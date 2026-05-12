@@ -9,13 +9,12 @@ import typing as T
 import cv2
 import numpy as np
 
-
 from lib.align.aligned_utils import batch_create_matrices
 from lib.logger import format_array, parse_class_init
 from lib.utils import get_module_objects
 
-from .objects import ExtractBatch
 from .handler import ExtractHandler
+from .objects import ExtractBatch
 
 if T.TYPE_CHECKING:
     import numpy.typing as npt
@@ -134,13 +133,11 @@ class Detect(ExtractHandler):
             (len(images), self.plugin.input_size, self.plugin.input_size, 3),
             dtype=images[0].dtype,
         )
-        interpolators = np.where(
-            matrices[:, 0, 0] < 1.0, cv2.INTER_AREA, cv2.INTER_CUBIC
-        )
+        interpolators = np.where(matrices[:, 0, 0] < 1.0, cv2.INTER_AREA, cv2.INTER_CUBIC)
         dims = (self.plugin.input_size, self.plugin.input_size)
         warp_mats = matrices[:, :2]
         for idx, (image, mat, interpolator) in enumerate(
-            zip(images, warp_mats, interpolators)
+            zip(images, warp_mats, interpolators, strict=False)
         ):
             image = image[..., 2::-1] if self.plugin.is_rgb else image
             cv2.warpAffine(image, mat, dims, dst=retval[idx], flags=interpolator)
@@ -198,7 +195,7 @@ class Detect(ExtractHandler):
         indices_requires = np.flatnonzero(mask_requires)
         indices_angle[indices_requires[mask_found]] = rotation_index
         mask_requires[indices_requires[mask_found]] = False
-        for i, box in zip(indices_requires[mask_found], bboxes):
+        for i, box in zip(indices_requires[mask_found], bboxes, strict=False):
             box_list[i] = box
 
     def process(self, batch: ExtractBatch) -> None:
@@ -258,9 +255,7 @@ class Detect(ExtractHandler):
             idx += 1
 
         boxes = (
-            np.array(
-                [self._empty_bbox if b is None else b for b in box_list], dtype="object"
-            )
+            np.array([self._empty_bbox if b is None else b for b in box_list], dtype="object")
             if boxes is None
             else boxes
         )
@@ -286,9 +281,7 @@ class Detect(ExtractHandler):
         -------
         The stacked detection boxes from all frames in the batch.
         """
-        valid = np.fromiter(
-            (i for i, p in enumerate(predictions) if np.any(p)), dtype=np.int32
-        )
+        valid = np.fromiter((i for i, p in enumerate(predictions) if np.any(p)), dtype=np.int32)
         if not valid.size:
             batch.frame_ids = valid
             return self._empty_bbox
@@ -298,9 +291,7 @@ class Detect(ExtractHandler):
         batch.frame_ids = np.repeat(valid, lengths)
         return np.vstack(result).astype(np.float32)
 
-    def _scale_boxes(
-        self, batch: ExtractBatch, predictions: npt.NDArray[np.float32]
-    ) -> None:
+    def _scale_boxes(self, batch: ExtractBatch, predictions: npt.NDArray[np.float32]) -> None:
         """Scale the detected faces back out to original image size, round to int and add to the
         batch object
 
@@ -444,9 +435,7 @@ class Rotator:
         The rotation angles between 0 and 360 for the given step size
         """
         retval = np.arange(0, 360, step_size, dtype="float32")
-        logger.debug(
-            "Setting rotation angles to %s from step size: %s", retval, step_size
-        )
+        logger.debug("Setting rotation angles to %s from step size: %s", retval, step_size)
         return retval
 
     def _get_angles(self, rotation: str | None) -> npt.NDArray[np.float32]:
@@ -523,9 +512,7 @@ class Rotator:
         size = (self._size, self._size)
 
         for i, img in enumerate(images):
-            cv2.warpAffine(
-                img, mat, size, dst=retval[i], borderMode=cv2.BORDER_REPLICATE
-            )
+            cv2.warpAffine(img, mat, size, dst=retval[i], borderMode=cv2.BORDER_REPLICATE)
 
         if self._channels_first:
             retval = retval.transpose(0, 3, 1, 2)
@@ -553,7 +540,7 @@ class Rotator:
         indices_needs_rotate = np.flatnonzero(mask_needs_rotate)
         matrices = self._matrices_inverse[indices_angle[mask_needs_rotate]]
 
-        for pred_idx, mat in zip(indices_needs_rotate, matrices):
+        for pred_idx, mat in zip(indices_needs_rotate, matrices, strict=False):
             bboxes = roi[pred_idx]
             pts = np.empty((bboxes.shape[0], 4, 2), dtype="float32")
             pts[:, 0] = bboxes[:, [0, 1]]  # lt

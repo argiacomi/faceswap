@@ -2,12 +2,13 @@
 """Main entry point to the convert process of FaceSwap"""
 
 from __future__ import annotations
-from dataclasses import dataclass, field
+
 import logging
-import re
 import os
+import re
 import sys
 import typing as T
+from dataclasses import dataclass, field
 from threading import Event
 from time import sleep
 
@@ -15,36 +16,37 @@ import cv2
 import numpy as np
 from tqdm import tqdm
 
-from scripts import fs_media
-from scripts.fs_media import finalize
-from lib.serializer import get_serializer
-from lib.convert import Converter
 from lib.align import AlignedFace, DetectedFace
-from lib.infer.objects import FrameFaces
+from lib.convert import Converter
 from lib.gpu_stats import GPUStats
-from lib.image import read_image_meta_batch, ImagesLoader
+from lib.image import ImagesLoader, read_image_meta_batch
+from lib.infer import Align, Detect
+from lib.infer.objects import FrameFaces
 from lib.multithreading import MultiThread, total_cpus
 from lib.queue_manager import queue_manager
+from lib.serializer import get_serializer
 from lib.utils import (
-    get_module_objects,
     FaceswapError,
     get_folder,
     get_image_paths,
+    get_module_objects,
     handle_deprecated_cli_opts,
 )
-from lib.infer import Detect, Align
 from plugins.plugin_loader import PluginLoader
 from plugins.train import train_config as mod_cfg
+from scripts import fs_media
+from scripts.fs_media import finalize
 
 if T.TYPE_CHECKING:
     from argparse import Namespace
     from collections.abc import Callable
+
+    from lib.align.aligned_face import CenteringType
+    from lib.infer.handler import ExtractHandler
+    from lib.infer.runner import ExtractRunner
+    from lib.queue_manager import EventQueue
     from plugins.convert.writer._base import Output
     from plugins.train.model._base import ModelBase
-    from lib.align.aligned_face import CenteringType
-    from lib.infer.runner import ExtractRunner
-    from lib.infer.handler import ExtractHandler
-    from lib.queue_manager import EventQueue
 
 
 logger = logging.getLogger(__name__)
@@ -100,22 +102,16 @@ class Convert:
 
         self._images = ImagesLoader(self._args.input_dir, fast_count=True)
         self._alignments = self._get_alignments()
-        self._opts = OptionalActions(
-            self._args, self._images.file_list, self._alignments
-        )
+        self._opts = OptionalActions(self._args, self._images.file_list, self._alignments)
 
         self._add_queues()
         self._predictor = Predict(self._queue_size, arguments)
-        self._disk_io = DiskIO(
-            self._alignments, self._images, self._predictor, arguments
-        )
+        self._disk_io = DiskIO(self._alignments, self._images, self._predictor, arguments)
         self._predictor.launch(self._disk_io.load_queue)
         self._validate()
         get_folder(self._args.output_dir)
 
-        config_file = (
-            self._args.config_file if hasattr(self._args, "config_file") else None
-        )
+        config_file = self._args.config_file if hasattr(self._args, "config_file") else None
         self._converter = Converter(
             self._predictor.output_size,
             self._predictor.coverage_ratio,
@@ -206,8 +202,7 @@ class Convert:
 
         if (
             not self._args.on_the_fly
-            and self._args.mask_type
-            not in ("none", "predicted", "extended", "components")
+            and self._args.mask_type not in ("none", "predicted", "extended", "components")
             and not self._alignments.mask_is_valid(self._args.mask_type)
         ):
             msg = (
@@ -220,10 +215,7 @@ class Convert:
             )
             raise FaceswapError(msg)
 
-        if (
-            self._args.mask_type == "predicted"
-            and not self._predictor.has_predicted_mask
-        ):
+        if self._args.mask_type == "predicted" and not self._predictor.has_predicted_mask:
             available_masks = [
                 k
                 for k, v in self._alignments.mask_summary.items()
@@ -460,9 +452,7 @@ class DiskIO:  # pylint:disable=too-many-instance-attributes
         if self._args.writer == "patch":
             args.append(predictor.output_size)
         logger.debug("Writer args: %s", args)
-        config_file = (
-            self._args.config_file if hasattr(self._args, "config_file") else None
-        )
+        config_file = self._args.config_file if hasattr(self._args, "config_file") else None
         return PluginLoader.get_converter("writer", self._args.writer)(
             *args, config_file=config_file
         )
@@ -494,8 +484,7 @@ class DiskIO:  # pylint:disable=too-many-instance-attributes
 
         if min_frame is None or max_frame is None:
             raise FaceswapError(
-                "Frame Ranges specified, but could not determine frame numbering "
-                "from filenames"
+                "Frame Ranges specified, but could not determine frame numbering from filenames"
             )
 
         retval = []
@@ -619,9 +608,7 @@ class DiskIO:  # pylint:disable=too-many-instance-attributes
             if self._check_skip_frame(filename):
                 if self._args.keep_unchanged:
                     logger.trace("Saving unchanged frame: %s", filename)  # type:ignore
-                    out_file = os.path.join(
-                        self._args.output_dir, os.path.basename(filename)
-                    )
+                    out_file = os.path.join(self._args.output_dir, os.path.basename(filename))
                     self._queues["save"].put((out_file, image))
                 else:
                     logger.trace("Discarding frame: '%s'", filename)  # type:ignore
@@ -664,9 +651,7 @@ class DiskIO:  # pylint:disable=too-many-instance-attributes
         logger.trace("idx: %s, skip_frame: %s", idx, skip_frame)  # type: ignore[attr-defined]
         return skip_frame
 
-    def _get_detected_faces(
-        self, filename: str, image: np.ndarray
-    ) -> list[DetectedFace]:
+    def _get_detected_faces(self, filename: str, image: np.ndarray) -> list[DetectedFace]:
         """Return the detected faces for the given image.
 
         If we have an alignments file, then the detected faces are created from that file. If
@@ -691,9 +676,7 @@ class DiskIO:  # pylint:disable=too-many-instance-attributes
         logger.trace("Got %s faces for: '%s'", len(detected_faces), filename)  # type:ignore
         return detected_faces
 
-    def _alignments_faces(
-        self, frame_name: str, image: np.ndarray
-    ) -> list[DetectedFace]:
+    def _alignments_faces(self, frame_name: str, image: np.ndarray) -> list[DetectedFace]:
         """Return detected faces from an alignments file.
 
         Parameters
@@ -778,9 +761,7 @@ class DiskIO:  # pylint:disable=too-many-instance-attributes
             if self._queues["save"].shutdown_event.is_set():
                 logger.debug("Save Queue: Stop signal received. Terminating")
                 break
-            item: tuple[str, np.ndarray | bytes] | T.Literal["EOF"] = self._queues[
-                "save"
-            ].get()
+            item: tuple[str, np.ndarray | bytes] | T.Literal["EOF"] = self._queues["save"].get()
             if item == "EOF":
                 logger.debug("EOF Received")
                 break
@@ -832,9 +813,7 @@ class Predict:  # pylint:disable=too-many-instance-attributes
         self._centering: CenteringType = T.cast("CenteringType", mod_cfg.centering())
 
         self._thread: MultiThread | None = None
-        logger.debug(
-            "Initialized %s: (out_queue: %s)", self.__class__.__name__, self._out_queue
-        )
+        logger.debug("Initialized %s: (out_queue: %s)", self.__class__.__name__, self._out_queue)
 
     @property
     def thread(self) -> MultiThread:
@@ -896,13 +875,9 @@ class Predict:  # pylint:disable=too-many-instance-attributes
         input_size in pixels and output_size in pixels
         """
         input_shape = self._model.model.input_shape
-        input_shape = (
-            [input_shape] if not isinstance(input_shape, list) else input_shape
-        )
+        input_shape = [input_shape] if not isinstance(input_shape, list) else input_shape
         output_shape = self._model.model.output_shape
-        output_shape = (
-            [output_shape] if not isinstance(output_shape, list) else output_shape
-        )
+        output_shape = [output_shape] if not isinstance(output_shape, list) else output_shape
         retval = {"input": input_shape[0][1], "output": output_shape[-1][1]}
         logger.debug(retval)
         return retval
@@ -961,9 +936,7 @@ class Predict:  # pylint:disable=too-many-instance-attributes
         The name of the Faceswap model being used.
         """
         state_files = [
-            fname
-            for fname in os.listdir(str(model_dir))
-            if fname.endswith("_state.json")
+            fname for fname in os.listdir(str(model_dir)) if fname.endswith("_state.json")
         ]
         if len(state_files) != 1:
             raise FaceswapError(
@@ -1138,20 +1111,13 @@ class Predict:  # pylint:disable=too-many-instance-attributes
         """
         logger.trace("Compiling feed face. Batchsize: %s", len(feed_faces))  # type:ignore
         retval = (
-            np.stack(
-                [
-                    T.cast(np.ndarray, feed_face.face)[..., :3]
-                    for feed_face in feed_faces
-                ]
-            )
+            np.stack([T.cast(np.ndarray, feed_face.face)[..., :3] for feed_face in feed_faces])
             / 255.0
         )
         logger.trace("Compiled Feed faces. Shape: %s", retval.shape)  # type:ignore
         return retval
 
-    def _predict(
-        self, feed_faces: np.ndarray, batch_size: int | None = None
-    ) -> np.ndarray:
+    def _predict(self, feed_faces: np.ndarray, batch_size: int | None = None) -> np.ndarray:
         """Run the Faceswap models' prediction function.
 
         Parameters
@@ -1179,9 +1145,7 @@ class Predict:  # pylint:disable=too-many-instance-attributes
             verbose=0,  # pyright:ignore[reportArgumentType]
             batch_size=batch_size,
         )
-        predicted: list[np.ndarray] = (
-            inbound if isinstance(inbound, list) else [inbound]
-        )
+        predicted: list[np.ndarray] = inbound if isinstance(inbound, list) else [inbound]
 
         if self._model.color_order.lower() == "rgb":
             predicted[0] = predicted[0][..., ::-1]
@@ -1200,9 +1164,7 @@ class Predict:  # pylint:disable=too-many-instance-attributes
         logger.trace("Final shape: %s", retval.shape)  # type:ignore
         return retval
 
-    def _queue_out_frames(
-        self, batch: list[ConvertItem], swapped_faces: np.ndarray
-    ) -> None:
+    def _queue_out_frames(self, batch: list[ConvertItem], swapped_faces: np.ndarray) -> None:
         """Compile the batch back to original frames and put to the Out Queue.
 
         For batching, faces are split away from their frames. This compiles all detected faces
@@ -1276,9 +1238,7 @@ class OptionalActions:  # pylint:disable=too-few-public-methods
             return
         pre_face_count = self._alignments.faces_count
         self._alignments.filter_faces(accept_dict, filter_out=False)
-        logger.info(
-            "Faces filtered out: %s", pre_face_count - self._alignments.faces_count
-        )
+        logger.info("Faces filtered out: %s", pre_face_count - self._alignments.faces_count)
 
     def _get_face_metadata(self) -> dict[str, list[int]]:
         """Check for the existence of an aligned directory for identifying which faces in the
@@ -1312,17 +1272,13 @@ class OptionalActions:  # pylint:disable=too-few-public-methods
             leave=False,
         ):
             if "itxt" not in metadata or "source" not in metadata["itxt"]:
-                logger.warning(
-                    "Non-Faceswap extracted face found. Image skipped: '%s'", fullpath
-                )
+                logger.warning("Non-Faceswap extracted face found. Image skipped: '%s'", fullpath)
                 continue
             meta = metadata["itxt"]["source"]
             retval.setdefault(meta["source_filename"], []).append(meta["face_index"])
 
         if not retval:
-            raise FaceswapError(
-                "Aligned directory is empty, no faces will be converted!"
-            )
+            raise FaceswapError("Aligned directory is empty, no faces will be converted!")
         if len(retval) <= len(self._input_images) / 3:
             logger.warning(
                 "Aligned directory contains far fewer images than the input "

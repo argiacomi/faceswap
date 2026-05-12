@@ -11,8 +11,8 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from lib.torch_utils import ColorSpaceConvert
 from lib.logger import parse_class_init
+from lib.torch_utils import ColorSpaceConvert
 from lib.utils import get_module_objects
 
 logger = logging.getLogger(__name__)
@@ -173,13 +173,10 @@ class LDRFLIPLoss(nn.Module):  # pylint:disable=too-many-instance-attributes
             power_delta_e_hyab < pcc_max,
             (self._pt / pcc_max) * power_delta_e_hyab,
             self._pt
-            + ((power_delta_e_hyab - pcc_max) / (self._c_max - pcc_max))
-            * (1.0 - self._pt),
+            + ((power_delta_e_hyab - pcc_max) / (self._c_max - pcc_max)) * (1.0 - self._pt),
         )
 
-    def _color_pipeline(
-        self, y_true: torch.Tensor, y_pred: torch.Tensor
-    ) -> torch.Tensor:
+    def _color_pipeline(self, y_true: torch.Tensor, y_pred: torch.Tensor) -> torch.Tensor:
         """Perform the color processing part of the FLIP loss function
 
         Parameters
@@ -202,9 +199,7 @@ class LDRFLIPLoss(nn.Module):  # pylint:disable=too-many-instance-attributes
         power_delta = delta**self._computed_distance_exponent
         return self._redistribute_errors(power_delta)
 
-    def _process_features(
-        self, y_true: torch.Tensor, y_pred: torch.Tensor
-    ) -> torch.Tensor:
+    def _process_features(self, y_true: torch.Tensor, y_pred: torch.Tensor) -> torch.Tensor:
         """Perform the color processing part of the FLIP loss function
 
         Parameters
@@ -307,25 +302,19 @@ class _SpatialFilters(nn.Module):
         max_scale_parameter = max([b1_a, b2_a, b1_rg, b2_rg, b1_by, b2_by])
         delta_x = 1.0 / self._pixels_per_degree
         radius = int(
-            np.ceil(
-                3
-                * np.sqrt(max_scale_parameter / (2 * np.pi**2))
-                * self._pixels_per_degree
-            )
+            np.ceil(3 * np.sqrt(max_scale_parameter / (2 * np.pi**2)) * self._pixels_per_degree)
         )
         ax_x, ax_y = np.meshgrid(range(-radius, radius + 1), range(-radius, radius + 1))
         domain = (ax_x * delta_x) ** 2 + (ax_y * delta_x) ** 2
         return domain, radius
 
     @classmethod
-    def _generate_weights(
-        cls, channel: dict[str, float], domain: np.ndarray
-    ) -> np.ndarray:
+    def _generate_weights(cls, channel: dict[str, float], domain: np.ndarray) -> np.ndarray:
         """Generate the weights for the spacial filters"""
         a_1, b_1, a_2, b_2 = channel["a1"], channel["b1"], channel["a2"], channel["b2"]
-        grad = a_1 * np.sqrt(np.pi / b_1) * np.exp(
-            -(np.pi**2) * domain / b_1
-        ) + a_2 * np.sqrt(np.pi / b_2) * np.exp(-(np.pi**2) * domain / b_2)
+        grad = a_1 * np.sqrt(np.pi / b_1) * np.exp(-(np.pi**2) * domain / b_1) + a_2 * np.sqrt(
+            np.pi / b_2
+        ) * np.exp(-(np.pi**2) * domain / b_2)
         grad = grad / np.sum(grad)
         grad = np.reshape(grad, (1, *grad.shape))
         return grad
@@ -355,10 +344,7 @@ class _SpatialFilters(nn.Module):
         )
         self._radius = radius
         weights = np.array(
-            [
-                self._generate_weights(mapping[channel], domain)
-                for channel in ("A", "RG", "BY")
-            ]
+            [self._generate_weights(mapping[channel], domain) for channel in ("A", "RG", "BY")]
         )
         return torch.from_numpy(weights).float()
 
@@ -419,9 +405,7 @@ class _FeatureDetection(nn.Module):
         )
         self.register_buffer(
             "_grads_point",
-            torch.from_numpy(
-                np.multiply(grid[0] ** 2 / (self._std**2) - 1, gradient)
-            ).float(),
+            torch.from_numpy(np.multiply(grid[0] ** 2 / (self._std**2) - 1, gradient)).float(),
         )
 
     def forward(self, image: torch.Tensor, feature_type: str) -> torch.Tensor:

@@ -2,13 +2,13 @@
 """Manages the widgets that hold the top 'viewer' area of the preview tool"""
 
 from __future__ import annotations
+
 import logging
 import os
 import tkinter as tk
 import typing as T
-
+from dataclasses import InitVar, dataclass, field
 from tkinter import ttk
-from dataclasses import dataclass, field, InitVar
 
 import cv2
 import numpy as np
@@ -20,9 +20,9 @@ from lib.logger import parse_class_init
 from lib.utils import get_module_objects
 from scripts.convert import ConvertItem
 
-
 if T.TYPE_CHECKING:
     import numpy.typing as npt
+
     from .preview import Preview
 
 logger = logging.getLogger(__name__)
@@ -176,9 +176,7 @@ class FacesDisplay:  # pylint:disable=too-many-instance-attributes
             header = self._header_text()
             source = np.hstack([self._draw_rect(face) for face in self._faces.src])
             self._faces_source = np.vstack((header, source))
-        self._faces_dest = np.hstack(
-            [self._draw_rect(face) for face in self._faces.dst]
-        )
+        self._faces_dest = np.hstack([self._draw_rect(face) for face in self._faces.dst])
         logger.debug(
             "source row shape: %s, swapped row shape: %s",
             self._faces_dest.shape,
@@ -187,9 +185,7 @@ class FacesDisplay:  # pylint:disable=too-many-instance-attributes
 
     def _faces_from_frames(self) -> None:
         """Extract the preview faces from the source frames and apply the requisite padding."""
-        logger.debug(
-            "Extracting faces from frames: Number images: %s", len(self.source)
-        )
+        logger.debug("Extracting faces from frames: Number images: %s", len(self.source))
         if self.update_source:
             self._crop_source_faces()
         self._crop_destination_faces()
@@ -202,9 +198,7 @@ class FacesDisplay:  # pylint:disable=too-many-instance-attributes
         """Extract the source faces from the source frames, along with their filenames and the
         transformation matrix used to extract the faces."""
         logger.debug("Updating source faces")
-        self._faces = _Faces(
-            num_faces=self._num_faces, size=self._size
-        )  # Init new class
+        self._faces = _Faces(num_faces=self._num_faces, size=self._size)  # Init new class
         for i, item in enumerate(self.source):
             detected_face = item.inbound.detected_faces[0]
             src_img = item.inbound.image
@@ -219,9 +213,7 @@ class FacesDisplay:  # pylint:disable=too-many-instance-attributes
                 matrix[1, 2] += self._y_offset
             self._faces.filenames.append(os.path.splitext(item.inbound.filename)[0])
             self._faces.matrix[i] = matrix
-            self._faces.src[i] = transform_image(
-                src_img, matrix, self._size, self._padding
-            )
+            self._faces.src[i] = transform_image(src_img, matrix, self._size, self._padding)
         self.update_source = False
         logger.debug("Updated source faces")
 
@@ -268,9 +260,7 @@ class FacesDisplay:  # pylint:disable=too-many-instance-attributes
             text_x,
             text_y,
         )
-        header_box = (
-            np.ones((height, self._size * self._total_columns, 3), np.uint8) * 255
-        )
+        header_box = np.ones((height, self._size * self._total_columns, 3), np.uint8) * 255
         for idx, text in enumerate(self._faces.filenames):
             cv2.putText(
                 header_box,
@@ -297,9 +287,7 @@ class FacesDisplay:  # pylint:disable=too-many-instance-attributes
         -------
         The given image with a border drawn around the outside
         """
-        cv2.rectangle(
-            image, (0, 0), (self._size - 1, self._size - 1), (255, 255, 255), 1
-        )
+        cv2.rectangle(image, (0, 0), (self._size - 1, self._size - 1), (255, 255, 255), 1)
         image = np.clip(image, 0.0, 255.0)
         return image.astype("uint8")
 

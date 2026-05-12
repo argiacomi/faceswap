@@ -6,14 +6,14 @@ Based on https://github.com/iperov/DeepFaceLab
 import logging
 
 import numpy as np
+from keras import Input, layers
+from keras import Model as KModel
 
-from keras import Input, layers, Model as KModel
-
-from lib.model.nn_blocks import Conv2DOutput, Conv2DBlock, ResidualBlock, UpscaleBlock
+from lib.model.nn_blocks import Conv2DBlock, Conv2DOutput, ResidualBlock, UpscaleBlock
 from plugins.train.train_config import Loss as cfg_loss
 
-from ._base import ModelBase
 from . import dfl_sae_defaults as cfg
+from ._base import ModelBase
 
 logger = logging.getLogger(__name__)
 
@@ -62,13 +62,9 @@ class Model(ModelBase):
 
         if self.architecture == "liae":
             inter_both = self.inter_liae("both", enc_output_shape)
-            int_output_shape = (
-                np.array(inter_both.output_shape[1:]) * (1, 1, 2)
-            ).tolist()
+            int_output_shape = (np.array(inter_both.output_shape[1:]) * (1, 1, 2)).tolist()
 
-            inter_a = layers.Concatenate()(
-                [inter_both(encoder_a), inter_both(encoder_a)]
-            )
+            inter_a = layers.Concatenate()([inter_both(encoder_a), inter_both(encoder_a)])
             inter_b = layers.Concatenate()(
                 [
                     self.inter_liae("b", enc_output_shape)(encoder_b),
@@ -96,9 +92,7 @@ class Model(ModelBase):
         var_x = Conv2DBlock(dims * 8, activation="leakyrelu")(var_x)
         var_x = layers.Dense(self.ae_dims)(layers.Flatten()(var_x))
         var_x = layers.Dense(lowest_dense_res * lowest_dense_res * self.ae_dims)(var_x)
-        var_x = layers.Reshape((lowest_dense_res, lowest_dense_res, self.ae_dims))(
-            var_x
-        )
+        var_x = layers.Reshape((lowest_dense_res, lowest_dense_res, self.ae_dims))(var_x)
         var_x = UpscaleBlock(self.ae_dims, activation="leakyrelu")(var_x)
         return KModel(input_, var_x, name="encoder_df")
 
@@ -119,12 +113,8 @@ class Model(ModelBase):
         lowest_dense_res = self.input_shape[0] // 16
         var_x = input_
         var_x = layers.Dense(self.ae_dims)(var_x)
-        var_x = layers.Dense(lowest_dense_res * lowest_dense_res * self.ae_dims * 2)(
-            var_x
-        )
-        var_x = layers.Reshape((lowest_dense_res, lowest_dense_res, self.ae_dims * 2))(
-            var_x
-        )
+        var_x = layers.Dense(lowest_dense_res * lowest_dense_res * self.ae_dims * 2)(var_x)
+        var_x = layers.Reshape((lowest_dense_res, lowest_dense_res, self.ae_dims * 2))(var_x)
         var_x = UpscaleBlock(self.ae_dims * 2, activation="leakyrelu")(var_x)
         return KModel(input_, var_x, name=f"intermediate_{side}")
 

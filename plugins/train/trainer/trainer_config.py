@@ -3,11 +3,10 @@
 
 from __future__ import annotations
 
-import inspect
 import gettext
+import inspect
 import logging
 import typing as T
-
 from dataclasses import dataclass
 
 from lib.config import ConfigItem, GlobalSection
@@ -68,9 +67,7 @@ class Augmentation(GlobalSection):
         datatype=int,
         default=14,
         group=_("evaluation"),
-        info=_(
-            "Number of sample faces to display for each side in the preview when training."
-        ),
+        info=_("Number of sample faces to display for each side in the preview when training."),
         rounding=2,
         min_max=(2, 16),
     )
@@ -92,9 +89,7 @@ class Augmentation(GlobalSection):
         default="#ff0000",
         choices="colorchooser",
         group=_("evaluation"),
-        info=_(
-            "The RGB hex color to use for the mask overlay in the training preview."
-        ),
+        info=_("The RGB hex color to use for the mask overlay in the training preview."),
     )
 
     zoom_amount = ConfigItem(
@@ -120,8 +115,7 @@ class Augmentation(GlobalSection):
         default=5,
         group=_("image augmentation"),
         info=_(
-            "Percentage amount to randomly shift each training image horizontally and "
-            "vertically."
+            "Percentage amount to randomly shift each training image horizontally and vertically."
         ),
         rounding=1,
         min_max=(0, 25),

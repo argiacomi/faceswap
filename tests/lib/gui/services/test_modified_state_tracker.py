@@ -25,9 +25,7 @@ class _BoolVar:
 
 def test_any_modified() -> None:
     """Tracker should report whether any command is modified."""
-    tracker = ModifiedStateTracker(
-        {"extract": _BoolVar(False), "train": _BoolVar(True)}
-    )
+    tracker = ModifiedStateTracker({"extract": _BoolVar(False), "train": _BoolVar(True)})
 
     assert tracker.any_modified() is True
 

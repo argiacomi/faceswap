@@ -2,6 +2,7 @@
 """Handles the recompilation of a Faceswap model into a version that can be used for inference"""
 
 from __future__ import annotations
+
 import logging
 import typing as T
 
@@ -55,9 +56,7 @@ class Inference:
         -------
         the input to the inference model
         """
-        assert len(model.input) == 2, (
-            f"Unexpected input count: {len(model.input)} ({model.input})"
-        )
+        assert len(model.input) == 2, f"Unexpected input count: {len(model.input)} ({model.input})"
         input_tensor = model.input[self._side_idx]
         logger.debug(
             "[Inference] '%s' model input for side index %s: '%s'",
@@ -159,9 +158,7 @@ class Inference:
             split = outputs_count // 2
             out_layers = layers[:split] if self._side_idx == 0 else layers[split:]
             out_layer_count = len(set(o.name for o in out_layers))
-            assert out_layer_count == 1, (
-                f"Unexpected output layer count: {out_layer_count}"
-            )
+            assert out_layer_count == 1, f"Unexpected output layer count: {out_layer_count}"
             retval = out_layers[0]
 
         logger.debug(
@@ -219,9 +216,7 @@ class Inference:
         """
         built = {self._input.name: self._input}
         to_build = {
-            k: v
-            for k, v in self._valid_layer_inputs.items()
-            if k in self._filtered_layers
+            k: v for k, v in self._valid_layer_inputs.items() if k in self._filtered_layers
         }
         logger.debug(
             "[Inference] Building inference model from '%s' with layers %s",
@@ -231,14 +226,10 @@ class Inference:
         for layer, inputs in to_build.items():
             name = layer.name
             input_names = [i.name for i in inputs]
-            logger.debug(
-                "[Inference] Building layer '%s' with inputs %s", name, input_names
-            )
+            logger.debug("[Inference] Building layer '%s' with inputs %s", name, input_names)
             assert all(i in built for i in input_names)
             input_layers = [built[n] for n in input_names]
-            built[layer.name] = layer(
-                input_layers if len(input_layers) > 1 else input_layers[0]
-            )
+            built[layer.name] = layer(input_layers if len(input_layers) > 1 else input_layers[0])
 
         output = built[self._output.name]
         retval = keras.Model(inputs=self._input, outputs=output, name=self._name)

@@ -5,17 +5,16 @@ import csv
 import gettext
 import logging
 import tkinter as tk
-
 from dataclasses import dataclass, field
 from tkinter import ttk
 
 from lib.utils import get_module_objects
 
+from .analysis import Calculations, Session
 from .control_helper import ControlBuilder, ControlPanelOption
 from .custom_widgets import Tooltip
 from .display_graph import SessionGraph
-from .analysis import Calculations, Session
-from .utils import FileHandler, get_images, LongRunningTask
+from .utils import FileHandler, LongRunningTask, get_images
 
 logger = logging.getLogger(__name__)
 
@@ -89,9 +88,7 @@ class SessionPopUp(tk.Toplevel):
             data_points,
         )
         super().__init__()
-        self._thread: LongRunningTask | None = (
-            None  # Thread for loading data in background
-        )
+        self._thread: LongRunningTask | None = None  # Thread for loading data in background
         self._default_view = "avg" if data_points > 1000 else "smoothed"
         self._session_id = None if session_id == "Total" else int(session_id)
 
@@ -106,9 +103,7 @@ class SessionPopUp(tk.Toplevel):
         optsframe = self._layout_frames()
         self._build_options(optsframe)
 
-        self._lbl_loading = ttk.Label(
-            self._graph_frame, text="Loading Data...", anchor=tk.CENTER
-        )
+        self._lbl_loading = ttk.Label(self._graph_frame, text="Loading Data...", anchor=tk.CENTER)
         self._lbl_loading.pack(fill=tk.BOTH, expand=True)
         self.update_idletasks()
 
@@ -324,9 +319,7 @@ class SessionPopUp(tk.Toplevel):
         """
         logger.debug("Building Buttons")
         btnframe = ttk.Frame(frame)
-        lblstatus = ttk.Label(
-            btnframe, width=40, textvariable=self._vars.status, anchor=tk.W
-        )
+        lblstatus = ttk.Label(btnframe, width=40, textvariable=self._vars.status, anchor=tk.W)
 
         for btntype in ("reload", "save"):
             cmd = getattr(self, f"_option_button_{btntype}")
@@ -370,12 +363,12 @@ class SessionPopUp(tk.Toplevel):
         logger.debug("Saving to: %s", savefile)
         assert self._display_data is not None
         save_data = self._display_data.stats
-        fieldnames = sorted(key for key in save_data.keys())
+        fieldnames = sorted(key for key in save_data)
 
         with savefile as outfile:
             csvout = csv.writer(outfile, delimiter=",")
             csvout.writerow(fieldnames)
-            csvout.writerows(zip(*[save_data[key] for key in fieldnames]))
+            csvout.writerows(zip(*[save_data[key] for key in fieldnames], strict=False))
 
     def _option_button_reload(self, *args) -> None:  # pylint:disable=unused-argument
         """Action for reset button press and checkbox changes.
@@ -393,9 +386,7 @@ class SessionPopUp(tk.Toplevel):
             logger.debug("Invalid data")
             return
         assert self._graph is not None
-        self._graph.refresh(
-            self._display_data, self._vars.display.get(), self._vars.scale.get()
-        )
+        self._graph.refresh(self._display_data, self._vars.display.get(), self._vars.scale.get())
         logger.debug("Refreshed Graph")
 
     def _graph_scale(self, *args) -> None:  # pylint:disable=unused-argument
@@ -517,9 +508,7 @@ class SessionPopUp(tk.Toplevel):
         """
         return Calculations(**kwargs)
 
-    def _check_valid_selection(
-        self, loss_keys: list[str], selections: list[str]
-    ) -> bool:
+    def _check_valid_selection(self, loss_keys: list[str], selections: list[str]) -> bool:
         """Check that there will be data to display.
 
         Parameters
@@ -541,9 +530,7 @@ class SessionPopUp(tk.Toplevel):
             selections,
             display,
         )
-        if not selections or (display == "loss" and not loss_keys):
-            return False
-        return True
+        return not (not selections or display == "loss" and not loss_keys)
 
     def _check_valid_data(self) -> bool:
         """Check that the selections holds valid data to display
@@ -559,12 +546,10 @@ class SessionPopUp(tk.Toplevel):
             "Validating data. %s",
             {key: len(val) for key, val in self._display_data.stats.items()},
         )
-        if any(
+        return not any(
             len(val) == 0  # pylint:disable=len-as-condition
             for val in self._display_data.stats.values()
-        ):
-            return False
-        return True
+        )
 
     def _selections_to_list(self) -> list[str]:
         """Compile checkbox selections to a list.

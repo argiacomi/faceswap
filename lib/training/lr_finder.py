@@ -2,6 +2,7 @@
 """Learning Rate Finder for faceswap.py."""
 
 from __future__ import annotations
+
 import logging
 import os
 import shutil
@@ -21,6 +22,7 @@ from plugins.train import train_config as cfg
 if T.TYPE_CHECKING:
     import torch
     from keras import optimizers
+
     from . import train
 
 logger = logging.getLogger(__name__)
@@ -68,9 +70,7 @@ class LearningRateFinder:  # pylint:disable=too-many-instance-attributes
 
         self._stop_factor = stop_factor
         self._beta = beta
-        self._lr_multiplier: float = (end_lr / self._start_lr) ** (
-            1.0 / self._iterations
-        )
+        self._lr_multiplier: float = (end_lr / self._start_lr) ** (1.0 / self._iterations)
 
         self._metrics: dict[T.Literal["learning_rates", "losses"], list[float]] = {
             "learning_rates": [],
@@ -142,9 +142,7 @@ class LearningRateFinder:  # pylint:disable=too-many-instance-attributes
             self._on_batch_end(idx, total_loss)
             self._update_description(p_bar)
 
-    def _rebuild_optimizer(
-        self, optimizer: optimizers.Optimizer
-    ) -> optimizers.Optimizer:
+    def _rebuild_optimizer(self, optimizer: optimizers.Optimizer) -> optimizers.Optimizer:
         """Pass through nested Optimizers (eg LossScaleOptimizer) and create new nested
         optimizers based on their original config
 
@@ -155,9 +153,7 @@ class LearningRateFinder:  # pylint:disable=too-many-instance-attributes
         logger.debug("Processing optimizer: '%s'", optimizer.name)
         config = optimizer.get_config()
         if hasattr(optimizer, "inner_optimizer"):
-            config["inner_optimizer"] = self._rebuild_optimizer(
-                optimizer.inner_optimizer
-            )
+            config["inner_optimizer"] = self._rebuild_optimizer(optimizer.inner_optimizer)
         retval = optimizer.__class__(**config)
         logger.debug(
             "Created optimizer '%s': (old: %s, new: %s)",
@@ -255,12 +251,10 @@ class LearningRateFinder:  # pylint:disable=too-many-instance-attributes
         plt.plot(lrs, losses, label="Learning Rate")
         best_idx = self._metrics["losses"].index(self._loss["best"])
         best_lr = self._metrics["learning_rates"][best_idx]
-        for val, color in zip(LRStrength, ("g", "y", "r")):
+        for val, color in zip(LRStrength, ("g", "y", "r"), strict=False):
             l_r = best_lr / val.value
             idx = lrs.index(next(r for r in lrs if r >= l_r))
-            plt.plot(
-                l_r, losses[idx], f"{color}o", label=f"{val.name.title()}: {l_r:.1e}"
-            )
+            plt.plot(l_r, losses[idx], f"{color}o", label=f"{val.name.title()}: {l_r:.1e}")
 
         plt.xscale("log")
         plt.xlabel("Learning Rate (Log Scale)")
@@ -269,9 +263,7 @@ class LearningRateFinder:  # pylint:disable=too-many-instance-attributes
         plt.legend()
 
         now = datetime.now().strftime("%Y-%m-%d_%H.%M.%S")
-        output = os.path.join(
-            self._model.io.model_dir, f"learning_rate_finder_{now}.png"
-        )
+        output = os.path.join(self._model.io.model_dir, f"learning_rate_finder_{now}.png")
         logger.info("Saving Learning Rate Finder graph to: '%s'", output)
         plt.savefig(output)
 

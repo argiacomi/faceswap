@@ -7,11 +7,10 @@ import logging
 import os
 import textwrap
 import typing as T
-
 from configparser import ConfigParser
 
 from lib.logger import parse_class_init
-from lib.utils import get_module_objects, PROJECT_ROOT
+from lib.utils import PROJECT_ROOT, get_module_objects
 
 if T.TYPE_CHECKING:
     from .objects import ConfigSection, ConfigValueType
@@ -64,9 +63,7 @@ class ConfigFile:
             return ini_path
 
         retval = os.path.join(PROJECT_ROOT, "config", f"{self._plugin_group}.ini")
-        logger.debug(
-            "[%s] Config File location: '%s'", os.path.basename(retval), retval
-        )
+        logger.debug("[%s] Config File location: '%s'", os.path.basename(retval), retval)
         return retval
 
     def _get_new_configparser(self) -> ConfigParser:
@@ -100,9 +97,7 @@ class ConfigFile:
             self._file_path,
         )
         # TODO in python >= 3.14 this will error when there are delimiters in the comments
-        with open(
-            self._file_path, "w", encoding="utf-8", errors="replace"
-        ) as f_cfgfile:
+        with open(self._file_path, "w", encoding="utf-8", errors="replace") as f_cfgfile:
             self._parser.write(f_cfgfile)
         logger.info("[%s] Saved config: '%s'", self._plugin_group, self._file_path)
 
@@ -246,18 +241,13 @@ class ConfigFile:
             subsequent_indent = "\t\t" if hlp.startswith("\t") else ""
             hlp = f"\t- {hlp[1:].strip()}" if hlp.startswith("\t") else hlp
             formatted += (
-                textwrap.fill(hlp, 100, tabsize=4, subsequent_indent=subsequent_indent)
-                + "\n"
+                textwrap.fill(hlp, 100, tabsize=4, subsequent_indent=subsequent_indent) + "\n"
             )
-        helptext = "# {}".format(
-            formatted[:-1].replace("\n", "\n# ")
-        )  # Strip last newline
+        helptext = "# {}".format(formatted[:-1].replace("\n", "\n# "))  # Strip last newline
         helptext = helptext.upper() if is_section else f"\n{helptext}"
         return helptext
 
-    def _insert_section(
-        self, section: str, helptext: str, config: ConfigParser
-    ) -> None:
+    def _insert_section(self, section: str, helptext: str, config: ConfigParser) -> None:
         """Insert a section into the config
 
         Parameters
@@ -351,9 +341,7 @@ class ConfigFile:
         self.save()
 
     # .ini extraction
-    def _get_converted_value(
-        self, section: str, option: str, datatype: type
-    ) -> ConfigValueType:
+    def _get_converted_value(self, section: str, option: str, datatype: type) -> ConfigValueType:
         """Return a config item from the .ini file in it's correct type.
 
         Parameters
@@ -383,11 +371,11 @@ class ConfigFile:
         )
 
         retval: ConfigValueType
-        if datatype == bool:
+        if datatype is bool:
             retval = self._parser.getboolean(section, option)
-        elif datatype == int:
+        elif datatype is int:
             retval = self._parser.getint(section, option)
-        elif datatype == float:
+        elif datatype is float:
             retval = self._parser.getfloat(section, option)
         else:
             retval = self._parser.get(section, option)
@@ -414,10 +402,7 @@ class ConfigFile:
             if self._values_synced(section, section_name):
                 continue
             for opt_name, opt in section.options.items():
-                if (
-                    section_name not in self._parser
-                    or opt_name not in self._parser[section_name]
-                ):
+                if section_name not in self._parser or opt_name not in self._parser[section_name]:
                     logger.debug(
                         "[%s:%s] Skipping new option: '%s'",
                         self._plugin_group,
@@ -436,9 +421,7 @@ class ConfigFile:
                         ini_opt,
                         opt.ini_value,
                     )
-                    opt.set(
-                        self._get_converted_value(section_name, opt_name, opt.datatype)
-                    )
+                    opt.set(self._get_converted_value(section_name, opt_name, opt.datatype))
 
     # .ini insertion and extraction
     def on_load(self, app_config: dict[str, ConfigSection]) -> None:
@@ -474,9 +457,7 @@ class ConfigFile:
         for section_name, section in app_config.items():
             self._insert_section(section_name, section.helptext, parser)
             for name, opt in section.options.items():
-                self._insert_option(
-                    section_name, name, opt.helptext, opt.ini_value, parser
-                )
+                self._insert_option(section_name, name, opt.helptext, opt.ini_value, parser)
         if parser != self._parser:
             self._parser = parser
         self.save()

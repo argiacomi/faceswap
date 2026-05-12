@@ -68,9 +68,7 @@ def naive_ewma(data: np.ndarray, alpha: float) -> np.ndarray:
     return out
 
 
-@pytest.mark.parametrize(
-    "alpha", [0.001, 0.01, 0.25, 0.33, 0.5, 0.66, 0.75, 0.90, 0.999]
-)
+@pytest.mark.parametrize("alpha", [0.001, 0.01, 0.25, 0.33, 0.5, 0.66, 0.75, 0.90, 0.999])
 @pytest.mark.parametrize("dtype", ("float32", "float64"))
 def test_ExponentialMovingAverage_matches_naive(alpha: float, dtype: str) -> None:
     """Make sure that we get sane results out for various data sizes against our reference

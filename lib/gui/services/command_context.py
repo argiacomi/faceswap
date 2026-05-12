@@ -3,8 +3,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import typing as T
+from dataclasses import dataclass
 
 from lib.utils import get_module_objects
 
@@ -19,9 +19,7 @@ class CommandExecutionContext:
     batch_mode: bool = False
 
     @classmethod
-    def from_values(
-        cls, command: str, values: T.Mapping[str, object]
-    ) -> CommandExecutionContext:
+    def from_values(cls, command: str, values: T.Mapping[str, object]) -> CommandExecutionContext:
         """Build execution context from switch-keyed command values."""
         model_name = None
         model_folder = None
@@ -54,7 +52,7 @@ class CommandExecutionContext:
         """Return a non-empty string value or ``None``."""
         if value is None or value is False:
             return None
-        if isinstance(value, (list, tuple)):
+        if isinstance(value, list | tuple):
             return None if not value else str(value[0])
         text = str(value)
         return text if text else None

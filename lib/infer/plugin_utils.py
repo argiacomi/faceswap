@@ -43,9 +43,7 @@ def random_input_from_plugin(
     size = plugin.input_size
     low, high = plugin.scale
     im_range = high - low
-    retval = (
-        np.random.random((batch_size, 3, size, size)).astype(plugin.dtype) * im_range
-    )
+    retval = np.random.random((batch_size, 3, size, size)).astype(plugin.dtype) * im_range
     retval += low
     if channels_last:
         retval = retval.transpose(0, 2, 3, 1)
@@ -145,11 +143,11 @@ def warmup_plugin(
         # so disable logging
         try:  # cv2 arbitrarily moves this based on build options :/
             cv2_loglevel = cv2.getLogLevel()  # type:ignore[attr-defined]
-            cv2_setlevel = getattr(cv2, "setLogLevel")
+            cv2_setlevel = cv2.setLogLevel
         except AttributeError:
             try:
                 cv2_loglevel = cv2.utils.logging.getLogLevel()  # type:ignore[attr-defined]
-                cv2_setlevel = getattr(cv2.utils.logging, "setLogLevel")
+                cv2_setlevel = cv2.utils.logging.setLogLevel
             except AttributeError:
                 pass
 
@@ -166,9 +164,7 @@ def warmup_plugin(
             is_chan_last = chan_last
             break
         except Exception as err:  # pylint:disable=broad-except
-            logger.debug(
-                "Exception with channels_last=%s: %s", chan_last, str(err).strip()
-            )
+            logger.debug("Exception with channels_last=%s: %s", chan_last, str(err).strip())
 
     if cv2_setlevel is not None:
         cv2_setlevel(cv2_loglevel)
@@ -195,9 +191,7 @@ def compile_models(plugin: ExtractPlugin, modules: list[torch.nn.Module]) -> Non
             _COMPILE_LOGGED.set()
             sleep(0.5)  # Let other plugins log their output first
             logger.info("Compiling PyTorch models...")
-        channels_last = warmup_plugin(
-            plugin, 1
-        )  # Make sure we don't trace on wrong channel order
+        channels_last = warmup_plugin(plugin, 1)  # Make sure we don't trace on wrong channel order
         for mod in modules:
             logger.verbose(
                 "Compiling %s (%s)...",  # type:ignore[attr-defined]

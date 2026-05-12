@@ -2,24 +2,24 @@
 """Manages the widgets that hold the bottom 'control' area of the preview tool."""
 
 from __future__ import annotations
+
 import gettext
 import logging
-import typing as T
-
 import tkinter as tk
-
+import typing as T
 from tkinter import ttk
 
-from lib.gui.custom_widgets import Tooltip
 from lib.gui.control_helper import ControlPanel, ControlPanelOption
-from lib.logger import parse_class_init
+from lib.gui.custom_widgets import Tooltip
 from lib.gui.utils import get_images
+from lib.logger import parse_class_init
 from lib.utils import get_module_objects
-from plugins.plugin_loader import PluginLoader
 from plugins.convert import convert_config
+from plugins.plugin_loader import PluginLoader
 
 if T.TYPE_CHECKING:
     from collections.abc import Callable
+
     from .preview import Preview
 
 logger = logging.getLogger(__name__)
@@ -97,9 +97,7 @@ class ConfigTools:
             for option_name, option in section.options.items():
                 cp_option = ControlPanelOption.from_config_object(option_name, option)
                 cp_options[option_name] = cp_option
-                self.tk_vars.setdefault(section_name, {})[option_name] = (
-                    cp_option.tk_var
-                )
+                self.tk_vars.setdefault(section_name, {})[option_name] = cp_option.tk_var
             config_dicts[section_name] = cp_options
         logger.debug("Formatted Config for GUI: %s", config_dicts)
         return config_dicts
@@ -120,8 +118,7 @@ class ConfigTools:
                 option = self._config.sections[section].options[option_name]
                 old_value = option.value
                 if new_value == old_value or (
-                    isinstance(old_value, list)
-                    and set(str(new_value).split()) == set(old_value)
+                    isinstance(old_value, list) and set(str(new_value).split()) == set(old_value)
                 ):
                     logger.trace(
                         "Skipping unchanged option '%s'",  # type:ignore[attr-defined]
@@ -200,18 +197,12 @@ class ConfigTools:
                 logger.debug("[%s] Skipping section not in local config", section_name)
                 continue
             if section is not None and section_name != section:
-                logger.debug(
-                    "[%s] Skipping section not selected for saving", section_name
-                )
+                logger.debug("[%s] Skipping section not selected for saving", section_name)
                 continue
             for option_name, option in sect.options.items():
                 new_opt = self.tk_vars[section_name][option_name].get()
-                fmt_opt = (
-                    str(new_opt).split() if isinstance(option.value, list) else new_opt
-                )
-                logger.debug(
-                    "[%s] Setting '%s' to %s", section_name, option_name, repr(fmt_opt)
-                )
+                fmt_opt = str(new_opt).split() if isinstance(option.value, list) else new_opt
+                logger.debug("[%s] Setting '%s' to %s", section_name, option_name, repr(fmt_opt))
                 option.set(new_opt)
 
         self._config.save_config()
@@ -257,9 +248,7 @@ class BusyProgressBar:
             logger.debug("busy indicator already started")
             return
 
-        self._progress_bar.pack(
-            side=tk.LEFT, padx=5, pady=(5, 10), fill=tk.X, expand=True
-        )
+        self._progress_bar.pack(side=tk.LEFT, padx=5, pady=(5, 10), fill=tk.X, expand=True)
         self._progress_bar.start(25)
 
 
@@ -288,9 +277,7 @@ class ActionFrame(ttk.Frame):  # pylint:disable=too-many-ancestors
         self._tk_vars: dict[str, tk.Variable] = {}
 
         self._options = {
-            "color": app._patch.converter.cli_arguments.color_adjustment.replace(
-                "-", "_"
-            ),
+            "color": app._patch.converter.cli_arguments.color_adjustment.replace("-", "_"),
             "mask_type": app._patch.converter.cli_arguments.mask_type.replace("-", "_"),
             "face_scale": app._patch.converter.cli_arguments.face_scale,
         }
@@ -415,9 +402,7 @@ class ActionFrame(ttk.Frame):  # pylint:disable=too-many-ancestors
         has_predicted_mask
             Whether the model was trained with a mask
         """
-        cp_options = self._get_control_panel_options(
-            defaults, available_masks, has_predicted_mask
-        )
+        cp_options = self._get_control_panel_options(defaults, available_masks, has_predicted_mask)
         panel_kwargs = {"blank_nones": False, "label_width": 10, "style": "CPanel"}
         ControlPanel(parent, cp_options, header_text=None, **panel_kwargs)
 
@@ -500,17 +485,13 @@ class ActionFrame(ttk.Frame):  # pylint:disable=too-many-ancestors
         if "none" not in available_masks:
             available_masks += ["none"]
         if self._format_from_display(defaults["mask_type"]) not in available_masks:
-            logger.debug(
-                "Setting default mask to first available: %s", available_masks[0]
-            )
+            logger.debug("Setting default mask to first available: %s", available_masks[0])
             defaults["mask_type"] = available_masks[0]
         logger.debug("Final mask choices: %s", available_masks)
         return available_masks
 
     @classmethod
-    def _add_refresh_button(
-        cls, parent: ttk.Frame, refresh_callback: Callable[[], None]
-    ) -> None:
+    def _add_refresh_button(cls, parent: ttk.Frame, refresh_callback: Callable[[], None]) -> None:
         """Add a button to refresh the images.
 
         Parameters
@@ -662,9 +643,7 @@ class ConfigFrame(ttk.Frame):  # pylint:disable=too-many-ancestors
         self._options = options
 
         self._action_frame = ttk.Frame(self)
-        self._action_frame.pack(
-            padx=0, pady=(0, 5), side=tk.BOTTOM, fill=tk.X, anchor=tk.E
-        )
+        self._action_frame.pack(padx=0, pady=(0, 5), side=tk.BOTTOM, fill=tk.X, anchor=tk.E)
         self._add_frame_separator()
 
         self._build_frame(parent, config_key)

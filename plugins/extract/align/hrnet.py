@@ -5,18 +5,19 @@ https://github.com/1adrianb/face-alignment
 """
 
 from __future__ import annotations
+
 import logging
 import typing as T
 from dataclasses import dataclass
 
 import numpy as np
-
 import torch
 from torch import nn
 from torch.nn import functional as F
 
-from lib.utils import get_module_objects, GetModel
+from lib.utils import GetModel, get_module_objects
 from plugins.extract.base import ExtractPlugin
+
 from . import hrnet_defaults as cfg
 from .dark_decoder import Dark
 
@@ -189,9 +190,7 @@ class HRNet(ExtractPlugin):
         batch /= self._std
         return self.from_torch(batch.transpose(0, 3, 1, 2))
 
-    def _get_predictions(
-        self, scores: npt.NDArray[np.float32]
-    ) -> npt.NDArray[np.float32]:
+    def _get_predictions(self, scores: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
         """Convert the score maps from the model into predictions
 
         Parameters
@@ -282,14 +281,10 @@ class BasicBlock(nn.Module):
         downsample: nn.Module | None = None,
     ) -> None:
         super().__init__()
-        self.conv1 = nn.Conv2d(
-            in_channels, out_channels, 3, stride=stride, padding=1, bias=False
-        )
+        self.conv1 = nn.Conv2d(in_channels, out_channels, 3, stride=stride, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(out_channels, momentum=0.01)
         self.relu = nn.ReLU(inplace=True)
-        self.conv2 = nn.Conv2d(
-            in_channels, out_channels, 3, stride=1, padding=1, bias=False
-        )
+        self.conv2 = nn.Conv2d(in_channels, out_channels, 3, stride=1, padding=1, bias=False)
         self.bn2 = nn.BatchNorm2d(out_channels, momentum=0.01)
         self.downsample = downsample
         self.stride = stride
@@ -343,14 +338,10 @@ class BasicBlockAttention(nn.Module):  # pylint:disable=too-many-instance-attrib
 
     def __init__(self, in_channels, out_channels, stride=1, downsample=None):
         super().__init__()
-        self.conv1 = nn.Conv2d(
-            in_channels, out_channels, 3, stride=stride, padding=1, bias=False
-        )
+        self.conv1 = nn.Conv2d(in_channels, out_channels, 3, stride=stride, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(out_channels, momentum=0.01)
         self.relu = nn.ReLU(inplace=True)
-        self.conv2 = nn.Conv2d(
-            in_channels, out_channels, 3, stride=1, padding=1, bias=False
-        )
+        self.conv2 = nn.Conv2d(in_channels, out_channels, 3, stride=1, padding=1, bias=False)
         self.bn2 = nn.BatchNorm2d(out_channels, momentum=0.01)
         self.downsample = downsample
         self.att1 = nn.Sequential(
@@ -436,13 +427,9 @@ class Bottleneck(nn.Module):
         super().__init__()
         self.conv1 = nn.Conv2d(in_channels, out_channels, 1, bias=False)
         self.bn1 = nn.BatchNorm2d(out_channels, momentum=0.01)
-        self.conv2 = nn.Conv2d(
-            out_channels, out_channels, 3, stride=stride, padding=1, bias=False
-        )
+        self.conv2 = nn.Conv2d(out_channels, out_channels, 3, stride=stride, padding=1, bias=False)
         self.bn2 = nn.BatchNorm2d(out_channels, momentum=0.01)
-        self.conv3 = nn.Conv2d(
-            out_channels, out_channels * self.expansion, 1, bias=False
-        )
+        self.conv3 = nn.Conv2d(out_channels, out_channels * self.expansion, 1, bias=False)
         self.bn3 = nn.BatchNorm2d(out_channels * self.expansion, momentum=0.01)
         self.relu = nn.ReLU(inplace=True)
         self.downsample = downsample
@@ -550,17 +537,12 @@ class HighResolutionModule(nn.Module):
             On an invalid configuration
         """
         if num_branches != len(num_blocks):
-            raise ValueError(
-                f"NUM_BRANCHES({num_branches}) <> NUM_BLOCKS({len(num_blocks)})"
-            )
+            raise ValueError(f"NUM_BRANCHES({num_branches}) <> NUM_BLOCKS({len(num_blocks)})")
         if num_branches != len(num_channels):
-            raise ValueError(
-                f"NUM_BRANCHES({num_branches}) <> NUM_CHANNELS({len(num_channels)})"
-            )
+            raise ValueError(f"NUM_BRANCHES({num_branches}) <> NUM_CHANNELS({len(num_channels)})")
         if num_branches != len(num_in_channels):
             raise ValueError(
-                f"NUM_BRANCHES({num_branches}) <> "
-                f"NUM_IN_CHANNELS({len(num_in_channels)})"
+                f"NUM_BRANCHES({num_branches}) <> NUM_IN_CHANNELS({len(num_in_channels)})"
             )
 
     def _make_one_branch(
@@ -593,10 +575,7 @@ class HighResolutionModule(nn.Module):
         The sequential modules for the branch
         """
         downsample = None
-        if (
-            stride != 1
-            or self.num_in_channels[branch_index] != num_channels * block.expansion
-        ):
+        if stride != 1 or self.num_in_channels[branch_index] != num_channels * block.expansion:
             downsample = nn.Sequential(
                 nn.Conv2d(
                     self.num_in_channels[branch_index],
@@ -670,9 +649,7 @@ class HighResolutionModule(nn.Module):
                                         padding=1,
                                         bias=False,
                                     ),
-                                    nn.BatchNorm2d(
-                                        num_out_channels_conv3x3, momentum=0.01
-                                    ),
+                                    nn.BatchNorm2d(num_out_channels_conv3x3, momentum=0.01),
                                 )
                             )
                         else:
@@ -687,9 +664,7 @@ class HighResolutionModule(nn.Module):
                                         padding=1,
                                         bias=False,
                                     ),
-                                    nn.BatchNorm2d(
-                                        num_out_channels_conv3x3, momentum=0.01
-                                    ),
+                                    nn.BatchNorm2d(num_out_channels_conv3x3, momentum=0.01),
                                     nn.ReLU(inplace=True),
                                 )
                             )
@@ -793,29 +768,19 @@ class HighResolutionNet(nn.Module):  # pylint:disable=too-many-instance-attribut
 
         num_channels = stage_2_config.num_channels
         block = _blocks[stage_2_config.block]
-        num_channels = [
-            num_channels[i] * block.expansion for i in range(len(num_channels))
-        ]
+        num_channels = [num_channels[i] * block.expansion for i in range(len(num_channels))]
         self.transition1 = self._make_transition_layer([256], num_channels)
-        self.stage2, pre_stage_channels = self._make_stage(
-            block, stage_2_config, num_channels
-        )
+        self.stage2, pre_stage_channels = self._make_stage(block, stage_2_config, num_channels)
 
         num_channels = stage_3_config.num_channels
         block = _blocks[stage_3_config.block]
-        num_channels = [
-            num_channels[i] * block.expansion for i in range(len(num_channels))
-        ]
+        num_channels = [num_channels[i] * block.expansion for i in range(len(num_channels))]
         self.transition2 = self._make_transition_layer(pre_stage_channels, num_channels)
-        self.stage3, pre_stage_channels = self._make_stage(
-            block, stage_3_config, num_channels
-        )
+        self.stage3, pre_stage_channels = self._make_stage(block, stage_3_config, num_channels)
 
         num_channels = stage_4_config.num_channels
         block = _blocks[stage_4_config.block]
-        num_channels = [
-            num_channels[i] * block.expansion for i in range(len(num_channels))
-        ]
+        num_channels = [num_channels[i] * block.expansion for i in range(len(num_channels))]
         self.transition3 = self._make_transition_layer(pre_stage_channels, num_channels)
         self.stage4, pre_stage_channels = self._make_stage(
             block, stage_4_config, num_channels, multi_scale_output=True
@@ -886,9 +851,7 @@ class HighResolutionNet(nn.Module):  # pylint:disable=too-many-instance-attribut
             for j in range(i + 1 - num_branches_pre):
                 in_channels = num_channels_pre_layer[-1]
                 out_channels = (
-                    num_channels_cur_layer[i]
-                    if j == i - num_branches_pre
-                    else in_channels
+                    num_channels_cur_layer[i] if j == i - num_branches_pre else in_channels
                 )
                 conv3x3s.append(
                     nn.Sequential(
@@ -1035,32 +998,22 @@ class HighResolutionNet(nn.Module):  # pylint:disable=too-many-instance-attribut
         y_list = self.stage2(x_list)
 
         x_list = [
-            self.transition2[i](y_list[-1])
-            if self.transition2[i] is not None
-            else y_list[i]
+            self.transition2[i](y_list[-1]) if self.transition2[i] is not None else y_list[i]
             for i in range(self.stage_3_config.num_branches)
         ]
         y_list = self.stage3(x_list)
 
         x_list = [
-            self.transition3[i](y_list[-1])
-            if self.transition3[i] is not None
-            else y_list[i]
+            self.transition3[i](y_list[-1]) if self.transition3[i] is not None else y_list[i]
             for i in range(self.stage_4_config.num_branches)
         ]
         x = self.stage4(x_list)
 
         # Head Part
         height, width = x[0].size(2), x[0].size(3)
-        x1 = F.interpolate(
-            x[1], size=(height, width), mode="bilinear", align_corners=False
-        )
-        x2 = F.interpolate(
-            x[2], size=(height, width), mode="bilinear", align_corners=False
-        )
-        x3 = F.interpolate(
-            x[3], size=(height, width), mode="bilinear", align_corners=False
-        )
+        x1 = F.interpolate(x[1], size=(height, width), mode="bilinear", align_corners=False)
+        x2 = F.interpolate(x[2], size=(height, width), mode="bilinear", align_corners=False)
+        x3 = F.interpolate(x[3], size=(height, width), mode="bilinear", align_corners=False)
         x = torch.cat([x[0], x1, x2, x3], 1)
         x = self.head(x)
 

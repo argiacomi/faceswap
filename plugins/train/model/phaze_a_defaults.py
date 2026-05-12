@@ -28,7 +28,6 @@ from lib.config import ConfigItem
 
 from lib.config import ConfigItem
 
-
 HELPTEXT: str = (
     "Phaze-A Model by TorzDF, with thanks to BirbFakes.\n"
     "Allows for the experimentation of various standard Networks as the encoder and takes "
@@ -297,8 +296,7 @@ bottleneck_size = ConfigItem(
     datatype=int,
     default=1024,
     group="bottleneck",
-    info="If using a Dense layer for the bottleneck, then this is the number of nodes to "
-    "use.",
+    info="If using a Dense layer for the bottleneck, then this is the number of nodes to use.",
     rounding=128,
     min_max=(128, 4096),
     fixed=True,

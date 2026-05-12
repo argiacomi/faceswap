@@ -106,25 +106,19 @@ class Navigation:
         face_count_change = not self._det_faces.filter.frame_meets_criteria
         if face_count_change:
             position -= 1
-        frame_count = (
-            self._det_faces.filter.count if frame_count is None else frame_count
-        )
+        frame_count = self._det_faces.filter.count if frame_count is None else frame_count
         if not face_count_change and (frame_count == 0 or position == frame_count - 1):
             logger.debug("End of Stream. Not incrementing")
             self.stop_playback()
             return
-        self._globals.var_transport_index.set(
-            min(position + 1, max(0, frame_count - 1))
-        )
+        self._globals.var_transport_index.set(min(position + 1, max(0, frame_count - 1)))
 
     def decrement_frame(self):
         """Update The frame navigation position to the previous frame based on filter."""
         self.stop_playback()
         position = self._get_safe_frame_index()
         face_count_change = not self._det_faces.filter.frame_meets_criteria
-        if not face_count_change and (
-            self._det_faces.filter.count == 0 or position == 0
-        ):
+        if not face_count_change and (self._det_faces.filter.count == 0 or position == 0):
             logger.debug("End of Stream. Not decrementing")
             return
         self._globals.var_transport_index.set(
@@ -176,9 +170,7 @@ class BackgroundImage:
         self._canvas = canvas
         self._globals = canvas._globals
         self._det_faces = canvas._det_faces
-        placeholder = np.ones(
-            (*reversed(self._globals.frame_display_dims), 3), dtype="uint8"
-        )
+        placeholder = np.ones((*reversed(self._globals.frame_display_dims), 3), dtype="uint8")
         self._tk_frame = ImageTk.PhotoImage(Image.fromarray(placeholder))
         self._tk_face = ImageTk.PhotoImage(Image.fromarray(placeholder))
         self._image = self._canvas.create_image(
@@ -331,12 +323,8 @@ class BackgroundImage:
         """Resize the :attr:`_tk_frame`, attr:`_tk_face` photo images, update the canvas to
         offset the image correctly.
         """
-        logger.trace(
-            "Resizing video frame on resize event: %s", self._globals.frame_display_dims
-        )
-        placeholder = np.ones(
-            (*reversed(self._globals.frame_display_dims), 3), dtype="uint8"
-        )
+        logger.trace("Resizing video frame on resize event: %s", self._globals.frame_display_dims)
+        placeholder = np.ones((*reversed(self._globals.frame_display_dims), 3), dtype="uint8")
         self._tk_frame = ImageTk.PhotoImage(Image.fromarray(placeholder))
         self._tk_face = ImageTk.PhotoImage(Image.fromarray(placeholder))
         self._canvas.coords(

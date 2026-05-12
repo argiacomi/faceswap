@@ -41,8 +41,8 @@ def main(argv: list[str] | None = None) -> int:
         "weighted_median",
     ):
         if variant in overall and best_single[0] is not None:
-            report["deltas"][variant] = (
-                overall[variant].get("nme", 0) - best_single[1].get("nme", 0)
+            report["deltas"][variant] = overall[variant].get("nme", 0) - best_single[1].get(
+                "nme", 0
             )
     with open(args.output, "w", encoding="utf-8") as outfile:
         json.dump(report, outfile, indent=2, sort_keys=True)

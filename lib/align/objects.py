@@ -3,9 +3,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, fields, MISSING
 import types
 import typing as T
+from dataclasses import MISSING, dataclass, field, fields
 
 import numpy as np
 import numpy.typing as npt
@@ -61,7 +61,7 @@ class DataclassDict:
         """
         retval: dict[str, T.Any] = {}
         for k, v in self.__dict__.items():
-            if isinstance(v, (list, tuple)):
+            if isinstance(v, list | tuple):
                 retval[k] = [self._object_to_serial(x) for x in v]
             elif isinstance(v, dict):
                 retval[k] = {x: self._object_to_serial(y) for x, y in v.items()}
@@ -70,9 +70,7 @@ class DataclassDict:
         return retval
 
     @classmethod
-    def _convert_dtype(
-        cls, data_type: T.Any, val: T.Any
-    ) -> DataclassDict | np.ndarray | None:
+    def _convert_dtype(cls, data_type: T.Any, val: T.Any) -> DataclassDict | np.ndarray | None:
         """Convert a serialized dict to a DataclassDict or list to a numpy array of the correct
         dtype
 
@@ -107,9 +105,7 @@ class DataclassDict:
         return np.array(val, dtype=dtype)
 
     @classmethod
-    def _parse_dict(
-        cls, field_type: T.Any, value: dict[str, T.Any]
-    ) -> dict[str, T.Any]:
+    def _parse_dict(cls, field_type: T.Any, value: dict[str, T.Any]) -> dict[str, T.Any]:
         """Parse incoming serialized dicts into their correct nested objects
 
         Parameters
@@ -152,9 +148,7 @@ class DataclassDict:
         The list with its values converted to the correct datatype
         """
         origin = T.get_origin(field_type)
-        assert origin in (list, tuple), (
-            f"value: {type(value)} field: {T.get_origin(field_type)}"
-        )
+        assert origin in (list, tuple), f"value: {type(value)} field: {T.get_origin(field_type)}"
         dtype = T.get_args(field_type)[0]
         items = []
         for v in value:
@@ -163,9 +157,7 @@ class DataclassDict:
                 items.append(converted)
                 continue
             items.append(v)
-        retval = T.cast(
-            list[T.Any] | tuple[T.Any], tuple(items) if origin is tuple else items
-        )
+        retval = T.cast(list[T.Any] | tuple[T.Any], tuple(items) if origin is tuple else items)
         return retval
 
     @classmethod
@@ -180,9 +172,7 @@ class DataclassDict:
         inbound = set(data_dict)
         all_fields = set(f.name for f in fields(cls))
         required = set(
-            f.name
-            for f in fields(cls)
-            if f.default is MISSING and f.default_factory is MISSING
+            f.name for f in fields(cls) if f.default is MISSING and f.default_factory is MISSING
         )
         if not inbound.issubset(all_fields):
             raise ValueError(
@@ -208,7 +198,7 @@ class DataclassDict:
             if isinstance(val, dict):
                 kwargs[f.name] = cls._parse_dict(field_type, val)
                 continue
-            if isinstance(val, (list, tuple)):
+            if isinstance(val, list | tuple):
                 kwargs[f.name] = cls._parse_list(field_type, val)
                 continue
             kwargs[f.name] = val
@@ -309,7 +299,5 @@ class AlignmentsEntry(DataclassDict):
 
     faces: list[FileAlignments] = field(default_factory=list)
     """The detected faces in a frame"""
-    video_meta: dict[T.Literal["pts_time", "keyframe"], int] = field(
-        default_factory=dict
-    )
+    video_meta: dict[T.Literal["pts_time", "keyframe"], int] = field(default_factory=dict)
     """The keyframe to pts timestamp mapping for video data"""

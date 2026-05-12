@@ -10,21 +10,21 @@ DeepHomage for lots of testing
 
 import logging
 
-from keras import layers, Input, Model as KModel
+from keras import Input, layers
+from keras import Model as KModel
 
 from lib.model.nn_blocks import (
-    Conv2DOutput,
     Conv2DBlock,
+    Conv2DOutput,
     ResidualBlock,
-    UpscaleBlock,
     Upscale2xBlock,
+    UpscaleBlock,
 )
 from lib.utils import FaceswapError
 from plugins.train.train_config import Loss as cfg_loss
 
-from ._base import ModelBase
 from . import dlight_defaults as cfg
-
+from ._base import ModelBase
 
 logger = logging.getLogger(__name__)
 
@@ -123,23 +123,13 @@ class Model(ModelBase):
         mask_complexity = 128
 
         var_xy = input_
-        var_xy = layers.UpSampling2D(self.upscale_ratio, interpolation="bilinear")(
-            var_xy
-        )
+        var_xy = layers.UpSampling2D(self.upscale_ratio, interpolation="bilinear")(var_xy)
 
         var_x = var_xy
-        var_x = Upscale2xBlock(dec_a_complexity, activation="leakyrelu", fast=False)(
-            var_x
-        )
-        var_x = Upscale2xBlock(
-            dec_a_complexity // 2, activation="leakyrelu", fast=False
-        )(var_x)
-        var_x = Upscale2xBlock(
-            dec_a_complexity // 4, activation="leakyrelu", fast=False
-        )(var_x)
-        var_x = Upscale2xBlock(
-            dec_a_complexity // 8, activation="leakyrelu", fast=False
-        )(var_x)
+        var_x = Upscale2xBlock(dec_a_complexity, activation="leakyrelu", fast=False)(var_x)
+        var_x = Upscale2xBlock(dec_a_complexity // 2, activation="leakyrelu", fast=False)(var_x)
+        var_x = Upscale2xBlock(dec_a_complexity // 4, activation="leakyrelu", fast=False)(var_x)
+        var_x = Upscale2xBlock(dec_a_complexity // 8, activation="leakyrelu", fast=False)(var_x)
 
         var_x = Conv2DOutput(3, 5, name="face_out")(var_x)
 
@@ -147,18 +137,10 @@ class Model(ModelBase):
 
         if cfg_loss.learn_mask():
             var_y = var_xy  # mask decoder
-            var_y = Upscale2xBlock(mask_complexity, activation="leakyrelu", fast=False)(
-                var_y
-            )
-            var_y = Upscale2xBlock(
-                mask_complexity // 2, activation="leakyrelu", fast=False
-            )(var_y)
-            var_y = Upscale2xBlock(
-                mask_complexity // 4, activation="leakyrelu", fast=False
-            )(var_y)
-            var_y = Upscale2xBlock(
-                mask_complexity // 8, activation="leakyrelu", fast=False
-            )(var_y)
+            var_y = Upscale2xBlock(mask_complexity, activation="leakyrelu", fast=False)(var_y)
+            var_y = Upscale2xBlock(mask_complexity // 2, activation="leakyrelu", fast=False)(var_y)
+            var_y = Upscale2xBlock(mask_complexity // 4, activation="leakyrelu", fast=False)(var_y)
+            var_y = Upscale2xBlock(mask_complexity // 8, activation="leakyrelu", fast=False)(var_y)
 
             var_y = Conv2DOutput(1, 5, name="mask_out")(var_y)
 
@@ -175,23 +157,13 @@ class Model(ModelBase):
 
         var_xy = input_
 
-        var_xy = UpscaleBlock(
-            512, scale_factor=self.upscale_ratio, activation="leakyrelu"
-        )(var_xy)
+        var_xy = UpscaleBlock(512, scale_factor=self.upscale_ratio, activation="leakyrelu")(var_xy)
         var_x = var_xy
 
-        var_x = Upscale2xBlock(dec_b_complexity, activation="leakyrelu", fast=True)(
-            var_x
-        )
-        var_x = Upscale2xBlock(
-            dec_b_complexity // 2, activation="leakyrelu", fast=True
-        )(var_x)
-        var_x = Upscale2xBlock(
-            dec_b_complexity // 4, activation="leakyrelu", fast=True
-        )(var_x)
-        var_x = Upscale2xBlock(
-            dec_b_complexity // 8, activation="leakyrelu", fast=True
-        )(var_x)
+        var_x = Upscale2xBlock(dec_b_complexity, activation="leakyrelu", fast=True)(var_x)
+        var_x = Upscale2xBlock(dec_b_complexity // 2, activation="leakyrelu", fast=True)(var_x)
+        var_x = Upscale2xBlock(dec_b_complexity // 4, activation="leakyrelu", fast=True)(var_x)
+        var_x = Upscale2xBlock(dec_b_complexity // 8, activation="leakyrelu", fast=True)(var_x)
 
         var_x = Conv2DOutput(3, 5, name="face_out")(var_x)
 
@@ -200,18 +172,10 @@ class Model(ModelBase):
         if cfg_loss.learn_mask():
             var_y = var_xy  # mask decoder
 
-            var_y = Upscale2xBlock(mask_complexity, activation="leakyrelu", fast=False)(
-                var_y
-            )
-            var_y = Upscale2xBlock(
-                mask_complexity // 2, activation="leakyrelu", fast=False
-            )(var_y)
-            var_y = Upscale2xBlock(
-                mask_complexity // 4, activation="leakyrelu", fast=False
-            )(var_y)
-            var_y = Upscale2xBlock(
-                mask_complexity // 8, activation="leakyrelu", fast=False
-            )(var_y)
+            var_y = Upscale2xBlock(mask_complexity, activation="leakyrelu", fast=False)(var_y)
+            var_y = Upscale2xBlock(mask_complexity // 2, activation="leakyrelu", fast=False)(var_y)
+            var_y = Upscale2xBlock(mask_complexity // 4, activation="leakyrelu", fast=False)(var_y)
+            var_y = Upscale2xBlock(mask_complexity // 8, activation="leakyrelu", fast=False)(var_y)
 
             var_y = Conv2DOutput(1, 5, name="mask_out")(var_y)
 
@@ -228,9 +192,9 @@ class Model(ModelBase):
 
         var_xy = input_
 
-        var_xy = Upscale2xBlock(
-            512, scale_factor=self.upscale_ratio, activation=None, fast=False
-        )(var_xy)
+        var_xy = Upscale2xBlock(512, scale_factor=self.upscale_ratio, activation=None, fast=False)(
+            var_xy
+        )
         var_x = var_xy
 
         var_x = layers.LeakyReLU(negative_slope=0.2)(var_x)
@@ -242,20 +206,14 @@ class Model(ModelBase):
         var_x = ResidualBlock(dec_b_complexity, use_bias=True)(var_x)
         var_x = ResidualBlock(dec_b_complexity, use_bias=False)(var_x)
         var_x = layers.BatchNormalization()(var_x)
-        var_x = Upscale2xBlock(dec_b_complexity // 2, activation=None, fast=False)(
-            var_x
-        )
+        var_x = Upscale2xBlock(dec_b_complexity // 2, activation=None, fast=False)(var_x)
         var_x = layers.LeakyReLU(negative_slope=0.2)(var_x)
         var_x = ResidualBlock(dec_b_complexity // 2, use_bias=True)(var_x)
-        var_x = Upscale2xBlock(dec_b_complexity // 4, activation=None, fast=False)(
-            var_x
-        )
+        var_x = Upscale2xBlock(dec_b_complexity // 4, activation=None, fast=False)(var_x)
         var_x = layers.LeakyReLU(negative_slope=0.2)(var_x)
         var_x = ResidualBlock(dec_b_complexity // 4, use_bias=False)(var_x)
         var_x = layers.BatchNormalization()(var_x)
-        var_x = Upscale2xBlock(
-            dec_b_complexity // 8, activation="leakyrelu", fast=False
-        )(var_x)
+        var_x = Upscale2xBlock(dec_b_complexity // 8, activation="leakyrelu", fast=False)(var_x)
 
         var_x = Conv2DOutput(3, 5, name="face_out")(var_x)
 
@@ -265,18 +223,10 @@ class Model(ModelBase):
             var_y = var_xy  # mask decoder
             var_y = layers.LeakyReLU(negative_slope=0.1)(var_y)
 
-            var_y = Upscale2xBlock(mask_complexity, activation="leakyrelu", fast=False)(
-                var_y
-            )
-            var_y = Upscale2xBlock(
-                mask_complexity // 2, activation="leakyrelu", fast=False
-            )(var_y)
-            var_y = Upscale2xBlock(
-                mask_complexity // 4, activation="leakyrelu", fast=False
-            )(var_y)
-            var_y = Upscale2xBlock(
-                mask_complexity // 8, activation="leakyrelu", fast=False
-            )(var_y)
+            var_y = Upscale2xBlock(mask_complexity, activation="leakyrelu", fast=False)(var_y)
+            var_y = Upscale2xBlock(mask_complexity // 2, activation="leakyrelu", fast=False)(var_y)
+            var_y = Upscale2xBlock(mask_complexity // 4, activation="leakyrelu", fast=False)(var_y)
+            var_y = Upscale2xBlock(mask_complexity // 8, activation="leakyrelu", fast=False)(var_y)
 
             var_y = Conv2DOutput(1, 5, name="mask_out")(var_y)
 

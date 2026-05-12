@@ -143,10 +143,7 @@ class DisplayFrame(ttk.Frame):  # pylint:disable=too-many-ancestors
     def tk_control_colors(self):
         """:dict: Editor key with :class:`tkinter.StringVar` containing the selected color hex
         code for each annotation"""
-        return {
-            key: val["color"].tk_var
-            for key, val in self._canvas.annotation_formats.items()
-        }
+        return {key: val["color"].tk_var for key, val in self._canvas.annotation_formats.items()}
 
     @property
     def tk_selected_mask(self):
@@ -238,9 +235,7 @@ class DisplayFrame(ttk.Frame):  # pylint:disable=too-many-ancestors
             state = ["!disabled"] if action != "save" else ["disabled"]
             if action != "mode":
                 icon = action if action != "extract" else "folder"
-                wgt = ttk.Button(
-                    frame, image=icons[icon], command=self._btn_action[action]
-                )
+                wgt = ttk.Button(frame, image=icons[icon], command=self._btn_action[action])
                 wgt.state(state)
             else:
                 wgt = self._add_filter_section(frame)
@@ -322,8 +317,8 @@ class DisplayFrame(ttk.Frame):  # pylint:disable=too-many-ancestors
         ctl = ttk.Scale(
             ctl_frame,
             variable=tk_var,
-            command=lambda val, var=tk_var, dt=int, rn=1, mm=min_max: (
-                set_slider_rounding(val, var, dt, rn, mm)
+            command=lambda val, var=tk_var, dt=int, rn=1, mm=min_max: set_slider_rounding(
+                val, var, dt, rn, mm
             ),
         )
         ctl["from_"] = min_max[0]
@@ -380,9 +375,7 @@ class DisplayFrame(ttk.Frame):  # pylint:disable=too-many-ancestors
             return
 
         # Populate the filtered frames count on first frame
-        frame_count = (
-            self._det_faces.filter.count if frame_count is None else frame_count
-        )
+        frame_count = self._det_faces.filter.count if frame_count is None else frame_count
         self._navigation.increment_frame(frame_count=frame_count, is_playing=True)
         delay = 16  # Cap speed at approx 60fps max. Unlikely to hit, but just in case
         duration = int((time() - start) * 1000)
@@ -534,12 +527,8 @@ class ActionsFrame(ttk.Frame):  # pylint:disable=too-many-ancestors
         for action in ("copy_prev", "copy_next", "reload"):
             if action == "reload":
                 icon = "reload3"
-                cmd = lambda f=self._globals: self._det_faces.revert_to_saved(
-                    f.frame_index
-                )  # noqa: E731, E501# pylint:disable=line-too-long,unnecessary-lambda-assignment
-                helptext = _("Revert to saved Alignments ({})").format(
-                    lookup[action][1]
-                )
+                cmd = lambda f=self._globals: self._det_faces.revert_to_saved(f.frame_index)  # noqa: E731, E501# pylint:disable=line-too-long,unnecessary-lambda-assignment
+                helptext = _("Revert to saved Alignments ({})").format(lookup[action][1])
             else:
                 icon = action
                 direction = action.replace("copy_", "")
@@ -558,12 +547,8 @@ class ActionsFrame(ttk.Frame):  # pylint:disable=too-many-ancestors
             button.pack()
             Tooltip(button, text=helptext)
             buttons[action] = button
-        self._globals.var_frame_index.trace_add(
-            "write", self._disable_enable_copy_buttons
-        )
-        self._globals.var_full_update.trace_add(
-            "write", self._disable_enable_reload_button
-        )
+        self._globals.var_frame_index.trace_add("write", self._disable_enable_copy_buttons)
+        self._globals.var_full_update.trace_add("write", self._disable_enable_reload_button)
         return buttons
 
     def _disable_enable_copy_buttons(self, *args):  # pylint:disable=unused-argument
@@ -703,9 +688,7 @@ class ActionsFrame(ttk.Frame):  # pylint:disable=too-many-ancestors
                     continue
                 hotkey = option[child]["hotkey"]
                 if hotkey is not None:
-                    logger.debug(
-                        "Unbinding optional hotkey for editor '%s': %s", editor, hotkey
-                    )
+                    logger.debug("Unbinding optional hotkey for editor '%s': %s", editor, hotkey)
                     self.winfo_toplevel().unbind(hotkey.lower())
 
 
@@ -867,9 +850,7 @@ class FrameViewer(tk.Canvas):  # pylint:disable=too-many-ancestors
             return
         zoomed_centering = self.active_editor.zoomed_centering
         self._image.refresh(self.active_editor.view_mode)
-        to_display = sorted(
-            [self.selected_action] + self.editor_display[self.selected_action]
-        )
+        to_display = sorted([self.selected_action] + self.editor_display[self.selected_action])
         self._hide_additional_faces()
         for editor in to_display:
             self._editors[editor].update_annotation()
@@ -888,9 +869,7 @@ class FrameViewer(tk.Canvas):  # pylint:disable=too-many-ancestors
         elif self._globals.frame_index == -1:
             current_face_count = 0
         else:
-            current_face_count = len(
-                self._det_faces.current_faces[self._globals.frame_index]
-            )
+            current_face_count = len(self._det_faces.current_faces[self._globals.frame_index])
 
         if current_face_count > self._max_face_count:
             # Most faces seen to date so nothing to hide. Update max count and return
@@ -904,8 +883,7 @@ class FrameViewer(tk.Canvas):  # pylint:disable=too-many-ancestors
         for idx in range(current_face_count, self._max_face_count):
             tag = f"face_{idx}"
             if any(
-                self.itemcget(item_id, "state") != "hidden"
-                for item_id in self.find_withtag(tag)
+                self.itemcget(item_id, "state") != "hidden" for item_id in self.find_withtag(tag)
             ):
                 logger.debug("Hiding face tag '%s'", tag)
                 self.itemconfig(tag, state="hidden")
@@ -915,8 +893,7 @@ class FrameViewer(tk.Canvas):  # pylint:disable=too-many-ancestors
         unbind_keys = [
             key
             for key, binding in self.key_bindings.items()
-            if binding["bound_to"] is not None
-            and binding["bound_to"] != self.selected_action
+            if binding["bound_to"] is not None and binding["bound_to"] != self.selected_action
         ]
         for key in unbind_keys:
             logger.debug("Unbinding key '%s'", key)
@@ -926,8 +903,7 @@ class FrameViewer(tk.Canvas):  # pylint:disable=too-many-ancestors
         bind_keys = {
             key: binding[self.selected_action]
             for key, binding in self.key_bindings.items()
-            if self.selected_action in binding
-            and binding["bound_to"] != self.selected_action
+            if self.selected_action in binding and binding["bound_to"] != self.selected_action
         }
         for key, method in bind_keys.items():
             logger.debug("Binding key '%s' to method %s", key, method)

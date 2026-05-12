@@ -2,15 +2,16 @@
 """The Faces Viewer Frame and Canvas for Faceswap's Manual Tool."""
 
 from __future__ import annotations
+
 import colorsys
 import gettext
 import logging
 import platform
 import tkinter as tk
-from tkinter import ttk
 import typing as T
-from math import floor, ceil
-from threading import Thread, Event
+from math import ceil, floor
+from threading import Event, Thread
+from tkinter import ttk
 
 import numpy as np
 
@@ -110,9 +111,7 @@ class FacesFrame(ttk.Frame):  # pylint:disable=too-many-ancestors
         self._canvas.viewport.update()
         self._canvas.configure(scrollregion=self._canvas.bbox("backdrop"))
 
-    def canvas_scroll(
-        self, direction: T.Literal["up", "down", "page-up", "page-down"]
-    ) -> None:
+    def canvas_scroll(self, direction: T.Literal["up", "down", "page-up", "page-down"]) -> None:
         """Scroll the canvas on an up/down or page-up/page-down key press.
 
         Notes
@@ -141,9 +140,7 @@ class FacesFrame(ttk.Frame):  # pylint:disable=too-many-ancestors
         amount = 1 if direction.endswith("down") else -1
         units = "pages" if direction.startswith("page") else "units"
         self._event.set()
-        thread = Thread(
-            target=self._canvas.canvas_scroll, args=(amount, units, self._event)
-        )
+        thread = Thread(target=self._canvas.canvas_scroll, args=(amount, units, self._event))
         thread.start()
 
     def set_annotation_display(self, key: str) -> None:
@@ -245,9 +242,7 @@ class FacesActionsFrame(ttk.Frame):  # pylint:disable=too-many-ancestors
             :attr:`_buttons`
         """
         is_pressed = not self._tk_vars[display].get()
-        style = (
-            "display_selected.TButton" if is_pressed else "display_deselected.TButton"
-        )
+        style = "display_selected.TButton" if is_pressed else "display_deselected.TButton"
         state = ["pressed", "focus"] if is_pressed else ["!pressed", "!focus"]
         btn = self._buttons[display]
         btn.configure(style=style)
@@ -350,9 +345,7 @@ class FacesViewer(tk.Canvas):  # pylint:disable=too-many-ancestors
     def control_colors(self) -> dict[str, str]:
         """dict[str, str]: The frame Editor name as key with the current user selected hex code as
         value."""
-        return {
-            key: val.get() for key, val in self._display_frame.tk_control_colors.items()
-        }
+        return {key: val.get() for key, val in self._display_frame.tk_control_colors.items()}
 
     # << CALLBACK FUNCTIONS >> #
     def _set_tk_callbacks(self, detected_faces: DetectedFaces):
@@ -390,9 +383,7 @@ class FacesViewer(tk.Canvas):  # pylint:disable=too-many-ancestors
 
         self.bind("<Configure>", lambda *e: self._view.update())
 
-    def refresh_grid(
-        self, trigger_var: tk.BooleanVar, retain_position: bool = False
-    ) -> None:
+    def refresh_grid(self, trigger_var: tk.BooleanVar, retain_position: bool = False) -> None:
         """Recalculate the full grid and redraw. Used when the active filter pull down is used, a
         face has been added or removed, or the face thumbnail size has changed.
 
@@ -424,9 +415,7 @@ class FacesViewer(tk.Canvas):  # pylint:disable=too-many-ancestors
         the mask type."""
         state: T.Literal["normal", "hidden"]
         state = "normal" if self.optional_annotations["mask"] else "hidden"
-        logger.debug(
-            "Updating mask type: (mask_type: %s. state: %s)", self.selected_mask, state
-        )
+        logger.debug("Updating mask type: (mask_type: %s. state: %s)", self.selected_mask, state)
         self._view.toggle_mask(state, self.selected_mask)
 
     # << MOUSE HANDLING >>
@@ -463,14 +452,10 @@ class FacesViewer(tk.Canvas):  # pylint:disable=too-many-ancestors
         else:
             adjust = 1
         self._event.set()
-        thread = Thread(
-            target=self.canvas_scroll, args=(-1 * adjust, "units", self._event)
-        )
+        thread = Thread(target=self.canvas_scroll, args=(-1 * adjust, "units", self._event))
         thread.start()
 
-    def canvas_scroll(
-        self, amount: int, units: T.Literal["pages", "units"], event: Event
-    ) -> None:
+    def canvas_scroll(self, amount: int, units: T.Literal["pages", "units"], event: Event) -> None:
         """Scroll the canvas on an up/down or page-up/page-down key press.
 
         Parameters
@@ -541,9 +526,7 @@ class FacesViewer(tk.Canvas):  # pylint:disable=too-many-ancestors
         """
         state: T.Literal["hidden", "normal"]
         state = "normal" if self.optional_annotations[annotation] else "hidden"
-        logger.debug(
-            "Toggle annotation: (annotation: %s, state: %s)", annotation, state
-        )
+        logger.debug("Toggle annotation: (annotation: %s, state: %s)", annotation, state)
         if annotation == "mesh":
             self._view.toggle_mesh(state)
         if annotation == "mask":
@@ -607,9 +590,7 @@ class Grid:
         """tuple: The (`width`, `height`) required to hold all display images."""
         if self._is_valid:
             assert self._grid is not None
-            retval = tuple(
-                dim * self._face_size for dim in reversed(self._grid.shape[1:])
-            )
+            retval = tuple(dim * self._face_size for dim in reversed(self._grid.shape[1:]))
             assert len(retval) == 2
         else:
             retval = (0, 0)
@@ -771,8 +752,7 @@ class Grid:
             dtype="int",
         ).reshape((2, rows, columns))
         logger.debug(
-            "face-count: %s, columns: %s, rows: %s, remainder: %s, padding: %s, labels "
-            "shape: %s",
+            "face-count: %s, columns: %s, rows: %s, remainder: %s, padding: %s, labels shape: %s",
             face_count,
             columns,
             rows,
@@ -799,12 +779,11 @@ class Grid:
         padding = [None for _ in range(face_count, columns * rows)]
         self._display_faces = np.array(
             [
-                None
-                if idx is None or face_idx is None
-                else current_faces[idx][face_idx]
+                None if idx is None or face_idx is None else current_faces[idx][face_idx]
                 for idx, face_idx in zip(
                     self._raw_indices["frame"] + padding,
                     self._raw_indices["face"] + padding,
+                    strict=False,
                 )
             ],
             dtype="object",
@@ -830,11 +809,7 @@ class Grid:
             The index of the requested frame within the filtered frames view. None if no valid
             frames
         """
-        retval = (
-            self._frames_list.index(frame_index)
-            if frame_index in self._frames_list
-            else None
-        )
+        retval = self._frames_list.index(frame_index) if frame_index in self._frames_list else None
         logger.trace(
             "frame_index: %s, transport_index: %s",  # type:ignore[attr-defined]
             frame_index,

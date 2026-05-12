@@ -87,13 +87,9 @@ class _FakePsutilProcess:
 def cli_opts_fixture() -> CliOptions:
     """Return a CliOptions instance with synthetic options."""
     cli_opts = CliOptions.__new__(CliOptions)
-    extract_input = CliOption(
-        _FakePanelOption("current", default="default"), ("-i",), None
-    )
+    extract_input = CliOption(_FakePanelOption("current", default="default"), ("-i",), None)
     extract_flag = CliOption(_FakePanelOption(True, default=True), ("-b",), None)
-    train_input = CliOption(
-        _FakePanelOption("train", default="train_default"), ("-t",), None
-    )
+    train_input = CliOption(_FakePanelOption("train", default="train_default"), ("-t",), None)
     cli_opts._opts = {
         "extract": {
             "Input": extract_input,
@@ -161,13 +157,9 @@ def test_invalid_quote_rolls_back_gui_state(capsys: pytest.CaptureFixture[str]) 
         display=_FakeVar("extract"),
     )
     wrapper._statusbar = _FakeStatusbar()
-    wrapper._task = SimpleNamespace(
-        terminate=lambda: None, execute_script=lambda *_args: None
-    )
+    wrapper._task = SimpleNamespace(terminate=lambda: None, execute_script=lambda *_args: None)
     wrapper._command = None
-    wrapper._build_args = lambda _category: (_ for _ in ()).throw(
-        ValueError("bad quote")
-    )
+    wrapper._build_args = lambda _category: (_ for _ in ()).throw(ValueError("bad quote"))
     wrapper._prepare_after_args_built = lambda: pytest.fail("prepare should not run")
 
     wrapper._action_command()
@@ -195,9 +187,7 @@ def test_invalid_generate_does_not_clear_running_task(
     )
     wrapper._statusbar = _FakeStatusbar()
     wrapper._command = "train"
-    wrapper._build_args = lambda *_args, **_kwargs: (_ for _ in ()).throw(
-        ValueError("bad quote")
-    )
+    wrapper._build_args = lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("bad quote"))
 
     wrapper._generate_command()
 
@@ -245,9 +235,7 @@ def test_terminate_targets_launched_process_pid_only(
         return root
 
     monkeypatch.setattr(wrapper_mod.psutil, "Process", fake_process)
-    monkeypatch.setattr(
-        wrapper_mod.psutil, "wait_procs", lambda procs, timeout: (procs, [])
-    )
+    monkeypatch.setattr(wrapper_mod.psutil, "wait_procs", lambda procs, timeout: (procs, []))
 
     control = FaceswapControl.__new__(FaceswapControl)
     control._queue_ui_update = lambda *_args: None

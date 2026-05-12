@@ -3,8 +3,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import typing as T
+from dataclasses import dataclass, field
 
 from lib.utils import get_module_objects
 
@@ -95,9 +95,7 @@ class ProjectFile:
         normalized: dict[str, dict[str, T.Any]] = {}
         for command, values in tasks.items():
             if not isinstance(values, dict):
-                raise ValueError(
-                    f"Project file task '{command}' options must be a mapping"
-                )
+                raise ValueError(f"Project file task '{command}' options must be a mapping")
             normalized[str(command)] = dict(values)
         return normalized
 

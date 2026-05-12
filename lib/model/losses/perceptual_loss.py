@@ -13,7 +13,6 @@ from torch.nn import functional as F
 from lib.logger import parse_class_init
 from lib.utils import FaceswapError, get_module_objects
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -144,11 +143,12 @@ class GMSDLoss(nn.Module):
         upper = 2.0 * true_edge * pred_edge
         lower = torch.square(true_edge) + torch.square(pred_edge)
         gms = (upper + epsilon) / (lower + epsilon)
-        if self._spatial:
-            # per-pixel similarity reasonable proxy for spatial loss
-            loss = 1.0 - gms.mean(dim=1)[:, None]
-        else:
-            loss = torch.std(gms, dim=(1, 2, 3))
+        # per-pixel similarity reasonable proxy for spatial loss
+        loss = (
+            1.0 - gms.mean(dim=1)[:, None]
+            if self._spatial
+            else torch.std(gms, dim=(1, 2, 3))
+        )
         return loss
 
 
@@ -483,8 +483,7 @@ class MSSIMLoss(_SSIM):
         flt = smallest_scale - 1 if smallest_scale % 2 == 0 else smallest_scale
         if flt < 3:
             raise FaceswapError(
-                "The output size of the selected model is too small for MS-SSIM. "
-                "Use SSIM instead."
+                "The output size of the selected model is too small for MS-SSIM. Use SSIM instead."
             )
         logger.debug(
             "[MSSIM] Adjusting filter kernel to %s from %s for smallest scale %s.",
@@ -496,9 +495,7 @@ class MSSIMLoss(_SSIM):
         self._validated = True
 
     @classmethod
-    def _do_pad(
-        cls, images: list[torch.Tensor], remainder: torch.Tensor
-    ) -> list[torch.Tensor]:
+    def _do_pad(cls, images: list[torch.Tensor], remainder: torch.Tensor) -> list[torch.Tensor]:
         """Pad images
 
         Parameters
@@ -542,10 +539,8 @@ class MSSIMLoss(_SSIM):
         for k in range(len(self._power_factors)):
             if k > 0:
                 # Avg pool takes rank 4 tensors. Flatten leading dimensions.
-                flat_images = [(x.reshape(-1, *t)) for x, t in zip(images, tails)]
-                remainder = (
-                    torch.tensor(tails[0], device=y_pred.device) % self._divisor_tensor
-                )
+                flat_images = [(x.reshape(-1, *t)) for x, t in zip(images, tails, strict=False)]
+                remainder = torch.tensor(tails[0], device=y_pred.device) % self._divisor_tensor
                 if (remainder != 0).any():
                     flat_images = self._do_pad(flat_images, remainder)
 
@@ -560,15 +555,13 @@ class MSSIMLoss(_SSIM):
                 ]
                 tails = [x.shape[1:] for x in downscaled]
                 images = [
-                    x.reshape(*h, *t) for x, h, t in zip(downscaled, heads, tails)
+                    x.reshape(*h, *t) for x, h, t in zip(downscaled, heads, tails, strict=False)
                 ]
 
             # Overwrite previous ssim value since we only need the last one.
             ssim_per_channel, cs_ = self._ssim_per_channel(images[0], images[1])
             if self._spatial:
-                cs_ = F.interpolate(
-                    cs_, size=size, mode="bilinear", align_corners=False
-                )
+                cs_ = F.interpolate(cs_, size=size, mode="bilinear", align_corners=False)
             mcs.append(F.relu(cs_))
 
         mcs.pop()  # Remove the cs score for the last scale.

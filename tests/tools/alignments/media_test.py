@@ -54,9 +54,7 @@ class TestAlignmentData:
         yield alignments_file
         os.remove(alignments_file)
 
-    def test_init(
-        self, alignments_file: str, mocker: pytest_mock.MockerFixture
-    ) -> None:
+    def test_init(self, alignments_file: str, mocker: pytest_mock.MockerFixture) -> None:
         """Test for :class:`~tools.alignments.media.AlignmentData` __init__ method
 
         Parameters
@@ -66,9 +64,7 @@ class TestAlignmentData:
         mocker: :class:`pytest_mock.MockerFixture`
             Fixture for mocking the superclass __init__
         """
-        alignments_parent_init = mocker.patch(
-            "tools.alignments.media.Alignments.__init__"
-        )
+        alignments_parent_init = mocker.patch("tools.alignments.media.Alignments.__init__")
         mocker.patch(
             "tools.alignments.media.Alignments.frames_count",
             new_callable=mocker.PropertyMock(return_value=20),
@@ -86,16 +82,12 @@ class TestAlignmentData:
         alignments_file: str
             The temporarily generated alignments file
         """
-        assert AlignmentData.check_file_exists(alignments_file) == os.path.split(
-            alignments_file
-        )
+        assert AlignmentData.check_file_exists(alignments_file) == os.path.split(alignments_file)
         fake_file = "/not/possibly/a/real/path/alignments.fsa"
         with pytest.raises(SystemExit):
             AlignmentData.check_file_exists(fake_file)
 
-    def test_save(
-        self, alignments_file: str, mocker: pytest_mock.MockerFixture
-    ) -> None:
+    def test_save(self, alignments_file: str, mocker: pytest_mock.MockerFixture) -> None:
         """Test for :class:`~tools.alignments.media.AlignmentData`save method
 
         Parameters
@@ -110,9 +102,7 @@ class TestAlignmentData:
             "tools.alignments.media.Alignments.frames_count",
             new_callable=mocker.PropertyMock(return_value=20),
         )
-        alignments_parent_backup = mocker.patch(
-            "tools.alignments.media.Alignments.backup"
-        )
+        alignments_parent_backup = mocker.patch("tools.alignments.media.Alignments.backup")
         alignments_parent_save = mocker.patch("tools.alignments.media.Alignments.save")
         align_data = AlignmentData(alignments_file)
         align_data.save()
@@ -149,9 +139,7 @@ class TestMediaLoader:
     """Test for :class:`~tools.alignments.media.MediaLoader`"""
 
     @pytest.fixture(name="media_loader_instance")
-    def media_loader_fixture(
-        self, folder: str, mocker: pytest_mock.MockerFixture
-    ) -> MediaLoader:
+    def media_loader_fixture(self, folder: str, mocker: pytest_mock.MockerFixture) -> MediaLoader:
         """An instance of :class:`~tools.alignments.media.MediaLoader` with unimplemented
         child methods patched out of __init__ and initialized with a dummy folder containing
         2 images
@@ -251,9 +239,7 @@ class TestMediaLoader:
             MagicMock,  # type:ignore
             mocker.MagicMock(return_value=expected),
         )
-        read_image_patch = mocker.patch(
-            "tools.alignments.media.read_image", return_value=expected
-        )
+        read_image_patch = mocker.patch("tools.alignments.media.read_image", return_value=expected)
         filename = "test.png"
         output = media_loader.load_image(filename)
         np.testing.assert_equal(expected, output)
@@ -318,8 +304,7 @@ class TestMediaLoader:
 
         loader = mocker.patch("tools.alignments.media.ImagesLoader.load")
         expected = [
-            (fname, np.random.rand(256, 256, 3))
-            for fname in os.listdir(media_loader.folder)
+            (fname, np.random.rand(256, 256, 3)) for fname in os.listdir(media_loader.folder)
         ]
         loader.side_effect = [expected]
         output = list(media_loader.stream())
@@ -426,9 +411,7 @@ class TestFaces:
         dupe_dir = os.path.join(faces.folder, "_duplicates")
         src_filename = "test_0001.png"
         src_face_idx = 0
-        paths = [
-            os.path.join(faces.folder, fname) for fname in os.listdir(faces.folder)
-        ]
+        paths = [os.path.join(faces.folder, fname) for fname in os.listdir(faces.folder)]
         data = mocker.MagicMock()
         data.source.source_filename = src_filename
         data.source.face_index = src_face_idx
@@ -468,12 +451,8 @@ class TestFaces:
             Fixture for mocking various logic calls
         """
         faces = faces_instance
-        read_image_meta_mock = mocker.patch(
-            "tools.alignments.media.read_image_meta_batch"
-        )
-        img_sources = [
-            os.path.join(faces.folder, fname) for fname in os.listdir(faces.folder)
-        ]
+        read_image_meta_mock = mocker.patch("tools.alignments.media.read_image_meta_batch")
+        img_sources = [os.path.join(faces.folder, fname) for fname in os.listdir(faces.folder)]
 
         meta_data = {
             "itxt": {
@@ -498,9 +477,7 @@ class TestFaces:
         }
         png_mock = mocker.MagicMock()
         png_mock.source.source_filename = "data.png"
-        monkeypatch.setattr(
-            "tools.alignments.media.PNGHeader.from_dict", lambda x: png_mock
-        )
+        monkeypatch.setattr("tools.alignments.media.PNGHeader.from_dict", lambda x: png_mock)
 
         expected = [(fname, png_mock) for fname in os.listdir(faces.folder)]
         read_image_meta_mock.side_effect = [[(src, meta_data) for src in img_sources]]
@@ -538,9 +515,7 @@ class TestFaces:
         assert dupe_mock.call_count == 0
         assert not output
 
-    def test_load_items(
-        self, faces_instance: Faces, mocker: pytest_mock.MockerFixture
-    ) -> None:
+    def test_load_items(self, faces_instance: Faces, mocker: pytest_mock.MockerFixture) -> None:
         """Test for :class:`~tools.alignments.media.Faces` load_items method
 
         Parameters
@@ -573,9 +548,7 @@ class TestFaces:
         result = faces.load_items()
         assert result == expected
 
-    def test_sorted_items(
-        self, faces_instance: Faces, mocker: pytest_mock.MockerFixture
-    ) -> None:
+    def test_sorted_items(self, faces_instance: Faces, mocker: pytest_mock.MockerFixture) -> None:
         """Test for :class:`~tools.alignments.media.Faces` sorted_items method
 
         Parameters
@@ -604,9 +577,7 @@ class TestFaces:
 class TestFrames:
     """Test for :class:`~tools.alignments.media.Frames`"""
 
-    def test_process_folder(
-        self, folder: str, mocker: pytest_mock.MockerFixture
-    ) -> None:
+    def test_process_folder(self, folder: str, mocker: pytest_mock.MockerFixture) -> None:
         """Test for :class:`~tools.alignments.media.Frames` process_folder method
 
         Parameters
@@ -617,9 +588,7 @@ class TestFrames:
             Fixture for mocking superclass calls
         """
         process_video_mock = mocker.patch("tools.alignments.media.Frames.process_video")
-        process_frames_mock = mocker.patch(
-            "tools.alignments.media.Frames.process_frames"
-        )
+        process_frames_mock = mocker.patch("tools.alignments.media.Frames.process_frames")
 
         frames = Frames(folder, None)
         frames.process_folder()
@@ -650,9 +619,7 @@ class TestFrames:
         ]
 
         frames = Frames(folder, None)
-        returned = sorted(
-            list(frames.process_frames()), key=itemgetter("frame_fullname")
-        )
+        returned = sorted(list(frames.process_frames()), key=itemgetter("frame_fullname"))
         assert returned == sorted(expected, key=itemgetter("frame_fullname"))
 
     def test_process_video(self, folder: str) -> None:
@@ -730,9 +697,7 @@ class TestExtractedFaces:
     """Test for :class:`~tools.alignments.media.ExtractedFaces`"""
 
     @pytest.fixture(name="extracted_faces_instance")
-    def extracted_faces_fixture(
-        self, mocker: pytest_mock.MockerFixture
-    ) -> ExtractedFaces:
+    def extracted_faces_fixture(self, mocker: pytest_mock.MockerFixture) -> ExtractedFaces:
         """An instance of :class:`~tools.alignments.media.ExtractedFaces` patching out Frames and
         AlignmentData parameters
 
@@ -777,9 +742,7 @@ class TestExtractedFaces:
         mocker: :class:`pytest_mock.MockerFixture`
             Fixture for mocking Frames and AlignmentData classes
         """
-        extract_face_mock = mocker.patch(
-            "tools.alignments.media.ExtractedFaces.extract_one_face"
-        )
+        extract_face_mock = mocker.patch("tools.alignments.media.ExtractedFaces.extract_one_face")
         faces = extracted_faces_instance
 
         frame = "test_frame"
@@ -837,9 +800,7 @@ class TestExtractedFaces:
         img = np.random.rand(256, 256, 3)
         returned = faces.extract_one_face(alignment, img)  # type:ignore
         detected_face.assert_called_once()
-        detected_face.return_value.from_alignment.assert_called_once_with(
-            alignment, image=img
-        )
+        detected_face.return_value.from_alignment.assert_called_once_with(alignment, image=img)
         detected_face.return_value.load_aligned.assert_called_once_with(
             img, size=512, centering="head"
         )
@@ -879,9 +840,9 @@ class TestExtractedFaces:
         faces.get_faces.assert_called_once_with(frame, image=img)
 
     _params = [
-        (np.array(([[25, 47], [32, 232], [244, 237], [240, 21]])), 216),
-        (np.array(([[127, 392], [403, 510], [32, 237], [19, 210]])), 211),
-        (np.array(([[26, 1927], [112, 1234], [1683, 1433], [78, 1155]])), 773),
+        (np.array([[25, 47], [32, 232], [244, 237], [240, 21]]), 216),
+        (np.array([[127, 392], [403, 510], [32, 237], [19, 210]]), 211),
+        (np.array([[26, 1927], [112, 1234], [1683, 1433], [78, 1155]]), 773),
     ]
 
     @pytest.mark.parametrize("roi,expected", _params)

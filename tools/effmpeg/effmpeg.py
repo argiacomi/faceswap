@@ -5,12 +5,12 @@ Created on 2018-03-16 15:14
 @author: Lev Velykoivanenko (velykoivanenko.lev@gmail.com)
 """
 
+import datetime
 import logging
 import os
 import subprocess
 import sys
 import typing as T
-import datetime
 from collections import OrderedDict
 
 import av
@@ -18,7 +18,7 @@ import ffmpeg
 from ffmpy import FFmpeg, FFRuntimeError
 
 # faceswap imports
-from lib.utils import get_module_objects, handle_deprecated_cli_opts, IMAGE_EXTENSIONS
+from lib.utils import IMAGE_EXTENSIONS, get_module_objects, handle_deprecated_cli_opts
 from lib.video import VIDEO_EXTENSIONS
 
 logger = logging.getLogger(__name__)
@@ -59,9 +59,7 @@ class DataItem:
         """Set the name"""
         if name is None and self.path is not None:
             self.name = os.path.basename(self.path)
-        elif name is not None and self.path is None:
-            self.name = os.path.basename(name)
-        elif name is not None and self.path is not None:
+        elif name is not None and self.path is None or name is not None and self.path is not None:
             self.name = os.path.basename(name)
         else:
             self.name = None
@@ -81,17 +79,13 @@ class DataItem:
                 item_type = "dir"
             self.type = item_type
             self.ext = item_ext
-            logger.debug(
-                "path: '%s', type: '%s', ext: '%s'", self.path, self.type, self.ext
-            )
+            logger.debug("path: '%s', type: '%s', ext: '%s'", self.path, self.type, self.ext)
 
     def set_dirname(self, path=None):
         """Set the folder name"""
         if path is None and self.path is not None:
             self.dirname = os.path.dirname(self.path)
-        elif path is not None and self.path is None:
-            self.dirname = os.path.dirname(path)
-        elif path is not None and self.path is not None:
+        elif path is not None and self.path is None or path is not None and self.path is not None:
             self.dirname = os.path.dirname(path)
         else:
             self.dirname = None
@@ -159,9 +153,7 @@ class Effmpeg:
     _common_ffmpeg_args = ""
 
     def __init__(self, arguments):
-        logger.debug(
-            "Initializing %s: (arguments: %s)", self.__class__.__name__, arguments
-        )
+        logger.debug("Initializing %s: (arguments: %s)", self.__class__.__name__, arguments)
         self.args = handle_deprecated_cli_opts(arguments)
         self.exe = str(ffmpeg.FFMPEG_PATH)
         self.input = DataItem()
@@ -179,9 +171,7 @@ class Effmpeg:
             self.output = DataItem(path=self.__get_default_output())
         elif self.args.action in self._actions_have_vid_output:
             if self.__check_have_fps(self.args.fps) > 0:
-                self.output = DataItem(
-                    path=self.__get_default_output(), fps=self.args.fps
-                )
+                self.output = DataItem(path=self.__get_default_output(), fps=self.args.fps)
             else:
                 self.output = DataItem(path=self.__get_default_output())
 
@@ -200,32 +190,22 @@ class Effmpeg:
         ValueError
             If provided arguments are not valid
         """
-        if self.args.action in self._actions_have_dir_input and not self.input.is_type(
-            "dir"
-        ):
+        if self.args.action in self._actions_have_dir_input and not self.input.is_type("dir"):
             raise ValueError(
                 "The chosen action requires a directory as its input, but you "
                 f"entered: {self.input.path}"
             )
-        if self.args.action in self._actions_have_vid_input and not self.input.is_type(
-            "vid"
-        ):
+        if self.args.action in self._actions_have_vid_input and not self.input.is_type("vid"):
             raise ValueError(
                 "The chosen action requires a video as its input, but you entered: "
                 f"{self.input.path}"
             )
-        if (
-            self.args.action in self._actions_have_dir_output
-            and not self.output.is_type("dir")
-        ):
+        if self.args.action in self._actions_have_dir_output and not self.output.is_type("dir"):
             raise ValueError(
                 "The chosen action requires a directory as its output, but you "
                 f"entered: {self.output.path}"
             )
-        if (
-            self.args.action in self._actions_have_vid_output
-            and not self.output.is_type("vid")
-        ):
+        if self.args.action in self._actions_have_vid_output and not self.output.is_type("vid"):
             raise ValueError(
                 "The chosen action requires a video as its output, but you entered: "
                 f"{self.output.path}"
@@ -238,13 +218,15 @@ class Effmpeg:
                     "The file chosen as the reference video is not a video, either "
                     f"leave the field blank or type 'None': {self.ref_vid.path}"
                 )
-        elif self.args.action in self._actions_can_use_ref_video:
-            if self.ref_vid.is_type("none"):
-                logger.warning(
-                    "Warning: no reference video was supplied, even though "
-                    "one may be used with the chosen action. If this is "
-                    "intentional then ignore this warning."
-                )
+        elif (
+            self.args.action in self._actions_can_use_ref_video
+            and self.ref_vid.is_type("none")
+        ):
+            logger.warning(
+                "Warning: no reference video was supplied, even though "
+                "one may be used with the chosen action. If this is "
+                "intentional then ignore this warning."
+            )
 
     def _set_times(self) -> None:
         """Set start, end and duration attributes"""
@@ -262,10 +244,7 @@ class Effmpeg:
             self.args.fps = str(-1.0)
 
         # Try to set fps automatically if needed and not supplied by user
-        if (
-            self.args.action in self._actions_req_fps
-            and self.__convert_fps(self.args.fps) <= 0
-        ):
+        if self.args.action in self._actions_req_fps and self.__convert_fps(self.args.fps) <= 0:
             if self.__check_have_fps(["r", "i"]):
                 _error_str = "No fps, input or reference video was supplied, "
                 _error_str += "hence it's not possible to "
@@ -535,9 +514,7 @@ class Effmpeg:
         _input_opts = Effmpeg._common_ffmpeg_args[:]
         _ref_vid_opts = None
         _output_opts = "-y -c copy -map 0:0 -map 1:1 -shortest"
-        _inputs = OrderedDict(
-            [(input_.path, _input_opts), (ref_vid.path, _ref_vid_opts)]
-        )
+        _inputs = OrderedDict([(input_.path, _input_opts), (ref_vid.path, _ref_vid_opts)])
         _outputs = {output.path: _output_opts}
         Effmpeg.__run_ffmpeg(exe=exe, inputs=_inputs, outputs=_outputs)
 
@@ -578,9 +555,7 @@ class Effmpeg:
                 if self.input.is_type("media"):
                     # Using the same extension as input leads to very poor
                     # output quality, hence the default is mkv for now
-                    retval = os.path.join(
-                        self.input.dirname, "out.mkv"
-                    )  # + self.input.ext)
+                    retval = os.path.join(self.input.dirname, "out.mkv")  # + self.input.ext)
                 else:  # case if input was a directory
                     retval = os.path.join(self.input.dirname, "out.mkv")
         else:
@@ -603,9 +578,7 @@ class Effmpeg:
     @staticmethod
     def __run_ffmpeg(exe=str(ffmpeg.FFMPEG_PATH), inputs=None, outputs=None):
         """Run ffmpeg"""
-        logger.debug(
-            "Running ffmpeg: (exe: '%s', inputs: %s, outputs: %s", exe, inputs, outputs
-        )
+        logger.debug("Running ffmpeg: (exe: '%s', inputs: %s, outputs: %s", exe, inputs, outputs)
         ffm = FFmpeg(executable=exe, inputs=inputs, outputs=outputs)
         try:
             ffm.run(stderr=subprocess.STDOUT)
@@ -614,9 +587,7 @@ class Effmpeg:
             if ffe.exit_code == 255:
                 pass
             else:
-                raise ValueError(
-                    f"An unexpected FFRuntimeError occurred: {ffe}"
-                ) from ffe
+                raise ValueError(f"An unexpected FFRuntimeError occurred: {ffe}") from ffe
         except KeyboardInterrupt:
             pass  # Do nothing if voluntary interruption
         logger.debug("ffmpeg finished")
@@ -641,9 +612,7 @@ class Effmpeg:
         end = datetime.timedelta(hours=end[0], minutes=end[1], seconds=end[2])
         delta = end - start
         secs = delta.total_seconds()
-        retval = (
-            f"{int(secs // 3600):02}:{int(secs % 3600 // 60):02}:{int(secs % 60):02}"
-        )
+        retval = f"{int(secs // 3600):02}:{int(secs % 3600 // 60):02}:{int(secs % 60):02}"
         logger.debug(retval)
         return retval
 

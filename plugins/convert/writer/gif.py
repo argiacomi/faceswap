@@ -17,8 +17,8 @@ from sklearn.cluster import MiniBatchKMeans
 from lib.logger import parse_class_init
 from lib.utils import get_module_objects
 
-from ._base import Output
 from . import gif_defaults as cfg
+from ._base import Output
 
 if T.TYPE_CHECKING:
     import numpy.typing as npt
@@ -210,8 +210,7 @@ class Writer(Output):
             return
         assert self._gif_file is not None
         logger.info(
-            "[GIF] Creating GIF. Depending on the number of frames this may take a "
-            "while..."
+            "[GIF] Creating GIF. Depending on the number of frames this may take a while..."
         )
         imgs = self._quantize_images()
         assert self._gif_file is not None

@@ -9,8 +9,9 @@ import cv2
 import numpy as np
 
 from lib.utils import get_module_objects
-from ._base import Output, logger
+
 from . import opencv_defaults as cfg
+from ._base import Output, logger
 
 
 class Writer(Output):
@@ -77,18 +78,14 @@ class Writer(Output):
             or length 2 (containing the image and mask to write out)
         """
         logger.trace("Outputting: (filename: '%s'", filename)  # type:ignore
-        filenames = self.get_output_filename(
-            filename, cfg.format(), self._separate_mask
-        )
+        filenames = self.get_output_filename(filename, cfg.format(), self._separate_mask)
         # pylint:disable=duplicate-code
-        for fname, img in zip(filenames, image):
+        for fname, img in zip(filenames, image, strict=False):
             try:
                 with open(fname, "wb") as outfile:
                     outfile.write(img)
             except Exception as err:  # pylint:disable=broad-except
-                logger.error(
-                    "Failed to save image '%s'. Original Error: %s", filename, err
-                )
+                logger.error("Failed to save image '%s'. Original Error: %s", filename, err)
 
     def pre_encode(self, image: np.ndarray, **kwargs) -> list[bytes]:
         """Pre_encode the image in lib/convert.py threads as it is a LOT quicker.

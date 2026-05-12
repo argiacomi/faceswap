@@ -5,12 +5,11 @@ import json
 import os
 import platform
 import sys
-
 from subprocess import PIPE, Popen
 
 from lib.git import git
 from lib.gpu_stats import GPUInfo, GPUStats
-from lib.utils import get_backend, get_module_objects, PROJECT_ROOT
+from lib.utils import PROJECT_ROOT, get_backend, get_module_objects
 
 from .ml_libs import Cuda, ROCm
 from .system import Packages, System
@@ -215,12 +214,10 @@ class _SysInfo:
             "gpu_vram": ", ".join(
                 f"GPU_{idx}: {int(vram)}MB ({int(vram_free)}MB free)"
                 for idx, (vram, vram_free) in enumerate(
-                    zip(self._gpu.vram, self._gpu.vram_free)
+                    zip(self._gpu.vram, self._gpu.vram_free, strict=False)
                 )
             ),
-            "gpu_devices_active": ", ".join(
-                [f"GPU_{idx}" for idx in self._gpu.devices_active]
-            ),
+            "gpu_devices_active": ", ".join([f"GPU_{idx}" for idx in self._gpu.devices_active]),
         }
         for key in sorted(sys_info.keys()):
             retval += f"{key + ':':<20} {sys_info[key]}\n"
@@ -272,8 +269,7 @@ class _Configs:  # pylint:disable=too-few-public-methods
             config_files = [
                 os.path.join(self.config_dir, c_file)
                 for c_file in os.listdir(self.config_dir)
-                if os.path.basename(c_file) == ".faceswap"
-                or os.path.splitext(c_file)[1] == ".ini"
+                if os.path.basename(c_file) == ".faceswap" or os.path.splitext(c_file)[1] == ".ini"
             ]
             return self._parse_configs(config_files)
         except FileNotFoundError:
@@ -315,7 +311,7 @@ class _Configs:  # pylint:disable=too-few-public-methods
         The current configuration in the config file formatted in a human readable format
         """
         formatted = ""
-        with open(config_file, "r", encoding="utf-8", errors="replace") as c_file:
+        with open(config_file, encoding="utf-8", errors="replace") as c_file:
             for line in c_file.readlines():
                 line = line.strip()
                 if line.startswith("#") or not line:
@@ -340,7 +336,7 @@ class _Configs:  # pylint:disable=too-few-public-methods
         The current configuration in the config file formatted as a python dictionary
         """
         formatted: str = ""
-        with open(config_file, "r", encoding="utf-8", errors="replace") as c_file:
+        with open(config_file, encoding="utf-8", errors="replace") as c_file:
             conf_dict = json.load(c_file)
             for key in sorted(conf_dict.keys()):
                 formatted += self._format_text(key, conf_dict[key])
@@ -409,7 +405,7 @@ class _State:  # pylint:disable=too-few-public-methods
             return ""
 
         retval = "\n\n=============== State File =================\n"
-        with open(fname, "r", encoding="utf-8", errors="replace") as s_file:
+        with open(fname, encoding="utf-8", errors="replace") as s_file:
             retval += s_file.read()
         return retval
 

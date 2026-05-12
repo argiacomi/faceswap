@@ -28,10 +28,7 @@ from lib.config import ConfigItem
 
 from lib.config import ConfigItem
 
-
-HELPTEXT = (
-    "Options for matching the histograms between the source and destination faces"
-)
+HELPTEXT = "Options for matching the histograms between the source and destination faces"
 
 
 threshold = ConfigItem(

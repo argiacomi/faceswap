@@ -29,7 +29,6 @@ from lib.config import ConfigItem
 # pylint:disable=duplicate-code
 from lib.config import ConfigItem
 
-
 HELPTEXT = (
     "Options for outputting converted frames to a series of images using Pillow\n"
     "Pillow is more feature rich than OpenCV but can be slower."

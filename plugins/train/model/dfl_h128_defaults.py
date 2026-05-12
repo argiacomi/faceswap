@@ -29,7 +29,6 @@ from lib.config import ConfigItem
 # pylint:disable=duplicate-code
 from lib.config import ConfigItem
 
-
 HELPTEXT = "DFL H128 Model (Adapted from https://github.com/iperov/DeepFaceLab)"
 
 

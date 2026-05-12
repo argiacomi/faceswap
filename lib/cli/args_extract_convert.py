@@ -5,8 +5,7 @@ import gettext
 import typing as T
 from argparse import SUPPRESS
 
-from lib.utils import get_module_objects
-from lib.utils import get_backend
+from lib.utils import get_backend, get_module_objects
 from plugins.plugin_loader import PluginLoader
 
 from .actions import (
@@ -21,11 +20,8 @@ from .actions import (
 )
 from .args import FaceSwapArgs
 
-
 # LOCALES
-_LANG = gettext.translation(
-    "lib.cli.args_extract_convert", localedir="locales", fallback=True
-)
+_LANG = gettext.translation("lib.cli.args_extract_convert", localedir="locales", fallback=True)
 _ = _LANG.gettext
 
 
@@ -58,8 +54,10 @@ class ExtractConvertArgs(FaceSwapArgs):
                 "required": True,
                 "group": _("Data"),
                 "help": _(
-                    "Input directory or video. Either a directory containing the image files you wish "
-                    "to process or path to a video file. NB: This should be the source video/frames "
+                    "Input directory or video. Either a directory containing the image files you "
+                    "wish "
+                    "to process or path to a video file. NB: This should be the source "
+                    "video/frames "
                     "NOT the source faces."
                 ),
             }
@@ -73,7 +71,8 @@ class ExtractConvertArgs(FaceSwapArgs):
                 "dest": "alignments_path",
                 "group": _("Data"),
                 "help": _(
-                    "Optional path to an alignments file. Leave blank if the alignments file is at "
+                    "Optional path to an alignments file. Leave blank if the alignments file is at"
+                    " "
                     "the default location."
                 ),
             }
@@ -159,16 +158,20 @@ class ExtractArgs(ExtractConvertArgs):
                 "help": _(
                     "R|Detector to use. Some of these have configurable settings in "
                     "'/config/extract.ini' or 'Settings > Configure Extract 'Plugins':"
-                    "\nL|cv2-dnn: A CPU only extractor which is the least reliable and least resource "
+                    "\nL|cv2-dnn: A CPU only extractor which is the least reliable and least "
+                    "resource "
                     "intensive. Use this only as a last resort. Both MTCNN and RetinaFace have "
                     "variants that will perform better on CPU."
-                    "\nL|mtcnn: Average detector. Fast on CPU, faster on GPU. Uses fewer resources "
+                    "\nL|mtcnn: Average detector. Fast on CPU, faster on GPU. Uses fewer resources"
+                    " "
                     "than other GPU detectors but can often return more false positives or misses "
                     "faces."
                     "\nL|retinaface: Good detector. Faster and lighter than S3FD but of similar "
-                    "quality. A ResNet and MobileNet version are available (configurable in Detect "
+                    "quality. A ResNet and MobileNet version are available (configurable in Detect"
+                    " "
                     "settings). The MobileNet version is light enough to run on CPU."
-                    "\nL|s3fd: Good detector. Slow on CPU, faster on GPU. Can detect more faces and "
+                    "\nL|s3fd: Good detector. Slow on CPU, faster on GPU. Can detect more faces "
+                    "and "
                     "fewer false positives than other GPU detectors, but is a lot more resource "
                     "intensive."
                 ),
@@ -184,7 +187,8 @@ class ExtractArgs(ExtractConvertArgs):
                 "group": _("Align"),
                 "help": _(
                     "R|Aligner to use."
-                    "\nL|cv2-dnn: A CPU only landmark detector. Faster, less resource intensive, but "
+                    "\nL|cv2-dnn: A CPU only landmark detector. Faster, less resource intensive, "
+                    "but "
                     "less accurate. Only use this if not using a GPU and time is important."
                     "\nL|fan: Good aligner. Fast on GPU, slow on CPU."
                     "\nL|hrnet: Best aligner. Faster and more performant than FAN. Trained on a "
@@ -205,19 +209,25 @@ class ExtractArgs(ExtractConvertArgs):
                     "RAM. You can select none, one or multiple masks, but the extraction may take "
                     "longer the more you select. NB: The Extended and Components (landmark based) "
                     "masks are automatically generated on extraction."
-                    "\nL|bisenet-fp: Relatively lightweight NN based mask that provides more refined "
-                    "control over the area to be masked including full head masking (configurable in "
+                    "\nL|bisenet-fp: Relatively lightweight NN based mask that provides more "
+                    "refined "
+                    "control over the area to be masked including full head masking (configurable "
+                    "in "
                     "mask settings)."
                     "\nL|custom: A dummy mask that fills the mask area with all 1s or 0s ("
-                    "configurable in settings). This is only required if you intend to manually edit "
-                    "the custom masks yourself in the manual tool. This mask does not use the GPU so "
+                    "configurable in settings). This is only required if you intend to manually "
+                    "edit "
+                    "the custom masks yourself in the manual tool. This mask does not use the GPU "
+                    "so "
                     "will not use any additional VRAM."
                     "\nL|vgg-clear: Mask designed to provide smart segmentation of mostly frontal "
                     "faces clear of obstructions. Profile faces and obstructions may result in "
                     "sub-par performance."
                     "\nL|vgg-obstructed: Mask designed to provide smart segmentation of mostly "
-                    "frontal faces. The mask model has been specifically trained to recognize some "
-                    "facial obstructions (hands and eyeglasses). Profile faces may result in sub-par "
+                    "frontal faces. The mask model has been specifically trained to recognize some"
+                    " "
+                    "facial obstructions (hands and eyeglasses). Profile faces may result in "
+                    "sub-par "
                     "performance."
                     "\nL|unet-dfl: Mask designed to provide smart segmentation of mostly frontal "
                     "faces. The mask model has been trained by community members and will need "
@@ -243,11 +253,14 @@ class ExtractArgs(ExtractConvertArgs):
                 "choices": PluginLoader.get_available_extractors("identity"),
                 "group": _("Identity"),
                 "help": _(
-                    "R|Obtain and store face identity encodings. Slows down extract a little but will "
+                    "R|Obtain and store face identity encodings. Slows down extract a little but "
+                    "will "
                     "save time if using 'sort by face'. Required for face filtering."
-                    "\nL|t-face: An InsightFace ResNet based model with a lighter and heavier variant "
+                    "\nL|t-face: An InsightFace ResNet based model with a lighter and heavier "
+                    "variant "
                     "(configurable in settings)."
-                    "\nL|vggface2: An older and lighter, but fairly reliable plugin based on the VGG "
+                    "\nL|vggface2: An older and lighter, but fairly reliable plugin based on the "
+                    "VGG "
                     "Network."
                 ),
             }
@@ -263,7 +276,8 @@ class ExtractArgs(ExtractConvertArgs):
                 "default": 0,
                 "group": _("Detect"),
                 "help": _(
-                    "Filters out detections below this percentage of the shortest side of the frame "
+                    "Filters out detections below this percentage of the shortest side of the "
+                    "frame "
                     "along the face detection box's longest edge. (eg: a value of 10 will filter "
                     "out faces smaller than 72px from a 720p image). 0 for disabled."
                 ),
@@ -280,7 +294,8 @@ class ExtractArgs(ExtractConvertArgs):
                 "default": 0,
                 "group": _("Detect"),
                 "help": _(
-                    "Filters out detections above this percentage of the shortest side of the frame "
+                    "Filters out detections above this percentage of the shortest side of the "
+                    "frame "
                     "along the face detection box's longest edge. (eg: a value of 200 will filter "
                     "out faces larger than 1440px from a 720p image). 0 for disabled."
                 ),
@@ -294,9 +309,12 @@ class ExtractArgs(ExtractConvertArgs):
                 "default": None,
                 "group": _("Detect"),
                 "help": _(
-                    "If a face isn't found, rotate the images to try to find a face. Can find more "
-                    "faces at the cost of extraction speed. Pass in a single number to use increments "
-                    "of that size up to 360, or pass in a list of numbers to enumerate exactly what "
+                    "If a face isn't found, rotate the images to try to find a face. Can find more"
+                    " "
+                    "faces at the cost of extraction speed. Pass in a single number to use "
+                    "increments "
+                    "of that size up to 360, or pass in a list of numbers to enumerate exactly "
+                    "what "
                     "angles to check."
                 ),
             }
@@ -316,7 +334,8 @@ class ExtractArgs(ExtractConvertArgs):
                     "will yield different results on different sets. NB: This does not impact the "
                     "output face, just the input to the aligner."
                     "\nL|none: Don't perform normalization on the face."
-                    "\nL|clahe: Perform Contrast Limited Adaptive Histogram Equalization on the face."
+                    "\nL|clahe: Perform Contrast Limited Adaptive Histogram Equalization on the "
+                    "face."
                     "\nL|hist: Equalize the histograms on the RGB channels."
                     "\nL|mean: Normalize the face colors to the mean."
                 ),
@@ -333,10 +352,13 @@ class ExtractArgs(ExtractConvertArgs):
                 "default": 0,
                 "group": _("Align"),
                 "help": _(
-                    "The number of times to re-feed the detected face into the aligner. Each time the "
-                    "face is re-fed into the aligner the bounding box is adjusted by a small amount. "
+                    "The number of times to re-feed the detected face into the aligner. Each time "
+                    "the "
+                    "face is re-fed into the aligner the bounding box is adjusted by a small "
+                    "amount. "
                     "The final landmarks are then averaged from each iteration. Helps to remove "
-                    "'micro-jitter' but at the cost of slower extraction speed. The more times the "
+                    "'micro-jitter' but at the cost of slower extraction speed. The more times the"
+                    " "
                     "face is re-fed into the aligner, the less micro-jitter should occur but the "
                     "longer extraction will take."
                 ),
@@ -350,8 +372,10 @@ class ExtractArgs(ExtractConvertArgs):
                 "default": False,
                 "group": _("Align"),
                 "help": _(
-                    "Re-feed the initially found aligned face through the aligner. Can help produce "
-                    "better alignments for faces that are rotated beyond 45 degrees in the frame or "
+                    "Re-feed the initially found aligned face through the aligner. Can help "
+                    "produce "
+                    "better alignments for faces that are rotated beyond 45 degrees in the frame "
+                    "or "
                     "are at extreme angles. Slows down extraction."
                 ),
             }
@@ -364,7 +388,8 @@ class ExtractArgs(ExtractConvertArgs):
                 "default": False,
                 "group": _("Align"),
                 "help": _(
-                    "Enable aligner filters. This allows the filtering out of faces based on certain "
+                    "Enable aligner filters. This allows the filtering out of faces based on "
+                    "certain "
                     "statistics and characteristics. Configurable in extract settings. Slows down "
                     "extraction."
                 ),
@@ -380,9 +405,12 @@ class ExtractArgs(ExtractConvertArgs):
                 "nargs": "+",
                 "group": _("Identity"),
                 "help": _(
-                    "Optionally filter out people who you do not wish to extract by passing in images "
-                    "of those people. Should be a small variety of images at different angles and in "
-                    "different conditions. A folder containing the required images or multiple image "
+                    "Optionally filter out people who you do not wish to extract by passing in "
+                    "images "
+                    "of those people. Should be a small variety of images at different angles and "
+                    "in "
+                    "different conditions. A folder containing the required images or multiple "
+                    "image "
                     "files, space separated, can be selected."
                 ),
             }
@@ -398,7 +426,8 @@ class ExtractArgs(ExtractConvertArgs):
                 "group": _("Identity"),
                 "help": _(
                     "Optionally select people you wish to extract by passing in images of that "
-                    "person. Should be a small variety of images at different angles and in different "
+                    "person. Should be a small variety of images at different angles and in "
+                    "different "
                     "conditions A folder containing the required images or multiple image files, "
                     "space separated, can be selected."
                 ),
@@ -430,7 +459,8 @@ class ExtractArgs(ExtractConvertArgs):
                 "default": 512,
                 "group": _("output"),
                 "help": _(
-                    "The output size of extracted faces. Make sure that the model you intend to train "
+                    "The output size of extracted faces. Make sure that the model you intend to "
+                    "train "
                     "supports your required size. This will only need to be changed for hi-res "
                     "models."
                 ),
@@ -447,8 +477,10 @@ class ExtractArgs(ExtractConvertArgs):
                 "default": 1,
                 "group": _("output"),
                 "help": _(
-                    "Extract every 'nth' frame. This option will skip frames when extracting faces. "
-                    "For example a value of 1 will extract faces from every frame, a value of 10 will "
+                    "Extract every 'nth' frame. This option will skip frames when extracting "
+                    "faces. "
+                    "For example a value of 1 will extract faces from every frame, a value of 10 "
+                    "will "
                     "extract faces from every 10th frame."
                 ),
             }
@@ -466,12 +498,16 @@ class ExtractArgs(ExtractConvertArgs):
                 "help": _(
                     "Only output faces that have been resized by this percent or more to meet the "
                     "specified extract size (`-z`, `--size`). Useful for excluding low-res images "
-                    "from a training set. Set to 0 to output all faces. This only impacts faces that "
+                    "from a training set. Set to 0 to output all faces. This only impacts faces "
+                    "that "
                     "are output to disk. All detected faces will still be saved to the alignments "
-                    "file regardless of what is set here. Eg: For an extract size of 512px, A setting "
-                    "of 50 will only output faces that have been resized from 256px or above. Setting "
+                    "file regardless of what is set here. Eg: For an extract size of 512px, A "
+                    "setting "
+                    "of 50 will only output faces that have been resized from 256px or above. "
+                    "Setting "
                     "to 100 will only output faces that have been resized from 512px or above. A "
-                    "setting of 200 will only output faces that have been downscaled from 1024px or "
+                    "setting of 200 will only output faces that have been downscaled from 1024px "
+                    "or "
                     "above."
                 ),
             }
@@ -487,9 +523,12 @@ class ExtractArgs(ExtractConvertArgs):
                 "default": 0,
                 "group": _("output"),
                 "help": _(
-                    "Automatically save the alignments file after a set amount of frames. By default "
-                    "the alignments file is only saved at the end of the extraction process. NB: If "
-                    "extracting in 2 passes then the alignments file will only start to be saved out "
+                    "Automatically save the alignments file after a set amount of frames. By "
+                    "default "
+                    "the alignments file is only saved at the end of the extraction process. NB: "
+                    "If "
+                    "extracting in 2 passes then the alignments file will only start to be saved "
+                    "out "
                     "during the second pass. WARNING: Don't interrupt the script when writing the "
                     "file because it might get corrupted. Set to 0 to turn off"
                 ),
@@ -541,7 +580,8 @@ class ExtractArgs(ExtractConvertArgs):
                 "default": False,
                 "group": _("settings"),
                 "help": _(
-                    "Skips frames that have already been extracted and exist in the alignments file"
+                    "Skips frames that have already been extracted and exist in the alignments "
+                    "file"
                 ),
             }
         )
@@ -552,9 +592,7 @@ class ExtractArgs(ExtractConvertArgs):
                 "dest": "skip_faces",
                 "default": False,
                 "group": _("settings"),
-                "help": _(
-                    "Skip frames that already have detected faces in the alignments file"
-                ),
+                "help": _("Skip frames that already have detected faces in the alignments file"),
             }
         )
         # Deprecated options
@@ -621,9 +659,7 @@ class ConvertArgs(ExtractConvertArgs):
                 "dest": "output_dir",
                 "required": True,
                 "group": _("Data"),
-                "help": _(
-                    "Output directory. This is where the converted files will be saved."
-                ),
+                "help": _("Output directory. This is where the converted files will be saved."),
             }
         )
         argument_list.append(
@@ -636,7 +672,8 @@ class ConvertArgs(ExtractConvertArgs):
                 "group": _("Data"),
                 "help": _(
                     "Only required if converting from images to video. Provide The original video "
-                    "that the source frames were extracted from (for extracting the fps and audio)."
+                    "that the source frames were extracted from (for extracting the fps and "
+                    "audio)."
                 ),
             }
         )
@@ -648,7 +685,8 @@ class ConvertArgs(ExtractConvertArgs):
                 "required": True,
                 "group": _("Data"),
                 "help": _(
-                    "Model directory. The directory containing the trained model you wish to use for "
+                    "Model directory. The directory containing the trained model you wish to use "
+                    "for "
                     "conversion."
                 ),
             }
@@ -664,16 +702,19 @@ class ConvertArgs(ExtractConvertArgs):
                 "group": _("Plugins"),
                 "help": _(
                     "R|Performs color adjustment to the swapped face. Some of these options have "
-                    "configurable settings in '/config/convert.ini' or 'Settings > Configure Convert "
+                    "configurable settings in '/config/convert.ini' or 'Settings > Configure "
+                    "Convert "
                     "Plugins':"
                     "\nL|avg-color: Adjust the mean of each color channel in the swapped "
                     "reconstruction to equal the mean of the masked area in the original image."
                     "\nL|color-transfer: Transfers the color distribution from the source to the "
-                    "target image using the mean and standard deviations of the L*a*b* color space."
+                    "target image using the mean and standard deviations of the L*a*b* color "
+                    "space."
                     "\nL|manual-balance: Manually adjust the balance of the image in a variety of "
                     "color spaces. Best used with the Preview tool to set correct values."
                     "\nL|match-hist: Adjust the histogram of each color channel in the swapped "
-                    "reconstruction to equal the histogram of the masked area in the original image."
+                    "reconstruction to equal the histogram of the masked area in the original "
+                    "image."
                     "\nL|seamless-clone: Use cv2's seamless clone function to remove extreme "
                     "gradients at the mask seam by smoothing colors. Generally does not give very "
                     "satisfactory results."
@@ -699,15 +740,18 @@ class ConvertArgs(ExtractConvertArgs):
                 + ["predicted"],
                 "group": _("Plugins"),
                 "help": _(
-                    "R|Masker to use. NB: The mask you require must exist within the alignments file. "
+                    "R|Masker to use. NB: The mask you require must exist within the alignments "
+                    "file. "
                     "You can add additional masks with the Mask Tool."
                     "\nL|none: Don't use a mask."
                     "\nL|bisenet-fp_face: Relatively lightweight NN based mask that provides more "
-                    "refined control over the area to be masked (configurable in mask settings). Use "
+                    "refined control over the area to be masked (configurable in mask settings). "
+                    "Use "
                     "this version of bisenet-fp if your model is trained with 'face' or "
                     "'legacy' centering."
                     "\nL|bisenet-fp_head: Relatively lightweight NN based mask that provides more "
-                    "refined control over the area to be masked (configurable in mask settings). Use "
+                    "refined control over the area to be masked (configurable in mask settings). "
+                    "Use "
                     "this version of bisenet-fp if your model is trained with 'head' centering."
                     "\nL|custom_face: Custom user created, face centered mask."
                     "\nL|custom_head: Custom user created, head centered mask."
@@ -718,17 +762,21 @@ class ConvertArgs(ExtractConvertArgs):
                     "positioning of landmark locations. A convex hull is constructed around the "
                     "exterior of the landmarks and the mask is extended upwards onto the forehead."
                     "\nL|vgg-clear: Mask designed to provide smart segmentation of mostly frontal "
-                    "faces clear of obstructions. Profile faces and obstructions may result in sub-"
+                    "faces clear of obstructions. Profile faces and obstructions may result in "
+                    "sub-"
                     "par performance."
                     "\nL|vgg-obstructed: Mask designed to provide smart segmentation of mostly "
-                    "frontal faces. The mask model has been specifically trained to recognize some "
-                    "facial obstructions (hands and eyeglasses). Profile faces may result in sub-par "
+                    "frontal faces. The mask model has been specifically trained to recognize some"
+                    " "
+                    "facial obstructions (hands and eyeglasses). Profile faces may result in "
+                    "sub-par "
                     "performance."
                     "\nL|unet-dfl: Mask designed to provide smart segmentation of mostly frontal "
                     "faces. The mask model has been trained by community members and will need "
                     "testing for further description. Profile faces may result in sub-par "
                     "performance."
-                    "\nL|predicted: If the 'Learn Mask' option was enabled during training, this will "
+                    "\nL|predicted: If the 'Learn Mask' option was enabled during training, this "
+                    "will "
                     "use the mask that was created by the trained model."
                 ),
             }
@@ -742,18 +790,23 @@ class ConvertArgs(ExtractConvertArgs):
                 "choices": PluginLoader.get_available_convert_plugins("writer", False),
                 "group": _("Plugins"),
                 "help": _(
-                    "R|The plugin to use to output the converted images. The writers are configurable "
+                    "R|The plugin to use to output the converted images. The writers are "
+                    "configurable "
                     "in '/config/convert.ini' or 'Settings > Configure Convert Plugins:'"
-                    "\nL|ffmpeg: [video] Writes out the convert straight to video. When the input is "
+                    "\nL|ffmpeg: [video] Writes out the convert straight to video. When the input "
+                    "is "
                     "a series of images then the '-ref' (--reference-video) parameter must be set."
                     "\nL|gif: [animated image] Create an animated gif."
-                    "\nL|opencv: [images] The fastest image writer, but less options and formats than "
+                    "\nL|opencv: [images] The fastest image writer, but less options and formats "
+                    "than "
                     "other plugins."
                     "\nL|patch: [images] Outputs the raw swapped face patch, along with the "
                     "transformation matrix required to re-insert the face back into the original "
-                    "frame. Use this option if you wish to post-process and composite the final face "
+                    "frame. Use this option if you wish to post-process and composite the final "
+                    "face "
                     "within external tools."
-                    "\nL|pillow: [images] Slower than opencv, but has more options and supports more "
+                    "\nL|pillow: [images] Slower than opencv, but has more options and supports "
+                    "more "
                     "formats."
                 ),
             }
@@ -769,7 +822,8 @@ class ConvertArgs(ExtractConvertArgs):
                 "default": 100,
                 "group": _("Frame Processing"),
                 "help": _(
-                    "Scale the final output frames by this amount. 100%% will output the frames at "
+                    "Scale the final output frames by this amount. 100%% will output the frames at"
+                    " "
                     "source dimensions. 50%% at half size 200%% at double size"
                 ),
             }
@@ -783,7 +837,8 @@ class ConvertArgs(ExtractConvertArgs):
                 "group": _("Frame Processing"),
                 "help": _(
                     "Frame ranges to apply transfer to e.g. For frames 10 to 50 and 90 to 100 use "
-                    "--frame-ranges 10-50 90-100. Frames falling outside of the selected range will "
+                    "--frame-ranges 10-50 90-100. Frames falling outside of the selected range "
+                    "will "
                     "be discarded unless '-k' (--keep-unchanged) is selected. NB: If you are "
                     "converting from images, then the filenames must end with the frame-number!"
                 ),
@@ -813,10 +868,13 @@ class ConvertArgs(ExtractConvertArgs):
                 "default": None,
                 "group": _("Face Processing"),
                 "help": _(
-                    "If you have not cleansed your alignments file, then you can filter out faces by "
-                    "defining a folder here that contains the faces extracted from your input files/"
+                    "If you have not cleansed your alignments file, then you can filter out faces "
+                    "by "
+                    "defining a folder here that contains the faces extracted from your input "
+                    "files/"
                     "video. If this folder is defined, then only faces that exist within your "
-                    "alignments file and also exist within the specified folder will be converted. "
+                    "alignments file and also exist within the specified folder will be converted."
+                    " "
                     "Leaving this blank will convert all faces that exist within the alignments "
                     "file."
                 ),
@@ -834,8 +892,10 @@ class ConvertArgs(ExtractConvertArgs):
                 "help": _(
                     "Optionally filter out people who you do not wish to process by passing in an "
                     "image of that person. Should be a front portrait with a single person in the "
-                    "image. Multiple images can be added space separated. NB: Using face filter will "
-                    "significantly decrease extraction speed and its accuracy cannot be guaranteed."
+                    "image. Multiple images can be added space separated. NB: Using face filter "
+                    "will "
+                    "significantly decrease extraction speed and its accuracy cannot be "
+                    "guaranteed."
                 ),
             }
         )
@@ -850,8 +910,10 @@ class ConvertArgs(ExtractConvertArgs):
                 "group": _("Face Processing"),
                 "help": _(
                     "Optionally select people you wish to process by passing in an image of that "
-                    "person. Should be a front portrait with a single person in the image. Multiple "
-                    "images can be added space separated. NB: Using face filter will significantly "
+                    "person. Should be a front portrait with a single person in the image. "
+                    "Multiple "
+                    "images can be added space separated. NB: Using face filter will significantly"
+                    " "
                     "decrease extraction speed and its accuracy cannot be guaranteed."
                 ),
             }
@@ -868,7 +930,8 @@ class ConvertArgs(ExtractConvertArgs):
                 "group": _("Face Processing"),
                 "help": _(
                     "For use with the optional nfilter/filter files. Threshold for positive face "
-                    "recognition. Lower values are stricter. NB: Using face filter will significantly "
+                    "recognition. Lower values are stricter. NB: Using face filter will "
+                    "significantly "
                     "decrease extraction speed and its accuracy cannot be guaranteed."
                 ),
             }
@@ -884,10 +947,15 @@ class ConvertArgs(ExtractConvertArgs):
                 "default": 0,
                 "group": _("settings"),
                 "help": _(
-                    "The maximum number of parallel processes for performing conversion. Converting "
-                    "images is system RAM heavy so it is possible to run out of memory if you have a "
-                    "lot of processes and not enough RAM to accommodate them all. Setting this to 0 "
-                    "will use the maximum available. No matter what you set this to, it will never "
+                    "The maximum number of parallel processes for performing conversion. "
+                    "Converting "
+                    "images is system RAM heavy so it is possible to run out of memory if you have"
+                    " "
+                    "a "
+                    "lot of processes and not enough RAM to accommodate them all. Setting this to "
+                    "0 "
+                    "will use the maximum available. No matter what you set this to, it will never"
+                    " "
                     "attempt to use more processes than are available on your system. If "
                     "singleprocess is enabled this setting will be ignored."
                 ),
@@ -929,9 +997,7 @@ class ConvertArgs(ExtractConvertArgs):
                 "dest": "swap_model",
                 "default": False,
                 "group": _("settings"),
-                "help": _(
-                    "Swap the model. Instead converting from of A -> B, converts B -> A"
-                ),
+                "help": _("Swap the model. Instead converting from of A -> B, converts B -> A"),
             }
         )
         argument_list.append(
@@ -940,9 +1006,7 @@ class ConvertArgs(ExtractConvertArgs):
                 "action": "store_true",
                 "default": False,
                 "group": _("settings"),
-                "help": _(
-                    "Disable multiprocessing. Slower but less resource intensive."
-                ),
+                "help": _("Disable multiprocessing. Slower but less resource intensive."),
             }
         )
         return argument_list

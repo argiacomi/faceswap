@@ -2,10 +2,10 @@
 """Pytest unit tests for :mod:`lib.config.ini`"""
 
 import os
+
 import pytest
 
 from lib.config import ini as ini_mod
-
 from tests.lib.config.helpers import FakeConfigItem
 
 # pylint:disable=protected-access,invalid-name
@@ -79,15 +79,15 @@ class FakeConfigSection:  # pylint:disable=too-few-public-methods
     """Fake config section"""
 
     def __init__(self, num_opts=2):
-        self.options = {
-            f"opt{i}": FakeConfigItem(f"test_value{i}") for i in range(num_opts)
-        }
+        self.options = {f"opt{i}": FakeConfigItem(f"test_value{i}") for i in range(num_opts)}
         self.helptext = f"Test helptext for {num_opts} options"
 
 
-def get_local_remote(sections=[2, 1, 3]):  # pylint:disable=dangerous-default-value
+def get_local_remote(sections=None):  # pylint:disable=dangerous-default-value
     """Obtain an object representing inputs to a ConfigParser and a matching object representing
     Faceswap Config"""
+    if sections is None:
+        sections = [2, 1, 3]
     parser_sections = {
         f"section{i}": {f"opt{idx}": f"test_value{idx}" for idx in range(s)}
         for i, s in enumerate(sections)
@@ -324,15 +324,13 @@ _SYNC_TO = ((_ini, _app, "synced"), (_ini_changed, _app, "updated_ini"))
 _SYNC__TO_IDS = [x[-1] for x in _SYNC_TO]
 
 
-@pytest.mark.parametrize(
-    ("ini_config", "app_config", "status"), _SYNC_TO, ids=_SYNC__TO_IDS
-)
+@pytest.mark.parametrize(("ini_config", "app_config", "status"), _SYNC_TO, ids=_SYNC__TO_IDS)
 def testConfigFile_sync_to_app(ini_config, app_config, status, mocker):
     """Test :class:`lib.config.ini.ConfigFile._sync_to_app` logic"""
 
     for sect in app_config.values():  # Add a dummy datatype param to FSConfig
         for opt in sect.options.values():
-            setattr(opt, "datatype", str)
+            opt.datatype = str
 
     instance = ini_mod.ConfigFile("test")
     instance._get_converted_value = mocker.MagicMock(return_value="updated_value")
@@ -345,12 +343,10 @@ def testConfigFile_sync_to_app(ini_config, app_config, status, mocker):
     instance._sync_to_app(app_config)
 
     app_values = {
-        sname: set(v.value for v in sect.options.values())
-        for sname, sect in app_config.items()
+        sname: set(v.value for v in sect.options.values()) for sname, sect in app_config.items()
     }
     sect_values = {
-        sname: set(instance._parser[sname].values())
-        for sname in instance._parser.sections()
+        sname: set(instance._parser[sname].values()) for sname in instance._parser.sections()
     }
 
     if status == "synced":  # No items change

@@ -28,7 +28,6 @@ from lib.config import ConfigItem
 
 from lib.config import ConfigItem
 
-
 HELPTEXT = "Options for manually altering the balance of colors of the swapped face"
 
 
@@ -62,11 +61,7 @@ balance_1 = ConfigItem(
     datatype=float,
     default=0.0,
     group="color balance",
-    info="Balance of channel 1:"
-    "\n\tRGB: Red"
-    "\n\tHSV: Hue"
-    "\n\tLAB: Lightness"
-    "\n\tYCrCb: Luma",
+    info="Balance of channel 1:\n\tRGB: Red\n\tHSV: Hue\n\tLAB: Lightness\n\tYCrCb: Luma",
     rounding=1,
     min_max=(-100.0, 100.0),
 )

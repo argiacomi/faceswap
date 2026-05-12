@@ -7,9 +7,8 @@ import logging
 import os
 import sys
 import typing as T
-from time import sleep
-
 from dataclasses import asdict, dataclass
+from time import sleep
 
 import cv2
 import numpy as np
@@ -24,29 +23,31 @@ from lib.align.aligned_utils import (
     get_adjusted_center,
     get_sub_crop_size,
 )
-from lib.align.objects import AlignmentsEntry, FileAlignments, PNGHeader, PNGSource
-from lib.align.constants import EXTRACT_RATIOS, LandmarkType, MEAN_FACE
+from lib.align.constants import EXTRACT_RATIOS, MEAN_FACE, LandmarkType
 from lib.align.detected_face import DetectedFace
-from lib.align.pose import get_camera_matrix, get_xyz_2d, Batch3D
-from lib.infer import Detect, Align, Identity, Mask, File, Profiler
+from lib.align.objects import AlignmentsEntry, FileAlignments, PNGHeader, PNGSource
+from lib.align.pose import Batch3D, get_camera_matrix, get_xyz_2d
+from lib.image import ImagesLoader, ImagesSaver, encode_image
+from lib.infer import Align, Detect, File, Identity, Mask, Profiler
 from lib.infer.identity import FilterLoader
 from lib.infer.objects import FrameFaces, frame_faces_to_alignment
-from lib.image import encode_image, ImagesLoader, ImagesSaver
 from lib.logger import parse_class_init
 from lib.multithreading import FSThread
 from lib.utils import (
+    IMAGE_EXTENSIONS,
     get_folder,
     get_module_objects,
     handle_deprecated_cli_opts,
-    IMAGE_EXTENSIONS,
 )
 from lib.video import VIDEO_EXTENSIONS
 
 from .fs_media import Alignments, finalize
 
 if T.TYPE_CHECKING:
-    import numpy.typing as npt
     from argparse import Namespace
+
+    import numpy.typing as npt
+
     from lib.align.objects import PNGAlignments
     from lib.infer.runner import ExtractRunner
     from lib.multithreading import ErrorState
@@ -158,8 +159,7 @@ class Extract:
 
         if os.path.isfile(input_location):
             logger.warning(
-                "Batch mode selected but input is not a folder. Switching to normal "
-                "mode"
+                "Batch mode selected but input is not a folder. Switching to normal mode"
             )
             return [input_location]
 
@@ -256,16 +256,14 @@ class Extract:
 
         if not input_locations:
             logger.error(
-                "Batch mode selected, but no valid files found in input location: '%s'. "
-                "Exiting.",
+                "Batch mode selected, but no valid files found in input location: '%s'. Exiting.",
                 args.input_dir,
             )
             sys.exit(1)
 
         if args.alignments_path:
             logger.warning(
-                "Custom alignments path not supported for batch mode. "
-                "Reverting to default."
+                "Custom alignments path not supported for batch mode. Reverting to default."
             )
             args.alignments_path = None
 
@@ -303,26 +301,17 @@ class Extract:
         if arguments.detector == arguments.aligner == "file" and (
             arguments.masker is None and arguments.identity is None
         ):
-            logger.debug(
-                "[Extract] Extracting directly from file. Not saving alignments"
-            )
+            logger.debug("[Extract] Extracting directly from file. Not saving alignments")
             return False
-        if (
-            arguments.detector == arguments.aligner == "file"
-            and arguments.extract_every_n > 1
-        ):
-            logger.warning(
-                "Alignments loaded from file, EEN > 1 and additional plugins selected."
-            )
+        if arguments.detector == arguments.aligner == "file" and arguments.extract_every_n > 1:
+            logger.warning("Alignments loaded from file, EEN > 1 and additional plugins selected.")
             logger.warning(
                 "The extracted faces will contain the additional plugin data, but an "
                 "updated Alignments File will not be saved."
             )
             return False
         if arguments.detector == arguments.aligner == "file":
-            logger.info(
-                "Alignments file will be updated with data from additional plugins"
-            )
+            logger.info("Alignments file will be updated with data from additional plugins")
         return True
 
     def _load_pipeline(self, arguments: Namespace) -> ExtractRunner:  # noqa: C901
@@ -362,9 +351,9 @@ class Extract:
                 )(retval, profile=profile)
             if arguments.masker is not None:
                 for masker in arguments.masker:
-                    retval = Mask(
-                        masker, compile_model=arguments.compile, config_file=conf_file
-                    )(retval, profile=profile)
+                    retval = Mask(masker, compile_model=arguments.compile, config_file=conf_file)(
+                        retval, profile=profile
+                    )
             if arguments.identity:
                 for idx, identity in enumerate(arguments.identity):
                     retval = Identity(
@@ -496,9 +485,7 @@ class Loader:  # pylint:disable=too-many-instance-attributes
             self._ready = True
             return
 
-        skip_een = set(
-            i for i in range(self._images.count) if i % self._extract_every != 0
-        )
+        skip_een = set(i for i in range(self._images.count) if i % self._extract_every != 0)
 
         file_names = (
             [os.path.basename(f) for f in self._images.file_list]
@@ -566,9 +553,7 @@ class Loader:  # pylint:disable=too-many-instance-attributes
                 fname,
             )
             return []
-        retval = [
-            DetectedFace().from_alignment(a) for a in self._alignments[fname].faces
-        ]
+        retval = [DetectedFace().from_alignment(a) for a in self._alignments[fname].faces]
         logger.trace(  # type:ignore[attr-defined]
             "[Extract.Loader] importing %s faces for file '%s'", len(retval), fname
         )
@@ -602,9 +587,7 @@ class Loader:  # pylint:disable=too-many-instance-attributes
         for filename_image in self._images.load():
             filename, image = filename_image[:2]
             faces = self._get_detected_faces(filename)
-            self._pipeline.put(
-                filename, image, source=self.location, detected_faces=faces
-            )
+            self._pipeline.put(filename, image, source=self.location, detected_faces=faces)
         if self.error_state.has_error:
             logger.debug("[Extract.Loader] Thread error OUT detected in worker thread")
             return
@@ -759,14 +742,11 @@ class DebugLandmarks:
             f"distance: {distance:.2f}",
         ]
         colors = [(255, 0, 0), (0, 0, 255), (0, 255, 0), (255, 255, 255)]
-        text_sizes = [
-            cv2.getTextSize(text, self._font, self._font_scale, 1)[0] for text in texts
-        ]
+        text_sizes = [cv2.getTextSize(text, self._font, self._font_scale, 1)[0] for text in texts]
         final_y = self._size - text_sizes[-1][1]
-        pos_y = [
-            (size[1] + self._font_pad) * (idx + 1)
-            for idx, size in enumerate(text_sizes)
-        ][:-1] + [final_y]
+        pos_y = [(size[1] + self._font_pad) * (idx + 1) for idx, size in enumerate(text_sizes)][
+            :-1
+        ] + [final_y]
         pos_x = self._font_pad
         for idx, text in enumerate(texts):
             self._border_text(text_image, text, colors[idx], (pos_x, pos_y[idx]))
@@ -801,24 +781,20 @@ class DebugLandmarks:
         sizes = np.rint(
             1.0 / (self._face_expansion * np.hypot(norm_mats[:, 0], norm_mats[:, 1]))
         ).astype(np.int32)
-        dists = np.abs(aligned.landmarks_normalized[:, 17:] - self._mean_face).mean(
-            axis=(1, 2)
-        )
+        dists = np.abs(aligned.landmarks_normalized[:, 17:] - self._mean_face).mean(axis=(1, 2))
         pry = (
             Batch3D.pitch(aligned.rotation),
             Batch3D.roll(aligned.rotation),
             Batch3D.yaw(aligned.rotation),
         )
-        for idx, (face, lms) in enumerate(zip(faces, landmarks)):
+        for idx, (face, lms) in enumerate(zip(faces, landmarks, strict=False)):
             # Landmarks
             for pos_x, pos_y in lms:
                 cv2.circle(face, (pos_x, pos_y), 1, (0, 255, 255), -1)
             # Pose
             center = (self._size // 2, self._size // 2)
             xyz = (
-                get_xyz_2d(
-                    aligned.rotation[idx], aligned.translation[idx], self._camera_matrix
-                )
+                get_xyz_2d(aligned.rotation[idx], aligned.translation[idx], self._camera_matrix)
                 - aligned.offsets_head[idx]
             )
             points = (xyz * self._size).astype("int32")
@@ -919,9 +895,7 @@ class Output:  # pylint:disable=too-many-instance-attributes
         -------
         The minimum size, in pixels, that a face is resized from to be considered valid
         """
-        retval = (
-            0 if min_scale == 0 else max(4, int(extract_size * (min_scale / 100.0)))
-        )
+        retval = 0 if min_scale == 0 else max(4, int(extract_size * (min_scale / 100.0)))
         logger.debug(
             "[Extract.Output] Extract size: %s, min percentage size: %s, min_size: %s",
             extract_size,
@@ -952,17 +926,13 @@ class Output:  # pylint:disable=too-many-instance-attributes
             logger.debug("[Extract.Output] Single save location: '%s'", out_folder)
             return [out_folder]
         retval = [
-            os.path.join(
-                out_folder, os.path.splitext(os.path.basename(b.loader.location))[0]
-            )
+            os.path.join(out_folder, os.path.splitext(os.path.basename(b.loader.location))[0])
             for b in self._batches
         ]
         logger.debug("[Extract.Output] Save locations: %s", retval)
         return retval
 
-    def _should_output(
-        self, matrices: npt.NDArray[np.float32]
-    ) -> npt.NDArray[np.bool_]:
+    def _should_output(self, matrices: npt.NDArray[np.float32]) -> npt.NDArray[np.bool_]:
         """Test which of the faces should be saved based on the given minimum scale option
 
         Parameters
@@ -977,9 +947,7 @@ class Output:  # pylint:disable=too-many-instance-attributes
         if self._min_size <= 0:
             return np.fromiter((True for _ in range(len(matrices))), dtype=bool)
         linear = matrices[:, :2, 0]
-        sizes = 1.0 / (
-            (1.0 - EXTRACT_RATIOS["face"]) * np.hypot(linear[:, 0], linear[:, 1])
-        )
+        sizes = 1.0 / ((1.0 - EXTRACT_RATIOS["face"]) * np.hypot(linear[:, 0], linear[:, 1]))
         return sizes >= self._min_size
 
     def _save_faces(
@@ -1015,7 +983,7 @@ class Output:  # pylint:disable=too-many-instance-attributes
             return
         split_name = os.path.splitext(basename)[0]
         for idx, (face, data, save) in enumerate(
-            zip(faces, meta, self._should_output(matrices))
+            zip(faces, meta, self._should_output(matrices), strict=False)
         ):
             if not save:
                 self._counts["scale_skip"] += 1
@@ -1069,21 +1037,15 @@ class Output:  # pylint:disable=too-many-instance-attributes
                 self._size,
                 T.cast(int, self._align["padding"]),
             )
-            faces = batch_align(
-                [media.image], image_ids, mats, self._size, fast_upscale=False
-            )
+            faces = batch_align([media.image], image_ids, mats, self._size, fast_upscale=False)
             thumbs = batch_resize(faces, 96)
             if self._debug is not None:
                 self._debug(faces, mats, media)
 
-        thumbnails = [
-            cv2.imencode(".jpg", t, [cv2.IMWRITE_JPEG_QUALITY, 60])[1] for t in thumbs
-        ]
+        thumbnails = [cv2.imencode(".jpg", t, [cv2.IMWRITE_JPEG_QUALITY, 60])[1] for t in thumbs]
         return faces, thumbnails
 
-    def _process_faces(
-        self, media: FrameFaces, alignments: Alignments, is_video: bool
-    ) -> None:
+    def _process_faces(self, media: FrameFaces, alignments: Alignments, is_video: bool) -> None:
         """Process the detected face objects into aligned faces, generate the thumbnails and run
         any post process actions
 
@@ -1111,7 +1073,7 @@ class Output:  # pylint:disable=too-many-instance-attributes
         )
         alignments_faces = [
             FileAlignments(**aln.__dict__, thumb=thumb)
-            for aln, thumb in zip(meta, thumbnails)
+            for aln, thumb in zip(meta, thumbnails, strict=False)
         ]
         alignments.data[basename] = AlignmentsEntry(faces=alignments_faces)
         faces_count = len(media)
@@ -1169,11 +1131,7 @@ class Output:  # pylint:disable=too-many-instance-attributes
             T.cast(bool, self._counts["verify"]),
         )
         self._counts["verify"] = False
-        output = (
-            None
-            if batch_index == len(self._outputs) - 1
-            else self._outputs[batch_index + 1]
-        )
+        output = None if batch_index == len(self._outputs) - 1 else self._outputs[batch_index + 1]
         self._set_saver(output)
         self._counts["faces"] = 0
         self._counts["scale_skip"] = 0
@@ -1186,22 +1144,17 @@ class Output:  # pylint:disable=too-many-instance-attributes
         self._set_saver(self._outputs[0])
         if self._saver is not None and self._min_size > 0:
             logger.info(
-                "Only outputting faces that have been resized from a minimum resolution "
-                "of %spx",
+                "Only outputting faces that have been resized from a minimum resolution of %spx",
                 self._min_size,
             )
 
         for batch_idx, batch in enumerate(self._batches):
-            msg = (
-                f" job {batch_idx + 1} of {total_batches}" if total_batches > 1 else ""
-            )
+            msg = f" job {batch_idx + 1} of {total_batches}" if total_batches > 1 else ""
             logger.info("Processing%s: '%s'", msg, batch.loader.location)
             if self._saver is not None:
                 logger.info("Faces output: '%s'", self._saver.location)
             has_started = False
-            save_interval = (
-                0 if not batch.alignments.save_alignments else self._save_interval
-            )
+            save_interval = 0 if not batch.alignments.save_alignments else self._save_interval
             with tqdm(
                 desc="Extracting faces",
                 total=batch.loader.count,

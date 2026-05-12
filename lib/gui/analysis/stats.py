@@ -7,12 +7,12 @@ the analysis tab) or the currently training session.
 """
 
 from __future__ import annotations
+
 import logging
 import os
 import time
 import typing as T
 import warnings
-
 from math import ceil
 from threading import Event
 
@@ -22,9 +22,8 @@ from lib.logger import parse_class_init
 from lib.serializer import get_serializer
 from lib.utils import get_module_objects
 
-from .moving_average import ExponentialMovingAverage
-
 from .event_reader import TensorBoardLogs
+from .moving_average import ExponentialMovingAverage
 
 logger = logging.getLogger(__name__)
 
@@ -451,9 +450,7 @@ class SessionsSummary:
             "end": end,
             "elapsed": elapsed,
             "rate": (
-                ((batchsize * 2) * timestamps["iterations"]) / elapsed
-                if elapsed != 0
-                else 0
+                ((batchsize * 2) * timestamps["iterations"]) / elapsed if elapsed != 0 else 0
             ),
             "batch": batchsize,
             "iterations": timestamps["iterations"],
@@ -524,9 +521,7 @@ class SessionsSummary:
                 if key not in ("start", "end", "elapsed", "rate"):
                     stats[key] = summary[key]
                     continue
-                stats["start"] = time.strftime(
-                    "%x %X", time.localtime(summary["start"])
-                )
+                stats["start"] = time.strftime("%x %X", time.localtime(summary["start"]))
                 stats["end"] = time.strftime("%x %X", time.localtime(summary["end"]))
                 stats["elapsed"] = f"{hrs}:{mins}:{secs}"
                 stats["rate"] = f"{summary['rate']:.1f}"
@@ -654,9 +649,7 @@ class Calculations:
             The amount of smoothing to apply to smoothed graph
         """
         update = max(min(amount, 0.999), 0.001)
-        logger.debug(
-            "Setting smooth amount to: %s (provided value: %s)", update, amount
-        )
+        logger.debug("Setting smooth amount to: %s (provided value: %s)", update, amount)
         self._args["smooth_amount"] = update
 
     def update_selections(self, selection: str, option: bool) -> None:
@@ -734,8 +727,7 @@ class Calculations:
                     }
                 else:
                     self._stats = {
-                        lossname: loss[: self._iterations]
-                        for lossname, loss in self.stats.items()
+                        lossname: loss[: self._iterations] for lossname, loss in self.stats.items()
                     }
 
         else:  # Rate calculation
@@ -878,9 +870,7 @@ class Calculations:
         avgs = np.cumsum(np.nan_to_num(data), dtype="float64")
         avgs[window:] = avgs[window:] - avgs[:-window]
         avgs = avgs[window - 1 :] / window
-        avgs = np.pad(
-            avgs, (pad, datapoints - (avgs.shape[0] + pad)), constant_values=(np.nan,)
-        )
+        avgs = np.pad(avgs, (pad, datapoints - (avgs.shape[0] + pad)), constant_values=(np.nan,))
         logger.debug("Calculated Average: shape: %s", avgs.shape)
         return avgs
 

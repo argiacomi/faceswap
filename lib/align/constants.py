@@ -48,9 +48,7 @@ class LandmarkType(Enum):
             (26, 3): cls.LM_3D_26,
         }
         if shape not in shapes:
-            raise ValueError(
-                f"The given shape {shape} is not valid. Valid shapes: {list(shapes)}"
-            )
+            raise ValueError(f"The given shape {shape} is not valid. Valid shapes: {list(shapes)}")
         return shapes[shape]
 
 

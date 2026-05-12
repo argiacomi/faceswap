@@ -8,18 +8,19 @@ import os
 import typing as T
 
 from lib.align.objects import PNGHeader
-from lib.image import encode_image, ImagesSaver
+from lib.image import ImagesSaver, encode_image
+from lib.infer import Mask
 from lib.logger import parse_class_init
 from lib.multithreading import FSThread
 from lib.utils import get_module_objects
-from lib.infer import Mask
 
 if T.TYPE_CHECKING:
     from lib import align
     from lib.align import DetectedFace
+    from lib.infer.handler import ExtractHandlerFace
     from lib.infer.objects import FrameFaces
     from lib.infer.runner import ExtractRunner
-    from lib.infer.handler import ExtractHandlerFace
+
     from . import loader
 
 
@@ -65,9 +66,7 @@ class MaskGenerator:
         )
         self._mask_type = self._extractor.handler.plugin.storage_name
         self._input_thread = self._set_loader_thread(loader)
-        self._saver = (
-            ImagesSaver(input_location, as_bytes=True) if input_is_faces else None
-        )
+        self._saver = ImagesSaver(input_location, as_bytes=True) if input_is_faces else None
 
         self._counts: dict[T.Literal["face", "update"], int] = {"face": 0, "update": 0}
 
@@ -128,9 +127,7 @@ class MaskGenerator:
                 # a mask where there are multiple faces we process all faces again for any frames
                 # which have missing masks.
                 needs_update = any(
-                    self._needs_update(
-                        os.path.basename(media.filename), idx, detected_face
-                    )
+                    self._needs_update(os.path.basename(media.filename), idx, detected_face)
                     for idx, detected_face in enumerate(media.detected_faces)
                 )
 
@@ -222,9 +219,7 @@ class MaskGenerator:
             self._saver.close()
 
         if self._counts["update"] == 0:
-            logger.warning(
-                "No masks were updated of the %s faces seen", self._counts["face"]
-            )
+            logger.warning("No masks were updated of the %s faces seen", self._counts["face"])
         else:
             logger.info(
                 "Updated masks for %s faces of %s",

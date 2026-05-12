@@ -6,9 +6,9 @@ fallback to opencv's imshow
 """
 
 from __future__ import annotations
+
 import logging
 import typing as T
-
 from threading import Event, Lock
 from time import sleep
 
@@ -18,12 +18,11 @@ from lib.utils import get_module_objects
 
 if T.TYPE_CHECKING:
     from collections.abc import Generator
+
     import numpy as np
 
 logger = logging.getLogger(__name__)
-TriggerType = dict[
-    T.Literal["toggle_mask", "refresh", "save", "quit", "shutdown"], Event
-]
+TriggerType = dict[T.Literal["toggle_mask", "refresh", "save", "quit", "shutdown"], Event]
 TriggerKeysType = T.Literal["m", "r", "s", "enter"]
 TriggerNamesType = T.Literal["toggle_mask", "refresh", "save", "quit"]
 
@@ -85,12 +84,8 @@ class PreviewBase:  # pylint:disable=too-few-public-methods
         Default: `None`
     """
 
-    def __init__(
-        self, preview_buffer: PreviewBuffer, triggers: TriggerType | None = None
-    ) -> None:
-        logger.debug(
-            "Initializing %s parent (triggers: %s)", self.__class__.__name__, triggers
-        )
+    def __init__(self, preview_buffer: PreviewBuffer, triggers: TriggerType | None = None) -> None:
+        logger.debug("Initializing %s parent (triggers: %s)", self.__class__.__name__, triggers)
         self._triggers = triggers
         self._buffer = preview_buffer
         self._keymaps: dict[TriggerKeysType, TriggerNamesType] = {
@@ -149,9 +144,7 @@ class PreviewCV(PreviewBase):  # pylint:disable=too-few-public-methods
         self._triggers: TriggerType = self._triggers
         self._windows: list[str] = []
 
-        self._lookup = {
-            ord(key): val for key, val in self._keymaps.items() if key != "enter"
-        }
+        self._lookup = {ord(key): val for key, val in self._keymaps.items() if key != "enter"}
         self._lookup[ord("\n")] = self._keymaps["enter"]
         self._lookup[ord("\r")] = self._keymaps["enter"]
 
@@ -160,10 +153,7 @@ class PreviewCV(PreviewBase):  # pylint:disable=too-few-public-methods
     @property
     def _window_closed(self) -> bool:
         """bool: ``True`` if any window has been closed otherwise ``False``"""
-        retval = any(
-            cv2.getWindowProperty(win, cv2.WND_PROP_VISIBLE) < 1
-            for win in self._windows
-        )
+        retval = any(cv2.getWindowProperty(win, cv2.WND_PROP_VISIBLE) < 1 for win in self._windows)
         if retval:
             logger.debug("Window closed detected")
         return retval
@@ -185,9 +175,7 @@ class PreviewCV(PreviewBase):  # pylint:disable=too-few-public-methods
             logger.info("Refresh preview requested...")
 
         self._triggers[self._lookup[key]].set()
-        logger.debug(
-            "Processed keypress '%s'. Set event for '%s'", key, self._lookup[key]
-        )
+        logger.debug("Processed keypress '%s'. Set event for '%s'", key, self._lookup[key])
 
     def _display_preview(self):
         """Handle the displaying of the images currently in :attr:`_preview_buffer`"""

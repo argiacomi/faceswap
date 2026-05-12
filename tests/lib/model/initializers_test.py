@@ -4,10 +4,10 @@
 Adapted from Keras tests.
 """
 
-import pytest
 import numpy as np
-
-from keras import device, initializers as k_initializers, Variable
+import pytest
+from keras import Variable, device
+from keras import initializers as k_initializers
 
 from lib.model import initializers
 from lib.utils import get_backend
@@ -16,9 +16,7 @@ CONV_SHAPE = (3, 3, 256, 2048)
 CONV_ID = get_backend().upper()
 
 
-def _runner(
-    init, shape, target_mean=None, target_std=None, target_max=None, target_min=None
-):
+def _runner(init, shape, target_mean=None, target_std=None, target_max=None, target_min=None):
     with device("cpu"):
         variable = Variable(init(shape))
     output = variable.numpy()

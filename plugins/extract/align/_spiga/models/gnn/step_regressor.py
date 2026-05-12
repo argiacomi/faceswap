@@ -1,12 +1,14 @@
 import torch.nn as nn
 
-from .layers import MLP
 from .gat import GAT
+from .layers import MLP
 
 
 class StepRegressor(nn.Module):
-    def __init__(self, input_dim: int, feature_dim: int, nstack=4, decoding=[256, 128, 64, 32]):
-        super(StepRegressor, self).__init__()
+    def __init__(self, input_dim: int, feature_dim: int, nstack=4, decoding=None):
+        if decoding is None:
+            decoding = [256, 128, 64, 32]
+        super().__init__()
         assert nstack > 0
         self.nstack = nstack
         self.gat = nn.ModuleList([GAT(input_dim, feature_dim, 4)])
@@ -14,7 +16,9 @@ class StepRegressor(nn.Module):
             self.gat.append(GAT(feature_dim, feature_dim, 4))
         self.decoder = OffsetDecoder(feature_dim, decoding)
 
-    def forward(self, embedded, prob_list=[]):
+    def forward(self, embedded, prob_list=None):
+        if prob_list is None:
+            prob_list = []
         embedded = embedded.transpose(-1, -2)
         for i in range(self.nstack):
             embedded, prob = self.gat[i](embedded)

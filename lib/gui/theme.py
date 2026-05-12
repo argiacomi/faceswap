@@ -69,10 +69,7 @@ class Style:
         # Console
         theme = self._user_theme["console"]
         console_sbar = tuple(
-            tuple(
-                theme[f"scrollbar_{area}_{state}"]
-                for state in ("normal", "disabled", "active")
-            )
+            tuple(theme[f"scrollbar_{area}_{state}"] for state in ("normal", "disabled", "active"))
             for area in ("background", "foreground", "border")
         )
         self._widgets.scrollbar(
@@ -97,9 +94,7 @@ class Style:
         self._root.option_add("*Menu.foreground", _DROPDOWN_TEXT_COLOR)
         self._root.option_add("*Menu.selectForeground", _DROPDOWN_TEXT_COLOR)
         self._root.option_add("*TCombobox*Listbox.foreground", _DROPDOWN_TEXT_COLOR)
-        self._root.option_add(
-            "*TCombobox*Listbox.selectForeground", _DROPDOWN_TEXT_COLOR
-        )
+        self._root.option_add("*TCombobox*Listbox.selectForeground", _DROPDOWN_TEXT_COLOR)
         self._root.option_add("*Entry.foreground", _PANEL_TEXT_COLOR)
         self._root.option_add("*Entry.insertBackground", _PANEL_TEXT_COLOR)
 
@@ -139,15 +134,13 @@ class Style:
             "section": theme["tree_subheader"],
             "option": theme["tree_unselected"],
         }
-        setattr(ttk.Treeview, "_faceswap_config_nav_colors", colors)
+        ttk.Treeview._faceswap_config_nav_colors = colors
 
         if getattr(ttk.Treeview, "_faceswap_config_nav_patched", False):
             return
 
         original_tag_configure = ttk.Treeview.tag_configure
-        setattr(
-            ttk.Treeview, "_faceswap_original_tag_configure", original_tag_configure
-        )
+        ttk.Treeview._faceswap_original_tag_configure = original_tag_configure
 
         def tag_configure(treeview, tagname, option=None, **kw):
             if option is None and treeview.cget("style") == "ConfigNav.Treeview":
@@ -158,7 +151,7 @@ class Style:
             return original_tag_configure(treeview, tagname, option=option, **kw)
 
         ttk.Treeview.tag_configure = tag_configure
-        setattr(ttk.Treeview, "_faceswap_config_nav_patched", True)
+        ttk.Treeview._faceswap_config_nav_patched = True
 
     def _config_settings_group(self):
         """Configures the style of the control panel entry boxes. Used for inputting Faceswap
@@ -423,9 +416,7 @@ class _Widgets:
             The hex code for the border of the frame
         """
         self._style.element_create(f"{key}.Frame.border", "from", "alt")
-        self._style.layout(
-            f"{key}.TFrame", [(f"{key}.Frame.border", {"sticky": "nswe"})]
-        )
+        self._style.layout(f"{key}.TFrame", [(f"{key}.Frame.border", {"sticky": "nswe"})])
         self._style.configure(
             f"{key}.TFrame",
             background=background,
@@ -455,8 +446,7 @@ class _Widgets:
         self._style.element_create(f"{key}.Notebook.client", "image", client, border=1)
 
         tabs = [
-            self._images.get_image((8, 8), color)
-            for color in (tab_color, tab_selected, tab_hover)
+            self._images.get_image((8, 8), color) for color in (tab_color, tab_selected, tab_hover)
         ]
 
         self._style.element_create(
@@ -469,9 +459,7 @@ class _Widgets:
             border=3,
         )
 
-        self._style.layout(
-            f"{key}.TNotebook", [(f"{key}.Notebook.client", {"sticky": "nswe"})]
-        )
+        self._style.layout(f"{key}.TNotebook", [(f"{key}.Notebook.client", {"sticky": "nswe"})])
         self._style.layout(
             f"{key}.TNotebook.Tab",
             [
@@ -509,9 +497,7 @@ class _Widgets:
         )
 
         self._style.configure(f"{key}.TNotebook", tabmargins=(0, 2, 0, 0))
-        self._style.configure(
-            f"{key}.TNotebook.Tab", padding=(6, 2, 6, 2), expand=(0, 0, 2)
-        )
+        self._style.configure(f"{key}.TNotebook.Tab", padding=(6, 2, 6, 2), expand=(0, 0, 2))
         self._style.configure(f"{key}.TNotebook.Tab", expand=("selected", (1, 2, 4, 2)))
 
     def scrollbar(
@@ -831,10 +817,7 @@ class _TkImage:
         self._cache.append(image)
 
         pixels = "} {".join(
-            " ".join(
-                foreground if pxl == 1 else border if pxl == 2 else background
-                for pxl in row
-            )
+            " ".join(foreground if pxl == 1 else border if pxl == 2 else background for pxl in row)
             for row in pattern
         )
         image.put("{" + pixels + "}")

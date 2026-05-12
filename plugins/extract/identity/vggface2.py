@@ -2,16 +2,17 @@
 """VGGFace inference"""
 
 from __future__ import annotations
+
 import logging
 import typing as T
 
 import numpy as np
-
 from torch import nn
 from torch.nn import functional as F
 
-from lib.utils import get_module_objects, GetModel
+from lib.utils import GetModel, get_module_objects
 from plugins.extract.base import FacePlugin
+
 from . import vggface2_defaults as cfg
 
 if T.TYPE_CHECKING:
@@ -110,18 +111,12 @@ class ConvBlock(nn.Module):
         The stride length for the first and last convolution
     """
 
-    def __init__(
-        self, in_channels: int, filters: int, kernel: int, stride: int = 2
-    ) -> None:
+    def __init__(self, in_channels: int, filters: int, kernel: int, stride: int = 2) -> None:
         super().__init__()
         bottleneck = filters // 4
-        self.reduce_conv = nn.Conv2d(
-            in_channels, bottleneck, 1, stride=stride, bias=False
-        )
+        self.reduce_conv = nn.Conv2d(in_channels, bottleneck, 1, stride=stride, bias=False)
         self.reduce_bn = nn.BatchNorm2d(bottleneck, eps=0.001, momentum=0.01)
-        self.conv = nn.Conv2d(
-            bottleneck, bottleneck, kernel, stride=1, padding=1, bias=False
-        )
+        self.conv = nn.Conv2d(bottleneck, bottleneck, kernel, stride=1, padding=1, bias=False)
         self.bn = nn.BatchNorm2d(bottleneck, eps=0.001, momentum=0.01)
         self.increase_conv = nn.Conv2d(bottleneck, filters, 1, stride=1, bias=False)
         self.increase_bn = nn.BatchNorm2d(filters, eps=0.001, momentum=0.01)

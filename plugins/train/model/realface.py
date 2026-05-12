@@ -11,13 +11,15 @@ Additional thanks: Birb - source of inspiration, great Encoder ideas
 import logging
 import sys
 
-from keras import initializers, Input, layers, Model as KModel
+from keras import Input, initializers, layers
+from keras import Model as KModel
 
-from lib.model.nn_blocks import Conv2DOutput, Conv2DBlock, ResidualBlock, UpscaleBlock
+from lib.model.nn_blocks import Conv2DBlock, Conv2DOutput, ResidualBlock, UpscaleBlock
 from plugins.train.train_config import Loss as cfg_loss
 
-from ._base import ModelBase
 from . import realface_defaults as cfg
+from ._base import ModelBase
+
 # pylint:disable=duplicate-code
 
 logger = logging.getLogger(__name__)
@@ -52,14 +54,12 @@ class Model(ModelBase):
         """Confirm valid input and output sized have been provided"""
         if not 64 <= cfg.input_size() <= 128 or cfg.input_size() % 16 != 0:
             logger.error(
-                "Config error: input_size must be between 64 and 128 and be divisible by "
-                "16."
+                "Config error: input_size must be between 64 and 128 and be divisible by 16."
             )
             sys.exit(1)
         if not 64 <= cfg.output_size() <= 256 or cfg.output_size() % 32 != 0:
             logger.error(
-                "Config error: output_size must be between 64 and 256 and be divisible "
-                "by 32."
+                "Config error: output_size must be between 64 and 256 and be divisible by 32."
             )
             sys.exit(1)
         logger.debug("Input and output sizes are valid")
@@ -102,9 +102,7 @@ class Model(ModelBase):
             var_x = ResidualBlock(encoder_complexity * 2**idx, use_bias=True)(var_x)
             var_x = ResidualBlock(encoder_complexity * 2**idx, use_bias=True)(var_x)
 
-        var_x = Conv2DBlock(
-            encoder_complexity * 2 ** (idx + 1), activation="leakyrelu"
-        )(var_x)
+        var_x = Conv2DBlock(encoder_complexity * 2 ** (idx + 1), activation="leakyrelu")(var_x)
 
         return KModel(input_, var_x, name="encoder")
 
@@ -117,12 +115,8 @@ class Model(ModelBase):
         var_xy = input_
 
         var_xy = layers.Dense(cfg.dense_nodes())(layers.Flatten()(var_xy))
-        var_xy = layers.Dense(self.dense_width * self.dense_width * self.dense_filters)(
-            var_xy
-        )
-        var_xy = layers.Reshape(
-            (self.dense_width, self.dense_width, self.dense_filters)
-        )(var_xy)
+        var_xy = layers.Dense(self.dense_width * self.dense_width * self.dense_filters)(var_xy)
+        var_xy = layers.Reshape((self.dense_width, self.dense_width, self.dense_filters))(var_xy)
         var_xy = UpscaleBlock(self.dense_filters, activation=None)(var_xy)
 
         var_x = var_xy
@@ -135,9 +129,7 @@ class Model(ModelBase):
             var_x = layers.LeakyReLU(negative_slope=0.2)(var_x)
             var_x = ResidualBlock(decoder_b_complexity // 2**idx, use_bias=False)(var_x)
             var_x = ResidualBlock(decoder_b_complexity // 2**idx, use_bias=True)(var_x)
-        var_x = UpscaleBlock(
-            decoder_b_complexity // 2 ** (idx + 1), activation="leakyrelu"
-        )(var_x)
+        var_x = UpscaleBlock(decoder_b_complexity // 2 ** (idx + 1), activation="leakyrelu")(var_x)
 
         var_x = Conv2DOutput(3, 5, name="face_out_b")(var_x)
 
@@ -149,12 +141,10 @@ class Model(ModelBase):
 
             mask_b_complexity = 384
             for idx in range(self.upscalers_no - 2):
-                var_y = UpscaleBlock(
-                    mask_b_complexity // 2**idx, activation="leakyrelu"
-                )(var_y)
-            var_y = UpscaleBlock(
-                mask_b_complexity // 2 ** (idx + 1), activation="leakyrelu"
-            )(var_y)
+                var_y = UpscaleBlock(mask_b_complexity // 2**idx, activation="leakyrelu")(var_y)
+            var_y = UpscaleBlock(mask_b_complexity // 2 ** (idx + 1), activation="leakyrelu")(
+                var_y
+            )
 
             var_y = Conv2DOutput(1, 5, name="mask_out_b")(var_y)
 
@@ -174,12 +164,8 @@ class Model(ModelBase):
         dense_filters = int(self.dense_filters / 1.5)
 
         var_xy = layers.Dense(dense_nodes)(layers.Flatten()(var_xy))
-        var_xy = layers.Dense(self.dense_width * self.dense_width * dense_filters)(
-            var_xy
-        )
-        var_xy = layers.Reshape((self.dense_width, self.dense_width, dense_filters))(
-            var_xy
-        )
+        var_xy = layers.Dense(self.dense_width * self.dense_width * dense_filters)(var_xy)
+        var_xy = layers.Reshape((self.dense_width, self.dense_width, dense_filters))(var_xy)
 
         var_xy = UpscaleBlock(dense_filters, activation=None)(var_xy)
 
@@ -189,12 +175,8 @@ class Model(ModelBase):
 
         decoder_a_complexity = int(cfg.complexity_decoder() / 1.5)
         for idx in range(self.upscalers_no - 2):
-            var_x = UpscaleBlock(
-                decoder_a_complexity // 2**idx, activation="leakyrelu"
-            )(var_x)
-        var_x = UpscaleBlock(
-            decoder_a_complexity // 2 ** (idx + 1), activation="leakyrelu"
-        )(var_x)
+            var_x = UpscaleBlock(decoder_a_complexity // 2**idx, activation="leakyrelu")(var_x)
+        var_x = UpscaleBlock(decoder_a_complexity // 2 ** (idx + 1), activation="leakyrelu")(var_x)
 
         var_x = Conv2DOutput(3, 5, name="face_out_a")(var_x)
 
@@ -206,12 +188,10 @@ class Model(ModelBase):
 
             mask_a_complexity = 384
             for idx in range(self.upscalers_no - 2):
-                var_y = UpscaleBlock(
-                    mask_a_complexity // 2**idx, activation="leakyrelu"
-                )(var_y)
-            var_y = UpscaleBlock(
-                mask_a_complexity // 2 ** (idx + 1), activation="leakyrelu"
-            )(var_y)
+                var_y = UpscaleBlock(mask_a_complexity // 2**idx, activation="leakyrelu")(var_y)
+            var_y = UpscaleBlock(mask_a_complexity // 2 ** (idx + 1), activation="leakyrelu")(
+                var_y
+            )
 
             var_y = Conv2DOutput(1, 5, name="mask_out_a")(var_y)
 

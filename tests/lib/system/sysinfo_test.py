@@ -3,7 +3,6 @@
 
 import platform
 import typing as T
-
 from collections import namedtuple
 from io import StringIO
 from unittest.mock import MagicMock
@@ -13,8 +12,8 @@ import pytest_mock
 
 # pylint:disable=import-error
 from lib.gpu_stats import GPUInfo
-from lib.system.sysinfo import _Configs, _State, _SysInfo, get_sysinfo
 from lib.system import Cuda, Packages, ROCm, System
+from lib.system.sysinfo import _Configs, _State, _SysInfo, get_sysinfo
 
 # pylint:disable=protected-access
 
@@ -91,9 +90,7 @@ def test_get_gpu_info(sys_info_instance: _SysInfo) -> None:
     assert isinstance(gpu_info, GPUInfo)
 
 
-def test__format_ram(
-    sys_info_instance: _SysInfo, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test__format_ram(sys_info_instance: _SysInfo, monkeypatch: pytest.MonkeyPatch) -> None:
     """Test the _format_ram method of :class:`lib.system.sysinfo._SysInfo`"""
     assert hasattr(sys_info_instance, "_format_ram")
     svmem = namedtuple("svmem", ["available", "free", "total", "used"])
@@ -193,9 +190,7 @@ def test__configs__parse_configs(
     assert configs_instance._parse_json.called
 
 
-def test__configs__parse_ini(
-    configs_instance: _Configs, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test__configs__parse_ini(configs_instance: _Configs, monkeypatch: pytest.MonkeyPatch) -> None:
     """Test _parse_ini function for :class:`~lib.utils.sysinfo._Configs`"""
     assert hasattr(configs_instance, "_parse_ini")
 
@@ -207,9 +202,7 @@ def test__configs__parse_ini(
     assert converted == ("\n[test.ini_header]\nparam:                    value\n")
 
 
-def test__configs__parse_json(
-    configs_instance: _Configs, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test__configs__parse_json(configs_instance: _Configs, monkeypatch: pytest.MonkeyPatch) -> None:
     """Test _parse_json function for :class:`~lib.utils.sysinfo._Configs`"""
     assert hasattr(configs_instance, "_parse_json")
     file = '{"test": "param"}'
@@ -246,9 +239,7 @@ def test__state__init__(state_instance: _State) -> None:
     assert isinstance(state_instance.state_file, str)
 
 
-def test__state__is_training(
-    state_instance: _State, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test__state__is_training(state_instance: _State, monkeypatch: pytest.MonkeyPatch) -> None:
     """Test _is_training function for :class:`~lib.utils.sysinfo._State`"""
     assert hasattr(state_instance, "_is_training")
     assert isinstance(state_instance._is_training, bool)
@@ -259,9 +250,7 @@ def test__state__is_training(
     assert not state_instance._is_training
 
 
-def test__state__get_arg(
-    state_instance: _State, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test__state__get_arg(state_instance: _State, monkeypatch: pytest.MonkeyPatch) -> None:
     """Test _get_arg function for :class:`~lib.utils.sysinfo._State`"""
     assert hasattr(state_instance, "_get_arg")
     assert state_instance._get_arg("-t", "--test_arg") is None

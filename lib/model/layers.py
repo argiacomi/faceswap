@@ -379,9 +379,7 @@ class PixelShuffler(Layer):  # pylint:disable=too-many-ancestors,abstract-method
             o_height, o_width = height * r_height, width * r_width
             o_channels = channels // (r_height * r_width)
 
-            out = ops.reshape(
-                inputs, (batch_size, r_height, r_width, o_channels, height, width)
-            )
+            out = ops.reshape(inputs, (batch_size, r_height, r_width, o_channels, height, width))
             out = ops.transpose(out, (0, 3, 4, 1, 5, 2))
             out = ops.reshape(out, (batch_size, o_channels, o_height, o_width))
         elif self.data_format == "channels_last":
@@ -393,9 +391,7 @@ class PixelShuffler(Layer):  # pylint:disable=too-many-ancestors,abstract-method
             o_height, o_width = height * r_height, width * r_width
             o_channels = channels // (r_height * r_width)
 
-            out = ops.reshape(
-                inputs, (batch_size, height, width, r_height, r_width, o_channels)
-            )
+            out = ops.reshape(inputs, (batch_size, height, width, r_height, r_width, o_channels))
             out = ops.transpose(out, (0, 1, 3, 2, 4, 5))
             out = ops.reshape(out, (batch_size, o_height, o_width, o_channels))
         assert out is not None

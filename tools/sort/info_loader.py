@@ -43,9 +43,7 @@ class InfoLoader:
         the image and the alignment data with the filename
     """
 
-    def __init__(
-        self, input_dir: str, info_type: T.Literal["face", "meta", "all"]
-    ) -> None:
+    def __init__(self, input_dir: str, info_type: T.Literal["face", "meta", "all"]) -> None:
         logger.debug(
             "Initializing: %s (input_dir: %s, info_type: %s)",
             self.__class__.__name__,
@@ -55,9 +53,7 @@ class InfoLoader:
         self._info_type = info_type
         self._iterator = None
         self._description = "Reading image statistics..."
-        self._loader = (
-            ImagesLoader(input_dir) if info_type == "face" else FacesLoader(input_dir)
-        )
+        self._loader = ImagesLoader(input_dir) if info_type == "face" else FacesLoader(input_dir)
         self.cached_source_data: dict[str, PNGSource] = {}
         """The source data read from the PNG header for each processed face"""
         if self._loader.count == 0:
@@ -215,12 +211,8 @@ class InfoLoader:
         if vers < 2.2:
             return
 
-        self.cached_source_data[filename].alignments_version = (
-            2.3 if vers == 2.2 else vers
-        )
-        header = PNGHeader(
-            alignments=alignments, source=self.cached_source_data[filename]
-        )
+        self.cached_source_data[filename].alignments_version = 2.3 if vers == 2.2 else vers
+        header = PNGHeader(alignments=alignments, source=self.cached_source_data[filename])
         update_existing_metadata(filename, header)
 
 

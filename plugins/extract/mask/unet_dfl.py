@@ -23,8 +23,9 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from lib.utils import get_module_objects, GetModel
+from lib.utils import GetModel, get_module_objects
 from plugins.extract.base import FacePlugin
+
 from . import unet_dfl_defaults as cfg
 
 if T.TYPE_CHECKING:
@@ -92,9 +93,7 @@ class ConvBlock(nn.Module):
         super().__init__()
         layers = [nn.Conv2d(in_channels, filters, 3, padding=1), nn.ReLU(inplace=True)]
         for _ in range(recursions - 1):
-            layers.extend(
-                [nn.Conv2d(filters, filters, 3, padding=1), nn.ReLU(inplace=True)]
-            )
+            layers.extend([nn.Conv2d(filters, filters, 3, padding=1), nn.ReLU(inplace=True)])
         self.convs = nn.Sequential(*layers)
 
     def forward(self, inputs: Tensor) -> Tensor:

@@ -45,9 +45,7 @@ class Dark:
         coords
             The derived points from the heatmaps (B, N, 2)
         """
-        assert isinstance(batch_heatmaps, np.ndarray), (
-            "batch_heatmaps should be numpy.ndarray"
-        )
+        assert isinstance(batch_heatmaps, np.ndarray), "batch_heatmaps should be numpy.ndarray"
         assert batch_heatmaps.ndim == 4, "batch_images should be 4-ndim"
 
         batch = batch_heatmaps.shape[0]
@@ -98,10 +96,7 @@ class Dark:
             self._size + 2 * self._border,
         )
         blurred = np.stack(
-            [
-                cv2.GaussianBlur(img, (self._blur_kernel, self._blur_kernel), 0)
-                for img in reshaped
-            ]
+            [cv2.GaussianBlur(img, (self._blur_kernel, self._blur_kernel), 0) for img in reshaped]
         )
         blurred = blurred.reshape(
             batch_size,
@@ -109,9 +104,7 @@ class Dark:
             self._size + 2 * self._border,
             self._size + 2 * self._border,
         )
-        cropped = blurred[
-            :, :, self._border : -self._border, self._border : -self._border
-        ]
+        cropped = blurred[:, :, self._border : -self._border, self._border : -self._border]
         new_max = cropped.reshape(batch_size, self._num_points, -1).max(axis=2)
         scale = origin_max / (new_max + 1e-8)  # avoid division by zero
         scale = scale[:, :, None, None]

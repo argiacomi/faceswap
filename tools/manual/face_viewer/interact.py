@@ -2,6 +2,7 @@
 """Handles the viewport area for mouse hover actions and the active frame"""
 
 from __future__ import annotations
+
 import logging
 import tkinter as tk
 import typing as T
@@ -14,6 +15,7 @@ from lib.utils import get_module_objects
 
 if T.TYPE_CHECKING:
     from lib.align import DetectedFace
+
     from .viewport import Viewport
 
 logger = logging.getLogger(__name__)
@@ -73,9 +75,7 @@ class HoverBox:
             mouse event) then the location of the cursor will be calculated
         """
         if event is None:
-            pnts = np.array(
-                (self._canvas.winfo_pointerx(), self._canvas.winfo_pointery())
-            )
+            pnts = np.array((self._canvas.winfo_pointerx(), self._canvas.winfo_pointery()))
             pnts -= np.array((self._canvas.winfo_rootx(), self._canvas.winfo_rooty()))
         else:
             pnts = np.array((event.x, event.y))
@@ -87,10 +87,7 @@ class HoverBox:
         face = self._viewport.face_from_point(*coords)
         frame_idx, face_idx = face[:2]
 
-        if (
-            frame_idx == self._current_frame_index
-            and face_idx == self._current_face_index
-        ):
+        if frame_idx == self._current_frame_index and face_idx == self._current_face_index:
             return
 
         is_zoomed = self._globals.is_zoomed
@@ -140,9 +137,7 @@ class HoverBox:
             frame_id,
             is_zoomed,
         )
-        if frame_id is None or (
-            frame_id == self._globals.frame_index and not is_zoomed
-        ):
+        if frame_id is None or (frame_id == self._globals.frame_index and not is_zoomed):
             return
         face_idx = self._current_face_index if is_zoomed else 0
         self._globals.set_face_index(face_idx)
@@ -293,10 +288,7 @@ class ActiveFrame:
             self._canvas.itemconfig(tag, **self._viewport.mesh_kwargs[key], width=1)
             self._canvas.dtag(tag)
 
-        if (
-            self._viewport.selected_editor == "mask"
-            and not self._optional_annotations["mask"]
-        ):
+        if self._viewport.selected_editor == "mask" and not self._optional_annotations["mask"]:
             for name, tk_face in self._tk_faces.items():
                 if name.startswith(f"{self._last_execution['frame_index']}_"):
                     tk_face.update_mask(None)
@@ -410,6 +402,7 @@ class ActiveFrame:
                 self._assets.meshes,
                 self._assets.boxes,
                 self._assets.faces,
+                strict=False,
             )
         ):
             if det_face is None:
@@ -474,9 +467,10 @@ class ActiveFrame:
         }
 
         assert isinstance(self._tk_vars["edited"], tk.BooleanVar)
-        edited = self._tk_vars["edited"].get() and self._tk_vars[
-            "selected_editor"
-        ].get() not in ("Mask", "View")
+        edited = self._tk_vars["edited"].get() and self._tk_vars["selected_editor"].get() not in (
+            "Mask",
+            "View",
+        )
         landmarks = self._viewport.get_landmarks(
             self.frame_index, face_index, detected_face, top_left, edited
         )

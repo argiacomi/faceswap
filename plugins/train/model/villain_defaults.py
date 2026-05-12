@@ -29,7 +29,6 @@ from lib.config import ConfigItem
 # pylint:disable=duplicate-code
 from lib.config import ConfigItem
 
-
 HELPTEXT = (
     "A Higher resolution version of the Original Model by VillainGuy.\n"
     "Extremely VRAM heavy. Don't try to run this if you have a small GPU.\n"

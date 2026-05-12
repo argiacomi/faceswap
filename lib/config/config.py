@@ -9,14 +9,12 @@ import logging
 import os
 import sys
 import typing as T
-
 from importlib import import_module
 
-from lib.utils import full_path_split, get_module_objects, PROJECT_ROOT
+from lib.utils import PROJECT_ROOT, full_path_split, get_module_objects
 
 from .ini import ConfigFile
 from .objects import ConfigItem, ConfigSection, GlobalSection
-
 
 logger = logging.getLogger(__name__)
 
@@ -134,9 +132,7 @@ class FaceswapConfig:
             The folder to scan for plugins
         """
         for dirpath, _, filenames in os.walk(plugin_folder):
-            default_files = [
-                fname for fname in filenames if fname.endswith("_defaults.py")
-            ]
+            default_files = [fname for fname in filenames if fname.endswith("_defaults.py")]
             if not default_files:
                 continue
             # Can't use replace as there is a bug on some Windows installs that lowers some paths
@@ -194,19 +190,13 @@ class FaceswapConfig:
 
         # Add global sub-sections
         for key, val in vars(sys.modules[self.__module__]).items():
-            if (
-                inspect.isclass(val)
-                and issubclass(val, GlobalSection)
-                and val != GlobalSection
-            ):
+            if inspect.isclass(val) and issubclass(val, GlobalSection) and val != GlobalSection:
                 g_val = T.cast(GlobalSection, val)
                 section_name = f"{section}.{key.lower()}"
                 self.add_section(section_name, g_val.helptext)
                 for opt_name, opt in g_val.__dict__.items():
                     if isinstance(opt, ConfigItem):
-                        self.add_item(
-                            section=section_name, title=opt_name, config_item=opt
-                        )
+                        self.add_item(section=section_name, title=opt_name, config_item=opt)
 
     def _set_defaults(self) -> None:
         """Load the plugin's default values, set the object names and order the sections, global
@@ -260,9 +250,7 @@ def generate_configs(force: bool = False) -> None:
     plugins_path = os.path.join(PROJECT_ROOT, "plugins")
     for dirpath, _, filenames in os.walk(plugins_path):
         relative_path = dirpath.replace(PROJECT_ROOT, "")[1:]
-        if (
-            len(full_path_split(relative_path)) > 2
-        ):  # don't dig further than 1 folder deep
+        if len(full_path_split(relative_path)) > 2:  # don't dig further than 1 folder deep
             continue
         plugin_group = os.path.basename(dirpath)
         filename = f"{plugin_group}_config.py"
@@ -275,9 +263,9 @@ def generate_configs(force: bool = False) -> None:
         config_file = os.path.join(configs_path, f"{plugin_group}.ini")
         if not os.path.exists(config_file) or force:
             mod_name = os.path.splitext(filename)[0]
-            mod_path = os.path.join(dirpath.replace(PROJECT_ROOT, ""), mod_name)[
-                1:
-            ].replace(os.sep, ".")
+            mod_path = os.path.join(dirpath.replace(PROJECT_ROOT, ""), mod_name)[1:].replace(
+                os.sep, "."
+            )
             mod = import_module(mod_path)
             for obj in vars(mod).values():
                 if (

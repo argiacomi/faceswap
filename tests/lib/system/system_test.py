@@ -12,7 +12,8 @@ import pytest_mock
 
 # pylint:disable=import-error
 import lib.system.system as system_mod
-from lib.system.system import _lines_from_command, VALID_PYTHON, Packages, System
+from lib.system.system import VALID_PYTHON, Packages, System, _lines_from_command
+
 # pylint:disable=protected-access
 
 
@@ -76,8 +77,7 @@ def test_system_init(system_instance: System) -> None:
     assert system_instance.python_architecture == platform.architecture()[0]
     assert system_instance.encoding == locale.getpreferredencoding()
     assert system_instance.is_conda == (
-        "conda" in sys.version.lower()
-        or os.path.exists(os.path.join(sys.prefix, "conda-meta"))
+        "conda" in sys.version.lower() or os.path.exists(os.path.join(sys.prefix, "conda-meta"))
     )
     assert isinstance(system_instance.is_admin, bool)
     assert isinstance(system_instance.is_virtual_env, bool)
@@ -203,9 +203,7 @@ def packages_fixture() -> Packages:
     return Packages()
 
 
-def test_packages_init(
-    packages_instance: Packages, mocker: pytest_mock.MockerFixture
-) -> None:
+def test_packages_init(packages_instance: Packages, mocker: pytest_mock.MockerFixture) -> None:
     """Test :class:`lib.system.Packages` __init__ and attributes"""
     assert isinstance(packages_instance, Packages)
 
@@ -213,10 +211,7 @@ def test_packages_init(
     assert all(a in packages_instance.__dict__ for a in attrs)
     assert all(a in attrs for a in packages_instance.__dict__)
 
-    assert (
-        isinstance(packages_instance._conda_exe, str)
-        or packages_instance._conda_exe is None
-    )
+    assert isinstance(packages_instance._conda_exe, str) or packages_instance._conda_exe is None
     assert isinstance(packages_instance._installed_python, dict)
     assert (
         isinstance(packages_instance._installed_conda, list)
@@ -247,9 +242,7 @@ def test_packages_get_installed_python(
     lines_from_command = mocker.patch("lib.system.system._lines_from_command")
     monkeypatch.setattr(system_mod.sys, "executable", "python")
     out = packages_instance._get_installed_python()
-    lines_from_command.assert_called_once_with(
-        ["python", "-m", "pip", "freeze", "--local"]
-    )
+    lines_from_command.assert_called_once_with(["python", "-m", "pip", "freeze", "--local"])
     assert isinstance(out, dict)
 
     monkeypatch.setattr(

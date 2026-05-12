@@ -123,14 +123,10 @@ class FaceswapGui(tk.Tk):
         """Add the paned window containers that
         hold each main area of the gui"""
         logger.debug("Adding containers")
-        main_container = self._new_paned_window(
-            self, orient=tk.VERTICAL, name="pw_main"
-        )
+        main_container = self._new_paned_window(self, orient=tk.VERTICAL, name="pw_main")
         main_container.pack(fill=tk.BOTH, expand=True)
 
-        top_container = self._new_paned_window(
-            main_container, orient=tk.HORIZONTAL, name="pw_top"
-        )
+        top_container = self._new_paned_window(main_container, orient=tk.HORIZONTAL, name="pw_top")
         main_container.add(top_container)
 
         bottom_container = ttk.Frame(main_container, name="frame_bottom")
@@ -215,9 +211,7 @@ class FaceswapGui(tk.Tk):
             return True
 
         confirm_txt = "Processes are still running.\n\nAre you sure you want to exit?"
-        if not messagebox.askokcancel(
-            "Close", confirm_txt, default="cancel", icon="warning"
-        ):
+        if not messagebox.askokcancel("Close", confirm_txt, default="cancel", icon="warning"):
             logger.debug("Close Cancelled")
             return False
         logger.debug("Close confirmed")

@@ -29,7 +29,6 @@ from lib.config import ConfigItem
 # pylint:disable=duplicate-code
 from lib.config import ConfigItem
 
-
 HELPTEXT = (
     "An extra detailed variant of Original model.\n"
     "Incorporates ideas from Bryanlyon and inspiration from the Villain model.\n"

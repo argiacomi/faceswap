@@ -3,7 +3,6 @@
 
 from lib.config import ConfigItem
 
-
 HELPTEXT = (
     "Landmark ensemble aligner options.\n"
     "Runs available aligner adapters, converts predictions to canonical 68-point frame "

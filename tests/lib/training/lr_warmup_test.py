@@ -3,13 +3,11 @@
 
 import pytest
 import pytest_mock
-
-from keras.layers import Input, Dense
+from keras.layers import Dense, Input
 from keras.models import Model
 from keras.optimizers import SGD
 
 from lib.training import LearningRateWarmup
-
 
 # pylint:disable=protected-access,redefined-outer-name
 
@@ -63,9 +61,7 @@ _NOTATION = [
 ]
 
 
-@pytest.mark.parametrize(
-    ("value", "expected"), _NOTATION, ids=[x[1] for x in _NOTATION]
-)
+@pytest.mark.parametrize(("value", "expected"), _NOTATION, ids=[x[1] for x in _NOTATION])
 def test_format_notation(value: float, expected: str) -> None:
     """Test floats format to string correctly"""
     result = LearningRateWarmup._format_notation(value)
@@ -78,9 +74,7 @@ _LR_STEPS_CURRENT = [
     (9e-4, 599, 0),
     (6e-5, 1000, 12),
 ]
-_LR_STEPS_CURRENT_IDS = [
-    f"lr:{x[0]}|steps:{x[1]}|current_step:{x[2]}" for x in _LR_STEPS_CURRENT
-]
+_LR_STEPS_CURRENT_IDS = [f"lr:{x[0]}|steps:{x[1]}|current_step:{x[2]}" for x in _LR_STEPS_CURRENT]
 
 
 @pytest.mark.parametrize(
@@ -94,14 +88,8 @@ def test_set_current_learning_rate(
     instance._current_step = current_step
     instance._set_learning_rate()
 
-    assert (
-        instance._current_lr
-        == instance._current_step / instance._steps * instance._target_lr
-    )
-    assert (
-        instance._model.optimizer.learning_rate.value.cpu().numpy()
-        == instance._current_lr
-    )
+    assert instance._current_lr == instance._current_step / instance._steps * instance._target_lr
+    assert instance._model.optimizer.learning_rate.value.cpu().numpy() == instance._current_lr
 
 
 _STEPS_CURRENT = [
@@ -110,9 +98,7 @@ _STEPS_CURRENT = [
     (500, 69, "unreported"),
     (1000, 200, "reported"),
 ]
-_STEPS_CURRENT_ID = [
-    f"steps:{x[0]}|current_step:{x[1]}|action:{x[2]}" for x in _STEPS_CURRENT
-]
+_STEPS_CURRENT_ID = [f"steps:{x[0]}|current_step:{x[1]}|action:{x[2]}" for x in _STEPS_CURRENT]
 
 
 @pytest.mark.parametrize(

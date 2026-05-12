@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Custom widgets for Faceswap GUI"""
 
+import contextlib
 import logging
 import platform
 import re
 import sys
-import typing as T
 import tkinter as tk
-from tkinter import ttk, TclError
+import typing as T
+from tkinter import TclError, ttk
 
 import numpy as np
 
@@ -51,15 +52,9 @@ class ContextMenu(tk.Menu):  # pylint:disable=too-many-ancestors
 
     def _standard_actions(self):
         """Standard menu actions"""
-        self.add_command(
-            label="Cut", command=lambda: self._widget.event_generate("<<Cut>>")
-        )
-        self.add_command(
-            label="Copy", command=lambda: self._widget.event_generate("<<Copy>>")
-        )
-        self.add_command(
-            label="Paste", command=lambda: self._widget.event_generate("<<Paste>>")
-        )
+        self.add_command(label="Cut", command=lambda: self._widget.event_generate("<<Cut>>"))
+        self.add_command(label="Copy", command=lambda: self._widget.event_generate("<<Copy>>"))
+        self.add_command(label="Paste", command=lambda: self._widget.event_generate("<<Paste>>"))
         self.add_separator()
         self.add_command(label="Select all", command=self._select_all)
 
@@ -71,9 +66,7 @@ class ContextMenu(tk.Menu):  # pylint:disable=too-many-ancestors
         """
         button = "<Button-2>" if platform.system() == "Darwin" else "<Button-3>"
         logger.debug("Binding '%s' to '%s'", button, self._widget.winfo_class())
-        self._widget.bind(
-            button, lambda event: self.tk_popup(event.x_root, event.y_root)
-        )
+        self._widget.bind(button, lambda event: self.tk_popup(event.x_root, event.y_root))
 
     def _select_all(self):
         """Select all for Text or Entry widgets"""
@@ -120,9 +113,9 @@ class RightClickMenu(tk.Menu):  # pylint:disable=too-many-ancestors
 
     def _create_menu(self):
         """Create the menu based on :attr:`_labels` and :attr:`_actions`."""
-        for idx, (label, action) in enumerate(zip(self._labels, self._actions)):
+        for idx, (label, action) in enumerate(zip(self._labels, self._actions, strict=False)):
             kwargs = {"label": label, "command": action}
-            if isinstance(self._hotkeys, (list, tuple)) and self._hotkeys[idx]:
+            if isinstance(self._hotkeys, list | tuple) and self._hotkeys[idx]:
                 kwargs["accelerator"] = self._hotkeys[idx]
             self.add_command(**kwargs)
 
@@ -170,9 +163,7 @@ class ConsoleOut(ttk.Frame):  # pylint:disable=too-many-ancestors
         self._debug = debug
         self._build_console()
         self._add_tags()
-        self.pack(
-            side=tk.TOP, anchor=tk.W, padx=10, pady=(2, 0), fill=tk.BOTH, expand=True
-        )
+        self.pack(side=tk.TOP, anchor=tk.W, padx=10, pady=(2, 0), fill=tk.BOTH, expand=True)
         logger.debug("Initialized %s", self.__class__.__name__)
 
     def _set_console_clear_var_trace(self):
@@ -350,10 +341,7 @@ class _WidgetRedirector:
         tk_.createcommand(wgt, self.dispatch)
 
     def __repr__(self):
-        return (
-            f"{self.__class__.__name__}({self.widget.__class__.__name__}"
-            f"<{self.widget._w}>)"
-        )  # pylint:disable=protected-access
+        return f"{self.__class__.__name__}({self.widget.__class__.__name__}<{self.widget._w}>)"  # pylint:disable=protected-access
 
     def close(self):
         "de-register operations and revert redirection created by .__init__."
@@ -391,10 +379,8 @@ class _WidgetRedirector:
         if operation in self._operations:
             function = self._operations[operation]
             del self._operations[operation]
-            try:
+            with contextlib.suppress(AttributeError):
                 delattr(self.widget, operation)
-            except AttributeError:
-                pass
             return function
         return None
 
@@ -502,9 +488,7 @@ class StatusBar(ttk.Frame):  # pylint:disable=too-many-ancestors
         lbltitle = ttk.Label(statusframe, text="Status:", width=6, anchor=tk.W)
         lbltitle.pack(side=tk.LEFT, expand=False)
 
-        lblstatus = ttk.Label(
-            statusframe, width=40, textvariable=self._message, anchor=tk.W
-        )
+        lblstatus = ttk.Label(statusframe, width=40, textvariable=self._message, anchor=tk.W)
         lblstatus.pack(side=tk.LEFT, anchor=tk.W, fill=tk.X, expand=True)
 
     def _progress_bar(self) -> ttk.Progressbar:
@@ -584,9 +568,7 @@ class StatusBar(ttk.Frame):  # pylint:disable=too-many-ancestors
         self.stop()
         self.start(mode)
 
-    def progress_update(
-        self, message: str, position: int, update_position: bool = True
-    ) -> None:
+    def progress_update(self, message: str, position: int, update_position: bool = True) -> None:
         """Update the GUIs progress bar and position.
 
         Parameters
@@ -957,9 +939,7 @@ class PopupProgress(tk.Toplevel):
         """
         frame = ttk.Frame(self)
         frame.pack(side=tk.BOTTOM, padx=5, pady=(0, 5))
-        pbar = ttk.Progressbar(
-            frame, length=400, maximum=self._total, mode="determinate"
-        )
+        pbar = ttk.Progressbar(frame, length=400, maximum=self._total, mode="determinate")
         pbar.pack(side=tk.LEFT)
         return pbar
 
@@ -1012,9 +992,7 @@ class ToggledFrame(ttk.Frame):  # pylint:disable=too-many-ancestors
         state of the widget. Set to None to create the variable internally. Default: ``None``
     """
 
-    def __init__(
-        self, parent, *args, text="", theme="CPanel", toggle_var=None, **kwargs
-    ):
+    def __init__(self, parent, *args, text="", theme="CPanel", toggle_var=None, **kwargs):
         logger.debug(
             "Initializing %s: (parent: %s, text: %s, theme: %s, toggle_var: %s)",
             self.__class__.__name__,
@@ -1024,7 +1002,7 @@ class ToggledFrame(ttk.Frame):  # pylint:disable=too-many-ancestors
             toggle_var,
         )
 
-        theme = "CPanel" if not theme else theme
+        theme = theme if theme else "CPanel"
         theme = theme[:-1] if theme[-1] == "." else theme
         super().__init__(parent, *args, style=f"{theme}.Group.TFrame", **kwargs)
         self._text = text
@@ -1039,9 +1017,7 @@ class ToggledFrame(ttk.Frame):  # pylint:disable=too-many-ancestors
 
         self._build_header(theme)
 
-        self.sub_frame = ttk.Frame(
-            self, style=f"{theme}.Subframe.Group.TFrame", padding=1
-        )
+        self.sub_frame = ttk.Frame(self, style=f"{theme}.Subframe.Group.TFrame", padding=1)
 
         if self.is_expanded:
             self.sub_frame.pack(fill=tk.X, expand=True)

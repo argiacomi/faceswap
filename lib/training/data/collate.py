@@ -12,9 +12,9 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-from lib.align.constants import EXTRACT_RATIOS, LandmarkType, MEAN_FACE
 from lib.align.aligned_face import batch_umeyama
 from lib.align.aligned_utils import batch_transform
+from lib.align.constants import EXTRACT_RATIOS, MEAN_FACE, LandmarkType
 from lib.align.pose import Batch3D
 from lib.image import read_image_meta_batch
 from lib.logger import format_array, parse_class_init
@@ -25,6 +25,7 @@ from .data_set import get_label, get_sorted_images, to_float32
 
 if T.TYPE_CHECKING:
     import numpy.typing as npt
+
     from lib.align import CenteringType
     from plugins.train.trainer.base import TrainConfig
 
@@ -68,10 +69,7 @@ class BatchMeta:
         length num_outputs in shape (batch_size, 1, H, W)
         """
         return BatchMeta(
-            **{
-                k: None if v is None else [x[:, key] for x in v]
-                for k, v in self.__dict__.items()
-            }
+            **{k: None if v is None else [x[:, key] for x in v] for k, v in self.__dict__.items()}
         )
 
     def to(self, device: str | torch.Device) -> T.Self:
@@ -138,9 +136,7 @@ class LandmarkMatcher:
         self._y_offset = y_offset
         self._num_choices = num_choices
 
-        self._padding = round(
-            size * (EXTRACT_RATIOS[centering] + coverage - 1) / (2 * coverage)
-        )
+        self._padding = round(size * (EXTRACT_RATIOS[centering] + coverage - 1) / (2 * coverage))
         self._scale = self._size - (2 * self._padding)
         self._landmarks = self._load_landmarks()
 
@@ -241,9 +237,7 @@ class LandmarkMatcher:
                 total=len(file_list),
                 leave=False,
             ):
-                lms[file_list.index(filename)] = self._landmarks_from_header(
-                    meta, filename
-                )
+                lms[file_list.index(filename)] = self._landmarks_from_header(meta, filename)
             landmarks.append(self._align_points(lms))
             logger.debug(
                 "[LandmarkMatcher] Got landmarks for side %s: %s",
@@ -273,12 +267,8 @@ class LandmarkMatcher:
         b_sq = (lms_b**2).sum(axis=1, keepdims=True)
         dist2 = a_sq + b_sq.T - 2.0 * (lms_a @ lms_b.T)
         np.clip(dist2, 0, None, out=dist2)
-        matches_a = np.argpartition(dist2, self._num_choices, axis=1)[
-            :, : self._num_choices
-        ]
-        matches_b = np.argpartition(dist2.T, self._num_choices, axis=1)[
-            :, : self._num_choices
-        ]
+        matches_a = np.argpartition(dist2, self._num_choices, axis=1)[:, : self._num_choices]
+        matches_b = np.argpartition(dist2.T, self._num_choices, axis=1)[:, : self._num_choices]
 
         logger.debug(
             "[TrainLoader] Closest matches. A: %s, B: %s",
@@ -287,9 +277,7 @@ class LandmarkMatcher:
         )
         return matches_a, matches_b
 
-    def get_close_landmarks(
-        self, indices: npt.NDArray[np.int64]
-    ) -> npt.NDArray[np.float32]:
+    def get_close_landmarks(self, indices: npt.NDArray[np.int64]) -> npt.NDArray[np.float32]:
         """For the given image indices, obtain a randomly selected close match landmarks from the
         other side
 
@@ -308,9 +296,7 @@ class LandmarkMatcher:
             src_lms = self._landmarks[side_id][ind]
             dst_choices = self._closest_indices[side_id][ind]
             idx = np.random.randint(0, dst_choices.shape[1], size=dst_choices.shape[0])
-            dst_indices = np.take_along_axis(dst_choices, idx[:, None], axis=1).squeeze(
-                1
-            )
+            dst_indices = np.take_along_axis(dst_choices, idx[:, None], axis=1).squeeze(1)
             dst_lms = self._landmarks[1 - side_id][dst_indices]
             matches[side_id, :, 0] = src_lms
             matches[side_id, :, 1] = dst_lms
@@ -379,8 +365,7 @@ class Collate:  # pylint:disable=too-many-instance-attributes
         params = {
             f"{k}"[1:]: format_array(v) if isinstance(v, np.ndarray) else v
             for k, v in self.__dict__.items()
-            if k
-            in ("_input_size", "_output_sizes", "_color_order", "_config", "_landmarks")
+            if k in ("_input_size", "_output_sizes", "_color_order", "_config", "_landmarks")
         }
         s_params = ", ".join(f"{k}={repr(v)}" for k, v in params.items())
         return f"{self.__class__.__name__}({s_params})"
@@ -419,9 +404,7 @@ class Collate:  # pylint:disable=too-many-instance-attributes
                     if batch.shape[1] == size
                     else np.array(
                         [
-                            cv2.resize(
-                                image, (size, size), interpolation=cv2.INTER_AREA
-                            )
+                            cv2.resize(image, (size, size), interpolation=cv2.INTER_AREA)
                             for image in batch
                         ]
                     )
@@ -442,8 +425,7 @@ class Collate:  # pylint:disable=too-many-instance-attributes
         masks = BatchMeta(
             **{
                 self._mask_types[idx]: [
-                    torch.from_numpy(out[..., 3 + idx][:, :, None, :, :])
-                    for out in reshaped
+                    torch.from_numpy(out[..., 3 + idx][:, :, None, :, :]) for out in reshaped
                 ]
                 for idx in range(reshaped[0].shape[-1] - 3)
             }

@@ -36,7 +36,9 @@ class RecordIterator:
     def __init__(self, log_file, is_live: bool = False) -> None:
         logger.debug(parse_class_init(locals()))
         self._file_path = log_file
-        self._log_file = open(self._file_path, "rb")  # pylint:disable=consider-using-with
+        self._log_file = open(  # noqa: SIM115  # pylint:disable=consider-using-with
+            self._file_path, "rb"
+        )
         self._is_live = is_live
         self._position = 0
         logger.debug("Initialized %s", self.__class__.__name__)
@@ -56,7 +58,9 @@ class RecordIterator:
             self._file_path,
             self._position,
         )
-        self._log_file = open(self._file_path, "rb")  # pylint:disable=consider-using-with
+        self._log_file = open(  # noqa: SIM115  # pylint:disable=consider-using-with
+            self._file_path, "rb"
+        )
         self._log_file.seek(self._position, 0)
 
     def _on_file_end(self) -> None:
@@ -109,9 +113,7 @@ class RecordIterator:
         len_crc = self._log_file.read(4)
         data = self._log_file.read(read_len)
         data_crc = self._log_file.read(4)
-        if (
-            len(len_crc) < 4 or len(data) < read_len or len(data_crc) < 4
-        ):  # Partial read
+        if len(len_crc) < 4 or len(data) < read_len or len(data_crc) < 4:  # Partial read
             self._log_file.seek(record_start, 0)
             self._on_file_end()
             raise StopIteration

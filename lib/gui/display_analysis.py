@@ -11,11 +11,11 @@ from tkinter import ttk
 from lib.logger import parse_class_init
 from lib.utils import get_module_objects
 
+from .analysis import Session
 from .custom_widgets import Tooltip
 from .display_page import DisplayPage
 from .popup_session import SessionPopUp
-from .analysis import Session
-from .utils import FileHandler, get_config, get_images, LongRunningTask
+from .utils import FileHandler, LongRunningTask, get_config, get_images
 
 logger = logging.getLogger(__name__)
 
@@ -134,9 +134,7 @@ class Analysis(DisplayPage):  # pylint:disable=too-many-ancestors
             self._clear_session()
             return
 
-        state_files = [
-            fname for fname in os.listdir(folder) if fname.endswith("_state.json")
-        ]
+        state_files = [fname for fname in os.listdir(folder) if fname.endswith("_state.json")]
         if not state_files:
             logger.debug("No state files found in folder: '%s'", folder)
             self._clear_session()
@@ -285,7 +283,7 @@ class Analysis(DisplayPage):  # pylint:disable=too-many-ancestors
             return
 
         logger.debug("Saving to: '%s'", savefile)
-        fieldnames = sorted(key for key in self._summary[0].keys())
+        fieldnames = sorted(key for key in self._summary[0])
         with savefile as outfile:
             csvout = csv.DictWriter(outfile, fieldnames)
             csvout.writeheader()
@@ -391,17 +389,13 @@ class StatsData(ttk.Frame):  # pylint:disable=too-many-ancestors
 
         self._canvas = tk.Canvas(self, bd=0, highlightthickness=0)
         tree_frame = ttk.Frame(self._canvas)
-        self._tree_canvas = self._canvas.create_window(
-            (0, 0), window=tree_frame, anchor=tk.NW
-        )
+        self._tree_canvas = self._canvas.create_window((0, 0), window=tree_frame, anchor=tk.NW)
         self._sub_frame = ttk.Frame(tree_frame)
 
         self._add_label()
 
         self._tree = ttk.Treeview(self._sub_frame, height=1, selectmode=tk.BROWSE)
-        self._scrollbar = ttk.Scrollbar(
-            tree_frame, orient="vertical", command=self._tree.yview
-        )
+        self._scrollbar = ttk.Scrollbar(tree_frame, orient="vertical", command=self._tree.yview)
 
         self._columns = self._tree_configure(helptext)
         self._canvas.bind("<Configure>", self._resize_frame)
@@ -431,9 +425,7 @@ class StatsData(ttk.Frame):  # pylint:disable=too-many-ancestors
         logger.debug("Resize Analysis Frame")
         canvas_width = event.width
         canvas_height = event.height
-        self._canvas.itemconfig(
-            self._tree_canvas, width=canvas_width, height=canvas_height
-        )
+        self._canvas.itemconfig(self._tree_canvas, width=canvas_width, height=canvas_height)
         logger.debug("Resized Analysis Frame")
 
     def _tree_configure(self, helptext):
@@ -548,9 +540,7 @@ class StatsData(ttk.Frame):  # pylint:disable=too-many-ancestors
         """
         col_indices = [self._columns.index("batch"), self._columns.index("iterations")]
         for idx in col_indices:
-            if (isinstance(values[idx], int) or values[idx].isdigit()) and int(
-                values[idx]
-            ) == 0:
+            if (isinstance(values[idx], int) or values[idx].isdigit()) and int(values[idx]) == 0:
                 logger.warning("No data to graph for selected session")
                 return False
         return True

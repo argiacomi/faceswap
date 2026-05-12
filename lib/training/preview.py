@@ -9,10 +9,10 @@ import typing as T
 import cv2
 import numpy as np
 
-from lib.logger import format_array, parse_class_init
 from lib.image import hex_to_rgb
-from lib.utils import get_module_objects
+from lib.logger import format_array, parse_class_init
 from lib.training.data import get_label
+from lib.utils import get_module_objects
 
 if T.TYPE_CHECKING:
     import numpy.typing as npt
@@ -91,12 +91,8 @@ class Samples:
         The background image patches shaped (src_side, num_src + 1, batch_size, height, width, 3)
         """
         num_swaps = targets.shape[0]
-        assert self._coverage_ratio != 1.0, (
-            "Background only required for coverage != 1.0"
-        )
-        retval = np.empty(
-            (num_swaps, num_swaps + 1, *targets.shape[1:4], 3), dtype=np.float32
-        )
+        assert self._coverage_ratio != 1.0, "Background only required for coverage != 1.0"
+        retval = np.empty((num_swaps, num_swaps + 1, *targets.shape[1:4], 3), dtype=np.float32)
         length = patch_size // 4
         t_l, b_r = (padding - 1, patch_size - padding + 1)
         retval[:] = np.repeat(targets[:, None, ..., :3], 3, axis=1)
@@ -138,9 +134,7 @@ class Samples:
         The foreground image patches shaped (src_side, num_src + 1, batch_size, height, width, 3)
         """
         num_swaps = predictions.shape[0]
-        retval = np.empty(
-            (num_swaps, num_swaps + 1, *predictions.shape[2:5], 3), dtype=np.float32
-        )
+        retval = np.empty((num_swaps, num_swaps + 1, *predictions.shape[2:5], 3), dtype=np.float32)
 
         retval[:, 1:] = predictions[..., :3]
 
@@ -242,15 +236,13 @@ class Samples:
         font = cv2.FONT_HERSHEY_SIMPLEX
         scaling = patch_width / 140
         text_sizes = [
-            cv2.getTextSize(labels[idx], font, scaling, 1)[0]
-            for idx in range(len(labels))
+            cv2.getTextSize(labels[idx], font, scaling, 1)[0] for idx in range(len(labels))
         ]
         t_y = int((height + text_sizes[0][1]) / 2)
         t_x = [int((patch_width - text_sizes[i][0]) / 2) for i in range(cols)]
         thickness = max(1, patch_width // 64)
         logger.debug(
-            "[%s] labels: %s, text_sizes: %s, text_x: %s, text_y: %s, thickness: %s, "
-            "scaling: %s",
+            "[%s] labels: %s, text_sizes: %s, text_x: %s, text_y: %s, thickness: %s, scaling: %s",
             self._name,
             labels,
             text_sizes,
@@ -259,7 +251,7 @@ class Samples:
             thickness,
             scaling,
         )
-        for idx, (text, header) in enumerate(zip(labels, headers)):
+        for idx, (text, header) in enumerate(zip(labels, headers, strict=False)):
             cv2.putText(
                 header,
                 text,
@@ -321,8 +313,7 @@ class Samples:
         pad = (patch_size - predictions.shape[-2]) // 2
 
         logger.debug(
-            "[%s] Showing sample. Predictions: %s, targets: %s, patch_size: %s, "
-            "padding: %s",
+            "[%s] Showing sample. Predictions: %s, targets: %s, patch_size: %s, padding: %s",
             self._name,
             format_array(predictions),
             format_array(targets),
@@ -334,9 +325,7 @@ class Samples:
 
         if self._coverage_ratio != 1.0:
             patches = self._get_background(targets, patch_size, pad)
-            patches[:, :, :, pad : patch_size - pad, pad : patch_size - pad] = (
-                foreground
-            )
+            patches[:, :, :, pad : patch_size - pad, pad : patch_size - pad] = foreground
         else:
             patches = foreground
 

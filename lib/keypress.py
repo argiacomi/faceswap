@@ -27,8 +27,8 @@ if os.name == "nt":
 
 # Posix (Linux, OS X)
 else:
-    import termios
     import atexit
+    import termios
     from select import select
 
 # pylint:disable=possibly-used-before-assignment

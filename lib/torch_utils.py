@@ -2,11 +2,11 @@
 """Common multi-backend Torch utilities"""
 
 from __future__ import annotations
+
 import logging
 import typing as T
 
 import numpy as np
-
 import torch
 from torch import nn
 
@@ -98,20 +98,14 @@ class ColorSpaceConvert(nn.Module):
         logger.debug(parse_class_init(locals()))
         func_name = f"{from_space.lower()}_{to_space.lower()}"
         if func_name not in functions:
-            raise ValueError(
-                f"The color transform {from_space} to {to_space} is not defined."
-            )
+            raise ValueError(f"The color transform {from_space} to {to_space} is not defined.")
         self._func = functions[func_name]
 
         ref_illuminant = np.array(
             [[[0.950428545]], [[1.000000000]], [[1.088900371]]], dtype=np.float32
         )
-        self.register_buffer(
-            "_ref_illuminant", torch.from_numpy(ref_illuminant).float()
-        )
-        self.register_buffer(
-            "_inv_ref_illuminant", torch.from_numpy(1.0 / ref_illuminant).float()
-        )
+        self.register_buffer("_ref_illuminant", torch.from_numpy(ref_illuminant).float())
+        self.register_buffer("_inv_ref_illuminant", torch.from_numpy(1.0 / ref_illuminant).float())
         self.register_buffer("_rgb_xyz_map", self._get_rgb_xyz_map())
 
     @classmethod

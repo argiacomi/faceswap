@@ -29,7 +29,6 @@ from lib.config import ConfigItem
 # pylint:disable=duplicate-code
 from lib.config import ConfigItem
 
-
 HELPTEXT = (
     "HRNet Aligner options.\n"
     "Trained on 128k heavily augmented faces with full 360 degree rotation. Fast on GPU, slow on "

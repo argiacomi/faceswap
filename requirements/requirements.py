@@ -8,10 +8,10 @@ NOTE: Only packages from the Python Standard Library should be imported in this 
 from __future__ import annotations
 
 import logging
-import typing as T
 import os
-
-from importlib import import_module, util as import_util
+import typing as T
+from importlib import import_module
+from importlib import util as import_util
 
 if T.TYPE_CHECKING:
     from packaging.markers import Marker
@@ -107,9 +107,7 @@ class Requirements:
         requirements = []
         with open(file_path, encoding="utf8") as f:
             for line in f:
-                line = (
-                    line.strip()
-                )  # Skip blanks, comments and nested requirement files
+                line = line.strip()  # Skip blanks, comments and nested requirement files
                 if not line or line.startswith(("#", "-r")):
                     continue
 
@@ -198,22 +196,16 @@ class Requirements:
         parsed_opts_base = self._parse_options(opts_base)
 
         if self._include_dev:
-            opts_dev, reqs_dev = self._parse_file(
-                os.path.join(req_path, "_requirements_dev.txt")
-            )
+            opts_dev, reqs_dev = self._parse_file(os.path.join(req_path, "_requirements_dev.txt"))
             opts_base += opts_dev
             parsed_reqs_base += self.parse_requirements(reqs_dev)
             parsed_opts_base += self._parse_options(opts_dev)
 
         for req_file in req_files:
-            backend = os.path.splitext(os.path.basename(req_file))[0].replace(
-                "requirements_", ""
-            )
+            backend = os.path.splitext(os.path.basename(req_file))[0].replace("requirements_", "")
             assert backend
             opts, reqs = self._parse_file(req_file)
-            self._requirements[backend] = parsed_reqs_base + self.parse_requirements(
-                reqs
-            )
+            self._requirements[backend] = parsed_reqs_base + self.parse_requirements(reqs)
             self._global_options[backend] = parsed_opts_base + self._parse_options(opts)
             logger.debug(
                 "[%s] Requirements: %s , Options: %s",

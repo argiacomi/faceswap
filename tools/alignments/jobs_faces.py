@@ -2,10 +2,10 @@
 """Tools for manipulating the alignments using extracted Faces as a source"""
 
 from __future__ import annotations
+
 import logging
 import os
 import typing as T
-
 from argparse import Namespace
 from operator import itemgetter
 
@@ -20,8 +20,9 @@ from scripts.fs_media import Alignments
 from .media import Faces
 
 if T.TYPE_CHECKING:
-    from .media import AlignmentData
     from lib.align.objects import FileAlignments, PNGAlignments
+
+    from .media import AlignmentData
 
 logger = logging.getLogger(__name__)
 
@@ -53,9 +54,7 @@ class FromFaces:
         logger.info("[CREATE ALIGNMENTS FROM FACES]")  # Tidy up cli output
 
         all_versions: dict[str, list[float]] = {}
-        d_align: dict[
-            str, dict[str, list[tuple[int, FileAlignments, str, PNGSource]]]
-        ] = {}
+        d_align: dict[str, dict[str, list[tuple[int, FileAlignments, str, PNGSource]]]] = {}
         filelist = T.cast(list[tuple[str, "PNGHeader"]], self._faces.file_list_sorted)
         for filename, meta in tqdm(
             filelist, desc="Generating Alignments", total=len(filelist), leave=False
@@ -64,12 +63,8 @@ class FromFaces:
             source_name, f_idx, alignment = self._extract_alignment(meta)
             full_info = (f_idx, alignment, filename, meta.source)
 
-            d_align.setdefault(align_fname, {}).setdefault(source_name, []).append(
-                full_info
-            )
-            all_versions.setdefault(align_fname, []).append(
-                meta.source.alignments_version
-            )
+            d_align.setdefault(align_fname, {}).setdefault(source_name, []).append(full_info)
+            all_versions.setdefault(align_fname, []).append(meta.source.alignments_version)
 
         versions = {k: min(v) for k, v in all_versions.items()}
         alignments = self._sort_alignments(d_align)
@@ -98,9 +93,7 @@ class FromFaces:
         logger.trace("Extracted alignments file filename: '%s'", retval)  # type:ignore
         return retval
 
-    def _extract_alignment(
-        self, metadata: PNGHeader
-    ) -> tuple[str, int, FileAlignments]:
+    def _extract_alignment(self, metadata: PNGHeader) -> tuple[str, int, FileAlignments]:
         """Extract alignment data from a PNG image's itxt header.
 
         Formats the landmarks into a numpy array and adds in mask centering information if it is
@@ -132,9 +125,7 @@ class FromFaces:
 
     def _sort_alignments(
         self,
-        alignments: dict[
-            str, dict[str, list[tuple[int, FileAlignments, str, PNGSource]]]
-        ],
+        alignments: dict[str, dict[str, list[tuple[int, FileAlignments, str, PNGSource]]]],
     ) -> dict[str, dict[str, AlignmentsEntry]]:
         """Sort the faces into face index order as they appeared in the original alignments file.
 
@@ -196,9 +187,7 @@ class FromFaces:
         """
         face = DetectedFace()
         face.from_alignment(alignment)
-        new_filename = (
-            f"{os.path.splitext(source_info.source_filename)[0]}_{new_index}.png"
-        )
+        new_filename = f"{os.path.splitext(source_info.source_filename)[0]}_{new_index}.png"
 
         logger.trace(
             "Updating png header for '%s': (face index from %s to %s, "  # type:ignore
@@ -365,9 +354,7 @@ class RemoveFaces:
     """
 
     def __init__(self, alignments: AlignmentData, arguments: Namespace) -> None:
-        logger.debug(
-            "Initializing %s: (arguments: %s)", self.__class__.__name__, arguments
-        )
+        logger.debug("Initializing %s: (arguments: %s)", self.__class__.__name__, arguments)
         self._alignments = alignments
 
         self._items = Faces(arguments.faces_dir, alignments=alignments)
@@ -416,9 +403,7 @@ class RemoveFaces:
             for x in T.cast(list[tuple[str, "PNGHeader"]], self._items.file_list_sorted)
         ]
         to_update = [  # Items whose face index has changed
-            x
-            for x in src
-            if x[1].face_index != items[x[1].source_filename].index(x[1].face_index)
+            x for x in src if x[1].face_index != items[x[1].source_filename].index(x[1].face_index)
         ]
 
         for item in tqdm(to_update, desc="Updating PNG Headers", leave=False):
@@ -455,9 +440,7 @@ class RemoveFaces:
             )
             update_existing_metadata(fullpath, meta)
 
-        logger.info(
-            "%s Extracted face(s) had their header information updated", len(to_update)
-        )
+        logger.info("%s Extracted face(s) had their header information updated", len(to_update))
 
 
 class FaceToFile:

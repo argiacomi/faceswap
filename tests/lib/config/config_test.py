@@ -4,9 +4,7 @@
 import pytest
 
 from lib.config import config as config_mod
-
 from tests.lib.config.helpers import FakeConfigItem
-
 
 # pylint:disable=too-few-public-methods,protected-access,invalid-name
 

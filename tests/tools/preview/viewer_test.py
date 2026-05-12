@@ -2,16 +2,15 @@
 """Pytest unit tests for :mod:`tools.preview.viewer`"""
 
 from __future__ import annotations
+
 import tkinter as tk
 import typing as T
-
 from tkinter import ttk
-
 from unittest.mock import MagicMock
 
+import numpy as np
 import pytest
 import pytest_mock
-import numpy as np
 from PIL import ImageTk
 
 from lib.logger import log_setup
@@ -47,9 +46,7 @@ class TestFacesDisplay:
 
     _padding = 64
 
-    def get_faces_display_instance(
-        self, columns: int = 5, face_size: int = 256
-    ) -> FacesDisplay:
+    def get_faces_display_instance(self, columns: int = 5, face_size: int = 256) -> FacesDisplay:
         """Obtain an instance of :class:`~tools.preview.viewer.FacesDisplay` with the given column
         and face size layout.
 
@@ -147,11 +144,21 @@ class TestFacesDisplay:
         f_display._faces_source = np.zeros((face_size, face_size, 3), dtype=np.uint8)
         f_display._faces_dest = np.zeros((face_size, face_size, 3), dtype=np.uint8)
 
-        try:
-            tk.Tk()  # tkinter instance needed for image creation
-        except tk.TclError:
-            # Some Windows runners arbitrarily don't install Tk correctly
-            pytest.skip("Tk not available on this system")
+        class MockPhotoImage:
+            """Mock PIL ImageTk image to avoid creating a real Tk interpreter."""
+
+            def __init__(self, image) -> None:
+                self._image = image
+
+            def width(self) -> int:
+                """Return the mocked image width."""
+                return self._image.width
+
+            def height(self) -> int:
+                """Return the mocked image height."""
+                return self._image.height
+
+        mocker.patch("tools.preview.viewer.ImageTk.PhotoImage", MockPhotoImage)
         f_display.update_tk_image()
 
         f_display._build_faces_image.assert_called_once()
@@ -200,9 +207,7 @@ class TestFacesDisplay:
         f_display._faces_from_frames = T.cast(MagicMock, mocker.MagicMock())  # type:ignore
         f_display._header_text = T.cast(  # type:ignore
             MagicMock,
-            mocker.MagicMock(
-                return_value=np.random.rand(header_size, face_size * columns, 3)
-            ),
+            mocker.MagicMock(return_value=np.random.rand(header_size, face_size * columns, 3)),
         )
         f_display._draw_rect = T.cast(
             MagicMock,  # type:ignore
@@ -253,9 +258,7 @@ class TestFacesDisplay:
         """
         f_display = self.get_faces_display_instance(columns, face_size)
         f_display.source = [mocker.MagicMock() for _ in range(3)]
-        f_display.destination = [
-            np.random.rand(face_size, face_size, 3) for _ in range(3)
-        ]
+        f_display.destination = [np.random.rand(face_size, face_size, 3) for _ in range(3)]
         f_display._crop_source_faces = T.cast(MagicMock, mocker.MagicMock())  # type:ignore
         f_display._crop_destination_faces = T.cast(MagicMock, mocker.MagicMock())  # type:ignore
 
@@ -302,9 +305,7 @@ class TestFacesDisplay:
         transform_image_mock = mocker.MagicMock(
             return_value=np.zeros((face_size, face_size, 3), dtype=np.uint8)
         )
-        monkeypatch.setattr(
-            "tools.preview.viewer.transform_image", transform_image_mock
-        )
+        monkeypatch.setattr("tools.preview.viewer.transform_image", transform_image_mock)
 
         mats = np.random.random((columns, 2, 3)).astype(np.float32)
         f_display.source = [mocker.MagicMock() for _ in range(columns)]
@@ -351,9 +352,7 @@ class TestFacesDisplay:
         transform_image_mock = mocker.MagicMock(
             return_value=np.zeros((face_size, face_size, 3), dtype=np.uint8)
         )
-        monkeypatch.setattr(
-            "tools.preview.viewer.transform_image", transform_image_mock
-        )
+        monkeypatch.setattr("tools.preview.viewer.transform_image", transform_image_mock)
 
         f_display.source = [mocker.MagicMock() for _ in range(columns)]
         for item in f_display.source:  # type ignore
@@ -457,9 +456,7 @@ class TestImagesCanvas:
         app = MagicMock()
         return ImagesCanvas(app, parent)
 
-    def test_init(
-        self, images_canvas_instance: ImagesCanvas, parent: MagicMock
-    ) -> None:
+    def test_init(self, images_canvas_instance: ImagesCanvas, parent: MagicMock) -> None:
         """Test :class:`~tools.preview.viewer.ImagesCanvas` __init__ method
 
         Parameters
@@ -496,9 +493,7 @@ class TestImagesCanvas:
 
         images_canvas_instance._resize(event_mock)
 
-        parent.preview_display.set_display_dimensions.assert_called_once_with(
-            (100, 200)
-        )
+        parent.preview_display.set_display_dimensions.assert_called_once_with((100, 200))
         images_canvas_instance.reload.assert_called_once()
 
     def test_reload(

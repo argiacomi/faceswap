@@ -28,7 +28,6 @@ from lib.config import ConfigItem
 
 from lib.config import ConfigItem
 
-
 HELPTEXT = (
     "Options for outputting the raw converted face patches from faceswap\n"
     "The raw face patches are output along with the transformation matrix, per face, to "

@@ -3,8 +3,8 @@
 
 import gettext
 
-from lib.cli.args import FaceSwapArgs
 from lib.cli.actions import DirOrFileFullPaths, FileFullPaths
+from lib.cli.args import FaceSwapArgs
 from lib.utils import get_module_objects
 
 # LOCALES
@@ -79,8 +79,10 @@ class ManualArgs(FaceSwapArgs):
                 "default": False,
                 "group": _("options"),
                 "help": _(
-                    "The process attempts to speed up generation of thumbnails by extracting from the "
-                    "video in parallel threads. For some videos, this causes the caching process to "
+                    "The process attempts to speed up generation of thumbnails by extracting from "
+                    "the "
+                    "video in parallel threads. For some videos, this causes the caching process "
+                    "to "
                     "hang. If this happens, then set this option to generate the thumbnails in a "
                     "slower, but more stable single thread."
                 ),

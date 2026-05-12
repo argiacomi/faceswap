@@ -29,7 +29,6 @@ from lib.config import ConfigItem
 # pylint:disable=duplicate-code
 from lib.config import ConfigItem
 
-
 HELPTEXT = "FAN Aligner options.\nFast on GPU, slow on CPU. Best aligner."
 
 

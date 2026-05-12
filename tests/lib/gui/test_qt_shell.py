@@ -87,13 +87,9 @@ class _CliOptions:
     commands = {"faceswap": ("extract",)}
     opts = {
         "extract": {
-            "Input Dir": _CliOption(
-                _PanelOption("Input Dir", str), ("-i", "--input-dir")
-            ),
+            "Input Dir": _CliOption(_PanelOption("Input Dir", str), ("-i", "--input-dir")),
             "Batch Mode": _CliOption(_PanelOption("Batch Mode", bool, False), ("-b",)),
-            "Mode": _CliOption(
-                _PanelOption("Mode", str, "one", ("one", "two")), ("--mode",)
-            ),
+            "Mode": _CliOption(_PanelOption("Mode", str, "one", ("one", "two")), ("--mode",)),
             "Files": _CliOption(_PanelOption("Files", str), ("--files",), "+"),
             "helptext": "ignored",
         }
@@ -178,9 +174,7 @@ def test_command_schema_service_discovers_real_faceswap_cli_metadata(
     assert schema.categories == ("faceswap",)
     assert schema.commands("faceswap")[:3] == ("extract", "train", "convert")
     assert {"-i", "-o", "-D", "-A"}.issubset(extract_options)
-    assert {"-A", "-B", "-m", "-t"}.issubset(
-        {option.switch for option in schema.options("train")}
-    )
+    assert {"-A", "-B", "-m", "-t"}.issubset({option.switch for option in schema.options("train")})
     assert {"-i", "-o", "-m", "-w"}.issubset(
         {option.switch for option in schema.options("convert")}
     )
@@ -367,16 +361,12 @@ def test_store_false_option_emits_when_unchecked(qtbot) -> None:  # type:ignore[
     widget.setChecked(False)
 
     assert panel.command_spec()[2] == {"--disable-feature": True}
-    assert CommandBuilder.build_options(panel.command_spec()[2]) == [
-        "--disable-feature"
-    ]
+    assert CommandBuilder.build_options(panel.command_spec()[2]) == ["--disable-feature"]
 
     panel.set_command("extract", {"--disable-feature": True})
 
     assert widget.isChecked() is False
-    assert CommandBuilder.build_options(panel.command_spec()[2]) == [
-        "--disable-feature"
-    ]
+    assert CommandBuilder.build_options(panel.command_spec()[2]) == ["--disable-feature"]
 
 
 def test_command_schema_nargs_splitting_preserves_windows_paths(monkeypatch) -> None:

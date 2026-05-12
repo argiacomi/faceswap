@@ -5,7 +5,7 @@ from .layers import Conv, Deconv, Residual
 
 class Hourglass(nn.Module):
     def __init__(self, n, f, bn=None, increase=0):
-        super(Hourglass, self).__init__()
+        super().__init__()
         nf = f + increase
         self.up1 = Residual(f, f)
         # Lower branch
@@ -32,12 +32,14 @@ class Hourglass(nn.Module):
 
 class HourglassCore(Hourglass):
     def __init__(self, n, f, bn=None, increase=0):
-        super(HourglassCore, self).__init__(n, f, bn=bn, increase=increase)
+        super().__init__(n, f, bn=bn, increase=increase)
         nf = f + increase
         if self.n > 1:
             self.low2 = HourglassCore(n - 1, nf, bn=bn)
 
-    def forward(self, x, core=[]):
+    def forward(self, x, core=None):
+        if core is None:
+            core = []
         up1 = self.up1(x)
         pool1 = self.pool1(x)
         low1 = self.low1(pool1)

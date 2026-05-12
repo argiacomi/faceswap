@@ -6,8 +6,8 @@ import numpy as np
 
 from lib.utils import get_module_objects
 
-from ._base import Adjustment, logger
 from . import sharpen_defaults as cfg
+from ._base import Adjustment, logger
 
 
 class Scaling(Adjustment):
@@ -121,9 +121,7 @@ class Scaling(Adjustment):
             The batch of swapped faces with gaussian sharpening applied
         """
         blur = cv2.GaussianBlur(new_face, kernel_size, 0)
-        new_face = cv2.addWeighted(
-            new_face, 1.0 + (0.5 * amount), blur, -(0.5 * amount), 0
-        )
+        new_face = cv2.addWeighted(new_face, 1.0 + (0.5 * amount), blur, -(0.5 * amount), 0)
         return new_face
 
     @classmethod
@@ -156,9 +154,7 @@ class Scaling(Adjustment):
         blur = cv2.GaussianBlur(new_face, kernel_size, 0)
         low_contrast_mask = (abs(new_face - blur) < threshold).astype("float32")
         sharpened = (new_face * (1.0 + amount)) + (blur * -amount)
-        new_face = (new_face * (1.0 - low_contrast_mask)) + (
-            sharpened * low_contrast_mask
-        )
+        new_face = (new_face * (1.0 - low_contrast_mask)) + (sharpened * low_contrast_mask)
         return new_face
 
 

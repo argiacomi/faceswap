@@ -10,11 +10,10 @@ import typing as T
 from importlib import import_module
 from inspect import isclass
 
+from lib.config.objects import ConfigItem, GlobalSection
 from lib.logger import parse_class_init
 from lib.serializer import get_serializer
 from lib.utils import get_module_objects
-
-from lib.config.objects import ConfigItem, GlobalSection
 from plugins.train import train_config as cfg
 
 if T.TYPE_CHECKING:
@@ -110,10 +109,7 @@ class State:  # pylint:disable=too-many-instance-attributes
         int
             The newly generated session id
         """
-        if not self._sessions:
-            session_id = 1
-        else:
-            session_id = max(int(key) for key in self._sessions.keys()) + 1
+        session_id = 1 if not self._sessions else max(int(key) for key in self._sessions) + 1
         logger.debug(session_id)
         return session_id
 
@@ -132,9 +128,7 @@ class State:  # pylint:disable=too-many-instance-attributes
             "no_logs": no_logs,
             "batchsize": 0,
             "iterations": 0,
-            "config": {
-                k: v for k, v in self._config.items() if k in self._updatable_options
-            },
+            "config": {k: v for k, v in self._config.items() if k in self._updatable_options},
         }
 
     def update_session_config(self, key: str, value: T.Any) -> None:
@@ -149,9 +143,7 @@ class State:  # pylint:disable=too-many-instance-attributes
         """
         old_val = self.current_session["config"][key]
         assert isinstance(value, type(old_val))
-        logger.debug(
-            "Updating configuration item '%s' from '%s' to '%s'", key, old_val, value
-        )
+        logger.debug("Updating configuration item '%s' from '%s' to '%s'", key, old_val, value)
         self.current_session["config"][key] = value
 
     def add_session_batchsize(self, batch_size: int) -> None:
@@ -191,9 +183,7 @@ class State:  # pylint:disable=too-many-instance-attributes
         """Save the state values to the serialized state file."""
         state = {
             "name": self._name,
-            "sessions": {
-                k: v for k, v in self._sessions.items() if v.get("iterations", 0) > 0
-            },
+            "sessions": {k: v for k, v in self._sessions.items() if v.get("iterations", 0) > 0},
             "lowest_avg_loss": self.lowest_avg_loss,
             "iterations": self._iterations,
             "mixed_precision_layers": self._mixed_precision_layers,
@@ -252,11 +242,9 @@ class State:  # pylint:disable=too-many-instance-attributes
             "clipping",
         ]
         updated = False
-        for old, new in zip(priors, new_items):
+        for old, new in zip(priors, new_items, strict=False):
             if old not in self._config:
-                logger.debug(
-                    "Legacy item '%s' not in state config. Skipping update", old
-                )
+                logger.debug("Legacy item '%s' not in state config. Skipping update", old)
                 continue
 
             # dssim_loss > loss_function
@@ -276,8 +264,7 @@ class State:  # pylint:disable=too-many-instance-attributes
                 self._config[new] = self._config["mask_type"] is not None
                 updated = True
                 logger.info(
-                    "Added new 'learn_mask' state config item for this model. Value set "
-                    "to: %s",
+                    "Added new 'learn_mask' state config item for this model. Value set to: %s",
                     self._config[new],
                 )
                 continue
@@ -304,38 +291,28 @@ class State:  # pylint:disable=too-many-instance-attributes
                 self._config["loss_weight_2"] = self._config[old]
                 del self._config[old]
                 updated = True
-                logger.info(
-                    "Updated state config from legacy 'l2_reg_term' to 'loss_function_2'"
-                )
+                logger.info("Updated state config from legacy 'l2_reg_term' to 'loss_function_2'")
 
             # Replace clipnorm with correct gradient clipping type and value
             if old == "clipnorm":
                 self._config[new] = "norm"
                 del self._config[old]
                 updated = True
-                logger.info(
-                    "Updated state config from legacy '%s' to  '%s: %s'", old, new, old
-                )
+                logger.info("Updated state config from legacy '%s' to  '%s: %s'", old, new, old)
 
             # Replace autoclip with correct gradient clipping type
             if old == "autoclip":
                 self._config[new] = old
                 del self._config[old]
                 updated = True
-                logger.info(
-                    "Updated state config from legacy '%s' to '%s: %s'", old, new, old
-                )
+                logger.info("Updated state config from legacy '%s' to '%s: %s'", old, new, old)
 
         # Update Clip layer names from dots to underscores
         mixed_precision = self._mixed_precision_layers
         if any("." in name for name in mixed_precision):
-            self._mixed_precision_layers = [
-                x.replace(".", "_") for x in mixed_precision
-            ]
+            self._mixed_precision_layers = [x.replace(".", "_") for x in mixed_precision]
             updated = True
-            logger.info(
-                "Updated state config for legacy 'mixed_precision' storage of Clip layers"
-            )
+            logger.info("Updated state config for legacy 'mixed_precision' storage of Clip layers")
 
         logger.debug("State file updated for legacy config: %s", updated)
         return updated
@@ -365,9 +342,7 @@ class State:  # pylint:disable=too-many-instance-attributes
             for name, opt in obj.__dict__.items():
                 if isinstance(opt, ConfigItem):
                     retval[name] = opt
-        logger.debug(
-            "Loaded global config options: %s", {k: v.value for k, v in retval.items()}
-        )
+        logger.debug("Loaded global config options: %s", {k: v.value for k, v in retval.items()})
         return retval
 
     def _get_model_options(self) -> dict[str, ConfigItem]:
@@ -412,15 +387,11 @@ class State:  # pylint:disable=too-many-instance-attributes
 
             if key not in self._config:
                 val = legacy_defaults.get(key, val)
-                logger.info(
-                    "Adding new config item to state file: '%s': %s", key, repr(val)
-                )
+                logger.info("Adding new config item to state file: '%s': %s", key, repr(val))
                 self._config[key] = val
 
             old_val = self._config[key]
-            old_val = (
-                "none" if old_val is None else old_val
-            )  # We used to allow NoneType. No more
+            old_val = "none" if old_val is None else old_val  # We used to allow NoneType. No more
 
             if not opt.fixed:
                 self._updatable_options.append(key)
@@ -458,9 +429,7 @@ class State:  # pylint:disable=too-many-instance-attributes
             if not val.fixed:
                 self._updatable_options.append(key)
 
-        logger.debug(
-            "Generated initial state config for '%s': %s", self._name, self._config
-        )
+        logger.debug("Generated initial state config for '%s': %s", self._name, self._config)
         logger.debug("Updatable items: %s", self._updatable_options)
 
     def _load(self) -> None:

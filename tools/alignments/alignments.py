@@ -5,17 +5,16 @@ import logging
 import os
 import sys
 import typing as T
-
 from argparse import Namespace
 from multiprocessing import Process
 
-from lib.utils import get_module_objects, FaceswapError, handle_deprecated_cli_opts
+from lib.utils import FaceswapError, get_module_objects, handle_deprecated_cli_opts
 from lib.video import VIDEO_EXTENSIONS
-from .media import AlignmentData
+
 from .jobs import Check, Export, Sort, Spatial  # noqa pylint:disable=unused-import
 from .jobs_faces import FromFaces, RemoveFaces, Rename  # noqa pylint:disable=unused-import
 from .jobs_frames import Draw, Extract  # noqa pylint:disable=unused-import
-
+from .media import AlignmentData
 
 logger = logging.getLogger(__name__)
 
@@ -36,9 +35,7 @@ class Alignments:
     """
 
     def __init__(self, arguments: Namespace) -> None:
-        logger.debug(
-            "Initializing %s: (arguments: %s)", self.__class__.__name__, arguments
-        )
+        logger.debug("Initializing %s: (arguments: %s)", self.__class__.__name__, arguments)
         self._requires_alignments = ["export", "sort", "spatial"]
         self._requires_faces = ["extract", "from-faces"]
         self._requires_frames = [
@@ -126,9 +123,7 @@ class Alignments:
             of ``Nones`` corresponding to the number of jobs to run
         """
         if not self._args.frames_dir:
-            logger.error(
-                "Please provide a 'frames_dir' location for '%s' job", self._args.job
-            )
+            logger.error("Please provide a 'frames_dir' location for '%s' job", self._args.job)
             sys.exit(1)
 
         frames: list[str] = []
@@ -152,30 +147,20 @@ class Alignments:
                 frames.append(candidate)
                 alignments.append(fname)
                 continue
-            logger.warning(
-                "Can't locate alignments file for '%s'. Skipping.", candidate
-            )
+            logger.warning("Can't locate alignments file for '%s'. Skipping.", candidate)
 
         if not frames:
-            logger.error(
-                "No valid videos or frames folders found in '%s'", self._args.frames_dir
-            )
+            logger.error("No valid videos or frames folders found in '%s'", self._args.frames_dir)
             sys.exit(1)
 
-        if (
-            self._args.job not in self._requires_faces
-        ):  # faces not required for frames input
+        if self._args.job not in self._requires_faces:  # faces not required for frames input
             faces: list[str | None] = [None for _ in range(len(frames))]
         else:
             if not self._args.faces_dir:
-                logger.error(
-                    "Please provide a 'faces_dir' location for '%s' job", self._args.job
-                )
+                logger.error("Please provide a 'faces_dir' location for '%s' job", self._args.job)
                 sys.exit(1)
             faces = [
-                os.path.join(
-                    self._args.faces_dir, os.path.basename(os.path.splitext(frm)[0])
-                )
+                os.path.join(self._args.faces_dir, os.path.basename(os.path.splitext(frm)[0]))
                 for frm in frames
             ]
 
@@ -209,9 +194,7 @@ class Alignments:
                 "frames_dir": [self._args.frames_dir],
             }
 
-        elif (
-            job in self._requires_alignments
-        ):  # Jobs only requiring an alignments file location
+        elif job in self._requires_alignments:  # Jobs only requiring an alignments file location
             retval = self._get_alignments_locations()
 
         elif job in self._requires_frames:  # Jobs that require a frames folder
@@ -239,8 +222,7 @@ class Alignments:
             )
         else:
             raise FaceswapError(
-                f"Unhandled job: {self._args.job}. This is a bug. Please report "
-                "to the developers"
+                f"Unhandled job: {self._args.job}. This is a bug. Please report to the developers"
             )
 
         logger.debug("File locations: %s", retval)
@@ -274,6 +256,7 @@ class Alignments:
                 self._locations["frames_dir"],
                 self._locations["faces_dir"],
                 self._locations["alignments_file"],
+                strict=False,
             )
         ):
             if num_jobs > 1:
@@ -305,9 +288,7 @@ class _Alignments:
     """
 
     def __init__(self, arguments: Namespace) -> None:
-        logger.debug(
-            "Initializing %s: (arguments: '%s'", self.__class__.__name__, arguments
-        )
+        logger.debug("Initializing %s: (arguments: '%s'", self.__class__.__name__, arguments)
         self._args = arguments
         job = self._args.job
 
@@ -321,9 +302,7 @@ class _Alignments:
             and arguments.frames_dir
             and os.path.isfile(arguments.frames_dir)
         ):
-            self.alignments.update_legacy_has_source(
-                os.path.basename(arguments.frames_dir)
-            )
+            self.alignments.update_legacy_has_source(os.path.basename(arguments.frames_dir))
 
         logger.debug("Initialized %s", self.__class__.__name__)
 
@@ -340,30 +319,21 @@ class _Alignments:
         """
         fname = self._args.alignments_file
         frames = self._args.frames_dir
-        if (
-            fname
-            and os.path.isfile(fname)
-            and os.path.splitext(fname)[-1].lower() == ".fsa"
-        ):
+        if fname and os.path.isfile(fname) and os.path.splitext(fname)[-1].lower() == ".fsa":
             return fname
         if fname:
             logger.error("Not a valid alignments file: '%s'", fname)
             sys.exit(1)
 
         if not frames or not os.path.exists(frames):
-            logger.error(
-                "Not a valid frames folder: '%s'. Can't scan for alignments.", frames
-            )
+            logger.error("Not a valid frames folder: '%s'. Can't scan for alignments.", frames)
             sys.exit(1)
 
         fname = "alignments.fsa"
         if os.path.isdir(frames) and os.path.exists(os.path.join(frames, fname)):
             return os.path.join(frames, fname)
 
-        if (
-            os.path.isdir(frames)
-            or os.path.splitext(frames)[-1] not in VIDEO_EXTENSIONS
-        ):
+        if os.path.isdir(frames) or os.path.splitext(frames)[-1] not in VIDEO_EXTENSIONS:
             logger.error("Can't find a valid alignments file in location: %s", frames)
             sys.exit(1)
 

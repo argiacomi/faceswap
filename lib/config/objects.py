@@ -5,23 +5,21 @@ from __future__ import annotations
 
 import gettext
 import logging
+import types
+from dataclasses import dataclass, field
 from typing import (
     Any,
-    cast,
     Generic,
-    get_args,
-    get_origin,
-    get_type_hints,
     Literal,
     TypeVar,
     Union,
+    cast,
+    get_args,
+    get_origin,
+    get_type_hints,
 )
-import types
-
-from dataclasses import dataclass, field
 
 from lib.utils import get_module_objects
-
 
 # LOCALES
 _LANG = gettext.translation("lib.config", localedir="locales", fallback=True)
@@ -124,28 +122,24 @@ class ConfigItem(Generic[T]):  # pylint:disable=too-many-instance-attributes
         retval = f"{self.info}\n"
         if not self.fixed:
             retval += _("\nThis option can be updated for existing models.\n")
-        if self.datatype == list:
+        if self.datatype is list:
             retval += _(
                 "\nIf selecting multiple options then each option should be separated "
                 "by a space or a comma (e.g. item1, item2, item3)\n"
             )
         if self.choices and self.choices != "colorchooser":
             retval += _("\nChoose from: {}").format(self.choices)
-        elif self.datatype == bool:
+        elif self.datatype is bool:
             retval += _("\nChoose from: True, False")
-        elif self.datatype == int:
+        elif self.datatype is int:
             assert self.min_max is not None
             cmin, cmax = self.min_max
             retval += _("\nSelect an integer between {} and {}").format(cmin, cmax)
-        elif self.datatype == float:
+        elif self.datatype is float:
             assert self.min_max is not None
             cmin, cmax = self.min_max
-            retval += _("\nSelect a decimal number between {} and {}").format(
-                cmin, cmax
-            )
-        default = (
-            ", ".join(self.default) if isinstance(self.default, list) else self.default
-        )
+            retval += _("\nSelect a decimal number between {} and {}").format(cmin, cmax)
+        default = ", ".join(self.default) if isinstance(self.default, list) else self.default
         retval += _("\n[Default: {}]").format(default)
         return retval
 
@@ -274,11 +268,7 @@ class ConfigItem(Generic[T]):  # pylint:disable=too-many-instance-attributes
                     f"Hex color codes should start with a '#' and be 6 "
                     f"characters long. Got: '{self.default}'"
                 )
-        elif (
-            self.choices
-            and isinstance(self.default, str)
-            and self.default not in self.choices
-        ):
+        elif self.choices and isinstance(self.default, str) and self.default not in self.choices:
             raise ValueError(
                 f"Config item default value '{self.default}' must exist in "
                 f"in choices {self.choices}"
@@ -295,8 +285,7 @@ class ConfigItem(Generic[T]):  # pylint:disable=too-many-instance-attributes
                 defaults = {self.default.lower()}
             if not defaults.issubset(unique_choices):
                 raise ValueError(
-                    f"Config item default {self.default} must exist in choices "
-                    f"{self.choices}"
+                    f"Config item default {self.default} must exist in choices {self.choices}"
                 )
 
         if not self.choices and isinstance(self.default, list):
@@ -311,7 +300,7 @@ class ConfigItem(Generic[T]):  # pylint:disable=too-many-instance-attributes
             If any float or int options have not been configured correctly
         """
         # NOTE: Have to include datatype filter in next check to exclude bools
-        if self.datatype in (float, int) and isinstance(self.default, (float, int)):
+        if self.datatype in (float, int) and isinstance(self.default, float | int):
             if self.rounding <= 0:
                 raise ValueError(
                     f"Config Item rounding must be a positive number for "
@@ -372,9 +361,7 @@ class ConfigItem(Generic[T]):  # pylint:disable=too-many-instance-attributes
             return [str(x) for x in value]
         delimiter = "," if "," in value else None
         retval = list(set(x.strip() for x in value.split(delimiter)))
-        logger.debug(
-            "[%s] Processed str value '%s' to unique list %s", self._name, value, retval
-        )
+        logger.debug("[%s] Processed str value '%s' to unique list %s", self._name, value, retval)
         return retval
 
     def _validate_selection(self, value: str | list[str]) -> str | list[str]:

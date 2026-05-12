@@ -25,9 +25,11 @@ THE SOFTWARE."""
 
 import cv2
 import numpy as np
+
 from lib.utils import get_module_objects
-from ._base import Adjustment
+
 from . import color_transfer_defaults as cfg
+from ._base import Adjustment
 
 
 class Color(Adjustment):
@@ -79,11 +81,11 @@ class Color(Adjustment):
             np.rint(new_face * raw_mask * 255.0).astype("uint8"), cv2.COLOR_BGR2LAB
         ).astype("float32")  # pylint:disable=no-member
         # compute color statistics for the source and target images
-        (l_mean_src, l_std_src, a_mean_src, a_std_src, b_mean_src, b_std_src) = (
-            self.image_stats(source)
+        (l_mean_src, l_std_src, a_mean_src, a_std_src, b_mean_src, b_std_src) = self.image_stats(
+            source
         )
-        (l_mean_tar, l_std_tar, a_mean_tar, a_std_tar, b_mean_tar, b_std_tar) = (
-            self.image_stats(target)
+        (l_mean_tar, l_std_tar, a_mean_tar, a_std_tar, b_mean_tar, b_std_tar) = self.image_stats(
+            target
         )
 
         # subtract the means from the target image

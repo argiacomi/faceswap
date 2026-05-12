@@ -27,9 +27,7 @@ class _Serializer:
         self.payload = payload
 
 
-def _store(
-    tmp_path: Path, payload: object | None = None
-) -> tuple[RecentFilesStore, _Serializer]:
+def _store(tmp_path: Path, payload: object | None = None) -> tuple[RecentFilesStore, _Serializer]:
     """Build a recent files store test subject."""
     filename = tmp_path / ".recent.json"
     serializer = _Serializer(payload)

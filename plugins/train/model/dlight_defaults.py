@@ -28,10 +28,8 @@ from lib.config import ConfigItem
 
 from lib.config import ConfigItem
 
-
 HELPTEXT = (
-    "A lightweight, high resolution Dfaker variant "
-    "(Adapted from https://github.com/dfaker/df)"
+    "A lightweight, high resolution Dfaker variant (Adapted from https://github.com/dfaker/df)"
 )
 
 

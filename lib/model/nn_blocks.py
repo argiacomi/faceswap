@@ -78,13 +78,8 @@ def _get_default_initializer(
         The kernel initializer to use for this convolutional layer. Either the original given
         initializer, HeUniform or convolutional aware (if selected in config options)
     """
-    if (
-        isinstance(initializer, dict)
-        and initializer.get("class_name", "") == "ConvolutionAware"
-    ):
-        logger.debug(
-            "Returning serialized initialized ConvAware initializer: %s", initializer
-        )
+    if isinstance(initializer, dict) and initializer.get("class_name", "") == "ConvolutionAware":
+        logger.debug("Returning serialized initialized ConvAware initializer: %s", initializer)
         return initializer
 
     if cfg.conv_aware_init():
@@ -124,11 +119,9 @@ class Conv2D:  # pylint:disable=too-many-ancestors,abstract-method
         layers. Default: ``False``
     """
 
-    def __init__(
-        self, *args, padding: str = "same", is_upscale: bool = False, **kwargs
-    ) -> None:
+    def __init__(self, *args, padding: str = "same", is_upscale: bool = False, **kwargs) -> None:
         logger.debug(parse_class_init(locals()))
-        if kwargs.get("name", None) is None:
+        if kwargs.get("name") is None:
             filters = kwargs["filters"] if "filters" in kwargs else args[0]
             kwargs["name"] = _get_name(f"conv2d_{filters}")
         initializer = _get_default_initializer(kwargs.pop("kernel_initializer", None))
@@ -182,15 +175,11 @@ class DepthwiseConv2D:  # noqa # pylint:disable=too-many-ancestors,abstract-meth
         layers. Default: ``False``
     """
 
-    def __init__(
-        self, *args, padding: str = "same", is_upscale: bool = False, **kwargs
-    ) -> None:
+    def __init__(self, *args, padding: str = "same", is_upscale: bool = False, **kwargs) -> None:
         logger.debug(parse_class_init(locals()))
-        if kwargs.get("name", None) is None:
+        if kwargs.get("name") is None:
             kwargs["name"] = _get_name("dwconv2d")
-        initializer = _get_default_initializer(
-            kwargs.pop("depthwise_initializer", None)
-        )
+        initializer = _get_default_initializer(kwargs.pop("depthwise_initializer", None))
         if is_upscale and cfg.icnr_init():
             initializer = ICNR(initializer=initializer)
             logger.debug("Using ICNR Initializer: %s", initializer)
@@ -263,9 +252,7 @@ class Conv2DOutput:
             if "name" in kwargs
             else _get_name(f"conv_output_{filters}")
         )
-        self._conv = Conv2D(
-            filters, kernel_size, padding=padding, name=f"{name}_conv2d", **kwargs
-        )
+        self._conv = Conv2D(filters, kernel_size, padding=padding, name=f"{name}_conv2d", **kwargs)
         self._activation = layers.Activation(activation, dtype="float32", name=name)
         logger.debug("Initialized %s", self.__class__.__name__)
 
@@ -342,14 +329,10 @@ class Conv2DBlock:  # pylint:disable=too-many-instance-attributes
     ) -> None:
         logger.debug(parse_class_init(locals()))
 
-        self._name = (
-            kwargs.pop("name") if "name" in kwargs else _get_name(f"conv_{filters}")
-        )
+        self._name = kwargs.pop("name") if "name" in kwargs else _get_name(f"conv_{filters}")
         self._use_reflect_padding = cfg.reflect_padding()
 
-        kernel_size = (
-            (kernel_size, kernel_size) if isinstance(kernel_size, int) else kernel_size
-        )
+        kernel_size = (kernel_size, kernel_size) if isinstance(kernel_size, int) else kernel_size
         self._args = (kernel_size,) if use_depthwise else (filters, kernel_size)
         self._strides = (strides, strides) if isinstance(strides, int) else strides
         self._padding = "valid" if self._use_reflect_padding else padding
@@ -407,15 +390,11 @@ class Conv2DBlock:  # pylint:disable=too-many-instance-attributes
             retval.append(InstanceNormalization(name=f"{self._name}_instancenorm"))
 
         if self._normalization == "batch":
-            retval.append(
-                layers.BatchNormalization(axis=3, name=f"{self._name}_batchnorm")
-            )
+            retval.append(layers.BatchNormalization(axis=3, name=f"{self._name}_batchnorm"))
 
         # activation
         if self._activation == "leakyrelu":
-            retval.append(
-                layers.LeakyReLU(self._relu_alpha, name=f"{self._name}_leakyrelu")
-            )
+            retval.append(layers.LeakyReLU(self._relu_alpha, name=f"{self._name}_leakyrelu"))
         if self._activation == "swish":
             retval.append(Swish(name=f"{self._name}_swish"))
         if self._activation == "prelu":
@@ -667,9 +646,7 @@ class Upscale2xBlock:
             )
 
         self._joiner = (
-            layers.Add()
-            if self._fast
-            else layers.Concatenate(name=f"{name}_concatenate")
+            layers.Add() if self._fast else layers.Concatenate(name=f"{name}_concatenate")
         )
 
         logger.debug("Initialized %s", self.__class__.__name__)
@@ -927,9 +904,7 @@ class ResidualBlock:
 
         self._layers = self._get_layers()
         self._add = layers.Add()
-        self._activation = layers.LeakyReLU(
-            negative_slope=0.2, name=f"{self._name}_leakyrelu_3"
-        )
+        self._activation = layers.LeakyReLU(negative_slope=0.2, name=f"{self._name}_leakyrelu_3")
         logger.debug("Initialized %s", self.__class__.__name__)
 
     def _get_layers(self) -> list[layers.Layer]:
@@ -959,9 +934,7 @@ class ResidualBlock:
                 **self._kwargs,
             )
         )
-        retval.append(
-            layers.LeakyReLU(negative_slope=0.2, name=f"{self._name}_leakyrelu_1")
-        )
+        retval.append(layers.LeakyReLU(negative_slope=0.2, name=f"{self._name}_leakyrelu_1"))
 
         if self._use_reflect_padding:
             retval.append(
@@ -972,9 +945,7 @@ class ResidualBlock:
                 )
             )
 
-        kwargs = {
-            key: val for key, val in self._kwargs.items() if key != "kernel_initializer"
-        }
+        kwargs = {key: val for key, val in self._kwargs.items() if key != "kernel_initializer"}
         if not cfg.conv_aware_init():
             kwargs["kernel_initializer"] = initializers.VarianceScaling(
                 scale=0.2, mode="fan_in", distribution="uniform"

@@ -21,14 +21,10 @@ class CommandBuilder:
     * anything else: emitted as ``switch value``
     """
 
-    def __init__(
-        self, *, executable: str | None = None, base_path: str | None = None
-    ) -> None:
+    def __init__(self, *, executable: str | None = None, base_path: str | None = None) -> None:
         self._executable = executable or sys.executable
         self._base_path = (
-            os.path.realpath(os.path.dirname(sys.argv[0]))
-            if base_path is None
-            else base_path
+            os.path.realpath(os.path.dirname(sys.argv[0])) if base_path is None else base_path
         )
 
     def build(
@@ -75,9 +71,7 @@ class CommandBuilder:
         """Quote arguments for readable generated command output."""
         return [
             f'"{arg}"'
-            if " " in arg
-            and not arg.startswith(("[", "("))
-            and not arg.endswith(("]", ")"))
+            if " " in arg and not arg.startswith(("[", "(")) and not arg.endswith(("]", ")"))
             else arg
             for arg in args
         ]
@@ -88,9 +82,7 @@ class CommandBuilder:
         return [arg for group in cls.build_option_groups(values) for arg in group]
 
     @classmethod
-    def build_option_groups(
-        cls, values: T.Mapping[str, object]
-    ) -> list[tuple[str, ...]]:
+    def build_option_groups(cls, values: T.Mapping[str, object]) -> list[tuple[str, ...]]:
         """Build grouped CLI switch/value arguments from a mapping.
 
         This preserves the legacy ``gen_cli_arguments()`` tuple shape while sharing the same
@@ -108,7 +100,7 @@ class CommandBuilder:
                 else:
                     groups.append((switch,))
                 continue
-            if isinstance(value, (list, tuple)):
+            if isinstance(value, list | tuple):
                 groups.append((switch, *(str(item) for item in value)))
                 continue
             groups.append((switch, str(value)))
@@ -122,9 +114,7 @@ class CommandBuilder:
             return True
         if isinstance(value, str) and value == "":
             return True
-        if isinstance(value, (list, tuple)) and not value:
-            return True
-        return False
+        return bool(isinstance(value, list | tuple) and not value)
 
 
 __all__ = get_module_objects(__name__)

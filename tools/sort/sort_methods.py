@@ -6,6 +6,7 @@ sorting a full list of scores and binning based on those sorted scores.
 """
 
 from __future__ import annotations
+
 import logging
 import operator
 import sys
@@ -17,18 +18,20 @@ import numpy as np
 from tqdm import tqdm
 
 from lib.align import DetectedFace, LandmarkType
-from lib.multithreading import FSThread
-from lib.utils import get_module_objects, FaceswapError
 from lib.infer.identity import Cluster, Identity
+from lib.multithreading import FSThread
+from lib.utils import FaceswapError, get_module_objects
 
 from .info_loader import InfoLoader
 
 if T.TYPE_CHECKING:
     from argparse import Namespace
+
     import numpy.typing as npt
+
     from lib.align.objects import PNGAlignments
-    from lib.infer.runner import ExtractRunner
     from lib.infer.handler import ExtractHandlerFace
+    from lib.infer.runner import ExtractRunner
 
 logger = logging.getLogger(__name__)
 
@@ -66,9 +69,7 @@ class SortMethod:
         )
         self._is_group = is_group
         self._log_once = True
-        self._method = (
-            arguments.group_method if self._is_group else arguments.sort_method
-        )
+        self._method = arguments.group_method if self._is_group else arguments.sort_method
 
         self._num_bins: int = arguments.num_bins
         self._bin_names: list[str] = []
@@ -91,9 +92,7 @@ class SortMethod:
         process is called when this property is first accessed"""
         if not self._binned:
             self._binned = self._binning()
-            logger.debug(
-                {f"bin_{idx}": len(bin_) for idx, bin_ in enumerate(self._binned)}
-            )
+            logger.debug({f"bin_{idx}": len(bin_) for idx, bin_ in enumerate(self._binned)})
         return self._binned
 
     @property
@@ -172,18 +171,16 @@ class SortMethod:
         if i == 0:
             retval = [str(int(n)) for n in rounded]
         else:
-            pre, post = zip(*[str(r).split(".") for r in rounded])
+            pre, post = zip(*[str(r).split(".") for r in rounded], strict=False)
             rpad = max(len(x) for x in post)
             retval = [
                 f"{str(int(left))}.{str(int(right)).ljust(rpad, '0')}"
-                for left, right in zip(pre, post)
+                for left, right in zip(pre, post, strict=False)
             ]
         logger.debug("rounded values: %s, formatted labels: %s", rounded, retval)
         return retval
 
-    def _binning_linear_threshold(
-        self, units: str = "", multiplier: int = 1
-    ) -> list[list[str]]:
+    def _binning_linear_threshold(self, units: str = "", multiplier: int = 1) -> list[list[str]]:
         """Standard linear binning method for binning by threshold.
 
         The minimum and maximum result from :attr:`_result` are taken, A range is created between
@@ -215,12 +212,7 @@ class SortMethod:
         bins: list[list[str]] = [[] for _ in range(self._num_bins)]
         for filename, result in self._result:
             bin_idx = (
-                next(
-                    bin_id
-                    for bin_id, thresh in enumerate(thresholds)
-                    if result <= thresh
-                )
-                - 1
+                next(bin_id for bin_id, thresh in enumerate(thresholds) if result <= thresh) - 1
             )
             bins[bin_idx].append(filename)
 
@@ -242,7 +234,7 @@ class SortMethod:
             self._bin_names = [f"{self._method}_{i:03d}" for i in range(len(retval))]
 
         logger.debug(
-            {bin_name: len(bin_) for bin_name, bin_ in zip(self._bin_names, retval)}
+            {bin_name: len(bin_) for bin_name, bin_ in zip(self._bin_names, retval, strict=False)}
         )
 
         return retval
@@ -408,9 +400,7 @@ class SortMultiMethod(SortMethod):
         """
         sorted_ = self._result
         output: list[list[str]] = []
-        for bin_ in tqdm(
-            self._binned, desc="Binning and sorting", file=sys.stdout, leave=False
-        ):
+        for bin_ in tqdm(self._binned, desc="Binning and sorting", file=sys.stdout, leave=False):
             indices: dict[int, str] = {}
             for filename in bin_:
                 indices[sorted_.index(filename)] = filename  # pyright:ignore[reportArgumentType]
@@ -573,17 +563,11 @@ class SortColor(SortMethod):
         if self._method == "gray":
             conversion = np.array([[0.0722], [0.7152], [0.2126]])
         else:
-            conversion = np.array(
-                [[0.25, 0.5, 0.25], [-0.5, 0.0, 0.5], [-0.25, 0.5, -0.25]]
-            )
+            conversion = np.array([[0.25, 0.5, 0.25], [-0.5, 0.0, 0.5], [-0.25, 0.5, -0.25]])
 
         operation = "ijk, kl -> ijl" if self._method == "gray" else "ijl, kl -> ijk"
-        path = np.einsum_path(
-            operation, image[..., :3], conversion, optimize="optimal"
-        )[0]
-        return np.einsum(operation, image[..., :3], conversion, optimize=path).astype(
-            "float32"
-        )
+        path = np.einsum_path(operation, image[..., :3], conversion, optimize="optimal")[0]
+        return np.einsum(operation, image[..., :3], conversion, optimize=path).astype("float32")
 
     def _near_split(self, bin_range: int) -> list[int]:
         """Obtain the split for the given number of bins for the given range
@@ -617,9 +601,7 @@ class SortColor(SortMethod):
         # Get edges of bins from 0 to 100
         bins_edges = self._near_split(100)
         # Get the proper bin number for each img order
-        img_bins = np.digitize(
-            [float(x[1]) for x in self._result], bins_edges, right=True
-        )
+        img_bins = np.digitize([float(x[1]) for x in self._result], bins_edges, right=True)
 
         # Place imgs in bins
         for idx, _bin in enumerate(img_bins):
@@ -652,9 +634,7 @@ class SortColor(SortMethod):
 
         assert image is not None
         if self._method == "black":
-            score = (
-                np.ndarray.all(image == [0, 0, 0], axis=2).sum() / image.size * 100 * 3
-            )
+            score = np.ndarray.all(image == [0, 0, 0], axis=2).sum() / image.size * 100 * 3
         else:
             channel_to_sort = self._desired_channel[self._method]
             score = np.average(self._convert_color(image), axis=(0, 1))[channel_to_sort]
@@ -879,13 +859,9 @@ class SortHistogram(SortMethod):
         super().__init__(arguments, loader_type="all", is_group=is_group)
         method = arguments.group_method if self._is_group else arguments.sort_method
         self._is_dissim = method == "hist-dissim"
-        self._threshold: float = (
-            0.3 if arguments.threshold < 0.0 else arguments.threshold
-        )
+        self._threshold: float = 0.3 if arguments.threshold < 0.0 else arguments.threshold
 
-    def _calc_histogram(
-        self, image: np.ndarray, alignments: PNGAlignments | None
-    ) -> np.ndarray:
+    def _calc_histogram(self, image: np.ndarray, alignments: PNGAlignments | None) -> np.ndarray:
         if alignments:
             image = self._mask_face(image, alignments)
         return cv2.calcHist([image], [0], None, [256], [0, 256])
@@ -924,9 +900,7 @@ class SortHistogram(SortMethod):
             min_score = float("inf")
             j_min_score = i + 1
             for j in range(i + 1, img_list_len):
-                score = cv2.compareHist(
-                    result[i][1], result[j][1], cv2.HISTCMP_BHATTACHARYYA
-                )
+                score = cv2.compareHist(result[i][1], result[j][1], cv2.HISTCMP_BHATTACHARYYA)
                 if score < min_score:
                     min_score = score
                     j_min_score = j
@@ -975,9 +949,7 @@ class SortHistogram(SortMethod):
         reference_groups[0] = [T.cast(np.ndarray, self._result[0][1])]
         bins.append([self._result[0][0]])
 
-        for i in tqdm(
-            range(1, img_list_len), desc="Grouping", file=sys.stdout, leave=False
-        ):
+        for i in tqdm(range(1, img_list_len), desc="Grouping", file=sys.stdout, leave=False):
             current_key = -1
             current_score = float("inf")
             img = T.cast(np.ndarray, self._result[i][1])

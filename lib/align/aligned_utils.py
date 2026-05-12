@@ -11,7 +11,7 @@ import numpy as np
 
 from lib.utils import get_module_objects
 
-from .constants import EXTRACT_RATIOS, LandmarkType, MAP_2D_68
+from .constants import EXTRACT_RATIOS, MAP_2D_68, LandmarkType
 
 if T.TYPE_CHECKING:
     import numpy.typing as npt
@@ -68,9 +68,7 @@ def get_adjusted_center(
     return center
 
 
-def get_base_scale(
-    source_centering: CenteringType, source_coverage: float = 1.0
-) -> float:
+def get_base_scale(source_centering: CenteringType, source_coverage: float = 1.0) -> float:
     """For an aligned patch of the given centering and the given coverage, obtain the ratio of the
     patch that contains the core central area with no padding applied
 
@@ -88,9 +86,7 @@ def get_base_scale(
     return 1 - EXTRACT_RATIOS[source_centering] * source_coverage
 
 
-def get_base_size(
-    size: int, source_centering: CenteringType, source_coverage: float = 1.0
-) -> int:
+def get_base_size(size: int, source_centering: CenteringType, source_coverage: float = 1.0) -> int:
     """For an aligned patch of the given size, centering and coverage, obtain the size of the patch
     that contains the core central area with no padding applied
 
@@ -137,9 +133,7 @@ def get_sub_crop_scale(
     """
     coverage = target_coverage / source_coverage
     return (
-        (1 - EXTRACT_RATIOS[source_centering])
-        / (1 - EXTRACT_RATIOS[target_centering])
-        * coverage
+        (1 - EXTRACT_RATIOS[source_centering]) / (1 - EXTRACT_RATIOS[target_centering]) * coverage
     )
 
 
@@ -191,8 +185,7 @@ def get_sub_crop_size(
         )
         retval = 2 * int(round(size * scale / 2))
     logger.trace(  # type:ignore[attr-defined]
-        "source_centering: %s, target_centering: %s, size: %s, coverage_ratio: %s, "
-        "crop_size: %s",
+        "source_centering: %s, target_centering: %s, size: %s, coverage_ratio: %s, crop_size: %s",
         source_centering,
         target_centering,
         size,
@@ -326,9 +319,7 @@ def sub_crop(
     dst_x1 = dst_x0 + (valid_src_x1 - valid_src_x0)
     dst_y1 = dst_y0 + (valid_src_y1 - valid_src_y0)
 
-    out[dst_y0:dst_y1, dst_x0:dst_x1] = image[
-        valid_src_y0:valid_src_y1, valid_src_x0:valid_src_x1
-    ]
+    out[dst_y0:dst_y1, dst_x0:dst_x1] = image[valid_src_y0:valid_src_y1, valid_src_x0:valid_src_x1]
     return out
 
 
@@ -498,9 +489,7 @@ def batch_sub_crop(
     lin_idx = y_idx * width + x_idx
 
     flat = images.reshape(batch_size, height * width, channels)
-    gathered = np.take_along_axis(
-        flat, lin_idx.reshape(batch_size, -1)[..., None], axis=1
-    )
+    gathered = np.take_along_axis(flat, lin_idx.reshape(batch_size, -1)[..., None], axis=1)
     return gathered.reshape(batch_size, out_size, out_size, 3)
 
 
@@ -543,9 +532,7 @@ def batch_align(
     assert all(i.dtype == dtype for i in images), "All images must have the same dtype"
     assert np.any(matrices), "No matrices provided"
     mats = matrices[:, :2, :]  # Crop any Nx3x3 matrices to Nx2x3
-    scales = np.hypot(
-        matrices[..., 0, 0], matrices[..., 1, 0]
-    )  # Always same x/y scaling
+    scales = np.hypot(matrices[..., 0, 0], matrices[..., 1, 0])  # Always same x/y scaling
     upscale = cv2.INTER_LINEAR if fast_upscale else cv2.INTER_CUBIC
     interpolations = np.where(scales > 1.0, cv2.INTER_LINEAR, upscale)
 
@@ -553,11 +540,9 @@ def batch_align(
     retval = np.zeros((len(image_ids), *dims, channels), dtype=dtype)
 
     for idx, (image_id, mat, interpolation) in enumerate(
-        zip(image_ids, mats, interpolations)
+        zip(image_ids, mats, interpolations, strict=False)
     ):
-        cv2.warpAffine(
-            images[image_id], mat, dims, dst=retval[idx], flags=interpolation
-        )
+        cv2.warpAffine(images[image_id], mat, dims, dst=retval[idx], flags=interpolation)
     return retval
 
 

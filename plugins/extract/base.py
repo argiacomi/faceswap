@@ -18,6 +18,7 @@ from lib.utils import get_module_objects
 
 if T.TYPE_CHECKING:
     import cv2
+
     from lib.align.constants import CenteringType
 
 
@@ -66,24 +67,18 @@ class _TorchInfer:
         The device that torch should use
         """
         if cpu:
-            logger.debug(
-                "[%s] CPU mode selected. Returning CPU device context", self._name
-            )
+            logger.debug("[%s] CPU mode selected. Returning CPU device context", self._name)
             return torch.device("cpu")
 
         if torch.cuda.is_available():
-            logger.debug(
-                "[%s] Cuda available. Returning Cuda device context", self._name
-            )
+            logger.debug("[%s] Cuda available. Returning Cuda device context", self._name)
             return torch.device("cuda")
 
         if torch.backends.mps.is_available():
             logger.debug("[%s] MPS available. Returning MPS device context", self._name)
             return torch.device("mps")
 
-        logger.debug(
-            "[%s] No backends available. Returning CPU device context", self._name
-        )
+        logger.debug("[%s] No backends available. Returning CPU device context", self._name)
         return torch.device("cpu")
 
     def load_torch_model(
@@ -135,7 +130,7 @@ class _TorchInfer:
             batch = itemgetter(*self._return_indices)(batch)
 
         if not isinstance(batch, torch.Tensor):
-            assert isinstance(batch, (list, tuple))
+            assert isinstance(batch, list | tuple)
             logger.debug(
                 "[%s] Setting _output_is_list to True for %s (length: %s)",
                 self._name,
@@ -161,8 +156,7 @@ class _TorchInfer:
         """
         if self._model is None:
             raise ValueError(
-                "Plugin function 'load_torch_model' must have been called to use "
-                "this function"
+                "Plugin function 'load_torch_model' must have been called to use this function"
             )
 
         with torch.inference_mode():
@@ -177,9 +171,7 @@ class _TorchInfer:
                     )
                 )
             else:
-                feed = torch.from_numpy(batch).to(
-                    self.device, memory_format=torch.channels_last
-                )
+                feed = torch.from_numpy(batch).to(self.device, memory_format=torch.channels_last)
             out = self._model(feed)
 
             if not self._first_batch_seen:
@@ -444,9 +436,7 @@ class FacePlugin(ExtractPlugin):
 
         self.centering: CenteringType = centering
         """The aligned centering of the image patch to feed the model"""
-        self.storage_name = self.__module__.rsplit(".", maxsplit=1)[-1].replace(
-            "_", "-"
-        )
+        self.storage_name = self.__module__.rsplit(".", maxsplit=1)[-1].replace("_", "-")
         """str : Dictionary safe name for storing the serialized data"""
 
     def __repr__(self) -> str:

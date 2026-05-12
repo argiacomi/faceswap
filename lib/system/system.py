@@ -14,7 +14,6 @@ import platform
 import re
 import sys
 import typing as T
-
 from shutil import which
 from subprocess import CalledProcessError, run
 
@@ -285,9 +284,7 @@ class Packages:
         dict[str, str]
             Installed Python package names to Python package versions
         """
-        installed = _lines_from_command(
-            [sys.executable, "-m", "pip", "freeze", "--local"]
-        )
+        installed = _lines_from_command([sys.executable, "-m", "pip", "freeze", "--local"])
         retval = {}
         for pkg in installed:
             if "==" not in pkg:

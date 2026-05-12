@@ -7,19 +7,19 @@ https://github.com/1adrianb/face-alignment
 """
 
 from __future__ import annotations
+
 import logging
 import typing as T
 
 import numpy as np
-
 import torch
 from torch import nn
 from torch.nn import functional as F
 
-from lib.utils import get_module_objects, GetModel
+from lib.utils import GetModel, get_module_objects
 from plugins.extract.base import ExtractPlugin
-from . import s3fd_defaults as cfg
 
+from . import s3fd_defaults as cfg
 
 logger = logging.getLogger(__name__)
 # pylint:disable=duplicate-code
@@ -60,9 +60,7 @@ class S3FD(ExtractPlugin):
         -------
         The loaded S3FD model
         """
-        weights = GetModel(
-            model_filename="s3fd_torch_v3.pth", git_model_id=11
-        ).model_path
+        weights = GetModel(model_filename="s3fd_torch_v3.pth", git_model_id=11).model_path
         assert isinstance(weights, str)
         return T.cast(S3FDModel, self.load_torch_model(S3FDModel(), weights))
 
@@ -145,15 +143,13 @@ class S3FD(ExtractPlugin):
         The bounding boxes with scores
         """
         retval = []
-        for _, h_idx, w_idx in zip(*np.where(o_cls[:, 1, :, :] > 0.05)):
+        for _, h_idx, w_idx in zip(*np.where(o_cls[:, 1, :, :] > 0.05), strict=False):
             axc, ayc = stride / 2 + w_idx * stride, stride / 2 + h_idx * stride
             score = o_cls[0, 1, h_idx, w_idx]
             if score < self._confidence:
                 continue
             loc = o_reg[:, :, h_idx, w_idx].copy()
-            priors = np.array(
-                [[axc / 1.0, ayc / 1.0, stride * 4 / 1.0, stride * 4 / 1.0]]
-            )
+            priors = np.array([[axc / 1.0, ayc / 1.0, stride * 4 / 1.0, stride * 4 / 1.0]])
             box = self.decode(loc, priors)
             x_1, y_1, x_2, y_2 = box[0] * 1.0
             retval.append([x_1, y_1, x_2, y_2, score])
@@ -213,9 +209,7 @@ class S3FD(ExtractPlugin):
             overlapping_boxes = (iou > threshold).nonzero()[0]
             if len(overlapping_boxes) != 0:
                 overlap_set = ranked_indices[overlapping_boxes + 1]
-                vote = np.average(
-                    boxes[overlap_set, :4], axis=0, weights=boxes[overlap_set, 4]
-                )
+                vote = np.average(boxes[overlap_set, :4], axis=0, weights=boxes[overlap_set, 4])
                 boxes[best_rest[0], :4] = vote
             retained_box_indices.append(best_rest[0])
 
@@ -321,24 +315,12 @@ class S3FDModel(nn.Module):  # pylint:disable=too-many-instance-attributes
         self.conv4_3_norm = L2Norm(512, scale=8)
         self.conv5_3_norm = L2Norm(512, scale=5)
 
-        self.conv3_3_norm_mbox_conf = nn.Conv2d(
-            256, 4, kernel_size=3, stride=1, padding=1
-        )
-        self.conv3_3_norm_mbox_loc = nn.Conv2d(
-            256, 4, kernel_size=3, stride=1, padding=1
-        )
-        self.conv4_3_norm_mbox_conf = nn.Conv2d(
-            512, 2, kernel_size=3, stride=1, padding=1
-        )
-        self.conv4_3_norm_mbox_loc = nn.Conv2d(
-            512, 4, kernel_size=3, stride=1, padding=1
-        )
-        self.conv5_3_norm_mbox_conf = nn.Conv2d(
-            512, 2, kernel_size=3, stride=1, padding=1
-        )
-        self.conv5_3_norm_mbox_loc = nn.Conv2d(
-            512, 4, kernel_size=3, stride=1, padding=1
-        )
+        self.conv3_3_norm_mbox_conf = nn.Conv2d(256, 4, kernel_size=3, stride=1, padding=1)
+        self.conv3_3_norm_mbox_loc = nn.Conv2d(256, 4, kernel_size=3, stride=1, padding=1)
+        self.conv4_3_norm_mbox_conf = nn.Conv2d(512, 2, kernel_size=3, stride=1, padding=1)
+        self.conv4_3_norm_mbox_loc = nn.Conv2d(512, 4, kernel_size=3, stride=1, padding=1)
+        self.conv5_3_norm_mbox_conf = nn.Conv2d(512, 2, kernel_size=3, stride=1, padding=1)
+        self.conv5_3_norm_mbox_loc = nn.Conv2d(512, 4, kernel_size=3, stride=1, padding=1)
 
         self.fc7_mbox_conf = nn.Conv2d(1024, 2, kernel_size=3, stride=1, padding=1)
         self.fc7_mbox_loc = nn.Conv2d(1024, 4, kernel_size=3, stride=1, padding=1)

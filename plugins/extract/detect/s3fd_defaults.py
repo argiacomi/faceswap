@@ -29,7 +29,6 @@ from lib.config import ConfigItem
 # pylint:disable=duplicate-code
 from lib.config import ConfigItem
 
-
 HELPTEXT = (
     "S3FD Detector options.\n"
     "Fast on GPU, slow on CPU. Can detect more faces and fewer false positives than other GPU "

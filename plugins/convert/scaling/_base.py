@@ -2,6 +2,7 @@
 """Parent class for scaling Adjustments for faceswap.py converter"""
 
 import logging
+
 import numpy as np
 
 from lib.logger import parse_class_init
@@ -38,8 +39,6 @@ class Adjustment:
         if reinsert_mask and new_face.shape[2] != 4:
             # Reinsert Mask
             assert final_mask is not None
-            new_face = np.concatenate(
-                (new_face, np.expand_dims(final_mask, axis=-1)), -1
-            )
+            new_face = np.concatenate((new_face, np.expand_dims(final_mask, axis=-1)), -1)
         logger.trace("Performed scaling adjustment")  # type:ignore[attr-defined]
         return new_face

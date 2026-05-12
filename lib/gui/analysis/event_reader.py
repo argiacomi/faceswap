@@ -2,11 +2,11 @@
 """Handles the loading and collation of events from Tensorboard event log files."""
 
 from __future__ import annotations
+
 import logging
 import os
 import typing as T
 import zlib
-
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -64,14 +64,10 @@ class _LogFiles:
         -------
         The full path of each log file for each training session id that has been run
         """
-        logger.debug(
-            "[LogFiles] Loading log filenames. base_dir: '%s'", self._logs_folder
-        )
+        logger.debug("[LogFiles] Loading log filenames. base_dir: '%s'", self._logs_folder)
         retval: dict[int, str] = {}
         for dirpath, _, filenames in os.walk(self._logs_folder):
-            if not any(
-                filename.startswith("events.out.tfevents") for filename in filenames
-            ):
+            if not any(filename.startswith("events.out.tfevents") for filename in filenames):
                 continue
             session_id = self._get_session_id(dirpath)
             if session_id is None:
@@ -117,12 +113,8 @@ class _LogFiles:
         -------
         The full path of the selected log file
         """
-        log_files = [
-            fname for fname in filenames if fname.startswith("events.out.tfevents")
-        ]
-        retval = os.path.join(
-            folder, sorted(log_files)[-1]
-        )  # Take last item if multi matches
+        log_files = [fname for fname in filenames if fname.startswith("events.out.tfevents")]
+        retval = os.path.join(folder, sorted(log_files)[-1])  # Take last item if multi matches
         logger.debug("[LogFiles] log_files: %s, selected: '%s'", log_files, retval)
         return retval
 
@@ -159,9 +151,7 @@ class _LogFiles:
         The full path to the log file for the requested session id
         """
         retval = self._filenames.get(session_id, "")
-        logger.debug(
-            "[LogFiles] session_id: %s, log_filename: '%s'", session_id, retval
-        )
+        logger.debug("[LogFiles] session_id: %s, log_filename: '%s'", session_id, retval)
         return retval
 
 
@@ -179,9 +169,7 @@ class _CacheData:
         The loss values collected for A and B sides for the session
     """
 
-    def __init__(
-        self, labels: list[str], timestamps: np.ndarray, loss: np.ndarray
-    ) -> None:
+    def __init__(self, labels: list[str], timestamps: np.ndarray, loss: np.ndarray) -> None:
         self.labels = labels
         self._loss = zlib.compress(T.cast(bytes, loss))
         self._timestamps = zlib.compress(T.cast(bytes, timestamps))
@@ -199,9 +187,7 @@ class _CacheData:
     @property
     def timestamps(self) -> np.ndarray:
         """The timestamps for this session"""
-        retval: np.ndarray = np.frombuffer(
-            zlib.decompress(self._timestamps), dtype="float64"
-        )
+        retval: np.ndarray = np.frombuffer(zlib.decompress(self._timestamps), dtype="float64")
         if len(self._timestamps_shape) > 1:
             retval = retval.reshape(-1, *self._timestamps_shape[1:])
         return retval
@@ -221,6 +207,7 @@ class _CacheData:
             [self._timestamps, self._loss],
             ["float64", "float32"],
             [self._timestamps_shape, self._loss_shape],
+            strict=False,
         ):
             old = np.frombuffer(zlib.decompress(buffer), dtype=dtype)
             if data.ndim > 1:
@@ -362,8 +349,7 @@ class _Cache:
             np.array(loss, dtype="float32"),
         )
         logger.debug(
-            "[Cache] Converted to numpy: (data points: %s, timestamps shape: %s, "
-            "loss shape: %s)",
+            "[Cache] Converted to numpy: (data points: %s, timestamps shape: %s, loss shape: %s)",
             len(data),
             n_times.shape,
             n_loss.shape,
@@ -396,11 +382,9 @@ class _Cache:
                 continue
             carry_over = self._carry_over.pop(key)
             update = data[key]
-            logger.debug(
-                "[Cache] Merging carry over data: %s in to %s", carry_over, update
-            )
+            logger.debug("[Cache] Merging carry over data: %s in to %s", carry_over, update)
             timestamp = update.timestamp
-            update.timestamp = carry_over.timestamp if not timestamp else timestamp
+            update.timestamp = timestamp if timestamp else carry_over.timestamp
             update.loss = carry_over.loss + update.loss
             logger.debug("[Cache] Merged carry over data: %s", update)
 
@@ -429,7 +413,7 @@ class _Cache:
             Cleaned list of complete loss for the latest live query
         """
         timestamps, loss = zip(
-            *[(data[idx].timestamp, data[idx].loss) for idx in sorted(data)]
+            *[(data[idx].timestamp, data[idx].loss) for idx in sorted(data)], strict=False
         )
 
         l_loss: list[list[float]] = list(loss)
@@ -451,9 +435,7 @@ class _Cache:
 
         return l_timestamps, l_loss
 
-    def _add_latest_live(
-        self, session_id: int, loss: np.ndarray, timestamps: np.ndarray
-    ) -> None:
+    def _add_latest_live(self, session_id: int, loss: np.ndarray, timestamps: np.ndarray) -> None:
         """Append the latest received live training data to the cached data.
 
         Parameters
@@ -466,8 +448,7 @@ class _Cache:
             The latest time stamps returned from the iterator
         """
         logger.debug(
-            "[Cache] Adding live data to cache: "
-            "(session_id: %s, loss: %s, timestamps: %s)",
+            "[Cache] Adding live data to cache: (session_id: %s, loss: %s, timestamps: %s)",
             session_id,
             loss.shape,
             timestamps.shape,
@@ -516,8 +497,7 @@ class _Cache:
             "[Cache] Obtained cached data: %s",
             {
                 session_id: {
-                    k: v.shape if isinstance(v, np.ndarray) else v
-                    for k, v in data.items()
+                    k: v.shape if isinstance(v, np.ndarray) else v for k, v in data.items()
                 }
                 for session_id, data in retval.items()
             },
@@ -583,9 +563,7 @@ class TensorBoardLogs:
         """
         retval = True
         if self._is_training == is_training:
-            logger.debug(
-                "[Cache] Training flag already set to %s. Returning", is_training
-            )
+            logger.debug("[Cache] Training flag already set to %s. Returning", is_training)
             return retval
 
         logger.debug("[Cache] Setting is_training to %s", is_training)
@@ -595,9 +573,7 @@ class TensorBoardLogs:
             if not retval:
                 self._cache.reset()
             log_file = self._log_files.get(self.session_ids[-1])
-            logger.debug(
-                "[Cache] Setting training iterator for log file: '%s'", log_file
-            )
+            logger.debug("[Cache] Setting training iterator for log file: '%s'", log_file)
             self._training_iterator = RecordIterator(log_file, is_live=True)
         else:
             logger.debug("[Cache] Removing training iterator")
@@ -637,10 +613,10 @@ class TensorBoardLogs:
             The Session ID to return the data for. Set to ``None`` to return all session
             data. Default ``None`
         """
-        if session_id is not None and not self._cache.is_cached(session_id):
-            self._cache_data(session_id)
-        elif (
-            self._is_training
+        if (
+            session_id is not None
+            and not self._cache.is_cached(session_id)
+            or self._is_training
             and session_id is not None
             and session_id == self.session_ids[-1]
         ):
@@ -650,9 +626,7 @@ class TensorBoardLogs:
                 if not self._cache.is_cached(idx):
                     self._cache_data(idx)
 
-    def get_loss(
-        self, session_id: int | None = None
-    ) -> dict[int, dict[str, np.ndarray]]:
+    def get_loss(self, session_id: int | None = None) -> dict[int, dict[str, np.ndarray]]:
         """Read the loss from the TensorBoard event logs
 
         Parameters
@@ -676,9 +650,7 @@ class TensorBoardLogs:
             data = full_data[idx]
             loss = data["loss"]
             assert isinstance(loss, np.ndarray)
-            retval[idx] = {
-                title: loss[:, idx] for idx, title in enumerate(data["labels"])
-            }
+            retval[idx] = {title: loss[:, idx] for idx, title in enumerate(data["labels"])}
 
         logger.debug(
             "[TensorBoardLogs] %s",
@@ -735,18 +707,14 @@ class _EventParser:
         otherwise ``False``
     """
 
-    def __init__(
-        self, iterator: Iterator[bytes], cache: _Cache, live_data: bool
-    ) -> None:
+    def __init__(self, iterator: Iterator[bytes], cache: _Cache, live_data: bool) -> None:
         logger.debug(parse_class_init(locals()))
         self._live_data = live_data
         self._cache = cache
         self._iterator = self._get_latest_live(iterator) if live_data else iterator
 
     @classmethod
-    def _get_latest_live(
-        cls, iterator: Iterator[bytes]
-    ) -> Generator[bytes, None, None]:
+    def _get_latest_live(cls, iterator: Iterator[bytes]) -> Generator[bytes, None, None]:
         """Obtain the latest event logs for live training data.
 
         The live data iterator remains open so that it can be re-queried
@@ -863,9 +831,7 @@ class _EventParser:
             tag = event.summary.value[0].tag
             if tag not in tags and tag != "batch_total":
                 tags.append(tag)
-            data[event.step] = self._process_event(
-                event, data.get(event.step, EventData())
-            )
+            data[event.step] = self._process_event(event, data.get(event.step, EventData()))
 
         tags = self._format_tags(tags)
         self._cache.cache_data(session_id, data, tags, is_live=self._live_data)

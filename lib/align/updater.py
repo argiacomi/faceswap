@@ -102,9 +102,7 @@ class VideoExtension(_Updater):
         The video filename that holds these alignments
     """
 
-    def __init__(
-        self, alignments: dict[str, T.Any], version: float, video_filename: str
-    ) -> None:
+    def __init__(self, alignments: dict[str, T.Any], version: float, video_filename: str) -> None:
         self._video_name, self._extension = os.path.splitext(video_filename)
         super().__init__(alignments, version)
         self._alignments: dict[str, AlignmentsEntry]

@@ -29,7 +29,6 @@ from lib.config import ConfigItem
 # pylint:disable=duplicate-code
 from lib.config import ConfigItem
 
-
 HELPTEXT = (
     "Options for outputting converted frames to a series of images using OpenCV\n"
     "OpenCV can be faster than other image writers, but lacks some configuration "

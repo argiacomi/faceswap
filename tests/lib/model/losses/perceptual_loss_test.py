@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """Tests for Faceswap Feature Losses. Adapted from Keras tests."""
 
-import pytest
 import numpy as np
+import pytest
 import torch
 
-# pylint:disable=import-error,duplicate-code
-from lib.model.losses.perceptual_loss import GMSDLoss, SSIMLoss, MSSIMLoss
 from lib.model.losses.flip import LDRFLIPLoss
-from lib.utils import get_backend
 
+# pylint:disable=import-error,duplicate-code
+from lib.model.losses.perceptual_loss import GMSDLoss, MSSIMLoss, SSIMLoss
+from lib.utils import get_backend
 
 _PARAMS = [SSIMLoss, GMSDLoss, LDRFLIPLoss, MSSIMLoss]
 _IDS = [f"{x.__name__}[{get_backend().upper()}]" for x in _PARAMS]

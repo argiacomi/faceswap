@@ -5,13 +5,13 @@ import os
 import platform
 import sys
 import time
-import typing as T
 import types
+import typing as T
 import zipfile
-
 from io import StringIO
-from socket import timeout as socket_timeout, error as socket_error
 from shutil import rmtree
+from socket import error as socket_error
+from socket import timeout as socket_timeout
 from unittest.mock import MagicMock
 from urllib import error as urlliberror
 
@@ -19,13 +19,15 @@ import pytest
 import pytest_mock
 
 from lib import utils
+from lib.logger import log_setup
 from lib.utils import (
+    DebugTimes,
+    FaceswapError,
+    GetModel,
     _Backend,
     camel_case_split,
     convert_to_secs,
-    DebugTimes,
     deprecation_warning,
-    FaceswapError,
     full_path_split,
     get_backend,
     get_dpi,
@@ -33,12 +35,9 @@ from lib.utils import (
     get_image_paths,
     get_module_objects,
     get_torch_version,
-    GetModel,
     safe_shutdown,
     set_backend,
 )
-
-from lib.logger import log_setup
 
 # Need to setup logging to avoid trace/verbose errors
 log_setup("DEBUG", "pytest_utils.log", "PyTest, False")
@@ -85,25 +84,17 @@ def test__backend(monkeypatch: pytest.MonkeyPatch) -> None:
         Monkey patching :func:`os.environ`, :func:`os.path.isfile`, :func:`builtins.open` and
         :func:`builtins.input`
     """
-    monkeypatch.setattr(
-        "os.environ", {"FACESWAP_BACKEND": "nvidia"}
-    )  # Environment variable set
+    monkeypatch.setattr("os.environ", {"FACESWAP_BACKEND": "nvidia"})  # Environment variable set
     backend = _Backend()
     assert backend.backend == "nvidia"
 
-    monkeypatch.setattr(
-        "os.environ", {}
-    )  # Environment variable not set, dummy in config file
+    monkeypatch.setattr("os.environ", {})  # Environment variable not set, dummy in config file
     monkeypatch.setattr("os.path.isfile", lambda x: True)
-    monkeypatch.setattr(
-        "builtins.open", lambda *args, **kwargs: StringIO('{"backend": "cpu"}')
-    )
+    monkeypatch.setattr("builtins.open", lambda *args, **kwargs: StringIO('{"backend": "cpu"}'))
     backend = _Backend()
     assert backend.backend == "cpu"
 
-    monkeypatch.setattr(
-        "os.path.isfile", lambda x: False
-    )  # no config file, dummy in user input
+    monkeypatch.setattr("os.path.isfile", lambda x: False)  # no config file, dummy in user input
     monkeypatch.setattr("builtins.input", lambda x: "2")
     backend = _Backend()
     assert backend._configure_backend() == "nvidia"
@@ -188,37 +179,37 @@ def test_get_module_objects(mocker: pytest_mock.MockerFixture):
         pass
 
     InternalPublic.__module__ = "our_mod"
-    setattr(test_module, "InternalPublic", InternalPublic)
+    test_module.InternalPublic = InternalPublic
 
     class _InternalPrivate:
         pass
 
     _InternalPrivate.__module__ = "our_mod"
-    setattr(test_module, "_InternalPrivate", _InternalPrivate)
+    test_module._InternalPrivate = _InternalPrivate
 
     class External:
         pass
 
     External.__module__ = "other_mod"
-    setattr(test_module, "External", External)
+    test_module.External = External
 
     def func_public():
         pass
 
     func_public.__module__ = "our_mod"
-    setattr(test_module, "func_public", func_public)
+    test_module.func_public = func_public
 
     def _func_private():
         pass
 
     _func_private.__module__ = "our_mod"
-    setattr(test_module, "_func_private", _func_private)
+    test_module._func_private = _func_private
 
     def func_external():
         pass
 
     func_external.__module__ = "other_mod"
-    setattr(test_module, "func_external", func_external)
+    test_module.func_external = func_external
 
     mocker.patch.dict(sys.modules, {"our_mod": test_module})
 
@@ -292,9 +283,7 @@ _TORCH_IDS = [x[0] for x in _TORCH_PARAMS]
 
 # General utils
 @pytest.mark.parametrize("str_vers, tuple_vers", _TORCH_PARAMS, ids=_TORCH_IDS)
-def test_get_torch_version(
-    str_vers, tuple_vers, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_get_torch_version(str_vers, tuple_vers, monkeypatch: pytest.MonkeyPatch) -> None:
     """Test the :func:`~lib.utils.get_torch_version` function version returns correctly"""
     monkeypatch.setattr("lib.utils._versions", {})
     monkeypatch.setattr("torch.__version__", str_vers)
@@ -345,9 +334,7 @@ def test_convert_to_secs(args: tuple[int, ...], result: int) -> None:
 
 
 @pytest.mark.parametrize("additional_info", [None, "additional information"])
-def test_deprecation_warning(
-    caplog: pytest.LogCaptureFixture, additional_info: str
-) -> None:
+def test_deprecation_warning(caplog: pytest.LogCaptureFixture, additional_info: str) -> None:
     """Test the :func:`~lib.utils.deprecation_warning` function works correctly
 
     Parameters
@@ -384,14 +371,12 @@ def test_safe_shutdown(caplog: pytest.LogCaptureFixture, got_error: bool) -> Non
     assert wrapped_exit.typename == "SystemExit"
     assert wrapped_exit.value.code == exit_value
     assert "Safely shutting down" in caplog.messages
-    assert (
-        "Cleanup complete. Shutting down queue manager and exiting" in caplog.messages
-    )
+    assert "Cleanup complete. Shutting down queue manager and exiting" in caplog.messages
 
 
 def test_faceswap_error():
     """Test the :class:`~lib.utils.FaceswapError` raises correctly"""
-    with pytest.raises(Exception):
+    with pytest.raises(FaceswapError):
         raise FaceswapError
 
 
@@ -441,7 +426,7 @@ _EXPECTED = (
 
 
 @pytest.mark.parametrize(
-    "filename,results", zip(_INPUT, _EXPECTED), ids=[str(i) for i in _INPUT]
+    "filename,results", zip(_INPUT, _EXPECTED, strict=False), ids=[str(i) for i in _INPUT]
 )
 def test_get_model_model_filename_input(
     get_model_instance: GetModel,  # pylint:disable=unused-argument
@@ -494,9 +479,7 @@ def test_get_model_properties(get_model_instance: GetModel) -> None:
     """
     model = get_model_instance
     assert model.model_path == os.path.join(model._cache_dir, "test_model_file_v1.h5")
-    assert model._model_zip_path == os.path.join(
-        model._cache_dir, "test_model_file_v1.zip"
-    )
+    assert model._model_zip_path == os.path.join(model._cache_dir, "test_model_file_v1.zip")
     assert not model._model_exists
     assert model._url_download == (
         "https://github.com/deepfakes-models/faceswap-models/releases/"
@@ -551,9 +534,7 @@ _DLPARAMS = [
 ]
 
 
-@pytest.mark.parametrize(
-    "error_type,error_args", _DLPARAMS, ids=[str(p[0]) for p in _DLPARAMS]
-)
+@pytest.mark.parametrize("error_type,error_args", _DLPARAMS, ids=[str(p[0]) for p in _DLPARAMS])
 def test_get_model__download_model(
     mocker: pytest_mock.MockerFixture,
     get_model_instance: GetModel,
@@ -661,9 +642,7 @@ def test_get_model__write_model(
     get_model_instance: `~lib.utils.GetModel`
         The patched instance of the class
     """
-    out_file = os.path.join(
-        get_model_instance._cache_dir, get_model_instance._model_filename[0]
-    )
+    out_file = os.path.join(get_model_instance._cache_dir, get_model_instance._model_filename[0])
     chunks = [8, 16, 32, 64, 128, 256, 512, 1024]
     data = [b"\x00" * size for size in chunks] + [b""]
     assert not os.path.isfile(out_file)
@@ -712,9 +691,9 @@ def test_debug_times():
     assert min(debug_times._times["Test2"]) == pytest.approx(0.2, abs=threshold)
     assert max(debug_times._times["Test1"]) == pytest.approx(0.1, abs=threshold)
     assert max(debug_times._times["Test2"]) == pytest.approx(0.2, abs=threshold)
-    assert (
-        sum(debug_times._times["Test1"]) / len(debug_times._times["Test1"])
-    ) == pytest.approx(0.1, abs=threshold)
-    assert sum(debug_times._times["Test2"]) / len(
-        debug_times._times["Test2"]
-    ) == pytest.approx(0.2, abs=threshold)
+    assert (sum(debug_times._times["Test1"]) / len(debug_times._times["Test1"])) == pytest.approx(
+        0.1, abs=threshold
+    )
+    assert sum(debug_times._times["Test2"]) / len(debug_times._times["Test2"]) == pytest.approx(
+        0.2, abs=threshold
+    )

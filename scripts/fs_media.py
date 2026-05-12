@@ -7,6 +7,7 @@ Holds optional pre/post processing functions for convert and extract.
 """
 
 from __future__ import annotations
+
 import logging
 import os
 import sys
@@ -138,13 +139,8 @@ class Alignments(AlignmentsBase):
         if location:
             logger.debug("Alignments File provided: '%s'", location)
             folder, filename = os.path.split(str(location))
-            if (
-                not self._plugin_is_file
-                and os.path.splitext(filename)[-1].lower() == ".json"
-            ):
-                logger.error(
-                    "Json files are only valid with 'File' detect/align plugins."
-                )
+            if not self._plugin_is_file and os.path.splitext(filename)[-1].lower() == ".json":
+                logger.error("Json files are only valid with 'File' detect/align plugins.")
                 sys.exit(1)
         elif input_is_video:
             logger.debug("Alignments from Video File: '%s'", source_location)
@@ -154,18 +150,14 @@ class Alignments(AlignmentsBase):
             logger.debug("Alignments from Input Folder: '%s'", source_location)
             folder = str(source_location)
             filename = "alignments"
-        logger.debug(
-            "Setting Alignments: (folder: '%s' filename: '%s')", folder, filename
-        )
+        logger.debug("Setting Alignments: (folder: '%s' filename: '%s')", folder, filename)
 
         if not self._plugin_is_file:
             return folder, filename, False
 
         full_path = os.path.join(folder, filename)
         for ext in (".json", ".fsa"):
-            if os.path.splitext(filename)[-1].lower() in ext and os.path.exists(
-                full_path
-            ):
+            if os.path.splitext(filename)[-1].lower() in ext and os.path.exists(full_path):
                 return folder, os.path.splitext(filename)[0], ext == ".json"
             full_file = f"{full_path}{ext}"
             if os.path.exists(full_file):
@@ -201,19 +193,13 @@ class Alignments(AlignmentsBase):
             and not self._skip_existing_faces
             and not self._plugin_is_file
         ):
-            logger.debug(
-                "No previous alignments file required. Returning empty dictionary"
-            )
+            logger.debug("No previous alignments file required. Returning empty dictionary")
             return data
 
         file_exists = self.have_alignments_file or self._import_json
 
-        if not file_exists and (
-            self._skip_existing_frames or self._skip_existing_faces
-        ):
-            logger.warning(
-                "Skip Existing/Skip Faces selected, but no alignments file found!"
-            )
+        if not file_exists and (self._skip_existing_frames or self._skip_existing_faces):
+            logger.warning("Skip Existing/Skip Faces selected, but no alignments file found!")
         if not file_exists:
             return data
 

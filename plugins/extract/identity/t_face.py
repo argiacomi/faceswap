@@ -2,14 +2,16 @@
 """Tencent TFace inference"""
 
 from __future__ import annotations
+
 import logging
 import typing as T
 
 import numpy as np
 
-from lib.utils import get_module_objects, GetModel
 from lib.model.networks.insightface_resnet import ir_50, ir_101
+from lib.utils import GetModel, get_module_objects
 from plugins.extract.base import FacePlugin
+
 from . import t_face_defaults as cfg
 
 if T.TYPE_CHECKING:

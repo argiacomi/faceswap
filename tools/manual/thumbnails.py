@@ -2,17 +2,17 @@
 """Thumbnail generator for the manual tool"""
 
 from __future__ import annotations
-import logging
-import typing as T
-import os
 
+import logging
+import os
+import typing as T
 from dataclasses import dataclass
-from time import sleep
 from threading import Lock
+from time import sleep
 
 import numpy as np
-
 from tqdm import tqdm
+
 from lib.align import AlignedFace
 from lib.image import SingleFrameLoader, generate_thumbnail
 from lib.logger import parse_class_init
@@ -130,13 +130,9 @@ class ThumbsCreator:
         """
         assert self._meta is not None
         if self._meta["keyframes"][0] != 0:
-            logger.warning(
-                "Your video does not start on a Key Frame. This can lead to issues."
-            )
+            logger.warning("Your video does not start on a Key Frame. This can lead to issues.")
 
-        frame_face_indices = [
-            i for i, v in enumerate(self._alignments.data.values()) if v.faces
-        ]
+        frame_face_indices = [i for i, v in enumerate(self._alignments.data.values()) if v.faces]
         num_frames = len(frame_face_indices)
         num_threads = min(num_frames, self._num_threads)
         window = num_frames // num_threads
@@ -251,9 +247,7 @@ class ThumbsCreator:
             end_index - start_index,
         )
 
-    def _set_thumbnail(
-        self, filename: str, frame: np.ndarray, frame_index: int
-    ) -> None:
+    def _set_thumbnail(self, filename: str, frame: np.ndarray, frame_index: int) -> None:
         """Extracts the faces from the frame and adds to alignments file
 
         Parameters
@@ -266,14 +260,10 @@ class ThumbsCreator:
             The frame index of this frame in the :attr:`_frame_faces`
         """
         for face_idx, face in enumerate(self._frame_faces[frame_index]):
-            aligned = AlignedFace(
-                face.landmarks_xy, image=frame, centering="head", size=96
-            )
+            aligned = AlignedFace(face.landmarks_xy, image=frame, centering="head", size=96)
             face.thumbnail = generate_thumbnail(aligned.face, size=96)
             assert face.thumbnail is not None
-            self._alignments.thumbnails.add_thumbnail(
-                filename, face_idx, face.thumbnail
-            )
+            self._alignments.thumbnails.add_thumbnail(filename, face_idx, face.thumbnail)
         with self._p_bar.lock:
             assert self._p_bar.p_bar is not None
             self._p_bar.p_bar.update(1)

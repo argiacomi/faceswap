@@ -6,10 +6,10 @@ import logging
 import cv2
 import numpy as np
 
-from lib.utils import get_module_objects, GetModel
+from lib.utils import GetModel, get_module_objects
 from plugins.extract.base import ExtractPlugin
-from . import cv2_dnn_defaults as cfg
 
+from . import cv2_dnn_defaults as cfg
 
 logger = logging.getLogger(__name__)
 
@@ -86,8 +86,7 @@ class CV2DNNDetect(ExtractPlugin):
         """
         confidence_mask = batch[..., 2] >= self.confidence
         boxes = [
-            batch[b, ..., 3:7][confidence_mask[b]] * self.input_size
-            for b in range(batch.shape[0])
+            batch[b, ..., 3:7][confidence_mask[b]] * self.input_size for b in range(batch.shape[0])
         ]
         return np.array(boxes, dtype="object")
 

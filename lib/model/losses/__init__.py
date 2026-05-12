@@ -8,6 +8,7 @@ from torch import nn
 from lib.utils import FaceswapError
 
 from .feature_loss import LPIPSLoss
+from .flip import LDRFLIPLoss
 from .loss import (
     FocalFrequencyLoss,
     GeneralizedLoss,
@@ -16,13 +17,10 @@ from .loss import (
     LInfNorm,
     LogCosh,
 )
-from .flip import LDRFLIPLoss
 from .perceptual_loss import GMSDLoss, MSSIMLoss, SSIMLoss
 
 
-def get_loss_function(
-    name: str, color_order: T.Literal["bgr", "rgb"] = "bgr"
-) -> nn.Module:
+def get_loss_function(name: str, color_order: T.Literal["bgr", "rgb"] = "bgr") -> nn.Module:
     """Get the associated log function for the given configuration file name
 
     Parameters
@@ -54,9 +52,7 @@ def get_loss_function(
         "smooth_loss": GeneralizedLoss,
     }
     if name not in valid:
-        raise FaceswapError(
-            f"'{name}' is not a valid Loss function. Choose from: {list(valid)}"
-        )
+        raise FaceswapError(f"'{name}' is not a valid Loss function. Choose from: {list(valid)}")
 
     kwargs: dict[str, T.Any] = {}
     if name in ("mae", "mse"):

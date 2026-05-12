@@ -4,7 +4,6 @@
 import gettext
 import os
 import sys
-
 from importlib import import_module
 
 # Importing the various tools
@@ -35,7 +34,7 @@ def _get_cli_opts():
             mod = ".".join(("tools", tool_name, "cli"))
             module = import_module(mod)
             cliarg_class = getattr(module, f"{tool_name.title()}Args")
-            help_text = getattr(module, "_HELPTEXT")
+            help_text = module._HELPTEXT
             yield tool_name, help_text, cliarg_class
 
 

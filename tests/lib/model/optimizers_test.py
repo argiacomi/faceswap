@@ -4,15 +4,14 @@
 Adapted from Keras tests.
 """
 
-import pytest
-
 import numpy as np
-
-from keras import device, layers as kl, optimizers as k_optimizers, Sequential
+import pytest
+from keras import Sequential, device
+from keras import layers as kl
+from keras import optimizers as k_optimizers
 
 from lib.model import optimizers
 from lib.utils import get_backend
-
 from tests.utils import generate_test_data, to_categorical
 
 
@@ -39,9 +38,7 @@ def _test_optimizer(optimizer, target=0.75):
     model.add(kl.Activation("relu"))
     model.add(kl.Dense(y_train.shape[1]))
     model.add(kl.Activation("softmax"))
-    model.compile(
-        loss="categorical_crossentropy", optimizer=optimizer, metrics=["accuracy"]
-    )
+    model.compile(loss="categorical_crossentropy", optimizer=optimizer, metrics=["accuracy"])
 
     history = model.fit(x_train, y_train, epochs=2, batch_size=16, verbose=0)  # type:ignore
     assert history.history["accuracy"][-1] >= target

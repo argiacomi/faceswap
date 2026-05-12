@@ -12,7 +12,6 @@ import os
 import platform
 import re
 import typing as T
-
 from abc import ABC, abstractmethod
 from shutil import which
 
@@ -121,9 +120,7 @@ class _Alternatives:
             for line in self._output
             if self._alternatives_marker in line.lower()
         ]
-        logger.debug(
-            "Versions from 'update-alternatives' for '%s': %s", self._package, retval
-        )
+        logger.debug("Versions from 'update-alternatives' for '%s': %s", self._package, retval)
         return retval
 
     @property
@@ -138,9 +135,7 @@ class _Alternatives:
             .replace(self._default_marker, "")
             .strip()
         )
-        logger.debug(
-            "Default from update-alternatives for '%s': %s", self._package, retval
-        )
+        logger.debug("Default from update-alternatives for '%s': %s", self._package, retval)
         return retval
 
     def _query(self) -> None:
@@ -258,7 +253,7 @@ class _Cuda(ABC):
         vers_file = os.path.join(folder, self._version_file)
         if not os.path.exists(vers_file):
             return None
-        with open(vers_file, "r", encoding="utf-8", errors="replace") as f:
+        with open(vers_file, encoding="utf-8", errors="replace") as f:
             vers = json.load(f)
         retval = self._tuple_from_string(vers.get("cuda_cudart", {}).get("version"))
         logger.debug("Version from '%s': %s", vers_file, retval)
@@ -336,12 +331,9 @@ class _Cuda(ABC):
             logger.debug("cudnn file '%s' does not exist", path)
             return None
 
-        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+        with open(path, encoding="utf-8", errors="ignore") as f:
             file = f.read()
-        version = {
-            v[0]: int(v[1]) if v[1].isdigit() else 0
-            for v in self._re_cudnn.findall(file)
-        }
+        version = {v[0]: int(v[1]) if v[1].isdigit() else 0 for v in self._re_cudnn.findall(file)}
         if not version:
             logger.debug("cudnn version could not be found in '%s'", path)
             return None
@@ -385,17 +377,13 @@ class CudaLinux(_Cuda):
         if not lib_versions:
             return None
         versions = [
-            self._tuple_from_string(f[1:])
-            for f in lib_versions
-            if f and f.startswith(".")
+            self._tuple_from_string(f[1:]) for f in lib_versions if f and f.startswith(".")
         ]
         valid = [v for v in versions if v is not None]
-        if not valid or not len(set(valid)) == 1:
+        if not valid or len(set(valid)) != 1:
             return None
         retval = valid[0]
-        logger.debug(
-            "Version from '%s': %s", os.path.join(lib_folder, self._lib), retval
-        )
+        logger.debug("Version from '%s': %s", os.path.join(lib_folder, self._lib), retval)
         return retval
 
     def _versions_from_usr(self) -> dict[tuple[int, int], str]:
@@ -416,9 +404,7 @@ class CudaLinux(_Cuda):
             path = os.path.join(usr, folder)
             if os.path.islink(path):
                 continue
-            version = self.version_from_version_file(path) or self._version_from_lib(
-                path
-            )
+            version = self.version_from_version_file(path) or self._version_from_lib(path)
             if version is not None:
                 retval[version] = path
         return retval
@@ -455,9 +441,7 @@ class CudaLinux(_Cuda):
             The potential parent Cuda folder, or an empty string if not detected
         """
         split = folder.split(os.sep)
-        return (
-            os.sep.join(split[: split.index("targets")]) if "targets" in split else ""
-        )
+        return os.sep.join(split[: split.index("targets")]) if "targets" in split else ""
 
     def _versions_from_dynamic_linker(self) -> dict[tuple[int, int], str]:
         """Attempt to detect all installed Cuda versions from ldconfig
@@ -473,9 +457,7 @@ class CudaLinux(_Cuda):
         for path in cuda_roots:
             if not path:
                 continue
-            version = self.version_from_version_file(path) or self._version_from_lib(
-                path
-            )
+            version = self.version_from_version_file(path) or self._version_from_lib(path)
             if version is not None:
                 retval[version] = path
 
@@ -508,9 +490,7 @@ class CudaLinux(_Cuda):
         default = self._alternatives.default
         if not default:
             return None
-        retval = self.version_from_version_file(default) or self._version_from_lib(
-            default
-        )
+        retval = self.version_from_version_file(default) or self._version_from_lib(default)
         logger.debug("Version from update-alternatives: %s", retval)
         return retval
 
@@ -525,12 +505,8 @@ class CudaLinux(_Cuda):
         path = os.path.join(os.sep, "usr", "local", "cuda")
         if not os.path.exists(path):
             return None
-        real_path = (
-            os.path.abspath(os.path.realpath(path)) if os.path.islink(path) else path
-        )
-        retval = self.version_from_version_file(real_path) or self._version_from_lib(
-            real_path
-        )
+        real_path = os.path.abspath(os.path.realpath(path)) if os.path.islink(path) else path
+        retval = self.version_from_version_file(real_path) or self._version_from_lib(real_path)
         logger.debug("Version from symlink: %s", retval)
         return retval
 
@@ -702,9 +678,7 @@ class CudaWindows(_Cuda):
                         "InstallLocation",
                     )
                 except (FileNotFoundError, OSError):
-                    logger.debug(
-                        "Skipping missing InstallLocation for sub-key '%s'", subkey
-                    )
+                    logger.debug("Skipping missing InstallLocation for sub-key '%s'", subkey)
                     continue
                 if not os.path.isdir(path):
                     logger.debug("Skipping non-existant path '%s'", path)
@@ -788,9 +762,7 @@ class ROCm:
     @property
     def valid_versions(self) -> list[tuple[int, int, int]]:
         """list[tuple[int, int, int]]"""
-        return [
-            v for v in self.versions if self.version_min <= v[:2] <= self.version_max
-        ]
+        return [v for v in self.versions if self.version_min <= v[:2] <= self.version_max]
 
     @property
     def valid_installed(self) -> bool:
@@ -859,7 +831,7 @@ class ROCm:
         for info_file in info_loc:
             if not os.path.exists(info_file):
                 continue
-            with open(info_file, "r", encoding="utf-8") as f:
+            with open(info_file, encoding="utf-8") as f:
                 vers_string = f.read().strip()
             if not vers_string:
                 continue
@@ -895,9 +867,7 @@ class ROCm:
         if not rocm_folder.startswith(self._folder_prefix):
             return None
         retval = self._version_from_string(rocm_folder)
-        logger.debug(
-            "Version from '%s': %s", os.path.join(lib_folder, self._lib), retval
-        )
+        logger.debug("Version from '%s': %s", os.path.join(lib_folder, self._lib), retval)
         return retval
 
     def _versions_from_opt(self) -> list[tuple[int, int, int]]:
@@ -1025,9 +995,7 @@ class ROCm:
         path = os.path.join(os.sep, "opt", "rocm")
         if not os.path.exists(path):
             return None
-        real_path = (
-            os.path.abspath(os.path.realpath(path)) if os.path.islink(path) else path
-        )
+        real_path = os.path.abspath(os.path.realpath(path)) if os.path.islink(path) else path
         retval = self._version_from_info(real_path) or self._version_from_lib(real_path)
         logger.debug("Version from symlink: %s", retval)
         return retval

@@ -29,7 +29,6 @@ from lib.config import ConfigItem
 # pylint:disable=duplicate-code
 from lib.config import ConfigItem
 
-
 HELPTEXT = (
     "An unbalanced model with adjustable input size options.\n"
     "This is an unbalanced model so b>a swaps may not work well\n"

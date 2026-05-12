@@ -9,9 +9,9 @@ import sys
 import typing as T
 
 from keras import (
+    InputSpec,
     constraints,
     initializers,
-    InputSpec,
     layers,
     ops,
     regularizers,
@@ -88,9 +88,7 @@ class AdaInstanceNormalization(layers.Layer):  # pylint:disable=too-many-ancesto
             raise ValueError(
                 "Axis " + str(self.axis) + " of "
                 "input tensor should have a defined dimension "
-                "but the layer received an input with shape "
-                + str(input_shape[0])
-                + "."
+                "but the layer received an input with shape " + str(input_shape[0]) + "."
             )
 
         super().build(input_shape)
@@ -216,7 +214,7 @@ class GroupNormalization(layers.Layer):  # pylint:disable=too-many-ancestors,abs
         self.beta = None
         self.gamma = None
         super().__init__(**kwargs)
-        self.axis = axis if isinstance(axis, (list, tuple)) else [axis]
+        self.axis = axis if isinstance(axis, list | tuple) else [axis]
         self.gamma_init = initializers.get(gamma_init)
         self.beta_init = initializers.get(beta_init)
         self.gamma_regularizer = regularizers.get(gamma_regularizer)
@@ -363,11 +361,7 @@ class GroupNormalization(layers.Layer):  # pylint:disable=too-many-ancestors,abs
         input_shape = inputs.shape
         if len(input_shape) != 4 and len(input_shape) != 2:
             raise ValueError(
-                "Inputs should have rank "
-                + str(4)
-                + " or "
-                + str(2)
-                + "; Received input shape:",
+                "Inputs should have rank " + str(4) + " or " + str(2) + "; Received input shape:",
                 str(input_shape),
             )
 
@@ -503,10 +497,7 @@ class InstanceNormalization(layers.Layer):  # pylint:disable=too-many-ancestors,
 
         self.input_spec = InputSpec(ndim=ndim)  # pylint:disable=attribute-defined-outside-init
 
-        if self.axis is None:
-            shape = (1,)
-        else:
-            shape = (input_shape[self.axis],)
+        shape = (1,) if self.axis is None else (input_shape[self.axis],)
 
         if self.scale:
             self.gamma = self.add_weight(
@@ -668,14 +659,10 @@ class RMSNormalization(layers.Layer):  # pylint:disable=too-many-ancestors,abstr
 
         # Checks
         if not isinstance(axis, int):
-            raise TypeError(
-                f"Expected an int for the argument 'axis', but received: {axis}"
-            )
+            raise TypeError(f"Expected an int for the argument 'axis', but received: {axis}")
 
         if not 0.0 <= partial <= 1.0:
-            raise ValueError(
-                f"partial must be between 0.0 and 1.0, but received {partial}"
-            )
+            raise ValueError(f"partial must be between 0.0 and 1.0, but received {partial}")
 
         self.axis = axis
         self.epsilon = epsilon
@@ -706,13 +693,9 @@ class RMSNormalization(layers.Layer):  # pylint:disable=too-many-ancestors,abstr
             raise ValueError(f"Invalid axis: {self.axis}")
 
         param_shape = [input_shape[self.axis]]
-        self.scale = self.add_weight(
-            name="scale", shape=param_shape, initializer="ones"
-        )
+        self.scale = self.add_weight(name="scale", shape=param_shape, initializer="ones")
         if self.bias:
-            self.offset = self.add_weight(
-                name="offset", shape=param_shape, initializer="zeros"
-            )
+            self.offset = self.add_weight(name="offset", shape=param_shape, initializer="zeros")
 
         self.built = True  # pylint:disable=attribute-defined-outside-init
 

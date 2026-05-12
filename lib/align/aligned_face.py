@@ -3,10 +3,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import logging
 import typing as T
-
+from dataclasses import dataclass, field
 from threading import Lock
 
 import cv2
@@ -15,16 +14,16 @@ import numpy as np
 from lib.logger import parse_class_init
 from lib.utils import get_module_objects
 
-from .constants import CenteringType, EXTRACT_RATIOS, LandmarkType, MEAN_FACE
+from .aligned_mask import LandmarksMask
 from .aligned_utils import (
     get_base_size,
-    get_sub_crop_size,
     get_matrix_scaling,
+    get_sub_crop_size,
     points_to_68,
     sub_crop,
     transform_image,
 )
-from .aligned_mask import LandmarksMask
+from .constants import EXTRACT_RATIOS, MEAN_FACE, CenteringType, LandmarkType
 from .pose import PoseEstimate
 
 if T.TYPE_CHECKING:
@@ -81,9 +80,9 @@ class _FaceCache:  # pylint:disable=too-many-instance-attributes
     adjusted_matrix: np.ndarray | None = None
     interpolators: tuple[int, int] = (0, 0)
     cropped_roi: dict[CenteringType, np.ndarray] = field(default_factory=dict)
-    cropped_slices: dict[
-        CenteringType, dict[T.Literal["in", "out"], tuple[slice, slice]]
-    ] = field(default_factory=dict)
+    cropped_slices: dict[CenteringType, dict[T.Literal["in", "out"], tuple[slice, slice]]] = field(
+        default_factory=dict
+    )
 
     _locks: dict[str, Lock] = field(default_factory=dict)
 
@@ -165,9 +164,7 @@ class AlignedFace:  # pylint:disable=too-many-instance-attributes
         self._y_offset = y_offset
         self._dtype = dtype
         self._is_aligned = is_aligned
-        self._source_centering: CenteringType = (
-            "legacy" if is_legacy and is_aligned else "head"
-        )
+        self._source_centering: CenteringType = "legacy" if is_legacy and is_aligned else "head"
         self._padding = self._padding_from_coverage(size, coverage_ratio)
 
         lookup = self._landmark_type
@@ -178,9 +175,7 @@ class AlignedFace:  # pylint:disable=too-many-instance-attributes
         )
 
         self._cache = _FaceCache()
-        self._matrices: dict[CenteringType, np.ndarray] = {
-            "legacy": self._get_default_matrix()
-        }
+        self._matrices: dict[CenteringType, np.ndarray] = {"legacy": self._get_default_matrix()}
 
         self._face = self.extract_face(image)
         logger.trace(
@@ -351,9 +346,7 @@ class AlignedFace:  # pylint:disable=too-many-instance-attributes
                     lms = self.normalized_landmarks
                     if self._landmark_type != LandmarkType.LM_2D_68:
                         lms = points_to_68(lms)
-                    lowest_eyes = np.max(
-                        self.normalized_landmarks[np.r_[17:27, 36:48], 1]
-                    )
+                    lowest_eyes = np.max(self.normalized_landmarks[np.r_[17:27, 36:48], 1])
                     highest_mouth = np.min(self.normalized_landmarks[48:68, 1])
                     position = highest_mouth - lowest_eyes
                     logger.trace(  # type:ignore[attr-defined]
@@ -366,9 +359,7 @@ class AlignedFace:  # pylint:disable=too-many-instance-attributes
         return self._cache.relative_eye_mouth_position
 
     @classmethod
-    def _padding_from_coverage(
-        cls, size: int, coverage_ratio: float
-    ) -> dict[CenteringType, int]:
+    def _padding_from_coverage(cls, size: int, coverage_ratio: float) -> dict[CenteringType, int]:
         """Return the image padding for a face from coverage_ratio set against a pre-padded
         training image.
 
@@ -385,9 +376,7 @@ class AlignedFace:  # pylint:disable=too-many-instance-attributes
         """
         retval = {
             _type: round(
-                size
-                * (EXTRACT_RATIOS[_type] + coverage_ratio - 1)
-                / (2 * coverage_ratio)
+                size * (EXTRACT_RATIOS[_type] + coverage_ratio - 1) / (2 * coverage_ratio)
             )
             for _type in T.get_args(T.Literal["legacy", "face", "head"])
         }
@@ -467,15 +456,9 @@ class AlignedFace:  # pylint:disable=too-many-instance-attributes
             # Crop out the sub face from full head
             image = self._convert_centering(image)
 
-        if (
-            self._is_aligned and image.shape[0] != self._size
-        ):  # Resize the given aligned face
-            interpolation = (
-                cv2.INTER_CUBIC if image.shape[0] < self._size else cv2.INTER_AREA
-            )
-            retval = cv2.resize(
-                image, (self._size, self._size), interpolation=interpolation
-            )
+        if self._is_aligned and image.shape[0] != self._size:  # Resize the given aligned face
+            interpolation = cv2.INTER_CUBIC if image.shape[0] < self._size else cv2.INTER_AREA
+            retval = cv2.resize(image, (self._size, self._size), interpolation=interpolation)
         elif self._is_aligned:
             retval = image
         else:
@@ -513,9 +496,7 @@ class AlignedFace:  # pylint:disable=too-many-instance-attributes
         )
         base_size = get_base_size(img_size, self._source_centering, 1.0)
         padding_diff = (img_size - target_size) / 2
-        delta = (
-            self.pose.offset[self._centering] - self.pose.offset[self._source_centering]
-        )
+        delta = self.pose.offset[self._centering] - self.pose.offset[self._source_centering]
         if self.y_offset:
             delta[1] -= self.y_offset
         offset = np.rint(delta * base_size + padding_diff).astype("int32")
@@ -593,9 +574,7 @@ class AlignedFace:  # pylint:disable=too-many-instance-attributes
         return mask.mask
 
 
-def _umeyama(
-    source: np.ndarray, destination: np.ndarray, estimate_scale: bool
-) -> np.ndarray:
+def _umeyama(source: np.ndarray, destination: np.ndarray, estimate_scale: bool) -> np.ndarray:
     """Estimate N-D similarity transformation with or without scaling.
 
     Imported, and slightly adapted, directly from:
@@ -660,11 +639,8 @@ def _umeyama(
     else:
         retval[:dim, :dim] = U @ np.diag(d) @ V
 
-    if estimate_scale:
-        # Eq. (41) and (42).
-        scale = 1.0 / src_demean.var(axis=0).sum() * (S @ d)
-    else:
-        scale = 1.0
+    # Eq. (41) and (42).
+    scale = 1.0 / src_demean.var(axis=0).sum() * (S @ d) if estimate_scale else 1.0
 
     retval[:dim, dim] = dst_mean - scale * (retval[:dim, :dim] @ src_mean.T)
     retval[:dim, :dim] *= scale
@@ -672,9 +648,7 @@ def _umeyama(
     return retval
 
 
-def batch_umeyama(
-    source: np.ndarray, destination: np.ndarray, estimate_scale: bool
-) -> np.ndarray:
+def batch_umeyama(source: np.ndarray, destination: np.ndarray, estimate_scale: bool) -> np.ndarray:
     """A batch implementation to estimate N-D similarity transformation with or without scaling.
 
     Parameters

@@ -8,6 +8,7 @@ with "original" unique code split out to the original plugin.
 """
 
 from __future__ import annotations
+
 import abc
 import logging
 import typing as T
@@ -17,7 +18,7 @@ import torch
 
 if T.TYPE_CHECKING:
     from lib.training.data import BatchMeta
-    from lib.training.loss import LossCollator, BatchLoss
+    from lib.training.loss import BatchLoss, LossCollator
     from plugins.train.model._base import ModelBase
 
 logger = logging.getLogger(__name__)

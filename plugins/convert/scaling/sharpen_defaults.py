@@ -28,7 +28,6 @@ from lib.config import ConfigItem
 
 from lib.config import ConfigItem
 
-
 HELPTEXT = "Options for sharpening the face after placement"
 
 

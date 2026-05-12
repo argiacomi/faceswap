@@ -5,19 +5,19 @@ part of the model.
 
 # TODO Fix Resnet. It is correct until final MHA
 from __future__ import annotations
+
 import inspect
 import logging
-import typing as T
 import sys
+import typing as T
 import warnings
-
 from dataclasses import dataclass
 
-from keras import layers, ops, Variable, models, saving
 import numpy as np
+from keras import Variable, layers, models, ops, saving
 
 from lib.model.layers import QuickGELU
-from lib.utils import get_module_objects, GetModel
+from lib.utils import GetModel, get_module_objects
 
 if T.TYPE_CHECKING:
     from keras import KerasTensor
@@ -75,9 +75,7 @@ class ViTConfig:
         )
 
 
-MODEL_CONFIG: dict[
-    TypeModels, ViTConfig
-] = {  # Each model has a different set of parameters
+MODEL_CONFIG: dict[TypeModels, ViTConfig] = {  # Each model has a different set of parameters
     "RN50": ViTConfig(
         embed_dim=1024,
         resolution=224,
@@ -178,8 +176,7 @@ class Transformer:
         name: str = "transformer",
     ) -> None:
         logger.debug(
-            "Initializing: %s (width: %s, num_layers: %s, heads: %s, attn_mask: %s, "
-            "name: %s)",
+            "Initializing: %s (width: %s, num_layers: %s, heads: %s, attn_mask: %s, name: %s)",
             self.__class__.__name__,
             width,
             num_layers,
@@ -330,7 +327,7 @@ class EmbeddingLayer(layers.Layer):  # pylint:disable=too-many-ancestors,abstrac
         dtype="float32",
         **kwargs,
     ) -> None:
-        super().__init__(name=name, dtype=dtype, *args, **kwargs)
+        super().__init__(*args, name=name, dtype=dtype, **kwargs)
         self._input_shape = input_shape
         self._scale = scale
         self._var: KerasTensor
@@ -510,9 +507,7 @@ class VisualTransformer:
             name=f"{self._name}_conv1",
         )(inputs)
 
-        var_x = layers.Reshape((-1, self._width))(
-            var_x
-        )  # shape = [*, grid ** 2, width]
+        var_x = layers.Reshape((-1, self._width))(var_x)  # shape = [*, grid ** 2, width]
 
         class_embed = ClassEmbedding(
             (self._width,), self._width**-0.5, name=f"{self._name}_class_embedding"
@@ -525,9 +520,7 @@ class VisualTransformer:
             name=f"{self._name}_positional_embedding",
         )(var_x)
         var_x = layers.Add()([var_x, pos_embed])
-        var_x = layers.LayerNormalization(epsilon=1e-05, name=f"{self._name}_ln_pre")(
-            var_x
-        )
+        var_x = layers.LayerNormalization(epsilon=1e-05, name=f"{self._name}_ln_pre")(var_x)
         var_x = Transformer(
             self._width, self._num_layers, self._heads, name=f"{self._name}_transformer"
         )(var_x)
@@ -627,16 +620,12 @@ class Bottleneck:
         :class:`keras.KerasTensor`
             The result of the forward pass through the Bottleneck block.
         """
-        out = layers.Conv2D(
-            self._planes, 1, use_bias=False, name=f"{self._name}_conv1"
-        )(inputs)
+        out = layers.Conv2D(self._planes, 1, use_bias=False, name=f"{self._name}_conv1")(inputs)
         out = layers.BatchNormalization(name=f"{self._name}_bn1", epsilon=1e-5)(out)
         out = layers.ReLU()(out)
 
         out = layers.ZeroPadding2D(padding=((1, 1), (1, 1)))(out)
-        out = layers.Conv2D(
-            self._planes, 3, use_bias=False, name=f"{self._name}_conv2"
-        )(out)
+        out = layers.Conv2D(self._planes, 3, use_bias=False, name=f"{self._name}_conv2")(out)
         out = layers.BatchNormalization(name=f"{self._name}_bn2", epsilon=1e-5)(out)
         out = layers.ReLU()(out)
 
@@ -801,12 +790,10 @@ class ModifiedResNet:
         for i in range(1, 4):
             width = self._width if i == 3 else self._width // 2
             strides = 2 if i == 1 else 1
-            var_x = layers.ZeroPadding2D(
-                padding=((1, 1), (1, 1)), name=f"conv{i}_padding"
-            )(var_x)
-            var_x = layers.Conv2D(
-                width, 3, strides=strides, use_bias=False, name=f"conv{i}"
-            )(var_x)
+            var_x = layers.ZeroPadding2D(padding=((1, 1), (1, 1)), name=f"conv{i}_padding")(var_x)
+            var_x = layers.Conv2D(width, 3, strides=strides, use_bias=False, name=f"conv{i}")(
+                var_x
+            )
             var_x = layers.BatchNormalization(name=f"bn{i}", epsilon=1e-5)(var_x)
             var_x = layers.ReLU()(var_x)
         var_x = layers.AveragePooling2D(2, name="avgpool")(var_x)
@@ -844,9 +831,7 @@ class ModifiedResNet:
         retval: KerasTensor
         retval = Bottleneck(planes, planes, stride, name=f"{name}_0")(inputs)
         for i in range(1, blocks):
-            retval = Bottleneck(
-                planes * Bottleneck.expansion, planes, name=f"{name}_{i}"
-            )(retval)
+            retval = Bottleneck(planes * Bottleneck.expansion, planes, name=f"{name}_{i}")(retval)
         return retval
 
     def __call__(self) -> models.Model:
@@ -1009,11 +994,7 @@ class ViT:
 
 # Update layers into Keras custom objects
 for name_, obj in inspect.getmembers(sys.modules[__name__]):
-    if (
-        inspect.isclass(obj)
-        and issubclass(obj, layers.Layer)
-        and obj.__module__ == __name__
-    ):
+    if inspect.isclass(obj) and issubclass(obj, layers.Layer) and obj.__module__ == __name__:
         saving.get_custom_objects().update({name_: obj})
 
 

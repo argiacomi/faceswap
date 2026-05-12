@@ -190,4 +190,3 @@ msgstr ""
 #: ./lib/gui/popup_session.py:363
 msgid "Change y-axis scale"
 msgstr ""
-

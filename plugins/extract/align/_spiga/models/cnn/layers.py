@@ -3,7 +3,7 @@ from torch import nn
 
 class Conv(nn.Module):
     def __init__(self, inp_dim, out_dim, kernel_size=3, stride=1, bn=False, relu=True):
-        super(Conv, self).__init__()
+        super().__init__()
         self.inp_dim = inp_dim
         self.conv = nn.Conv2d(
             inp_dim,
@@ -21,7 +21,7 @@ class Conv(nn.Module):
             self.bn = nn.BatchNorm2d(out_dim)
 
     def forward(self, x):
-        assert x.size()[1] == self.inp_dim, "{} {}".format(x.size()[1], self.inp_dim)
+        assert x.size()[1] == self.inp_dim, f"{x.size()[1]} {self.inp_dim}"
         x = self.conv(x)
         if self.bn is not None:
             x = self.bn(x)
@@ -32,7 +32,7 @@ class Conv(nn.Module):
 
 class Deconv(nn.Module):
     def __init__(self, inp_dim, out_dim, kernel_size=3, stride=1, bn=False, relu=True):
-        super(Deconv, self).__init__()
+        super().__init__()
         self.inp_dim = inp_dim
         self.deconv = nn.ConvTranspose2d(
             inp_dim, out_dim, kernel_size=kernel_size, stride=stride, bias=False
@@ -45,7 +45,7 @@ class Deconv(nn.Module):
             self.bn = nn.BatchNorm2d(out_dim)
 
     def forward(self, x):
-        assert x.size()[1] == self.inp_dim, "{} {}".format(x.size()[1], self.inp_dim)
+        assert x.size()[1] == self.inp_dim, f"{x.size()[1]} {self.inp_dim}"
         x = self.deconv(x)
         if self.bn is not None:
             x = self.bn(x)
@@ -56,7 +56,7 @@ class Deconv(nn.Module):
 
 class Residual(nn.Module):
     def __init__(self, inp_dim, out_dim, kernel=3):
-        super(Residual, self).__init__()
+        super().__init__()
         self.relu = nn.ReLU()
         self.bn1 = nn.BatchNorm2d(inp_dim)
         self.conv1 = Conv(inp_dim, int(out_dim / 2), 1, relu=False)
@@ -71,10 +71,7 @@ class Residual(nn.Module):
             self.need_skip = True
 
     def forward(self, x):
-        if self.need_skip:
-            residual = self.skip_layer(x)
-        else:
-            residual = x
+        residual = self.skip_layer(x) if self.need_skip else x
         out = self.bn1(x)
         out = self.relu(out)
         out = self.conv1(out)

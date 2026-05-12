@@ -3,9 +3,10 @@
 
 # pylint:disable=protected-access
 from __future__ import annotations
+
+import contextlib
 import os
 import typing as T
-
 from shutil import rmtree
 from time import time
 from unittest.mock import MagicMock
@@ -13,16 +14,15 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 import pytest_mock
-
 from tensorboard.compat.proto import event_pb2
 
 from lib.gui.analysis.event_reader import (
+    EventData,
+    TensorBoardLogs,
     _Cache,
     _CacheData,
     _EventParser,
     _LogFiles,
-    EventData,
-    TensorBoardLogs,
 )
 
 if T.TYPE_CHECKING:
@@ -159,9 +159,7 @@ class Test_Cache:  # pylint:disable=invalid-name
         cache.cache_data(session_id, data, labels, is_live)
         assert cache._loss_labels == labels
         assert cache.is_cached(session_id)
-        np.testing.assert_array_equal(
-            cache._data[session_id].timestamps, np.array([4.0, 5.0])
-        )
+        np.testing.assert_array_equal(cache._data[session_id].timestamps, np.array([4.0, 5.0]))
         np.testing.assert_array_equal(
             cache._data[session_id].loss, np.array([[1.0, 2.0], [3.0, 4.0]])
         )
@@ -259,9 +257,7 @@ class Test_Cache:  # pylint:disable=invalid-name
 
         assert cache.is_cached(session_id)
         assert cache._loss_labels == labels
-        np.testing.assert_array_equal(
-            cache._data[session_id].timestamps, expected_timestamps
-        )
+        np.testing.assert_array_equal(cache._data[session_id].timestamps, expected_timestamps)
         np.testing.assert_array_equal(cache._data[session_id].loss, expected_loss)
 
     @staticmethod
@@ -332,10 +328,8 @@ class TestTensorBoardLogs:
         tblogs_instance = TensorBoardLogs(tmp_path, False)
 
         def teardown():
-            try:
+            with contextlib.suppress(PermissionError):
                 rmtree(tmp_path)
-            except PermissionError:
-                pass
 
         request.addfinalizer(teardown)
         return tblogs_instance
@@ -428,9 +422,7 @@ class TestTensorBoardLogs:
             Mocker for checking _cache_data is called
         """
         is_cached = mocker.patch("lib.gui.analysis.event_reader._Cache.is_cached")
-        cache_data = mocker.patch(
-            "lib.gui.analysis.event_reader.TensorBoardLogs._cache_data"
-        )
+        cache_data = mocker.patch("lib.gui.analysis.event_reader.TensorBoardLogs._cache_data")
         tb_logs = tensorboardlogs_instance
 
         # Session ID not training
@@ -493,9 +485,7 @@ class TestTensorBoardLogs:
         mocker.patch("lib.gui.analysis.event_reader.RecordIterator")
         tb_logs.get_loss(3)
 
-        check_cache = mocker.patch(
-            "lib.gui.analysis.event_reader.TensorBoardLogs._check_cache"
-        )
+        check_cache = mocker.patch("lib.gui.analysis.event_reader.TensorBoardLogs._check_cache")
         get_data = mocker.patch("lib.gui.analysis.event_reader._Cache.get_data")
         get_data.return_value = None
 
@@ -529,9 +519,7 @@ class TestTensorBoardLogs:
 
         tb_logs.get_timestamps(3)
 
-        check_cache = mocker.patch(
-            "lib.gui.analysis.event_reader.TensorBoardLogs._check_cache"
-        )
+        check_cache = mocker.patch("lib.gui.analysis.event_reader.TensorBoardLogs._check_cache")
         get_data = mocker.patch("lib.gui.analysis.event_reader._Cache.get_data")
         get_data.return_value = None
 
@@ -587,9 +575,7 @@ class Test_EventParser:  # pylint:disable=invalid-name
         bytes
             A serialized test Tensorboard Event
         """
-        return iter(
-            [self._create_example_event(i, 1 + (i / 10), time()) for i in range(4)]
-        )
+        return iter([self._create_example_event(i, 1 + (i / 10), time()) for i in range(4)])
 
     @pytest.fixture(name="mock_cache")
     def mock_cache(self):
@@ -733,17 +719,11 @@ class Test_EventParser:  # pylint:disable=invalid-name
         assert not event_data.loss
         timestamp = time()
         loss = [1.1, 2.2]
-        event = self._create_example_event(
-            1, 1.0, timestamp, serialize=False
-        )  # batch_total
+        event = self._create_example_event(1, 1.0, timestamp, serialize=False)  # batch_total
         event_parse._process_event(event, event_data)
-        event = self._create_example_event(
-            2, loss[0], time(), serialize=False
-        )  # face A
+        event = self._create_example_event(2, loss[0], time(), serialize=False)  # face A
         event_parse._process_event(event, event_data)
-        event = self._create_example_event(
-            3, loss[1], time(), serialize=False
-        )  # face B
+        event = self._create_example_event(3, loss[1], time(), serialize=False)  # face B
         event_parse._process_event(event, event_data)
 
         # Original timestamp and both loss values collected

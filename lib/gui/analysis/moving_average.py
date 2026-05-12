@@ -8,7 +8,6 @@ import numpy as np
 from lib.logger import parse_class_init
 from lib.utils import get_module_objects
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -49,9 +48,7 @@ class ExponentialMovingAverage:
             The smoothed data
         """
         if self._data.size <= self._row_size:
-            self._ewma_vectorized(
-                self._data, self._out
-            )  # Normal function can handle this input
+            self._ewma_vectorized(self._data, self._out)  # Normal function can handle this input
         else:
             self._ewma_vectorized_safe()  # Use the safe version
         return self._out
@@ -84,19 +81,13 @@ class ExponentialMovingAverage:
 
         if leftover > 0:
             # set temporary results to slice view of out parameter
-            out_main_view = np.reshape(
-                self._out[:-leftover], (num_rows, self._row_size)
-            )
-            data_main_view = np.reshape(
-                self._data[:-leftover], (num_rows, self._row_size)
-            )
+            out_main_view = np.reshape(self._out[:-leftover], (num_rows, self._row_size))
+            data_main_view = np.reshape(self._data[:-leftover], (num_rows, self._row_size))
         else:
             out_main_view = self._out.reshape(-1, self._row_size)
             data_main_view = self._data.reshape(-1, self._row_size)
 
-        self._ewma_vectorized_2d(
-            data_main_view, out_main_view
-        )  # get the scaled cumulative sums
+        self._ewma_vectorized_2d(data_main_view, out_main_view)  # get the scaled cumulative sums
 
         scaling_factors = (1 - self._alpha) ** np.arange(1, self._row_size + 1)
         last_scaling_factor = scaling_factors[-1]

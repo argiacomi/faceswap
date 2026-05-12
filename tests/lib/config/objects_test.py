@@ -4,6 +4,7 @@
 import pytest
 
 from lib.config.objects import ConfigItem
+
 # pylint:disable=invalid-name
 
 _TEST_GROUP = "TestGroup"
@@ -105,9 +106,7 @@ _FLOAT_CONFIG = (
 _FLOAT_PARAMS = ["default", "min_max", "rounding", "status"]
 
 
-@pytest.mark.parametrize(
-    _FLOAT_PARAMS, _FLOAT_CONFIG, ids=[x[-1] for x in _FLOAT_CONFIG]
-)
+@pytest.mark.parametrize(_FLOAT_PARAMS, _FLOAT_CONFIG, ids=[x[-1] for x in _FLOAT_CONFIG])
 def test_ConfigItem_float(default, min_max, rounding, status):
     """Test that datatypes validate for floats and value is set correctly"""
     dtype = float
@@ -149,15 +148,11 @@ def test_ConfigItem_bool(default, status):
     """Test that datatypes validate for bool and value is set correctly"""
     dtype = bool
     if status.startswith("success"):
-        dclass = ConfigItem(
-            datatype=dtype, default=default, group=_TEST_GROUP, info=_TEST_INFO
-        )
+        dclass = ConfigItem(datatype=dtype, default=default, group=_TEST_GROUP, info=_TEST_INFO)
         assert dclass.value is default
     else:
         with pytest.raises(ValueError):
-            ConfigItem(
-                datatype=dtype, default=default, group=_TEST_GROUP, info=_TEST_INFO
-            )
+            ConfigItem(datatype=dtype, default=default, group=_TEST_GROUP, info=_TEST_INFO)
 
 
 _LIST_CONFIG = (  # type:ignore[var-annotated]
@@ -224,16 +219,12 @@ def test_ConfigItem_missing_required(group, info, status):
 _NAME_CONFIG = (("TestName", "success"), ("", "fail-no-name"), (100, "fail-dtype"))
 
 
-@pytest.mark.parametrize(
-    ("name", "status"), _NAME_CONFIG, ids=[x[-1] for x in _NAME_CONFIG]
-)
+@pytest.mark.parametrize(("name", "status"), _NAME_CONFIG, ids=[x[-1] for x in _NAME_CONFIG])
 def test_ConfigItem_set_name(name, status):
     """Test that setting the config item's name functions correctly"""
     dtype = str
     default = "test"
-    dclass = ConfigItem(
-        datatype=dtype, default=default, group="TestGroup", info="TestInfo"
-    )
+    dclass = ConfigItem(datatype=dtype, default=default, group="TestGroup", info="TestInfo")
     if status.startswith("success"):
         dclass.set_name(name)
         assert dclass.name == name
@@ -256,9 +247,7 @@ _STR_SET_CONFIG = (  # type:ignore[var-annotated]
 _STR_SET_PARAMS = ("value", "choices", "status")
 
 
-@pytest.mark.parametrize(
-    _STR_SET_PARAMS, _STR_SET_CONFIG, ids=[x[-1] for x in _STR_SET_CONFIG]
-)
+@pytest.mark.parametrize(_STR_SET_PARAMS, _STR_SET_CONFIG, ids=[x[-1] for x in _STR_SET_CONFIG])
 def test_ConfigItem_set_str(value, choices, status):
     """Test that strings validate and set correctly"""
     default = "#ffffff" if choices == "colorchooser" else "TestDefault"
@@ -296,9 +285,7 @@ _INT_SET_CONFIG = (
 _INT_SET_PARAMS = ("value", "status")
 
 
-@pytest.mark.parametrize(
-    _INT_SET_PARAMS, _INT_SET_CONFIG, ids=[x[-1] for x in _INT_SET_CONFIG]
-)
+@pytest.mark.parametrize(_INT_SET_PARAMS, _INT_SET_CONFIG, ids=[x[-1] for x in _INT_SET_CONFIG])
 def test_ConfigItem_set_int(value, status):
     """Test that ints validate and set correctly"""
     default = 20
@@ -375,16 +362,12 @@ _BOOL_SET_CONFIG = (
 _BOOL_SET_PARAMS = ("value", "status")
 
 
-@pytest.mark.parametrize(
-    _BOOL_SET_PARAMS, _BOOL_SET_CONFIG, ids=[x[-1] for x in _BOOL_SET_CONFIG]
-)
+@pytest.mark.parametrize(_BOOL_SET_PARAMS, _BOOL_SET_CONFIG, ids=[x[-1] for x in _BOOL_SET_CONFIG])
 def test_ConfigItem_set_bool(value, status):
     """Test that bools validate and set correctly"""
     default = True
     dtype = bool
-    dclass = ConfigItem(
-        datatype=dtype, default=default, group=_TEST_GROUP, info=_TEST_INFO
-    )
+    dclass = ConfigItem(datatype=dtype, default=default, group=_TEST_GROUP, info=_TEST_INFO)
 
     with pytest.raises(ValueError):  # Confirm setting fails when name not set
         dclass.set(value)
@@ -416,9 +399,7 @@ _LIST_SET_CONFIG = (
 _LIST_SET_PARAMS = ("value", "status")
 
 
-@pytest.mark.parametrize(
-    _LIST_SET_PARAMS, _LIST_SET_CONFIG, ids=[x[-1] for x in _LIST_SET_CONFIG]
-)
+@pytest.mark.parametrize(_LIST_SET_PARAMS, _LIST_SET_CONFIG, ids=[x[-1] for x in _LIST_SET_CONFIG])
 def test_ConfigItem_set_list(value, status):
     """Test that lists validate and set correctly"""
     default = ["TestDefault"]
@@ -441,9 +422,7 @@ def test_ConfigItem_set_list(value, status):
         dclass.set(value)
 
         if not isinstance(value, list):
-            value = (
-                [x.strip() for x in value.split(",")] if "," in value else value.split()
-            )
+            value = [x.strip() for x in value.split(",")] if "," in value else value.split()
         assert dclass.value == dclass() == dclass.get()
         expected = [x.lower() for x in value]
         if status.startswith("success-fallback"):

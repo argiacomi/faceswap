@@ -32,13 +32,12 @@ from math import ceil
 
 import numpy as np
 import torch
+import torchvision.models as tv_models
+import torchvision.models._utils as tv_utils
 from torch import nn
 from torch.nn import functional as F
 
-import torchvision.models as tv_models
-import torchvision.models._utils as tv_utils
-
-from lib.utils import get_module_objects, GetModel
+from lib.utils import GetModel, get_module_objects
 from plugins.extract.base import ExtractPlugin
 
 from . import retinaface_defaults as cfg
@@ -86,12 +85,11 @@ class RetinaFace(ExtractPlugin):
         steps = [8, 16, 32]
         min_sizes = [[16, 32], [64, 128], [256, 512]]
         feature_maps = [
-            [ceil(self.input_size / step), ceil(self.input_size / step)]
-            for step in steps
+            [ceil(self.input_size / step), ceil(self.input_size / step)] for step in steps
         ]
         anchors = []
 
-        for sizes, feats, step in zip(min_sizes, feature_maps, steps):
+        for sizes, feats, step in zip(min_sizes, feature_maps, steps, strict=False):
             for i, j in product(range(feats[0]), range(feats[1])):
                 for min_size in sizes:
                     s_kx = min_size / self.input_size
@@ -118,9 +116,7 @@ class RetinaFace(ExtractPlugin):
         vers = 1 if backbone == "resnet" else 2
         weights = GetModel(f"retinaface_v{vers}.pth", 32).model_path
         assert isinstance(weights, str)
-        return T.cast(
-            RetinaFaceModel, self.load_torch_model(RetinaFaceModel(backbone), weights)
-        )
+        return T.cast(RetinaFaceModel, self.load_torch_model(RetinaFaceModel(backbone), weights))
 
     def pre_process(self, batch: np.ndarray) -> np.ndarray:
         """Compile the detection image(s) for prediction
@@ -236,7 +232,7 @@ class RetinaFace(ExtractPlugin):
         batch_scores = T.cast("npt.NDArray[np.float32]", confidence[:, :, 1])
         batch_mask = batch_scores > self._confidence
         final_boxes = []
-        for boxes, scores, mask in zip(batch_boxes, batch_scores, batch_mask):
+        for boxes, scores, mask in zip(batch_boxes, batch_scores, batch_mask, strict=False):
             scores = scores[mask]
             if scores.size == 0:
                 final_boxes.append(np.empty((0, 5), dtype="float32"))
@@ -293,9 +289,7 @@ def conv_bn(
     return nn.Sequential(*layers)
 
 
-def conv_dw(
-    in_channels: int, out_channels: int, stride: int, leaky=0.1
-) -> torch.nn.Sequential:
+def conv_dw(in_channels: int, out_channels: int, stride: int, leaky=0.1) -> torch.nn.Sequential:
     """Generates a double Conv Batch Norm sequential module for RetinaFace
 
     Parameters
@@ -314,9 +308,7 @@ def conv_dw(
     The built sequential module
     """
     return nn.Sequential(
-        nn.Conv2d(
-            in_channels, in_channels, 3, stride, 1, groups=in_channels, bias=False
-        ),
+        nn.Conv2d(in_channels, in_channels, 3, stride, 1, groups=in_channels, bias=False),
         nn.BatchNorm2d(in_channels),
         nn.LeakyReLU(negative_slope=leaky, inplace=True),
         nn.Conv2d(in_channels, out_channels, 1, 1, 0, bias=False),
@@ -416,9 +408,7 @@ class SSH(nn.Module):
             use_relu=True,
             leaky=leaky,
         )
-        self.conv7x7_3 = conv_bn(
-            out_channel // 4, out_channel // 4, stride=1, use_relu=False
-        )
+        self.conv7x7_3 = conv_bn(out_channel // 4, out_channel // 4, stride=1, use_relu=False)
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         """Forward pass through SSH Module
@@ -509,15 +499,11 @@ class FPN(nn.Module):
         output2 = self.output2(l_inputs[1])
         output3 = self.output3(l_inputs[2])
 
-        up3 = F.interpolate(
-            output3, size=[output2.size(2), output2.size(3)], mode="nearest"
-        )
+        up3 = F.interpolate(output3, size=[output2.size(2), output2.size(3)], mode="nearest")
         output2 = output2 + up3
         output2 = self.merge2(output2)
 
-        up2 = F.interpolate(
-            output2, size=[output1.size(2), output1.size(3)], mode="nearest"
-        )
+        up2 = F.interpolate(output2, size=[output1.size(2), output1.size(3)], mode="nearest")
         output1 = output1 + up2
         output1 = self.merge1(output1)
         return [output1, output2, output3]

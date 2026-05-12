@@ -28,7 +28,6 @@ from lib.config import ConfigItem
 
 from lib.config import ConfigItem
 
-
 HELPTEXT = "DFL SAE Model (Adapted from https://github.com/iperov/DeepFaceLab)"
 
 

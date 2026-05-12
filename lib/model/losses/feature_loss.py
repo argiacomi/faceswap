@@ -2,16 +2,17 @@
 """Custom Feature Map Loss Functions for faceswap.py"""
 
 from __future__ import annotations
-from dataclasses import dataclass, field
+
 import logging
 import typing as T
+from dataclasses import dataclass, field
 
 import torch
 from torch import nn
-from torchvision.models import alexnet, squeezenet1_1, vgg16, feature_extraction
+from torchvision.models import alexnet, feature_extraction, squeezenet1_1, vgg16
 
 from lib.logger import parse_class_init
-from lib.utils import get_module_objects, GetModel
+from lib.utils import GetModel, get_module_objects
 
 if T.TYPE_CHECKING:
     from collections.abc import Callable
@@ -148,9 +149,7 @@ class _LPIPSTrunkNet(nn.Module):
         return net
 
     @classmethod
-    def _normalize_output(
-        cls, inputs: torch.Tensor, epsilon: float = 1e-10
-    ) -> torch.Tensor:
+    def _normalize_output(cls, inputs: torch.Tensor, epsilon: float = 1e-10) -> torch.Tensor:
         """Normalize the output tensors from the trunk network.
 
         Parameters
@@ -230,7 +229,7 @@ class _LPIPSLinearNet(nn.Module):
             weights = torch.load(weights_path)
             state = net.state_dict()
             assert len(weights) == len(state)
-            for key, val in zip(list(state), weights.values()):
+            for key, val in zip(list(state), weights.values(), strict=False):
                 state[key] = val
 
             net.load_state_dict(state)
@@ -341,9 +340,7 @@ class LPIPSLoss(nn.Module):  # pylint:disable=too-many-instance-attributes
         self.register_buffer(
             "_scale", torch.Tensor([0.458, 0.448, 0.450]).float()[None, :, None, None]
         )
-        self._trunk_net = _LPIPSTrunkNet(
-            trunk_network, trunk_eval_mode, trunk_pretrained
-        )
+        self._trunk_net = _LPIPSTrunkNet(trunk_network, trunk_eval_mode, trunk_pretrained)
         self._linear_net = _LPIPSLinearNet(
             trunk_network, linear_eval_mode, linear_pretrained, linear_use_dropout
         )
@@ -424,9 +421,7 @@ class LPIPSLoss(nn.Module):  # pylint:disable=too-many-instance-attributes
         the height, width axes.
         """
         if self._spatial:
-            return nn.Upsample(output_dims, mode="bilinear", align_corners=False)(
-                inputs
-            )
+            return nn.Upsample(output_dims, mode="bilinear", align_corners=False)(inputs)
         return torch.mean(inputs, dim=(2, 3), keepdim=True)
 
     def forward(
@@ -460,14 +455,15 @@ class LPIPSLoss(nn.Module):  # pylint:disable=too-many-instance-attributes
         net_pred = self._trunk_net(y_pred)
 
         diffs = [
-            (out_true - out_pred) ** 2 for out_true, out_pred in zip(net_true, net_pred)
+            (out_true - out_pred) ** 2
+            for out_true, out_pred in zip(net_true, net_pred, strict=False)
         ]
 
         dims = y_true.shape[2:4]
         if self._crop_amount:
             diffs = [
                 d[:, :, i:-i, i:-i] if i else d
-                for d, i in zip(diffs, self._crop_amount)
+                for d, i in zip(diffs, self._crop_amount, strict=False)
             ]
 
         dims = dims if self._spatial else y_true.shape[2:4]

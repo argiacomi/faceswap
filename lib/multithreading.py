@@ -2,13 +2,13 @@
 """Multithreading/processing utils for faceswap"""
 
 from __future__ import annotations
-import logging
-import typing as T
-from multiprocessing import cpu_count
 
+import logging
 import queue as Queue
 import sys
 import threading
+import typing as T
+from multiprocessing import cpu_count
 from types import TracebackType
 
 from lib.utils import get_module_objects
@@ -18,8 +18,7 @@ if T.TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 _ErrorType: T.TypeAlias = (
-    tuple[type[BaseException], BaseException, TracebackType]
-    | tuple[T.Any, T.Any, T.Any]
+    tuple[type[BaseException], BaseException, TracebackType] | tuple[T.Any, T.Any, T.Any]
 )
 _THREAD_NAMES: set[str] = set()
 
@@ -86,9 +85,7 @@ class ErrorState:
         """
         with self._lock:
             if self.errors:
-                logger.debug(
-                    "An error has already been captured and is waiting to be handled."
-                )
+                logger.debug("An error has already been captured and is waiting to be handled.")
             logger.debug("Recording error state:", exc_info=exc_info)
             self.errors.append(exc_info)
 
@@ -135,9 +132,7 @@ class FSThread(threading.Thread):
         *,
         daemon: bool | None = None,
     ) -> None:
-        super().__init__(
-            target=target, name=name, args=args, kwargs=kwargs, daemon=daemon
-        )
+        super().__init__(target=target, name=name, args=args, kwargs=kwargs, daemon=daemon)
         self.target = target
         self.args = args
         self.kwargs = kwargs = {} if kwargs is None else kwargs
@@ -269,12 +264,8 @@ class MultiThread:
         logger.debug("Starting thread(s): '%s'", self._name)
         for idx in range(self._thread_count):
             name = self._name if self._thread_count == 1 else f"{self._name}_{idx}"
-            logger.debug(
-                "Starting thread %s of %s: '%s'", idx + 1, self._thread_count, name
-            )
-            thread = FSThread(
-                name=name, target=self._target, args=self._args, kwargs=self._kwargs
-            )
+            logger.debug("Starting thread %s of %s: '%s'", idx + 1, self._thread_count, name)
+            thread = FSThread(name=name, target=self._target, args=self._args, kwargs=self._kwargs)
             thread.daemon = self.daemon
             thread.start()
             self._threads.append(thread)

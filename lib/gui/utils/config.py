@@ -2,26 +2,25 @@
 """Global configuration options for the Faceswap GUI"""
 
 from __future__ import annotations
+
 import logging
 import os
 import sys
 import tkinter as tk
 import typing as T
-
 from dataclasses import dataclass, field
 
 from lib.gui import gui_config as cfg
 from lib.gui.project import Project, Tasks
 from lib.gui.theme import Style
-from lib.utils import get_module_objects, PROJECT_ROOT
+from lib.utils import PROJECT_ROOT, get_module_objects
 
 from .file_handler import FileHandler
 
 if T.TYPE_CHECKING:
-    from lib.gui.options import CliOptions
+    from lib.gui.command import CommandNotebook, ToolsNotebook
     from lib.gui.custom_widgets import StatusBar
-    from lib.gui.command import CommandNotebook
-    from lib.gui.command import ToolsNotebook
+    from lib.gui.options import CliOptions
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +64,7 @@ def initialize_config(
     return _CONFIG
 
 
-def get_config() -> "Config":
+def get_config() -> Config:
     """Get the Master GUI configuration.
 
     Returns
@@ -191,9 +190,9 @@ class Config:  # pylint:disable=too-many-public-methods
             cli_opts,
             statusbar,
         )
-        self._default_font = T.cast(
-            dict, tk.font.nametofont("TkDefaultFont").configure()
-        )["family"]
+        self._default_font = T.cast(dict, tk.font.nametofont("TkDefaultFont").configure())[
+            "family"
+        ]
         self._constants = {
             "root": root,
             "scaling_factor": self._get_scaling(root),
@@ -366,9 +365,7 @@ class Config:  # pylint:disable=too-many-public-methods
         elif name in self._tools_tabs:
             self.command_notebook.select(self._command_tabs["tools"])
             tab_id = self._tools_tabs[name]
-            logger.debug(
-                "Setting active Tools tab to: (name: %s, id: %s)", name, tab_id
-            )
+            logger.debug("Setting active Tools tab to: (name: %s, id: %s)", name, tab_id)
             self.tools_notebook.select()
         else:
             logger.debug("Name couldn't be found. Setting to id 0: %s", name)
@@ -462,9 +459,7 @@ class Config:  # pylint:disable=too-many-public-methods
         elif fullscreen:
             self.root.attributes("-zoomed", True)
         else:
-            self.root.geometry(
-                f"{str(initial_dimensions[0])}x{str(initial_dimensions[1])}+80+80"
-            )
+            self.root.geometry(f"{str(initial_dimensions[0])}x{str(initial_dimensions[1])}+80+80")
         logger.debug("Geometry: %sx%s", *initial_dimensions)
 
 

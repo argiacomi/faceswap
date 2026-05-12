@@ -2,17 +2,18 @@
 """Plugin loader for Faceswap extract, training and convert tasks"""
 
 from __future__ import annotations
+
 import ast
 import logging
 import os
 import typing as T
-
 from importlib import import_module
 
-from lib.utils import full_path_split, get_module_objects, PROJECT_ROOT
+from lib.utils import PROJECT_ROOT, full_path_split, get_module_objects
 
 if T.TYPE_CHECKING:
     from collections.abc import Callable
+
     from plugins.extract.base import ExtractPlugin
     from plugins.train.model._base import ModelBase
     from plugins.train.trainer.base import TrainerBase
@@ -46,7 +47,7 @@ def get_extractors() -> dict[str, list[str]]:  # noqa: C901
         mods = []
         for fpath in files:
             try:
-                with open(fpath, "r", encoding="utf-8") as pfile:
+                with open(fpath, encoding="utf-8") as pfile:
                     tree = ast.parse(pfile.read())
             except Exception:  # pylint:disable=broad-except
                 continue
@@ -57,9 +58,7 @@ def get_extractors() -> dict[str, list[str]]:  # noqa: C901
                     if not isinstance(base, ast.Name):
                         continue
                     if base.id in ("ExtractPlugin", "FacePlugin"):
-                        rel_path = os.path.splitext(
-                            fpath.replace(PROJECT_ROOT, "")[1:]
-                        )[0]
+                        rel_path = os.path.splitext(fpath.replace(PROJECT_ROOT, "")[1:])[0]
                         mods.append(".".join(full_path_split(rel_path) + [node.name]))
         if mods:
             retval[os.path.basename(fld)] = list(sorted(mods))
@@ -113,9 +112,7 @@ class PluginLoader:
         mods = [p.split(".")[-2] for p in plugins]
         real_name = name.lower().replace("-", "_")
         if real_name not in mods:
-            raise ValueError(
-                f"{name} is not a valid {plugin_type} plugin. Select from {mods}"
-            )
+            raise ValueError(f"{name} is not a valid {plugin_type} plugin. Select from {mods}")
 
         mod, obj = plugins[mods.index(real_name)].rsplit(".", maxsplit=1)
         logger.debug("Loading '%s' from '%s'", plugin_type, name)
@@ -163,9 +160,7 @@ class PluginLoader:
         return PluginLoader._import("train.trainer", name, disable_logging)
 
     @staticmethod
-    def get_converter(
-        category: str, name: str, disable_logging: bool = False
-    ) -> Callable:
+    def get_converter(category: str, name: str, disable_logging: bool = False) -> Callable:
         """Return requested converter plugin
 
         Converters work slightly differently to other faceswap plugins. They are created to do a
@@ -242,10 +237,7 @@ class PluginLoader:
                 f"{extractor_type} is not a valid plugin type. Select from "
                 f"{list(cls.extract_plugins)}"
             )
-        plugins = [
-            x.split(".")[-2].replace("_", "-")
-            for x in cls.extract_plugins[extractor_type]
-        ]
+        plugins = [x.split(".")[-2].replace("_", "-") for x in cls.extract_plugins[extractor_type]]
         if extend_plugin and extractor_type == "mask":
             extendable = ["bisenet-fp", "custom"]
             for plugin in extendable:
@@ -288,9 +280,7 @@ class PluginLoader:
         return "original" if "original" in models else models[0]
 
     @staticmethod
-    def get_available_convert_plugins(
-        convert_category: str, add_none: bool = True
-    ) -> list[str]:
+    def get_available_convert_plugins(convert_category: str, add_none: bool = True) -> list[str]:
         """Return a list of available converter plugins in the given category
 
         Parameters
@@ -305,9 +295,7 @@ class PluginLoader:
         A list of the available converter plugin names in the given category
         """
 
-        convert_path = os.path.join(
-            os.path.dirname(__file__), "convert", convert_category
-        )
+        convert_path = os.path.join(os.path.dirname(__file__), "convert", convert_category)
         converters = sorted(
             item.name.replace(".py", "").replace("_", "-")
             for item in os.scandir(convert_path)

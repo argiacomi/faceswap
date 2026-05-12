@@ -2,15 +2,15 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .gnn import pose_proj as pproj
 from .cnn.cnn_multitask import MultitaskCNN
-from .gnn.step_regressor import StepRegressor, RelativePositionEncoder
+from .gnn import pose_proj as pproj
+from .gnn.step_regressor import RelativePositionEncoder, StepRegressor
 
 
 class SPIGA(nn.Module):
     def __init__(self, num_landmarks=98, num_edges=15, steps=3, **kwargs):
 
-        super(SPIGA, self).__init__()
+        super().__init__()
 
         # Model parameters
         self.steps = steps  # Cascaded regressors
@@ -41,7 +41,7 @@ class SPIGA(nn.Module):
         # Relative positional encoder
         shape_dim = 2 * (self.num_landmarks - 1)
         shape_encoder = []
-        for step in range(self.steps):
+        for _step in range(self.steps):
             shape_encoder.append(RelativePositionEncoder(shape_dim, self.embedded_dim, [256, 256]))
         self.shape_encoder = nn.ModuleList(shape_encoder)
         # Diagonal mask used to compute relative positions

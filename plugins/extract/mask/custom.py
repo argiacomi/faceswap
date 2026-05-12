@@ -2,10 +2,12 @@
 """Custom Mask for faceswap.py"""
 
 from __future__ import annotations
+
 import logging
 import typing as T
 
 import numpy as np
+
 from lib.utils import get_module_objects
 from plugins.extract.base import FacePlugin
 

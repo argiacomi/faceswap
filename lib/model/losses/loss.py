@@ -2,6 +2,7 @@
 """Custom Loss Functions for faceswap.py"""
 
 from __future__ import annotations
+
 import logging
 
 import numpy as np
@@ -113,9 +114,7 @@ class FocalFrequencyLoss(nn.Module):
         freq = torch.stack([freq.real, freq.imag], dim=-1)
         return freq
 
-    def _get_weight_matrix(
-        self, freq_true: torch.Tensor, freq_pred: torch.Tensor
-    ) -> torch.Tensor:
+    def _get_weight_matrix(self, freq_true: torch.Tensor, freq_pred: torch.Tensor) -> torch.Tensor:
         """Calculate a continuous, dynamic weight matrix based on current Euclidean distance.
 
         Parameters
@@ -136,9 +135,7 @@ class FocalFrequencyLoss(nn.Module):
         if self._log_matrix:  # adjust the spectrum weight matrix by logarithm
             weights = torch.log(weights + 1.0)
 
-        if (
-            self._batch_matrix
-        ):  # calculate the spectrum weight matrix using batch-based statistics
+        if self._batch_matrix:  # calculate the spectrum weight matrix using batch-based statistics
             scale = torch.max(weights)
         else:
             scale = torch.amax(weights, dim=(-1, -2), keepdim=True)
@@ -165,14 +162,10 @@ class FocalFrequencyLoss(nn.Module):
         The final loss value for each item in the batch
         """
 
-        tmp = torch.square(
-            freq_pred - freq_true
-        )  # freq distance using squared Euclidean distance
+        tmp = torch.square(freq_pred - freq_true)  # freq distance using squared Euclidean distance
 
         freq_distance = tmp[..., 0] + tmp[..., 1]
-        loss = (
-            weight_matrix * freq_distance
-        )  # dynamic spectrum weighting (Hadamard product)
+        loss = weight_matrix * freq_distance  # dynamic spectrum weighting (Hadamard product)
         return torch.mean(loss, dim=(1,) if self._spatial else (1, 2, 3, 4))
 
     def forward(self, y_true: torch.Tensor, y_pred: torch.Tensor) -> torch.Tensor:
@@ -537,7 +530,7 @@ class LaplacianPyramidLoss(nn.Module):
 
         losses = [
             F.l1_loss(o, t, reduction="none")
-            for o, t in zip(pyramid_true, pyramid_pred)
+            for o, t in zip(pyramid_true, pyramid_pred, strict=False)
         ]
         if self._spatial:
             size = y_true.shape[-2:]
@@ -546,11 +539,7 @@ class LaplacianPyramidLoss(nn.Module):
                     [
                         x
                         if x.shape[-2:] == size
-                        else (
-                            F.interpolate(
-                                x, size=size, mode="bilinear", align_corners=False
-                            )
-                        )
+                        else (F.interpolate(x, size=size, mode="bilinear", align_corners=False))
                         for x in losses
                     ]
                 ).swapaxes(0, 1)

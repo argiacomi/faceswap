@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 if T.TYPE_CHECKING:
     import numpy.typing as npt
+
     from .constants import CenteringType
 
 
@@ -205,9 +206,7 @@ class PoseEstimate:
         proj_matrix = np.zeros((3, 4), dtype="float32")
         proj_matrix[:3, :3] = cv2.Rodrigues(self._rotation)[0]
         euler = cv2.decomposeProjectionMatrix(proj_matrix)[-1]
-        self._pitch_yaw_roll = T.cast(
-            tuple[float, float, float], tuple(euler.squeeze())
-        )
+        self._pitch_yaw_roll = T.cast(tuple[float, float, float], tuple(euler.squeeze()))
         logger.trace("yaw_pitch: %s", self._pitch_yaw_roll)  # type:ignore[attr-defined]
 
     def _solve_pnp(self, landmarks: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -355,9 +354,7 @@ class Batch3D:
         k[:, 2, 1] = units[:, 0]
 
         ident = np.eye(3, dtype="float32")
-        retval = (
-            ident + np.sin(theta)[:, None] * k + (1 - np.cos(theta))[:, None] * (k @ k)
-        )
+        retval = ident + np.sin(theta)[:, None] * k + (1 - np.cos(theta))[:, None] * (k @ k)
         return retval
 
     @classmethod
@@ -433,9 +430,7 @@ class Batch3D:
         The (N, M, 2) projected points in 2D space
         """
         rot = cls.rodrigues(rotation_vectors)
-        x_cam = np.einsum("nij,nmj->nmi", rot, points) + translation_vectors.swapaxes(
-            1, 2
-        )
+        x_cam = np.einsum("nij,nmj->nmi", rot, points) + translation_vectors.swapaxes(1, 2)
         x_y = x_cam[..., :2] / x_cam[..., 2:3]
 
         cam = cls._camera_matrix
@@ -470,9 +465,9 @@ class Batch3D:
         if centering == "legacy":
             return np.broadcast_to(cls._legacy_offset, (batch_size, 2))
         points3d = np.broadcast_to(_CENTER_OFFSETS[centering][None], (batch_size, 3))
-        offsets = cls.project_points(
-            points3d[:, None, :], rotation_vectors, translation_vectors
-        )[:, 0]
+        offsets = cls.project_points(points3d[:, None, :], rotation_vectors, translation_vectors)[
+            :, 0
+        ]
         return offsets - cls._to_center_shift
 
 

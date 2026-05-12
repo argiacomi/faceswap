@@ -1,8 +1,8 @@
 #!/usr/bin python3
 """The command frame for Faceswap GUI"""
 
-import logging
 import gettext
+import logging
 import tkinter as tk
 from tkinter import ttk
 
@@ -10,8 +10,8 @@ from lib.utils import get_module_objects
 
 from .control_helper import ControlPanel
 from .custom_widgets import Tooltip
-from .utils import get_images, get_config
 from .options import CliOption
+from .utils import get_config, get_images
 
 logger = logging.getLogger(__name__)
 
@@ -39,10 +39,7 @@ class CommandNotebook(ttk.Notebook):  # pylint:disable=too-many-ancestors
     @property
     def tab_names(self):
         """dict: Command tab titles with their IDs"""
-        return {
-            self.tab(tab_id, "text").lower(): tab_id
-            for tab_id in range(0, self.index("end"))
-        }
+        return {self.tab(tab_id, "text").lower(): tab_id for tab_id in range(0, self.index("end"))}
 
     @property
     def tools_tab_names(self):
@@ -141,9 +138,7 @@ class CommandTab(ttk.Frame):  # pylint:disable=too-many-ancestors
         """Build the tab"""
         logger.debug("Build Tab: '%s'", self.command)
         options = get_config().cli_opts.opts[self.command]
-        cp_opts = [
-            val.panel_option for val in options.values() if isinstance(val, CliOption)
-        ]
+        cp_opts = [val.panel_option for val in options.values() if isinstance(val, CliOption)]
         ControlPanel(
             self,
             cp_opts,
@@ -169,9 +164,7 @@ class ActionFrame(ttk.Frame):  # pylint:disable=too-many-ancestors
     """Action Frame - Displays action controls for the command tab"""
 
     def __init__(self, parent):
-        logger.debug(
-            "Initializing %s: (command: '%s')", self.__class__.__name__, parent.command
-        )
+        logger.debug("Initializing %s: (command: '%s')", self.__class__.__name__, parent.command)
         super().__init__(parent)
         self.pack(fill=tk.BOTH, padx=5, pady=5, side=tk.BOTTOM, anchor=tk.N)
 

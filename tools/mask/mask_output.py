@@ -15,7 +15,6 @@ from tqdm import tqdm
 
 from lib.align import AlignedFace
 from lib.align.objects import AlignmentsEntry
-
 from lib.image import ImagesSaver, read_image_meta_batch
 from lib.utils import get_folder, get_module_objects
 from scripts.fs_media import Alignments as ExtractAlignments
@@ -109,9 +108,7 @@ class Output:
         """
         if output is None or not output:
             if processing == "output":
-                logger.error(
-                    "Processing set as 'output' but no output folder provided."
-                )
+                logger.error("Processing set as 'output' but no output folder provided.")
                 sys.exit(0)
             logger.debug("No output provided. Not creating saver")
             return None
@@ -194,11 +191,7 @@ class Output:
                 size=detected_face.image.shape[0],
                 is_aligned=True,
             )
-            border = (
-                cv2.BORDER_TRANSPARENT
-                if len(detected_faces) > 1
-                else cv2.BORDER_CONSTANT
-            )
+            border = cv2.BORDER_TRANSPARENT if len(detected_faces) > 1 else cv2.BORDER_CONSTANT
             assert face.face is not None
             cv2.warpAffine(
                 face.face,
@@ -283,12 +276,8 @@ class Output:
         if self._full_frame:
             retval = self._get_background_frame(detected_faces, frame_dims)
         else:
-            assert (
-                len(detected_faces) == 1
-            )  # If outputting faces, we should only receive 1 face
-            retval = self._get_background_face(
-                detected_faces[0], mask_centering, mask_size
-            )
+            assert len(detected_faces) == 1  # If outputting faces, we should only receive 1 face
+            retval = self._get_background_face(detected_faces[0], mask_centering, mask_size)
 
         logger.trace(
             "Background image (size: %s, dtype: %s)",  # type:ignore[attr-defined]
@@ -336,9 +325,7 @@ class Output:
         )
         return retval
 
-    def _build_output_image(
-        self, background: np.ndarray, mask: np.ndarray
-    ) -> np.ndarray:
+    def _build_output_image(self, background: np.ndarray, mask: np.ndarray) -> np.ndarray:
         """Collate the mask and images for the final output image, depending on selected output
         type
 
@@ -361,9 +348,7 @@ class Output:
             return np.concatenate([background, mask], axis=-1)
 
         height, width = background.shape[:2]
-        masked = (background.astype("float32") * mask.astype("float32") / 255.0).astype(
-            "uint8"
-        )
+        masked = (background.astype("float32") * mask.astype("float32") / 255.0).astype("uint8")
         mask = np.tile(mask, 3)
         for img in (background, masked, mask):
             cv2.rectangle(img, (0, 0), (width - 1, height - 1), (255, 255, 255), 1)
@@ -406,9 +391,7 @@ class Output:
         mask_centering = detected_faces[0].mask[mask_type].stored_centering
         mask_size = detected_faces[0].mask[mask_type].stored_size
 
-        background = self._get_background(
-            detected_faces, dims, mask_centering, mask_size
-        )
+        background = self._get_background(detected_faces, dims, mask_centering, mask_size)
         mask = self._get_mask(
             detected_faces,
             mask_type,

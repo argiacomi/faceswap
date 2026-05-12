@@ -6,7 +6,7 @@ class E2Ptransform(nn.Module):
     """Edge to Points trasnformation"""
 
     def __init__(self, points, edges, out_dim=64):
-        super(E2Ptransform, self).__init__()
+        super().__init__()
         self.ones = nn.parameter.Parameter(torch.ones((1, out_dim, out_dim)), requires_grad=False)
         edge_matrix = self._select_matrix(points, edges)
         self.edge2point = nn.parameter.Parameter(

@@ -2,11 +2,11 @@
 """Tools for manipulating the alignments serialized file"""
 
 from __future__ import annotations
+
 import logging
 import os
 import sys
 import typing as T
-
 from datetime import datetime
 
 import numpy as np
@@ -16,15 +16,17 @@ from tqdm import tqdm
 
 from lib.logger import parse_class_init
 from lib.serializer import get_serializer
-from lib.utils import get_module_objects, FaceswapError
+from lib.utils import FaceswapError, get_module_objects
 
-from .media import Faces, Frames
 from .jobs_faces import FaceToFile
+from .media import Faces, Frames
 
 if T.TYPE_CHECKING:
-    from collections.abc import Generator
     from argparse import Namespace
+    from collections.abc import Generator
+
     from lib.align.objects import FileAlignments, PNGHeader
+
     from .media import AlignmentData
 
 logger = logging.getLogger(__name__)
@@ -73,9 +75,7 @@ class Check:
             and hasattr(arguments, "frames_dir")
             and arguments.frames_dir
         ):
-            logger.error(
-                "Only select a source frames (-fr) or source faces (-fc) folder"
-            )
+            logger.error("Only select a source frames (-fr) or source faces (-fc) folder")
             sys.exit(1)
         elif hasattr(arguments, "faces_dir") and arguments.faces_dir:
             self._type = "faces"
@@ -101,9 +101,7 @@ class Check:
         assert self._type is not None
         items: Frames | Faces = globals()[self._type.title()](self._source_dir)
         self._is_video = items.is_video
-        return T.cast(
-            list[dict[str, str]] | list[tuple[str, "PNGHeader"]], items.file_list_sorted
-        )
+        return T.cast(list[dict[str, str]] | list[tuple[str, "PNGHeader"]], items.file_list_sorted)
 
     def process(self) -> None:
         """Process the frames check against the alignments file"""
@@ -233,9 +231,7 @@ class Check:
             frame_name = frame["frame_fullname"]
             if frame[
                 "frame_extension"
-            ] not in exclude_filetypes and not self._alignments.frame_exists(
-                frame_name
-            ):
+            ] not in exclude_filetypes and not self._alignments.frame_exists(frame_name):
                 logger.debug("Returning: '%s'", frame_name)
                 yield frame_name
 
@@ -247,12 +243,8 @@ class Check:
         The frame name of any frames in alignments with no matching file
         """
         self.output_message = "Missing frames that are in alignments file"
-        frames = set(
-            item["frame_fullname"] for item in T.cast(list[dict[str, str]], self._items)
-        )
-        for frame in tqdm(
-            self._alignments.data.keys(), desc=self.output_message, leave=False
-        ):
+        frames = set(item["frame_fullname"] for item in T.cast(list[dict[str, str]], self._items))
+        for frame in tqdm(self._alignments.data.keys(), desc=self.output_message, leave=False):
             if frame not in frames:
                 logger.debug("Returning: '%s'", frame)
                 yield frame
@@ -348,8 +340,7 @@ class Check:
         """
         now = datetime.now().strftime("%Y%m%d_%H%M%S")
         folder_name = (
-            f"{self._get_filename_prefix()}"
-            f"{self.output_message.replace(' ', '_').lower()}_{now}"
+            f"{self._get_filename_prefix()}{self.output_message.replace(' ', '_').lower()}_{now}"
         )
         dst_dir = self._get_output_folder()
         output_folder = os.path.join(dst_dir, folder_name)
@@ -376,9 +367,7 @@ class Check:
             logger.debug("Moving: '%s' to '%s'", src, dst)
             os.rename(src, dst)
 
-    def _move_faces(
-        self, output_folder: str, items_output: list[tuple[str, int]]
-    ) -> None:
+    def _move_faces(self, output_folder: str, items_output: list[tuple[str, int]]) -> None:
         """Make additional sub folders for each face that appears Enables easier manual sorting
 
         Parameters
@@ -391,9 +380,7 @@ class Check:
         logger.info("Moving %s faces(s) to '%s'", len(items_output), output_folder)
         for frame, idx in items_output:
             src = os.path.join(self._source_dir, frame)
-            dst_folder = (
-                os.path.join(output_folder, str(idx)) if idx != -1 else output_folder
-            )
+            dst_folder = os.path.join(output_folder, str(idx)) if idx != -1 else output_folder
             if not os.path.isdir(dst_folder):
                 logger.debug("Creating folder: '%s'", dst_folder)
                 os.makedirs(dst_folder)
@@ -442,9 +429,7 @@ class Export:
         return out_file
 
     @classmethod
-    def _format_face(
-        cls, face: FileAlignments
-    ) -> dict[str, list[int] | list[list[float]]]:
+    def _format_face(cls, face: FileAlignments) -> dict[str, list[int] | list[list[float]]]:
         """Format the relevant keys from an alignment file's face into the correct format for
         export/import
 
@@ -619,13 +604,10 @@ class Spatial:
         # Calculate scale factors and divide shapes
         scale_factors = np.sqrt((shapes_centered**2).sum(axis=1)).mean(axis=0)
         shapes_normalized = np.zeros(shapes_centered.shape)
-        shapes_normalized = shapes_centered / np.tile(
-            scale_factors, [num_pts, num_dims, 1]
-        )
+        shapes_normalized = shapes_centered / np.tile(scale_factors, [num_pts, num_dims, 1])
 
         logger.debug(
-            "Normalized shapes: (shapes_normalized: %s, scale_factors: %s, mean_coords: "
-            "%s",
+            "Normalized shapes: (shapes_normalized: %s, scale_factors: %s, mean_coords: %s",
             shapes_normalized,
             scale_factors,
             mean_coords,
@@ -657,9 +639,7 @@ class Spatial:
         (num_pts, num_dims, _) = shapes_normalized.shape
 
         # move back to the correct scale
-        shapes_centered = shapes_normalized * np.tile(
-            scale_factors, [num_pts, num_dims, 1]
-        )
+        shapes_centered = shapes_normalized * np.tile(scale_factors, [num_pts, num_dims, 1])
         # move back to the correct location
         shapes_im_coords = shapes_centered + np.tile(mean_coords, [num_pts, 1, 1])
 
@@ -672,26 +652,18 @@ class Spatial:
         count = sum(1 for val in self._alignments.data.values() if val.faces)
 
         sample_lm = next(
-            (
-                val.faces[0].landmarks_xy
-                for val in self._alignments.data.values()
-                if val.faces
-            ),
+            (val.faces[0].landmarks_xy for val in self._alignments.data.values() if val.faces),
             68,
         )
         assert isinstance(sample_lm, np.ndarray)
         lm_count = sample_lm.shape[0]
         if lm_count != 68:
-            raise FaceswapError(
-                "Spatial smoothing only supports 68 point facial landmarks"
-            )
+            raise FaceswapError("Spatial smoothing only supports 68 point facial landmarks")
 
         landmarks_all = np.zeros((lm_count, 2, int(count)))
 
         end = 0
-        for key in tqdm(
-            sorted(self._alignments.data.keys()), desc="Compiling", leave=False
-        ):
+        for key in tqdm(sorted(self._alignments.data.keys()), desc="Compiling", leave=False):
             val = self._alignments.data[key].faces
             if not val:
                 continue
@@ -717,9 +689,7 @@ class Spatial:
         logger.debug("Shape model")
         landmarks_norm = self._normalized["landmarks"]
         num_components = 20
-        normalized_shapes_tbl = np.reshape(
-            landmarks_norm, [68 * 2, landmarks_norm.shape[2]]
-        ).T
+        normalized_shapes_tbl = np.reshape(landmarks_norm, [68 * 2, landmarks_norm.shape[2]]).T
         self._shapes_model = decomposition.PCA(
             n_components=num_components, whiten=True, random_state=1
         ).fit(normalized_shapes_tbl)
@@ -742,9 +712,7 @@ class Spatial:
         assert self._shapes_model is not None
         landmarks_norm = self._normalized["landmarks"]
         # Convert to matrix form
-        landmarks_norm_table = np.reshape(
-            landmarks_norm, [68 * 2, landmarks_norm.shape[2]]
-        ).T
+        landmarks_norm_table = np.reshape(landmarks_norm, [68 * 2, landmarks_norm.shape[2]]).T
         # Project onto shapes model and reconstruct
         landmarks_norm_table_rec = self._shapes_model.inverse_transform(
             self._shapes_model.transform(landmarks_norm_table)
@@ -784,14 +752,10 @@ class Spatial:
         start_tile_block = np.tile(
             landmarks[:, :, 0][:, :, np.newaxis], [1, 1, filter_half_length]
         )
-        end_tile_block = np.tile(
-            landmarks[:, :, -1][:, :, np.newaxis], [1, 1, filter_half_length]
-        )
+        end_tile_block = np.tile(landmarks[:, :, -1][:, :, np.newaxis], [1, 1, filter_half_length])
         landmarks_padded = np.dstack((start_tile_block, landmarks, end_tile_block))
 
-        retval = signal.convolve(
-            landmarks_padded, temporal_filter, mode="valid", method="fft"
-        )
+        retval = signal.convolve(landmarks_padded, temporal_filter, mode="valid", method="fft")
         logger.debug("Temporally Smoothed: %s", retval)
         return retval
 

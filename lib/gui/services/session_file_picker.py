@@ -3,9 +3,9 @@
 
 from __future__ import annotations
 
+import typing as T
 from dataclasses import dataclass
 from pathlib import Path
-import typing as T
 
 from lib.utils import get_module_objects
 
@@ -46,14 +46,10 @@ class SessionFilePicker:
     def __init__(self, file_handler: T.Any) -> None:
         self._file_handler = file_handler
 
-    def open(
-        self, session_type: SessionType, filename: str | None = None
-    ) -> PickedFile | None:
+    def open(self, session_type: SessionType, filename: str | None = None) -> PickedFile | None:
         """Return an existing selected file for the given session type."""
         if filename is None:
-            file_obj = self._file_handler(
-                "open", self._HANDLER_BY_TYPE[session_type]
-            ).return_file
+            file_obj = self._file_handler("open", self._HANDLER_BY_TYPE[session_type]).return_file
             if not file_obj:
                 return None
             filename = file_obj.name
@@ -82,9 +78,7 @@ class SessionFilePicker:
         file_obj.close()
         return PickedFile(filename)
 
-    def _validate_existing(
-        self, filename: str, session_type: SessionType
-    ) -> PickedFile | None:
+    def _validate_existing(self, filename: str, session_type: SessionType) -> PickedFile | None:
         """Validate an existing filename for a session type."""
         path = Path(filename)
         if not path.is_file():

@@ -28,7 +28,6 @@ from lib.config import ConfigItem
 
 from lib.config import ConfigItem
 
-
 HELPTEXT = (
     "SPIGA Aligner options.\n"
     "Shape-preserving landmark detector using the upstream SPIGA 300W-68 and WFLW-98 PyTorch "

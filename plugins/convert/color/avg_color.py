@@ -2,7 +2,9 @@
 """Average colour adjustment color matching adjustment plugin for faceswap.py converter"""
 
 import numpy as np
+
 from lib.utils import get_module_objects
+
 from ._base import Adjustment
 
 

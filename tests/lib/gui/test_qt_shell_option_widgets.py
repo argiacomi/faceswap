@@ -94,9 +94,7 @@ def test_radio_widget_extracts_and_restores_values(  # type:ignore[no-untyped-de
     qtbot.addWidget(panel)
     buttons = {
         button.text(): button
-        for button in panel.renderer.widget_for_switch("--mode").findChildren(
-            QRadioButton
-        )
+        for button in panel.renderer.widget_for_switch("--mode").findChildren(QRadioButton)
     }
 
     buttons["two"].setChecked(True)
@@ -135,9 +133,7 @@ def test_multi_option_widget_extracts_and_restores_values(  # type:ignore[no-unt
     qtbot.addWidget(panel)
     boxes = {
         checkbox.text(): checkbox
-        for checkbox in panel.renderer.widget_for_switch("--masks").findChildren(
-            QCheckBox
-        )
+        for checkbox in panel.renderer.widget_for_switch("--masks").findChildren(QCheckBox)
     }
 
     boxes["mouth"].setChecked(True)

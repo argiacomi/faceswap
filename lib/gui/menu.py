@@ -2,22 +2,23 @@
 """The Menu Bars for faceswap GUI"""
 
 from __future__ import annotations
+
 import gettext
 import logging
 import os
 import tkinter as tk
 import typing as T
-from tkinter import ttk
 import webbrowser
+from tkinter import ttk
 
+import update_deps
 from lib.git import git
 from lib.multithreading import MultiThread
-from lib.serializer import get_serializer, Serializer
+from lib.serializer import Serializer, get_serializer
 from lib.utils import FaceswapError, get_module_objects
-import update_deps
 
-from .popup_configure import open_popup
 from .custom_widgets import Tooltip
+from .popup_configure import open_popup
 from .utils import get_config, get_images
 
 if T.TYPE_CHECKING:
@@ -81,9 +82,7 @@ class SettingsMenu(tk.Menu):  # pylint:disable=too-many-ancestors
         """Add the settings menu to the menu bar"""
         # pylint:disable=cell-var-from-loop
         logger.debug("Building settings menu")
-        self.add_command(
-            label=_("Configure Settings..."), underline=0, command=open_popup
-        )
+        self.add_command(label=_("Configure Settings..."), underline=0, command=open_popup)
         logger.debug("Built settings menu")
 
 
@@ -101,9 +100,7 @@ class FileMenu(tk.Menu):  # pylint:disable=too-many-ancestors
         super().__init__(parent, tearoff=0)
         self.root = parent.root
         self._config = get_config()
-        self.recent_menu = tk.Menu(
-            self, tearoff=0, postcommand=self._refresh_recent_menu
-        )
+        self.recent_menu = tk.Menu(self, tearoff=0, postcommand=self._refresh_recent_menu)
         self._build()
         logger.debug("Initialized %s", self.__class__.__name__)
 
@@ -135,18 +132,14 @@ class FileMenu(tk.Menu):  # pylint:disable=too-many-ancestors
             accelerator="Ctrl+S",
             command=lambda: self._config.project.save(save_as=False),
         )
-        self.root.bind_all(
-            "<Control-s>", lambda e: self._config.project.save(e, save_as=False)
-        )
+        self.root.bind_all("<Control-s>", lambda e: self._config.project.save(e, save_as=False))
         self.add_command(
             label=_("Save Project as..."),
             underline=13,
             accelerator="Ctrl+Alt+S",
             command=lambda: self._config.project.save(save_as=True),
         )
-        self.root.bind_all(
-            "<Control-Alt-s>", lambda e: self._config.project.save(e, save_as=True)
-        )
+        self.root.bind_all("<Control-Alt-s>", lambda e: self._config.project.save(e, save_as=True))
         self.add_command(
             label=_("Reload Project from Disk"),
             underline=0,
@@ -211,8 +204,7 @@ class FileMenu(tk.Menu):  # pylint:disable=too-many-ancestors
             if "Error unserializing data for type" in str(err):
                 # Some reports of corruption breaking menus
                 logger.warning(
-                    "There was an error opening the recent files list so it has been "
-                    "reset."
+                    "There was an error opening the recent files list so it has been reset."
                 )
                 self._clear_recent_files(serializer, menu_file)
 
@@ -221,9 +213,7 @@ class FileMenu(tk.Menu):  # pylint:disable=too-many-ancestors
         for recent_item in recent_files:
             filename, command = recent_item
             if not os.path.isfile(filename):
-                logger.debug(
-                    "File does not exist. Flagging for removal: '%s'", filename
-                )
+                logger.debug("File does not exist. Flagging for removal: '%s'", filename)
                 removed_files.append(recent_item)
                 continue
             # Legacy project files didn't have a command stored
@@ -327,9 +317,7 @@ class HelpMenu(tk.Menu):  # pylint:disable=too-many-ancestors
                 logger.info("Faceswap is up to date.")
                 return False
             if "have diverged" in line.lower():
-                logger.warning(
-                    "Your branch has diverged from the remote repo. Not updating"
-                )
+                logger.warning("Your branch has diverged from the remote repo. Not updating")
                 return False
             if line.lower().startswith("your branch is behind"):
                 return True
@@ -421,9 +409,7 @@ class HelpMenu(tk.Menu):  # pylint:disable=too-many-ancestors
             command=lambda action="_update": self._in_thread(action),
         )  # type:ignore
         if self._build_branches_menu():
-            self.add_cascade(
-                label=_("Switch Branch"), underline=7, menu=self._branches_menu
-            )
+            self.add_cascade(label=_("Switch Branch"), underline=7, menu=self._branches_menu)
         self.add_separator()
         self._build_recources_menu()
         self.add_cascade(label=_("Resources"), underline=0, menu=self.recources_menu)

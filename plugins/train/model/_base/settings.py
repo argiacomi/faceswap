@@ -11,22 +11,25 @@ Handles configuration of model plugins for:
 """
 
 from __future__ import annotations
+
 import logging
 import typing as T
 
 import keras
-from keras import config as k_config, dtype_policies, optimizers
+from keras import config as k_config
+from keras import dtype_policies, optimizers
 
-from lib.model.optimizers import AdaBelief
+from lib.logger import parse_class_init
 from lib.model.autoclip import AutoClipper
 from lib.model.nn_blocks import reset_naming
-from lib.logger import parse_class_init
+from lib.model.optimizers import AdaBelief
 from lib.utils import get_module_objects
 from plugins.train.train_config import Optimizer as cfg_opt
 
 if T.TYPE_CHECKING:
-    from collections.abc import Callable
     from argparse import Namespace
+    from collections.abc import Callable
+
     from .state import State
 
 logger = logging.getLogger(__name__)
@@ -39,7 +42,7 @@ class Optimizer:
         logger.debug(parse_class_init(locals()))
         betas = {"ada_beta_1": "beta_1", "ada_beta_2": "beta_2"}
         amsgrad = {"ada_amsgrad": "amsgrad"}
-        self._valid: dict[str, tuple[T.Type[Optimizer], dict[str, T.Any]]] = {
+        self._valid: dict[str, tuple[type[Optimizer], dict[str, T.Any]]] = {
             "adabelief": (AdaBelief, betas | amsgrad),
             "adam": (optimizers.Adam, betas | amsgrad),
             "adamax": (optimizers.Adamax, betas),
@@ -86,9 +89,7 @@ class Optimizer:
             logger.debug("clipping disabled")
             return
 
-        logger.info(
-            "Enabling Clipping: %s", method.replace("_", " ").replace("_", " ").title()
-        )
+        logger.info("Enabling Clipping: %s", method.replace("_", " ").replace("_", " ").title())
         clip_types = {
             "global_norm": "global_clipnorm",
             "norm": "clipnorm",
@@ -113,11 +114,7 @@ class Optimizer:
         # TODO Keras3 has removed the ""gradient_transformers" kwarg, and there now appears to be
         # no standardized method to add custom gradient transformers. Currently, we monkey patch
         # its _clip_gradients function, which feels hacky and potentially problematic
-        setattr(
-            self._optimizer,
-            "_clip_gradients",
-            AutoClipper(int(value * 10), history_size=history),
-        )
+        self._optimizer._clip_gradients = AutoClipper(int(value * 10), history_size=history)
 
     def _configure_ema(self, enable: bool, momentum: float, frequency: int) -> None:
         """configure the optimizer kwargs for exponential moving average updates
@@ -142,9 +139,7 @@ class Optimizer:
         self._kwargs["ema_overwrite_frequency"] = frequency
         logger.debug("ema enabled (momentum: %s, frequency: %s)", momentum, frequency)
 
-    def _configure_kwargs(
-        self, weight_decay: float, gradient_accumulation_steps: int
-    ) -> None:
+    def _configure_kwargs(self, weight_decay: float, gradient_accumulation_steps: int) -> None:
         """Configure the remaining global optimizer kwargs
 
         Parameters
@@ -161,9 +156,7 @@ class Optimizer:
             logger.debug("weight decay disabled")
 
         if gradient_accumulation_steps > 1:
-            logger.info(
-                "Enabling Gradient Accumulation: %s", gradient_accumulation_steps
-            )
+            logger.info("Enabling Gradient Accumulation: %s", gradient_accumulation_steps)
             self._kwargs["gradient_accumulation_steps"] = gradient_accumulation_steps
         else:
             logger.debug("gradient accumulation disabled")
@@ -191,17 +184,13 @@ class Optimizer:
             cfg_opt.autoclip_history(),
         )
 
-        self._configure_ema(
-            cfg_opt.use_ema(), cfg_opt.ema_momentum(), cfg_opt.ema_frequency()
-        )
+        self._configure_ema(cfg_opt.use_ema(), cfg_opt.ema_momentum(), cfg_opt.ema_frequency())
 
         self._configure_kwargs(cfg_opt.weight_decay(), cfg_opt.gradient_accumulation())
 
         self._configure_specific()
 
-        logger.debug(
-            "Configured '%s' optimizer. kwargs: %s", cfg_opt.optimizer(), self._kwargs
-        )
+        logger.debug("Configured '%s' optimizer. kwargs: %s", cfg_opt.optimizer(), self._kwargs)
 
 
 class Settings:
@@ -221,9 +210,7 @@ class Settings:
         for training. Default: ``False``
     """
 
-    def __init__(
-        self, arguments: Namespace, mixed_precision: bool, is_predict: bool
-    ) -> None:
+    def __init__(self, arguments: Namespace, mixed_precision: bool, is_predict: bool) -> None:
         logger.debug(
             "Initializing %s: (arguments: %s, mixed_precision: %s, is_predict: %s)",
             self.__class__.__name__,
@@ -430,9 +417,7 @@ class Settings:
         logger.debug("model: %s, mixed precision layers: %s", model, layers)
         return model, layers
 
-    def check_model_precision(
-        self, model: keras.models.Model, state: "State"
-    ) -> keras.models.Model:
+    def check_model_precision(self, model: keras.models.Model, state: State) -> keras.models.Model:
         """Check the model's precision.
 
         If this is a new model, then
@@ -469,9 +454,7 @@ class Settings:
 
         if not self.use_mixed_precision and not state.mixed_precision_layers:
             # Switched to Full Precision, get compatible layers from model if not already stored
-            state.add_mixed_precision_layers(
-                self._get_mixed_precision_layers(config["layers"])
-            )
+            state.add_mixed_precision_layers(self._get_mixed_precision_layers(config["layers"]))
 
         self._switch_precision(config["layers"], state.mixed_precision_layers)
 

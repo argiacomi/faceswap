@@ -3,24 +3,27 @@
 
 # pylint:disable=too-many-lines
 from __future__ import annotations
+
 import logging
 import typing as T
 from dataclasses import dataclass
 
-import numpy as np
 import keras
-from keras import applications as kapp, layers as kl
+import numpy as np
+from keras import applications as kapp
+from keras import layers as kl
 
 from lib.logger import parse_class_init
+from lib.model.networks import TypeModelsViT, ViT
 from lib.model.nn_blocks import (
     Conv2D,
     Conv2DBlock,
     Conv2DOutput,
     ResidualBlock,
-    UpscaleBlock,
     Upscale2xBlock,
-    UpscaleResizeImagesBlock,
+    UpscaleBlock,
     UpscaleDNYBlock,
+    UpscaleResizeImagesBlock,
 )
 from lib.model.normalization import (
     AdaInstanceNormalization,
@@ -28,12 +31,11 @@ from lib.model.normalization import (
     InstanceNormalization,
     RMSNormalization,
 )
-from lib.model.networks import ViT, TypeModelsViT
-from lib.utils import get_keras_version, FaceswapError
+from lib.utils import FaceswapError, get_keras_version
 from plugins.train.train_config import Loss as cfg_loss
 
-from ._base import ModelBase, get_all_sub_models
 from . import phaze_a_defaults as cfg
+from ._base import ModelBase, get_all_sub_models
 
 if T.TYPE_CHECKING:
     from keras import KerasTensor
@@ -81,18 +83,10 @@ _MODEL_MAPPING: dict[str, _EncoderInfo] = {
     "clipv_vit-b-32": _EncoderInfo(keras_name="ViT-B-32", default_size=224),
     "clipv_vit-l-14": _EncoderInfo(keras_name="ViT-L-14", default_size=224),
     "clipv_vit-l-14-336px": _EncoderInfo(keras_name="ViT-L-14-336px", default_size=336),
-    "convnext_tiny": _EncoderInfo(
-        keras_name="ConvNeXtTiny", scaling=(0, 255), default_size=224
-    ),
-    "convnext_small": _EncoderInfo(
-        keras_name="ConvNeXtSmall", scaling=(0, 255), default_size=224
-    ),
-    "convnext_base": _EncoderInfo(
-        keras_name="ConvNeXtBase", scaling=(0, 255), default_size=224
-    ),
-    "convnext_large": _EncoderInfo(
-        keras_name="ConvNeXtLarge", scaling=(0, 255), default_size=224
-    ),
+    "convnext_tiny": _EncoderInfo(keras_name="ConvNeXtTiny", scaling=(0, 255), default_size=224),
+    "convnext_small": _EncoderInfo(keras_name="ConvNeXtSmall", scaling=(0, 255), default_size=224),
+    "convnext_base": _EncoderInfo(keras_name="ConvNeXtBase", scaling=(0, 255), default_size=224),
+    "convnext_large": _EncoderInfo(keras_name="ConvNeXtLarge", scaling=(0, 255), default_size=224),
     "convnext_extra_large": _EncoderInfo(
         keras_name="ConvNeXtXLarge", scaling=(0, 255), default_size=224
     ),
@@ -150,12 +144,8 @@ _MODEL_MAPPING: dict[str, _EncoderInfo] = {
     "inception_v3": _EncoderInfo(
         keras_name="InceptionV3", scaling=(-1, 1), min_size=75, default_size=299
     ),
-    "mobilenet": _EncoderInfo(
-        keras_name="MobileNet", scaling=(-1, 1), default_size=224
-    ),
-    "mobilenet_v2": _EncoderInfo(
-        keras_name="MobileNetV2", scaling=(-1, 1), default_size=224
-    ),
+    "mobilenet": _EncoderInfo(keras_name="MobileNet", scaling=(-1, 1), default_size=224),
+    "mobilenet_v2": _EncoderInfo(keras_name="MobileNetV2", scaling=(-1, 1), default_size=224),
     "mobilenet_v3_large": _EncoderInfo(
         keras_name="MobileNetV3Large", scaling=(-1, 1), default_size=224
     ),
@@ -177,21 +167,11 @@ _MODEL_MAPPING: dict[str, _EncoderInfo] = {
     "resnet50": _EncoderInfo(
         keras_name="ResNet50", scaling=(-1, 1), min_size=32, default_size=224
     ),
-    "resnet50_v2": _EncoderInfo(
-        keras_name="ResNet50V2", scaling=(-1, 1), default_size=224
-    ),
-    "resnet101": _EncoderInfo(
-        keras_name="ResNet101", scaling=(-1, 1), default_size=224
-    ),
-    "resnet101_v2": _EncoderInfo(
-        keras_name="ResNet101V2", scaling=(-1, 1), default_size=224
-    ),
-    "resnet152": _EncoderInfo(
-        keras_name="ResNet152", scaling=(-1, 1), default_size=224
-    ),
-    "resnet152_v2": _EncoderInfo(
-        keras_name="ResNet152V2", scaling=(-1, 1), default_size=224
-    ),
+    "resnet50_v2": _EncoderInfo(keras_name="ResNet50V2", scaling=(-1, 1), default_size=224),
+    "resnet101": _EncoderInfo(keras_name="ResNet101", scaling=(-1, 1), default_size=224),
+    "resnet101_v2": _EncoderInfo(keras_name="ResNet101V2", scaling=(-1, 1), default_size=224),
+    "resnet152": _EncoderInfo(keras_name="ResNet152", scaling=(-1, 1), default_size=224),
+    "resnet152_v2": _EncoderInfo(keras_name="ResNet152V2", scaling=(-1, 1), default_size=224),
     "vgg16": _EncoderInfo(
         keras_name="VGG16", color_order="bgr", scaling=(0, 255), default_size=224
     ),
@@ -201,9 +181,7 @@ _MODEL_MAPPING: dict[str, _EncoderInfo] = {
     "xception": _EncoderInfo(
         keras_name="Xception", scaling=(-1, 1), min_size=71, default_size=299
     ),
-    "fs_original": _EncoderInfo(
-        keras_name="", color_order="bgr", min_size=32, default_size=1024
-    ),
+    "fs_original": _EncoderInfo(keras_name="", color_order="bgr", min_size=32, default_size=1024),
 }
 
 
@@ -329,9 +307,7 @@ class Model(ModelBase):
         """
         arch = cfg.enc_architecture()
         # EfficientNetV2 is inconsistent with other model's naming conventions
-        keras_name = _MODEL_MAPPING[arch].keras_name.replace(
-            "EfficientNetV2", "EfficientNetV2-"
-        )
+        keras_name = _MODEL_MAPPING[arch].keras_name.replace("EfficientNetV2", "EfficientNetV2-")
         # CLIPv model is always called 'visual' regardless of weights/format loaded
         keras_name = "visual" if arch.startswith("clipv_") else keras_name
 
@@ -434,9 +410,7 @@ class Model(ModelBase):
         autoencoder = keras.models.Model(inputs, outputs, name=self.model_name)
         return autoencoder
 
-    def _build_encoders(
-        self, inputs: list[KerasTensor]
-    ) -> dict[str, keras.models.Model]:
+    def _build_encoders(self, inputs: list[KerasTensor]) -> dict[str, keras.models.Model]:
         """Build the encoders for Phaze-A
 
         Parameters
@@ -492,12 +466,8 @@ class Model(ModelBase):
             else:
                 assert fc_both is not None
                 fc_shared = fc_both
-            inter_a = [
-                kl.Concatenate(name="inter_a")([inter_a[0], fc_shared(inputs["a"])])
-            ]
-            inter_b = [
-                kl.Concatenate(name="inter_b")([inter_b[0], fc_shared(inputs["b"])])
-            ]
+            inter_a = [kl.Concatenate(name="inter_a")([inter_a[0], fc_shared(inputs["a"])])]
+            inter_b = [kl.Concatenate(name="inter_b")([inter_b[0], fc_shared(inputs["b"])])]
 
         if cfg.enable_gblock():
             fc_gblock = FullyConnected("gblock", input_shapes)()
@@ -541,7 +511,7 @@ class Model(ModelBase):
             }
         else:
             g_block = GBlock("both", input_shapes)()
-            retval = {"a": g_block((inputs["a"])), "b": g_block((inputs["b"]))}
+            retval = {"a": g_block(inputs["a"]), "b": g_block(inputs["b"])}
 
         logger.debug("G-Blocks: %s", retval)
         return retval
@@ -748,10 +718,7 @@ def _get_curve(
             y_axis.append(current_value)
             if current_value == end_y:
                 break
-        pad = [
-            start_y if mode == "cap_max" else end_y
-            for _ in range(num_points - len(y_axis))
-        ]
+        pad = [start_y if mode == "cap_max" else end_y for _ in range(num_points - len(y_axis))]
         retval = pad + y_axis if mode == "cap_max" else y_axis + pad
     logger.debug("Returning curve: %s", retval)
     return retval
@@ -1032,18 +999,14 @@ class FullyConnected:
         """
         scaled_dim = _scale_dim(cfg.output_size(), self._final_dims)
         if scaled_dim == self._final_dims:
-            logger.debug(
-                "filters don't require scaling. Returning: %s", original_filters
-            )
+            logger.debug("filters don't require scaling. Returning: %s", original_filters)
             return original_filters
 
         flat = self._final_dims**2 * original_filters
         modifier = self._final_dims**2 * scaled_dim**2
         retval = int((flat // modifier) * modifier)
         retval = int(retval / self._final_dims**2)
-        logger.debug(
-            "original_filters: %s, scaled_filters: %s", original_filters, retval
-        )
+        logger.debug("original_filters: %s, scaled_filters: %s", original_filters, retval)
         return retval
 
     def _do_upsampling(self, inputs: KerasTensor) -> KerasTensor:
@@ -1083,9 +1046,7 @@ class FullyConnected:
             var_x = upscaler(var_x)
         else:
             for _ in range(num_upsamples):
-                upscaler = _get_upscale_layer(
-                    upsampler, upsample_filts, activation="leakyrelu"
-                )
+                upscaler = _get_upscale_layer(upsampler, upsample_filts, activation="leakyrelu")
                 var_x = upscaler(var_x)
         if upsampler == "upsample2d":
             var_x = kl.LeakyReLU(negative_slope=0.1)(var_x)
@@ -1129,9 +1090,7 @@ class FullyConnected:
 
             num_upscales = cfg.dec_upscales_in_fc()
             if num_upscales:
-                var_x = UpscaleBlocks(self._side, layer_indicies=(0, num_upscales))(
-                    var_x
-                )
+                var_x = UpscaleBlocks(self._side, layer_indicies=(0, num_upscales))(var_x)
 
         return keras.models.Model(input_, var_x, name=f"fc_{self._side}")
 
@@ -1319,9 +1278,7 @@ class UpscaleBlocks:
         )(var_x)
         return var_x
 
-    def __call__(
-        self, inputs: KerasTensor | list[KerasTensor]
-    ) -> KerasTensor | list[KerasTensor]:
+    def __call__(self, inputs: KerasTensor | list[KerasTensor]) -> KerasTensor | list[KerasTensor]:
         """Upscale Network.
 
         Parameters
@@ -1337,9 +1294,7 @@ class UpscaleBlocks:
             The output of encoder blocks. Either a single tensor (if learn mask is not enabled) or
             list of tensors (if learn mask is enabled)
         """
-        start_idx, end_idx = (
-            (0, None) if self._layer_indicies is None else self._layer_indicies
-        )
+        start_idx, end_idx = (0, None) if self._layer_indicies is None else self._layer_indicies
         end_idx = None if end_idx == -1 else end_idx
 
         var_x: KerasTensor
@@ -1375,9 +1330,7 @@ class UpscaleBlocks:
                     cfg.dec_min_filters(),
                     upscales,
                     cfg.dec_filter_slope(),
-                    mode=T.cast(
-                        T.Literal["full", "cap_min", "cap_max"], cfg.dec_slope_mode()
-                    ),
+                    mode=T.cast(T.Literal["full", "cap_min", "cap_max"], cfg.dec_slope_mode()),
                 )
             )
             logger.debug("Generated class filters: %s", self._filters)
@@ -1406,9 +1359,7 @@ class GBlock:
         model.
     """
 
-    def __init__(
-        self, side: T.Literal["a", "b", "both"], input_shapes: list | tuple
-    ) -> None:
+    def __init__(self, side: T.Literal["a", "b", "both"], input_shapes: list | tuple) -> None:
         logger.debug(parse_class_init(locals()))
         self._side = side
         self._inputs = [kl.Input(shape=shape) for shape in input_shapes]
@@ -1440,9 +1391,7 @@ class GBlock:
         """
         var_x = inputs
         for i in range(recursions):
-            styles = [
-                kl.Reshape([1, 1, filters])(kl.Dense(filters)(style)) for _ in range(2)
-            ]
+            styles = [kl.Reshape([1, 1, filters])(kl.Dense(filters)(style)) for _ in range(2)]
             noise = kl.Conv2D(filters, 1, padding="same")(kl.GaussianNoise(1.0)(var_x))
 
             if i == recursions - 1:
@@ -1524,8 +1473,6 @@ class Decoder:
 
         outputs = [Conv2DOutput(3, cfg.dec_output_kernel(), name="face_out")(var_x)]
         if cfg_loss.learn_mask():
-            outputs.append(
-                Conv2DOutput(1, cfg.dec_output_kernel(), name="mask_out")(var_y)
-            )
+            outputs.append(Conv2DOutput(1, cfg.dec_output_kernel(), name="mask_out")(var_y))
 
         return keras.models.Model(inputs, outputs=outputs, name=f"decoder_{self._side}")

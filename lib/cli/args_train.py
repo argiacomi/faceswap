@@ -10,7 +10,6 @@ from plugins.plugin_loader import PluginLoader
 from .actions import DirFullPaths, FileFullPaths, Radio, Slider
 from .args import FaceSwapArgs
 
-
 # LOCALES
 _LANG = gettext.translation("lib.cli.args_train", localedir="locales", fallback=True)
 _ = _LANG.gettext
@@ -52,7 +51,8 @@ class TrainArgs(FaceSwapArgs):
                 "required": True,
                 "group": _("faces"),
                 "help": _(
-                    "Input directory. A directory containing training images for face A. This is the "
+                    "Input directory. A directory containing training images for face A. This is "
+                    "the "
                     "original face, i.e. the face that you want to remove and replace with face B."
                 ),
             }
@@ -65,7 +65,8 @@ class TrainArgs(FaceSwapArgs):
                 "required": True,
                 "group": _("faces"),
                 "help": _(
-                    "Input directory. A directory containing training images for face B. This is the "
+                    "Input directory. A directory containing training images for face B. This is "
+                    "the "
                     "swap face, i.e. the face that you want to place onto the head of person A."
                 ),
             }
@@ -81,7 +82,8 @@ class TrainArgs(FaceSwapArgs):
                     "Model directory. This is where the training data will be stored. You should "
                     "always specify a new folder for new models. If starting a new model, select "
                     "either an empty folder, or a folder which does not exist (which will be "
-                    "created). If continuing to train an existing model, specify the location of the "
+                    "created). If continuing to train an existing model, specify the location of "
+                    "the "
                     "existing model."
                 ),
             }
@@ -96,13 +98,16 @@ class TrainArgs(FaceSwapArgs):
                 "group": _("model"),
                 "help": _(
                     "R|Load the weights from a pre-existing model into a newly created model. For "
-                    "most models this will load weights from the Encoder of the given model into the "
-                    "encoder of the newly created model. Some plugins may have specific configuration "
+                    "most models this will load weights from the Encoder of the given model into "
+                    "the "
+                    "encoder of the newly created model. Some plugins may have specific "
+                    "configuration "
                     "options allowing you to load weights from other layers. Weights will only be "
                     "loaded when creating a new model. This option will be ignored if you are "
                     "resuming an existing model. Generally you will also want to 'freeze-weights' "
                     "whilst the rest of your model catches up with your Encoder.\n"
-                    "NB: Weights can only be loaded from models of the same plugin as you intend to "
+                    "NB: Weights can only be loaded from models of the same plugin as you intend "
+                    "to "
                     "train."
                 ),
             }
@@ -116,10 +121,12 @@ class TrainArgs(FaceSwapArgs):
                 "choices": PluginLoader.get_available_models(),
                 "group": _("model"),
                 "help": _(
-                    "R|Select which trainer to use. Trainers can be configured from the Settings menu "
+                    "R|Select which trainer to use. Trainers can be configured from the Settings "
+                    "menu "
                     "or the config folder."
                     "\nL|original: The original model created by /u/deepfakes."
-                    "\nL|dfaker: 64px in/128px out model from dfaker. Enable 'warp-to-landmarks' for "
+                    "\nL|dfaker: 64px in/128px out model from dfaker. Enable 'warp-to-landmarks' "
+                    "for "
                     "full dfaker method."
                     "\nL|dfl-h128: 128px in/out model from deepfacelab"
                     "\nL|dfl-sae: Adaptable model from deepfacelab"
@@ -132,7 +139,8 @@ class TrainArgs(FaceSwapArgs):
                     "won't work so well. By andenixa et al. Very configurable."
                     "\nL|unbalanced: 128px in/out model from andenixa. The autoencoders are "
                     "unbalanced so B>A swaps won't work so well. Very configurable."
-                    "\nL|villain: 128px in/out model from villainguy. Very resource hungry (You will "
+                    "\nL|villain: 128px in/out model from villainguy. Very resource hungry (You "
+                    "will "
                     "require a GPU with a fair amount of VRAM). Good for details, but more "
                     "susceptible to color differences."
                 ),
@@ -147,8 +155,10 @@ class TrainArgs(FaceSwapArgs):
                 "group": _("model"),
                 "help": _(
                     "Output a summary of the model and exit. If a model folder is provided then a "
-                    "summary of the saved model is displayed. Otherwise a summary of the model that "
-                    "would be created by the chosen plugin and configuration settings is displayed."
+                    "summary of the saved model is displayed. Otherwise a summary of the model "
+                    "that "
+                    "would be created by the chosen plugin and configuration settings is "
+                    "displayed."
                 ),
             }
         )
@@ -161,8 +171,10 @@ class TrainArgs(FaceSwapArgs):
                 "group": _("model"),
                 "help": _(
                     "Freeze the weights of the model. Freezing weights means that some of the "
-                    "parameters in the model will no longer continue to learn, but those that are not "
-                    "frozen will continue to learn. For most models, this will freeze the encoder, "
+                    "parameters in the model will no longer continue to learn, but those that are "
+                    "not "
+                    "frozen will continue to learn. For most models, this will freeze the encoder,"
+                    " "
                     "but some models may have configuration options for freezing other layers."
                 ),
             }
@@ -178,8 +190,10 @@ class TrainArgs(FaceSwapArgs):
                 "default": 16,
                 "group": _("training"),
                 "help": _(
-                    "Batch size. This is the number of images processed through the model for each "
-                    "side per iteration. NB: As the model is fed 2 sides at a time, the actual number "
+                    "Batch size. This is the number of images processed through the model for each"
+                    " "
+                    "side per iteration. NB: As the model is fed 2 sides at a time, the actual "
+                    "number "
                     "of images within the model at any one time is double the number that you set "
                     "here. Larger batches require more GPU RAM."
                 ),
@@ -195,8 +209,10 @@ class TrainArgs(FaceSwapArgs):
                 "default": 1000000,
                 "group": _("training"),
                 "help": _(
-                    "Length of training in iterations. This is only really used for automation. There "
-                    "is no 'correct' number of iterations a model should be trained for. You should "
+                    "Length of training in iterations. This is only really used for automation. "
+                    "There "
+                    "is no 'correct' number of iterations a model should be trained for. You "
+                    "should "
                     "stop training when you are happy with the previews. However, if you want the "
                     "model to stop automatically at a set number of iterations, you can set that "
                     "value here."
@@ -213,7 +229,8 @@ class TrainArgs(FaceSwapArgs):
                 "default": 0,
                 "group": _("training"),
                 "help": _(
-                    "Learning rate warmup. Linearly increase the learning rate from 0 to the chosen "
+                    "Learning rate warmup. Linearly increase the learning rate from 0 to the "
+                    "chosen "
                     "target rate over the number of iterations given here. 0 to disable."
                 ),
             }
@@ -237,7 +254,8 @@ class TrainArgs(FaceSwapArgs):
                 "default": False,
                 "group": _("training"),
                 "help": _(
-                    "Disables TensorBoard logging. NB: Disabling logs means that you will not be able "
+                    "Disables TensorBoard logging. NB: Disabling logs means that you will not be "
+                    "able "
                     "to use the graph or analysis for this session in the GUI."
                 ),
             }
@@ -250,10 +268,14 @@ class TrainArgs(FaceSwapArgs):
                 "default": False,
                 "group": _("training"),
                 "help": _(
-                    "Use the Learning Rate Finder to discover the optimal learning rate for training. "
-                    "For new models, this will calculate the optimal learning rate for the model. For "
-                    "existing models this will use the optimal learning rate that was discovered when "
-                    "initializing the model. Setting this option will ignore the manually configured "
+                    "Use the Learning Rate Finder to discover the optimal learning rate for "
+                    "training. "
+                    "For new models, this will calculate the optimal learning rate for the model. "
+                    "For "
+                    "existing models this will use the optimal learning rate that was discovered "
+                    "when "
+                    "initializing the model. Setting this option will ignore the manually "
+                    "configured "
                     "learning rate (configurable in train settings)."
                 ),
             }
@@ -282,7 +304,8 @@ class TrainArgs(FaceSwapArgs):
                 "default": 25000,
                 "group": _("Saving"),
                 "help": _(
-                    "Sets the number of iterations before saving a backup snapshot of the model in "
+                    "Sets the number of iterations before saving a backup snapshot of the model in"
+                    " "
                     "it's current state. Set to 0 for off."
                 ),
             }
@@ -295,10 +318,13 @@ class TrainArgs(FaceSwapArgs):
                 "default": None,
                 "group": _("timelapse"),
                 "help": _(
-                    "Optional for creating a timelapse. Timelapse will save an image of your selected "
-                    "faces into the timelapse-output folder at every save iteration. This should be "
+                    "Optional for creating a timelapse. Timelapse will save an image of your "
+                    "selected "
+                    "faces into the timelapse-output folder at every save iteration. This should "
+                    "be "
                     "the input folder of 'A' faces that you would like to use for creating the "
-                    "timelapse. You must also supply a --timelapse-output and a --timelapse-input-B "
+                    "timelapse. You must also supply a --timelapse-output and a "
+                    "--timelapse-input-B "
                     "parameter."
                 ),
             }
@@ -311,10 +337,13 @@ class TrainArgs(FaceSwapArgs):
                 "default": None,
                 "group": _("timelapse"),
                 "help": _(
-                    "Optional for creating a timelapse. Timelapse will save an image of your selected "
-                    "faces into the timelapse-output folder at every save iteration. This should be "
+                    "Optional for creating a timelapse. Timelapse will save an image of your "
+                    "selected "
+                    "faces into the timelapse-output folder at every save iteration. This should "
+                    "be "
                     "the input folder of 'B' faces that you would like to use for creating the "
-                    "timelapse. You must also supply a --timelapse-output and a --timelapse-input-A "
+                    "timelapse. You must also supply a --timelapse-output and a "
+                    "--timelapse-input-A "
                     "parameter."
                 ),
             }
@@ -327,9 +356,11 @@ class TrainArgs(FaceSwapArgs):
                 "default": None,
                 "group": _("timelapse"),
                 "help": _(
-                    "Optional for creating a timelapse. Timelapse will save an image of your selected "
+                    "Optional for creating a timelapse. Timelapse will save an image of your "
+                    "selected "
                     "faces into the timelapse-output folder at every save iteration. If the input "
-                    "folders are supplied but no output folder, it will default to your model folder/"
+                    "folders are supplied but no output folder, it will default to your model "
+                    "folder/"
                     "timelapse/"
                 ),
             }
@@ -352,7 +383,8 @@ class TrainArgs(FaceSwapArgs):
                 "default": False,
                 "group": _("preview"),
                 "help": _(
-                    "Writes the training result to a file. The image will be stored in the root of "
+                    "Writes the training result to a file. The image will be stored in the root of"
+                    " "
                     "your FaceSwap folder."
                 ),
             }
@@ -379,8 +411,10 @@ class TrainArgs(FaceSwapArgs):
                 "default": False,
                 "group": _("augmentation"),
                 "help": _(
-                    "To effectively learn, a random set of images are flipped horizontally. Sometimes "
-                    "it is desirable for this not to occur. Generally this should be left off except "
+                    "To effectively learn, a random set of images are flipped horizontally. "
+                    "Sometimes "
+                    "it is desirable for this not to occur. Generally this should be left off "
+                    "except "
                     "for during 'fit training'."
                 ),
             }
@@ -393,8 +427,10 @@ class TrainArgs(FaceSwapArgs):
                 "default": False,
                 "group": _("augmentation"),
                 "help": _(
-                    "Color augmentation helps make the model less susceptible to color differences "
-                    "between the A and B sets, at an increased training time cost. Enable this option "
+                    "Color augmentation helps make the model less susceptible to color differences"
+                    " "
+                    "between the A and B sets, at an increased training time cost. Enable this "
+                    "option "
                     "to disable color augmentation."
                 ),
             }
@@ -407,8 +443,10 @@ class TrainArgs(FaceSwapArgs):
                 "default": False,
                 "group": _("augmentation"),
                 "help": _(
-                    "Warping is integral to training the Neural Network. This option should only be "
-                    "enabled towards the very end of training to try to bring out more detail. Think "
+                    "Warping is integral to training the Neural Network. This option should only "
+                    "be "
+                    "enabled towards the very end of training to try to bring out more detail. "
+                    "Think "
                     "of it as 'fine-tuning'. Enabling this option from the beginning is likely to "
                     "kill a model and lead to terrible results."
                 ),

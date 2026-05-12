@@ -10,20 +10,19 @@ import typing as T
 
 import cv2
 import numexpr as ne
-
 import numpy as np
 import torch
 from torch.utils.data import Dataset
 
 from lib.align import AlignedFace, Mask
-from lib.logger import format_array, parse_class_init
 from lib.image import read_image
+from lib.logger import format_array, parse_class_init
 from lib.utils import FaceswapError, get_module_objects
 from plugins.train import train_config as cfg
 
-
 if T.TYPE_CHECKING:
     import numpy.typing as npt
+
     from lib.align import CenteringType
     from lib.align.objects import MaskAlignmentsFile, PNGAlignments, PNGHeader
     from lib.align.pose import PoseEstimate
@@ -43,9 +42,7 @@ def to_float32(in_array: npt.NDArray[np.uint8]) -> npt.NDArray[np.float32]:
     -------
     The array cast to 0.0 - 1.0 float32
     """
-    return ne.evaluate(
-        "x / c", local_dict={"x": in_array, "c": np.float32(255)}, casting="unsafe"
-    )
+    return ne.evaluate("x / c", local_dict={"x": in_array, "c": np.float32(255)}, casting="unsafe")
 
 
 def get_label(index: int, num_identities: int, next_identity: bool = False) -> str:
@@ -70,9 +67,7 @@ def get_label(index: int, num_identities: int, next_identity: bool = False) -> s
     if num_identities > len(identities):
         identities += [chr(i) for i in range(97, 97 + 26)]
     if num_identities > len(identities):
-        raise FaceswapError(
-            f"Too many identities: {num_identities}. Max: {len(identities)}"
-        )
+        raise FaceswapError(f"Too many identities: {num_identities}. Max: {len(identities)}")
     identities = identities[:num_identities]
     index = index % num_identities
     if not next_identity:
@@ -158,9 +153,7 @@ class _MaskProcessing:  # pylint:disable=too-many-instance-attributes
         )
         return f"{self.__class__.__name__}({params})"
 
-    def _check_mask_exists(
-        self, masks: list[str], mask_type: str, filename: str
-    ) -> None:
+    def _check_mask_exists(self, masks: list[str], mask_type: str, filename: str) -> None:
         """Check that the requested mask exists in the given masks dictionary
 
         Parameters
@@ -254,9 +247,7 @@ class _MaskProcessing:  # pylint:disable=too-many-instance-attributes
             retval = face_mask
         else:
             retval = np.empty((*self._dims, 1), dtype=face_mask.dtype)
-            interpolator = (
-                cv2.INTER_CUBIC if mask.stored_size < self._dims[0] else cv2.INTER_AREA
-            )
+            interpolator = cv2.INTER_CUBIC if mask.stored_size < self._dims[0] else cv2.INTER_AREA
             cv2.resize(face_mask, self._dims, interpolation=interpolator, dst=retval)
         return retval
 
@@ -296,9 +287,7 @@ class _MaskProcessing:  # pylint:disable=too-many-instance-attributes
         if mask_type in self._lm_masks:
             retval = self._get_landmarks_mask(
                 self._lm_masks[
-                    T.cast(
-                        T.Literal["components", "extended", "eye", "mouth"], mask_type
-                    )
+                    T.cast(T.Literal["components", "extended", "eye", "mouth"], mask_type)
                 ],
                 aligned,
             )
@@ -472,9 +461,7 @@ class TrainSet(_BaseSet):
         retval = np.empty(self._out_shape, dtype=img.dtype)
         retval[..., :3] = img
         for i, mask_type in enumerate(self._mask_types):
-            retval[..., 3 + i] = self._mask(
-                meta.alignments.mask, mask_type, filename, face
-            )
+            retval[..., 3 + i] = self._mask(meta.alignments.mask, mask_type, filename, face)
 
         logger.trace(
             "[%s] images and masks: %s",  # type:ignore[attr-defined]
@@ -582,9 +569,7 @@ class PreviewSet(_BaseSet):
         meta: PNGHeader
         image, meta = read_image(filename, raise_error=False, with_metadata=True)
 
-        in_face = self._get_face(
-            image, meta.alignments, self._input_size, self._coverage
-        )
+        in_face = self._get_face(image, meta.alignments, self._input_size, self._coverage)
         in_img = T.cast("npt.NDArray[np.uint8]", in_face.face)
         out_face = self._get_face(image, meta.alignments, self._full_size, 1.0)
         out_img = np.empty((self._full_size, self._full_size, 4), dtype=np.uint8)
@@ -675,9 +660,7 @@ class MultiDataset(Dataset):
                 if take < ds_len:
                     self._remainder[idx] = perm[take:]
 
-        logger.debug(
-            "[MultiDataset] Shuffled dataset indices: %s", format_array(retval)
-        )
+        logger.debug("[MultiDataset] Shuffled dataset indices: %s", format_array(retval))
         return retval
 
     def shuffle(self) -> None:
@@ -693,15 +676,12 @@ class MultiDataset(Dataset):
         """
         if self._is_random:
             results: list[tuple[np.ndarray, ...]] = [
-                dataset[self._indices[i][index]]
-                for i, dataset in enumerate(self._datasets)
+                dataset[self._indices[i][index]] for i, dataset in enumerate(self._datasets)
             ]
         else:
             results = [dataset[index] for dataset in self._datasets]
 
-        retval = tuple(
-            np.stack([res[i] for res in results]) for i in range(len(results[0]))
-        )
+        retval = tuple(np.stack([res[i] for res in results]) for i in range(len(results[0])))
         return retval
 
 

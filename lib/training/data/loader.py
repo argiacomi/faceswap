@@ -10,17 +10,19 @@ import typing as T
 import torch
 from torch.utils import data as tch_data
 from torch.utils.data import DataLoader
+
 from lib.logger import parse_class_init
 from lib.utils import get_module_objects
 from plugins.train import train_config as mod_cfg
 from plugins.train.trainer import trainer_config as trn_cfg
 
-from .data_set import get_label, TrainSet, PreviewSet, MultiDataset
 from .collate import Collate, LandmarkMatcher
+from .data_set import MultiDataset, PreviewSet, TrainSet, get_label
 
 if T.TYPE_CHECKING:
     from lib.align.constants import CenteringType
     from plugins.train.trainer.base import TrainConfig
+
     from .collate import BatchMeta
 
 logger = logging.getLogger(__name__)
@@ -50,8 +52,7 @@ class TrainLoader:  # pylint:disable=too-many-instance-attributes
         output_sizes: tuple[int, ...],
         color_order: T.Literal["bgr", "rgb"],
         config: TrainConfig,
-        sampler: None
-        | type[tch_data.RandomSampler | tch_data.DistributedSampler] = None,
+        sampler: None | type[tch_data.RandomSampler | tch_data.DistributedSampler] = None,
     ) -> None:
         logger.debug(parse_class_init(locals()))
         self._learn_mask = mod_cfg.Loss.learn_mask()
@@ -90,8 +91,7 @@ class TrainLoader:  # pylint:disable=too-many-instance-attributes
         params = {
             f"{k}"[1:]: v
             for k, v in self.__dict__.items()
-            if k
-            in ("_input_size", "_output_sizes", "_color_order", "_config", "_sampler")
+            if k in ("_input_size", "_output_sizes", "_color_order", "_config", "_sampler")
         }
         s_params = ", ".join(f"{k}={repr(v)}" for k, v in params.items())
         return f"{self.__class__.__name__}({s_params})"
@@ -108,8 +108,7 @@ class TrainLoader:  # pylint:disable=too-many-instance-attributes
         max_proc = 1 if max_proc is None else max_proc
         if num_workers > max_proc:
             logger.warning(
-                "Data Loader processes set to %s but only %s processors available. "
-                "Lowering to %s",
+                "Data Loader processes set to %s but only %s processors available. Lowering to %s",
                 num_workers,
                 max_proc,
                 max_proc - 1,
@@ -212,8 +211,7 @@ class PreviewLoader:
         color_order: T.Literal["bgr", "rgb"],
         input_folders: list[str],
         batch_size: int,
-        sampler: None
-        | type[tch_data.RandomSampler | tch_data.SequentialSampler] = None,
+        sampler: None | type[tch_data.RandomSampler | tch_data.SequentialSampler] = None,
         num_samples: int = 0,
     ) -> None:
         self._output_size = output_size
@@ -227,9 +225,7 @@ class PreviewLoader:
         )
         self._sampler = tch_data.RandomSampler if sampler is None else sampler
         self._loader = self.get_loader()
-        self._iterator = T.cast(
-            T.Iterator[tuple[torch.Tensor, torch.Tensor]], iter(self._loader)
-        )
+        self._iterator = T.cast(T.Iterator[tuple[torch.Tensor, torch.Tensor]], iter(self._loader))
 
     def __iter__(self) -> T.Self:
         """This is an iterator"""
@@ -294,9 +290,7 @@ class PreviewLoader:
             A batch of full sized, full coverage input images with mask in the 4th channel
         """
         try:
-            inputs, targets = T.cast(
-                tuple[torch.Tensor, torch.Tensor], next(self._iterator)
-            )
+            inputs, targets = T.cast(tuple[torch.Tensor, torch.Tensor], next(self._iterator))
 
         except StopIteration:
             logger.debug("[PreviewLoader] end")

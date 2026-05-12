@@ -2,6 +2,7 @@
 """Processes the augmentation of images for feeding into a Faceswap model."""
 
 from __future__ import annotations
+
 import logging
 import typing as T
 from dataclasses import dataclass
@@ -109,9 +110,7 @@ class ConstantsWarp:
     def __repr__(self) -> str:
         """Display shape/type information for arrays in __repr__"""
         params = {
-            k: f"array[shape: {v.shape}, dtype: {v.dtype}]"
-            if isinstance(v, np.ndarray)
-            else v
+            k: f"array[shape: {v.shape}, dtype: {v.dtype}]" if isinstance(v, np.ndarray) else v
             for k, v in self.__dict__.items()
         }
         str_params = ", ".join(f"{k}={v}" for k, v in params.items())
@@ -168,8 +167,7 @@ class ConstantsAugmentation:
         clahe_chance = cfg.Augmentation.color_clahe_chance() / 100
         clahe_max_size = cfg.Augmentation.color_clahe_max_size()
         logger.debug(
-            "[AugConstants] clahe_base_contrast: %s, clahe_chance: %s, "
-            "clahe_max_size: %s",
+            "[AugConstants] clahe_base_contrast: %s, clahe_chance: %s, clahe_max_size: %s",
             clahe_base_contrast,
             clahe_chance,
             clahe_max_size,
@@ -237,9 +235,7 @@ class ConstantsAugmentation:
         return retval
 
     @classmethod
-    def _get_warp_to_landmarks(
-        cls, size: int, batch_size: int
-    ) -> tuple[np.ndarray, np.ndarray]:
+    def _get_warp_to_landmarks(cls, size: int, batch_size: int) -> tuple[np.ndarray, np.ndarray]:
         """Load the warp-to-landmarks augmentation constants
 
         Parameters
@@ -304,9 +300,7 @@ class ConstantsAugmentation:
 
         warp_range = np.linspace(0, size, 5, dtype="float32")
         warp_map_x = np.broadcast_to(warp_range, (batch_size, 5, 5)).astype("float32")
-        warp_map_y = np.broadcast_to(warp_map_x[0].T, (batch_size, 5, 5)).astype(
-            "float32"
-        )
+        warp_map_y = np.broadcast_to(warp_map_x[0].T, (batch_size, 5, 5)).astype("float32")
         warp_pad = int(1.25 * size)
 
         retval = ConstantsWarp(
@@ -322,9 +316,7 @@ class ConstantsAugmentation:
         return retval
 
     @classmethod
-    def from_config(
-        cls, processing_size: int, batch_size: int
-    ) -> ConstantsAugmentation:
+    def from_config(cls, processing_size: int, batch_size: int) -> ConstantsAugmentation:
         """Create a new dataclass instance from user config
 
         Parameters
@@ -394,13 +386,11 @@ class ImageAugmentation:
         logger.trace("[Aug] Random LAB adjustments: %s", randoms)  # type:ignore[attr-defined]
         # Iterating through the images and channels is much faster than numpy.where and slightly
         # faster than numexpr.where.
-        for image, rand in zip(batch, randoms):
+        for image, rand in zip(batch, randoms, strict=False):
             for idx in range(rand.shape[-1]):
                 adjustment = rand[:, :, idx]
                 if adjustment >= 0:
-                    image[:, :, idx] = ((255 - image[:, :, idx]) * adjustment) + image[
-                        :, :, idx
-                    ]
+                    image[:, :, idx] = ((255 - image[:, :, idx]) * adjustment) + image[:, :, idx]
                 else:
                     image[:, :, idx] = image[:, :, idx] * (1 + adjustment)
 
@@ -436,7 +426,7 @@ class ImageAugmentation:
             for grid_size in grid_sizes
         ]  # type:ignore[attr-defined]
 
-        for idx, clahe in zip(indices, clahes):
+        for idx, clahe in zip(indices, clahes, strict=False):
             batch[idx, :, :, 0] = clahe.apply(
                 batch[idx, :, :, 0],
             )
@@ -501,7 +491,7 @@ class ImageAugmentation:
             self._processing_size, rotation, scale=scale, translation=transform
         )
 
-        for image, mat in zip(batch, mats[:, :2, :]):
+        for image, mat in zip(batch, mats[:, :2, :], strict=False):
             cv2.warpAffine(
                 image,
                 mat,
@@ -570,23 +560,18 @@ class ImageAugmentation:
         rands = np.random.normal(
             size=(self._batch_size, 2, 5, 5), scale=self._constants.warp.scale
         ).astype("float32")
-        batch_maps = ne.evaluate(
-            "m + r", local_dict={"m": self._constants.warp.maps, "r": rands}
-        )
+        batch_maps = ne.evaluate("m + r", local_dict={"m": self._constants.warp.maps, "r": rands})
 
         interpolators = np.array(
             [
-                [
-                    cv2.resize(map_, self._constants.warp.pad)[slices, slices]
-                    for map_ in maps
-                ]
+                [cv2.resize(map_, self._constants.warp.pad)[slices, slices] for map_ in maps]
                 for maps in batch_maps
             ]
         )
         warped_batch = np.array(
             [
                 cv2.remap(image, interpolator[0], interpolator[1], cv2.INTER_LINEAR)
-                for image, interpolator in zip(batch, interpolators)
+                for image, interpolator in zip(batch, interpolators, strict=False)
             ]
         )
 
@@ -629,7 +614,7 @@ class ImageAugmentation:
         face_cores = [
             cv2.convexHull(np.concatenate([src[17:], dst[17:]], axis=0))
             for src, dst in zip(
-                batch_src_points.astype("int32"), batch_dst.astype("int32")
+                batch_src_points.astype("int32"), batch_dst.astype("int32"), strict=False
             )
         ]
 
@@ -646,22 +631,22 @@ class ImageAugmentation:
                 )
             )
             for src, dst, face_core in zip(
-                batch_src[:, :18, :], batch_dst[:, :18, :], face_cores
+                batch_src[:, :18, :], batch_dst[:, :18, :], face_cores, strict=False
             )
         ]
         lm_batch_src = [
             np.delete(src, indices, axis=0)
-            for indices, src in zip(rem_indices, batch_src)
+            for indices, src in zip(rem_indices, batch_src, strict=False)
         ]
         lm_batch_dst = [
             np.delete(dst, indices, axis=0)
-            for indices, dst in zip(rem_indices, batch_dst)
+            for indices, dst in zip(rem_indices, batch_dst, strict=False)
         ]
 
         grid_z = np.array(
             [
                 griddata(dst, src, (grids[0], grids[1]), method="linear")
-                for src, dst in zip(lm_batch_src, lm_batch_dst)
+                for src, dst in zip(lm_batch_src, lm_batch_dst, strict=False)
             ]
         )
         maps = grid_z.reshape(
@@ -677,7 +662,7 @@ class ImageAugmentation:
                     cv2.INTER_LINEAR,
                     borderMode=cv2.BORDER_TRANSPARENT,
                 )
-                for image, map_ in zip(batch, maps)
+                for image, map_ in zip(batch, maps, strict=False)
             ]
         )
         logger.trace(
@@ -720,9 +705,7 @@ class ImageAugmentation:
         if to_landmarks:
             assert batch_src_points is not None
             assert batch_dst_points is not None
-            return self._random_warp_landmarks(
-                batch, batch_src_points, batch_dst_points
-            )
+            return self._random_warp_landmarks(batch, batch_src_points, batch_dst_points)
         return self._random_warp(batch)
 
 

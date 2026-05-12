@@ -2,38 +2,39 @@
 """Tool to preview swaps and tweak configuration prior to running a convert"""
 
 from __future__ import annotations
+
 import gettext
 import logging
+import os
 import random
+import sys
 import tkinter as tk
 import typing as T
-
-from tkinter import ttk
-import os
-import sys
-
 from threading import Event, Lock, Thread
+from tkinter import ttk
 
 import numpy as np
 
 from lib.align import DetectedFace
 from lib.cli.args_extract_convert import ConvertArgs
-from lib.gui.utils import get_images, get_config, initialize_config, initialize_images
+from lib.convert import Converter
+from lib.gui.utils import get_config, get_images, initialize_config, initialize_images
 from lib.image import SingleFrameLoader
 from lib.infer.objects import FrameFaces
-from lib.convert import Converter
-from lib.utils import get_module_objects, FaceswapError, handle_deprecated_cli_opts
 from lib.queue_manager import queue_manager
+from lib.utils import FaceswapError, get_module_objects, handle_deprecated_cli_opts
 from lib.video import check_for_video
+from scripts.convert import ConvertItem, Predict
 from scripts.fs_media import Alignments
-from scripts.convert import Predict, ConvertItem
 
 from .control_panels import ActionFrame, ConfigTools, OptionsBook
 from .viewer import FacesDisplay, ImagesCanvas
 
 if T.TYPE_CHECKING:
     from argparse import Namespace
+
     from lib.queue_manager import EventQueue
+
     from .control_panels import BusyProgressBar
 
 logger = logging.getLogger(__name__)
@@ -60,9 +61,7 @@ class Preview(tk.Tk):
     _w: str
 
     def __init__(self, arguments: Namespace) -> None:
-        logger.debug(
-            "Initializing %s: (arguments: '%s'", self.__class__.__name__, arguments
-        )
+        logger.debug("Initializing %s: (arguments: '%s'", self.__class__.__name__, arguments)
         super().__init__()
         arguments = handle_deprecated_cli_opts(arguments)
         self._config_tools = ConfigTools(arguments.config_file)
@@ -80,12 +79,12 @@ class Preview(tk.Tk):
         logger.debug("Initialized %s", self.__class__.__name__)
 
     @property
-    def config_tools(self) -> "ConfigTools":
+    def config_tools(self) -> ConfigTools:
         """The object responsible for parsing configuration options and updating to/from the GUI"""
         return self._config_tools
 
     @property
-    def dispatcher(self) -> "Dispatcher":
+    def dispatcher(self) -> Dispatcher:
         """Responsible for triggering events and variables and handling global GUI state"""
         return self._dispatcher
 
@@ -152,9 +151,7 @@ class Preview(tk.Tk):
         """Build the elements for displaying preview images and options panels."""
         container = ttk.PanedWindow(self, orient=tk.VERTICAL)
         container.pack(fill=tk.BOTH, expand=True)
-        setattr(
-            container, "preview_display", self._display
-        )  # TODO subclass not setattr
+        container.preview_display = self._display  # TODO subclass not setattr
         self._image_canvas = ImagesCanvas(self, container)
         container.add(self._image_canvas, weight=3)
 
@@ -242,9 +239,7 @@ class Dispatcher:
         """Sends a trigger to the patching thread that it needs to be run. Waits for the patching
         to complete prior to triggering a display refresh and unsetting the busy indicators"""
         if self._is_updating:
-            logger.debug(
-                "Request to run patch when it is already running. Adding stacked event."
-            )
+            logger.debug("Request to run patch when it is already running. Adding stacked event.")
             self._stacked_event = True
             return
         self._is_updating = True
@@ -299,21 +294,15 @@ class Samples:
             sys.exit(1)
 
         video_meta = self._alignments.video_meta_data
-        self._images = SingleFrameLoader(
-            arguments.input_dir, video_meta_data=video_meta
-        )
+        self._images = SingleFrameLoader(arguments.input_dir, video_meta_data=video_meta)
 
         if is_video and video_meta is None:
             video_meta = self._images.video_meta_data
             assert video_meta is not None
-            self._alignments.save_video_meta_data(
-                video_meta["pts_time"], video_meta["keyframes"]
-            )
+            self._alignments.save_video_meta_data(video_meta["pts_time"], video_meta["keyframes"])
 
         if self._images.is_video:
-            self._alignments.update_legacy_has_source(
-                os.path.basename(arguments.input_dir)
-            )
+            self._alignments.update_legacy_has_source(os.path.basename(arguments.input_dir))
 
         self._filelist = self._get_filelist()
         self._indices = self._get_indices()
@@ -529,22 +518,16 @@ class Patch:
         )
         self._app = app
         self._queue_patch_in = queue_manager.get_queue("preview_patch_in")
-        self.converter_arguments: dict[str, T.Any] | None = (
-            None  # Updated converter args
-        )
+        self.converter_arguments: dict[str, T.Any] | None = None  # Updated converter args
 
-        config_file = (
-            arguments.config_file if hasattr(arguments, "config_file") else None
-        )
+        config_file = arguments.config_file if hasattr(arguments, "config_file") else None
         self._converter = Converter(
             output_size=app._samples.predictor.output_size,
             coverage_ratio=app._samples.predictor.coverage_ratio,
             centering=app._samples.predictor.centering,
             draw_transparent=False,
             pre_encode=None,
-            arguments=self._generate_converter_arguments(
-                arguments, app._samples.available_masks
-            ),
+            arguments=self._generate_converter_arguments(arguments, app._samples.available_masks),
             config_file=config_file,
         )
         self._thread = Thread(
@@ -588,9 +571,7 @@ class Patch:
                 continue
             option = item.get("dest", item["opts"][1].replace("--", ""))
             if option == "mask_type" and value not in valid_masks:
-                logger.debug(
-                    "Amending default mask from '%s' to '%s'", value, valid_masks[0]
-                )
+                logger.debug("Amending default mask from '%s' to '%s'", value, valid_masks[0])
                 value = valid_masks[0]
             # Skip options already in arguments
             if hasattr(arguments, option):
@@ -600,9 +581,7 @@ class Patch:
         logger.debug(arguments)
         return arguments
 
-    def _process(
-        self, patch_queue_in: EventQueue, trigger_event: Event, samples: Samples
-    ) -> None:
+    def _process(self, patch_queue_in: EventQueue, trigger_event: Event, samples: Samples) -> None:
         """The face patching process.
 
         Runs in a thread, and waits for an event to be set. Once triggered, runs a patching
@@ -618,8 +597,7 @@ class Patch:
             The Samples for display.
         """
         logger.debug(
-            "Launching patch process thread: (patch_queue_in: %s, trigger_event: %s, "
-            "samples: %s)",
+            "Launching patch process thread: (patch_queue_in: %s, trigger_event: %s, samples: %s)",
             patch_queue_in,
             trigger_event,
             samples,
@@ -635,9 +613,7 @@ class Patch:
             with self._app.lock:
                 self._update_converter_arguments()
                 self._converter.reinitialize()
-            swapped = self._patch_faces(
-                patch_queue_in, patch_queue_out, samples.sample_size
-            )
+            swapped = self._patch_faces(patch_queue_in, patch_queue_out, samples.sample_size)
             with self._app.lock:
                 self._app.display.destination = swapped
 

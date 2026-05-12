@@ -10,8 +10,8 @@ from lib.align import AlignedFace
 from lib.gui.custom_widgets import RightClickMenu
 from lib.gui.utils import get_config
 from lib.utils import get_module_objects
-from ._base import Editor, logger
 
+from ._base import Editor, logger
 
 # LOCALES
 _LANG = gettext.translation("tools.manual", localedir="locales", fallback=True)
@@ -64,9 +64,7 @@ class ExtractBox(Editor):
         for idx, face in enumerate(self._face_iterator):
             logger.trace("Drawing Extract Box: (idx: %s)", idx)
             if self._globals.is_zoomed:
-                box = np.array(
-                    (roi[0], roi[1], roi[2], roi[1], roi[2], roi[3], roi[0], roi[3])
-                )
+                box = np.array((roi[0], roi[1], roi[2], roi[1], roi[2], roi[3], roi[0], roi[3]))
             else:
                 aligned = AlignedFace(face.landmarks_xy, centering="face")
                 box = self._scale_to_display(aligned.original_roi).flatten()
@@ -101,7 +99,7 @@ class ExtractBox(Editor):
         anchor_points = self._get_anchor_points(
             (extract_box[:2], extract_box[2:4], extract_box[4:6], extract_box[6:])
         )
-        for idx, (anc_dsp, anc_grb) in enumerate(zip(*anchor_points)):
+        for idx, (anc_dsp, anc_grb) in enumerate(zip(*anchor_points, strict=False)):
             dsp_kwargs = {"outline": color, "fill": fill_color, "width": 1}
             grb_kwargs = {
                 "outline": "",
@@ -153,14 +151,10 @@ class ExtractBox(Editor):
             return False
         item_id = list(item_ids)[0]
         tags = self._canvas.gettags(item_id)
-        face_idx = int(
-            next(tag for tag in tags if tag.startswith("face_")).split("_")[-1]
-        )
+        face_idx = int(next(tag for tag in tags if tag.startswith("face_")).split("_")[-1])
         corner_idx = int(
             next(
-                tag
-                for tag in tags
-                if tag.startswith("eb_anc_grb_") and "face_" not in tag
+                tag for tag in tags if tag.startswith("eb_anc_grb_") and "face_" not in tag
             ).split("_")[-1]
         )
 
@@ -230,8 +224,7 @@ class ExtractBox(Editor):
         position = np.array((event.x, event.y)).astype("float32")
         for face_idx, points in enumerate(boxes):
             if any(
-                np.all(position > point - distance)
-                and np.all(position < point + distance)
+                np.all(position > point - distance) and np.all(position < point + distance)
                 for point in points
             ):
                 self._canvas.config(cursor="exchange")
@@ -294,9 +287,7 @@ class ExtractBox(Editor):
             return
         shift_x = event.x - self._drag_data["current_location"][0]
         shift_y = event.y - self._drag_data["current_location"][1]
-        scaled_shift = self.scale_from_display(
-            np.array((shift_x, shift_y)), do_offset=False
-        )
+        scaled_shift = self.scale_from_display(np.array((shift_x, shift_y)), do_offset=False)
         self._det_faces.update.landmarks(
             self._globals.frame_index, self._mouse_location[1], *scaled_shift
         )
@@ -367,12 +358,8 @@ class ExtractBox(Editor):
             ``True`` if the drag operation does not cross the center point otherwise ``False``
         """
         # Generate lines that span the full frame (x and y) along the center point
-        center_x = np.array(
-            ((center[0], 0), (center[0], self._globals.frame_display_dims[1]))
-        )
-        center_y = np.array(
-            ((0, center[1]), (self._globals.frame_display_dims[0], center[1]))
-        )
+        center_x = np.array(((center[0], 0), (center[0], self._globals.frame_display_dims[1])))
+        center_y = np.array(((0, center[1]), (self._globals.frame_display_dims[0], center[1])))
 
         # Generate a line coming from the current corner location to the current cursor position
         full_line = np.array(
@@ -393,9 +380,7 @@ class ExtractBox(Editor):
         for line in (center_x, center_y):
             if self._is_ccw(full_line[0], *line) != self._is_ccw(
                 full_line[1], *line
-            ) and self._is_ccw(*full_line, line[0]) != self._is_ccw(
-                *full_line, line[1]
-            ):
+            ) and self._is_ccw(*full_line, line[0]) != self._is_ccw(*full_line, line[1]):
                 logger.trace("line: %s crosses center: %s", full_line, center)
                 return False
         return True
@@ -477,9 +462,7 @@ class ExtractBox(Editor):
         """
         if self._mouse_location is None or self._mouse_location[0] != "box":
             return
-        self._det_faces.update.delete(
-            self._globals.frame_index, self._mouse_location[1]
-        )
+        self._det_faces.update.delete(self._globals.frame_index, self._mouse_location[1])
 
 
 __all__ = get_module_objects(__name__)

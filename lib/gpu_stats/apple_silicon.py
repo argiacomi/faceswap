@@ -1,17 +1,15 @@
 #!/usr/bin/env python3
 """Collects and returns Information on available Apple Silicon SoCs in Apple Macs."""
 
+import os
 import typing as T
 
-import os
 import psutil
 import torch
 
 from lib.utils import FaceswapError, get_module_objects
 
-
 from ._base import _GPUStats
-
 
 _METAL_INITIALIZED: bool = False
 
@@ -161,10 +159,7 @@ class AppleSiliconStats(_GPUStats):
         The RAM in Megabytes for each available Apple Silicon SoC
         """
         vram = [
-            int(
-                (torch.mps.driver_allocated_memory() / self._device_count)
-                / (1024 * 1024)
-            )
+            int((torch.mps.driver_allocated_memory() / self._device_count) / (1024 * 1024))
             for _ in range(self._device_count)
         ]
         self._log("debug", f"SoC RAM: {vram}")
@@ -180,9 +175,7 @@ class AppleSiliconStats(_GPUStats):
         SoC as corresponding to the values in :attr:`_handles
         """
         vram = [
-            int(
-                (psutil.virtual_memory().available / self._device_count) / (1024 * 1024)
-            )
+            int((psutil.virtual_memory().available / self._device_count) / (1024 * 1024))
             for _ in range(self._device_count)
         ]
         self._log("debug", f"SoC RAM free: {vram}")
@@ -198,8 +191,7 @@ class AppleSiliconStats(_GPUStats):
         """
         self._log(
             "warning",
-            "Apple Silicon does not support excluding GPUs. This option has been "
-            "ignored",
+            "Apple Silicon does not support excluding GPUs. This option has been ignored",
         )
 
 

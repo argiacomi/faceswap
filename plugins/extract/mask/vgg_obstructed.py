@@ -2,16 +2,17 @@
 """VGG Obstructed face mask plugin"""
 
 from __future__ import annotations
+
 import logging
 import typing as T
 
 import numpy as np
-
 from torch import nn
 from torch.nn import functional as F
 
-from lib.utils import get_module_objects, GetModel
+from lib.utils import GetModel, get_module_objects
 from plugins.extract.base import FacePlugin
+
 from . import vgg_obstructed_defaults as cfg
 
 if T.TYPE_CHECKING:
@@ -62,9 +63,7 @@ class VGGObstructed(FacePlugin):
         -------
         The updated images for feeding the model
         """
-        return (batch - np.mean(batch, axis=(1, 2))[:, None, None, :]).transpose(
-            0, 3, 1, 2
-        )
+        return (batch - np.mean(batch, axis=(1, 2))[:, None, None, :]).transpose(0, 3, 1, 2)
 
     def process(self, batch: np.ndarray) -> np.ndarray:
         """Get the masks from the model

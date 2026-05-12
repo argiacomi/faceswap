@@ -28,7 +28,6 @@ from lib.config import ConfigItem
 
 from lib.config import ConfigItem
 
-
 HELPTEXT = (
     "CV2 DNN Detector options.\n"
     "A CPU only extractor, is the least reliable, but uses least resources and runs fast on CPU. "

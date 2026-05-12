@@ -39,9 +39,7 @@ class PreviewExtract(DisplayOptionalPage):  # pylint:disable=too-many-ancestors
     def display_item_set(self) -> None:
         """Load the latest preview if available"""
         logger.trace("Loading latest preview")  # type:ignore[attr-defined]
-        size = int(
-            256 if self.command == "convert" else 128 * get_config().scaling_factor
-        )
+        size = int(256 if self.command == "convert" else 128 * get_config().scaling_factor)
         if not self._preview.load_latest_preview(
             thumbnail_size=size, frame_dims=(self.winfo_width(), self.winfo_height())
         ):
@@ -160,9 +158,7 @@ class PreviewTrain(DisplayOptionalPage):  # pylint:disable=too-many-ancestors
             return
 
         logger.debug("Displaying preview")
-        self._display = PreviewTk(
-            self._preview.buffer, self.subnotebook, self.optsframe, None
-        )
+        self._display = PreviewTk(self._preview.buffer, self.subnotebook, self.optsframe, None)
         self.subnotebook_add_page(self.tabname, widget=self._display.master_frame)
 
     def save_items(self) -> None:
@@ -297,9 +293,7 @@ class GraphDisplay(DisplayOptionalPage):  # pylint:disable=too-many-ancestors
         logger.debug("Adding Smoothing Slider")
         tk_var = self.vars["smoothgraph"]
         min_max = (0, 0.999)
-        hlp = _(
-            "Set the smoothing amount. 0 is no smoothing, 0.99 is maximum smoothing."
-        )
+        hlp = _("Set the smoothing amount. 0 is no smoothing, 0.99 is maximum smoothing.")
 
         ctl_frame = ttk.Frame(self.optsframe)
         ctl_frame.pack(padx=2, side=tk.RIGHT)
@@ -430,9 +424,7 @@ class GraphDisplay(DisplayOptionalPage):  # pylint:disable=too-many-ancestors
         except tk.TclError:
             # Don't update when there is no value in the variable
             return
-        logger.debug(
-            "Updating graph iteration limit: (new_value: %s, args: %s)", limit, args
-        )
+        logger.debug("Updating graph iteration limit: (new_value: %s, args: %s)", limit, args)
         for graph in self.subnotebook.children.values():
             graph.calcs.set_iterations_limit(limit)
 
@@ -480,6 +472,7 @@ class GraphDisplay(DisplayOptionalPage):  # pylint:disable=too-many-ancestors
         for name, action in zip(
             T.get_args(T.Literal["smoothgraph", "display_iterations"]),
             (self._smooth_amount_callback, self._iteration_limit_callback),
+            strict=False,
         ):
             var = self.vars[name]
             if name not in self._trace_vars:

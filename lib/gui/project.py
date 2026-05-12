@@ -41,9 +41,7 @@ class _GuiSession:  # pylint:disable=too-few-public-methods
 
     """
 
-    def __init__(
-        self, config: Config, file_handler: type[FileHandler] | None = None
-    ) -> None:
+    def __init__(self, config: Config, file_handler: type[FileHandler] | None = None) -> None:
         # NB file_handler has to be passed in to avoid circular imports
         logger.debug(parse_class_init(locals()))
         self._serializer = get_serializer("json")
@@ -53,9 +51,7 @@ class _GuiSession:  # pylint:disable=too-few-public-methods
         self._recent_files = RecentFilesStore(self._serializer, recent_filename)
         self._modified_tracker: ModifiedStateTracker | None = None
         self._option_applier: GuiOptionApplier | None = None
-        self._file_picker = (
-            None if file_handler is None else SessionFilePicker(file_handler)
-        )
+        self._file_picker = None if file_handler is None else SessionFilePicker(file_handler)
         self._saved_tasks = None
         self._modified = False
         self._state = ProjectSessionState()
@@ -137,9 +133,7 @@ class _GuiSession:  # pylint:disable=too-few-public-methods
                     "choices": valid_choices[command][option]["choices"],
                 }
                 for option, value in options.items()
-                if value
-                and command in valid_choices
-                and option in valid_choices[command]
+                if value and command in valid_choices and option in valid_choices[command]
             }
             for command, options in options_by_command.items()
             if isinstance(options, dict)
@@ -321,9 +315,7 @@ class _GuiSession:  # pylint:disable=too-few-public-methods
         options_by_command = self._state.options
         assert options_by_command is not None
         for command, options in self._selected_to_choices.items():
-            opts = T.cast(
-                dict[str, bool | int | float | str], options_by_command[command]
-            )
+            opts = T.cast(dict[str, bool | int | float | str], options_by_command[command])
             for option, data in options.items():
                 if not data["is_multi"] and data["value"] in data["choices"]:
                     continue
@@ -334,12 +326,10 @@ class _GuiSession:  # pylint:disable=too-few-public-methods
                 ):
                     continue
                 if data["is_multi"] and isinstance(data["value"], str):
-                    val = " ".join(
-                        [v for v in data["value"].split() if v in data["choices"]]
-                    )
+                    val = " ".join([v for v in data["value"].split() if v in data["choices"]])
                 else:
                     val = ""
-                val = self._default_options[command][option] if not val else val
+                val = val if val else self._default_options[command][option]
                 logger.debug(
                     "Updating invalid value to default: (command: '%s', option: '%s', "
                     "original value: '%s', new value: '%s')",
@@ -350,16 +340,12 @@ class _GuiSession:  # pylint:disable=too-few-public-methods
                 )
                 opts[option] = val
 
-    def _save_as_to_filename(
-        self, session_type: T.Literal["all", "task", "project"]
-    ) -> bool:
+    def _save_as_to_filename(self, session_type: T.Literal["all", "task", "project"]) -> bool:
         """Set the current session filename from a save-as dialog."""
         logger.debug("Popping save as file handler. session_type: '%s'", session_type)
         assert self._file_picker is not None
 
-        title = (
-            f"Save {f'{session_type.title()} ' if session_type != 'all' else ''}As..."
-        )
+        title = f"Save {f'{session_type.title()} ' if session_type != 'all' else ''}As..."
         picked = self._file_picker.save_as(
             session_type,
             title=title,
@@ -382,8 +368,8 @@ class _GuiSession:  # pylint:disable=too-few-public-methods
         """Collect the options in the current GUI state and save.
 
         Obtains the current options set in the GUI with the selected tab and applies them to
-        session state. Saves the versioned project file to the current filename. Resets modified vars
-        for either the given command or all commands,
+        session state. Saves the versioned project file to the current filename. Resets modified
+        vars for either the given command or all commands,
 
         Parameters
         ----------
@@ -427,10 +413,7 @@ class Tasks(_GuiSession):
             str,
             dict[
                 T.Literal["filename", "options", "is_project"],
-                str
-                | bool
-                | dict[str, str | dict[str, bool | int | float | str]]
-                | None,
+                str | bool | dict[str, str | dict[str, bool | int | float | str]] | None,
             ],
         ] = {}
 
@@ -531,9 +514,7 @@ class Tasks(_GuiSession):
         if is_legacy:
             self.save()
 
-        logger.debug(
-            "Loaded task config: (command: '%s', filename: '%s')", command, filename
-        )
+        logger.debug("Loaded task config: (command: '%s', filename: '%s')", command, filename)
 
     def _update_legacy_task(self, filename: str) -> str:
         """Update legacy ``.fsw`` tasks to ``.fst`` tasks.
@@ -815,9 +796,7 @@ class Project(_GuiSession):
         self._add_to_recent()
         self._reset_modified_var()
         self._update_root_title()
-        logger.debug(
-            "Loaded project config: (command: '%s', filename: '%s')", command, filename
-        )
+        logger.debug("Loaded project config: (command: '%s', filename: '%s')", command, filename)
 
     def _handoff_legacy_task(self) -> None:
         """Update legacy tasks saved with the old file extension ``.fsw`` to tasks ``.fst``.
@@ -860,11 +839,7 @@ class Project(_GuiSession):
     def _update_root_title(self) -> None:
         """Update the root Window title with the project name. Add a asterisk if the file is
         modified."""
-        text = (
-            "<untitled project>"
-            if self._state.basename is None
-            else self._state.basename
-        )
+        text = "<untitled project>" if self._state.basename is None else self._state.basename
         text += "*" if self._modified else ""
         self._config.set_root_title(text=text)
 
@@ -950,12 +925,8 @@ class Project(_GuiSession):
         if not self._modified:
             logger.debug("Project is not modified")
             return True
-        confirm_txt = (
-            "You have unsaved changes.\n\nAre you sure you want to close the project?"
-        )
-        if messagebox.askokcancel(
-            "Close", confirm_txt, default="cancel", icon="warning"
-        ):
+        confirm_txt = "You have unsaved changes.\n\nAre you sure you want to close the project?"
+        if messagebox.askokcancel("Close", confirm_txt, default="cancel", icon="warning"):
             logger.debug("Close Cancelled")
             return True
         logger.debug("Close confirmed")
@@ -978,9 +949,7 @@ class LastSession(_GuiSession):
 
     def __init__(self, config: Config) -> None:
         super().__init__(config)
-        self._state.set_filename(
-            os.path.join(self._config.path_cache, ".last_session.json")
-        )
+        self._state.set_filename(os.path.join(self._config.path_cache, ".last_session.json"))
         if not self._enabled:
             return
 
@@ -994,9 +963,7 @@ class LastSession(_GuiSession):
         """``True`` if autosave is enabled otherwise ``False``."""
         return cfg.autosave_last_session() != "never"
 
-    def from_dict(
-        self, options: dict[str, str | dict[str, bool | int | float | str]]
-    ) -> None:
+    def from_dict(self, options: dict[str, str | dict[str, bool | int | float | str]]) -> None:
         """Set session options from the given dictionary and update the GUI.
 
         This function is required for reloading the GUI state when the GUI has been force
@@ -1110,9 +1077,7 @@ class LastSession(_GuiSession):
         if opts is not None:
             assert self._serializer is not None
             self._serializer.save(filename, opts)  # pyright:ignore[reportCallIssue]
-            logger.debug(
-                "Saved last session. (filename: %s, options: %s", filename, opts
-            )
+            logger.debug("Saved last session. (filename: %s, options: %s", filename, opts)
 
 
 __all__ = get_module_objects(__name__)

@@ -29,7 +29,6 @@ from lib.config import ConfigItem
 # pylint:disable=duplicate-code
 from lib.config import ConfigItem
 
-
 HELPTEXT = (
     "VGG_Clear options. Mask designed to provide smart segmentation of mostly frontal faces clear "
     "of obstructions.\nProfile faces and obstructions may result in sub-par performance."

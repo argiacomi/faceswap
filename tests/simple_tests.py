@@ -7,10 +7,11 @@ For this we want another set of testcases using pytest.
 Due to my lazy coding, DON'T USE PATHES WITH BLANKS !
 """
 
-import sys
-from subprocess import check_call, CalledProcessError
 import os
-from os.path import join as pathjoin, abspath, dirname
+import sys
+from os.path import abspath, dirname
+from os.path import join as pathjoin
+from subprocess import CalledProcessError, check_call
 
 _fail_count = 0
 _test_count = 0
@@ -68,8 +69,7 @@ def extract_args(detector, aligner, in_path, out_path, args=None):
     """Extraction command"""
     py_exe = sys.executable
     _extract_args = (
-        f"{py_exe} faceswap.py extract -i {in_path} -o {out_path} -D {detector} "
-        f"-A {aligner}"
+        f"{py_exe} faceswap.py extract -i {in_path} -o {out_path} -D {detector} -A {aligner}"
     )
     if args:
         _extract_args += f" {args}"
@@ -90,8 +90,7 @@ def convert_args(in_path, out_path, model_path, writer, args=None):
     """Convert command"""
     py_exe = sys.executable
     conv_args = (
-        f"{py_exe} faceswap.py convert -i {in_path} -o {out_path} -m {model_path} "
-        f"-w {writer}"
+        f"{py_exe} faceswap.py convert -i {in_path} -o {out_path} -m {model_path} -w {writer}"
     )
     if args:
         conv_args += f" {args}"
@@ -101,9 +100,7 @@ def convert_args(in_path, out_path, model_path, writer, args=None):
 def sort_args(in_path, out_path, sortby="face", groupby="hist"):
     """Sort command"""
     py_exe = sys.executable
-    _sort_args = (
-        f"{py_exe} tools.py sort -i {in_path} -o {out_path} -s {sortby} -g {groupby} -k"
-    )
+    _sort_args = f"{py_exe} tools.py sort -i {in_path} -o {out_path} -s {sortby} -g {groupby} -k"
     return _sort_args.split()
 
 

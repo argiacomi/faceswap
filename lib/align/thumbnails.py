@@ -61,9 +61,7 @@ class Thumbnails:
         -------
         The encoded JPG thumbnail
         """
-        retval = (
-            self._alignments_dict[self._frame_list[frame_index]].faces[face_index].thumb
-        )
+        retval = self._alignments_dict[self._frame_list[frame_index]].faces[face_index].thumb
         assert retval is not None
         logger.trace(  # type:ignore[attr-defined]
             "frame index: %s, face_index: %s, thumb shape: %s",

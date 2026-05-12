@@ -3,8 +3,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 import typing as T
+from collections.abc import Mapping
 
 from lib.utils import get_module_objects
 

@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """Tests for Faceswap Feature Losses. Adapted from Keras tests."""
 
-import pytest
 import numpy as np
+import pytest
 import torch
 
 # pylint:disable=import-error
 from lib.model.losses.feature_loss import LPIPSLoss
 from lib.utils import get_backend
-
 
 _NETS = ("alex", "squeeze", "vgg16")
 _IDS = [f"LPIPS_{x}[{get_backend().upper()}]" for x in _NETS]

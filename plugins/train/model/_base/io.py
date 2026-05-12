@@ -11,21 +11,25 @@ This module handles:
 """
 
 from __future__ import annotations
+
 import logging
 import os
 import sys
 import typing as T
-from keras import layers, models as kmodels
+
+from keras import layers
+from keras import models as kmodels
 
 from lib.logger import parse_class_init
 from lib.model.backup_restore import Backup
-from lib.utils import get_module_objects, FaceswapError
+from lib.utils import FaceswapError, get_module_objects
 
 from .update import Legacy, PatchKerasConfig
 
 if T.TYPE_CHECKING:
-    from .model import ModelBase
     from keras import Optimizer
+
+    from .model import ModelBase
 
 logger = logging.getLogger(__name__)
 
@@ -148,9 +152,7 @@ class IO:
         Note: Currently disabled as keras hangs trying to load old faceswap models
         """
         if self.model_exists:
-            logger.debug(
-                "Existing model file is current: '%s'", os.path.basename(self.filename)
-            )
+            logger.debug("Existing model file is current: '%s'", os.path.basename(self.filename))
             return
 
         old_fname = f"{os.path.splitext(self.filename)[0]}.h5"
@@ -176,9 +178,7 @@ class IO:
         """
         logger.debug("Loading model: %s", self.filename)
         if self._is_predict and not self.model_exists:
-            logger.error(
-                "Model could not be found in folder '%s'. Exiting", self._model_dir
-            )
+            logger.error("Model could not be found in folder '%s'. Exiting", self._model_dir)
             sys.exit(1)
 
         try:
@@ -266,7 +266,7 @@ class IO:
         if not include_optimizer:
             assert optimizer is not None
             logger.debug("Re-attaching optimizer: %s", optimizer)
-            setattr(self._plugin.model, "optimizer", optimizer)
+            self._plugin.model.optimizer = optimizer
 
     def _get_save_average(self) -> float:
         """Return the average loss since the last save iteration and reset historical loss
@@ -368,11 +368,7 @@ class IO:
         self._save_model(is_exit, force_save_optimizer)
         save_average, backed_up = self._maybe_backup()
 
-        msg = (
-            "[Saved optimizer state for Snapshot]"
-            if force_save_optimizer
-            else "[Saved model]"
-        )
+        msg = "[Saved optimizer state for Snapshot]" if force_save_optimizer else "[Saved model]"
         if save_average:
             msg += f" - Average total loss since last save: {save_average:.5f}"
         if backed_up:
@@ -432,10 +428,8 @@ class Weights:
 
         msg = ""
         if not os.path.exists(weights_file):
-            msg = (
-                f"Load weights selected, but the path '{weights_file}' does not exist."
-            )
-        elif not os.path.splitext(weights_file)[-1].lower() == ".keras":
+            msg = f"Load weights selected, but the path '{weights_file}' does not exist."
+        elif os.path.splitext(weights_file)[-1].lower() != ".keras":
             msg = (
                 f"Load weights selected, but the path '{weights_file}' is not a valid Keras "
                 f"model (.keras) file."
@@ -462,15 +456,12 @@ class Weights:
 
         for layer in get_all_sub_models(self._model):
             if layer.name in self._freeze_layers:
-                logger.info(
-                    "Freezing weights for '%s' in model '%s'", layer.name, self._name
-                )
+                logger.info("Freezing weights for '%s' in model '%s'", layer.name, self._name)
                 layer.trainable = False
                 self._freeze_layers.remove(layer.name)
         if self._freeze_layers:
             logger.warning(
-                "The following layers were set to be frozen but do not exist in the "
-                "model: %s",
+                "The following layers were set to be frozen but do not exist in the model: %s",
                 self._freeze_layers,
             )
 
@@ -498,20 +489,12 @@ class Weights:
         skipped_ops = 0
 
         for model_name in self._load_layers:
-            sub_model = next(
-                (lyr for lyr in all_models if lyr.name == model_name), None
-            )
-            sub_weights = next(
-                (lyr for lyr in weights_models if lyr.name == model_name), None
-            )
+            sub_model = next((lyr for lyr in all_models if lyr.name == model_name), None)
+            sub_weights = next((lyr for lyr in weights_models if lyr.name == model_name), None)
 
             if not sub_model or not sub_weights:
                 msg = f"Skipping layer {model_name} as not in "
-                msg += (
-                    "current_model."
-                    if not sub_model
-                    else f"weights '{self._weights_file}.'"
-                )
+                msg += "current_model." if not sub_model else f"weights '{self._weights_file}.'"
                 logger.warning(msg)
                 continue
 
@@ -594,13 +577,10 @@ class Weights:
             logger.debug("Skipping layer without weights: %s", layer.name)
             return -1
 
-        layer_weights = next(
-            (lyr for lyr in sub_weights.layers if lyr.name == layer.name), None
-        )
+        layer_weights = next((lyr for lyr in sub_weights.layers if lyr.name == layer.name), None)
         if not layer_weights:
             logger.warning(
-                "The weights file '%s' for layer '%s' does not contain weights for "
-                "'%s'. Skipping",
+                "The weights file '%s' for layer '%s' does not contain weights for '%s'. Skipping",
                 self._weights_file,
                 model_name,
                 layer.name,

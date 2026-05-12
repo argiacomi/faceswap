@@ -6,8 +6,7 @@ a multiprocess on a Windows System it will break Faceswap"""
 
 import logging
 import threading
-
-from queue import Queue, Empty as QueueEmpty  # pylint:disable=unused-import; # noqa
+from queue import Queue  # pylint:disable=unused-import; # noqa
 from time import sleep
 
 from lib.utils import get_module_objects
@@ -162,9 +161,7 @@ class _QueueManager:
         update_interval: int, Optional
             The number of seconds between printing information to the console. Default: 2
         """
-        thread = threading.Thread(
-            target=self._debug_queue_sizes, args=(update_interval,)
-        )
+        thread = threading.Thread(target=self._debug_queue_sizes, args=(update_interval,))
         thread.daemon = True
         thread.start()
 

@@ -29,7 +29,6 @@ from lib.config import ConfigItem
 # pylint:disable=duplicate-code
 from lib.config import ConfigItem
 
-
 HELPTEXT = (
     "BiSeNet Face Parsing options.\n"
     "Mask ported from https://github.com/zllrunning/face-parsing.PyTorch."

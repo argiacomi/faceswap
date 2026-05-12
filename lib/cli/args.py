@@ -9,8 +9,8 @@ import sys
 import textwrap
 import typing as T
 
-from lib.utils import get_backend, get_module_objects
 from lib.gpu_stats import GPUStats
+from lib.utils import get_backend, get_module_objects
 
 from .actions import FileFullPaths, MultiOption, SaveFileFullPaths
 from .launcher import ScriptExecutor
@@ -18,10 +18,7 @@ from .launcher import ScriptExecutor
 logger = logging.getLogger(__name__)
 
 
-if GPUStats is None:
-    _GPUS = []
-else:
-    _GPUS = GPUStats().cli_devices
+_GPUS = [] if GPUStats is None else GPUStats().cli_devices
 
 # LOCALES
 _LANG = gettext.translation("lib.cli.args", localedir="locales", fallback=True)
@@ -203,7 +200,8 @@ class FaceSwapArgs:
                     "choices": [str(idx) for idx in range(len(_GPUS))],
                     "group": _("Global Options"),
                     "help": _(
-                        "R|Exclude GPUs from use by Faceswap. Select the number(s) which correspond "
+                        "R|Exclude GPUs from use by Faceswap. Select the number(s) which "
+                        "correspond "
                         "to any GPU(s) that you do not wish to be made available to Faceswap. "
                         "Selecting all GPUs here will force Faceswap into CPU mode."
                         "\nL|{}".format(" \nL|".join(_GPUS))
@@ -232,7 +230,8 @@ class FaceSwapArgs:
                 "choices": ("INFO", "VERBOSE", "DEBUG", "TRACE"),
                 "group": _("Global Options"),
                 "help": _(
-                    "Log level. Stick with INFO or VERBOSE unless you need to file an error report. "
+                    "Log level. Stick with INFO or VERBOSE unless you need to file an error "
+                    "report. "
                     "Be careful with TRACE as it will generate a lot of data"
                 ),
             }
@@ -299,11 +298,7 @@ class FaceSwapArgs:
         options = self.global_arguments + self.argument_list + self.optional_arguments
         for option in options:
             args = option["opts"]
-            kwargs = {
-                key: option[key]
-                for key in option.keys()
-                if key not in ("opts", "group")
-            }
+            kwargs = {key: option[key] for key in option if key not in ("opts", "group")}
             self.parser.add_argument(*args, **kwargs)
 
     def _process_suppressions(self) -> None:
@@ -321,7 +316,7 @@ class FaceSwapArgs:
                 if opts.get("backend", None) is None:
                     continue
                 opt_backend = opts.pop("backend")
-                if isinstance(opt_backend, (list, tuple)):
+                if isinstance(opt_backend, list | tuple):
                     opt_backend = [backend.lower() for backend in opt_backend]
                 else:
                     opt_backend = [opt_backend.lower()]

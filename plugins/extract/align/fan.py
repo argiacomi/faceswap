@@ -5,21 +5,20 @@ https://github.com/1adrianb/face-alignment
 """
 
 from __future__ import annotations
+
 import logging
 import typing as T
 
 import numpy as np
-
 import torch
 from torch import nn
 from torch.nn import functional as F
 
-from lib.utils import get_module_objects, GetModel
+from lib.utils import GetModel, get_module_objects
 from plugins.extract.base import ExtractPlugin
 
 from . import fan_defaults as cfg
 from .dark_decoder import Dark
-
 
 logger = logging.getLogger(__name__)
 
@@ -180,13 +179,9 @@ class ConvBlock(nn.Module):
         self.bn1 = nn.BatchNorm2d(num_in)
         self.conv1 = nn.Conv2d(num_in, num_out // 2, 3, stride=1, padding=1, bias=False)
         self.bn2 = nn.BatchNorm2d(num_out // 2)
-        self.conv2 = nn.Conv2d(
-            num_out // 2, num_out // 4, 3, stride=1, padding=1, bias=False
-        )
+        self.conv2 = nn.Conv2d(num_out // 2, num_out // 4, 3, stride=1, padding=1, bias=False)
         self.bn3 = nn.BatchNorm2d(num_out // 4)
-        self.conv3 = nn.Conv2d(
-            num_out // 4, num_out // 4, 3, stride=1, padding=1, bias=False
-        )
+        self.conv3 = nn.Conv2d(num_out // 4, num_out // 4, 3, stride=1, padding=1, bias=False)
         self.downsample = None
         if num_in != num_out:
             self.downsample = nn.Sequential(
@@ -244,13 +239,9 @@ class HourGlass(nn.Module):
             The depth of the hour-glass network
         """
         for i in range(self._num_modules):
-            self.add_module(
-                f"b1_{level}_{i}", ConvBlock(self._num_features, self._num_features)
-            )
+            self.add_module(f"b1_{level}_{i}", ConvBlock(self._num_features, self._num_features))
         for i in range(self._num_modules):
-            self.add_module(
-                f"b2_{level}_{i}", ConvBlock(self._num_features, self._num_features)
-            )
+            self.add_module(f"b2_{level}_{i}", ConvBlock(self._num_features, self._num_features))
 
         if level > 1:
             self._generate_network(level - 1)
@@ -262,9 +253,7 @@ class HourGlass(nn.Module):
                 )
 
         for i in range(self._num_modules):
-            self.add_module(
-                f"b3_{level}_{i}", ConvBlock(self._num_features, self._num_features)
-            )
+            self.add_module(f"b3_{level}_{i}", ConvBlock(self._num_features, self._num_features))
 
     def _forward(self, level: int, inputs: torch.Tensor) -> torch.Tensor:
         """Forward pass through FAN's hour-glass network

@@ -4,9 +4,8 @@
 Adapted from Keras tests.
 """
 
-import pytest
 import numpy as np
-
+import pytest
 import torch
 
 from lib.model.losses.loss import (
@@ -16,9 +15,7 @@ from lib.model.losses.loss import (
     LaplacianPyramidLoss,
     LInfNorm,
 )
-
 from lib.utils import get_backend
-
 
 _PARAMS = (
     (FocalFrequencyLoss, 1.0),

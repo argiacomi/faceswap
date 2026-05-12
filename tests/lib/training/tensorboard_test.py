@@ -3,10 +3,9 @@
 
 import os
 
-import pytest
-
-from keras import layers, Sequential
 import numpy as np
+import pytest
+from keras import Sequential, layers
 from tensorboard.compat.proto import event_pb2
 from torch.utils.tensorboard import SummaryWriter
 
@@ -20,12 +19,18 @@ def _gen_events_file(tmpdir):
     log_dir = tmpdir.mkdir("logs")
 
     def _apply(
-        keys=["test1"],  # pylint:disable=dangerous-default-value
-        values=[0.42],
-        global_steps=[4],
+        keys=None,  # pylint:disable=dangerous-default-value
+        values=None,
+        global_steps=None,
     ):
+        if global_steps is None:
+            global_steps = [4]
+        if values is None:
+            values = [0.42]
+        if keys is None:
+            keys = ["test1"]
         writer = SummaryWriter(log_dir)
-        for key, val, step in zip(keys, values, global_steps):
+        for key, val, step in zip(keys, values, global_steps, strict=False):
             writer.add_scalar(key, val, global_step=step)
         writer.flush()
         return os.path.join(log_dir, os.listdir(log_dir)[0])
@@ -56,7 +61,7 @@ def test_RecordIterator(entries, batch, is_live, _gen_events_file):
     valid = [r for r in results if r.summary.value]
 
     assert len(valid) == len(keys)
-    for entry, key, val, btc in zip(valid, keys, vals, batches):
+    for entry, key, val, btc in zip(valid, keys, vals, batches, strict=False):
         assert len(entry.summary.value) == 1
         assert entry.step == btc
         assert entry.summary.value[0].tag == key
@@ -94,9 +99,7 @@ def _get_logs(temp_path):
     return records
 
 
-@pytest.mark.parametrize(
-    "write_graph", (True, False), ids=("write_graph", "no_write_graph")
-)
+@pytest.mark.parametrize("write_graph", (True, False), ids=("write_graph", "no_write_graph"))
 def test_TorchTensorBoard_set_model(write_graph, _get_ttb_instance):
     """Test that :class:`lib.training.tensorboard.set_model` functions"""
     log_dir, instance = _get_ttb_instance(write_graph=write_graph)
@@ -151,7 +154,7 @@ def test_TorchTensorBoard_on_train_batch_end(batch, logs, _get_ttb_instance):
     tb_logs = [x for x in _get_logs(os.path.join(log_dir)) if x.summary.value]
 
     assert len(tb_logs) == len(logs)
-    for (k, v), out in zip(logs.items(), tb_logs):
+    for (k, v), out in zip(logs.items(), tb_logs, strict=False):
         assert len(out.summary.value) == 1
         assert out.summary.value[0].tag == f"batch_{k}"
         assert np.isclose(out.summary.value[0].simple_value, v)

@@ -92,9 +92,7 @@ class ICNR(initializers.Initializer):
 
         var_x = self._initializer(new_shape, dtype)
         var_x = ops.transpose(var_x, [2, 0, 1, 3])
-        var_x = ops.image.resize(
-            var_x, size, interpolation="nearest", data_format="channels_last"
-        )
+        var_x = ops.image.resize(var_x, size, interpolation="nearest", data_format="channels_last")
         var_x = self._space_to_depth(T.cast("KerasTensor", var_x))
         var_x = ops.transpose(var_x, [1, 2, 0, 3])
 
@@ -207,9 +205,7 @@ class ConvolutionAware(initializers.Initializer):
         logger.debug("Input shape: %s. Output shape: %s", inputs.shape, retval.shape)
         return retval
 
-    def _create_basis(
-        self, filters_size: int, filters: int, size: int, dtype: str
-    ) -> np.ndarray:
+    def _create_basis(self, filters_size: int, filters: int, size: int, dtype: str) -> np.ndarray:
         """Create the basis for convolutional aware initialization
 
         Parameters
@@ -232,9 +228,7 @@ class ConvolutionAware(initializers.Initializer):
         var_a = np.random.normal(0.0, 1.0, (filters_size, nbb, size, size))
         var_a = self._symmetrize(var_a)
         var_u = np.linalg.svd(var_a)[0].transpose(0, 1, 3, 2)
-        retval = np.reshape(var_u, (filters_size, nbb * size, size))[
-            :, :filters, :
-        ].astype(dtype)
+        retval = np.reshape(var_u, (filters_size, nbb * size, size))[:, :filters, :].astype(dtype)
         logger.debug(
             "filters_size: %s, filters: %s, size: %s, dtype: %s, output: %s",
             filters_size,
@@ -291,9 +285,7 @@ class ConvolutionAware(initializers.Initializer):
         :class:`keras.Variable`
             The modified kernel weights
         """
-        if (
-            self._initialized
-        ):  # Avoid re-calculating initializer when loading a saved model
+        if self._initialized:  # Avoid re-calculating initializer when loading a saved model
             return T.cast("Variable", self._he_uniform(shape, dtype=dtype))
         dtype = K.floatx() if dtype is None else dtype
         logger.info("Calculating Convolution Aware Initializer for shape: %s", shape)
@@ -354,9 +346,7 @@ class ConvolutionAware(initializers.Initializer):
         init = correct_ifft(basis, kernel_shape) + randoms
         init = self._scale_filters(init, variance)
         self._initialized = True
-        retval = Variable(
-            init.transpose(transpose_dimensions), dtype=dtype, name="conv_aware"
-        )
+        retval = Variable(init.transpose(transpose_dimensions), dtype=dtype, name="conv_aware")
         logger.debug("ConvAware output: %s", retval)
         return retval
 

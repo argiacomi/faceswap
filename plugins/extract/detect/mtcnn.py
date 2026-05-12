@@ -2,20 +2,19 @@
 """MTCNN Face detection plugin"""
 
 from __future__ import annotations
+
 import logging
 
 import cv2
 import numpy as np
-
 import torch
 from torch import nn
 
 from lib.logger import parse_class_init
-from lib.utils import get_module_objects, GetModel
+from lib.utils import GetModel, get_module_objects
 from plugins.extract.base import ExtractPlugin
 
 from . import mtcnn_defaults as cfg
-
 
 logger = logging.getLogger(__name__)
 
@@ -45,9 +44,7 @@ class MTCNN(ExtractPlugin):
             )
             cfg.min_size.set(cfg.min_size.default)
 
-        for idx, threshold in enumerate(
-            (cfg.threshold_1, cfg.threshold_2, cfg.threshold_3)
-        ):
+        for idx, threshold in enumerate((cfg.threshold_1, cfg.threshold_2, cfg.threshold_3)):
             if not 0.0 < threshold() <= 1.0:
                 logger.warning(
                     "Invalid MTCNN config value 'threshold_%s': %s. Reset to %s",
@@ -274,8 +271,7 @@ class PNetRunner:
 
         self._pnet_scales = self._calculate_scales(min_size, factor)
         self._pnet_sizes = [
-            (int(input_size * scale), int(input_size * scale))
-            for scale in self._pnet_scales
+            (int(input_size * scale), int(input_size * scale)) for scale in self._pnet_scales
         ]
         logger.debug("Initialized: %s", self.__class__.__name__)
 
@@ -378,7 +374,7 @@ class PNetRunner:
         ]
 
         for scale, batch, (r_height, r_width) in zip(
-            self._pnet_scales, pnet_input, self._pnet_sizes
+            self._pnet_scales, pnet_input, self._pnet_sizes, strict=False
         ):
             for idx in range(batch_size):
                 cv2.resize(images[idx], (r_width, r_height), dst=batch[idx])
@@ -401,7 +397,7 @@ class PNetRunner:
 
         return [
             nms(np.array(rect), np.array(score), 0.7, "iou")[0]  # don't output scores
-            for rect, score in zip(rectangles, scores)
+            for rect, score in zip(rectangles, scores, strict=False)
         ]
 
 
@@ -534,7 +530,7 @@ class RNetRunner:
         Refined face candidates from R-Net
         """
         ret: list[np.ndarray] = []
-        for idx, (rectangles, image) in enumerate(zip(rectangle_batch, images)):
+        for idx, (rectangles, image) in enumerate(zip(rectangle_batch, images, strict=False)):
             if not np.any(rectangles):
                 ret.append(np.array([]))
                 continue
@@ -588,9 +584,7 @@ class ONet(nn.Module):  # pylint:disable=too-many-instance-attributes
         self.dense6_3 = nn.Linear(256, 10)
         self.load_state_dict(torch.load(weights_path, map_location="cpu"))
 
-    def forward(
-        self, inputs: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(self, inputs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Keras O-Network Definition for MTCNN
 
         Parameters
@@ -687,9 +681,7 @@ class ONetRunner:
         )
         pts = np.tile(dims, (1, 5)) * pts + np.tile(bbox[..., :2], (1, 5))
 
-        bbox = np.clip(
-            np.floor(bbox + roi[pick] * np.tile(dims, (1, 2))), 0.0, self._input_size
-        )
+        bbox = np.clip(np.floor(bbox + roi[pick] * np.tile(dims, (1, 2))), 0.0, self._input_size)
 
         indices = np.where(
             np.logical_and(bbox[..., 2] > bbox[..., 0], bbox[..., 3] > bbox[..., 1])
@@ -697,9 +689,7 @@ class ONetRunner:
         picks = np.concatenate([bbox[indices], pts[indices]], axis=-1)
 
         results, scores = nms(picks, scores, 0.3, "iom")
-        return np.concatenate([results[..., :4], scores[..., None]], axis=-1), results[
-            ..., 4:
-        ].T
+        return np.concatenate([results[..., :4], scores[..., None]], axis=-1), results[..., 4:].T
 
     def __call__(
         self, images: np.ndarray, rectangle_batch: list[np.ndarray]
@@ -726,20 +716,14 @@ class ONetRunner:
             batch = np.empty((rectangles.shape[0], 48, 48, 3), dtype="float32")
 
             for i, rect in enumerate(rectangles):
-                cv2.resize(
-                    image[rect[1] : rect[3], rect[0] : rect[2]], (48, 48), dst=batch[i]
-                )
+                cv2.resize(image[rect[1] : rect[3], rect[0] : rect[2]], (48, 48), dst=batch[i])
 
             feed = torch.from_numpy(batch.transpose(0, 3, 1, 2)).to(
                 self.device, memory_format=torch.channels_last
             )
             with torch.inference_mode():
-                cls_probs, roi_probs, pts_probs = (
-                    t.cpu().numpy() for t in self._model(feed)
-                )
-            ret.append(
-                self._filter_face_48net(cls_probs, roi_probs, pts_probs, rectangles)
-            )
+                cls_probs, roi_probs, pts_probs = (t.cpu().numpy() for t in self._model(feed))
+            ret.append(self._filter_face_48net(cls_probs, roi_probs, pts_probs, rectangles))
         return ret
 
 
@@ -796,7 +780,7 @@ class MTCNNModel:
         rectangles = self._pnet(batch)
         rectangles = self._rnet(batch, rectangles)
 
-        ret_boxes, ret_points = zip(*self._onet(batch, rectangles))
+        ret_boxes, ret_points = zip(*self._onet(batch, rectangles), strict=False)
         return np.array(ret_boxes, dtype="object"), ret_points
 
 

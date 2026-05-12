@@ -4,8 +4,8 @@
 # pylint:disable=too-many-lines
 from __future__ import annotations
 
-import logging
 import json
+import logging
 import os
 import re
 import sys
@@ -17,12 +17,13 @@ from subprocess import PIPE, Popen, check_call
 
 from lib.logger import log_setup
 from lib.system import Cuda, Packages, ROCm, System
-from lib.utils import get_module_objects, PROJECT_ROOT
-from requirements.requirements import Requirements, PYTHON_VERSIONS
+from lib.utils import PROJECT_ROOT, get_module_objects
+from requirements.requirements import PYTHON_VERSIONS, Requirements
 
 if T.TYPE_CHECKING:
-    from packaging.requirements import Requirement
     import pip
+    from packaging.requirements import Requirement
+
     import lib.utils as lib_utils
 
 logger = logging.getLogger(__name__)
@@ -68,9 +69,7 @@ class Environment:
         logger.debug("Running on: %s", self.system)
         if not updater:
             self.system.validate()
-        self.is_installer: bool = (
-            False  # Flag setup is being run by installer to skip steps
-        )
+        self.is_installer: bool = False  # Flag setup is being run by installer to skip steps
         self.include_dev_tools: bool = False
         self.backend: T.Literal["nvidia", "apple_silicon", "cpu", "rocm"] | None = None
         self.enable_docker: bool = False
@@ -91,9 +90,7 @@ class Environment:
         """str : The detected globally installed cuDNN Version"""
         return self.cuda_cudnn[1]
 
-    def set_backend(
-        self, backend: T.Literal["nvidia", "apple_silicon", "cpu", "rocm"]
-    ) -> None:
+    def set_backend(self, backend: T.Literal["nvidia", "apple_silicon", "cpu", "rocm"]) -> None:
         """Set the backend to install for
 
         Parameters
@@ -150,9 +147,7 @@ class Environment:
             return
         lookup = [r.replace("_", "") for r in req_files]
         if arg not in lookup:
-            logger.debug(
-                "Defaulting to latest requirements for unknown lookup '%s'", arg
-            )
+            logger.debug("Defaulting to latest requirements for unknown lookup '%s'", arg)
             self.set_requirements(req_files[-1])
             return
         self.set_requirements(req_files[lookup.index(arg)])
@@ -201,9 +196,7 @@ class Environment:
                     logger.info("Installing pip...")
                     check_call([sys.executable, "-m", "ensurepip", "--default-pip"])
                     continue
-                logger.error(
-                    "Import pip failed. Please Install python3-pip and try again"
-                )
+                logger.error("Import pip failed. Please Install python3-pip and try again")
                 sys.exit(1)
         logger.info("Pip version: %s", _pip.__version__)  # type:ignore[attr-defined]
 
@@ -222,7 +215,7 @@ class Environment:
         config = {}
         if os.path.exists(conf_file):
             try:
-                with open(conf_file, "r", encoding="utf-8") as c_file:
+                with open(conf_file, encoding="utf-8") as c_file:
                     config = json.load(c_file)
             except ValueError:
                 pass
@@ -344,8 +337,7 @@ class RequiredPackages:
         )
         if not to_add:
             logger.debug(
-                "No packages to add for '%s'('%s'). All backend packages: %s. All OS "
-                "packages: %s",
+                "No packages to add for '%s'('%s'). All backend packages: %s. All OS packages: %s",
                 self._env.backend,
                 self._env.system,
                 _CONDA_BACKEND_REQUIRED,
@@ -377,14 +369,10 @@ class RequiredPackages:
         if not self._env.system.is_conda:
             return retval
         required = self._get_required_conda()
-        requirements = self._requirements.parse_requirements(
-            [p["package"] for p in required]
-        )
+        requirements = self._requirements.parse_requirements([p["package"] for p in required])
         channels = [p["channel"] for p in required]
-        installed = {
-            k: v for k, v in self._packages.installed_conda.items() if v[1] != "pypi"
-        }
-        for req, channel in zip(requirements, channels):
+        installed = {k: v for k, v in self._packages.installed_conda.items() if v[1] != "pypi"}
+        for req, channel in zip(requirements, channels, strict=False):
             spec_str = str(req.specifier).replace("==", "=") if req.specifier else ""
             package: dict[T.Literal["name", "package"], str] = {
                 "name": req.name.title(),
@@ -395,12 +383,8 @@ class RequiredPackages:
                 # Default TK has bad fonts under Linux.
                 # Ref: https://github.com/ContinuumIO/anaconda-issues/issues/6833
                 # This versioning will fail in parse_requirements, so we need to do it here
-                package["package"] = (
-                    f"{req.name}=*=xft_*"  # Swap out for explicit XFT version
-                )
-                if exists is not None and not exists[1].startswith(
-                    "xft"
-                ):  # Replace no-xft vers
+                package["package"] = f"{req.name}=*=xft_*"  # Swap out for explicit XFT version
+                if exists is not None and not exists[1].startswith("xft"):  # Replace no-xft vers
                     exists = None
             if not exists:
                 logger.debug("Adding new Conda package '%s'", package["package"])
@@ -472,7 +456,7 @@ class Checks:  # pylint:disable=too-few-public-methods
         self._env.set_backend("rocm")
         versions = ["6.0", "6.1", "6.2", "6.3", "6.4"]
         i = input(f"Which ROCm version? [{', '.join(versions)}] ").strip()
-        i = versions[-1] if not i else i
+        i = i if i else versions[-1]
         print(i, i in versions, versions)
         if i not in versions:
             logger.warning("Invalid selection '%s'", i)
@@ -511,7 +495,7 @@ class Checks:  # pylint:disable=too-few-public-methods
             "Which Cuda version: 11 (GTX7xx-8xx), 12 (GTX9xx-10xx) or 13 (RTX20xx-)? "
             f"[{', '.join(versions)}] "
         ).strip()
-        i = "13" if not i else i
+        i = i if i else "13"
         if i not in versions:
             logger.warning("Invalid selection '%s'", i)
             self._cuda_ask_enable()
@@ -572,9 +556,7 @@ class Checks:  # pylint:disable=too-few-public-methods
             self._env.cuda_cudnn[0] = str_vers
             logger.debug("CUDA version: %s", self._env.cuda_version)
         if cuda.cudnn_versions:
-            str_vers = ", ".join(
-                ".".join(str(x) for x in v) for v in cuda.cudnn_versions.values()
-            )
+            str_vers = ", ".join(".".join(str(x) for x in v) for v in cuda.cudnn_versions.values())
             msg = (
                 "Globally installed CuDNN version"
                 f"{'s' if len(cuda.cudnn_versions) > 1 else ''} {str_vers} found. PyTorch uses "
@@ -594,9 +576,7 @@ class Checks:  # pylint:disable=too-few-public-methods
 
         if rocm.is_valid or rocm.valid_installed:
             self._env.rocm_version = max(rocm.valid_versions)
-            logger.info(
-                "ROCm version: %s", ".".join(str(v) for v in self._env.rocm_version)
-            )
+            logger.info("ROCm version: %s", ".".join(str(v) for v in self._env.rocm_version))
         if rocm.is_valid:
             return
         if rocm.valid_installed:
@@ -638,13 +618,9 @@ class Status:
         self._max_width = 79  # Keep short because of NSIS Details window size
         self._prefix = "> "
         self._conda_tracked: dict[str, dict[T.Literal["size", "done"], float]] = {}
-        self._re_pip_pkg = re.compile(
-            r"^Downloading\s(?P<lib>\w+)\b.*?\s\((?P<size>.+)\)"
-        )
+        self._re_pip_pkg = re.compile(r"^Downloading\s(?P<lib>\w+)\b.*?\s\((?P<size>.+)\)")
         self._re_pip_http = re.compile(r"https?://[^\s]*/([^/\s]+)")
-        self._re_pip_progress = re.compile(
-            r"^Progress\s+(?P<done>\d+).+?(?P<total>\d+)"
-        )
+        self._re_pip_progress = re.compile(r"^Progress\s+(?P<done>\d+).+?(?P<total>\d+)")
         self._re_conda = re.compile(
             r"(?P<lib>^\S+)\s+\|\s+(?P<tot>\d+\.?\d*\s\w+).*\|\s+(?P<prg>\d+)%"
         )
@@ -1010,8 +986,7 @@ class Install:  # pylint:disable=too-few-public-methods
         ret_code = Installer(self._env, names, conda_exe, True, self._is_gui)()
         if ret_code != 0:
             logger.warning(
-                "Unable to install Conda packages: %s. "
-                "Please install these packages manually",
+                "Unable to install Conda packages: %s. Please install these packages manually",
                 ", ".join(names),
             )
             _InstallState.failed = True
@@ -1127,9 +1102,7 @@ class Tips:
 
 
 if __name__ == "__main__":
-    logfile = os.path.join(
-        os.path.dirname(os.path.realpath(sys.argv[0])), "faceswap_setup.log"
-    )
+    logfile = os.path.join(os.path.dirname(os.path.realpath(sys.argv[0])), "faceswap_setup.log")
     log_setup("INFO", logfile, "setup")
     logger.debug("Setup called with args: %s", sys.argv)
     ENV = Environment()

@@ -29,7 +29,6 @@ from lib.config import ConfigItem
 # pylint:disable=duplicate-code
 from lib.config import ConfigItem
 
-
 HELPTEXT = (
     "UNET_DFL options. Mask designed to provide smart segmentation of mostly frontal faces.\n"
     "The mask model has been trained by community members.  Profile faces may result in sub-par "

@@ -3,7 +3,6 @@
 from the :class:`_GPUStats` class contained here."""
 
 import logging
-
 from dataclasses import dataclass
 
 from lib.utils import get_backend
@@ -79,9 +78,7 @@ class _GPUStats:
     def __init__(self, log: bool = True) -> None:
         # Logger is held internally, as we don't want to log when obtaining system stats on crash
         # or when querying the backend for command line options
-        self._logger: logging.Logger | None = (
-            logging.getLogger(__name__) if log else None
-        )
+        self._logger: logging.Logger | None = logging.getLogger(__name__) if log else None
         self._log("debug", f"Initializing {self.__class__.__name__}")
 
         self._is_initialized = False
@@ -172,9 +169,7 @@ class _GPUStats:
         -------
         The list of device indices that are available for Faceswap to use
         """
-        devices = [
-            idx for idx in range(self._device_count) if idx not in _EXCLUDE_DEVICES
-        ]
+        devices = [idx for idx in range(self._device_count) if idx not in _EXCLUDE_DEVICES]
         self._log("debug", f"Active GPU Devices: {devices}")
         return devices
 

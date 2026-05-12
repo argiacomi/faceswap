@@ -2,6 +2,7 @@
 """Utilities for handling images in the Faceswap GUI"""
 
 from __future__ import annotations
+
 import logging
 import os
 import typing as T
@@ -14,7 +15,7 @@ from lib.gui import gui_config as cfg
 from lib.training.preview_cv import PreviewBuffer
 from lib.utils import get_module_objects
 
-from .config import get_config, PATH_CACHE
+from .config import PATH_CACHE, get_config
 
 if T.TYPE_CHECKING:
     from collections.abc import Sequence
@@ -38,7 +39,7 @@ def initialize_images() -> None:
     _IMAGES = Images()
 
 
-def get_images() -> "Images":
+def get_images() -> Images:
     """Get the Master GUI Images handler.
 
     Returns
@@ -87,9 +88,7 @@ class PreviewTrain:
     """
 
     def __init__(self, cache_path: str) -> None:
-        logger.debug(
-            "Initializing %s: (cache_path: '%s')", self.__class__.__name__, cache_path
-        )
+        logger.debug("Initializing %s: (cache_path: '%s')", self.__class__.__name__, cache_path)
         self._buffer = PreviewBuffer()
         self._cache_path = cache_path
         self._modified: float = 0.0
@@ -107,11 +106,7 @@ class PreviewTrain:
         logger.trace("Loading Training preview images")  # type:ignore
         image_files = _get_previews(self._cache_path)
         filename = next(
-            (
-                fname
-                for fname in image_files
-                if os.path.basename(fname) == TRAINING_PREVIEW
-            ),
+            (fname for fname in image_files if os.path.basename(fname) == TRAINING_PREVIEW),
             "",
         )
         img: np.ndarray | None = None
@@ -178,9 +173,7 @@ class PreviewExtract:
     """
 
     def __init__(self, cache_path: str) -> None:
-        logger.debug(
-            "Initializing %s: (cache_path: '%s')", self.__class__.__name__, cache_path
-        )
+        logger.debug("Initializing %s: (cache_path: '%s')", self.__class__.__name__, cache_path)
         self._cache_path = cache_path
 
         self._batch_mode = False
@@ -272,18 +265,12 @@ class PreviewExtract:
         if not self._modified:
             retval = image_files
         else:
-            retval = [
-                fname
-                for fname in image_files
-                if os.path.getmtime(fname) > self._modified
-            ]
+            retval = [fname for fname in image_files if os.path.getmtime(fname) > self._modified]
         if not retval:
             logger.debug("No new images in output folder")
         else:
             self._modified = max(os.path.getmtime(img) for img in retval)
-            logger.debug(
-                "Number new images: %s, Last Modified: %s", len(retval), self._modified
-            )
+            logger.debug("Number new images: %s, Last Modified: %s", len(retval), self._modified)
         return retval
 
     def _pad_and_border(self, image: Image.Image, size: int) -> np.ndarray:
@@ -304,9 +291,7 @@ class PreviewExtract:
         if image.size[0] != image.size[1]:
             # Pad to square
             new_img = Image.new("RGB", (size, size))
-            new_img.paste(
-                image, ((size - image.size[0]) // 2, (size - image.size[1]) // 2)
-            )
+            new_img.paste(image, ((size - image.size[0]) // 2, (size - image.size[1]) // 2))
             image = new_img
         draw = ImageDraw.Draw(image)
         draw.rectangle(((0, 0), (size, size)), outline="#E5E5E5", width=1)
@@ -384,16 +369,12 @@ class PreviewExtract:
             frame_dims,
             thumbnail_size,
         )
-        num_images = (frame_dims[0] // thumbnail_size) * (
-            frame_dims[1] // thumbnail_size
-        )
+        num_images = (frame_dims[0] // thumbnail_size) * (frame_dims[1] // thumbnail_size)
         logger.debug("num_images: %s", num_images)
         if num_images == 0:
             return False
         samples: list[np.ndarray] = []
-        start_idx = (
-            len(image_files) - num_images if len(image_files) > num_images else 0
-        )
+        start_idx = len(image_files) - num_images if len(image_files) > num_images else 0
         show_files = sorted(image_files, key=os.path.getctime)[start_idx:]
         dropped_files = []
         for fname in show_files:
@@ -420,9 +401,7 @@ class PreviewExtract:
 
             width, height = img_file.size
             scaling = thumbnail_size / max(width, height)
-            logger.debug(
-                "image width: %s, height: %s, scaling: %s", width, height, scaling
-            )
+            logger.debug("image width: %s, height: %s, scaling: %s", width, height, scaling)
 
             try:
                 img = img_file.resize((int(width * scaling), int(height * scaling)))
@@ -456,9 +435,7 @@ class PreviewExtract:
         logger.debug("Creating placeholder. thumbnail_size: %s", thumbnail_size)
         placeholder = Image.new("RGB", (thumbnail_size, thumbnail_size))
         draw = ImageDraw.Draw(placeholder)
-        draw.rectangle(
-            ((0, 0), (thumbnail_size, thumbnail_size)), outline="#E5E5E5", width=1
-        )
+        draw.rectangle(((0, 0), (thumbnail_size, thumbnail_size)), outline="#E5E5E5", width=1)
         n_placeholder = np.array(placeholder)
         self._placeholder = n_placeholder
         logger.debug("Created placeholder. shape: %s", n_placeholder.shape)
@@ -496,9 +473,7 @@ class PreviewExtract:
         if remainder != 0:
             logger.debug("Padding sample display. Remainder: %s", remainder)
             assert self._placeholder is not None
-            placeholder = np.concatenate(
-                [np.expand_dims(self._placeholder, 0)] * remainder
-            )
+            placeholder = np.concatenate([np.expand_dims(self._placeholder, 0)] * remainder)
             samples = np.concatenate((samples, placeholder))
 
         display = np.vstack(
@@ -510,9 +485,7 @@ class PreviewExtract:
         logger.debug("display shape: %s", display.shape)
         return Image.fromarray(display)
 
-    def load_latest_preview(
-        self, thumbnail_size: int, frame_dims: tuple[int, int]
-    ) -> bool:
+    def load_latest_preview(self, thumbnail_size: int, frame_dims: tuple[int, int]) -> bool:
         """Load the latest preview image for extract and convert.
 
         Retrieves the latest preview images from the faceswap output folder, resizes to thumbnails
@@ -536,14 +509,10 @@ class PreviewExtract:
             thumbnail_size,
             frame_dims,
         )
-        image_path = (
-            self._get_newest_folder() if self._batch_mode else self._output_path
-        )
+        image_path = self._get_newest_folder() if self._batch_mode else self._output_path
         image_files = _get_previews(image_path)
         gui_preview = os.path.join(self._output_path, ".gui_preview.jpg")
-        if not image_files or (
-            len(image_files) == 1 and gui_preview not in image_files
-        ):
+        if not image_files or (len(image_files) == 1 and gui_preview not in image_files):
             logger.debug("No preview to display")
             return False
         # Filter to just the gui_preview if it exists in folder output
@@ -649,9 +618,7 @@ class Images:
             if ext != ".png":
                 continue
             img = Image.open(os.path.join(path_icons, fname))
-            p_img = ImageTk.PhotoImage(
-                img.resize((size, size), resample=Image.Resampling.HAMMING)
-            )
+            p_img = ImageTk.PhotoImage(img.resize((size, size), resample=Image.Resampling.HAMMING))
             icons[name] = p_img
         logger.debug(icons)
         return icons
@@ -711,9 +678,7 @@ class PreviewTrigger:
                 pass
             logger.debug("Set preview trigger: %s", trigger)
 
-    def clear(
-        self, trigger_type: T.Literal["update", "mask_toggle"] | None = None
-    ) -> None:
+    def clear(self, trigger_type: T.Literal["update", "mask_toggle"] | None = None) -> None:
         """Remove the trigger file from the cache folder.
 
         Parameters

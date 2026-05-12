@@ -56,8 +56,7 @@ class AutoClipper:
             The autoclipped gradients
         """
         self._grad_history.append(
-            sum(g.data.norm(2).item() ** 2 for g in gradients if g is not None)
-            ** (1.0 / 2)
+            sum(g.data.norm(2).item() ** 2 for g in gradients if g is not None) ** (1.0 / 2)
         )
         self._grad_history = self._grad_history[-self._history_size :]
         clip_value = np.percentile(self._grad_history, self._clip_percentile)

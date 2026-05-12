@@ -2,7 +2,6 @@
 """Pytest unit tests for :mod:`lib.gpu_stats._base`"""
 
 import typing as T
-
 from dataclasses import dataclass
 from unittest.mock import MagicMock
 
@@ -38,17 +37,11 @@ def fixture__gpu_stats_instance(mocker: pytest_mock.MockerFixture) -> _GPUStats:
     """
     mocker.patch.object(_GPUStats, "_initialize")
     mocker.patch.object(_GPUStats, "_shutdown")
-    mocker.patch.object(
-        _GPUStats, "_get_device_count", return_value=_DummyData.device_count
-    )
-    mocker.patch.object(
-        _GPUStats, "_get_active_devices", return_value=_DummyData.active_devices
-    )
+    mocker.patch.object(_GPUStats, "_get_device_count", return_value=_DummyData.device_count)
+    mocker.patch.object(_GPUStats, "_get_active_devices", return_value=_DummyData.active_devices)
     mocker.patch.object(_GPUStats, "_get_handles", return_value=_DummyData.handles)
     mocker.patch.object(_GPUStats, "_get_driver", return_value=_DummyData.driver)
-    mocker.patch.object(
-        _GPUStats, "_get_device_names", return_value=_DummyData.device_names
-    )
+    mocker.patch.object(_GPUStats, "_get_device_names", return_value=_DummyData.device_names)
     mocker.patch.object(_GPUStats, "_get_vram", return_value=_DummyData.vram)
     mocker.patch.object(_GPUStats, "_get_free_vram", return_value=_DummyData.free_vram)
     gpu_stats = _GPUStats()

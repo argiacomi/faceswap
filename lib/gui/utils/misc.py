@@ -2,12 +2,12 @@
 """Miscellaneous Utility functions for the GUI. Includes LongRunningTask object"""
 
 from __future__ import annotations
+
 import logging
 import sys
 import typing as T
-
-from threading import Event, Thread
 from queue import Queue
+from threading import Event, Thread
 
 from lib.utils import get_module_objects
 
@@ -16,6 +16,7 @@ from .config import get_config
 if T.TYPE_CHECKING:
     from collections.abc import Callable
     from types import TracebackType
+
     from lib.multithreading import _ErrorType
 
 
@@ -60,9 +61,7 @@ class LongRunningTask(Thread):
             kwargs,
             daemon,
         )
-        super().__init__(
-            target=target, name=name, args=args, kwargs=kwargs, daemon=daemon
-        )
+        super().__init__(target=target, name=name, args=args, kwargs=kwargs, daemon=daemon)
         self.err: _ErrorType | None = None
         self._widget = widget
         self._config = get_config()
@@ -116,8 +115,7 @@ class LongRunningTask(Thread):
         """
         if not self._complete.is_set():
             logger.warning(
-                "Aborting attempt to retrieve result from a LongRunningTask that is "
-                "still running"
+                "Aborting attempt to retrieve result from a LongRunningTask that is still running"
             )
             return None
         if self.err:

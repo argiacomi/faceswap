@@ -10,13 +10,14 @@ It is a good starting point but may need to be refined over time
 
 import os
 import re
-from subprocess import run
 from shutil import which
+from subprocess import run
 
 import torch
 
 from lib.utils import get_module_objects
-from ._base import _GPUStats, _EXCLUDE_DEVICES
+
+from ._base import _EXCLUDE_DEVICES, _GPUStats
 
 _DEVICE_LOOKUP = {  # ref: https://gist.github.com/roalercon/51f13a387f3754615cce
     int("0x130F", 0): "AMD Radeon(TM) R7 Graphics",
@@ -248,7 +249,7 @@ class ROCm(_GPUStats):
             self._log("debug", f"File '{path}' does not exist. Returning empty string")
             return ""
         try:
-            with open(path, "r", encoding="utf-8", errors="ignore") as sys_file:
+            with open(path, encoding="utf-8", errors="ignore") as sys_file:
                 val = sys_file.read().strip()
         except PermissionError:
             self._log(
@@ -319,10 +320,7 @@ class ROCm(_GPUStats):
         -------
         The total number of GPUs available
         """
-        if self._is_wsl:
-            retval = torch.cuda.device_count()
-        else:
-            retval = len(self._sysfs_paths)
+        retval = torch.cuda.device_count() if self._is_wsl else len(self._sysfs_paths)
         self._log("debug", f"GPU Device count: {retval}")
         return retval
 
@@ -389,8 +387,7 @@ class ROCm(_GPUStats):
                 if name or number:  # product_name or product_number populated
                     self._log(
                         "debug",
-                        f"Got name from product_name: '{name}', product_number: "
-                        f"'{number}'",
+                        f"Got name from product_name: '{name}', product_number: '{number}'",
                     )
                     retval.append(f"{name + ' ' if name else ''}{number}")
                     continue
@@ -443,9 +440,7 @@ class ROCm(_GPUStats):
             if self._is_wsl:
                 vram = torch.cuda.get_device_properties(device).total_memory
             else:
-                query = self._from_sysfs_file(
-                    os.path.join(device, "mem_info_vram_total")
-                )
+                query = self._from_sysfs_file(os.path.join(device, "mem_info_vram_total"))
                 try:
                     vram = int(query)
                 except ValueError:
@@ -470,7 +465,7 @@ class ROCm(_GPUStats):
         """
         retval = []
         total_vram = self._get_vram()
-        for device, vram in zip(self._handles, total_vram):
+        for device, vram in zip(self._handles, total_vram, strict=False):
             if not vram:
                 retval.append(0)
                 continue
@@ -481,15 +476,11 @@ class ROCm(_GPUStats):
                 # than crashing
                 used = torch.cuda.memory_reserved(device)
             else:
-                query = self._from_sysfs_file(
-                    os.path.join(device, "mem_info_vram_used")
-                )
+                query = self._from_sysfs_file(os.path.join(device, "mem_info_vram_used"))
                 try:
                     used = int(query)
                 except ValueError:
-                    self._log(
-                        "debug", f"Couldn't extract used VRAM from string: '{query}'"
-                    )
+                    self._log("debug", f"Couldn't extract used VRAM from string: '{query}'")
                     used = 0
 
             retval.append(vram - int(used / (1024 * 1024)))
@@ -517,9 +508,7 @@ class ROCm(_GPUStats):
             str(d) for d in active if d not in _EXCLUDE_DEVICES
         )
 
-        env_vars = [
-            f"{k}: {v}" for k, v in os.environ.items() if k.lower().startswith("hip")
-        ]
+        env_vars = [f"{k}: {v}" for k, v in os.environ.items() if k.lower().startswith("hip")]
         self._log("debug", f"HIP environment variables: {env_vars}")
 
 

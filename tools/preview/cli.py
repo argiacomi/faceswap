@@ -4,8 +4,8 @@
 import gettext
 import typing as T
 
+from lib.cli.actions import DirFullPaths, DirOrFileFullPaths, FileFullPaths
 from lib.cli.args import FaceSwapArgs
-from lib.cli.actions import DirOrFileFullPaths, DirFullPaths, FileFullPaths
 from lib.utils import get_module_objects
 
 # pylint:disable=duplicate-code
@@ -29,9 +29,7 @@ class PreviewArgs(FaceSwapArgs):
         str
             Top line information about the Preview tool
         """
-        return _(
-            "Preview tool\nAllows you to configure your convert settings with a live preview"
-        )
+        return _("Preview tool\nAllows you to configure your convert settings with a live preview")
 
     @staticmethod
     def get_argument_list() -> list[dict[str, T.Any]]:
@@ -52,7 +50,8 @@ class PreviewArgs(FaceSwapArgs):
                 "group": _("data"),
                 "required": True,
                 "help": _(
-                    "Input directory or video. Either a directory containing the image files you wish "
+                    "Input directory or video. Either a directory containing the image files you "
+                    "wish "
                     "to process or path to a video file."
                 ),
             }
@@ -78,7 +77,8 @@ class PreviewArgs(FaceSwapArgs):
                 "group": _("data"),
                 "required": True,
                 "help": _(
-                    "Model directory. A directory containing the trained model you wish to process."
+                    "Model directory. A directory containing the trained model you wish to "
+                    "process."
                 ),
             }
         )

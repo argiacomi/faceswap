@@ -2,6 +2,7 @@
 """Converter for Faceswap"""
 
 from __future__ import annotations
+
 import logging
 import typing as T
 from dataclasses import dataclass
@@ -16,14 +17,15 @@ from plugins.plugin_loader import PluginLoader
 if T.TYPE_CHECKING:
     from argparse import Namespace
     from collections.abc import Callable
+
     from lib.align.aligned_face import AlignedFace, CenteringType
     from lib.align.detected_face import DetectedFace
     from lib.queue_manager import EventQueue
-    from scripts.convert import ConvertItem
     from plugins.convert.color._base import Adjustment as ColorAdjust
     from plugins.convert.color.seamless_clone import Color as SeamlessAdjust
     from plugins.convert.mask.mask_blend import Mask as MaskAdjust
     from plugins.convert.scaling._base import Adjustment as ScalingAdjust
+    from scripts.convert import ConvertItem
 
 logger = logging.getLogger(__name__)
 
@@ -154,10 +156,7 @@ class Converter:  # pylint:disable=too-many-instance-attributes
             config_file=self._config_file,
         )
 
-        if (
-            self._args.color_adjustment is not None
-            and self._args.color_adjustment != "none"
-        ):
+        if self._args.color_adjustment is not None and self._args.color_adjustment != "none":
             self._adjustments.color = PluginLoader.get_converter(
                 "color", self._args.color_adjustment, disable_logging=disable_logging
             )(config_file=self._config_file)
@@ -229,9 +228,7 @@ class Converter:  # pylint:disable=too-many-instance-attributes
                 out_queue.put((item.inbound.filename, image))
         logger.debug("Completed convert process")
 
-    def _get_warp_matrix(
-        self, matrix: np.ndarray, size: int, y_offset: float = 0.0
-    ) -> np.ndarray:
+    def _get_warp_matrix(self, matrix: np.ndarray, size: int, y_offset: float = 0.0) -> np.ndarray:
         """Obtain the final scaled warp transformation matrix based on face scaling from the
         original transformation matrix
 
@@ -317,9 +314,7 @@ class Converter:  # pylint:disable=too-many-instance-attributes
         )
         return retval
 
-    def _warp_to_frame(
-        self, reference: AlignedFace, face: np.ndarray, frame: np.ndarray
-    ) -> None:
+    def _warp_to_frame(self, reference: AlignedFace, face: np.ndarray, frame: np.ndarray) -> None:
         """Perform affine transformation to place a face patch onto the given frame.
 
         Affine is done in place on the `frame` array, so this function does not return a value
@@ -334,9 +329,7 @@ class Converter:  # pylint:disable=too-many-instance-attributes
             The frame to affine the face onto
         """
         # Warp face with the mask
-        mat = self._get_warp_matrix(
-            reference.adjusted_matrix, face.shape[0], reference.y_offset
-        )
+        mat = self._get_warp_matrix(reference.adjusted_matrix, face.shape[0], reference.y_offset)
         frame_face = np.zeros_like(frame)
         cv2.warpAffine(
             face,
@@ -385,9 +378,7 @@ class Converter:  # pylint:disable=too-many-instance-attributes
             len(predicted.swapped_faces),
         )
 
-        placeholder: np.ndarray = np.zeros(
-            (frame_size[1], frame_size[0], 4), dtype="float32"
-        )
+        placeholder: np.ndarray = np.zeros((frame_size[1], frame_size[0], 4), dtype="float32")
         faces: list[np.ndarray] | None = None
         if self._full_frame_output:
             background = predicted.inbound.image / np.array(255.0, dtype="float32")
@@ -400,6 +391,7 @@ class Converter:  # pylint:disable=too-many-instance-attributes
             predicted.swapped_faces,
             predicted.inbound.detected_faces,
             predicted.reference_faces,
+            strict=False,
         ):
             predicted_mask = new_face[:, :, -1] if new_face.shape[2] == 4 else None
             new_face = new_face[:, :, :3]
@@ -535,9 +527,7 @@ class Converter:  # pylint:disable=too-many-instance-attributes
         logger.trace("Got mask. Image shape: %s", new_face.shape)  # type: ignore[attr-defined]
         return new_face, raw_mask
 
-    def _post_warp_adjustments(
-        self, background: np.ndarray, new_image: np.ndarray
-    ) -> np.ndarray:
+    def _post_warp_adjustments(self, background: np.ndarray, new_image: np.ndarray) -> np.ndarray:
         """Perform any requested adjustments to the swapped faces after they have been transformed
         into the final frame.
 

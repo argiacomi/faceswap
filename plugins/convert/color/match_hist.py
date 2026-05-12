@@ -3,9 +3,11 @@
 for faceswap.py converter"""
 
 import numpy as np
+
 from lib.utils import get_module_objects
-from ._base import Adjustment
+
 from . import match_hist_defaults as cfg
+from ._base import Adjustment
 
 
 class Color(Adjustment):
@@ -36,9 +38,7 @@ class Color(Adjustment):
 
         old_masked = old_channel[mask_indices]
         new_masked = new_channel[mask_indices]
-        _, bin_idx, s_counts = np.unique(
-            new_masked, return_inverse=True, return_counts=True
-        )
+        _, bin_idx, s_counts = np.unique(new_masked, return_inverse=True, return_counts=True)
         t_values, t_counts = np.unique(old_masked, return_counts=True)
         s_quants = np.cumsum(s_counts, dtype="float32")
         t_quants = np.cumsum(t_counts, dtype="float32")

@@ -18,7 +18,7 @@ from tests.utils import has_arg
 # pylint:disable=dangerous-default-value,too-many-locals,too-many-branches
 def layer_test(
     layer_cls,  # noqa: C901
-    kwargs={},
+    kwargs=None,
     input_shape=None,
     input_dtype=None,
     input_data=None,
@@ -29,6 +29,8 @@ def layer_test(
     """Test routine for a layer with a single input tensor
     and single output tensor.
     """
+    if kwargs is None:
+        kwargs = {}
     with device("cpu"):
         # generate input data
         # pylint:disable=duplicate-code
@@ -73,7 +75,9 @@ def layer_test(
 
         actual_output = model.predict(input_data, verbose=0)  # type:ignore
         actual_output_shape = actual_output.shape
-        for expected_dim, actual_dim in zip(expected_output_shape, actual_output_shape):
+        for expected_dim, actual_dim in zip(
+            expected_output_shape, actual_output_shape, strict=False
+        ):
             if expected_dim is not None:
                 assert expected_dim == actual_dim
 

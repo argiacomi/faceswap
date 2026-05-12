@@ -2,6 +2,7 @@
 """VGG Clear face mask plugin."""
 
 from __future__ import annotations
+
 import logging
 import typing as T
 
@@ -9,8 +10,9 @@ import numpy as np
 from torch import nn
 from torch.nn import functional as F
 
-from lib.utils import get_module_objects, GetModel
+from lib.utils import GetModel, get_module_objects
 from plugins.extract.base import FacePlugin
+
 from . import vgg_clear_defaults as cfg
 
 if T.TYPE_CHECKING:
@@ -60,9 +62,7 @@ class VGGClear(FacePlugin):
         -------
         The updated images for feeding the model
         """
-        return (batch - np.mean(batch, axis=(1, 2))[:, None, None, :]).transpose(
-            0, 3, 1, 2
-        )
+        return (batch - np.mean(batch, axis=(1, 2))[:, None, None, :]).transpose(0, 3, 1, 2)
 
     def process(self, batch: np.ndarray) -> np.ndarray:
         """Get the masks from the model
@@ -94,9 +94,7 @@ class ConvBlock(nn.Module):
         The amount of padding to apply to the first convolution
     """
 
-    def __init__(
-        self, in_channels: int, filters: int, iterations: int, padding: int = 1
-    ) -> None:
+    def __init__(self, in_channels: int, filters: int, iterations: int, padding: int = 1) -> None:
         super().__init__()
         layers = [
             nn.Conv2d(in_channels, filters, 3, padding=padding),

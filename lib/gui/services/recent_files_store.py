@@ -66,9 +66,7 @@ class RecentFilesStore:
         """Decode a serializer payload into recent-file entries."""
         if not isinstance(payload, list):
             return []
-        return [
-            item for item in (cls._decode(row) for row in payload) if item is not None
-        ]
+        return [item for item in (cls._decode(row) for row in payload) if item is not None]
 
     @staticmethod
     def _decode(row: object) -> RecentFile | None:

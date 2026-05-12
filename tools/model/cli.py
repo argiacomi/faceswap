@@ -4,8 +4,8 @@
 import gettext
 import typing as T
 
-from lib.cli.args import FaceSwapArgs
 from lib.cli.actions import DirFullPaths, Radio
+from lib.cli.args import FaceSwapArgs
 from lib.utils import get_module_objects
 
 # LOCALES
@@ -34,7 +34,8 @@ class ModelArgs(FaceSwapArgs):
                 "dest": "model_dir",
                 "required": True,
                 "help": _(
-                    "Model directory. A directory containing the model you wish to perform an action "
+                    "Model directory. A directory containing the model you wish to perform an "
+                    "action "
                     "on."
                 ),
             }
@@ -48,10 +49,15 @@ class ModelArgs(FaceSwapArgs):
                 "required": True,
                 "help": _(
                     "R|Choose which action you want to perform."
-                    "\nL|'inference' - Create an inference only copy of the model. Strips any layers "
-                    "from the model which are only required for training. NB: This is for exporting "
-                    "the model for use in external applications. Inference generated models cannot be "
-                    "used within Faceswap. See the 'format' option for specifying the model output "
+                    "\nL|'inference' - Create an inference only copy of the model. Strips any "
+                    "layers "
+                    "from the model which are only required for training. NB: This is for "
+                    "exporting "
+                    "the model for use in external applications. Inference generated models cannot"
+                    " "
+                    "be "
+                    "used within Faceswap. See the 'format' option for specifying the model output"
+                    " "
                     "format."
                     "\nL|'nan-scan' - Scan the model file for NaNs or Infs (invalid data)."
                     "\nL|'restore' - Restore a model from backup."
@@ -66,7 +72,8 @@ class ModelArgs(FaceSwapArgs):
                 "default": False,
                 "group": _("inference"),
                 "help": _(
-                    "Only used for 'inference' job. Generate the inference model for B -> A  instead "
+                    "Only used for 'inference' job. Generate the inference model for B -> A  "
+                    "instead "
                     "of A -> B."
                 ),
             }

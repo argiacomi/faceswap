@@ -30,7 +30,6 @@ from lib.config import ConfigItem
 # pylint:disable=duplicate-code
 from lib.config import ConfigItem
 
-
 HELPTEXT = "Tencent TFace identity recognition.\n(https://github.com/Tencent/TFace)"
 
 

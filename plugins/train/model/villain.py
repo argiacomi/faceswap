@@ -3,20 +3,22 @@
 Based on the original https://www.reddit.com/r/deepfakes/ code sample + contributions
 Adapted from a model by VillainGuy (https://github.com/VillainGuy)"""
 
-from keras import initializers, Input, layers, Model as KModel
+from keras import Input, initializers, layers
+from keras import Model as KModel
 
 from lib.model.layers import PixelShuffler
 from lib.model.nn_blocks import (
-    Conv2DOutput,
     Conv2DBlock,
+    Conv2DOutput,
     ResidualBlock,
     SeparableConv2DBlock,
     UpscaleBlock,
 )
 from plugins.train.train_config import Loss as cfg_loss
 
-from .original import Model as OriginalModel
 from . import villain_defaults as cfg
+from .original import Model as OriginalModel
+
 # pylint:disable=duplicate-code
 
 

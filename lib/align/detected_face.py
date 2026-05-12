@@ -2,21 +2,23 @@
 """Face and landmarks detection for faceswap.py"""
 
 from __future__ import annotations
+
 import logging
 import typing as T
-
 from zlib import compress, decompress
 
 import numpy as np
 
 from lib.logger import format_array, parse_class_init
 from lib.utils import get_module_objects
-from .objects import FileAlignments, PNGAlignments
-from .aligned_face import AlignedFace
+
 from . import aligned_mask
+from .aligned_face import AlignedFace
+from .objects import FileAlignments, PNGAlignments
 
 if T.TYPE_CHECKING:
     import numpy.typing as npt
+
     from .aligned_face import CenteringType
 
 logger = logging.getLogger(__name__)
@@ -110,9 +112,7 @@ class DetectedFace:  # pylint:disable=too-many-instance-attributes
             )
         }
         params = {
-            k[1:] if k.startswith("_") else k: format_array(v)
-            if isinstance(v, np.ndarray)
-            else v
+            k[1:] if k.startswith("_") else k: format_array(v) if isinstance(v, np.ndarray) else v
             for k, v in params.items()
         }
         s_params = ", ".join(f"{k}={v}" for k, v in params.items())
@@ -191,9 +191,7 @@ class DetectedFace:  # pylint:disable=too-many-instance-attributes
             storage_size,
             storage_centering,
         )
-        fs_mask = aligned_mask.Mask(
-            storage_size=storage_size, storage_centering=storage_centering
-        )
+        fs_mask = aligned_mask.Mask(storage_size=storage_size, storage_centering=storage_centering)
         fs_mask.add(mask, affine_matrix)
         self.mask[name] = fs_mask
 
@@ -315,9 +313,9 @@ class DetectedFace:  # pylint:disable=too-many-instance-attributes
         """
         if not self._training_masks:
             return None
-        return np.frombuffer(
-            decompress(self._training_masks[0]), dtype="uint8"
-        ).reshape(self._training_masks[1])
+        return np.frombuffer(decompress(self._training_masks[0]), dtype="uint8").reshape(
+            self._training_masks[1]
+        )
 
     def to_alignment(self) -> FileAlignments:
         """Return the detected face formatted for an alignments file
@@ -328,15 +326,8 @@ class DetectedFace:  # pylint:disable=too-many-instance-attributes
         ``landmarks_xy``, ``mask``. The additional key ``thumb`` will be provided if the
         detected face object contains a thumbnail.
         """
-        if (
-            self.left is None
-            or self.width is None
-            or self.top is None
-            or self.height is None
-        ):
-            raise AssertionError(
-                "Some detected face variables have not been initialized"
-            )
+        if self.left is None or self.width is None or self.top is None or self.height is None:
+            raise AssertionError("Some detected face variables have not been initialized")
         thumb = None if self.thumbnail is None else self.thumbnail.tolist()
         alignment = FileAlignments(
             x=self.left,
@@ -423,15 +414,8 @@ class DetectedFace:  # pylint:disable=too-many-instance-attributes
         The alignments dict will be returned with the keys ``x``, ``w``, ``y``, ``h``,
         ``landmarks_xy`` and ``mask``
         """
-        if (
-            self.left is None
-            or self.width is None
-            or self.top is None
-            or self.height is None
-        ):
-            raise AssertionError(
-                "Some detected face variables have not been initialized"
-            )
+        if self.left is None or self.width is None or self.top is None or self.height is None:
+            raise AssertionError("Some detected face variables have not been initialized")
         alignment = PNGAlignments(
             x=self.left,
             w=self.width,

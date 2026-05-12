@@ -28,9 +28,7 @@ class _PreviewExtract:
         self.output_path: str | None = None
         self.batch_mode: bool | None = None
 
-    def set_faceswap_output_path(
-        self, output_path: str, *, batch_mode: bool = False
-    ) -> None:
+    def set_faceswap_output_path(self, output_path: str, *, batch_mode: bool = False) -> None:
         """Capture preview output arguments."""
         self.output_path = output_path
         self.batch_mode = batch_mode

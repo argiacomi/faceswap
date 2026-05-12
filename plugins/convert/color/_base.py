@@ -2,6 +2,7 @@
 """Parent class for color Adjustments for faceswap.py converter"""
 
 import logging
+
 import numpy as np
 
 from plugins.convert import convert_config
@@ -42,8 +43,6 @@ class Adjustment:
         if reinsert_mask and new_face.shape[2] != 4:
             # Reinsert Mask
             assert final_mask is not None
-            new_face = np.concatenate(
-                (new_face, np.expand_dims(final_mask, axis=-1)), -1
-            )
+            new_face = np.concatenate((new_face, np.expand_dims(final_mask, axis=-1)), -1)
         logger.trace("Performed color adjustment")  # type:ignore[attr-defined]
         return new_face

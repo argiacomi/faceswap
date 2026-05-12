@@ -4,7 +4,6 @@
 import logging
 import os
 import sys
-
 from subprocess import PIPE, Popen
 
 from lib.utils import get_module_objects
@@ -38,9 +37,7 @@ class Git:
         """
         logger.debug("command: '%s'", command)
         cmd = f"git {command}"
-        with Popen(
-            cmd, shell=True, stdout=PIPE, stderr=PIPE, cwd=self._working_dir
-        ) as proc:
+        with Popen(cmd, shell=True, stdout=PIPE, stderr=PIPE, cwd=self._working_dir) as proc:
             stdout, stderr = proc.communicate()
         retcode = proc.returncode
         success = retcode == 0
@@ -70,9 +67,7 @@ class Git:
         success, msg = self._from_git("status")
         if success:
             return True
-        config = next(
-            (line.strip() for line in msg if "add safe.directory" in line), None
-        )
+        config = next((line.strip() for line in msg if "add safe.directory" in line), None)
         if not config:
             return False
         success, _ = self._from_git(config.split("git ", 1)[-1])
@@ -91,9 +86,7 @@ class Git:
     @property
     def branch(self) -> str:
         """str: The git branch that is currently being used to execute Faceswap."""
-        status = next(
-            (line.strip() for line in self.status if "On branch" in line), "Not Found"
-        )
+        status = next((line.strip() for line in self.status if "On branch" in line), "Not Found")
         return status.replace("On branch ", "")
 
     @property
@@ -162,9 +155,7 @@ class Git:
         """
         if not self._available:
             return []
-        success, commits = self._from_git(
-            f"log --pretty=oneline --abbrev-commit -n {count}"
-        )
+        success, commits = self._from_git(f"log --pretty=oneline --abbrev-commit -n {count}")
         if not success or not commits:
             return []
         return commits

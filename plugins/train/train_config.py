@@ -4,7 +4,6 @@
 import gettext
 import logging
 import os
-
 from dataclasses import dataclass
 
 from lib.config import ConfigItem, FaceswapConfig, GlobalSection
@@ -30,9 +29,7 @@ class _Config(FaceswapConfig):
     # pylint:disable=too-many-statements
     def set_defaults(self, helptext="") -> None:
         """Set the default values for config"""
-        super().set_defaults(
-            helptext=_("Options that apply to all models") + _ADDITIONAL_INFO
-        )
+        super().set_defaults(helptext=_("Options that apply to all models") + _ADDITIONAL_INFO)
         self._defaults_from_plugin(os.path.dirname(__file__))
         for section, opts in trainer_config.get_defaults().items():
             sect = f"trainer.{section.lower()}"
@@ -373,9 +370,7 @@ class Loss(GlobalSection):
             _("The loss function to use.")
             + "\n\n\t"
             + "\n\n\t".join(
-                f"{k}: {v}"
-                for k, v in sorted(_LOSS_HELP.items())
-                if k not in _NON_PRIMARY_LOSS
+                f"{k}: {v}" for k, v in sorted(_LOSS_HELP.items()) if k not in _NON_PRIMARY_LOSS
             )
         ),
         choices=[x for x in sorted(_LOSS_HELP) if x not in _NON_PRIMARY_LOSS],
@@ -587,9 +582,7 @@ class Loss(GlobalSection):
         choices=list(
             sorted(
                 ["extended", "components"]
-                + PluginLoader.get_available_extractors(
-                    "mask", add_none=True, extend_plugin=True
-                )
+                + PluginLoader.get_available_extractors("mask", add_none=True, extend_plugin=True)
             )
         ),
         gui_radio=True,
@@ -628,8 +621,7 @@ class Loss(GlobalSection):
         default=4,
         group=_("mask"),
         info=_(
-            "Sets pixels that are near white to white and near black to black. Set to 0 "
-            "for off."
+            "Sets pixels that are near white to white and near black to black. Set to 0 for off."
         ),
         min_max=(0, 50),
         rounding=1,

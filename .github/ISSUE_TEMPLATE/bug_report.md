@@ -6,7 +6,7 @@ labels: ''
 assignees: ''
 
 ---
-*Note: For general usage questions and help, please use either our [FaceSwap Forum](https://faceswap.dev/forum) 
+*Note: For general usage questions and help, please use either our [FaceSwap Forum](https://faceswap.dev/forum)
 or [FaceSwap Discord server](https://discord.gg/FC54sYg). General usage questions are liable to be closed without
 response.*
 
@@ -33,7 +33,7 @@ If applicable, add screenshots to help explain your problem.
  - Python Version [e.g. 3.5, 3.6]
  - Conda Version [e.g. 4.5.12]
  - Commit ID [e.g. e83819f]
- - 
+ -
 **Additional context**
 Add any other context about the problem here.
 

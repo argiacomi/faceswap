@@ -2,12 +2,13 @@
 """Custom Optimizers for Torch/keras"""
 
 from __future__ import annotations
+
 import inspect
 import logging
 import sys
 import typing as T
 
-from keras import ops, Optimizer, saving
+from keras import Optimizer, ops, saving
 
 from lib.logger import parse_class_init
 from lib.utils import get_module_objects
@@ -181,20 +182,14 @@ class AdaBelief(Optimizer):  # pylint:disable=too-many-instance-attributes,too-m
 
         for var in variables:
             self._momentums.append(
-                self.add_variable_from_reference(
-                    reference_variable=var, name="momentum"
-                )
+                self.add_variable_from_reference(reference_variable=var, name="momentum")
             )
             self._velocities.append(
-                self.add_variable_from_reference(
-                    reference_variable=var, name="velocity"
-                )
+                self.add_variable_from_reference(reference_variable=var, name="velocity")
             )
             if self.amsgrad:
                 self._velocity_hats.append(
-                    self.add_variable_from_reference(
-                        reference_variable=var, name="velocity_hat"
-                    )
+                    self.add_variable_from_reference(reference_variable=var, name="velocity_hat")
                 )
         logger.debug(
             "Built AdaBelief. momentums: %s, velocities: %s, velocity_hats: %s",
@@ -203,9 +198,7 @@ class AdaBelief(Optimizer):  # pylint:disable=too-many-instance-attributes,too-m
             len(self._velocity_hats),
         )
 
-    def _maybe_warmup(
-        self, learning_rate: KerasTensor, local_step: KerasTensor
-    ) -> KerasTensor:
+    def _maybe_warmup(self, learning_rate: KerasTensor, local_step: KerasTensor) -> KerasTensor:
         """Do learning rate warm up if requested
 
         Parameters
@@ -224,9 +217,7 @@ class AdaBelief(Optimizer):  # pylint:disable=too-many-instance-attributes,too-m
             return learning_rate
 
         total_steps = ops.cast(self.total_steps, learning_rate.dtype)
-        warmup_steps = total_steps * ops.cast(
-            self.warmup_proportion, learning_rate.dtype
-        )
+        warmup_steps = total_steps * ops.cast(self.warmup_proportion, learning_rate.dtype)
         min_lr = ops.cast(self.min_learning_rate, learning_rate.dtype)
         decay_steps = ops.maximum(total_steps - warmup_steps, 1)
         decay_rate = ops.divide(min_lr - learning_rate, decay_steps)
@@ -293,9 +284,7 @@ class AdaBelief(Optimizer):  # pylint:disable=too-many-instance-attributes,too-m
             The learning rate
         """
         local_step = ops.cast(self.iterations + 1, variable.dtype)
-        learning_rate = self._maybe_warmup(
-            ops.cast(learning_rate, variable.dtype), local_step
-        )
+        learning_rate = self._maybe_warmup(ops.cast(learning_rate, variable.dtype), local_step)
         gradient = ops.cast(gradient, variable.dtype)
         beta_1_power = ops.power(ops.cast(self.beta_1, variable.dtype), local_step)
         beta_2_power = ops.power(ops.cast(self.beta_2, variable.dtype), local_step)
@@ -303,9 +292,7 @@ class AdaBelief(Optimizer):  # pylint:disable=too-many-instance-attributes,too-m
         #     m_t = b1 * m + (1 - b1) * g
         # =>  m_t = m + (g - m) * (1 - b1)
         momentum = self._momentums[self._get_variable_index(variable)]
-        self.assign_add(
-            momentum, ops.multiply(ops.subtract(gradient, momentum), 1 - self.beta_1)
-        )
+        self.assign_add(momentum, ops.multiply(ops.subtract(gradient, momentum), 1 - self.beta_1))
         momentum_corr = ops.divide(momentum, (1 - beta_1_power))
 
         #    v_t = b2 * v + (1 - b2) * (g - m_t)^2 + e
@@ -313,9 +300,7 @@ class AdaBelief(Optimizer):  # pylint:disable=too-many-instance-attributes,too-m
         velocity = self._velocities[self._get_variable_index(variable)]
         self.assign_add(
             velocity,
-            ops.multiply(
-                ops.subtract(ops.square(gradient - momentum), velocity), 1 - self.beta_2
-            )
+            ops.multiply(ops.subtract(ops.square(gradient - momentum), velocity), 1 - self.beta_2)
             + self.epsilon,
         )
 
@@ -326,9 +311,7 @@ class AdaBelief(Optimizer):  # pylint:disable=too-many-instance-attributes,too-m
         else:
             velocity_corr = ops.sqrt(ops.divide(velocity, (1 - beta_2_power)))
 
-        var_t = self._maybe_rectify(
-            momentum_corr, velocity_corr, local_step, beta_2_power
-        )
+        var_t = self._maybe_rectify(momentum_corr, velocity_corr, local_step, beta_2_power)
 
         self.assign_sub(variable, ops.multiply(learning_rate, var_t))
 

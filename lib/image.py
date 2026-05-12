@@ -2,15 +2,17 @@
 """Utilities for working with images"""
 
 from __future__ import annotations
+
 import json
 import logging
 import os
 import struct
 import typing as T
-
 from ast import literal_eval
 from concurrent import futures
-from queue import Empty as QueueEmpty, Full as QueueFull, Queue
+from queue import Empty as QueueEmpty
+from queue import Full as QueueFull
+from queue import Queue
 from threading import current_thread, main_thread
 from zlib import crc32
 
@@ -21,11 +23,11 @@ from lib.align.objects import PNGHeader
 from lib.logger import parse_class_init
 from lib.multithreading import FSThread
 from lib.utils import FaceswapError, get_image_paths, get_module_objects
-from lib.video import check_for_video, VideoReader
-
+from lib.video import VideoReader, check_for_video
 
 if T.TYPE_CHECKING:
     import numpy.typing as npt
+
     from lib.multithreading import ErrorState
 
 logger = logging.getLogger(__name__)
@@ -108,9 +110,7 @@ def read_image(
     try:
         with open(filename, "rb") as in_file:
             raw_file = in_file.read()
-        image = cv2.imdecode(
-            np.frombuffer(raw_file, dtype=np.uint8), cv2.IMREAD_UNCHANGED
-        )
+        image = cv2.imdecode(np.frombuffer(raw_file, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
         if image is None:
             raise ValueError("Image is None")
         if image.ndim == 2:  # Convert grayscale to BGR
@@ -119,9 +119,7 @@ def read_image(
             image = image[:, :, :3]
 
         if np.issubdtype(image.dtype, np.integer):
-            info = np.iinfo(
-                T.cast(np.integer, image.dtype)
-            )  # Scale non UINT8 INT images to UINT8
+            info = np.iinfo(T.cast(np.integer, image.dtype))  # Scale non UINT8 INT images to UINT8
             if info.max != 255:
                 image = image.astype(np.float32) / info.max * 255.0
         elif np.issubdtype(image.dtype, np.floating):
@@ -234,9 +232,7 @@ def read_image_batch(
         }
 
         for future in futures.as_completed(images):
-            result = T.cast(
-                np.ndarray | tuple[np.ndarray, "PNGHeader"], future.result()
-            )
+            result = T.cast(np.ndarray | tuple[np.ndarray, "PNGHeader"], future.result())
             ret_idx = images[future]
             if with_metadata:
                 assert isinstance(result, tuple)
@@ -247,10 +243,7 @@ def read_image_batch(
 
     arr_batch = np.array(batch)
     retval: np.ndarray | tuple[np.ndarray, list[PNGHeader]]
-    if with_metadata:
-        retval = (arr_batch, T.cast(list["PNGHeader"], meta))
-    else:
-        retval = arr_batch
+    retval = (arr_batch, T.cast(list["PNGHeader"], meta)) if with_metadata else arr_batch
 
     logger.trace(  # type:ignore[attr-defined]
         "Returning images: (filenames: %s, batch shape: %s, with_metadata: %s)",
@@ -317,9 +310,7 @@ def read_image_meta(filename):
             elif field == b"iTXt":
                 keyword, value = in_file.read(length).split(b"\0", 1)
                 if keyword == b"faceswap":
-                    retval["itxt"] = literal_eval(
-                        value[4:].decode("utf-8", errors="replace")
-                    )
+                    retval["itxt"] = literal_eval(value[4:].decode("utf-8", errors="replace"))
                     break
                 logger.trace(
                     "Skipping iTXt chunk: '%s'",  # type:ignore[attr-defined]
@@ -364,8 +355,7 @@ def read_image_meta_batch(filenames):
     with executor:
         logger.debug("Submitting %s items to executor", len(filenames))
         read_meta = {
-            executor.submit(read_image_meta, filename): filename
-            for filename in filenames
+            executor.submit(read_image_meta, filename): filename for filename in filenames
         }
         logger.debug("Successfully submitted %s items to executor", len(filenames))
         for future in futures.as_completed(read_meta):
@@ -546,9 +536,7 @@ def tiff_write_meta(
         data = json.dumps(data, ensure_ascii=True).encode("ascii")
 
     assert image[:2] == b"II", "Not a supported TIFF file"
-    assert struct.unpack("<H", image[2:4])[0] == 42, (
-        "Only version 42 Tiff files are supported"
-    )
+    assert struct.unpack("<H", image[2:4])[0] == 42, "Only version 42 Tiff files are supported"
     ptr = struct.unpack("<I", image[4:8])[0]
     rendered = image[:ptr]  # Pack up to IFD
 
@@ -556,9 +544,7 @@ def tiff_write_meta(
     ptr += 2
     rendered += struct.pack("<H", num_tags + 1)  # Pack new IFD field count
     remainder = image[ptr + num_tags * 12 :]  # Hold the data from after the IFD
-    assert struct.unpack("<I", remainder[:4])[0] == 0, (
-        "Multi-page TIFF files not supported"
-    )
+    assert struct.unpack("<I", remainder[:4])[0] == 0, "Multi-page TIFF files not supported"
 
     dtypes = {2: "1s", 3: "1H", 4: "1I", 7: "1B"}
 
@@ -583,9 +569,7 @@ def tiff_write_meta(
 
         ifd += tag[:8]
         tag_offset = struct.unpack("<I", tag[8:12])[0]
-        new_offset = struct.pack(
-            "<I", tag_offset + 12
-        )  # Increment by length of new ifd entry
+        new_offset = struct.pack("<I", tag_offset + 12)  # Increment by length of new ifd entry
         ifd += new_offset
 
     end = len(rendered) + len(ifd) + 12 + len(remainder)
@@ -593,9 +577,7 @@ def tiff_write_meta(
     desc += struct.pack("II", len(data), end)
     # TODO confirm no extra pages in end of IFD
 
-    rendered += (
-        ifd[: insert_idx * 12] + desc + ifd[insert_idx * 12 :] + remainder + data
-    )
+    rendered += ifd[: insert_idx * 12] + desc + ifd[insert_idx * 12 :] + remainder + data
     return rendered
 
 
@@ -609,9 +591,7 @@ def tiff_read_meta(image: bytes) -> dict[str, T.Any]:  # pylint:disable=too-many
         the patch writer)
     """
     assert image[:2] == b"II", "Not a supported TIFF file"
-    assert struct.unpack("<H", image[2:4])[0] == 42, (
-        "Only version 42 Tiff files are supported"
-    )
+    assert struct.unpack("<H", image[2:4])[0] == 42, "Only version 42 Tiff files are supported"
     ptr = struct.unpack("<I", image[4:8])[0]
 
     num_tags = struct.unpack("<H", image[ptr : ptr + 2])[0]
@@ -671,9 +651,7 @@ def png_read_meta(image: bytes) -> PNGHeader | dict[str, T.Any]:
         pointer += 8
         keyword, value = image[pointer : pointer + length].split(b"\0", 1)
         if keyword == b"faceswap":
-            retval = PNGHeader.from_dict(
-                literal_eval(value[4:].decode("utf-8", errors="ignore"))
-            )
+            retval = PNGHeader.from_dict(literal_eval(value[4:].decode("utf-8", errors="ignore")))
             break
         logger.trace(
             "Skipping iTXt chunk: '%s'",  # type:ignore[attr-defined]
@@ -776,9 +754,7 @@ def hex_to_rgb(hex_code):
     """
     value = hex_code.lstrip("#")
     chars = len(value)
-    return tuple(
-        int(value[i : i + chars // 3], 16) for i in range(0, chars, chars // 3)
-    )
+    return tuple(int(value[i : i + chars // 3], 16) for i in range(0, chars, chars // 3))
 
 
 def rgb_to_hex(rgb):
@@ -849,7 +825,7 @@ class ImageIO:
         """
         if isinstance(self.location, str) and not os.path.exists(self.location):
             raise FaceswapError(f"The location '{self.location}' does not exist")
-        if isinstance(self.location, (list, tuple)) and not all(
+        if isinstance(self.location, list | tuple) and not all(
             os.path.exists(location) for location in self.location
         ):
             raise FaceswapError("Not all locations in the input list exist")
@@ -864,9 +840,7 @@ class ImageIO:
                 self._thread,
             )
             return
-        self._thread = FSThread(
-            self._process, name=self.__class__.__name__, args=(self._queue,)
-        )
+        self._thread = FSThread(self._process, name=self.__class__.__name__, args=(self._queue,))
         self._error_state = self._thread.error_state
         logger.debug("[%s] Set thread: %s", self._name, self._thread)
         self._thread.start()
@@ -951,9 +925,7 @@ class ImagesLoader(ImageIO):
         self._count: int | None = None
         self._file_list: list[str] = []
         self._reader = (
-            VideoReader(
-                self.location, fast_count=fast_count, pts=pts, keyframes=keyframes
-            )
+            VideoReader(self.location, fast_count=fast_count, pts=pts, keyframes=keyframes)
             if self._is_video
             else None
         )
@@ -1016,11 +988,9 @@ class ImagesLoader(ImageIO):
         if self._is_video:
             assert self._reader is not None
             self._count = len(self._reader)
-            self._file_list = [
-                self._dummy_video_frame_name(i) for i in range(self.count)
-            ]
+            self._file_list = [self._dummy_video_frame_name(i) for i in range(self.count)]
         else:
-            if isinstance(self.location, (list, tuple)):
+            if isinstance(self.location, list | tuple):
                 self._file_list = list(self.location)
             else:
                 self._file_list = get_image_paths(self.location)
@@ -1055,9 +1025,7 @@ class ImagesLoader(ImageIO):
 
             while True:
                 if self._error_state.has_error:
-                    logger.debug(
-                        "[%s] Thread error detected in worker thread", self._name
-                    )
+                    logger.debug("[%s] Thread error detected in worker thread", self._name)
                     return
                 try:
                     queue.put(retval, timeout=0.2)
@@ -1125,8 +1093,7 @@ class ImagesLoader(ImageIO):
     def _from_folder(
         self,
     ) -> T.Generator[
-        tuple[str, npt.NDArray[np.uint8]]
-        | tuple[str, npt.NDArray[np.uint8], PNGHeader],
+        tuple[str, npt.NDArray[np.uint8]] | tuple[str, npt.NDArray[np.uint8], PNGHeader],
         None,
         None,
     ]:
@@ -1157,8 +1124,7 @@ class ImagesLoader(ImageIO):
     def load(
         self,
     ) -> T.Generator[
-        tuple[str, npt.NDArray[np.uint8]]
-        | tuple[str, npt.NDArray[np.uint8], PNGHeader],
+        tuple[str, npt.NDArray[np.uint8]] | tuple[str, npt.NDArray[np.uint8], PNGHeader],
         None,
         None,
     ]:
@@ -1233,15 +1199,13 @@ class FacesLoader(ImagesLoader):
             The number of images that the loader will encounter if already known, otherwise
             ``None``
         """
-        if isinstance(self.location, (list, tuple)):
+        if isinstance(self.location, list | tuple):
             file_list = self.location
         else:
             file_list = get_image_paths(self.location)
 
         self._file_list = [
-            fname
-            for fname in file_list
-            if os.path.splitext(fname)[-1].lower() == ".png"
+            fname for fname in file_list if os.path.splitext(fname)[-1].lower() == ".png"
         ]
         self._count = len(self.file_list) if count is None else count
 
@@ -1297,18 +1261,15 @@ class SingleFrameLoader(ImagesLoader):
     def __init__(
         self,
         path: str,
-        video_meta_data: dict[T.Literal["pts_time", "keyframes"], list[int]]
-        | None = None,
+        video_meta_data: dict[T.Literal["pts_time", "keyframes"], list[int]] | None = None,
     ) -> None:
         logger.debug(parse_class_init(locals()))
-        self._video_meta_data: (
-            dict[T.Literal["pts_time", "keyframes"], list[int]] | None
-        ) = video_meta_data
+        self._video_meta_data: dict[T.Literal["pts_time", "keyframes"], list[int]] | None = (
+            video_meta_data
+        )
         pts = None if video_meta_data is None else video_meta_data["pts_time"]
         keyframes = None if video_meta_data is None else video_meta_data["keyframes"]
-        super().__init__(
-            path, queue_size=1, fast_count=False, pts=pts, keyframes=keyframes
-        )
+        super().__init__(path, queue_size=1, fast_count=False, pts=pts, keyframes=keyframes)
 
     @property
     def video_meta_data(
@@ -1357,11 +1318,7 @@ class SingleFrameLoader(ImagesLoader):
             filename = self._dummy_video_frame_name(index)
         else:
             file_list = (
-                [
-                    f
-                    for idx, f in enumerate(self._file_list)
-                    if idx not in self._skip_list
-                ]
+                [f for idx, f in enumerate(self._file_list) if idx not in self._skip_list]
                 if self._skip_list
                 else self._file_list
             )
@@ -1429,9 +1386,7 @@ class ImagesSaver(ImageIO):
             )
         super()._check_location_exists()
         if not os.path.isdir(self.location):
-            raise FaceswapError(
-                f"The output location '{self.location}' is not a folder"
-            )
+            raise FaceswapError(f"The output location '{self.location}' is not a folder")
 
     def _process(self, queue):
         """Saves images from the save queue to the given :attr:`location` inside a thread.
@@ -1441,9 +1396,7 @@ class ImagesSaver(ImageIO):
         queue: queue.Queue()
             The ImageIO Queue
         """
-        executor = futures.ThreadPoolExecutor(
-            thread_name_prefix=self.__class__.__name__
-        )
+        executor = futures.ThreadPoolExecutor(thread_name_prefix=self.__class__.__name__)
         assert self._error_state is not None
         while True:
             if self._error_state.has_error:
@@ -1458,9 +1411,7 @@ class ImagesSaver(ImageIO):
             executor.submit(self._save, *item)
         executor.shutdown()
 
-    def _save(
-        self, filename: str, image: bytes | np.ndarray, sub_folder: str | None
-    ) -> None:
+    def _save(self, filename: str, image: bytes | np.ndarray, sub_folder: str | None) -> None:
         """Save a single image inside a ThreadPoolExecutor
 
         Parameters
@@ -1474,9 +1425,7 @@ class ImagesSaver(ImageIO):
             If the file should be saved in a subfolder in the output location, the subfolder should
             be provided here. ``None`` for no subfolder.
         """
-        location = (
-            os.path.join(self.location, sub_folder) if sub_folder else self._location
-        )
+        location = os.path.join(self.location, sub_folder) if sub_folder else self._location
         if sub_folder and not os.path.exists(location):
             os.makedirs(location)
 
@@ -1495,9 +1444,7 @@ class ImagesSaver(ImageIO):
                 filename,
             )
         except Exception as err:  # pylint:disable=broad-except
-            logger.error(
-                "Failed to save image '%s'. Original Error: %s", filename, str(err)
-            )
+            logger.error("Failed to save image '%s'. Original Error: %s", filename, str(err))
         del image
         del filename
 

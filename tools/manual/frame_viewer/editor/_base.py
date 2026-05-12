@@ -41,9 +41,7 @@ class Editor:
             detected_faces,
             control_text,
         )
-        self.zoomed_centering = (
-            "face"  # Override for different zoomed centering per editor
-        )
+        self.zoomed_centering = "face"  # Override for different zoomed centering per editor
         self._canvas = canvas
         self._globals = canvas._globals
         self._det_faces = detected_faces
@@ -83,10 +81,7 @@ class Editor:
         When initializing, the active_editor parameter will not be set in the parent,
         so return ``False`` in this instance
         """
-        return (
-            hasattr(self._canvas, "active_editor")
-            and self._canvas.active_editor == self
-        )
+        return hasattr(self._canvas, "active_editor") and self._canvas.active_editor == self
 
     @property
     def view_mode(self):
@@ -151,9 +146,7 @@ class Editor:
         else:
             faces = self._det_faces.current_faces[self._globals.frame_index]
             faces = (
-                [faces[self._globals.face_index]]
-                if self._globals.is_zoomed and faces
-                else faces
+                [faces[self._globals.face_index]] if self._globals.is_zoomed and faces else faces
             )
         return faces
 
@@ -306,9 +299,7 @@ class Editor:
             retval = ["fill", "outline"]
         else:
             retval = ["outline"]
-        logger.trace(
-            "returning %s for key: %s, object_type: %s", retval, key, object_type
-        )
+        logger.trace("returning %s for key: %s, object_type: %s", retval, key, object_type)
         return retval
 
     def _add_new_object(self, key, object_type, face_index, coordinates, object_kwargs):
@@ -342,9 +333,7 @@ class Editor:
             object_kwargs,
         )
         object_kwargs["tags"] = self._set_object_tags(face_index, key)
-        item_id = getattr(self._canvas, f"create_{object_type}")(
-            *coordinates, **object_kwargs
-        )
+        item_id = getattr(self._canvas, f"create_{object_type}")(*coordinates, **object_kwargs)
         return item_id
 
     def _set_object_tags(self, face_index, key):
@@ -543,9 +532,7 @@ class Editor:
             integer
         """
         offset = self._canvas.offset if do_offset else (0, 0)
-        retval = np.rint((points - offset) / self._globals.current_frame.scale).astype(
-            "int32"
-        )
+        retval = np.rint((points - offset) / self._globals.current_frame.scale).astype("int32")
         logger.trace("Original points: %s, scaled points: %s", points, retval)
         return retval
 
@@ -624,9 +611,9 @@ class Editor:
         group_key = option.group.replace(" ", "").lower()
         group_key = "none" if group_key == "_master" else group_key
         annotation_key = option.title.replace(" ", "")
-        self._canvas.control_tk_vars.setdefault(editor_key, {}).setdefault(
-            group_key, {}
-        )[annotation_key] = option.tk_var
+        self._canvas.control_tk_vars.setdefault(editor_key, {}).setdefault(group_key, {})[
+            annotation_key
+        ] = option.tk_var
 
     def _add_annotation_format_controls(self):
         """Add the annotation display (color/size) controls to :attr:`_annotation_formats`.
@@ -657,9 +644,7 @@ class Editor:
                     helptext="Set the annotation color",
                 )
                 colors.set(self._default_colors[annotation_key])
-                self._annotation_formats.setdefault(annotation_key, {})["color"] = (
-                    colors
-                )
+                self._annotation_formats.setdefault(annotation_key, {})["color"] = colors
                 self._annotation_formats[annotation_key]["mask_opacity"] = opacity
 
         for editor in editors:

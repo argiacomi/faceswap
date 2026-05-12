@@ -69,9 +69,7 @@ class MainWindow(QMainWindow):
         self._schema = self._load_schema() if schema is None else schema
         self._builder = CommandBuilder(base_path=str(root))
         self._project_store = ProjectStore(get_serializer("json"))
-        self._recent_files = RecentFilesStore(
-            get_serializer("json"), str(self._recent_cache())
-        )
+        self._recent_files = RecentFilesStore(get_serializer("json"), str(self._recent_cache()))
         self._project = ProjectFile()
         self._project_filename: str | None = None
         self._runner = JobRunner(self)
@@ -237,13 +235,9 @@ class MainWindow(QMainWindow):
         """Update UI state when the process exits."""
         self._set_running(False)
         self._console.write_line(f"\nProcess finished with exit code {exit_code}")
-        self.statusBar().showMessage(
-            f"Process finished with exit code {exit_code}", 5000
-        )
+        self.statusBar().showMessage(f"Process finished with exit code {exit_code}", 5000)
 
-    def _build_command(
-        self, *, generate: bool
-    ) -> tuple[str, str, dict[str, object], list[str]]:
+    def _build_command(self, *, generate: bool) -> tuple[str, str, dict[str, object], list[str]]:
         """Build command args from the selected panel state."""
         category, command, values = self._command_panel.command_spec()
         if not category or not command:
@@ -359,9 +353,7 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _load_schema() -> CommandSchema:
         """Load real Faceswap and tools CLI metadata for the Qt shell."""
-        return CommandSchemaService().from_real_cli_metadata(
-            categories=("faceswap", "tools")
-        )
+        return CommandSchemaService().from_real_cli_metadata(categories=("faceswap", "tools"))
 
     @staticmethod
     def _recent_cache() -> Path:

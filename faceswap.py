@@ -58,9 +58,7 @@ def _main() -> None:
         "convert",
         _("Convert source pictures or video to a new one with the face swapped"),
     )
-    cli_args.GuiArgs(
-        subparser, "gui", _("Launch the Faceswap Graphical User Interface")
-    )
+    cli_args.GuiArgs(subparser, "gui", _("Launch the Faceswap Graphical User Interface"))
     _PARSER.set_defaults(func=_bad_args)
     arguments = _PARSER.parse_args()
     arguments.func(arguments)

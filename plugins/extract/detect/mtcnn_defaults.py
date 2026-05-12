@@ -29,7 +29,6 @@ from lib.config import ConfigItem
 # pylint:disable=duplicate-code
 from lib.config import ConfigItem
 
-
 HELPTEXT = (
     "MTCNN Detector options.\n"
     "Fast on CPU, Faster on GPU. Uses fewer resources than other GPU detectors but can often "
@@ -97,8 +96,7 @@ threshold_3 = ConfigItem(
     datatype=float,
     default=0.7,
     group="threshold",
-    info="Third stage threshold for face detection. This stage further refines face "
-    "candidates.",
+    info="Third stage threshold for face detection. This stage further refines face candidates.",
     rounding=2,
     min_max=(0.1, 0.9),
 )

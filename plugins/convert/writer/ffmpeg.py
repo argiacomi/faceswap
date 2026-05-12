@@ -4,16 +4,16 @@
 from __future__ import annotations
 
 import logging
-import typing as T
 import os
+import typing as T
 from collections import deque
 
 from lib.logger import parse_class_init
 from lib.utils import get_module_objects
 from lib.video import VideoMux
 
-from ._base import Output
 from . import ffmpeg_defaults as cfg
+from ._base import Output
 
 if T.TYPE_CHECKING:
     import numpy as np

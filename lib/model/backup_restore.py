@@ -112,9 +112,7 @@ class Backup:
         snapshot_dir = f"{self.model_dir}_snapshot_{iterations}_iters"
 
         if os.path.isdir(snapshot_dir):
-            logger.debug(
-                "Removing previously existing snapshot folder: '%s'", snapshot_dir
-            )
+            logger.debug("Removing previously existing snapshot folder: '%s'", snapshot_dir)
             rmtree(snapshot_dir)
 
         dst = get_folder(snapshot_dir)
@@ -217,7 +215,7 @@ class Backup:
             self.model_dir, f"{self.model_name}_state.{serializer.file_extension}"
         )
         state = serializer.load(state_file)
-        session_names = [f"session_{key}" for key in state["sessions"].keys()]
+        session_names = [f"session_{key}" for key in state["sessions"]]
         logger.debug("Session to restore: %s", session_names)
         return session_names
 

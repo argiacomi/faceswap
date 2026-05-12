@@ -6,21 +6,21 @@ from __future__ import annotations
 import logging
 import os
 import sys
-import typing as T
 import tkinter as tk
-from tkinter import ttk
+import typing as T
 from dataclasses import dataclass
 from time import sleep
+from tkinter import ttk
 
 import numpy as np
 
 from lib.gui.control_helper import ControlPanel
-from lib.gui.utils import get_images, get_config, initialize_config, initialize_images
+from lib.gui.utils import get_config, get_images, initialize_config, initialize_images
 from lib.image import SingleFrameLoader, read_image_meta
+from lib.infer.align import Align
 from lib.logger import parse_class_init
 from lib.multithreading import MultiThread
 from lib.utils import get_module_objects, handle_deprecated_cli_opts
-from lib.infer.align import Align
 
 from .detected_faces import DetectedFaces
 from .face_viewer.frame import FacesFrame
@@ -30,6 +30,7 @@ from .thumbnails import ThumbsCreator
 
 if T.TYPE_CHECKING:
     from argparse import Namespace
+
     from lib.infer.runner import ExtractRunner
 
 logger = logging.getLogger(__name__)
@@ -86,25 +87,19 @@ class Manual(tk.Tk):
             self._detected_faces.frame_list,
         )
 
-        if (
-            valid_meta
-        ):  # Load the faces whilst other threads complete if we have valid meta data
+        if valid_meta:  # Load the faces whilst other threads complete if we have valid meta data
             self._detected_faces.load_faces()
 
         self._containers = self._create_containers()
         self._wait_for_threads(extractor, loader, valid_meta)
-        if (
-            not valid_meta
-        ):  # If meta data needs updating, load faces after other threads
+        if not valid_meta:  # If meta data needs updating, load faces after other threads
             self._detected_faces.load_faces()
 
         self._generate_thumbs(
             arguments.frames, arguments.thumb_regenerate, arguments.single_process
         )
 
-        self._display = DisplayFrame(
-            self._containers.top, self._globals, self._detected_faces
-        )
+        self._display = DisplayFrame(self._containers.top, self._globals, self._detected_faces)
         _Options(self._containers.top, self._globals, self._display)
 
         self._faces_frame = FacesFrame(
@@ -138,21 +133,15 @@ class Manual(tk.Tk):
         meta = read_image_meta(test_file)
         logger.debug("Test file: (filename: %s, metadata: %s)", test_file, meta)
         if "itxt" in meta and "alignments" in meta["itxt"]:
-            logger.error(
-                "The input folder '%s' contains extracted faces.", frames_folder
-            )
+            logger.error("The input folder '%s' contains extracted faces.", frames_folder)
             logger.error(
                 "The Manual Tool works with source frames or a video file, not extracted "
                 "faces. Please update your input."
             )
             sys.exit(1)
-        logger.debug(
-            "Test input file '%s' does not contain Faceswap header data", test_file
-        )
+        logger.debug("Test input file '%s' does not contain Faceswap header data", test_file)
 
-    def _wait_for_threads(
-        self, extractor: Aligner, loader: FrameLoader, valid_meta: bool
-    ) -> None:
+    def _wait_for_threads(self, extractor: Aligner, loader: FrameLoader, valid_meta: bool) -> None:
         """The :class:`Aligner` and :class:`FramesLoader` are launched in background threads.
         Wait for them to be initialized prior to proceeding.
 
@@ -174,9 +163,7 @@ class Manual(tk.Tk):
         extractor_init = False
         frames_init = False
         while True:
-            extractor_init = (
-                extractor_init if extractor_init else extractor.is_initialized
-            )
+            extractor_init = extractor_init if extractor_init else extractor.is_initialized
             frames_init = frames_init if frames_init else loader.is_initialized
             if extractor_init and frames_init:
                 logger.debug("Threads initialized")
@@ -192,9 +179,7 @@ class Manual(tk.Tk):
                 keyframes=loader.video_meta_data["keyframes"],
             )
 
-    def _generate_thumbs(
-        self, input_location: str, force: bool, single_process: bool
-    ) -> None:
+    def _generate_thumbs(self, input_location: str, force: bool, single_process: bool) -> None:
         """Check whether thumbnails are stored in the alignments file and if not generate them.
 
         Parameters
@@ -274,12 +259,8 @@ class Manual(tk.Tk):
             "space": self._display.navigation.handle_play_button,
             "home": self._display.navigation.goto_first_frame,
             "end": self._display.navigation.goto_last_frame,
-            "down": lambda d="down": self._faces_frame.canvas_scroll(
-                T.cast(T.Literal["down"], d)
-            ),
-            "up": lambda d="up": self._faces_frame.canvas_scroll(
-                T.cast(T.Literal["up"], d)
-            ),
+            "down": lambda d="down": self._faces_frame.canvas_scroll(T.cast(T.Literal["down"], d)),
+            "up": lambda d="up": self._faces_frame.canvas_scroll(T.cast(T.Literal["up"], d)),
             "next": lambda d="page-down": self._faces_frame.canvas_scroll(
                 T.cast(T.Literal["page-down"], d)
             ),
@@ -305,15 +286,9 @@ class Manual(tk.Tk):
         }
 
         # Allow keypad keys to be used for numbers
-        press = (
-            event.keysym.replace("KP_", "")
-            if event.keysym.startswith("KP_")
-            else event.keysym
-        )
+        press = event.keysym.replace("KP_", "") if event.keysym.startswith("KP_") else event.keysym
         assert isinstance(event.state, int)
-        modifier = "_".join(
-            val for key, val in modifiers.items() if event.state & key != 0
-        )
+        modifier = "_".join(val for key, val in modifiers.items() if event.state & key != 0)
         key_press = "_".join([modifier, press]) if modifier else press
         if key_press.lower() in bindings:
             logger.trace(
@@ -456,9 +431,7 @@ class _Options(ttk.Frame):  # pylint:disable=too-many-ancestors
                     ctl.title,
                 )
                 seen_controls.add(ctl)
-                ctl.tk_var.trace(
-                    "w", lambda *e: self._globals.var_full_update.set(True)
-                )
+                ctl.tk_var.trace("w", lambda *e: self._globals.var_full_update.set(True))
 
     def _update_options(self, *args) -> None:  # pylint:disable=unused-argument
         """Update the control panel display for the current editor.
@@ -492,9 +465,7 @@ class Aligner:
     """
 
     def __init__(self, tk_globals: TkGlobals) -> None:
-        logger.debug(
-            "Initializing: %s (tk_globals: %s)", self.__class__.__name__, tk_globals
-        )
+        logger.debug("Initializing: %s (tk_globals: %s)", self.__class__.__name__, tk_globals)
         self._globals = tk_globals
         self._aligners: dict[
             T.Literal["FAN", "HRNet", "cv2-dnn"],  # type:ignore[type-var]
@@ -595,9 +566,7 @@ class Aligner:
             .put(
                 self._globals.current_frame.filename,
                 self._globals.current_frame.image,
-                detected_faces=[
-                    self._detected_faces.current_faces[frame_index][face_index]
-                ],
+                detected_faces=[self._detected_faces.current_faces[frame_index][face_index]],
                 passthrough=True,
             )
             .detected_faces[0]
@@ -605,9 +574,7 @@ class Aligner:
         logger.trace("landmarks: %s", face.landmarks_xy)  # type:ignore[attr-defined]
         return face.landmarks_xy
 
-    def set_normalization_method(
-        self, method: T.Literal["none", "clahe", "hist", "mean"]
-    ) -> None:
+    def set_normalization_method(self, method: T.Literal["none", "clahe", "hist", "mean"]) -> None:
         """Change the normalization method for faces fed into the aligner.
         The normalization method is user adjustable from the GUI. When this method is triggered
         the method is updated for all aligner pipelines.
@@ -663,9 +630,7 @@ class FrameLoader:
             self._init_thread.check_and_raise_error()
         else:
             self._init_thread.join()
-            self._set_frame(
-                initialize=True
-            )  # Setting initial frame must be done from main thread
+            self._set_frame(initialize=True)  # Setting initial frame must be done from main thread
         return not thread_is_alive
 
     @property
@@ -722,14 +687,10 @@ class FrameLoader:
         frame_list
             The list of frames that exist in the alignments file
         """
-        self._loader = SingleFrameLoader(
-            frames_location, video_meta_data=video_meta_data
-        )
+        self._loader = SingleFrameLoader(frames_location, video_meta_data=video_meta_data)
         if not self._loader.is_video and len(frame_list) < self._loader.count:
             files = [os.path.basename(f) for f in self._loader.file_list]
-            skip_list = [
-                idx for idx, fname in enumerate(files) if fname not in frame_list
-            ]
+            skip_list = [idx for idx, fname in enumerate(files) if fname not in frame_list]
             logger.debug(
                 "Adding %s entries to skip list for images not in alignments file",
                 len(skip_list),
@@ -756,9 +717,7 @@ class FrameLoader:
             Default: ``False``
         """
         position = self._globals.frame_index
-        if not initialize and (
-            position == self._current_idx and not self._globals.is_zoomed
-        ):
+        if not initialize and (position == self._current_idx and not self._globals.is_zoomed):
             logger.trace(
                 "Update criteria not met. Not updating: "  # type:ignore[attr-defined]
                 "(initialize: %s, position: %s, current_idx: %s, is_zoomed: %s)",

@@ -16,7 +16,7 @@
 
 ## Other relevant information
 - **Command lined used (if not specified in steps to reproduce)**: faceswap.py ...
-- **Operating system and version:** Windows, macOS, Linux 
+- **Operating system and version:** Windows, macOS, Linux
 - **Python version:** 2.7, 3.5, 3.6.4, ...
 - **Faceswap version:** commit hash or version number
 - **Faceswap method:** CPU/GPU

@@ -2,25 +2,27 @@
 """Tools for manipulating the alignments using Frames as a source"""
 
 from __future__ import annotations
+
 import logging
 import os
 import sys
 import typing as T
-
 from datetime import datetime
 
 import cv2
 import numpy as np
 from tqdm import tqdm
 
-from lib.align import DetectedFace, LANDMARK_PARTS, LandmarkType
+from lib.align import LANDMARK_PARTS, DetectedFace, LandmarkType
 from lib.align.objects import PNGHeader, PNGSource
-from lib.image import encode_image, ImagesSaver
-from lib.utils import get_module_objects, deprecation_warning
+from lib.image import ImagesSaver, encode_image
+from lib.utils import deprecation_warning, get_module_objects
+
 from .media import ExtractedFaces, Frames
 
 if T.TYPE_CHECKING:
     from argparse import Namespace
+
     from .media import AlignmentData
 
 logger = logging.getLogger(__name__)
@@ -39,9 +41,7 @@ class Draw:
     """
 
     def __init__(self, alignments: AlignmentData, arguments: Namespace) -> None:
-        logger.debug(
-            "Initializing %s: (arguments: %s)", self.__class__.__name__, arguments
-        )
+        logger.debug("Initializing %s: (arguments: %s)", self.__class__.__name__, arguments)
         self._alignments = alignments
         self._frames = Frames(arguments.frames_dir)
         self._output_folder = self._set_output()
@@ -98,17 +98,13 @@ class Draw:
         logger.trace("Annotating frame: '%s'", frame_name)  # type:ignore
         image = self._frames.load_image(frame_name)
 
-        for idx, alignment in enumerate(
-            self._alignments.get_faces_in_frame(frame_name)
-        ):
+        for idx, alignment in enumerate(self._alignments.get_faces_in_frame(frame_name)):
             face = DetectedFace()
             face.from_alignment(alignment, image=image)
             # Bounding Box
             assert face.left is not None
             assert face.top is not None
-            cv2.rectangle(
-                image, (face.left, face.top), (face.right, face.bottom), (255, 0, 0), 1
-            )
+            cv2.rectangle(image, (face.left, face.top), (face.right, face.bottom), (255, 0, 0), 1)
             self._annotate_landmarks(image, np.rint(face.landmarks_xy).astype("int32"))
             self._annotate_extract_boxes(image, face, idx)
             self._annotate_pose(image, face)  # Pose (head is still loaded)
@@ -126,18 +122,14 @@ class Draw:
             The facial landmarks that are to be annotated onto the frame
         """
         # Mesh
-        for start, end, fill in LANDMARK_PARTS[
-            LandmarkType.from_shape(landmarks.shape)
-        ].values():
+        for start, end, fill in LANDMARK_PARTS[LandmarkType.from_shape(landmarks.shape)].values():
             cv2.polylines(image, [landmarks[start:end]], fill, (255, 255, 0), 1)
         # Landmarks
         for pos_x, pos_y in landmarks:
             cv2.circle(image, (pos_x, pos_y), 1, (0, 255, 255), -1)
 
     @classmethod
-    def _annotate_extract_boxes(
-        cls, image: np.ndarray, face: DetectedFace, index: int
-    ) -> None:
+    def _annotate_extract_boxes(cls, image: np.ndarray, face: DetectedFace, index: int) -> None:
         """Annotate the mesh and landmarks boxes onto the frame.
 
         Parameters
@@ -154,9 +146,7 @@ class Draw:
             color = (0, 255, 0) if area == "face" else (0, 0, 255)
             top_left = face.aligned.original_roi[0]
             top_left = (top_left[0], top_left[1] - 10)
-            cv2.putText(
-                image, str(index), top_left, cv2.FONT_HERSHEY_DUPLEX, 1.0, color, 1
-            )
+            cv2.putText(image, str(index), top_left, cv2.FONT_HERSHEY_DUPLEX, 1.0, color, 1)
             cv2.polylines(image, [face.aligned.original_roi], True, color, 1)
 
     @classmethod
@@ -171,17 +161,11 @@ class Draw:
             The aligned face loaded for head centering
         """
         center = (
-            np.array((face.aligned.size / 2, face.aligned.size / 2))
-            .astype("int32")
-            .reshape(1, 2)
+            np.array((face.aligned.size / 2, face.aligned.size / 2)).astype("int32").reshape(1, 2)
         )
-        center = np.rint(face.aligned.transform_points(center, invert=True)).astype(
-            "int32"
-        )
+        center = np.rint(face.aligned.transform_points(center, invert=True)).astype("int32")
         points = face.aligned.pose.xyz_2d * face.aligned.size
-        points = np.rint(face.aligned.transform_points(points, invert=True)).astype(
-            "int32"
-        )
+        points = np.rint(face.aligned.transform_points(points, invert=True)).astype("int32")
         cv2.line(image, tuple(center), tuple(points[1]), (0, 255, 0), 2)
         cv2.line(image, tuple(center), tuple(points[0]), (255, 0, 0), 2)
         cv2.line(image, tuple(center), tuple(points[2]), (0, 0, 255), 2)
@@ -199,13 +183,10 @@ class Extract:
     """
 
     def __init__(self, alignments: AlignmentData, arguments: Namespace) -> None:
-        logger.debug(
-            "Initializing %s: (arguments: %s)", self.__class__.__name__, arguments
-        )
+        logger.debug("Initializing %s: (arguments: %s)", self.__class__.__name__, arguments)
         deprecation_warning(
             "'Extract' job",
-            "Use 'python faceswap.py extract' instead, selecting "
-            "the 'file' aligner plugin.",
+            "Use 'python faceswap.py extract' instead, selecting the 'file' aligner plugin.",
         )
         self._arguments = arguments
         self._alignments = alignments
@@ -213,9 +194,7 @@ class Extract:
         self._min_size = self._get_min_size(arguments.size, arguments.min_size)
 
         self._frames = Frames(arguments.frames_dir, self._get_count())
-        self._extracted_faces = ExtractedFaces(
-            self._frames, self._alignments, size=arguments.size
-        )
+        self._extracted_faces = ExtractedFaces(self._frames, self._alignments, size=arguments.size)
         self._saver: ImagesSaver | None = None
         logger.debug("Initialized %s", self.__class__.__name__)
 
@@ -262,9 +241,7 @@ class Extract:
             retval: int | None = len(T.cast(dict[str, list[int]], meta["pts_time"]))
         else:
             retval = None
-        logger.debug(
-            "Frame count from alignments file: (has_meta: %s, %s", has_meta, retval
-        )
+        logger.debug("Frame count from alignments file: (has_meta: %s, %s", has_meta, retval)
         return retval
 
     def process(self) -> None:
@@ -275,8 +252,7 @@ class Extract:
 
         if self._min_size > 0:
             logger.info(
-                "Only selecting faces that have been resized from a minimum resolution "
-                "of %spx",
+                "Only selecting faces that have been resized from a minimum resolution of %spx",
                 self._min_size,
             )
 
@@ -301,11 +277,7 @@ class Extract:
         """Export the faces to the output folder."""
         extracted_faces = 0
         skip_list = self._set_skip_list()
-        count = (
-            self._frames.count
-            if skip_list is None
-            else self._frames.count - len(skip_list)
-        )
+        count = self._frames.count if skip_list is None else self._frames.count - len(skip_list)
 
         for filename, image in tqdm(
             self._frames.stream(skip_list=skip_list),
@@ -333,9 +305,7 @@ class Extract:
             logger.debug("Not skipping any frames")
             return None
         skip_list = []
-        for idx, item in enumerate(
-            T.cast(list[dict[str, str]], self._frames.file_list_sorted)
-        ):
+        for idx, item in enumerate(T.cast(list[dict[str, str]], self._frames.file_list_sorted)):
             if idx % skip_num != 0:
                 logger.trace(
                     "Adding image '%s' to skip list due to "  # type:ignore
@@ -383,9 +353,7 @@ class Extract:
                 ),
             )
             assert face.aligned.face is not None
-            self._saver.save(
-                output, encode_image(face.aligned.face, ".png", metadata=meta)
-            )
+            self._saver.save(output, encode_image(face.aligned.face, ".png", metadata=meta))
             face_count += 1
         self._saver.close()
         return face_count
@@ -409,9 +377,7 @@ class Extract:
             valid_faces = faces
         else:
             sizes = self._extracted_faces.get_roi_size_for_frame(frame)
-            valid_faces = [
-                faces[idx] for idx, size in enumerate(sizes) if size >= self._min_size
-            ]
+            valid_faces = [faces[idx] for idx, size in enumerate(sizes) if size >= self._min_size]
         logger.trace(
             "frame: '%s', total_faces: %s, valid_faces: %s",  # type:ignore
             frame,

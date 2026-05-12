@@ -3,25 +3,24 @@
 serialized alignments file."""
 
 from __future__ import annotations
+
 import logging
 import os
 import sys
 import typing as T
 from datetime import datetime
 
-
 from lib.serializer import get_serializer
 from lib.utils import FaceswapError, get_module_objects
 
 from .objects import AlignmentsEntry, FileAlignments
-
 from .thumbnails import Thumbnails
 from .updater import (
     FileStructure,
     IdentityAndVideoMeta,
     LandmarkRename,
-    NumpyToList,
     MaskCentering,
+    NumpyToList,
     VideoExtension,
 )
 
@@ -213,9 +212,7 @@ class Alignments:  # pylint:disable=too-many-public-methods
             else:
                 self.data[key].video_meta = meta
 
-        logger.debug(
-            "Alignments count: %s, timestamp count: %s", len(self.data), len(pts_time)
-        )
+        logger.debug("Alignments count: %s, timestamp count: %s", len(self.data), len(pts_time))
         if len(self.data) != len(pts_time):
             raise FaceswapError(
                 "There is a mismatch between the number of frames found in the video file "
@@ -245,7 +242,7 @@ class Alignments:  # pylint:disable=too-many-public-methods
         ``True`` if the given frame_name exists within the alignments :attr:`data` otherwise
         ``False``
         """
-        retval = frame_name in self._data.keys()
+        retval = frame_name in self._data
         logger.trace("'%s': %s", frame_name, retval)  # type:ignore[attr-defined]
         return retval
 
@@ -377,9 +374,7 @@ class Alignments:  # pylint:disable=too-many-public-methods
             )
             return False
         del self._data[frame_name].faces[face_index]
-        logger.debug(
-            "Deleted face: (frame_name: '%s', face_index %s)", frame_name, face_index
-        )
+        logger.debug("Deleted face: (frame_name: '%s', face_index %s)", frame_name, face_index)
         return True
 
     def add_face(self, frame_name: str, face: FileAlignments) -> int:
@@ -406,9 +401,7 @@ class Alignments:  # pylint:disable=too-many-public-methods
         logger.debug("Returning new face index: %s", retval)
         return retval
 
-    def update_face(
-        self, frame_name: str, face_index: int, face: FileAlignments
-    ) -> None:
+    def update_face(self, frame_name: str, face_index: int, face: FileAlignments) -> None:
         """Update the face for the given frame_name at the given face index in :attr:`data`.
 
         Parameters
@@ -425,9 +418,7 @@ class Alignments:  # pylint:disable=too-many-public-methods
         logger.debug("Updating face %s for frame_name '%s'", face_index, frame_name)
         self._data[frame_name].faces[face_index] = face
 
-    def filter_faces(
-        self, filter_dict: dict[str, list[int]], filter_out: bool = False
-    ) -> None:
+    def filter_faces(self, filter_dict: dict[str, list[int]], filter_out: bool = False) -> None:
         """Remove faces from :attr:`data` based on a given filter list.
 
         Parameters
@@ -447,9 +438,7 @@ class Alignments:  # pylint:disable=too-many-public-methods
                 filter_list = face_indices
             else:
                 filter_list = [
-                    idx
-                    for idx in range(len(frame_data.faces))
-                    if idx not in face_indices
+                    idx for idx in range(len(frame_data.faces)) if idx not in face_indices
                 ]
             logger.trace(
                 "frame: '%s', filter_list: %s",  # type:ignore[attr-defined]
@@ -522,8 +511,7 @@ class Alignments:  # pylint:disable=too-many-public-methods
             The filename/folder of the original source images/video for the current alignments
         """
         updates = [
-            updater.is_updated
-            for updater in (VideoExtension(self._data, self.version, filename),)
+            updater.is_updated for updater in (VideoExtension(self._data, self.version, filename),)
         ]
         if any(updates):
             self._io.update_version()
@@ -544,9 +532,7 @@ class _IO:
     """
 
     def __init__(self, alignments: Alignments, folder: str, filename: str) -> None:
-        logger.debug(
-            "Initializing %s: (alignments: %s)", self.__class__.__name__, alignments
-        )
+        logger.debug("Initializing %s: (alignments: %s)", self.__class__.__name__, alignments)
         self._alignments = alignments
         self._serializer = get_serializer("compressed")
         self._file = self._get_location(folder, filename)
@@ -583,9 +569,7 @@ class _IO:
         -------
         The full path to the alignments file
         """
-        logger.debug(
-            "Getting location: (folder: '%s', filename: '%s')", folder, filename
-        )
+        logger.debug("Getting location: (folder: '%s', filename: '%s')", folder, filename)
         assert self._serializer is not None
         no_ext_name, extension = os.path.splitext(filename)
         if extension[1:] == self._serializer.file_extension:
@@ -655,8 +639,7 @@ class _IO:
         self._version = meta["version"]
         if self._version < 2.0:
             logger.error(
-                "This alignments file was generated with a very old legacy extraction "
-                "method."
+                "This alignments file was generated with a very old legacy extraction method."
             )
             logger.error("Updating these very old files is no longer supported.")
             logger.error(

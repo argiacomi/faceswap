@@ -11,7 +11,6 @@ import typing as T
 
 from lib.utils import get_module_objects
 
-
 # << FILE HANDLING >>
 
 
@@ -24,7 +23,7 @@ class _FullPaths(argparse.Action):
     """
 
     def __call__(self, parser, namespace, values, option_string=None) -> None:
-        if isinstance(values, (list, tuple)):
+        if isinstance(values, list | tuple):
             vals = [os.path.abspath(os.path.expanduser(val)) for val in values]
         else:
             vals = os.path.abspath(os.path.expanduser(values))
@@ -119,7 +118,7 @@ class FilesFullPaths(FileFullPaths):
     """
 
     def __init__(self, *args, filetypes: str | None = None, **kwargs) -> None:
-        if kwargs.get("nargs", None) is None:
+        if kwargs.get("nargs") is None:
             opt = kwargs["option_strings"]
             raise ValueError(f"nargs must be provided for FilesFullPaths: {opt}")
         super().__init__(*args, **kwargs)
@@ -191,7 +190,7 @@ class DirOrFilesFullPaths(FileFullPaths):
 
         We check whether the input can be resolved to a folder first before expanding.
         """
-        assert isinstance(values, (list, tuple))
+        assert isinstance(values, list | tuple)
         folder = os.path.abspath(os.path.expanduser(" ".join(values)))
         if os.path.isdir(folder):
             setattr(namespace, self.dest, [folder])
@@ -265,7 +264,7 @@ class ContextFullPaths(FileFullPaths):
         **kwargs,
     ) -> None:
         opt = kwargs["option_strings"]
-        if kwargs.get("nargs", None) is not None:
+        if kwargs.get("nargs") is not None:
             raise ValueError(f"nargs not allowed for ContextFullPaths: {opt}")
         if filetypes is None:
             raise ValueError(f"filetypes is required for ContextFullPaths: {opt}")
@@ -314,7 +313,7 @@ class Radio(argparse.Action):
 
     def __init__(self, *args, **kwargs) -> None:
         opt = kwargs["option_strings"]
-        if kwargs.get("nargs", None) is not None:
+        if kwargs.get("nargs") is not None:
             raise ValueError(f"nargs not allowed for Radio buttons: {opt}")
         if not kwargs.get("choices", []):
             raise ValueError(f"Choices must be provided for Radio buttons: {opt}")
@@ -405,11 +404,11 @@ class Slider(argparse.Action):
         **kwargs,
     ) -> None:
         opt = kwargs["option_strings"]
-        if kwargs.get("nargs", None) is not None:
+        if kwargs.get("nargs") is not None:
             raise ValueError(f"nargs not allowed for Slider: {opt}")
-        if kwargs.get("default", None) is None:
+        if kwargs.get("default") is None:
             raise ValueError(f"A default value must be supplied for Slider: {opt}")
-        if kwargs.get("type", None) not in (int, float):
+        if kwargs.get("type") not in (int, float):
             raise ValueError(f"Sliders only accept int and float data types: {opt}")
         if min_max is None:
             raise ValueError(f"min_max must be provided for Sliders: {opt}")

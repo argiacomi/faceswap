@@ -3,6 +3,7 @@
 associated objects."""
 
 from __future__ import annotations
+
 import typing as T
 
 from .lr_finder import LearningRateFinder

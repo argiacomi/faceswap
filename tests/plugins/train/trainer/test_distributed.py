@@ -8,10 +8,9 @@ import pytest_mock
 import torch
 
 from lib.training.data.collate import BatchMeta
+from plugins.train.trainer import base as mod_base
 from plugins.train.trainer import distributed as mod_distributed
 from plugins.train.trainer import original as mod_original
-from plugins.train.trainer import base as mod_base
-
 
 _MODULE_PREFIX = "plugins.train.trainer.distributed"
 
@@ -37,9 +36,7 @@ def test_WrappedModel(batch_size, outputs, mocker):
 
     inp_a = torch.from_numpy(np.random.random(test_dims))
     inp_b = torch.from_numpy(np.random.random(test_dims))
-    targets = [
-        torch.from_numpy(np.random.random(test_dims)) for _ in range(outputs * 2)
-    ]
+    targets = [torch.from_numpy(np.random.random(test_dims)) for _ in range(outputs * 2)]
     predictions = [*torch.from_numpy(np.random.random((outputs * 2, *test_dims)))]
 
     model.return_value = predictions
@@ -53,7 +50,7 @@ def test_WrappedModel(batch_size, outputs, mocker):
     assert model_kwargs == {"training": True}
     assert len(model_args) == 1
     assert len(model_args[0]) == 2
-    for real, expected in zip(model_args[0], [inp_a, inp_b]):
+    for real, expected in zip(model_args[0], [inp_a, inp_b], strict=False):
         assert np.allclose(real.numpy(), expected.numpy())
 
     # Confirm loss functions correctly called
@@ -98,9 +95,7 @@ def test_Trainer(gpu_count, batch_size, _trainer_mocked):
     assert instance._distributed_model is patched_parallel.return_value
 
 
-@pytest.mark.parametrize(
-    "gpu_count", (2, 3, 5, 8), ids=[f"gpus:{x}" for x in (2, 3, 5, 8)]
-)
+@pytest.mark.parametrize("gpu_count", (2, 3, 5, 8), ids=[f"gpus:{x}" for x in (2, 3, 5, 8)])
 @pytest.mark.parametrize("outputs", (1, 2, 4))
 @pytest.mark.parametrize("batch_size", (4, 8, 16, 32, 64))
 def test_Trainer_forward(gpu_count, batch_size, outputs, _trainer_mocked, mocker):
@@ -110,15 +105,11 @@ def test_Trainer_forward(gpu_count, batch_size, outputs, _trainer_mocked, mocker
     test_dims = (batch_size, 2, 16, 16, 3)
 
     inputs = list(torch.from_numpy(np.random.random(test_dims)).to("cpu"))
-    targets = [
-        torch.from_numpy(np.random.random(test_dims)).to("cpu") for _ in range(outputs)
-    ]
+    targets = [torch.from_numpy(np.random.random(test_dims)).to("cpu") for _ in range(outputs)]
 
     loss_return = [DummyLoss() for _ in range(gpu_count)]
     instance._distributed_model = mocker.MagicMock(return_value=loss_return)
-    instance._mean_loss = mocker.MagicMock(
-        return_value={"unweighted": 1.0, "weighted": 1.0}
-    )
+    instance._mean_loss = mocker.MagicMock(return_value={"unweighted": 1.0, "weighted": 1.0})
 
     # Call the forward pass
     instance._forward(inputs, targets, BatchMeta())

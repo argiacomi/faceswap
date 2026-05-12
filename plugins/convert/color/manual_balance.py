@@ -3,9 +3,11 @@
 
 import cv2
 import numpy as np
+
 from lib.utils import get_module_objects
-from ._base import Adjustment
+
 from . import manual_balance_defaults as cfg
+from ._base import Adjustment
 
 
 class Color(Adjustment):
@@ -18,9 +20,7 @@ class Color(Adjustment):
         ).astype("float32")
         for idx in range(3):
             if adjustment[idx] >= 0:
-                image[:, :, idx] = ((1 - image[:, :, idx]) * adjustment[idx]) + image[
-                    :, :, idx
-                ]
+                image[:, :, idx] = ((1 - image[:, :, idx]) * adjustment[idx]) + image[:, :, idx]
             else:
                 image[:, :, idx] = image[:, :, idx] * (1 + adjustment[idx])
 

@@ -8,8 +8,8 @@ import pytest_mock
 import torch
 
 from lib.training.data.collate import BatchMeta
-from plugins.train.trainer import original as mod_original
 from plugins.train.trainer import base as mod_base
+from plugins.train.trainer import original as mod_original
 
 
 class DummyLoss:  # pylint:disable=too-few-public-methods
@@ -74,27 +74,23 @@ def test_Trainer_forward(
     """Test that original trainer _forward calls the correct model methods"""
     instance = _trainer_mocked(batch_size=batch_size)
 
-    loss_returns = [
-        torch.from_numpy(np.random.random((1,))) for _ in range(outputs * 2)
-    ]
+    loss_returns = [torch.from_numpy(np.random.random((1,))) for _ in range(outputs * 2)]
     mock_predictions = [
-        torch.from_numpy(np.random.random((batch_size, 16, 16, 3)))
-        for _ in range(outputs * 2)
+        torch.from_numpy(np.random.random((batch_size, 16, 16, 3))) for _ in range(outputs * 2)
     ]
     instance.model.model.return_value = mock_predictions
     instance.loss_func = mocker.MagicMock()
 
     inputs = list(torch.from_numpy(np.random.random((2, batch_size, 16, 16, 3))))
     targets = [
-        torch.from_numpy(np.random.random((2, batch_size, 16, 16, 3)))
-        for _ in range(outputs)
+        torch.from_numpy(np.random.random((2, batch_size, 16, 16, 3))) for _ in range(outputs)
     ]
 
     # Call forwards
     result = instance._forward(inputs, targets, BatchMeta())
 
     # Output comes from loss functions
-    assert (np.allclose(e.numpy(), a.numpy()) for e, a in zip(result, loss_returns))
+    assert (np.allclose(e.numpy(), a.numpy()) for e, a in zip(result, loss_returns, strict=False))
 
     # model forward pass called with inputs split
     train_call = instance.model.model
@@ -103,14 +99,14 @@ def test_Trainer_forward(
     assert call_kwargs == {"training": True}
     expected_inputs = [a.numpy() for a in inputs]
     actual_inputs = [a.numpy() for a in call_args[0]]
-    assert (np.allclose(e, a) for e, a in zip(expected_inputs, actual_inputs))
+    assert (np.allclose(e, a) for e, a in zip(expected_inputs, actual_inputs, strict=False))
 
     # losses called with targets split
     loss_calls = instance.model.model.loss
     expected_targets = [t[i].numpy() for i in range(2) for t in targets]
     expected_predictions = [p.numpy() for p in mock_predictions]
     for loss_call, pred, target in zip(
-        loss_calls, expected_predictions, expected_targets
+        loss_calls, expected_predictions, expected_targets, strict=False
     ):
         loss_call.assert_called_once()
         call_args, call_kwargs = loss_call.call_args

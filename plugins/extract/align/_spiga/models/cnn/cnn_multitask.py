@@ -1,13 +1,14 @@
 from torch import nn
-from .layers import Conv, Residual
-from .hourglass import HourglassCore
+
 from .coord_conv import AddCoordsTh
+from .hourglass import HourglassCore
+from .layers import Conv, Residual
 from .transform_e2p import E2Ptransform
 
 
 class MultitaskCNN(nn.Module):
     def __init__(self, nstack=4, num_landmarks=98, num_edges=15, pose_req=True, **kwargs):
-        super(MultitaskCNN, self).__init__()
+        super().__init__()
 
         # Parameters
         self.img_res = 256  # WxH input resolution

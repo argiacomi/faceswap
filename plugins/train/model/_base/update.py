@@ -15,7 +15,7 @@ from keras import models as k_models
 from lib.logger import parse_class_init
 from lib.model.layers import ScalarOp
 from lib.model.networks import TypeModelsViT, ViT
-from lib.utils import get_module_objects, FaceswapError
+from lib.utils import FaceswapError, get_module_objects
 
 logger = logging.getLogger(__name__)
 
@@ -64,15 +64,11 @@ class Legacy:  # pylint:disable=too-few-public-methods
         s_version = T.cast(str | None, h5file.attrs.get("keras_version"))
         s_config = T.cast(str | None, h5file.attrs.get("model_config"))
         if not s_version or not s_config:
-            raise FaceswapError(
-                f"'{self._old_model_file}' is not a valid Faceswap 2 model file"
-            )
+            raise FaceswapError(f"'{self._old_model_file}' is not a valid Faceswap 2 model file")
 
         version = s_version.split(".")[:2]
         if len(version) != 2 or version[0] != "2":
-            raise FaceswapError(
-                f"'{self._old_model_file}' is not a valid Faceswap 2 model file"
-            )
+            raise FaceswapError(f"'{self._old_model_file}' is not a valid Faceswap 2 model file")
 
         retval = json.loads(s_config)
         logger.debug("Loaded keras 2.x model config: %s", retval)
@@ -116,7 +112,7 @@ class Legacy:  # pylint:disable=too-few-public-methods
                 f"The state file '{state_file}' does not exist. This model cannot be ported"
             )
 
-        with open(state_file, "r", encoding="utf-8") as ifile:
+        with open(state_file, encoding="utf-8") as ifile:
             config = json.load(ifile)
 
         logger.debug("Loaded legacy config '%s': %s", state_file, config)
@@ -134,12 +130,8 @@ class Legacy:  # pylint:disable=too-few-public-methods
                 f"'{net_name}' with encoder scaling: {scaling}. This model cannot be ported"
             )
 
-        input_size = int(
-            max(vit_info.min_size, ((vit_info.default_size * scaling) // 16) * 16)
-        )
-        vit_model = ViT(
-            T.cast(TypeModelsViT, vit_info.keras_name), input_size=input_size
-        )()
+        input_size = int(max(vit_info.min_size, ((vit_info.default_size * scaling) // 16) * 16))
+        vit_model = ViT(T.cast(TypeModelsViT, vit_info.keras_name), input_size=input_size)()
 
         retval = vit_model.get_config()
         del vit_model
@@ -202,9 +194,7 @@ class Legacy:  # pylint:disable=too-few-public-methods
             config = layer["config"]
             old, new = "alpha", "negative_slope"
             if old in config:
-                logger.debug(
-                    "Updating '%s' kwarg '%s' to '%s'", layer["name"], old, new
-                )
+                logger.debug("Updating '%s' kwarg '%s' to '%s'", layer["name"], old, new)
                 config[new] = config[old]
                 del config[old]
 
@@ -218,14 +208,11 @@ class Legacy:  # pylint:disable=too-few-public-methods
             self._convert_lambda_config(layer)
 
         if (
-            layer["class_name"]
-            in ("DepthwiseConv2D", "SeparableConv2D", "Conv2DTranspose")
+            layer["class_name"] in ("DepthwiseConv2D", "SeparableConv2D", "Conv2DTranspose")
             and "groups" in layer["config"]
         ):
             # groups parameter doesn't exist in Keras 3. Hopefully it still works the same
-            logger.debug(
-                "Removing groups from %s '%s'", layer["class_name"], layer["name"]
-            )
+            logger.debug("Removing groups from %s '%s'", layer["class_name"], layer["name"])
             del layer["config"]["groups"]
 
         if layer["class_name"] == "SeparableConv2D":
@@ -446,11 +433,7 @@ class PatchKerasConfig:
             The model configuration dictionary from the keras 3 model file
         """
         with zipfile.ZipFile(self._model_path, "r") as zf:
-            items = {
-                f.filename: zf.read(f)
-                for f in zf.filelist
-                if f.filename != "config.json"
-            }
+            items = {f.filename: zf.read(f) for f in zf.filelist if f.filename != "config.json"}
             config = json.loads(zf.read("config.json"))
 
         logger.debug(
@@ -531,9 +514,7 @@ class PatchKerasConfig:
         """
         if "." in layer["name"]:
             new_name = layer["name"].replace(".", "_")
-            logger.debug(
-                "Updating Keras layer name from '%s' to '%s'", layer["name"], new_name
-            )
+            logger.debug("Updating Keras layer name from '%s' to '%s'", layer["name"], new_name)
             layer["name"] = new_name
 
         config = layer["config"]
@@ -575,9 +556,7 @@ class PatchKerasConfig:
     def _save_model(self) -> None:
         """Save the updated keras model"""
         logger.info("Updating Keras model '%s'...", self._model_path)
-        with zipfile.ZipFile(
-            self._model_path, "w", compression=zipfile.ZIP_DEFLATED
-        ) as zf:
+        with zipfile.ZipFile(self._model_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
             for filename, data in self._items.items():
                 zf.writestr(filename, data)
             zf.writestr("config.json", json.dumps(self._config).encode("utf-8"))

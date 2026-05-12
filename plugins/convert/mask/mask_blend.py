@@ -14,6 +14,7 @@ from lib.align.aligned_mask import LandmarksMask
 from lib.logger import parse_class_init
 from lib.utils import get_module_objects
 from plugins.convert import convert_config
+
 from . import mask_blend_defaults as cfg
 
 if T.TYPE_CHECKING:
@@ -103,13 +104,9 @@ class Mask:
         :class:`numpy.ndarray`
             The processed predicted mask
         """
-        blur_type = T.cast(
-            T.Literal["gaussian", "normalized", "none"], cfg.type().lower()
-        )
+        blur_type = T.cast(T.Literal["gaussian", "normalized", "none"], cfg.type().lower())
         if blur_type != "none":
-            mask = BlurMask(
-                blur_type, mask, cfg.kernel_size(), passes=cfg.passes()
-            ).blurred
+            mask = BlurMask(blur_type, mask, cfg.kernel_size(), passes=cfg.passes()).blurred
         return mask
 
     def _get_landmarks_mask(self, mask: LandmarksMask) -> npt.NDArray[np.float32]:
@@ -125,9 +122,7 @@ class Mask:
         -------
         The landmarks mask with any blur/erosion applied
         """
-        blur_type = T.cast(
-            T.Literal["gaussian", "normalized"] | None, cfg.type().lower()
-        )
+        blur_type = T.cast(T.Literal["gaussian", "normalized"] | None, cfg.type().lower())
         mask.blur_type = None if blur_type == "none" else blur_type
         mask.blur_kernel = cfg.kernel_size()
         mask.blur_passes = cfg.passes()
@@ -159,9 +154,7 @@ class Mask:
             The mask sized to Faceswap model output with any requested blurring applied.
         """
         mask = detected_face.mask[self._mask_type]
-        blur_type = T.cast(
-            T.Literal["gaussian", "normalized"] | None, cfg.type().lower()
-        )
+        blur_type = T.cast(T.Literal["gaussian", "normalized"] | None, cfg.type().lower())
         blur_type = None if blur_type == "none" else blur_type
         mask.set_blur_and_threshold(
             blur_kernel=cfg.kernel_size(),
@@ -224,9 +217,7 @@ class Mask:
         elif landmarks_mask is not None:
             mask = self._get_landmarks_mask(landmarks_mask)
         else:
-            mask = self._get_stored_mask(
-                detected_face, centering, source_offset, target_offset
-            )
+            mask = self._get_stored_mask(detected_face, centering, source_offset, target_offset)
 
         logger.trace(mask.shape)  # type: ignore
         return mask
@@ -256,12 +247,8 @@ class Mask:
             shape = cv2.MORPH_ELLIPSE if idx == 0 else cv2.MORPH_RECT
             if idx > 1:
                 pos = 0 if idx % 2 == 0 else 1
-                kernel[pos] = (
-                    1  # Set x/y to 1px based on whether eroding top/bottom, left/right
-                )
-            kernels.append(
-                cv2.getStructuringElement(shape, kernel) if size else np.array(0)
-            )
+                kernel[pos] = 1  # Set x/y to 1px based on whether eroding top/bottom, left/right
+            kernels.append(cv2.getStructuringElement(shape, kernel) if size else np.array(0))
         logger.trace("Erosion kernels: %s", [k.shape for k in kernels])  # type: ignore
         return kernels
 
@@ -282,7 +269,7 @@ class Mask:
         if not any(k.any() for k in kernels):
             return mask  # No kernels could be created from selected input res
         eroded = mask
-        for idx, (kernel, ratio) in enumerate(zip(kernels, self._erodes)):
+        for idx, (kernel, ratio) in enumerate(zip(kernels, self._erodes, strict=False)):
             if not kernel.any():
                 continue
             anchor = [-1, -1]

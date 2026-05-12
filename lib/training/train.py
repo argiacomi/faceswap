@@ -5,32 +5,34 @@ from __future__ import annotations
 
 import logging
 import os
-import typing as T
 import time
+import typing as T
 import warnings
 
 import cv2
 import numpy as np
-
 import torch
 from torch.cuda import OutOfMemoryError
 
 from lib.logger import format_array, parse_class_init
 from lib.torch_utils import get_device
 from lib.training import LearningRateFinder, LearningRateWarmup
+from lib.training.data import PreviewLoader, TrainLoader, get_label
 from lib.training.preview import Samples
-from lib.training.data import get_label, PreviewLoader, TrainLoader
 from lib.training.tensorboard import TorchTensorBoard
-from lib.utils import get_module_objects, FaceswapError
+from lib.utils import FaceswapError, get_module_objects
 from plugins.train import train_config as mod_cfg
 from plugins.train.trainer import trainer_config as trn_cfg
 
 from .loss import LossCollator
 
 if T.TYPE_CHECKING:
-    import numpy.typing as npt
     from collections.abc import Callable
+
+    import numpy.typing as npt
+
     from plugins.train.trainer.base import TrainerBase
+
     from .loss import BatchLoss
 
 logger = logging.getLogger(__name__)
@@ -138,9 +140,7 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
             mouth_multiplier=mod_cfg.Loss.mouth_multiplier(),
             smallest_output=min(x[1] for x in self._model.output_shapes if x[-1] != 1),
             mask_loss=(
-                None
-                if not mod_cfg.Loss.learn_mask()
-                else mod_cfg.Loss.mask_loss_function()
+                None if not mod_cfg.Loss.learn_mask() else mod_cfg.Loss.mask_loss_function()
             ),
         )
         plugin.register_loss(loss)
@@ -154,9 +154,7 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
         The loaders for feeding the model's training loop
         """
         input_sizes = [x[1] for x in self._model.input_shapes]
-        assert len(set(input_sizes)) == 1, (
-            f"Multiple input sizes not supported. Got {input_sizes}"
-        )
+        assert len(set(input_sizes)) == 1, f"Multiple input sizes not supported. Got {input_sizes}"
 
         out_sizes = [x[1] for x in self._model.output_shapes if x[-1] != 1]
         num_sides = len(self._plugin.config.folders)
@@ -164,12 +162,8 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
             f"Output count ({len(out_sizes)}) doesn't match number of inputs ({num_sides})"
         )
         split = len(out_sizes) // num_sides
-        split_sizes = [
-            out_sizes[x : x + split] for x in range(0, len(out_sizes), split)
-        ]
-        assert len(set(out_sizes)) == len(set(split_sizes[0])), (
-            "Sizes for each output must match"
-        )
+        split_sizes = [out_sizes[x : x + split] for x in range(0, len(out_sizes), split)]
+        assert len(set(out_sizes)) == len(set(split_sizes[0])), "Sizes for each output must match"
 
         retval = TrainLoader(
             input_sizes[0],
@@ -287,9 +281,7 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
         The Learning Rate Warmup object
         """
         target_lr = float(self._model.model.optimizer.learning_rate.value.cpu().numpy())
-        return LearningRateWarmup(
-            self._model.model, target_lr, self._model.warmup_steps
-        )
+        return LearningRateWarmup(self._model.model, target_lr, self._model.warmup_steps)
 
     def _set_tensorboard(self) -> TorchTensorBoard | None:
         """Set up Tensorboard callback for logging loss.
@@ -312,9 +304,7 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
             f"{self._model.name}_logs",
             f"session_{self._model.state.session_id}",
         )
-        tensorboard = TorchTensorBoard(
-            log_dir=log_dir, write_graph=True, update_freq="batch"
-        )
+        tensorboard = TorchTensorBoard(log_dir=log_dir, write_graph=True, update_freq="batch")
         tensorboard.set_model(self._model.model)
         logger.verbose("Enabled TensorBoard Logging")  # type: ignore
         return tensorboard
@@ -369,13 +359,11 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
         }
         for i, out in enumerate(loss):
             lbl = get_label(i, len(loss))
-            for idx, (w, u) in enumerate(zip(out.weighted, out.unweighted)):
+            for idx, (w, u) in enumerate(zip(out.weighted, out.unweighted, strict=False)):
                 key = lbl if len(out.unweighted) == 1 else f"{lbl}_{idx}"
                 weighted = {k: v.mean() for k, v in w.items()}
                 unweighted = {k: v.mean() for k, v in u.items()}
-                logs[f"face_{key}"] = T.cast(
-                    torch.Tensor, sum(weighted.values())
-                ).item()
+                logs[f"face_{key}"] = T.cast(torch.Tensor, sum(weighted.values())).item()
                 logs[f"weighted_{key}"] = {k: v.item() for k, v in weighted.items()}
                 logs[f"unweighted_{key}"] = {k: v.item() for k, v in unweighted.items()}
             if out.mask is not None:
@@ -405,9 +393,7 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
             If a NaN is detected, a :class:`FaceswapError` will be raised
         """
         # NaN protection
-        if mod_cfg.nan_protection() and not all(
-            torch.isfinite(val.total).all() for val in loss
-        ):
+        if mod_cfg.nan_protection() and not all(torch.isfinite(val.total).all() for val in loss):
             loss_str = ", ".join(
                 f"Loss {get_label(i, len(loss))}: {round(x.total.item(), 6)}"
                 for i, x in enumerate(loss)
@@ -448,7 +434,7 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
         output = ", ".join(
             [
                 f"Loss {side}: {side_loss:.5f}"
-                for side, side_loss in zip(("A", "B"), loss)
+                for side, side_loss in zip(("A", "B"), loss, strict=False)
             ]
         )
         timestamp = time.strftime("%H:%M:%S")
@@ -498,10 +484,7 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
                     if x.shape[1] == self._out_size
                 ]  # Filter multi-scale output
             if mod_cfg.Loss.learn_mask():  # Apply mask to alpha channel
-                out = [
-                    np.concatenate(out[i : i + 2], axis=-1)
-                    for i in range(0, len(out), 2)
-                ]
+                out = [np.concatenate(out[i : i + 2], axis=-1) for i in range(0, len(out), 2)]
             out_arr = np.stack(out, axis=0)
             if is_padded:
                 out_arr = out_arr[:, :feed_size]
@@ -572,9 +555,7 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
         samples = self._samples.get_preview(predictions, targets)
 
         if do_timelapse:
-            filename = os.path.join(
-                self._timelapse_output, str(int(time.time())) + ".jpg"
-            )
+            filename = os.path.join(self._timelapse_output, str(int(time.time())) + ".jpg")
             cv2.imwrite(filename, samples)
             logger.debug("[Trainer] Created time-lapse: '%s'", filename)
             return
@@ -627,8 +608,7 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
         do_snapshot = (
             self._plugin.config.snapshot_interval != 0
             and self._model.iterations - 1 >= self._plugin.config.snapshot_interval
-            and (self._model.iterations - 1) % self._plugin.config.snapshot_interval
-            == 0
+            and (self._model.iterations - 1) % self._plugin.config.snapshot_interval == 0
         )
         self._warmup()
         loss = self.train_one_batch()

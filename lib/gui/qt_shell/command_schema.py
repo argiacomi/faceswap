@@ -3,8 +3,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import typing as T
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True)

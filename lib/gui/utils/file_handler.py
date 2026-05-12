@@ -4,8 +4,8 @@
 import logging
 import platform
 import tkinter as tk
-from tkinter import filedialog, ttk
 import typing as T
+from tkinter import filedialog, ttk
 
 from lib.utils import get_module_objects
 
@@ -165,21 +165,13 @@ class FileHandler:  # pylint:disable=too-few-public-methods
         for key in filetypes:
             if platform.system() == "Linux":
                 filetypes[key] = [
-                    item
-                    if item[0] == "All files"
-                    else (item[0], f"{item[1]} {item[1].upper()}")
+                    item if item[0] == "All files" else (item[0], f"{item[1]} {item[1].upper()}")
                     for item in filetypes[key]
                 ]
             if len(filetypes[key]) > 2:
                 multi = [f"{key.title()} Files"]
                 multi.append(
-                    " ".join(
-                        [
-                            ftype[1]
-                            for ftype in filetypes[key]
-                            if ftype[0] != "All files"
-                        ]
-                    )
+                    " ".join([ftype[1] for ftype in filetypes[key] if ftype[0] != "All files"])
                 )
                 filetypes[key].insert(0, T.cast(tuple[str, str], tuple(multi)))
         return filetypes
@@ -367,13 +359,11 @@ class FileHandler:  # pylint:disable=too-few-public-methods
             The variable associated with this file dialog
         """
         if self._contexts[command].get(variable, None) is not None:
-            handletype = T.cast(dict[str, dict[str, dict[str, str]]], self._contexts)[
-                command
-            ][variable][action]
+            handletype = T.cast(dict[str, dict[str, dict[str, str]]], self._contexts)[command][
+                variable
+            ][action]
         else:
-            handletype = T.cast(dict[str, dict[str, str]], self._contexts)[command][
-                action
-            ]
+            handletype = T.cast(dict[str, dict[str, str]], self._contexts)[command][action]
         logger.debug(handletype)
         self._handletype = T.cast(_HANDLETYPE, handletype)
 

@@ -8,4 +8,3 @@ The plugins package holds Extraction, Training and Conversion plugins for Facesw
    :glob:
 
    *
-

@@ -14,15 +14,17 @@ from tqdm import tqdm
 
 from lib.align import AlignedFace
 from lib.align.objects import PNGHeader
-from lib.image import encode_image, ImagesSaver
+from lib.image import ImagesSaver, encode_image
 from lib.utils import get_image_paths, get_module_objects
 
 if T.TYPE_CHECKING:
     import numpy as np
-    from lib.infer.objects import FrameFaces
+
     from lib import align
     from lib.align import DetectedFace
     from lib.align.aligned_face import CenteringType
+    from lib.infer.objects import FrameFaces
+
     from . import loader
 
 logger = logging.getLogger(__name__)
@@ -85,9 +87,7 @@ class Import:
         self._re_frame_num = re.compile(r"\d+$")
         self._mapping = self._generate_mapping(import_path, loader)
 
-        self._saver = (
-            ImagesSaver(input_location, as_bytes=True) if input_is_faces else None
-        )
+        self._saver = ImagesSaver(input_location, as_bytes=True) if input_is_faces else None
         self._counts: dict[T.Literal["skip", "update"], int] = {"skip": 0, "update": 0}
 
         logger.debug("Initialized %s", self.__class__.__name__)
@@ -157,8 +157,7 @@ class Import:
             logger.warning("Extra mask file found: '%s'", os.path.basename(fname))
 
         logger.warning(
-            "%s mask file(s) do not exist in the source data so will not be imported "
-            "(see above)",
+            "%s mask file(s) do not exist in the source data so will not be imported (see above)",
             len(file_list),
         )
 
@@ -176,14 +175,11 @@ class Import:
         """
         retval: dict[int, str] = {}
         for filename in file_list:
-            frame_num = self._re_frame_num.findall(
-                os.path.splitext(os.path.basename(filename))[0]
-            )
+            frame_num = self._re_frame_num.findall(os.path.splitext(os.path.basename(filename))[0])
 
             if not frame_num or len(frame_num) > 1:
                 logger.error(
-                    "Could not detect frame number from mask file '%s'. "
-                    "Check your filenames",
+                    "Could not detect frame number from mask file '%s'. Check your filenames",
                     os.path.basename(filename),
                 )
                 sys.exit(1)
@@ -206,9 +202,7 @@ class Import:
 
         return retval
 
-    def _map_video(
-        self, file_list: list[str], source_files: list[str]
-    ) -> dict[str, str]:
+    def _map_video(self, file_list: list[str], source_files: list[str]) -> dict[str, str]:
         """Generate the mapping between the source data and the masks to be imported for
         video sources
 
@@ -236,8 +230,7 @@ class Import:
 
         if len(unmapped) == len(source_files):
             logger.error(
-                "No masks map between the source data and the mask folder. "
-                "Check your filenames"
+                "No masks map between the source data and the mask folder. Check your filenames"
             )
             sys.exit(1)
 
@@ -250,9 +243,7 @@ class Import:
         )
         return retval
 
-    def _map_images(
-        self, file_list: list[str], source_files: list[str]
-    ) -> dict[str, str]:
+    def _map_images(self, file_list: list[str], source_files: list[str]) -> dict[str, str]:
         """Generate the mapping between the source data and the masks to be imported for
         folder of image sources
 
@@ -273,11 +264,7 @@ class Import:
         for filename in tqdm(source_files, desc="Mapping masks to input", leave=False):
             fname = os.path.splitext(os.path.basename(filename))[0]
             mapped = next(
-                (
-                    f
-                    for f in file_list
-                    if os.path.splitext(os.path.basename(f))[0] == fname
-                ),
+                (f for f in file_list if os.path.splitext(os.path.basename(f))[0] == fname),
                 "",
             )
             if not mapped:
@@ -287,8 +274,7 @@ class Import:
 
         if len(unmapped) == len(source_files):
             logger.error(
-                "No masks map between the source data and the mask folder. "
-                "Check your filenames"
+                "No masks map between the source data and the mask folder. Check your filenames"
             )
             sys.exit(1)
 
@@ -302,9 +288,7 @@ class Import:
         )
         return retval
 
-    def _generate_mapping(
-        self, import_path: str, loader: loader.Loader
-    ) -> dict[str, str]:
+    def _generate_mapping(self, import_path: str, loader: loader.Loader) -> dict[str, str]:
         """Generate the mapping between the source data and the masks to be imported
 
         Parameters
@@ -445,9 +429,7 @@ class Import:
         mask_file = self._mapping.get(os.path.basename(media.filename))
         if not mask_file:
             self._counts["skip"] += 1
-            logger.warning(
-                "No mask file found for: '%s'", os.path.basename(media.filename)
-            )
+            logger.warning("No mask file found for: '%s'", os.path.basename(media.filename))
             return
 
         mask = T.cast("np.ndarray", cv2.imread(mask_file, cv2.IMREAD_GRAYSCALE))

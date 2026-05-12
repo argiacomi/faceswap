@@ -88,9 +88,7 @@ class GraphBase(ttk.Frame):  # pylint:disable=too-many-ancestors
     def _initiate_graph(self) -> None:
         """Place the graph canvas"""
         logger.debug("[GraphBase] Setting plot canvas")
-        self._plot_canvas.get_tk_widget().pack(
-            side=tk.TOP, padx=5, fill=tk.BOTH, expand=True
-        )
+        self._plot_canvas.get_tk_widget().pack(side=tk.TOP, padx=5, fill=tk.BOTH, expand=True)
         self._fig.subplots_adjust(
             left=0.100, bottom=0.100, right=0.95, top=0.95, wspace=0.2, hspace=0.2
         )
@@ -243,9 +241,7 @@ class GraphBase(ttk.Frame):  # pylint:disable=too-many-ancestors
         return lines
 
     @staticmethod
-    def _lines_group_size(
-        raw_lines: list[list[str]], sorted_lines: list[list[str]]
-    ) -> int:
+    def _lines_group_size(raw_lines: list[list[str]], sorted_lines: list[list[str]]) -> int:
         """Get the number of items in each group.
 
         If raw data isn't selected, then check the length of remaining groups until something is
@@ -319,9 +315,7 @@ class GraphBase(ttk.Frame):  # pylint:disable=too-many-ancestors
         groups = int(len(lines) / group_size)
         colors = self._lines_create_colors(group_size, groups)
         widths = list(range(1, groups + 1))
-        retval = T.cast(
-            list[list[str | int | tuple[float, float, float, float]]], lines
-        )
+        retval = T.cast(list[list[str | int | tuple[float, float, float, float]]], lines)
         for idx, item in enumerate(retval):
             linewidth = widths[idx // group_size]
             item.extend((linewidth, colors[idx]))
@@ -397,12 +391,8 @@ class TrainingGraph(GraphBase):  # pylint:disable=too-many-ancestors
             logger.debug("[TrainingGraph] Graph Data not yet available")
             self.after(1000, self.refresh)
         else:
-            logger.debug(
-                "[TrainingGraph] Updating plot with data from background thread"
-            )
-            self._calcs = (
-                self._thread.get_result()
-            )  # Terminate the LongRunningTask object
+            logger.debug("[TrainingGraph] Updating plot with data from background thread")
+            self._calcs = self._thread.get_result()  # Terminate the LongRunningTask object
             self._thread = None
 
             dsp_keys = list(sorted(self._calcs.stats))
@@ -432,11 +422,7 @@ class TrainingGraph(GraphBase):  # pylint:disable=too-many-ancestors
         """
         logger.debug("[TrainingGraph] Saving graph: '%s'", location)
         keys = sorted(
-            [
-                key.replace("raw_", "")
-                for key in self._calcs.stats.keys()
-                if key.startswith("raw_")
-            ]
+            [key.replace("raw_", "") for key in self._calcs.stats if key.startswith("raw_")]
         )
         filename = " - ".join(keys)
         now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -455,8 +441,8 @@ class TrainingGraph(GraphBase):  # pylint:disable=too-many-ancestors
 
             pass  # pylint:disable=unnecessary-pass
 
-        setattr(Event, "width", self.winfo_width())
-        setattr(Event, "height", self.winfo_height())
+        Event.width = self.winfo_width()
+        Event.height = self.winfo_height()
         self._plot_canvas.resize(Event)  # pylint:disable=no-value-for-parameter
 
 
@@ -542,9 +528,7 @@ class NavigationToolbar(NavigationToolbar2Tk):  # pylint:disable=too-many-ancest
     """
 
     toolitems = tuple(
-        t
-        for t in NavigationToolbar2Tk.toolitems
-        if t[0] in ("Home", "Pan", "Zoom", "Save")
+        t for t in NavigationToolbar2Tk.toolitems if t[0] in ("Home", "Pan", "Zoom", "Save")
     )
 
     def __init__(
@@ -624,11 +608,7 @@ class NavigationToolbar(NavigationToolbar2Tk):  # pylint:disable=too-many-ancest
         can be toggled.
         """
         icon_mapping = {"home": "reload", "filesave": "save", "zoom_to_rect": "zoom"}
-        icon = (
-            icon_mapping[image_file]
-            if icon_mapping.get(image_file, None)
-            else image_file
-        )
+        icon = icon_mapping[image_file] if icon_mapping.get(image_file) else image_file
         img = get_images().icons[icon]
 
         if not toggle:
@@ -651,8 +631,8 @@ class NavigationToolbar(NavigationToolbar2Tk):  # pylint:disable=too-many-ancest
             # Original implementation uses tk Checkbuttons which have a select and deselect
             # method. These aren't available in ttk Checkbuttons, so we monkey patch the methods
             # to update the underlying variable.
-            setattr(btn, "select", lambda i=1: var.set(i))
-            setattr(btn, "deselect", lambda i=0: var.set(i))
+            btn.select = lambda i=1: var.set(i)
+            btn.deselect = lambda i=0: var.set(i)
 
         btn.pack(side=tk.RIGHT, padx=2)
         return btn

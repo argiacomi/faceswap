@@ -2,13 +2,14 @@
 """Image output writer for faceswap.py converter"""
 
 from io import BytesIO
-from PIL import Image
 
 import numpy as np
+from PIL import Image
 
 from lib.utils import get_module_objects
-from ._base import Output, logger
+
 from . import pillow_defaults as cfg
+from ._base import Output, logger
 
 
 class Writer(Output):
@@ -39,9 +40,7 @@ class Writer(Output):
     def _check_transparency_format(self) -> None:
         """Make sure that the output format is correct if draw_transparent is selected"""
         # pylint:disable=duplicate-code
-        if not self.output_alpha or (
-            self.output_alpha and cfg.format() in ("png", "tif")
-        ):
+        if not self.output_alpha or (self.output_alpha and cfg.format() in ("png", "tif")):
             return
         logger.warning(
             "Draw Transparent selected, but the requested format does not support "
@@ -83,11 +82,9 @@ class Writer(Output):
             or length 2 (containing the image and mask to write out)
         """
         logger.trace("Outputting: (filename: '%s'", filename)  # type:ignore
-        filenames = self.get_output_filename(
-            filename, cfg.format(), self._separate_mask
-        )
+        filenames = self.get_output_filename(filename, cfg.format(), self._separate_mask)
         try:
-            for fname, img in zip(filenames, image):
+            for fname, img in zip(filenames, image, strict=False):
                 with open(fname, "wb") as outfile:
                     outfile.write(img.read())
         except Exception as err:  # pylint:disable=broad-except

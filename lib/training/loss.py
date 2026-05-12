@@ -4,9 +4,9 @@ training Faceswap models"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import logging
 import typing as T
+from dataclasses import dataclass, field
 
 import torch
 from torch import nn
@@ -57,12 +57,8 @@ class BatchLoss:
         This object with all tensors detached and moved to CPU
         """
         self._total = None if self._total is None else self._total.detach().cpu()
-        self.unweighted = [
-            {k: v.detach().cpu() for k, v in x.items()} for x in self.unweighted
-        ]
-        self.weighted = [
-            {k: v.detach().cpu() for k, v in x.items()} for x in self.weighted
-        ]
+        self.unweighted = [{k: v.detach().cpu() for k, v in x.items()} for x in self.unweighted]
+        self.weighted = [{k: v.detach().cpu() for k, v in x.items()} for x in self.weighted]
         self.mask = None if self.mask is None else self.mask.detach().cpu()
         return self
 
@@ -171,7 +167,7 @@ class LossCollator(nn.Module):
 
         functions = nn.ModuleDict()
         weight_dict: dict[str, float] = {}
-        for name, weight in zip(names, weights):
+        for name, weight in zip(names, weights, strict=False):
             if name is None or name == "none" or weight <= 0.0:
                 continue
             functions[name] = get_loss_function(name)
@@ -280,9 +276,7 @@ class LossCollator(nn.Module):
                 continue
             mask = masks[index]
             inputs.append((y_true * mask, y_pred * mask))
-            weights.append(
-                self._eye_multiplier if m_type == "eye" else self._mouth_multiplier
-            )
+            weights.append(self._eye_multiplier if m_type == "eye" else self._mouth_multiplier)
         logger.trace(
             "[Loss] masked inputs: %s, weights: %s",  # type:ignore[attr-defined]
             [[x.shape for x in i] for i in inputs],
@@ -321,7 +315,7 @@ class LossCollator(nn.Module):
             losses = torch.stack(
                 [
                     self._functions[name](inp_true, inp_pred) * weight
-                    for weight, (inp_true, inp_pred) in zip(weights, inputs)
+                    for weight, (inp_true, inp_pred) in zip(weights, inputs, strict=False)
                 ]
             )
             retval[name] = losses.sum(dim=0)
@@ -354,29 +348,23 @@ class LossCollator(nn.Module):
         all_unweighted: list[dict[str, torch.Tensor]] = []
         all_weighted: list[dict[str, torch.Tensor]] = []
         mask_loss = None
-        for idx, (y_true, y_pred) in enumerate(zip(y_true_all, y_pred_all)):
+        for idx, (y_true, y_pred) in enumerate(zip(y_true_all, y_pred_all, strict=False)):
             # TODO remove once channels first
             y_true = y_true.permute(0, 3, 1, 2)
             y_pred = y_pred.permute(0, 3, 1, 2)
 
             if y_true.shape[1] == 1:
                 assert self._mask_loss_function is not None
-                mask_loss = T.cast(
-                    torch.Tensor, self._mask_loss_function(y_true, y_pred)
-                )
+                mask_loss = T.cast(torch.Tensor, self._mask_loss_function(y_true, y_pred))
                 mask_loss = mask_loss.mean(dim=tuple(range(1, mask_loss.ndim)))
                 continue
 
             unweighted = self._get_spatial_loss(y_true, y_pred, meta, idx)
             unweighted |= self._get_non_spatial_loss(y_true, y_pred, meta, idx)
             all_unweighted.append(unweighted)
-            all_weighted.append(
-                {k: v * self._weights[k] for k, v in unweighted.items()}
-            )
+            all_weighted.append({k: v * self._weights[k] for k, v in unweighted.items()})
 
-        retval = BatchLoss(
-            unweighted=all_unweighted, weighted=all_weighted, mask=mask_loss
-        )
+        retval = BatchLoss(unweighted=all_unweighted, weighted=all_weighted, mask=mask_loss)
         logger.trace("[Loss] %s", retval)  # type:ignore[attr-defined]
         return retval
 

@@ -3,11 +3,10 @@
 
 import gettext
 
+from lib.cli.actions import DirFullPaths, Radio, SaveFileFullPaths, Slider
 from lib.cli.args import FaceSwapArgs
-from lib.cli.actions import DirFullPaths, SaveFileFullPaths, Radio, Slider
 from lib.utils import get_module_objects
 from plugins.plugin_loader import PluginLoader
-
 
 # pylint:disable=duplicate-code
 # # LOCALES
@@ -37,9 +36,7 @@ _SORT_METHODS = (
     "size",
 )
 
-_GPTHRESHOLD = _(
-    " Adjust the '-t' ('--threshold') parameter to control the strength of grouping."
-)
+_GPTHRESHOLD = _(" Adjust the '-t' ('--threshold') parameter to control the strength of grouping.")
 _GPCOLOR = _(
     " Adjust the '-b' ('--bins') parameter to control the number of bins for grouping. "
     "Each image is allocated to a bin by the percentage of color pixels that appear in "
@@ -78,9 +75,7 @@ _METHOD_TEXT = {
     ),
     "hist": _("faces by their color histogram."),
     "hist-dissim": _("Like 'hist' but sorts by dissimilarity."),
-    "color-gray": _(
-        "images by the average intensity of the converted grayscale color channel."
-    ),
+    "color-gray": _("images by the average intensity of the converted grayscale color channel."),
     "color-black": _(
         "images by their number of black pixels. Useful when faces are near borders "
         "and a large part of the image is black."
@@ -155,7 +150,8 @@ class SortArgs(FaceSwapArgs):
                 "help": _(
                     "Output directory for sorted aligned faces. If not provided and 'keep' is "
                     "selected then a new folder called 'sorted' will be created within the input "
-                    "folder to house the output. If not provided and 'keep' is not selected then the "
+                    "folder to house the output. If not provided and 'keep' is not selected then "
+                    "the "
                     "images will be sorted in-place, overwriting the original contents of the "
                     "'input_dir'"
                 ),
@@ -169,7 +165,8 @@ class SortArgs(FaceSwapArgs):
                 "default": False,
                 "group": _("data"),
                 "help": _(
-                    "R|If selected then the input_dir should be a parent folder containing multiple "
+                    "R|If selected then the input_dir should be a parent folder containing "
+                    "multiple "
                     "folders of faces you wish to sort. The faces will be output to separate sub-"
                     "folders in the output_dir"
                 ),
@@ -185,10 +182,12 @@ class SortArgs(FaceSwapArgs):
                 "group": _("sort settings"),
                 "default": "face",
                 "help": _(
-                    "R|Choose how images are sorted. Selecting a sort method gives the images a new "
+                    "R|Choose how images are sorted. Selecting a sort method gives the images a "
+                    "new "
                     "filename based on the order the image appears within the given method."
                     "\nL|'none': Don't sort the images. When a 'group-by' method is selected, "
-                    "selecting 'none' means that the files will be moved/copied into their respective "
+                    "selecting 'none' means that the files will be moved/copied into their "
+                    "respective "
                     "bins, but the files will keep their original filenames. Selecting 'none' for "
                     "both 'sort-by' and 'group-by' will do nothing"
                     + _sort_help
@@ -206,10 +205,13 @@ class SortArgs(FaceSwapArgs):
                 "group": _("group settings"),
                 "default": "none",
                 "help": _(
-                    "R|Selecting a group by method will move/copy files into numbered bins based on "
+                    "R|Selecting a group by method will move/copy files into numbered bins based "
+                    "on "
                     "the selected method."
-                    "\nL|'none': Don't bin the images. Folders will be sorted by the selected 'sort-"
-                    "by' but will not be binned, instead they will be sorted into a single folder. "
+                    "\nL|'none': Don't bin the images. Folders will be sorted by the selected "
+                    "'sort-"
+                    "by' but will not be binned, instead they will be sorted into a single folder."
+                    " "
                     "Selecting 'none' for both 'sort-by' and 'group-by' will do nothing"
                     + _GROUP_HELP
                     + "\nDefault: none"
@@ -224,10 +226,14 @@ class SortArgs(FaceSwapArgs):
                 "default": False,
                 "group": _("data"),
                 "help": _(
-                    "Whether to keep the original files in their original location. Choosing a 'sort-"
-                    "by' method means that the files have to be renamed. Selecting 'keep' means that "
-                    "the original files will be kept, and the renamed files will be created in the "
-                    "specified output folder. Unselecting keep means that the original files will be "
+                    "Whether to keep the original files in their original location. Choosing a "
+                    "'sort-"
+                    "by' method means that the files have to be renamed. Selecting 'keep' means "
+                    "that "
+                    "the original files will be kept, and the renamed files will be created in the"
+                    " "
+                    "specified output folder. Unselecting keep means that the original files will "
+                    "be "
                     "moved and renamed based on the selected sort/group criteria."
                 ),
             }
@@ -243,15 +249,20 @@ class SortArgs(FaceSwapArgs):
                 "group": _("group settings"),
                 "default": -1.0,
                 "help": _(
-                    "R|Float value. Minimum threshold to use for grouping comparison with 'face-cnn' "
+                    "R|Float value. Minimum threshold to use for grouping comparison with "
+                    "'face-cnn' "
                     "'hist' and 'face' methods."
-                    "\nThe lower the value the more discriminating the grouping is. Leaving -1.0 will "
+                    "\nThe lower the value the more discriminating the grouping is. Leaving -1.0 "
+                    "will "
                     "allow Faceswap to choose the default value."
                     "\nL|For 'face-cnn' 7.2 should be enough, with 4 being very discriminating. "
                     "\nL|For 'hist' 0.3 should be enough, with 0.2 being very discriminating. "
-                    "\nL|For 'face' between 0.1 (more bins) to 0.5 (fewer bins) should be about right."
-                    "\nBe careful setting a value that's too extrene in a directory with many images, "
-                    "as this could result in a lot of folders being created. Defaults: face-cnn 7.2, "
+                    "\nL|For 'face' between 0.1 (more bins) to 0.5 (fewer bins) should be about "
+                    "right."
+                    "\nBe careful setting a value that's too extrene in a directory with many "
+                    "images, "
+                    "as this could result in a lot of folders being created. Defaults: face-cnn "
+                    "7.2, "
                     "hist 0.3, face 0.25"
                 ),
             }
@@ -267,21 +278,28 @@ class SortArgs(FaceSwapArgs):
                 "group": _("group settings"),
                 "default": 5,
                 "help": _(
-                    "R|Integer value. Used to control the number of bins created for grouping by: any "
-                    "'blur' methods, 'color' methods or 'face metric' methods ('distance', 'size') "
+                    "R|Integer value. Used to control the number of bins created for grouping by: "
+                    "any "
+                    "'blur' methods, 'color' methods or 'face metric' methods ('distance', 'size')"
+                    " "
                     "and 'orientation; methods ('yaw', 'pitch'). For any other grouping "
                     "methods see the '-t' ('--threshold') option."
                     "\nL|For 'face metric' methods the bins are filled, according the the "
                     "distribution of faces between the minimum and maximum chosen metric."
                     "\nL|For 'color' methods the number of bins represents the divider of the "
-                    "percentage of colored pixels. Eg. For a bin number of '5': The first folder will "
-                    "have the faces with 0%% to 20%% colored pixels, second 21%% to 40%%, etc. Any "
+                    "percentage of colored pixels. Eg. For a bin number of '5': The first folder "
+                    "will "
+                    "have the faces with 0%% to 20%% colored pixels, second 21%% to 40%%, etc. Any"
+                    " "
                     "empty bins will be deleted, so you may end up with fewer bins than selected."
-                    "\nL|For 'blur' methods folder 0 will be the least blurry, while the last folder "
+                    "\nL|For 'blur' methods folder 0 will be the least blurry, while the last "
+                    "folder "
                     "will be the blurriest."
                     "\nL|For 'orientation' methods the number of bins is dictated by how much 180 "
-                    "degrees is divided. Eg. If 18 is selected, then each folder will be a 10 degree "
-                    "increment. Folder 0 will contain faces looking the most to the left/down whereas "
+                    "degrees is divided. Eg. If 18 is selected, then each folder will be a 10 "
+                    "degree "
+                    "increment. Folder 0 will contain faces looking the most to the left/down "
+                    "whereas "
                     "the last folder will contain the faces looking the most to the right/up. NB: "
                     "Some bins may be empty if faces do not fit the criteria. \nDefault value: 5"
                 ),
@@ -297,9 +315,11 @@ class SortArgs(FaceSwapArgs):
                 "default": "t-face",
                 "help": _(
                     "R|The identity plugin to use when sorting/grouping by face. "
-                    "\nL|t-face: An InsightFace ResNet based model with a lighter and heavier variant "
+                    "\nL|t-face: An InsightFace ResNet based model with a lighter and heavier "
+                    "variant "
                     "(configurable in settings)."
-                    "\nL|vggface2: An older and lighter, but fairly reliable plugin based on the VGG "
+                    "\nL|vggface2: An older and lighter, but fairly reliable plugin based on the "
+                    "VGG "
                     "Network."
                     "\nDefault: t-face"
                 ),
@@ -312,8 +332,10 @@ class SortArgs(FaceSwapArgs):
                 "group": _("settings"),
                 "default": False,
                 "help": _(
-                    "Logs file renaming changes if grouping by renaming, or it logs the file copying/"
-                    "movement if grouping by folders. If no log file is specified  with '--log-file', "
+                    "Logs file renaming changes if grouping by renaming, or it logs the file "
+                    "copying/"
+                    "movement if grouping by folders. If no log file is specified  with "
+                    "'--log-file', "
                     "then a 'sort_log.json' file will be created in the input directory."
                 ),
             }
@@ -327,7 +349,8 @@ class SortArgs(FaceSwapArgs):
                 "dest": "log_file_path",
                 "default": "sort_log.json",
                 "help": _(
-                    "Specify a log file to use for saving the renaming or grouping information. If "
+                    "Specify a log file to use for saving the renaming or grouping information. If"
+                    " "
                     "specified extension isn't 'json' or 'yaml', then json will be used as the "
                     "serializer, with the supplied filename. Default: sort_log.json"
                 ),

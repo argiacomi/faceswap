@@ -2,22 +2,21 @@
 """Tool to generate masks and previews of masks for existing alignments file"""
 
 from __future__ import annotations
+
 import logging
 import os
 import sys
 import typing as T
-
 from argparse import Namespace
 from multiprocessing import Process
 
 from lib.align import Alignments
-
 from lib.utils import get_module_objects, handle_deprecated_cli_opts
 from lib.video import VIDEO_EXTENSIONS
 
 from .loader import Loader
-from .mask_import import Import
 from .mask_generate import MaskGenerator
+from .mask_import import Import
 from .mask_output import Output
 
 if T.TYPE_CHECKING:
@@ -43,9 +42,7 @@ class Mask:
     """
 
     def __init__(self, arguments: Namespace) -> None:
-        logger.debug(
-            "Initializing %s: (arguments: %s", self.__class__.__name__, arguments
-        )
+        logger.debug("Initializing %s: (arguments: %s", self.__class__.__name__, arguments)
         if arguments.batch_mode and arguments.processing == "import":
             logger.error("Batch mode is not supported for 'import' processing")
             sys.exit(0)
@@ -159,9 +156,7 @@ class _Mask:
     """
 
     def __init__(self, arguments: Namespace) -> None:
-        logger.debug(
-            "Initializing %s: (arguments: %s)", self.__class__.__name__, arguments
-        )
+        logger.debug("Initializing %s: (arguments: %s)", self.__class__.__name__, arguments)
         arguments = handle_deprecated_cli_opts(arguments)
         self._update_type = arguments.processing
         self._input_is_faces = arguments.input_type == "faces"
@@ -171,9 +166,7 @@ class _Mask:
         self._alignments = self._get_alignments(arguments.alignments, arguments.input)
 
         if self._loader.is_video and self._alignments is not None:
-            self._alignments.update_legacy_has_source(
-                os.path.basename(self._loader.location)
-            )
+            self._alignments.update_legacy_has_source(os.path.basename(self._loader.location))
 
         self._loader.add_alignments(self._alignments)
 
@@ -225,9 +218,7 @@ class _Mask:
             sys.exit(0)
         logger.debug("input '%s' is valid", mask_input)
 
-    def _get_alignments(
-        self, alignments: str | None, input_location: str
-    ) -> Alignments | None:
+    def _get_alignments(self, alignments: str | None, input_location: str) -> Alignments | None:
         """Obtain the alignments from either the given alignments location or the default
         location.
 
@@ -245,13 +236,9 @@ class _Mask:
         """
         if alignments:
             logger.debug("Alignments location provided: %s", alignments)
-            return Alignments(
-                os.path.dirname(alignments), filename=os.path.basename(alignments)
-            )
+            return Alignments(os.path.dirname(alignments), filename=os.path.basename(alignments))
         if self._input_is_faces and self._update_type == "output":
-            logger.debug(
-                "No alignments file provided for faces. Using PNG Header for output"
-            )
+            logger.debug("No alignments file provided for faces. Using PNG Header for output")
             return None
         if self._input_is_faces:
             logger.warning(

@@ -5,12 +5,14 @@ Based on the dfaker model: https://github.com/dfaker"""
 import logging
 import sys
 
-from keras import initializers, Input, layers, Model as KModel
+from keras import Input, initializers, layers
+from keras import Model as KModel
 
-from lib.model.nn_blocks import Conv2DOutput, UpscaleBlock, ResidualBlock
+from lib.model.nn_blocks import Conv2DOutput, ResidualBlock, UpscaleBlock
 from plugins.train.train_config import Loss as cfg_loss
-from .original import Model as OriginalModel
+
 from . import dfaker_defaults as cfg
+from .original import Model as OriginalModel
 
 logger = logging.getLogger(__name__)
 # pylint:disable=duplicate-code
@@ -37,9 +39,7 @@ class Model(OriginalModel):
         if self._output_size == 256:
             var_x = UpscaleBlock(1024, activation=None)(var_x)
             var_x = layers.LeakyReLU(negative_slope=0.2)(var_x)
-            var_x = ResidualBlock(1024, kernel_initializer=self.kernel_initializer)(
-                var_x
-            )
+            var_x = ResidualBlock(1024, kernel_initializer=self.kernel_initializer)(var_x)
         var_x = UpscaleBlock(512, activation=None)(var_x)
         var_x = layers.LeakyReLU(negative_slope=0.2)(var_x)
         var_x = ResidualBlock(512, kernel_initializer=self.kernel_initializer)(var_x)

@@ -29,7 +29,6 @@ from lib.config import ConfigItem
 # pylint:disable=duplicate-code
 from lib.config import ConfigItem
 
-
 HELPTEXT = (
     "Custom (dummy) Mask options..\n"
     "The custom mask just fills a face patch with all 0's (masked out) or all 1's (masked in) for "

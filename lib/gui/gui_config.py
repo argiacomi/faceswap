@@ -116,8 +116,7 @@ console_panel_height = ConfigItem(
     datatype=int,
     default=20,
     group="layout",
-    info="How tall the bottom console panel is as a percentage of GUI height at "
-    "startup.",
+    info="How tall the bottom console panel is as a percentage of GUI height at startup.",
     min_max=(10, 90),
     rounding=1,
 )

@@ -6,17 +6,18 @@ the transformation matrix for re-inserting the face into the original frame
 
 import json
 import logging
+import os
 import re
 import typing as T
 
-import os
 import cv2
 import numpy as np
 
 from lib.image import encode_image, png_read_meta, tiff_read_meta
 from lib.utils import get_module_objects
-from ._base import Output
+
 from . import patch_defaults as cfg
+from ._base import Output
 
 logger = logging.getLogger(__name__)
 
@@ -44,16 +45,13 @@ class Writer(Output):
 
         if self._extension == ".png" and cfg.bit_depth() not in ("8", "16"):
             logger.warning(
-                "Patch Writer: Bit Depth '%s' is unsupported for format '%s'. "
-                "Updating to '16'",
+                "Patch Writer: Bit Depth '%s' is unsupported for format '%s'. Updating to '16'",
                 cfg.bit_depth(),
                 cfg.format(),
             )
             cfg.bit_depth.set("16")
 
-        self._dtype = {"8": np.uint8, "16": np.uint16, "32": np.float32}[
-            cfg.bit_depth()
-        ]
+        self._dtype = {"8": np.uint8, "16": np.uint16, "32": np.float32}[cfg.bit_depth()]
         self._multiplier = {"8": 255.0, "16": 65535.0, "32": 1.0}[cfg.bit_depth()]
 
         self._dummy_patch = np.zeros((1, patch_size, patch_size, 4), dtype=np.float32)
@@ -116,9 +114,7 @@ class Writer(Output):
 
         split_fname = self._fname_split.split(fname)
         if split_fname and split_fname[-1].isdigit():
-            i_frame_no = (
-                int(split_fname[-1]) + (int(cfg.start_index()) - 1) + cfg.index_offset()
-            )
+            i_frame_no = int(split_fname[-1]) + (int(cfg.start_index()) - 1) + cfg.index_offset()
             frame_no = f".{str(i_frame_no).rjust(cfg.number_padding(), '0')}"
             base_fname = fname[: -len(split_fname[-1]) - 1]
         else:
@@ -159,17 +155,13 @@ class Writer(Output):
         read_func = png_read_meta if self._extension == ".png" else tiff_read_meta
         for idx, face in enumerate(image):
             new_filename = self._get_new_filename(filename, idx)
-            filenames = self.get_output_filename(
-                new_filename, cfg.format(), self._separate_mask
-            )
-            for fname, img in zip(filenames, face):
+            filenames = self.get_output_filename(new_filename, cfg.format(), self._separate_mask)
+            for fname, img in zip(filenames, face, strict=False):
                 try:
                     with open(fname, "wb") as outfile:
                         outfile.write(img)
                 except Exception as err:  # pylint:disable=broad-except
-                    logger.error(
-                        "Failed to save image '%s'. Original Error: %s", filename, err
-                    )
+                    logger.error("Failed to save image '%s'. Original Error: %s", filename, err)
                 if not cfg.json_output():
                     continue
                 mat = T.cast(dict[str, list[list[float]]], read_func(img))
@@ -196,16 +188,12 @@ class Writer(Output):
             )
 
         identity = np.array([[[0.0, 0.0, 1.0]]], dtype=np.float32)
-        mat = np.concatenate(
-            [matrices, np.repeat(identity, matrices.shape[0], axis=0)], axis=1
-        )
+        mat = np.concatenate([matrices, np.repeat(identity, matrices.shape[0], axis=0)], axis=1)
         retval = np.linalg.inv(mat)
         logger.trace("matrix: %s, inverse: %s", mat, retval)  # type:ignore[attr-defined]
         return retval
 
-    def _adjust_to_origin(
-        self, matrices: np.ndarray, canvas_size: tuple[int, int]
-    ) -> None:
+    def _adjust_to_origin(self, matrices: np.ndarray, canvas_size: tuple[int, int]) -> None:
         """Adjust the transformation matrix to use the correct target coordinates system. The
         matrix adjustment is done in place, so this does not return a value
 
@@ -220,9 +208,7 @@ class Writer(Output):
             return
 
         for mat in matrices:
-            og_cnr = cv2.transform(
-                self._patch_corner[None, None], mat[:2, ...]
-            ).squeeze()
+            og_cnr = cv2.transform(self._patch_corner[None, None], mat[:2, ...]).squeeze()
             x_shift, y_shift = og_cnr
             if cfg.origin().split("-")[-1] == "right":
                 x_shift = canvas_size[0] - x_shift
@@ -287,7 +273,7 @@ class Writer(Output):
         rois = self._get_roi(matrices)
         patches = (image * self._multiplier).astype(self._dtype)
 
-        for patch, matrix, roi in zip(patches, matrices, rois):
+        for patch, matrix, roi in zip(patches, matrices, rois, strict=False):
             this_face = []
             mat = json.dumps(
                 {"transform_matrix": matrix.tolist(), "roi": roi.tolist()},
@@ -298,18 +284,14 @@ class Writer(Output):
                 face = patch[..., :3]
 
                 this_face.append(
-                    encode_image(
-                        mask, self._extension, encoding_args=self._args, metadata=mat
-                    )
+                    encode_image(mask, self._extension, encoding_args=self._args, metadata=mat)
                 )
             else:
                 face = patch
 
             this_face.insert(
                 0,
-                encode_image(
-                    face, self._extension, encoding_args=self._args, metadata=mat
-                ),
+                encode_image(face, self._extension, encoding_args=self._args, metadata=mat),
             )
             retval.append(this_face)
         return retval

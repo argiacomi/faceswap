@@ -2,11 +2,11 @@
 """A tool that allows for sorting and grouping images in different ways."""
 
 from __future__ import annotations
+
 import logging
 import os
 import sys
 import typing as T
-
 from argparse import Namespace
 from shutil import copyfile, rmtree
 
@@ -21,9 +21,9 @@ from .sort_methods_aligned import (
     SortDistance,
     SortFaceCNN,
     SortPitch,
+    SortRoll,
     SortSize,
     SortYaw,
-    SortRoll,
 )
 
 if T.TYPE_CHECKING:
@@ -99,9 +99,7 @@ class Sort:
             logger.info("Batch mode selected processing: %s", self._input_locations)
         for job_no, location in enumerate(self._input_locations):
             if self._args.batch_mode:
-                logger.info(
-                    "Processing job %s of %s: '%s'", job_no + 1, len(inputs), location
-                )
+                logger.info("Processing job %s of %s: '%s'", job_no + 1, len(inputs), location)
                 arguments = Namespace(**self._args.__dict__)
                 arguments.input_dir = location
                 arguments.output_dir = self._output_for_input(location)
@@ -115,9 +113,7 @@ class _Sort:
     """Sorts folders of faces based on input criteria"""
 
     def __init__(self, arguments: Namespace) -> None:
-        logger.debug(
-            "Initializing %s: arguments: %s", self.__class__.__name__, arguments
-        )
+        logger.debug("Initializing %s: arguments: %s", self.__class__.__name__, arguments)
         self._processes = {
             "blur": SortBlur,
             "blur_fft": SortBlur,
@@ -175,8 +171,7 @@ class _Sort:
         ):
             output_dir = os.path.join(input_dir, "sorted")
             logger.warning(
-                "No output folder selected, but files need renaming. "
-                "Outputting to: '%s'",
+                "No output folder selected, but files need renaming. Outputting to: '%s'",
                 output_dir,
             )
         elif not output_dir:
@@ -215,9 +210,7 @@ class _Sort:
 
         if arguments.log_changes and arguments.log_file_path == "sort_log.json":
             # Assign default sort_log.json value if user didn't specify one
-            arguments.log_file_path = os.path.join(
-                self._args.input_dir, "sort_log.json"
-            )
+            arguments.log_file_path = os.path.join(self._args.input_dir, "sort_log.json")
 
         logger.debug("Cleaned arguments: %s", arguments)
         return arguments
@@ -237,11 +230,7 @@ class _Sort:
             self._args, is_group=self._args.sort_method == "none"
         )
 
-        if (
-            sort_method != "none"
-            and group_method != "none"
-            and group_method != sort_method
-        ):
+        if sort_method != "none" and group_method != "none" and group_method != sort_method:
             grouper = self._processes[group_method](self._args, is_group=True)
             retval = SortMultiMethod(self._args, sorter, grouper)
             logger.debug("Got sorter + grouper: %s (%s, %s)", retval, sorter, grouper)
@@ -324,9 +313,7 @@ class _Sort:
                 rmtree(folder)
             os.makedirs(folder)
 
-        description = (
-            f"{'Copying' if self._args.keep_original else 'Moving'} into groups"
-        )
+        description = f"{'Copying' if self._args.keep_original else 'Moving'} into groups"
         description += " and renaming" if is_rename else ""
 
         pbar = tqdm(
@@ -337,9 +324,7 @@ class _Sort:
         )
         idx = 0
         for bin_id, bin_ in enumerate(self._sorter.binned):
-            pbar.set_description(
-                f"{description}: Bin {bin_id + 1} of {len(self._sorter.binned)}"
-            )
+            pbar.set_description(f"{description}: Bin {bin_id + 1} of {len(self._sorter.binned)}")
             output_path = os.path.join(self._args.output_dir, bin_names[bin_id])
             if not bin_:
                 logger.debug("Removing empty bin: %s", output_path)
@@ -361,9 +346,7 @@ class _Sort:
         output_dir = self._args.output_dir
         os.makedirs(output_dir, exist_ok=True)
 
-        description = (
-            f"{'Copying' if self._args.keep_original else 'Moving'} and renaming"
-        )
+        description = f"{'Copying' if self._args.keep_original else 'Moving'} and renaming"
         for idx, source in enumerate(
             tqdm(
                 self._sorter.sorted_filelist,

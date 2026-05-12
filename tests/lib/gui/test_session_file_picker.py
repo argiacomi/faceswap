@@ -138,9 +138,7 @@ def test_save_as_returns_selected_file(tmp_path: Path) -> None:
     file_handler = _FileHandler(return_file)
     picker = SessionFilePicker(file_handler)
 
-    picked = picker.save_as(
-        "task", title="Save Task As...", initial_folder=str(tmp_path)
-    )
+    picked = picker.save_as("task", title="Save Task As...", initial_folder=str(tmp_path))
 
     assert picked == PickedFile(str(filename))
     assert return_file.closed is True

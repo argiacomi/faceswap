@@ -146,9 +146,7 @@ class DisplayNotebook(ttk.Notebook):  # pylint:disable=too-many-ancestors
                 continue
             logger.debug("removing child: %s", child)
             child_name = child.split(".")[-1]
-            child_object = self.children.get(
-                child_name
-            )  # returns the OptionalDisplayPage object
+            child_object = self.children.get(child_name)  # returns the OptionalDisplayPage object
             if child_object is not None:
                 child_object.close()  # Call the OptionalDisplayPage close() method
             if child in self.tabs():

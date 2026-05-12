@@ -7,7 +7,6 @@ import logging
 import os
 import sys
 import tkinter as tk
-
 from dataclasses import dataclass, field
 
 import cv2
@@ -86,9 +85,7 @@ class TKVars:
         str
             Loggable representation of the dataclass
         """
-        properties = [
-            f"{k}={v.__class__.__name__}({v.get()})" for k, v in self.__dict__.items()
-        ]
+        properties = [f"{k}={v.__class__.__name__}({v.get()})" for k, v in self.__dict__.items()]
         return f"{self.__class__.__name__} ({', '.join(properties)}"
 
 
@@ -286,9 +283,7 @@ class TkGlobals:
         self._current_frame.image = image
         self._current_frame.filename = filename
         self._current_frame.scale = scale
-        self._current_frame.interpolation = (
-            cv2.INTER_CUBIC if scale > 1.0 else cv2.INTER_AREA
-        )
+        self._current_frame.interpolation = cv2.INTER_CUBIC if scale > 1.0 else cv2.INTER_AREA
         self._current_frame.display_dims = (
             int(round(image.shape[1] * scale)),
             int(round(image.shape[0] * scale)),
@@ -315,9 +310,7 @@ class TkGlobals:
             self.frame_display_dims[1] / image.shape[0],
         )
         self._current_frame.scale = scale
-        self._current_frame.interpolation = (
-            cv2.INTER_CUBIC if scale > 1.0 else cv2.INTER_AREA
-        )
+        self._current_frame.interpolation = cv2.INTER_CUBIC if scale > 1.0 else cv2.INTER_AREA
         self._current_frame.display_dims = (
             int(round(image.shape[1] * scale)),
             int(round(image.shape[0] * scale)),

@@ -6,7 +6,6 @@ Defaults files should be named `<plugin_name>_defaults.py`
 
 from lib.config import ConfigItem
 
-
 HELPTEXT = (
     "ORFormer Aligner options.\n"
     "Occlusion-robust transformer landmark detector using the official WACV 2025 ORFormer "

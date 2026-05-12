@@ -29,7 +29,6 @@ from lib.config import ConfigItem
 # pylint:disable=duplicate-code
 from lib.config import ConfigItem
 
-
 HELPTEXT = (
     "VGG_Obstructed options. Mask designed to provide smart segmentation of mostly frontal "
     "faces.\nThe mask model has been specifically trained to recognize some facial obstructions "

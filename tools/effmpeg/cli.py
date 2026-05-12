@@ -3,10 +3,9 @@
 
 import gettext
 
-from lib.cli.args import FaceSwapArgs
 from lib.cli.actions import ContextFullPaths, FileFullPaths, Radio
-from lib.utils import get_module_objects, IMAGE_EXTENSIONS
-
+from lib.cli.args import FaceSwapArgs
+from lib.utils import IMAGE_EXTENSIONS, get_module_objects
 
 # LOCALES
 _LANG = gettext.translation("tools.effmpeg.cli", localedir="locales", fallback=True)
@@ -251,9 +250,7 @@ class EffmpegArgs(FaceSwapArgs):
                 "dest": "scale",
                 "group": _("output"),
                 "default": "1920x1080",
-                "help": _(
-                    "Set the new resolution scale if the chosen action is 'rescale'."
-                ),
+                "help": _("Set the new resolution scale if the chosen action is 'rescale'."),
             }
         )
         argument_list.append(

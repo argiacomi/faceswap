@@ -607,7 +607,7 @@ def _process_value(value: T.Any) -> T.Any:
     -------
     The original or amended value
     """
-    if isinstance(value, (list, tuple, set)) and len(value) > 10:
+    if isinstance(value, list | tuple | set) and len(value) > 10:
         return f'[type: "{type(value).__name__}" len: {len(value)}]'
 
     try:

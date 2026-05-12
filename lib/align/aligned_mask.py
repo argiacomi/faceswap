@@ -2,9 +2,9 @@
 """Handles retrieval and storage of Faceswap aligned masks"""
 
 from __future__ import annotations
+
 import logging
 import typing as T
-
 from zlib import compress, decompress
 
 import cv2
@@ -14,12 +14,14 @@ from lib.logger import format_array, parse_class_init
 from lib.utils import FaceswapError, get_module_objects
 
 from .aligned_utils import get_adjusted_center, get_sub_crop_size
+from .constants import LANDMARK_MASK_PARTS, LANDMARK_PARTS, LandmarkType
 from .objects import MaskAlignmentsFile
-from .constants import LandmarkType, LANDMARK_PARTS, LANDMARK_MASK_PARTS
 
 if T.TYPE_CHECKING:
     from collections.abc import Callable
+
     import numpy.typing as npt
+
     from .aligned_face import CenteringType
 
 logger = logging.getLogger(__name__)
@@ -49,9 +51,7 @@ class Mask:  # pylint:disable=too-many-instance-attributes
         The centering that the mask is stored at. One of `"legacy"`, `"face"`, `"head"`
     """
 
-    def __init__(
-        self, storage_size: int = 128, storage_centering: CenteringType = "face"
-    ) -> None:
+    def __init__(self, storage_size: int = 128, storage_centering: CenteringType = "face") -> None:
         logger.trace(parse_class_init(locals()))  # type:ignore[attr-defined]
         self.stored_size = storage_size
         self.stored_centering: CenteringType = storage_centering
@@ -89,11 +89,7 @@ class Mask:  # pylint:disable=too-many-instance-attributes
         """The mask at the size of :attr:`stored_size` with any requested blurring, threshold
         amount and centering applied."""
         mask = self.stored_mask
-        if (
-            self._dilation[-1] is not None
-            or self._threshold != 0.0
-            or self._blur_kernel != 0
-        ):
+        if self._dilation[-1] is not None or self._threshold != 0.0 or self._blur_kernel != 0:
             mask = mask.copy()
         self._dilate_mask(mask)
         if self._threshold != 0.0:
@@ -104,9 +100,7 @@ class Mask:  # pylint:disable=too-many-instance-attributes
                 self._blur_type, mask, self._blur_kernel, passes=self._blur_passes
             ).blurred
         if self._sub_crop_size:  # Crop the mask to the given centering
-            out = np.zeros(
-                (self._sub_crop_size, self._sub_crop_size, 1), dtype=mask.dtype
-            )
+            out = np.zeros((self._sub_crop_size, self._sub_crop_size, 1), dtype=mask.dtype)
             slice_in, slice_out = (
                 self._sub_crop_slices["in"],
                 self._sub_crop_slices["out"],
@@ -204,9 +198,7 @@ class Mask:  # pylint:disable=too-many-instance-attributes
         )
         return mask
 
-    def add(
-        self, mask: npt.NDArray[np.uint8], affine_matrix: npt.NDArray[np.float32]
-    ) -> T.Self:
+    def add(self, mask: npt.NDArray[np.uint8], affine_matrix: npt.NDArray[np.float32]) -> T.Self:
         """Add a Faceswap mask to this :class:`Mask`.
 
         The mask should be the original output from  :mod:`plugins.extract.mask`
@@ -254,9 +246,7 @@ class Mask:  # pylint:disable=too-many-instance-attributes
             new_mask = mask
         else:
             dims = (self.stored_size, self.stored_size)
-            interpolation = (
-                cv2.INTER_AREA if self.stored_size < size else cv2.INTER_LINEAR
-            )
+            interpolation = cv2.INTER_AREA if self.stored_size < size else cv2.INTER_LINEAR
             new_mask = T.cast(
                 "npt.NDArray[np.uint8]",
                 cv2.resize(mask, dims, interpolation=interpolation),
@@ -415,9 +405,7 @@ class Mask:  # pylint:disable=too-many-instance-attributes
             return matrix
         return np.concatenate([matrix, np.array([[0.0, 0.0, 1.0]], dtype=np.float32)])
 
-    def _adjust_affine_matrix(
-        self, mask_size: int, affine_matrix: np.ndarray
-    ) -> np.ndarray:
+    def _adjust_affine_matrix(self, mask_size: int, affine_matrix: np.ndarray) -> np.ndarray:
         """Adjust the affine matrix for the mask's storage size
 
         Parameters
@@ -600,9 +588,7 @@ class LandmarksMask:
         -------
         The slices required to extract landmark points for creating a mask
         """
-        parts = (
-            LANDMARK_PARTS if self._area in ("eye", "mouth") else LANDMARK_MASK_PARTS
-        )
+        parts = LANDMARK_PARTS if self._area in ("eye", "mouth") else LANDMARK_MASK_PARTS
         if self._landmark_type not in parts:
             raise FaceswapError(
                 f"Landmark based masks cannot be created for {self._landmark_type.name}"
@@ -622,13 +608,10 @@ class LandmarksMask:
             )
 
         if self._area in ("eye", "mouth"):
-            retval: list[slice] | list[list[slice]] = [
-                slice(*lm_parts[v][:2]) for v in mapped
-            ]
+            retval: list[slice] | list[list[slice]] = [slice(*lm_parts[v][:2]) for v in mapped]
         else:
             retval = [
-                [slice(*p) for p in T.cast(list[tuple[int, int]], lm_parts[v])]
-                for v in mapped
+                [slice(*p) for p in T.cast(list[tuple[int, int]], lm_parts[v])] for v in mapped
             ]
         logger.trace(
             "[LM_MASK] area: '%s', slices: %s",  # type:ignore[attr-defined]
@@ -661,12 +644,8 @@ class LandmarksMask:
         qr_pnt = (landmarks[45] + mr_pnt) // 2
 
         # Top of the eye arrays
-        bot_l = np.array(
-            (ql_pnt, landmarks[36], landmarks[37], landmarks[38], landmarks[39])
-        )
-        bot_r = np.array(
-            (landmarks[42], landmarks[43], landmarks[44], landmarks[45], qr_pnt)
-        )
+        bot_l = np.array((ql_pnt, landmarks[36], landmarks[37], landmarks[38], landmarks[39]))
+        bot_r = np.array((landmarks[42], landmarks[43], landmarks[44], landmarks[45], qr_pnt))
 
         # Eyebrow arrays
         top_l = landmarks[17:22]
@@ -693,8 +672,7 @@ class LandmarksMask:
 
         if self._area in ("eye", "mouth"):
             retval = [
-                np.rint(landmarks[zone]).astype(np.int32)
-                for zone in T.cast(list[slice], slices)
+                np.rint(landmarks[zone]).astype(np.int32) for zone in T.cast(list[slice], slices)
             ]
         else:
             retval = [
@@ -714,9 +692,7 @@ class LandmarksMask:
         if self.dilation == 0.0:
             return
         kernel_size = int(round(self._size * abs(self.dilation / 100.0), 0))
-        element = cv2.getStructuringElement(
-            cv2.MORPH_ELLIPSE, (kernel_size, kernel_size)
-        )
+        element = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
         func = cv2.erode if self.dilation < 0 else cv2.dilate
         func(mask, element, dst=mask, iterations=1)
 
@@ -734,9 +710,7 @@ class LandmarksMask:
             mask = np.zeros((self._size, self._size, 1), dtype=np.uint8)
             for pts in points:
                 lms = np.rint(pts).astype("int")
-                cv2.fillConvexPoly(
-                    mask, cv2.convexHull(lms), [255], lineType=cv2.LINE_AA
-                )
+                cv2.fillConvexPoly(mask, cv2.convexHull(lms), [255], lineType=cv2.LINE_AA)
             self._original_mask = mask
 
         mask = self._original_mask.copy()

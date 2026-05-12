@@ -4,12 +4,12 @@
 import inspect
 import sys
 
-import pytest
 import keras
+import pytest
 import torch
 
-from lib.utils import get_backend
 from lib.system.system import VALID_KERAS, VALID_PYTHON, VALID_TORCH
+from lib.utils import get_backend
 
 _BACKEND = get_backend().upper()
 

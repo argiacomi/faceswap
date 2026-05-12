@@ -4,17 +4,18 @@ alignments data to :class:`~lib.align.DetectedFace` objects, and the update of t
 when edits are made in the GUI."""
 
 from __future__ import annotations
+
 import logging
 import os
 import tkinter as tk
 import typing as T
 from copy import deepcopy
-from queue import Queue, Empty
+from queue import Empty, Queue
 
 import cv2
 import numpy as np
 
-from lib.align import Alignments, AlignedFace, DetectedFace
+from lib.align import AlignedFace, Alignments, DetectedFace
 from lib.align.objects import PNGHeader, PNGSource
 from lib.gui.custom_widgets import PopupProgress
 from lib.gui.utils import FileHandler
@@ -23,8 +24,9 @@ from lib.multithreading import MultiThread
 from lib.utils import get_folder, get_module_objects
 
 if T.TYPE_CHECKING:
-    from . import manual
     from lib.align.objects import FileAlignments
+
+    from . import manual
 
 logger = logging.getLogger(__name__)
 
@@ -67,9 +69,7 @@ class DetectedFaces:
         self._frame_faces: list[list[DetectedFace]] = []
         self._updated_frame_indices: set[int] = set()
 
-        self._alignments: Alignments = self._get_alignments(
-            alignments_path, input_location
-        )
+        self._alignments: Alignments = self._get_alignments(alignments_path, input_location)
         self._alignments.update_legacy_has_source(os.path.basename(input_location))
 
         self._extractor = extractor
@@ -242,9 +242,7 @@ class DetectedFaces:
         -------
         The alignments object for the given input location
         """
-        logger.debug(
-            "alignments_path: %s, input_location: %s", alignments_path, input_location
-        )
+        logger.debug("alignments_path: %s, input_location: %s", alignments_path, input_location)
         if alignments_path:
             folder, filename = os.path.split(alignments_path)
         else:
@@ -255,9 +253,7 @@ class DetectedFaces:
             else:
                 folder = input_location
         retval = Alignments(folder, filename)
-        logger.debug(
-            "folder: %s, filename: %s, alignments: %s", folder, filename, retval
-        )
+        logger.debug("folder: %s, filename: %s, alignments: %s", folder, filename, retval)
         return retval
 
 
@@ -321,7 +317,7 @@ class _DiskIO:
         )
 
         for idx, faces in zip(
-            frames, np.array(self._frame_faces, dtype="object")[np.array(frames)]
+            frames, np.array(self._frame_faces, dtype="object")[np.array(frames)], strict=False
         ):
             frame = self._sorted_frame_names[idx]
             self._alignments.data[frame].faces = [face.to_alignment() for face in faces]
@@ -351,7 +347,7 @@ class _DiskIO:
 
         reset_grid = self._add_remove_faces(alignments, faces)
 
-        for detected_face, face in zip(faces, alignments):
+        for detected_face, face in zip(faces, alignments, strict=False):
             detected_face.from_alignment(face, with_thumb=True)
             detected_face.load_aligned(None, force=True)
             _ = detected_face.aligned.average_distance  # cache the distances
@@ -531,9 +527,7 @@ class Filter:
             or (filter_mode == "Multiple Faces" and len(frame_faces) > 1)
             or (
                 filter_mode == "Misaligned Faces"
-                and any(
-                    face.aligned.average_distance > distance for face in frame_faces
-                )
+                and any(face.aligned.average_distance > distance for face in frame_faces)
             )
         )
         assert isinstance(retval, bool)
@@ -587,9 +581,7 @@ class Filter:
         face."""
         frame_indices: list[int] = []
         face_indices: list[int] = []
-        face_counts = (
-            self._detected_faces.face_count_per_index
-        )  # Copy to avoid recalculations
+        face_counts = self._detected_faces.face_count_per_index  # Copy to avoid recalculations
 
         for frame_idx in self.frames_list:
             for face_idx in range(face_counts[frame_idx]):
@@ -613,17 +605,11 @@ class Filter:
         :attr:`~tools.manual.manual.TkGlobals.var_filter_mode.get()`."""
         face_count_per_index = self._detected_faces.face_count_per_index
         if self._globals.var_filter_mode.get() == "No Faces":
-            retval = [
-                idx for idx, count in enumerate(face_count_per_index) if count == 0
-            ]
+            retval = [idx for idx, count in enumerate(face_count_per_index) if count == 0]
         elif self._globals.var_filter_mode.get() == "Multiple Faces":
-            retval = [
-                idx for idx, count in enumerate(face_count_per_index) if count > 1
-            ]
+            retval = [idx for idx, count in enumerate(face_count_per_index) if count > 1]
         elif self._globals.var_filter_mode.get() == "Has Face(s)":
-            retval = [
-                idx for idx, count in enumerate(face_count_per_index) if count != 0
-            ]
+            retval = [idx for idx, count in enumerate(face_count_per_index) if count != 0]
         elif self._globals.var_filter_mode.get() == "Misaligned Faces":
             distance = self._filter_distance
             retval = [
@@ -707,9 +693,7 @@ class FaceUpdate:
         retval = self._frame_faces[frame_index]
         return retval
 
-    def add(
-        self, frame_index: int, pnt_x: int, width: int, pnt_y: int, height: int
-    ) -> None:
+    def add(self, frame_index: int, pnt_x: int, width: int, pnt_y: int, height: int) -> None:
         """Add a :class:`~lib.align.DetectedFace` object to the current frame with the
         given dimensions.
 
@@ -731,9 +715,7 @@ class FaceUpdate:
         faces.append(face)
         face_index = len(faces) - 1
 
-        self.bounding_box(
-            frame_index, face_index, pnt_x, width, pnt_y, height, aligner="cv2-dnn"
-        )
+        self.bounding_box(frame_index, face_index, pnt_x, width, pnt_y, height, aligner="cv2-dnn")
         face.load_aligned(None)
         self._tk_face_count_changed.set(True)
 
@@ -748,9 +730,7 @@ class FaceUpdate:
         face_index
             The face index within the frame
         """
-        logger.debug(
-            "Deleting face at frame index: %s face index: %s", frame_index, face_index
-        )
+        logger.debug("Deleting face at frame index: %s face index: %s", frame_index, face_index)
         faces = self._faces_at_frame_index(frame_index)
         del faces[face_index]
         self._tk_face_count_changed.set(True)
@@ -803,9 +783,7 @@ class FaceUpdate:
         face.width = width
         face.top = pnt_y
         face.height = height
-        face.add_landmarks_xy(
-            self._extractor.get_landmarks(frame_index, face_index, aligner)
-        )
+        face.add_landmarks_xy(self._extractor.get_landmarks(frame_index, face_index, aligner))
         self._globals.var_full_update.set(True)
 
     def landmark(
@@ -852,7 +830,7 @@ class FaceUpdate:
                 landmark = cv2.transform(landmark, matrix, landmark.shape).squeeze()
                 face.landmarks_xy[landmark_index] = landmark
             else:
-                for lmk, idx in zip(landmark, landmark_index):  # type:ignore[call-overload]
+                for lmk, idx in zip(landmark, landmark_index, strict=False):  # type:ignore[call-overload]
                     lmk = np.reshape(lmk, (1, 1, 2))
                     lmk = cv2.transform(lmk, matrix, lmk.shape).squeeze()
                     face.landmarks_xy[idx] = lmk
@@ -860,9 +838,7 @@ class FaceUpdate:
             face.landmarks_xy[landmark_index] += (shift_x, shift_y)
         self._globals.var_full_update.set(True)
 
-    def landmarks(
-        self, frame_index: int, face_index: int, shift_x: int, shift_y: int
-    ) -> None:
+    def landmarks(self, frame_index: int, face_index: int, shift_x: int, shift_y: int) -> None:
         """Shift all of the landmarks and bounding box for the
         :class:`~lib.align.DetectedFace` object at the given frame and face indices by the
         given x and y values and update the masks.
@@ -937,9 +913,7 @@ class FaceUpdate:
         face.add_landmarks_xy(((face.landmarks_xy - center) * scale) + center)
         self._globals.var_full_update.set(True)
 
-    def mask(
-        self, frame_index: int, face_index: int, mask: np.ndarray, mask_type: str
-    ) -> None:
+    def mask(self, frame_index: int, face_index: int, mask: np.ndarray, mask_type: str) -> None:
         """Update the mask on an edit for the :class:`~lib.align.DetectedFace` object at
         the given frame and face indices, for the given mask and mask type.
 
@@ -974,14 +948,10 @@ class FaceUpdate:
         logger.debug("frame: %s, direction: %s", frame_index, direction)
         faces = self._faces_at_frame_index(frame_index)
         frames_with_faces = [
-            idx
-            for idx, faces in enumerate(self._detected_faces.current_faces)
-            if len(faces) > 0
+            idx for idx, faces in enumerate(self._detected_faces.current_faces) if len(faces) > 0
         ]
         if direction == "prev":
-            idx = next(
-                (idx for idx in reversed(frames_with_faces) if idx < frame_index), None
-            )
+            idx = next((idx for idx in reversed(frames_with_faces) if idx < frame_index), None)
         else:
             idx = next((idx for idx in frames_with_faces if idx > frame_index), None)
         if idx is None:
@@ -995,7 +965,7 @@ class FaceUpdate:
             face._aligned = None  # pylint:disable=protected-access
         copied = deepcopy(to_copy)
 
-        for old_face, new_face in zip(to_copy, copied):
+        for old_face, new_face in zip(to_copy, copied, strict=False):
             old_face.load_aligned(None)
             new_face.load_aligned(None)
 

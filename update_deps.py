@@ -31,9 +31,7 @@ def update(is_gui=False) -> None:
 
 
 if __name__ == "__main__":
-    logfile = os.path.join(
-        os.path.dirname(os.path.realpath(sys.argv[0])), "faceswap_update.log"
-    )
+    logfile = os.path.join(os.path.dirname(os.path.realpath(sys.argv[0])), "faceswap_update.log")
     log_setup("INFO", logfile, "setup")
     update()
 

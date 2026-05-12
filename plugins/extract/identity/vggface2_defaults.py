@@ -30,7 +30,6 @@ from lib.config import ConfigItem
 # pylint:disable=duplicate-code
 from lib.config import ConfigItem
 
-
 HELPTEXT = (
     "VGG Face 2 identity recognition.\n"
     "A Keras port of the model trained for VGGFace2: A dataset for recognizing faces across pose "

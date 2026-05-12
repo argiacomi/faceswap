@@ -6,6 +6,7 @@ https://github.com/zllrunning/face-parsing.PyTorch
 """
 
 from __future__ import annotations
+
 import logging
 import typing as T
 
@@ -14,8 +15,9 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from lib.utils import get_module_objects, GetModel
+from lib.utils import GetModel, get_module_objects
 from plugins.extract.base import FacePlugin
+
 from . import bisenet_fp_defaults as cfg
 
 if T.TYPE_CHECKING:
@@ -106,9 +108,7 @@ class BiSeNetFP(FacePlugin):
         -------
         The loaded BiSeNetFP model
         """
-        weights = GetModel(
-            f"bisenet_face_parsing_v{self._git_version}.pth", 14
-        ).model_path
+        weights = GetModel(f"bisenet_face_parsing_v{self._git_version}.pth", 14).model_path
         assert isinstance(weights, str)
         return T.cast(
             BiSeNet,
@@ -204,9 +204,7 @@ class BasicBlock(nn.Module):
 
     def __init__(self, in_channels: int, filters: int, stride: int = 1):
         super().__init__()
-        self.conv1 = nn.Conv2d(
-            in_channels, filters, 3, stride=stride, padding=1, bias=False
-        )
+        self.conv1 = nn.Conv2d(in_channels, filters, 3, stride=stride, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(filters)
         self.conv2 = nn.Conv2d(filters, filters, 3, stride=1, padding=1, bias=False)
         self.bn2 = nn.BatchNorm2d(filters)
@@ -365,9 +363,7 @@ class BiSeNetOutput(nn.Module):
 
     def __init__(self, in_channels: int, filters: int, num_classes: int) -> None:
         super().__init__()
-        self.conv1 = ConvBNReLU(
-            in_channels, filters, kernel_size=3, strides=1, padding=1
-        )
+        self.conv1 = ConvBNReLU(in_channels, filters, kernel_size=3, strides=1, padding=1)
         self.conv_out = nn.Conv2d(filters, num_classes, 1, bias=False)
 
     def forward(self, inputs: Tensor) -> Tensor:
@@ -399,9 +395,7 @@ class AttentionRefinementModule(nn.Module):
 
     def __init__(self, in_channels: int, filters: int) -> None:
         super().__init__()
-        self.conv = ConvBNReLU(
-            in_channels, filters, kernel_size=3, strides=1, padding=1
-        )
+        self.conv = ConvBNReLU(in_channels, filters, kernel_size=3, strides=1, padding=1)
         self.conv_atten = nn.Conv2d(filters, filters, kernel_size=1, bias=False)
         self.bn_atten = nn.BatchNorm2d(filters)
         self.sigmoid_atten = nn.Sigmoid()
@@ -463,9 +457,7 @@ class ContextPath(nn.Module):
             dim_32,
             mode="nearest",
         )
-        feat32 = self.conv_head32(
-            F.interpolate(self.arm32(feat32) + avg, dim_16, mode="nearest")
-        )
+        feat32 = self.conv_head32(F.interpolate(self.arm32(feat32) + avg, dim_16, mode="nearest"))
         feat16 = self.conv_head16(
             F.interpolate(self.arm16(feat16) + feat32, dim_8, mode="nearest")
         )
@@ -486,15 +478,9 @@ class FeatureFusionModule(nn.Module):
 
     def __init__(self, in_channels: int, filters: int) -> None:
         super().__init__()
-        self.convblk = ConvBNReLU(
-            in_channels, filters, kernel_size=1, strides=1, padding=0
-        )
-        self.conv1 = nn.Conv2d(
-            filters, filters // 4, 1, stride=1, padding=0, bias=False
-        )
-        self.conv2 = nn.Conv2d(
-            filters // 4, filters, 1, stride=1, padding=0, bias=False
-        )
+        self.convblk = ConvBNReLU(in_channels, filters, kernel_size=1, strides=1, padding=0)
+        self.conv1 = nn.Conv2d(filters, filters // 4, 1, stride=1, padding=0, bias=False)
+        self.conv2 = nn.Conv2d(filters // 4, filters, 1, stride=1, padding=0, bias=False)
         self.relu = nn.ReLU(inplace=True)
         self.sigmoid = nn.Sigmoid()
 
@@ -562,8 +548,7 @@ class BiSeNet(nn.Module):
             self.conv_out32(feat_cp16),
         ]
         output = tuple(
-            F.interpolate(feat, dims, mode="bilinear", align_corners=True)
-            for feat in feats
+            F.interpolate(feat, dims, mode="bilinear", align_corners=True) for feat in feats
         )
         assert len(output) == 3
         return output

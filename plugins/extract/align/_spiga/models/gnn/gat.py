@@ -1,7 +1,8 @@
 from copy import deepcopy
+
 import torch
-from torch import nn
 import torch.nn.functional as F
+from torch import nn
 
 from .layers import MLP
 
@@ -51,8 +52,8 @@ class Attention(nn.Module):
     def forward(self, query, key, value):
         batch_dim = query.size(0)
         query, key, value = [
-            l(x).view(batch_dim, self.dim, self.num_heads, -1)
-            for l, x in zip(self.proj, (query, key, value))
+            layer(x).view(batch_dim, self.dim, self.num_heads, -1)
+            for layer, x in zip(self.proj, (query, key, value), strict=False)
         ]
         x, prob = self.attention(query, key, value)
         return self.merge(x.contiguous().view(batch_dim, self.dim * self.num_heads, -1)), prob

@@ -11,10 +11,10 @@ import typing as T
 import numpy as np
 from tqdm import tqdm
 
-from lib.align import alignments, DetectedFace
+from lib.align import DetectedFace, alignments
 from lib.image import FacesLoader, ImagesLoader
-from lib.utils import get_module_objects
 from lib.infer.objects import FrameFaces
+from lib.utils import get_module_objects
 
 if T.TYPE_CHECKING:
     from lib.align.objects import FileAlignments, PNGAlignments, PNGHeader
@@ -109,15 +109,11 @@ class Loader:
             aligns = self._alignments.get_faces_in_frame(frame_name)
             if not aligns or face_index > len(aligns) - 1:
                 self._skip_count += 1
-                logger.warning(
-                    "Skipping Face not found in alignments file: '%s'", filename
-                )
+                logger.warning("Skipping Face not found in alignments file: '%s'", filename)
                 return None
 
         alignment = aligns[lookup_index]
-        retval = FrameFaces(
-            filename, image, is_aligned=True, frame_metadata=metadata.source
-        )
+        retval = FrameFaces(filename, image, is_aligned=True, frame_metadata=metadata.source)
         retval.detected_faces = [DetectedFace().from_alignment(alignment)]
         return retval
 
@@ -128,14 +124,10 @@ class Loader:
         ------
         The extract media object for the processed face
         """
-        for filename, image, metadata in tqdm(
-            self._loader.load(), total=self._loader.count
-        ):
+        for filename, image, metadata in tqdm(self._loader.load(), total=self._loader.count):
             if not metadata:
                 self._skip_count += 1
-                logger.warning(
-                    "Non-Faceswap extracted face found. Image skipped: '%s'", filename
-                )
+                logger.warning("Non-Faceswap extracted face found. Image skipped: '%s'", filename)
                 continue
 
             retval = self._process_face(filename, image, metadata)
@@ -181,10 +173,7 @@ class Loader:
         ------
         The extract media object for the processed face
         """
-        if self._is_faces:
-            iterator = self._from_faces
-        else:
-            iterator = self._from_frames
+        iterator = self._from_faces if self._is_faces else self._from_frames
 
         yield from iterator()
 

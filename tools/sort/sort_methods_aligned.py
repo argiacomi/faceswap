@@ -4,6 +4,7 @@ their sorting metrics.
 """
 
 from __future__ import annotations
+
 import logging
 import operator
 import sys
@@ -13,11 +14,13 @@ import numpy as np
 from tqdm import tqdm
 
 from lib.align import AlignedFace, LandmarkType
-from lib.utils import get_module_objects, FaceswapError
+from lib.utils import FaceswapError, get_module_objects
+
 from .sort_methods import SortMethod
 
 if T.TYPE_CHECKING:
     from argparse import Namespace
+
     from lib.align.objects import PNGAlignments
 
 logger = logging.getLogger(__name__)
@@ -170,9 +173,7 @@ class SortPitch(SortAlignedMetric):
         # Start bin names from 0 for more intuitive experience
         names = np.flip(thresholds.astype("int")) + 90
         self._bin_names = [
-            f"{self._method}_"
-            f"{idx:03d}_{int(names[idx])}"
-            f"degrees_to_{int(names[idx + 1])}"
+            f"{self._method}_{idx:03d}_{int(names[idx])}degrees_to_{int(names[idx + 1])}"
             for idx in range(self._num_bins)
         ]
 
@@ -180,12 +181,7 @@ class SortPitch(SortAlignedMetric):
         for filename, result in self._result:
             result = np.clip(result, -90.0, 90.0)
             bin_idx = (
-                next(
-                    bin_id
-                    for bin_id, thresh in enumerate(thresholds)
-                    if result >= thresh
-                )
-                - 1
+                next(bin_id for bin_id, thresh in enumerate(thresholds) if result >= thresh) - 1
             )
             bins[bin_idx].append(filename)
         return bins
@@ -279,9 +275,7 @@ class SortFaceCNN(SortAlignedMetric):
     def __init__(self, arguments: Namespace, is_group: bool = False) -> None:
         super().__init__(arguments, is_group=is_group)
         self._is_dissim = self._method == "face-cnn-dissim"
-        self._threshold: float = (
-            7.2 if arguments.threshold < 1.0 else arguments.threshold
-        )
+        self._threshold: float = 7.2 if arguments.threshold < 1.0 else arguments.threshold
 
     def _get_metric(self, aligned_face: AlignedFace) -> np.ndarray:
         """Obtain the xy aligned landmarks for the face"
@@ -309,9 +303,7 @@ class SortFaceCNN(SortAlignedMetric):
     def _sort_landmarks_ssim(self) -> None:
         """Sort landmarks by similarity"""
         img_list_len = len(self._result)
-        for i in tqdm(
-            range(0, img_list_len - 1), desc="Comparing", file=sys.stdout, leave=False
-        ):
+        for i in tqdm(range(0, img_list_len - 1), desc="Comparing", file=sys.stdout, leave=False):
             min_score = float("inf")
             j_min_score = i + 1
             for j in range(i + 1, img_list_len):
@@ -330,9 +322,7 @@ class SortFaceCNN(SortAlignedMetric):
         """Sort landmarks by dissimilarity"""
         logger.info("Comparing landmarks...")
         img_list_len = len(self._result)
-        for i in tqdm(
-            range(0, img_list_len - 1), desc="Comparing", file=sys.stdout, leave=False
-        ):
+        for i in tqdm(range(0, img_list_len - 1), desc="Comparing", file=sys.stdout, leave=False):
             score_total = 0
             for j in range(i + 1, img_list_len):
                 if i == j:
@@ -370,9 +360,7 @@ class SortFaceCNN(SortAlignedMetric):
         threshold = self._threshold * 1000
         img_list_len = len(self._result)
 
-        for i in tqdm(
-            range(0, img_list_len - 1), desc="Grouping", file=sys.stdout, leave=False
-        ):
+        for i in tqdm(range(0, img_list_len - 1), desc="Grouping", file=sys.stdout, leave=False):
             fl1 = self._result[i][1]
 
             current_key = -1

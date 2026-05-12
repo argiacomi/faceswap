@@ -6,7 +6,9 @@ does not have a natural home, so here for now and called as an extra plugin from
 
 import cv2
 import numpy as np
+
 from lib.utils import get_module_objects
+
 from ._base import Adjustment
 
 
@@ -31,9 +33,7 @@ class Color(Adjustment):
         insertion_mask = np.rint(raw_mask[y_crop, x_crop] * 255.0).astype("uint8")
         insertion_mask[insertion_mask != 0] = 255
         prior = np.rint(
-            np.pad(
-                old_face * 255.0, ((height, height), (width, width), (0, 0)), "constant"
-            )
+            np.pad(old_face * 255.0, ((height, height), (width, width), (0, 0)), "constant")
         ).astype("uint8")
 
         blended = cv2.seamlessClone(

@@ -6,7 +6,7 @@ from __future__ import annotations
 import logging
 import math
 import typing as T
-from dataclasses import dataclass, InitVar, field
+from dataclasses import InitVar, dataclass, field
 from operator import itemgetter
 from threading import Event, Lock
 from time import perf_counter
@@ -20,13 +20,15 @@ from lib.multithreading import FSThread
 from lib.utils import get_module_objects
 from plugins.extract import extract_config as cfg
 
-from .runner import get_pipeline
 from .plugin_utils import get_torch_modules, random_input_from_plugin, warmup_plugin
+from .runner import get_pipeline
 
 if T.TYPE_CHECKING:
     import numpy.typing as npt
+
     from lib.multithreading import ErrorState
     from plugins.extract.base import ExtractPlugin
+
     from .handler import ExtractHandler
     from .runner import ExtractRunner
 
@@ -123,7 +125,8 @@ class ModelProfile:
         """Print the benchmark results to screen in a format that is easy to read and can be
         copy and pasted (fixed width)"""
         egs = [
-            (i * b) / self._run_time for i, b in zip(self.iterations, self.batch_sizes)
+            (i * b) / self._run_time
+            for i, b in zip(self.iterations, self.batch_sizes, strict=False)
         ]
         bs_str = [str(i) for i in self.batch_sizes]
         eg_str = ["N/A" if i < 0 else f"{i:.1f}" for i in egs]
@@ -136,11 +139,9 @@ class ModelProfile:
         labels = ["BatchSize", "EG/S", "VRAM(MB) Allocated", "VRAM(MB) Reserved"]
 
         lbl_width = max(len(i) for i in labels)
-        col_width = (
-            max(len(i) for i in bs_str + eg_str + vram_alloc_str + vram_res_str) + 2
-        )
+        col_width = max(len(i) for i in bs_str + eg_str + vram_alloc_str + vram_res_str) + 2
 
-        for lbl, data in zip(labels, (bs_str, eg_str, vram_alloc_str, vram_res_str)):
+        for lbl, data in zip(labels, (bs_str, eg_str, vram_alloc_str, vram_res_str), strict=False):
             dat = "".join([d.rjust(col_width) for d in data])
             print(f"    {lbl.ljust(lbl_width)}{dat}")
 
@@ -149,9 +150,7 @@ class ModelProfile:
         logger.info("Profiling %s", self.plugin.name)
         prog_bar = tqdm(self.batch_sizes, desc="Batch size 1", leave=False, smoothing=0)
         for idx, batch_size in enumerate(prog_bar):
-            inputs = random_input_from_plugin(
-                self.plugin, batch_size, self.channels_last
-            )
+            inputs = random_input_from_plugin(self.plugin, batch_size, self.channels_last)
             try:
                 torch.cuda.empty_cache()
                 self._predict(inputs, 2)  # warmup
@@ -275,9 +274,7 @@ class DataTracker:  # pylint:disable=too-many-instance-attributes
         """``True`` if the last iteration hit an OOM or fell outside our max VRAM threshold"""
         if not self.vram:
             return False
-        return any(
-            [np.any(self._iterations[-1] < 0), self.vram[-1][1] > self.vram_limit]
-        )
+        return any([np.any(self._iterations[-1] < 0), self.vram[-1][1] > self.vram_limit])
 
     @property
     def batch_sizes(self) -> npt.NDArray[np.int64]:
@@ -305,9 +302,7 @@ class DataTracker:  # pylint:disable=too-many-instance-attributes
 
     def collect_vram(self) -> None:
         """Store the currently allocated and reserved Cuda VRAM stats"""
-        self.vram.append(
-            (torch.cuda.max_memory_allocated(), torch.cuda.max_memory_reserved())
-        )
+        self.vram.append((torch.cuda.max_memory_allocated(), torch.cuda.max_memory_reserved()))
         logger.debug("[%s] VRAM collected: %s", self._name, self.vram[-1])
 
     def get_samples(
@@ -368,13 +363,8 @@ class DataTracker:  # pylint:disable=too-many-instance-attributes
         """
         samples = self.get_samples(index=index, adjusted=adjusted)
         dim = 1 if index is None else 0
-        if method == "mean":
-            retval = samples.mean(axis=dim)
-        else:
-            retval = samples.min(axis=dim)
-        logger.debug(
-            "[%s] Calculated Average samples/plugin: %s", self._name, retval.tolist()
-        )
+        retval = samples.mean(axis=dim) if method == "mean" else samples.min(axis=dim)
+        logger.debug("[%s] Calculated Average samples/plugin: %s", self._name, retval.tolist())
         return retval
 
     def _handle_oom(self) -> None:
@@ -387,8 +377,7 @@ class DataTracker:  # pylint:disable=too-many-instance-attributes
 
         changed_mask = self._all_batch_sizes[-1] != self._all_batch_sizes[-2]
         diff = abs(
-            self._all_batch_sizes[-1][changed_mask]
-            - self._all_batch_sizes[-2][changed_mask]
+            self._all_batch_sizes[-1][changed_mask] - self._all_batch_sizes[-2][changed_mask]
         )
         if diff <= 4:
             logger.debug(
@@ -421,9 +410,7 @@ class DataTracker:  # pylint:disable=too-many-instance-attributes
         else:
             next_batch[p_idx] += _batch_size_adjust
         logger.debug("[%s] next batch sizes: %s", self._name, next_batch.tolist())
-        self._all_batch_sizes = np.concatenate(
-            [self._all_batch_sizes, next_batch[None]]
-        )
+        self._all_batch_sizes = np.concatenate([self._all_batch_sizes, next_batch[None]])
         self._success = np.concatenate([self._success, [True]])
 
 
@@ -463,11 +450,13 @@ class Output:
         message_list = message_list[1:]
         if left_justify:
             msg = " ".join(
-                m.ljust(l) for m, l in zip(message_list, self._label_widths[1:])
+                m.ljust(width)
+                for m, width in zip(message_list, self._label_widths[1:], strict=False)
             )
         else:
             msg = " ".join(
-                m.rjust(l) for m, l in zip(message_list, self._label_widths[1:])
+                m.rjust(width)
+                for m, width in zip(message_list, self._label_widths[1:], strict=False)
             )
         tqdm.write(f"{self._spacer}{label}{msg}")
 
@@ -485,10 +474,7 @@ class Output:
 
         if self._data.has_detector and self._data.face_scaling > 1:
             lbl = [f"Scaled EG/S ({self._data.face_scaling}x)"]
-            egs = [
-                f"{e:.1f}"
-                for e in self._data.get_samples(-1, adjusted=True) / self._run_time
-            ]
+            egs = [f"{e:.1f}" for e in self._data.get_samples(-1, adjusted=True) / self._run_time]
             avg_egs = [
                 f"{self._data.get_samples_stats('mean', -1, adjusted=True) / self._run_time:.1f}"
             ]
@@ -497,9 +483,7 @@ class Output:
             ]
             self._write(lbl + egs + avg_egs + min_egs)
 
-        vram_alloc, vram_res = (
-            str(int(round(v / 1024 / 1024))) for v in self._data.vram[-1]
-        )
+        vram_alloc, vram_res = (str(int(round(v / 1024 / 1024))) for v in self._data.vram[-1])
         vram_res = f"{vram_res}/{str(int(round(self._data.vram_limit / 1024 / 1024)))}"
         self._write(["VRAM(MB) Allocated", vram_alloc], left_justify=True)
         self._write(["VRAM(MB) Reserved", vram_res], left_justify=True)
@@ -551,14 +535,12 @@ class PipelineProfile:
         self._error_state = error_state
 
         self._events = Events(ready=[Event() for _ in range(len(plugins))])
-        self._data = DataTracker(
-            len(plugins), max_vram / 100.0, face_scaling, has_detector
-        )
+        self._data = DataTracker(len(plugins), max_vram / 100.0, face_scaling, has_detector)
         self._output_stats = Output([p.name for p in plugins], self._data, run_time)
 
         self._threads = [
             FSThread(self._plugin_runner, name=f"{p.name}_thread", args=(p, i, c))
-            for i, (p, c) in enumerate(zip(plugins, channels_last))
+            for i, (p, c) in enumerate(zip(plugins, channels_last, strict=False))
         ]
 
     @classmethod
@@ -586,9 +568,7 @@ class PipelineProfile:
         torch.cuda.synchronize()
         return iters
 
-    def _plugin_runner(
-        self, plugin: ExtractPlugin, matrix_id: int, channels_last: bool
-    ) -> None:
+    def _plugin_runner(self, plugin: ExtractPlugin, matrix_id: int, channels_last: bool) -> None:
         """Runs a plugin inside a thread, waits and reports to main thread by means of events
 
         Parameters
@@ -612,9 +592,7 @@ class PipelineProfile:
                 break
             batch_size = self._data.batch_sizes[-1][matrix_id]
             inputs = random_input_from_plugin(plugin, batch_size, channels_last)
-            logger.debug(
-                "[PipelineProfile] Running test '%s'. input: %s", name, inputs.shape
-            )
+            logger.debug("[PipelineProfile] Running test '%s'. input: %s", name, inputs.shape)
             try:
                 self._predict(plugin, inputs, self._warmup_time)  # warmup
                 self._events.set_ready(matrix_id)
@@ -640,11 +618,11 @@ class PipelineProfile:
             "[Profiler] Setting optimal batch sizes: %s",
             ", ".join(
                 f"{p}: {b}"
-                for p, b in zip(plugin_names, self._data.batch_sizes[best_idx])
+                for p, b in zip(plugin_names, self._data.batch_sizes[best_idx], strict=False)
             ),
         )
 
-        for plugin, batch_size in zip(self._plugins, best_batch_sizes):
+        for plugin, batch_size in zip(self._plugins, best_batch_sizes, strict=False):
             logger.debug(
                 "[PipelineProfile] Updating batch size for '%s': %s",
                 plugin.name,
@@ -663,9 +641,7 @@ class PipelineProfile:
                 self._error_state.re_raise()
 
             msg = f"[{self._current_index}] Batches {tuple(self._data.batch_sizes[-1].tolist())}"
-            prog_bar = tqdm(
-                desc=f"Benchmarking Pipeline {msg}", total=prog_length, leave=False
-            )
+            prog_bar = tqdm(desc=f"Benchmarking Pipeline {msg}", total=prog_length, leave=False)
             torch.cuda.empty_cache()
 
             # Warmup
@@ -764,9 +740,7 @@ class Profiler:
         retval: list[int] = []
         for idx, runner in enumerate(self._chain):
             if runner.handler.plugin.device.type == "cpu":
-                logger.debug(
-                    "[Profiler] Skipping CPU model: '%s'", runner.handler.plugin_name
-                )
+                logger.debug("[Profiler] Skipping CPU model: '%s'", runner.handler.plugin_name)
                 continue
             if self._check_for_torch(runner.handler.plugin):
                 logger.debug("[Profiler] Adding: '%s'", runner.handler.plugin.name)
@@ -787,7 +761,7 @@ class Profiler:
         The benchmark object for each plugin tested
         """
         retval: list[ModelProfile] = []
-        for idx, chan_last in zip(self._torch_runners, self._channels_last):
+        for idx, chan_last in zip(self._torch_runners, self._channels_last, strict=False):
             plugin = self._chain[idx].handler.plugin
             profile = ModelProfile(plugin, channels_last=chan_last)
             logger.debug(
@@ -811,19 +785,15 @@ class Profiler:
         if not cfg.profile_save_config():
             return
         conf = cfg.load_config()
-        f_names = [
-            ".".join(p.__class__.__module__.rsplit(".", maxsplit=2)[-2:])
-            for p in plugins
-        ]
+        f_names = [".".join(p.__class__.__module__.rsplit(".", maxsplit=2)[-2:]) for p in plugins]
 
         is_updated = False
-        for plugin_name, plugin in zip(f_names, plugins):
+        for plugin_name, plugin in zip(f_names, plugins, strict=False):
             opts = conf.sections[plugin_name].options
             opt = opts.get("batch_size", opts.get("batch_size"))
             if not opt:
                 logger.warning(
-                    "Could not update Config file for '%s' as no 'batch_size' "
-                    "entry found",
+                    "Could not update Config file for '%s' as no 'batch_size' entry found",
                     plugin.name,
                 )
                 continue
@@ -847,8 +817,7 @@ class Profiler:
 
         if not is_updated:
             logger.info(
-                "No batch sizes were updated from their saved values. "
-                "Not saving config file"
+                "No batch sizes were updated from their saved values. Not saving config file"
             )
             return
         logger.info("Saving config file with updated batch sizes")
@@ -857,12 +826,8 @@ class Profiler:
     def __call__(self) -> None:
         """Call the profiler"""
         # model_benchmarks = self._profile_isolated()  # Unused. Kept for if/when multi-gpu support
-        plugins = [
-            r.handler.plugin for r in itemgetter(*self._torch_runners)(self._chain)
-        ]
-        has_detector = (
-            self._chain[self._torch_runners[0]].handler.plugin_type == "detect"
-        )
+        plugins = [r.handler.plugin for r in itemgetter(*self._torch_runners)(self._chain)]
+        has_detector = self._chain[self._torch_runners[0]].handler.plugin_type == "detect"
         pipeline_benchmarks = PipelineProfile(
             plugins,
             self._chain[0]._threads.error_state,

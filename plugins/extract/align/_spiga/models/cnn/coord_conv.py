@@ -4,7 +4,7 @@ import torch.nn as nn
 
 class AddCoordsTh(nn.Module):
     def __init__(self, x_dim=64, y_dim=64, with_r=False):
-        super(AddCoordsTh, self).__init__()
+        super().__init__()
         self.x_dim = x_dim
         self.y_dim = y_dim
         self.with_r = with_r

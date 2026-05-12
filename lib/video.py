@@ -7,7 +7,6 @@ import logging
 import os
 import subprocess
 import typing as T
-
 from collections import deque
 from fractions import Fraction
 from math import ceil
@@ -21,12 +20,11 @@ import numpy as np
 from tqdm import tqdm
 
 from lib.logger import parse_class_init
-from lib.utils import convert_to_secs, FaceswapError, get_module_objects
-
+from lib.utils import FaceswapError, convert_to_secs, get_module_objects
 
 if T.TYPE_CHECKING:
-    from av.container import InputContainer, OutputContainer
     import numpy.typing as npt
+    from av.container import InputContainer, OutputContainer
 
 logger = logging.getLogger(__name__)
 av.logging.set_level(av.logging.VERBOSE)
@@ -158,23 +156,17 @@ def count_frames(filename, fast=False):
         if output.startswith("Duration:"):
             logger.debug("Duration line: %s", output)
             idx = output.find("Duration:") + len("Duration:")
-            duration = int(
-                convert_to_secs(*output[idx:].split(",", 1)[0].strip().split(":"))
-            )
+            duration = int(convert_to_secs(*output[idx:].split(",", 1)[0].strip().split(":")))
             logger.debug("duration: %s", duration)
         if output.startswith("frame="):
             logger.debug("frame line: %s", output)
             if p_bar is None:
                 logger.debug("Initializing tqdm")
-                p_bar = tqdm(
-                    desc="Analyzing Video", leave=False, total=duration, unit="secs"
-                )
+                p_bar = tqdm(desc="Analyzing Video", leave=False, total=duration, unit="secs")
             time_idx = output.find("time=") + len("time=")
             frame_idx = output.find("frame=") + len("frame=")
             frames = int(output[frame_idx:].strip().split(" ")[0].strip())
-            vid_time = int(
-                convert_to_secs(*output[time_idx:].split(" ")[0].strip().split(":"))
-            )
+            vid_time = int(convert_to_secs(*output[time_idx:].split(" ")[0].strip().split(":")))
             logger.debug("frames: %s, vid_time: %s", frames, vid_time)
             prev_update = update
             update = vid_time
@@ -220,9 +212,7 @@ class VideoInfo:
         self._fast_count = fast_count
         self._stream_index = stream_index
         self._pts = None if pts is None else np.array(pts, dtype=np.int64)
-        self._keyframes = (
-            None if keyframes is None else np.array(keyframes, dtype=np.int64)
-        )
+        self._keyframes = None if keyframes is None else np.array(keyframes, dtype=np.int64)
         self._num_keyframes = -1
 
         self._duration = self._get_duration()
@@ -233,8 +223,7 @@ class VideoInfo:
         params = {
             k[1:]: v.tolist() if isinstance(v, np.ndarray) else v
             for k, v in self.__dict__.items()
-            if k
-            in ("_video_file", "_fast_count", "_stream_index", "_pts", "_keyframes")
+            if k in ("_video_file", "_fast_count", "_stream_index", "_pts", "_keyframes")
         }
         s_params = ", ".join(f"{k}={repr(v)}" for k, v in params.items())
         return f"{self.__class__.__name__}({s_params})"
@@ -303,8 +292,7 @@ class VideoInfo:
         stream.thread_type = "AUTO"
         if stream.time_base is None:
             raise FaceswapError(
-                f"Video file '{self._video_file}' cannot be processed. Missing "
-                "duration metadata"
+                f"Video file '{self._video_file}' cannot be processed. Missing duration metadata"
             )
         return stream
 
@@ -366,9 +354,7 @@ class VideoInfo:
             stream = self._get_stream(container)
             assert stream.time_base is not None
 
-            p_bar = tqdm(
-                desc="Analyzing Video", leave=False, total=self.duration, unit="secs"
-            )
+            p_bar = tqdm(desc="Analyzing Video", leave=False, total=self.duration, unit="secs")
             i = last_update = offset = 0
             decoder = container.decode(stream)
             while True:
@@ -439,9 +425,7 @@ class VideoReader:
         logger.debug(parse_class_init(locals()))
         self._video_file = validate_video_file(video_file)
         self._stream_index = stream_index
-        self._info = VideoInfo(
-            self._video_file, fast_count, self._stream_index, pts, keyframes
-        )
+        self._info = VideoInfo(self._video_file, fast_count, self._stream_index, pts, keyframes)
 
         self._container = av.open(self._video_file, "r")
         self._stream = self._container.streams.video[stream_index]
@@ -483,9 +467,7 @@ class VideoReader:
 
     def close(self) -> None:
         """Shut down the AV Container object"""
-        logger.debug(
-            "[%s] '%s' Closing container", self.__class__.__name__, self._video_file
-        )
+        logger.debug("[%s] '%s' Closing container", self.__class__.__name__, self._video_file)
         self._container.close()
 
     def __next__(self) -> av.VideoFrame:
@@ -570,16 +552,12 @@ class VideoReader:
                 self._current_index,
                 index,
             )
-            self._container.seek(
-                target_pts, backward=True, any_frame=False, stream=self._stream
-            )
+            self._container.seek(target_pts, backward=True, any_frame=False, stream=self._stream)
             self._decoder = self._container.decode(self._stream)
             self._current_index = self._get_previous_keyframe(index)
             return
 
-        next_key_index = np.searchsorted(
-            self._info.keyframes, self._current_index, side="right"
-        )
+        next_key_index = np.searchsorted(self._info.keyframes, self._current_index, side="right")
         next_keyframe = self._info.keyframes[next_key_index]
 
         if next_keyframe > index:
@@ -596,9 +574,7 @@ class VideoReader:
             self.__class__.__name__,
             next_keyframe,
         )
-        self._container.seek(
-            target_pts, backward=True, any_frame=False, stream=self._stream
-        )
+        self._container.seek(target_pts, backward=True, any_frame=False, stream=self._stream)
         self._decoder = self._container.decode(self._stream)
         self._current_index = next_keyframe
 
@@ -671,9 +647,7 @@ class VideoMux:  # pylint:disable=too-many-instance-attributes
         self._codec_parameters = codec_parameters
         self._mux_audio = mux_audio
 
-        self._containers: dict[
-            T.Literal["src", "dst"], InputContainer | OutputContainer
-        ] = {
+        self._containers: dict[T.Literal["src", "dst"], InputContainer | OutputContainer] = {
             "src": av.open(self._source_video, "r"),
             "dst": av.open(self._destination_video, "w"),
         }
@@ -719,9 +693,7 @@ class VideoMux:  # pylint:disable=too-many-instance-attributes
         logger.debug("[%s] Source fps: %s", self.__class__.__name__, fps)
 
         if not self._mux_audio:
-            logger.debug(
-                "[%s] Not muxing audio due to input parameters", self.__class__.__name__
-            )
+            logger.debug("[%s] Not muxing audio due to input parameters", self.__class__.__name__)
             return None, fps
 
         audio = next((s for s in src.streams if s.type == "audio"), None)
@@ -735,9 +707,7 @@ class VideoMux:  # pylint:disable=too-many-instance-attributes
             return None, fps
 
         packets = (p for p in src.demux(audio) if p.dts is not None)
-        logger.debug(
-            "[%s] Muxing audio from source: %s", self.__class__.__name__, packets
-        )
+        logger.debug("[%s] Muxing audio from source: %s", self.__class__.__name__, packets)
         self._next_audio_packet = next(packets)
         logger.debug(
             "[%s] Queued first audio packet: %s",
@@ -757,9 +727,7 @@ class VideoMux:  # pylint:disable=too-many-instance-attributes
         """
         retval: dict[T.Literal["audio", "video"], av.AudioStream | av.VideoStream] = {}
         dst = T.cast("OutputContainer", self._containers["dst"])
-        video = dst.add_stream(
-            self._codec, rate=self._fps, options=self._codec_parameters
-        )
+        video = dst.add_stream(self._codec, rate=self._fps, options=self._codec_parameters)
         assert isinstance(video, av.VideoStream)
         video.thread_type = "AUTO"
         video.pix_fmt = "yuv420p"
@@ -809,9 +777,7 @@ class VideoMux:  # pylint:disable=too-many-instance-attributes
         for i in range(len(filters) - 1):
             filters[i].link_to(filters[i + 1])
         self._graph.configure()
-        logger.debug(
-            "[%s] Created scale filter: %s", self.__class__.__name__, self._graph
-        )
+        logger.debug("[%s] Created scale filter: %s", self.__class__.__name__, self._graph)
 
     def _initialize_video(self, image: npt.NDArray[np.uint8]) -> None:
         """Initialize the video dimensions based on the first frame seen. We scale dimensions to be
@@ -837,9 +803,7 @@ class VideoMux:  # pylint:disable=too-many-instance-attributes
             output_dimensions,
             vid,
         )
-        self._add_rescale_filter(
-            input_dimensions, output_dimensions, T.cast(str, vid.pix_fmt)
-        )
+        self._add_rescale_filter(input_dimensions, output_dimensions, T.cast(str, vid.pix_fmt))
 
         logger.debug("[%s] Initialized video stream", self.__class__.__name__)
         self._initialized = True

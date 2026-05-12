@@ -6,13 +6,16 @@ This model is heavily documented as it acts as a template that other model plugi
 from.
 """
 
-from keras import Input, layers, Model as KModel
+from keras import Input, layers
+from keras import Model as KModel
 
-from lib.model.nn_blocks import Conv2DOutput, Conv2DBlock, UpscaleBlock
+from lib.model.nn_blocks import Conv2DBlock, Conv2DOutput, UpscaleBlock
 from lib.utils import get_module_objects
 from plugins.train.train_config import Loss as cfg_loss
-from ._base import ModelBase
+
 from . import original_defaults as cfg
+from ._base import ModelBase
+
 # pylint:disable=duplicate-code
 
 

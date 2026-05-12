@@ -127,9 +127,7 @@ class BottleneckIR(nn.Module):
             nn.Conv2d(in_channels, shrink_channel, 1, stride=1, padding=0, bias=False),
             nn.BatchNorm2d(shrink_channel),
             nn.PReLU(shrink_channel),
-            nn.Conv2d(
-                shrink_channel, shrink_channel, 3, stride=1, padding=1, bias=False
-            ),
+            nn.Conv2d(shrink_channel, shrink_channel, 3, stride=1, padding=1, bias=False),
             nn.BatchNorm2d(shrink_channel),
             nn.PReLU(shrink_channel),
             nn.Conv2d(shrink_channel, depth, 1, stride=stride, padding=0, bias=False),
@@ -208,9 +206,7 @@ class IRNet(nn.Module):
             nn.BatchNorm2d(64),
             nn.PReLU(64),
         )
-        self.body = self._get_blocks(
-            block_filters, block_recursions, use_se, use_bottleneck
-        )
+        self.body = self._get_blocks(block_filters, block_recursions, use_se, use_bottleneck)
         self.output_layer = self._get_output_layer(input_size, num_features)
 
     @classmethod
@@ -241,7 +237,7 @@ class IRNet(nn.Module):
         depth = 64
         block = BottleneckIR if use_bottleneck else BasicBlockIR
         layers = []
-        for in_channels, units in zip(block_filters, block_recursions):
+        for in_channels, units in zip(block_filters, block_recursions, strict=False):
             layers.append(block(in_channels, depth, 2, use_se))
             for _ in range(units - 1):
                 layers.append(block(depth, depth, 1, use_se))

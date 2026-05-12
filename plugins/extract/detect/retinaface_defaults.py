@@ -29,7 +29,6 @@ from lib.config import ConfigItem
 # pylint:disable=duplicate-code
 from lib.config import ConfigItem
 
-
 HELPTEXT = "RetinaFace Detector options.\nGPU and CPU versions available."
 
 cpu = ConfigItem(

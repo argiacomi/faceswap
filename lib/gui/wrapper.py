@@ -42,9 +42,7 @@ class ProcessWrapper:
         """ str | None: The currently executing command, when process running or ``None`` """
 
         self._statusbar = get_config().statusbar
-        self._training_session_location: dict[
-            T.Literal["model_name", "model_folder"], str
-        ] = {}
+        self._training_session_location: dict[T.Literal["model_name", "model_folder"], str] = {}
         self._task = FaceswapControl(self)
         logger.debug("Initialized %s", self.__class__.__name__)
 
@@ -181,7 +179,7 @@ class ProcessWrapper:
             command,
             generate,
         )
-        command = self._command if not command else command
+        command = command if command else self._command
         assert command is not None
 
         values = get_config().cli_opts.get_cli_argument_values(command)
@@ -207,14 +205,10 @@ class ProcessWrapper:
 
         if context.model_name is not None:
             self._training_session_location["model_name"] = context.model_name
-            logger.debug(
-                "model_name: '%s'", self._training_session_location["model_name"]
-            )
+            logger.debug("model_name: '%s'", self._training_session_location["model_name"])
         if context.model_folder is not None:
             self._training_session_location["model_folder"] = context.model_folder
-            logger.debug(
-                "model_folder: '%s'", self._training_session_location["model_folder"]
-            )
+            logger.debug("model_folder: '%s'", self._training_session_location["model_folder"])
 
         if context.preview_output_path is not None:
             get_images().preview_extract.set_faceswap_output_path(
@@ -262,9 +256,10 @@ class FaceswapControl:
         self._process: Popen | None = None
         self._thread: LongRunningTask | None = None
         self._ui_queue: Queue[tuple[str, T.Any]] = Queue()
-        self._train_stats: dict[
-            T.Literal["iterations", "timestamp"], int | float | None
-        ] = {"iterations": 0, "timestamp": None}
+        self._train_stats: dict[T.Literal["iterations", "timestamp"], int | float | None] = {
+            "iterations": 0,
+            "timestamp": None,
+        }
         self._consoleregex: dict[T.Literal["loss", "tqdm", "ffmpeg"], re.Pattern] = {
             "loss": re.compile(r"[\W]+(\d+)?[\W]+([a-zA-Z\s]*)[\W]+?(\d+\.\d+)"),
             "tqdm": re.compile(
@@ -370,11 +365,7 @@ class FaceswapControl:
         bool
             ``True`` if a determinate TQDM line was parsed when training otherwise ``False``
         """
-        if (
-            self._command == "train"
-            and not self._first_loss_seen
-            and self._capture_tqdm(output)
-        ):
+        if self._command == "train" and not self._first_loss_seen and self._capture_tqdm(output):
             self._queue_ui_update("status_mode", "determinate")
             return True
         return False
@@ -398,18 +389,13 @@ class FaceswapControl:
         if self._command == "train" and self._capture_loss(output):
             return True
 
-        if (
-            self._command == "train" and output.strip() == "\x1b[2K"
-        ):  # Clear line command for cli
+        if self._command == "train" and output.strip() == "\x1b[2K":  # Clear line command for cli
             return True
 
         if self._command == "effmpeg" and self._capture_ffmpeg(output):
             return True
 
-        if self._command not in ("train", "effmpeg") and self._capture_tqdm(output):
-            return True
-
-        return False
+        return bool(self._command not in ("train", "effmpeg") and self._capture_tqdm(output))
 
     def _process_training_stdout(self, output: str) -> None:
         """Process any triggers that are required to update the GUI when Faceswap is running a
@@ -618,8 +604,7 @@ class FaceswapControl:
         description = tqdm["dsc"].strip()
         description = description if description == "" else f"{description[:-1]}  |  "
         processtime = (
-            f"Elapsed: {tqdm['tme'].split('<')[0]}  "
-            f"Remaining: {tqdm['tme'].split('<')[1]}"
+            f"Elapsed: {tqdm['tme'].split('<')[0]}  Remaining: {tqdm['tme'].split('<')[1]}"
         )
         msg = f"{description}{processtime}  |  {tqdm['rte']}  |  {tqdm['itm']}  |  {tqdm['pct']}"
 

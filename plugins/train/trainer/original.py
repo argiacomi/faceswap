@@ -6,10 +6,11 @@ from __future__ import annotations
 import logging
 import typing as T
 
-from keras import ops
 import torch
+from keras import ops
 
 from lib.utils import get_module_objects
+
 from .base import TrainerBase
 
 if T.TYPE_CHECKING:
@@ -73,9 +74,7 @@ class Trainer(TrainerBase):
         all_loss
             The loss for each output from the model
         """
-        total_loss = T.cast(
-            torch.Tensor, self.model.model.optimizer.scale_loss(ops.sum(all_loss))
-        )
+        total_loss = T.cast(torch.Tensor, self.model.model.optimizer.scale_loss(ops.sum(all_loss)))
         total_loss.backward()
 
         trainable_weights = self.model.model.trainable_weights[:]

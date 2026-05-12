@@ -5,13 +5,10 @@ import gettext
 import logging
 import os
 
-from lib.config import FaceswapConfig
-from lib.config import ConfigItem
+from lib.config import ConfigItem, FaceswapConfig
 
 # LOCALES
-_LANG = gettext.translation(
-    "plugins.extract.extract_config", localedir="locales", fallback=True
-)
+_LANG = gettext.translation("plugins.extract.extract_config", localedir="locales", fallback=True)
 _ = _LANG.gettext
 
 logger = logging.getLogger(__name__)
@@ -99,9 +96,7 @@ mask_storage_size = ConfigItem(
     datatype=int,
     default=128,
     group=_("mask"),
-    info=_(
-        "The size to store masks at. Set to 0 to store at the mask model's output size."
-    ),
+    info=_("The size to store masks at. Set to 0 to store at the mask model's output size."),
     min_max=(0, 1028),
     rounding=64,
 )
@@ -165,8 +160,7 @@ profile_save_config = ConfigItem(
     default=False,
     group=_("profile"),
     info=_(
-        "Whether to save the discovered plugin batch sizes to Faceswap's config for future "
-        "use."
+        "Whether to save the discovered plugin batch sizes to Faceswap's config for future use."
     ),
 )
 

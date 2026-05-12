@@ -46,10 +46,7 @@ class DisplayPage(ttk.Frame):  # pylint:disable=too-many-ancestors
     @property
     def _tab_is_active(self):
         """bool: ``True`` if the tab currently has focus otherwise ``False``"""
-        return (
-            self._parent.tab(self._parent.select(), "text").lower()
-            == self.tabname.lower()
-        )
+        return self._parent.tab(self._parent.select(), "text").lower() == self.tabname.lower()
 
     def add_optional_vars(self, varsdict):
         """Add page specific variables"""

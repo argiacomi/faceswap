@@ -30,4 +30,3 @@ msgstr ""
 #: faceswap.py:48
 msgid "Launch the Faceswap Graphical User Interface"
 msgstr ""
-

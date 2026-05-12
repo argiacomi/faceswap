@@ -2,13 +2,13 @@
 """Main entry point to the training process of FaceSwap"""
 
 from __future__ import annotations
+
 import logging
 import os
 import sys
 import typing as T
-
-from time import sleep
 from threading import Event
+from time import sleep
 
 import cv2
 import numpy as np
@@ -17,24 +17,24 @@ from lib.gui.utils.image import TRAINING_PREVIEW
 from lib.image import read_image_meta
 from lib.keypress import KBHit
 from lib.logger import parse_class_init
-from lib.multithreading import MultiThread, FSThread
+from lib.multithreading import FSThread, MultiThread
 from lib.training import Preview, PreviewBuffer, TriggerType
 from lib.training.data import get_label
 from lib.training.train import Trainer
 from lib.utils import (
+    FaceswapError,
     get_folder,
     get_image_paths,
     get_module_objects,
     handle_deprecated_cli_opts,
-    FaceswapError,
 )
 from plugins.plugin_loader import PluginLoader
 from plugins.train.trainer.base import TrainConfig
 
-
 if T.TYPE_CHECKING:
     import argparse
     from collections.abc import Callable
+
     from plugins.train.model._base import ModelBase
 
 
@@ -106,8 +106,7 @@ class Train:
             sys.exit(1)
         if num_images < 250:
             logger.warning(
-                "Side %s contains fewer than 250 images. "
-                "Results are likely to be poor.",
+                "Side %s contains fewer than 250 images. Results are likely to be poor.",
                 side,
             )
             logger.warning(msg)
@@ -123,9 +122,7 @@ class Train:
             Full path to a faceswap .png to validate
         """
         meta = read_image_meta(image_path)
-        logger.debug(
-            "[Train] Test file: (filename: %s, metadata: %s)", image_path, meta
-        )
+        logger.debug("[Train] Test file: (filename: %s, metadata: %s)", image_path, meta)
         if "itxt" not in meta or "alignments" not in meta["itxt"]:
             logger.error(
                 "The input folder '%s' contains images that are not extracted faces.",
@@ -161,9 +158,7 @@ class Train:
             self._validate_faceswap_image(next(img for img in test))
             self._validate_image_counts(key, len(test))
             retval.append(image_dir)
-            logger.info(
-                "Model %s Directory: '%s' (%s images)", key, image_dir, len(test)
-            )
+            logger.info("Model %s Directory: '%s' (%s images)", key, image_dir, len(test))
 
         return retval
 
@@ -291,9 +286,7 @@ class Train:
             self._run_training_cycle(trainer)
         except KeyboardInterrupt:
             try:
-                logger.debug(
-                    "[Train] Keyboard Interrupt Caught. Saving Weights and exiting"
-                )
+                logger.debug("[Train] Keyboard Interrupt Caught. Saving Weights and exiting")
                 if trainer is not None:
                     trainer.save(is_exit=True)
             except KeyboardInterrupt:
@@ -338,8 +331,7 @@ class Train:
             gpu_count = torch.cuda.device_count()
             if gpu_count < 2:
                 logger.warning(
-                    "Distributed selected but fewer than 2 GPUs detected. Switching "
-                    "to Original"
+                    "Distributed selected but fewer than 2 GPUs detected. Switching to Original"
                 )
                 trainer = "original"
 
@@ -392,11 +384,7 @@ class Train:
                 trainer.toggle_mask()
                 update_preview_images = True
 
-            if (
-                self._preview.should_refresh
-                or gui_triggers["refresh"]
-                or update_preview_images
-            ):
+            if self._preview.should_refresh or gui_triggers["refresh"] or update_preview_images:
                 viewer = display_func
                 update_preview_images = False
             else:
@@ -569,9 +557,7 @@ class Train:
             if self._args.redirect_gui:
                 logger.debug("[Train] Generating preview for GUI")
                 img = TRAINING_PREVIEW
-                img_file = os.path.join(
-                    script_path, "lib", "gui", ".cache", "preview", img
-                )
+                img_file = os.path.join(script_path, "lib", "gui", ".cache", "preview", img)
                 cv2.imwrite(img_file, image)  # pylint:disable=no-member
                 logger.debug("[Train] Generated preview for GUI: '%s'", img_file)
             if self._args.preview:

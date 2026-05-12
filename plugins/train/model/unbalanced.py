@@ -3,13 +3,15 @@
 Based on the original https://www.reddit.com/r/deepfakes/
     code sample + contributions"""
 
-from keras import initializers, Input, layers, Model as KModel
+from keras import Input, initializers, layers
+from keras import Model as KModel
 
-from lib.model.nn_blocks import Conv2DOutput, Conv2DBlock, ResidualBlock, UpscaleBlock
+from lib.model.nn_blocks import Conv2DBlock, Conv2DOutput, ResidualBlock, UpscaleBlock
 from plugins.train.train_config import Loss as cfg_loss
 
-from ._base import ModelBase
 from . import unbalanced_defaults as cfg
+from ._base import ModelBase
+
 # pylint:disable=duplicate-code
 
 
@@ -55,18 +57,12 @@ class Model(ModelBase):
             activation="leakyrelu",
             **kwargs,
         )(var_x)
-        var_x = Conv2DBlock(encoder_complexity * 4, **kwargs, activation="leakyrelu")(
-            var_x
+        var_x = Conv2DBlock(encoder_complexity * 4, **kwargs, activation="leakyrelu")(var_x)
+        var_x = Conv2DBlock(encoder_complexity * 6, **kwargs, activation="leakyrelu")(var_x)
+        var_x = Conv2DBlock(encoder_complexity * 8, **kwargs, activation="leakyrelu")(var_x)
+        var_x = layers.Dense(self.encoder_dim, kernel_initializer=self.kernel_initializer)(
+            layers.Flatten()(var_x)
         )
-        var_x = Conv2DBlock(encoder_complexity * 6, **kwargs, activation="leakyrelu")(
-            var_x
-        )
-        var_x = Conv2DBlock(encoder_complexity * 8, **kwargs, activation="leakyrelu")(
-            var_x
-        )
-        var_x = layers.Dense(
-            self.encoder_dim, kernel_initializer=self.kernel_initializer
-        )(layers.Flatten()(var_x))
         var_x = layers.Dense(
             dense_shape * dense_shape * dense_dim,
             kernel_initializer=self.kernel_initializer,
@@ -84,23 +80,15 @@ class Model(ModelBase):
 
         var_x = input_
 
-        var_x = UpscaleBlock(decoder_complexity, activation="leakyrelu", **kwargs)(
-            var_x
-        )
+        var_x = UpscaleBlock(decoder_complexity, activation="leakyrelu", **kwargs)(var_x)
         var_x = layers.SpatialDropout2D(0.25)(var_x)
-        var_x = UpscaleBlock(decoder_complexity, activation="leakyrelu", **kwargs)(
-            var_x
-        )
+        var_x = UpscaleBlock(decoder_complexity, activation="leakyrelu", **kwargs)(var_x)
         if self.low_mem:
             var_x = layers.SpatialDropout2D(0.15)(var_x)
         else:
             var_x = layers.SpatialDropout2D(0.25)(var_x)
-        var_x = UpscaleBlock(decoder_complexity // 2, activation="leakyrelu", **kwargs)(
-            var_x
-        )
-        var_x = UpscaleBlock(decoder_complexity // 4, activation="leakyrelu", **kwargs)(
-            var_x
-        )
+        var_x = UpscaleBlock(decoder_complexity // 2, activation="leakyrelu", **kwargs)(var_x)
+        var_x = UpscaleBlock(decoder_complexity // 4, activation="leakyrelu", **kwargs)(var_x)
         var_x = Conv2DOutput(3, 5, name="face_out_a")(var_x)
         outputs = [var_x]
 
@@ -124,39 +112,27 @@ class Model(ModelBase):
 
         var_x = input_
         if self.low_mem:
-            var_x = UpscaleBlock(decoder_complexity, activation="leakyrelu", **kwargs)(
-                var_x
-            )
-            var_x = UpscaleBlock(
-                decoder_complexity // 2, activation="leakyrelu", **kwargs
-            )(var_x)
-            var_x = UpscaleBlock(
-                decoder_complexity // 4, activation="leakyrelu", **kwargs
-            )(var_x)
-            var_x = UpscaleBlock(
-                decoder_complexity // 8, activation="leakyrelu", **kwargs
-            )(var_x)
+            var_x = UpscaleBlock(decoder_complexity, activation="leakyrelu", **kwargs)(var_x)
+            var_x = UpscaleBlock(decoder_complexity // 2, activation="leakyrelu", **kwargs)(var_x)
+            var_x = UpscaleBlock(decoder_complexity // 4, activation="leakyrelu", **kwargs)(var_x)
+            var_x = UpscaleBlock(decoder_complexity // 8, activation="leakyrelu", **kwargs)(var_x)
         else:
             var_x = UpscaleBlock(decoder_complexity, activation=None, **kwargs)(var_x)
             var_x = layers.LeakyReLU(negative_slope=0.2)(var_x)
-            var_x = ResidualBlock(
-                decoder_complexity, kernel_initializer=self.kernel_initializer
-            )(var_x)
-            var_x = UpscaleBlock(decoder_complexity, activation=None, **kwargs)(var_x)
-            var_x = layers.LeakyReLU(negative_slope=0.2)(var_x)
-            var_x = ResidualBlock(
-                decoder_complexity, kernel_initializer=self.kernel_initializer
-            )(var_x)
-            var_x = UpscaleBlock(decoder_complexity // 2, activation=None, **kwargs)(
+            var_x = ResidualBlock(decoder_complexity, kernel_initializer=self.kernel_initializer)(
                 var_x
             )
+            var_x = UpscaleBlock(decoder_complexity, activation=None, **kwargs)(var_x)
+            var_x = layers.LeakyReLU(negative_slope=0.2)(var_x)
+            var_x = ResidualBlock(decoder_complexity, kernel_initializer=self.kernel_initializer)(
+                var_x
+            )
+            var_x = UpscaleBlock(decoder_complexity // 2, activation=None, **kwargs)(var_x)
             var_x = layers.LeakyReLU(negative_slope=0.2)(var_x)
             var_x = ResidualBlock(
                 decoder_complexity // 2, kernel_initializer=self.kernel_initializer
             )(var_x)
-            var_x = UpscaleBlock(
-                decoder_complexity // 4, activation="leakyrelu", **kwargs
-            )(var_x)
+            var_x = UpscaleBlock(decoder_complexity // 4, activation="leakyrelu", **kwargs)(var_x)
         var_x = Conv2DOutput(3, 5, name="face_out_b")(var_x)
         outputs = [var_x]
 
@@ -168,9 +144,7 @@ class Model(ModelBase):
             var_y = UpscaleBlock(decoder_complexity // 2, activation="leakyrelu")(var_y)
             var_y = UpscaleBlock(decoder_complexity // 4, activation="leakyrelu")(var_y)
             if self.low_mem:
-                var_y = UpscaleBlock(decoder_complexity // 8, activation="leakyrelu")(
-                    var_y
-                )
+                var_y = UpscaleBlock(decoder_complexity // 8, activation="leakyrelu")(var_y)
             var_y = Conv2DOutput(1, 5, name="mask_out_b")(var_y)
             outputs.append(var_y)
         return KModel(input_, outputs=outputs, name="decoder_b")

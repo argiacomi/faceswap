@@ -6,12 +6,12 @@ from __future__ import annotations
 import abc
 import logging
 import typing as T
-
-from queue import Queue, Empty as QueueEmpty
+from queue import Empty as QueueEmpty
+from queue import Queue
 
 import numpy as np
 
-from lib.infer.objects import FrameFaces, ExtractSignal
+from lib.infer.objects import ExtractSignal, FrameFaces
 from lib.logger import parse_class_init
 from lib.utils import get_module_objects
 
@@ -186,9 +186,7 @@ class ExtractIterator(T.Generic[QueueItemInT, QueueItemOutT], abc.ABC):
         logger.debug("[%s] sending FLUSH downstream", self._name)
         return ExtractSignal.FLUSH
 
-    def _handle_inbound_signal(
-        self, inbound: ExtractSignal
-    ) -> QueueItemOutT | ExtractSignal:
+    def _handle_inbound_signal(self, inbound: ExtractSignal) -> QueueItemOutT | ExtractSignal:
         """Handle any received signals from the queue
 
         Parameters
@@ -208,17 +206,13 @@ class ExtractIterator(T.Generic[QueueItemInT, QueueItemOutT], abc.ABC):
             If a shutdown signal has been received and there are no items queued for output
         """
         signal = inbound.name
-        logger.debug(
-            "[%s] %s received. FIFO size: %s", self._name, signal, len(self._fifo)
-        )
+        logger.debug("[%s] %s received. FIFO size: %s", self._name, signal, len(self._fifo))
 
         if self._fifo:
             setattr(self, f"_{signal.lower()}", True)
             assert len(self._fifo) == 1  # Final batch should remain
             retval = self._fifo.pop(0)
-            logger.debug(
-                "[%s] Returning final queued output item: %s", self._name, retval
-            )
+            logger.debug("[%s] Returning final queued output item: %s", self._name, retval)
             return retval
 
         if inbound == ExtractSignal.SHUTDOWN:
@@ -319,11 +313,7 @@ class InputIterator(ExtractIterator[FrameFaces, ExtractBatch]):
             return
 
         last_fifo = self._fifo[-1]
-        exist_size = (
-            len(last_fifo.filenames)
-            if self._plugin_type == "detect"
-            else len(last_fifo)
-        )
+        exist_size = len(last_fifo.filenames) if self._plugin_type == "detect" else len(last_fifo)
 
         if exist_size == self._batch_size:  # Append straight onto the end of FIFO
             self._append_to_fifo(in_batch)
@@ -464,9 +454,7 @@ class InboundIterator(ExtractIterator[ExtractBatch, ExtractBatch]):
         """
         partial = self._fifo and len(self._fifo[-1]) != self._batch_size
         num_boxes = len(batch)
-        capacity = (
-            self._batch_size - len(self._fifo[-1]) if partial else self._batch_size
-        )
+        capacity = self._batch_size - len(self._fifo[-1]) if partial else self._batch_size
         if num_boxes not in (0, capacity):  # Batch needs splitting
             return num_boxes, capacity
 
@@ -503,9 +491,7 @@ class InboundIterator(ExtractIterator[ExtractBatch, ExtractBatch]):
             len(batch.filenames[start:]),
         )
         self._batch_to_fifo(
-            ExtractBatch(
-                batch.filenames[start:], batch.images[start:], batch.sources[start:]
-            )
+            ExtractBatch(batch.filenames[start:], batch.images[start:], batch.sources[start:])
         )
 
     def _rebatch_data(self, batch: ExtractBatch) -> None:  # pylint:disable=too-many-locals
@@ -566,9 +552,7 @@ class InboundIterator(ExtractIterator[ExtractBatch, ExtractBatch]):
 
         while True:
             self._check_error()
-            retval = (
-                self._from_fifo()
-            )  # In loop as re-batching may need to run multiple times
+            retval = self._from_fifo()  # In loop as re-batching may need to run multiple times
             if retval is not None:
                 return retval
 
@@ -577,9 +561,7 @@ class InboundIterator(ExtractIterator[ExtractBatch, ExtractBatch]):
                 continue
 
             if isinstance(batch, ExtractBatch) and batch.passthrough and self._fifo:
-                raise RuntimeError(
-                    "Pipeline must be empty when adding a passthrough object"
-                )
+                raise RuntimeError("Pipeline must be empty when adding a passthrough object")
 
             if isinstance(batch, ExtractBatch) and batch.passthrough:
                 return batch
@@ -672,7 +654,7 @@ class OutputIterator(ExtractIterator[ExtractBatch, FrameFaces]):
         lengths = batch.lengths
         starts = np.cumsum(lengths, dtype=np.int32) - lengths
         for idx, (filename, image, source, start, length) in enumerate(
-            zip(batch.filenames, batch.images, batch.sources, starts, lengths)
+            zip(batch.filenames, batch.images, batch.sources, starts, lengths, strict=False)
         ):
             end = start + length
             media = FrameFaces(
@@ -683,9 +665,7 @@ class OutputIterator(ExtractIterator[ExtractBatch, FrameFaces]):
                 masks={k: v[start:end] for k, v in batch.masks.items()},
                 source=source,
                 is_aligned=batch.is_aligned,
-                frame_metadata=None
-                if batch.frame_metadata is None
-                else batch.frame_metadata[idx],
+                frame_metadata=None if batch.frame_metadata is None else batch.frame_metadata[idx],
                 passthrough=batch.passthrough,
             )
             media.aligned = batch.aligned[start:end]
@@ -728,9 +708,7 @@ class OutputIterator(ExtractIterator[ExtractBatch, FrameFaces]):
             If the batch does not contain exactly one frame
         """
         if self._fifo:
-            raise RuntimeError(
-                "Pipeline must be empty when adding a passthrough object"
-            )
+            raise RuntimeError("Pipeline must be empty when adding a passthrough object")
         if len(batch.filenames) != 1:
             raise ValueError("Exactly 1 image should exist when passing through")
 

@@ -27,7 +27,6 @@ the order that they are added to this module.
 
 from lib.config import ConfigItem
 
-
 HELPTEXT = (
     "Options for transfering the color distribution from the source to the target image using the "
     "mean and standard deviations of the L*a*b* color space.\nThis implementation is (loosely) "

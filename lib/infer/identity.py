@@ -17,14 +17,16 @@ from lib.align.detected_face import DetectedFace
 from lib.align.objects import PNGHeader
 from lib.image import png_read_meta
 from lib.logger import parse_class_init
-from lib.utils import FaceswapError, get_module_objects, IMAGE_EXTENSIONS
+from lib.utils import IMAGE_EXTENSIONS, FaceswapError, get_module_objects
 
-from .objects import ExtractBatch
 from .handler import ExtractHandlerFace
+from .objects import ExtractBatch
 
 if T.TYPE_CHECKING:
-    import numpy.typing as npt
     from collections.abc import Generator
+
+    import numpy.typing as npt
+
     from .runner import ExtractRunner
 
 logger = logging.getLogger(__name__)
@@ -80,12 +82,8 @@ class Identity(ExtractHandlerFace):
                 getattr(batch.aligned, self._aligned_offsets_name),
             )
         else:
-            matrices = self._get_matrices(
-                getattr(batch.aligned, self._aligned_mat_name)
-            )
-            data = self._get_faces(
-                batch.images, batch.frame_ids, matrices, with_alpha=False
-            )
+            matrices = self._get_matrices(getattr(batch.aligned, self._aligned_mat_name))
+            data = self._get_faces(batch.images, batch.frame_ids, matrices, with_alpha=False)
         data = self._format_images(data)
         batch.data = self.plugin.pre_process(data)
 
@@ -106,9 +104,7 @@ class Identity(ExtractHandlerFace):
         batch.identities[self.storage_name] = identity
         self._filter(batch)
 
-    def add_filter_identities(
-        self, identities: npt.NDArray[np.float32], is_filter: bool
-    ) -> None:
+    def add_filter_identities(self, identities: npt.NDArray[np.float32], is_filter: bool) -> None:
         """Add the given identities to the identity filter
 
         Parameters
@@ -153,9 +149,7 @@ class IdentityFilter:
         self.enabled = False
         """``True`` if the identity filter is enabled"""
 
-    def add_identities(
-        self, identities: npt.NDArray[np.float32], is_filter: bool
-    ) -> None:
+    def add_identities(self, identities: npt.NDArray[np.float32], is_filter: bool) -> None:
         """Add the given identities to the filter
 
         Parameters
@@ -227,9 +221,7 @@ class IdentityFilter:
         identities = batch.identities[self._plugin_name]
         mask = np.empty((self._active_count, batch.bboxes.shape[0]), dtype="bool")
         for idx, f_type in enumerate(sorted(self._active)):
-            similarities = self._find_cosine_similarity(
-                self._filters[f_type], identities
-            )
+            similarities = self._find_cosine_similarity(self._filters[f_type], identities)
             matches = np.any(similarities >= self.threshold, axis=1)
             mask[idx] = ~matches if f_type == "nfilter" else matches
             self._counts[f_type] += int(np.sum(~mask[idx]))
@@ -289,9 +281,7 @@ class FilterLoader:
 
         self._runner: ExtractRunner[ExtractHandlerFace]
 
-    def _validate_paths(
-        self, full_paths: list[str] | None, is_filter: bool
-    ) -> set[str]:
+    def _validate_paths(self, full_paths: list[str] | None, is_filter: bool) -> set[str]:
         """Validates that the given image file paths are valid. Exits if paths are provided but no
         images could be found
 
@@ -318,17 +308,13 @@ class FilterLoader:
                     if os.path.splitext(fname)[-1].lower() in IMAGE_EXTENSIONS
                 ]
                 if not files:
-                    logger.warning(
-                        "%s folder '%s' contains no image files", name, file_path
-                    )
+                    logger.warning("%s folder '%s' contains no image files", name, file_path)
                 else:
                     retval.extend(files)
                 continue
 
             if os.path.splitext(file_path)[-1] not in IMAGE_EXTENSIONS:
-                logger.warning(
-                    "%s file '%s' is not an image file. Skipping", name, file_path
-                )
+                logger.warning("%s file '%s' is not an image file. Skipping", name, file_path)
                 continue
             if not os.path.isfile(file_path):
                 logger.warning("%s file '%s' does not exist. Skipping", name, file_path)
@@ -376,15 +362,11 @@ class FilterLoader:
         try:
             meta = png_read_meta(image)
         except AssertionError:
-            logger.debug(
-                "[IdentityFilter] '%s' is not a faceswap extracted image", filename
-            )
+            logger.debug("[IdentityFilter] '%s' is not a faceswap extracted image", filename)
             return None
 
         if not isinstance(meta, PNGHeader):
-            logger.debug(
-                "[IdentityFilter] '%s' is not a faceswap extracted image", filename
-            )
+            logger.debug("[IdentityFilter] '%s' is not a faceswap extracted image", filename)
             return None
 
         return meta
@@ -412,9 +394,7 @@ class FilterLoader:
             retval[file_name] = np.array(
                 [
                     f.identity[self._runner.handler.storage_name]
-                    for f in pipeline.put(
-                        file_name, image, passthrough=True
-                    ).detected_faces
+                    for f in pipeline.put(file_name, image, passthrough=True).detected_faces
                 ]
             ).squeeze(0)
 
@@ -450,9 +430,7 @@ class FilterLoader:
                 is_aligned=True,
                 frame_size=meta.source.source_frame_dims,
             )
-            retval[fname] = out.identities[
-                self._runner.handler.plugin.storage_name
-            ].squeeze(0)
+            retval[fname] = out.identities[self._runner.handler.plugin.storage_name].squeeze(0)
 
         logger.debug(
             "[IdentityFilter] Identity from plugin: %s",
@@ -469,7 +447,7 @@ class FilterLoader:
             The file name with embeddings to add to the plugin filter
         """
         for is_filter, file_list in zip(
-            (True, False), (self._filter_files, self._nfilter_files)
+            (True, False), (self._filter_files, self._nfilter_files), strict=False
         ):
             if not file_list:
                 continue
@@ -536,9 +514,7 @@ class FilterLoader:
             meta = self._get_meta(filepath, raw_image)
             if meta is not None:
                 idn = meta.alignments.identity
-                embed = np.array(
-                    idn.get(self._runner.handler.storage_name, []), dtype="float32"
-                )
+                embed = np.array(idn.get(self._runner.handler.storage_name, []), dtype="float32")
                 if np.any(embed):
                     logger.debug(
                         "[IdentityFilter] Identity from header '%s'. Shape: %s",
@@ -698,9 +674,7 @@ class Cluster:
         logger.debug("Linkage shape: %s", retval.shape)
         return retval
 
-    def _process_leaf_node(
-        self, current_index: int, current_bin: int
-    ) -> list[tuple[int, int]]:
+    def _process_leaf_node(self, current_index: int, current_bin: int) -> list[tuple[int, int]]:
         """Process the output when we have hit a leaf node"""
         if not self._should_output_bins:
             return [(current_index, 0)]
@@ -710,9 +684,7 @@ class Cluster:
             self._bins[current_bin] = next_val
         return [(current_index, self._bins[current_bin])]
 
-    def _get_bin(
-        self, tree: np.ndarray, points: int, current_index: int, current_bin: int
-    ) -> int:
+    def _get_bin(self, tree: np.ndarray, points: int, current_index: int, current_bin: int) -> int:
         """Obtain the bin that we are currently in.
 
         If we are not currently below the threshold for binning, get a new bin ID from the integer
@@ -785,9 +757,7 @@ class Cluster:
         List of indices with the order implied by the hierarchical tree or list of tuples of
         (`index`, `bin`) if a binning threshold was provided
         """
-        logger.info(
-            "Sorting face distances. Depending on your dataset this may take some time..."
-        )
+        logger.info("Sorting face distances. Depending on your dataset this may take some time...")
         if self._threshold:
             self._threshold = self._result_linkage[:, 2].max() * self._threshold
         result_order = self._seriation(

@@ -76,9 +76,7 @@ class OptionsFormRenderer(QWidget):
             elif self._is_slider(spec):
                 self._set_slider_value(spec, widget, value)
             elif isinstance(widget, QCheckBox):
-                widget.setChecked(
-                    self._checked_for_value(spec, value, spec.switch in values)
-                )
+                widget.setChecked(self._checked_for_value(spec, value, spec.switch in values))
             elif isinstance(widget, QComboBox):
                 widget.setCurrentText(self._string_value(value))
             elif isinstance(widget, QLineEdit):
@@ -102,7 +100,7 @@ class OptionsFormRenderer(QWidget):
 
     @staticmethod
     def _grouped_specs(
-        specs: tuple[OptionSpec, ...]
+        specs: tuple[OptionSpec, ...],
     ) -> tuple[tuple[str | None, tuple[OptionSpec, ...]], ...]:
         """Group option specs in first-seen order."""
         group_order: list[str | None] = []
@@ -222,9 +220,7 @@ class OptionsFormRenderer(QWidget):
 
         def sync_line(slider_value: int) -> None:
             line_edit.setText(
-                self._format_slider_value(
-                    spec, self._slider_to_value(spec, slider_value)
-                )
+                self._format_slider_value(spec, self._slider_to_value(spec, slider_value))
             )
 
         def sync_slider() -> None:
@@ -249,9 +245,7 @@ class OptionsFormRenderer(QWidget):
             button = QPushButton(self._browser_label(mode))
             button.setObjectName(f"qt-shell-browser-{mode}")
             button.setToolTip(spec.helptext or f"Browse for {spec.title}")
-            button.clicked.connect(
-                lambda _checked=False, m=mode, w=widget: self._browse(m, w)
-            )
+            button.clicked.connect(lambda _checked=False, m=mode, w=widget: self._browse(m, w))
             layout.addWidget(button)
         return row
 
@@ -308,15 +302,11 @@ class OptionsFormRenderer(QWidget):
     def _browse(self, mode: str, widget: QLineEdit) -> None:
         """Populate a line edit from a simple QFileDialog browser mode."""
         if mode == "folder":
-            value = QFileDialog.getExistingDirectory(
-                self, "Select Folder", widget.text()
-            )
+            value = QFileDialog.getExistingDirectory(self, "Select Folder", widget.text())
         elif mode == "file":
             value, _ = QFileDialog.getOpenFileName(self, "Select File", widget.text())
         elif mode == "files":
-            values, _ = QFileDialog.getOpenFileNames(
-                self, "Select Files", widget.text()
-            )
+            values, _ = QFileDialog.getOpenFileNames(self, "Select Files", widget.text())
             value = self._join_paths(values)
         elif mode == "save":
             value, _ = QFileDialog.getSaveFileName(self, "Save File", widget.text())
@@ -339,9 +329,7 @@ class OptionsFormRenderer(QWidget):
     def _is_slider(spec: OptionSpec) -> bool:
         """Return true when metadata clearly asks for a slider."""
         return (
-            spec.action == "Slider"
-            and spec.slider_min is not None
-            and spec.slider_max is not None
+            spec.action == "Slider" and spec.slider_min is not None and spec.slider_max is not None
         )
 
     @staticmethod
@@ -355,9 +343,7 @@ class OptionsFormRenderer(QWidget):
         }.get(mode, "Browse")
 
     @staticmethod
-    def _checked_for_value(
-        spec: OptionSpec, value: object, value_is_command_value: bool
-    ) -> bool:
+    def _checked_for_value(spec: OptionSpec, value: object, value_is_command_value: bool) -> bool:
         """Return human-facing checkbox state for defaults or stored command values."""
         checked = bool(value)
         if spec.action == "store_false" and value_is_command_value:
@@ -374,7 +360,7 @@ class OptionsFormRenderer(QWidget):
                 return set(cls._split_nargs(value))
             except ValueError:
                 return {part.strip() for part in value.split(",") if part.strip()}
-        if isinstance(value, (list, tuple, set)):
+        if isinstance(value, list | tuple | set):
             return {str(item) for item in value}
         return {str(value)}
 
@@ -443,8 +429,7 @@ class OptionsFormRenderer(QWidget):
     def _join_paths(paths: T.Iterable[str]) -> str:
         """Join browser-selected paths for a nargs line edit."""
         return " ".join(
-            f'"{path}"' if any(char.isspace() for char in path) else path
-            for path in paths
+            f'"{path}"' if any(char.isspace() for char in path) else path for path in paths
         )
 
     @staticmethod
@@ -453,9 +438,7 @@ class OptionsFormRenderer(QWidget):
         parts = shlex.split(value, posix=os.name != "nt")
         if os.name == "nt":
             parts = [
-                part[1:-1]
-                if len(part) >= 2 and part[0] == part[-1] and part[0] in "\"'"
-                else part
+                part[1:-1] if len(part) >= 2 and part[0] == part[-1] and part[0] in "\"'" else part
                 for part in parts
             ]
         return parts
@@ -465,7 +448,7 @@ class OptionsFormRenderer(QWidget):
         """Render a stored value as editable text."""
         if value is None or value is False:
             return ""
-        if isinstance(value, (list, tuple)):
+        if isinstance(value, list | tuple):
             return " ".join(str(item) for item in value)
         return str(value)
 

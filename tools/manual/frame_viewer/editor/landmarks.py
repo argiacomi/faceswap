@@ -2,10 +2,12 @@
 """Landmarks Editor and Landmarks Mesh viewer for the manual adjustments tool"""
 
 import gettext
+
 import numpy as np
 
-from lib.align import AlignedFace, LANDMARK_PARTS, LandmarkType
+from lib.align import LANDMARK_PARTS, AlignedFace, LandmarkType
 from lib.utils import get_module_objects
+
 from ._base import Editor, logger
 
 # LOCALES
@@ -46,9 +48,7 @@ class Landmarks(Editor):
         super().__init__(canvas, detected_faces, control_text)
         # Clear selection box on an editor or frame change
         self._canvas._tk_action_var.trace("w", lambda *e: self._reset_selection())
-        self._globals.var_frame_index.trace_add(
-            "write", lambda *e: self._reset_selection()
-        )
+        self._globals.var_frame_index.trace_add("write", lambda *e: self._reset_selection())
 
     def _add_actions(self):
         """Add the optional action buttons to the viewer. Current actions are Point, Select
@@ -90,9 +90,7 @@ class Landmarks(Editor):
         """Get the latest Landmarks points and update."""
         zoomed_offset = self._zoomed_roi[:2]
         for face_idx, face in enumerate(self._face_iterator):
-            face_index = (
-                self._globals.face_index if self._globals.is_zoomed else face_idx
-            )
+            face_index = self._globals.face_index if self._globals.is_zoomed else face_idx
             if self._globals.is_zoomed:
                 aligned = AlignedFace(
                     face.landmarks_xy,
@@ -163,9 +161,7 @@ class Landmarks(Editor):
         }
         bg_kwargs = {"fill": "#ffffea", "outline": "black"}
 
-        text_id = self._object_tracker(
-            keys[0], "text", face_index, top_left, text_kwargs
-        )
+        text_id = self._object_tracker(keys[0], "text", face_index, top_left, text_kwargs)
         bbox = self._canvas.bbox(text_id)
         bbox = [bbox[0] - 2, bbox[1] - 2, bbox[2] + 2, bbox[3] + 2]
         bg_id = self._object_tracker(keys[1], "rectangle", face_index, bbox, bg_kwargs)
@@ -216,20 +212,16 @@ class Landmarks(Editor):
             self._update_cursor_select_mode(event)
         else:
             objs = self._canvas.find_withtag(
-                f"lm_grb_face_{self._globals.face_index}"
-                if self._globals.is_zoomed
-                else "lm_grb"
+                f"lm_grb_face_{self._globals.face_index}" if self._globals.is_zoomed else "lm_grb"
             )
             item_ids = set(
-                self._canvas.find_overlapping(
-                    event.x - 6, event.y - 6, event.x + 6, event.y + 6
-                )
+                self._canvas.find_overlapping(event.x - 6, event.y - 6, event.x + 6, event.y + 6)
             ).intersection(objs)
             bboxes = [self._canvas.bbox(idx) for idx in item_ids]
             item_id = next(
                 (
                     idx
-                    for idx, bbox in zip(item_ids, bboxes)
+                    for idx, bbox in zip(item_ids, bboxes, strict=False)
                     if bbox[0] <= event.x <= bbox[2] and bbox[1] <= event.y <= bbox[3]
                 ),
                 None,
@@ -258,12 +250,8 @@ class Landmarks(Editor):
         """
         self._canvas.itemconfig(item_id, outline="yellow")
         tags = self._canvas.gettags(item_id)
-        face_idx = int(
-            next(tag for tag in tags if tag.startswith("face_")).split("_")[-1]
-        )
-        lm_idx = int(
-            next(tag for tag in tags if tag.startswith("lm_grb_")).split("_")[-1]
-        )
+        face_idx = int(next(tag for tag in tags if tag.startswith("face_")).split("_")[-1])
+        lm_idx = int(next(tag for tag in tags if tag.startswith("lm_grb_")).split("_")[-1])
         obj_idx = (face_idx, lm_idx)
 
         self._canvas.config(cursor="none")
@@ -308,9 +296,7 @@ class Landmarks(Editor):
         elif not self._drag_data:  # Initial point selection box
             self._drag_data["start_location"] = (event.x, event.y)
             self._drag_callback = self._select
-        elif (
-            sel_box[0] <= event.x <= sel_box[2] and sel_box[1] <= event.y <= sel_box[3]
-        ):
+        elif sel_box[0] <= event.x <= sel_box[2] and sel_box[1] <= event.y <= sel_box[3]:
             # Move point selection box
             self._drag_data["start_location"] = (event.x, event.y)
             self._drag_callback = self._move_selection
@@ -365,9 +351,7 @@ class Landmarks(Editor):
 
         for item_id in self._canvas.find_withtag("lm_selected"):
             tags = self._canvas.gettags(item_id)
-            face_idx.add(
-                next(int(tag.split("_")[-1]) for tag in tags if tag.startswith("face_"))
-            )
+            face_idx.add(next(int(tag.split("_")[-1]) for tag in tags if tag.startswith("face_")))
             landmark_indices.append(
                 next(
                     int(tag.split("_")[-1])
@@ -376,17 +360,13 @@ class Landmarks(Editor):
                 )
             )
         if len(face_idx) != 1:
-            logger.trace(
-                "Not exactly 1 face in selection. Aborting. Face indices: %s", face_idx
-            )
+            logger.trace("Not exactly 1 face in selection. Aborting. Face indices: %s", face_idx)
             self._reset_selection()
             return
 
         self._drag_data["face_index"] = face_idx.pop()
         self._drag_data["landmarks"] = landmark_indices
-        self._canvas.itemconfig(
-            self._selection_box, stipple="", fill="", outline="#ffff00"
-        )
+        self._canvas.itemconfig(self._selection_box, stipple="", fill="", outline="#ffff00")
         self._snap_selection_to_points()
 
     def _snap_selection_to_points(self):
@@ -397,10 +377,7 @@ class Landmarks(Editor):
         outside of the selected points.
         """
         all_coords = np.array(
-            [
-                self._canvas.coords(item_id)
-                for item_id in self._canvas.find_withtag("lm_selected")
-            ]
+            [self._canvas.coords(item_id) for item_id in self._canvas.find_withtag("lm_selected")]
         )
         mins = np.min(all_coords, axis=0)
         maxes = np.max(all_coords, axis=0)
@@ -428,9 +405,7 @@ class Landmarks(Editor):
         if self._globals.is_zoomed:
             scaled_shift = np.array((shift_x, shift_y))
         else:
-            scaled_shift = self.scale_from_display(
-                np.array((shift_x, shift_y)), do_offset=False
-            )
+            scaled_shift = self.scale_from_display(np.array((shift_x, shift_y)), do_offset=False)
         self._det_faces.update.landmark(
             self._globals.frame_index,
             face_idx,
@@ -468,9 +443,7 @@ class Landmarks(Editor):
         if self._globals.is_zoomed:
             scaled_shift = np.array((shift_x, shift_y))
         else:
-            scaled_shift = self.scale_from_display(
-                np.array((shift_x, shift_y)), do_offset=False
-            )
+            scaled_shift = self.scale_from_display(np.array((shift_x, shift_y)), do_offset=False)
         self._canvas.move(self._selection_box, shift_x, shift_y)
 
         self._det_faces.update.landmark(
@@ -507,9 +480,7 @@ class Mesh(Editor):
         color = self._control_color
         zoomed_offset = self._zoomed_roi[:2]
         for face_idx, face in enumerate(self._face_iterator):
-            face_index = (
-                self._globals.face_index if self._globals.is_zoomed else face_idx
-            )
+            face_index = self._globals.face_index if self._globals.is_zoomed else face_idx
             if self._globals.is_zoomed:
                 aligned = AlignedFace(
                     face.landmarks_xy,
@@ -523,12 +494,8 @@ class Mesh(Editor):
                 self._canvas.itemconfig(f"Mesh_face_{face_index}", state="normal")
             else:
                 landmarks = self._scale_to_display(face.landmarks_xy)
-                landmark_mapping = LANDMARK_PARTS[
-                    LandmarkType.from_shape(landmarks.shape)
-                ]
-            logger.trace(
-                "Drawing Landmarks Mesh: (landmarks: %s, color: %s)", landmarks, color
-            )
+                landmark_mapping = LANDMARK_PARTS[LandmarkType.from_shape(landmarks.shape)]
+            logger.trace("Drawing Landmarks Mesh: (landmarks: %s, color: %s)", landmarks, color)
             for idx, (start, end, fill) in enumerate(landmark_mapping.values()):
                 key = f"mesh_{idx}"
                 pts = landmarks[start:end].flatten()

@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """Command Line Arguments for tools"""
 
-import sys
 import gettext
+import sys
 import typing as T
 
-from lib.cli.args import FaceSwapArgs
 from lib.cli.actions import (
-    DirOrFileFullPaths,
     DirFullPaths,
+    DirOrFileFullPaths,
     FileFullPaths,
     Radio,
     Slider,
 )
+from lib.cli.args import FaceSwapArgs
 from lib.utils import get_module_objects
 
 # LOCALES
@@ -20,9 +20,7 @@ _LANG = gettext.translation("tools.alignments.cli", localedir="locales", fallbac
 _ = _LANG.gettext
 
 
-_HELPTEXT = _(
-    "This command lets you perform various tasks pertaining to an alignments file."
-)
+_HELPTEXT = _("This command lets you perform various tasks pertaining to an alignments file.")
 
 
 class AlignmentsArgs(FaceSwapArgs):
@@ -54,12 +52,10 @@ class AlignmentsArgs(FaceSwapArgs):
         frames_dir = _(" Must Pass in a frames folder/source video file (-r).")
         faces_dir = _(" Must Pass in a faces folder (-c).")
         frames_or_faces_dir = _(
-            " Must Pass in either a frames folder/source video file OR a "
-            "faces folder (-r or -c)."
+            " Must Pass in either a frames folder/source video file OR a faces folder (-r or -c)."
         )
         frames_and_faces_dir = _(
-            " Must Pass in a frames folder/source video file AND a faces "
-            "folder (-r and -c)."
+            " Must Pass in a frames folder/source video file AND a faces folder (-r and -c)."
         )
         output_opts = _(" Use the output option (-o) to process results.")
         argument_list = []
@@ -89,22 +85,28 @@ class AlignmentsArgs(FaceSwapArgs):
                     "alignments file (-a) to be passed in."
                     "\nL|'draw': Draw landmarks on frames in the selected folder/video. A "
                     "subfolder will be created within the frames folder to hold the output.{0}"
-                    "\nL|'export': Export the contents of an alignments file to a json file. Can be "
-                    "used for editing alignment information in external tools and then re-importing "
-                    "by using Faceswap's Extract 'file' plugins for detector and aligner. Note: masks "
+                    "\nL|'export': Export the contents of an alignments file to a json file. Can "
+                    "be "
+                    "used for editing alignment information in external tools and then "
+                    "re-importing "
+                    "by using Faceswap's Extract 'file' plugins for detector and aligner. Note: "
+                    "masks "
                     "and identity vectors will not be included in the exported file, so can be re-"
                     "generated when the json file is imported back into Faceswap. All data is "
                     "exported with the origin (0, 0) at the top left of the canvas."
-                    "\nL|'extract': [DEPRECATED] Use 'python faceswap.py extract' instead and select "
+                    "\nL|'extract': [DEPRECATED] Use 'python faceswap.py extract' instead and "
+                    "select "
                     "'file' as the aligner plugin. {1}"
                     "\nL|'from-faces': Generate alignment file(s) from a folder of extracted "
                     "faces. if the folder of faces comes from multiple sources, then multiple "
                     "alignments files will be created. NB: for faces which have been extracted "
                     "from folders of source images, rather than a video, a single alignments file "
                     "will be created as there is no way for the process to know how many folders "
-                    "of images were originally used. You do not need to provide an alignments file "
+                    "of images were originally used. You do not need to provide an alignments file"
+                    " "
                     "path to run this job. {3}"
-                    "\nL|'missing-alignments': Identify frames that do not exist in the alignments "
+                    "\nL|'missing-alignments': Identify frames that do not exist in the alignments"
+                    " "
                     "file.{2}{0}"
                     "\nL|'missing-frames': Identify frames in the alignments file that do not "
                     "appear within the frames folder/video.{2}{0}"
@@ -164,7 +166,8 @@ class AlignmentsArgs(FaceSwapArgs):
                     "Full path to the alignments file to be processed. If you have input a "
                     "'frames_dir' and don't provide this option, the process will try to find the "
                     "alignments file at the default location. All jobs require an alignments file "
-                    "with the exception of 'from-faces' when the alignments file will be generated "
+                    "with the exception of 'from-faces' when the alignments file will be generated"
+                    " "
                     "in the specified faces folder."
                 ),
             }
@@ -185,9 +188,7 @@ class AlignmentsArgs(FaceSwapArgs):
                 "dest": "frames_dir",
                 "filetypes": "video",
                 "group": _("data"),
-                "help": _(
-                    "Directory containing source frames that faces were extracted from."
-                ),
+                "help": _("Directory containing source frames that faces were extracted from."),
             }
         )
         argument_list.append(
@@ -203,7 +204,8 @@ class AlignmentsArgs(FaceSwapArgs):
                     "\nL|draw, extract, from-faces, missing-alignments, missing-frames, no-faces, "
                     "sort, spatial."
                     "\nIf batch mode is selected then the other options should be set as follows:"
-                    "\nL|alignments_file: For 'sort' and 'spatial' this should point to the parent "
+                    "\nL|alignments_file: For 'sort' and 'spatial' this should point to the parent"
+                    " "
                     "folder containing the alignments files to be processed. For all other jobs "
                     "this option is ignored, and the alignments files must exist at their default "
                     "location relative to the original frames folder/video."
@@ -211,7 +213,8 @@ class AlignmentsArgs(FaceSwapArgs):
                     "sub-folders of extracted faces from which to generate alignments files. For "
                     "'extract' this should be a parent folder where sub-folders will be created "
                     "for each extraction to be run. For all other jobs this option is ignored."
-                    "\nL|frames_dir: For 'draw', 'extract', 'missing-alignments', 'missing-frames' "
+                    "\nL|frames_dir: For 'draw', 'extract', 'missing-alignments', 'missing-frames'"
+                    " "
                     "and 'no-faces' this should be a parent folder containing video files or sub-"
                     "folders of images to perform the alignments job on. The alignments file "
                     "should exist at the default location. For all other jobs this option is "
@@ -231,7 +234,8 @@ class AlignmentsArgs(FaceSwapArgs):
                 "group": _("extract"),
                 "help": _(
                     "[DEPRECTATED. Extract only] Extract every 'nth' frame. This option will skip "
-                    "frames when extracting faces. For example a value of 1 will extract faces from "
+                    "frames when extracting faces. For example a value of 1 will extract faces "
+                    "from "
                     "every frame, a value of 10 will extract faces from every 10th frame."
                 ),
             }
@@ -245,9 +249,7 @@ class AlignmentsArgs(FaceSwapArgs):
                 "rounding": 64,
                 "default": 512,
                 "group": _("extract"),
-                "help": _(
-                    "[DEPRECTATED. Extract only] The output size of extracted faces."
-                ),
+                "help": _("[DEPRECTATED. Extract only] The output size of extracted faces."),
             }
         )
         argument_list.append(
@@ -261,8 +263,10 @@ class AlignmentsArgs(FaceSwapArgs):
                 "dest": "min_size",
                 "group": _("extract"),
                 "help": _(
-                    "[DEPRECTATED. Extract only] Only extract faces that have been resized by this "
-                    "percent or more to meet the specified extract size (`-z`, `--size`). Useful for "
+                    "[DEPRECTATED. Extract only] Only extract faces that have been resized by this"
+                    " "
+                    "percent or more to meet the specified extract size (`-z`, `--size`). Useful "
+                    "for "
                     "excluding low-res images from a training set. Set to 0 to extract all faces. "
                     "Eg: For an extract size of 512px, A setting of 50 will only include faces "
                     "that have been resized from 256px or above. Setting to 100 will only extract "

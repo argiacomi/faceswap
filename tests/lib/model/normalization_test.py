@@ -8,12 +8,10 @@ from itertools import product
 
 import numpy as np
 import pytest
-
-from keras import device, regularizers, models, layers
+from keras import device, layers, models, regularizers
 
 from lib.model import normalization
 from lib.utils import get_backend
-
 from tests.lib.model.layers_test import layer_test
 
 
@@ -102,7 +100,7 @@ def test_adain_normalization(center, scale):
         actual_output = model.predict(data, verbose=0)
         actual_output_shape = actual_output.shape
 
-    for expected_dim, actual_dim in zip(expected_output_shape, actual_output_shape):
+    for expected_dim, actual_dim in zip(expected_output_shape, actual_output_shape, strict=False):
         if expected_dim is not None:
             assert expected_dim == actual_dim
 

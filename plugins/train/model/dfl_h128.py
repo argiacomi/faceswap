@@ -3,12 +3,14 @@
 Based on https://github.com/iperov/DeepFaceLab
 """
 
-from keras import Input, layers, Model as KModel
+from keras import Input, layers
+from keras import Model as KModel
 
-from lib.model.nn_blocks import Conv2DOutput, Conv2DBlock, UpscaleBlock
+from lib.model.nn_blocks import Conv2DBlock, Conv2DOutput, UpscaleBlock
 from plugins.train.train_config import Loss as cfg_loss
-from .original import Model as OriginalModel
+
 from . import dfl_h128_defaults as cfg
+from .original import Model as OriginalModel
 
 
 class Model(OriginalModel):

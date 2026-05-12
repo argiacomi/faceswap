@@ -4,12 +4,14 @@ An extremely limited model for training on low-end graphics cards
 Based on the original https://www.reddit.com/r/deepfakes/
 code sample + contributions"""
 
-from keras import Input, layers, Model as KModel
+from keras import Input, layers
+from keras import Model as KModel
 
-from lib.model.nn_blocks import Conv2DOutput, Conv2DBlock, UpscaleBlock
+from lib.model.nn_blocks import Conv2DBlock, Conv2DOutput, UpscaleBlock
 from plugins.train.train_config import Loss as cfg_loss
 
 from .original import Model as OriginalModel
+
 # pylint:disable=duplicate-code
 
 
@@ -48,8 +50,6 @@ class Model(OriginalModel):
             var_y = UpscaleBlock(512, activation="leakyrelu")(var_y)
             var_y = UpscaleBlock(256, activation="leakyrelu")(var_y)
             var_y = UpscaleBlock(128, activation="leakyrelu")(var_y)
-            var_y = Conv2DOutput(1, 5, activation="sigmoid", name=f"mask_out_{side}")(
-                var_y
-            )
+            var_y = Conv2DOutput(1, 5, activation="sigmoid", name=f"mask_out_{side}")(var_y)
             outputs.append(var_y)
         return KModel(input_, outputs=outputs, name=f"decoder_{side}")

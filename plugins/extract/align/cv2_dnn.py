@@ -25,12 +25,13 @@ SOFTWARE.
 """
 
 from __future__ import annotations
+
 import logging
 
 import cv2
 import numpy as np
 
-from lib.utils import get_module_objects, GetModel
+from lib.utils import GetModel, get_module_objects
 from plugins.extract.base import ExtractPlugin
 
 logger = logging.getLogger(__name__)

@@ -84,9 +84,7 @@ def test_set_project_replaces_options_with_project_legacy_shape() -> None:
         }
     )
 
-    state.set_project(
-        ProjectFile(tab_name="train", tasks={"train": {"Model Dir": "/model"}})
-    )
+    state.set_project(ProjectFile(tab_name="train", tasks={"train": {"Model Dir": "/model"}}))
 
     assert state.tab_name == "train"
     assert state.options == {

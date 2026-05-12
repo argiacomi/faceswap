@@ -27,9 +27,7 @@ class LearningRateWarmup:
         The number of iterations to warmup the learning rate for
     """
 
-    def __init__(
-        self, model: models.Model, target_learning_rate: float, steps: int
-    ) -> None:
+    def __init__(self, model: models.Model, target_learning_rate: float, steps: int) -> None:
         self._model = model
         self._target_lr = target_learning_rate
         self._steps = steps

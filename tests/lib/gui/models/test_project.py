@@ -61,9 +61,7 @@ def test_project_file_rejects_non_mapping_tasks() -> None:
 
 def test_project_file_rejects_non_mapping_task_options() -> None:
     """Each versioned task payload must store options as a mapping."""
-    with pytest.raises(
-        ValueError, match="Project file task 'extract' options must be a mapping"
-    ):
+    with pytest.raises(ValueError, match="Project file task 'extract' options must be a mapping"):
         ProjectFile.from_mapping({"version": 2, "tasks": {"extract": []}})
 
 

@@ -8,7 +8,6 @@ import logging
 import os
 import pickle
 import zlib
-
 from io import BytesIO
 
 import numpy as np
@@ -74,7 +73,7 @@ class Serializer:
         try:
             with open(filename, self._write_option) as s_file:
                 s_file.write(self.marshal(data))
-        except IOError as err:
+        except OSError as err:
             msg = f"Error writing to '{filename}': {err.strerror}"
             raise FaceswapError(msg) from err
 
@@ -111,7 +110,7 @@ class Serializer:
                 logger.debug("stored data type: %s", type(data))
                 retval = self.unmarshal(data)
 
-        except IOError as err:
+        except OSError as err:
             msg = f"Error reading from '{filename}': {err.strerror}"
             raise FaceswapError(msg) from err
         logger.debug("data type: %s", type(retval))
@@ -168,9 +167,7 @@ class Serializer:
         try:
             retval = self._unmarshal(serialized_data)
         except Exception as err:
-            msg = (
-                f"Error unserializing data for type {type(serialized_data)}: {str(err)}"
-            )
+            msg = f"Error unserializing data for type {type(serialized_data)}: {str(err)}"
             raise FaceswapError(msg) from err
         logger.debug("returned data type: %s", type(retval))
         return retval
@@ -305,9 +302,7 @@ def get_serializer(serializer):
         )
         retval = _JSONSerializer
     else:
-        logger.warning(
-            "Unrecognized serializer: '%s'. Returning json serializer", serializer
-        )
+        logger.warning("Unrecognized serializer: '%s'. Returning json serializer", serializer)
     logger.debug(retval)
     return retval
 
@@ -351,9 +346,7 @@ def get_serializer_from_filename(filename):
         )
         retval = _JSONSerializer()
     else:
-        logger.warning(
-            "Unrecognized extension: '%s'. Returning json serializer", extension
-        )
+        logger.warning("Unrecognized extension: '%s'. Returning json serializer", extension)
         retval = _JSONSerializer()
     logger.debug(retval)
     return retval

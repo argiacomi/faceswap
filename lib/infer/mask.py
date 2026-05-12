@@ -13,11 +13,12 @@ from lib.logger import parse_class_init
 from lib.utils import get_module_objects
 from plugins.extract import extract_config as cfg
 
-from .objects import ExtractBatchMask
 from .handler import ExtractHandlerFace
+from .objects import ExtractBatchMask
 
 if T.TYPE_CHECKING:
     import numpy.typing as npt
+
     from .objects import ExtractBatch
 
 logger = logging.getLogger(__name__)
@@ -43,9 +44,7 @@ class Mask(ExtractHandlerFace):
         self._storage_size = cfg.mask_storage_size()
         super().__init__(plugin, compile_model=compile_model, config_file=config_file)
         if 0 < self._storage_size < 64:
-            logger.warning(
-                "Updating mask storage size from %s to 64", self._storage_size
-            )
+            logger.warning("Updating mask storage size from %s to 64", self._storage_size)
             self._storage_size = 64
 
     # Pre-processing
@@ -71,9 +70,7 @@ class Mask(ExtractHandlerFace):
         )
 
         dtype = batch.images[0].dtype
-        retval = np.empty(
-            (len(batch.bboxes), self._input_size, self._input_size, 4), dtype=dtype
-        )
+        retval = np.empty((len(batch.bboxes), self._input_size, self._input_size, 4), dtype=dtype)
         retval[..., :3] = self._get_faces_aligned(
             batch.images,
             batch.frame_ids,
@@ -86,7 +83,7 @@ class Mask(ExtractHandlerFace):
         scales = np.hypot(linear[:, 0], linear[:, 1])  # Always same x/y scaling
         interpolations = np.where(scales > 1.0, cv2.INTER_LINEAR, cv2.INTER_AREA)
         size = (self._input_size, self._input_size)
-        for idx, (mat, interpolation) in enumerate(zip(mats, interpolations)):
+        for idx, (mat, interpolation) in enumerate(zip(mats, interpolations, strict=False)):
             mask = np.ones((batch.frame_sizes[batch.frame_ids[idx]]), dtype=dtype) * 255
             retval[idx, :, :, 3] = cv2.warpAffine(mask, mat, size, flags=interpolation)
 
@@ -107,9 +104,7 @@ class Mask(ExtractHandlerFace):
         if batch.is_aligned:
             data = self._pre_process_aligned(batch, matrices)
         else:
-            data = self._get_faces(
-                batch.images, batch.frame_ids, matrices, with_alpha=True
-            )
+            data = self._get_faces(batch.images, batch.frame_ids, matrices, with_alpha=True)
 
         data = self._format_images(data)
         batch.matrices = data[..., -1]  # type:ignore[assignment]  # Hacky re-use for ROI

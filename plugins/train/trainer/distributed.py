@@ -2,6 +2,7 @@
 """Original Trainer"""
 
 from __future__ import annotations
+
 import logging
 import typing as T
 import warnings
@@ -11,12 +12,15 @@ import torch
 from lib.training.data import BatchMeta
 from lib.training.loss import BatchLoss
 from lib.utils import get_module_objects
+
 from .original import Trainer as OriginalTrainer
 
 if T.TYPE_CHECKING:
-    from .base import TrainConfig
-    from plugins.train.model._base import ModelBase
     import keras
+
+    from plugins.train.model._base import ModelBase
+
+    from .base import TrainConfig
 
 logger = logging.getLogger(__name__)
 
@@ -110,8 +114,7 @@ class Trainer(OriginalTrainer):
         """
         if batch_size < self._gpu_count:
             logger.warning(
-                "Batch size (%s) is less than the number of GPUs (%s). Updating batch "
-                "size to: %s",
+                "Batch size (%s) is less than the number of GPUs (%s). Updating batch size to: %s",
                 batch_size,
                 self._gpu_count,
                 self._gpu_count,
@@ -183,9 +186,7 @@ class Trainer(OriginalTrainer):
         return wrapped
 
     @classmethod
-    def _mean_loss(
-        cls, value: torch.Tensor | list | dict
-    ) -> torch.Tensor | list | dict:
+    def _mean_loss(cls, value: torch.Tensor | list | dict) -> torch.Tensor | list | dict:
         """Recursively collate the loss from multiple GPUs back to single scalars
 
         Parameters
@@ -230,10 +231,7 @@ class Trainer(OriginalTrainer):
         The loss for each input to the model in order (A, B, ...)
         """
         loss_dicts = self._distributed_model(inputs, targets, meta.__dict__)
-        loss = [
-            BatchLoss(**T.cast(dict, self._mean_loss(loss_dict)))
-            for loss_dict in loss_dicts
-        ]
+        loss = [BatchLoss(**T.cast(dict, self._mean_loss(loss_dict))) for loss_dict in loss_dicts]
         return loss
 
 

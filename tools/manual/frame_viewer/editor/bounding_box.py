@@ -9,8 +9,8 @@ import numpy as np
 
 from lib.gui.custom_widgets import RightClickMenu
 from lib.utils import get_module_objects
-from ._base import ControlPanelOption, Editor, logger
 
+from ._base import ControlPanelOption, Editor, logger
 
 # LOCALES
 _LANG = gettext.translation("tools.manual", localedir="locales", fallback=True)
@@ -108,9 +108,7 @@ class BoundingBox(Editor):
         var = norm_ctl.tk_var
         var.trace(
             "w",
-            lambda *e, v=var: self._det_faces.extractor.set_normalization_method(
-                v.get()
-            ),
+            lambda *e, v=var: self._det_faces.extractor.set_normalization_method(v.get()),
         )
         self._add_control(norm_ctl)
 
@@ -165,7 +163,7 @@ class BoundingBox(Editor):
                 (bounding_box[0], bounding_box[3]),
             )
         )
-        for idx, (anc_dsp, anc_grb) in enumerate(zip(*anchor_points)):
+        for idx, (anc_dsp, anc_grb) in enumerate(zip(*anchor_points, strict=False)):
             dsp_kwargs = {"outline": color, "fill": fill_color, "width": 1}
             grb_kwargs = {
                 "outline": "",
@@ -223,14 +221,10 @@ class BoundingBox(Editor):
             return False
         item_id = list(item_ids)[0]
         tags = self._canvas.gettags(item_id)
-        face_idx = int(
-            next(tag for tag in tags if tag.startswith("face_")).split("_")[-1]
-        )
+        face_idx = int(next(tag for tag in tags if tag.startswith("face_")).split("_")[-1])
         corner_idx = int(
             next(
-                tag
-                for tag in tags
-                if tag.startswith("bb_anc_grb_") and "face_" not in tag
+                tag for tag in tags if tag.startswith("bb_anc_grb_") and "face_" not in tag
             ).split("_")[-1]
         )
         pos_x, pos_y = self._corner_order[corner_idx]
@@ -285,12 +279,8 @@ class BoundingBox(Editor):
             return False
         display_dims = self._globals.current_frame.display_dims
         if (
-            self._canvas.offset[0]
-            <= event.x
-            <= display_dims[0] + self._canvas.offset[0]
-            and self._canvas.offset[1]
-            <= event.y
-            <= display_dims[1] + self._canvas.offset[1]
+            self._canvas.offset[0] <= event.x <= display_dims[0] + self._canvas.offset[0]
+            and self._canvas.offset[1] <= event.y <= display_dims[1] + self._canvas.offset[1]
         ):
             self._canvas.config(cursor="plus")
             self._mouse_location = ("image",)
@@ -367,9 +357,7 @@ class BoundingBox(Editor):
         size = min(self._globals.current_frame.display_dims) // 8
         box = (event.x - size, event.y - size, event.x + size, event.y + size)
         logger.debug("Creating new bounding box: %s ", box)
-        self._det_faces.update.add(
-            self._globals.frame_index, *self._coords_to_bounding_box(box)
-        )
+        self._det_faces.update.add(self._globals.frame_index, *self._coords_to_bounding_box(box))
 
     def _resize(self, event):
         """Resizes a bounding box on a corner anchor drag event.
@@ -397,8 +385,7 @@ class BoundingBox(Editor):
             partial(max, box[1] + 20),
         )
         rect_xy_indices = [
-            ("left", "top", "right", "bottom").index(pnt)
-            for pnt in self._drag_data["corner"]
+            ("left", "top", "right", "bottom").index(pnt) for pnt in self._drag_data["corner"]
         ]
         box[rect_xy_indices[1]] = limits[rect_xy_indices[1]](event.x)
         box[rect_xy_indices[0]] = limits[rect_xy_indices[0]](event.y)
@@ -426,9 +413,7 @@ class BoundingBox(Editor):
         )
         face_tag = f"bb_box_face_{face_idx}"
         coords = np.array(self._canvas.coords(face_tag)) + (*shift, *shift)
-        logger.trace(
-            "face_tag: %s, shift: %s, new co-ords: %s", face_tag, shift, coords
-        )
+        logger.trace("face_tag: %s, shift: %s, new co-ords: %s", face_tag, shift, coords)
         self._det_faces.update.bounding_box(
             self._globals.frame_index,
             face_idx,
@@ -448,9 +433,7 @@ class BoundingBox(Editor):
         """
         logger.trace("in: %s", coords)
         coords = (
-            self.scale_from_display(np.array(coords).reshape((2, 2)))
-            .flatten()
-            .astype("int32")
+            self.scale_from_display(np.array(coords).reshape((2, 2))).flatten().astype("int32")
         )
         logger.trace("out: %s", coords)
         return (
@@ -483,9 +466,7 @@ class BoundingBox(Editor):
             )
             return
         logger.debug("Deleting face. _mouse_location: %s", self._mouse_location)
-        self._det_faces.update.delete(
-            self._globals.frame_index, int(self._mouse_location[1])
-        )
+        self._det_faces.update.delete(self._globals.frame_index, int(self._mouse_location[1]))
 
 
 __all__ = get_module_objects(__name__)

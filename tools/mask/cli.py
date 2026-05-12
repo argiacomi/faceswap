@@ -3,17 +3,16 @@
 
 import gettext
 
-from lib.cli.args import FaceSwapArgs
 from lib.cli.actions import (
-    DirOrFileFullPaths,
     DirFullPaths,
+    DirOrFileFullPaths,
     FileFullPaths,
     Radio,
     Slider,
 )
+from lib.cli.args import FaceSwapArgs
 from lib.utils import get_module_objects
 from plugins.plugin_loader import PluginLoader
-
 
 # pylint:disable=duplicate-code
 # LOCALES
@@ -21,8 +20,7 @@ _LANG = gettext.translation("tools.mask.cli", localedir="locales", fallback=True
 _ = _LANG.gettext
 
 _HELPTEXT = _(
-    "This tool allows you to generate, import, export or preview masks for existing "
-    "alignments."
+    "This tool allows you to generate, import, export or preview masks for existing alignments."
 )
 
 
@@ -33,8 +31,7 @@ class MaskArgs(FaceSwapArgs):
     def get_info():
         """Return command information"""
         return _(
-            "Mask tool\nGenerate, import, export or preview masks for existing alignments "
-            "files."
+            "Mask tool\nGenerate, import, export or preview masks for existing alignments files."
         )
 
     @staticmethod
@@ -64,9 +61,7 @@ class MaskArgs(FaceSwapArgs):
                 "group": _("data"),
                 "filetypes": "video",
                 "required": True,
-                "help": _(
-                    "Directory containing extracted faces, source frames, or a video file."
-                ),
+                "help": _("Directory containing extracted faces, source frames, or a video file."),
             }
         )
         argument_list.append(
@@ -121,7 +116,8 @@ class MaskArgs(FaceSwapArgs):
                     "(configurable in mask settings)."
                     "\nL|custom: A dummy mask that fills the mask area with all 1s or 0s "
                     "(configurable in settings). This is only required if you intend to manually "
-                    "edit the custom masks yourself in the manual tool. This mask does not use the "
+                    "edit the custom masks yourself in the manual tool. This mask does not use the"
+                    " "
                     "GPU."
                     "\nL|vgg-clear: Mask designed to provide smart segmentation of mostly frontal "
                     "faces clear of obstructions. Profile faces and obstructions may result in "
@@ -146,14 +142,16 @@ class MaskArgs(FaceSwapArgs):
                 "group": _("process"),
                 "help": _(
                     "R|The Mask tool process to perform."
-                    "\nL|all: Update the mask for all faces in the alignments file for the selected "
+                    "\nL|all: Update the mask for all faces in the alignments file for the "
+                    "selected "
                     "'masker'."
                     "\nL|missing: Create a mask for all faces in the alignments file where a mask "
                     "does not previously exist for the selected 'masker'."
                     "\nL|output: Don't update the masks, just output the selected 'masker' for "
                     "review/editing in external tools to the given output folder."
                     "\nL|import: Import masks that have been edited outside of faceswap into the "
-                    "alignments file. Note: 'custom' must be the selected 'masker' and the masks must "
+                    "alignments file. Note: 'custom' must be the selected 'masker' and the masks "
+                    "must "
                     "be in the same format as the 'input-type' (frames or faces)"
                 ),
             }
@@ -168,11 +166,14 @@ class MaskArgs(FaceSwapArgs):
                     "R|Import only. The path to the folder that contains masks to be imported."
                     "\nL|How the masks are provided is not important, but they will be stored, "
                     "internally, as 8-bit grayscale images."
-                    "\nL|If the input are images, then the masks must be named exactly the same as "
+                    "\nL|If the input are images, then the masks must be named exactly the same as"
+                    " "
                     "input frames/faces (excluding the file extension)."
                     "\nL|If the input is a video file, then the filename of the masks is not "
-                    "important but should contain the frame number at the end of the filename (but "
-                    "before the file extension). The frame number can be separated from the rest of "
+                    "important but should contain the frame number at the end of the filename (but"
+                    " "
+                    "before the file extension). The frame number can be separated from the rest "
+                    "of "
                     "the filename by any non-numeric character and can be padded by any number of "
                     "zeros. The frame number must correspond correctly to the frame number in the "
                     "original video (starting from frame 1)."
@@ -188,7 +189,8 @@ class MaskArgs(FaceSwapArgs):
                 "default": "face",
                 "group": _("import"),
                 "help": _(
-                    "R|Import/Output only. When importing masks, this is the centering to use. For "
+                    "R|Import/Output only. When importing masks, this is the centering to use. For"
+                    " "
                     "output this is only used for outputting custom imported masks, and should "
                     "correspond to the centering used when importing the mask. Note: For any job "
                     "other than 'import' and 'output' this option is ignored as mask centering is "
@@ -217,8 +219,10 @@ class MaskArgs(FaceSwapArgs):
                 "default": 128,
                 "rounding": 64,
                 "help": _(
-                    "Import only. The size, in pixels to internally store the mask at.\nThe default "
-                    "is 128 which is fine for nearly all usecases. Larger sizes will result in larger "
+                    "Import only. The size, in pixels to internally store the mask at.\nThe "
+                    "default "
+                    "is 128 which is fine for nearly all usecases. Larger sizes will result in "
+                    "larger "
                     "alignments files and longer processing."
                 ),
             }

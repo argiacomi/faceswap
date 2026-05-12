@@ -28,7 +28,6 @@ from lib.config import ConfigItem
 
 from lib.config import ConfigItem
 
-
 HELPTEXT = (
     "Options for outputting converted frames to an animated GIF.\n"
     "Note: GIF creation needs to load all images into RAM so you should only use short "
@@ -58,8 +57,7 @@ palette_size = ConfigItem(
     datatype=str,
     default="256",
     group="settings",
-    info="The number of colors to quantize the image to. Is rounded to the nearest power of "
-    "two.",
+    info="The number of colors to quantize the image to. Is rounded to the nearest power of two.",
     choices=["2", "4", "8", "16", "32", "64", "128", "256"],
 )
 

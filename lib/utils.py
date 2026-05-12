@@ -9,8 +9,8 @@ import inspect
 import json
 import logging
 import os
+import subprocess
 import sys
-import tkinter as tk
 import typing as T
 import zipfile
 from importlib import import_module
@@ -307,14 +307,27 @@ def get_dpi() -> float | None:
     96.0
     """
     logger = logging.getLogger(__name__)
+    tk_probe = (
+        "import tkinter as tk\n"
+        "root = tk.Tk()\n"
+        "root.withdraw()\n"
+        "try:\n"
+        "    print(float(root.winfo_fpixels('1i')))\n"
+        "finally:\n"
+        "    root.destroy()\n"
+    )
     try:
-        root = tk.Tk()
-        dpi = root.winfo_fpixels('1i')
-    except tk.TclError:
+        dpi = subprocess.run(  # noqa:S603  # nosec: B603 - fixed interpreter/arguments
+            [sys.executable, "-c", tk_probe],
+            capture_output=True,
+            check=True,
+            text=True,
+            timeout=5,
+        ).stdout.strip()
+        return float(dpi)
+    except (subprocess.SubprocessError, ValueError):
         logger.warning("Display not detected. Could not obtain DPI")
         return None
-
-    return float(dpi)
 
 
 def get_module_objects(module: str) -> list[str]:

@@ -5,6 +5,7 @@ See :mod:`~plugins.train.model.original` for an annotated example for how to cre
 """
 
 from __future__ import annotations
+
 import logging
 import os
 import sys
@@ -13,16 +14,17 @@ import typing as T
 import keras
 
 from lib.logger import parse_class_init
-from lib.utils import get_module_objects, FaceswapError
+from lib.utils import FaceswapError, get_module_objects
 from plugins.train import train_config as cfg
 
 from .inference import Inference
-from .io import IO, get_all_sub_models, Weights
+from .io import IO, Weights, get_all_sub_models
 from .settings import Optimizer, Settings
 from .state import State
 
 if T.TYPE_CHECKING:
     import argparse
+
     import numpy as np
 
 
@@ -56,9 +58,7 @@ class ModelBase:  # pylint:disable=too-many-instance-attributes
         If the inputs have different sizes for `"A"` and `"B"` this should be a `list` of 2 3
         dimensional shape `tuples`, 1 for each side respectively."""
 
-        self.color_order: T.Literal["bgr", "rgb"] = (
-            "bgr"  # Override for image color channel order
-        )
+        self.color_order: T.Literal["bgr", "rgb"] = "bgr"  # Override for image color channel order
 
         self._args = arguments
         self._is_predict = predict
@@ -84,9 +84,7 @@ class ModelBase:  # pylint:disable=too-many-instance-attributes
             self,
             model_dir,
             self._is_predict,
-            T.cast(
-                T.Literal["never", "always", "exit"], cfg.Optimizer.save_optimizer()
-            ),
+            T.cast(T.Literal["never", "always", "exit"], cfg.Optimizer.save_optimizer()),
         )
         self._check_multiple_models()
 
@@ -133,18 +131,14 @@ class ModelBase:  # pylint:disable=too-many-instance-attributes
     @property
     def input_shapes(self) -> list[tuple[None, int, int, int]]:
         """A flattened list corresponding to all of the inputs to the model."""
-        shapes = [
-            T.cast(tuple[None, int, int, int], inputs.shape)
-            for inputs in self.model.inputs
-        ]
+        shapes = [T.cast(tuple[None, int, int, int], inputs.shape) for inputs in self.model.inputs]
         return shapes
 
     @property
     def output_shapes(self) -> list[tuple[None, int, int, int]]:
         """A flattened list corresponding to all of the outputs of the model."""
         shapes = [
-            T.cast(tuple[None, int, int, int], output.shape)
-            for output in self.model.outputs
+            T.cast(tuple[None, int, int, int], output.shape) for output in self.model.outputs
         ]
         return shapes
 
@@ -176,7 +170,7 @@ class ModelBase:  # pylint:disable=too-many-instance-attributes
         return ".".join(self.__module__.split(".")[-2:])
 
     @property
-    def state(self) -> "State":
+    def state(self) -> State:
         """The state settings for the current plugin."""
         return self._state
 
@@ -249,9 +243,7 @@ class ModelBase:  # pylint:disable=too-many-instance-attributes
     def _validate_input_shape(self) -> None:
         """Validate that the input shape is either a single shape tuple of 3 dimensions or
         a list of 2 shape tuples of 3 dimensions."""
-        assert len(self.input_shape) == 3, (
-            "Input shape should be a 3 dimensional shape tuple"
-        )
+        assert len(self.input_shape) == 3, "Input shape should be a 3 dimensional shape tuple"
 
     def _get_inputs(self) -> list[keras.layers.Input]:
         """Obtain the standardized inputs for the model.
@@ -268,7 +260,7 @@ class ModelBase:  # pylint:disable=too-many-instance-attributes
         input_shapes = [self.input_shape, self.input_shape]
         inputs = [
             keras.layers.Input(shape=shape, name=f"face_in_{side}")
-            for side, shape in zip(("a", "b"), input_shapes)
+            for side, shape in zip(("a", "b"), input_shapes, strict=False)
         ]
         logger.debug("inputs: %s", inputs)
         return inputs

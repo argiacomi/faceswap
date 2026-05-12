@@ -5,20 +5,19 @@ If Tkinter is installed, then this will be used to manage the preview image, oth
 fallback to opencv's imshow"""
 
 from __future__ import annotations
+
 import logging
 import os
 import sys
 import tkinter as tk
 import typing as T
-
 from datetime import datetime
+from math import ceil, floor
 from platform import system
 from tkinter import ttk
-from math import ceil, floor
-
-from PIL import Image, ImageTk
 
 import cv2
+from PIL import Image, ImageTk
 
 from lib.utils import get_module_objects
 
@@ -26,6 +25,7 @@ from .preview_cv import PreviewBase, TriggerKeysType
 
 if T.TYPE_CHECKING:
     import numpy as np
+
     from .preview_cv import PreviewBuffer, TriggerType
 
 logger = logging.getLogger(__name__)
@@ -138,9 +138,7 @@ class _Taskbar:
             width=10,
         )
         scale.pack(side=tk.RIGHT)
-        scale.bind(
-            "<FocusIn>", self._clear_combo_focus
-        )  # Remove auto-focus on widget text box
+        scale.bind("<FocusIn>", self._clear_combo_focus)  # Remove auto-focus on widget text box
         self._track_widget(scale)
         logger.debug("Added scale combo: '%s'", scale)
         return scale
@@ -180,9 +178,7 @@ class _Taskbar:
         frame = tk.Frame(self._frame)
         for text, mode in self._interpolators:
             logger.debug("Adding %s radio button", text)
-            radio = tk.Radiobutton(
-                frame, text=text, value=mode, variable=self.interpolator_var
-            )
+            radio = tk.Radiobutton(frame, text=text, value=mode, variable=self.interpolator_var)
             radio.pack(side=tk.LEFT, anchor=tk.W)
             self._track_widget(radio)
 
@@ -246,9 +242,7 @@ class _Taskbar:
 
     def cycle_interpolators(self, *args) -> None:  # pylint:disable=unused-argument
         """Cycle interpolators on a keypress callback"""
-        current = next(
-            i for i in self._interpolators if i[1] == self.interpolator_var.get()
-        )
+        current = next(i for i in self._interpolators if i[1] == self.interpolator_var.get())
         next_idx = self._interpolators.index(current) + 1
         next_idx = 0 if next_idx == len(self._interpolators) else next_idx
         self.interpolator_var.set(self._interpolators[next_idx][1])
@@ -352,9 +346,7 @@ class _PreviewCanvas(tk.Canvas):  # pylint:disable=too-many-ancestors
         y_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
         self.configure(xscrollcommand=x_scrollbar.set, yscrollcommand=y_scrollbar.set)
-        logger.debug(
-            "Configured scrollbars. x: '%s', y: '%s'", x_scrollbar, y_scrollbar
-        )
+        logger.debug("Configured scrollbars. x: '%s', y: '%s'", x_scrollbar, y_scrollbar)
 
     def _resize(self, event: tk.Event) -> None:  # pylint:disable=unused-argument
         """Place the image in center of canvas on resize event and move to top left
@@ -496,9 +488,7 @@ class _Image:
         logger.debug("Setting display image. Scale: %s", self._scale)
         image = self.source[..., 2::-1]  # TO RGB
         if self._scale not in (0.0, 1.0):  # Scale will be 0,0 on initial load in GUI
-            interpolator = (
-                self._interpolation if self._scale > 1.0 else cv2.INTER_NEAREST
-            )
+            interpolator = self._interpolation if self._scale > 1.0 else cv2.INTER_NEAREST
             dims = (
                 int(round(self.source.shape[1] * self._scale, 0)),
                 int(round(self.source.shape[0] * self._scale, 0)),
@@ -555,11 +545,7 @@ class _Image:
             Tuple containing either the key press event (Ctrl+s shortcut), the tk variable
             arguments (standalone save button press) or the folder location (GUI save button press)
         """
-        if (
-            self._is_standalone
-            and not self._save_var.get()
-            and not isinstance(args[0], tk.Event)
-        ):
+        if self._is_standalone and not self._save_var.get() and not isinstance(args[0], tk.Event):
             return
 
         if self._is_standalone:
@@ -663,14 +649,10 @@ class _Bindings:  # pylint:disable=too-few-public-methods
         location_y = event.y / self._image.display_image.height()
 
         if self._canvas.xview() != (0.0, 1.0):
-            to_x = min(
-                1.0, max(0.0, self._drag_data[0] - location_x + self._canvas.xview()[0])
-            )
+            to_x = min(1.0, max(0.0, self._drag_data[0] - location_x + self._canvas.xview()[0]))
             self._canvas.xview_moveto(to_x)
         if self._canvas.yview() != (0.0, 1.0):
-            to_y = min(
-                1.0, max(0.0, self._drag_data[1] - location_y + self._canvas.yview()[0])
-            )
+            to_y = min(1.0, max(0.0, self._drag_data[1] - location_y + self._canvas.yview()[0]))
             self._canvas.yview_moveto(to_y)
 
         self._drag_data = [location_x, location_y]
@@ -683,11 +665,7 @@ class _Bindings:  # pylint:disable=too-few-public-methods
         event
             The key press event
         """
-        move_axis = (
-            self._canvas.xview
-            if event.keysym in ("Left", "Right")
-            else self._canvas.yview
-        )
+        move_axis = self._canvas.xview if event.keysym in ("Left", "Right") else self._canvas.yview
         visible = move_axis()[1] - move_axis()[0]
         amount = -visible / 25 if event.keysym in ("Up", "Left") else visible / 25
         logger.trace(
@@ -707,12 +685,8 @@ class _Bindings:  # pylint:disable=too-few-public-methods
         """
         logger.debug("Binding mouse events")
         if system() == "Linux":
-            self._canvas.tag_bind(
-                self._canvas.image_id, "<Button-4>", self._on_bound_zoom
-            )
-            self._canvas.tag_bind(
-                self._canvas.image_id, "<Button-5>", self._on_bound_zoom
-            )
+            self._canvas.tag_bind(self._canvas.image_id, "<Button-4>", self._on_bound_zoom)
+            self._canvas.tag_bind(self._canvas.image_id, "<Button-5>", self._on_bound_zoom)
         else:
             self._canvas.bind("<MouseWheel>", self._on_bound_zoom)
 
@@ -896,9 +870,7 @@ class PreviewTk(PreviewBase):
         max_scale = min(8.0, max(1.0, min(max_scales)))
         max_scale = (floor(max_scale * 10)) * 10
 
-        logger.debug(
-            "Calculated minimum scale: %s, maximum_scale: %s", min_scale, max_scale
-        )
+        logger.debug("Calculated minimum scale: %s, maximum_scale: %s", min_scale, max_scale)
         self._taskbar.set_min_max_scale(min_scale, max_scale)
 
     def _initialize_window(self) -> None:
@@ -941,8 +913,7 @@ class PreviewTk(PreviewBase):
         scale = min(width_scale, height_scale) * 100
         retval = f"{floor(scale)}%"
         logger.debug(
-            "Converted 'Fit' scaling: (width_scale: %s, height_scale: %s, scale: %s, "
-            "retval: '%s'",
+            "Converted 'Fit' scaling: (width_scale: %s, height_scale: %s, scale: %s, retval: '%s'",
             width_scale,
             height_scale,
             scale,
@@ -1007,9 +978,7 @@ class PreviewTk(PreviewBase):
             logger.info("Refresh preview requested...")
 
         self._triggers[self._keymaps[key]].set()
-        logger.debug(
-            "Processed keypress '%s'. Set event for '%s'", key, self._keymaps[key]
-        )
+        logger.debug("Processed keypress '%s'. Set event for '%s'", key, self._keymaps[key])
 
     def _display_preview(self) -> None:
         """Handle the displaying of the images currently in :attr:`_preview_buffer`"""
@@ -1047,6 +1016,7 @@ def main():
     python -m lib.training.preview_tk <filename>
     """
     from lib.logger import log_setup  # pylint:disable=import-outside-toplevel
+
     from .preview_cv import PreviewBuffer  # pylint:disable=import-outside-toplevel
 
     log_setup("DEBUG", "faceswap_preview.log", "Test", False)

@@ -2,11 +2,12 @@
 """Media items (Alignments, Faces, Frames) for alignments tool"""
 
 from __future__ import annotations
+
 import logging
-from operator import itemgetter
 import os
 import sys
 import typing as T
+from operator import itemgetter
 
 import cv2
 from tqdm import tqdm
@@ -14,18 +15,20 @@ from tqdm import tqdm
 from lib.align import Alignments, DetectedFace
 from lib.align.objects import PNGHeader
 from lib.image import (
-    generate_thumbnail,
     ImagesLoader,
+    generate_thumbnail,
     png_write_meta,
     read_image,
     read_image_meta_batch,
 )
-from lib.utils import get_module_objects, IMAGE_EXTENSIONS
-from lib.video import count_frames, VIDEO_EXTENSIONS
+from lib.utils import IMAGE_EXTENSIONS, get_module_objects
+from lib.video import VIDEO_EXTENSIONS, count_frames
 
 if T.TYPE_CHECKING:
     from collections.abc import Generator
+
     import numpy as np
+
     from lib.align.objects import FileAlignments
 
 logger = logging.getLogger(__name__)
@@ -172,10 +175,7 @@ class MediaLoader:
 
     def process_folder(
         self,
-    ) -> (
-        Generator[dict[str, str], None, None]
-        | Generator[tuple[str, PNGHeader], None, None]
-    ):
+    ) -> Generator[dict[str, str], None, None] | Generator[tuple[str, PNGHeader], None, None]:
         """Override for specific folder processing"""
         raise NotImplementedError()
 
@@ -345,9 +345,7 @@ class Faces(MediaLoader):
         dupe_count = 0
         seen: dict[str, list[int]] = {}
 
-        if (
-            self._alignments is not None and self._alignments.version < 2.1
-        ):  # Legacy updating
+        if self._alignments is not None and self._alignments.version < 2.1:  # Legacy updating
             filelist = [
                 os.path.join(self.folder, face)
                 for face in os.listdir(self.folder)
@@ -366,9 +364,7 @@ class Faces(MediaLoader):
             desc="Reading Face Data",
         ):
             if "itxt" not in metadata or "source" not in metadata["itxt"]:
-                logger.warning(
-                    "Non-Faceswap extracted face found. Image skipped: '%s'", fullpath
-                )
+                logger.warning("Non-Faceswap extracted face found. Image skipped: '%s'", fullpath)
                 continue
             sub_dict = T.cast(PNGHeader, PNGHeader.from_dict(metadata["itxt"]))
 
@@ -523,9 +519,7 @@ class ExtractedFaces:
         The extract face size. Default: 512
     """
 
-    def __init__(
-        self, frames: Frames, alignments: AlignmentData, size: int = 512
-    ) -> None:
+    def __init__(self, frames: Frames, alignments: AlignmentData, size: int = 512) -> None:
         logger.trace(
             "Initializing %s: size: %s",  # type:ignore[attr-defined]
             self.__class__.__name__,
@@ -560,14 +554,10 @@ class ExtractedFaces:
             self.faces = []
             return
         image = self.frames.load_image(frame) if image is None else image
-        self.faces = [
-            self.extract_one_face(alignment, image) for alignment in alignments
-        ]
+        self.faces = [self.extract_one_face(alignment, image) for alignment in alignments]
         self.current_frame = frame
 
-    def extract_one_face(
-        self, alignment: FileAlignments, image: np.ndarray
-    ) -> DetectedFace:
+    def extract_one_face(self, alignment: FileAlignments, image: np.ndarray) -> DetectedFace:
         """Extract one face from image
 
         Parameters

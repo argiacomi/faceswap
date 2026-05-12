@@ -49,18 +49,12 @@ class CommandSchemaDiscovery:
 
     def __init__(self, base_path: str | os.PathLike[str] | None = None) -> None:
         self._base_path = (
-            Path(__file__).resolve().parents[3]
-            if base_path is None
-            else Path(base_path)
+            Path(__file__).resolve().parents[3] if base_path is None else Path(base_path)
         )
 
-    def discover(
-        self, categories: T.Iterable[str] | None = None
-    ) -> tuple[DiscoveredCommand, ...]:
+    def discover(self, categories: T.Iterable[str] | None = None) -> tuple[DiscoveredCommand, ...]:
         """Return discovered commands for the requested categories."""
-        wanted_categories = (
-            ("faceswap", "tools") if categories is None else tuple(categories)
-        )
+        wanted_categories = ("faceswap", "tools") if categories is None else tuple(categories)
         commands: list[DiscoveredCommand] = []
         for category in wanted_categories:
             modules = self._get_modules(str(category))
@@ -105,9 +99,7 @@ class CommandSchemaDiscovery:
         return tuple(modules)
 
     @classmethod
-    def _get_all_classes(
-        cls, modules: T.Iterable[ModuleType]
-    ) -> tuple[type[T.Any], ...]:
+    def _get_all_classes(cls, modules: T.Iterable[ModuleType]) -> tuple[type[T.Any], ...]:
         """Return valid FaceSwapArgs classes from CLI metadata modules."""
         classes: list[type[T.Any]] = []
         for module in modules:
@@ -132,8 +124,7 @@ class CommandSchemaDiscovery:
     ) -> tuple[DiscoveredCommand, ...]:
         """Return ordered command metadata for a category."""
         by_command = {
-            self._class_name_to_command(arg_class.__name__): arg_class
-            for arg_class in classes
+            self._class_name_to_command(arg_class.__name__): arg_class for arg_class in classes
         }
         command_names = sorted(by_command)
         if category == "faceswap":
@@ -192,7 +183,7 @@ class CommandSchemaDiscovery:
             return None
 
         raw_opts = option.get("opts", ())
-        if not isinstance(raw_opts, (list, tuple)) or not raw_opts:
+        if not isinstance(raw_opts, list | tuple) or not raw_opts:
             return None
         opts = tuple(str(opt) for opt in raw_opts)
         nargs = option.get("nargs")
@@ -237,7 +228,7 @@ class CommandSchemaDiscovery:
     @staticmethod
     def _get_choices(choices: object) -> tuple[str, ...]:
         """Normalize CLI choices for Qt option rendering."""
-        if isinstance(choices, (list, tuple)):
+        if isinstance(choices, list | tuple):
             return tuple(str(choice) for choice in choices)
         return ()
 
@@ -272,7 +263,7 @@ class CommandSchemaDiscovery:
         if action != "Slider":
             return None, None
         min_max = option.get("min_max")
-        if not isinstance(min_max, (list, tuple)) or len(min_max) != 2:
+        if not isinstance(min_max, list | tuple) or len(min_max) != 2:
             return None, None
         return float(min_max[0]), float(min_max[1])
 
@@ -282,7 +273,7 @@ class CommandSchemaDiscovery:
         if action != "Slider":
             return None
         rounding = option.get("rounding")
-        if isinstance(rounding, (float, int)):
+        if isinstance(rounding, float | int):
             return float(rounding)
         return None
 

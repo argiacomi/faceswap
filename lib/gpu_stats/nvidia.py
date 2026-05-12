@@ -7,7 +7,7 @@ import pynvml  # pylint:disable=import-error
 
 from lib.utils import FaceswapError, get_module_objects
 
-from ._base import _GPUStats, _EXCLUDE_DEVICES
+from ._base import _EXCLUDE_DEVICES, _GPUStats
 
 
 class NvidiaStats(_GPUStats):
@@ -86,8 +86,7 @@ class NvidiaStats(_GPUStats):
         except pynvml.NVMLError as err:
             self._log(
                 "debug",
-                "Error obtaining device count. Setting to 0. "
-                f"Original error: {str(err)}",
+                f"Error obtaining device count. Setting to 0. Original error: {str(err)}",
             )
             retval = 0
         self._log("debug", f"GPU Device count: {retval}")
@@ -118,9 +117,7 @@ class NvidiaStats(_GPUStats):
         -------
         The list of pointers for connected Nvidia GPUs
         """
-        handles = [
-            pynvml.nvmlDeviceGetHandleByIndex(i) for i in range(self._device_count)
-        ]
+        handles = [pynvml.nvmlDeviceGetHandleByIndex(i) for i in range(self._device_count)]
         self._log("debug", f"GPU Handles found: {len(handles)}")
         return handles
 
@@ -180,8 +177,7 @@ class NvidiaStats(_GPUStats):
             self._handles = self._get_handles()
 
         vram = [
-            pynvml.nvmlDeviceGetMemoryInfo(handle).free / (1024 * 1024)
-            for handle in self._handles
+            pynvml.nvmlDeviceGetMemoryInfo(handle).free / (1024 * 1024) for handle in self._handles
         ]
         if not is_initialized:
             self._shutdown()
@@ -210,9 +206,7 @@ class NvidiaStats(_GPUStats):
             str(d) for d in active if d not in _EXCLUDE_DEVICES
         )
 
-        env_vars = [
-            f"{k}: {v}" for k, v in os.environ.items() if k.lower().startswith("cuda")
-        ]
+        env_vars = [f"{k}: {v}" for k, v in os.environ.items() if k.lower().startswith("cuda")]
         self._log("debug", f"Cuda environment variables: {env_vars}")
 
 
