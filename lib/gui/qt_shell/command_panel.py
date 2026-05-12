@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
     QFormLayout,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -21,7 +22,9 @@ from PySide6.QtWidgets import (
     QPushButton,
     QRadioButton,
     QScrollArea,
+    QSizePolicy,
     QSlider,
+    QTabBar,
     QVBoxLayout,
     QWidget,
 )
@@ -76,7 +79,9 @@ class OptionsFormRenderer(QWidget):
             elif self._is_slider(spec):
                 self._set_slider_value(spec, widget, value)
             elif isinstance(widget, QCheckBox):
-                widget.setChecked(self._checked_for_value(spec, value, spec.switch in values))
+                widget.setChecked(
+                    self._checked_for_value(spec, value, spec.switch in values)
+                )
             elif isinstance(widget, QComboBox):
                 widget.setCurrentText(self._string_value(value))
             elif isinstance(widget, QLineEdit):
@@ -100,7 +105,7 @@ class OptionsFormRenderer(QWidget):
 
     @staticmethod
     def _grouped_specs(
-        specs: tuple[OptionSpec, ...],
+        specs: tuple[OptionSpec, ...]
     ) -> tuple[tuple[str | None, tuple[OptionSpec, ...]], ...]:
         """Group option specs in first-seen order."""
         group_order: list[str | None] = []
@@ -123,6 +128,7 @@ class OptionsFormRenderer(QWidget):
         form.setContentsMargins(10, 8, 10, 10)
         form.setHorizontalSpacing(12)
         form.setVerticalSpacing(6)
+        form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
         if has_title:
             label = QLabel(str(group).title())
             label.setObjectName("qt-shell-option-group-label")
@@ -133,6 +139,8 @@ class OptionsFormRenderer(QWidget):
     def _label_for(self, spec: OptionSpec) -> QLabel:
         """Return a label with optional help tooltip."""
         label = QLabel(spec.title)
+        label.setMinimumWidth(105)
+        label.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
         if spec.helptext:
             label.setToolTip(spec.helptext)
         return label
@@ -159,44 +167,55 @@ class OptionsFormRenderer(QWidget):
             widget.setCurrentText(default)
         else:
             widget = QLineEdit(self._string_value(spec.default))
+        self._apply_widget_policy(widget)
         if spec.helptext:
             widget.setToolTip(spec.helptext)
         return widget
 
     def _build_radio_group(self, spec: OptionSpec) -> QWidget:
-        """Build a compact exclusive choice widget for radio metadata."""
+        """Build an exclusive choice widget for radio metadata."""
         widget = QWidget()
-        layout = QHBoxLayout(widget)
+        layout = QGridLayout(widget)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
+        layout.setHorizontalSpacing(18)
+        layout.setVerticalSpacing(6)
         group = QButtonGroup(widget)
         group.setExclusive(True)
         default = self._string_value(spec.default)
-        for choice in spec.choices:
+        columns = self._choice_columns(spec.choices)
+        for index, choice in enumerate(spec.choices):
             button = QRadioButton(choice)
+            button.setMinimumWidth(self._choice_width(choice))
+            button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             button.setChecked(choice == default)
             if spec.helptext:
                 button.setToolTip(spec.helptext)
             group.addButton(button)
-            layout.addWidget(button)
-        layout.addStretch(1)
+            layout.addWidget(button, index // columns, index % columns)
+        for column in range(columns):
+            layout.setColumnStretch(column, 1)
         self._radio_groups[spec.switch] = group
         return widget
 
     def _build_multi_select(self, spec: OptionSpec) -> QWidget:
-        """Build a compact multi-select widget only for multi-option metadata."""
+        """Build a multi-select widget only for multi-option metadata."""
         widget = QWidget()
-        layout = QHBoxLayout(widget)
+        layout = QGridLayout(widget)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
+        layout.setHorizontalSpacing(18)
+        layout.setVerticalSpacing(6)
         selected = self._value_set(spec.default)
-        for choice in spec.choices:
+        columns = self._choice_columns(spec.choices)
+        for index, choice in enumerate(spec.choices):
             checkbox = QCheckBox(choice)
+            checkbox.setMinimumWidth(self._choice_width(choice))
+            checkbox.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             checkbox.setChecked(choice in selected)
             if spec.helptext:
                 checkbox.setToolTip(spec.helptext)
-            layout.addWidget(checkbox)
-        layout.addStretch(1)
+            layout.addWidget(checkbox, index // columns, index % columns)
+        for column in range(columns):
+            layout.setColumnStretch(column, 1)
         return widget
 
     def _build_slider(self, spec: OptionSpec) -> QWidget:
@@ -204,13 +223,14 @@ class OptionsFormRenderer(QWidget):
         widget = QWidget()
         layout = QHBoxLayout(widget)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6)
+        layout.setSpacing(8)
 
         slider = QSlider(Qt.Horizontal)
         line_edit = QLineEdit()
-        line_edit.setFixedWidth(58)
+        line_edit.setFixedWidth(70)
         slider.setObjectName("qt-shell-option-slider")
         line_edit.setObjectName("qt-shell-option-slider-value")
+        slider.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         slider.setRange(
             self._value_to_slider(spec, spec.slider_min),
             self._value_to_slider(spec, spec.slider_max),
@@ -220,7 +240,9 @@ class OptionsFormRenderer(QWidget):
 
         def sync_line(slider_value: int) -> None:
             line_edit.setText(
-                self._format_slider_value(spec, self._slider_to_value(spec, slider_value))
+                self._format_slider_value(
+                    spec, self._slider_to_value(spec, slider_value)
+                )
             )
 
         def sync_slider() -> None:
@@ -228,7 +250,7 @@ class OptionsFormRenderer(QWidget):
 
         slider.valueChanged.connect(sync_line)
         line_edit.editingFinished.connect(sync_slider)
-        layout.addWidget(slider)
+        layout.addWidget(slider, 1)
         layout.addWidget(line_edit)
         self._set_slider_value(spec, widget, spec.default)
         return widget
@@ -240,12 +262,16 @@ class OptionsFormRenderer(QWidget):
         row = QWidget()
         layout = QHBoxLayout(row)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(widget)
+        layout.setSpacing(6)
+        layout.addWidget(widget, 1)
         for mode in spec.browser_modes:
             button = QPushButton(self._browser_label(mode))
             button.setObjectName(f"qt-shell-browser-{mode}")
             button.setToolTip(spec.helptext or f"Browse for {spec.title}")
-            button.clicked.connect(lambda _checked=False, m=mode, w=widget: self._browse(m, w))
+            button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+            button.clicked.connect(
+                lambda _checked=False, m=mode, w=widget: self._browse(m, w)
+            )
             layout.addWidget(button)
         return row
 
@@ -302,11 +328,15 @@ class OptionsFormRenderer(QWidget):
     def _browse(self, mode: str, widget: QLineEdit) -> None:
         """Populate a line edit from a simple QFileDialog browser mode."""
         if mode == "folder":
-            value = QFileDialog.getExistingDirectory(self, "Select Folder", widget.text())
+            value = QFileDialog.getExistingDirectory(
+                self, "Select Folder", widget.text()
+            )
         elif mode == "file":
             value, _ = QFileDialog.getOpenFileName(self, "Select File", widget.text())
         elif mode == "files":
-            values, _ = QFileDialog.getOpenFileNames(self, "Select Files", widget.text())
+            values, _ = QFileDialog.getOpenFileNames(
+                self, "Select Files", widget.text()
+            )
             value = self._join_paths(values)
         elif mode == "save":
             value, _ = QFileDialog.getSaveFileName(self, "Save File", widget.text())
@@ -317,8 +347,8 @@ class OptionsFormRenderer(QWidget):
 
     @staticmethod
     def _is_radio_group(spec: OptionSpec) -> bool:
-        """Return true when metadata clearly asks for a compact radio group."""
-        return spec.is_radio and bool(spec.choices) and len(spec.choices) <= 4
+        """Return true when metadata clearly asks for a radio group."""
+        return spec.is_radio and bool(spec.choices)
 
     @staticmethod
     def _is_multi_select(spec: OptionSpec) -> bool:
@@ -329,7 +359,9 @@ class OptionsFormRenderer(QWidget):
     def _is_slider(spec: OptionSpec) -> bool:
         """Return true when metadata clearly asks for a slider."""
         return (
-            spec.action == "Slider" and spec.slider_min is not None and spec.slider_max is not None
+            spec.action == "Slider"
+            and spec.slider_min is not None
+            and spec.slider_max is not None
         )
 
     @staticmethod
@@ -343,7 +375,29 @@ class OptionsFormRenderer(QWidget):
         }.get(mode, "Browse")
 
     @staticmethod
-    def _checked_for_value(spec: OptionSpec, value: object, value_is_command_value: bool) -> bool:
+    def _choice_columns(choices: tuple[str, ...]) -> int:
+        """Return a stable column count for radio and checkbox groups."""
+        if len(choices) <= 2:
+            return max(1, len(choices))
+        return 3
+
+    @staticmethod
+    def _choice_width(choice: str) -> int:
+        """Return a minimum width that avoids clipped choice labels."""
+        return max(125, len(choice) * 9 + 34)
+
+    @staticmethod
+    def _apply_widget_policy(widget: QWidget) -> None:
+        """Apply common growth policy for option widgets."""
+        if isinstance(widget, (QLineEdit, QComboBox)):
+            widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        else:
+            widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+
+    @staticmethod
+    def _checked_for_value(
+        spec: OptionSpec, value: object, value_is_command_value: bool
+    ) -> bool:
         """Return human-facing checkbox state for defaults or stored command values."""
         checked = bool(value)
         if spec.action == "store_false" and value_is_command_value:
@@ -360,7 +414,7 @@ class OptionsFormRenderer(QWidget):
                 return set(cls._split_nargs(value))
             except ValueError:
                 return {part.strip() for part in value.split(",") if part.strip()}
-        if isinstance(value, list | tuple | set):
+        if isinstance(value, (list, tuple, set)):
             return {str(item) for item in value}
         return {str(value)}
 
@@ -429,7 +483,8 @@ class OptionsFormRenderer(QWidget):
     def _join_paths(paths: T.Iterable[str]) -> str:
         """Join browser-selected paths for a nargs line edit."""
         return " ".join(
-            f'"{path}"' if any(char.isspace() for char in path) else path for path in paths
+            f'"{path}"' if any(char.isspace() for char in path) else path
+            for path in paths
         )
 
     @staticmethod
@@ -438,7 +493,9 @@ class OptionsFormRenderer(QWidget):
         parts = shlex.split(value, posix=os.name != "nt")
         if os.name == "nt":
             parts = [
-                part[1:-1] if len(part) >= 2 and part[0] == part[-1] and part[0] in "\"'" else part
+                part[1:-1]
+                if len(part) >= 2 and part[0] == part[-1] and part[0] in "\"'"
+                else part
                 for part in parts
             ]
         return parts
@@ -448,7 +505,7 @@ class OptionsFormRenderer(QWidget):
         """Render a stored value as editable text."""
         if value is None or value is False:
             return ""
-        if isinstance(value, list | tuple):
+        if isinstance(value, (list, tuple)):
             return " ".join(str(item) for item in value)
         return str(value)
 
@@ -464,13 +521,17 @@ class CommandPanel(QWidget):
         self._schema = schema
         self._category = QComboBox()
         self._command = QComboBox()
+        self._primary_tabs = QTabBar()
+        self._tool_tabs = QTabBar()
         self._command_info = QLabel()
         self._renderer = OptionsFormRenderer()
         self._run_button = QPushButton("Run")
+        self._syncing_tabs = False
         self._build()
-        self._category.currentTextChanged.connect(self._set_category)
+        self._primary_tabs.currentChanged.connect(self._set_primary_tab)
+        self._tool_tabs.currentChanged.connect(self._set_tool_tab)
         self._command.currentTextChanged.connect(self._set_command_options)
-        self._set_category(self._category.currentText())
+        self._set_primary_tab(self._primary_tabs.currentIndex())
 
     @property
     def renderer(self) -> OptionsFormRenderer:
@@ -489,10 +550,11 @@ class CommandPanel(QWidget):
         """Apply a command and values from a loaded project."""
         category = self._schema.category_for_command(command)
         if category is not None:
-            self._category.setCurrentText(category)
+            self._set_category(category)
         if self._command.findText(command) == -1:
             self._command.addItem(command)
         self._command.setCurrentText(command)
+        self._select_tabs_for_command(category, command)
         self._renderer.apply_values(values)
 
     def clear_values(self) -> None:
@@ -505,15 +567,13 @@ class CommandPanel(QWidget):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(8)
 
+        self._build_tabs()
+        layout.addWidget(self._primary_tabs)
+        layout.addWidget(self._tool_tabs)
+
         self._command_info.setWordWrap(True)
         self._command_info.setObjectName("qt-shell-command-info")
         layout.addWidget(self._command_info)
-
-        form = QFormLayout()
-        self._category.addItems(self._schema.categories)
-        form.addRow("Category", self._category)
-        form.addRow("Command", self._command)
-        layout.addLayout(form)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -529,12 +589,57 @@ class CommandPanel(QWidget):
         buttons.addWidget(self._run_button)
         layout.addLayout(buttons)
 
+    def _build_tabs(self) -> None:
+        """Build command and tool tab selectors."""
+        self._primary_tabs.setObjectName("qt-shell-command-tabs")
+        self._tool_tabs.setObjectName("qt-shell-tool-tabs")
+        self._primary_tabs.setExpanding(False)
+        self._tool_tabs.setExpanding(False)
+
+        for command in self._schema.commands("faceswap"):
+            self._primary_tabs.addTab(command.title())
+        if "tools" in self._schema.categories:
+            self._primary_tabs.addTab("Tools")
+            for command in self._schema.commands("tools"):
+                self._tool_tabs.addTab(command.title())
+
+        self._category.addItems(self._schema.categories)
+        self._tool_tabs.setVisible(False)
+
+    def _set_primary_tab(self, index: int) -> None:
+        """Update category/command for the selected primary tab."""
+        if index < 0 or self._syncing_tabs:
+            return
+        tab = self._primary_tabs.tabText(index).lower()
+        if tab == "tools":
+            self._tool_tabs.setVisible(True)
+            self._set_category("tools")
+            tool_index = max(0, self._tool_tabs.currentIndex())
+            self._set_tool_tab(tool_index)
+            return
+        self._tool_tabs.setVisible(False)
+        self._set_category("faceswap")
+        self._command.setCurrentText(tab)
+
+    def _set_tool_tab(self, index: int) -> None:
+        """Update command for the selected tool tab."""
+        if index < 0 or self._syncing_tabs:
+            return
+        if self._primary_tabs.tabText(self._primary_tabs.currentIndex()) != "Tools":
+            return
+        self._set_category("tools")
+        self._command.setCurrentText(self._tool_tabs.tabText(index).lower())
+
     def _set_category(self, category: str) -> None:
-        """Update commands for the selected category."""
+        """Update commands for a category without exposing combo widgets."""
+        if self._category.currentText() != category:
+            self._category.setCurrentText(category)
         self._command.blockSignals(True)
         self._command.clear()
         self._command.addItems(self._schema.commands(category))
         self._command.blockSignals(False)
+        if self._command.count() and not self._command.currentText():
+            self._command.setCurrentIndex(0)
         self._set_command_options(self._command.currentText())
 
     def _set_command_options(self, command: str) -> None:
@@ -556,3 +661,31 @@ class CommandPanel(QWidget):
             self._command_info.setText(f"<b>{heading}</b><br>{detail}")
         else:
             self._command_info.setText(f"<b>{heading}</b>")
+
+    def _select_tabs_for_command(self, category: str | None, command: str) -> None:
+        """Synchronize visible tabs after a project load or programmatic command set."""
+        self._syncing_tabs = True
+        try:
+            if category == "tools":
+                tools_index = self._find_tab(self._primary_tabs, "Tools")
+                if tools_index >= 0:
+                    self._primary_tabs.setCurrentIndex(tools_index)
+                tool_index = self._find_tab(self._tool_tabs, command.title())
+                if tool_index >= 0:
+                    self._tool_tabs.setCurrentIndex(tool_index)
+                self._tool_tabs.setVisible(True)
+            else:
+                command_index = self._find_tab(self._primary_tabs, command.title())
+                if command_index >= 0:
+                    self._primary_tabs.setCurrentIndex(command_index)
+                self._tool_tabs.setVisible(False)
+        finally:
+            self._syncing_tabs = False
+
+    @staticmethod
+    def _find_tab(tabs: QTabBar, text: str) -> int:
+        """Return the index for a tab text or -1."""
+        for index in range(tabs.count()):
+            if tabs.tabText(index) == text:
+                return index
+        return -1

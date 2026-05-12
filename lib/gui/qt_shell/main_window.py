@@ -69,14 +69,15 @@ class MainWindow(QMainWindow):
         self._schema = self._load_schema() if schema is None else schema
         self._builder = CommandBuilder(base_path=str(root))
         self._project_store = ProjectStore(get_serializer("json"))
-        self._recent_files = RecentFilesStore(get_serializer("json"), str(self._recent_cache()))
+        self._recent_files = RecentFilesStore(
+            get_serializer("json"), str(self._recent_cache())
+        )
         self._project = ProjectFile()
         self._project_filename: str | None = None
         self._runner = JobRunner(self)
         self._running = False
         self._command_panel = CommandPanel(self._schema)
         self._console = ConsolePane()
-        self._command_preview = QPlainTextEdit()
         self._progress = QProgressBar()
         self._run_action: QAction | None = None
         self._stop_action: QAction | None = None
@@ -97,22 +98,30 @@ class MainWindow(QMainWindow):
         self._build_toolbar()
         self._build_statusbar()
         top = QSplitter(Qt.Horizontal)
+        top.setObjectName("qt-shell-main-splitter")
+        top.setChildrenCollapsible(False)
         top.addWidget(self._command_panel)
         top.addWidget(self._display_tabs())
-        top.setSizes([360, 840])
+        top.setStretchFactor(0, 0)
+        top.setStretchFactor(1, 1)
+        top.setSizes([420, 840])
         main = QSplitter(Qt.Vertical)
+        main.setObjectName("qt-shell-vertical-splitter")
+        main.setChildrenCollapsible(False)
         main.addWidget(top)
         main.addWidget(self._console)
-        main.setSizes([480, 160])
+        main.setStretchFactor(0, 3)
+        main.setStretchFactor(1, 1)
+        main.setSizes([520, 180])
         self.setCentralWidget(main)
 
     def _display_tabs(self) -> QTabWidget:
-        """Create right display tabs with an Analysis placeholder."""
+        """Create right display tabs used only for Analysis, Preview and Graph."""
         tabs = QTabWidget()
+        tabs.setObjectName("qt-shell-display-tabs")
         tabs.addTab(self._analysis_panel(), "Analysis")
-        self._command_preview.setReadOnly(True)
-        self._command_preview.setPlaceholderText("Generated command preview")
-        tabs.addTab(self._command_preview, "Command")
+        tabs.addTab(self._display_placeholder("Preview"), "Preview")
+        tabs.addTab(self._display_placeholder("Graph"), "Graph")
         return tabs
 
     def _analysis_panel(self) -> QWidget:
@@ -153,24 +162,48 @@ class MainWindow(QMainWindow):
         layout.addLayout(footer)
         return panel
 
+    @staticmethod
+    def _display_placeholder(name: str) -> QWidget:
+        """Create a right-panel placeholder for display-only tabs."""
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(12, 12, 12, 8)
+        label = QLabel(f"{name} display placeholder")
+        label.setAlignment(Qt.AlignCenter)
+        label.setObjectName(f"qt-shell-{name.lower()}-placeholder")
+        layout.addWidget(label, 1)
+        return panel
+
     def _build_menus(self) -> None:
-        """Build prototype project and command menus."""
-        project_menu = self.menuBar().addMenu("Project")
+        """Build prototype menu bar."""
+        menu_bar = self.menuBar()
+        menu_bar.setNativeMenuBar(False)
+        project_menu = menu_bar.addMenu("Project")
         project_menu.addAction("New Prototype Project", self._new_project)
         project_menu.addAction("Open Project...", self._open_project)
         project_menu.addAction("Save Project As...", self._save_project_as)
         project_menu.addSeparator()
         project_menu.addAction("List Recent Files", self._list_recent_files)
-        command_menu = self.menuBar().addMenu("Command")
+
+        command_menu = menu_bar.addMenu("Command")
         command_menu.addAction("Generate", self._generate_command)
         self._run_menu_action = command_menu.addAction("Run", self._run_command)
         self._stop_menu_action = command_menu.addAction("Stop", self._stop_job)
+
+        view_menu = menu_bar.addMenu("View")
+        view_menu.addAction("Analysis")
+        view_menu.addAction("Preview")
+        view_menu.addAction("Graph")
 
     def _build_toolbar(self) -> None:
         """Build the top toolbar."""
         toolbar = QToolBar("Toolbar")
         toolbar.setObjectName("qt-shell-toolbar")
         self.addToolBar(toolbar)
+        toolbar.addAction("New", self._new_project)
+        toolbar.addAction("Open", self._open_project)
+        toolbar.addAction("Save", self._save_project_as)
+        toolbar.addSeparator()
         toolbar.addAction("Generate", self._generate_command)
         self._run_action = toolbar.addAction("Run", self._run_command)
         self._stop_action = toolbar.addAction("Stop", self._stop_job)
@@ -182,7 +215,7 @@ class MainWindow(QMainWindow):
         self._progress.setVisible(False)
         status.addPermanentWidget(self._progress)
         self.setStatusBar(status)
-        status.showMessage("Qt shell prototype ready")
+        status.showMessage("Status Ready")
 
     def _connect_signals(self) -> None:
         """Connect command panel and QProcess runner signals."""
@@ -201,7 +234,6 @@ class MainWindow(QMainWindow):
             return
         self._project = ProjectFile(tab_name=command, tasks={command: values})
         command_text = " ".join(args)
-        self._command_preview.setPlainText(command_text)
         self._console.write_line(f"$ {command_text}")
         self._write_context(command, values)
         self.statusBar().showMessage("Generated command through CommandBuilder", 5000)
@@ -235,9 +267,13 @@ class MainWindow(QMainWindow):
         """Update UI state when the process exits."""
         self._set_running(False)
         self._console.write_line(f"\nProcess finished with exit code {exit_code}")
-        self.statusBar().showMessage(f"Process finished with exit code {exit_code}", 5000)
+        self.statusBar().showMessage(
+            f"Process finished with exit code {exit_code}", 5000
+        )
 
-    def _build_command(self, *, generate: bool) -> tuple[str, str, dict[str, object], list[str]]:
+    def _build_command(
+        self, *, generate: bool
+    ) -> tuple[str, str, dict[str, object], list[str]]:
         """Build command args from the selected panel state."""
         category, command, values = self._command_panel.command_spec()
         if not category or not command:
@@ -353,7 +389,9 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _load_schema() -> CommandSchema:
         """Load real Faceswap and tools CLI metadata for the Qt shell."""
-        return CommandSchemaService().from_real_cli_metadata(categories=("faceswap", "tools"))
+        return CommandSchemaService().from_real_cli_metadata(
+            categories=("faceswap", "tools")
+        )
 
     @staticmethod
     def _recent_cache() -> Path:

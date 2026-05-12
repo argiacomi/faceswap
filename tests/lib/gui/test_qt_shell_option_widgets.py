@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QRadioButton,
     QSlider,
+    QTabBar,
 )
 
 
@@ -38,6 +39,40 @@ def test_option_renderer_uses_group_sections(qtbot) -> None:  # type:ignore[no-u
 
     assert len(groups) == 2
     assert panel.renderer.rendered_switches == ("-i", "-o", "-D")
+
+
+def test_command_panel_uses_command_tabs(qtbot) -> None:  # type:ignore[no-untyped-def]
+    """CommandPanel should expose top-level command tabs and tool subtabs."""
+    from lib.gui.qt_shell.command_panel import CommandPanel
+    from lib.gui.qt_shell.command_schema import CommandSchema, CommandSpec, OptionSpec
+
+    schema = CommandSchema(
+        (
+            CommandSpec("faceswap", "extract", (OptionSpec("Input", "-i"),)),
+            CommandSpec("faceswap", "train", (OptionSpec("Input A", "-A"),)),
+            CommandSpec("faceswap", "convert", (OptionSpec("Input", "-i"),)),
+            CommandSpec("tools", "preview", (OptionSpec("Input", "-i"),)),
+            CommandSpec("tools", "sort", (OptionSpec("Input", "-i"),)),
+        )
+    )
+
+    panel = CommandPanel(schema)
+    qtbot.addWidget(panel)
+    primary = panel.findChild(QTabBar, "qt-shell-command-tabs")
+    tools = panel.findChild(QTabBar, "qt-shell-tool-tabs")
+
+    assert primary is not None
+    assert tools is not None
+    assert [primary.tabText(idx) for idx in range(primary.count())] == [
+        "Extract",
+        "Train",
+        "Convert",
+        "Tools",
+    ]
+    assert [tools.tabText(idx) for idx in range(tools.count())] == [
+        "Preview",
+        "Sort",
+    ]
 
 
 def test_command_panel_renders_command_info(qtbot) -> None:  # type:ignore[no-untyped-def]
@@ -94,7 +129,9 @@ def test_radio_widget_extracts_and_restores_values(  # type:ignore[no-untyped-de
     qtbot.addWidget(panel)
     buttons = {
         button.text(): button
-        for button in panel.renderer.widget_for_switch("--mode").findChildren(QRadioButton)
+        for button in panel.renderer.widget_for_switch("--mode").findChildren(
+            QRadioButton
+        )
     }
 
     buttons["two"].setChecked(True)
@@ -102,6 +139,37 @@ def test_radio_widget_extracts_and_restores_values(  # type:ignore[no-untyped-de
 
     panel.set_command("extract", {"--mode": "one"})
     assert buttons["one"].isChecked() is True
+
+
+def test_radio_widget_does_not_clip_long_labels(qtbot) -> None:  # type:ignore[no-untyped-def]
+    """Radio choices should reserve enough width for plugin names."""
+    from lib.gui.qt_shell.command_panel import CommandPanel
+    from lib.gui.qt_shell.command_schema import CommandSchema, CommandSpec, OptionSpec
+
+    schema = CommandSchema(
+        (
+            CommandSpec(
+                "faceswap",
+                "extract",
+                (
+                    OptionSpec(
+                        "Identity",
+                        "--identity",
+                        str,
+                        "vggface2",
+                        ("t-face", "vggface2"),
+                        is_radio=True,
+                    ),
+                ),
+            ),
+        )
+    )
+    panel = CommandPanel(schema)
+    qtbot.addWidget(panel)
+    buttons = panel.renderer.widget_for_switch("--identity").findChildren(QRadioButton)
+
+    assert {button.text() for button in buttons} == {"t-face", "vggface2"}
+    assert all(button.minimumWidth() >= 125 for button in buttons)
 
 
 def test_multi_option_widget_extracts_and_restores_values(  # type:ignore[no-untyped-def]
@@ -133,7 +201,9 @@ def test_multi_option_widget_extracts_and_restores_values(  # type:ignore[no-unt
     qtbot.addWidget(panel)
     boxes = {
         checkbox.text(): checkbox
-        for checkbox in panel.renderer.widget_for_switch("--masks").findChildren(QCheckBox)
+        for checkbox in panel.renderer.widget_for_switch("--masks").findChildren(
+            QCheckBox
+        )
     }
 
     boxes["mouth"].setChecked(True)
