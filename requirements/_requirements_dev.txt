@@ -16,3 +16,4 @@ types-psutil
 types-tensorflow
 sphinx_rtd_theme
 sphinx-automodapi
+tensorboard
