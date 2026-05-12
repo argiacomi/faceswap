@@ -8,7 +8,13 @@ on:
 
 jobs:
     gui-tooling:
-        runs-on: ubuntu-latest
+        runs-on: ubuntu-24.04
+
+        env:
+            KERAS_BACKEND: torch
+            KERAS_TORCH_DEVICE: CPU
+            FACESWAP_BACKEND: cpu
+            QT_QPA_PLATFORM: xcb
 
         steps:
             - name: Check out repository
@@ -23,8 +29,22 @@ jobs:
             - name: Install system GUI dependencies
               run: |
                   sudo apt-get update
-                  sudo apt-get install -y python3-tk xvfb
-                  sudo apt-get install -y libegl1 libgl1 libxkbcommon-x11-0 libxcb-cursor0
+                  sudo apt-get install -y \
+                    python3-tk \
+                    xvfb \
+                    libegl1 \
+                    libgl1 \
+                    libdbus-1-3 \
+                    libxkbcommon-x11-0 \
+                    libxcb-cursor0 \
+                    libxcb-icccm4 \
+                    libxcb-image0 \
+                    libxcb-keysyms1 \
+                    libxcb-randr0 \
+                    libxcb-render-util0 \
+                    libxcb-xinerama0 \
+                    libxcb-xfixes0 \
+                    x11-utils
 
             - name: Install GUI tooling dependencies
               run: |
@@ -35,4 +55,4 @@ jobs:
               run: pre-commit run --all-files
 
             - name: Run GUI service tests
-              run: xvfb-run -a pytest tests/lib/gui
+              run: xvfb-run -a pytest -v tests/lib/gui

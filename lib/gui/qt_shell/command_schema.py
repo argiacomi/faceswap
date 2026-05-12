@@ -107,7 +107,7 @@ class CommandSchema:
 
     @staticmethod
     def _build_category_index(
-        commands: tuple[CommandSpec, ...]
+        commands: tuple[CommandSpec, ...],
     ) -> dict[str, tuple[CommandSpec, ...]]:
         """Build a category ordered index from command specs."""
         index: dict[str, list[CommandSpec]] = {}

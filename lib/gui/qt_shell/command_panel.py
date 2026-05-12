@@ -142,7 +142,11 @@ class CommandPanel(QWidget):
 
     def command_spec(self) -> tuple[str, str, dict[str, object]]:
         """Return selected category, command and switch-keyed values."""
-        return self._category.currentText(), self._command.currentText(), self._renderer.values()
+        return (
+            self._category.currentText(),
+            self._command.currentText(),
+            self._renderer.values(),
+        )
 
     def set_command(self, command: str, values: T.Mapping[str, object]) -> None:
         """Apply a command and values from a loaded project."""

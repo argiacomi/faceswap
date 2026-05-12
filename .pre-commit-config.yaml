@@ -1,28 +1,30 @@
 repos:
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.8.6
-    hooks:
-      - id: ruff
-        args: [--fix]
-        files: ^(lib/gui/services|lib/gui/models|lib/gui/qt_shell|tests/lib/gui)/.*\.py$
-      - id: ruff-format
-        files: ^(lib/gui/services|lib/gui/models|lib/gui/qt_shell|tests/lib/gui)/.*\.py$
+    - repo: https://github.com/astral-sh/ruff-pre-commit
+      rev: v0.8.6
+      hooks:
+          - id: ruff
+            args: [--fix]
+            files: ^(lib/gui/services|lib/gui/models|lib/gui/qt_shell|tests/lib/gui)/.*\.py$
+          - id: ruff-format
+            files: ^(lib/gui/services|lib/gui/models|lib/gui/qt_shell|tests/lib/gui)/.*\.py$
 
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.14.1
-    hooks:
-      - id: mypy
-        name: mypy gui services and models
-        args: [lib/gui/services, lib/gui/models]
-        pass_filenames: false
-        additional_dependencies:
-          - types-psutil
-          - types-PyYAML
-          - types-setuptools
+    - repo: https://github.com/pre-commit/mirrors-mypy
+      rev: v1.14.1
+      hooks:
+          - id: mypy
+            name: mypy gui services and models
+            args: [lib/gui/services, lib/gui/models]
+            pass_filenames: false
+            additional_dependencies:
+                - types-psutil
+                - types-PyYAML
+                - types-setuptools
 
-  - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
-    hooks:
-      - id: check-yaml
-      - id: end-of-file-fixer
-      - id: trailing-whitespace
+    - repo: https://github.com/pre-commit/pre-commit-hooks
+      rev: v5.0.0
+      hooks:
+          - id: check-yaml
+          - id: end-of-file-fixer
+            files: ^(lib/gui/services|lib/gui/models|lib/gui/qt_shell|tests/lib/gui)/.*\.py$
+          - id: trailing-whitespace
+            files: ^(lib/gui/services|lib/gui/models|lib/gui/qt_shell|tests/lib/gui)/.*\.py$

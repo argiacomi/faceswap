@@ -33,7 +33,9 @@ class CommandSchemaService:
 
         return CommandSchema(command_specs)
 
-    def _options_for_command(self, options: T.Mapping[str, object]) -> tuple[OptionSpec, ...]:
+    def _options_for_command(
+        self, options: T.Mapping[str, object]
+    ) -> tuple[OptionSpec, ...]:
         """Return Qt option specs from a command's GUI option metadata."""
         option_specs = [
             spec

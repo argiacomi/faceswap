@@ -87,9 +87,13 @@ class _CliOptions:
     commands = {"faceswap": ("extract",)}
     opts = {
         "extract": {
-            "Input Dir": _CliOption(_PanelOption("Input Dir", str), ("-i", "--input-dir")),
+            "Input Dir": _CliOption(
+                _PanelOption("Input Dir", str), ("-i", "--input-dir")
+            ),
             "Batch Mode": _CliOption(_PanelOption("Batch Mode", bool, False), ("-b",)),
-            "Mode": _CliOption(_PanelOption("Mode", str, "one", ("one", "two")), ("--mode",)),
+            "Mode": _CliOption(
+                _PanelOption("Mode", str, "one", ("one", "two")), ("--mode",)
+            ),
             "Files": _CliOption(_PanelOption("Files", str), ("--files",), "+"),
             "helptext": "ignored",
         }

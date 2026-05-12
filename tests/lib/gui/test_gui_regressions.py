@@ -145,7 +145,10 @@ def test_gen_cli_arguments_with_quoted_nargs() -> None:
     input_option = CliOption(_FakePanelOption('"foo bar" baz'), ("-i",), "+")
     cli_opts._opts = {"extract": {"Input": input_option, "helptext": "extract help"}}
 
-    assert list(cli_opts.gen_cli_arguments("extract")) == [("-i", "foo bar", "baz")]
+    with pytest.deprecated_call(match="CliOptions.gen_cli_arguments"):
+        args = list(cli_opts.gen_cli_arguments("extract"))
+
+    assert args == [("-i", "foo bar", "baz")]
 
 
 def test_invalid_quote_rolls_back_gui_state(capsys: pytest.CaptureFixture[str]) -> None:

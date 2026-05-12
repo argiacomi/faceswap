@@ -3,11 +3,11 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import typing as T
+from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QTextCursor
 from PySide6.QtWidgets import (
     QFileDialog,
     QLabel,
@@ -44,7 +44,7 @@ class ConsolePane(QPlainTextEdit):
     def write(self, text: str) -> None:
         """Append raw console text."""
         cursor = self.textCursor()
-        cursor.movePosition(cursor.End)
+        cursor.movePosition(QTextCursor.MoveOperation.End)
         cursor.insertText(text)
         self.setTextCursor(cursor)
         self.ensureCursorVisible()
@@ -63,7 +63,9 @@ class MainWindow(QMainWindow):
         self._schema = CommandSchema.prototype() if schema is None else schema
         self._builder = CommandBuilder(base_path=str(root))
         self._project_store = ProjectStore(get_serializer("json"))
-        self._recent_files = RecentFilesStore(get_serializer("json"), str(self._recent_cache()))
+        self._recent_files = RecentFilesStore(
+            get_serializer("json"), str(self._recent_cache())
+        )
         self._project = ProjectFile()
         self._project_filename: str | None = None
         self._runner = JobRunner(self)
@@ -80,7 +82,9 @@ class MainWindow(QMainWindow):
         self._connect_signals()
         self._set_running(False)
         self._console.write_line("Faceswap Qt shell prototype")
-        self._console.write_line("Scope: service wiring, command generation and QProcess jobs")
+        self._console.write_line(
+            "Scope: service wiring, command generation and QProcess jobs"
+        )
 
     def _build_ui(self) -> None:
         """Build the Qt shell layout."""
@@ -194,7 +198,9 @@ class MainWindow(QMainWindow):
         """Update UI state when the process exits."""
         self._set_running(False)
         self._console.write_line(f"\nProcess finished with exit code {exit_code}")
-        self.statusBar().showMessage(f"Process finished with exit code {exit_code}", 5000)
+        self.statusBar().showMessage(
+            f"Process finished with exit code {exit_code}", 5000
+        )
 
     def _build_command(
         self, *, generate: bool
