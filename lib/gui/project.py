@@ -6,18 +6,19 @@ from __future__ import annotations
 import logging
 import os
 import tkinter as tk
-from tkinter import messagebox
 import typing as T
+from tkinter import messagebox
 
-from lib.serializer import get_serializer
 from lib.gui import gui_config as cfg
 from lib.logger import parse_class_init
+from lib.serializer import get_serializer
 from lib.utils import get_module_objects
 
+from .project_models import ProjectFile
 
 if T.TYPE_CHECKING:
-    from .utils.config import Config
     from .utils import FileHandler
+    from .utils.config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -111,12 +112,12 @@ class _GuiSession:  # pylint:disable=too-few-public-methods
         valid_choices = {
             cmd: {
                 opt: {
-                    "choices": val.panel_option.choices,  # pyright:ignore[reportAttributeAccessIssue]  # noqa: E501
-                    "is_multi": val.panel_option.is_multi_option,  # pyright:ignore[reportAttributeAccessIssue]  # noqa: E501
+                    "choices": val.panel_option.choices,  # pyright:ignore[reportAttributeAccessIssue]  # noqa[E501]
+                    "is_multi": val.panel_option.is_multi_option,  # pyright:ignore[reportAttributeAccessIssue]  # noqa[E501]
                 }
                 for opt, val in data.items()
                 if hasattr(val, "panel_option")  # Filter out helptext
-                and val.panel_option.choices is not None  # pyright:ignore[reportAttributeAccessIssue]  # noqa: E501
+                and val.panel_option.choices is not None  # pyright:ignore[reportAttributeAccessIssue]  # noqa[E501]
             }
             for cmd, data in self._config.cli_opts.opts.items()
         }
@@ -435,15 +436,33 @@ class _GuiSession:  # pylint:disable=too-few-public-methods
         if self._file_exists:
             logger.debug("Loading config")
             assert self._serializer is not None
-            self._options = self._serializer.load(  # pyright:ignore[reportCallIssue]
+            raw_options = self._serializer.load(  # pyright:ignore[reportCallIssue]
                 self._filename
             )
+            self._options = self._deserialize_options(raw_options)
             self._check_valid_choices()
             retval = True
         else:
             logger.debug("File doesn't exist. Aborting")
             retval = False
         return retval
+
+    def _deserialize_options(
+        self, raw_options: dict[str, T.Any]
+    ) -> dict[str, str | dict[str, bool | int | float | str]]:
+        """Deserialize a project/task payload from disk into the GUI's legacy flat shape."""
+        project_file = ProjectFile.from_mapping(raw_options)
+        return project_file.to_legacy_options()
+
+    def _serialize_options(
+        self, command: str | None = None
+    ) -> dict[str, int | str | dict[str, dict[str, T.Any]]]:
+        """Serialize stored options to the versioned project/task file shape."""
+        assert self._options is not None
+        project_file = ProjectFile.from_legacy_options(
+            self._options, tab_name=self._active_tab
+        )
+        return project_file.model_dump()
 
     def _check_valid_choices(self) -> None:
         """Check whether the loaded file has any selected combo/radio/multi-option values that are
@@ -539,7 +558,8 @@ class _GuiSession:  # pylint:disable=too-few-public-methods
             "Saving options: (filename: %s, options: %s", self._filename, self._options
         )
         assert self._serializer is not None
-        self._serializer.save(self._filename, self._options)  # pyright:ignore[reportCallIssue]
+        payload = self._serialize_options(command)
+        self._serializer.save(self._filename, payload)  # pyright:ignore[reportCallIssue]
         self._reset_modified_var(command)
         self._add_to_recent(command)
 
@@ -1143,9 +1163,7 @@ class LastSession(_GuiSession):
         self._options = options
         self._set_options()
 
-    def to_dict(
-        self,
-    ) -> dict[str, str | dict[str, bool | int | float | str] | None] | None:
+    def to_dict(self) -> dict[str, str | dict[str, bool | int | float | str]] | None:
         """Collect the current GUI options and place them in a dict for retrieval or storage.
 
         This function is required for reloading the GUI state when the GUI has been force
@@ -1156,7 +1174,7 @@ class LastSession(_GuiSession):
         The current cli options ready for saving or retrieval by :func:`from_dict`
         """
         opts = T.cast(
-            dict[str, str | dict[str, bool | int | float | str] | None],
+            dict[str, str | dict[str, bool | int | float | str]],
             self._current_gui_state(),
         )
         logger.debug("Collected opts: %s", opts)
@@ -1165,12 +1183,19 @@ class LastSession(_GuiSession):
             return None
         opts["tab_name"] = self._active_tab
         fname = self._config.project.filename
-        opts["project"] = fname
+        if fname is not None:
+            opts["project"] = fname
         logger.debug(
             "Added project items: %s",
             {k: v for k, v in opts.items() if k in ("tab_name", "project")},
         )
         return opts
+
+    def _deserialize_options(
+        self, raw_options: dict[str, T.Any]
+    ) -> dict[str, str | dict[str, bool | int | float | str]]:
+        """Deserialize last session payloads without project/task model coercion."""
+        return T.cast(dict[str, str | dict[str, bool | int | float | str]], raw_options)
 
     def ask_load(self) -> None:
         """Pop a message box to ask the user if they wish to load their last session."""
