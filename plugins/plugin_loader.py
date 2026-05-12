@@ -19,7 +19,7 @@ if T.TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def get_extractors() -> dict[str, list[str]]:  # noqa[C901]
+def get_extractors() -> dict[str, list[str]]:  # noqa: C901
     """Obtain a dictionary of all available extraction plugins by plugin type
 
     Returns

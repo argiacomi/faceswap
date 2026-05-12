@@ -609,7 +609,7 @@ class CudaWindows(_Cuda):
         logger.debug("Version from CUDA_PATH Environment Variable: %s", path)
         return retval
 
-    def _get_cudnn_paths(self) -> list[str]:  # noqa[C901]
+    def _get_cudnn_paths(self) -> list[str]:  # noqa: C901
         """ Attempt to locate the locations of cuDNN installs for Windows
 
         Returns

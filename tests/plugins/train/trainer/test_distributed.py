@@ -59,7 +59,7 @@ def test_WrappedModel(batch_size, outputs, mocker):
 
 
 @pytest.fixture
-def _trainer_mocked(mocker: pytest_mock.MockFixture):  # noqa:[F811]
+def _trainer_mocked(mocker: pytest_mock.MockFixture):  # noqa: F811
     """ Generate a mocked model and feeder object and patch torch GPU count """
 
     def _apply_patch(gpus=2, batch_size=8):

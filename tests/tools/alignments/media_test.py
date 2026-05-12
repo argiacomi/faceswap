@@ -1,9 +1,9 @@
 #!/usr/bin python3
 """ Pytest unit tests for :mod:`tools.alignments.media` """
 from __future__ import annotations
+
 import os
 import typing as T
-
 from operator import itemgetter
 from unittest.mock import MagicMock
 
@@ -13,12 +13,18 @@ import pytest
 import pytest_mock
 
 from lib.logger import log_setup
+
 # Need to setup logging to avoid trace/verbose errors
 log_setup("DEBUG", f"{__name__}.log", "PyTest, False")
 
 # pylint:disable=wrong-import-position,protected-access
-from tools.alignments.media import (AlignmentData, Faces, ExtractedFaces,  # noqa:E402
-                                    Frames, MediaLoader)
+from tools.alignments.media import (  # noqa: E402
+    AlignmentData,
+    ExtractedFaces,
+    Faces,
+    Frames,
+    MediaLoader,
+)
 
 if T.TYPE_CHECKING:
     from collections.abc import Generator

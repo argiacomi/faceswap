@@ -4,13 +4,11 @@
 Adapted from Keras tests.
 """
 
-
-import pytest
 import numpy as np
-
+import pytest
+from keras import Input, Model, device
+from keras import backend as K
 from numpy.testing import assert_allclose
-
-from keras import device, Input, Model, backend as K
 
 from lib.model import layers
 from lib.utils import get_backend
@@ -18,14 +16,16 @@ from tests.utils import has_arg
 
 
 # pylint:disable=dangerous-default-value,too-many-locals,too-many-branches
-def layer_test(layer_cls,  # noqa:C901
-               kwargs={},
-               input_shape=None,
-               input_dtype=None,
-               input_data=None,
-               expected_output=None,
-               expected_output_dtype=None,
-               fixed_batch_size=False):
+def layer_test(
+    layer_cls,  # noqa: C901
+    kwargs={},
+    input_shape=None,
+    input_dtype=None,
+    input_data=None,
+    expected_output=None,
+    expected_output_dtype=None,
+    fixed_batch_size=False,
+):
     """Test routine for a layer with a single input tensor
     and single output tensor.
     """

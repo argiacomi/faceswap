@@ -18,7 +18,7 @@ class DummyLoss:  # pylint:disable=too-few-public-methods
 
 
 @pytest.fixture
-def _trainer_mocked(mocker: pytest_mock.MockFixture):  # noqa:[F811]
+def _trainer_mocked(mocker: pytest_mock.MockFixture):  # noqa: F811
     """ Generate a mocked model and feeder object and patch user config items """
 
     def _apply_patch(batch_size=8):

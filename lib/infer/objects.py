@@ -564,7 +564,7 @@ class ExtractBatch:  # pylint:disable=too-many-instance-attributes
         for k, v in batch.__dict__.items():
             setattr(self, k, v)
 
-    def append(self, batch: ExtractBatch) -> None:  # noqa[C901]
+    def append(self, batch: ExtractBatch) -> None:  # noqa: C901
         """Append the data from the given batch object to this batch object
 
         Parameters

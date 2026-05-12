@@ -105,12 +105,12 @@ class _GuiSession():  # pylint:disable=too-few-public-methods
         valid_choices = {
             cmd: {
                 opt: {
-                    "choices": val.panel_option.choices,  # pyright:ignore[reportAttributeAccessIssue]  # noqa[E501]
-                    "is_multi": val.panel_option.is_multi_option  # pyright:ignore[reportAttributeAccessIssue]  # noqa[E501]
+                    "choices": val.panel_option.choices,  # pyright:ignore[reportAttributeAccessIssue]  # noqa: E501
+                    "is_multi": val.panel_option.is_multi_option  # pyright:ignore[reportAttributeAccessIssue]  # noqa: E501
                     }
                 for opt, val in data.items()
                 if hasattr(val, "panel_option")  # Filter out helptext
-                and val.panel_option.choices is not None  # pyright:ignore[reportAttributeAccessIssue]  # noqa[E501]
+                and val.panel_option.choices is not None  # pyright:ignore[reportAttributeAccessIssue]  # noqa: E501
                 }
             for cmd, data in self._config.cli_opts.opts.items()
             }

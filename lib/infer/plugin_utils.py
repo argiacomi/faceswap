@@ -49,7 +49,7 @@ def random_input_from_plugin(plugin: ExtractPlugin,
     return retval
 
 
-def get_torch_modules(obj: T.Any,  # noqa[C901]  # pylint:disable=too-many-branches,too-many-return-statements
+def get_torch_modules(obj: T.Any,  # noqa: C901  # pylint:disable=too-many-branches,too-many-return-statements
                       mod: str | None = None,
                       seen: set[int] | None = None,
                       results: list[torch.nn.Module] | None = None) -> list[torch.nn.Module]:
@@ -110,7 +110,7 @@ def get_torch_modules(obj: T.Any,  # noqa[C901]  # pylint:disable=too-many-branc
     return retval
 
 
-def warmup_plugin(plugin: ExtractPlugin,  # noqa[C901]
+def warmup_plugin(plugin: ExtractPlugin,  # noqa: C901
                   batch_size: int,
                   channels_last: bool | None = None) -> bool | None:
     """Warm up a plugin that contains torch modules. If channels_last is ``None`` then attempt to

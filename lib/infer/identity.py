@@ -291,7 +291,7 @@ class FilterLoader:
                     retval.extend(files)
                 continue
 
-            if not os.path.splitext(file_path)[-1] in IMAGE_EXTENSIONS:
+            if os.path.splitext(file_path)[-1] not in IMAGE_EXTENSIONS:
                 logger.warning("%s file '%s' is not an image file. Skipping", name, file_path)
                 continue
             if not os.path.isfile(file_path):

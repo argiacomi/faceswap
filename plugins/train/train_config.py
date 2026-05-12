@@ -310,7 +310,7 @@ class Loss(GlobalSection):
     MSE https://heartbeat.fritz.ai/5-regression-loss-functions-all-machine-learners-should-know-4fb140e9d4b0
     LogCosh https://heartbeat.fritz.ai/5-regression-loss-functions-all-machine-learners-should-know-4fb140e9d4b0
     L_inf_norm https://medium.com/@montjoile/l0-norm-l1-norm-l2-norm-l-infinity-norm-7a7d18a4f40c
-    """  # pylint:disable=line-too-long  # noqa[E501]
+    """  # pylint:disable=line-too-long  # noqa: E501
 
     helptext = _(
         "Loss configuration options\n"

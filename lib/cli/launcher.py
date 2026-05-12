@@ -1,18 +1,24 @@
 #!/usr/bin/env python3
 """Launches the correct script with the given Command Line Arguments"""
 from __future__ import annotations
+
 import logging
 import os
 import platform
 import sys
 import typing as T
-
 from importlib import import_module
 
 from lib.gpu_stats import GPUStats
 from lib.logger import crash_log, log_setup
-from lib.utils import (FaceswapError, get_backend, get_torch_version,
-                       get_module_objects, safe_shutdown, set_backend)
+from lib.utils import (
+    FaceswapError,
+    get_backend,
+    get_module_objects,
+    get_torch_version,
+    safe_shutdown,
+    set_backend,
+)
 
 if T.TYPE_CHECKING:
     import argparse
@@ -80,11 +86,12 @@ class ScriptExecutor():
         min_ver = (2, 3)
         max_ver = (2, 11)
         try:
-            import torch  # noqa:F401 pylint:disable=unused-import,import-outside-toplevel
+            import torch  # noqa: F401 # pylint:disable=unused-import,import-outside-toplevel
         except ImportError as err:
             msg = (
                 f"There was an error importing PyTorch. This is most likely because you do "
-                f"not have PyTorch installed. Original import error: {str(err)}")
+                f"not have PyTorch installed. Original import error: {str(err)}"
+            )
             self._handle_import_error(msg)
 
         torch_ver = get_torch_version()

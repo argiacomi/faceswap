@@ -149,8 +149,8 @@ class ControlPanelOption():
         Default: ``False``
     command : str | None, optional
         Required if tracking modified. The command that this option belongs to. Default: ``None``
-    """  # noqa[E501]  # pylint:disable=line-too-long
-    def __init__(self,  # pylint:disable=too-many-arguments,too-many-positional-arguments,too-many-locals  # noqa[E501]
+    """  # noqa: E501  # pylint:disable=line-too-long
+    def __init__(self,  # pylint:disable=too-many-arguments,too-many-positional-arguments,too-many-locals  # noqa: E501
                  title: str,
                  dtype: type,
                  group: str | None = None,
@@ -541,7 +541,7 @@ class ControlPanel(ttk.Frame):  # pylint:disable=too-many-ancestors,too-many-ins
         Default: ``True``
     """
 
-    def __init__(self, parent, options,  # pylint:disable=too-many-arguments,too-many-positional-arguments  # noqa[E501]
+    def __init__(self, parent, options,  # pylint:disable=too-many-arguments,too-many-positional-arguments  # noqa: E501
                  label_width=20, columns=1, max_columns=4, option_columns=4, header_text=None,
                  style=None, blank_nones=True, scrollbar=True):
         logger.debug("Initializing %s: (parent: '%s', options: %s, label_width: %s, columns: %s, "

@@ -399,7 +399,7 @@ def log_setup(loglevel, log_file: str, command: str, is_gui: bool = False) -> No
     logging.info("Log level set to: %s", loglevel.upper())
 
     try:
-        import torch  # noqa[F401]  # pylint:disable=unused-import,import-outside-toplevel
+        import torch  # noqa: F401  # pylint:disable=unused-import,import-outside-toplevel
     except ImportError:
         return
 

@@ -168,7 +168,7 @@ class Legacy:  # pylint:disable=too-few-public-methods
         layer["inbound_nodes"] = [layer["inbound_nodes"]]
         logger.debug("Converted legacy TFLambdaOp to %s", layer)
 
-    def _process_deprecations(self, layer: dict[str, T.Any]) -> None:  # noqa[C901]
+    def _process_deprecations(self, layer: dict[str, T.Any]) -> None:  # noqa: C901
         """Some layer kwargs are deprecated between Keras 2 and Keras 3. Some are not mission
         critical, but updating these here prevents Keras from outputting warnings about deprecated
         arguments. Others will fail to load the legacy model (eg Clip) so are replaced with a new

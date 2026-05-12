@@ -264,7 +264,7 @@ class Extract:
             logger.info("Alignments file will be updated with data from additional plugins")
         return True
 
-    def _load_pipeline(self, arguments: Namespace) -> ExtractRunner:  # noqa[C901]
+    def _load_pipeline(self, arguments: Namespace) -> ExtractRunner:  # noqa: C901
         """ Create the extraction pipeline and run profiling, if selected
 
         Parameters
@@ -998,7 +998,7 @@ class Output:  # pylint:disable=too-many-instance-attributes
         self._counts["scale_skip"] = 0
         del batch.alignments
 
-    def _process(self) -> None:  # noqa[C901]
+    def _process(self) -> None:  # noqa: C901
         """ Process the output from the extraction pipeline within a thread """
         logger.debug("[Extract.Output] start")
         total_batches = len(self._batches)

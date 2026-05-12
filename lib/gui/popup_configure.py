@@ -267,7 +267,7 @@ class _Tree(ttk.Frame):  # pylint:disable=too-many-ancestors
         style = ttk.Style()
 
         # Fix a bug in Tree-view that doesn't show alternate foreground on selection
-        fix_map = lambda o: [elm for elm in style.map("Treeview", query_opt=o)  # noqa[E731]  # pylint:disable=C3001
+        fix_map = lambda o: [elm for elm in style.map("Treeview", query_opt=o)  # noqa: E731  # pylint:disable=C3001
                              if elm[:2] != ("!disabled", "!selected")]
 
         # Remove the Borders

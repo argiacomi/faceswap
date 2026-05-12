@@ -2,16 +2,15 @@
 """ Custom Initializers for faceswap.py """
 from __future__ import annotations
 
+import inspect
 import logging
 import sys
-import inspect
 import typing as T
 
-from keras import backend as K, initializers, ops
-from keras import saving, Variable
-from keras.src.initializers.random_initializers import compute_fans
-
 import numpy as np
+from keras import Variable, initializers, ops, saving
+from keras import backend as K
+from keras.src.initializers.random_initializers import compute_fans
 
 from lib.logger import parse_class_init
 from lib.utils import get_module_objects
@@ -295,7 +294,7 @@ class ConvolutionAware(initializers.Initializer):
 
             transpose_dimensions = (2, 1, 0)
             kernel_shape = (row,)
-            correct_ifft = lambda shape, s=[None]: np.fft.irfft(shape, s[0])  # noqa:E731,E501 pylint:disable=unnecessary-lambda-assignment
+            correct_ifft = lambda shape, s=[None]: np.fft.irfft(shape, s[0])  # noqa: E731, E501 pylint:disable=unnecessary-lambda-assignment
 
             correct_fft = np.fft.rfft
 

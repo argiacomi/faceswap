@@ -13,7 +13,7 @@ if sys.platform.startswith("win"):
 
 from lib.cli import args as cli_args  # pylint:disable=wrong-import-position
 from lib.cli.args_train import TrainArgs  # pylint:disable=wrong-import-position
-from lib.cli.args_extract_convert import ConvertArgs, ExtractArgs  # noqa:E501 pylint:disable=wrong-import-position
+from lib.cli.args_extract_convert import ConvertArgs, ExtractArgs  # noqa: E501pylint:disable=wrong-import-position
 from lib.config import generate_configs  # pylint:disable=wrong-import-position
 from lib.system import System  # pylint:disable=wrong-import-position
 

@@ -11,7 +11,7 @@ from lib.training.lr_finder import LearningRateFinder
 from plugins.train import train_config as cfg
 
 # pylint:disable=unused-import
-from tests.lib.config.helpers import patch_config  # noqa:[F401]
+from tests.lib.config.helpers import patch_config  # noqa: F401
 
 # pylint:disable=protected-access,invalid-name,redefined-outer-name
 
@@ -23,7 +23,7 @@ class DummyLoss:  # pylint:disable=too-few-public-methods
 
 
 @pytest.fixture
-def _trainer_mock(patch_config, mocker: pytest_mock.MockFixture):  # noqa:[F811]
+def _trainer_mock(patch_config, mocker: pytest_mock.MockFixture):  # noqa: F811
     """ Generate a mocked model and feeder object and patch user config items """
     def _apply_patch(iters=1000, mode="default", strength="default"):
         patch_config(cfg, {"lr_finder_iterations": iters})
@@ -223,7 +223,7 @@ _LR_PARAMS_FIND = ("exists", "losses", "best", "learning_rates")
                          ids=[x[-1] for x in _LR_FIND])
 @pytest.mark.parametrize(_LR_CONF_PARAMS, _LR_CONF)
 @pytest.mark.parametrize(_LR_CMDS_PARAMS, _LR_CMDS[0:1])
-def test_LearningRateFinder_find(iters,  # pylint:disable=too-many-arguments,too-many-positional-arguments  # noqa[E501]
+def test_LearningRateFinder_find(iters,  # pylint:disable=too-many-arguments,too-many-positional-arguments  # noqa: E501
                                  mode,
                                  strength,
                                  stop_factor,

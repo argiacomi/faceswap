@@ -17,7 +17,7 @@ from lib.model import nn_blocks
 from lib.utils import get_backend
 from plugins.train import train_config as cfg
 # pylint:disable=unused-import
-from tests.lib.config.helpers import patch_config  # noqa:[F401]
+from tests.lib.config.helpers import patch_config  # noqa: F401
 
 
 def block_test(layer_func,  # pylint:disable=dangerous-default-value,too-many-locals
@@ -69,7 +69,7 @@ _IDS = [f"{'|'.join([_PARAMS[idx] for idx, b in enumerate(v) if b])}[{get_backen
 def test_blocks(use_icnr_init,
                 use_convaware_init,
                 use_reflect_padding,
-                patch_config):  # pylint:disable=redefined-outer-name  # noqa:[F811]
+                patch_config):  # pylint:disable=redefined-outer-name  # noqa: F811
     """ Test for all blocks contained within the NNBlocks Class """
     config = {"icnr_init": use_icnr_init,
               "conv_aware_init": use_convaware_init,

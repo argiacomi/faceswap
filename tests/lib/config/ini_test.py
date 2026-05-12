@@ -207,7 +207,7 @@ _SYNC_IDS = [x[-1] for x in _SYNC]
 
 @pytest.mark.parametrize(("ini_config", "app_config", "status"), _SYNC, ids=_SYNC_IDS)
 @pytest.mark.parametrize("exists", (True, False), ids=("exists", "not_exists"))
-def testConfigFile_sync_from_app(ini_config,  # pylint:disable=too-many-branches  # noqa[C901]
+def testConfigFile_sync_from_app(ini_config,  # pylint:disable=too-many-branches  # noqa: C901
                                  app_config,
                                  status,
                                  exists,

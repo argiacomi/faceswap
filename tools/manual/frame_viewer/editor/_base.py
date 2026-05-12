@@ -4,7 +4,6 @@
 import gettext
 import logging
 import tkinter as tk
-
 from collections import OrderedDict
 
 import numpy as np
@@ -370,7 +369,7 @@ class Editor():
         if update_color:
             for key in object_color_keys:
                 update_kwargs[key] = object_kwargs[object_color_keys[0]]
-        if self._canvas.type(item_id) == "image" and "image" in object_kwargs:  # noqa:E721
+        if self._canvas.type(item_id) == "image" and "image" in object_kwargs:  # noqa: E721
             update_kwargs["image"] = object_kwargs["image"]
         logger.trace("Updating coordinates: (item_id: '%s', object_kwargs: %s, "
                      "coordinates: %s, update_kwargs: %s", item_id, object_kwargs,

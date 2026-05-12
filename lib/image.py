@@ -56,7 +56,7 @@ def read_image(filename: str,
                with_metadata: T.Literal[True]) -> npt.NDArray[np.uint8]: ...
 
 
-def read_image(filename: str,  # noqa[C901]  # pylint:disable=too-many-statements,too-many-branches
+def read_image(filename: str,  # noqa: C901  # pylint:disable=too-many-statements,too-many-branches
                raise_error: bool = False,
                with_metadata: bool = False
                ) -> np.ndarray | None | tuple[npt.NDArray[np.uint8], PNGHeader]:

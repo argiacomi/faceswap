@@ -1,28 +1,30 @@
 #!/usr/bin python3
 """Graph functions for Display Frame area of the Faceswap GUI"""
 from __future__ import annotations
+
 import datetime
 import logging
 import os
 import tkinter as tk
 import typing as T
-
-from tkinter import ttk
 from math import ceil, floor
+from tkinter import ttk
 
-import numpy as np
 import matplotlib
+import numpy as np
 from matplotlib import style
-from matplotlib.figure import Figure
-from matplotlib.backends.backend_tkagg import (
-    FigureCanvasTkAgg, NavigationToolbar2Tk)  # pyright:ignore[reportPrivateImportUsage]
 from matplotlib.backend_bases import NavigationToolbar2
+from matplotlib.backends.backend_tkagg import (
+    FigureCanvasTkAgg,  # pyright:ignore[reportPrivateImportUsage]
+    NavigationToolbar2Tk,
+)
+from matplotlib.figure import Figure
 
 from lib.logger import parse_class_init
 from lib.utils import get_module_objects
 
 from .custom_widgets import Tooltip
-from .utils import get_config, get_images, LongRunningTask
+from .utils import LongRunningTask, get_config, get_images
 
 if T.TYPE_CHECKING:
     from matplotlib.lines import Line2D
@@ -536,11 +538,13 @@ class NavigationToolbar(NavigationToolbar2Tk):  # pylint:disable=too-many-ancest
             self.pack(side=tk.BOTTOM, fill=tk.X)
 
     @staticmethod
-    def _Button(frame,  # type:ignore[override] # pylint:disable=arguments-differ,arguments-renamed  # noqa:E501
-                text: str,
-                image_file: str,
-                toggle: bool,
-                command) -> ttk.Button | ttk.Checkbutton:
+    def _Button(
+        frame,  # type:ignore[override] # pylint:disable=arguments-differ,arguments-renamed  # noqa: E501
+        text: str,
+        image_file: str,
+        toggle: bool,
+        command,
+    ) -> ttk.Button | ttk.Checkbutton:
         """Override the default button method to use our icons and ttk widgets for
         consistent GUI layout.
 

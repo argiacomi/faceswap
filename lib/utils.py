@@ -23,7 +23,7 @@ from urllib import request, error as urlliberror
 try:
     import numpy as np
     from tqdm import tqdm
-except:  # noqa[E722]  # pylint:disable=bare-except
+except:  # noqa: E722  # pylint:disable=bare-except
     # Importing outside of faceswap environment, these packages should not be required
     np = None  # type:ignore[assignment]  # pylint:disable=invalid-name
     tqdm = None  # pylint:disable=invalid-name

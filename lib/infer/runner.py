@@ -479,7 +479,7 @@ class ExtractRunner(T.Generic[HandlerT]):
                 logger.debug("[%s] Waiting on queue", self._plugin_name)
                 continue
 
-    def put_direct(self,  # noqa[C901]
+    def put_direct(self,  # noqa: C901
                    filename: str,
                    image: npt.NDArray[np.uint8],
                    detected_faces: list[DetectedFace],
