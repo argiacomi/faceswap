@@ -26,8 +26,15 @@
 !.install/
 !.install/**
 !config/
+!configs/
+!configs/**/
+!configs/**/*.json
+!configs/**/*.yml
+!configs/**/*.yaml
 !.readthedocs.yml
 !docs/
+!docs/landmarks/
+!docs/landmarks/*.md
 !docs/_static/
 !docs/_static/*.png
 !docs/full/

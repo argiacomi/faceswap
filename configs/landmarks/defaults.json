@@ -1,0 +1,15 @@
+{
+  "schema": "2d_68",
+  "fusion": {
+    "method": "static_weighted",
+    "available_methods": ["plain_average", "static_weighted"],
+    "reject_outliers": true,
+    "outlier_threshold": 3.5,
+    "default_weight": 1.0
+  },
+  "cache": {
+    "enabled": true,
+    "max_size": 256
+  },
+  "adapters": []
+}
