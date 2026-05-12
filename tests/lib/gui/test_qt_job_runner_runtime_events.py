@@ -184,3 +184,26 @@ def test_job_runner_infers_command_from_argv(monkeypatch) -> None:
     runner.start(["python", "-u", "/repo/tools.py", "effmpeg"])
 
     assert runner._runtime.command == "effmpeg"  # pylint:disable=protected-access
+
+
+def test_main_window_display_controller_reacts_to_runner_progress(qtbot) -> None:  # type:ignore[no-untyped-def]
+    """MainWindow should route runner RuntimeEvent values to DisplayController."""
+    from lib.gui.qt_shell.command_schema import CommandSchema, CommandSpec
+    from lib.gui.qt_shell.main_window import MainWindow
+    from lib.gui.services.runtime_events import RuntimeEvent
+
+    schema = CommandSchema((CommandSpec("faceswap", "train", ()),))
+    window = MainWindow(schema)
+    qtbot.addWidget(window)
+
+    assert window._display_controller.visible_tab_names() == ("Analysis",)  # pylint:disable=protected-access
+
+    window._runner.progress.emit(  # pylint:disable=protected-access
+        RuntimeEvent(kind="progress", progress=50.0, payload={"command": "train"})
+    )
+
+    assert window._display_controller.visible_tab_names() == (  # pylint:disable=protected-access
+        "Analysis",
+        "Preview",
+        "Graph",
+    )
