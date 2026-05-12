@@ -204,12 +204,10 @@ class ProgressParser:
         description = tqdm["dsc"].strip()
         description = description if description == "" else f"{description[:-1]}  |  "
         process_time = (
-            f"Elapsed: {tqdm['tme'].split('<')[0]}  "
-            f"Remaining: {tqdm['tme'].split('<')[1]}"
+            f"Elapsed: {tqdm['tme'].split('<')[0]}  Remaining: {tqdm['tme'].split('<')[1]}"
         )
         message = (
-            f"{description}{process_time}  |  {tqdm['rte']}  |  "
-            f"{tqdm['itm']}  |  {tqdm['pct']}"
+            f"{description}{process_time}  |  {tqdm['rte']}  |  {tqdm['itm']}  |  {tqdm['pct']}"
         )
 
         percent = tqdm["pct"].replace("%", "")

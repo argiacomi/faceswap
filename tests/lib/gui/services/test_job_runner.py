@@ -24,8 +24,7 @@ def test_process_stdout_emits_parsed_events_to_callbacks() -> None:
     runner = ProcessRuntimeService(command="extract")
     events = _collect_events(runner)
 
-    parsed = runner.process_stdout(
-        "Extracting:  25%|##5       | 5/20 [00:02<00:06,  2.50it/s]\n")
+    parsed = runner.process_stdout("Extracting:  25%|##5       | 5/20 [00:02<00:06,  2.50it/s]\n")
 
     assert parsed.consumed
     assert events[0].kind == "progress"
@@ -38,8 +37,7 @@ def test_process_stderr_emits_parsed_events_to_callbacks() -> None:
     runner = ProcessRuntimeService(command="train")
     events = _collect_events(runner)
 
-    parsed = runner.process_stderr(
-        "Training:  50%|#####     | 10/20 [00:04<00:04,  2.50it/s]\n")
+    parsed = runner.process_stderr("Training:  50%|#####     | 10/20 [00:04<00:04,  2.50it/s]\n")
 
     assert parsed.consumed
     assert [event.kind for event in events] == ["progress", "status"]

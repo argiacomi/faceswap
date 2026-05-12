@@ -33,9 +33,7 @@ class DisplayStateService:
     def start(self, command: str) -> RuntimeDisplayState:
         """Return the display state for a newly started command."""
         mode: ProgressMode = (
-            "indeterminate"
-            if command in self._INDETERMINATE_START_COMMANDS
-            else "determinate"
+            "indeterminate" if command in self._INDETERMINATE_START_COMMANDS else "determinate"
         )
         return RuntimeDisplayState(
             running_task=True,
