@@ -7,18 +7,17 @@ import logging
 import os
 import tkinter as tk
 import typing as T
-
 from tkinter import ttk
 
 from lib.logger import parse_class_init
 from lib.training.preview_tk import PreviewTk
 from lib.utils import get_module_objects
 
-from .display_graph import TrainingGraph
-from .display_page import DisplayOptionalPage
-from .custom_widgets import Tooltip
 from .analysis import Calculations, Session
 from .control_helper import set_slider_rounding
+from .custom_widgets import Tooltip
+from .display_graph import TrainingGraph
+from .display_page import DisplayOptionalPage
 from .utils import FileHandler, get_config, get_images, preview_trigger
 
 logger = logging.getLogger(__name__)
@@ -377,7 +376,7 @@ class GraphDisplay(DisplayOptionalPage):  # pylint:disable=too-many-ancestors
         """Add a single graph to the graph window"""
         if not Session.is_training:
             logger.debug("Waiting for Session Data to become available to graph")
-            self.after(1000, self.display_item_process)
+            self._schedule_after(1000, self.display_item_process)
             return
 
         existing = list(self.subnotebook_get_titles_ids().keys())
@@ -386,7 +385,7 @@ class GraphDisplay(DisplayOptionalPage):  # pylint:disable=too-many-ancestors
         if not loss_keys:
             # Reload if we attempt to get loss keys before data is written
             logger.debug("Waiting for Session Data to become available to graph")
-            self.after(1000, self.display_item_process)
+            self._schedule_after(1000, self.display_item_process)
             return
 
         loss_keys = [key for key in loss_keys if key != "total"]

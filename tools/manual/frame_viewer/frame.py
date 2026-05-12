@@ -4,22 +4,21 @@
 import gettext
 import logging
 import tkinter as tk
-from tkinter import ttk, TclError
-
 from functools import partial
 from time import time
+from tkinter import TclError, ttk
 
 from lib.gui.control_helper import set_slider_rounding
 from lib.gui.custom_widgets import Tooltip
 from lib.gui.utils import get_images
 from lib.utils import get_module_objects
 
-from .control import Navigation, BackgroundImage
-from .editor import (
+from .control import BackgroundImage, Navigation
+from .editor import (  # noqa pylint:disable=unused-import
     BoundingBox,
     ExtractBox,
     Landmarks,
-    Mask,  # noqa pylint:disable=unused-import
+    Mask,
     Mesh,
     View,
 )

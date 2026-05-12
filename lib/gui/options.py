@@ -1,26 +1,28 @@
 #!/usr/bin python3
-""" Cli Options for the GUI """
+"""Cli Options for the GUI"""
+
 from __future__ import annotations
 
 import inspect
+import logging
+import os
+import shlex
+import sys
+import typing as T
 from argparse import SUPPRESS
 from dataclasses import dataclass
 from importlib import import_module
-import logging
-import os
-import re
-import sys
-import typing as T
 
 from lib.cli import actions
 from lib.utils import get_module_objects
 
-from .utils import get_images
 from .control_helper import ControlPanelOption
+from .utils import get_images
 
 if T.TYPE_CHECKING:
     from tkinter import Variable
     from types import ModuleType
+
     from lib.cli.args import FaceSwapArgs
 
 logger = logging.getLogger(__name__)
@@ -28,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class CliOption:
-    """ A parsed command line option
+    """A parsed command line option
 
     Parameters
     ----------
@@ -41,6 +43,7 @@ class CliOption:
         ``None`` for not used. "+" for at least 1 argument required with values to be contained
         in a list
     """
+
     panel_option: ControlPanelOption
     """:class:`~lib.gui.control_helper.ControlPanelOption`: Object to hold information of a command
     line item for displaying in a GUI :class:`~lib.gui.control_helper.ControlPanel`"""
@@ -51,20 +54,23 @@ class CliOption:
     values to be contained in a list """
 
 
-class CliOptions():
-    """ Class and methods for the command line options """
+class CliOptions:
+    """Class and methods for the command line options"""
+
     def __init__(self) -> None:
         logger.debug("Initializing %s", self.__class__.__name__)
         self._base_path = os.path.realpath(os.path.dirname(sys.argv[0]))
-        self._commands: dict[T.Literal["faceswap", "tools"], list[str]] = {"faceswap": [],
-                                                                           "tools": []}
+        self._commands: dict[T.Literal["faceswap", "tools"], list[str]] = {
+            "faceswap": [],
+            "tools": [],
+        }
         self._opts: dict[str, dict[str, CliOption | str]] = {}
         self._build_options()
         logger.debug("Initialized %s", self.__class__.__name__)
 
     @property
     def categories(self) -> tuple[T.Literal["faceswap", "tools"], ...]:
-        """tuple[str, str] The categories for faceswap's GUI """
+        """tuple[str, str] The categories for faceswap's GUI"""
         return tuple(self._commands)
 
     @property
@@ -75,11 +81,11 @@ class CliOptions():
     @property
     def opts(self) -> dict[str, dict[str, CliOption | str]]:
         """dict[str, dict[str, CliOption | str]] The command line options collected from faceswap's
-        cli files """
+        cli files"""
         return self._opts
 
     def _get_modules_tools(self) -> list[ModuleType]:
-        """ Parse the tools cli python files for the modules that contain the command line
+        """Parse the tools cli python files for the modules that contain the command line
         arguments
 
         Returns
@@ -102,7 +108,7 @@ class CliOptions():
         return retval
 
     def _get_modules_faceswap(self) -> list[ModuleType]:
-        """ Parse the faceswap cli python files for the modules that contain the command line
+        """Parse the faceswap cli python files for the modules that contain the command line
         arguments
 
         Returns
@@ -124,8 +130,10 @@ class CliOptions():
             logger.debug("Collected: '%s", retval[-1])
         return retval
 
-    def _get_modules(self, category: T.Literal["faceswap", "tools"]) -> list[ModuleType]:
-        """ Parse the cli files for faceswap and tools and return the imported module
+    def _get_modules(
+        self, category: T.Literal["faceswap", "tools"]
+    ) -> list[ModuleType]:
+        """Parse the cli files for faceswap and tools and return the imported module
 
         Parameters
         ----------
@@ -145,7 +153,7 @@ class CliOptions():
 
     @classmethod
     def _get_classes(cls, module: ModuleType) -> list[T.Type[FaceSwapArgs]]:
-        """ Obtain the classes from the given module that contain the command line
+        """Obtain the classes from the given module that contain the command line
         arguments
 
         Parameters
@@ -168,7 +176,9 @@ class CliOptions():
                 continue
             logger.debug("Collecting %s", obj)
             retval.append(obj)
-        logger.debug("Collected from '%s': %s", module.__name__, [c.__name__ for c in retval])
+        logger.debug(
+            "Collected from '%s': %s", module.__name__, [c.__name__ for c in retval]
+        )
         return retval
 
     def _get_all_classes(self, modules: list[ModuleType]) -> list[T.Type[FaceSwapArgs]]:
@@ -191,12 +201,14 @@ class CliOptions():
                 logger.debug("module '%s' contains no cli classes. Skipping", module)
                 continue
             retval.extend(mod_classes)
-        logger.debug("Obtained %s cli classes from %s modules", len(retval), len(modules))
+        logger.debug(
+            "Obtained %s cli classes from %s modules", len(retval), len(modules)
+        )
         return retval
 
     @classmethod
     def _class_name_to_command(cls, class_name: str) -> str:
-        """ Format a FaceSwapArgs class name to a standardized command name
+        """Format a FaceSwapArgs class name to a standardized command name
 
         Parameters
         ----------
@@ -210,10 +222,12 @@ class CliOptions():
         """
         return class_name.lower()[:-4]
 
-    def _store_commands(self,
-                        category: T.Literal["faceswap", "tools"],
-                        classes: list[T.Type[FaceSwapArgs]]) -> None:
-        """ Format classes into command names and sort. Store in :attr:`commands`.
+    def _store_commands(
+        self,
+        category: T.Literal["faceswap", "tools"],
+        classes: list[T.Type[FaceSwapArgs]],
+    ) -> None:
+        """Format classes into command names and sort. Store in :attr:`commands`.
         Sorting is in specific workflow order for faceswap and alphabetical for all others
 
         Parameters
@@ -228,16 +242,17 @@ class CliOptions():
 
         if category == "faceswap":
             ordered = ["extract", "train", "convert"]
-            commands = ordered + [command for command in commands
-                                  if command not in ordered]
+            commands = ordered + [
+                command for command in commands if command not in ordered
+            ]
         self._commands[category].extend(commands)
         logger.debug("Set '%s' commands: %s", category, self._commands[category])
 
     @classmethod
-    def _get_cli_arguments(cls,
-                           arg_class: T.Type[FaceSwapArgs],
-                           command: str) -> tuple[str, list[dict[str, T.Any]]]:
-        """ Extract the command line options from the given cli class
+    def _get_cli_arguments(
+        cls, arg_class: T.Type[FaceSwapArgs], command: str
+    ) -> tuple[str, list[dict[str, T.Any]]]:
+        """Extract the command line options from the given cli class
 
         Parameters
         ----------
@@ -255,13 +270,17 @@ class CliOptions():
         """
         args = arg_class(None, command)
         arg_list = args.argument_list + args.optional_arguments + args.global_arguments
-        logger.debug("Obtain options for '%s'. Info: '%s', options: %s",
-                     command, args.info, len(arg_list))
+        logger.debug(
+            "Obtain options for '%s'. Info: '%s', options: %s",
+            command,
+            args.info,
+            len(arg_list),
+        )
         return args.info, arg_list
 
     @classmethod
     def _set_control_title(cls, opts: tuple[str, ...]) -> str:
-        """ Take the option switch and format it nicely
+        """Take the option switch and format it nicely
 
         Parameters
         ----------
@@ -275,12 +294,12 @@ class CliOptions():
         """
         ctltitle = opts[1] if len(opts) == 2 else opts[0]
         retval = ctltitle.replace("-", " ").replace("_", " ").strip().title()
-        logger.debug("Formatted '%s' to '%s'",  ctltitle, retval)
+        logger.debug("Formatted '%s' to '%s'", ctltitle, retval)
         return retval
 
     @classmethod
     def _get_data_type(cls, opt: dict[str, T.Any]) -> type:
-        """ Return a data type for passing into control_helper.py to get the correct control
+        """Return a data type for passing into control_helper.py to get the correct control
 
         Parameters
         ----------
@@ -304,7 +323,7 @@ class CliOptions():
 
     @classmethod
     def _get_rounding(cls, opt: dict[str, T.Any]) -> int | None:
-        """ Return rounding for the given option
+        """Return rounding for the given option
 
         Parameters
         ----------
@@ -327,10 +346,10 @@ class CliOptions():
         return retval
 
     @classmethod
-    def _expand_action_option(cls,
-                              option: dict[str, T.Any],
-                              options: list[dict[str, T.Any]]) -> None:
-        """ Expand the action option to the full command name
+    def _expand_action_option(
+        cls, option: dict[str, T.Any], options: list[dict[str, T.Any]]
+    ) -> None:
+        """Expand the action option to the full command name
 
         Parameters
         ----------
@@ -339,22 +358,24 @@ class CliOptions():
         options: list[dict[str, Any]]
             The full list of options for the command
         """
-        opts = {opt["opts"][0]: opt["opts"][-1]
-                for opt in options}
+        opts = {opt["opts"][0]: opt["opts"][-1] for opt in options}
         old_val = option["action_option"]
         new_val = opts[old_val]
         logger.debug("Updating action option from '%s' to '%s'", old_val, new_val)
         option["action_option"] = new_val
 
-    def _get_sysbrowser(self,
-                        option: dict[str, T.Any],
-                        options: list[dict[str, T.Any]],
-                        command: str) -> dict[T.Literal["filetypes",
-                                                        "browser",
-                                                        "command",
-                                                        "destination",
-                                                        "action_option"], str | list[str]] | None:
-        """ Return the system file browser and file types if required
+    def _get_sysbrowser(
+        self, option: dict[str, T.Any], options: list[dict[str, T.Any]], command: str
+    ) -> (
+        dict[
+            T.Literal[
+                "filetypes", "browser", "command", "destination", "action_option"
+            ],
+            str | list[str],
+        ]
+        | None
+    ):
+        """Return the system file browser and file types if required
 
         Parameters
         ----------
@@ -372,20 +393,23 @@ class CliOptions():
             The browser information, if valid, or ``None`` if browser not required
         """
         action = option.get("action", None)
-        if action not in (actions.DirFullPaths,
-                          actions.FileFullPaths,
-                          actions.FilesFullPaths,
-                          actions.DirOrFileFullPaths,
-                          actions.DirOrFilesFullPaths,
-                          actions.SaveFileFullPaths,
-                          actions.ContextFullPaths):
+        if action not in (
+            actions.DirFullPaths,
+            actions.FileFullPaths,
+            actions.FilesFullPaths,
+            actions.DirOrFileFullPaths,
+            actions.DirOrFilesFullPaths,
+            actions.SaveFileFullPaths,
+            actions.ContextFullPaths,
+        ):
             return None
 
-        retval: dict[T.Literal["filetypes",
-                               "browser",
-                               "command",
-                               "destination",
-                               "action_option"], str | list[str]] = {}
+        retval: dict[
+            T.Literal[
+                "filetypes", "browser", "command", "destination", "action_option"
+            ],
+            str | list[str],
+        ] = {}
         action_option = None
         if option.get("action_option", None) is not None:
             self._expand_action_option(option, options)
@@ -405,15 +429,18 @@ class CliOptions():
             retval["browser"] = ["context"]
             retval["command"] = command
             retval["action_option"] = action_option
-            retval["destination"] = option.get("dest", option["opts"][1].replace("--", ""))
+            retval["destination"] = option.get(
+                "dest", option["opts"][1].replace("--", "")
+            )
         else:
             retval["browser"] = ["folder"]
         logger.debug(retval)
         return retval
 
-    def _process_options(self, command_options: list[dict[str, T.Any]], command: str
-                         ) -> dict[str, CliOption]:
-        """ Process the options for a single command
+    def _process_options(
+        self, command_options: list[dict[str, T.Any]], command: str
+    ) -> dict[str, CliOption]:
+        """Process the options for a single command
 
         Parameters
         ----------
@@ -447,15 +474,16 @@ class CliOptions():
                 sysbrowser=self._get_sysbrowser(opt, command_options, command),
                 helptext=opt["help"],
                 track_modified=True,
-                command=command)
-            retval[title] = CliOption(panel_option=panel_option,
-                                      opts=opt["opts"],
-                                      nargs=opt.get("nargs"))
+                command=command,
+            )
+            retval[title] = CliOption(
+                panel_option=panel_option, opts=opt["opts"], nargs=opt.get("nargs")
+            )
             logger.debug("Processed: %s", retval)
         return retval
 
     def _extract_options(self, arguments: list[T.Type[FaceSwapArgs]]):
-        """ Extract the collected command line FaceSwapArg options into master options
+        """Extract the collected command line FaceSwapArg options into master options
         :attr:`opts` dictionary
 
         Parameters
@@ -468,14 +496,16 @@ class CliOptions():
             logger.debug("Processing: '%s'", arg_class.__name__)
             command = self._class_name_to_command(arg_class.__name__)
             info, options = self._get_cli_arguments(arg_class, command)
-            opts = T.cast(dict[str, CliOption | str], self._process_options(options, command))
+            opts = T.cast(
+                dict[str, CliOption | str], self._process_options(options, command)
+            )
             opts["helptext"] = info
             retval[command] = opts
         self._opts.update(retval)
 
     def _build_options(self) -> None:
-        """ Parse the command line argument modules and populate :attr:`commands` and :attr:`opts`
-        for each category """
+        """Parse the command line argument modules and populate :attr:`commands` and :attr:`opts`
+        for each category"""
         for category in self.categories:
             modules = self._get_modules(category)
             classes = self._get_all_classes(modules)
@@ -483,9 +513,10 @@ class CliOptions():
             self._extract_options(classes)
             logger.debug("Built '%s'", category)
 
-    def _gen_command_options(self, command: str
-                             ) -> T.Generator[tuple[str, CliOption], None, None]:
-        """ Yield each option for specified command
+    def _gen_command_options(
+        self, command: str
+    ) -> T.Generator[tuple[str, CliOption], None, None]:
+        """Yield each option for specified command
 
         Parameters
         ----------
@@ -505,7 +536,7 @@ class CliOptions():
             yield key, val
 
     def _options_to_process(self, command: str | None = None) -> list[CliOption]:
-        """ Return a consistent object for processing regardless of whether processing all commands
+        """Return a consistent object for processing regardless of whether processing all commands
         or just one command for reset and clear. Removes helptext from return value
 
         Parameters
@@ -519,12 +550,18 @@ class CliOptions():
             The options to be processed
         """
         if command is None:
-            return [opt for opts in self._opts.values()
-                    for opt in opts if isinstance(opt, CliOption)]
-        return [opt for opt in self._opts[command] if isinstance(opt, CliOption)]
+            return [
+                opt
+                for opts in self._opts.values()
+                for opt in opts.values()
+                if isinstance(opt, CliOption)
+            ]
+        return [
+            opt for opt in self._opts[command].values() if isinstance(opt, CliOption)
+        ]
 
     def reset(self, command: str | None = None) -> None:
-        """ Reset the options for all or passed command back to default value
+        """Reset the options for all or passed command back to default value
 
         Parameters
         ----------
@@ -537,11 +574,11 @@ class CliOptions():
             cp_opt = option.panel_option
             default = "" if cp_opt.default is None else cp_opt.default
             if option.nargs is not None and isinstance(default, (list, tuple)):
-                default = ' '.join(str(val) for val in default)
+                default = " ".join(str(val) for val in default)
             cp_opt.set(default)
 
     def clear(self, command: str | None = None) -> None:
-        """ Clear the options values for all or passed commands
+        """Clear the options values for all or passed commands
 
         Parameters
         ----------
@@ -559,9 +596,10 @@ class CliOptions():
             else:
                 cp_opt.set("")
 
-    def get_option_values(self, command: str | None = None
-                          ) -> dict[str, dict[str, bool | int | float | str]]:
-        """ Return all or single command control titles with the associated tk_var value
+    def get_option_values(
+        self, command: str | None = None
+    ) -> dict[str, dict[str, bool | int | float | str]]:
+        """Return all or single command control titles with the associated tk_var value
 
         Parameters
         ----------
@@ -588,7 +626,7 @@ class CliOptions():
         return ctl_dict
 
     def get_one_option_variable(self, command: str, title: str) -> Variable | None:
-        """ Return a single :class:`tkinter.Variable` tk_var for the specified command and
+        """Return a single :class:`tkinter.Variable` tk_var for the specified command and
         control_title
 
         Parameters
@@ -608,8 +646,27 @@ class CliOptions():
                 return option.panel_option.tk_var
         return None
 
-    def gen_cli_arguments(self, command: str) -> T.Generator[tuple[str, ...], None, None]:
-        """ Yield the generated cli arguments for the selected command
+    @classmethod
+    def _split_nargs(cls, value: str, switch: str) -> list[str]:
+        """Split a multi-value CLI option preserving platform-specific path syntax."""
+        try:
+            parts = shlex.split(value, posix=os.name != "nt")
+        except ValueError as err:
+            raise ValueError(f"Invalid quoted argument for {switch}: {value}") from err
+
+        if os.name == "nt":
+            parts = [
+                part[1:-1]
+                if len(part) >= 2 and part[0] == part[-1] and part[0] in "\"'"
+                else part
+                for part in parts
+            ]
+        return parts
+
+    def gen_cli_arguments(
+        self, command: str
+    ) -> T.Generator[tuple[str, ...], None, None]:
+        """Yield the generated cli arguments for the selected command
 
         Parameters
         ----------
@@ -628,7 +685,9 @@ class CliOptions():
             str_val = str(option.panel_option.get())
             switch = option.opts[0]
             batch_mode = command == "extract" and switch == "-b"  # Check for batch mode
-            if command in ("extract", "convert") and switch == "-o":  # Output location for preview
+            if (
+                command in ("extract", "convert") and switch == "-o"
+            ):  # Output location for preview
                 output_dir = str_val
 
             if str_val in ("False", ""):  # skip no value opts
@@ -639,21 +698,19 @@ class CliOptions():
                 continue
 
             if option.nargs is not None:
-                if "\"" in str_val:
-                    val = [arg[1:-1] for arg in re.findall(r"\".+?\"", str_val)]
-                else:
-                    val = str_val.split(" ")
+                val = self._split_nargs(str_val, switch)
                 arg = (switch, *val)
             else:
                 arg = (switch, str_val)
             args.append(arg)
 
-        switch_args = [] if not switches else [(f"-{switches}", )]
+        switch_args = [] if not switches else [(f"-{switches}",)]
         yield from switch_args + args
 
         if command in ("extract", "convert") and output_dir is not None:
-            get_images().preview_extract.set_faceswap_output_path(output_dir,
-                                                                  batch_mode=batch_mode)
+            get_images().preview_extract.set_faceswap_output_path(
+                output_dir, batch_mode=batch_mode
+            )
 
 
 __all__ = get_module_objects(__name__)

@@ -5,8 +5,8 @@ This is the large right hand area of the GUI. At default, the Analysis tab is al
 here. Further optional tabs will also be displayed depending on the currently executing Faceswap
 task."""
 
-import logging
 import gettext
+import logging
 import tkinter as tk
 from tkinter import ttk
 
@@ -149,10 +149,12 @@ class DisplayNotebook(ttk.Notebook):  # pylint:disable=too-many-ancestors
             child_object = self.children.get(
                 child_name
             )  # returns the OptionalDisplayPage object
-            if not child_object:
-                continue
-            child_object.close()  # Call the OptionalDisplayPage close() method
-            self.forget(child)
+            if child_object is not None:
+                child_object.close()  # Call the OptionalDisplayPage close() method
+            if child in self.tabs():
+                self.forget(child)
+            if child_object is not None:
+                child_object.destroy()
 
     def _update_displaybook(self, *args):  # pylint:disable=unused-argument
         """Callback to be executed when the global tkinter variable `display`
@@ -182,9 +184,16 @@ class DisplayNotebook(ttk.Notebook):  # pylint:disable=too-many-ancestors
         event: tkinter callback event
             Required, but unused
         """
-        selected = self.select().split(".")[-1]
+        selected_tab = self.select()
+        if not selected_tab:
+            logger.debug("No selected tab. Returning")
+            return
+        selected = selected_tab.split(".")[-1]
         logger.debug("Selected tab: %s", selected)
-        selected_object = self.children[selected]
+        selected_object = self.children.get(selected)
+        if selected_object is None:
+            logger.debug("Selected tab has no child object. Returning: %s", selected)
+            return
         if hasattr(selected_object, "on_tab_select"):
             logger.debug("Calling on_tab_select for '%s'", selected_object)
             selected_object.on_tab_select()

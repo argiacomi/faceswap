@@ -171,6 +171,8 @@ class DisplayOptionalPage(DisplayPage):  # pylint:disable=too-many-ancestors
         super().__init__(parent, tab_name, helptext)
 
         self._waittime = wait_time
+        self._after_ids: list[str] = []
+        self._update_after_id: str | None = None
         self.command = command
         self.display_item = None
 
@@ -257,6 +259,48 @@ class DisplayOptionalPage(DisplayPage):  # pylint:disable=too-many-ancestors
             self.subnotebook_hide()
         self.set_info_text()
 
+    def _schedule_after(self, wait_time: int, callback, *args) -> None:
+        """Schedule and track a one-off ``after`` callback so it can be cancelled on close."""
+        after_id = ""
+
+        def _run_callback():
+            if after_id in self._after_ids:
+                self._after_ids.remove(after_id)
+            callback(*args)
+
+        after_id = self.after(wait_time, _run_callback)
+        self._after_ids.append(after_id)
+
+    def _schedule_update_page(self) -> None:
+        """Schedule the recurring page update loop once."""
+        if self._update_after_id is not None:
+            return
+
+        def _run_update_page() -> None:
+            self._update_after_id = None
+            self._update_page()
+
+        self._update_after_id = self.after(self._waittime, _run_update_page)
+
+    def _cancel_after_callbacks(self) -> None:
+        """Cancel all pending ``after`` callbacks for this page."""
+        if self._update_after_id is not None:
+            try:
+                self.after_cancel(self._update_after_id)
+            except tk.TclError:
+                logger.debug(
+                    "Update callback already cancelled or fired: %s",
+                    self._update_after_id,
+                )
+            self._update_after_id = None
+
+        for after_id in self._after_ids[:]:
+            try:
+                self.after_cancel(after_id)
+            except tk.TclError:
+                logger.debug("After callback already cancelled or fired: %s", after_id)
+        self._after_ids = []
+
     def _update_page(self):
         """Update the latest preview item"""
         if not self.running_task.get() or not self._tab_is_active:
@@ -265,7 +309,7 @@ class DisplayOptionalPage(DisplayPage):  # pylint:disable=too-many-ancestors
             logger.trace("Updating page: %s", self.__class__.__name__)
             self.display_item_set()
             self.load_display()
-        self.after(self._waittime, self._update_page)
+        self._schedule_update_page()
 
     def display_item_set(self):
         """Override for display specific loading"""
@@ -288,6 +332,7 @@ class DisplayOptionalPage(DisplayPage):  # pylint:disable=too-many-ancestors
         """Called when the parent notebook is shutting down
         Children must be destroyed as forget only hides display
         Override for page specific shutdown"""
+        self._cancel_after_callbacks()
         for child in self.winfo_children():
             logger.debug("Destroying child: %s", child)
             child.destroy()

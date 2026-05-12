@@ -7,20 +7,22 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 from lib.gui import (
-    TaskBar,
     CliOptions,
     CommandNotebook,
     ConsoleOut,
     DisplayNotebook,
-    get_images,
-    gui_config as cfg,
-    initialize_images,
-    initialize_config,
     LastSession,
     MainMenuBar,
-    preview_trigger,
     ProcessWrapper,
     StatusBar,
+    TaskBar,
+    get_images,
+    initialize_config,
+    initialize_images,
+    preview_trigger,
+)
+from lib.gui import (
+    gui_config as cfg,
 )
 from lib.utils import get_module_objects
 
@@ -102,14 +104,31 @@ class FaceswapGui(tk.Tk):
         self._config.set_default_options()
         logger.debug("Built GUI")
 
+    @staticmethod
+    def _new_paned_window(parent, *, orient: str, name: str) -> tk.PanedWindow:
+        """Create a paned window with a visible separator."""
+        return tk.PanedWindow(
+            parent,
+            orient=orient,
+            name=name,
+            borderwidth=0,
+            sashrelief=tk.RIDGE,
+            sashwidth=6,
+            showhandle=True,
+            handlesize=12,
+            opaqueresize=True,
+        )
+
     def add_containers(self):
         """Add the paned window containers that
         hold each main area of the gui"""
         logger.debug("Adding containers")
-        main_container = ttk.PanedWindow(self, orient=tk.VERTICAL, name="pw_main")
+        main_container = self._new_paned_window(
+            self, orient=tk.VERTICAL, name="pw_main"
+        )
         main_container.pack(fill=tk.BOTH, expand=True)
 
-        top_container = ttk.PanedWindow(
+        top_container = self._new_paned_window(
             main_container, orient=tk.HORIZONTAL, name="pw_top"
         )
         main_container.add(top_container)
@@ -148,8 +167,8 @@ class FaceswapGui(tk.Tk):
             width,
             height,
         )
-        self.objects["container_top"].sashpos(0, width)
-        self.objects["container_main"].sashpos(0, height)
+        self.objects["container_top"].sash_place(0, width, 0)
+        self.objects["container_main"].sash_place(0, 0, height)
         self.update_idletasks()
 
     def rebuild(self):

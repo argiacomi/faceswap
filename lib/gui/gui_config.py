@@ -3,13 +3,12 @@
 
 import logging
 import os
-
 from tkinter import font as tk_font
+
 from matplotlib import font_manager
 
-from lib.config import FaceswapConfig
-from lib.config import ConfigItem
-from lib.utils import get_module_objects, PROJECT_ROOT
+from lib.config import ConfigItem, FaceswapConfig
+from lib.utils import PROJECT_ROOT, get_module_objects
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +64,8 @@ def get_clean_fonts() -> list[str]:
     list[str]:
         A list of valid fonts for the system
     """
-    f_manager = font_manager.FontManager()
+    logging.getLogger("matplotlib.font_manager").setLevel(logging.CRITICAL)
+    f_manager = font_manager.fontManager
     fonts: dict[str, dict[str, bool]] = {}
     for fnt in f_manager.ttflist:
         if str(fnt.weight) in ("400", "normal", "regular"):
@@ -89,7 +89,7 @@ def get_clean_fonts() -> list[str]:
 
 
 fullscreen = ConfigItem(
-    datatype=bool, default=False, group="startup", info="Start Faceswap maximized."
+    datatype=bool, default=True, group="startup", info="Start Faceswap maximized."
 )
 
 
@@ -106,8 +106,7 @@ options_panel_width = ConfigItem(
     datatype=int,
     default=30,
     group="layout",
-    info="How wide the lefthand option panel is as a percentage of GUI width at "
-    "startup.",
+    info="How wide the lefthand option panel is as a percentage of GUI width at startup.",
     min_max=(10, 90),
     rounding=1,
 )

@@ -11,8 +11,11 @@ import numpy as np
 from lib.serializer import get_serializer
 from lib.utils import FaceswapError, get_module_objects
 
-
 logger = logging.getLogger(__name__)
+
+_DROPDOWN_TEXT_COLOR = "#000000"
+_PANEL_TEXT_COLOR = "#FFFFFF"
+_SETTINGS_NAV_TEXT_COLOR = "#000000"
 
 
 class Style:
@@ -44,6 +47,7 @@ class Style:
 
     def _set_styles(self):
         """Configure widget theme and styles"""
+        self._config_text_colors()
         self._config_settings_group()
         # Command page
         theme = self._user_theme["command_tabs"]
@@ -81,6 +85,81 @@ class Style:
             "Console", theme["background_color"], theme["border_color"], borderwidth=1
         )
 
+    def _config_text_colors(self):
+        """Configure global text colors for dropdowns, menus and settings navigation."""
+        settings_theme = {
+            **self._user_theme["group_panel"],
+            **self._user_theme["group_settings"],
+        }
+        tree_select = settings_theme["tree_select"]
+        tree_unselected = settings_theme["tree_unselected"]
+
+        self._root.option_add("*Menu.foreground", _DROPDOWN_TEXT_COLOR)
+        self._root.option_add("*Menu.selectForeground", _DROPDOWN_TEXT_COLOR)
+        self._root.option_add("*TCombobox*Listbox.foreground", _DROPDOWN_TEXT_COLOR)
+        self._root.option_add(
+            "*TCombobox*Listbox.selectForeground", _DROPDOWN_TEXT_COLOR
+        )
+        self._root.option_add("*Entry.foreground", _PANEL_TEXT_COLOR)
+        self._root.option_add("*Entry.insertBackground", _PANEL_TEXT_COLOR)
+
+        self._style.configure("Treeview", foreground=_SETTINGS_NAV_TEXT_COLOR)
+        self._style.map(
+            "Treeview",
+            foreground=[
+                ("selected", _SETTINGS_NAV_TEXT_COLOR),
+                ("!selected", _SETTINGS_NAV_TEXT_COLOR),
+            ],
+        )
+        self._style.configure(
+            "ConfigNav.Treeview",
+            background=tree_unselected,
+            fieldbackground=tree_unselected,
+            foreground=_SETTINGS_NAV_TEXT_COLOR,
+        )
+        self._style.map(
+            "ConfigNav.Treeview",
+            foreground=[
+                ("selected", _SETTINGS_NAV_TEXT_COLOR),
+                ("!selected", _SETTINGS_NAV_TEXT_COLOR),
+            ],
+            background=[("selected", tree_select), ("!selected", tree_unselected)],
+        )
+        self._patch_config_nav_tree_tags(settings_theme)
+
+    @classmethod
+    def _patch_config_nav_tree_tags(cls, theme):
+        """Force settings navigation tag colors to use the active red theme.
+
+        The settings popup configures Treeview row backgrounds with hardcoded tag colors after
+        theme initialization, so patch tag_configure for the settings navigation Treeview only.
+        """
+        colors = {
+            "category": theme["tree_subheader"],
+            "section": theme["tree_subheader"],
+            "option": theme["tree_unselected"],
+        }
+        setattr(ttk.Treeview, "_faceswap_config_nav_colors", colors)
+
+        if getattr(ttk.Treeview, "_faceswap_config_nav_patched", False):
+            return
+
+        original_tag_configure = ttk.Treeview.tag_configure
+        setattr(
+            ttk.Treeview, "_faceswap_original_tag_configure", original_tag_configure
+        )
+
+        def tag_configure(treeview, tagname, option=None, **kw):
+            if option is None and treeview.cget("style") == "ConfigNav.Treeview":
+                nav_colors = getattr(ttk.Treeview, "_faceswap_config_nav_colors", {})
+                if tagname in nav_colors:
+                    kw["background"] = nav_colors[tagname]
+                    kw["foreground"] = _SETTINGS_NAV_TEXT_COLOR
+            return original_tag_configure(treeview, tagname, option=option, **kw)
+
+        ttk.Treeview.tag_configure = tag_configure
+        setattr(ttk.Treeview, "_faceswap_config_nav_patched", True)
+
     def _config_settings_group(self):
         """Configures the style of the control panel entry boxes. Used for inputting Faceswap
         options or controlling plugin settings."""
@@ -93,13 +172,12 @@ class Style:
             )
             # Header Colors on option/group controls
             self._style.configure(
-                f"{panel_type}.Group.TLabelframe.Label",
-                foreground=theme["header_color"],
+                f"{panel_type}.Group.TLabelframe.Label", foreground=_PANEL_TEXT_COLOR
             )
             self._style.configure(
                 f"{panel_type}.Groupheader.TLabel",
                 background=theme["header_color"],
-                foreground=theme["header_font"],
+                foreground=_PANEL_TEXT_COLOR,
                 font=(self._font[0], self._font[1], "bold"),
             )
             # Widgets and specific areas
@@ -165,13 +243,13 @@ class Style:
         self._style.configure(
             f"{key}.InfoHeader.TLabel",
             background=theme["info_color"],
-            foreground=theme["info_font"],
+            foreground=_PANEL_TEXT_COLOR,
             font=(self._font[0], self._font[1], "bold"),
         )
         self._style.configure(
             f"{key}.InfoBody.TLabel",
             background=theme["info_color"],
-            foreground=theme["info_font"],
+            foreground=_PANEL_TEXT_COLOR,
         )
 
     def _group_panel_widgets(self, key, theme):
@@ -200,11 +278,12 @@ class Style:
             "TCheckbutton",
             "TRadiobutton",
             "TLabelframe.Label",
+            "TEntry",
         ]:
             self._style.configure(
                 f"{key}.Group.{lbl}",
                 background=theme["group_background"],
-                foreground=theme["group_font"],
+                foreground=_PANEL_TEXT_COLOR,
             )
 
 
@@ -319,6 +398,15 @@ class _Widgets:
                         "sticky": "nswe",
                     },
                 )
+            ],
+        )
+        self._style.configure(f"{key}.TCombobox", foreground=_DROPDOWN_TEXT_COLOR)
+        self._style.map(
+            f"{key}.TCombobox",
+            foreground=[
+                ("readonly", _DROPDOWN_TEXT_COLOR),
+                ("!disabled", _DROPDOWN_TEXT_COLOR),
+                ("disabled", _DROPDOWN_TEXT_COLOR),
             ],
         )
 

@@ -2,6 +2,7 @@
 """Neural Network Blocks for faceswap.py."""
 
 from __future__ import annotations
+
 import logging
 import typing as T
 
@@ -12,7 +13,7 @@ from lib.utils import get_module_objects
 from plugins.train import train_config as cfg
 
 from .initializers import ICNR, ConvolutionAware
-from .layers import PixelShuffler, ReflectionPadding2D, Swish, KResizeImages
+from .layers import KResizeImages, PixelShuffler, ReflectionPadding2D, Swish
 from .normalization import InstanceNormalization
 
 if T.TYPE_CHECKING:
@@ -160,7 +161,7 @@ class Conv2D:  # pylint:disable=too-many-ancestors,abstract-method
         return self._conv2d(*args, **kwargs)
 
 
-class DepthwiseConv2D:  # noqa,pylint:disable=too-many-ancestors,abstract-method
+class DepthwiseConv2D:  # noqa # pylint:disable=too-many-ancestors,abstract-method
     """A standard Keras Depthwise Convolution 2D layer with parameters updated to be more
     appropriate for Faceswap architecture.
 
