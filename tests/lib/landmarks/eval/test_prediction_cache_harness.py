@@ -10,7 +10,7 @@ import cv2
 import numpy as np
 import pytest
 
-from lib.landmarks.datasets import build_manifest
+from lib.landmarks.datasets import build_cofw_manifest, build_manifest, build_wflw_manifest
 from lib.landmarks.ensemble.weights import weights_from_errors
 from lib.landmarks.eval.harness import run_quality_harness
 from lib.landmarks.eval.prediction_cache import DiskPredictionCache
@@ -103,4 +103,55 @@ def test_manifest_audit_written(tmp_path: Path) -> None:
     audit = json.loads((tmp_path / "dataset" / "dataset_audit.json").read_text())
 
     assert audit["total_entries"] == 1
+    assert audit["condition_counts"] == {"occluded": 1}
+
+
+def test_wflw_annotation_builder_maps_98_to_68(tmp_path: Path) -> None:
+    """WFLW text annotations are written as canonical 68-point landmark files."""
+    points = np.stack(
+        (
+            np.linspace(0, 97, 98, dtype="float32"),
+            np.linspace(100, 197, 98, dtype="float32"),
+        ),
+        axis=1,
+    )
+    annotation = tmp_path / "wflw.txt"
+    annotation.write_text(
+        " ".join(str(value) for value in points.reshape(-1)) + " images/sample.jpg\n",
+        encoding="utf-8",
+    )
+
+    manifest_path = build_wflw_manifest(annotation, tmp_path / "wflw")
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    landmarks = np.load(tmp_path / "wflw" / payload["samples"][0]["landmarks"])
+
+    assert payload["dataset"] == "wflw"
+    assert landmarks.shape == (68, 2)
+
+
+def test_cofw_json_builder_writes_manifest(tmp_path: Path) -> None:
+    """COFW JSON exports are converted into harness-compatible manifests."""
+    source = tmp_path / "cofw.json"
+    source.write_text(
+        json.dumps(
+            {
+                "samples": [
+                    {
+                        "sample_id": "face",
+                        "image": "face.png",
+                        "landmarks": _points().tolist(),
+                        "conditions": {"scenario": "occluded"},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    manifest_path = build_cofw_manifest(source, tmp_path / "cofw")
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    audit = json.loads((tmp_path / "cofw" / "dataset_audit.json").read_text())
+
+    assert payload["samples"][0]["condition"] == "occluded"
+    assert np.load(tmp_path / "cofw" / payload["samples"][0]["landmarks"]).shape == (68, 2)
     assert audit["condition_counts"] == {"occluded": 1}
