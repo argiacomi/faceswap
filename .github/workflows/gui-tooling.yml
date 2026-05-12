@@ -1,0 +1,38 @@
+name: GUI tooling
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+      - modernize-packaging-tooling
+
+jobs:
+  gui-tooling:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+
+      - name: Install system GUI dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-tk xvfb
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements/_requirements_base.txt -r requirements/_requirements_dev.txt
+
+      - name: Run scoped pre-commit hooks
+        run: pre-commit run --all-files
+
+      - name: Run GUI service tests
+        run: xvfb-run -a pytest tests/lib/gui

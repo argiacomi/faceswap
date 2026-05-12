@@ -2,9 +2,13 @@
 flake8
 flake8-pyproject
 mypy
+pre-commit
 pylint
 pytest
+pytest-cov
 pytest-mock
+pytest-qt
+ruff
 types-setuptools
 types-PyYAML
 types-psutil
