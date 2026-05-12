@@ -16,6 +16,7 @@ from lib.landmarks.datasets.sources import (
     DEFAULT_CACHE_DIR,
     DatasetSourceSpec,
     extract_archive_to_temp,
+    is_archive,
     resolve_dataset_source,
 )
 
@@ -206,9 +207,13 @@ def build_cofw_manifest(
             force_download=force_download,
             no_download=no_download,
         )
-        cleanup = _source_root(resolved)
-        root = cleanup.__enter__()
-        source = _find_cofw_json(root)
+        if resolved.is_file() and not is_archive(resolved):
+            source = resolved
+            root = source.parent
+        else:
+            cleanup = _source_root(resolved)
+            root = cleanup.__enter__()
+            source = _find_cofw_json(root)
     else:
         source = Path(source_json)
         root = source.parent
