@@ -4,10 +4,13 @@
 from __future__ import annotations
 
 import os
+import typing as T
 
 from PySide6.QtCore import QObject, QProcess, QTimer, Signal
 
 from lib.gui.services.job_runner import ProcessRuntimeService
+
+StreamName = T.Literal["stdout", "stderr"]
 
 
 class JobRunner(QObject):
@@ -23,6 +26,8 @@ class JobRunner(QObject):
         self.process: QProcess | None = None
         self._runtime = ProcessRuntimeService()
         self._runtime.add_event_callback(self.progress.emit)
+        self._stdout_buffer = ""
+        self._stderr_buffer = ""
 
     def start(self, argv: list[str], *, command: str | None = None) -> None:
         """Start a command using QProcess."""
@@ -32,6 +37,8 @@ class JobRunner(QObject):
             raise RuntimeError("A job is already running")
 
         self._runtime.command = command or self._command_from_argv(argv)
+        self._stdout_buffer = ""
+        self._stderr_buffer = ""
         self.process = QProcess(self)
         self.process.setProgram(argv[0])
         self.process.setArguments(argv[1:])
@@ -58,22 +65,16 @@ class JobRunner(QObject):
         if self.process is None:
             return
         data = bytes(self.process.readAllStandardOutput()).decode(errors="replace")
-        if not data:
-            return
-        parsed = self._runtime.process_stdout(data)
-        if not parsed.consumed:
-            self.stdout.emit(data)
+        if data:
+            self._process_output("stdout", data)
 
     def _stderr(self) -> None:
         """Emit decoded stderr or structured runtime events."""
         if self.process is None:
             return
         data = bytes(self.process.readAllStandardError()).decode(errors="replace")
-        if not data:
-            return
-        parsed = self._runtime.process_stderr(data)
-        if not parsed.consumed:
-            self.stderr.emit(data)
+        if data:
+            self._process_output("stderr", data)
 
     def _error(self, error: QProcess.ProcessError) -> None:
         """Forward QProcess errors to the console."""
@@ -83,9 +84,61 @@ class JobRunner(QObject):
         """Drain final output, emit final runtime status, and clear process state."""
         self._stdout()
         self._stderr()
+        self._flush_output_buffers()
         self._runtime.finish(exit_code)
         self.process = None
         self.finished.emit(exit_code)
+
+    def _process_output(self, stream: StreamName, data: str, *, flush: bool = False) -> None:
+        """Buffer decoded process output and parse complete output units."""
+        buffer = self._stdout_buffer if stream == "stdout" else self._stderr_buffer
+        units, remainder = self._split_output_units(f"{buffer}{data}", flush=flush)
+        if stream == "stdout":
+            self._stdout_buffer = remainder
+        else:
+            self._stderr_buffer = remainder
+        for unit in units:
+            self._emit_output_unit(stream, unit)
+
+    def _flush_output_buffers(self) -> None:
+        """Flush partial stdout/stderr output when a process exits."""
+        self._process_output("stdout", "", flush=True)
+        self._process_output("stderr", "", flush=True)
+
+    def _emit_output_unit(self, stream: StreamName, output: str) -> None:
+        """Emit parsed runtime events or pass through plain process output."""
+        parsed = (
+            self._runtime.process_stdout(output)
+            if stream == "stdout"
+            else self._runtime.process_stderr(output)
+        )
+        if parsed.consumed:
+            return
+        if stream == "stdout":
+            self.stdout.emit(output)
+        else:
+            self.stderr.emit(output)
+
+    @staticmethod
+    def _split_output_units(output: str, *, flush: bool = False) -> tuple[list[str], str]:
+        """Split output into complete newline/carriage-return terminated units."""
+        units: list[str] = []
+        start = 0
+        index = 0
+        while index < len(output):
+            if output[index] not in ("\n", "\r"):
+                index += 1
+                continue
+            end = index + 1
+            if output[index] == "\r" and end < len(output) and output[end] == "\n":
+                end += 1
+            units.append(output[start:end])
+            start = end
+            index = end
+        if flush and start < len(output):
+            units.append(output[start:])
+            return units, ""
+        return units, output[start:]
 
     @staticmethod
     def _command_from_argv(argv: list[str]) -> str | None:
