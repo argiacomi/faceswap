@@ -1,5 +1,6 @@
 #!/usr/bin python3
-""" Pytest unit tests for :mod:`lib.utils` """
+"""Pytest unit tests for :mod:`lib.utils`"""
+
 import os
 import platform
 import sys
@@ -19,11 +20,26 @@ import pytest_mock
 
 from lib import utils
 from lib.utils import (
-    _Backend, camel_case_split, convert_to_secs, DebugTimes, deprecation_warning, FaceswapError,
-    full_path_split, get_backend, get_dpi, get_folder, get_image_paths, get_module_objects,
-    get_torch_version, GetModel, safe_shutdown, set_backend)
+    _Backend,
+    camel_case_split,
+    convert_to_secs,
+    DebugTimes,
+    deprecation_warning,
+    FaceswapError,
+    full_path_split,
+    get_backend,
+    get_dpi,
+    get_folder,
+    get_image_paths,
+    get_module_objects,
+    get_torch_version,
+    GetModel,
+    safe_shutdown,
+    set_backend,
+)
 
 from lib.logger import log_setup
+
 # Need to setup logging to avoid trace/verbose errors
 log_setup("DEBUG", "pytest_utils.log", "PyTest, False")
 
@@ -33,7 +49,7 @@ log_setup("DEBUG", "pytest_utils.log", "PyTest, False")
 
 # Backend tests
 def test_set_backend(monkeypatch: pytest.MonkeyPatch) -> None:
-    """ Test the :func:`~lib.utils.set_backend` function
+    """Test the :func:`~lib.utils.set_backend` function
 
     Parameters
     ----------
@@ -49,7 +65,7 @@ def test_set_backend(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_get_backend(monkeypatch: pytest.MonkeyPatch) -> None:
-    """ Test the :func:`~lib.utils.get_backend` function
+    """Test the :func:`~lib.utils.get_backend` function
 
     Parameters
     ----------
@@ -61,7 +77,7 @@ def test_get_backend(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test__backend(monkeypatch: pytest.MonkeyPatch) -> None:
-    """ Test the :class:`~lib.utils._Backend` class
+    """Test the :class:`~lib.utils._Backend` class
 
     Parameters
     ----------
@@ -69,17 +85,25 @@ def test__backend(monkeypatch: pytest.MonkeyPatch) -> None:
         Monkey patching :func:`os.environ`, :func:`os.path.isfile`, :func:`builtins.open` and
         :func:`builtins.input`
     """
-    monkeypatch.setattr("os.environ", {"FACESWAP_BACKEND": "nvidia"})  # Environment variable set
+    monkeypatch.setattr(
+        "os.environ", {"FACESWAP_BACKEND": "nvidia"}
+    )  # Environment variable set
     backend = _Backend()
     assert backend.backend == "nvidia"
 
-    monkeypatch.setattr("os.environ", {})  # Environment variable not set, dummy in config file
+    monkeypatch.setattr(
+        "os.environ", {}
+    )  # Environment variable not set, dummy in config file
     monkeypatch.setattr("os.path.isfile", lambda x: True)
-    monkeypatch.setattr("builtins.open", lambda *args, **kwargs: StringIO('{"backend": "cpu"}'))
+    monkeypatch.setattr(
+        "builtins.open", lambda *args, **kwargs: StringIO('{"backend": "cpu"}')
+    )
     backend = _Backend()
     assert backend.backend == "cpu"
 
-    monkeypatch.setattr("os.path.isfile", lambda x: False)  # no config file, dummy in user input
+    monkeypatch.setattr(
+        "os.path.isfile", lambda x: False
+    )  # no config file, dummy in user input
     monkeypatch.setattr("builtins.input", lambda x: "2")
     backend = _Backend()
     assert backend._configure_backend() == "nvidia"
@@ -87,7 +111,7 @@ def test__backend(monkeypatch: pytest.MonkeyPatch) -> None:
 
 # Folder and path utils
 def test_get_folder(tmp_path: str) -> None:
-    """ Unit test for :func:`~lib.utils.get_folder`
+    """Unit test for :func:`~lib.utils.get_folder`
 
     Parameters
     ----------
@@ -118,7 +142,7 @@ def test_get_folder(tmp_path: str) -> None:
 
 
 def test_get_image_paths(tmp_path: str) -> None:
-    """ Unit test for :func:`~lib.utils.test_get_image_paths`
+    """Unit test for :func:`~lib.utils.test_get_image_paths`
 
     Parameters
     ----------
@@ -139,48 +163,60 @@ def test_get_image_paths(tmp_path: str) -> None:
             pass
 
     # Test getting any image paths from a folder with images and random files
-    exists = [os.path.join(test_folder, img)
-              for img in os.listdir(test_folder) if os.path.splitext(img)[-1] != ".txt"]
+    exists = [
+        os.path.join(test_folder, img)
+        for img in os.listdir(test_folder)
+        if os.path.splitext(img)[-1] != ".txt"
+    ]
     assert sorted(get_image_paths(test_folder)) == sorted(exists)
 
     # Test getting image paths from a folder with images with a specific extension
-    exists = [os.path.join(test_folder, img)
-              for img in os.listdir(test_folder) if os.path.splitext(img)[-1] == ".png"]
+    exists = [
+        os.path.join(test_folder, img)
+        for img in os.listdir(test_folder)
+        if os.path.splitext(img)[-1] == ".png"
+    ]
     assert sorted(get_image_paths(test_folder, extension=".png")) == sorted(exists)
 
 
 def test_get_module_objects(mocker: pytest_mock.MockerFixture):
-    """ Test :func:`lib.utils.get_module_objects` returns as expected """
+    """Test :func:`lib.utils.get_module_objects` returns as expected"""
     # pylint:disable=too-few-public-methods,missing-class-docstring
     test_module = types.ModuleType("our_mod")
 
     class InternalPublic:
         pass
+
     InternalPublic.__module__ = "our_mod"
     setattr(test_module, "InternalPublic", InternalPublic)
 
     class _InternalPrivate:
         pass
+
     _InternalPrivate.__module__ = "our_mod"
     setattr(test_module, "_InternalPrivate", _InternalPrivate)
 
     class External:
         pass
+
     External.__module__ = "other_mod"
     setattr(test_module, "External", External)
 
     def func_public():
         pass
+
     func_public.__module__ = "our_mod"
     setattr(test_module, "func_public", func_public)
 
     def _func_private():
         pass
+
     _func_private.__module__ = "our_mod"
     setattr(test_module, "_func_private", _func_private)
 
     def func_external():
         pass
+
     func_external.__module__ = "other_mod"
     setattr(test_module, "func_external", func_external)
 
@@ -200,12 +236,13 @@ _PATHS = (  # type:ignore[var-annotated]
     ("", []),  # Edge cases
     ("/", ["/"]),
     (".", ["."]),
-    ("..", [".."]))
+    ("..", [".."]),
+)
 
 
 @pytest.mark.parametrize("path,result", _PATHS, ids=[f'"{p[0]}"' for p in _PATHS])
 def test_full_path_split(path: str, result: list[str]) -> None:
-    """ Test the :func:`~lib.utils.full_path_split` function works correctly
+    """Test the :func:`~lib.utils.full_path_split` function works correctly
 
     Parameters
     ----------
@@ -219,21 +256,23 @@ def test_full_path_split(path: str, result: list[str]) -> None:
     assert split == result
 
 
-_CASES = (("camelCase", ["camel", "Case"]),  # type:ignore[var-annotated]
-          ("camelCaseTest", ["camel", "Case", "Test"]),
-          ("camelCaseTestCase", ["camel", "Case", "Test", "Case"]),
-          ("CamelCase", ["Camel", "Case"]),
-          ("CamelCaseTest", ["Camel", "Case", "Test"]),
-          ("CamelCaseTestCase", ["Camel", "Case", "Test", "Case"]),
-          ("CAmelCASETestCase", ["C", "Amel", "CASE", "Test", "Case"]),
-          ("camelcasetestcase", ["camelcasetestcase"]),
-          ("CAMELCASETESTCASE", ["CAMELCASETESTCASE"]),
-          ("", []))
+_CASES = (
+    ("camelCase", ["camel", "Case"]),  # type:ignore[var-annotated]
+    ("camelCaseTest", ["camel", "Case", "Test"]),
+    ("camelCaseTestCase", ["camel", "Case", "Test", "Case"]),
+    ("CamelCase", ["Camel", "Case"]),
+    ("CamelCaseTest", ["Camel", "Case", "Test"]),
+    ("CamelCaseTestCase", ["Camel", "Case", "Test", "Case"]),
+    ("CAmelCASETestCase", ["C", "Amel", "CASE", "Test", "Case"]),
+    ("camelcasetestcase", ["camelcasetestcase"]),
+    ("CAMELCASETESTCASE", ["CAMELCASETESTCASE"]),
+    ("", []),
+)
 
 
 @pytest.mark.parametrize("text, result", _CASES, ids=[f'"{p[0]}"' for p in _CASES])
 def test_camel_case_split(text: str, result: list[str]) -> None:
-    """ Test the :func:`~lib.utils.camel_case_spli` function works correctly
+    """Test the :func:`~lib.utils.camel_case_spli` function works correctly
 
     Parameters
     ----------
@@ -253,8 +292,10 @@ _TORCH_IDS = [x[0] for x in _TORCH_PARAMS]
 
 # General utils
 @pytest.mark.parametrize("str_vers, tuple_vers", _TORCH_PARAMS, ids=_TORCH_IDS)
-def test_get_torch_version(str_vers, tuple_vers, monkeypatch: pytest.MonkeyPatch) -> None:
-    """ Test the :func:`~lib.utils.get_torch_version` function version returns correctly """
+def test_get_torch_version(
+    str_vers, tuple_vers, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test the :func:`~lib.utils.get_torch_version` function version returns correctly"""
     monkeypatch.setattr("lib.utils._versions", {})
     monkeypatch.setattr("torch.__version__", str_vers)
     torch_version = get_torch_version()
@@ -262,8 +303,8 @@ def test_get_torch_version(str_vers, tuple_vers, monkeypatch: pytest.MonkeyPatch
 
 
 def test_get_dpi() -> None:
-    """ Test the :func:`~lib.utils.get_dpi` function version returns correctly in a sane
-    range """
+    """Test the :func:`~lib.utils.get_dpi` function version returns correctly in a sane
+    range"""
     dpi = get_dpi()
     assert isinstance(dpi, float) or dpi is None
     if dpi is None:  # No display detected
@@ -272,22 +313,24 @@ def test_get_dpi() -> None:
     assert dpi < 600.0
 
 
-_SECPARAMS = [((1, ), 1),  # 1 argument
-              ((10, ), 10),
-              ((0, 1), 1),
-              ((0, 60), 60),  # 2 arguments
-              ((1, 0), 60),
-              ((1, 1), 61),
-              ((0, 0, 1), 1),
-              ((0, 0, 60), 60),  # 3 arguments
-              ((0, 1, 0), 60),
-              ((1, 0, 0), 3600),
-              ((1, 1, 1), 3661)]
+_SECPARAMS = [
+    ((1,), 1),  # 1 argument
+    ((10,), 10),
+    ((0, 1), 1),
+    ((0, 60), 60),  # 2 arguments
+    ((1, 0), 60),
+    ((1, 1), 61),
+    ((0, 0, 1), 1),
+    ((0, 0, 60), 60),  # 3 arguments
+    ((0, 1, 0), 60),
+    ((1, 0, 0), 3600),
+    ((1, 1, 1), 3661),
+]
 
 
 @pytest.mark.parametrize("args,result", _SECPARAMS, ids=[str(p[0]) for p in _SECPARAMS])
 def test_convert_to_secs(args: tuple[int, ...], result: int) -> None:
-    """ Test the :func:`~lib.utils.convert_to_secs` function works correctly
+    """Test the :func:`~lib.utils.convert_to_secs` function works correctly
 
     Parameters
     ----------
@@ -302,8 +345,10 @@ def test_convert_to_secs(args: tuple[int, ...], result: int) -> None:
 
 
 @pytest.mark.parametrize("additional_info", [None, "additional information"])
-def test_deprecation_warning(caplog: pytest.LogCaptureFixture, additional_info: str) -> None:
-    """ Test the :func:`~lib.utils.deprecation_warning` function works correctly
+def test_deprecation_warning(
+    caplog: pytest.LogCaptureFixture, additional_info: str
+) -> None:
+    """Test the :func:`~lib.utils.deprecation_warning` function works correctly
 
     Parameters
     ----------
@@ -322,7 +367,7 @@ def test_deprecation_warning(caplog: pytest.LogCaptureFixture, additional_info: 
 
 @pytest.mark.parametrize("got_error", [True, False])
 def test_safe_shutdown(caplog: pytest.LogCaptureFixture, got_error: bool) -> None:
-    """ Test the :func:`~lib.utils.safe_shutdown` function works correctly
+    """Test the :func:`~lib.utils.safe_shutdown` function works correctly
 
     Parameters
     ----------
@@ -339,22 +384,26 @@ def test_safe_shutdown(caplog: pytest.LogCaptureFixture, got_error: bool) -> Non
     assert wrapped_exit.typename == "SystemExit"
     assert wrapped_exit.value.code == exit_value
     assert "Safely shutting down" in caplog.messages
-    assert "Cleanup complete. Shutting down queue manager and exiting" in caplog.messages
+    assert (
+        "Cleanup complete. Shutting down queue manager and exiting" in caplog.messages
+    )
 
 
 def test_faceswap_error():
-    """ Test the :class:`~lib.utils.FaceswapError` raises correctly """
+    """Test the :class:`~lib.utils.FaceswapError` raises correctly"""
     with pytest.raises(Exception):
         raise FaceswapError
 
 
 # GetModel class
 @pytest.fixture(name="get_model_instance")
-def fixture_get_model_instance(monkeypatch: pytest.MonkeyPatch,
-                               tmp_path: pytest.TempdirFactory,
-                               request: pytest.FixtureRequest) -> GetModel:
-    """ Create a fixture of the :class:`~lib.utils.GetModel` object, prevent _get() from running at
-    __init__ and point the cache_dir at our local test folder """
+def fixture_get_model_instance(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pytest.TempdirFactory,
+    request: pytest.FixtureRequest,
+) -> GetModel:
+    """Create a fixture of the :class:`~lib.utils.GetModel` object, prevent _get() from running at
+    __init__ and point the cache_dir at our local test folder"""
     cache_dir = os.path.join(str(tmp_path), "get_model")
     os.mkdir(cache_dir)
 
@@ -376,19 +425,30 @@ def fixture_get_model_instance(monkeypatch: pytest.MonkeyPatch,
     return model_instance
 
 
-_INPUT = ("test_model_file_v3.h5",
-          ["test_multi_model_file_v1.1.npy", "test_multi_model_file_v1.2.npy"])
-_EXPECTED = ((["test_model_file_v3.h5"], "test_model_file_v3", "test_model_file", 3),
-             (["test_multi_model_file_v1.1.npy", "test_multi_model_file_v1.2.npy"],
-              "test_multi_model_file_v1", "test_multi_model_file", 1))
+_INPUT = (
+    "test_model_file_v3.h5",
+    ["test_multi_model_file_v1.1.npy", "test_multi_model_file_v1.2.npy"],
+)
+_EXPECTED = (
+    (["test_model_file_v3.h5"], "test_model_file_v3", "test_model_file", 3),
+    (
+        ["test_multi_model_file_v1.1.npy", "test_multi_model_file_v1.2.npy"],
+        "test_multi_model_file_v1",
+        "test_multi_model_file",
+        1,
+    ),
+)
 
 
-@pytest.mark.parametrize("filename,results", zip(_INPUT, _EXPECTED), ids=[str(i) for i in _INPUT])
+@pytest.mark.parametrize(
+    "filename,results", zip(_INPUT, _EXPECTED), ids=[str(i) for i in _INPUT]
+)
 def test_get_model_model_filename_input(
-        get_model_instance: GetModel,  # pylint:disable=unused-argument
-        filename: str | list[str],
-        results: str | list[str]) -> None:
-    """ Test :class:`~lib.utils.GetModel` filename parsing works
+    get_model_instance: GetModel,  # pylint:disable=unused-argument
+    filename: str | list[str],
+    results: str | list[str],
+) -> None:
+    """Test :class:`~lib.utils.GetModel` filename parsing works
 
     Parameters
     ---------
@@ -408,7 +468,7 @@ def test_get_model_model_filename_input(
 
 
 def test_get_model_attributes(get_model_instance: GetModel) -> None:
-    """ Test :class:`~lib.utils.GetModel` private attributes set correctly
+    """Test :class:`~lib.utils.GetModel` private attributes set correctly
 
     Parameters
     ---------
@@ -417,14 +477,15 @@ def test_get_model_attributes(get_model_instance: GetModel) -> None:
     """
     model = get_model_instance
     assert model._git_model_id == 123
-    assert model._url_base == ("https://github.com/deepfakes-models/faceswap-models"
-                               "/releases/download")
+    assert model._url_base == (
+        "https://github.com/deepfakes-models/faceswap-models/releases/download"
+    )
     assert model._chunk_size == 1024
     assert model._retries == 6
 
 
 def test_get_model_properties(get_model_instance: GetModel) -> None:
-    """ Test :class:`~lib.utils.GetModel` calculated attributes return correctly
+    """Test :class:`~lib.utils.GetModel` calculated attributes return correctly
 
     Parameters
     ---------
@@ -433,18 +494,22 @@ def test_get_model_properties(get_model_instance: GetModel) -> None:
     """
     model = get_model_instance
     assert model.model_path == os.path.join(model._cache_dir, "test_model_file_v1.h5")
-    assert model._model_zip_path == os.path.join(model._cache_dir, "test_model_file_v1.zip")
+    assert model._model_zip_path == os.path.join(
+        model._cache_dir, "test_model_file_v1.zip"
+    )
     assert not model._model_exists
-    assert model._url_download == ("https://github.com/deepfakes-models/faceswap-models/releases/"
-                                   "download/v123.1/test_model_file_v1.zip")
+    assert model._url_download == (
+        "https://github.com/deepfakes-models/faceswap-models/releases/"
+        "download/v123.1/test_model_file_v1.zip"
+    )
     assert model._url_partial_size == 0
 
 
 @pytest.mark.parametrize("model_exists", (True, False))
-def test_get_model__get(mocker: pytest_mock.MockerFixture,
-                        get_model_instance: GetModel,
-                        model_exists: bool) -> None:
-    """ Test :func:`~lib.utils.GetModel._get` executes logic correctly
+def test_get_model__get(
+    mocker: pytest_mock.MockerFixture, get_model_instance: GetModel, model_exists: bool
+) -> None:
+    """Test :func:`~lib.utils.GetModel._get` executes logic correctly
 
     Parameters
     ---------
@@ -468,26 +533,34 @@ def test_get_model__get(mocker: pytest_mock.MockerFixture,
     model._get(model)  # type:ignore
 
     assert (model_exists and not model._download_model.called) or (
-        not model_exists and model._download_model.called)
+        not model_exists and model._download_model.called
+    )
     assert (model_exists and not model._unzip_model.called) or (
-        not model_exists and model._unzip_model.called)
+        not model_exists and model._unzip_model.called
+    )
     assert model_exists or not (model_exists and os_remove.called)
     os_remove.reset_mock()
 
 
-_DLPARAMS = [(None, None),
-             (socket_error, ()),
-             (socket_timeout, ()),
-             (urlliberror.URLError, ("test_reason", )),
-             (urlliberror.HTTPError, ("test_uri", 400, "", "", 0))]
+_DLPARAMS = [
+    (None, None),
+    (socket_error, ()),
+    (socket_timeout, ()),
+    (urlliberror.URLError, ("test_reason",)),
+    (urlliberror.HTTPError, ("test_uri", 400, "", "", 0)),
+]
 
 
-@pytest.mark.parametrize("error_type,error_args", _DLPARAMS, ids=[str(p[0]) for p in _DLPARAMS])
-def test_get_model__download_model(mocker: pytest_mock.MockerFixture,
-                                   get_model_instance: GetModel,
-                                   error_type: T.Any,
-                                   error_args: tuple[str | int, ...]) -> None:
-    """ Test :func:`~lib.utils.GetModel._download_model` executes its logic correctly
+@pytest.mark.parametrize(
+    "error_type,error_args", _DLPARAMS, ids=[str(p[0]) for p in _DLPARAMS]
+)
+def test_get_model__download_model(
+    mocker: pytest_mock.MockerFixture,
+    get_model_instance: GetModel,
+    error_type: T.Any,
+    error_args: tuple[str | int, ...],
+) -> None:
+    """Test :func:`~lib.utils.GetModel._download_model` executes its logic correctly
 
     Parameters
     ---------
@@ -516,10 +589,10 @@ def test_get_model__download_model(mocker: pytest_mock.MockerFixture,
 # TODO remove the next line that supresses a weird pytest bug when it tears down the tempdir
 @pytest.mark.filterwarnings("ignore::pytest.PytestUnraisableExceptionWarning")
 @pytest.mark.parametrize("dl_type", ["complete", "new", "continue"])
-def test_get_model__write_zipfile(mocker: pytest_mock.MockerFixture,
-                                  get_model_instance: GetModel,
-                                  dl_type: str) -> None:
-    """ Test :func:`~lib.utils.GetModel._write_zipfile` executes its logic correctly """
+def test_get_model__write_zipfile(
+    mocker: pytest_mock.MockerFixture, get_model_instance: GetModel, dl_type: str
+) -> None:
+    """Test :func:`~lib.utils.GetModel._write_zipfile` executes its logic correctly"""
     response = mocker.MagicMock()
     assert not os.path.isfile(get_model_instance._model_zip_path)
 
@@ -552,9 +625,10 @@ def test_get_model__write_zipfile(mocker: pytest_mock.MockerFixture,
 
 # TODO remove the next line that supresses a weird pytest bug when it tears down the tempdir
 @pytest.mark.filterwarnings("ignore::pytest.PytestUnraisableExceptionWarning")
-def test_get_model__unzip_model(mocker: pytest_mock.MockerFixture,
-                                get_model_instance: GetModel) -> None:
-    """ Test :func:`~lib.utils.GetModel._unzip_model` executes its logic correctly
+def test_get_model__unzip_model(
+    mocker: pytest_mock.MockerFixture, get_model_instance: GetModel
+) -> None:
+    """Test :func:`~lib.utils.GetModel._unzip_model` executes its logic correctly
 
     Parameters
     ---------
@@ -575,9 +649,10 @@ def test_get_model__unzip_model(mocker: pytest_mock.MockerFixture,
     mock_zipfile.reset_mock()
 
 
-def test_get_model__write_model(mocker: pytest_mock.MockerFixture,
-                                get_model_instance: GetModel) -> None:
-    """ Test :func:`~lib.utils.GetModel._write_model` executes its logic correctly
+def test_get_model__write_model(
+    mocker: pytest_mock.MockerFixture, get_model_instance: GetModel
+) -> None:
+    """Test :func:`~lib.utils.GetModel._write_model` executes its logic correctly
 
     Parameters
     ---------
@@ -586,7 +661,9 @@ def test_get_model__write_model(mocker: pytest_mock.MockerFixture,
     get_model_instance: `~lib.utils.GetModel`
         The patched instance of the class
     """
-    out_file = os.path.join(get_model_instance._cache_dir, get_model_instance._model_filename[0])
+    out_file = os.path.join(
+        get_model_instance._cache_dir, get_model_instance._model_filename[0]
+    )
     chunks = [8, 16, 32, 64, 128, 256, 512, 1024]
     data = [b"\x00" * size for size in chunks] + [b""]
     assert not os.path.isfile(out_file)
@@ -602,7 +679,7 @@ def test_get_model__write_model(mocker: pytest_mock.MockerFixture,
 
 # DebugTimes class
 def test_debug_times():
-    """ Test :class:`~lib.utils.DebugTimes` executes its logic correctly  """
+    """Test :class:`~lib.utils.DebugTimes` executes its logic correctly"""
     debug_times = DebugTimes()
 
     debug_times.step_start("Test1")
@@ -635,7 +712,9 @@ def test_debug_times():
     assert min(debug_times._times["Test2"]) == pytest.approx(0.2, abs=threshold)
     assert max(debug_times._times["Test1"]) == pytest.approx(0.1, abs=threshold)
     assert max(debug_times._times["Test2"]) == pytest.approx(0.2, abs=threshold)
-    assert (sum(debug_times._times["Test1"]) /
-            len(debug_times._times["Test1"])) == pytest.approx(0.1, abs=threshold)
-    assert (sum(debug_times._times["Test2"]) /
-            len(debug_times._times["Test2"]) == pytest.approx(0.2, abs=threshold))
+    assert (
+        sum(debug_times._times["Test1"]) / len(debug_times._times["Test1"])
+    ) == pytest.approx(0.1, abs=threshold)
+    assert sum(debug_times._times["Test2"]) / len(
+        debug_times._times["Test2"]
+    ) == pytest.approx(0.2, abs=threshold)

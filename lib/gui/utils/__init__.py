@@ -1,5 +1,5 @@
 #!/usr/bin python3
-""" Utilities for the Faceswap GUI """
+"""Utilities for the Faceswap GUI"""
 
 from .config import get_config, initialize_config, PATH_CACHE
 from .file_handler import FileHandler

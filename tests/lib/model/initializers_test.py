@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-""" Tests for Faceswap Initializers.
+"""Tests for Faceswap Initializers.
 
 Adapted from Keras tests.
 """
@@ -16,8 +16,9 @@ CONV_SHAPE = (3, 3, 256, 2048)
 CONV_ID = get_backend().upper()
 
 
-def _runner(init, shape, target_mean=None, target_std=None,
-            target_max=None, target_min=None):
+def _runner(
+    init, shape, target_mean=None, target_std=None, target_max=None, target_min=None
+):
     with device("cpu"):
         variable = Variable(init(shape))
     output = variable.numpy()
@@ -32,9 +33,9 @@ def _runner(init, shape, target_mean=None, target_std=None,
         assert abs(output.min() - target_min) < lim
 
 
-@pytest.mark.parametrize('tensor_shape', [CONV_SHAPE], ids=[CONV_ID])
+@pytest.mark.parametrize("tensor_shape", [CONV_SHAPE], ids=[CONV_ID])
 def test_icnr(tensor_shape):
-    """ ICNR Initialization Test
+    """ICNR Initialization Test
 
     Parameters
     ----------
@@ -43,16 +44,18 @@ def test_icnr(tensor_shape):
     """
     with device("cpu"):
         fan_in, _ = initializers.compute_fans(tensor_shape)
-        std = np.sqrt(2. / fan_in)
-        _runner(initializers.ICNR(initializer=k_initializers.he_uniform(), scale=2),
-                tensor_shape,
-                target_mean=0,
-                target_std=std)
+        std = np.sqrt(2.0 / fan_in)
+        _runner(
+            initializers.ICNR(initializer=k_initializers.he_uniform(), scale=2),
+            tensor_shape,
+            target_mean=0,
+            target_std=std,
+        )
 
 
-@pytest.mark.parametrize('tensor_shape', [CONV_SHAPE], ids=[CONV_ID])
+@pytest.mark.parametrize("tensor_shape", [CONV_SHAPE], ids=[CONV_ID])
 def test_convolution_aware(tensor_shape):
-    """ Convolution Aware Initialization Test
+    """Convolution Aware Initialization Test
 
     Parameters
     ----------
@@ -61,6 +64,10 @@ def test_convolution_aware(tensor_shape):
     """
     with device("cpu"):
         fan_in, _ = initializers.compute_fans(tensor_shape)
-        std = np.sqrt(2. / fan_in)
-        _runner(initializers.ConvolutionAware(seed=123), tensor_shape,
-                target_mean=0, target_std=std)
+        std = np.sqrt(2.0 / fan_in)
+        _runner(
+            initializers.ConvolutionAware(seed=123),
+            tensor_shape,
+            target_mean=0,
+            target_std=std,
+        )

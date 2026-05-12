@@ -1,5 +1,6 @@
 #!/usr/bin python3
-""" Pytest unit tests for :mod:`tools.preview.viewer` """
+"""Pytest unit tests for :mod:`tools.preview.viewer`"""
+
 from __future__ import annotations
 import tkinter as tk
 import typing as T
@@ -14,6 +15,7 @@ import numpy as np
 from PIL import ImageTk
 
 from lib.logger import log_setup
+
 # Need to setup logging to avoid trace/verbose errors
 log_setup("DEBUG", "pytest_viewer.log", "PyTest, False")
 
@@ -28,7 +30,7 @@ if T.TYPE_CHECKING:
 
 
 def test__faces():
-    """ Test the :class:`~tools.preview.viewer._Faces dataclass initializes correctly """
+    """Test the :class:`~tools.preview.viewer._Faces dataclass initializes correctly"""
     faces = _Faces(5, 64)
     assert isinstance(faces.filenames, list) and not faces.filenames
     assert isinstance(faces.matrix, np.ndarray)
@@ -40,12 +42,15 @@ _PARAMS = ((3, 448), (4, 333), (5, 254), (6, 128))  # columns/face_size
 _IDS = [f"cols:{c},size:{s}[{get_backend().upper()}]" for c, s in _PARAMS]
 
 
-class TestFacesDisplay():
-    """ Test :class:`~tools.preview.viewer.FacesDisplay """
+class TestFacesDisplay:
+    """Test :class:`~tools.preview.viewer.FacesDisplay"""
+
     _padding = 64
 
-    def get_faces_display_instance(self, columns: int = 5, face_size: int = 256) -> FacesDisplay:
-        """ Obtain an instance of :class:`~tools.preview.viewer.FacesDisplay` with the given column
+    def get_faces_display_instance(
+        self, columns: int = 5, face_size: int = 256
+    ) -> FacesDisplay:
+        """Obtain an instance of :class:`~tools.preview.viewer.FacesDisplay` with the given column
         and face size layout.
 
         Parameters
@@ -66,7 +71,7 @@ class TestFacesDisplay():
         return retval
 
     def test_init(self) -> None:
-        """ Test :class:`~tools.preview.viewer.FacesDisplay` __init__ method """
+        """Test :class:`~tools.preview.viewer.FacesDisplay` __init__ method"""
         f_display = self.get_faces_display_instance(face_size=256)
         assert f_display._size == 256
         assert f_display._padding == self._padding
@@ -85,7 +90,7 @@ class TestFacesDisplay():
 
     @pytest.mark.parametrize("columns, face_size", _PARAMS, ids=_IDS)
     def test__total_columns(self, columns: int, face_size: int) -> None:
-        """ Test :class:`~tools.preview.viewer.FacesDisplay` _total_columns property is correctly
+        """Test :class:`~tools.preview.viewer.FacesDisplay` _total_columns property is correctly
         calculated
 
         Parameters
@@ -100,7 +105,7 @@ class TestFacesDisplay():
         assert f_display._total_columns == columns
 
     def test_set_centering(self) -> None:
-        """ Test :class:`~tools.preview.viewer.FacesDisplay` set_centering_offset method """
+        """Test :class:`~tools.preview.viewer.FacesDisplay` set_centering_offset method"""
         f_display = self.get_faces_display_instance()
         assert f_display._centering is None
         centering: CenteringType = "legacy"
@@ -109,7 +114,7 @@ class TestFacesDisplay():
         assert f_display._y_offset == 0.80
 
     def test_set_display_dimensions(self) -> None:
-        """ Test :class:`~tools.preview.viewer.FacesDisplay` set_display_dimensions method """
+        """Test :class:`~tools.preview.viewer.FacesDisplay` set_display_dimensions method"""
         f_display = self.get_faces_display_instance()
         assert f_display._display_dims == (1, 1)
         dimensions = (800, 600)
@@ -119,11 +124,10 @@ class TestFacesDisplay():
     # TODO remove the next line that suppresses a weird pytest bug when it tears down the tempdir
     @pytest.mark.filterwarnings("ignore::pytest.PytestUnraisableExceptionWarning")
     @pytest.mark.parametrize("columns, face_size", _PARAMS, ids=_IDS)
-    def test_update_tk_image(self,
-                             columns: int,
-                             face_size: int,
-                             mocker: pytest_mock.MockerFixture) -> None:
-        """ Test :class:`~tools.preview.viewer.FacesDisplay` update_tk_image method
+    def test_update_tk_image(
+        self, columns: int, face_size: int, mocker: pytest_mock.MockerFixture
+    ) -> None:
+        """Test :class:`~tools.preview.viewer.FacesDisplay` update_tk_image method
 
         Parameters
         ----------
@@ -136,8 +140,10 @@ class TestFacesDisplay():
         """
         f_display = self.get_faces_display_instance(columns, face_size)
         f_display._build_faces_image = T.cast(MagicMock, mocker.MagicMock())  # type:ignore
-        f_display._get_scale_size = T.cast(MagicMock,  # type:ignore
-                                           mocker.MagicMock(return_value=(128, 128)))
+        f_display._get_scale_size = T.cast(
+            MagicMock,  # type:ignore
+            mocker.MagicMock(return_value=(128, 128)),
+        )
         f_display._faces_source = np.zeros((face_size, face_size, 3), dtype=np.uint8)
         f_display._faces_dest = np.zeros((face_size, face_size, 3), dtype=np.uint8)
 
@@ -157,7 +163,7 @@ class TestFacesDisplay():
 
     @pytest.mark.parametrize("columns, face_size", _PARAMS, ids=_IDS)
     def test_get_scale_size(self, columns: int, face_size: int) -> None:
-        """ Test :class:`~tools.preview.viewer.FacesDisplay` get_scale_size method
+        """Test :class:`~tools.preview.viewer.FacesDisplay` get_scale_size method
 
         Parameters
         ----------
@@ -174,11 +180,10 @@ class TestFacesDisplay():
         assert size == (600, 600)
 
     @pytest.mark.parametrize("columns, face_size", _PARAMS, ids=_IDS)
-    def test__build_faces_image(self,
-                                columns: int,
-                                face_size: int,
-                                mocker: pytest_mock.MockerFixture) -> None:
-        """ Test :class:`~tools.preview.viewer.FacesDisplay` _build_faces_image method
+    def test__build_faces_image(
+        self, columns: int, face_size: int, mocker: pytest_mock.MockerFixture
+    ) -> None:
+        """Test :class:`~tools.preview.viewer.FacesDisplay` _build_faces_image method
 
         Parameters
         ----------
@@ -195,9 +200,14 @@ class TestFacesDisplay():
         f_display._faces_from_frames = T.cast(MagicMock, mocker.MagicMock())  # type:ignore
         f_display._header_text = T.cast(  # type:ignore
             MagicMock,
-            mocker.MagicMock(return_value=np.random.rand(header_size, face_size * columns, 3)))
-        f_display._draw_rect = T.cast(MagicMock,  # type:ignore
-                                      mocker.MagicMock(side_effect=lambda x: x))
+            mocker.MagicMock(
+                return_value=np.random.rand(header_size, face_size * columns, 3)
+            ),
+        )
+        f_display._draw_rect = T.cast(
+            MagicMock,  # type:ignore
+            mocker.MagicMock(side_effect=lambda x: x),
+        )
 
         # Test full update
         f_display.update_source = True
@@ -206,7 +216,11 @@ class TestFacesDisplay():
         f_display._faces_from_frames.assert_called_once()
         f_display._header_text.assert_called_once()
         assert f_display._draw_rect.call_count == columns * 2  # src + dst
-        assert f_display._faces_source.shape == (face_size + header_size, face_size * columns, 3)
+        assert f_display._faces_source.shape == (
+            face_size + header_size,
+            face_size * columns,
+            3,
+        )
         assert f_display._faces_dest.shape == (face_size, face_size * columns, 3)
 
         f_display._faces_from_frames.reset_mock()
@@ -223,11 +237,10 @@ class TestFacesDisplay():
         assert f_display._faces_dest.shape == (face_size, face_size * columns, 3)
 
     @pytest.mark.parametrize("columns, face_size", _PARAMS, ids=_IDS)
-    def test_faces__from_frames(self,
-                                columns,
-                                face_size,
-                                mocker: pytest_mock.MockerFixture) -> None:
-        """ Test :class:`~tools.preview.viewer.FacesDisplay` _from_frames method
+    def test_faces__from_frames(
+        self, columns, face_size, mocker: pytest_mock.MockerFixture
+    ) -> None:
+        """Test :class:`~tools.preview.viewer.FacesDisplay` _from_frames method
 
         Parameters
         ----------
@@ -240,7 +253,9 @@ class TestFacesDisplay():
         """
         f_display = self.get_faces_display_instance(columns, face_size)
         f_display.source = [mocker.MagicMock() for _ in range(3)]
-        f_display.destination = [np.random.rand(face_size, face_size, 3) for _ in range(3)]
+        f_display.destination = [
+            np.random.rand(face_size, face_size, 3) for _ in range(3)
+        ]
         f_display._crop_source_faces = T.cast(MagicMock, mocker.MagicMock())  # type:ignore
         f_display._crop_destination_faces = T.cast(MagicMock, mocker.MagicMock())  # type:ignore
 
@@ -260,12 +275,14 @@ class TestFacesDisplay():
         f_display._crop_destination_faces.assert_called_once()
 
     @pytest.mark.parametrize("columns, face_size", _PARAMS, ids=_IDS)
-    def test__crop_source_faces(self,
-                                columns: int,
-                                face_size: int,
-                                monkeypatch: pytest.MonkeyPatch,
-                                mocker: pytest_mock.MockerFixture) -> None:
-        """ Test :class:`~tools.preview.viewer.FacesDisplay` _crop_source_faces method
+    def test__crop_source_faces(
+        self,
+        columns: int,
+        face_size: int,
+        monkeypatch: pytest.MonkeyPatch,
+        mocker: pytest_mock.MockerFixture,
+    ) -> None:
+        """Test :class:`~tools.preview.viewer.FacesDisplay` _crop_source_faces method
 
         Parameters
         ----------
@@ -282,9 +299,12 @@ class TestFacesDisplay():
         f_display._centering = "face"
         f_display.update_source = True
 
-        transform_image_mock = mocker.MagicMock(return_value=np.zeros((face_size, face_size, 3),
-                                                                      dtype=np.uint8))
-        monkeypatch.setattr("tools.preview.viewer.transform_image", transform_image_mock)
+        transform_image_mock = mocker.MagicMock(
+            return_value=np.zeros((face_size, face_size, 3), dtype=np.uint8)
+        )
+        monkeypatch.setattr(
+            "tools.preview.viewer.transform_image", transform_image_mock
+        )
 
         mats = np.random.random((columns, 2, 3)).astype(np.float32)
         f_display.source = [mocker.MagicMock() for _ in range(columns)]
@@ -307,12 +327,14 @@ class TestFacesDisplay():
             assert np.all(f_display._faces.matrix[idx] == mats[idx])
 
     @pytest.mark.parametrize("columns, face_size", _PARAMS, ids=_IDS)
-    def test__crop_destination_faces(self,
-                                     columns: int,
-                                     face_size: int,
-                                     monkeypatch: pytest.MonkeyPatch,
-                                     mocker: pytest_mock.MockerFixture) -> None:
-        """ Test :class:`~tools.preview.viewer.FacesDisplay` _crop_destination_faces method
+    def test__crop_destination_faces(
+        self,
+        columns: int,
+        face_size: int,
+        monkeypatch: pytest.MonkeyPatch,
+        mocker: pytest_mock.MockerFixture,
+    ) -> None:
+        """Test :class:`~tools.preview.viewer.FacesDisplay` _crop_destination_faces method
 
         Parameters
         ----------
@@ -326,9 +348,12 @@ class TestFacesDisplay():
         f_display = self.get_faces_display_instance(columns, face_size)
         f_display._centering = "face"
 
-        transform_image_mock = mocker.MagicMock(return_value=np.zeros((face_size, face_size, 3),
-                                                                      dtype=np.uint8))
-        monkeypatch.setattr("tools.preview.viewer.transform_image", transform_image_mock)
+        transform_image_mock = mocker.MagicMock(
+            return_value=np.zeros((face_size, face_size, 3), dtype=np.uint8)
+        )
+        monkeypatch.setattr(
+            "tools.preview.viewer.transform_image", transform_image_mock
+        )
 
         f_display.source = [mocker.MagicMock() for _ in range(columns)]
         for item in f_display.source:  # type ignore
@@ -340,11 +365,10 @@ class TestFacesDisplay():
         assert all(f.shape == (face_size, face_size, 3) for f in f_display._faces.dst)
 
     @pytest.mark.parametrize("columns, face_size", _PARAMS, ids=_IDS)
-    def test__header_text(self,
-                          columns: int,
-                          face_size: int,
-                          mocker: pytest_mock.MockerFixture) -> None:
-        """ Test :class:`~tools.preview.viewer.FacesDisplay` _header_text method
+    def test__header_text(
+        self, columns: int, face_size: int, mocker: pytest_mock.MockerFixture
+    ) -> None:
+        """Test :class:`~tools.preview.viewer.FacesDisplay` _header_text method
 
         Parameters
         ----------
@@ -361,7 +385,9 @@ class TestFacesDisplay():
 
         cv2_mock = mocker.patch("tools.preview.viewer.cv2")
         text_width, text_height = (100, 32)
-        cv2_mock.getTextSize.return_value = [(text_width, text_height), ]
+        cv2_mock.getTextSize.return_value = [
+            (text_width, text_height),
+        ]
 
         header_box = f_display._header_text()
         assert cv2_mock.getTextSize.call_count == columns
@@ -369,11 +395,10 @@ class TestFacesDisplay():
         assert header_box.shape == (face_size // 8, face_size * columns, 3)
 
     @pytest.mark.parametrize("columns, face_size", _PARAMS, ids=_IDS)
-    def test__draw_rect_text(self,
-                             columns: int,
-                             face_size: int,
-                             mocker: pytest_mock.MockerFixture) -> None:
-        """ Test :class:`~tools.preview.viewer.FacesDisplay` _draw_rect method
+    def test__draw_rect_text(
+        self, columns: int, face_size: int, mocker: pytest_mock.MockerFixture
+    ) -> None:
+        """Test :class:`~tools.preview.viewer.FacesDisplay` _draw_rect method
 
         Parameters
         ----------
@@ -395,11 +420,11 @@ class TestFacesDisplay():
 
 
 class TestImagesCanvas:
-    """ Test :class:`~tools.preview.viewer.ImagesCanvas` """
+    """Test :class:`~tools.preview.viewer.ImagesCanvas`"""
 
     @pytest.fixture
     def parent(self) -> MagicMock:
-        """ Mock object to act as the parent widget to the ImagesCanvas
+        """Mock object to act as the parent widget to the ImagesCanvas
 
         Returns
         --------
@@ -417,7 +442,7 @@ class TestImagesCanvas:
 
     @pytest.fixture(name="images_canvas_instance")
     def images_canvas_fixture(self, parent) -> ImagesCanvas:
-        """ Fixture for creating a testing :class:`~tools.preview.viewer.ImagesCanvas` instance
+        """Fixture for creating a testing :class:`~tools.preview.viewer.ImagesCanvas` instance
 
         Parameters
         ----------
@@ -432,8 +457,10 @@ class TestImagesCanvas:
         app = MagicMock()
         return ImagesCanvas(app, parent)
 
-    def test_init(self, images_canvas_instance: ImagesCanvas, parent: MagicMock) -> None:
-        """ Test :class:`~tools.preview.viewer.ImagesCanvas` __init__ method
+    def test_init(
+        self, images_canvas_instance: ImagesCanvas, parent: MagicMock
+    ) -> None:
+        """Test :class:`~tools.preview.viewer.ImagesCanvas` __init__ method
 
         Parameters
         ----------
@@ -441,17 +468,19 @@ class TestImagesCanvas:
             The class instance to test
         parent: :class:`unittest.mock.MagicMock`
             The mocked parent ttk.PanedWindow
-         """
+        """
         assert images_canvas_instance._display == parent.preview_display
         assert isinstance(images_canvas_instance._canvas, tk.Canvas)
         assert images_canvas_instance._canvas.master == images_canvas_instance
         assert images_canvas_instance._canvas.winfo_ismapped()
 
-    def test_resize(self,
-                    images_canvas_instance: ImagesCanvas,
-                    parent: MagicMock,
-                    mocker: pytest_mock.MockerFixture) -> None:
-        """ Test :class:`~tools.preview.viewer.ImagesCanvas` resize method
+    def test_resize(
+        self,
+        images_canvas_instance: ImagesCanvas,
+        parent: MagicMock,
+        mocker: pytest_mock.MockerFixture,
+    ) -> None:
+        """Test :class:`~tools.preview.viewer.ImagesCanvas` resize method
 
         Parameters
         ----------
@@ -467,14 +496,18 @@ class TestImagesCanvas:
 
         images_canvas_instance._resize(event_mock)
 
-        parent.preview_display.set_display_dimensions.assert_called_once_with((100, 200))
+        parent.preview_display.set_display_dimensions.assert_called_once_with(
+            (100, 200)
+        )
         images_canvas_instance.reload.assert_called_once()
 
-    def test_reload(self,
-                    images_canvas_instance: ImagesCanvas,
-                    parent: MagicMock,
-                    mocker: pytest_mock.MockerFixture) -> None:
-        """ Test :class:`~tools.preview.viewer.ImagesCanvas` reload method
+    def test_reload(
+        self,
+        images_canvas_instance: ImagesCanvas,
+        parent: MagicMock,
+        mocker: pytest_mock.MockerFixture,
+    ) -> None:
+        """Test :class:`~tools.preview.viewer.ImagesCanvas` reload method
 
         Parameters
         ----------

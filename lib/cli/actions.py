@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-""" Custom :class:`argparse.Action` objects for Faceswap's Command Line Interface.
+"""Custom :class:`argparse.Action` objects for Faceswap's Command Line Interface.
 
 The custom actions within this module allow for custom manipulation of Command Line Arguments
 as well as adding a mechanism for indicating to the GUI how specific options should be rendered.
@@ -14,13 +14,15 @@ from lib.utils import get_module_objects
 
 # << FILE HANDLING >>
 
+
 class _FullPaths(argparse.Action):
-    """ Parent class for various file type and file path handling classes.
+    """Parent class for various file type and file path handling classes.
 
     Expands out given paths to their full absolute paths. This class should not be
     called directly. It is the base class for the various different file handling
     methods.
     """
+
     def __call__(self, parser, namespace, values, option_string=None) -> None:
         if isinstance(values, (list, tuple)):
             vals = [os.path.abspath(os.path.expanduser(val)) for val in values]
@@ -30,7 +32,7 @@ class _FullPaths(argparse.Action):
 
 
 class DirFullPaths(_FullPaths):
-    """ Adds support for a Directory browser in the GUI.
+    """Adds support for a Directory browser in the GUI.
 
     This is a standard :class:`argparse.Action` (with stock parameters) which indicates to the GUI
     that a dialog box should be opened in order to browse for a folder.
@@ -44,11 +46,12 @@ class DirFullPaths(_FullPaths):
     >>>        opts=("-f", "--folder_location"),
     >>>        action=DirFullPaths)),
     """
+
     pass  # pylint:disable=unnecessary-pass
 
 
 class FileFullPaths(_FullPaths):
-    """ Adds support for a File browser to select a single file in the GUI.
+    """Adds support for a File browser to select a single file in the GUI.
 
     This extends the standard :class:`argparse.Action` and adds an additional parameter
     :attr:`filetypes`, indicating to the GUI that it should pop a file browser for opening a file
@@ -69,26 +72,29 @@ class FileFullPaths(_FullPaths):
     >>>        action=FileFullPaths,
     >>>        filetypes="video))"
     """
+
     def __init__(self, *args, filetypes: str | None = None, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.filetypes = filetypes
 
     def _get_kwargs(self):
-        names = ["option_strings",
-                 "dest",
-                 "nargs",
-                 "const",
-                 "default",
-                 "type",
-                 "choices",
-                 "help",
-                 "metavar",
-                 "filetypes"]
+        names = [
+            "option_strings",
+            "dest",
+            "nargs",
+            "const",
+            "default",
+            "type",
+            "choices",
+            "help",
+            "metavar",
+            "filetypes",
+        ]
         return [(name, getattr(self, name)) for name in names]
 
 
 class FilesFullPaths(FileFullPaths):
-    """ Adds support for a File browser to select multiple files in the GUI.
+    """Adds support for a File browser to select multiple files in the GUI.
 
     This extends the standard :class:`argparse.Action` and adds an additional parameter
     :attr:`filetypes`, indicating to the GUI that it should pop a file browser, and limit
@@ -111,6 +117,7 @@ class FilesFullPaths(FileFullPaths):
     >>>        filetypes="image",
     >>>        nargs="+"))
     """
+
     def __init__(self, *args, filetypes: str | None = None, **kwargs) -> None:
         if kwargs.get("nargs", None) is None:
             opt = kwargs["option_strings"]
@@ -119,7 +126,7 @@ class FilesFullPaths(FileFullPaths):
 
 
 class DirOrFileFullPaths(FileFullPaths):
-    """ Adds support to the GUI to launch either a file browser or a folder browser.
+    """Adds support to the GUI to launch either a file browser or a folder browser.
 
     Some inputs (for example source frames) can come from a folder of images or from a
     video file. This indicates to the GUI that it should place 2 buttons (one for a folder
@@ -148,7 +155,7 @@ class DirOrFileFullPaths(FileFullPaths):
 
 
 class DirOrFilesFullPaths(FileFullPaths):
-    """ Adds support to the GUI to launch either a file browser for selecting multiple files
+    """Adds support to the GUI to launch either a file browser for selecting multiple files
     or a folder browser.
 
     Some inputs (for example face filter) can come from a folder of images or from multiple
@@ -175,8 +182,9 @@ class DirOrFilesFullPaths(FileFullPaths):
     >>>        action=DirOrFileFullPaths,
     >>>        filetypes="video))"
     """
+
     def __call__(self, parser, namespace, values, option_string=None) -> None:
-        """ Override :class:`_FullPaths` __call__ function.
+        """Override :class:`_FullPaths` __call__ function.
 
         The input for this option can be a space separated list of files or a single folder.
         Folders can have spaces in them, so we don't want to blindly expand the paths.
@@ -192,7 +200,7 @@ class DirOrFilesFullPaths(FileFullPaths):
 
 
 class SaveFileFullPaths(FileFullPaths):
-    """ Adds support for a Save File dialog in the GUI.
+    """Adds support for a Save File dialog in the GUI.
 
     This extends the standard :class:`argparse.Action` and adds an additional parameter
     :attr:`filetypes`, indicating to the GUI that it should pop a save file browser, and limit
@@ -213,11 +221,12 @@ class SaveFileFullPaths(FileFullPaths):
     >>>        action=SaveFileFullPaths,
     >>>        filetypes="video"))
     """
+
     pass  # pylint:disable=unnecessary-pass
 
 
 class ContextFullPaths(FileFullPaths):
-    """ Adds support for context sensitive browser dialog opening in the GUI.
+    """Adds support for context sensitive browser dialog opening in the GUI.
 
     For some tasks, the type of action (file load, folder open, file save etc.) can vary
     depending on the task to be performed (a good example of this is the effmpeg tool).
@@ -246,12 +255,15 @@ class ContextFullPaths(FileFullPaths):
     >>>        filetypes="video",
     >>>        action_option="-a"))
     """
+
     # pylint:disable=too-many-arguments
-    def __init__(self,
-                 *args,
-                 filetypes: str | None = None,
-                 action_option: str | None = None,
-                 **kwargs) -> None:
+    def __init__(
+        self,
+        *args,
+        filetypes: str | None = None,
+        action_option: str | None = None,
+        **kwargs,
+    ) -> None:
         opt = kwargs["option_strings"]
         if kwargs.get("nargs", None) is not None:
             raise ValueError(f"nargs not allowed for ContextFullPaths: {opt}")
@@ -263,24 +275,27 @@ class ContextFullPaths(FileFullPaths):
         self.action_option = action_option
 
     def _get_kwargs(self) -> list[tuple[str, T.Any]]:
-        names = ["option_strings",
-                 "dest",
-                 "nargs",
-                 "const",
-                 "default",
-                 "type",
-                 "choices",
-                 "help",
-                 "metavar",
-                 "filetypes",
-                 "action_option"]
+        names = [
+            "option_strings",
+            "dest",
+            "nargs",
+            "const",
+            "default",
+            "type",
+            "choices",
+            "help",
+            "metavar",
+            "filetypes",
+            "action_option",
+        ]
         return [(name, getattr(self, name)) for name in names]
 
 
 # << GUI DISPLAY OBJECTS >>
 
+
 class Radio(argparse.Action):
-    """ Adds support for a GUI Radio options box.
+    """Adds support for a GUI Radio options box.
 
     This is a standard :class:`argparse.Action` (with stock parameters) which indicates to the GUI
     that the options passed should be rendered as a group of Radio Buttons rather than a combo box.
@@ -296,6 +311,7 @@ class Radio(argparse.Action):
     >>>        action=Radio,
     >>>        choices=["foo", "bar"))
     """
+
     def __init__(self, *args, **kwargs) -> None:
         opt = kwargs["option_strings"]
         if kwargs.get("nargs", None) is not None:
@@ -309,7 +325,7 @@ class Radio(argparse.Action):
 
 
 class MultiOption(argparse.Action):
-    """ Adds support for multiple option checkboxes in the GUI.
+    """Adds support for multiple option checkboxes in the GUI.
 
     This is a standard :class:`argparse.Action` (with stock parameters) which indicates to the GUI
     that the options passed should be rendered as a group of Radio Buttons rather than a combo box.
@@ -324,6 +340,7 @@ class MultiOption(argparse.Action):
     >>>        action=MultiOption,
     >>>        choices=["foo", "bar"))
     """
+
     def __init__(self, *args, **kwargs) -> None:
         opt = kwargs["option_strings"]
         if not kwargs.get("nargs", []):
@@ -337,7 +354,7 @@ class MultiOption(argparse.Action):
 
 
 class Slider(argparse.Action):
-    """ Adds support for a slider in the GUI.
+    """Adds support for a slider in the GUI.
 
     The standard :class:`argparse.Action` is extended with the additional parameters listed below.
     The :attr:`default` value must be supplied and the :attr:`type` must be either :class:`int` or
@@ -379,11 +396,14 @@ class Slider(argparse.Action):
     >>>        type=float,
     >>>        default=5.00))
     """
-    def __init__(self,
-                 *args,
-                 min_max: tuple[int, int] | tuple[float, float] | None = None,
-                 rounding: int | None = None,
-                 **kwargs) -> None:
+
+    def __init__(
+        self,
+        *args,
+        min_max: tuple[int, int] | tuple[float, float] | None = None,
+        rounding: int | None = None,
+        **kwargs,
+    ) -> None:
         opt = kwargs["option_strings"]
         if kwargs.get("nargs", None) is not None:
             raise ValueError(f"nargs not allowed for Slider: {opt}")
@@ -401,17 +421,19 @@ class Slider(argparse.Action):
         self.rounding = rounding
 
     def _get_kwargs(self) -> list[tuple[str, T.Any]]:
-        names = ["option_strings",
-                 "dest",
-                 "nargs",
-                 "const",
-                 "default",
-                 "type",
-                 "choices",
-                 "help",
-                 "metavar",
-                 "min_max",  # Tuple containing min and max values of scale
-                 "rounding"]  # Decimal places to round floats to or step interval for ints
+        names = [
+            "option_strings",
+            "dest",
+            "nargs",
+            "const",
+            "default",
+            "type",
+            "choices",
+            "help",
+            "metavar",
+            "min_max",  # Tuple containing min and max values of scale
+            "rounding",
+        ]  # Decimal places to round floats to or step interval for ints
         return [(name, getattr(self, name)) for name in names]
 
     def __call__(self, parser, namespace, values, option_string=None) -> None:

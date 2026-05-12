@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-""" DeepFaceLab H128 Model
-    Based on https://github.com/iperov/DeepFaceLab
+"""DeepFaceLab H128 Model
+Based on https://github.com/iperov/DeepFaceLab
 """
 
 from keras import Input, layers, Model as KModel
@@ -12,14 +12,15 @@ from . import dfl_h128_defaults as cfg
 
 
 class Model(OriginalModel):
-    """ H128 Model from DFL """
+    """H128 Model from DFL"""
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.input_shape = (128, 128, 3)
         self.encoder_dim = 256 if cfg.lowmem() else 512
 
     def encoder(self):
-        """ DFL H128 Encoder """
+        """DFL H128 Encoder"""
         input_ = Input(shape=self.input_shape)
         var_x = Conv2DBlock(128, activation="leakyrelu")(input_)
         var_x = Conv2DBlock(256, activation="leakyrelu")(var_x)
@@ -32,7 +33,7 @@ class Model(OriginalModel):
         return KModel(input_, var_x, name="encoder")
 
     def decoder(self, side):
-        """ DFL H128 Decoder """
+        """DFL H128 Decoder"""
         input_ = Input(shape=(16, 16, self.encoder_dim))
         var_x = input_
         var_x = UpscaleBlock(self.encoder_dim, activation="leakyrelu")(var_x)

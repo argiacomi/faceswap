@@ -1,5 +1,6 @@
 #!/usr/bin python3
-""" Pytest unit tests for :mod:`lib.gui.stats.event_reader` """
+"""Pytest unit tests for :mod:`lib.gui.stats.event_reader`"""
+
 # pylint:disable=protected-access
 from __future__ import annotations
 import os
@@ -15,15 +16,21 @@ import pytest_mock
 
 from tensorboard.compat.proto import event_pb2
 
-from lib.gui.analysis.event_reader import (_Cache, _CacheData, _EventParser,
-                                           _LogFiles, EventData, TensorBoardLogs)
+from lib.gui.analysis.event_reader import (
+    _Cache,
+    _CacheData,
+    _EventParser,
+    _LogFiles,
+    EventData,
+    TensorBoardLogs,
+)
 
 if T.TYPE_CHECKING:
     from collections.abc import Iterator
 
 
 def test__logfiles(tmp_path: str):
-    """ Test the _LogFiles class operates correctly
+    """Test the _LogFiles class operates correctly
 
     Parameters
     ----------
@@ -63,7 +70,7 @@ def test__logfiles(tmp_path: str):
 
 
 def test__cachedata():
-    """ Test the _CacheData class operates correctly """
+    """Test the _CacheData class operates correctly"""
     labels = ["label_a", "label_b"]
     timestamps = np.array([1.23, 4.56], dtype="float64")
     loss = np.array([[2.34, 5.67], [3.45, 6.78]], dtype="float32")
@@ -93,10 +100,11 @@ def test__cachedata():
 
 # _Cache tests
 class Test_Cache:  # pylint:disable=invalid-name
-    """ Test that :class:`lib.gui.analysis.event_reader._Cache` works correctly """
+    """Test that :class:`lib.gui.analysis.event_reader._Cache` works correctly"""
+
     @staticmethod
     def test_init() -> None:
-        """ Test __init__ """
+        """Test __init__"""
         cache = _Cache()
         assert isinstance(cache._data, dict)
         assert isinstance(cache._carry_over, dict)
@@ -107,19 +115,34 @@ class Test_Cache:  # pylint:disable=invalid-name
 
     @staticmethod
     def test_is_cached() -> None:
-        """ Test is_cached function works """
+        """Test is_cached function works"""
         cache = _Cache()
 
-        data = _CacheData(["test_1", "test_2"],
-                          np.array([1.23, ], dtype="float64"),
-                          np.array([[2.34, ], [4.56]], dtype="float32"))
+        data = _CacheData(
+            ["test_1", "test_2"],
+            np.array(
+                [
+                    1.23,
+                ],
+                dtype="float64",
+            ),
+            np.array(
+                [
+                    [
+                        2.34,
+                    ],
+                    [4.56],
+                ],
+                dtype="float32",
+            ),
+        )
         cache._data[1] = data
         assert cache.is_cached(1)
         assert not cache.is_cached(2)
 
     @staticmethod
     def test_cache_data(mocker: pytest_mock.MockerFixture) -> None:
-        """ Test cache_data function works
+        """Test cache_data function works
 
         Parameters
         ----------
@@ -129,15 +152,19 @@ class Test_Cache:  # pylint:disable=invalid-name
         cache = _Cache()
 
         session_id = 1
-        data = {1: EventData(4., [1., 2.]), 2: EventData(5., [3., 4.])}
-        labels = ['label1', 'label2']
+        data = {1: EventData(4.0, [1.0, 2.0]), 2: EventData(5.0, [3.0, 4.0])}
+        labels = ["label1", "label2"]
         is_live = False
 
         cache.cache_data(session_id, data, labels, is_live)
         assert cache._loss_labels == labels
         assert cache.is_cached(session_id)
-        np.testing.assert_array_equal(cache._data[session_id].timestamps, np.array([4., 5.]))
-        np.testing.assert_array_equal(cache._data[session_id].loss, np.array([[1., 2.], [3., 4.]]))
+        np.testing.assert_array_equal(
+            cache._data[session_id].timestamps, np.array([4.0, 5.0])
+        )
+        np.testing.assert_array_equal(
+            cache._data[session_id].loss, np.array([[1.0, 2.0], [3.0, 4.0]])
+        )
 
         add_live = mocker.patch("lib.gui.analysis.event_reader._Cache._add_latest_live")
         is_live = True
@@ -146,37 +173,42 @@ class Test_Cache:  # pylint:disable=invalid-name
 
     @staticmethod
     def test__to_numpy() -> None:
-        """ Test _to_numpy function works """
+        """Test _to_numpy function works"""
         cache = _Cache()
-        cache._loss_labels = ['label1', 'label2']
-        data = {1: EventData(4., [1., 2.]), 2: EventData(5., [3., 4.])}
+        cache._loss_labels = ["label1", "label2"]
+        data = {1: EventData(4.0, [1.0, 2.0]), 2: EventData(5.0, [3.0, 4.0])}
 
         # Non-live
         is_live = False
         times, loss = cache._to_numpy(data, is_live)
-        np.testing.assert_array_equal(times, np.array([4., 5.]))
-        np.testing.assert_array_equal(loss, np.array([[1., 2.], [3., 4.]]))
+        np.testing.assert_array_equal(times, np.array([4.0, 5.0]))
+        np.testing.assert_array_equal(loss, np.array([[1.0, 2.0], [3.0, 4.0]]))
 
         # Correctly collected live
         is_live = True
         times, loss = cache._to_numpy(data, is_live)
-        np.testing.assert_array_equal(times, np.array([4., 5.]))
-        np.testing.assert_array_equal(loss, np.array([[1., 2.], [3., 4.]]))
+        np.testing.assert_array_equal(times, np.array([4.0, 5.0]))
+        np.testing.assert_array_equal(loss, np.array([[1.0, 2.0], [3.0, 4.0]]))
 
         # Incorrectly collected live
-        live_data = {1: EventData(4., [1., 2.]),
-                     2: EventData(5., [3.]),
-                     3: EventData(6., [4., 5., 6.])}
+        live_data = {
+            1: EventData(4.0, [1.0, 2.0]),
+            2: EventData(5.0, [3.0]),
+            3: EventData(6.0, [4.0, 5.0, 6.0]),
+        }
         times, loss = cache._to_numpy(live_data, is_live)
-        np.testing.assert_array_equal(times, np.array([4.]))
-        np.testing.assert_array_equal(loss, np.array([[1., 2.]]))
+        np.testing.assert_array_equal(times, np.array([4.0]))
+        np.testing.assert_array_equal(loss, np.array([[1.0, 2.0]]))
 
     @staticmethod
     def test__collect_carry_over() -> None:
-        """ Test _collect_carry_over function works """
-        data = {1: EventData(3., [4., 5.]), 2: EventData(6., [7., 8.])}
-        carry_over = {1: EventData(3., [2., 3.])}
-        expected = {1: EventData(3., [2., 3., 4., 5.]), 2: EventData(6., [7., 8.])}
+        """Test _collect_carry_over function works"""
+        data = {1: EventData(3.0, [4.0, 5.0]), 2: EventData(6.0, [7.0, 8.0])}
+        carry_over = {1: EventData(3.0, [2.0, 3.0])}
+        expected = {
+            1: EventData(3.0, [2.0, 3.0, 4.0, 5.0]),
+            2: EventData(6.0, [7.0, 8.0]),
+        }
 
         cache = _Cache()
         cache._carry_over = carry_over
@@ -185,17 +217,19 @@ class Test_Cache:  # pylint:disable=invalid-name
 
     @staticmethod
     def test__process_data() -> None:
-        """ Test _process_data function works """
+        """Test _process_data function works"""
         cache = _Cache()
-        cache._loss_labels = ['label1', 'label2']
+        cache._loss_labels = ["label1", "label2"]
 
-        data = {1: EventData(4., [5., 6.]),
-                2: EventData(5., [7., 8.]),
-                3: EventData(6., [9.])}
+        data = {
+            1: EventData(4.0, [5.0, 6.0]),
+            2: EventData(5.0, [7.0, 8.0]),
+            3: EventData(6.0, [9.0]),
+        }
         is_live = False
-        expected_timestamps = np.array([4., 5.])
-        expected_loss = np.array([[5., 6.], [7., 8.]])
-        expected_carry_over = {3: EventData(6., [9.])}
+        expected_timestamps = np.array([4.0, 5.0])
+        expected_loss = np.array([[5.0, 6.0], [7.0, 8.0]])
+        expected_carry_over = {3: EventData(6.0, [9.0])}
 
         timestamps, loss = cache._process_data(data, is_live)
         np.testing.assert_array_equal(timestamps, expected_timestamps)
@@ -210,14 +244,14 @@ class Test_Cache:  # pylint:disable=invalid-name
 
     @staticmethod
     def test__add_latest_live() -> None:
-        """ Test _add_latest_live function works """
+        """Test _add_latest_live function works"""
         session_id = 1
-        labels = ['label1', 'label2']
-        data = {1: EventData(3., [5., 6.]), 2: EventData(4., [7., 8.])}
-        new_timestamp = np.array([5.], dtype="float64")
-        new_loss = np.array([[8., 9.]], dtype="float32")
-        expected_timestamps = np.array([3., 4., 5.])
-        expected_loss = np.array([[5., 6.], [7., 8.], [8., 9.]])
+        labels = ["label1", "label2"]
+        data = {1: EventData(3.0, [5.0, 6.0]), 2: EventData(4.0, [7.0, 8.0])}
+        new_timestamp = np.array([5.0], dtype="float64")
+        new_loss = np.array([[8.0, 9.0]], dtype="float32")
+        expected_timestamps = np.array([3.0, 4.0, 5.0])
+        expected_loss = np.array([[5.0, 6.0], [7.0, 8.0], [8.0, 9.0]])
 
         cache = _Cache()
         cache.cache_data(session_id, data, labels)  # Initial data
@@ -225,22 +259,24 @@ class Test_Cache:  # pylint:disable=invalid-name
 
         assert cache.is_cached(session_id)
         assert cache._loss_labels == labels
-        np.testing.assert_array_equal(cache._data[session_id].timestamps, expected_timestamps)
+        np.testing.assert_array_equal(
+            cache._data[session_id].timestamps, expected_timestamps
+        )
         np.testing.assert_array_equal(cache._data[session_id].loss, expected_loss)
 
     @staticmethod
     def test_get_data() -> None:
-        """ Test get_data function works """
+        """Test get_data function works"""
         session_id = 1
 
         cache = _Cache()
         assert cache.get_data(session_id, "loss") is None
         assert cache.get_data(session_id, "timestamps") is None
 
-        labels = ['label1', 'label2']
-        data = {1: EventData(3., [5., 6.]), 2: EventData(4., [7., 8.])}
-        expected_timestamps = np.array([3., 4.])
-        expected_loss = np.array([[5., 6.], [7., 8.]])
+        labels = ["label1", "label2"]
+        data = {1: EventData(3.0, [5.0, 6.0]), 2: EventData(4.0, [7.0, 8.0])}
+        expected_timestamps = np.array([3.0, 4.0])
+        expected_loss = np.array([[5.0, 6.0], [7.0, 8.0]])
 
         cache.cache_data(session_id, data, labels, is_live=False)
         get_timestamps = cache.get_data(session_id, "timestamps")
@@ -263,13 +299,13 @@ class Test_Cache:  # pylint:disable=invalid-name
 
 # TensorBoardLogs
 class TestTensorBoardLogs:
-    """ Test that :class:`lib.gui.analysis.event_reader.TensorBoardLogs` works correctly """
+    """Test that :class:`lib.gui.analysis.event_reader.TensorBoardLogs` works correctly"""
 
     @pytest.fixture(name="tensorboardlogs_instance")
-    def tensorboardlogs_fixture(self,
-                                tmp_path: str,
-                                request: pytest.FixtureRequest) -> TensorBoardLogs:
-        """ Pytest fixture for :class:`lib.gui.analysis.event_reader.TensorBoardLogs`
+    def tensorboardlogs_fixture(
+        self, tmp_path: str, request: pytest.FixtureRequest
+    ) -> TensorBoardLogs:
+        """Pytest fixture for :class:`lib.gui.analysis.event_reader.TensorBoardLogs`
 
         Parameters
         ----------
@@ -306,7 +342,7 @@ class TestTensorBoardLogs:
 
     @staticmethod
     def test_init(tensorboardlogs_instance: TensorBoardLogs) -> None:
-        """ Test __init__ works correctly
+        """Test __init__ works correctly
 
         Parameters
         ----------
@@ -325,7 +361,7 @@ class TestTensorBoardLogs:
 
     @staticmethod
     def test_session_ids(tensorboardlogs_instance: TensorBoardLogs) -> None:
-        """ Test session_ids property works correctly
+        """Test session_ids property works correctly
 
         Parameters
         ----------
@@ -337,7 +373,7 @@ class TestTensorBoardLogs:
 
     @staticmethod
     def test_set_training(tensorboardlogs_instance: TensorBoardLogs) -> None:
-        """ Test set_training works correctly
+        """Test set_training works correctly
 
         Parameters
         ----------
@@ -355,9 +391,10 @@ class TestTensorBoardLogs:
         assert tb_logs._training_iterator is None
 
     @staticmethod
-    def test__cache_data(tensorboardlogs_instance: TensorBoardLogs,
-                         mocker: pytest_mock.MockerFixture) -> None:
-        """ Test _cache_data works correctly
+    def test__cache_data(
+        tensorboardlogs_instance: TensorBoardLogs, mocker: pytest_mock.MockerFixture
+    ) -> None:
+        """Test _cache_data works correctly
 
         Parameters
         ----------
@@ -378,9 +415,10 @@ class TestTensorBoardLogs:
         assert cacher.called
 
     @staticmethod
-    def test__check_cache(tensorboardlogs_instance: TensorBoardLogs,
-                          mocker: pytest_mock.MockerFixture) -> None:
-        """ Test _check_cache works correctly
+    def test__check_cache(
+        tensorboardlogs_instance: TensorBoardLogs, mocker: pytest_mock.MockerFixture
+    ) -> None:
+        """Test _check_cache works correctly
 
         Parameters
         ----------
@@ -390,7 +428,9 @@ class TestTensorBoardLogs:
             Mocker for checking _cache_data is called
         """
         is_cached = mocker.patch("lib.gui.analysis.event_reader._Cache.is_cached")
-        cache_data = mocker.patch("lib.gui.analysis.event_reader.TensorBoardLogs._cache_data")
+        cache_data = mocker.patch(
+            "lib.gui.analysis.event_reader.TensorBoardLogs._cache_data"
+        )
         tb_logs = tensorboardlogs_instance
 
         # Session ID not training
@@ -436,9 +476,10 @@ class TestTensorBoardLogs:
         cache_data.reset_mock()
 
     @staticmethod
-    def test_get_loss(tensorboardlogs_instance: TensorBoardLogs,
-                      mocker: pytest_mock.MockerFixture) -> None:
-        """ Test get_loss works correctly
+    def test_get_loss(
+        tensorboardlogs_instance: TensorBoardLogs, mocker: pytest_mock.MockerFixture
+    ) -> None:
+        """Test get_loss works correctly
 
         Parameters
         ----------
@@ -452,7 +493,9 @@ class TestTensorBoardLogs:
         mocker.patch("lib.gui.analysis.event_reader.RecordIterator")
         tb_logs.get_loss(3)
 
-        check_cache = mocker.patch("lib.gui.analysis.event_reader.TensorBoardLogs._check_cache")
+        check_cache = mocker.patch(
+            "lib.gui.analysis.event_reader.TensorBoardLogs._check_cache"
+        )
         get_data = mocker.patch("lib.gui.analysis.event_reader._Cache.get_data")
         get_data.return_value = None
 
@@ -469,9 +512,10 @@ class TestTensorBoardLogs:
         get_data.reset_mock()
 
     @staticmethod
-    def test_get_timestamps(tensorboardlogs_instance: TensorBoardLogs,
-                            mocker: pytest_mock.MockerFixture) -> None:
-        """ Test get_timestamps works correctly
+    def test_get_timestamps(
+        tensorboardlogs_instance: TensorBoardLogs, mocker: pytest_mock.MockerFixture
+    ) -> None:
+        """Test get_timestamps works correctly
 
         Parameters
         ----------
@@ -485,7 +529,9 @@ class TestTensorBoardLogs:
 
         tb_logs.get_timestamps(3)
 
-        check_cache = mocker.patch("lib.gui.analysis.event_reader.TensorBoardLogs._check_cache")
+        check_cache = mocker.patch(
+            "lib.gui.analysis.event_reader.TensorBoardLogs._check_cache"
+        )
         get_data = mocker.patch("lib.gui.analysis.event_reader._Cache.get_data")
         get_data.return_value = None
 
@@ -504,13 +550,12 @@ class TestTensorBoardLogs:
 
 # EventParser
 class Test_EventParser:  # pylint:disable=invalid-name
-    """ Test that :class:`lib.gui.analysis.event_reader.TensorBoardLogs` works correctly """
-    def _create_example_event(self,
-                              step: int,
-                              loss_value: float,
-                              timestamp: float,
-                              serialize: bool = True) -> bytes:
-        """ Generate a test TensorBoard event
+    """Test that :class:`lib.gui.analysis.event_reader.TensorBoardLogs` works correctly"""
+
+    def _create_example_event(
+        self, step: int, loss_value: float, timestamp: float, serialize: bool = True
+    ) -> bytes:
+        """Generate a test TensorBoard event
 
         Parameters
         ----------
@@ -525,47 +570,51 @@ class Test_EventParser:  # pylint:disable=invalid-name
         """
         tags = {0: "keras", 1: "batch_total", 2: "batch_face_a", 3: "batch_face_b"}
         event = event_pb2.Event(step=step)
-        event.summary.value.add(tag=tags[step],  # pylint:disable=no-member
-                                simple_value=loss_value)
+        event.summary.value.add(
+            tag=tags[step],  # pylint:disable=no-member
+            simple_value=loss_value,
+        )
         event.wall_time = timestamp
         retval = event.SerializeToString() if serialize else event
         return retval
 
     @pytest.fixture(name="mock_iterator")
     def iterator(self) -> Iterator[bytes]:
-        """ Dummy iterator for generating test events
+        """Dummy iterator for generating test events
 
         Yields
         ------
         bytes
             A serialized test Tensorboard Event
         """
-        return iter([self._create_example_event(i, 1 + (i / 10), time()) for i in range(4)])
+        return iter(
+            [self._create_example_event(i, 1 + (i / 10), time()) for i in range(4)]
+        )
 
     @pytest.fixture(name="mock_cache")
     def mock_cache(self):
-        """ Dummy :class:`_Cache` for testing"""
+        """Dummy :class:`_Cache` for testing"""
+
         class _CacheMock:
             def __init__(self):
                 self.data = {}
                 self._loss_labels = []
 
             def is_cached(self, session_id):
-                """ Dummy is_cached method"""
+                """Dummy is_cached method"""
                 return session_id in self.data
 
-            def cache_data(self, session_id, data, labels,
-                           is_live=False):  # pylint:disable=unused-argument
-                """ Dummy cache_data method"""
-                self.data[session_id] = {'data': data, 'labels': labels}
+            def cache_data(self, session_id, data, labels, is_live=False):  # pylint:disable=unused-argument
+                """Dummy cache_data method"""
+                self.data[session_id] = {"data": data, "labels": labels}
 
         return _CacheMock()
 
     @pytest.fixture(name="event_parser_instance")
-    def event_parser_fixture(self,
-                             mock_iterator: Iterator[bytes],
-                             mock_cache: _Cache) -> _EventParser:
-        """ Pytest fixture for :class:`lib.gui.analysis.event_reader._EventParser`
+    def event_parser_fixture(
+        self, mock_iterator: Iterator[bytes], mock_cache: _Cache
+    ) -> _EventParser:
+        """Pytest fixture for :class:`lib.gui.analysis.event_reader._EventParser`
 
         Parameters
         ----------
@@ -582,11 +631,13 @@ class Test_EventParser:  # pylint:disable=invalid-name
         event_parser = _EventParser(mock_iterator, mock_cache, live_data=False)
         return event_parser
 
-    def test__init_(self,
-                    event_parser_instance: _EventParser,
-                    mock_iterator: Iterator[bytes],
-                    mock_cache: _Cache) -> None:
-        """ Test __init__ works correctly
+    def test__init_(
+        self,
+        event_parser_instance: _EventParser,
+        mock_iterator: Iterator[bytes],
+        mock_cache: _Cache,
+    ) -> None:
+        """Test __init__ works correctly
 
         Parameters
         ----------
@@ -603,7 +654,7 @@ class Test_EventParser:  # pylint:disable=invalid-name
         assert evp_live._iterator.__name__ == "_get_latest_live"  # type:ignore[attr-defined]
 
     def test__get_latest_live(self, event_parser_instance: _EventParser) -> None:
-        """ Test _get_latest_live works correctly
+        """Test _get_latest_live works correctly
 
         Parameters
         ----------
@@ -614,11 +665,13 @@ class Test_EventParser:  # pylint:disable=invalid-name
         test = list(event_parse._get_latest_live(event_parse._iterator))
         assert len(test) == 4
 
-    def test_cache_events(self,
-                          event_parser_instance: _EventParser,
-                          mocker: pytest_mock.MockerFixture,
-                          monkeypatch: pytest.MonkeyPatch) -> None:
-        """ Test cache_events works correctly
+    def test_cache_events(
+        self,
+        event_parser_instance: _EventParser,
+        mocker: pytest_mock.MockerFixture,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Test cache_events works correctly
 
         Parameters
         ----------
@@ -636,9 +689,9 @@ class Test_EventParser:  # pylint:disable=invalid-name
         event_parse._cache.cache_data = T.cast(MagicMock, mocker.MagicMock())  # type:ignore
 
         # keras model
-        monkeypatch.setattr(event_parse,
-                            "_iterator",
-                            iter([self._create_example_event(0, 1., time())]))
+        monkeypatch.setattr(
+            event_parse, "_iterator", iter([self._create_example_event(0, 1.0, time())])
+        )
         event_parse.cache_events(1)
         assert not event_parse._process_event.called
         assert event_parse._cache.cache_data.called
@@ -646,9 +699,9 @@ class Test_EventParser:  # pylint:disable=invalid-name
         event_parse._cache.cache_data.reset_mock()
 
         # Batch item
-        monkeypatch.setattr(event_parse,
-                            "_iterator",
-                            iter([self._create_example_event(1, 1., time())]))
+        monkeypatch.setattr(
+            event_parse, "_iterator", iter([self._create_example_event(1, 1.0, time())])
+        )
         event_parse.cache_events(1)
         assert event_parse._process_event.called
         assert event_parse._cache.cache_data.called
@@ -656,16 +709,18 @@ class Test_EventParser:  # pylint:disable=invalid-name
         event_parse._cache.cache_data.reset_mock()
 
         # No summary value
-        monkeypatch.setattr(event_parse,
-                            "_iterator",
-                            iter([event_pb2.Event(step=1).SerializeToString()]))
+        monkeypatch.setattr(
+            event_parse,
+            "_iterator",
+            iter([event_pb2.Event(step=1).SerializeToString()]),
+        )
         assert not event_parse._process_event.called
         assert not event_parse._cache.cache_data.called
         event_parse._process_event.reset_mock()
         event_parse._cache.cache_data.reset_mock()
 
     def test__process_event(self, event_parser_instance: _EventParser) -> None:
-        """ Test _process_event works correctly
+        """Test _process_event works correctly
 
         Parameters
         ----------
@@ -678,11 +733,17 @@ class Test_EventParser:  # pylint:disable=invalid-name
         assert not event_data.loss
         timestamp = time()
         loss = [1.1, 2.2]
-        event = self._create_example_event(1, 1.0, timestamp, serialize=False)  # batch_total
+        event = self._create_example_event(
+            1, 1.0, timestamp, serialize=False
+        )  # batch_total
         event_parse._process_event(event, event_data)
-        event = self._create_example_event(2, loss[0], time(), serialize=False)  # face A
+        event = self._create_example_event(
+            2, loss[0], time(), serialize=False
+        )  # face A
         event_parse._process_event(event, event_data)
-        event = self._create_example_event(3, loss[1], time(), serialize=False)  # face B
+        event = self._create_example_event(
+            3, loss[1], time(), serialize=False
+        )  # face B
         event_parse._process_event(event, event_data)
 
         # Original timestamp and both loss values collected

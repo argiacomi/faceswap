@@ -101,7 +101,10 @@ class CPUStats(_GPUStats):
         ----------
         The GPU device IDS to be excluded
         """
-        self._log("warning", "CPU does not support excluding GPUs. This option has been ignored")
+        self._log(
+            "warning",
+            "CPU does not support excluding GPUs. This option has been ignored",
+        )
 
 
 __all__ = get_module_objects(__name__)

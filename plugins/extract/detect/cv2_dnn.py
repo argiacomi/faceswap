@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """OpenCV DNN Face detection plugin"""
+
 import logging
 
 import cv2
@@ -15,12 +16,11 @@ logger = logging.getLogger(__name__)
 
 class CV2DNNDetect(ExtractPlugin):
     """CV2 DNN detector for face recognition"""
+
     def __init__(self) -> None:
-        super().__init__(input_size=300,
-                         batch_size=1,
-                         is_rgb=False,
-                         dtype="float32",
-                         scale=(0, 255))
+        super().__init__(
+            input_size=300, batch_size=1, is_rgb=False, dtype="float32", scale=(0, 255)
+        )
         self.model: cv2.dnn.Net
         self.confidence = cfg.confidence() / 100
         self._average_image = np.array([104, 117, 123], dtype="float32")
@@ -32,8 +32,10 @@ class CV2DNNDetect(ExtractPlugin):
         -------
         The loaded cv2-DNN model
         """
-        weights = GetModel(model_filename=["resnet_ssd_v1.caffemodel", "resnet_ssd_v1.prototxt"],
-                           git_model_id=4)
+        weights = GetModel(
+            model_filename=["resnet_ssd_v1.caffemodel", "resnet_ssd_v1.prototxt"],
+            git_model_id=4,
+        )
         model_path = weights.model_path
         assert isinstance(model_path, list)
         model = cv2.dnn.readNetFromCaffe(model_path[1], model_path[0])
@@ -83,8 +85,10 @@ class CV2DNNDetect(ExtractPlugin):
         The processed detection bounding box from the model at model input size
         """
         confidence_mask = batch[..., 2] >= self.confidence
-        boxes = [batch[b, ..., 3:7][confidence_mask[b]] * self.input_size
-                 for b in range(batch.shape[0])]
+        boxes = [
+            batch[b, ..., 3:7][confidence_mask[b]] * self.input_size
+            for b in range(batch.shape[0])
+        ]
         return np.array(boxes, dtype="object")
 
 

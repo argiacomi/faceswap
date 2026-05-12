@@ -1,5 +1,6 @@
 #! /usr/env/bin/python3
-"""Handles individual plugins within a plugin runner """
+"""Handles individual plugins within a plugin runner"""
+
 from __future__ import annotations
 
 import abc
@@ -9,8 +10,14 @@ import typing as T
 import numpy as np
 from torch.cuda import OutOfMemoryError
 
-from lib.align.aligned_utils import (batch_adjust_matrices, batch_align, batch_resize,
-                                     batch_sub_crop, get_base_scale, get_sub_crop_scale)
+from lib.align.aligned_utils import (
+    batch_adjust_matrices,
+    batch_align,
+    batch_resize,
+    batch_sub_crop,
+    get_base_scale,
+    get_sub_crop_scale,
+)
 from lib.align.constants import EXTRACT_RATIOS, LandmarkType
 from lib.logger import parse_class_init
 from lib.utils import FaceswapError, get_module_objects
@@ -57,19 +64,20 @@ class ExtractHandler(abc.ABC):
     config_file
         Full path to a custom config file to load. ``None`` for default config
     """
-    processors: tuple[T.Literal["pre_process", "process", "post_process"],
-                      ...] = ("pre_process", "process", "post_process")
+
+    processors: tuple[T.Literal["pre_process", "process", "post_process"], ...] = (
+        "pre_process",
+        "process",
+        "post_process",
+    )
     """The processors which should have thread's launched for this handler"""
 
-    def __init__(self,
-                 plugin: str,
-                 compile_model: bool = False,
-                 config_file: str | None = None) -> None:
-        self.plugin_type: T.Literal["detect",
-                                    "align",
-                                    "mask",
-                                    "identity",
-                                    "file"] = self._get_plugin_type()
+    def __init__(
+        self, plugin: str, compile_model: bool = False, config_file: str | None = None
+    ) -> None:
+        self.plugin_type: T.Literal["detect", "align", "mask", "identity", "file"] = (
+            self._get_plugin_type()
+        )
         """The type of plugin that this handler manages"""
         self._config_file = config_file
         self.do_compile = compile_model
@@ -79,15 +87,18 @@ class ExtractHandler(abc.ABC):
         load_config(config_file)
         self.plugin = PluginLoader.get_extractor(self.plugin_type, plugin)
         """The extraction plugin that this handler manages"""
-        self._overridden: dict[T.Literal["pre_process", "process", "post_process"], bool] = {
-            method: self._is_overridden(method) for method in self.processors}
+        self._overridden: dict[
+            T.Literal["pre_process", "process", "post_process"], bool
+        ] = {method: self._is_overridden(method) for method in self.processors}
         self._runner: ExtractRunner | None = None
 
     def __repr__(self) -> str:
         """Pretty print for logging"""
-        params = {"plugin": repr(self.plugin_name),
-                  "compile_model": self.do_compile,
-                  "config_file": repr(self._config_file)}
+        params = {
+            "plugin": repr(self.plugin_name),
+            "compile_model": self.do_compile,
+            "config_file": repr(self._config_file),
+        }
         return f"{self.__class__.__name__}({', '.join(f'{k}={v}' for k, v in params.items())})"
 
     @property
@@ -98,7 +109,9 @@ class ExtractHandler(abc.ABC):
     @property
     def runner(self) -> ExtractRunner:
         """The runner that runs this handler"""
-        assert self._runner is not None, "The handler must be called prior to accessing its runner"
+        assert self._runner is not None, (
+            "The handler must be called prior to accessing its runner"
+        )
         return self._runner
 
     @classmethod
@@ -109,13 +122,16 @@ class ExtractHandler(abc.ABC):
         -------
         The type of plugin that this runner is using
         """
-        plugin_type = T.cast(T.Literal["detect", "align", "mask", "identity"],
-                             cls.__name__.lower().replace("handler", ""))
+        plugin_type = T.cast(
+            T.Literal["detect", "align", "mask", "identity"],
+            cls.__name__.lower().replace("handler", ""),
+        )
         assert plugin_type in ("detect", "align", "mask", "identity")
         return plugin_type
 
-    def _is_overridden(self, method_name: T.Literal["pre_process", "process", "post_process"]
-                       ) -> bool:
+    def _is_overridden(
+        self, method_name: T.Literal["pre_process", "process", "post_process"]
+    ) -> bool:
         """Test if a plugin method's method has been overridden
 
         Parameters
@@ -128,11 +144,12 @@ class ExtractHandler(abc.ABC):
         ``True`` if the plugin has overridden the given method
         """
         plugin_class = type(self.plugin)
-        retval = (
-            method_name in plugin_class.__dict__
-            and plugin_class.__dict__[method_name] is not ExtractPlugin.__dict__.get(method_name)
-            )
-        logger.debug("[%s] Overridden method '%s': %s", self.plugin_name, method_name, retval)
+        retval = method_name in plugin_class.__dict__ and plugin_class.__dict__[
+            method_name
+        ] is not ExtractPlugin.__dict__.get(method_name)
+        logger.debug(
+            "[%s] Overridden method '%s': %s", self.plugin_name, method_name, retval
+        )
         return retval
 
     def init_model(self) -> None:
@@ -170,9 +187,15 @@ class ExtractHandler(abc.ABC):
         is_padded = self.do_compile and feed_size < self.plugin.batch_size
         batch_feed = feed
         if is_padded:  # Prevent model re-compile on undersized batch
-            batch_feed = np.empty((self.plugin.batch_size, *feed.shape[1:]), dtype=feed.dtype)
-            logger.debug("[%s.process] Padding undersized batch of shape %s to %s",
-                         self.plugin.name, feed.shape, batch_feed.shape)
+            batch_feed = np.empty(
+                (self.plugin.batch_size, *feed.shape[1:]), dtype=feed.dtype
+            )
+            logger.debug(
+                "[%s.process] Padding undersized batch of shape %s to %s",
+                self.plugin.name,
+                feed.shape,
+                batch_feed.shape,
+            )
             batch_feed[:feed_size] = feed
         try:
             retval = self.plugin.process(batch_feed)
@@ -198,12 +221,16 @@ class ExtractHandler(abc.ABC):
         -------
         The batch of images formatted and scaled for the plugin
         """
-        retval = images if self.plugin.dtype == np.uint8 else images.astype(self.plugin.dtype)
+        retval = (
+            images
+            if self.plugin.dtype == np.uint8
+            else images.astype(self.plugin.dtype)
+        )
         if self.plugin.scale == (0, 255):
             return retval
         low, high = self.plugin.scale
         im_range = high - low
-        retval /= (255. / im_range)
+        retval /= 255.0 / im_range
         retval += low
         return retval
 
@@ -214,7 +241,7 @@ class ExtractHandler(abc.ABC):
 
     @abc.abstractmethod
     def pre_process(self, batch: ExtractBatch) -> None:
-        """ Override to perform plugin type specific behavior for pre-processing on the given batch
+        """Override to perform plugin type specific behavior for pre-processing on the given batch
         object, ready for inference.
 
         Parameters
@@ -245,8 +272,11 @@ class ExtractHandler(abc.ABC):
             The incoming ExtractBatch to use for post-processing
         """
 
-    def __call__(self, input_plugin: ExtractHandler | ExtractRunner | None = None,
-                 profile: bool = False) -> ExtractRunner:
+    def __call__(
+        self,
+        input_plugin: ExtractHandler | ExtractRunner | None = None,
+        profile: bool = False,
+    ) -> ExtractRunner:
         """Build and start the plugin handler's runner
 
         Parameters
@@ -265,8 +295,11 @@ class ExtractHandler(abc.ABC):
         """
         logger.debug("[%s] Initializing runner from handler", self.plugin.name)
         runner = ExtractRunner(self)
-        input_runner = input_plugin.runner if isinstance(input_plugin,
-                                                         ExtractHandler) else input_plugin
+        input_runner = (
+            input_plugin.runner
+            if isinstance(input_plugin, ExtractHandler)
+            else input_plugin
+        )
         runner(input_runner, profile)
         return runner
 
@@ -284,13 +317,13 @@ class ExtractHandlerFace(ExtractHandler, abc.ABC):
     config_file
         Full path to a custom config file to load. ``None`` for default config
     """
+
     _logged_warning: dict[str, bool] = {"mask": False, "identity": False}
     """Stores whether a warning has been issued for non-68 point landmarks for this plugin type"""
 
-    def __init__(self,
-                 plugin: str,
-                 compile_model: bool = False,
-                 config_file: str | None = None) -> None:
+    def __init__(
+        self, plugin: str, compile_model: bool = False, config_file: str | None = None
+    ) -> None:
         super().__init__(plugin, compile_model=compile_model, config_file=config_file)
         self.plugin: FacePlugin
 
@@ -300,12 +333,15 @@ class ExtractHandlerFace(ExtractHandler, abc.ABC):
         """The name that the object will be stored with in the alignments file"""
 
         self._padding = round((self._input_size * EXTRACT_RATIOS[self._centering]) / 2)
-        self._aligned_mat_name = ("matrices" if self._centering == "legacy"
-                                  else f"matrices_{self._centering}")
+        self._aligned_mat_name = (
+            "matrices" if self._centering == "legacy" else f"matrices_{self._centering}"
+        )
 
         # Aligned handling
         self._head_to_base_ratio = get_base_scale("head", 1.0) / 2
-        self._head_to_centering_ratio = get_sub_crop_scale("head", self._centering, 1.0, 1.0) / 2
+        self._head_to_centering_ratio = (
+            get_sub_crop_scale("head", self._centering, 1.0, 1.0) / 2
+        )
         self._aligned_offsets_name = f"offsets_{self._centering}"
 
     def _maybe_log_warning(self, landmark_type: LandmarkType | None) -> None:
@@ -317,16 +353,22 @@ class ExtractHandlerFace(ExtractHandler, abc.ABC):
             The type of landmarks within the batch
         """
         assert landmark_type is not None
-        if self._logged_warning[self.plugin_type] or landmark_type in (LandmarkType.LM_2D_68,
-                                                                       LandmarkType.LM_2D_98):
+        if self._logged_warning[self.plugin_type] or landmark_type in (
+            LandmarkType.LM_2D_68,
+            LandmarkType.LM_2D_98,
+        ):
             return
         ptype = "Masks" if self.plugin_type == "mask" else "Identities"
-        logger.warning("Faces do not contain landmark data. %s are likely to be sub-standard",
-                       ptype)
+        logger.warning(
+            "Faces do not contain landmark data. %s are likely to be sub-standard",
+            ptype,
+        )
         self._logged_warning[self.plugin_type] = True
 
     # Pre-processing
-    def _get_matrices(self, matrices: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
+    def _get_matrices(
+        self, matrices: npt.NDArray[np.float32]
+    ) -> npt.NDArray[np.float32]:
         """Obtain the (N, 2, 3) matrices for the face plugin's centering type
 
         Parameters
@@ -340,11 +382,13 @@ class ExtractHandlerFace(ExtractHandler, abc.ABC):
         """
         return batch_adjust_matrices(matrices, self._input_size, self._padding)
 
-    def _get_faces(self,  # pylint:disable=too-many-locals
-                   images: list[npt.NDArray[np.uint8]],
-                   image_ids: npt.NDArray[np.int32],
-                   matrices: npt.NDArray[np.float32],
-                   with_alpha: bool = False) -> npt.NDArray[np.uint8]:
+    def _get_faces(
+        self,  # pylint:disable=too-many-locals
+        images: list[npt.NDArray[np.uint8]],
+        image_ids: npt.NDArray[np.int32],
+        matrices: npt.NDArray[np.float32],
+        with_alpha: bool = False,
+    ) -> npt.NDArray[np.uint8]:
         """Obtain the cropped and aligned faces from the batch of images
 
         Parameters
@@ -365,17 +409,22 @@ class ExtractHandlerFace(ExtractHandler, abc.ABC):
         then the final channel is an ROI mask indicating areas that go out of bounds
         """
         if with_alpha:
-            images = [np.concatenate([i, np.zeros((*i.shape[:2], 1), dtype=i.dtype) + 255],
-                                     axis=-1)
-                      for i in images]
+            images = [
+                np.concatenate(
+                    [i, np.zeros((*i.shape[:2], 1), dtype=i.dtype) + 255], axis=-1
+                )
+                for i in images
+            ]
         return batch_align(images, image_ids, matrices, self._input_size)
 
     # Aligned faces as input methods
-    def _get_faces_aligned(self,
-                           images: list[npt.NDArray[np.uint8]],
-                           image_ids: npt.NDArray[np.int32],
-                           source_padding: npt.NDArray[np.float32],
-                           dest_padding: npt.NDArray[np.float32]) -> npt.NDArray[np.uint8]:
+    def _get_faces_aligned(
+        self,
+        images: list[npt.NDArray[np.uint8]],
+        image_ids: npt.NDArray[np.int32],
+        source_padding: npt.NDArray[np.float32],
+        dest_padding: npt.NDArray[np.float32],
+    ) -> npt.NDArray[np.uint8]:
         """Obtain the batch of faces when input images are a batch of extracted faceswap faces
 
         Parameters
@@ -393,8 +442,11 @@ class ExtractHandlerFace(ExtractHandler, abc.ABC):
         -------
         The sub-crop from the aligned faces for feeding the model
         """
-        imgs = np.array([images[idx] for idx in image_ids] if len(images) != len(image_ids)
-                        else images)
+        imgs = np.array(
+            [images[idx] for idx in image_ids]
+            if len(images) != len(image_ids)
+            else images
+        )
         assert imgs.dtype != object, "Aligned images must all be the same size"
         if self._centering == "head":
             return batch_resize(imgs, self._input_size)
@@ -424,11 +476,15 @@ class FileHandler(ExtractHandler):
     """A pseudo handler that passes through data when the pipeline is driven entirely by an
     alignments file (ie: no plugins are being loaded). This is effectively a No-op which allows
     the data to pass straight from input to output"""
-    processors: tuple[T.Literal["pre_process", "process", "post_process"], ...] = tuple()
+
+    processors: tuple[T.Literal["pre_process", "process", "post_process"], ...] = (
+        tuple()
+    )
     """File handler launches no threads"""
 
     class Plugin:  # pylint:disable=too-few-public-methods
         """Dummy plugin with required properties"""
+
         name = "file"
         batch_size = 128  # Irrelevant, data is just passed through
 
@@ -457,8 +513,11 @@ class FileHandler(ExtractHandler):
         """Not applicable for passthrough plugin."""
         return
 
-    def __call__(self, input_plugin: ExtractHandler | ExtractRunner | None = None,
-                 profile: bool = False) -> ExtractRunner:
+    def __call__(
+        self,
+        input_plugin: ExtractHandler | ExtractRunner | None = None,
+        profile: bool = False,
+    ) -> ExtractRunner:
         """Build and start the plugin handler's runner. Overridden to ensure that neither an input
         plugin or profile are set
 

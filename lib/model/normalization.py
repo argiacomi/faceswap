@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-""" Normalization methods for faceswap.py specific to Torch backend """
+"""Normalization methods for faceswap.py specific to Torch backend"""
+
 from __future__ import annotations
 
 import inspect
@@ -7,7 +8,15 @@ import logging
 import sys
 import typing as T
 
-from keras import constraints, initializers, InputSpec, layers, ops, regularizers, saving
+from keras import (
+    constraints,
+    initializers,
+    InputSpec,
+    layers,
+    ops,
+    regularizers,
+    saving,
+)
 
 from lib.logger import parse_class_init
 from lib.utils import get_module_objects
@@ -46,13 +55,16 @@ class AdaInstanceNormalization(layers.Layer):  # pylint:disable=too-many-ancesto
         Arbitrary Style Transfer in Real-time with Adaptive Instance Normalization - \
         https://arxiv.org/abs/1703.06868
     """
-    def __init__(self,
-                 axis: int = -1,
-                 momentum: float = 0.99,
-                 epsilon: float = 1e-3,
-                 center: bool = True,
-                 scale: bool = True,
-                 **kwargs) -> None:
+
+    def __init__(
+        self,
+        axis: int = -1,
+        momentum: float = 0.99,
+        epsilon: float = 1e-3,
+        center: bool = True,
+        scale: bool = True,
+        **kwargs,
+    ) -> None:
         logger.debug(parse_class_init(locals()))
         super().__init__(**kwargs)
         self.axis = axis
@@ -73,15 +85,20 @@ class AdaInstanceNormalization(layers.Layer):  # pylint:disable=too-many-ancesto
         """
         dim = input_shape[0][self.axis]
         if dim is None:
-            raise ValueError('Axis ' + str(self.axis) + ' of '
-                             'input tensor should have a defined dimension '
-                             'but the layer received an input with shape ' +
-                             str(input_shape[0]) + '.')
+            raise ValueError(
+                "Axis " + str(self.axis) + " of "
+                "input tensor should have a defined dimension "
+                "but the layer received an input with shape "
+                + str(input_shape[0])
+                + "."
+            )
 
         super().build(input_shape)
 
-    def call(self, inputs: KerasTensor  # pylint:disable=arguments-differ
-             ) -> KerasTensor:
+    def call(
+        self,
+        inputs: KerasTensor,  # pylint:disable=arguments-differ
+    ) -> KerasTensor:
         """This is where the layer's logic lives.
 
         Parameters
@@ -121,18 +138,20 @@ class AdaInstanceNormalization(layers.Layer):  # pylint:disable=too-many-ancesto
             A python dictionary containing the layer configuration
         """
         config = {
-            'axis': self.axis,
-            'momentum': self.momentum,
-            'epsilon': self.epsilon,
-            'center': self.center,
-            'scale': self.scale
+            "axis": self.axis,
+            "momentum": self.momentum,
+            "epsilon": self.epsilon,
+            "center": self.center,
+            "scale": self.scale,
         }
         base_config = super().get_config()
         return dict(list(base_config.items()) + list(config.items()))
 
-    def compute_output_shape(self, input_shape: tuple[int, ...]  # pylint:disable=arguments-differ
-                             ) -> int:
-        """ Calculate the output shape from this layer.
+    def compute_output_shape(
+        self,
+        input_shape: tuple[int, ...],  # pylint:disable=arguments-differ
+    ) -> int:
+        """Calculate the output shape from this layer.
 
         Parameters
         ----------
@@ -148,7 +167,7 @@ class AdaInstanceNormalization(layers.Layer):  # pylint:disable=too-many-ancesto
 
 
 class GroupNormalization(layers.Layer):  # pylint:disable=too-many-ancestors,abstract-method
-    """ Group Normalization
+    """Group Normalization
 
     Parameters
     ----------
@@ -179,17 +198,20 @@ class GroupNormalization(layers.Layer):  # pylint:disable=too-many-ancestors,abs
     ----------
     Shaoanlu GAN: https://github.com/shaoanlu/faceswap-GAN
     """
+
     # pylint:disable=too-many-instance-attributes
-    def __init__(self,
-                 axis: int = -1,
-                 gamma_init: str = 'one',
-                 beta_init: str = 'zero',
-                 gamma_regularizer: T.Any = None,
-                 beta_regularizer: T.Any = None,
-                 epsilon: float = 1e-6,
-                 group: int = 32,
-                 data_format: str | None = None,
-                 **kwargs) -> None:
+    def __init__(
+        self,
+        axis: int = -1,
+        gamma_init: str = "one",
+        beta_init: str = "zero",
+        gamma_regularizer: T.Any = None,
+        beta_regularizer: T.Any = None,
+        epsilon: float = 1e-6,
+        group: int = 32,
+        data_format: str | None = None,
+        **kwargs,
+    ) -> None:
         logger.debug(parse_class_init(locals()))
         self.beta = None
         self.gamma = None
@@ -218,26 +240,30 @@ class GroupNormalization(layers.Layer):  # pylint:disable=too-many-ancestors,abs
         input_spec = [InputSpec(shape=input_shape)]
         self.input_spec = input_spec  # pylint:disable=attribute-defined-outside-init
         shape = [1 for _ in input_shape]
-        if self.data_format == 'channels_last':
+        if self.data_format == "channels_last":
             channel_axis = -1
             shape[channel_axis] = input_shape[channel_axis]
-        elif self.data_format == 'channels_first':
+        elif self.data_format == "channels_first":
             channel_axis = 1
             shape[channel_axis] = input_shape[channel_axis]
         # for i in self.axis:
         #    shape[i] = input_shape[i]
-        self.gamma = self.add_weight(shape=shape,
-                                     initializer=self.gamma_init,
-                                     regularizer=self.gamma_regularizer,
-                                     name='gamma')
-        self.beta = self.add_weight(shape=shape,
-                                    initializer=self.beta_init,
-                                    regularizer=self.beta_regularizer,
-                                    name='beta')
+        self.gamma = self.add_weight(
+            shape=shape,
+            initializer=self.gamma_init,
+            regularizer=self.gamma_regularizer,
+            name="gamma",
+        )
+        self.beta = self.add_weight(
+            shape=shape,
+            initializer=self.beta_init,
+            regularizer=self.beta_regularizer,
+            name="beta",
+        )
         self.built = True  # pylint:disable=attribute-defined-outside-init
 
     def _process_4_channel(self, inputs: KerasTensor) -> KerasTensor:
-        """ Logic for processing 4 channel inputs
+        """Logic for processing 4 channel inputs
 
         Parameters
         ----------
@@ -250,21 +276,23 @@ class GroupNormalization(layers.Layer):  # pylint:disable=too-many-ancestors,abs
             A tensor or list/tuple of tensors
         """
         input_shape = inputs.shape
-        if self.data_format == 'channels_last':
+        if self.data_format == "channels_last":
             batch_size, height, width, channels = input_shape
             if batch_size is None:
                 batch_size = -1
 
             if channels < self.group:
-                raise ValueError('Input channels should be larger than group size' +
-                                 '; Received input channels: ' + str(channels) +
-                                 '; Group size: ' + str(self.group))
+                raise ValueError(
+                    "Input channels should be larger than group size"
+                    + "; Received input channels: "
+                    + str(channels)
+                    + "; Group size: "
+                    + str(self.group)
+                )
 
-            var_x = ops.reshape(inputs, (batch_size,
-                                         height,
-                                         width,
-                                         self.group,
-                                         channels // self.group))
+            var_x = ops.reshape(
+                inputs, (batch_size, height, width, self.group, channels // self.group)
+            )
             mean = ops.mean(var_x, axis=[1, 2, 4], keepdims=True)
             std = ops.sqrt(ops.var(var_x, axis=[1, 2, 4], keepdims=True) + self.epsilon)
             var_x = (var_x - mean) / std
@@ -278,15 +306,17 @@ class GroupNormalization(layers.Layer):  # pylint:disable=too-many-ancestors,abs
             batch_size = -1
 
         if channels < self.group:
-            raise ValueError('Input channels should be larger than group size' +
-                             '; Received input channels: ' + str(channels) +
-                             '; Group size: ' + str(self.group))
+            raise ValueError(
+                "Input channels should be larger than group size"
+                + "; Received input channels: "
+                + str(channels)
+                + "; Group size: "
+                + str(self.group)
+            )
 
-        var_x = ops.reshape(inputs, (batch_size,
-                                     self.group,
-                                     channels // self.group,
-                                     height,
-                                     width))
+        var_x = ops.reshape(
+            inputs, (batch_size, self.group, channels // self.group, height, width)
+        )
         mean = ops.mean(var_x, axis=[2, 3, 4], keepdims=True)
         std = ops.sqrt(ops.var(var_x, axis=[2, 3, 4], keepdims=True) + self.epsilon)
         var_x = (var_x - mean) / std
@@ -294,9 +324,11 @@ class GroupNormalization(layers.Layer):  # pylint:disable=too-many-ancestors,abs
         var_x = ops.reshape(var_x, (batch_size, channels, height, width))
         return self.gamma * var_x + self.beta
 
-    def compute_output_shape(self, input_shape: tuple[int, ...]  # pylint:disable=arguments-differ
-                             ) -> tuple[int, ...]:
-        """ Calculate the output shape from this layer.
+    def compute_output_shape(
+        self,
+        input_shape: tuple[int, ...],  # pylint:disable=arguments-differ
+    ) -> tuple[int, ...]:
+        """Calculate the output shape from this layer.
 
         Parameters
         ----------
@@ -310,8 +342,12 @@ class GroupNormalization(layers.Layer):  # pylint:disable=too-many-ancestors,abs
         """
         return input_shape
 
-    def call(self, inputs: KerasTensor, *args, **kwargs  # pylint:disable=arguments-differ
-             ) -> KerasTensor:
+    def call(
+        self,
+        inputs: KerasTensor,
+        *args,
+        **kwargs,  # pylint:disable=arguments-differ
+    ) -> KerasTensor:
         """This is where the layer's logic lives.
 
         Parameters
@@ -326,9 +362,14 @@ class GroupNormalization(layers.Layer):  # pylint:disable=too-many-ancestors,abs
         """
         input_shape = inputs.shape
         if len(input_shape) != 4 and len(input_shape) != 2:
-            raise ValueError('Inputs should have rank ' +
-                             str(4) + " or " + str(2) +
-                             '; Received input shape:', str(input_shape))
+            raise ValueError(
+                "Inputs should have rank "
+                + str(4)
+                + " or "
+                + str(2)
+                + "; Received input shape:",
+                str(input_shape),
+            )
 
         if len(input_shape) == 4:
             return self._process_4_channel(inputs)
@@ -355,13 +396,15 @@ class GroupNormalization(layers.Layer):  # pylint:disable=too-many-ancestors,abs
         dict[str, Any]:
             A python dictionary containing the layer configuration
         """
-        config = {'epsilon': self.epsilon,
-                  'axis': self.axis,
-                  'gamma_init': initializers.serialize(self.gamma_init),
-                  'beta_init': initializers.serialize(self.beta_init),
-                  'gamma_regularizer': regularizers.serialize(self.gamma_regularizer),
-                  'beta_regularizer': regularizers.serialize(self.gamma_regularizer),
-                  'group': self.group}
+        config = {
+            "epsilon": self.epsilon,
+            "axis": self.axis,
+            "gamma_init": initializers.serialize(self.gamma_init),
+            "beta_init": initializers.serialize(self.beta_init),
+            "gamma_regularizer": regularizers.serialize(self.gamma_regularizer),
+            "beta_regularizer": regularizers.serialize(self.gamma_regularizer),
+            "group": self.group,
+        }
         base_config = super().get_config()
         return dict(list(base_config.items()) + list(config.items()))
 
@@ -409,19 +452,22 @@ class InstanceNormalization(layers.Layer):  # pylint:disable=too-many-ancestors,
         - Instance Normalization: The Missing Ingredient for Fast Stylization - \
         https://arxiv.org/abs/1607.08022
     """
+
     # pylint:disable=too-many-instance-attributes,too-many-arguments,too-many-positional-arguments
-    def __init__(self,
-                 axis: int | None = None,
-                 epsilon: float = 1e-3,
-                 center: bool = True,
-                 scale: bool = True,
-                 beta_initializer: str = "zeros",
-                 gamma_initializer: str = "ones",
-                 beta_regularizer: T.Any = None,
-                 gamma_regularizer: T.Any = None,
-                 beta_constraint: T.Any = None,
-                 gamma_constraint: T.Any = None,
-                 **kwargs) -> None:
+    def __init__(
+        self,
+        axis: int | None = None,
+        epsilon: float = 1e-3,
+        center: bool = True,
+        scale: bool = True,
+        beta_initializer: str = "zeros",
+        gamma_initializer: str = "ones",
+        beta_regularizer: T.Any = None,
+        gamma_regularizer: T.Any = None,
+        beta_constraint: T.Any = None,
+        gamma_constraint: T.Any = None,
+        **kwargs,
+    ) -> None:
         logger.debug(parse_class_init(locals()))
         self.beta = None
         self.gamma = None
@@ -463,26 +509,32 @@ class InstanceNormalization(layers.Layer):  # pylint:disable=too-many-ancestors,
             shape = (input_shape[self.axis],)
 
         if self.scale:
-            self.gamma = self.add_weight(shape=shape,
-                                         name="gamma",
-                                         initializer=self.gamma_initializer,
-                                         regularizer=self.gamma_regularizer,
-                                         constraint=self.gamma_constraint)
+            self.gamma = self.add_weight(
+                shape=shape,
+                name="gamma",
+                initializer=self.gamma_initializer,
+                regularizer=self.gamma_regularizer,
+                constraint=self.gamma_constraint,
+            )
         else:
             self.gamma = None
         if self.center:
-            self.beta = self.add_weight(shape=shape,
-                                        name="beta",
-                                        initializer=self.beta_initializer,
-                                        regularizer=self.beta_regularizer,
-                                        constraint=self.beta_constraint)
+            self.beta = self.add_weight(
+                shape=shape,
+                name="beta",
+                initializer=self.beta_initializer,
+                regularizer=self.beta_regularizer,
+                constraint=self.beta_constraint,
+            )
         else:
             self.beta = None
         self.built = True  # pylint:disable=attribute-defined-outside-init
 
-    def compute_output_shape(self, input_shape: tuple[int, ...]  # pylint:disable=arguments-differ
-                             ) -> tuple[int, ...]:
-        """ Calculate the output shape from this layer.
+    def compute_output_shape(
+        self,
+        input_shape: tuple[int, ...],  # pylint:disable=arguments-differ
+    ) -> tuple[int, ...]:
+        """Calculate the output shape from this layer.
 
         Parameters
         ----------
@@ -496,8 +548,10 @@ class InstanceNormalization(layers.Layer):  # pylint:disable=too-many-ancestors,
         """
         return input_shape
 
-    def call(self, inputs: KerasTensor  # pylint:disable=arguments-differ
-             ) -> KerasTensor:
+    def call(
+        self,
+        inputs: KerasTensor,  # pylint:disable=arguments-differ
+    ) -> KerasTensor:
         """This is where the layer's logic lives.
 
         Parameters
@@ -559,14 +613,14 @@ class InstanceNormalization(layers.Layer):  # pylint:disable=too-many-ancestors,
             "beta_regularizer": regularizers.serialize(self.beta_regularizer),
             "gamma_regularizer": regularizers.serialize(self.gamma_regularizer),
             "beta_constraint": constraints.serialize(self.beta_constraint),
-            "gamma_constraint": constraints.serialize(self.gamma_constraint)
+            "gamma_constraint": constraints.serialize(self.gamma_constraint),
         }
         base_config = super().get_config()
         return dict(list(base_config.items()) + list(config.items()))
 
 
 class RMSNormalization(layers.Layer):  # pylint:disable=too-many-ancestors,abstract-method
-    """ Root Mean Square Layer Normalization (Biao Zhang, Rico Sennrich, 2019)
+    """Root Mean Square Layer Normalization (Biao Zhang, Rico Sennrich, 2019)
 
     RMSNorm is a simplification of the original layer normalization (LayerNorm). LayerNorm is a
     regularization technique that might handle the internal covariate shift issue so as to
@@ -599,32 +653,39 @@ class RMSNormalization(layers.Layer):  # pylint:disable=too-many-ancestors,abstr
         - RMS Normalization - https://arxiv.org/abs/1910.07467
         - Official implementation - https://github.com/bzhangGo/rmsnorm
     """
-    def __init__(self,
-                 axis: int = -1,
-                 epsilon: float = 1e-8,
-                 partial: float = 0.0,
-                 bias: bool = False,
-                 **kwargs) -> None:
+
+    def __init__(
+        self,
+        axis: int = -1,
+        epsilon: float = 1e-8,
+        partial: float = 0.0,
+        bias: bool = False,
+        **kwargs,
+    ) -> None:
         logger.debug(parse_class_init(locals()))
         self.scale = None
         super().__init__(**kwargs)
 
         # Checks
         if not isinstance(axis, int):
-            raise TypeError(f"Expected an int for the argument 'axis', but received: {axis}")
+            raise TypeError(
+                f"Expected an int for the argument 'axis', but received: {axis}"
+            )
 
         if not 0.0 <= partial <= 1.0:
-            raise ValueError(f"partial must be between 0.0 and 1.0, but received {partial}")
+            raise ValueError(
+                f"partial must be between 0.0 and 1.0, but received {partial}"
+            )
 
         self.axis = axis
         self.epsilon = epsilon
         self.partial = partial
         self.bias = bias
-        self.offset = 0.
+        self.offset = 0.0
         logger.debug("Initialized %s", self.__class__.__name__)
 
     def build(self, input_shape: tuple[int, ...]) -> None:
-        """ Validate and populate :attr:`axis`
+        """Validate and populate :attr:`axis`
 
         Parameters
         ----------
@@ -646,20 +707,22 @@ class RMSNormalization(layers.Layer):  # pylint:disable=too-many-ancestors,abstr
 
         param_shape = [input_shape[self.axis]]
         self.scale = self.add_weight(
-            name="scale",
-            shape=param_shape,
-            initializer="ones")
+            name="scale", shape=param_shape, initializer="ones"
+        )
         if self.bias:
             self.offset = self.add_weight(
-                name="offset",
-                shape=param_shape,
-                initializer="zeros")
+                name="offset", shape=param_shape, initializer="zeros"
+            )
 
         self.built = True  # pylint:disable=attribute-defined-outside-init
 
-    def call(self, inputs: KerasTensor, *args, **kwargs  # pylint:disable=arguments-differ
-             ) -> KerasTensor:
-        """ Call Root Mean Square Layer Normalization
+    def call(
+        self,
+        inputs: KerasTensor,
+        *args,
+        **kwargs,  # pylint:disable=arguments-differ
+    ) -> KerasTensor:
+        """Call Root Mean Square Layer Normalization
 
         Parameters
         ----------
@@ -686,9 +749,11 @@ class RMSNormalization(layers.Layer):  # pylint:disable=too-many-ancestors,abstr
         output = self.scale * inputs * recip_square_root + self.offset
         return output
 
-    def compute_output_shape(self, input_shape: tuple[int, ...]  # pylint:disable=arguments-differ
-                             ) -> tuple[int, ...]:
-        """ The output shape of the layer is the same as the input shape.
+    def compute_output_shape(
+        self,
+        input_shape: tuple[int, ...],  # pylint:disable=arguments-differ
+    ) -> tuple[int, ...]:
+        """The output shape of the layer is the same as the input shape.
 
         Parameters
         ----------
@@ -718,10 +783,12 @@ class RMSNormalization(layers.Layer):  # pylint:disable=too-many-ancestors,abstr
             A python dictionary containing the layer configuration
         """
         base_config = super().get_config()
-        config = {"axis": self.axis,
-                  "epsilon": self.epsilon,
-                  "partial": self.partial,
-                  "bias": self.bias}
+        config = {
+            "axis": self.axis,
+            "epsilon": self.epsilon,
+            "partial": self.partial,
+            "bias": self.bias,
+        }
         return dict(list(base_config.items()) + list(config.items()))
 
 

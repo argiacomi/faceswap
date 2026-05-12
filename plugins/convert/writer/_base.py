@@ -15,7 +15,7 @@ from plugins.convert import convert_config
 logger = logging.getLogger(__name__)
 
 
-class Output():
+class Output:
     """Parent class for writer plugins.
 
     Parameters
@@ -26,6 +26,7 @@ class Output():
         The full path to a custom configuration ini file. If ``None`` is passed
         then the file is loaded from the default location. Default: ``None``.
     """
+
     def __init__(self, output_folder: str, config_file: str | None = None) -> None:
         logger.debug(parse_class_init(locals()))
         convert_config.load_config(config_file=config_file)
@@ -44,20 +45,20 @@ class Output():
         """Whether the writer outputs a stream or a series images.
 
         Writers that write to a stream have a frame_order parameter to dictate
-        the order in which frames should be written out (eg. gif/ffmpeg) """
+        the order in which frames should be written out (eg. gif/ffmpeg)"""
         retval = hasattr(self, "_frame_order")
         return retval
 
     @property
     def output_alpha(self) -> bool:
         """Override if the plugin can output an alpha channel and the user configuration
-        option is set to use it. Default ``False`` """
+        option is set to use it. Default ``False``"""
         return False
 
     @classmethod
-    def _set_frame_order(cls,
-                         total_count: int,
-                         frame_ranges: list[tuple[int, int]] | None) -> deque[int]:
+    def _set_frame_order(
+        cls, total_count: int, frame_ranges: list[tuple[int, int]] | None
+    ) -> deque[int]:
         """Obtain the full list of frames to be converted in order.
 
         Used for FFMPEG and Gif writers to ensure correct frame order
@@ -83,10 +84,9 @@ class Output():
         logger.debug("frame_order: %s", retval)
         return retval
 
-    def get_output_filename(self,
-                            filename: str,
-                            extension: str,
-                            separate_mask: bool = False) -> list[str]:
+    def get_output_filename(
+        self, filename: str, extension: str, separate_mask: bool = False
+    ) -> list[str]:
         """Obtain the full path for the output file, including the correct extension, for the
         given input filename.
 
@@ -154,7 +154,7 @@ class Output():
         raise NotImplementedError
 
     def pre_encode(self, image: np.ndarray, **kwargs) -> T.Any:  # pylint:disable=unused-argument
-        """ Some writer plugins support the pre-encoding of images prior to saving out. As
+        """Some writer plugins support the pre-encoding of images prior to saving out. As
         patching is done in multiple threads, but writing is done in a single thread, it can
         speed up the process to do any pre-encoding as part of the converter process.
 

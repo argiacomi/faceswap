@@ -1,5 +1,5 @@
 #!/usr/bin python3
-""" Pytest unit tests for :mod:`lib.config.ini` """
+"""Pytest unit tests for :mod:`lib.config.ini`"""
 
 import os
 import pytest
@@ -18,7 +18,7 @@ _CONFIG = ("custom", "custom_missing", "root", "root_missing")
 @pytest.mark.parametrize("plugin_group", _GROUPS)
 @pytest.mark.parametrize("config", _CONFIG)
 def test_ConfigFile(tmpdir, mocker, plugin_group, config):
-    """ Test that :class:`lib.config.ini.ConfigFile` initializes correctly """
+    """Test that :class:`lib.config.ini.ConfigFile` initializes correctly"""
     root_conf = tmpdir.mkdir("root").mkdir("config").join(f"{plugin_group}.ini")
     root_dir = os.path.dirname(os.path.dirname(root_conf))
     if config != "root_missing":
@@ -52,7 +52,7 @@ def test_ConfigFile(tmpdir, mocker, plugin_group, config):
 
 
 def test_ConfigFile_load(mocker):
-    """ Test that :class:`lib.config.ini.ConfigFile.load` calls correctly """
+    """Test that :class:`lib.config.ini.ConfigFile.load` calls correctly"""
     instance = ini_mod.ConfigFile("test")
 
     mock_read = mocker.MagicMock()
@@ -64,7 +64,7 @@ def test_ConfigFile_load(mocker):
 
 
 def test_ConfigFile_save(mocker):
-    """ Test that :class:`lib.config.ini.ConfigFile.save` calls correctly """
+    """Test that :class:`lib.config.ini.ConfigFile.save` calls correctly"""
     instance = ini_mod.ConfigFile("test")
 
     mock_write = mocker.MagicMock()
@@ -76,23 +76,28 @@ def test_ConfigFile_save(mocker):
 
 
 class FakeConfigSection:  # pylint:disable=too-few-public-methods
-    """ Fake config section """
+    """Fake config section"""
+
     def __init__(self, num_opts=2):
-        self.options = {f"opt{i}": FakeConfigItem(f"test_value{i}") for i in range(num_opts)}
+        self.options = {
+            f"opt{i}": FakeConfigItem(f"test_value{i}") for i in range(num_opts)
+        }
         self.helptext = f"Test helptext for {num_opts} options"
 
 
 def get_local_remote(sections=[2, 1, 3]):  # pylint:disable=dangerous-default-value
-    """ Obtain an object representing inputs to a ConfigParser and a matching object representing
-    Faceswap Config """
-    parser_sections = {f"section{i}": {f"opt{idx}": f"test_value{idx}" for idx in range(s)}
-                       for i, s in enumerate(sections)}
+    """Obtain an object representing inputs to a ConfigParser and a matching object representing
+    Faceswap Config"""
+    parser_sections = {
+        f"section{i}": {f"opt{idx}": f"test_value{idx}" for idx in range(s)}
+        for i, s in enumerate(sections)
+    }
     fs_sections = {f"section{i}": FakeConfigSection(s) for i, s in enumerate(sections)}
     return parser_sections, fs_sections
 
 
 def test_ConfigFile_is_synced_structure():
-    """ Test that :class:`lib.config.ini.ConfigFile.is_synced_structure` is logical """
+    """Test that :class:`lib.config.ini.ConfigFile.is_synced_structure` is logical"""
     instance = ini_mod.ConfigFile("test")
 
     sect_sizes = [2, 1, 3]
@@ -143,17 +148,16 @@ def test_ConfigFile_is_synced_structure():
 
 
 def testConfigFile_format_help():
-    """ Test that :class:`lib.config.ini.ConfigFile.format_help` inserts # on each line """
+    """Test that :class:`lib.config.ini.ConfigFile.format_help` inserts # on each line"""
     instance = ini_mod.ConfigFile("test")
     text = "This\nis a test\n\n\nof some text\n"
     result = instance.format_help(text)
     assert all(x.startswith("#") for x in result.splitlines() if x)
 
 
-@pytest.mark.parametrize("section",
-                         ("section1", "another_section", "section_test"))
+@pytest.mark.parametrize("section", ("section1", "another_section", "section_test"))
 def testConfigFile_insert_section(mocker, section):
-    """ Test that :class:`lib.config.ini.ConfigFile._insert_section` calls correctly """
+    """Test that :class:`lib.config.ini.ConfigFile._insert_section` calls correctly"""
     helptext = f"{section}_helptext"
 
     instance = ini_mod.ConfigFile("test")
@@ -171,11 +175,15 @@ def testConfigFile_insert_section(mocker, section):
     assert helptext in parser[section]
 
 
-@pytest.mark.parametrize(("section", "name", "value"),
-                         (("section1", "opt1", "value1"),
-                         ("another_section", "my_option", "what_its_worth")))
+@pytest.mark.parametrize(
+    ("section", "name", "value"),
+    (
+        ("section1", "opt1", "value1"),
+        ("another_section", "my_option", "what_its_worth"),
+    ),
+)
 def testConfigFile_insert_option(mocker, section, name, value):
-    """ Test that :class:`lib.config.ini.ConfigFile._insert_option` calls correctly """
+    """Test that :class:`lib.config.ini.ConfigFile._insert_option` calls correctly"""
     helptext = f"{section}_helptext"
 
     instance = ini_mod.ConfigFile("test")
@@ -193,26 +201,33 @@ def testConfigFile_insert_option(mocker, section, name, value):
     assert parser[section][name] == value
 
 
-_ini, _app,  = get_local_remote([2, 1, 3])
+(
+    _ini,
+    _app,
+) = get_local_remote([2, 1, 3])
 _ini_extra, _app_extra = get_local_remote(sections=[3, 1, 3])
 _ini_value, _ = get_local_remote(sections=[2, 1, 3])
 _ini_value["section0"]["opt0"] = "updated_value"
 
-_SYNC = ((_ini, _app, "synced"),
-         (_ini, _app_extra, "new_from_app"),
-         (_ini_extra, _app, "del_from_app"),
-         (_ini_value, _app, "updated_ini"))
+_SYNC = (
+    (_ini, _app, "synced"),
+    (_ini, _app_extra, "new_from_app"),
+    (_ini_extra, _app, "del_from_app"),
+    (_ini_value, _app, "updated_ini"),
+)
 _SYNC_IDS = [x[-1] for x in _SYNC]
 
 
 @pytest.mark.parametrize(("ini_config", "app_config", "status"), _SYNC, ids=_SYNC_IDS)
 @pytest.mark.parametrize("exists", (True, False), ids=("exists", "not_exists"))
-def testConfigFile_sync_from_app(ini_config,  # pylint:disable=too-many-branches  # noqa: C901
-                                 app_config,
-                                 status,
-                                 exists,
-                                 mocker):
-    """ Test :class:`lib.config.ini.ConfigFile._sync_from_app` logic """
+def testConfigFile_sync_from_app(
+    ini_config,  # pylint:disable=too-many-branches  # noqa: C901
+    app_config,
+    status,
+    exists,
+    mocker,
+):
+    """Test :class:`lib.config.ini.ConfigFile._sync_from_app` logic"""
     mocker.patch("lib.config.ini.ConfigFile._exists", exists)
 
     instance = ini_mod.ConfigFile("test")
@@ -226,9 +241,13 @@ def testConfigFile_sync_from_app(ini_config,  # pylint:disable=too-many-branches
             for name, opt in opts.items():
                 original_parser[section][name] = opt
 
-        opt_pairs = [({k: v.value for k, v in opts.options.items()},
-                      dict(original_parser[s].items()))
-                     for s, opts in app_config.items()]
+        opt_pairs = [
+            (
+                {k: v.value for k, v in opts.options.items()},
+                dict(original_parser[s].items()),
+            )
+            for s, opts in app_config.items()
+        ]
         # Sanity check that the loaded parser is set correctly
         if status == "synced":
             assert all(set(x[0]) == set(x[1]) for x in opt_pairs)
@@ -251,9 +270,13 @@ def testConfigFile_sync_from_app(ini_config,  # pylint:disable=too-many-branches
     else:
         assert instance._parser is original_parser  # Blank Config pre-exists
 
-    opt_pairs = [({k: v.value for k, v in opts.options.items()},
-                  {k: v for k, v in instance._parser[s].items() if k.startswith("opt")})
-                 for s, opts in app_config.items()]
+    opt_pairs = [
+        (
+            {k: v.value for k, v in opts.options.items()},
+            {k: v for k, v in instance._parser[s].items() if k.startswith("opt")},
+        )
+        for s, opts in app_config.items()
+    ]
 
     # Test options are now in sync
     assert all(set(x[0]) == set(x[1]) for x in opt_pairs)
@@ -267,15 +290,19 @@ def testConfigFile_sync_from_app(ini_config,  # pylint:disable=too-many-branches
         assert all(a == i for a, i in vals)
 
 
-@pytest.mark.parametrize(("section", "option", "value", "datatype"),
-                         (("section1", "opt_str", "test_str", str),
-                          ("section2", "opt_bool", "True", bool),
-                          ("section3", "opt_int", "42", int),
-                          ("section4", "opt_float", "42.69", float),
-                          ("section5", "opt_other", "[test_other]", str)),
-                         ids=("str", "bool", "int", "float", "other"))
+@pytest.mark.parametrize(
+    ("section", "option", "value", "datatype"),
+    (
+        ("section1", "opt_str", "test_str", str),
+        ("section2", "opt_bool", "True", bool),
+        ("section3", "opt_int", "42", int),
+        ("section4", "opt_float", "42.69", float),
+        ("section5", "opt_other", "[test_other]", str),
+    ),
+    ids=("str", "bool", "int", "float", "other"),
+)
 def testConfigFile_get_converted_value(section, option, value, datatype):
-    """ Test :class:`lib.config.ini.ConfigFile._get_converted_value` logic """
+    """Test :class:`lib.config.ini.ConfigFile._get_converted_value` logic"""
     instance = ini_mod.ConfigFile("test")
     instance._parser.add_section(section)
     instance._parser[section][option] = value
@@ -285,7 +312,10 @@ def testConfigFile_get_converted_value(section, option, value, datatype):
     assert datatype(value) == result
 
 
-_ini, _app,  = get_local_remote([2, 1, 3])
+(
+    _ini,
+    _app,
+) = get_local_remote([2, 1, 3])
 _ini_changed, _ = get_local_remote(sections=[2, 1, 3])
 _ini_changed["section0"]["opt0"] = "updated_value"
 _ini_changed["section2"]["opt1"] = "updated_value"
@@ -294,9 +324,11 @@ _SYNC_TO = ((_ini, _app, "synced"), (_ini_changed, _app, "updated_ini"))
 _SYNC__TO_IDS = [x[-1] for x in _SYNC_TO]
 
 
-@pytest.mark.parametrize(("ini_config", "app_config", "status"), _SYNC_TO, ids=_SYNC__TO_IDS)
+@pytest.mark.parametrize(
+    ("ini_config", "app_config", "status"), _SYNC_TO, ids=_SYNC__TO_IDS
+)
 def testConfigFile_sync_to_app(ini_config, app_config, status, mocker):
-    """ Test :class:`lib.config.ini.ConfigFile._sync_to_app` logic """
+    """Test :class:`lib.config.ini.ConfigFile._sync_to_app` logic"""
 
     for sect in app_config.values():  # Add a dummy datatype param to FSConfig
         for opt in sect.options.values():
@@ -312,10 +344,14 @@ def testConfigFile_sync_to_app(ini_config, app_config, status, mocker):
 
     instance._sync_to_app(app_config)
 
-    app_values = {sname: set(v.value for v in sect.options.values())
-                  for sname, sect in app_config.items()}
-    sect_values = {sname: set(instance._parser[sname].values())
-                   for sname in instance._parser.sections()}
+    app_values = {
+        sname: set(v.value for v in sect.options.values())
+        for sname, sect in app_config.items()
+    }
+    sect_values = {
+        sname: set(instance._parser[sname].values())
+        for sname in instance._parser.sections()
+    }
 
     if status == "synced":  # No items change
         instance._get_converted_value.assert_not_called()
@@ -328,12 +364,12 @@ def testConfigFile_sync_to_app(ini_config, app_config, status, mocker):
         assert set(app_values[sect]) == set(sect_values[sect])
 
 
-@pytest.mark.parametrize("structure_synced",
-                         (True, False),
-                         ids=("struc_synced", "not_struc_synced"))
+@pytest.mark.parametrize(
+    "structure_synced", (True, False), ids=("struc_synced", "not_struc_synced")
+)
 @pytest.mark.parametrize("exists", (True, False), ids=("exists", "not_exists"))
 def testConfigFile_sync_on_load(structure_synced, exists, mocker):
-    """ Test :class:`lib.config.ini.ConfigFile.on_load` logic """
+    """Test :class:`lib.config.ini.ConfigFile.on_load` logic"""
     mocker.patch("lib.config.ini.ConfigFile._exists", exists)
     _, app_config = get_local_remote()
 
@@ -355,12 +391,16 @@ def testConfigFile_sync_on_load(structure_synced, exists, mocker):
     assert instance._sync_from_app.call_count == call_count
 
 
-@pytest.mark.parametrize("app_config",
-                         (get_local_remote([2, 1, 3])[1],
-                          get_local_remote([4, 2, 6, 8])[1],
-                          get_local_remote([3])[1]))
+@pytest.mark.parametrize(
+    "app_config",
+    (
+        get_local_remote([2, 1, 3])[1],
+        get_local_remote([4, 2, 6, 8])[1],
+        get_local_remote([3])[1],
+    ),
+)
 def testConfigFile_sync_update_from_app(app_config, mocker):
-    """ Test :class:`lib.config.ini.ConfigFile.update_from_app` logic """
+    """Test :class:`lib.config.ini.ConfigFile.update_from_app` logic"""
     instance = ini_mod.ConfigFile("test")
     instance.save = mocker.MagicMock()
     for sect in app_config:

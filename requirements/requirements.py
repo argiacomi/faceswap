@@ -1,9 +1,10 @@
 #! /usr/env/bin/python3
-""" Parses the contents of python requirements.txt files and holds the information in a parsable
+"""Parses the contents of python requirements.txt files and holds the information in a parsable
 format
 
 NOTE: Only packages from the Python Standard Library should be imported in this module
 """
+
 from __future__ import annotations
 
 import logging
@@ -26,13 +27,14 @@ Python version, if below the project maximum """
 
 
 class Requirements:
-    """ Parse requirement information
+    """Parse requirement information
 
     Parameters
     ----------
     include_dev : bool, optional
         ``True`` to additionally load requirements from the dev requirements file
     """
+
     def __init__(self, include_dev: bool = False) -> None:
         self._include_dev = include_dev
         self._marker: type[Marker] | None = None
@@ -43,36 +45,37 @@ class Requirements:
 
     @property
     def packaging_available(self) -> bool:
-        """ bool : ``True`` if the packaging Library is available otherwise ``False`` """
+        """bool : ``True`` if the packaging Library is available otherwise ``False``"""
         if self._requirement is not None:
             return True
         return import_util.find_spec("packaging") is not None
 
     @property
     def requirements(self) -> dict[str, list[Requirement]]:
-        """ dict[str, list[Requirement]] : backend type as key, list of required packages as
-        value """
+        """dict[str, list[Requirement]] : backend type as key, list of required packages as
+        value"""
         if not self._requirements:
             self._load_requirements()
         return self._requirements
 
     @property
     def global_options(self) -> dict[str, list[str]]:
-        """ dict[str, list[str]] : The global pip install options for each backend """
+        """dict[str, list[str]] : The global pip install options for each backend"""
         if not self._requirements:
             self._load_requirements()
         return self._global_options
 
     def __repr__(self) -> str:
-        """ Pretty print the required packages for logging """
+        """Pretty print the required packages for logging"""
         props = ", ".join(
             f"{k}={repr(getattr(self, k))}"
             for k, v in self.__class__.__dict__.items()
-            if isinstance(v, property) and not k.startswith("_"))
+            if isinstance(v, property) and not k.startswith("_")
+        )
         return f"{self.__class__.__name__}({props})"
 
     def _import_packaging(self) -> None:
-        """ Import the packaging library and set the required classes to class attributes. """
+        """Import the packaging library and set the required classes to class attributes."""
         if self._requirement is not None:
             return
 
@@ -86,7 +89,7 @@ class Requirements:
 
     @classmethod
     def _parse_file(cls, file_path: str) -> tuple[list[str], list[str]]:
-        """ Parse a requirements file
+        """Parse a requirements file
 
         Parameters
         ----------
@@ -104,7 +107,9 @@ class Requirements:
         requirements = []
         with open(file_path, encoding="utf8") as f:
             for line in f:
-                line = line.strip()  # Skip blanks, comments and nested requirement files
+                line = (
+                    line.strip()
+                )  # Skip blanks, comments and nested requirement files
                 if not line or line.startswith(("#", "-r")):
                     continue
 
@@ -115,12 +120,16 @@ class Requirements:
                     continue
                 requirements.append(line)  # Collect requirement
 
-        logger.debug("Parsed requirements file '%s'. global_options: %s, requirements: %s",
-                     os.path.basename(file_path), global_options, requirements)
+        logger.debug(
+            "Parsed requirements file '%s'. global_options: %s, requirements: %s",
+            os.path.basename(file_path),
+            global_options,
+            requirements,
+        )
         return global_options, requirements
 
     def parse_requirements(self, packages: list[str]) -> list[Requirement]:
-        """ Drop in replacement for deprecated pkg_resources.parse_requirements
+        """Drop in replacement for deprecated pkg_resources.parse_requirements
 
         Parameters
         ----------
@@ -137,13 +146,15 @@ class Requirements:
         requirements = [self._requirement(p) for p in packages]
         retval = [r for r in requirements if r.marker is None or r.marker.evaluate()]
         if len(retval) != len(requirements):
-            logger.debug("Filtered invalid packages %s",
-                         [(r.name, r.marker) for r in set(requirements).difference(set(retval))])
+            logger.debug(
+                "Filtered invalid packages %s",
+                [(r.name, r.marker) for r in set(requirements).difference(set(retval))],
+            )
         logger.debug("Parsed requirements %s: %s", packages, retval)
         return retval
 
     def _parse_options(self, options: list[str]) -> list[str]:
-        """ Parse global options from a requirements file and only return valid options
+        """Parse global options from a requirements file and only return valid options
 
         Parameters
         ----------
@@ -173,32 +184,43 @@ class Requirements:
         return retval
 
     def _load_requirements(self) -> None:
-        """ Parse the requirements files and populate information to :attr:`_requirements` """
+        """Parse the requirements files and populate information to :attr:`_requirements`"""
         req_path = os.path.dirname(os.path.realpath(__file__))
         base_file = os.path.join(req_path, "_requirements_base.txt")
-        req_files = [os.path.join(req_path, f)
-                     for f in os.listdir(req_path)
-                     if f.startswith("requirements_")
-                     and os.path.splitext(f)[-1] == ".txt"]
+        req_files = [
+            os.path.join(req_path, f)
+            for f in os.listdir(req_path)
+            if f.startswith("requirements_") and os.path.splitext(f)[-1] == ".txt"
+        ]
 
         opts_base, reqs_base = self._parse_file(base_file)
         parsed_reqs_base = self.parse_requirements(reqs_base)
         parsed_opts_base = self._parse_options(opts_base)
 
         if self._include_dev:
-            opts_dev, reqs_dev = self._parse_file(os.path.join(req_path, "_requirements_dev.txt"))
+            opts_dev, reqs_dev = self._parse_file(
+                os.path.join(req_path, "_requirements_dev.txt")
+            )
             opts_base += opts_dev
             parsed_reqs_base += self.parse_requirements(reqs_dev)
             parsed_opts_base += self._parse_options(opts_dev)
 
         for req_file in req_files:
-            backend = os.path.splitext(os.path.basename(req_file))[0].replace("requirements_", "")
+            backend = os.path.splitext(os.path.basename(req_file))[0].replace(
+                "requirements_", ""
+            )
             assert backend
             opts, reqs = self._parse_file(req_file)
-            self._requirements[backend] = parsed_reqs_base + self.parse_requirements(reqs)
+            self._requirements[backend] = parsed_reqs_base + self.parse_requirements(
+                reqs
+            )
             self._global_options[backend] = parsed_opts_base + self._parse_options(opts)
-            logger.debug("[%s] Requirements: %s , Options: %s",
-                         backend, self._requirements[backend], self._global_options[backend])
+            logger.debug(
+                "[%s] Requirements: %s , Options: %s",
+                backend,
+                self._requirements[backend],
+                self._global_options[backend],
+            )
 
 
 if __name__ == "__main__":

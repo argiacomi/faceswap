@@ -12,6 +12,7 @@ https://github.com/iperov/DeepFaceLab/blob/master/nnlib/TernausNet.py
 Model file sourced from...
 https://github.com/iperov/DeepFaceLab/blob/master/nnlib/FANSeg_256_full_face.h5
 """
+
 from __future__ import annotations
 
 import logging
@@ -36,13 +37,16 @@ logger = logging.getLogger(__name__)
 
 class UNetDFL(FacePlugin):
     """Neural network to process face image into a segmentation mask of the face"""
+
     def __init__(self) -> None:
-        super().__init__(input_size=256,
-                         batch_size=cfg.batch_size(),
-                         is_rgb=False,
-                         dtype="float32",
-                         scale=(0, 1),
-                         centering="legacy")
+        super().__init__(
+            input_size=256,
+            batch_size=cfg.batch_size(),
+            is_rgb=False,
+            dtype="float32",
+            scale=(0, 1),
+            centering="legacy",
+        )
         self.model: UnetDFL
 
     def load_model(self) -> UnetDFL:
@@ -83,13 +87,14 @@ class ConvBlock(nn.Module):
     recursions: int
         The number of convolutions to run
     """
+
     def __init__(self, in_channels: int, filters: int, recursions: int) -> None:
         super().__init__()
-        layers = [nn.Conv2d(in_channels, filters, 3, padding=1),
-                  nn.ReLU(inplace=True)]
+        layers = [nn.Conv2d(in_channels, filters, 3, padding=1), nn.ReLU(inplace=True)]
         for _ in range(recursions - 1):
-            layers.extend([nn.Conv2d(filters, filters, 3, padding=1),
-                           nn.ReLU(inplace=True)])
+            layers.extend(
+                [nn.Conv2d(filters, filters, 3, padding=1), nn.ReLU(inplace=True)]
+            )
         self.convs = nn.Sequential(*layers)
 
     def forward(self, inputs: Tensor) -> Tensor:
@@ -121,20 +126,16 @@ class DecoderBlock(nn.Module):
     relu
         ``True`` to use ReLU activation on the first conv. ``False`` to use no activation
     """
-    def __init__(self,
-                 in_channels: int,
-                 middle_channels: int,
-                 out_channels: int,
-                 relu: bool) -> None:
+
+    def __init__(
+        self, in_channels: int, middle_channels: int, out_channels: int, relu: bool
+    ) -> None:
         super().__init__()
         self._use_relu = relu
         self.conv = nn.Conv2d(in_channels, middle_channels, 3, padding=1)
-        self.conv_trans = nn.ConvTranspose2d(middle_channels,
-                                             out_channels,
-                                             3,
-                                             stride=2,
-                                             padding=0,
-                                             output_padding=0)
+        self.conv_trans = nn.ConvTranspose2d(
+            middle_channels, out_channels, 3, stride=2, padding=0, output_padding=0
+        )
 
     def forward(self, inputs: Tensor) -> Tensor:
         """Decoder block forward pass
@@ -157,6 +158,7 @@ class DecoderBlock(nn.Module):
 
 class UnetDFL(nn.Module):  # pylint:disable=too-many-instance-attributes
     """UNet DFL Definition for PyTorch"""
+
     def __init__(self) -> None:
         super().__init__()
         self.features_0 = ConvBlock(3, 64, 1)

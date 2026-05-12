@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Collects and returns Information on available Nvidia GPUs. """
+"""Collects and returns Information on available Nvidia GPUs."""
+
 import os
 
 import pynvml  # pylint:disable=import-error
@@ -45,24 +46,30 @@ class NvidiaStats(_GPUStats):
         try:
             self._log("debug", "Initializing PyNVML for Nvidia GPU.")
             pynvml.nvmlInit()
-        except (pynvml.NVMLError_LibraryNotFound,  # pylint:disable=no-member
-                pynvml.NVMLError_DriverNotLoaded,  # pylint:disable=no-member
-                pynvml.NVMLError_NoPermission) as err:  # pylint:disable=no-member
-            msg = ("There was an error reading from the Nvidia Machine Learning Library. The most "
-                   "likely cause is incorrectly installed drivers. If this is the case, Please "
-                   "remove and reinstall your Nvidia drivers before reporting. Original "
-                   f"Error: {str(err)}")
+        except (
+            pynvml.NVMLError_LibraryNotFound,  # pylint:disable=no-member
+            pynvml.NVMLError_DriverNotLoaded,  # pylint:disable=no-member
+            pynvml.NVMLError_NoPermission,
+        ) as err:  # pylint:disable=no-member
+            msg = (
+                "There was an error reading from the Nvidia Machine Learning Library. The most "
+                "likely cause is incorrectly installed drivers. If this is the case, Please "
+                "remove and reinstall your Nvidia drivers before reporting. Original "
+                f"Error: {str(err)}"
+            )
             raise FaceswapError(msg) from err
         except Exception as err:  # pylint:disable=broad-except
-            msg = ("An unhandled exception occurred reading from the Nvidia Machine Learning "
-                   f"Library. Original error: {str(err)}")
+            msg = (
+                "An unhandled exception occurred reading from the Nvidia Machine Learning "
+                f"Library. Original error: {str(err)}"
+            )
             raise FaceswapError(msg) from err
 
         os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
         super()._initialize()
 
     def _shutdown(self) -> None:
-        """Cleanly close access to NVML and set :attr:`_is_initialized` back to ``False``. """
+        """Cleanly close access to NVML and set :attr:`_is_initialized` back to ``False``."""
         self._log("debug", "Shutting down NVML")
         pynvml.nvmlShutdown()
         super()._shutdown()
@@ -77,8 +84,11 @@ class NvidiaStats(_GPUStats):
         try:
             retval = pynvml.nvmlDeviceGetCount()
         except pynvml.NVMLError as err:
-            self._log("debug", "Error obtaining device count. Setting to 0. "
-                               f"Original error: {str(err)}")
+            self._log(
+                "debug",
+                "Error obtaining device count. Setting to 0. "
+                f"Original error: {str(err)}",
+            )
             retval = 0
         self._log("debug", f"GPU Device count: {retval}")
         return retval
@@ -108,8 +118,9 @@ class NvidiaStats(_GPUStats):
         -------
         The list of pointers for connected Nvidia GPUs
         """
-        handles = [pynvml.nvmlDeviceGetHandleByIndex(i)
-                   for i in range(self._device_count)]
+        handles = [
+            pynvml.nvmlDeviceGetHandleByIndex(i) for i in range(self._device_count)
+        ]
         self._log("debug", f"GPU Handles found: {len(handles)}")
         return handles
 
@@ -135,8 +146,7 @@ class NvidiaStats(_GPUStats):
         -------
         The list of connected Nvidia GPU names
         """
-        names = [pynvml.nvmlDeviceGetName(handle)
-                 for handle in self._handles]
+        names = [pynvml.nvmlDeviceGetName(handle) for handle in self._handles]
         self._log("debug", f"GPU Devices: {names}")
         return names
 
@@ -148,8 +158,10 @@ class NvidiaStats(_GPUStats):
         -------
         The VRAM in Megabytes for each connected Nvidia GPU
         """
-        vram = [pynvml.nvmlDeviceGetMemoryInfo(handle).total / (1024 * 1024)
-                for handle in self._handles]
+        vram = [
+            pynvml.nvmlDeviceGetMemoryInfo(handle).total / (1024 * 1024)
+            for handle in self._handles
+        ]
         self._log("debug", f"GPU VRAM: {vram}")
         return vram
 
@@ -167,8 +179,10 @@ class NvidiaStats(_GPUStats):
             self._initialize()
             self._handles = self._get_handles()
 
-        vram = [pynvml.nvmlDeviceGetMemoryInfo(handle).free / (1024 * 1024)
-                for handle in self._handles]
+        vram = [
+            pynvml.nvmlDeviceGetMemoryInfo(handle).free / (1024 * 1024)
+            for handle in self._handles
+        ]
         if not is_initialized:
             self._shutdown()
 
@@ -192,10 +206,13 @@ class NvidiaStats(_GPUStats):
 
         active = self._get_active_devices()
 
-        os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(str(d) for d in active
-                                                      if d not in _EXCLUDE_DEVICES)
+        os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(
+            str(d) for d in active if d not in _EXCLUDE_DEVICES
+        )
 
-        env_vars = [f"{k}: {v}" for k, v in os.environ.items() if k.lower().startswith("cuda")]
+        env_vars = [
+            f"{k}: {v}" for k, v in os.environ.items() if k.lower().startswith("cuda")
+        ]
         self._log("debug", f"Cuda environment variables: {env_vars}")
 
 

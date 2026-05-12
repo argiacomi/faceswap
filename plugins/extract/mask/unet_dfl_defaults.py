@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-""" The default options for the faceswap UNET dfl plugin.
+"""The default options for the faceswap UNET dfl plugin.
 
 Defaults files should be named `<plugin_name>_defaults.py`
 
@@ -25,6 +25,7 @@ Items will be grouped together as per their `group` parameter, but otherwise wil
 the order that they are added to this module.
 from lib.config import ConfigItem
 """
+
 # pylint:disable=duplicate-code
 from lib.config import ConfigItem
 
@@ -33,7 +34,7 @@ HELPTEXT = (
     "UNET_DFL options. Mask designed to provide smart segmentation of mostly frontal faces.\n"
     "The mask model has been trained by community members.  Profile faces may result in sub-par "
     "performance."
-    )
+)
 
 
 batch_size = ConfigItem(
@@ -41,6 +42,7 @@ batch_size = ConfigItem(
     default=8,
     group="settings",
     info="The batch size to use. To a point, higher batch sizes equal better performance, "
-         "but setting it too high can harm performance.",
+    "but setting it too high can harm performance.",
     rounding=1,
-    min_max=(1, 128))
+    min_max=(1, 128),
+)

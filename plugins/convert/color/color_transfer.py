@@ -1,27 +1,27 @@
 #!/usr/bin/env python3
-""" Color Transfer adjustment color matching adjustment plugin for faceswap.py converter
-    source: https://github.com/jrosebr1/color_transfer
-    The MIT License (MIT)
+"""Color Transfer adjustment color matching adjustment plugin for faceswap.py converter
+source: https://github.com/jrosebr1/color_transfer
+The MIT License (MIT)
 
-    Copyright (c) 2014 Adrian Rosebrock, http://www.pyimagesearch.com
+Copyright (c) 2014 Adrian Rosebrock, http://www.pyimagesearch.com
 
-    Permission is hereby granted, free of charge, to any person obtaining a copy
-    of this software and associated documentation files (the "Software"), to deal
-    in the Software without restriction, including without limitation the rights
-    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-    copies of the Software, and to permit persons to whom the Software is
-    furnished to do so, subject to the following conditions:
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-    The above copyright notice and this permission notice shall be included in
-    all copies or substantial portions of the Software.
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
 
-    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-    THE SOFTWARE. """
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE."""
 
 import cv2
 import numpy as np
@@ -73,18 +73,18 @@ class Color(Adjustment):
         # sure to utilizing the floating point data type (note: OpenCV
         # expects floats to be 32-bit, so use that instead of 64-bit)
         source = cv2.cvtColor(  # pylint:disable=no-member
-            np.rint(old_face * raw_mask * 255.0).astype("uint8"),
-            cv2.COLOR_BGR2LAB).astype("float32")  # pylint:disable=no-member
+            np.rint(old_face * raw_mask * 255.0).astype("uint8"), cv2.COLOR_BGR2LAB
+        ).astype("float32")  # pylint:disable=no-member
         target = cv2.cvtColor(  # pylint:disable=no-member
-            np.rint(new_face * raw_mask * 255.0).astype("uint8"),
-            cv2.COLOR_BGR2LAB).astype("float32")  # pylint:disable=no-member
+            np.rint(new_face * raw_mask * 255.0).astype("uint8"), cv2.COLOR_BGR2LAB
+        ).astype("float32")  # pylint:disable=no-member
         # compute color statistics for the source and target images
-        (l_mean_src, l_std_src,
-         a_mean_src, a_std_src,
-         b_mean_src, b_std_src) = self.image_stats(source)
-        (l_mean_tar, l_std_tar,
-         a_mean_tar, a_std_tar,
-         b_mean_tar, b_std_tar) = self.image_stats(target)
+        (l_mean_src, l_std_src, a_mean_src, a_std_src, b_mean_src, b_std_src) = (
+            self.image_stats(source)
+        )
+        (l_mean_tar, l_std_tar, a_mean_tar, a_std_tar, b_mean_tar, b_std_tar) = (
+            self.image_stats(target)
+        )
 
         # subtract the means from the target image
         (light, col_a, col_b) = cv2.split(target)  # pylint:disable=no-member
@@ -118,9 +118,12 @@ class Color(Adjustment):
         # space, being sure to utilize the 8-bit unsigned integer data
         # type
         transfer = cv2.merge([light, col_a, col_b])  # pylint:disable=no-member
-        transfer = cv2.cvtColor(  # pylint:disable=no-member
-            transfer.astype("uint8"),
-            cv2.COLOR_LAB2BGR).astype("float32") / 255.0  # pylint:disable=no-member
+        transfer = (
+            cv2.cvtColor(  # pylint:disable=no-member
+                transfer.astype("uint8"), cv2.COLOR_LAB2BGR
+            ).astype("float32")
+            / 255.0
+        )  # pylint:disable=no-member
         background = new_face * (1 - raw_mask)
         merged = transfer + background
         # return the color transferred image
@@ -172,8 +175,9 @@ class Color(Adjustment):
         # check if scaling needs to be done to be in new_range
         if arr_min < new_range[0] or arr_max > new_range[1]:
             # perform min-max scaling
-            scaled = (new_range[1] - new_range[0]) * (arr - arr_min) / (arr_max -
-                                                                        arr_min) + new_range[0]
+            scaled = (new_range[1] - new_range[0]) * (arr - arr_min) / (
+                arr_max - arr_min
+            ) + new_range[0]
         else:
             # return array if already in range
             scaled = arr

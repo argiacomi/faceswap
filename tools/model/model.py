@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Tool to restore models from backup"""
+
 from __future__ import annotations
 import logging
 import os
@@ -14,6 +15,7 @@ import keras
 from lib.model.backup_restore import Backup
 
 from lib.logger import parse_class_init
+
 # Import the following libs for custom objects
 from lib.model import initializers, layers, normalization  # noqa # pylint:disable=unused-import
 from lib.utils import get_module_objects
@@ -26,7 +28,7 @@ if T.TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class Model():
+class Model:
     """Tool to perform actions on a model file.
 
     Parameters
@@ -34,6 +36,7 @@ class Model():
     arguments
         The command line arguments calling the model tool
     """
+
     def __init__(self, arguments: argparse.Namespace) -> None:
         logger.debug(parse_class_init(locals()))
         self._model_dir = self._check_folder(arguments.model_dir)
@@ -57,7 +60,8 @@ class Model():
         jobs: dict[str, T.Type[Inference | NaNScan | Restore]] = {
             "inference": Inference,
             "nan-scan": NaNScan,
-            "restore": Restore}
+            "restore": Restore,
+        }
         return jobs[arguments.job](arguments)
 
     @classmethod
@@ -79,17 +83,23 @@ class Model():
             logger.error("Model folder does not exist: '%s'", model_dir)
             sys.exit(1)
 
-        chk_files = [fname
-                     for fname in os.listdir(model_dir)
-                     if fname.endswith(".keras")
-                     and not os.path.splitext(fname)[0].endswith("_inference")]
+        chk_files = [
+            fname
+            for fname in os.listdir(model_dir)
+            if fname.endswith(".keras")
+            and not os.path.splitext(fname)[0].endswith("_inference")
+        ]
 
         if not chk_files:
-            logger.error("Could not find a model in the supplied folder: '%s'", model_dir)
+            logger.error(
+                "Could not find a model in the supplied folder: '%s'", model_dir
+            )
             sys.exit(1)
 
         if len(chk_files) > 1:
-            logger.error("More than one model file found in the model folder: '%s'", model_dir)
+            logger.error(
+                "More than one model file found in the model folder: '%s'", model_dir
+            )
             sys.exit(1)
 
         model_name = os.path.splitext(chk_files[0])[0].title()
@@ -101,7 +111,7 @@ class Model():
         self._job.process()
 
 
-class Inference():
+class Inference:
     """Save an inference model from a trained Faceswap model.
 
     Parameters
@@ -109,6 +119,7 @@ class Inference():
     arguments
         The command line arguments calling the model tool
     """
+
     def __init__(self, arguments: argparse.Namespace) -> None:
         logger.debug(parse_class_init(locals()))
         self._switch = arguments.swap_model
@@ -129,10 +140,12 @@ class Inference():
             The full path to the source model file
         inference_model
             The full path to the inference model save location
-         """
-        model_name = next(fname for fname in os.listdir(model_dir)
-                          if fname.endswith(".keras")
-                          and not fname.endswith("_inference.keras"))
+        """
+        model_name = next(
+            fname
+            for fname in os.listdir(model_dir)
+            if fname.endswith(".keras") and not fname.endswith("_inference.keras")
+        )
         in_path = os.path.join(model_dir, model_name)
         logger.debug("Model input path: '%s'", in_path)
 
@@ -151,7 +164,7 @@ class Inference():
         inference.save(self._output_file)
 
 
-class NaNScan():
+class NaNScan:
     """Tool to scan for NaN and Infs in model weights.
 
     Parameters
@@ -159,6 +172,7 @@ class NaNScan():
     arguments
         The command line arguments calling the model tool
     """
+
     def __init__(self, arguments: argparse.Namespace) -> None:
         logger.debug(parse_class_init(locals()))
         self._model_file = self._get_model_filename(arguments.model_dir)
@@ -177,15 +191,17 @@ class NaNScan():
         -------
         The full path to the saved model file
         """
-        model_file = next(fname for fname in os.listdir(model_dir) if fname.endswith(".keras"))
+        model_file = next(
+            fname for fname in os.listdir(model_dir) if fname.endswith(".keras")
+        )
         return os.path.join(model_dir, model_file)
 
-    def _parse_weights(self,
-                       layer: keras.models.Model | keras.layers.Layer) -> dict:
+    def _parse_weights(self, layer: keras.models.Model | keras.layers.Layer) -> dict:
         """Recursively pass through sub-models to scan layer weights"""
         weights = layer.get_weights()
-        logger.debug("Processing weights for layer '%s', length: '%s'",
-                     layer.name, len(weights))
+        logger.debug(
+            "Processing weights for layer '%s', length: '%s'", layer.name, len(weights)
+        )
 
         if not weights:
             logger.debug("Skipping layer with no weights: %s", layer.name)
@@ -242,7 +258,7 @@ class NaNScan():
         self._parse_output(errors)
 
 
-class Restore():
+class Restore:
     """Restore a model from backup.
 
     Parameters
@@ -250,6 +266,7 @@ class Restore():
     arguments
         The command line arguments calling the model tool
     """
+
     def __init__(self, arguments: argparse.Namespace) -> None:
         logger.debug(parse_class_init(locals()))
         self._model_dir = arguments.model_dir
@@ -265,16 +282,20 @@ class Restore():
 
     def _get_model_name(self) -> str:
         """Additional checks to make sure that a backup exists in the model location."""
-        bk_files = [fname for fname in os.listdir(self._model_dir) if fname.endswith(".bk")]
+        bk_files = [
+            fname for fname in os.listdir(self._model_dir) if fname.endswith(".bk")
+        ]
         if not bk_files:
-            logger.error("Could not find any backup files in the supplied folder: '%s'",
-                         self._model_dir)
+            logger.error(
+                "Could not find any backup files in the supplied folder: '%s'",
+                self._model_dir,
+            )
             sys.exit(1)
         logger.verbose("Backup files: %s)", bk_files)  # type:ignore[attr-defined]
 
         ext = ".keras.bk"
         model_name = next(fname for fname in bk_files if fname.endswith(ext))
-        return model_name[:-len(ext)]
+        return model_name[: -len(ext)]
 
 
 __all__ = get_module_objects(__name__)

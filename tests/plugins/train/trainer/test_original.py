@@ -1,5 +1,5 @@
 #!/usr/bin python3
-""" Pytest unit tests for :mod:`plugins.train.trainer.original` Trainer plug in """
+"""Pytest unit tests for :mod:`plugins.train.trainer.original` Trainer plug in"""
 # pylint:disable=protected-access,invalid-name
 
 import numpy as np
@@ -14,21 +14,24 @@ from plugins.train.trainer import base as mod_base
 
 class DummyLoss:  # pylint:disable=too-few-public-methods
     """Dummy loss return"""
+
     total = 1.0
 
 
 @pytest.fixture
 def _trainer_mocked(mocker: pytest_mock.MockFixture):  # noqa: F811
-    """ Generate a mocked model and feeder object and patch user config items """
+    """Generate a mocked model and feeder object and patch user config items"""
 
     def _apply_patch(batch_size=8):
         model = mocker.MagicMock()
-        conf = mod_base.TrainConfig(folders=["x", "y"],
-                                    batch_size=batch_size,
-                                    augment_color=False,
-                                    flip=False,
-                                    warp=False,
-                                    cache_landmarks=False)
+        conf = mod_base.TrainConfig(
+            folders=["x", "y"],
+            batch_size=batch_size,
+            augment_color=False,
+            flip=False,
+            warp=False,
+            cache_landmarks=False,
+        )
         instance = mod_original.Trainer(model, conf)
         return instance
 
@@ -37,7 +40,7 @@ def _trainer_mocked(mocker: pytest_mock.MockFixture):  # noqa: F811
 
 @pytest.mark.parametrize("batch_size", (4, 8, 16, 32, 64))
 def test_Trainer(batch_size, _trainer_mocked):
-    """ Test that original trainer creates correctly """
+    """Test that original trainer creates correctly"""
     instance = _trainer_mocked(batch_size=batch_size)
     assert isinstance(instance, mod_base.TrainerBase)
     assert instance.batch_size == batch_size
@@ -45,7 +48,7 @@ def test_Trainer(batch_size, _trainer_mocked):
 
 
 def test_Trainer_train_batch(_trainer_mocked, mocker):
-    """ Test that original trainer calls the forward and backwards methods """
+    """Test that original trainer calls the forward and backwards methods"""
     instance = _trainer_mocked()
     loss_return = [DummyLoss()]
     instance._forward = mocker.MagicMock(return_value=loss_return)
@@ -62,22 +65,30 @@ def test_Trainer_train_batch(_trainer_mocked, mocker):
 
 @pytest.mark.parametrize("outputs", (1, 2, 4))
 @pytest.mark.parametrize("batch_size", (4, 8, 16, 32, 64))
-def test_Trainer_forward(batch_size,  # pylint:disable=too-many-locals
-                         outputs,
-                         _trainer_mocked,
-                         mocker):
-    """ Test that original trainer _forward calls the correct model methods """
+def test_Trainer_forward(
+    batch_size,  # pylint:disable=too-many-locals
+    outputs,
+    _trainer_mocked,
+    mocker,
+):
+    """Test that original trainer _forward calls the correct model methods"""
     instance = _trainer_mocked(batch_size=batch_size)
 
-    loss_returns = [torch.from_numpy(np.random.random((1, ))) for _ in range(outputs * 2)]
-    mock_predictions = [torch.from_numpy(np.random.random((batch_size, 16, 16, 3)))
-                        for _ in range(outputs * 2)]
+    loss_returns = [
+        torch.from_numpy(np.random.random((1,))) for _ in range(outputs * 2)
+    ]
+    mock_predictions = [
+        torch.from_numpy(np.random.random((batch_size, 16, 16, 3)))
+        for _ in range(outputs * 2)
+    ]
     instance.model.model.return_value = mock_predictions
     instance.loss_func = mocker.MagicMock()
 
     inputs = list(torch.from_numpy(np.random.random((2, batch_size, 16, 16, 3))))
-    targets = [torch.from_numpy(np.random.random((2, batch_size, 16, 16, 3)))
-               for _ in range(outputs)]
+    targets = [
+        torch.from_numpy(np.random.random((2, batch_size, 16, 16, 3)))
+        for _ in range(outputs)
+    ]
 
     # Call forwards
     result = instance._forward(inputs, targets, BatchMeta())
@@ -98,7 +109,9 @@ def test_Trainer_forward(batch_size,  # pylint:disable=too-many-locals
     loss_calls = instance.model.model.loss
     expected_targets = [t[i].numpy() for i in range(2) for t in targets]
     expected_predictions = [p.numpy() for p in mock_predictions]
-    for loss_call, pred, target in zip(loss_calls, expected_predictions, expected_targets):
+    for loss_call, pred, target in zip(
+        loss_calls, expected_predictions, expected_targets
+    ):
         loss_call.assert_called_once()
         call_args, call_kwargs = loss_call.call_args
         assert not call_kwargs
@@ -111,7 +124,7 @@ def test_Trainer_forward(batch_size,  # pylint:disable=too-many-locals
 
 
 def test_Trainer_backwards_and_apply(_trainer_mocked, mocker):
-    """ Test that original trainer _backwards_and_apply calls the correct model methods """
+    """Test that original trainer _backwards_and_apply calls the correct model methods"""
     instance = _trainer_mocked()
 
     mock_loss = mocker.MagicMock()

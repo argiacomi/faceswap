@@ -1,5 +1,6 @@
 #!/usr/bin python3
-""" Main entry point to the extract process of FaceSwap """
+"""Main entry point to the extract process of FaceSwap"""
+
 from __future__ import annotations
 
 import logging
@@ -15,8 +16,14 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-from lib.align.aligned_utils import (batch_adjust_matrices, batch_align, batch_resize,
-                                     batch_transform, get_adjusted_center, get_sub_crop_size)
+from lib.align.aligned_utils import (
+    batch_adjust_matrices,
+    batch_align,
+    batch_resize,
+    batch_transform,
+    get_adjusted_center,
+    get_sub_crop_size,
+)
 from lib.align.objects import AlignmentsEntry, FileAlignments, PNGHeader, PNGSource
 from lib.align.constants import EXTRACT_RATIOS, LandmarkType, MEAN_FACE
 from lib.align.detected_face import DetectedFace
@@ -27,7 +34,12 @@ from lib.infer.objects import FrameFaces, frame_faces_to_alignment
 from lib.image import encode_image, ImagesLoader, ImagesSaver
 from lib.logger import parse_class_init
 from lib.multithreading import FSThread
-from lib.utils import get_folder, get_module_objects, handle_deprecated_cli_opts, IMAGE_EXTENSIONS
+from lib.utils import (
+    get_folder,
+    get_module_objects,
+    handle_deprecated_cli_opts,
+    IMAGE_EXTENSIONS,
+)
 from lib.video import VIDEO_EXTENSIONS
 
 from .fs_media import Alignments, finalize
@@ -44,7 +56,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class BatchInfo:
-    """ Holds information about each input batch being processed through extract
+    """Holds information about each input batch being processed through extract
 
     Parameters
     ----------
@@ -53,6 +65,7 @@ class BatchInfo:
     alignments
         The alignments for the input
     """
+
     loader: Loader
     """The images loader for the batch"""
     alignments: Alignments
@@ -60,7 +73,7 @@ class BatchInfo:
 
 
 class Extract:
-    """ The Faceswap Face Extraction Process.
+    """The Faceswap Face Extraction Process.
 
     The extraction process is responsible for detecting faces in a series of images/video, aligning
     them and optionally collecting further data about each face leveraging various user selected
@@ -72,10 +85,12 @@ class Extract:
         The arguments to be passed to the extraction process as generated from Faceswap's command
         line arguments
     """
+
     def __init__(self, arguments: Namespace) -> None:
         logger.debug(parse_class_init(locals()))
-        args = handle_deprecated_cli_opts(arguments,
-                                          additional={"K": ("to skip saving faces", True, None)})
+        args = handle_deprecated_cli_opts(
+            arguments, additional={"K": ("to skip saving faces", True, None)}
+        )
         args = self._validate_compatible_args(args)
         input_locations = self._get_input_locations(args.input_dir, args.batch_mode)
         self._validate_batch_mode(args.batch_mode, input_locations, args)
@@ -85,34 +100,44 @@ class Extract:
 
         file_input = args.detector == "file" or args.aligner == "file"
         save_alignments = self._should_save_alignments(args)
-        self._batches = [BatchInfo(ld := Loader(self._pipeline,
-                                                input_location,
-                                                file_input,
-                                                args.extract_every_n,
-                                                args.skip_existing,
-                                                args.skip_faces,
-                                                idx == len(input_locations) - 1),
-                                   Alignments(args.alignments_path,
-                                              ld.location,
-                                              is_extract=True,
-                                              skip_existing_frames=args.skip_existing,
-                                              skip_existing_faces=arguments.skip_faces,
-                                              plugin_is_file=file_input,
-                                              save_alignments=save_alignments,
-                                              input_is_video=ld.is_video))
-                         for idx, input_location in enumerate(input_locations)]
+        self._batches = [
+            BatchInfo(
+                ld := Loader(
+                    self._pipeline,
+                    input_location,
+                    file_input,
+                    args.extract_every_n,
+                    args.skip_existing,
+                    args.skip_faces,
+                    idx == len(input_locations) - 1,
+                ),
+                Alignments(
+                    args.alignments_path,
+                    ld.location,
+                    is_extract=True,
+                    skip_existing_frames=args.skip_existing,
+                    skip_existing_faces=arguments.skip_faces,
+                    plugin_is_file=file_input,
+                    save_alignments=save_alignments,
+                    input_is_video=ld.is_video,
+                ),
+            )
+            for idx, input_location in enumerate(input_locations)
+        ]
 
-        self._output = Output(self._pipeline,
-                              args.output_dir,
-                              args.size,
-                              args.min_scale,
-                              self._batches,
-                              args.save_interval,
-                              args.debug_landmarks)
+        self._output = Output(
+            self._pipeline,
+            args.output_dir,
+            args.size,
+            args.min_scale,
+            self._batches,
+            args.save_interval,
+            args.debug_landmarks,
+        )
 
     @classmethod
     def _get_input_locations(cls, input_location: str, batch_mode: bool) -> list[str]:
-        """ Obtain the full path to input locations. Will be a list of locations if batch mode is
+        """Obtain the full path to input locations. Will be a list of locations if batch mode is
         selected, or a list containing a single location if batch mode is not selected.
 
         Parameters
@@ -132,16 +157,24 @@ class Extract:
             return [input_location]
 
         if os.path.isfile(input_location):
-            logger.warning("Batch mode selected but input is not a folder. Switching to normal "
-                           "mode")
+            logger.warning(
+                "Batch mode selected but input is not a folder. Switching to normal "
+                "mode"
+            )
             return [input_location]
 
-        retval = [os.path.join(input_location, fname)
-                  for fname in os.listdir(input_location)
-                  if (os.path.isdir(os.path.join(input_location, fname))  # folder images
-                      and any(os.path.splitext(iname)[-1].lower() in IMAGE_EXTENSIONS
-                              for iname in os.listdir(os.path.join(input_location, fname))))
-                  or os.path.splitext(fname)[-1].lower() in VIDEO_EXTENSIONS]  # video
+        retval = [
+            os.path.join(input_location, fname)
+            for fname in os.listdir(input_location)
+            if (
+                os.path.isdir(os.path.join(input_location, fname))  # folder images
+                and any(
+                    os.path.splitext(iname)[-1].lower() in IMAGE_EXTENSIONS
+                    for iname in os.listdir(os.path.join(input_location, fname))
+                )
+            )
+            or os.path.splitext(fname)[-1].lower() in VIDEO_EXTENSIONS
+        ]  # video
 
         retval = list(sorted(retval))
         logger.debug("[Extract] Input locations: %s", retval)
@@ -163,34 +196,45 @@ class Extract:
         """
         # Can't run a detector if importing landmarks
         if args.aligner == "file" and args.detector != "file":
-            logger.warning("Detecting faces is not compatible with importing landmarks from a "
-                           "file. Setting Detector to 'file'")
+            logger.warning(
+                "Detecting faces is not compatible with importing landmarks from a "
+                "file. Setting Detector to 'file'"
+            )
             args.detector = "file"
         # Impossible to skip existing when not running detection
         if args.skip_existing and args.detector == "file":
-            logger.warning("Skipping existing frames is not compatible with importing from a file "
-                           "for detection. Disabling 'skip_existing'")
+            logger.warning(
+                "Skipping existing frames is not compatible with importing from a file "
+                "for detection. Disabling 'skip_existing'"
+            )
             args.skip_existing = False
         # Impossible to get missing faces when we do not have a detector or aligner
         if args.skip_faces and (args.detector == "file" or args.aligner == "file"):
-            logger.warning("Skipping existing faces is not compatible with importing from a file. "
-                           "Disabling 'skip_existing_faces'")
+            logger.warning(
+                "Skipping existing faces is not compatible with importing from a file. "
+                "Disabling 'skip_existing_faces'"
+            )
             args.skip_faces = False
         # Face filtering needs a recognition plugin
         if (args.filter or args.nfilter) and not args.identity:
-            logger.warning("Face-filtering is enabled, but an identity plugin has not been "
-                           "selected. Selecting 'T-Face' plugin")
+            logger.warning(
+                "Face-filtering is enabled, but an identity plugin has not been "
+                "selected. Selecting 'T-Face' plugin"
+            )
             args.identity = ["t-face"]
         # We can only use 1 identity for face filtering, so we select the first given
         if (args.filter or args.nfilter) and len(args.identity) > 1:
-            logger.warning("Face-filtering is enabled, but multiple identity plugins have been "
-                           "selected. Using '%s' for filtering", args.identity[0])
+            logger.warning(
+                "Face-filtering is enabled, but multiple identity plugins have been "
+                "selected. Using '%s' for filtering",
+                args.identity[0],
+            )
         return args
 
-    def _validate_batch_mode(self, batch_mode: bool,
-                             input_locations: list[str],
-                             args: Namespace) -> None:
-        """ Validate the command line arguments.
+    def _validate_batch_mode(
+        self, batch_mode: bool, input_locations: list[str], args: Namespace
+    ) -> None:
+        """Validate the command line arguments.
 
         If batch-mode selected and there is only one object to extract from, then batch mode is
         disabled
@@ -211,13 +255,18 @@ class Extract:
             return
 
         if not input_locations:
-            logger.error("Batch mode selected, but no valid files found in input location: '%s'. "
-                         "Exiting.", args.input_dir)
+            logger.error(
+                "Batch mode selected, but no valid files found in input location: '%s'. "
+                "Exiting.",
+                args.input_dir,
+            )
             sys.exit(1)
 
         if args.alignments_path:
-            logger.warning("Custom alignments path not supported for batch mode. "
-                           "Reverting to default.")
+            logger.warning(
+                "Custom alignments path not supported for batch mode. "
+                "Reverting to default."
+            )
             args.alignments_path = None
 
     @classmethod
@@ -239,7 +288,7 @@ class Extract:
         torch._dynamo.config.cache_size_limit = 512
 
     def _should_save_alignments(self, arguments: Namespace) -> bool:
-        """ Decide whether alignments should be saved from the given command line arguments and
+        """Decide whether alignments should be saved from the given command line arguments and
         output suitable information
 
         Parameters
@@ -252,20 +301,32 @@ class Extract:
         ``True`` if alignments should be saved
         """
         if arguments.detector == arguments.aligner == "file" and (
-                arguments.masker is None and arguments.identity is None):
-            logger.debug("[Extract] Extracting directly from file. Not saving alignments")
+            arguments.masker is None and arguments.identity is None
+        ):
+            logger.debug(
+                "[Extract] Extracting directly from file. Not saving alignments"
+            )
             return False
-        if arguments.detector == arguments.aligner == "file" and arguments.extract_every_n > 1:
-            logger.warning("Alignments loaded from file, EEN > 1 and additional plugins selected.")
-            logger.warning("The extracted faces will contain the additional plugin data, but an "
-                           "updated Alignments File will not be saved.")
+        if (
+            arguments.detector == arguments.aligner == "file"
+            and arguments.extract_every_n > 1
+        ):
+            logger.warning(
+                "Alignments loaded from file, EEN > 1 and additional plugins selected."
+            )
+            logger.warning(
+                "The extracted faces will contain the additional plugin data, but an "
+                "updated Alignments File will not be saved."
+            )
             return False
         if arguments.detector == arguments.aligner == "file":
-            logger.info("Alignments file will be updated with data from additional plugins")
+            logger.info(
+                "Alignments file will be updated with data from additional plugins"
+            )
         return True
 
     def _load_pipeline(self, arguments: Namespace) -> ExtractRunner:  # noqa: C901
-        """ Create the extraction pipeline and run profiling, if selected
+        """Create the extraction pipeline and run profiling, if selected
 
         Parameters
         ---------
@@ -281,31 +342,37 @@ class Extract:
         profile = arguments.benchmark
         try:
             if arguments.detector != "file":
-                retval = Detect(arguments.detector,
-                                rotation=arguments.rotate_images,
-                                min_size=arguments.min_size,
-                                max_size=arguments.max_size,
-                                compile_model=arguments.compile,
-                                config_file=conf_file)(retval, profile=profile)
+                retval = Detect(
+                    arguments.detector,
+                    rotation=arguments.rotate_images,
+                    min_size=arguments.min_size,
+                    max_size=arguments.max_size,
+                    compile_model=arguments.compile,
+                    config_file=conf_file,
+                )(retval, profile=profile)
             if arguments.aligner != "file":
-                retval = Align(arguments.aligner,
-                               re_feeds=arguments.re_feed,
-                               re_align=arguments.re_align,
-                               normalization=arguments.normalization,
-                               filters=arguments.align_filters,
-                               compile_model=arguments.compile,
-                               config_file=conf_file)(retval, profile=profile)
+                retval = Align(
+                    arguments.aligner,
+                    re_feeds=arguments.re_feed,
+                    re_align=arguments.re_align,
+                    normalization=arguments.normalization,
+                    filters=arguments.align_filters,
+                    compile_model=arguments.compile,
+                    config_file=conf_file,
+                )(retval, profile=profile)
             if arguments.masker is not None:
                 for masker in arguments.masker:
-                    retval = Mask(masker,
-                                  compile_model=arguments.compile,
-                                  config_file=conf_file)(retval, profile=profile)
+                    retval = Mask(
+                        masker, compile_model=arguments.compile, config_file=conf_file
+                    )(retval, profile=profile)
             if arguments.identity:
                 for idx, identity in enumerate(arguments.identity):
-                    retval = Identity(identity,
-                                      self._face_filter.threshold,
-                                      compile_model=arguments.compile,
-                                      config_file=conf_file)(retval, profile=profile)
+                    retval = Identity(
+                        identity,
+                        self._face_filter.threshold,
+                        compile_model=arguments.compile,
+                        config_file=conf_file,
+                    )(retval, profile=profile)
                     if self._face_filter.enabled and idx == 0:
                         # Add the first selected identity plugin
                         self._face_filter.add_identity_plugin(retval)
@@ -324,7 +391,7 @@ class Extract:
         return retval
 
     def process(self) -> None:
-        """ Run the extraction process """
+        """Run the extraction process"""
         try:
             if self._face_filter.enabled:
                 self._face_filter.get_embeddings(self._pipeline)
@@ -342,7 +409,7 @@ class Extract:
 
 
 class Loader:  # pylint:disable=too-many-instance-attributes
-    """ Loads images/video frames from disks and puts to queue for feeding the extraction pipeline
+    """Loads images/video frames from disks and puts to queue for feeding the extraction pipeline
 
     Parameters
     ----------
@@ -363,14 +430,17 @@ class Loader:  # pylint:disable=too-many-instance-attributes
     is_final
         ``True`` if this loader is for the final batch being processed
     """
-    def __init__(self,
-                 pipeline: ExtractRunner,
-                 input_path: str,
-                 input_is_file: bool,
-                 extract_every: int,
-                 skip_existing_frames: bool,
-                 skip_existing_faces: bool,
-                 is_final: bool) -> None:
+
+    def __init__(
+        self,
+        pipeline: ExtractRunner,
+        input_path: str,
+        input_is_file: bool,
+        extract_every: int,
+        skip_existing_frames: bool,
+        skip_existing_faces: bool,
+        is_final: bool,
+    ) -> None:
         logger.debug(parse_class_init(locals()))
         self.location = input_path
         """Full path to the input location for the loader"""
@@ -414,7 +484,7 @@ class Loader:  # pylint:disable=too-many-instance-attributes
         return self._thread.error_state
 
     def _set_skip_list(self) -> None:
-        """ Add the skip list to the image loader
+        """Add the skip list to the image loader
 
         Checks against `extract_every_n` and the existence of alignments data (can exist if
         `skip_existing` or `skip_existing_faces` has been provided) and compiles a list of frame
@@ -426,26 +496,45 @@ class Loader:  # pylint:disable=too-many-instance-attributes
             self._ready = True
             return
 
-        skip_een = set(i for i in range(self._images.count) if i % self._extract_every != 0)
+        skip_een = set(
+            i for i in range(self._images.count) if i % self._extract_every != 0
+        )
 
-        file_names = ([os.path.basename(f) for f in self._images.file_list]
-                      if self._skip_frames or self._skip_faces else [])
-        skip_frames = set(i for i, f in enumerate(file_names)
-                          if f in existing) if self._skip_frames else set()
+        file_names = (
+            [os.path.basename(f) for f in self._images.file_list]
+            if self._skip_frames or self._skip_faces
+            else []
+        )
+        skip_frames = (
+            set(i for i, f in enumerate(file_names) if f in existing)
+            if self._skip_frames
+            else set()
+        )
         skip_faces = (
-            set(i for i, f in enumerate(file_names)
-                if f in self._alignments and self._alignments[f].faces)
-            if self._skip_faces else set()
+            set(
+                i
+                for i, f in enumerate(file_names)
+                if f in self._alignments and self._alignments[f].faces
+            )
+            if self._skip_faces
+            else set()
         )
         skip_exist = skip_frames.union(skip_faces)
 
         if self._extract_every > 1:
-            logger.info("Skipping %s frames of %s for extract every %s",
-                        len(skip_een), self._images.count, self._extract_every)
+            logger.info(
+                "Skipping %s frames of %s for extract every %s",
+                len(skip_een),
+                self._images.count,
+                self._extract_every,
+            )
         if skip_exist:
             self.existing_count = len(skip_exist.difference(skip_een))
-            logger.info("Skipping %s frames of %s for skip existing frames/faces",
-                        self.existing_count, self._images.count - len(skip_een))
+            logger.info(
+                "Skipping %s frames of %s for skip existing frames/faces",
+                self.existing_count,
+                self._images.count - len(skip_een),
+            )
 
         skip = list(skip_exist.union(skip_een))
         logger.debug("[Extract.Loader] Total skip count: %s", len(skip))
@@ -473,11 +562,16 @@ class Loader:  # pylint:disable=too-many-instance-attributes
         if fname not in self._alignments:
             self._missing_count += 1
             logger.verbose(  # type:ignore[attr-defined]
-                "Adding frame with no detections as does not exist in import file: '%s'", fname)
+                "Adding frame with no detections as does not exist in import file: '%s'",
+                fname,
+            )
             return []
-        retval = [DetectedFace().from_alignment(a) for a in self._alignments[fname].faces]
+        retval = [
+            DetectedFace().from_alignment(a) for a in self._alignments[fname].faces
+        ]
         logger.trace(  # type:ignore[attr-defined]
-            "[Extract.Loader] importing %s faces for file '%s'", len(retval), fname)
+            "[Extract.Loader] importing %s faces for file '%s'", len(retval), fname
+        )
         return retval
 
     def _finalize(self) -> None:
@@ -485,25 +579,32 @@ class Loader:  # pylint:disable=too-many-instance-attributes
         if self._is_final:
             self._pipeline.stop()
         if self._missing_count > 0:
-            logger.warning("%s images did not exist in the import file. Run in verbose mode to "
-                           "see which files have been added with no detected faces.",
-                           self._missing_count)
+            logger.warning(
+                "%s images did not exist in the import file. Run in verbose mode to "
+                "see which files have been added with no detected faces.",
+                self._missing_count,
+            )
         processed_files = set(self._images.processed_file_list)
         if self._input_is_file and len(self._seen) != len(processed_files):
-            logger.warning("%s images exist in the import file but do not exist on disk. Run in "
-                           "verbose mode to see which files are missing.",
-                           len(processed_files) - len(self._seen))
+            logger.warning(
+                "%s images exist in the import file but do not exist on disk. Run in "
+                "verbose mode to see which files are missing.",
+                len(processed_files) - len(self._seen),
+            )
             logger.verbose(  # type:ignore[attr-defined]
                 "Files in import file that do not exist on disk: %s",
-                list(sorted(processed_files.difference(self._seen))))
+                list(sorted(processed_files.difference(self._seen))),
+            )
 
     def _load(self) -> None:
-        """ Load images from disk and pass to a queue for the extraction pipeline """
+        """Load images from disk and pass to a queue for the extraction pipeline"""
         logger.debug("[Extract.Loader] start")
         for filename_image in self._images.load():
             filename, image = filename_image[:2]
             faces = self._get_detected_faces(filename)
-            self._pipeline.put(filename, image, source=self.location, detected_faces=faces)
+            self._pipeline.put(
+                filename, image, source=self.location, detected_faces=faces
+            )
         if self.error_state.has_error:
             logger.debug("[Extract.Loader] Thread error OUT detected in worker thread")
             return
@@ -511,7 +612,7 @@ class Loader:  # pylint:disable=too-many-instance-attributes
         logger.debug("[Extract.Loader] end")
 
     def start(self, alignments: dict[str, AlignmentsEntry]) -> None:
-        """ Set the skip list and start loading images from disk
+        """Set the skip list and start loading images from disk
 
         Parameters
         ----------
@@ -526,7 +627,7 @@ class Loader:  # pylint:disable=too-many-instance-attributes
         self._thread.start()
 
     def join(self) -> None:
-        """ Join the image loading thread and monitor for keyboard interrupts"""
+        """Join the image loading thread and monitor for keyboard interrupts"""
         logger.debug("[Extract.Loader] join thread")
         while self._thread.is_alive():
             try:
@@ -537,7 +638,7 @@ class Loader:  # pylint:disable=too-many-instance-attributes
         logger.debug("[Extract.Loader] joined thread")
 
 
-class DebugLandmarks():
+class DebugLandmarks:
     """Draw debug landmarks on face output.
 
     Parameters
@@ -545,6 +646,7 @@ class DebugLandmarks():
     size
         The size of the extracted face image
     """
+
     def __init__(self, size: int) -> None:
         logger.debug(parse_class_init(locals()))
         self._size = size
@@ -557,11 +659,13 @@ class DebugLandmarks():
         self._font_scale = size / 512
         self._font_pad = size // 64
 
-    def _border_text(self,
-                     image: np.ndarray,
-                     text: str,
-                     color: tuple[int, int, int],
-                     position: tuple[int, int]) -> None:
+    def _border_text(
+        self,
+        image: np.ndarray,
+        text: str,
+        color: tuple[int, int, int],
+        position: tuple[int, int],
+    ) -> None:
         """Create text on an image with a black border
 
         Parameters
@@ -578,21 +682,25 @@ class DebugLandmarks():
         thickness = 2
         for idx in range(2):
             text_color = (0, 0, 0) if idx == 0 else color
-            cv2.putText(image,
-                        text,
-                        position,
-                        self._font,
-                        self._font_scale,
-                        text_color,
-                        thickness,
-                        lineType=cv2.LINE_AA)
+            cv2.putText(
+                image,
+                text,
+                position,
+                self._font,
+                self._font_scale,
+                text_color,
+                thickness,
+                lineType=cv2.LINE_AA,
+            )
             thickness //= 2
 
-    def _annotate_face_box(self,
-                           face: npt.NDArray[np.uint8],
-                           offset_head: npt.NDArray[np.float32],
-                           offset_face: npt.NDArray[np.float32],
-                           face_size) -> None:
+    def _annotate_face_box(
+        self,
+        face: npt.NDArray[np.uint8],
+        offset_head: npt.NDArray[np.float32],
+        offset_face: npt.NDArray[np.float32],
+        face_size,
+    ) -> None:
         """Annotate the face extract box and print the original size in pixels
 
         Parameters
@@ -620,12 +728,14 @@ class DebugLandmarks():
         self._border_text(text_img, text, color, (pos_x, pos_y))
         cv2.addWeighted(text_img, 0.75, face, 0.25, 0, face)
 
-    def _print_stats(self,
-                     face: npt.NDArray[np.uint8],
-                     distance: float,
-                     pitch: float,
-                     roll: float,
-                     yaw: float) -> None:
+    def _print_stats(
+        self,
+        face: npt.NDArray[np.uint8],
+        distance: float,
+        pitch: float,
+        roll: float,
+        yaw: float,
+    ) -> None:
         """Print various metrics on the output face images
 
         Parameters
@@ -642,25 +752,33 @@ class DebugLandmarks():
             The yaw of the face in degrees
         """
         text_image = face.copy()
-        texts = [f"pitch: {pitch:.2f}",
-                 f"yaw: {yaw:.2f}",
-                 f"roll: {roll: .2f}",
-                 f"distance: {distance:.2f}"]
+        texts = [
+            f"pitch: {pitch:.2f}",
+            f"yaw: {yaw:.2f}",
+            f"roll: {roll: .2f}",
+            f"distance: {distance:.2f}",
+        ]
         colors = [(255, 0, 0), (0, 0, 255), (0, 255, 0), (255, 255, 255)]
-        text_sizes = [cv2.getTextSize(text, self._font, self._font_scale, 1)[0] for text in texts]
+        text_sizes = [
+            cv2.getTextSize(text, self._font, self._font_scale, 1)[0] for text in texts
+        ]
         final_y = self._size - text_sizes[-1][1]
-        pos_y = [(size[1] + self._font_pad) * (idx + 1)
-                 for idx, size in enumerate(text_sizes)][:-1] + [final_y]
+        pos_y = [
+            (size[1] + self._font_pad) * (idx + 1)
+            for idx, size in enumerate(text_sizes)
+        ][:-1] + [final_y]
         pos_x = self._font_pad
         for idx, text in enumerate(texts):
             self._border_text(text_image, text, colors[idx], (pos_x, pos_y[idx]))
         # Apply text to face
         cv2.addWeighted(text_image, 0.75, face, 0.25, 0, face)
 
-    def __call__(self,  # pylint:disable=too-many-locals
-                 faces: npt.NDArray[np.uint8],
-                 matrices: npt.NDArray[np.float32],
-                 media: FrameFaces) -> None:
+    def __call__(
+        self,  # pylint:disable=too-many-locals
+        faces: npt.NDArray[np.uint8],
+        matrices: npt.NDArray[np.float32],
+        media: FrameFaces,
+    ) -> None:
         """Draw debug annotations on extracted face images
 
         Parameters
@@ -676,53 +794,67 @@ class DebugLandmarks():
             return
 
         landmarks = batch_transform(
-            matrices, T.cast("npt.NDArray[np.float32]", media.landmarks)).astype("int32")
+            matrices, T.cast("npt.NDArray[np.float32]", media.landmarks)
+        ).astype("int32")
         aligned = media.aligned
         norm_mats = aligned.matrices[:, :2, 0]
-        sizes = np.rint(1.0 / (self._face_expansion *
-                               np.hypot(norm_mats[:, 0], norm_mats[:, 1]))).astype(np.int32)
-        dists = np.abs(aligned.landmarks_normalized[:, 17:] -
-                       self._mean_face).mean(axis=(1, 2))
-        pry = (Batch3D.pitch(aligned.rotation),
-               Batch3D.roll(aligned.rotation),
-               Batch3D.yaw(aligned.rotation))
+        sizes = np.rint(
+            1.0 / (self._face_expansion * np.hypot(norm_mats[:, 0], norm_mats[:, 1]))
+        ).astype(np.int32)
+        dists = np.abs(aligned.landmarks_normalized[:, 17:] - self._mean_face).mean(
+            axis=(1, 2)
+        )
+        pry = (
+            Batch3D.pitch(aligned.rotation),
+            Batch3D.roll(aligned.rotation),
+            Batch3D.yaw(aligned.rotation),
+        )
         for idx, (face, lms) in enumerate(zip(faces, landmarks)):
             # Landmarks
-            for (pos_x, pos_y) in lms:
+            for pos_x, pos_y in lms:
                 cv2.circle(face, (pos_x, pos_y), 1, (0, 255, 255), -1)
             # Pose
             center = (self._size // 2, self._size // 2)
-            xyz = get_xyz_2d(aligned.rotation[idx],
-                             aligned.translation[idx],
-                             self._camera_matrix) - aligned.offsets_head[idx]
+            xyz = (
+                get_xyz_2d(
+                    aligned.rotation[idx], aligned.translation[idx], self._camera_matrix
+                )
+                - aligned.offsets_head[idx]
+            )
             points = (xyz * self._size).astype("int32")
             cv2.line(face, center, tuple(points[1]), (0, 255, 0), 1)
             cv2.line(face, center, tuple(points[0]), (255, 0, 0), 1)
             cv2.line(face, center, tuple(points[2]), (0, 0, 255), 1)
             # Face centering
-            self._annotate_face_box(face,
-                                    aligned.offsets_head[idx],
-                                    aligned.offsets_face[idx],
-                                    int(sizes[idx]))
+            self._annotate_face_box(
+                face,
+                aligned.offsets_head[idx],
+                aligned.offsets_face[idx],
+                int(sizes[idx]),
+            )
             # Legacy centering
-            center_a = get_adjusted_center(self._size,
-                                           aligned.offsets_head[idx],
-                                           aligned.offsets_legacy[idx],
-                                           "head",
-                                           0)
+            center_a = get_adjusted_center(
+                self._size,
+                aligned.offsets_head[idx],
+                aligned.offsets_legacy[idx],
+                "head",
+                0,
+            )
             padding = self._legacy_size // 2
             roi = np.array([center_a - padding, center_a + padding]).tolist()
             cv2.rectangle(face, roi[0], roi[1], (0, 0, 255), 1)
             # Pitch/roll/yaw/distance
-            self._print_stats(face,
-                              float(dists[idx]),
-                              float(pry[0][idx]),
-                              float(pry[1][idx]),
-                              float(pry[2][idx]))
+            self._print_stats(
+                face,
+                float(dists[idx]),
+                float(pry[0][idx]),
+                float(pry[1][idx]),
+                float(pry[2][idx]),
+            )
 
 
 class Output:  # pylint:disable=too-many-instance-attributes
-    """ Handles output processing and saving of extracted faces
+    """Handles output processing and saving of extracted faces
 
     Parameters
     ----------
@@ -742,14 +874,17 @@ class Output:  # pylint:disable=too-many-instance-attributes
     debug_landmarks
         ``True`` to annotate the output images with debug data
     """
-    def __init__(self,
-                 pipeline: ExtractRunner,
-                 output_folder: str | None,
-                 size: int,
-                 min_scale: int,
-                 batches: list[BatchInfo],
-                 save_interval: int,
-                 debug_landmarks: bool) -> None:
+
+    def __init__(
+        self,
+        pipeline: ExtractRunner,
+        output_folder: str | None,
+        size: int,
+        min_scale: int,
+        batches: list[BatchInfo],
+        save_interval: int,
+        debug_landmarks: bool,
+    ) -> None:
         logger.debug(parse_class_init(locals()))
         self._pipeline = pipeline
         self._size = size
@@ -761,13 +896,15 @@ class Output:  # pylint:disable=too-many-instance-attributes
         self._thread = FSThread(self._process, name="ExtractOutput")
         self._debug = DebugLandmarks(size) if debug_landmarks else None
         self._counts = {"verify": False, "faces": 0, "scale_skip": 0}
-        self._align = {"padding": round((size * EXTRACT_RATIOS["head"]) / 2),
-                       "padding_thumbnail": round((96 * EXTRACT_RATIOS["head"]) / 2),
-                       "empty_faces": np.empty((0, size, size, 3), dtype=np.uint8)}
+        self._align = {
+            "padding": round((size * EXTRACT_RATIOS["head"]) / 2),
+            "padding_thumbnail": round((96 * EXTRACT_RATIOS["head"]) / 2),
+            "empty_faces": np.empty((0, size, size, 3), dtype=np.uint8),
+        }
 
     @classmethod
     def _get_min_size(cls, extract_size: int, min_scale: int) -> int:
-        """ Obtain the minimum size that a face has been resized from to be included as a valid
+        """Obtain the minimum size that a face has been resized from to be included as a valid
         extract.
 
         Parameters
@@ -782,13 +919,19 @@ class Output:  # pylint:disable=too-many-instance-attributes
         -------
         The minimum size, in pixels, that a face is resized from to be considered valid
         """
-        retval = 0 if min_scale == 0 else max(4, int(extract_size * (min_scale / 100.)))
-        logger.debug("[Extract.Output] Extract size: %s, min percentage size: %s, min_size: %s",
-                     extract_size, min_scale, retval)
+        retval = (
+            0 if min_scale == 0 else max(4, int(extract_size * (min_scale / 100.0)))
+        )
+        logger.debug(
+            "[Extract.Output] Extract size: %s, min percentage size: %s, min_size: %s",
+            extract_size,
+            min_scale,
+            retval,
+        )
         return retval
 
     def _get_outputs(self, output_folder: str | None) -> list[str | None]:
-        """ Obtain the locations to save the output for each batch input location
+        """Obtain the locations to save the output for each batch input location
 
         Parameters
         ----------
@@ -808,13 +951,18 @@ class Output:  # pylint:disable=too-many-instance-attributes
         if num_batches == 1:
             logger.debug("[Extract.Output] Single save location: '%s'", out_folder)
             return [out_folder]
-        retval = [os.path.join(out_folder,
-                               os.path.splitext(os.path.basename(b.loader.location))[0])
-                  for b in self._batches]
+        retval = [
+            os.path.join(
+                out_folder, os.path.splitext(os.path.basename(b.loader.location))[0]
+            )
+            for b in self._batches
+        ]
         logger.debug("[Extract.Output] Save locations: %s", retval)
         return retval
 
-    def _should_output(self, matrices: npt.NDArray[np.float32]) -> npt.NDArray[np.bool_]:
+    def _should_output(
+        self, matrices: npt.NDArray[np.float32]
+    ) -> npt.NDArray[np.bool_]:
         """Test which of the faces should be saved based on the given minimum scale option
 
         Parameters
@@ -829,17 +977,21 @@ class Output:  # pylint:disable=too-many-instance-attributes
         if self._min_size <= 0:
             return np.fromiter((True for _ in range(len(matrices))), dtype=bool)
         linear = matrices[:, :2, 0]
-        sizes = 1.0 / ((1.0 - EXTRACT_RATIOS["face"]) * np.hypot(linear[:, 0], linear[:, 1]))
+        sizes = 1.0 / (
+            (1.0 - EXTRACT_RATIOS["face"]) * np.hypot(linear[:, 0], linear[:, 1])
+        )
         return sizes >= self._min_size
 
-    def _save_faces(self,  # pylint:disable=too-many-locals
-                    faces: npt.NDArray[np.uint8],
-                    matrices: npt.NDArray[np.float32],
-                    basename: str,
-                    meta: list[PNGAlignments],
-                    frame_size: tuple[int, int],
-                    alignments_version: float,
-                    is_video: bool) -> None:
+    def _save_faces(
+        self,  # pylint:disable=too-many-locals
+        faces: npt.NDArray[np.uint8],
+        matrices: npt.NDArray[np.float32],
+        basename: str,
+        meta: list[PNGAlignments],
+        frame_size: tuple[int, int],
+        alignments_version: float,
+        is_video: bool,
+    ) -> None:
         """Encode the aligned faces with PNG Header information and save to disk
 
         Parameters
@@ -862,23 +1014,30 @@ class Output:  # pylint:disable=too-many-instance-attributes
         if self._saver is None:
             return
         split_name = os.path.splitext(basename)[0]
-        for idx, (face, data, save) in enumerate(zip(faces, meta, self._should_output(matrices))):
+        for idx, (face, data, save) in enumerate(
+            zip(faces, meta, self._should_output(matrices))
+        ):
             if not save:
                 self._counts["scale_skip"] += 1
                 continue
             img_name = f"{split_name}_{idx}.png"
-            header = PNGHeader(alignments=data,
-                               source=PNGSource(alignments_version=alignments_version,
-                                                original_filename=img_name,
-                                                face_index=idx,
-                                                source_filename=basename,
-                                                source_is_video=is_video,
-                                                source_frame_dims=frame_size))
+            header = PNGHeader(
+                alignments=data,
+                source=PNGSource(
+                    alignments_version=alignments_version,
+                    original_filename=img_name,
+                    face_index=idx,
+                    source_filename=basename,
+                    source_is_video=is_video,
+                    source_frame_dims=frame_size,
+                ),
+            )
             img = encode_image(face, ".png", metadata=asdict(header))
             self._saver.save(img_name, img)
 
-    def _get_faces_and_thumbs(self, media: FrameFaces
-                              ) -> tuple[npt.NDArray[np.uint8], list[npt.NDArray[np.uint8]]]:
+    def _get_faces_and_thumbs(
+        self, media: FrameFaces
+    ) -> tuple[npt.NDArray[np.uint8], list[npt.NDArray[np.uint8]]]:
         """Obtain the aligned faces and jpeg thumbnails from the given media object
 
         Parameters
@@ -898,29 +1057,34 @@ class Output:  # pylint:disable=too-many-instance-attributes
         image_ids = np.fromiter((0 for _ in range(len(media))), dtype=np.int32)
         if self._saver is None:
             faces = np.empty((0, self._size, self._size, 3), dtype=np.uint8)
-            mats = batch_adjust_matrices(media.aligned.matrices_head,
-                                         96,
-                                         T.cast(int, self._align["padding_thumbnail"]))
+            mats = batch_adjust_matrices(
+                media.aligned.matrices_head,
+                96,
+                T.cast(int, self._align["padding_thumbnail"]),
+            )
             thumbs = batch_align([media.image], image_ids, mats, 96)
         else:
-            mats = batch_adjust_matrices(media.aligned.matrices_head,
-                                         self._size,
-                                         T.cast(int, self._align["padding"]))
-            faces = batch_align([media.image],
-                                image_ids,
-                                mats,
-                                self._size,
-                                fast_upscale=False)
+            mats = batch_adjust_matrices(
+                media.aligned.matrices_head,
+                self._size,
+                T.cast(int, self._align["padding"]),
+            )
+            faces = batch_align(
+                [media.image], image_ids, mats, self._size, fast_upscale=False
+            )
             thumbs = batch_resize(faces, 96)
             if self._debug is not None:
                 self._debug(faces, mats, media)
 
-        thumbnails = [cv2.imencode(".jpg", t, [cv2.IMWRITE_JPEG_QUALITY, 60])[1]
-                      for t in thumbs]
+        thumbnails = [
+            cv2.imencode(".jpg", t, [cv2.IMWRITE_JPEG_QUALITY, 60])[1] for t in thumbs
+        ]
         return faces, thumbnails
 
-    def _process_faces(self, media: FrameFaces, alignments: Alignments, is_video: bool) -> None:
-        """ Process the detected face objects into aligned faces, generate the thumbnails and run
+    def _process_faces(
+        self, media: FrameFaces, alignments: Alignments, is_video: bool
+    ) -> None:
+        """Process the detected face objects into aligned faces, generate the thumbnails and run
         any post process actions
 
         Parameters
@@ -936,15 +1100,19 @@ class Output:  # pylint:disable=too-many-instance-attributes
         faces, thumbnails = self._get_faces_and_thumbs(media)
         media.remove_image()  # Spare the RAM
         meta = frame_faces_to_alignment(media)
-        self._save_faces(faces,
-                         media.aligned.matrices,
-                         basename,
-                         meta,
-                         media.image_size,
-                         alignments.version,
-                         is_video)
-        alignments_faces = [FileAlignments(**aln.__dict__, thumb=thumb)
-                            for aln, thumb in zip(meta, thumbnails)]
+        self._save_faces(
+            faces,
+            media.aligned.matrices,
+            basename,
+            meta,
+            media.image_size,
+            alignments.version,
+            is_video,
+        )
+        alignments_faces = [
+            FileAlignments(**aln.__dict__, thumb=thumb)
+            for aln, thumb in zip(meta, thumbnails)
+        ]
         alignments.data[basename] = AlignmentsEntry(faces=alignments_faces)
         faces_count = len(media)
         if faces_count == 0:
@@ -967,11 +1135,13 @@ class Output:  # pylint:disable=too-many-instance-attributes
             self._saver = None
         else:
             self._saver = ImagesSaver(get_folder(output), as_bytes=True)
-        logger.debug("[Extract.Output] Set image saver to location: %s",
-                     repr(self._saver if self._saver is None else self._saver.location))
+        logger.debug(
+            "[Extract.Output] Set image saver to location: %s",
+            repr(self._saver if self._saver is None else self._saver.location),
+        )
 
     def _finalize_batch(self, batch: BatchInfo, batch_index: int) -> None:
-        """ Actions to perform when an input batch has finished processing.
+        """Actions to perform when an input batch has finished processing.
 
         Parameters
         ----------
@@ -987,37 +1157,57 @@ class Output:  # pylint:disable=too-many-instance-attributes
             batch.alignments.save()
         count = batch.loader.count - batch.loader.existing_count
         if self._counts["scale_skip"] > 0:
-            logger.info("%s faces not output as they are below the minimum size of %spx. These "
-                        "still exist in the alignments file.",
-                        self._counts["scale_skip"], self._min_size)
-        finalize(count, T.cast(int, self._counts["faces"]), T.cast(bool, self._counts["verify"]))
+            logger.info(
+                "%s faces not output as they are below the minimum size of %spx. These "
+                "still exist in the alignments file.",
+                self._counts["scale_skip"],
+                self._min_size,
+            )
+        finalize(
+            count,
+            T.cast(int, self._counts["faces"]),
+            T.cast(bool, self._counts["verify"]),
+        )
         self._counts["verify"] = False
-        output = None if batch_index == len(self._outputs) - 1 else self._outputs[batch_index + 1]
+        output = (
+            None
+            if batch_index == len(self._outputs) - 1
+            else self._outputs[batch_index + 1]
+        )
         self._set_saver(output)
         self._counts["faces"] = 0
         self._counts["scale_skip"] = 0
         del batch.alignments
 
     def _process(self) -> None:  # noqa: C901
-        """ Process the output from the extraction pipeline within a thread """
+        """Process the output from the extraction pipeline within a thread"""
         logger.debug("[Extract.Output] start")
         total_batches = len(self._batches)
         self._set_saver(self._outputs[0])
         if self._saver is not None and self._min_size > 0:
-            logger.info("Only outputting faces that have been resized from a minimum resolution "
-                        "of %spx", self._min_size)
+            logger.info(
+                "Only outputting faces that have been resized from a minimum resolution "
+                "of %spx",
+                self._min_size,
+            )
 
         for batch_idx, batch in enumerate(self._batches):
-            msg = f" job {batch_idx + 1} of {total_batches}" if total_batches > 1 else ""
+            msg = (
+                f" job {batch_idx + 1} of {total_batches}" if total_batches > 1 else ""
+            )
             logger.info("Processing%s: '%s'", msg, batch.loader.location)
             if self._saver is not None:
                 logger.info("Faces output: '%s'", self._saver.location)
             has_started = False
-            save_interval = 0 if not batch.alignments.save_alignments else self._save_interval
-            with tqdm(desc="Extracting faces",
-                      total=batch.loader.count,
-                      leave=True,
-                      smoothing=0) as prog_bar:
+            save_interval = (
+                0 if not batch.alignments.save_alignments else self._save_interval
+            )
+            with tqdm(
+                desc="Extracting faces",
+                total=batch.loader.count,
+                leave=True,
+                smoothing=0,
+            ) as prog_bar:
                 if batch_idx > 0:  # Update for batch picked up at end of previous batch
                     prog_bar.update(1)
 
@@ -1029,8 +1219,9 @@ class Output:  # pylint:disable=too-many-instance-attributes
                     if media.source != batch.loader.location:
                         self._finalize_batch(batch, batch_idx)
                         next_batch = self._batches[batch_idx + 1]
-                        self._process_faces(media, next_batch.alignments,
-                                            next_batch.loader.is_video)
+                        self._process_faces(
+                            media, next_batch.alignments, next_batch.loader.is_video
+                        )
                         break
 
                     self._process_faces(media, batch.alignments, batch.loader.is_video)
@@ -1048,12 +1239,12 @@ class Output:  # pylint:disable=too-many-instance-attributes
         logger.debug("[Extract.Output] end")
 
     def start(self) -> None:
-        """ Start the output thread """
+        """Start the output thread"""
         logger.debug("[Extract.Output] start thread")
         self._thread.start()
 
     def join(self) -> None:
-        """ Join the output thread """
+        """Join the output thread"""
         logger.debug("[Extract.Output] join thread")
         self._thread.join()
         logger.debug("[Extract.Output] joined thread")

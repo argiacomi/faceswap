@@ -1,4 +1,5 @@
-""" Auto clipper for clipping gradients. """
+"""Auto clipper for clipping gradients."""
+
 from __future__ import annotations
 
 import logging
@@ -16,8 +17,8 @@ if T.TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class AutoClipper():
-    """ AutoClip: Adaptive Gradient Clipping for Source Separation Networks
+class AutoClipper:
+    """AutoClip: Adaptive Gradient Clipping for Source Separation Networks
 
     Parameters
     ----------
@@ -31,6 +32,7 @@ class AutoClipper():
     Adapted from: https://github.com/pseeth/autoclip
     original paper: https://arxiv.org/abs/2007.14469
     """
+
     def __init__(self, clip_percentile: int, history_size: int = 10000) -> None:
         logger.debug(parse_class_init(locals()))
 
@@ -41,7 +43,7 @@ class AutoClipper():
         logger.debug("Initialized %s", self.__class__.__name__)
 
     def __call__(self, gradients: list[KerasTensor]) -> list[KerasTensor]:
-        """ Call the AutoClip function.
+        """Call the AutoClip function.
 
         Parameters
         ----------
@@ -53,9 +55,11 @@ class AutoClipper():
         list[:class:`keras.KerasTensor`]
             The autoclipped gradients
         """
-        self._grad_history.append(sum(g.data.norm(2).item() ** 2
-                                      for g in gradients if g is not None) ** (1. / 2))
-        self._grad_history = self._grad_history[-self._history_size:]
+        self._grad_history.append(
+            sum(g.data.norm(2).item() ** 2 for g in gradients if g is not None)
+            ** (1.0 / 2)
+        )
+        self._grad_history = self._grad_history[-self._history_size :]
         clip_value = np.percentile(self._grad_history, self._clip_percentile)
         torch.nn.utils.clip_grad_norm_(gradients, T.cast(float, clip_value))
         return gradients

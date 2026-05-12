@@ -23,6 +23,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
+
 from __future__ import annotations
 
 import typing as T
@@ -49,13 +50,16 @@ if T.TYPE_CHECKING:
 
 class RetinaFace(ExtractPlugin):
     """RetinaFace detector for face detection"""
+
     def __init__(self) -> None:
-        super().__init__(input_size=640,
-                         batch_size=cfg.batch_size(),
-                         is_rgb=True,
-                         dtype="float32",
-                         scale=(0, 255),
-                         force_cpu=cfg.cpu())
+        super().__init__(
+            input_size=640,
+            batch_size=cfg.batch_size(),
+            is_rgb=True,
+            dtype="float32",
+            scale=(0, 255),
+            force_cpu=cfg.cpu(),
+        )
         self.model: RetinaFaceModel
         self._average_img = np.array([[104.0, 117.0, 123.0]], dtype="float32")
         self._confidence = cfg.confidence() / 100
@@ -64,8 +68,10 @@ class RetinaFace(ExtractPlugin):
         self._keep_top_k = 750
         self._nms_threshold = 0.4
 
-    def _generate_priors(self, clip: bool = False  # pylint:disable=too-many-locals
-                         ) -> npt.NDArray[np.float32]:
+    def _generate_priors(
+        self,
+        clip: bool = False,  # pylint:disable=too-many-locals
+    ) -> npt.NDArray[np.float32]:
         """Generate the anchor boxes for the image size
 
         Parameters
@@ -79,8 +85,10 @@ class RetinaFace(ExtractPlugin):
         """
         steps = [8, 16, 32]
         min_sizes = [[16, 32], [64, 128], [256, 512]]
-        feature_maps = [[ceil(self.input_size / step), ceil(self.input_size / step)]
-                        for step in steps]
+        feature_maps = [
+            [ceil(self.input_size / step), ceil(self.input_size / step)]
+            for step in steps
+        ]
         anchors = []
 
         for sizes, feats, step in zip(min_sizes, feature_maps, steps):
@@ -110,7 +118,9 @@ class RetinaFace(ExtractPlugin):
         vers = 1 if backbone == "resnet" else 2
         weights = GetModel(f"retinaface_v{vers}.pth", 32).model_path
         assert isinstance(weights, str)
-        return T.cast(RetinaFaceModel, self.load_torch_model(RetinaFaceModel(backbone), weights))
+        return T.cast(
+            RetinaFaceModel, self.load_torch_model(RetinaFaceModel(backbone), weights)
+        )
 
     def pre_process(self, batch: np.ndarray) -> np.ndarray:
         """Compile the detection image(s) for prediction
@@ -157,15 +167,22 @@ class RetinaFace(ExtractPlugin):
         -------
         Decoded bounding box predictions
         """
-        boxes = np.concatenate([
-            self._priors[..., :2] + locations[..., :2] * self._variance[0] * self._priors[..., 2:],
-            self._priors[..., 2:] * np.exp(locations[..., 2:] * self._variance[1])], axis=2)
+        boxes = np.concatenate(
+            [
+                self._priors[..., :2]
+                + locations[..., :2] * self._variance[0] * self._priors[..., 2:],
+                self._priors[..., 2:] * np.exp(locations[..., 2:] * self._variance[1]),
+            ],
+            axis=2,
+        )
         boxes[..., :2] -= boxes[..., 2:] / 2
         boxes[..., 2:] += boxes[..., :2]
         return T.cast("npt.NDArray[np.float32]", boxes)
 
-    def _nms(self, boxes: npt.NDArray[np.float32]  # pylint:disable=too-many-locals
-             ) -> npt.NDArray[np.float32]:
+    def _nms(
+        self,
+        boxes: npt.NDArray[np.float32],  # pylint:disable=too-many-locals
+    ) -> npt.NDArray[np.float32]:
         """Perform Non-Maximum Suppression
 
         Parameters
@@ -226,7 +243,7 @@ class RetinaFace(ExtractPlugin):
                 continue
 
             boxes = boxes[mask]
-            order = np.argsort(scores)[::-1][:self._keep_top_k]
+            order = np.argsort(scores)[::-1][: self._keep_top_k]
             detections = np.hstack([boxes[order], scores[order][:, None]])
             final_boxes.append(self._nms(detections)[..., :4])
 
@@ -235,14 +252,15 @@ class RetinaFace(ExtractPlugin):
         return retval
 
 
-def conv_bn(in_channels: int,
-            out_channels: int,
-            kernel: int = 3,
-            stride: int = 1,
-            padding: int = 1,
-            use_relu: bool = False,
-            leaky: float = 0.0
-            ) -> torch.nn.Sequential:
+def conv_bn(
+    in_channels: int,
+    out_channels: int,
+    kernel: int = 3,
+    stride: int = 1,
+    padding: int = 1,
+    use_relu: bool = False,
+    leaky: float = 0.0,
+) -> torch.nn.Sequential:
     """Generates a Conv Batch Norm sequential module for RetinaFace
 
     Parameters
@@ -266,14 +284,18 @@ def conv_bn(in_channels: int,
     -------
     The built sequential module
     """
-    layers = [nn.Conv2d(in_channels, out_channels, kernel, stride, padding, bias=False),
-              nn.BatchNorm2d(out_channels)]
+    layers = [
+        nn.Conv2d(in_channels, out_channels, kernel, stride, padding, bias=False),
+        nn.BatchNorm2d(out_channels),
+    ]
     if use_relu:
         layers.append(nn.LeakyReLU(negative_slope=leaky, inplace=True))
     return nn.Sequential(*layers)
 
 
-def conv_dw(in_channels: int, out_channels: int, stride: int, leaky=0.1) -> torch.nn.Sequential:
+def conv_dw(
+    in_channels: int, out_channels: int, stride: int, leaky=0.1
+) -> torch.nn.Sequential:
     """Generates a double Conv Batch Norm sequential module for RetinaFace
 
     Parameters
@@ -292,7 +314,9 @@ def conv_dw(in_channels: int, out_channels: int, stride: int, leaky=0.1) -> torc
     The built sequential module
     """
     return nn.Sequential(
-        nn.Conv2d(in_channels, in_channels, 3, stride, 1, groups=in_channels, bias=False),
+        nn.Conv2d(
+            in_channels, in_channels, 3, stride, 1, groups=in_channels, bias=False
+        ),
         nn.BatchNorm2d(in_channels),
         nn.LeakyReLU(negative_slope=leaky, inplace=True),
         nn.Conv2d(in_channels, out_channels, 1, 1, 0, bias=False),
@@ -303,6 +327,7 @@ def conv_dw(in_channels: int, out_channels: int, stride: int, leaky=0.1) -> torc
 
 class MobileNetV1(nn.Module):
     """MobileNet V1 for use with RetinaFace"""
+
     def __init__(self) -> None:
         super().__init__()
         self.stage1 = nn.Sequential(
@@ -358,31 +383,42 @@ class SSH(nn.Module):
     out_channels
         The number of output channels
     """
+
     def __init__(self, in_channels: int, out_channel: int) -> None:
         super().__init__()
         assert out_channel % 4 == 0
         leaky = 0.0
         if out_channel <= 64:
             leaky = 0.1
-        self.conv3X3 = conv_bn(in_channels,  # pylint:disable=invalid-name
-                               out_channel // 2,
-                               stride=1,
-                               use_relu=False)
-        self.conv5X5_1 = conv_bn(in_channels,  # pylint:disable=invalid-name
-                                 out_channel // 4,
-                                 stride=1,
-                                 use_relu=True,
-                                 leaky=leaky)
-        self.conv5X5_2 = conv_bn(out_channel // 4,  # pylint:disable=invalid-name
-                                 out_channel // 4,
-                                 stride=1,
-                                 use_relu=False)
-        self.conv7X7_2 = conv_bn(out_channel // 4,  # pylint:disable=invalid-name
-                                 out_channel // 4,
-                                 stride=1,
-                                 use_relu=True,
-                                 leaky=leaky)
-        self.conv7x7_3 = conv_bn(out_channel // 4, out_channel // 4, stride=1, use_relu=False)
+        self.conv3X3 = conv_bn(
+            in_channels,  # pylint:disable=invalid-name
+            out_channel // 2,
+            stride=1,
+            use_relu=False,
+        )
+        self.conv5X5_1 = conv_bn(
+            in_channels,  # pylint:disable=invalid-name
+            out_channel // 4,
+            stride=1,
+            use_relu=True,
+            leaky=leaky,
+        )
+        self.conv5X5_2 = conv_bn(
+            out_channel // 4,  # pylint:disable=invalid-name
+            out_channel // 4,
+            stride=1,
+            use_relu=False,
+        )
+        self.conv7X7_2 = conv_bn(
+            out_channel // 4,  # pylint:disable=invalid-name
+            out_channel // 4,
+            stride=1,
+            use_relu=True,
+            leaky=leaky,
+        )
+        self.conv7x7_3 = conv_bn(
+            out_channel // 4, out_channel // 4, stride=1, use_relu=False
+        )
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         """Forward pass through SSH Module
@@ -418,32 +454,39 @@ class FPN(nn.Module):
     out_channels
         The number of output channels
     """
+
     def __init__(self, in_channels_list: list[int], out_channels: int) -> None:
         super().__init__()
         leaky = 0.0
         if out_channels <= 64:
             leaky = 0.1
-        self.output1 = conv_bn(in_channels_list[0],
-                               out_channels,
-                               kernel=1,
-                               stride=1,
-                               padding=0,
-                               use_relu=True,
-                               leaky=leaky)
-        self.output2 = conv_bn(in_channels_list[1],
-                               out_channels,
-                               kernel=1,
-                               stride=1,
-                               padding=0,
-                               use_relu=True,
-                               leaky=leaky)
-        self.output3 = conv_bn(in_channels_list[2],
-                               out_channels,
-                               kernel=1,
-                               stride=1,
-                               padding=0,
-                               use_relu=True,
-                               leaky=leaky)
+        self.output1 = conv_bn(
+            in_channels_list[0],
+            out_channels,
+            kernel=1,
+            stride=1,
+            padding=0,
+            use_relu=True,
+            leaky=leaky,
+        )
+        self.output2 = conv_bn(
+            in_channels_list[1],
+            out_channels,
+            kernel=1,
+            stride=1,
+            padding=0,
+            use_relu=True,
+            leaky=leaky,
+        )
+        self.output3 = conv_bn(
+            in_channels_list[2],
+            out_channels,
+            kernel=1,
+            stride=1,
+            padding=0,
+            use_relu=True,
+            leaky=leaky,
+        )
 
         self.merge1 = conv_bn(out_channels, out_channels, use_relu=True, leaky=leaky)
         self.merge2 = conv_bn(out_channels, out_channels, use_relu=True, leaky=leaky)
@@ -466,11 +509,15 @@ class FPN(nn.Module):
         output2 = self.output2(l_inputs[1])
         output3 = self.output3(l_inputs[2])
 
-        up3 = F.interpolate(output3, size=[output2.size(2), output2.size(3)], mode="nearest")
+        up3 = F.interpolate(
+            output3, size=[output2.size(2), output2.size(3)], mode="nearest"
+        )
         output2 = output2 + up3
         output2 = self.merge2(output2)
 
-        up2 = F.interpolate(output2, size=[output1.size(2), output1.size(3)], mode="nearest")
+        up2 = F.interpolate(
+            output2, size=[output1.size(2), output1.size(3)], mode="nearest"
+        )
         output1 = output1 + up2
         output1 = self.merge1(output1)
         return [output1, output2, output3]
@@ -486,14 +533,13 @@ class ClassHead(nn.Module):
     num_anchors
         The number of anchors. Default: 3
     """
+
     def __init__(self, in_channels: int = 512, num_anchors: int = 3) -> None:
         super().__init__()
         self.num_anchors = num_anchors
-        self.conv1x1 = nn.Conv2d(in_channels,
-                                 self.num_anchors * 2,
-                                 kernel_size=(1, 1),
-                                 stride=1,
-                                 padding=0)
+        self.conv1x1 = nn.Conv2d(
+            in_channels, self.num_anchors * 2, kernel_size=(1, 1), stride=1, padding=0
+        )
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         """Forward pass through ClassHead Module
@@ -522,13 +568,12 @@ class BboxHead(nn.Module):
     num_anchors
         The number of anchors. Default: 3
     """
+
     def __init__(self, in_channels: int = 512, num_anchors: int = 3) -> None:
         super().__init__()
-        self.conv1x1 = nn.Conv2d(in_channels,
-                                 num_anchors * 4,
-                                 kernel_size=(1, 1),
-                                 stride=1,
-                                 padding=0)
+        self.conv1x1 = nn.Conv2d(
+            in_channels, num_anchors * 4, kernel_size=(1, 1), stride=1, padding=0
+        )
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         """Forward pass through BboxHead Module
@@ -555,18 +600,25 @@ class RetinaFaceModel(nn.Module):
     backbone
         The backbone to use for RetinaFace
     """
+
     def __init__(self, backbone: T.Literal["mobilenet", "resnet"]) -> None:
         super().__init__()
-        b_bone_cfg = {"mobilenet": {"in_channels": 32,
-                                    "out_channel": 64,
-                                    "return_layers": {'stage1': 1, 'stage2': 2, 'stage3': 3}},
-                      "resnet": {"in_channels": 256,
-                                 "out_channel": 256,
-                                 'return_layers': {'layer2': 1, 'layer3': 2, 'layer4': 3}}}
+        b_bone_cfg = {
+            "mobilenet": {
+                "in_channels": 32,
+                "out_channel": 64,
+                "return_layers": {"stage1": 1, "stage2": 2, "stage3": 3},
+            },
+            "resnet": {
+                "in_channels": 256,
+                "out_channel": 256,
+                "return_layers": {"layer2": 1, "layer3": 2, "layer4": 3},
+            },
+        }
         self._config = b_bone_cfg[backbone]
         self.body = tv_utils.IntermediateLayerGetter(
             tv_models.resnet50() if backbone == "resnet" else MobileNetV1(),
-            self._config["return_layers"]
+            self._config["return_layers"],
         )
         in_channels_stage2 = T.cast(int, self._config["in_channels"])
         in_channels_list = [
@@ -581,12 +633,15 @@ class RetinaFaceModel(nn.Module):
         self.ssh3 = SSH(out_channels, out_channels)
 
         self.ClassHead = self._make_class_head(  # pylint:disable=invalid-name
-            fpn_num=3, in_channels=out_channels)
+            fpn_num=3, in_channels=out_channels
+        )
         self.BboxHead = self._make_bbox_head(  # pylint:disable=invalid-name
-            fpn_num=3, in_channels=out_channels)
+            fpn_num=3, in_channels=out_channels
+        )
 
-    def _make_class_head(self, fpn_num: int = 3, in_channels: int = 64, anchor_num: int = 2
-                         ) -> torch.nn.ModuleList:
+    def _make_class_head(
+        self, fpn_num: int = 3, in_channels: int = 64, anchor_num: int = 2
+    ) -> torch.nn.ModuleList:
         """Make the Class Head for RetinaFace
 
         Parameters
@@ -607,8 +662,9 @@ class RetinaFaceModel(nn.Module):
             class_head.append(ClassHead(in_channels, anchor_num))
         return class_head
 
-    def _make_bbox_head(self, fpn_num: int = 3, in_channels: int = 64, anchor_num: int = 2
-                        ) -> torch.nn.ModuleList:
+    def _make_bbox_head(
+        self, fpn_num: int = 3, in_channels: int = 64, anchor_num: int = 2
+    ) -> torch.nn.ModuleList:
         """Make the Bounding Box Head for RetinaFace
 
         Parameters
@@ -652,10 +708,12 @@ class RetinaFaceModel(nn.Module):
         feature3 = self.ssh3(fpn[2])
         features = [feature1, feature2, feature3]
 
-        bbox_regressions = torch.cat([self.BboxHead[i](feature)
-                                      for i, feature in enumerate(features)], dim=1)
-        classifications = torch.cat([self.ClassHead[i](feature)
-                                     for i, feature in enumerate(features)], dim=1)
+        bbox_regressions = torch.cat(
+            [self.BboxHead[i](feature) for i, feature in enumerate(features)], dim=1
+        )
+        classifications = torch.cat(
+            [self.ClassHead[i](feature) for i, feature in enumerate(features)], dim=1
+        )
         output = (bbox_regressions, F.softmax(classifications, dim=-1))
         return output
 

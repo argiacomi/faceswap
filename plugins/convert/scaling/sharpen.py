@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-""" Sharpening for enlarged face for faceswap.py converter """
+"""Sharpening for enlarged face for faceswap.py converter"""
+
 import cv2
 import numpy as np
 
@@ -10,10 +11,10 @@ from . import sharpen_defaults as cfg
 
 
 class Scaling(Adjustment):
-    """ Sharpening Adjustments for the face applied after warp to final frame """
+    """Sharpening Adjustments for the face applied after warp to final frame"""
 
     def process(self, new_face: np.ndarray) -> np.ndarray:
-        """ Sharpen using the requested technique
+        """Sharpen using the requested technique
 
         Parameters
         ----------
@@ -33,10 +34,10 @@ class Scaling(Adjustment):
         return new_face
 
     @classmethod
-    def get_kernel_size(cls,
-                        new_face: np.ndarray,
-                        radius_percent: float) -> tuple[tuple[int, int], int]:
-        """ Return the kernel size and central point for the given radius
+    def get_kernel_size(
+        cls, new_face: np.ndarray, radius_percent: float
+    ) -> tuple[tuple[int, int], int]:
+        """Return the kernel size and central point for the given radius
             relative to frame width.
 
         Parameters
@@ -61,12 +62,14 @@ class Scaling(Adjustment):
         return full_kernel_size, radius
 
     @classmethod
-    def box(cls,
-            new_face: np.ndarray,
-            kernel_size: tuple[int, int],
-            radius: int,
-            amount: float) -> np.ndarray:
-        """ Sharpen using box filter
+    def box(
+        cls,
+        new_face: np.ndarray,
+        kernel_size: tuple[int, int],
+        radius: int,
+        amount: float,
+    ) -> np.ndarray:
+        """Sharpen using box filter
 
         Parameters
         ----------
@@ -86,18 +89,20 @@ class Scaling(Adjustment):
         """
         kernel: np.ndarray = np.zeros(kernel_size, dtype="float32")
         kernel[radius, radius] = 1.0
-        box_filter = np.ones(kernel_size, dtype="float32") / kernel_size[0]**2
+        box_filter = np.ones(kernel_size, dtype="float32") / kernel_size[0] ** 2
         kernel = kernel + (kernel - box_filter) * amount
         new_face = cv2.filter2D(new_face, -1, kernel)
         return new_face
 
     @classmethod
-    def gaussian(cls,
-                 new_face: np.ndarray,
-                 kernel_size: tuple[int, int],
-                 radius: float,  # pylint:disable=unused-argument
-                 amount: float) -> np.ndarray:
-        """ Sharpen using gaussian filter
+    def gaussian(
+        cls,
+        new_face: np.ndarray,
+        kernel_size: tuple[int, int],
+        radius: float,  # pylint:disable=unused-argument
+        amount: float,
+    ) -> np.ndarray:
+        """Sharpen using gaussian filter
 
         Parameters
         ----------
@@ -116,20 +121,20 @@ class Scaling(Adjustment):
             The batch of swapped faces with gaussian sharpening applied
         """
         blur = cv2.GaussianBlur(new_face, kernel_size, 0)
-        new_face = cv2.addWeighted(new_face,
-                                   1.0 + (0.5 * amount),
-                                   blur,
-                                   -(0.5 * amount),
-                                   0)
+        new_face = cv2.addWeighted(
+            new_face, 1.0 + (0.5 * amount), blur, -(0.5 * amount), 0
+        )
         return new_face
 
     @classmethod
-    def unsharp_mask(cls,
-                     new_face: np.ndarray,
-                     kernel_size: tuple[int, int],
-                     center: float,  # pylint:disable=unused-argument
-                     amount: float) -> np.ndarray:
-        """ Sharpen using unsharp mask
+    def unsharp_mask(
+        cls,
+        new_face: np.ndarray,
+        kernel_size: tuple[int, int],
+        center: float,  # pylint:disable=unused-argument
+        amount: float,
+    ) -> np.ndarray:
+        """Sharpen using unsharp mask
 
         Parameters
         ----------
@@ -151,7 +156,9 @@ class Scaling(Adjustment):
         blur = cv2.GaussianBlur(new_face, kernel_size, 0)
         low_contrast_mask = (abs(new_face - blur) < threshold).astype("float32")
         sharpened = (new_face * (1.0 + amount)) + (blur * -amount)
-        new_face = (new_face * (1.0 - low_contrast_mask)) + (sharpened * low_contrast_mask)
+        new_face = (new_face * (1.0 - low_contrast_mask)) + (
+            sharpened * low_contrast_mask
+        )
         return new_face
 
 

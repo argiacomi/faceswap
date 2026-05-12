@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Thumbnail generator for the manual tool"""
+
 from __future__ import annotations
 import logging
 import typing as T
@@ -27,6 +28,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ProgressBar:
     """Thread-safe progress bar for tracking thumbnail generation progress"""
+
     p_bar: tqdm | None = None
     lock = Lock()
 
@@ -42,11 +44,12 @@ class VideoMeta:
     pts_times
         List of presentation timestamps for the video
     """
+
     key_frames: list[int] | None = None
     pts_times: list[int] | None = None
 
 
-class ThumbsCreator():
+class ThumbsCreator:
     """Background loader to generate thumbnails for the alignments file. Generates low resolution
     thumbnails in parallel threads for faster processing.
 
@@ -59,10 +62,10 @@ class ThumbsCreator():
     single_process
         ``True`` to generated thumbs in a single process otherwise ``False``
     """
-    def __init__(self,
-                 detected_faces: DetectedFaces,
-                 input_location: str,
-                 single_process: bool) -> None:
+
+    def __init__(
+        self, detected_faces: DetectedFaces, input_location: str, single_process: bool
+    ) -> None:
         logger.debug(parse_class_init(locals()))
         self._p_bar = ProgressBar()
         self._meta = detected_faces.video_meta_data
@@ -90,9 +93,9 @@ class ThumbsCreator():
     def generate_cache(self) -> None:
         """Extract the face thumbnails from a video or folder of images into the
         alignments file"""
-        self._p_bar.p_bar = tqdm(desc="Caching Thumbnails",
-                                 leave=False,
-                                 total=len(self._frame_faces))
+        self._p_bar.p_bar = tqdm(
+            desc="Caching Thumbnails", leave=False, total=len(self._frame_faces)
+        )
         if self._is_video:
             self._launch_video()
         else:
@@ -127,9 +130,13 @@ class ThumbsCreator():
         """
         assert self._meta is not None
         if self._meta["keyframes"][0] != 0:
-            logger.warning("Your video does not start on a Key Frame. This can lead to issues.")
+            logger.warning(
+                "Your video does not start on a Key Frame. This can lead to issues."
+            )
 
-        frame_face_indices = [i for i, v in enumerate(self._alignments.data.values()) if v.faces]
+        frame_face_indices = [
+            i for i, v in enumerate(self._alignments.data.values()) if v.faces
+        ]
         num_frames = len(frame_face_indices)
         num_threads = min(num_frames, self._num_threads)
         window = num_frames // num_threads
@@ -138,9 +145,16 @@ class ThumbsCreator():
             start = idx * window
             end = num_frames + 1 if is_final else start + window
             indices = frame_face_indices[start:end]
-            logger.debug("[THUMBS] thread index: %s, start_idx: %s, end_idx: %s, frame_start: %s, "
-                         "frame_end: %s, segment_count: %s",
-                         idx, start, end, indices[0], indices[-1], len(indices))
+            logger.debug(
+                "[THUMBS] thread index: %s, start_idx: %s, end_idx: %s, frame_start: %s, "
+                "frame_end: %s, segment_count: %s",
+                idx,
+                start,
+                end,
+                indices[0],
+                indices[-1],
+                len(indices),
+            )
             thread = MultiThread(self._load_from_video, indices)
             thread.start()
             self._threads.append(thread)
@@ -153,14 +167,21 @@ class ThumbsCreator():
         thread for some speed up.
         """
         reader = SingleFrameLoader(self._location)
-        skip_list = [idx for idx, f in enumerate(reader.file_list)
-                     if os.path.basename(f) not in self._alignments.data]
+        skip_list = [
+            idx
+            for idx, f in enumerate(reader.file_list)
+            if os.path.basename(f) not in self._alignments.data
+        ]
         if skip_list:
             reader.add_skip_list(skip_list)
         num_threads = min(reader.process_count, self._num_threads)
         frame_split = reader.process_count // self._num_threads
-        logger.debug("[THUMBS] total images: %s, num_threads: %s, frames_per_thread: %s",
-                     reader.process_count, num_threads, frame_split)
+        logger.debug(
+            "[THUMBS] total images: %s, num_threads: %s, frames_per_thread: %s",
+            reader.process_count,
+            num_threads,
+            frame_split,
+        )
         for idx in range(num_threads):
             is_final = idx == num_threads - 1
             start_idx = idx * frame_split
@@ -179,8 +200,12 @@ class ThumbsCreator():
         indices
             The frame indices to process for for this segment
         """
-        logger.debug("[THUMBS] Segment start: frame_start: %s, frame_end: %s, segment_count: %s",
-                     list(indices)[0], list(indices)[-1], len(indices))
+        logger.debug(
+            "[THUMBS] Segment start: frame_start: %s, frame_end: %s, segment_count: %s",
+            list(indices)[0],
+            list(indices)[-1],
+            len(indices),
+        )
         assert self._meta is not None
         reader = SingleFrameLoader(self._location, video_meta_data=self._meta)
         proc_count = 0
@@ -189,13 +214,15 @@ class ThumbsCreator():
             self._set_thumbnail(filename, image, frame_index)
             proc_count += 1
         reader.close()
-        logger.debug("[THUMBS] Segment complete: (starting_frame_index: %s, processed_count: %s)",
-                     indices[0], proc_count)
+        logger.debug(
+            "[THUMBS] Segment complete: (starting_frame_index: %s, processed_count: %s)",
+            indices[0],
+            proc_count,
+        )
 
-    def _load_from_folder(self,
-                          reader: SingleFrameLoader,
-                          start_index: int,
-                          end_index: int) -> None:
+    def _load_from_folder(
+        self, reader: SingleFrameLoader, start_index: int, end_index: int
+    ) -> None:
         """Loads faces from the given range of frame indices from a folder of images.
 
         Each frame range is extracted in a different background thread.
@@ -209,15 +236,24 @@ class ThumbsCreator():
         end_index
             The end frame index for the images to extract faces from
         """
-        logger.debug("[THUMBS] reader: %s, start_index: %s, end_index: %s",
-                     reader, start_index, end_index)
+        logger.debug(
+            "[THUMBS] reader: %s, start_index: %s, end_index: %s",
+            reader,
+            start_index,
+            end_index,
+        )
         for frame_index in range(start_index, end_index):
             filename, frame = reader.image_from_index(frame_index)
             self._set_thumbnail(filename, frame, frame_index)
-        logger.debug("[THUMBS] Segment complete: (start_index: %s, processed_count: %s)",
-                     start_index, end_index - start_index)
+        logger.debug(
+            "[THUMBS] Segment complete: (start_index: %s, processed_count: %s)",
+            start_index,
+            end_index - start_index,
+        )
 
-    def _set_thumbnail(self, filename: str, frame: np.ndarray, frame_index: int) -> None:
+    def _set_thumbnail(
+        self, filename: str, frame: np.ndarray, frame_index: int
+    ) -> None:
         """Extracts the faces from the frame and adds to alignments file
 
         Parameters
@@ -230,13 +266,14 @@ class ThumbsCreator():
             The frame index of this frame in the :attr:`_frame_faces`
         """
         for face_idx, face in enumerate(self._frame_faces[frame_index]):
-            aligned = AlignedFace(face.landmarks_xy,
-                                  image=frame,
-                                  centering="head",
-                                  size=96)
+            aligned = AlignedFace(
+                face.landmarks_xy, image=frame, centering="head", size=96
+            )
             face.thumbnail = generate_thumbnail(aligned.face, size=96)
             assert face.thumbnail is not None
-            self._alignments.thumbnails.add_thumbnail(filename, face_idx, face.thumbnail)
+            self._alignments.thumbnails.add_thumbnail(
+                filename, face_idx, face.thumbnail
+            )
         with self._p_bar.lock:
             assert self._p_bar.p_bar is not None
             self._p_bar.p_bar.update(1)

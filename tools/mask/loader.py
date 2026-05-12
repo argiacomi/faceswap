@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Handles loading of faces/frames from source locations and pairing with alignments
 information"""
+
 from __future__ import annotations
 
 import logging
@@ -31,9 +32,14 @@ class Loader:
     is_faces
         ``True`` if the source is a folder of faceswap extracted faces
     """
+
     def __init__(self, location: str, is_faces: bool) -> None:
-        logger.debug("Initializing %s (location: %s, is_faces: %s)",
-                     self.__class__.__name__, location, is_faces)
+        logger.debug(
+            "Initializing %s (location: %s, is_faces: %s)",
+            self.__class__.__name__,
+            location,
+            is_faces,
+        )
 
         self._is_faces = is_faces
         self._loader = FacesLoader(location) if is_faces else ImagesLoader(location)
@@ -44,17 +50,17 @@ class Loader:
 
     @property
     def file_list(self) -> list[str]:
-        """Full file list of source files to be loaded """
+        """Full file list of source files to be loaded"""
         return self._loader.file_list
 
     @property
     def is_video(self) -> bool:
-        """``True`` if the source is a video file otherwise ``False`` """
+        """``True`` if the source is a video file otherwise ``False``"""
         return self._loader.is_video
 
     @property
     def location(self) -> str:
-        """Full path to the source folder/video file location """
+        """Full path to the source folder/video file location"""
         return self._loader.location
 
     @property
@@ -73,10 +79,9 @@ class Loader:
         logger.debug("Adding alignments to loader: %s", alignments_object)
         self._alignments = alignments_object
 
-    def _process_face(self,
-                      filename: str,
-                      image: np.ndarray,
-                      metadata: PNGHeader) -> FrameFaces | None:
+    def _process_face(
+        self, filename: str, image: np.ndarray, metadata: PNGHeader
+    ) -> FrameFaces | None:
         """Process a single face when masking from face images
 
         Parameters
@@ -104,11 +109,15 @@ class Loader:
             aligns = self._alignments.get_faces_in_frame(frame_name)
             if not aligns or face_index > len(aligns) - 1:
                 self._skip_count += 1
-                logger.warning("Skipping Face not found in alignments file: '%s'", filename)
+                logger.warning(
+                    "Skipping Face not found in alignments file: '%s'", filename
+                )
                 return None
 
         alignment = aligns[lookup_index]
-        retval = FrameFaces(filename, image, is_aligned=True, frame_metadata=metadata.source)
+        retval = FrameFaces(
+            filename, image, is_aligned=True, frame_metadata=metadata.source
+        )
         retval.detected_faces = [DetectedFace().from_alignment(alignment)]
         return retval
 
@@ -119,11 +128,14 @@ class Loader:
         ------
         The extract media object for the processed face
         """
-        for filename, image, metadata in tqdm(self._loader.load(), total=self._loader.count):
+        for filename, image, metadata in tqdm(
+            self._loader.load(), total=self._loader.count
+        ):
             if not metadata:
                 self._skip_count += 1
-                logger.warning("Non-Faceswap extracted face found. Image skipped: '%s'",
-                               filename)
+                logger.warning(
+                    "Non-Faceswap extracted face found. Image skipped: '%s'", filename
+                )
                 continue
 
             retval = self._process_face(filename, image, metadata)
@@ -153,8 +165,9 @@ class Loader:
                 continue
 
             faces_in_frame = self._alignments.get_faces_in_frame(frame)
-            detected_faces = [DetectedFace().from_alignment(alignment)
-                              for alignment in faces_in_frame]
+            detected_faces = [
+                DetectedFace().from_alignment(alignment) for alignment in faces_in_frame
+            ]
 
             retval = FrameFaces(filename, image)
             retval.detected_faces = detected_faces
@@ -176,8 +189,10 @@ class Loader:
         yield from iterator()
 
         if self._skip_count > 0:
-            logger.warning("%s face(s) skipped due to not existing in the alignments file",
-                           self._skip_count)
+            logger.warning(
+                "%s face(s) skipped due to not existing in the alignments file",
+                self._skip_count,
+            )
 
 
 __all__ = get_module_objects(__name__)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-""" The default options for the faceswap FAN Alignments plugin.
+"""The default options for the faceswap FAN Alignments plugin.
 
 Defaults files should be named `<plugin_name>_defaults.py`
 
@@ -25,14 +25,12 @@ Items will be grouped together as per their `group` parameter, but otherwise wil
 the order that they are added to this module.
 from lib.config import ConfigItem
 """
+
 # pylint:disable=duplicate-code
 from lib.config import ConfigItem
 
 
-HELPTEXT = (
-    "FAN Aligner options.\n"
-    "Fast on GPU, slow on CPU. Best aligner."
-    )
+HELPTEXT = "FAN Aligner options.\nFast on GPU, slow on CPU. Best aligner."
 
 
 batch_size = ConfigItem(
@@ -40,13 +38,17 @@ batch_size = ConfigItem(
     default=16,
     group="settings",
     info="The batch size to use. To a point, higher batch sizes equal better performance, "
-         "but setting it too high can harm performance.",
+    "but setting it too high can harm performance.",
     rounding=1,
-    min_max=(1, 256))
+    min_max=(1, 256),
+)
 
 dark_decoder = ConfigItem(
     datatype=bool,
     default=True,
     group="settings",
-    info=("Use DARK decoder. A more refined method for obtaining landmarks from generated "
-          "heatmaps. (Ref: https://arxiv.org/abs/1910.06278)."))
+    info=(
+        "Use DARK decoder. A more refined method for obtaining landmarks from generated "
+        "heatmaps. (Ref: https://arxiv.org/abs/1910.06278)."
+    ),
+)

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-""" Default configurations for faceswap. Handles parsing and validating of Faceswap Configs and
-interfacing with :class:`configparser.ConfigParser` """
+"""Default configurations for faceswap. Handles parsing and validating of Faceswap Configs and
+interfacing with :class:`configparser.ConfigParser`"""
+
 from __future__ import annotations
 
 import inspect
@@ -23,10 +24,11 @@ _CONFIGS: dict[str, FaceswapConfig] = {}
 """ dict[str, FaceswapConfig] : plugin group to FaceswapConfig mapping for all loaded configs """
 
 
-class FaceswapConfig():
-    """ Config Items """
+class FaceswapConfig:
+    """Config Items"""
+
     def __init__(self, config_file: str | None = None) -> None:
-        """ Init Configuration
+        """Init Configuration
 
         Parameters
         ----------
@@ -48,7 +50,7 @@ class FaceswapConfig():
         logger.debug("Initialized: %s", self.__class__.__name__)
 
     def _get_plugin_group(self) -> str:
-        """ Obtain the name of the plugin group based on the child module's folder path
+        """Obtain the name of the plugin group based on the child module's folder path
 
         Returns
         -------
@@ -58,15 +60,14 @@ class FaceswapConfig():
         mod_split = self.__module__.split(".")
         mod_name = mod_split[-1]
         retval = mod_name.rsplit("_", maxsplit=1)[0]
-        logger.debug("Got plugin group '%s' from module '%s'",
-                     retval, self.__module__)
+        logger.debug("Got plugin group '%s' from module '%s'", retval, self.__module__)
         # Sanity check in case of defaults config file name/location changes
         parent = mod_split[-2]
         assert mod_name == f"{parent}_config"
         return retval
 
     def add_section(self, title: str, info: str) -> None:
-        """ Add a default section to config file
+        """Add a default section to config file
 
         Parameters
         ----------
@@ -79,7 +80,7 @@ class FaceswapConfig():
         self.sections[title] = ConfigSection(helptext=info, options={})
 
     def add_item(self, section: str, title: str, config_item: ConfigItem) -> None:
-        """ Add a default item to a config section
+        """Add a default item to a config section
 
         Parameters
         ----------
@@ -93,11 +94,10 @@ class FaceswapConfig():
         logger.debug("Add item: (section: '%s', item: %s", section, config_item)
         self.sections[section].options[title] = config_item
 
-    def _import_defaults_from_module(self,
-                                     filename: str,
-                                     module_path: str,
-                                     plugin_type: str) -> None:
-        """ Load the plugin's defaults module, extract defaults and add to default configuration.
+    def _import_defaults_from_module(
+        self, filename: str, module_path: str, plugin_type: str
+    ) -> None:
+        """Load the plugin's defaults module, extract defaults and add to default configuration.
 
         Parameters
         ----------
@@ -108,8 +108,12 @@ class FaceswapConfig():
         plugin_type : str
             The type of plugin that the defaults are being loaded for
         """
-        logger.debug("Adding defaults: (filename: %s, module_path: %s, plugin_type: %s",
-                     filename, module_path, plugin_type)
+        logger.debug(
+            "Adding defaults: (filename: %s, module_path: %s, plugin_type: %s",
+            filename,
+            module_path,
+            plugin_type,
+        )
         module = os.path.splitext(filename)[0]
         section = ".".join((plugin_type, module.replace("_defaults", "")))
         logger.debug("Importing defaults module: %s.%s", module_path, module)
@@ -121,7 +125,7 @@ class FaceswapConfig():
         logger.debug("Added defaults: %s", section)
 
     def _defaults_from_plugin(self, plugin_folder: str) -> None:
-        """ Scan the given plugins folder for config defaults.py files and update the
+        """Scan the given plugins folder for config defaults.py files and update the
         default configuration.
 
         Parameters
@@ -130,17 +134,19 @@ class FaceswapConfig():
             The folder to scan for plugins
         """
         for dirpath, _, filenames in os.walk(plugin_folder):
-            default_files = [fname for fname in filenames if fname.endswith("_defaults.py")]
+            default_files = [
+                fname for fname in filenames if fname.endswith("_defaults.py")
+            ]
             if not default_files:
                 continue
             # Can't use replace as there is a bug on some Windows installs that lowers some paths
-            import_path = ".".join(full_path_split(dirpath[len(PROJECT_ROOT):])[1:])
+            import_path = ".".join(full_path_split(dirpath[len(PROJECT_ROOT) :])[1:])
             plugin_type = import_path.rsplit(".", maxsplit=1)[-1]
             for filename in default_files:
                 self._import_defaults_from_module(filename, import_path, plugin_type)
 
     def set_defaults(self, helptext: str = "") -> None:
-        """ Override for plugin specific config defaults.
+        """Override for plugin specific config defaults.
 
         This method should always be overridden to add the help text for the global plugin group.
         If `helptext` is not provided, then it is assumed that there is no global section for this
@@ -173,8 +179,10 @@ class FaceswapConfig():
         logger.debug("[%s:%s] Adding defaults", self._plugin_group, section)
 
         if not helptext:
-            logger.debug("No help text provided for '%s'. Not creating global section",
-                         self.__module__)
+            logger.debug(
+                "No help text provided for '%s'. Not creating global section",
+                self.__module__,
+            )
             return
 
         self.add_section(section, helptext)
@@ -186,13 +194,19 @@ class FaceswapConfig():
 
         # Add global sub-sections
         for key, val in vars(sys.modules[self.__module__]).items():
-            if inspect.isclass(val) and issubclass(val, GlobalSection) and val != GlobalSection:
+            if (
+                inspect.isclass(val)
+                and issubclass(val, GlobalSection)
+                and val != GlobalSection
+            ):
                 g_val = T.cast(GlobalSection, val)
                 section_name = f"{section}.{key.lower()}"
                 self.add_section(section_name, g_val.helptext)
                 for opt_name, opt in g_val.__dict__.items():
                     if isinstance(opt, ConfigItem):
-                        self.add_item(section=section_name, title=opt_name, config_item=opt)
+                        self.add_item(
+                            section=section_name, title=opt_name, config_item=opt
+                        )
 
     def _set_defaults(self) -> None:
         """Load the plugin's default values, set the object names and order the sections, global
@@ -214,7 +228,7 @@ class FaceswapConfig():
 
 
 def get_configs() -> dict[str, FaceswapConfig]:
-    """ Get all of the FaceswapConfig options. Loads any configs that have not been loaded and
+    """Get all of the FaceswapConfig options. Loads any configs that have not been loaded and
     return a dictionary of all configs.
 
     Returns
@@ -227,7 +241,7 @@ def get_configs() -> dict[str, FaceswapConfig]:
 
 
 def generate_configs(force: bool = False) -> None:
-    """ Generate config files if they don't exist.
+    """Generate config files if they don't exist.
 
     This script is run prior to anything being set up, so don't use logging
     Generates the default config files for plugins in the faceswap config folder
@@ -246,7 +260,9 @@ def generate_configs(force: bool = False) -> None:
     plugins_path = os.path.join(PROJECT_ROOT, "plugins")
     for dirpath, _, filenames in os.walk(plugins_path):
         relative_path = dirpath.replace(PROJECT_ROOT, "")[1:]
-        if len(full_path_split(relative_path)) > 2:  # don't dig further than 1 folder deep
+        if (
+            len(full_path_split(relative_path)) > 2
+        ):  # don't dig further than 1 folder deep
             continue
         plugin_group = os.path.basename(dirpath)
         filename = f"{plugin_group}_config.py"
@@ -259,13 +275,16 @@ def generate_configs(force: bool = False) -> None:
         config_file = os.path.join(configs_path, f"{plugin_group}.ini")
         if not os.path.exists(config_file) or force:
             mod_name = os.path.splitext(filename)[0]
-            mod_path = os.path.join(dirpath.replace(PROJECT_ROOT, ""),
-                                    mod_name)[1:].replace(os.sep, ".")
+            mod_path = os.path.join(dirpath.replace(PROJECT_ROOT, ""), mod_name)[
+                1:
+            ].replace(os.sep, ".")
             mod = import_module(mod_path)
             for obj in vars(mod).values():
-                if (inspect.isclass(obj)
-                        and issubclass(obj, FaceswapConfig)
-                        and obj != FaceswapConfig):
+                if (
+                    inspect.isclass(obj)
+                    and issubclass(obj, FaceswapConfig)
+                    and obj != FaceswapConfig
+                ):
                     obj()
 
 

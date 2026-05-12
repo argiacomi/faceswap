@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-""" Original Model
+"""Original Model
 Based on the original https://www.reddit.com/r/deepfakes/ code sample + contributions.
 
 This model is heavily documented as it acts as a template that other model plugins can be developed
@@ -42,6 +42,7 @@ class Model(ModelBase):
         The default keyword arguments passed in from :class:`~scripts.train.Train` or
         :class:`~scripts.train.Convert`
     """
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.input_shape = (64, 64, 3)
@@ -50,7 +51,7 @@ class Model(ModelBase):
         self.encoder_dim = 512 if self.low_mem else 1024
 
     def build_model(self, inputs):
-        """ Create the model's structure.
+        """Create the model's structure.
 
         This function is automatically called immediately after :func:`__init__` has been called if
         a new model is being created. It is ignored if an existing model is being loaded from disk
@@ -96,7 +97,7 @@ class Model(ModelBase):
         return autoencoder
 
     def encoder(self):
-        """ The original Faceswap Encoder Network.
+        """The original Faceswap Encoder Network.
 
         The encoder for the original model has it's weights shared between both the "A" and "B"
         side of the model, so only one instance is created :func:`build_model`. However this same
@@ -122,7 +123,7 @@ class Model(ModelBase):
         return KModel(input_, var_x, name="encoder")
 
     def decoder(self, side):
-        """ The original Faceswap Decoder Network.
+        """The original Faceswap Decoder Network.
 
         The decoders for the original model have separate weights for each side "A" and "B", so two
         instances are created in :func:`build_model`, one for each side.

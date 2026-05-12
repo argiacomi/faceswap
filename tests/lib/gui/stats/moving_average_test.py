@@ -1,5 +1,5 @@
 #!/usr/bin python3
-""" Pytest unit tests for :mod:`lib.gui.stats.moving_average` """
+"""Pytest unit tests for :mod:`lib.gui.stats.moving_average`"""
 
 import numpy as np
 import pytest
@@ -9,24 +9,28 @@ from lib.gui.analysis.moving_average import ExponentialMovingAverage as EMA
 # pylint:disable=[protected-access,invalid-name]
 
 
-_INIT_PARAMS = ((np.array([1, 2, 3], dtype="float32"), 0.0),
-                (np.array([4, 5, 6], dtype="float64"), 0.25),
-                (np.array([7, 8, 9], dtype="uint8"), 1.0),
-                (np.array([0, np.nan, 1], dtype="float32"), 0.74),
-                (np.array([2, 3, np.inf], dtype="float32"), 0.33),
-                (np.array([4, 5, 6], dtype="float32"), -1.0),
-                (np.array([7, 8, 9], dtype="float32"), 99.0))
+_INIT_PARAMS = (
+    (np.array([1, 2, 3], dtype="float32"), 0.0),
+    (np.array([4, 5, 6], dtype="float64"), 0.25),
+    (np.array([7, 8, 9], dtype="uint8"), 1.0),
+    (np.array([0, np.nan, 1], dtype="float32"), 0.74),
+    (np.array([2, 3, np.inf], dtype="float32"), 0.33),
+    (np.array([4, 5, 6], dtype="float32"), -1.0),
+    (np.array([7, 8, 9], dtype="float32"), 99.0),
+)
 _INIT_IDS = ["float32", "float64", "uint8", "nan", "inf", "amount:-1", "amount:99"]
 
 
 @pytest.mark.parametrize(("data", "amount"), _INIT_PARAMS, ids=_INIT_IDS)
 def test_ExponentialMovingAverage_init(data: np.ndarray, amount: float):
-    """ Test that moving_average.MovingAverage correctly initializes """
-    attrs = {"_data": np.ndarray,
-             "_alpha": float,
-             "_dtype": str,
-             "_row_size": int,
-             "_out": np.ndarray}
+    """Test that moving_average.MovingAverage correctly initializes"""
+    attrs = {
+        "_data": np.ndarray,
+        "_alpha": float,
+        "_dtype": str,
+        "_row_size": int,
+        "_out": np.ndarray,
+    }
 
     instance = EMA(data, amount)
     # Verify required attributes exist and are of the correct type
@@ -42,7 +46,7 @@ def test_ExponentialMovingAverage_init(data: np.ndarray, amount: float):
     assert not np.any(np.isinf(instance._data))
 
     # Check alpha clamp logic
-    expected_alpha = 1. - min(0.999, max(0.001, amount))
+    expected_alpha = 1.0 - min(0.999, max(0.001, amount))
     assert instance._alpha == expected_alpha
 
     # dtype assignment logic
@@ -56,7 +60,7 @@ def test_ExponentialMovingAverage_init(data: np.ndarray, amount: float):
 
 
 def naive_ewma(data: np.ndarray, alpha: float) -> np.ndarray:
-    """ A simple ewma implementation to test for correctness """
+    """A simple ewma implementation to test for correctness"""
     out = np.empty_like(data, dtype=data.dtype)
     out[0] = data[0]
     for i in range(1, len(data)):
@@ -64,11 +68,13 @@ def naive_ewma(data: np.ndarray, alpha: float) -> np.ndarray:
     return out
 
 
-@pytest.mark.parametrize("alpha", [0.001, 0.01, 0.25, 0.33, 0.5, 0.66, 0.75, 0.90, 0.999])
+@pytest.mark.parametrize(
+    "alpha", [0.001, 0.01, 0.25, 0.33, 0.5, 0.66, 0.75, 0.90, 0.999]
+)
 @pytest.mark.parametrize("dtype", ("float32", "float64"))
 def test_ExponentialMovingAverage_matches_naive(alpha: float, dtype: str) -> None:
-    """ Make sure that we get sane results out for various data sizes against our reference
-    for various amounts """
+    """Make sure that we get sane results out for various data sizes against our reference
+    for various amounts"""
     rows = max(5, int(np.random.random() * 25000))
     data = np.random.rand(rows).astype(dtype)
     instance = EMA(data, 1 - alpha)
@@ -80,8 +86,8 @@ def test_ExponentialMovingAverage_matches_naive(alpha: float, dtype: str) -> Non
 
 @pytest.mark.parametrize("dtype", ("float32", "float64"))
 def test_ExponentialMovingAverage_small_data(dtype: str) -> None:
-    """ Make sure we get sane results out of our small path """
-    data = np.array([1., 2., 3.], dtype=dtype)
+    """Make sure we get sane results out of our small path"""
+    data = np.array([1.0, 2.0, 3.0], dtype=dtype)
     instance = EMA(data, 0.5)
     out = instance()
     ref = naive_ewma(data, instance._alpha)
@@ -90,7 +96,7 @@ def test_ExponentialMovingAverage_small_data(dtype: str) -> None:
 
 @pytest.mark.parametrize("dtype", ("float32", "float64"))
 def test_ExponentialMovingAverage_large_data_safe_path(dtype: str) -> None:
-    """ Make sure we get sane results out of our safe path """
+    """Make sure we get sane results out of our safe path"""
     data = np.random.rand(50000).astype(dtype)
     instance = EMA(data, 0.1)
     # Force safe path
@@ -104,7 +110,7 @@ def test_ExponentialMovingAverage_large_data_safe_path(dtype: str) -> None:
 
 @pytest.mark.parametrize("dtype", ("float32", "float64"))
 def test_ExponentialMovingAverage_empty_input(dtype: str) -> None:
-    """ Test that we get no data on an empty input """
+    """Test that we get no data on an empty input"""
     data = np.array([], dtype=dtype)
     instance = EMA(data, 0.5)
     out = instance()

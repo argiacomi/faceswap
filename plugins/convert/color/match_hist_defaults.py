@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-""" The default options for the faceswap Match_Hist Color plugin.
+"""The default options for the faceswap Match_Hist Color plugin.
 
 Defaults files should be named `<plugin_name>_defaults.py`
 
@@ -25,10 +25,13 @@ Items will be grouped together as per their `group` parameter, but otherwise wil
 the order that they are added to this module.
 from lib.config import ConfigItem
 """
+
 from lib.config import ConfigItem
 
 
-HELPTEXT = "Options for matching the histograms between the source and destination faces"
+HELPTEXT = (
+    "Options for matching the histograms between the source and destination faces"
+)
 
 
 threshold = ConfigItem(
@@ -36,6 +39,7 @@ threshold = ConfigItem(
     default=99.0,
     group="settings",
     info="Adjust the threshold for histogram matching. Can reduce extreme colors leaking in "
-         "by filtering out colors at the extreme ends of the histogram spectrum.",
+    "by filtering out colors at the extreme ends of the histogram spectrum.",
     rounding=1,
-    min_max=(90.0, 100.0))
+    min_max=(90.0, 100.0),
+)

@@ -1,5 +1,6 @@
 #! /usr/env/bin/python3
-""" Handles the loading and saving of a model's state file """
+"""Handles the loading and saving of a model's state file"""
+
 from __future__ import annotations
 
 import logging
@@ -23,8 +24,8 @@ if T.TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class State():  # pylint:disable=too-many-instance-attributes
-    """ Holds state information relating to the plugin's saved model.
+class State:  # pylint:disable=too-many-instance-attributes
+    """Holds state information relating to the plugin's saved model.
 
     Parameters
     ----------
@@ -35,10 +36,8 @@ class State():  # pylint:disable=too-many-instance-attributes
     no_logs: bool
         ``True`` if Tensorboard logs should not be generated, otherwise ``False``
     """
-    def __init__(self,
-                 model_dir: str,
-                 model_name: str,
-                 no_logs: bool) -> None:
+
+    def __init__(self, model_dir: str, model_name: str, no_logs: bool) -> None:
         logger.debug(parse_class_init(locals()))
         self._serializer = get_serializer("json")
         filename = f"{model_name}_state.{self._serializer.file_extension}"
@@ -62,48 +61,48 @@ class State():  # pylint:disable=too-many-instance-attributes
 
     @property
     def filename(self) -> str:
-        """ str: Full path to the state filename """
+        """str: Full path to the state filename"""
         return self._filename
 
     @property
     def current_session(self) -> dict:
-        """ dict: The state dictionary for the current :attr:`session_id`. """
+        """dict: The state dictionary for the current :attr:`session_id`."""
         return self._sessions[self._session_id]
 
     @property
     def iterations(self) -> int:
-        """ int: The total number of iterations that the model has trained. """
+        """int: The total number of iterations that the model has trained."""
         return self._iterations
 
     @property
     def session_id(self) -> int:
-        """ int: The current training session id. """
+        """int: The current training session id."""
         return self._session_id
 
     @property
     def sessions(self) -> dict[int, dict[str, T.Any]]:
-        """ dict[int, dict[str, Any]]: The session information for each session in the state
-        file """
+        """dict[int, dict[str, Any]]: The session information for each session in the state
+        file"""
         return {int(k): v for k, v in self._sessions.items()}
 
     @property
     def mixed_precision_layers(self) -> list[str]:
-        """list: Layers that can be switched between mixed-float16 and float32. """
+        """list: Layers that can be switched between mixed-float16 and float32."""
         return self._mixed_precision_layers
 
     @property
     def lr_finder(self) -> float:
-        """ The value discovered from the learning rate finder. -1 if no value stored """
+        """The value discovered from the learning rate finder. -1 if no value stored"""
         return self._lr_finder
 
     @property
     def model_needs_rebuild(self) -> bool:
         """bool: ``True`` if mixed precision policy has changed so model needs to be rebuilt
-        otherwise ``False`` """
+        otherwise ``False``"""
         return self._rebuild_model
 
     def _new_session_id(self) -> int:
-        """ Generate a new session id. Returns 1 if this is a new model, or the last session id + 1
+        """Generate a new session id. Returns 1 if this is a new model, or the last session id + 1
         if it is a pre-existing model.
 
         Returns
@@ -119,7 +118,7 @@ class State():  # pylint:disable=too-many-instance-attributes
         return session_id
 
     def _create_new_session(self, no_logs: bool) -> None:
-        """ Initialize a new session, creating the dictionary entry for the session in
+        """Initialize a new session, creating the dictionary entry for the session in
         :attr:`_sessions`.
 
         Parameters
@@ -128,15 +127,18 @@ class State():  # pylint:disable=too-many-instance-attributes
             ``True`` if Tensorboard logs should not be generated, otherwise ``False``
         """
         logger.debug("Creating new session. id: %s", self._session_id)
-        self._sessions[self._session_id] = {"timestamp": time.time(),
-                                            "no_logs": no_logs,
-                                            "batchsize": 0,
-                                            "iterations": 0,
-                                            "config": {k: v for k, v in self._config.items()
-                                                       if k in self._updatable_options}}
+        self._sessions[self._session_id] = {
+            "timestamp": time.time(),
+            "no_logs": no_logs,
+            "batchsize": 0,
+            "iterations": 0,
+            "config": {
+                k: v for k, v in self._config.items() if k in self._updatable_options
+            },
+        }
 
     def update_session_config(self, key: str, value: T.Any) -> None:
-        """ Update a configuration item of the currently loaded session.
+        """Update a configuration item of the currently loaded session.
 
         Parameters
         ----------
@@ -147,11 +149,13 @@ class State():  # pylint:disable=too-many-instance-attributes
         """
         old_val = self.current_session["config"][key]
         assert isinstance(value, type(old_val))
-        logger.debug("Updating configuration item '%s' from '%s' to '%s'", key, old_val, value)
+        logger.debug(
+            "Updating configuration item '%s' from '%s' to '%s'", key, old_val, value
+        )
         self.current_session["config"][key] = value
 
     def add_session_batchsize(self, batch_size: int) -> None:
-        """ Add the session batch size to the sessions dictionary.
+        """Add the session batch size to the sessions dictionary.
 
         Parameters
         ----------
@@ -162,18 +166,18 @@ class State():  # pylint:disable=too-many-instance-attributes
         self._sessions[self._session_id]["batchsize"] = batch_size
 
     def increment_iterations(self) -> None:
-        """ Increment :attr:`iterations` and session iterations by 1. """
+        """Increment :attr:`iterations` and session iterations by 1."""
         self._iterations += 1
         self._sessions[self._session_id]["iterations"] += 1
 
     def add_mixed_precision_layers(self, layers: list[str]) -> None:
-        """ Add the list of model's layers that are compatible for mixed precision to the
-        state dictionary """
+        """Add the list of model's layers that are compatible for mixed precision to the
+        state dictionary"""
         logger.debug("Storing mixed precision layers: %s", layers)
         self._mixed_precision_layers = layers
 
     def add_lr_finder(self, learning_rate: float) -> None:
-        """ Add the optimal discovered learning rate from the learning rate finder
+        """Add the optimal discovered learning rate from the learning rate finder
 
         Parameters
         ----------
@@ -184,21 +188,24 @@ class State():  # pylint:disable=too-many-instance-attributes
         self._lr_finder = learning_rate
 
     def save(self) -> None:
-        """ Save the state values to the serialized state file. """
-        state = {"name": self._name,
-                 "sessions": {k: v for k, v in self._sessions.items()
-                              if v.get("iterations", 0) > 0},
-                 "lowest_avg_loss": self.lowest_avg_loss,
-                 "iterations": self._iterations,
-                 "mixed_precision_layers": self._mixed_precision_layers,
-                 "lr_finder": self._lr_finder,
-                 "config": self._config}
+        """Save the state values to the serialized state file."""
+        state = {
+            "name": self._name,
+            "sessions": {
+                k: v for k, v in self._sessions.items() if v.get("iterations", 0) > 0
+            },
+            "lowest_avg_loss": self.lowest_avg_loss,
+            "iterations": self._iterations,
+            "mixed_precision_layers": self._mixed_precision_layers,
+            "lr_finder": self._lr_finder,
+            "config": self._config,
+        }
         logger.debug("Saving State: %s", state)
         self._serializer.save(self._filename, state)
         logger.debug("Saved State: '%s'", self._filename)
 
     def _update_legacy_config(self) -> bool:
-        """ Legacy updates for new config additions.
+        """Legacy updates for new config additions.
 
         When new config items are added to the Faceswap code, existing model state files need to be
         updated to handle these new items.
@@ -228,13 +235,28 @@ class State():  # pylint:disable=too-many-instance-attributes
             ``True`` if legacy items exist and state file has been updated, otherwise ``False``
         """
         logger.debug("Checking for legacy state file update")
-        priors = ["dssim_loss", "mask_type", "mask_type", "l2_reg_term", "clipnorm", "autoclip"]
-        new_items = ["loss_function", "learn_mask", "mask_type", "loss_function_2",
-                     "gradient_clipping", "clipping"]
+        priors = [
+            "dssim_loss",
+            "mask_type",
+            "mask_type",
+            "l2_reg_term",
+            "clipnorm",
+            "autoclip",
+        ]
+        new_items = [
+            "loss_function",
+            "learn_mask",
+            "mask_type",
+            "loss_function_2",
+            "gradient_clipping",
+            "clipping",
+        ]
         updated = False
         for old, new in zip(priors, new_items):
             if old not in self._config:
-                logger.debug("Legacy item '%s' not in state config. Skipping update", old)
+                logger.debug(
+                    "Legacy item '%s' not in state config. Skipping update", old
+                )
                 continue
 
             # dssim_loss > loss_function
@@ -242,26 +264,38 @@ class State():  # pylint:disable=too-many-instance-attributes
                 self._config[new] = "ssim" if self._config[old] else "mae"
                 del self._config[old]
                 updated = True
-                logger.info("Updated state config from legacy dssim format. New config loss "
-                            "function: '%s'", self._config[new])
+                logger.info(
+                    "Updated state config from legacy dssim format. New config loss "
+                    "function: '%s'",
+                    self._config[new],
+                )
                 continue
 
             # Add learn mask option and set to True if model has "penalized_mask_loss" specified
             if old == "mask_type" and new == "learn_mask" and new not in self._config:
                 self._config[new] = self._config["mask_type"] is not None
                 updated = True
-                logger.info("Added new 'learn_mask' state config item for this model. Value set "
-                            "to: %s", self._config[new])
+                logger.info(
+                    "Added new 'learn_mask' state config item for this model. Value set "
+                    "to: %s",
+                    self._config[new],
+                )
                 continue
 
             # Replace removed masks with most similar equivalent
-            if old == "mask_type" and new == "mask_type" and self._config[old] in ("facehull",
-                                                                                   "dfl_full"):
+            if (
+                old == "mask_type"
+                and new == "mask_type"
+                and self._config[old] in ("facehull", "dfl_full")
+            ):
                 old_mask = self._config[old]
                 self._config[new] = "components"
                 updated = True
-                logger.info("Updated 'mask_type' from '%s' to '%s' for this model",
-                            old_mask, self._config[new])
+                logger.info(
+                    "Updated 'mask_type' from '%s' to '%s' for this model",
+                    old_mask,
+                    self._config[new],
+                )
 
             # Replace l2_reg_term with the correct loss_2_function and update the value of
             # loss_2_weight
@@ -270,43 +304,58 @@ class State():  # pylint:disable=too-many-instance-attributes
                 self._config["loss_weight_2"] = self._config[old]
                 del self._config[old]
                 updated = True
-                logger.info("Updated state config from legacy 'l2_reg_term' to 'loss_function_2'")
+                logger.info(
+                    "Updated state config from legacy 'l2_reg_term' to 'loss_function_2'"
+                )
 
             # Replace clipnorm with correct gradient clipping type and value
             if old == "clipnorm":
                 self._config[new] = "norm"
                 del self._config[old]
                 updated = True
-                logger.info("Updated state config from legacy '%s' to  '%s: %s'", old, new, old)
+                logger.info(
+                    "Updated state config from legacy '%s' to  '%s: %s'", old, new, old
+                )
 
             # Replace autoclip with correct gradient clipping type
             if old == "autoclip":
                 self._config[new] = old
                 del self._config[old]
                 updated = True
-                logger.info("Updated state config from legacy '%s' to '%s: %s'", old, new, old)
+                logger.info(
+                    "Updated state config from legacy '%s' to '%s: %s'", old, new, old
+                )
 
         # Update Clip layer names from dots to underscores
         mixed_precision = self._mixed_precision_layers
         if any("." in name for name in mixed_precision):
-            self._mixed_precision_layers = [x.replace(".", "_") for x in mixed_precision]
+            self._mixed_precision_layers = [
+                x.replace(".", "_") for x in mixed_precision
+            ]
             updated = True
-            logger.info("Updated state config for legacy 'mixed_precision' storage of Clip layers")
+            logger.info(
+                "Updated state config for legacy 'mixed_precision' storage of Clip layers"
+            )
 
         logger.debug("State file updated for legacy config: %s", updated)
         return updated
 
     def _get_global_options(self) -> dict[str, ConfigItem]:
-        """ Obtain all of the current global user config options
+        """Obtain all of the current global user config options
 
         Returns
         -------
         dict[str, :class:`lib.config.objects.ConfigItem`]
             All of the current global user configuration options
         """
-        objects = {key: val for key, val in vars(cfg).items()
-                   if isinstance(val, ConfigItem)
-                   or isclass(val) and issubclass(val, GlobalSection) and val != GlobalSection}
+        objects = {
+            key: val
+            for key, val in vars(cfg).items()
+            if isinstance(val, ConfigItem)
+            or isclass(val)
+            and issubclass(val, GlobalSection)
+            and val != GlobalSection
+        }
 
         retval: dict[str, ConfigItem] = {}
         for key, obj in objects.items():
@@ -316,11 +365,13 @@ class State():  # pylint:disable=too-many-instance-attributes
             for name, opt in obj.__dict__.items():
                 if isinstance(opt, ConfigItem):
                     retval[name] = opt
-        logger.debug("Loaded global config options: %s", {k: v.value for k, v in retval.items()})
+        logger.debug(
+            "Loaded global config options: %s", {k: v.value for k, v in retval.items()}
+        )
         return retval
 
     def _get_model_options(self) -> dict[str, ConfigItem]:
-        """ Obtain all of the currently configured model user config options """
+        """Obtain all of the currently configured model user config options"""
         mod_name = f"plugins.train.model.{self._name}_defaults"
         try:
             mod = import_module(mod_name)
@@ -329,12 +380,15 @@ class State():  # pylint:disable=too-many-instance-attributes
             return {}
 
         retval = {k: v for k, v in vars(mod).items() if isinstance(v, ConfigItem)}
-        logger.debug("Loaded '%s' config options: %s",
-                     self._name, {k: v.value for k, v in retval.items()})
+        logger.debug(
+            "Loaded '%s' config options: %s",
+            self._name,
+            {k: v.value for k, v in retval.items()},
+        )
         return retval
 
     def _update_config(self) -> None:
-        """ Update the loaded training config with the one contained within the values loaded
+        """Update the loaded training config with the one contained within the values loaded
         from the state file.
 
         Check for any `fixed`=``False`` parameter changes and log info changes.
@@ -344,11 +398,13 @@ class State():  # pylint:disable=too-many-instance-attributes
         legacy_update = self._update_legacy_config()
         # Add any new items to state config for legacy purposes where the new default may be
         # detrimental to an existing model.
-        legacy_defaults: dict[str, str | int | bool | float] = {"centering": "legacy",
-                                                                "coverage": 62.5,
-                                                                "mask_loss_function": "mse",
-                                                                "optimizer": "adam",
-                                                                "mixed_precision": False}
+        legacy_defaults: dict[str, str | int | bool | float] = {
+            "centering": "legacy",
+            "coverage": 62.5,
+            "mask_loss_function": "mse",
+            "optimizer": "adam",
+            "mixed_precision": False,
+        }
         rebuild_tasks = ["mixed_precision"]
         options = self._get_global_options() | self._get_model_options()
         for key, opt in options.items():
@@ -356,25 +412,37 @@ class State():  # pylint:disable=too-many-instance-attributes
 
             if key not in self._config:
                 val = legacy_defaults.get(key, val)
-                logger.info("Adding new config item to state file: '%s': %s", key, repr(val))
+                logger.info(
+                    "Adding new config item to state file: '%s': %s", key, repr(val)
+                )
                 self._config[key] = val
 
             old_val = self._config[key]
-            old_val = "none" if old_val is None else old_val  # We used to allow NoneType. No more
+            old_val = (
+                "none" if old_val is None else old_val
+            )  # We used to allow NoneType. No more
 
             if not opt.fixed:
                 self._updatable_options.append(key)
 
             if not opt.fixed and val != old_val:
                 self._config[key] = val
-                logger.info("Config item: '%s' has been updated from %s to %s",
-                            key, repr(old_val), repr(val))
+                logger.info(
+                    "Config item: '%s' has been updated from %s to %s",
+                    key,
+                    repr(old_val),
+                    repr(val),
+                )
                 self._rebuild_model = self._rebuild_model or key in rebuild_tasks
                 continue
 
             if val != old_val:
-                logger.debug("Fixed config item '%s' Updated from %s to %s from state file",
-                             key, repr(val), repr(old_val))
+                logger.debug(
+                    "Fixed config item '%s' Updated from %s to %s from state file",
+                    key,
+                    repr(val),
+                    repr(old_val),
+                )
                 opt.set(old_val)
 
         if legacy_update:
@@ -383,18 +451,20 @@ class State():  # pylint:disable=too-many-instance-attributes
         logger.debug("Updatable items: %s", self._updatable_options)
 
     def _generate_config(self) -> None:
-        """ Generate an initial state config based on the currently selected user config """
+        """Generate an initial state config based on the currently selected user config"""
         options = self._get_global_options() | self._get_model_options()
         for key, val in options.items():
             self._config[key] = val.value
             if not val.fixed:
                 self._updatable_options.append(key)
 
-        logger.debug("Generated initial state config for '%s': %s", self._name, self._config)
+        logger.debug(
+            "Generated initial state config for '%s': %s", self._name, self._config
+        )
         logger.debug("Updatable items: %s", self._updatable_options)
 
     def _load(self) -> None:
-        """ Load a state file and set the serialized values to the class instance.
+        """Load a state file and set the serialized values to the class instance.
 
         Updates the model's config with the values stored in the state file.
         """
@@ -412,8 +482,11 @@ class State():  # pylint:disable=too-many-instance-attributes
         self.lowest_avg_loss = state.get("lowest_avg_loss", 0.0)
         if isinstance(self.lowest_avg_loss, dict):
             lowest_avg_loss = sum(self.lowest_avg_loss.values())
-            logger.debug("Collating legacy lowest_avg_loss from %s to %s",
-                         self.lowest_avg_loss, lowest_avg_loss)
+            logger.debug(
+                "Collating legacy lowest_avg_loss from %s to %s",
+                self.lowest_avg_loss,
+                lowest_avg_loss,
+            )
             self.lowest_avg_loss = lowest_avg_loss
 
         self._iterations = state.get("iterations", 0)

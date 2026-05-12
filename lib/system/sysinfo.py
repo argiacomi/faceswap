@@ -21,14 +21,17 @@ except ImportError:
     psutil = None  # type:ignore[assignment]
 
 
-class _SysInfo():
+class _SysInfo:
     """Obtain information about the System, Python and GPU"""
+
     def __init__(self) -> None:
         self._state_file = _State().state_file
         self._configs = _Configs().configs
         self._system = System()
-        self._python = {"implementation": platform.python_implementation(),
-                        "version": platform.python_version()}
+        self._python = {
+            "implementation": platform.python_implementation(),
+            "version": platform.python_version(),
+        }
         self._packages = Packages()
         self._gpu = self._get_gpu_info()
         self._cuda = Cuda()
@@ -141,20 +144,24 @@ class _SysInfo():
         The information on connected GPUs
         """
         if GPUStats is None:
-            return GPUInfo(vram=[],
-                           vram_free=[],
-                           driver="N/A",
-                           devices=["Error obtaining GPU Stats: 'GPUStats import error'"],
-                           devices_active=[])
+            return GPUInfo(
+                vram=[],
+                vram_free=[],
+                driver="N/A",
+                devices=["Error obtaining GPU Stats: 'GPUStats import error'"],
+                devices_active=[],
+            )
         try:
             retval = GPUStats(log=False).sys_info
         except Exception as err:  # pylint:disable=broad-except
             err_string = f"{type(err)}: {err}"
-            retval = GPUInfo(vram=[],
-                             vram_free=[],
-                             driver="N/A",
-                             devices=[f"Error obtaining GPU Stats: '{err_string}'"],
-                             devices_active=[])
+            retval = GPUInfo(
+                vram=[],
+                vram_free=[],
+                driver="N/A",
+                devices=[f"Error obtaining GPU Stats: '{err_string}'"],
+                devices_active=[],
+            )
         return retval
 
     def _format_ram(self) -> str:
@@ -180,37 +187,43 @@ class _SysInfo():
         a log file.
         """
         retval = "\n============ System Information ============\n"
-        sys_info = {"backend": get_backend(),
-                    "os_platform": self._system.platform,
-                    "os_machine": self._system.machine,
-                    "os_release": self._system.release,
-                    "py_conda_version": self._conda_version,
-                    "py_implementation": self._system.python_implementation,
-                    "py_version": self._system.python_version,
-                    "py_command": self._fs_command,
-                    "py_virtual_env": self._system.is_virtual_env,
-                    "sys_cores": self._system.cpu_count,
-                    "sys_processor": self._system.processor,
-                    "sys_ram": self._format_ram(),
-                    "encoding": self._system.encoding,
-                    "git_branch": git.branch,
-                    "git_commits": self._git_commits,
-                    "gpu_cuda_versions": self._cuda_versions,
-                    "gpu_cuda": self._cuda_version,
-                    "gpu_cudnn": self._cudnn_versions,
-                    "gpu_rocm_versions": self._rocm_versions,
-                    "gpu_rocm_version": self._rocm_version,
-                    "gpu_driver": self._gpu.driver,
-                    "gpu_devices": ", ".join([f"GPU_{idx}: {device}"
-                                              for idx, device in enumerate(self._gpu.devices)]),
-                    "gpu_vram": ", ".join(
-                        f"GPU_{idx}: {int(vram)}MB ({int(vram_free)}MB free)"
-                        for idx, (vram, vram_free) in enumerate(zip(self._gpu.vram,
-                                                                    self._gpu.vram_free))),
-                    "gpu_devices_active": ", ".join([f"GPU_{idx}"
-                                                     for idx in self._gpu.devices_active])}
+        sys_info = {
+            "backend": get_backend(),
+            "os_platform": self._system.platform,
+            "os_machine": self._system.machine,
+            "os_release": self._system.release,
+            "py_conda_version": self._conda_version,
+            "py_implementation": self._system.python_implementation,
+            "py_version": self._system.python_version,
+            "py_command": self._fs_command,
+            "py_virtual_env": self._system.is_virtual_env,
+            "sys_cores": self._system.cpu_count,
+            "sys_processor": self._system.processor,
+            "sys_ram": self._format_ram(),
+            "encoding": self._system.encoding,
+            "git_branch": git.branch,
+            "git_commits": self._git_commits,
+            "gpu_cuda_versions": self._cuda_versions,
+            "gpu_cuda": self._cuda_version,
+            "gpu_cudnn": self._cudnn_versions,
+            "gpu_rocm_versions": self._rocm_versions,
+            "gpu_rocm_version": self._rocm_version,
+            "gpu_driver": self._gpu.driver,
+            "gpu_devices": ", ".join(
+                [f"GPU_{idx}: {device}" for idx, device in enumerate(self._gpu.devices)]
+            ),
+            "gpu_vram": ", ".join(
+                f"GPU_{idx}: {int(vram)}MB ({int(vram_free)}MB free)"
+                for idx, (vram, vram_free) in enumerate(
+                    zip(self._gpu.vram, self._gpu.vram_free)
+                )
+            ),
+            "gpu_devices_active": ", ".join(
+                [f"GPU_{idx}" for idx in self._gpu.devices_active]
+            ),
+        }
         for key in sorted(sys_info.keys()):
-            retval += (f"{key + ':':<20} {sys_info[key]}\n")
+            retval += f"{key + ':':<20} {sys_info[key]}\n"
         retval += "\n=============== Pip Packages ===============\n"
         retval += self._packages.installed_python_pretty
         if self._system.is_conda:
@@ -240,9 +253,9 @@ def get_sysinfo() -> str:
     return retval
 
 
-class _Configs():  # pylint:disable=too-few-public-methods
+class _Configs:  # pylint:disable=too-few-public-methods
     """Parses the config files in /faceswap/config and outputs the information stored within them
-    in a human readable format. """
+    in a human readable format."""
 
     def __init__(self) -> None:
         self.config_dir = os.path.join(PROJECT_ROOT, "config")
@@ -256,10 +269,12 @@ class _Configs():  # pylint:disable=too-few-public-methods
         The current configuration in the config files formatted in a human readable format
         """
         try:
-            config_files = [os.path.join(self.config_dir, c_file)
-                            for c_file in os.listdir(self.config_dir)
-                            if os.path.basename(c_file) == ".faceswap"
-                            or os.path.splitext(c_file)[1] == ".ini"]
+            config_files = [
+                os.path.join(self.config_dir, c_file)
+                for c_file in os.listdir(self.config_dir)
+                if os.path.basename(c_file) == ".faceswap"
+                or os.path.splitext(c_file)[1] == ".ini"
+            ]
             return self._parse_configs(config_files)
         except FileNotFoundError:
             return ""
@@ -349,9 +364,10 @@ class _Configs():  # pylint:disable=too-few-public-methods
         return f"{key.strip() + ':':<25} {value.strip()}\n"
 
 
-class _State():  # pylint:disable=too-few-public-methods
+class _State:  # pylint:disable=too-few-public-methods
     """Parses the state file in the current model directory, if the model is training, and
-    formats the content into a human readable format. """
+    formats the content into a human readable format."""
+
     def __init__(self) -> None:
         self._model_dir = self._get_arg("-m", "--model-dir")
         self._trainer = self._get_arg("-t", "--trainer")

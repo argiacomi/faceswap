@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Collects and returns Information on available Apple Silicon SoCs in Apple Macs."""
+
 import typing as T
 
 import os
@@ -34,6 +35,7 @@ class AppleSiliconStats(_GPUStats):
         available then this parameter should be set to ``False``. Otherwise set to ``True``.
         Default: ``True``
     """
+
     def __init__(self, log: bool = True) -> None:
         # Following attribute set in :func:``_initialize``
         self._mps_devices: list[T.Any] = []
@@ -87,11 +89,12 @@ class AppleSiliconStats(_GPUStats):
         """
         try:
             meminfo = torch.mps.driver_allocated_memory()
-            self._log("debug",
-                      f"Torch initialization test: (mem_info: {meminfo})")
+            self._log("debug", f"Torch initialization test: (mem_info: {meminfo})")
         except RuntimeError as err:
-            msg = ("An unhandled exception occurred initializing the device via Torch "
-                   f"Library. Original error: {str(err)}")
+            msg = (
+                "An unhandled exception occurred initializing the device via Torch "
+                f"Library. Original error: {str(err)}"
+            )
             raise FaceswapError(msg) from err
 
     def _get_device_count(self) -> int:
@@ -157,8 +160,13 @@ class AppleSiliconStats(_GPUStats):
         -------
         The RAM in Megabytes for each available Apple Silicon SoC
         """
-        vram = [int((torch.mps.driver_allocated_memory() / self._device_count) / (1024 * 1024))
-                for _ in range(self._device_count)]
+        vram = [
+            int(
+                (torch.mps.driver_allocated_memory() / self._device_count)
+                / (1024 * 1024)
+            )
+            for _ in range(self._device_count)
+        ]
         self._log("debug", f"SoC RAM: {vram}")
         return vram
 
@@ -171,8 +179,12 @@ class AppleSiliconStats(_GPUStats):
         List of `float`s containing the amount of RAM available, in Megabytes, for each available
         SoC as corresponding to the values in :attr:`_handles
         """
-        vram = [int((psutil.virtual_memory().available / self._device_count) / (1024 * 1024))
-                for _ in range(self._device_count)]
+        vram = [
+            int(
+                (psutil.virtual_memory().available / self._device_count) / (1024 * 1024)
+            )
+            for _ in range(self._device_count)
+        ]
         self._log("debug", f"SoC RAM free: {vram}")
         return vram
 
@@ -184,8 +196,11 @@ class AppleSiliconStats(_GPUStats):
         devices
             The GPU device IDS to be excluded
         """
-        self._log("warning", "Apple Silicon does not support excluding GPUs. This option has been "
-                             "ignored")
+        self._log(
+            "warning",
+            "Apple Silicon does not support excluding GPUs. This option has been "
+            "ignored",
+        )
 
 
 __all__ = get_module_objects(__name__)

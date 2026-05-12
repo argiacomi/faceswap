@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Plugin loader for Faceswap extract, training and convert tasks"""
+
 from __future__ import annotations
 import ast
 import logging
@@ -27,16 +28,21 @@ def get_extractors() -> dict[str, list[str]]:  # noqa: C901
     A list of all available plugins for each extraction plugin type
     """
     root = os.path.join(PROJECT_ROOT, "plugins", "extract")
-    folders = sorted(os.path.join(root, f) for f in os.listdir(root)
-                     if os.path.isdir(os.path.join(root, f))
-                     and not f.startswith("_"))
+    folders = sorted(
+        os.path.join(root, f)
+        for f in os.listdir(root)
+        if os.path.isdir(os.path.join(root, f)) and not f.startswith("_")
+    )
     retval: dict[str, list[str]] = {}
     for fld in folders:
-        files = sorted(os.path.join(fld, fname) for fname in os.listdir(fld)
-                       if os.path.isfile(os.path.join(fld, fname))
-                       and fname.endswith(".py")
-                       and not fname.startswith("_")
-                       and not fname.endswith("_defaults.py"))
+        files = sorted(
+            os.path.join(fld, fname)
+            for fname in os.listdir(fld)
+            if os.path.isfile(os.path.join(fld, fname))
+            and fname.endswith(".py")
+            and not fname.startswith("_")
+            and not fname.endswith("_defaults.py")
+        )
         mods = []
         for fpath in files:
             try:
@@ -51,7 +57,9 @@ def get_extractors() -> dict[str, list[str]]:  # noqa: C901
                     if not isinstance(base, ast.Name):
                         continue
                     if base.id in ("ExtractPlugin", "FacePlugin"):
-                        rel_path = os.path.splitext(fpath.replace(PROJECT_ROOT, "")[1:])[0]
+                        rel_path = os.path.splitext(
+                            fpath.replace(PROJECT_ROOT, "")[1:]
+                        )[0]
                         mods.append(".".join(full_path_split(rel_path) + [node.name]))
         if mods:
             retval[os.path.basename(fld)] = list(sorted(mods))
@@ -59,7 +67,7 @@ def get_extractors() -> dict[str, list[str]]:  # noqa: C901
     return retval
 
 
-class PluginLoader():
+class PluginLoader:
     """Retrieve, or get information on, Faceswap plugins
 
     Return a specific plugin, list available plugins, or get the default plugin for a
@@ -71,12 +79,13 @@ class PluginLoader():
     >>> align_plugins = PluginLoader.get_available_extractors('align')
     >>> aligner = PluginLoader.get_aligner('cv2-dnn')
     """
+
     extract_plugins = get_extractors()
 
     @classmethod
-    def get_extractor(cls,
-                      plugin_type: T.Literal["align", "detect", "identity", "mask"],
-                      name: str) -> ExtractPlugin:
+    def get_extractor(
+        cls, plugin_type: T.Literal["align", "detect", "identity", "mask"], name: str
+    ) -> ExtractPlugin:
         """Return requested extractor plugin
 
         Parameters
@@ -96,13 +105,17 @@ class PluginLoader():
             If an invalid plugin type or plugin name is selected
         """
         if plugin_type not in cls.extract_plugins:
-            raise ValueError(f"{plugin_type} is not a valid plugin type. Select from "
-                             f"{list(cls.extract_plugins)}")
+            raise ValueError(
+                f"{plugin_type} is not a valid plugin type. Select from "
+                f"{list(cls.extract_plugins)}"
+            )
         plugins = cls.extract_plugins[plugin_type]
         mods = [p.split(".")[-2] for p in plugins]
         real_name = name.lower().replace("-", "_")
         if real_name not in mods:
-            raise ValueError(f"{name} is not a valid {plugin_type} plugin. Select from {mods}")
+            raise ValueError(
+                f"{name} is not a valid {plugin_type} plugin. Select from {mods}"
+            )
 
         mod, obj = plugins[mods.index(real_name)].rsplit(".", maxsplit=1)
         logger.debug("Loading '%s' from '%s'", plugin_type, name)
@@ -150,7 +163,9 @@ class PluginLoader():
         return PluginLoader._import("train.trainer", name, disable_logging)
 
     @staticmethod
-    def get_converter(category: str, name: str, disable_logging: bool = False) -> Callable:
+    def get_converter(
+        category: str, name: str, disable_logging: bool = False
+    ) -> Callable:
         """Return requested converter plugin
 
         Converters work slightly differently to other faceswap plugins. They are created to do a
@@ -196,10 +211,12 @@ class PluginLoader():
         return getattr(module, ttl)
 
     @classmethod
-    def get_available_extractors(cls,
-                                 extractor_type: T.Literal["align", "detect", "identity", "mask"],
-                                 add_none: bool = False,
-                                 extend_plugin: bool = False) -> list[str]:
+    def get_available_extractors(
+        cls,
+        extractor_type: T.Literal["align", "detect", "identity", "mask"],
+        add_none: bool = False,
+        extend_plugin: bool = False,
+    ) -> list[str]:
         """Return a list of available extractors of the given type
 
         Parameters
@@ -221,9 +238,14 @@ class PluginLoader():
         A list of the available extractor plugin names for the given type
         """
         if extractor_type not in cls.extract_plugins:
-            raise ValueError(f"{extractor_type} is not a valid plugin type. Select from "
-                             f"{list(cls.extract_plugins)}")
-        plugins = [x.split(".")[-2].replace("_", "-") for x in cls.extract_plugins[extractor_type]]
+            raise ValueError(
+                f"{extractor_type} is not a valid plugin type. Select from "
+                f"{list(cls.extract_plugins)}"
+            )
+        plugins = [
+            x.split(".")[-2].replace("_", "-")
+            for x in cls.extract_plugins[extractor_type]
+        ]
         if extend_plugin and extractor_type == "mask":
             extendable = ["bisenet-fp", "custom"]
             for plugin in extendable:
@@ -245,11 +267,13 @@ class PluginLoader():
         A list of the available training model plugin names
         """
         model_path = os.path.join(os.path.dirname(__file__), "train", "model")
-        models = sorted(item.name.replace(".py", "").replace("_", "-")
-                        for item in os.scandir(model_path)
-                        if not item.name.startswith("_")
-                        and not item.name.endswith("defaults.py")
-                        and item.name.endswith(".py"))
+        models = sorted(
+            item.name.replace(".py", "").replace("_", "-")
+            for item in os.scandir(model_path)
+            if not item.name.startswith("_")
+            and not item.name.endswith("defaults.py")
+            and item.name.endswith(".py")
+        )
         return models
 
     @staticmethod
@@ -261,10 +285,12 @@ class PluginLoader():
         The default faceswap training model
         """
         models = PluginLoader.get_available_models()
-        return 'original' if 'original' in models else models[0]
+        return "original" if "original" in models else models[0]
 
     @staticmethod
-    def get_available_convert_plugins(convert_category: str, add_none: bool = True) -> list[str]:
+    def get_available_convert_plugins(
+        convert_category: str, add_none: bool = True
+    ) -> list[str]:
         """Return a list of available converter plugins in the given category
 
         Parameters
@@ -279,14 +305,16 @@ class PluginLoader():
         A list of the available converter plugin names in the given category
         """
 
-        convert_path = os.path.join(os.path.dirname(__file__),
-                                    "convert",
-                                    convert_category)
-        converters = sorted(item.name.replace(".py", "").replace("_", "-")
-                            for item in os.scandir(convert_path)
-                            if not item.name.startswith("_")
-                            and not item.name.endswith("defaults.py")
-                            and item.name.endswith(".py"))
+        convert_path = os.path.join(
+            os.path.dirname(__file__), "convert", convert_category
+        )
+        converters = sorted(
+            item.name.replace(".py", "").replace("_", "-")
+            for item in os.scandir(convert_path)
+            if not item.name.startswith("_")
+            and not item.name.endswith("defaults.py")
+            and item.name.endswith(".py")
+        )
         if add_none:
             converters.insert(0, "none")
         return converters

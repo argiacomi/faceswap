@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-""" functions for implementing themes in Faceswap's GUI """
+"""functions for implementing themes in Faceswap's GUI"""
+
 import logging
 import os
 import tkinter as tk
@@ -14,8 +15,8 @@ from lib.utils import FaceswapError, get_module_objects
 logger = logging.getLogger(__name__)
 
 
-class Style():
-    """ Set the overarching theme and customize widgets.
+class Style:
+    """Set the overarching theme and customize widgets.
 
     Parameters
     ----------
@@ -26,6 +27,7 @@ class Style():
     path_cache: str
         The path to the GUI's cache
     """
+
     def __init__(self, default_font, root, path_cache):
         self._root = root
         self._font = default_font
@@ -37,85 +39,113 @@ class Style():
 
     @property
     def user_theme(self):
-        """ dict: The currently selected user theme. """
+        """dict: The currently selected user theme."""
         return self._user_theme
 
     def _set_styles(self):
-        """ Configure widget theme and styles """
+        """Configure widget theme and styles"""
         self._config_settings_group()
         # Command page
         theme = self._user_theme["command_tabs"]
-        self._widgets.notebook("CPanel",
-                               theme["frame_border"],
-                               theme["tab_color"],
-                               theme["tab_selected"],
-                               theme["tab_hover"])
+        self._widgets.notebook(
+            "CPanel",
+            theme["frame_border"],
+            theme["tab_color"],
+            theme["tab_selected"],
+            theme["tab_hover"],
+        )
 
         # Settings Popup
-        self._style.configure("SPanel.Header1.TLabel",
-                              font=(self._font[0], self._font[1] + 4, "bold"))
-        self._style.configure("SPanel.Header2.TLabel",
-                              font=(self._font[0], self._font[1] + 2, "bold"))
+        self._style.configure(
+            "SPanel.Header1.TLabel", font=(self._font[0], self._font[1] + 4, "bold")
+        )
+        self._style.configure(
+            "SPanel.Header2.TLabel", font=(self._font[0], self._font[1] + 2, "bold")
+        )
         # Console
         theme = self._user_theme["console"]
-        console_sbar = tuple(tuple(theme[f"scrollbar_{area}_{state}"]
-                                   for state in ("normal", "disabled", "active"))
-                             for area in ("background", "foreground", "border"))
-        self._widgets.scrollbar("Console",
-                                theme["scrollbar_trough"],
-                                theme["scrollbar_border"],
-                                *console_sbar)
-        self._widgets.frame("Console",
-                            theme["background_color"],
-                            theme["border_color"],
-                            borderwidth=1)
+        console_sbar = tuple(
+            tuple(
+                theme[f"scrollbar_{area}_{state}"]
+                for state in ("normal", "disabled", "active")
+            )
+            for area in ("background", "foreground", "border")
+        )
+        self._widgets.scrollbar(
+            "Console",
+            theme["scrollbar_trough"],
+            theme["scrollbar_border"],
+            *console_sbar,
+        )
+        self._widgets.frame(
+            "Console", theme["background_color"], theme["border_color"], borderwidth=1
+        )
 
     def _config_settings_group(self):
-        """ Configures the style of the control panel entry boxes. Used for inputting Faceswap
-        options or controlling plugin settings. """
+        """Configures the style of the control panel entry boxes. Used for inputting Faceswap
+        options or controlling plugin settings."""
         theme = self._user_theme["group_panel"]
         for panel_type in ("CPanel", "SPanel"):
             if panel_type == "SPanel":  # Merge in Settings Panel overrides
                 theme = {**theme, **self._user_theme["group_settings"]}
-            self._style.configure(f"{panel_type}.Holder.TFrame",
-                                  background=theme["panel_background"])
+            self._style.configure(
+                f"{panel_type}.Holder.TFrame", background=theme["panel_background"]
+            )
             # Header Colors on option/group controls
-            self._style.configure(f"{panel_type}.Group.TLabelframe.Label",
-                                  foreground=theme["header_color"])
-            self._style.configure(f"{panel_type}.Groupheader.TLabel",
-                                  background=theme["header_color"],
-                                  foreground=theme["header_font"],
-                                  font=(self._font[0], self._font[1], "bold"))
+            self._style.configure(
+                f"{panel_type}.Group.TLabelframe.Label",
+                foreground=theme["header_color"],
+            )
+            self._style.configure(
+                f"{panel_type}.Groupheader.TLabel",
+                background=theme["header_color"],
+                foreground=theme["header_font"],
+                font=(self._font[0], self._font[1], "bold"),
+            )
             # Widgets and specific areas
             self._group_panel_widgets(panel_type, theme)
             self._group_panel_infoheader(panel_type, theme)
-            self._widgets.slider(panel_type,
-                                 theme["control_color"],
-                                 theme["control_active"],
-                                 self._user_theme["group_panel"]["group_background"])
-            backgrounds = (theme["control_color"],
-                           theme["control_disabled"],
-                           theme["control_active"])
-            foregrounds = (theme["control_disabled"],
-                           theme["control_color"],
-                           theme["control_disabled"])
-            borders = (theme["header_color"], theme["control_color"], theme["header_color"])
-            self._widgets.scrollbar(panel_type,
-                                    theme["scrollbar_trough"],
-                                    theme["scrollbar_border"],
-                                    backgrounds,
-                                    foregrounds,
-                                    borders)
-            self._widgets.combobox(panel_type,
-                                   theme["control_color"],
-                                   theme["control_active"],
-                                   theme["control_disabled"],
-                                   theme["header_color"],
-                                   theme["group_background"],
-                                   theme["group_font"])
+            self._widgets.slider(
+                panel_type,
+                theme["control_color"],
+                theme["control_active"],
+                self._user_theme["group_panel"]["group_background"],
+            )
+            backgrounds = (
+                theme["control_color"],
+                theme["control_disabled"],
+                theme["control_active"],
+            )
+            foregrounds = (
+                theme["control_disabled"],
+                theme["control_color"],
+                theme["control_disabled"],
+            )
+            borders = (
+                theme["header_color"],
+                theme["control_color"],
+                theme["header_color"],
+            )
+            self._widgets.scrollbar(
+                panel_type,
+                theme["scrollbar_trough"],
+                theme["scrollbar_border"],
+                backgrounds,
+                foregrounds,
+                borders,
+            )
+            self._widgets.combobox(
+                panel_type,
+                theme["control_color"],
+                theme["control_active"],
+                theme["control_disabled"],
+                theme["header_color"],
+                theme["group_background"],
+                theme["group_font"],
+            )
 
     def _group_panel_infoheader(self, key, theme):
-        """ Set the theme for the information header box that appears at the top of each group
+        """Set the theme for the information header box that appears at the top of each group
         panel
 
         Parameters
@@ -125,21 +155,27 @@ class Style():
         theme: dict
             The user configuration theme options
         """
-        self._widgets.frame(f"{key}.InfoHeader",
-                            theme["info_color"],
-                            theme["info_border"],
-                            borderwidth=1)
+        self._widgets.frame(
+            f"{key}.InfoHeader",
+            theme["info_color"],
+            theme["info_border"],
+            borderwidth=1,
+        )
 
-        self._style.configure(f"{key}.InfoHeader.TLabel",
-                              background=theme["info_color"],
-                              foreground=theme["info_font"],
-                              font=(self._font[0], self._font[1], "bold"))
-        self._style.configure(f"{key}.InfoBody.TLabel",
-                              background=theme["info_color"],
-                              foreground=theme["info_font"])
+        self._style.configure(
+            f"{key}.InfoHeader.TLabel",
+            background=theme["info_color"],
+            foreground=theme["info_font"],
+            font=(self._font[0], self._font[1], "bold"),
+        )
+        self._style.configure(
+            f"{key}.InfoBody.TLabel",
+            background=theme["info_color"],
+            foreground=theme["info_font"],
+        )
 
     def _group_panel_widgets(self, key, theme):
-        """ Configure the foreground and background colors of common widgets.
+        """Configure the foreground and background colors of common widgets.
 
         Parameters
         ----------
@@ -149,34 +185,53 @@ class Style():
             The user configuration theme options
         """
         # Put a border on a group's sub-frame
-        self._widgets.frame(f"{key}.Subframe.Group",
-                            theme["group_background"],
-                            theme["group_border"],
-                            borderwidth=1)
+        self._widgets.frame(
+            f"{key}.Subframe.Group",
+            theme["group_background"],
+            theme["group_border"],
+            borderwidth=1,
+        )
 
         # Background and Foreground of widgets and labels
-        for lbl in ["TLabel", "TFrame", "TLabelframe", "TCheckbutton", "TRadiobutton",
-                    "TLabelframe.Label"]:
-            self._style.configure(f"{key}.Group.{lbl}",
-                                  background=theme["group_background"],
-                                  foreground=theme["group_font"])
+        for lbl in [
+            "TLabel",
+            "TFrame",
+            "TLabelframe",
+            "TCheckbutton",
+            "TRadiobutton",
+            "TLabelframe.Label",
+        ]:
+            self._style.configure(
+                f"{key}.Group.{lbl}",
+                background=theme["group_background"],
+                foreground=theme["group_font"],
+            )
 
 
-class _Widgets():
-    """ Create custom ttk widget layouts for themed widgets.
+class _Widgets:
+    """Create custom ttk widget layouts for themed widgets.
 
     Parameters
     ----------
     style: :class:`ttk.Style`
         The master style object
     """
+
     def __init__(self, style):
         self._images = _TkImage()
         self._style = style
 
-    def combobox(self, key, control_color, active_color, arrow_color, control_border, field_color,
-                 field_border):
-        """ Combo-boxes are fairly complex to style.
+    def combobox(
+        self,
+        key,
+        control_color,
+        active_color,
+        arrow_color,
+        control_border,
+        field_color,
+        field_border,
+    ):
+        """Combo-boxes are fairly complex to style.
 
         Parameters
         ----------
@@ -205,43 +260,70 @@ class _Widgets():
                 pattern="arrow",
                 thickness=2,
                 border_width=1,
-                border_color=control_border)
+                border_color=control_border,
+            )
 
-        self._style.element_create(f"{key}.Combobox.downarrow",
-                                   "image",
-                                   images["arrow_normal"],
-                                   ("active", images["arrow_active"]),
-                                   ("pressed", images["arrow_active"]),
-                                   sticky="e",
-                                   width=20)
+        self._style.element_create(
+            f"{key}.Combobox.downarrow",
+            "image",
+            images["arrow_normal"],
+            ("active", images["arrow_active"]),
+            ("pressed", images["arrow_active"]),
+            sticky="e",
+            width=20,
+        )
 
         # None of the themes give us the border control we need, so create an image
-        box = self._images.get_image((16, 16),
-                                     field_color,
-                                     border_width=1,
-                                     border_color=field_border)
-        self._style.element_create(f"{key}.Combobox.field",
-                                   "image",
-                                   box,
-                                   border=1,
-                                   padding=(6, 0, 0, 0))
+        box = self._images.get_image(
+            (16, 16), field_color, border_width=1, border_color=field_border
+        )
+        self._style.element_create(
+            f"{key}.Combobox.field", "image", box, border=1, padding=(6, 0, 0, 0)
+        )
 
         # Set a layout so we can access required params
-        self._style.layout(f"{key}.TCombobox", [
-            (f"{key}.Combobox.field", {
-                "children": [
-                    (f"{key}.Combobox.downarrow", {"side": "right", "sticky": "ns"}),
-                    (f"{key}.Combobox.padding", {
-                        "expand": "1",
+        self._style.layout(
+            f"{key}.TCombobox",
+            [
+                (
+                    f"{key}.Combobox.field",
+                    {
+                        "children": [
+                            (
+                                f"{key}.Combobox.downarrow",
+                                {"side": "right", "sticky": "ns"},
+                            ),
+                            (
+                                f"{key}.Combobox.padding",
+                                {
+                                    "expand": "1",
+                                    "sticky": "nswe",
+                                    "children": [
+                                        (
+                                            f"{key}.Combobox.focus",
+                                            {
+                                                "expand": "1",
+                                                "sticky": "nswe",
+                                                "children": [
+                                                    (
+                                                        f"{key}.Combobox.textarea",
+                                                        {"sticky": "nswe"},
+                                                    )
+                                                ],
+                                            },
+                                        )
+                                    ],
+                                },
+                            ),
+                        ],
                         "sticky": "nswe",
-                        "children": [(f"{key}.Combobox.focus", {
-                            "expand": "1",
-                            "sticky": "nswe",
-                            "children": [(f"{key}.Combobox.textarea", {"sticky": "nswe"})]})]})],
-                "sticky": "nswe"})])
+                    },
+                )
+            ],
+        )
 
     def frame(self, key, background, border, borderwidth=1):
-        """ Create a custom frame widget for controlling background and border colors.
+        """Create a custom frame widget for controlling background and border colors.
 
         Parameters
         ----------
@@ -253,16 +335,19 @@ class _Widgets():
             The hex code for the border of the frame
         """
         self._style.element_create(f"{key}.Frame.border", "from", "alt")
-        self._style.layout(f"{key}.TFrame",
-                           [(f"{key}.Frame.border", {"sticky": "nswe"})])
-        self._style.configure(f"{key}.TFrame",
-                              background=background,
-                              relief=tk.SOLID,
-                              borderwidth=borderwidth,
-                              bordercolor=border)
+        self._style.layout(
+            f"{key}.TFrame", [(f"{key}.Frame.border", {"sticky": "nswe"})]
+        )
+        self._style.configure(
+            f"{key}.TFrame",
+            background=background,
+            relief=tk.SOLID,
+            borderwidth=borderwidth,
+            bordercolor=border,
+        )
 
     def notebook(self, key, frame_border, tab_color, tab_selected, tab_hover):
-        """ Create a custom notebook widget so we can control the colors.
+        """Create a custom notebook widget so we can control the colors.
 
         Parameters
         ----------
@@ -281,46 +366,76 @@ class _Widgets():
         client = self._images.get_image((8, 8), frame_border)
         self._style.element_create(f"{key}.Notebook.client", "image", client, border=1)
 
-        tabs = [self._images.get_image((8, 8), color)
-                for color in (tab_color, tab_selected, tab_hover)]
+        tabs = [
+            self._images.get_image((8, 8), color)
+            for color in (tab_color, tab_selected, tab_hover)
+        ]
 
-        self._style.element_create(f"{key}.Notebook.tab",
-                                   "image",
-                                   tabs[0],
-                                   ("selected", tabs[1]),
-                                   ("active", tabs[2]),
-                                   padding=(0, 2, 0, 0),
-                                   border=3)
+        self._style.element_create(
+            f"{key}.Notebook.tab",
+            "image",
+            tabs[0],
+            ("selected", tabs[1]),
+            ("active", tabs[2]),
+            padding=(0, 2, 0, 0),
+            border=3,
+        )
 
-        self._style.layout(f"{key}.TNotebook", [(f"{key}.Notebook.client", {"sticky": "nswe"})])
-        self._style.layout(f"{key}.TNotebook.Tab", [
-            (f"{key}.Notebook.tab", {
-                "sticky": "nswe",
-                "children": [
-                    ("Notebook.padding", {
-                        "side": "top",
+        self._style.layout(
+            f"{key}.TNotebook", [(f"{key}.Notebook.client", {"sticky": "nswe"})]
+        )
+        self._style.layout(
+            f"{key}.TNotebook.Tab",
+            [
+                (
+                    f"{key}.Notebook.tab",
+                    {
                         "sticky": "nswe",
                         "children": [
-                            ("Notebook.focus", {
-                                "side": "top",
-                                "sticky": "nswe",
-                                "children": [("Notebook.label", {"side": "top", "sticky": ""})]
-                            })]
-                    })]
-            })])
+                            (
+                                "Notebook.padding",
+                                {
+                                    "side": "top",
+                                    "sticky": "nswe",
+                                    "children": [
+                                        (
+                                            "Notebook.focus",
+                                            {
+                                                "side": "top",
+                                                "sticky": "nswe",
+                                                "children": [
+                                                    (
+                                                        "Notebook.label",
+                                                        {"side": "top", "sticky": ""},
+                                                    )
+                                                ],
+                                            },
+                                        )
+                                    ],
+                                },
+                            )
+                        ],
+                    },
+                )
+            ],
+        )
 
         self._style.configure(f"{key}.TNotebook", tabmargins=(0, 2, 0, 0))
-        self._style.configure(f"{key}.TNotebook.Tab", padding=(6, 2, 6, 2), expand=(0, 0, 2))
+        self._style.configure(
+            f"{key}.TNotebook.Tab", padding=(6, 2, 6, 2), expand=(0, 0, 2)
+        )
         self._style.configure(f"{key}.TNotebook.Tab", expand=("selected", (1, 2, 4, 2)))
 
-    def scrollbar(self,  # pylint:disable=too-many-locals
-                  key,
-                  trough_color,
-                  border_color,
-                  control_backgrounds,
-                  control_foregrounds,
-                  control_borders):
-        """ Create a custom scroll bar widget so we can control the colors.
+    def scrollbar(
+        self,  # pylint:disable=too-many-locals
+        key,
+        trough_color,
+        border_color,
+        control_backgrounds,
+        control_foregrounds,
+        control_borders,
+    ):
+        """Create a custom scroll bar widget so we can control the colors.
 
         Parameters
         ----------
@@ -344,10 +459,16 @@ class _Widgets():
             Tuple of length 3 for the borders of the buttons and slider for the states `normal`,
             `disabled`, `active`
         """
-        logger.debug("Creating scrollbar: (key: %s, trough_color: %s, border_color: %s, "
-                     "control_backgrounds: %s, control_foregrounds: %s, control_borders: %s)",
-                     key, trough_color, border_color, control_backgrounds, control_foregrounds,
-                     control_borders)
+        logger.debug(
+            "Creating scrollbar: (key: %s, trough_color: %s, border_color: %s, "
+            "control_backgrounds: %s, control_foregrounds: %s, control_borders: %s)",
+            key,
+            trough_color,
+            border_color,
+            control_backgrounds,
+            control_foregrounds,
+            control_borders,
+        )
         images = {}
         for idx, state in enumerate(("normal", "disabled", "active")):
             # Create arrow and slider widgets for each state
@@ -360,21 +481,23 @@ class _Widgets():
                     direction=dir_,
                     thickness=4,
                     border_width=1,
-                    border_color=control_borders[idx])
+                    border_color=control_borders[idx],
+                )
             images[f"img_thumb_{state}"] = self._images.get_image(
-                *img_args,
-                border_width=1,
-                border_color=control_borders[idx])
+                *img_args, border_width=1, border_color=control_borders[idx]
+            )
 
         for element in ("thumb", "uparrow", "downarrow"):
             # Create the elements with the new images
             lookup = element.replace("arrow", "")
-            args = (f"{key}.Vertical.Scrollbar.{element}",
-                    "image",
-                    images[f"img_{lookup}_normal"],
-                    ("disabled", images[f"img_{lookup}_disabled"]),
-                    ("pressed !disabled", images[f"img_{lookup}_active"]),
-                    ("active !disabled", images[f"img_{lookup}_active"]))
+            args = (
+                f"{key}.Vertical.Scrollbar.{element}",
+                "image",
+                images[f"img_{lookup}_normal"],
+                ("disabled", images[f"img_{lookup}_disabled"]),
+                ("pressed !disabled", images[f"img_{lookup}_active"]),
+                ("active !disabled", images[f"img_{lookup}_active"]),
+            )
             kwargs = {"border": 1, "sticky": "ns"} if element == "thumb" else {}
             self._style.element_create(*args, **kwargs)
 
@@ -383,22 +506,39 @@ class _Widgets():
 
         self._style.layout(
             f"{key}.Vertical.TScrollbar",
-            [(f"{key}.Vertical.Scrollbar.trough", {
-                "sticky": "ns",
-                "children": [
-                    (f"{key}.Vertical.Scrollbar.uparrow", {"side": "top", "sticky": ""}),
-                    (f"{key}.Vertical.Scrollbar.downarrow", {"side": "bottom", "sticky": ""}),
-                    (f"{key}.Vertical.Scrollbar.thumb", {"expand": "1", "sticky": "nswe"})
-                ]
-            })])
-        self._style.configure(f"{key}.Vertical.TScrollbar",
-                              troughcolor=trough_color,
-                              bordercolor=border_color,
-                              troughrelief=tk.SOLID,
-                              troughborderwidth=1)
+            [
+                (
+                    f"{key}.Vertical.Scrollbar.trough",
+                    {
+                        "sticky": "ns",
+                        "children": [
+                            (
+                                f"{key}.Vertical.Scrollbar.uparrow",
+                                {"side": "top", "sticky": ""},
+                            ),
+                            (
+                                f"{key}.Vertical.Scrollbar.downarrow",
+                                {"side": "bottom", "sticky": ""},
+                            ),
+                            (
+                                f"{key}.Vertical.Scrollbar.thumb",
+                                {"expand": "1", "sticky": "nswe"},
+                            ),
+                        ],
+                    },
+                )
+            ],
+        )
+        self._style.configure(
+            f"{key}.Vertical.TScrollbar",
+            troughcolor=trough_color,
+            bordercolor=border_color,
+            troughrelief=tk.SOLID,
+            troughborderwidth=1,
+        )
 
     def slider(self, key, control_color, active_color, trough_color):
-        """ Take a copy of the default ttk.Scale widget and replace the slider element with a
+        """Take a copy of the default ttk.Scale widget and replace the slider element with a
         version we can control the color and shape of.
 
         Parameters
@@ -416,44 +556,63 @@ class _Widgets():
         img_slider_alt = self._images.get_image((10, 25), active_color)
 
         self._style.element_create(f"{key}.Horizontal.Scale.trough", "from", "alt")
-        self._style.element_create(f"{key}.Horizontal.Scale.slider",
-                                   "image",
-                                   img_slider,
-                                   ("active", img_slider_alt))
+        self._style.element_create(
+            f"{key}.Horizontal.Scale.slider",
+            "image",
+            img_slider,
+            ("active", img_slider_alt),
+        )
 
         self._style.layout(
             f"{key}.Horizontal.TScale",
-            [(f"{key}.Scale.focus", {
-                "expand": "1",
-                "sticky": "nswe",
-                "children": [
-                    (f"{key}.Horizontal.Scale.trough", {
+            [
+                (
+                    f"{key}.Scale.focus",
+                    {
                         "expand": "1",
                         "sticky": "nswe",
                         "children": [
-                            (f"{key}.Horizontal.Scale.track", {"sticky": "we"}),
-                            (f"{key}.Horizontal.Scale.slider", {"side": "left", "sticky": ""})
-                            ]
-                        })
-                ]
-            })])
+                            (
+                                f"{key}.Horizontal.Scale.trough",
+                                {
+                                    "expand": "1",
+                                    "sticky": "nswe",
+                                    "children": [
+                                        (
+                                            f"{key}.Horizontal.Scale.track",
+                                            {"sticky": "we"},
+                                        ),
+                                        (
+                                            f"{key}.Horizontal.Scale.slider",
+                                            {"side": "left", "sticky": ""},
+                                        ),
+                                    ],
+                                },
+                            )
+                        ],
+                    },
+                )
+            ],
+        )
 
-        self._style.configure(f"{key}.Horizontal.TScale",
-                              background=trough_color,
-                              groovewidth=4,
-                              troughcolor=trough_color)
+        self._style.configure(
+            f"{key}.Horizontal.TScale",
+            background=trough_color,
+            groovewidth=4,
+            troughcolor=trough_color,
+        )
 
 
-class _TkImage():
-    """ Create a tk image for a given pattern and shape.
-    """
+class _TkImage:
+    """Create a tk image for a given pattern and shape."""
+
     def __init__(self):
         self._cache = []  # We need to keep a reference to every image created
 
     # Numpy array patterns
     @classmethod
     def _get_solid(cls, dimensions):
-        """ Return a solid background color pattern.
+        """Return a solid background color pattern.
 
         Parameters
         ----------
@@ -469,7 +628,7 @@ class _TkImage():
 
     @classmethod
     def _get_arrow(cls, dimensions, thickness, direction):
-        """ Return a background color with a "v" arrow in foreground color
+        """Return a background color with a "v" arrow in foreground color
 
         Parameters
         ----------
@@ -487,8 +646,10 @@ class _TkImage():
         """
         square_size = min(dimensions[1], dimensions[0])
         if square_size < 16 or any(dim % 2 != 0 for dim in dimensions):
-            raise FaceswapError("For arrow image, the minimum size across any axis must be 8 and "
-                                "dimensions must all be divisible by 2")
+            raise FaceswapError(
+                "For arrow image, the minimum size across any axis must be 8 and "
+                "dimensions must all be divisible by 2"
+            )
         crop_size = (square_size // 16) * 16
         draw_rows = int(6 * crop_size / 16)
         start_row = dimensions[1] // 2 - draw_rows // 2
@@ -497,25 +658,29 @@ class _TkImage():
         retval = np.zeros((dimensions[1], dimensions[0]), dtype="uint8")
         for i in range(start_row, start_row + draw_rows):
             indent = initial_indent + i - start_row
-            join = (min(indent + thickness, dimensions[0] // 2),
-                    max(dimensions[0] - indent - thickness, dimensions[0] // 2))
-            retval[i, np.r_[indent:join[0], join[1]:dimensions[0] - indent]] = 1
+            join = (
+                min(indent + thickness, dimensions[0] // 2),
+                max(dimensions[0] - indent - thickness, dimensions[0] // 2),
+            )
+            retval[i, np.r_[indent : join[0], join[1] : dimensions[0] - indent]] = 1
         if direction in ("right", "left"):
             retval = np.rot90(retval)
         if direction in ("up", "left"):
             retval = np.flip(retval)
         return retval
 
-    def get_image(self,
-                  dimensions,
-                  background,
-                  foreground=None,
-                  pattern="solid",
-                  border_width=0,
-                  border_color=None,
-                  thickness=2,
-                  direction="down"):
-        """ Obtain a tk image.
+    def get_image(
+        self,
+        dimensions,
+        background,
+        foreground=None,
+        pattern="solid",
+        border_width=0,
+        border_color=None,
+        thickness=2,
+        direction="down",
+    ):
+        """Obtain a tk image.
 
         Generates the requested image and stores in cache.
 
@@ -552,15 +717,15 @@ class _TkImage():
 
         if border_width > 0:
             border = np.ones_like(pattern) + 1
-            border[border_width:-border_width,
-                   border_width:-border_width] = pattern[border_width:-border_width,
-                                                         border_width:-border_width]
+            border[border_width:-border_width, border_width:-border_width] = pattern[
+                border_width:-border_width, border_width:-border_width
+            ]
             pattern = border
 
         return self._create_photoimage(background, foreground, border_color, pattern)
 
     def _create_photoimage(self, background, foreground, border, pattern):
-        """ Create a tkinter PhotoImage and populate it with the requested color pattern.
+        """Create a tkinter PhotoImage and populate it with the requested color pattern.
 
         Parameters
         ----------
@@ -577,10 +742,13 @@ class _TkImage():
         image = tk.PhotoImage(width=pattern.shape[1], height=pattern.shape[0])
         self._cache.append(image)
 
-        pixels = "} {".join(" ".join(foreground
-                                     if pxl == 1 else border if pxl == 2 else background
-                                     for pxl in row)
-                            for row in pattern)
+        pixels = "} {".join(
+            " ".join(
+                foreground if pxl == 1 else border if pxl == 2 else background
+                for pxl in row
+            )
+            for row in pattern
+        )
         image.put("{" + pixels + "}")
         return image
 

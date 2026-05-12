@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-""" Custom Initializers for faceswap.py """
+"""Custom Initializers for faceswap.py"""
+
 from __future__ import annotations
 
 import inspect
@@ -22,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 
 class ICNR(initializers.Initializer):
-    """ ICNR initializer for checkerboard artifact free sub pixel convolution
+    """ICNR initializer for checkerboard artifact free sub pixel convolution
 
     Parameters
     ----------
@@ -47,9 +48,9 @@ class ICNR(initializers.Initializer):
     https://arxiv.org/pdf/1707.02937.pdf,  https://distill.pub/2016/deconv-checkerboard/
     """
 
-    def __init__(self,
-                 initializer: dict[str, T.Any] | initializers.Initializer,
-                 scale: int = 2) -> None:
+    def __init__(
+        self, initializer: dict[str, T.Any] | initializers.Initializer, scale: int = 2
+    ) -> None:
         logger.debug(parse_class_init(locals()))
 
         self._scale = scale
@@ -57,10 +58,10 @@ class ICNR(initializers.Initializer):
 
         logger.debug("Initialized %s", self.__class__.__name__)
 
-    def __call__(self,
-                 shape: list[int] | tuple[int, ...],
-                 dtype: str | None = "float32") -> KerasTensor:
-        """ Call function for the ICNR initializer.
+    def __call__(
+        self, shape: list[int] | tuple[int, ...], dtype: str | None = "float32"
+    ) -> KerasTensor:
+        """Call function for the ICNR initializer.
 
         Parameters
         ----------
@@ -83,7 +84,7 @@ class ICNR(initializers.Initializer):
                 return next(i for i in self._initializer.values())
             return self._initializer(shape)
 
-        new_shape = shape[:3] + [shape[3] // (self._scale ** 2)]
+        new_shape = shape[:3] + [shape[3] // (self._scale**2)]
         size = [s * self._scale for s in new_shape[:2]]
 
         if isinstance(self._initializer, dict):
@@ -91,10 +92,9 @@ class ICNR(initializers.Initializer):
 
         var_x = self._initializer(new_shape, dtype)
         var_x = ops.transpose(var_x, [2, 0, 1, 3])
-        var_x = ops.image.resize(var_x,
-                                 size,
-                                 interpolation="nearest",
-                                 data_format="channels_last")
+        var_x = ops.image.resize(
+            var_x, size, interpolation="nearest", data_format="channels_last"
+        )
         var_x = self._space_to_depth(T.cast("KerasTensor", var_x))
         var_x = ops.transpose(var_x, [1, 2, 0, 3])
 
@@ -102,7 +102,7 @@ class ICNR(initializers.Initializer):
         return T.cast("KerasTensor", var_x)
 
     def _space_to_depth(self, input_tensor: KerasTensor) -> KerasTensor:
-        """ Space to depth Keras implementation.
+        """Space to depth Keras implementation.
 
         Parameters
         ----------
@@ -123,12 +123,15 @@ class ICNR(initializers.Initializer):
         var_x = ops.transpose(var_x, (0, 1, 3, 2, 4, 5))
         retval = ops.reshape(var_x, (batch, new_height, new_width, -1))
 
-        logger.debug("Space to depth - Input shape: %s, Output shape: %s",
-                     input_tensor.shape, retval.shape)
+        logger.debug(
+            "Space to depth - Input shape: %s, Output shape: %s",
+            input_tensor.shape,
+            retval.shape,
+        )
         return T.cast("KerasTensor", retval)
 
     def get_config(self) -> dict[str, T.Any]:
-        """ Return the ICNR Initializer configuration.
+        """Return the ICNR Initializer configuration.
 
         Returns
         -------
@@ -170,10 +173,9 @@ class ConvolutionAware(initializers.Initializer):
     Armen Aghajanyan, https://arxiv.org/abs/1702.06295
     """
 
-    def __init__(self,
-                 eps_std: float = 0.05,
-                 seed: int | None = None,
-                 initialized: bool = False) -> None:
+    def __init__(
+        self, eps_std: float = 0.05, seed: int | None = None, initialized: bool = False
+    ) -> None:
         logger.debug(parse_class_init(locals()))
 
         self._eps_std = eps_std
@@ -186,7 +188,7 @@ class ConvolutionAware(initializers.Initializer):
 
     @classmethod
     def _symmetrize(cls, inputs: np.ndarray) -> np.ndarray:
-        """ Make the given tensor symmetrical.
+        """Make the given tensor symmetrical.
 
         Parameters
         ----------
@@ -205,8 +207,10 @@ class ConvolutionAware(initializers.Initializer):
         logger.debug("Input shape: %s. Output shape: %s", inputs.shape, retval.shape)
         return retval
 
-    def _create_basis(self, filters_size: int, filters: int, size: int, dtype: str) -> np.ndarray:
-        """ Create the basis for convolutional aware initialization
+    def _create_basis(
+        self, filters_size: int, filters: int, size: int, dtype: str
+    ) -> np.ndarray:
+        """Create the basis for convolutional aware initialization
 
         Parameters
         ----------
@@ -228,14 +232,22 @@ class ConvolutionAware(initializers.Initializer):
         var_a = np.random.normal(0.0, 1.0, (filters_size, nbb, size, size))
         var_a = self._symmetrize(var_a)
         var_u = np.linalg.svd(var_a)[0].transpose(0, 1, 3, 2)
-        retval = np.reshape(var_u, (filters_size, nbb * size, size))[:, :filters, :].astype(dtype)
-        logger.debug("filters_size: %s, filters: %s, size: %s, dtype: %s, output: %s",
-                     filters_size, filters, size, dtype, retval.shape)
+        retval = np.reshape(var_u, (filters_size, nbb * size, size))[
+            :, :filters, :
+        ].astype(dtype)
+        logger.debug(
+            "filters_size: %s, filters: %s, size: %s, dtype: %s, output: %s",
+            filters_size,
+            filters,
+            size,
+            dtype,
+            retval.shape,
+        )
         return retval
 
     @classmethod
     def _scale_filters(cls, filters: np.ndarray, variance: float) -> np.ndarray:
-        """ Scale the given filters.
+        """Scale the given filters.
 
         Parameters
         ----------
@@ -252,14 +264,20 @@ class ConvolutionAware(initializers.Initializer):
         c_var = np.var(filters)
         var_p = np.sqrt(variance / c_var)
         retval = filters * var_p
-        logger.debug("Scaled filters (filters: %s, variance: %s, output: %s)",
-                     filters.shape, variance, retval.shape)
+        logger.debug(
+            "Scaled filters (filters: %s, variance: %s, output: %s)",
+            filters.shape,
+            variance,
+            retval.shape,
+        )
         return retval
 
-    def __call__(self,  # pylint: disable=too-many-locals
-                 shape: list[int] | tuple[int, ...],
-                 dtype: str | None = None) -> Variable:
-        """ Call function for the ICNR initializer.
+    def __call__(
+        self,  # pylint: disable=too-many-locals
+        shape: list[int] | tuple[int, ...],
+        dtype: str | None = None,
+    ) -> Variable:
+        """Call function for the ICNR initializer.
 
         Parameters
         ----------
@@ -273,7 +291,9 @@ class ConvolutionAware(initializers.Initializer):
         :class:`keras.Variable`
             The modified kernel weights
         """
-        if self._initialized:   # Avoid re-calculating initializer when loading a saved model
+        if (
+            self._initialized
+        ):  # Avoid re-calculating initializer when loading a saved model
             return T.cast("Variable", self._he_uniform(shape, dtype=dtype))
         dtype = K.floatx() if dtype is None else dtype
         logger.info("Calculating Convolution Aware Initializer for shape: %s", shape)
@@ -320,30 +340,39 @@ class ConvolutionAware(initializers.Initializer):
 
         kernel_fourier_shape = correct_fft(np.zeros(kernel_shape)).shape
 
-        basis = self._create_basis(filters_size,
-                                   stack_size,
-                                   T.cast(int, np.prod(kernel_fourier_shape)),
-                                   dtype)
-        basis = basis.reshape((filters_size, stack_size,) + kernel_fourier_shape)
+        basis = self._create_basis(
+            filters_size, stack_size, T.cast(int, np.prod(kernel_fourier_shape)), dtype
+        )
+        basis = basis.reshape(
+            (
+                filters_size,
+                stack_size,
+            )
+            + kernel_fourier_shape
+        )
         randoms = np.random.normal(0, self._eps_std, basis.shape[:-2] + kernel_shape)
         init = correct_ifft(basis, kernel_shape) + randoms
         init = self._scale_filters(init, variance)
         self._initialized = True
-        retval = Variable(init.transpose(transpose_dimensions), dtype=dtype, name="conv_aware")
+        retval = Variable(
+            init.transpose(transpose_dimensions), dtype=dtype, name="conv_aware"
+        )
         logger.debug("ConvAware output: %s", retval)
         return retval
 
     def get_config(self) -> dict[str, T.Any]:
-        """ Return the Convolutional Aware Initializer configuration.
+        """Return the Convolutional Aware Initializer configuration.
 
         Returns
         -------
         dict[str, Any]
             The configuration for Convolutional Aware Initialization
         """
-        config = {"eps_std": self._eps_std,
-                  "seed": self._seed,
-                  "initialized": self._initialized}
+        config = {
+            "eps_std": self._eps_std,
+            "seed": self._seed,
+            "initialized": self._initialized,
+        }
         # pylint:disable=duplicate-code
         base_config = super().get_config()
         return dict(list(base_config.items()) + list(config.items()))

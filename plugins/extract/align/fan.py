@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Facial landmarks extractor for faceswap.py
-   Code adapted and modified from:
-   https://github.com/1adrianb/face-alignment
+Code adapted and modified from:
+https://github.com/1adrianb/face-alignment
 """
+
 from __future__ import annotations
 import logging
 import typing as T
@@ -17,7 +18,7 @@ from lib.utils import get_module_objects, GetModel
 from plugins.extract.base import ExtractPlugin
 
 from . import fan_defaults as cfg
-from . dark_decoder import Dark
+from .dark_decoder import Dark
 
 
 logger = logging.getLogger(__name__)
@@ -25,12 +26,15 @@ logger = logging.getLogger(__name__)
 
 class FAN(ExtractPlugin):
     """FAN Face alignment"""
+
     def __init__(self) -> None:
-        super().__init__(input_size=256,
-                         batch_size=cfg.batch_size(),
-                         is_rgb=True,
-                         dtype="float32",
-                         scale=(0, 1))
+        super().__init__(
+            input_size=256,
+            batch_size=cfg.batch_size(),
+            is_rgb=True,
+            dtype="float32",
+            scale=(0, 1),
+        )
         self.model: FaceAlignmentNetwork
         self.realign_centering = "head"
         # Original reference scale leads to some fairly unsatisfying landmarks so tightened up
@@ -47,14 +51,20 @@ class FAN(ExtractPlugin):
         """
         weights = GetModel("face-alignment-network_2d4_v4.pth", 13).model_path
         assert isinstance(weights, str)
-        model = T.cast(FaceAlignmentNetwork,
-                       self.load_torch_model(FaceAlignmentNetwork(num_stack=4,
-                                                                  num_modules=1,
-                                                                  hg_depth=4,
-                                                                  num_features=256,
-                                                                  num_classes=68),
-                                             weights,
-                                             return_indices=[-1]))
+        model = T.cast(
+            FaceAlignmentNetwork,
+            self.load_torch_model(
+                FaceAlignmentNetwork(
+                    num_stack=4,
+                    num_modules=1,
+                    hg_depth=4,
+                    num_features=256,
+                    num_classes=68,
+                ),
+                weights,
+                return_indices=[-1],
+            ),
+        )
         return model
 
     def pre_process(self, batch: np.ndarray) -> np.ndarray:
@@ -114,7 +124,7 @@ class FAN(ExtractPlugin):
         The final landmarks in 0-1 space
         """
         if self._dark is not None:
-            return self._dark(batch) / 64.
+            return self._dark(batch) / 64.0
         num_images, num_landmarks, height, width = batch.shape
         assert height == width, "Heatmaps must be square"
         resolution = height
@@ -122,20 +132,26 @@ class FAN(ExtractPlugin):
         image_slice = np.arange(num_images)[:, None]
         landmark_slice = np.arange(num_landmarks)[None, :]
 
-        subpixel_landmarks = np.ones((num_images, num_landmarks, 2), dtype='float32')
+        subpixel_landmarks = np.ones((num_images, num_landmarks, 2), dtype="float32")
 
-        indices = np.array(np.unravel_index(batch.reshape(num_images,
-                                                          num_landmarks,
-                                                          -1).argmax(-1),
-                                            (batch.shape[2],  # height
-                                             batch.shape[3])))  # width
+        indices = np.array(
+            np.unravel_index(
+                batch.reshape(num_images, num_landmarks, -1).argmax(-1),
+                (
+                    batch.shape[2],  # height
+                    batch.shape[3],
+                ),
+            )
+        )  # width
         min_clipped = np.minimum(indices + 1, batch.shape[2] - 1)
         max_clipped = np.maximum(indices - 1, 0)
 
-        offsets = [(image_slice, landmark_slice, indices[0], min_clipped[1]),  # Right
-                   (image_slice, landmark_slice, indices[0], max_clipped[1]),  # Left
-                   (image_slice, landmark_slice, min_clipped[0], indices[1]),  # Down
-                   (image_slice, landmark_slice, max_clipped[0], indices[1])]  # Up
+        offsets = [
+            (image_slice, landmark_slice, indices[0], min_clipped[1]),  # Right
+            (image_slice, landmark_slice, indices[0], max_clipped[1]),  # Left
+            (image_slice, landmark_slice, min_clipped[0], indices[1]),  # Down
+            (image_slice, landmark_slice, max_clipped[0], indices[1]),
+        ]  # Up
         right, left = batch[offsets[0]], batch[offsets[1]]
         down, up = batch[offsets[2]], batch[offsets[3]]
         epsilon = 1e-6  # Small epsilon to avoid zero div
@@ -158,19 +174,26 @@ class ConvBlock(nn.Module):
     num_out
         The number of out channels
     """
+
     def __init__(self, num_in: int, num_out: int) -> None:
         super().__init__()
         self.bn1 = nn.BatchNorm2d(num_in)
         self.conv1 = nn.Conv2d(num_in, num_out // 2, 3, stride=1, padding=1, bias=False)
         self.bn2 = nn.BatchNorm2d(num_out // 2)
-        self.conv2 = nn.Conv2d(num_out // 2, num_out // 4, 3, stride=1, padding=1, bias=False)
+        self.conv2 = nn.Conv2d(
+            num_out // 2, num_out // 4, 3, stride=1, padding=1, bias=False
+        )
         self.bn3 = nn.BatchNorm2d(num_out // 4)
-        self.conv3 = nn.Conv2d(num_out // 4, num_out // 4, 3, stride=1, padding=1, bias=False)
+        self.conv3 = nn.Conv2d(
+            num_out // 4, num_out // 4, 3, stride=1, padding=1, bias=False
+        )
         self.downsample = None
         if num_in != num_out:
-            self.downsample = nn.Sequential(nn.BatchNorm2d(num_in),
-                                            nn.ReLU(inplace=True),
-                                            nn.Conv2d(num_in, num_out, 1, stride=1, bias=False))
+            self.downsample = nn.Sequential(
+                nn.BatchNorm2d(num_in),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(num_in, num_out, 1, stride=1, bias=False),
+            )
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         """Forward pass through FAN's conv block
@@ -204,6 +227,7 @@ class HourGlass(nn.Module):
     num_features
         The number of features to generate
     """
+
     def __init__(self, num_modules: int, depth: int, num_features: int) -> None:
         super().__init__()
         self._num_modules = num_modules
@@ -220,19 +244,27 @@ class HourGlass(nn.Module):
             The depth of the hour-glass network
         """
         for i in range(self._num_modules):
-            self.add_module(f"b1_{level}_{i}", ConvBlock(self._num_features, self._num_features))
+            self.add_module(
+                f"b1_{level}_{i}", ConvBlock(self._num_features, self._num_features)
+            )
         for i in range(self._num_modules):
-            self.add_module(f"b2_{level}_{i}", ConvBlock(self._num_features, self._num_features))
+            self.add_module(
+                f"b2_{level}_{i}", ConvBlock(self._num_features, self._num_features)
+            )
 
         if level > 1:
             self._generate_network(level - 1)
         else:
             for i in range(self._num_modules):
-                self.add_module(f"b2_plus_{level}_{i}",
-                                ConvBlock(self._num_features, self._num_features))
+                self.add_module(
+                    f"b2_plus_{level}_{i}",
+                    ConvBlock(self._num_features, self._num_features),
+                )
 
         for i in range(self._num_modules):
-            self.add_module(f"b3_{level}_{i}", ConvBlock(self._num_features, self._num_features))
+            self.add_module(
+                f"b3_{level}_{i}", ConvBlock(self._num_features, self._num_features)
+            )
 
     def _forward(self, level: int, inputs: torch.Tensor) -> torch.Tensor:
         """Forward pass through FAN's hour-glass network
@@ -285,12 +317,15 @@ class HourGlass(nn.Module):
 
 class FaceAlignmentNetwork(nn.Module):
     """2D FAN alignment for faceswap"""
-    def __init__(self,
-                 num_stack: int = 4,
-                 num_modules: int = 1,
-                 hg_depth: int = 4,
-                 num_features: int = 256,
-                 num_classes: int = 68) -> None:
+
+    def __init__(
+        self,
+        num_stack: int = 4,
+        num_modules: int = 1,
+        hg_depth: int = 4,
+        num_features: int = 256,
+        num_classes: int = 68,
+    ) -> None:
         super().__init__()
         self._num_stacks = num_stack
         self._num_modules = num_modules
@@ -339,8 +374,10 @@ class FaceAlignmentNetwork(nn.Module):
             for j in range(self._num_modules):
                 ll = getattr(self, f"top_m{j}_{i}")(ll)
 
-            ll = F.relu(getattr(self, f"bn_end{i}")(getattr(self, f"conv_last{i}")(ll)),
-                        inplace=True)
+            ll = F.relu(
+                getattr(self, f"bn_end{i}")(getattr(self, f"conv_last{i}")(ll)),
+                inplace=True,
+            )
 
             out.append(getattr(self, f"l{i}")(ll))
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-""" Custom Optimizers for Torch/keras """
+"""Custom Optimizers for Torch/keras"""
+
 from __future__ import annotations
 import inspect
 import logging
@@ -18,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 class AdaBelief(Optimizer):  # pylint:disable=too-many-instance-attributes,too-many-ancestors
-    """ Implementation of the AdaBelief Optimizer
+    """Implementation of the AdaBelief Optimizer
 
     Inherits from: keras.optimizers.Optimizer.
 
@@ -127,19 +128,21 @@ class AdaBelief(Optimizer):  # pylint:disable=too-many-instance-attributes,too-m
     OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
     """
 
-    def __init__(self,  # pylint:disable=too-many-arguments,too-many-positional-arguments
-                 learning_rate: float = 0.001,
-                 beta_1: float = 0.9,
-                 beta_2: float = 0.999,
-                 epsilon: float = 1e-14,
-                 amsgrad: bool = False,
-                 rectify: bool = True,
-                 sma_threshold: float = 5.0,
-                 total_steps: int = 0,
-                 warmup_proportion: float = 0.1,
-                 min_learning_rate: float = 0.0,
-                 name="AdaBeliefOptimizer",
-                 **kwargs):
+    def __init__(
+        self,  # pylint:disable=too-many-arguments,too-many-positional-arguments
+        learning_rate: float = 0.001,
+        beta_1: float = 0.9,
+        beta_2: float = 0.999,
+        epsilon: float = 1e-14,
+        amsgrad: bool = False,
+        rectify: bool = True,
+        sma_threshold: float = 5.0,
+        total_steps: int = 0,
+        warmup_proportion: float = 0.1,
+        min_learning_rate: float = 0.0,
+        name="AdaBeliefOptimizer",
+        **kwargs,
+    ):
         logger.debug(parse_class_init(locals()))
         super().__init__(learning_rate=learning_rate, name=name, **kwargs)
         self.beta_1 = beta_1
@@ -177,18 +180,33 @@ class AdaBelief(Optimizer):  # pylint:disable=too-many-instance-attributes,too-m
         super().build(variables)
 
         for var in variables:
-            self._momentums.append(self.add_variable_from_reference(
-                    reference_variable=var, name="momentum"))
-            self._velocities.append(self.add_variable_from_reference(
-                    reference_variable=var, name="velocity"))
+            self._momentums.append(
+                self.add_variable_from_reference(
+                    reference_variable=var, name="momentum"
+                )
+            )
+            self._velocities.append(
+                self.add_variable_from_reference(
+                    reference_variable=var, name="velocity"
+                )
+            )
             if self.amsgrad:
-                self._velocity_hats.append(self.add_variable_from_reference(
-                        reference_variable=var, name="velocity_hat"))
-        logger.debug("Built AdaBelief. momentums: %s, velocities: %s, velocity_hats: %s",
-                     len(self._momentums), len(self._velocities), len(self._velocity_hats))
+                self._velocity_hats.append(
+                    self.add_variable_from_reference(
+                        reference_variable=var, name="velocity_hat"
+                    )
+                )
+        logger.debug(
+            "Built AdaBelief. momentums: %s, velocities: %s, velocity_hats: %s",
+            len(self._momentums),
+            len(self._velocities),
+            len(self._velocity_hats),
+        )
 
-    def _maybe_warmup(self, learning_rate: KerasTensor, local_step: KerasTensor) -> KerasTensor:
-        """ Do learning rate warm up if requested
+    def _maybe_warmup(
+        self, learning_rate: KerasTensor, local_step: KerasTensor
+    ) -> KerasTensor:
+        """Do learning rate warm up if requested
 
         Parameters
         ----------
@@ -206,21 +224,29 @@ class AdaBelief(Optimizer):  # pylint:disable=too-many-instance-attributes,too-m
             return learning_rate
 
         total_steps = ops.cast(self.total_steps, learning_rate.dtype)
-        warmup_steps = total_steps * ops.cast(self.warmup_proportion, learning_rate.dtype)
+        warmup_steps = total_steps * ops.cast(
+            self.warmup_proportion, learning_rate.dtype
+        )
         min_lr = ops.cast(self.min_learning_rate, learning_rate.dtype)
         decay_steps = ops.maximum(total_steps - warmup_steps, 1)
         decay_rate = ops.divide(min_lr - learning_rate, decay_steps)
-        return ops.where(local_step <= warmup_steps,
-                         ops.multiply(learning_rate, (ops.divide(local_step, warmup_steps))),
-                         ops.multiply(learning_rate + decay_rate,
-                                      ops.minimum(local_step - warmup_steps, decay_steps)))
+        return ops.where(
+            local_step <= warmup_steps,
+            ops.multiply(learning_rate, (ops.divide(local_step, warmup_steps))),
+            ops.multiply(
+                learning_rate + decay_rate,
+                ops.minimum(local_step - warmup_steps, decay_steps),
+            ),
+        )
 
-    def _maybe_rectify(self,
-                       momentum: KerasTensor,
-                       velocity: KerasTensor,
-                       local_step: KerasTensor,
-                       beta_2_power: KerasTensor) -> KerasTensor:
-        """ Apply rectification, if requested
+    def _maybe_rectify(
+        self,
+        momentum: KerasTensor,
+        velocity: KerasTensor,
+        local_step: KerasTensor,
+        beta_2_power: KerasTensor,
+    ) -> KerasTensor:
+        """Apply rectification, if requested
 
         Parameters
         ----------
@@ -243,19 +269,18 @@ class AdaBelief(Optimizer):  # pylint:disable=too-many-instance-attributes,too-m
 
         sma_inf = 2 / (1 - self.beta_2) - 1
         sma_t = sma_inf - 2 * local_step * beta_2_power / (1 - beta_2_power)
-        rect = ops.sqrt((sma_t - 4) / (sma_inf - 4) *
-                        (sma_t - 2) / (sma_inf - 2) *
-                        sma_inf / sma_t)
-        return ops.where(sma_t >= self.sma_threshold,
-                         ops.divide(
-                            ops.multiply(rect, momentum),
-                            (ops.add(velocity, self.epsilon))),
-                         momentum)
+        rect = ops.sqrt(
+            (sma_t - 4) / (sma_inf - 4) * (sma_t - 2) / (sma_inf - 2) * sma_inf / sma_t
+        )
+        return ops.where(
+            sma_t >= self.sma_threshold,
+            ops.divide(ops.multiply(rect, momentum), (ops.add(velocity, self.epsilon))),
+            momentum,
+        )
 
-    def update_step(self,
-                    gradient: KerasTensor,
-                    variable: Variable,
-                    learning_rate: Variable) -> None:
+    def update_step(
+        self, gradient: KerasTensor, variable: Variable, learning_rate: Variable
+    ) -> None:
         """Update step given gradient and the associated model variable for AdaBelief.
 
         Parameters
@@ -268,7 +293,9 @@ class AdaBelief(Optimizer):  # pylint:disable=too-many-instance-attributes,too-m
             The learning rate
         """
         local_step = ops.cast(self.iterations + 1, variable.dtype)
-        learning_rate = self._maybe_warmup(ops.cast(learning_rate, variable.dtype), local_step)
+        learning_rate = self._maybe_warmup(
+            ops.cast(learning_rate, variable.dtype), local_step
+        )
         gradient = ops.cast(gradient, variable.dtype)
         beta_1_power = ops.power(ops.cast(self.beta_1, variable.dtype), local_step)
         beta_2_power = ops.power(ops.cast(self.beta_2, variable.dtype), local_step)
@@ -276,17 +303,21 @@ class AdaBelief(Optimizer):  # pylint:disable=too-many-instance-attributes,too-m
         #     m_t = b1 * m + (1 - b1) * g
         # =>  m_t = m + (g - m) * (1 - b1)
         momentum = self._momentums[self._get_variable_index(variable)]
-        self.assign_add(momentum, ops.multiply(ops.subtract(gradient, momentum), 1 - self.beta_1))
+        self.assign_add(
+            momentum, ops.multiply(ops.subtract(gradient, momentum), 1 - self.beta_1)
+        )
         momentum_corr = ops.divide(momentum, (1 - beta_1_power))
 
         #    v_t = b2 * v + (1 - b2) * (g - m_t)^2 + e
         # => v_t = v + ((g - m_t)^2 - v) * (1 - b2) + e
         velocity = self._velocities[self._get_variable_index(variable)]
-        self.assign_add(velocity,
-                        ops.multiply(
-                            ops.subtract(ops.square(gradient - momentum), velocity),
-                            1 - self.beta_2)
-                        + self.epsilon)
+        self.assign_add(
+            velocity,
+            ops.multiply(
+                ops.subtract(ops.square(gradient - momentum), velocity), 1 - self.beta_2
+            )
+            + self.epsilon,
+        )
 
         if self.amsgrad:
             velocity_hat = self._velocity_hats[self._get_variable_index(variable)]
@@ -295,12 +326,14 @@ class AdaBelief(Optimizer):  # pylint:disable=too-many-instance-attributes,too-m
         else:
             velocity_corr = ops.sqrt(ops.divide(velocity, (1 - beta_2_power)))
 
-        var_t = self._maybe_rectify(momentum_corr, velocity_corr, local_step, beta_2_power)
+        var_t = self._maybe_rectify(
+            momentum_corr, velocity_corr, local_step, beta_2_power
+        )
 
         self.assign_sub(variable, ops.multiply(learning_rate, var_t))
 
     def get_config(self) -> dict[str, T.Any]:
-        """ Returns the config of the optimizer.
+        """Returns the config of the optimizer.
 
         Optimizer configuration for AdaBelief.
 
@@ -310,15 +343,19 @@ class AdaBelief(Optimizer):  # pylint:disable=too-many-instance-attributes,too-m
             The optimizer configuration.
         """
         config = super().get_config()
-        config.update({"beta_1": self.beta_1,
-                       "beta_2": self.beta_2,
-                       "epsilon": self.epsilon,
-                       "amsgrad": self.amsgrad,
-                       "rectify": self.rectify,
-                       "sma_threshold": self.sma_threshold,
-                       "total_steps": self.total_steps,
-                       "warmup_proportion": self.warmup_proportion,
-                       "min_learning_rate": self.min_learning_rate})
+        config.update(
+            {
+                "beta_1": self.beta_1,
+                "beta_2": self.beta_2,
+                "epsilon": self.epsilon,
+                "amsgrad": self.amsgrad,
+                "rectify": self.rectify,
+                "sma_threshold": self.sma_threshold,
+                "total_steps": self.total_steps,
+                "warmup_proportion": self.warmup_proportion,
+                "min_learning_rate": self.min_learning_rate,
+            }
+        )
         return config
 
 

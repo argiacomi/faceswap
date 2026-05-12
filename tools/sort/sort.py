@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """A tool that allows for sorting and grouping images in different ways."""
+
 from __future__ import annotations
 import logging
 import os
@@ -16,7 +17,14 @@ from lib.serializer import Serializer, get_serializer_from_filename
 from lib.utils import get_module_objects, handle_deprecated_cli_opts
 
 from .sort_methods import SortBlur, SortColor, SortFace, SortHistogram, SortMultiMethod
-from .sort_methods_aligned import SortDistance, SortFaceCNN, SortPitch, SortSize, SortYaw, SortRoll
+from .sort_methods_aligned import (
+    SortDistance,
+    SortFaceCNN,
+    SortPitch,
+    SortSize,
+    SortYaw,
+    SortRoll,
+)
 
 if T.TYPE_CHECKING:
     from .sort_methods import SortMethod
@@ -24,7 +32,7 @@ if T.TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class Sort():
+class Sort:
     """Sorts folders of faces based on input criteria
 
     Wrapper for the sort process to run in either batch mode or single use mode
@@ -35,6 +43,7 @@ class Sort():
         The arguments to be passed to the extraction process as generated from Faceswap's command
         line arguments
     """
+
     def __init__(self, arguments: Namespace) -> None:
         logger.debug("Initializing: %s (args: %s)", self.__class__.__name__, arguments)
         self._args = handle_deprecated_cli_opts(arguments)
@@ -52,9 +61,11 @@ class Sort():
         if not self._args.batch_mode:
             return [self._args.input_dir]
 
-        retval = [os.path.join(self._args.input_dir, fname)
-                  for fname in os.listdir(self._args.input_dir)
-                  if os.path.isdir(os.path.join(self._args.input_dir, fname))]
+        retval = [
+            os.path.join(self._args.input_dir, fname)
+            for fname in os.listdir(self._args.input_dir)
+            if os.path.isdir(os.path.join(self._args.input_dir, fname))
+        ]
         logger.debug("Input locations: %s", retval)
         return retval
 
@@ -82,13 +93,15 @@ class Sort():
 
         Should only be called from  :class:`lib.cli.launcher.ScriptExecutor`
         """
-        logger.info('Starting, this may take a while...')
+        logger.info("Starting, this may take a while...")
         inputs = self._input_locations
         if self._args.batch_mode:
             logger.info("Batch mode selected processing: %s", self._input_locations)
         for job_no, location in enumerate(self._input_locations):
             if self._args.batch_mode:
-                logger.info("Processing job %s of %s: '%s'", job_no + 1, len(inputs), location)
+                logger.info(
+                    "Processing job %s of %s: '%s'", job_no + 1, len(inputs), location
+                )
                 arguments = Namespace(**self._args.__dict__)
                 arguments.input_dir = location
                 arguments.output_dir = self._output_for_input(location)
@@ -98,27 +111,32 @@ class Sort():
             sort.process()
 
 
-class _Sort():
+class _Sort:
     """Sorts folders of faces based on input criteria"""
+
     def __init__(self, arguments: Namespace) -> None:
-        logger.debug("Initializing %s: arguments: %s", self.__class__.__name__, arguments)
-        self._processes = {"blur": SortBlur,
-                           "blur_fft": SortBlur,
-                           "distance": SortDistance,
-                           "yaw": SortYaw,
-                           "pitch": SortPitch,
-                           "roll": SortRoll,
-                           "size": SortSize,
-                           "face": SortFace,
-                           "face_cnn": SortFaceCNN,
-                           "face_cnn_dissim": SortFaceCNN,
-                           "hist": SortHistogram,
-                           "hist_dissim": SortHistogram,
-                           "color_black": SortColor,
-                           "color_gray": SortColor,
-                           "color_luma": SortColor,
-                           "color_green": SortColor,
-                           "color_orange": SortColor}
+        logger.debug(
+            "Initializing %s: arguments: %s", self.__class__.__name__, arguments
+        )
+        self._processes = {
+            "blur": SortBlur,
+            "blur_fft": SortBlur,
+            "distance": SortDistance,
+            "yaw": SortYaw,
+            "pitch": SortPitch,
+            "roll": SortRoll,
+            "size": SortSize,
+            "face": SortFace,
+            "face_cnn": SortFaceCNN,
+            "face_cnn_dissim": SortFaceCNN,
+            "hist": SortHistogram,
+            "hist_dissim": SortHistogram,
+            "color_black": SortColor,
+            "color_gray": SortColor,
+            "color_luma": SortColor,
+            "color_green": SortColor,
+            "color_orange": SortColor,
+        }
 
         self._args = self._parse_arguments(arguments)
         self._changes: dict[str, str] = {}
@@ -150,15 +168,23 @@ class _Sort():
 
         needs_rename = sort_method != "none" and group_method == "none"
 
-        if needs_rename and arguments.keep_original and (not output_dir or
-                                                         output_dir == input_dir):
+        if (
+            needs_rename
+            and arguments.keep_original
+            and (not output_dir or output_dir == input_dir)
+        ):
             output_dir = os.path.join(input_dir, "sorted")
-            logger.warning("No output folder selected, but files need renaming. "
-                           "Outputting to: '%s'", output_dir)
+            logger.warning(
+                "No output folder selected, but files need renaming. "
+                "Outputting to: '%s'",
+                output_dir,
+            )
         elif not output_dir:
             output_dir = input_dir
-            logger.warning("No output folder selected, files will be sorted in place in: '%s'",
-                           output_dir)
+            logger.warning(
+                "No output folder selected, files will be sorted in place in: '%s'",
+                output_dir,
+            )
 
         arguments.output_dir = output_dir
         logger.debug("Set output folder: %s", arguments.output_dir)
@@ -189,7 +215,9 @@ class _Sort():
 
         if arguments.log_changes and arguments.log_file_path == "sort_log.json":
             # Assign default sort_log.json value if user didn't specify one
-            arguments.log_file_path = os.path.join(self._args.input_dir, 'sort_log.json')
+            arguments.log_file_path = os.path.join(
+                self._args.input_dir, "sort_log.json"
+            )
 
         logger.debug("Cleaned arguments: %s", arguments)
         return arguments
@@ -205,23 +233,27 @@ class _Sort():
         group_method = self._args.group_method
 
         sort_method = group_method if sort_method == "none" else sort_method
-        sorter = self._processes[sort_method](self._args,
-                                              is_group=self._args.sort_method == "none")
+        sorter = self._processes[sort_method](
+            self._args, is_group=self._args.sort_method == "none"
+        )
 
-        if sort_method != "none" and group_method != "none" and group_method != sort_method:
+        if (
+            sort_method != "none"
+            and group_method != "none"
+            and group_method != sort_method
+        ):
             grouper = self._processes[group_method](self._args, is_group=True)
             retval = SortMultiMethod(self._args, sorter, grouper)
             logger.debug("Got sorter + grouper: %s (%s, %s)", retval, sorter, grouper)
 
         else:
-
             retval = sorter
 
         logger.debug("Final sorter: %s", retval)
         return retval
 
     def _write_to_log(self, changes):
-        """Write the changes to log file """
+        """Write the changes to log file"""
         logger.info("Writing sort log to: '%s'", self._args.log_file_path)
         self.serializer.save(self._args.log_file_path, changes)
 
@@ -260,8 +292,12 @@ class _Sort():
             else:
                 os.rename(source, destination)
         except FileNotFoundError as err:
-            logger.error("Failed to sort '%s' to '%s'. Original error: %s",
-                         source, destination, str(err))
+            logger.error(
+                "Failed to sort '%s' to '%s'. Original error: %s",
+                source,
+                destination,
+                str(err),
+            )
 
         if self._args.log_changes:
             self._changes[source] = destination
@@ -274,8 +310,11 @@ class _Sort():
         """
         is_rename = self._args.sort_method != "none"
 
-        logger.info("Creating %s group folders in '%s'.",
-                    len(self._sorter.binned), self._args.output_dir)
+        logger.info(
+            "Creating %s group folders in '%s'.",
+            len(self._sorter.binned),
+            self._args.output_dir,
+        )
         bin_names = [f"_{b}" for b in self._sorter.bin_names]
         if is_rename:
             bin_names = [f"{name}_by_{self._args.sort_method}" for name in bin_names]
@@ -285,16 +324,22 @@ class _Sort():
                 rmtree(folder)
             os.makedirs(folder)
 
-        description = f"{'Copying' if self._args.keep_original else 'Moving'} into groups"
+        description = (
+            f"{'Copying' if self._args.keep_original else 'Moving'} into groups"
+        )
         description += " and renaming" if is_rename else ""
 
-        pbar = tqdm(range(len(self._sorter.sorted_filelist)),
-                    desc=description,
-                    file=sys.stdout,
-                    leave=False)
+        pbar = tqdm(
+            range(len(self._sorter.sorted_filelist)),
+            desc=description,
+            file=sys.stdout,
+            leave=False,
+        )
         idx = 0
         for bin_id, bin_ in enumerate(self._sorter.binned):
-            pbar.set_description(f"{description}: Bin {bin_id + 1} of {len(self._sorter.binned)}")
+            pbar.set_description(
+                f"{description}: Bin {bin_id + 1} of {len(self._sorter.binned)}"
+            )
             output_path = os.path.join(self._args.output_dir, bin_names[bin_id])
             if not bin_:
                 logger.debug("Removing empty bin: %s", output_path)
@@ -316,11 +361,17 @@ class _Sort():
         output_dir = self._args.output_dir
         os.makedirs(output_dir, exist_ok=True)
 
-        description = f"{'Copying' if self._args.keep_original else 'Moving'} and renaming"
-        for idx, source in enumerate(tqdm(self._sorter.sorted_filelist,
-                                          desc=description,
-                                          file=sys.stdout,
-                                          leave=False)):
+        description = (
+            f"{'Copying' if self._args.keep_original else 'Moving'} and renaming"
+        )
+        for idx, source in enumerate(
+            tqdm(
+                self._sorter.sorted_filelist,
+                desc=description,
+                file=sys.stdout,
+                leave=False,
+            )
+        ):
             dest = os.path.join(output_dir, f"{idx:06d}_{os.path.basename(source)}")
 
             self._sort_file(source, dest)

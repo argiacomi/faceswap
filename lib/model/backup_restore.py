@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-""" Functions for backing up, restoring and creating model snapshots. """
+"""Functions for backing up, restoring and creating model snapshots."""
 
 import logging
 import os
@@ -13,8 +13,8 @@ from lib.utils import get_folder, get_module_objects
 logger = logging.getLogger(__name__)
 
 
-class Backup():
-    """ Performs the back up of models at each save iteration, and the restoring of models from
+class Backup:
+    """Performs the back up of models at each save iteration, and the restoring of models from
     their back up location.
 
     Parameters
@@ -24,15 +24,20 @@ class Backup():
     model_name: str
         The name of the model that is to be backed up
     """
+
     def __init__(self, model_dir: str, model_name: str) -> None:
-        logger.debug("Initializing %s: (model_dir: '%s', model_name: '%s')",
-                     self.__class__.__name__, model_dir, model_name)
+        logger.debug(
+            "Initializing %s: (model_dir: '%s', model_name: '%s')",
+            self.__class__.__name__,
+            model_dir,
+            model_name,
+        )
         self.model_dir = str(model_dir)
         self.model_name = model_name
         logger.debug("Initialized %s", self.__class__.__name__)
 
     def _check_valid(self, filename: str, for_restore: bool = False) -> bool:
-        """ Check if the passed in filename is valid for a backup or restore operation.
+        """Check if the passed in filename is valid for a backup or restore operation.
 
         Parameters
         ----------
@@ -55,9 +60,10 @@ class Backup():
         elif for_restore and filename.endswith(".bk"):
             # Only filenames ending in .bk are valid for restoring
             retval = True
-        elif not for_restore and ((os.path.isfile(fullpath) and not filename.endswith(".bk")) or
-                                  (os.path.isdir(fullpath) and
-                                   filename == f"{self.model_name}_logs")):
+        elif not for_restore and (
+            (os.path.isfile(fullpath) and not filename.endswith(".bk"))
+            or (os.path.isdir(fullpath) and filename == f"{self.model_name}_logs")
+        ):
             # Only filenames that do not end with .bk or folders that are the logs folder
             # are valid for backup
             retval = True
@@ -68,7 +74,7 @@ class Backup():
 
     @staticmethod
     def backup_model(full_path: str) -> None:
-        """ Backup a model file.
+        """Backup a model file.
 
         The backed up file is saved with the original filename in the original location with `.bk`
         appended to the end of the name.
@@ -82,12 +88,15 @@ class Backup():
         if os.path.exists(backupfile):
             os.remove(backupfile)
         if os.path.exists(full_path):
-            logger.verbose("Backing up: '%s' to '%s'",  # type:ignore[attr-defined]
-                           full_path, backupfile)
+            logger.verbose(
+                "Backing up: '%s' to '%s'",  # type:ignore[attr-defined]
+                full_path,
+                backupfile,
+            )
             copyfile(full_path, backupfile)
 
     def snapshot_models(self, iterations: int) -> None:
-        """ Take a snapshot of the model at the current state and back it up.
+        """Take a snapshot of the model at the current state and back it up.
 
         The snapshot is a copy of the model folder located in the same root location
         as the original model file, with the number of iterations appended to the end
@@ -103,7 +112,9 @@ class Backup():
         snapshot_dir = f"{self.model_dir}_snapshot_{iterations}_iters"
 
         if os.path.isdir(snapshot_dir):
-            logger.debug("Removing previously existing snapshot folder: '%s'", snapshot_dir)
+            logger.debug(
+                "Removing previously existing snapshot folder: '%s'", snapshot_dir
+            )
             rmtree(snapshot_dir)
 
         dst = get_folder(snapshot_dir)
@@ -122,18 +133,18 @@ class Backup():
         logger.info("Saved snapshot (%s iterations)", iterations)
 
     def restore(self) -> None:
-        """ Restores a model from backup.
+        """Restores a model from backup.
 
         The original model files are migrated into a folder within the original model folder
         named `<model_name>_archived_<timestamp>`. The `.bk` backup files are then moved to
         the location of the previously existing model files. Logs that were generated after the
-        the last backup was taken are removed. """
+        the last backup was taken are removed."""
         archive_dir = self._move_archived()
         self._restore_files()
         self._restore_logs(archive_dir)
 
     def _move_archived(self) -> str:
-        """ Move archived files to the archived folder.
+        """Move archived files to the archived folder.
 
         Returns
         -------
@@ -149,7 +160,8 @@ class Backup():
                 logger.debug("Not moving file to archived: '%s'", filename)
                 continue
             logger.verbose(  # type:ignore[attr-defined]
-                "Moving '%s' to archived model folder: '%s'", filename, archive_dir)
+                "Moving '%s' to archived model folder: '%s'", filename, archive_dir
+            )
             src = os.path.join(self.model_dir, filename)
             dst = os.path.join(archive_dir, filename)
             os.rename(src, dst)
@@ -157,22 +169,25 @@ class Backup():
         return archive_dir
 
     def _restore_files(self) -> None:
-        """ Restore files from .bk """
+        """Restore files from .bk"""
         logger.info("Restoring models from backup...")
         for filename in os.listdir(self.model_dir):
             if not self._check_valid(filename, for_restore=True):
                 logger.debug("Not restoring file: '%s'", filename)
                 continue
             dstfile = os.path.splitext(filename)[0]
-            logger.verbose("Restoring '%s' to '%s'",  # type:ignore[attr-defined]
-                           filename, dstfile)
+            logger.verbose(
+                "Restoring '%s' to '%s'",  # type:ignore[attr-defined]
+                filename,
+                dstfile,
+            )
             src = os.path.join(self.model_dir, filename)
             dst = os.path.join(self.model_dir, dstfile)
             copyfile(src, dst)
         logger.verbose("Restored models from backup")  # type:ignore[attr-defined]
 
     def _restore_logs(self, archive_dir: str) -> None:
-        """ Restores the log files up to and including the last backup.
+        """Restores the log files up to and including the last backup.
 
         Parameters
         ----------
@@ -190,7 +205,7 @@ class Backup():
         logger.verbose("Restored Logs")  # type:ignore[attr-defined]
 
     def _get_session_names(self) -> list[str]:
-        """ Get the existing session names from a state file.
+        """Get the existing session names from a state file.
 
         Returns
         -------
@@ -198,15 +213,16 @@ class Backup():
             The session names that exist for the model
         """
         serializer = get_serializer("json")
-        state_file = os.path.join(self.model_dir,
-                                  f"{self.model_name}_state.{serializer.file_extension}")
+        state_file = os.path.join(
+            self.model_dir, f"{self.model_name}_state.{serializer.file_extension}"
+        )
         state = serializer.load(state_file)
         session_names = [f"session_{key}" for key in state["sessions"].keys()]
         logger.debug("Session to restore: %s", session_names)
         return session_names
 
     def _get_log_dirs(self, archive_dir: str, session_names: list[str]) -> list[str]:
-        """ Get the session log directory paths in the archive folder.
+        """Get the session log directory paths in the archive folder.
 
         Parameters
         ----------
@@ -221,10 +237,12 @@ class Backup():
             The full paths to the log folders
         """
         archive_logs = os.path.join(archive_dir, f"{self.model_name}_logs")
-        paths = [os.path.join(dirpath.replace(archive_dir, "")[1:], folder)
-                 for dirpath, dirnames, _ in os.walk(archive_logs)
-                 for folder in dirnames
-                 if folder in session_names]
+        paths = [
+            os.path.join(dirpath.replace(archive_dir, "")[1:], folder)
+            for dirpath, dirnames, _ in os.walk(archive_logs)
+            for folder in dirnames
+            if folder in session_names
+        ]
         logger.debug("log folders to restore: %s", paths)
         return paths
 

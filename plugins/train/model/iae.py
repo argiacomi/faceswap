@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-""" Improved autoencoder for faceswap """
+"""Improved autoencoder for faceswap"""
 
 from keras import Input, layers, Model as KModel
 
@@ -11,14 +11,15 @@ from ._base import ModelBase
 
 
 class Model(ModelBase):
-    """ Improved Autoencoder Model """
+    """Improved Autoencoder Model"""
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.input_shape = (64, 64, 3)
         self.encoder_dim = 1024
 
     def build_model(self, inputs):
-        """ Build the IAE Model """
+        """Build the IAE Model"""
         encoder = self.encoder()
         decoder = self.decoder()
         inter_a = self.intermediate("a")
@@ -28,14 +29,15 @@ class Model(ModelBase):
         encoder_a = encoder(inputs[0])
         encoder_b = encoder(inputs[1])
 
-        outputs = (decoder(layers.Concatenate()([inter_a(encoder_a), inter_both(encoder_a)])) +
-                   decoder(layers.Concatenate()([inter_b(encoder_b), inter_both(encoder_b)])))
+        outputs = decoder(
+            layers.Concatenate()([inter_a(encoder_a), inter_both(encoder_a)])
+        ) + decoder(layers.Concatenate()([inter_b(encoder_b), inter_both(encoder_b)]))
 
         autoencoder = KModel(inputs, outputs, name=self.model_name)
         return autoencoder
 
     def encoder(self):
-        """ Encoder Network """
+        """Encoder Network"""
         input_ = Input(shape=self.input_shape)
         var_x = input_
         var_x = Conv2DBlock(128, activation="leakyrelu")(var_x)
@@ -46,15 +48,15 @@ class Model(ModelBase):
         return KModel(input_, var_x, name="encoder")
 
     def intermediate(self, side):
-        """ Intermediate Network """
-        input_ = Input(shape=(4 * 4 * 1024, ))
+        """Intermediate Network"""
+        input_ = Input(shape=(4 * 4 * 1024,))
         var_x = layers.Dense(self.encoder_dim)(input_)
-        var_x = layers.Dense(4 * 4 * int(self.encoder_dim/2))(var_x)
-        var_x = layers.Reshape((4, 4, int(self.encoder_dim/2)))(var_x)
+        var_x = layers.Dense(4 * 4 * int(self.encoder_dim / 2))(var_x)
+        var_x = layers.Reshape((4, 4, int(self.encoder_dim / 2)))(var_x)
         return KModel(input_, var_x, name=f"inter_{side}")
 
     def decoder(self):
-        """ Decoder Network """
+        """Decoder Network"""
         input_ = Input(shape=(4, 4, self.encoder_dim))
         var_x = input_
         var_x = UpscaleBlock(512, activation="leakyrelu")(var_x)

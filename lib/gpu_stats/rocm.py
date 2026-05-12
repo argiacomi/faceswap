@@ -7,6 +7,7 @@ GPUs discovered on the system regardless of ROCm compatibility.
 
 It is a good starting point but may need to be refined over time
 """
+
 import os
 import re
 from subprocess import run
@@ -207,7 +208,8 @@ _DEVICE_LOOKUP = {  # ref: https://gist.github.com/roalercon/51f13a387f3754615cc
     int("0x999D", 0): "AMD Radeon HD 8550D",
     int("0x99A0", 0): "AMD Radeon HD 7520G",
     int("0x99A2", 0): "AMD Radeon HD 7420G",
-    int("0x99A4", 0): "AMD Radeon HD 7400G"}
+    int("0x99A4", 0): "AMD Radeon HD 7400G",
+}
 
 
 class ROCm(_GPUStats):
@@ -222,6 +224,7 @@ class ROCm(_GPUStats):
         available then this parameter should be set to ``False``. Otherwise set to ``True``.
         Default: ``True``
     """
+
     def __init__(self, log: bool = True) -> None:
         self._vendor_id = "0x1002"  # AMD VendorID
         self._sysfs_paths: list[str] = []
@@ -248,7 +251,10 @@ class ROCm(_GPUStats):
             with open(path, "r", encoding="utf-8", errors="ignore") as sys_file:
                 val = sys_file.read().strip()
         except PermissionError:
-            self._log("debug", f"Permission error accessing file '{path}'. Returning empty string")
+            self._log(
+                "debug",
+                f"Permission error accessing file '{path}'. Returning empty string",
+            )
             val = ""
         return val
 
@@ -275,7 +281,10 @@ class ROCm(_GPUStats):
 
             vendor_id = self._from_sysfs_file(vendor_path)
             if vendor_id != self._vendor_id:
-                self._log("debug", f"Skipping non AMD Vendor '{vendor_id}' for device: '{folder}'")
+                self._log(
+                    "debug",
+                    f"Skipping non AMD Vendor '{vendor_id}' for device: '{folder}'",
+                )
                 continue
 
             retval.append(folder_path)
@@ -294,7 +303,10 @@ class ROCm(_GPUStats):
         if self._is_initialized:
             return
         if self._is_wsl:
-            self._log("debug", "Running WSL. Obtaining limited info from Torch for AMDGPU (ROCm).")
+            self._log(
+                "debug",
+                "Running WSL. Obtaining limited info from Torch for AMDGPU (ROCm).",
+            )
         else:
             self._log("debug", "Initializing sysfs for AMDGPU (ROCm).")
             self._sysfs_paths = self._get_sysfs_paths()
@@ -342,12 +354,14 @@ class ROCm(_GPUStats):
             retval = ""
             cmd = ["modinfo", "amdgpu"]
             try:
-                proc = run(cmd,
-                           check=True,
-                           timeout=5,
-                           capture_output=True,
-                           encoding="utf-8",
-                           errors="ignore")
+                proc = run(
+                    cmd,
+                    check=True,
+                    timeout=5,
+                    capture_output=True,
+                    encoding="utf-8",
+                    errors="ignore",
+                )
                 for line in proc.stdout.split("\n"):
                     if line.startswith("version:"):
                         retval = line.split()[-1]
@@ -373,8 +387,11 @@ class ROCm(_GPUStats):
                 name = self._from_sysfs_file(os.path.join(device, "product_name"))
                 number = self._from_sysfs_file(os.path.join(device, "product_number"))
                 if name or number:  # product_name or product_number populated
-                    self._log("debug", f"Got name from product_name: '{name}', product_number: "
-                                       f"'{number}'")
+                    self._log(
+                        "debug",
+                        f"Got name from product_name: '{name}', product_number: "
+                        f"'{number}'",
+                    )
                     retval.append(f"{name + ' ' if name else ''}{number}")
                     continue
 
@@ -426,11 +443,16 @@ class ROCm(_GPUStats):
             if self._is_wsl:
                 vram = torch.cuda.get_device_properties(device).total_memory
             else:
-                query = self._from_sysfs_file(os.path.join(device, "mem_info_vram_total"))
+                query = self._from_sysfs_file(
+                    os.path.join(device, "mem_info_vram_total")
+                )
                 try:
                     vram = int(query)
                 except ValueError:
-                    self._log("debug", f"Couldn't extract VRAM from string: '{query}'", )
+                    self._log(
+                        "debug",
+                        f"Couldn't extract VRAM from string: '{query}'",
+                    )
                     vram = 0
             retval.append(int(vram / (1024 * 1024)))
 
@@ -459,11 +481,15 @@ class ROCm(_GPUStats):
                 # than crashing
                 used = torch.cuda.memory_reserved(device)
             else:
-                query = self._from_sysfs_file(os.path.join(device, "mem_info_vram_used"))
+                query = self._from_sysfs_file(
+                    os.path.join(device, "mem_info_vram_used")
+                )
                 try:
                     used = int(query)
                 except ValueError:
-                    self._log("debug", f"Couldn't extract used VRAM from string: '{query}'")
+                    self._log(
+                        "debug", f"Couldn't extract used VRAM from string: '{query}'"
+                    )
                     used = 0
 
             retval.append(vram - int(used / (1024 * 1024)))
@@ -487,10 +513,13 @@ class ROCm(_GPUStats):
 
         active = self._get_active_devices()
 
-        os.environ["HIP_VISIBLE_DEVICES"] = ",".join(str(d) for d in active
-                                                     if d not in _EXCLUDE_DEVICES)
+        os.environ["HIP_VISIBLE_DEVICES"] = ",".join(
+            str(d) for d in active if d not in _EXCLUDE_DEVICES
+        )
 
-        env_vars = [f"{k}: {v}" for k, v in os.environ.items() if k.lower().startswith("hip")]
+        env_vars = [
+            f"{k}: {v}" for k, v in os.environ.items() if k.lower().startswith("hip")
+        ]
         self._log("debug", f"HIP environment variables: {env_vars}")
 
 

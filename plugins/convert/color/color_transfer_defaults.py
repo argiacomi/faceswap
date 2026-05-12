@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-""" The default options for the faceswap Color_Transfer Color plugin.
+"""The default options for the faceswap Color_Transfer Color plugin.
 
 Defaults files should be named `<plugin_name>_defaults.py`
 
@@ -24,6 +24,7 @@ See the docstring/ReadtheDocs documentation required parameters for the ConfigIt
 Items will be grouped together as per their `group` parameter, but otherwise will be processed in
 the order that they are added to this module.
 """
+
 from lib.config import ConfigItem
 
 
@@ -31,7 +32,8 @@ HELPTEXT = (
     "Options for transfering the color distribution from the source to the target image using the "
     "mean and standard deviations of the L*a*b* color space.\nThis implementation is (loosely) "
     "based on the 'Color Transfer between Images' paper by Reinhard et al., 2001. matching the "
-    "histograms between the source and destination faces.")
+    "histograms between the source and destination faces."
+)
 
 
 clip = ConfigItem(
@@ -39,17 +41,19 @@ clip = ConfigItem(
     default=True,
     group="method",
     info="Should components of L*a*b* image be scaled by numpy.clip before converting back to "
-         "BGR color space?\nIf False then components will be min-max scaled appropriately.\n"
-         "Clipping will keep target image brightness truer to the input.\nScaling will adjust "
-         "image brightness to avoid washed out portions in the resulting color transfer that "
-         "can be caused by clipping.")
+    "BGR color space?\nIf False then components will be min-max scaled appropriately.\n"
+    "Clipping will keep target image brightness truer to the input.\nScaling will adjust "
+    "image brightness to avoid washed out portions in the resulting color transfer that "
+    "can be caused by clipping.",
+)
 
 preserve_paper = ConfigItem(
     datatype=bool,
     group="method",
     default=True,
     info="Should color transfer strictly follow methodology layed out in original paper?\nThe "
-         "method does not always produce aesthetically pleasing results.\nIf False then "
-         "L*a*b* components will be scaled using the reciprocal of the scaling factor "
-         "proposed in the paper. This method seems to produce more consistently aesthetically "
-         "pleasing results.")
+    "method does not always produce aesthetically pleasing results.\nIf False then "
+    "L*a*b* components will be scaled using the reciprocal of the scaling factor "
+    "proposed in the paper. This method seems to produce more consistently aesthetically "
+    "pleasing results.",
+)

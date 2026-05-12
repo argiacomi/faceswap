@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-""" Tests for Faceswap Custom Layers.
+"""Tests for Faceswap Custom Layers.
 
 Adapted from Keras tests.
 """
@@ -73,8 +73,7 @@ def layer_test(
 
         actual_output = model.predict(input_data, verbose=0)  # type:ignore
         actual_output_shape = actual_output.shape
-        for expected_dim, actual_dim in zip(expected_output_shape,
-                                            actual_output_shape):
+        for expected_dim, actual_dim in zip(expected_output_shape, actual_output_shape):
             if expected_dim is not None:
                 assert expected_dim == actual_dim
 
@@ -92,8 +91,8 @@ def layer_test(
 
         # test training mode (e.g. useful when the layer has a
         # different behavior at training and testing time).
-        if has_arg(layer.call, 'training'):
-            model.compile('rmsprop', 'mse')
+        if has_arg(layer.call, "training"):
+            model.compile("rmsprop", "mse")
             model.train_on_batch(input_data, actual_output)
 
         # test instantiation from layer config
@@ -104,51 +103,51 @@ def layer_test(
         return actual_output
 
 
-@pytest.mark.parametrize('dummy', [None], ids=[get_backend().upper()])
+@pytest.mark.parametrize("dummy", [None], ids=[get_backend().upper()])
 def test_global_min_pooling_2d(dummy):  # pylint:disable=unused-argument
-    """ Global Min Pooling 2D layer test """
+    """Global Min Pooling 2D layer test"""
     layer_test(layers.GlobalMinPooling2D, input_shape=(2, 4, 4, 1024))
 
 
-@pytest.mark.parametrize('dummy', [None], ids=[get_backend().upper()])
+@pytest.mark.parametrize("dummy", [None], ids=[get_backend().upper()])
 def test_global_std_pooling_2d(dummy):  # pylint:disable=unused-argument
-    """ Global Standard Deviation Pooling 2D layer test """
+    """Global Standard Deviation Pooling 2D layer test"""
     layer_test(layers.GlobalStdDevPooling2D, input_shape=(2, 4, 4, 1024))
 
 
-@pytest.mark.parametrize('dummy', [None], ids=[get_backend().upper()])
+@pytest.mark.parametrize("dummy", [None], ids=[get_backend().upper()])
 def test_k_resize_images(dummy):  # pylint:disable=unused-argument
-    """ Global Standard Deviation Pooling 2D layer test """
+    """Global Standard Deviation Pooling 2D layer test"""
     layer_test(layers.KResizeImages, input_shape=(2, 4, 4, 1024))
 
 
-@pytest.mark.parametrize('dummy', [None], ids=[get_backend().upper()])
+@pytest.mark.parametrize("dummy", [None], ids=[get_backend().upper()])
 def test_l2_normalize(dummy):  # pylint:disable=unused-argument
-    """ L2 Normalize layer test """
+    """L2 Normalize layer test"""
     layer_test(layers.L2Normalize, kwargs={"axis": 1}, input_shape=(2, 4, 4, 1024))
 
 
-@pytest.mark.parametrize('dummy', [None], ids=[get_backend().upper()])
+@pytest.mark.parametrize("dummy", [None], ids=[get_backend().upper()])
 def test_pixel_shuffler(dummy):  # pylint:disable=unused-argument
-    """ Pixel Shuffler layer test """
+    """Pixel Shuffler layer test"""
     layer_test(layers.PixelShuffler, input_shape=(2, 4, 4, 1024))
 
 
-@pytest.mark.parametrize('dummy', [None], ids=[get_backend().upper()])
+@pytest.mark.parametrize("dummy", [None], ids=[get_backend().upper()])
 def test_quick_gelu(dummy):  # pylint:disable=unused-argument
-    """ Global Standard Deviation Pooling 2D layer test """
+    """Global Standard Deviation Pooling 2D layer test"""
     layer_test(layers.QuickGELU, input_shape=(2, 4, 4, 1024))
 
 
-@pytest.mark.parametrize('dummy', [None], ids=[get_backend().upper()])
+@pytest.mark.parametrize("dummy", [None], ids=[get_backend().upper()])
 def test_reflection_padding_2d(dummy):  # pylint:disable=unused-argument
-    """ Reflection Padding 2D layer test """
+    """Reflection Padding 2D layer test"""
     layer_test(layers.ReflectionPadding2D, input_shape=(2, 4, 4, 512))
 
 
-@pytest.mark.parametrize('dummy', [None], ids=[get_backend().upper()])
+@pytest.mark.parametrize("dummy", [None], ids=[get_backend().upper()])
 def test_swish(dummy):  # pylint:disable=unused-argument
-    """ Swish activation layer test """
+    """Swish activation layer test"""
     layer_test(layers.Swish, input_shape=(2, 4, 4, 1024))
 
 
@@ -158,15 +157,19 @@ _IDS = [f"{x}[{get_backend().upper()}]" for x in _PARAMS]
 
 @pytest.mark.parametrize("operation", _PARAMS, ids=_IDS)
 def test_scalar_op(operation):
-    """ Scalar operation layer test """
+    """Scalar operation layer test"""
     val = 2.0
-    np_ops = {"multiply": np.multiply,
-              "truediv": np.true_divide,
-              "add": np.add,
-              "subtract": np.subtract}
+    np_ops = {
+        "multiply": np.multiply,
+        "truediv": np.true_divide,
+        "add": np.add,
+        "subtract": np.subtract,
+    }
     input_data = np.random.random((2, 4, 4, 1024)).astype("float32")
     output_data = np_ops[operation](input_data, val)
-    layer_test(layers.ScalarOp,
-               kwargs={"operation": operation, "value": val},
-               input_data=input_data,
-               expected_output=output_data)
+    layer_test(
+        layers.ScalarOp,
+        kwargs={"operation": operation, "value": val},
+        input_data=input_data,
+        expected_output=output_data,
+    )

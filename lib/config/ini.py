@@ -1,5 +1,6 @@
 #! /usr/env/bin/python3
-""" Handles interfacing between Faceswap Configs and ConfigParser .ini files """
+"""Handles interfacing between Faceswap Configs and ConfigParser .ini files"""
+
 from __future__ import annotations
 
 import logging
@@ -18,8 +19,8 @@ if T.TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class ConfigFile():
-    """ Handles the interfacing between saved faceswap .ini configs and internal Config objects
+class ConfigFile:
+    """Handles the interfacing between saved faceswap .ini configs and internal Config objects
 
     Parameters
     ----------
@@ -28,6 +29,7 @@ class ConfigFile():
     ini_path : str | None, optional
         Optional path to a .ini config file. ``None`` for default location. Default: ``None``
     """
+
     def __init__(self, plugin_group: str, ini_path: str | None = None) -> None:
         parse_class_init(locals())
         self._plugin_group = plugin_group
@@ -38,11 +40,11 @@ class ConfigFile():
 
     @property
     def _exists(self) -> bool:
-        """ bool : ``True`` if the config.ini file exists """
+        """bool : ``True`` if the config.ini file exists"""
         return os.path.isfile(self._file_path)
 
     def _get_config_path(self, ini_path: str | None) -> str:
-        """ Return the path to the config file from the calling folder or the provided file
+        """Return the path to the config file from the calling folder or the provided file
 
         Parameters
         ----------
@@ -62,11 +64,13 @@ class ConfigFile():
             return ini_path
 
         retval = os.path.join(PROJECT_ROOT, "config", f"{self._plugin_group}.ini")
-        logger.debug("[%s] Config File location: '%s'", os.path.basename(retval), retval)
+        logger.debug(
+            "[%s] Config File location: '%s'", os.path.basename(retval), retval
+        )
         return retval
 
     def _get_new_configparser(self) -> ConfigParser:
-        """ Obtain a fresh ConfigParser object and set it to case-sensitive
+        """Obtain a fresh ConfigParser object and set it to case-sensitive
 
         Returns
         -------
@@ -79,23 +83,32 @@ class ConfigFile():
 
     # I/O
     def load(self) -> None:
-        """ Load values from the saved config ini file into our Config object """
-        logger.verbose("[%s] Loading config: '%s'",  # type:ignore[attr-defined]
-                       self._plugin_group, self._file_path)
+        """Load values from the saved config ini file into our Config object"""
+        logger.verbose(
+            "[%s] Loading config: '%s'",  # type:ignore[attr-defined]
+            self._plugin_group,
+            self._file_path,
+        )
         self._parser.read(self._file_path, encoding="utf-8")
 
     def save(self) -> None:
-        """ Save a config file """
-        logger.debug("[%s] %s config: '%s'",
-                     self._plugin_group, "Updating" if self._exists else "Saving", self._file_path)
+        """Save a config file"""
+        logger.debug(
+            "[%s] %s config: '%s'",
+            self._plugin_group,
+            "Updating" if self._exists else "Saving",
+            self._file_path,
+        )
         # TODO in python >= 3.14 this will error when there are delimiters in the comments
-        with open(self._file_path, "w", encoding="utf-8", errors="replace") as f_cfgfile:
+        with open(
+            self._file_path, "w", encoding="utf-8", errors="replace"
+        ) as f_cfgfile:
             self._parser.write(f_cfgfile)
         logger.info("[%s] Saved config: '%s'", self._plugin_group, self._file_path)
 
     # .ini vs Faceswap Config checking
     def _sections_synced(self, app_config: dict[str, ConfigSection]) -> bool:
-        """ Validate that all of the sections within the application config match with all of the
+        """Validate that all of the sections within the application config match with all of the
         sections in the ini file
 
         Parameters
@@ -112,12 +125,16 @@ class ConfigFile():
         loaded_sections = set(self._parser.sections())
         retval = given_sections == loaded_sections
         if not retval:
-            logger.debug("[%s] Config sections are not synced: (app: %s, ini: %s)",
-                         self._plugin_group, sorted(given_sections), sorted(loaded_sections))
+            logger.debug(
+                "[%s] Config sections are not synced: (app: %s, ini: %s)",
+                self._plugin_group,
+                sorted(given_sections),
+                sorted(loaded_sections),
+            )
         return retval
 
     def _options_synced(self, app_config: dict[str, ConfigSection]) -> bool:
-        """ Validate that all of the option names within the application config match with all of
+        """Validate that all of the option names within the application config match with all of
         the option names in the ini file
 
         Note
@@ -138,13 +155,18 @@ class ConfigFile():
             given_opts = set(opt for opt in section.options)
             loaded_opts = set(self._parser[name].keys())
             if given_opts != loaded_opts:
-                logger.debug("[%s:%s] Config options are not synced: (app: %s, ini: %s)",
-                             self._plugin_group, name, sorted(given_opts), sorted(loaded_opts))
+                logger.debug(
+                    "[%s:%s] Config options are not synced: (app: %s, ini: %s)",
+                    self._plugin_group,
+                    name,
+                    sorted(given_opts),
+                    sorted(loaded_opts),
+                )
                 return False
         return True
 
     def _values_synced(self, app_section: ConfigSection, section: str) -> bool:
-        """ Validate that all of the option values within the application config match with all of
+        """Validate that all of the option values within the application config match with all of
         the option values in the ini file
 
         Parameters
@@ -165,12 +187,17 @@ class ConfigFile():
         loaded_vals = set((k, v) for k, v in self._parser[section].items())
         retval = given_vals == loaded_vals
         if not retval:
-            logger.debug("[%s:%s] Config values are not synced: (app: %s, ini: %s)",
-                         self._plugin_group, section, sorted(given_vals), sorted(loaded_vals))
+            logger.debug(
+                "[%s:%s] Config values are not synced: (app: %s, ini: %s)",
+                self._plugin_group,
+                section,
+                sorted(given_vals),
+                sorted(loaded_vals),
+            )
         return retval
 
     def _is_synced_structure(self, app_config: dict[str, ConfigSection]) -> bool:
-        """ Validate that all the given sections and option names within the application config
+        """Validate that all the given sections and option names within the application config
         match with their corresponding items in the save .ini file
 
         Parameters
@@ -193,7 +220,7 @@ class ConfigFile():
 
     # .ini file insertion
     def format_help(self, helptext: str, is_section: bool = False) -> str:
-        """ Format comments for insertion into a config ini file
+        """Format comments for insertion into a config ini file
 
         Parameters
         ----------
@@ -208,22 +235,30 @@ class ConfigFile():
         str
             The formatted help text
         """
-        logger.debug("[%s] Formatting help: (helptext: '%s', is_section: '%s')",
-                     self._plugin_group, helptext, is_section)
+        logger.debug(
+            "[%s] Formatting help: (helptext: '%s', is_section: '%s')",
+            self._plugin_group,
+            helptext,
+            is_section,
+        )
         formatted = ""
         for hlp in helptext.split("\n"):
             subsequent_indent = "\t\t" if hlp.startswith("\t") else ""
             hlp = f"\t- {hlp[1:].strip()}" if hlp.startswith("\t") else hlp
-            formatted += textwrap.fill(hlp,
-                                       100,
-                                       tabsize=4,
-                                       subsequent_indent=subsequent_indent) + "\n"
-        helptext = '# {}'.format(formatted[:-1].replace("\n", "\n# "))  # Strip last newline
+            formatted += (
+                textwrap.fill(hlp, 100, tabsize=4, subsequent_indent=subsequent_indent)
+                + "\n"
+            )
+        helptext = "# {}".format(
+            formatted[:-1].replace("\n", "\n# ")
+        )  # Strip last newline
         helptext = helptext.upper() if is_section else f"\n{helptext}"
         return helptext
 
-    def _insert_section(self, section: str, helptext: str, config: ConfigParser) -> None:
-        """ Insert a section into the config
+    def _insert_section(
+        self, section: str, helptext: str, config: ConfigParser
+    ) -> None:
+        """Insert a section into the config
 
         Parameters
         ----------
@@ -234,19 +269,21 @@ class ConfigFile():
         config : :class:`configparser.ConfigParser`
             The config parser object to insert the section into.
         """
-        logger.debug("[%s:%s] Inserting section: (helptext: '%s', config: '%s')",
-                     self._plugin_group, section, helptext, config)
+        logger.debug(
+            "[%s:%s] Inserting section: (helptext: '%s', config: '%s')",
+            self._plugin_group,
+            section,
+            helptext,
+            config,
+        )
         helptext = self.format_help(helptext, is_section=True)
         config.add_section(section)
         config.set(section, helptext)
 
-    def _insert_option(self,
-                       section: str,
-                       name: str,
-                       helptext: str,
-                       value: str,
-                       config: ConfigParser) -> None:
-        """ Insert an option into a config section
+    def _insert_option(
+        self, section: str, name: str, helptext: str, value: str, config: ConfigParser
+    ) -> None:
+        """Insert an option into a config section
 
         Parameters
         ----------
@@ -263,13 +300,19 @@ class ConfigFile():
         """
         logger.debug(
             "[%s:%s] Inserting option: (name: '%s', helptext: %s, value: '%s', config: '%s')",
-            self._plugin_group, section, name, helptext, value, config)
+            self._plugin_group,
+            section,
+            name,
+            helptext,
+            value,
+            config,
+        )
         helptext = self.format_help(helptext, is_section=False)
         config.set(section, helptext)
         config.set(section, name, value)
 
     def _sync_from_app(self, app_config: dict[str, ConfigSection]) -> None:
-        """ Update the saved config.ini file from the values stored in the application config
+        """Update the saved config.ini file from the values stored in the application config
 
         Existing options keep their saved values as per the .ini files. New options are added with
         their application defined default value. Options in the .ini file not in application
@@ -289,13 +332,16 @@ class ConfigFile():
         for section_name, section in app_config.items():
             self._insert_section(section_name, section.helptext, parser)
             for name, opt in section.options.items():
-
                 value = self._parser.get(section_name, name, fallback=None)
                 if value is None:
                     value = opt.ini_value
                     logger.debug(
                         "[%s:%s] Setting default value for non-existent config option '%s': '%s'",
-                        self._plugin_group, section_name, name, value)
+                        self._plugin_group,
+                        section_name,
+                        name,
+                        value,
+                    )
 
                 self._insert_option(section_name, name, opt.helptext, value, parser)
 
@@ -305,8 +351,10 @@ class ConfigFile():
         self.save()
 
     # .ini extraction
-    def _get_converted_value(self, section: str, option: str, datatype: type) -> ConfigValueType:
-        """ Return a config item from the .ini file in it's correct type.
+    def _get_converted_value(
+        self, section: str, option: str, datatype: type
+    ) -> ConfigValueType:
+        """Return a config item from the .ini file in it's correct type.
 
         Parameters
         ----------
@@ -322,11 +370,17 @@ class ConfigFile():
         bool | int | float | list[str] | str
             The selected configuration option in the correct data format
         """
-        logger.debug("[%s:%s] Getting config item: (option: '%s', datatype: %s)",
-                     self._plugin_group, section, option, datatype)
+        logger.debug(
+            "[%s:%s] Getting config item: (option: '%s', datatype: %s)",
+            self._plugin_group,
+            section,
+            option,
+            datatype,
+        )
 
         assert datatype in (bool, int, float, str, list), (
-            f"Expected (bool, int, float, str, list). Got {datatype}")
+            f"Expected (bool, int, float, str, list). Got {datatype}"
+        )
 
         retval: ConfigValueType
         if datatype == bool:
@@ -338,12 +392,17 @@ class ConfigFile():
         else:
             retval = self._parser.get(section, option)
 
-        logger.debug("[%s:%s] Got config item: (value: %s, type: %s)",
-                     self._plugin_group, section, retval, type(retval))
+        logger.debug(
+            "[%s:%s] Got config item: (value: %s, type: %s)",
+            self._plugin_group,
+            section,
+            retval,
+            type(retval),
+        )
         return retval
 
     def _sync_to_app(self, app_config: dict[str, ConfigSection]) -> None:
-        """ Update the values in the application config to those loaded from the saved config.ini.
+        """Update the values in the application config to those loaded from the saved config.ini.
 
         Parameters
         ----------
@@ -355,21 +414,35 @@ class ConfigFile():
             if self._values_synced(section, section_name):
                 continue
             for opt_name, opt in section.options.items():
-                if section_name not in self._parser or opt_name not in self._parser[section_name]:
-                    logger.debug("[%s:%s] Skipping new option: '%s'",
-                                 self._plugin_group, section_name, opt_name)
+                if (
+                    section_name not in self._parser
+                    or opt_name not in self._parser[section_name]
+                ):
+                    logger.debug(
+                        "[%s:%s] Skipping new option: '%s'",
+                        self._plugin_group,
+                        section_name,
+                        opt_name,
+                    )
                     continue
 
                 ini_opt = self._parser[section_name][opt_name]
                 if opt.ini_value != ini_opt:
-                    logger.debug("[%s:%s] Updating '%s' from '%s' to '%s'",
-                                 self._plugin_group, section_name,
-                                 opt_name, ini_opt, opt.ini_value)
-                    opt.set(self._get_converted_value(section_name, opt_name, opt.datatype))
+                    logger.debug(
+                        "[%s:%s] Updating '%s' from '%s' to '%s'",
+                        self._plugin_group,
+                        section_name,
+                        opt_name,
+                        ini_opt,
+                        opt.ini_value,
+                    )
+                    opt.set(
+                        self._get_converted_value(section_name, opt_name, opt.datatype)
+                    )
 
     # .ini insertion and extraction
     def on_load(self, app_config: dict[str, ConfigSection]) -> None:
-        """ Check whether there has been any change between the current application config and
+        """Check whether there has been any change between the current application config and
         the loaded ini config. If so, update the relevant object(s) appropriately. This check will
         also create new config.ini files if they do not pre-exist
 
@@ -388,7 +461,7 @@ class ConfigFile():
         self._sync_to_app(app_config)
 
     def update_from_app(self, app_config: dict[str, ConfigSection]) -> None:
-        """ Update the config.ini file to those values that are currently in Faceswap's app
+        """Update the config.ini file to those values that are currently in Faceswap's app
         config
 
         Parameters
@@ -401,7 +474,9 @@ class ConfigFile():
         for section_name, section in app_config.items():
             self._insert_section(section_name, section.helptext, parser)
             for name, opt in section.options.items():
-                self._insert_option(section_name, name, opt.helptext, opt.ini_value, parser)
+                self._insert_option(
+                    section_name, name, opt.helptext, opt.ini_value, parser
+                )
         if parser != self._parser:
             self._parser = parser
         self.save()

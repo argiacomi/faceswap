@@ -12,7 +12,7 @@ _EXCLUDE_DEVICES: list[int] = []
 
 
 @dataclass
-class GPUInfo():
+class GPUInfo:
     """Dataclass for storing information about the available GPUs on the system.
 
     Attributes:
@@ -28,6 +28,7 @@ class GPUInfo():
     devices_active
         List of integers representing the indices of the active GPU devices.
     """
+
     vram: list[int]
     """List of integers representing the total VRAM available on each GPU, in MB."""
     vram_free: list[int]
@@ -41,7 +42,7 @@ class GPUInfo():
 
 
 @dataclass
-class BiggestGPUInfo():
+class BiggestGPUInfo:
     """Dataclass for holding GPU Information about the card with most available VRAM.
 
     Attributes
@@ -55,6 +56,7 @@ class BiggestGPUInfo():
     total
         the total amount of VRAM on the GPU
     """
+
     card_id: int
     """Integer representing the index of the GPU device."""
     device: str
@@ -65,7 +67,7 @@ class BiggestGPUInfo():
     """the total amount of VRAM on the GPU"""
 
 
-class _GPUStats():
+class _GPUStats:
     """Parent class for collecting GPU device information.
 
     Parameters:
@@ -77,7 +79,9 @@ class _GPUStats():
     def __init__(self, log: bool = True) -> None:
         # Logger is held internally, as we don't want to log when obtaining system stats on crash
         # or when querying the backend for command line options
-        self._logger: logging.Logger | None = logging.getLogger(__name__) if log else None
+        self._logger: logging.Logger | None = (
+            logging.getLogger(__name__) if log else None
+        )
         self._log("debug", f"Initializing {self.__class__.__name__}")
 
         self._is_initialized = False
@@ -115,11 +119,13 @@ class _GPUStats():
     @property
     def sys_info(self) -> GPUInfo:
         """The GPU Stats that are required for system information logging"""
-        return GPUInfo(vram=self._vram,
-                       vram_free=self._get_free_vram(),
-                       driver=self._driver,
-                       devices=self._device_names,
-                       devices_active=self._active_devices)
+        return GPUInfo(
+            vram=self._vram,
+            vram_free=self._get_free_vram(),
+            driver=self._driver,
+            devices=self._device_names,
+            devices_active=self._active_devices,
+        )
 
     def _log(self, level: str, message: str) -> None:
         """If the class has been initialized with :attr:`log` as `True` then log the message
@@ -166,7 +172,9 @@ class _GPUStats():
         -------
         The list of device indices that are available for Faceswap to use
         """
-        devices = [idx for idx in range(self._device_count) if idx not in _EXCLUDE_DEVICES]
+        devices = [
+            idx for idx in range(self._device_count) if idx not in _EXCLUDE_DEVICES
+        ]
         self._log("debug", f"Active GPU Devices: {devices}")
         return devices
 
@@ -229,18 +237,19 @@ class _GPUStats():
         of free and total RAM available is fixed to 2048 Megabytes.
         """
         if len(self._active_devices) == 0:
-            retval = BiggestGPUInfo(card_id=-1,
-                                    device="No GPU devices found",
-                                    free=2048,
-                                    total=2048)
+            retval = BiggestGPUInfo(
+                card_id=-1, device="No GPU devices found", free=2048, total=2048
+            )
         else:
             free_vram = [self._vram_free[i] for i in self._active_devices]
             vram_free = max(free_vram)
             card_id = self._active_devices[free_vram.index(vram_free)]
-            retval = BiggestGPUInfo(card_id=card_id,
-                                    device=self._device_names[card_id],
-                                    free=vram_free,
-                                    total=self._vram[card_id])
+            retval = BiggestGPUInfo(
+                card_id=card_id,
+                device=self._device_names[card_id],
+                free=vram_free,
+                total=self._vram[card_id],
+            )
         self._log("debug", f"Active GPU Card with most free VRAM: {retval}")
         return retval
 

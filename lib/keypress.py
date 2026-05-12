@@ -35,7 +35,8 @@ else:
 
 
 class KBHit:
-    """ Creates a KBHit object that you can call to do various keyboard things. """
+    """Creates a KBHit object that you can call to do various keyboard things."""
+
     def __init__(self, is_gui=False):
         self.is_gui = is_gui
         if os.name == "nt" or self.is_gui or not sys.stdout.isatty():
@@ -54,15 +55,15 @@ class KBHit:
             atexit.register(self.set_normal_term)
 
     def set_normal_term(self):
-        """ Resets to normal terminal.  On Windows this is a no-op. """
+        """Resets to normal terminal.  On Windows this is a no-op."""
         if os.name == "nt" or self.is_gui or not sys.stdout.isatty():
             pass
         else:
             termios.tcsetattr(self.file_desc, termios.TCSAFLUSH, self.old_term)
 
     def getch(self):
-        """ Returns a keyboard character after kbhit() has been called.
-            Should not be called in the same program as getarrow(). """
+        """Returns a keyboard character after kbhit() has been called.
+        Should not be called in the same program as getarrow()."""
         if (self.is_gui or not sys.stdout.isatty()) and os.name != "nt":
             return None
         if os.name == "nt":
@@ -70,12 +71,12 @@ class KBHit:
         return sys.stdin.read(1)
 
     def getarrow(self):
-        """ Returns an arrow-key code after kbhit() has been called. Codes are
+        """Returns an arrow-key code after kbhit() has been called. Codes are
         0 : up
         1 : right
         2 : down
         3 : left
-        Should not be called in the same program as getch(). """
+        Should not be called in the same program as getch()."""
 
         if (self.is_gui or not sys.stdout.isatty()) and os.name != "nt":
             return None
@@ -90,7 +91,7 @@ class KBHit:
         return vals.index(ord(char.decode("utf-8", errors="replace")))
 
     def kbhit(self):
-        """ Returns True if keyboard character was hit, False otherwise. """
+        """Returns True if keyboard character was hit, False otherwise."""
         if (self.is_gui or not sys.stdout.isatty()) and os.name != "nt":
             return None
         if os.name == "nt":

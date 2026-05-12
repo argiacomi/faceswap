@@ -23,6 +23,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
+
 from __future__ import annotations
 import logging
 
@@ -36,14 +37,13 @@ logger = logging.getLogger(__name__)
 
 
 class CV2DNNAlign(ExtractPlugin):
-    """CV2 DNN Plugin for face alignment """
+    """CV2 DNN Plugin for face alignment"""
+
     def __init__(self) -> None:
         # pylint:disable=duplicate-code
-        super().__init__(input_size=128,
-                         batch_size=1,
-                         is_rgb=True,
-                         dtype="float32",
-                         scale=(0, 255))
+        super().__init__(
+            input_size=128, batch_size=1, is_rgb=True, dtype="float32", scale=(0, 255)
+        )
         self.model: cv2.dnn.Net
 
     def load_model(self) -> cv2.dnn.Net:

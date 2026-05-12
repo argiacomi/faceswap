@@ -1,5 +1,5 @@
 #!/usr/bin python3
-""" Pytest unit tests for :mod:`plugins.train.trainer.distributed` Trainer plug in """
+"""Pytest unit tests for :mod:`plugins.train.trainer.distributed` Trainer plug in"""
 # pylint:disable=protected-access, invalid-name, duplicate-code, too-many-locals
 
 import numpy as np
@@ -18,13 +18,14 @@ _MODULE_PREFIX = "plugins.train.trainer.distributed"
 
 class DummyLoss:  # pylint:disable=too-few-public-methods
     """Dummy loss return"""
+
     total = 1.0
 
 
 @pytest.mark.parametrize("batch_size", (4, 8, 16, 32, 64))
 @pytest.mark.parametrize("outputs", (1, 2, 4))
 def test_WrappedModel(batch_size, outputs, mocker):
-    """ Test that the wrapped model calls predictions and loss """
+    """Test that the wrapped model calls predictions and loss"""
     model = mocker.MagicMock()
     instance = mod_distributed.WrappedModel(model)
     assert instance._keras_model is model
@@ -36,8 +37,9 @@ def test_WrappedModel(batch_size, outputs, mocker):
 
     inp_a = torch.from_numpy(np.random.random(test_dims))
     inp_b = torch.from_numpy(np.random.random(test_dims))
-    targets = [torch.from_numpy(np.random.random(test_dims))
-               for _ in range(outputs * 2)]
+    targets = [
+        torch.from_numpy(np.random.random(test_dims)) for _ in range(outputs * 2)
+    ]
     predictions = [*torch.from_numpy(np.random.random((outputs * 2, *test_dims)))]
 
     model.return_value = predictions
@@ -60,7 +62,7 @@ def test_WrappedModel(batch_size, outputs, mocker):
 
 @pytest.fixture
 def _trainer_mocked(mocker: pytest_mock.MockFixture):  # noqa: F811
-    """ Generate a mocked model and feeder object and patch torch GPU count """
+    """Generate a mocked model and feeder object and patch torch GPU count"""
 
     def _apply_patch(gpus=2, batch_size=8):
         patched_cuda_device = mocker.patch(f"{_MODULE_PREFIX}.torch.cuda.device_count")
@@ -68,12 +70,14 @@ def _trainer_mocked(mocker: pytest_mock.MockFixture):  # noqa: F811
         patched_parallel = mocker.patch(f"{_MODULE_PREFIX}.torch.nn.DataParallel")
         patched_parallel.return_value = mocker.MagicMock()
         model = mocker.MagicMock()
-        conf = mod_base.TrainConfig(folders=["x", "y"],
-                                    batch_size=batch_size,
-                                    augment_color=False,
-                                    flip=False,
-                                    warp=False,
-                                    cache_landmarks=False)
+        conf = mod_base.TrainConfig(
+            folders=["x", "y"],
+            batch_size=batch_size,
+            augment_color=False,
+            flip=False,
+            warp=False,
+            cache_landmarks=False,
+        )
         instance = mod_distributed.Trainer(model, conf)
         return instance, patched_parallel
 
@@ -83,7 +87,7 @@ def _trainer_mocked(mocker: pytest_mock.MockFixture):  # noqa: F811
 @pytest.mark.parametrize("gpu_count", (2, 3, 5, 8))
 @pytest.mark.parametrize("batch_size", (4, 8, 16, 32, 64))
 def test_Trainer(gpu_count, batch_size, _trainer_mocked):
-    """ Test that original trainer creates correctly """
+    """Test that original trainer creates correctly"""
     instance, patched_parallel = _trainer_mocked(gpus=gpu_count, batch_size=batch_size)
     assert isinstance(instance, mod_base.TrainerBase)
     assert isinstance(instance, mod_original.Trainer)
@@ -94,22 +98,27 @@ def test_Trainer(gpu_count, batch_size, _trainer_mocked):
     assert instance._distributed_model is patched_parallel.return_value
 
 
-@pytest.mark.parametrize("gpu_count", (2, 3, 5, 8), ids=[f"gpus:{x}" for x in (2, 3, 5, 8)])
+@pytest.mark.parametrize(
+    "gpu_count", (2, 3, 5, 8), ids=[f"gpus:{x}" for x in (2, 3, 5, 8)]
+)
 @pytest.mark.parametrize("outputs", (1, 2, 4))
 @pytest.mark.parametrize("batch_size", (4, 8, 16, 32, 64))
 def test_Trainer_forward(gpu_count, batch_size, outputs, _trainer_mocked, mocker):
-    """ Test that original trainer _forward calls the correct model methods """
+    """Test that original trainer _forward calls the correct model methods"""
     instance, _ = _trainer_mocked(gpus=gpu_count, batch_size=batch_size)
 
     test_dims = (batch_size, 2, 16, 16, 3)
 
     inputs = list(torch.from_numpy(np.random.random(test_dims)).to("cpu"))
-    targets = [torch.from_numpy(np.random.random(test_dims)).to("cpu")
-               for _ in range(outputs)]
+    targets = [
+        torch.from_numpy(np.random.random(test_dims)).to("cpu") for _ in range(outputs)
+    ]
 
     loss_return = [DummyLoss() for _ in range(gpu_count)]
     instance._distributed_model = mocker.MagicMock(return_value=loss_return)
-    instance._mean_loss = mocker.MagicMock(return_value={"unweighted": 1.0, "weighted": 1.0})
+    instance._mean_loss = mocker.MagicMock(
+        return_value={"unweighted": 1.0, "weighted": 1.0}
+    )
 
     # Call the forward pass
     instance._forward(inputs, targets, BatchMeta())

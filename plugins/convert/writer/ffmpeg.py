@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-""" Video output writer for faceswap.py converter """
+"""Video output writer for faceswap.py converter"""
+
 from __future__ import annotations
 
 import logging
@@ -22,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 
 class Writer(Output):
-    """ Video output writer using pyAV.
+    """Video output writer using pyAV.
 
     Parameters
     ----------
@@ -38,12 +39,15 @@ class Writer(Output):
     kwargs: dict
         Any additional standard :class:`plugins.convert.writer._base.Output` key word arguments.
     """
-    def __init__(self,
-                 output_folder: str,
-                 total_count: int,
-                 frame_ranges: list[tuple[int, int]] | None,
-                 source_video: str,
-                 **kwargs) -> None:
+
+    def __init__(
+        self,
+        output_folder: str,
+        total_count: int,
+        frame_ranges: list[tuple[int, int]] | None,
+        source_video: str,
+        **kwargs,
+    ) -> None:
         super().__init__(output_folder, **kwargs)
         logger.debug(parse_class_init(locals()))
         self._frame_ranges: list[tuple[int, int]] | None = frame_ranges
@@ -52,13 +56,21 @@ class Writer(Output):
 
     @property
     def _valid_tunes(self) -> dict:
-        """ dict: Valid tune selections for libx264 and libx265 codecs. """
-        return {"libx264": ["film", "animation", "grain", "stillimage", "fastdecode",
-                            "zerolatency"],
-                "libx265": ["grain", "fastdecode", "zerolatency"]}
+        """dict: Valid tune selections for libx264 and libx265 codecs."""
+        return {
+            "libx264": [
+                "film",
+                "animation",
+                "grain",
+                "stillimage",
+                "fastdecode",
+                "zerolatency",
+            ],
+            "libx265": ["grain", "fastdecode", "zerolatency"],
+        }
 
     def _get_output_filename(self, source_filename: str) -> str:
-        """ Return full path to video output file.
+        """Return full path to video output file.
 
         The filename is the same as the input video with `"_converted"` appended to the end. The
         file extension is as selected in the plugin settings. If a file already exists with the
@@ -97,8 +109,7 @@ class Writer(Output):
         codec = cfg.codec()
         tune = cfg.tune()
 
-        output_args = {"crf": str(cfg.crf()),
-                       "preset": cfg.preset()}
+        output_args = {"crf": str(cfg.crf()), "preset": cfg.preset()}
 
         if tune is not None and tune in self._valid_tunes[codec]:
             output_args["tune"] = tune
@@ -124,9 +135,11 @@ class Writer(Output):
             return False
 
         if self._frame_ranges is not None:
-            logger.warning("Muxing audio is not supported for limited frame ranges."
-                           "The output video will be created but you will need to mux audio "
-                           "manually.")
+            logger.warning(
+                "Muxing audio is not supported for limited frame ranges."
+                "The output video will be created but you will need to mux audio "
+                "manually."
+            )
             return False
 
         logger.debug("[FFMPEG] Audio will be muxed")
@@ -155,13 +168,16 @@ class Writer(Output):
             save_no = self._frame_order.popleft()
             save_image = self.cache.pop(save_no)
             logger.trace(  # type:ignore[attr-defined]
-                "[FFMPEG] Rendering from cache. Frame no: %s", save_no)
+                "[FFMPEG] Rendering from cache. Frame no: %s", save_no
+            )
             self._muxer.encode(save_image)
-        logger.trace("[FFMPEG] Current cache size: %s",  # type:ignore[attr-defined]
-                     len(self.cache))
+        logger.trace(
+            "[FFMPEG] Current cache size: %s",  # type:ignore[attr-defined]
+            len(self.cache),
+        )
 
     def write(self, filename: str, image: npt.NDArray[np.uint8]) -> None:
-        """ Frames come from the pool in arbitrary order, so frames are cached for writing out
+        """Frames come from the pool in arbitrary order, so frames are cached for writing out
         in the correct order.
 
         Parameters
@@ -171,13 +187,16 @@ class Writer(Output):
         image: :class:`numpy.ndarray`
             The converted image to be written
         """
-        logger.trace("Received frame: (filename: '%s', shape: %s",  # type:ignore[attr-defined]
-                     filename, image.shape)
+        logger.trace(
+            "Received frame: (filename: '%s', shape: %s",  # type:ignore[attr-defined]
+            filename,
+            image.shape,
+        )
         self.cache_frame(filename, image)
         self._save_from_cache()
 
     def close(self) -> None:
-        """ Close the ffmpeg writer"""
+        """Close the ffmpeg writer"""
         self._muxer.encode(None)
 
 

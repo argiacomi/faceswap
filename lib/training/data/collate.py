@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Handles collation of data for training faceswap models"""
+
 from __future__ import annotations
 
 import logging
@@ -37,6 +38,7 @@ class BatchMeta:
     All lists are of len(number model outputs per side) with tensors in shape (batch_size,
     num_inputs, 1, H, W)
     """
+
     mask_face: list[torch.Tensor] | None = None
     """The selected face mask for penalized loss/learn mask for each output in NCHW order"""
     mask_eye: list[torch.Tensor] | None = None
@@ -46,8 +48,10 @@ class BatchMeta:
 
     def __repr__(self) -> str:
         """Pretty print for logging"""
-        params = ", ".join(f"{k}={None if v is None else [(x.shape, x.dtype) for x in v]}"
-                           for k, v in self.__dict__.items())
+        params = ", ".join(
+            f"{k}={None if v is None else [(x.shape, x.dtype) for x in v]}"
+            for k, v in self.__dict__.items()
+        )
         return f"{self.__class__.__name__}({params})"
 
     def __getitem__(self, key: int) -> BatchMeta:
@@ -63,8 +67,12 @@ class BatchMeta:
         The meta data for a specific model input. Data will be populated in lists of
         length num_outputs in shape (batch_size, 1, H, W)
         """
-        return BatchMeta(**{k: None if v is None else [x[:, key] for x in v]
-                            for k, v in self.__dict__.items()})
+        return BatchMeta(
+            **{
+                k: None if v is None else [x[:, key] for x in v]
+                for k, v in self.__dict__.items()
+            }
+        )
 
     def to(self, device: str | torch.Device) -> T.Self:
         """Place all contained tensors onto the given device
@@ -109,16 +117,20 @@ class LandmarkMatcher:
     num_choices
         Number of choices from the opposite side to cache for each landmark. Default: 10
     """
-    def __init__(self,
-                 folders: list[str],
-                 size: int,
-                 centering: CenteringType,
-                 coverage: float,
-                 y_offset: float,
-                 num_choices: int = 10) -> None:
+
+    def __init__(
+        self,
+        folders: list[str],
+        size: int,
+        centering: CenteringType,
+        coverage: float,
+        y_offset: float,
+        num_choices: int = 10,
+    ) -> None:
         logger.debug(parse_class_init(locals()))
         assert len(folders) == 2, (
-            f"Warp to landmarks is only compatible with 2 inputs. Got {len(folders)}")
+            f"Warp to landmarks is only compatible with 2 inputs. Got {len(folders)}"
+        )
         self._folders = folders
         self._size = size
         self._centering: CenteringType = centering
@@ -126,7 +138,9 @@ class LandmarkMatcher:
         self._y_offset = y_offset
         self._num_choices = num_choices
 
-        self._padding = round(size * (EXTRACT_RATIOS[centering] + coverage - 1) / (2 * coverage))
+        self._padding = round(
+            size * (EXTRACT_RATIOS[centering] + coverage - 1) / (2 * coverage)
+        )
         self._scale = self._size - (2 * self._padding)
         self._landmarks = self._load_landmarks()
 
@@ -137,14 +151,25 @@ class LandmarkMatcher:
 
     def __repr__(self) -> str:
         """Pretty print for logging"""
-        params = {f"{k}"[1:]: v for k, v in self.__dict__.items()
-                  if k in ("_folders", "_size", "_centering", "_coverage", "_y_offset",
-                           "_num_choices")}
+        params = {
+            f"{k}"[1:]: v
+            for k, v in self.__dict__.items()
+            if k
+            in (
+                "_folders",
+                "_size",
+                "_centering",
+                "_coverage",
+                "_y_offset",
+                "_num_choices",
+            )
+        }
         s_params = ", ".join(f"{k}={repr(v)}" for k, v in params.items())
         return f"{self.__class__.__name__}({s_params})"
 
-    def _landmarks_from_header(self, meta: dict[str, T.Any], filename: str
-                               ) -> npt.NDArray[np.float32]:
+    def _landmarks_from_header(
+        self, meta: dict[str, T.Any], filename: str
+    ) -> npt.NDArray[np.float32]:
         """Extract the landmarks from the PNG metadata.
 
         Returns
@@ -164,8 +189,10 @@ class LandmarkMatcher:
 
         retval = np.array(meta["itxt"]["alignments"]["landmarks_xy"], dtype=np.float32)
         if LandmarkType.from_shape(retval.shape) != LandmarkType.LM_2D_68:
-            raise FaceswapError("68 Point facial Landmarks are required for Warp-to-"
-                                f"landmarks. The face that failed was: '{filename}'")
+            raise FaceswapError(
+                "68 Point facial Landmarks are required for Warp-to-"
+                f"landmarks. The face that failed was: '{filename}'"
+            )
         return retval
 
     def _align_points(self, points: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
@@ -191,7 +218,9 @@ class LandmarkMatcher:
         norm_lms += self._padding
         return norm_lms
 
-    def _load_landmarks(self) -> tuple[npt.NDArray[np.float32], npt.NDArray[np.float32]]:
+    def _load_landmarks(
+        self,
+    ) -> tuple[npt.NDArray[np.float32], npt.NDArray[np.float32]]:
         """For each input folder load and align the landmarks for each face
 
         Returns
@@ -206,17 +235,26 @@ class LandmarkMatcher:
             side = get_label(i, len(self._folders))
             file_list = get_sorted_images(folder)
             lms = np.empty((len(file_list), 68, 2), dtype=np.float32)
-            for filename, meta in tqdm(read_image_meta_batch(file_list),
-                                       desc=f"WTL: Caching Landmarks ({side.upper()})",
-                                       total=len(file_list),
-                                       leave=False):
-                lms[file_list.index(filename)] = self._landmarks_from_header(meta, filename)
+            for filename, meta in tqdm(
+                read_image_meta_batch(file_list),
+                desc=f"WTL: Caching Landmarks ({side.upper()})",
+                total=len(file_list),
+                leave=False,
+            ):
+                lms[file_list.index(filename)] = self._landmarks_from_header(
+                    meta, filename
+                )
             landmarks.append(self._align_points(lms))
-            logger.debug("[LandmarkMatcher] Got landmarks for side %s: %s",
-                         side, format_array(landmarks[-1]))
+            logger.debug(
+                "[LandmarkMatcher] Got landmarks for side %s: %s",
+                side,
+                format_array(landmarks[-1]),
+            )
         return landmarks[0], landmarks[1]
 
-    def _get_closest_indices(self) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]:
+    def _get_closest_indices(
+        self,
+    ) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]:
         """Obtain the closest x number of landmarks from the opposite side
 
         Returns
@@ -231,18 +269,27 @@ class LandmarkMatcher:
         lms_a = self._landmarks[0].reshape(a_count, -1)
         lms_b = self._landmarks[1].reshape(b_count, -1)
 
-        a_sq = (lms_a ** 2).sum(axis=1, keepdims=True)
-        b_sq = (lms_b ** 2).sum(axis=1, keepdims=True)
+        a_sq = (lms_a**2).sum(axis=1, keepdims=True)
+        b_sq = (lms_b**2).sum(axis=1, keepdims=True)
         dist2 = a_sq + b_sq.T - 2.0 * (lms_a @ lms_b.T)
         np.clip(dist2, 0, None, out=dist2)
-        matches_a = np.argpartition(dist2, self._num_choices, axis=1)[:, :self._num_choices]
-        matches_b = np.argpartition(dist2.T, self._num_choices, axis=1)[:, :self._num_choices]
+        matches_a = np.argpartition(dist2, self._num_choices, axis=1)[
+            :, : self._num_choices
+        ]
+        matches_b = np.argpartition(dist2.T, self._num_choices, axis=1)[
+            :, : self._num_choices
+        ]
 
-        logger.debug("[TrainLoader] Closest matches. A: %s, B: %s",
-                     format_array(matches_a), format_array(matches_b))
+        logger.debug(
+            "[TrainLoader] Closest matches. A: %s, B: %s",
+            format_array(matches_a),
+            format_array(matches_b),
+        )
         return matches_a, matches_b
 
-    def get_close_landmarks(self, indices: npt.NDArray[np.int64]) -> npt.NDArray[np.float32]:
+    def get_close_landmarks(
+        self, indices: npt.NDArray[np.int64]
+    ) -> npt.NDArray[np.float32]:
         """For the given image indices, obtain a randomly selected close match landmarks from the
         other side
 
@@ -261,14 +308,18 @@ class LandmarkMatcher:
             src_lms = self._landmarks[side_id][ind]
             dst_choices = self._closest_indices[side_id][ind]
             idx = np.random.randint(0, dst_choices.shape[1], size=dst_choices.shape[0])
-            dst_indices = np.take_along_axis(dst_choices, idx[:, None], axis=1).squeeze(1)
+            dst_indices = np.take_along_axis(dst_choices, idx[:, None], axis=1).squeeze(
+                1
+            )
             dst_lms = self._landmarks[1 - side_id][dst_indices]
             matches[side_id, :, 0] = src_lms
             matches[side_id, :, 1] = dst_lms
 
         retval = matches.reshape((-1, 2, 68, 2)).copy()
-        logger.trace("[LandmarkMatcher] matched_points: %s",  # type:ignore[attr-defined]
-                     format_array(retval))
+        logger.trace(
+            "[LandmarkMatcher] matched_points: %s",  # type:ignore[attr-defined]
+            format_array(retval),
+        )
         return retval
 
 
@@ -290,15 +341,18 @@ class Collate:  # pylint:disable=too-many-instance-attributes
         The landmark matching object for the (A and B) sides of the model if warp_to_landmarks is
         enabled otherwise ``None``
     """
+
     _mask_types = ("mask_face", "mask_eye", "mask_mouth")
     """The masks that are stacked to the end of the targets in the order they are stacked"""
 
-    def __init__(self,
-                 input_size: int,
-                 output_sizes: tuple[int, ...],
-                 color_order: T.Literal["bgr", "rgb"],
-                 config: TrainConfig,
-                 landmarks: LandmarkMatcher | None) -> None:
+    def __init__(
+        self,
+        input_size: int,
+        output_sizes: tuple[int, ...],
+        color_order: T.Literal["bgr", "rgb"],
+        config: TrainConfig,
+        landmarks: LandmarkMatcher | None,
+    ) -> None:
         logger.debug(parse_class_init(locals()))
         self._name = f"{self.__class__.__name__}"
         self._input_size = input_size
@@ -315,21 +369,26 @@ class Collate:  # pylint:disable=too-many-instance-attributes
         self._process_size = max(*output_sizes, input_size)
         self._resize_targets = any(x != self._process_size for x in self._output_sizes)
         self._resize_inputs = self._process_size != self._input_size
-        self._aug = ImageAugmentation(batch_size=self._batch_size * self._num_inputs,
-                                      processing_size=self._process_size)
+        self._aug = ImageAugmentation(
+            batch_size=self._batch_size * self._num_inputs,
+            processing_size=self._process_size,
+        )
 
     def __repr__(self) -> str:
         """Pretty print for logging"""
-        params = {f"{k}"[1:]: format_array(v) if isinstance(v, np.ndarray) else v
-                  for k, v in self.__dict__.items()
-                  if k in ("_input_size", "_output_sizes", "_color_order",
-                           "_config", "_landmarks")}
+        params = {
+            f"{k}"[1:]: format_array(v) if isinstance(v, np.ndarray) else v
+            for k, v in self.__dict__.items()
+            if k
+            in ("_input_size", "_output_sizes", "_color_order", "_config", "_landmarks")
+        }
         s_params = ", ".join(f"{k}={repr(v)}" for k, v in params.items())
         return f"{self.__class__.__name__}({s_params})"
 
-    def _create_targets(self, batch: npt.NDArray[np.uint8]
-                        ) -> tuple[list[torch.Tensor], BatchMeta]:
-        """ Compile target images, with masks, for the model output sizes.
+    def _create_targets(
+        self, batch: npt.NDArray[np.uint8]
+    ) -> tuple[list[torch.Tensor], BatchMeta]:
+        """Compile target images, with masks, for the model output sizes.
 
         Parameters
         ----------
@@ -348,38 +407,58 @@ class Collate:  # pylint:disable=too-many-instance-attributes
         meta
             Any additional Meta information relating to the batch required for training the model
         """
-        logger.trace("[%s] Compiling targets: batch shape: %s",  # type:ignore[attr-defined]
-                     self._name, batch.shape)
+        logger.trace(
+            "[%s] Compiling targets: batch shape: %s",  # type:ignore[attr-defined]
+            self._name,
+            batch.shape,
+        )
         if self._resize_targets:
-            reshaped = [to_float32(batch if batch.shape[1] == size else
-                                   np.array([
-                                       cv2.resize(image,
-                                                  (size, size),
-                                                  interpolation=cv2.INTER_AREA)
-                                       for image in batch
-                                      ])).reshape(self._num_inputs,
-                                                  self._batch_size,
-                                                  size,
-                                                  size,
-                                                  -1).swapaxes(0, 1)
-                        for size in self._output_sizes]
+            reshaped = [
+                to_float32(
+                    batch
+                    if batch.shape[1] == size
+                    else np.array(
+                        [
+                            cv2.resize(
+                                image, (size, size), interpolation=cv2.INTER_AREA
+                            )
+                            for image in batch
+                        ]
+                    )
+                )
+                .reshape(self._num_inputs, self._batch_size, size, size, -1)
+                .swapaxes(0, 1)
+                for size in self._output_sizes
+            ]
         else:
-            reshaped = [to_float32(batch).reshape(self._num_inputs,
-                                                  self._batch_size,
-                                                  *batch.shape[1:]).swapaxes(0, 1)
-                        for _ in self._output_sizes]
+            reshaped = [
+                to_float32(batch)
+                .reshape(self._num_inputs, self._batch_size, *batch.shape[1:])
+                .swapaxes(0, 1)
+                for _ in self._output_sizes
+            ]
 
         targets = [torch.from_numpy(out[..., :3]) for out in reshaped]
         masks = BatchMeta(
-            **{self._mask_types[idx]: [torch.from_numpy(out[..., 3 + idx][:, :, None, :, :])
-                                       for out in reshaped]
-               for idx in range(reshaped[0].shape[-1] - 3)})
-        logger.trace("[%s] Processed targets: %s, masks: %s",  # type:ignore[attr-defined]
-                     self._name, [t.shape for t in targets], masks)
+            **{
+                self._mask_types[idx]: [
+                    torch.from_numpy(out[..., 3 + idx][:, :, None, :, :])
+                    for out in reshaped
+                ]
+                for idx in range(reshaped[0].shape[-1] - 3)
+            }
+        )
+        logger.trace(
+            "[%s] Processed targets: %s, masks: %s",  # type:ignore[attr-defined]
+            self._name,
+            [t.shape for t in targets],
+            masks,
+        )
         return targets, masks
 
-    def _get_landmarks_pairs(self, indices: npt.NDArray[np.int64]
-                             ) -> npt.NDArray[np.float32] | None:
+    def _get_landmarks_pairs(
+        self, indices: npt.NDArray[np.int64]
+    ) -> npt.NDArray[np.float32] | None:
         """Get a pair of matching source landmarks and closely selected destination landmarks
         for Warp to Landmarks for each of the inputs
 
@@ -399,8 +478,9 @@ class Collate:  # pylint:disable=too-many-instance-attributes
         assert indices.shape[0] == 2, "Only 2 inputs allowed for WTL"
         return self._landmarks.get_close_landmarks(indices)
 
-    def __call__(self, data: list[tuple[tuple[npt.NDArray[np.uint8], int], ...]]
-                 ) -> tuple[list[torch.Tensor], list[torch.Tensor], BatchMeta]:
+    def __call__(
+        self, data: list[tuple[tuple[npt.NDArray[np.uint8], int], ...]]
+    ) -> tuple[list[torch.Tensor], list[torch.Tensor], BatchMeta]:
         """Prepare the loaded samples for feeding the model, creating targets and applying
         augmentation
 
@@ -444,18 +524,28 @@ class Collate:  # pylint:disable=too-many-instance-attributes
 
         feed = batch[..., :3]
         if self._config.warp and landmarks is not None and self._landmarks is not None:
-            feed = self._aug.warp(feed,
-                                  to_landmarks=True,
-                                  batch_src_points=landmarks[:, 0],
-                                  batch_dst_points=landmarks[:, 1])
+            feed = self._aug.warp(
+                feed,
+                to_landmarks=True,
+                batch_src_points=landmarks[:, 0],
+                batch_dst_points=landmarks[:, 1],
+            )
         elif self._config.warp:
             feed = self._aug.warp(feed, to_landmarks=False)
 
         if self._resize_inputs:
-            feed = to_float32(np.array([cv2.resize(image,
-                                                   (self._input_size, self._input_size),
-                                                   interpolation=cv2.INTER_AREA)
-                                        for image in feed]))
+            feed = to_float32(
+                np.array(
+                    [
+                        cv2.resize(
+                            image,
+                            (self._input_size, self._input_size),
+                            interpolation=cv2.INTER_AREA,
+                        )
+                        for image in feed
+                    ]
+                )
+            )
         else:
             feed = to_float32(feed)
 

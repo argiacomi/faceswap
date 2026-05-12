@@ -1,4 +1,5 @@
 """Loads images with metadata from disk for the sort tool"""
+
 from __future__ import annotations
 
 import logging
@@ -10,7 +11,12 @@ import numpy as np
 from tqdm import tqdm
 
 from lib.align.objects import PNGHeader
-from lib.image import FacesLoader, ImagesLoader, read_image_meta_batch, update_existing_metadata
+from lib.image import (
+    FacesLoader,
+    ImagesLoader,
+    read_image_meta_batch,
+    update_existing_metadata,
+)
 from lib.utils import get_module_objects
 
 if T.TYPE_CHECKING:
@@ -19,12 +25,12 @@ if T.TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-ImgMetaType: T.TypeAlias = Generator[tuple[str,
-                                           np.ndarray | None,
-                                           T.Union["PNGAlignments", None]], None, None]
+ImgMetaType: T.TypeAlias = Generator[
+    tuple[str, np.ndarray | None, T.Union["PNGAlignments", None]], None, None
+]
 
 
-class InfoLoader():
+class InfoLoader:
     """Loads aligned faces and/or face metadata
 
     Parameters
@@ -36,15 +42,22 @@ class InfoLoader():
         filename, "meta" just loads the image alignment data with the filename. "all" loads
         the image and the alignment data with the filename
     """
-    def __init__(self,
-                 input_dir: str,
-                 info_type: T.Literal["face", "meta", "all"]) -> None:
-        logger.debug("Initializing: %s (input_dir: %s, info_type: %s)",
-                     self.__class__.__name__, input_dir, info_type)
+
+    def __init__(
+        self, input_dir: str, info_type: T.Literal["face", "meta", "all"]
+    ) -> None:
+        logger.debug(
+            "Initializing: %s (input_dir: %s, info_type: %s)",
+            self.__class__.__name__,
+            input_dir,
+            info_type,
+        )
         self._info_type = info_type
         self._iterator = None
         self._description = "Reading image statistics..."
-        self._loader = ImagesLoader(input_dir) if info_type == "face" else FacesLoader(input_dir)
+        self._loader = (
+            ImagesLoader(input_dir) if info_type == "face" else FacesLoader(input_dir)
+        )
         self.cached_source_data: dict[str, PNGSource] = {}
         """The source data read from the PNG header for each processed face"""
         if self._loader.count == 0:
@@ -55,7 +68,7 @@ class InfoLoader():
 
     @property
     def filelist_count(self) -> int:
-        """The number of files to be processed """
+        """The number of files to be processed"""
         return len(self._loader.file_list)
 
     def _get_iterator(self) -> ImgMetaType:
@@ -89,9 +102,9 @@ class InfoLoader():
         iterator = self._get_iterator()
         return iterator
 
-    def _get_alignments(self,
-                        filename: str,
-                        metadata: dict[str, T.Any] | PNGHeader) -> PNGAlignments | None:
+    def _get_alignments(
+        self, filename: str, metadata: dict[str, T.Any] | PNGHeader
+    ) -> PNGAlignments | None:
         """Obtain the alignments from a PNG Header.
 
         The other image metadata is cached locally in case a sort method needs to write back to the
@@ -130,10 +143,12 @@ class InfoLoader():
         alignments
             The alignment data for the given face or ``None`` if no alignments found
         """
-        for filename, metadata in tqdm(read_image_meta_batch(self._loader.file_list),
-                                       total=self._loader.count,
-                                       desc=self._description,
-                                       leave=False):
+        for filename, metadata in tqdm(
+            read_image_meta_batch(self._loader.file_list),
+            total=self._loader.count,
+            desc=self._description,
+            leave=False,
+        ):
             alignments = self._get_alignments(filename, metadata.get("itxt", {}))
             yield filename, None, alignments
 
@@ -149,10 +164,12 @@ class InfoLoader():
         alignments
             The alignment data for the given face or ``None`` if no alignments found
         """
-        for item in tqdm(self._loader.load(),
-                         desc=self._description,
-                         total=self._loader.count,
-                         leave=False):
+        for item in tqdm(
+            self._loader.load(),
+            desc=self._description,
+            total=self._loader.count,
+            leave=False,
+        ):
             assert len(item) == 3
             filename, image, metadata = item
             alignments = self._get_alignments(filename, metadata)
@@ -170,10 +187,12 @@ class InfoLoader():
         alignments
             Alignments will always be ``None`` with the image data reader
         """
-        for item in tqdm(self._loader.load(),
-                         desc=self._description,
-                         total=self._loader.count,
-                         leave=False):
+        for item in tqdm(
+            self._loader.load(),
+            desc=self._description,
+            total=self._loader.count,
+            leave=False,
+        ):
             assert len(item) == 2
             filename, image = item
             yield filename, image, None
@@ -196,8 +215,12 @@ class InfoLoader():
         if vers < 2.2:
             return
 
-        self.cached_source_data[filename].alignments_version = 2.3 if vers == 2.2 else vers
-        header = PNGHeader(alignments=alignments, source=self.cached_source_data[filename])
+        self.cached_source_data[filename].alignments_version = (
+            2.3 if vers == 2.2 else vers
+        )
+        header = PNGHeader(
+            alignments=alignments, source=self.cached_source_data[filename]
+        )
         update_existing_metadata(filename, header)
 
 

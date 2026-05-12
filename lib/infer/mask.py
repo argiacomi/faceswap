@@ -1,5 +1,6 @@
 #! /usr/env/bin/python3
-"""Handles face masking plugins and runners """
+"""Handles face masking plugins and runners"""
+
 from __future__ import annotations
 
 import logging
@@ -34,20 +35,23 @@ class Mask(ExtractHandlerFace):
     config_file
         Full path to a custom config file to load. ``None`` for default config
     """
-    def __init__(self,
-                 plugin: str,
-                 compile_model: bool = False,
-                 config_file: str | None = None) -> None:
+
+    def __init__(
+        self, plugin: str, compile_model: bool = False, config_file: str | None = None
+    ) -> None:
         logger.debug(parse_class_init(locals()))
         self._storage_size = cfg.mask_storage_size()
         super().__init__(plugin, compile_model=compile_model, config_file=config_file)
         if 0 < self._storage_size < 64:
-            logger.warning("Updating mask storage size from %s to 64", self._storage_size)
+            logger.warning(
+                "Updating mask storage size from %s to 64", self._storage_size
+            )
             self._storage_size = 64
 
     # Pre-processing
-    def _pre_process_aligned(self, batch: ExtractBatch, matrices: npt.NDArray[np.float32]
-                             ) -> npt.NDArray[np.uint8]:
+    def _pre_process_aligned(
+        self, batch: ExtractBatch, matrices: npt.NDArray[np.float32]
+    ) -> npt.NDArray[np.uint8]:
         """Pre-process the data when the input are aligned faces. Sub-crops the feed images from
         the aligned images and adds the ROI mask to the alpha channel
 
@@ -63,15 +67,19 @@ class Mask(ExtractHandlerFace):
         The prepared images with ROI mask in the alpha channel
         """
         assert batch.frame_sizes is not None, (
-            "[Mask] Frame sizes must be provided when input is aligned faces")
+            "[Mask] Frame sizes must be provided when input is aligned faces"
+        )
 
         dtype = batch.images[0].dtype
-        retval = np.empty((len(batch.bboxes), self._input_size, self._input_size, 4), dtype=dtype)
-        retval[..., :3] = self._get_faces_aligned(batch.images,
-                                                  batch.frame_ids,
-                                                  batch.aligned.offsets_head,
-                                                  getattr(batch.aligned,
-                                                          self._aligned_offsets_name))
+        retval = np.empty(
+            (len(batch.bboxes), self._input_size, self._input_size, 4), dtype=dtype
+        )
+        retval[..., :3] = self._get_faces_aligned(
+            batch.images,
+            batch.frame_ids,
+            batch.aligned.offsets_head,
+            getattr(batch.aligned, self._aligned_offsets_name),
+        )
 
         mats = matrices[:, :2]
         linear = mats[:, :, 0]
@@ -99,7 +107,9 @@ class Mask(ExtractHandlerFace):
         if batch.is_aligned:
             data = self._pre_process_aligned(batch, matrices)
         else:
-            data = self._get_faces(batch.images, batch.frame_ids, matrices, with_alpha=True)
+            data = self._get_faces(
+                batch.images, batch.frame_ids, matrices, with_alpha=True
+            )
 
         data = self._format_images(data)
         batch.matrices = data[..., -1]  # type:ignore[assignment]  # Hacky re-use for ROI
@@ -108,8 +118,9 @@ class Mask(ExtractHandlerFace):
 
     # Post-processing
     @classmethod
-    def _crop_out_of_bounds(cls, masks: npt.NDArray[np.float32], roi_masks: npt.NDArray[np.float32]
-                            ) -> None:
+    def _crop_out_of_bounds(
+        cls, masks: npt.NDArray[np.float32], roi_masks: npt.NDArray[np.float32]
+    ) -> None:
         """Un-mask any area of the predicted mask that falls outside of the original frame.
 
         Parameters
@@ -121,7 +132,7 @@ class Mask(ExtractHandlerFace):
         """
         if np.all(roi_masks):
             return  # All of the masks are within the frame
-        needs_crop = np.any(roi_masks < 1., axis=(1, 2))
+        needs_crop = np.any(roi_masks < 1.0, axis=(1, 2))
         roi_masks = roi_masks[..., None] if masks.ndim == 4 else roi_masks
         masks[needs_crop] *= roi_masks[needs_crop]
 
@@ -143,10 +154,13 @@ class Mask(ExtractHandlerFace):
 
         if self._storage_size == 0:
             self._storage_size = masks.shape[1]
-            logger.debug("[%s.post_process] Updated storage size to %s",
-                         self.plugin.name, self._storage_size)
+            logger.debug(
+                "[%s.post_process] Updated storage size to %s",
+                self.plugin.name,
+                self._storage_size,
+            )
 
-        batch.masks[self.storage_name].masks = (masks * 255.).astype(np.uint8)
+        batch.masks[self.storage_name].masks = (masks * 255.0).astype(np.uint8)
         batch.masks[self.storage_name].storage_size = self._storage_size
 
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Learning Rate Finder for faceswap.py."""
+
 from __future__ import annotations
 import logging
 import os
@@ -27,6 +28,7 @@ logger = logging.getLogger(__name__)
 
 class LRStrength(Enum):
     """Enum for how aggressively to set the optimal learning rate"""
+
     DEFAULT = 10
     AGGRESSIVE = 5
     EXTREME = 2.5
@@ -44,17 +46,20 @@ class LearningRateFinder:  # pylint:disable=too-many-instance-attributes
     beta
         Amount to smooth loss by, for graphing purposes
     """
-    def __init__(self,  # pylint:disable=too-many-positional-arguments
-                 trainer: train.Trainer,
-                 stop_factor: int = 4,
-                 beta: float = 0.98) -> None:
+
+    def __init__(
+        self,  # pylint:disable=too-many-positional-arguments
+        trainer: train.Trainer,
+        stop_factor: int = 4,
+        beta: float = 0.98,
+    ) -> None:
         logger.debug(parse_class_init(locals()))
         self._iterations = cfg.lr_finder_iterations()
         self._save_graph = cfg.lr_finder_mode() in ("graph_and_set", "graph_and_exit")
         self._strength = LRStrength[cfg.lr_finder_strength().upper()].value
 
         self._start_lr = 1e-10
-        end_lr = 1e+1
+        end_lr = 1e1
 
         self._trainer = trainer
 
@@ -63,11 +68,14 @@ class LearningRateFinder:  # pylint:disable=too-many-instance-attributes
 
         self._stop_factor = stop_factor
         self._beta = beta
-        self._lr_multiplier: float = (end_lr / self._start_lr) ** (1.0 / self._iterations)
+        self._lr_multiplier: float = (end_lr / self._start_lr) ** (
+            1.0 / self._iterations
+        )
 
         self._metrics: dict[T.Literal["learning_rates", "losses"], list[float]] = {
             "learning_rates": [],
-            "losses": []}
+            "losses": [],
+        }
         self._loss: dict[T.Literal["avg", "best"], float] = {"avg": 0.0, "best": 1e9}
 
         logger.debug("Initialized %s", self.__class__.__name__)
@@ -86,7 +94,7 @@ class LearningRateFinder:  # pylint:disable=too-many-instance-attributes
         self._metrics["learning_rates"].append(learning_rate)
 
         self._loss["avg"] = (self._beta * self._loss["avg"]) + ((1 - self._beta) * loss)
-        smoothed = self._loss["avg"] / (1 - (self._beta ** iteration))
+        smoothed = self._loss["avg"] / (1 - (self._beta**iteration))
         self._metrics["losses"].append(smoothed)
 
         stop_loss = self._stop_factor * self._loss["best"]
@@ -110,7 +118,7 @@ class LearningRateFinder:  # pylint:disable=too-many-instance-attributes
         progress_bar
             The learning rate finder progress bar to update
         """
-        current = self._metrics['learning_rates'][-1]
+        current = self._metrics["learning_rates"][-1]
         best_idx = self._metrics["losses"].index(self._loss["best"])
         best = self._metrics["learning_rates"][best_idx] / self._strength
         progress_bar.set_description(f"Current: {current:.1e}  Best: {best:.1e}")
@@ -119,9 +127,11 @@ class LearningRateFinder:  # pylint:disable=too-many-instance-attributes
         """Train the model for the given number of iterations to find the optimal
         learning rate and show progress"""
         logger.info("Finding optimal learning rate...")
-        p_bar = tqdm(range(1, self._iterations + 1),
-                     desc="Current: N/A      Best: N/A    ",
-                     leave=False)
+        p_bar = tqdm(
+            range(1, self._iterations + 1),
+            desc="Current: N/A      Best: N/A    ",
+            leave=False,
+        )
         for idx in p_bar:
             loss = self._trainer.train_one_batch()
             total_loss = T.cast("torch.Tensor", sum(x.total for x in loss)).item()
@@ -132,7 +142,9 @@ class LearningRateFinder:  # pylint:disable=too-many-instance-attributes
             self._on_batch_end(idx, total_loss)
             self._update_description(p_bar)
 
-    def _rebuild_optimizer(self, optimizer: optimizers.Optimizer) -> optimizers.Optimizer:
+    def _rebuild_optimizer(
+        self, optimizer: optimizers.Optimizer
+    ) -> optimizers.Optimizer:
         """Pass through nested Optimizers (eg LossScaleOptimizer) and create new nested
         optimizers based on their original config
 
@@ -143,10 +155,16 @@ class LearningRateFinder:  # pylint:disable=too-many-instance-attributes
         logger.debug("Processing optimizer: '%s'", optimizer.name)
         config = optimizer.get_config()
         if hasattr(optimizer, "inner_optimizer"):
-            config["inner_optimizer"] = self._rebuild_optimizer(optimizer.inner_optimizer)
+            config["inner_optimizer"] = self._rebuild_optimizer(
+                optimizer.inner_optimizer
+            )
         retval = optimizer.__class__(**config)
-        logger.debug("Created optimizer '%s': (old: %s, new: %s)",
-                     optimizer.name, optimizer, retval)
+        logger.debug(
+            "Created optimizer '%s': (old: %s, new: %s)",
+            optimizer.name,
+            optimizer,
+            retval,
+        )
         return retval
 
     def _reset_model(self, original_lr: float, new_lr: float) -> None:
@@ -174,11 +192,17 @@ class LearningRateFinder:  # pylint:disable=too-many-instance-attributes
         logger.info("Loading initial weights")
         self._model.model.load_weights(self._model.io.filename)
 
-        self._model.model.compile(optimizer=optimizer,
-                                  loss=self._model.model.loss,
-                                  metrics=self._model.model.loss)
+        self._model.model.compile(
+            optimizer=optimizer,
+            loss=self._model.model.loss,
+            metrics=self._model.model.loss,
+        )
 
-        logger.info("Updating Learning Rate from %s to %s", f"{original_lr:.1e}", f"{new_lr:.1e}")
+        logger.info(
+            "Updating Learning Rate from %s to %s",
+            f"{original_lr:.1e}",
+            f"{new_lr:.1e}",
+        )
         self._model.model.optimizer.learning_rate.assign(new_lr)
         self._optimizer = self._model.model.optimizer
 
@@ -201,8 +225,10 @@ class LearningRateFinder:  # pylint:disable=too-many-instance-attributes
         best_idx = self._metrics["losses"].index(self._loss["best"])
         new_lr = self._metrics["learning_rates"][best_idx] / self._strength
         if new_lr < 1e-9:
-            logger.error("The optimal learning rate could not be found. This is most likely "
-                         "because you did not run the finder for enough iterations.")
+            logger.error(
+                "The optimal learning rate could not be found. This is most likely "
+                "because you did not run the finder for enough iterations."
+            )
             shutil.rmtree(self._model.io.model_dir)
             return False
 
@@ -232,9 +258,9 @@ class LearningRateFinder:  # pylint:disable=too-many-instance-attributes
         for val, color in zip(LRStrength, ("g", "y", "r")):
             l_r = best_lr / val.value
             idx = lrs.index(next(r for r in lrs if r >= l_r))
-            plt.plot(l_r, losses[idx],
-                     f"{color}o",
-                     label=f"{val.name.title()}: {l_r:.1e}")
+            plt.plot(
+                l_r, losses[idx], f"{color}o", label=f"{val.name.title()}: {l_r:.1e}"
+            )
 
         plt.xscale("log")
         plt.xlabel("Learning Rate (Log Scale)")
@@ -243,7 +269,9 @@ class LearningRateFinder:  # pylint:disable=too-many-instance-attributes
         plt.legend()
 
         now = datetime.now().strftime("%Y-%m-%d_%H.%M.%S")
-        output = os.path.join(self._model.io.model_dir, f"learning_rate_finder_{now}.png")
+        output = os.path.join(
+            self._model.io.model_dir, f"learning_rate_finder_{now}.png"
+        )
         logger.info("Saving Learning Rate Finder graph to: '%s'", output)
         plt.savefig(output)
 

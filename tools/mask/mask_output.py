@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Output processing for faceswap's mask tool"""
+
 from __future__ import annotations
 
 import logging
@@ -39,11 +40,20 @@ class Output:
     file_list
         Full file list for the loader. Used for extracting alignments from faces
     """
-    def __init__(self, arguments: Namespace,
-                 alignments: align.alignments.Alignments | None,
-                 file_list: list[str]) -> None:
-        logger.debug("Initializing %s (arguments: %s, alignments: %s, file_list: %s)",
-                     self.__class__.__name__, arguments, alignments, len(file_list))
+
+    def __init__(
+        self,
+        arguments: Namespace,
+        alignments: align.alignments.Alignments | None,
+        file_list: list[str],
+    ) -> None:
+        logger.debug(
+            "Initializing %s (arguments: %s, alignments: %s, file_list: %s)",
+            self.__class__.__name__,
+            arguments,
+            alignments,
+            len(file_list),
+        )
 
         self._blur_kernel: int = arguments.blur_kernel
         self._threshold: int = arguments.threshold
@@ -79,8 +89,7 @@ class Output:
         The full path to where masks should be saved
         """
         out_type = "frame" if self._full_frame else "face"
-        retval = os.path.join(output,
-                              f"{self._mask_type}_{out_type}_{self._type}")
+        retval = os.path.join(output, f"{self._mask_type}_{out_type}_{self._type}")
         logger.info("Saving masks to '%s'", retval)
         return retval
 
@@ -100,7 +109,9 @@ class Output:
         """
         if output is None or not output:
             if processing == "output":
-                logger.error("Processing set as 'output' but no output folder provided.")
+                logger.error(
+                    "Processing set as 'output' but no output folder provided."
+                )
                 sys.exit(0)
             logger.debug("No output provided. Not creating saver")
             return None
@@ -109,9 +120,9 @@ class Output:
         logger.debug(retval)
         return retval
 
-    def _get_alignments(self,
-                        alignments: align.alignments.Alignments | None,
-                        file_list: list[str]) -> align.alignments.Alignments | None:
+    def _get_alignments(
+        self, alignments: align.alignments.Alignments | None, file_list: list[str]
+    ) -> align.alignments.Alignments | None:
         """Obtain the alignments file. If input is faces and full frame output is requested then
         the file needs to be generated from the input faces, if not provided
 
@@ -131,10 +142,12 @@ class Output:
         logger.debug("Generating alignments from faces")
 
         data = T.cast(dict[str, AlignmentsEntry], {})
-        for _, meta in tqdm(read_image_meta_batch(file_list),
-                            desc="Reading alignments from faces",
-                            total=len(file_list),
-                            leave=False):
+        for _, meta in tqdm(
+            read_image_meta_batch(file_list),
+            desc="Reading alignments from faces",
+            total=len(file_list),
+            leave=False,
+        ):
             fname = meta["itxt"]["source"]["source_filename"]
             aln = meta["itxt"]["alignments"]
             data.setdefault(fname, AlignmentsEntry()).faces.append(aln)
@@ -143,8 +156,9 @@ class Output:
         retval.update_from_dict(data)
         return retval
 
-    def _get_background_frame(self, detected_faces: list[DetectedFace], frame_dims: tuple[int, int]
-                              ) -> np.ndarray:
+    def _get_background_frame(
+        self, detected_faces: list[DetectedFace], frame_dims: tuple[int, int]
+    ) -> np.ndarray:
         """Obtain the background image when final output is in full frame format. There will only
         ever be one background, even when there are multiple faces
 
@@ -173,25 +187,32 @@ class Output:
         retval = np.zeros((*frame_dims, 3), dtype="uint8")
         for detected_face in detected_faces:
             assert detected_face.image is not None
-            face = AlignedFace(detected_face.landmarks_xy,
-                               image=detected_face.image,
-                               centering="head",
-                               size=detected_face.image.shape[0],
-                               is_aligned=True)
-            border = cv2.BORDER_TRANSPARENT if len(detected_faces) > 1 else cv2.BORDER_CONSTANT
+            face = AlignedFace(
+                detected_face.landmarks_xy,
+                image=detected_face.image,
+                centering="head",
+                size=detected_face.image.shape[0],
+                is_aligned=True,
+            )
+            border = (
+                cv2.BORDER_TRANSPARENT
+                if len(detected_faces) > 1
+                else cv2.BORDER_CONSTANT
+            )
             assert face.face is not None
-            cv2.warpAffine(face.face,
-                           face.adjusted_matrix,
-                           tuple(reversed(frame_dims)),
-                           retval,
-                           flags=cv2.WARP_INVERSE_MAP | face.interpolators[1],
-                           borderMode=border)
+            cv2.warpAffine(
+                face.face,
+                face.adjusted_matrix,
+                tuple(reversed(frame_dims)),
+                retval,
+                flags=cv2.WARP_INVERSE_MAP | face.interpolators[1],
+                borderMode=border,
+            )
         return retval
 
-    def _get_background_face(self,
-                             detected_face: DetectedFace,
-                             mask_centering: CenteringType,
-                             mask_size: int) -> np.ndarray:
+    def _get_background_face(
+        self, detected_face: DetectedFace, mask_centering: CenteringType, mask_size: int
+    ) -> np.ndarray:
         """Obtain the background images when the output is faces
 
         The output image will depend on the requested output type and whether the input is faces
@@ -216,26 +237,32 @@ class Output:
         assert detected_face.image is not None
 
         if self._input_is_faces:
-            retval = AlignedFace(detected_face.landmarks_xy,
-                                 image=detected_face.image,
-                                 centering=mask_centering,
-                                 size=mask_size,
-                                 is_aligned=True).face
+            retval = AlignedFace(
+                detected_face.landmarks_xy,
+                image=detected_face.image,
+                centering=mask_centering,
+                size=mask_size,
+                is_aligned=True,
+            ).face
         else:
-            detected_face.load_aligned(detected_face.image,
-                                       size=mask_size,
-                                       centering=mask_centering,
-                                       force=True)
+            detected_face.load_aligned(
+                detected_face.image,
+                size=mask_size,
+                centering=mask_centering,
+                force=True,
+            )
             retval = detected_face.aligned.face
 
         assert retval is not None
         return retval
 
-    def _get_background(self,
-                        detected_faces: list[DetectedFace],
-                        frame_dims: tuple[int, int],
-                        mask_centering: CenteringType,
-                        mask_size: int) -> np.ndarray:
+    def _get_background(
+        self,
+        detected_faces: list[DetectedFace],
+        frame_dims: tuple[int, int],
+        mask_centering: CenteringType,
+        mask_size: int,
+    ) -> np.ndarray:
         """Obtain the background image that the final output will be placed on
 
         Parameters
@@ -256,17 +283,26 @@ class Output:
         if self._full_frame:
             retval = self._get_background_frame(detected_faces, frame_dims)
         else:
-            assert len(detected_faces) == 1  # If outputting faces, we should only receive 1 face
-            retval = self._get_background_face(detected_faces[0], mask_centering, mask_size)
+            assert (
+                len(detected_faces) == 1
+            )  # If outputting faces, we should only receive 1 face
+            retval = self._get_background_face(
+                detected_faces[0], mask_centering, mask_size
+            )
 
-        logger.trace("Background image (size: %s, dtype: %s)",  # type:ignore[attr-defined]
-                     retval.shape, retval.dtype)
+        logger.trace(
+            "Background image (size: %s, dtype: %s)",  # type:ignore[attr-defined]
+            retval.shape,
+            retval.dtype,
+        )
         return retval
 
-    def _get_mask(self,
-                  detected_faces: list[DetectedFace],
-                  mask_type: str,
-                  mask_dims: tuple[int, int]) -> np.ndarray:
+    def _get_mask(
+        self,
+        detected_faces: list[DetectedFace],
+        mask_type: str,
+        mask_dims: tuple[int, int],
+    ) -> np.ndarray:
         """Generate the mask to be applied to the final output frame
 
         Parameters
@@ -285,18 +321,24 @@ class Output:
         retval = np.zeros(mask_dims, dtype="uint8")
         for face in detected_faces:
             mask_object = face.mask[mask_type]
-            mask_object.set_blur_and_threshold(blur_kernel=self._blur_kernel,
-                                               threshold=self._threshold)
+            mask_object.set_blur_and_threshold(
+                blur_kernel=self._blur_kernel, threshold=self._threshold
+            )
             if self._full_frame:
                 mask = mask_object.get_full_frame_mask(*reversed(mask_dims))
             else:
                 mask = mask_object.mask[..., 0]
             np.maximum(retval, mask, out=retval)
-        logger.trace("Final mask (shape: %s, dtype: %s)",  # type:ignore[attr-defined]
-                     retval.shape, retval.dtype)
+        logger.trace(
+            "Final mask (shape: %s, dtype: %s)",  # type:ignore[attr-defined]
+            retval.shape,
+            retval.dtype,
+        )
         return retval
 
-    def _build_output_image(self, background: np.ndarray, mask: np.ndarray) -> np.ndarray:
+    def _build_output_image(
+        self, background: np.ndarray, mask: np.ndarray
+    ) -> np.ndarray:
         """Collate the mask and images for the final output image, depending on selected output
         type
 
@@ -319,7 +361,9 @@ class Output:
             return np.concatenate([background, mask], axis=-1)
 
         height, width = background.shape[:2]
-        masked = (background.astype("float32") * mask.astype("float32") / 255.).astype("uint8")
+        masked = (background.astype("float32") * mask.astype("float32") / 255.0).astype(
+            "uint8"
+        )
         mask = np.tile(mask, 3)
         for img in (background, masked, mask):
             cv2.rectangle(img, (0, 0), (width - 1, height - 1), (255, 255, 255), 1)
@@ -328,10 +372,12 @@ class Output:
 
         return retval
 
-    def _create_image(self,
-                      detected_faces: list[DetectedFace],
-                      mask_type: str,
-                      frame_dims: tuple[int, int] | None) -> np.ndarray:
+    def _create_image(
+        self,
+        detected_faces: list[DetectedFace],
+        mask_type: str,
+        frame_dims: tuple[int, int] | None,
+    ) -> np.ndarray:
         """Create a mask preview image for saving out to disk
 
         Parameters
@@ -351,27 +397,35 @@ class Output:
           - The masked face
         """
         assert detected_faces[0].image is not None
-        dims = T.cast(tuple[int, int],
-                      frame_dims if self._input_is_faces else detected_faces[0].image.shape[:2])
+        dims = T.cast(
+            tuple[int, int],
+            frame_dims if self._input_is_faces else detected_faces[0].image.shape[:2],
+        )
         assert dims is not None and len(dims) == 2
 
         mask_centering = detected_faces[0].mask[mask_type].stored_centering
         mask_size = detected_faces[0].mask[mask_type].stored_size
 
-        background = self._get_background(detected_faces, dims, mask_centering, mask_size)
-        mask = self._get_mask(detected_faces,
-                              mask_type,
-                              dims if self._full_frame else (mask_size, mask_size))
+        background = self._get_background(
+            detected_faces, dims, mask_centering, mask_size
+        )
+        mask = self._get_mask(
+            detected_faces,
+            mask_type,
+            dims if self._full_frame else (mask_size, mask_size),
+        )
         retval = self._build_output_image(background, mask)
 
-        logger.trace("Output image (shape: %s, dtype: %s)",  # type:ignore[attr-defined]
-                     retval.shape, retval.dtype)
+        logger.trace(
+            "Output image (shape: %s, dtype: %s)",  # type:ignore[attr-defined]
+            retval.shape,
+            retval.dtype,
+        )
         return retval
 
-    def _handle_cache(self,
-                      frame: str,
-                      idx: int,
-                      detected_face: DetectedFace) -> list[tuple[int, DetectedFace]]:
+    def _handle_cache(
+        self, frame: str, idx: int, detected_face: DetectedFace
+    ) -> list[tuple[int, DetectedFace]]:
         """For full frame output, cache any faces until all detected faces have been seen. For
         face output, just return the detected_face object inside a list
 
@@ -406,9 +460,9 @@ class Output:
         logger.trace("Processing '%s' from cache: %s", frame, retval)  # type:ignore[attr-defined]
         return retval
 
-    def _get_mask_types(self,
-                        frame: str,
-                        detected_faces: list[tuple[int, DetectedFace]]) -> list[str]:
+    def _get_mask_types(
+        self, frame: str, detected_faces: list[tuple[int, DetectedFace]]
+    ) -> list[str]:
         """Get the mask type names for the select mask type. Remove any detected faces where
         the selected mask does not exist
 
@@ -436,10 +490,15 @@ class Output:
         final_masks = set()
         for idx in reversed(range(len(detected_faces))):
             face_idx, detected_face = detected_faces[idx]
-            if detected_face.mask is None or not any(mask in detected_face.mask
-                                                     for mask in mask_types):
-                logger.warning("Mask type '%s' does not exist for frame '%s' index %s. Skipping",
-                               self._mask_type, frame, face_idx)
+            if detected_face.mask is None or not any(
+                mask in detected_face.mask for mask in mask_types
+            ):
+                logger.warning(
+                    "Mask type '%s' does not exist for frame '%s' index %s. Skipping",
+                    self._mask_type,
+                    frame,
+                    face_idx,
+                )
                 del detected_faces[idx]
                 continue
             final_masks.update([m for m in detected_face.mask if m in mask_types])
@@ -448,11 +507,13 @@ class Output:
         logger.trace("Handling mask types: %s", retval)  # type:ignore[attr-defined]
         return retval
 
-    def save(self,
-             frame: str,
-             idx: int,
-             detected_face: DetectedFace,
-             frame_dims: tuple[int, int] | None = None) -> None:
+    def save(
+        self,
+        frame: str,
+        idx: int,
+        detected_face: DetectedFace,
+        frame_dims: tuple[int, int] | None = None,
+    ) -> None:
         """Build the mask preview image and save
 
         Parameters
@@ -492,8 +553,11 @@ class Output:
             if not self._full_frame:
                 filename += f"_{idx}"
             filename = os.path.join(self._saver.location, f"{filename}.png")
-            logger.trace("filename: '%s', image_shape: %s",  # type:ignore[attr-defined]
-                         filename, image.shape)
+            logger.trace(
+                "filename: '%s', image_shape: %s",  # type:ignore[attr-defined]
+                filename,
+                image.shape,
+            )
             self._saver.save(filename, image)
 
     def close(self) -> None:

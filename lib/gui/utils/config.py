@@ -1,5 +1,6 @@
 #!/usr/bin python3
-""" Global configuration options for the Faceswap GUI """
+"""Global configuration options for the Faceswap GUI"""
+
 from __future__ import annotations
 import logging
 import os
@@ -28,10 +29,10 @@ PATH_CACHE = os.path.join(PROJECT_ROOT, "lib", "gui", ".cache")
 _CONFIG: Config | None = None
 
 
-def initialize_config(root: tk.Tk,
-                      cli_opts: CliOptions | None,
-                      statusbar: StatusBar | None) -> Config | None:
-    """ Initialize the GUI Master :class:`Config` and add to global constant.
+def initialize_config(
+    root: tk.Tk, cli_opts: CliOptions | None, statusbar: StatusBar | None
+) -> Config | None:
+    """Initialize the GUI Master :class:`Config` and add to global constant.
 
     This should only be called once on first GUI startup. Future access to :class:`Config`
     should only be executed through :func:`get_config`.
@@ -54,14 +55,18 @@ def initialize_config(root: tk.Tk,
     global _CONFIG  # pylint:disable=global-statement
     if _CONFIG is not None:
         return None
-    logger.debug("Initializing config: (root: %s, cli_opts: %s, "
-                 "statusbar: %s)", root, cli_opts, statusbar)
+    logger.debug(
+        "Initializing config: (root: %s, cli_opts: %s, statusbar: %s)",
+        root,
+        cli_opts,
+        statusbar,
+    )
     _CONFIG = Config(root, cli_opts, statusbar)
     return _CONFIG
 
 
 def get_config() -> "Config":
-    """ Get the Master GUI configuration.
+    """Get the Master GUI configuration.
 
     Returns
     -------
@@ -72,9 +77,10 @@ def get_config() -> "Config":
     return _CONFIG
 
 
-class GlobalVariables():
-    """ Global tkinter variables accessible from all parts of the GUI. Should only be accessed from
-    :attr:`get_config().tk_vars` """
+class GlobalVariables:
+    """Global tkinter variables accessible from all parts of the GUI. Should only be accessed from
+    :attr:`get_config().tk_vars`"""
+
     def __init__(self) -> None:
         logger.debug("Initializing %s", self.__class__.__name__)
         self._display = tk.StringVar()
@@ -91,50 +97,50 @@ class GlobalVariables():
 
     @property
     def display(self) -> tk.StringVar:
-        """ :class:`tkinter.StringVar`: The current Faceswap command running """
+        """:class:`tkinter.StringVar`: The current Faceswap command running"""
         return self._display
 
     @property
     def running_task(self) -> tk.BooleanVar:
-        """ :class:`tkinter.BooleanVar`: ``True`` if a Faceswap task is running otherwise
-        ``False`` """
+        """:class:`tkinter.BooleanVar`: ``True`` if a Faceswap task is running otherwise
+        ``False``"""
         return self._running_task
 
     @property
     def is_training(self) -> tk.BooleanVar:
-        """ :class:`tkinter.BooleanVar`: ``True`` if Faceswap is currently training otherwise
-        ``False`` """
+        """:class:`tkinter.BooleanVar`: ``True`` if Faceswap is currently training otherwise
+        ``False``"""
         return self._is_training
 
     @property
     def action_command(self) -> tk.StringVar:
-        """ :class:`tkinter.StringVar`: The command line action to perform """
+        """:class:`tkinter.StringVar`: The command line action to perform"""
         return self._action_command
 
     @property
     def generate_command(self) -> tk.StringVar:
-        """ :class:`tkinter.StringVar`: The command line action to generate """
+        """:class:`tkinter.StringVar`: The command line action to generate"""
         return self._generate_command
 
     @property
     def console_clear(self) -> tk.BooleanVar:
-        """ :class:`tkinter.BooleanVar`: ``True`` if the console should be cleared otherwise
-        ``False`` """
+        """:class:`tkinter.BooleanVar`: ``True`` if the console should be cleared otherwise
+        ``False``"""
         return self._console_clear
 
     @property
     def refresh_graph(self) -> tk.BooleanVar:
-        """ :class:`tkinter.BooleanVar`:  ``True`` if the training graph should be refreshed
-        otherwise ``False`` """
+        """:class:`tkinter.BooleanVar`:  ``True`` if the training graph should be refreshed
+        otherwise ``False``"""
         return self._refresh_graph
 
     @property
     def analysis_folder(self) -> tk.StringVar:
-        """ :class:`tkinter.StringVar`: Full path the analysis folder"""
+        """:class:`tkinter.StringVar`: Full path the analysis folder"""
         return self._analysis_folder
 
     def _initialize_variables(self) -> None:
-        """ Initialize the default variable values"""
+        """Initialize the default variable values"""
         self._display.set("")
         self._running_task.set(False)
         self._is_training.set(False)
@@ -147,7 +153,8 @@ class GlobalVariables():
 
 @dataclass
 class _GuiObjects:
-    """ Data class for commonly accessed GUI Objects """
+    """Data class for commonly accessed GUI Objects"""
+
     cli_opts: CliOptions | None
     tk_vars: GlobalVariables
     project: Project
@@ -157,8 +164,8 @@ class _GuiObjects:
     command_notebook: CommandNotebook | None = None
 
 
-class Config():  # pylint:disable=too-many-public-methods
-    """ The centralized configuration class for holding items that should be made available to all
+class Config:  # pylint:disable=too-many-public-methods
+    """The centralized configuration class for holding items that should be made available to all
     parts of the GUI.
 
     This class should be initialized on GUI startup through :func:`initialize_config`. Any further
@@ -173,23 +180,32 @@ class Config():  # pylint:disable=too-many-public-methods
     statusbar: :class:`lib.gui.custom_widgets.StatusBar` or ``None``
         The GUI Status bar. Must be provided for main GUI. Must be ``None`` for tools
     """
-    def __init__(self,
-                 root: tk.Tk,
-                 cli_opts: CliOptions | None,
-                 statusbar: StatusBar | None) -> None:
-        logger.debug("Initializing %s: (root %s, cli_opts: %s, statusbar: %s)",
-                     self.__class__.__name__, root, cli_opts, statusbar)
-        self._default_font = T.cast(dict,
-                                    tk.font.nametofont("TkDefaultFont").configure())["family"]
-        self._constants = {"root": root,
-                           "scaling_factor": self._get_scaling(root),
-                           "default_font": self._default_font}
+
+    def __init__(
+        self, root: tk.Tk, cli_opts: CliOptions | None, statusbar: StatusBar | None
+    ) -> None:
+        logger.debug(
+            "Initializing %s: (root %s, cli_opts: %s, statusbar: %s)",
+            self.__class__.__name__,
+            root,
+            cli_opts,
+            statusbar,
+        )
+        self._default_font = T.cast(
+            dict, tk.font.nametofont("TkDefaultFont").configure()
+        )["family"]
+        self._constants = {
+            "root": root,
+            "scaling_factor": self._get_scaling(root),
+            "default_font": self._default_font,
+        }
         self._gui_objects = _GuiObjects(
             cli_opts=cli_opts,
             tk_vars=GlobalVariables(),
             project=Project(self, FileHandler),
             tasks=Tasks(self, FileHandler),
-            status_bar=statusbar)
+            status_bar=statusbar,
+        )
 
         self._style = Style(self.default_font, root, PATH_CACHE)
         self._user_theme = self._style.user_theme
@@ -198,23 +214,23 @@ class Config():  # pylint:disable=too-many-public-methods
     # Constants
     @property
     def root(self) -> tk.Tk:
-        """ :class:`tkinter.Tk`: The root tkinter window. """
+        """:class:`tkinter.Tk`: The root tkinter window."""
         return self._constants["root"]
 
     @property
     def scaling_factor(self) -> float:
-        """ float: The scaling factor for current display. """
+        """float: The scaling factor for current display."""
         return self._constants["scaling_factor"]
 
     @property
     def path_cache(self) -> str:
-        """ str: The path to the GUI cache folder """
+        """str: The path to the GUI cache folder"""
         return PATH_CACHE
 
     # GUI Objects
     @property
     def cli_opts(self) -> CliOptions:
-        """ :class:`lib.gui.options.CliOptions`: The command line options for this GUI Session. """
+        """:class:`lib.gui.options.CliOptions`: The command line options for this GUI Session."""
         # This should only be None when a separate tool (not main GUI) is used, at which point
         # cli_opts do not exist
         assert self._gui_objects.cli_opts is not None
@@ -222,28 +238,28 @@ class Config():  # pylint:disable=too-many-public-methods
 
     @property
     def tk_vars(self) -> GlobalVariables:
-        """ dict: The global tkinter variables. """
+        """dict: The global tkinter variables."""
         return self._gui_objects.tk_vars
 
     @property
     def project(self) -> Project:
-        """ :class:`lib.gui.project.Project`: The project session handler. """
+        """:class:`lib.gui.project.Project`: The project session handler."""
         return self._gui_objects.project
 
     @property
     def tasks(self) -> Tasks:
-        """ :class:`lib.gui.project.Tasks`: The session tasks handler. """
+        """:class:`lib.gui.project.Tasks`: The session tasks handler."""
         return self._gui_objects.tasks
 
     @property
     def default_options(self) -> dict[str, dict[str, T.Any]]:
-        """ dict: The default options for all tabs """
+        """dict: The default options for all tabs"""
         return self._gui_objects.default_options
 
     @property
     def statusbar(self) -> StatusBar:
-        """ :class:`lib.gui.custom_widgets.StatusBar`: The GUI StatusBar
-        :class:`tkinter.ttk.Frame`. """
+        """:class:`lib.gui.custom_widgets.StatusBar`: The GUI StatusBar
+        :class:`tkinter.ttk.Frame`."""
         # This should only be None when a separate tool (not main GUI) is used, at which point
         # this statusbar does not exist
         assert self._gui_objects.status_bar is not None
@@ -251,50 +267,50 @@ class Config():  # pylint:disable=too-many-public-methods
 
     @property
     def command_notebook(self) -> CommandNotebook | None:
-        """ :class:`lib.gui.command.CommandNotebook`: The main Faceswap Command Notebook. """
+        """:class:`lib.gui.command.CommandNotebook`: The main Faceswap Command Notebook."""
         return self._gui_objects.command_notebook
 
     # Convenience GUI Objects
     @property
     def tools_notebook(self) -> ToolsNotebook:
-        """ :class:`lib.gui.command.ToolsNotebook`: The Faceswap Tools sub-Notebook. """
+        """:class:`lib.gui.command.ToolsNotebook`: The Faceswap Tools sub-Notebook."""
         assert self.command_notebook is not None
         return self.command_notebook.tools_notebook
 
     @property
     def modified_vars(self) -> dict[str, tk.BooleanVar]:
-        """ dict: The command notebook modified tkinter variables. """
+        """dict: The command notebook modified tkinter variables."""
         assert self.command_notebook is not None
         return self.command_notebook.modified_vars
 
     @property
     def _command_tabs(self) -> dict[str, int]:
-        """ dict: Command tab titles with their IDs. """
+        """dict: Command tab titles with their IDs."""
         assert self.command_notebook is not None
         return self.command_notebook.tab_names
 
     @property
     def _tools_tabs(self) -> dict[str, int]:
-        """ dict: Tools command tab titles with their IDs. """
+        """dict: Tools command tab titles with their IDs."""
         assert self.command_notebook is not None
         return self.command_notebook.tools_tab_names
 
     @property
     def user_theme(self) -> dict[str, T.Any]:  # TODO Dataclass
-        """ dict: The GUI theme selection options. """
+        """dict: The GUI theme selection options."""
         return self._user_theme
 
     @property
     def default_font(self) -> tuple[str, int]:
-        """ tuple: The selected font as configured in user settings. First item is the font (`str`)
-        second item the font size (`int`). """
+        """tuple: The selected font as configured in user settings. First item is the font (`str`)
+        second item the font size (`int`)."""
         font = cfg.font()
         font = self._default_font if font == "default" else font
         return (font, cfg.font_size())
 
     @staticmethod
     def _get_scaling(root) -> float:
-        """ Get the display DPI.
+        """Get the display DPI.
 
         Returns
         -------
@@ -307,7 +323,7 @@ class Config():  # pylint:disable=too-many-public-methods
         return scaling
 
     def set_default_options(self) -> None:
-        """ Set the default options for :mod:`lib.gui.projects`
+        """Set the default options for :mod:`lib.gui.projects`
 
         The Default GUI options are stored on Faceswap startup.
 
@@ -320,7 +336,7 @@ class Config():  # pylint:disable=too-many-public-methods
         self.project.set_default_options()
 
     def set_command_notebook(self, notebook: CommandNotebook) -> None:
-        """ Set the command notebook to the :attr:`command_notebook` attribute
+        """Set the command notebook to the :attr:`command_notebook` attribute
         and enable the modified callback for :attr:`project`.
 
         Parameters
@@ -333,7 +349,7 @@ class Config():  # pylint:disable=too-many-public-methods
         self.project.set_modified_callback()
 
     def set_active_tab_by_name(self, name: str) -> None:
-        """ Sets the :attr:`command_notebook` or :attr:`tools_notebook` to active based on given
+        """Sets the :attr:`command_notebook` or :attr:`tools_notebook` to active based on given
         name.
 
         Parameters
@@ -350,14 +366,16 @@ class Config():  # pylint:disable=too-many-public-methods
         elif name in self._tools_tabs:
             self.command_notebook.select(self._command_tabs["tools"])
             tab_id = self._tools_tabs[name]
-            logger.debug("Setting active Tools tab to: (name: %s, id: %s)", name, tab_id)
+            logger.debug(
+                "Setting active Tools tab to: (name: %s, id: %s)", name, tab_id
+            )
             self.tools_notebook.select()
         else:
             logger.debug("Name couldn't be found. Setting to id 0: %s", name)
             self.command_notebook.select(0)
 
     def set_modified_true(self, command: str) -> None:
-        """ Set the modified variable to ``True`` for the given command in :attr:`modified_vars`.
+        """Set the modified variable to ``True`` for the given command in :attr:`modified_vars`.
 
         Parameters
         ----------
@@ -373,7 +391,7 @@ class Config():  # pylint:disable=too-many-public-methods
         logger.debug("Set modified var to True for: '%s'", command)
 
     def set_cursor_busy(self, widget: tk.Widget | None = None) -> None:
-        """ Set the root or widget cursor to busy.
+        """Set the root or widget cursor to busy.
 
         Parameters
         ----------
@@ -387,7 +405,7 @@ class Config():  # pylint:disable=too-many-public-methods
         component.update_idletasks()
 
     def set_cursor_default(self, widget: tk.Widget | None = None) -> None:
-        """ Set the root or widget cursor to default.
+        """Set the root or widget cursor to default.
 
         Parameters
         ----------
@@ -401,7 +419,7 @@ class Config():  # pylint:disable=too-many-public-methods
         component.update_idletasks()
 
     def set_root_title(self, text: str | None = None) -> None:
-        """ Set the main title text for Faceswap.
+        """Set the main title text for Faceswap.
 
         The title will always begin with 'Faceswap.py'. Additional text can be appended.
 
@@ -415,7 +433,7 @@ class Config():  # pylint:disable=too-many-public-methods
         self.root.title(title)
 
     def set_geometry(self, width: int, height: int, fullscreen: bool = False) -> None:
-        """ Set the geometry for the root tkinter object.
+        """Set the geometry for the root tkinter object.
 
         Parameters
         ----------
@@ -429,17 +447,24 @@ class Config():  # pylint:disable=too-many-public-methods
         """
         self.root.tk.call("tk", "scaling", self.scaling_factor)
         if fullscreen:
-            initial_dimensions = (self.root.winfo_screenwidth(), self.root.winfo_screenheight())
+            initial_dimensions = (
+                self.root.winfo_screenwidth(),
+                self.root.winfo_screenheight(),
+            )
         else:
-            initial_dimensions = (round(width * self.scaling_factor),
-                                  round(height * self.scaling_factor))
+            initial_dimensions = (
+                round(width * self.scaling_factor),
+                round(height * self.scaling_factor),
+            )
 
         if fullscreen and sys.platform in ("win32", "darwin"):
-            self.root.state('zoomed')
+            self.root.state("zoomed")
         elif fullscreen:
-            self.root.attributes('-zoomed', True)
+            self.root.attributes("-zoomed", True)
         else:
-            self.root.geometry(f"{str(initial_dimensions[0])}x{str(initial_dimensions[1])}+80+80")
+            self.root.geometry(
+                f"{str(initial_dimensions[0])}x{str(initial_dimensions[1])}+80+80"
+            )
         logger.debug("Geometry: %sx%s", *initial_dimensions)
 
 

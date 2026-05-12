@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Manages the widgets that hold the top 'viewer' area of the preview tool"""
+
 from __future__ import annotations
 import logging
 import os
@@ -38,6 +39,7 @@ class _Faces:
     num_faces
         The number of faces to be displayed in the preview window
     """
+
     num_faces: InitVar[int]
     size: InitVar[int]
 
@@ -53,7 +55,7 @@ class _Faces:
         self.dst = np.empty((num_faces, size, size, 3), dtype=np.uint8)
 
 
-class FacesDisplay():  # pylint:disable=too-many-instance-attributes
+class FacesDisplay:  # pylint:disable=too-many-instance-attributes
     """Compiles the 2 rows of sample faces (original and swapped) into a single image
 
     Parameters
@@ -67,6 +69,7 @@ class FacesDisplay():  # pylint:disable=too-many-instance-attributes
     num_faces
         The number of faces to be displayed in the preview window
     """
+
     def __init__(self, app: Preview, size: int, padding: int, num_faces: int) -> None:
         logger.debug(parse_class_init(locals()))
         self._size = size
@@ -173,37 +176,52 @@ class FacesDisplay():  # pylint:disable=too-many-instance-attributes
             header = self._header_text()
             source = np.hstack([self._draw_rect(face) for face in self._faces.src])
             self._faces_source = np.vstack((header, source))
-        self._faces_dest = np.hstack([self._draw_rect(face) for face in self._faces.dst])
-        logger.debug("source row shape: %s, swapped row shape: %s",
-                     self._faces_dest.shape, self._faces_source.shape)
+        self._faces_dest = np.hstack(
+            [self._draw_rect(face) for face in self._faces.dst]
+        )
+        logger.debug(
+            "source row shape: %s, swapped row shape: %s",
+            self._faces_dest.shape,
+            self._faces_source.shape,
+        )
 
     def _faces_from_frames(self) -> None:
         """Extract the preview faces from the source frames and apply the requisite padding."""
-        logger.debug("Extracting faces from frames: Number images: %s", len(self.source))
+        logger.debug(
+            "Extracting faces from frames: Number images: %s", len(self.source)
+        )
         if self.update_source:
             self._crop_source_faces()
         self._crop_destination_faces()
-        logger.debug("Extracted faces from frames: %s",
-                     {k: len(v) for k, v in self._faces.__dict__.items()})
+        logger.debug(
+            "Extracted faces from frames: %s",
+            {k: len(v) for k, v in self._faces.__dict__.items()},
+        )
 
     def _crop_source_faces(self) -> None:
         """Extract the source faces from the source frames, along with their filenames and the
         transformation matrix used to extract the faces."""
         logger.debug("Updating source faces")
-        self._faces = _Faces(num_faces=self._num_faces, size=self._size)  # Init new class
+        self._faces = _Faces(
+            num_faces=self._num_faces, size=self._size
+        )  # Init new class
         for i, item in enumerate(self.source):
             detected_face = item.inbound.detected_faces[0]
             src_img = item.inbound.image
-            detected_face.load_aligned(src_img,
-                                       size=self._size,
-                                       centering=T.cast(CenteringType, self._centering))
+            detected_face.load_aligned(
+                src_img,
+                size=self._size,
+                centering=T.cast(CenteringType, self._centering),
+            )
             matrix = detected_face.aligned.matrix
             if self._y_offset:
                 matrix = matrix.copy()
                 matrix[1, 2] += self._y_offset
             self._faces.filenames.append(os.path.splitext(item.inbound.filename)[0])
             self._faces.matrix[i] = matrix
-            self._faces.src[i] = transform_image(src_img, matrix, self._size, self._padding)
+            self._faces.src[i] = transform_image(
+                src_img, matrix, self._size, self._padding
+            )
         self.update_source = False
         logger.debug("Updated source faces")
 
@@ -211,13 +229,15 @@ class FacesDisplay():  # pylint:disable=too-many-instance-attributes
         """Extract the swapped faces from the swapped frames using the source face destination
         matrices."""
         logger.debug("Updating destination faces")
-        destination = self.destination if self.destination else [np.ones_like(src.inbound.image)
-                                                                 for src in self.source]
+        destination = (
+            self.destination
+            if self.destination
+            else [np.ones_like(src.inbound.image) for src in self.source]
+        )
         for i, image in enumerate(destination):
-            self._faces.dst[i] = transform_image(image,
-                                                 self._faces.matrix[i],
-                                                 self._size,
-                                                 self._padding)
+            self._faces.dst[i] = transform_image(
+                image, self._faces.matrix[i], self._size, self._padding
+            )
         logger.debug("Updated destination faces")
 
     def _header_text(self) -> np.ndarray:
@@ -231,27 +251,37 @@ class FacesDisplay():  # pylint:disable=too-many-instance-attributes
         height = self._size // 8
         font = cv2.FONT_HERSHEY_SIMPLEX
         # Get size of placed text for positioning
-        text_sizes = [cv2.getTextSize(self._faces.filenames[idx],
-                                      font,
-                                      font_scale,
-                                      1)[0]
-                      for idx in range(self._total_columns)]
+        text_sizes = [
+            cv2.getTextSize(self._faces.filenames[idx], font, font_scale, 1)[0]
+            for idx in range(self._total_columns)
+        ]
         # Get X and Y co-ordinates for each text item
         text_y = int((height + text_sizes[0][1]) / 2)
-        text_x = [int((self._size - text_sizes[idx][0]) / 2) + self._size * idx
-                  for idx in range(self._total_columns)]
-        logger.debug("filenames: %s, text_sizes: %s, text_x: %s, text_y: %s",
-                     self._faces.filenames, text_sizes, text_x, text_y)
-        header_box = np.ones((height, self._size * self._total_columns, 3), np.uint8) * 255
+        text_x = [
+            int((self._size - text_sizes[idx][0]) / 2) + self._size * idx
+            for idx in range(self._total_columns)
+        ]
+        logger.debug(
+            "filenames: %s, text_sizes: %s, text_x: %s, text_y: %s",
+            self._faces.filenames,
+            text_sizes,
+            text_x,
+            text_y,
+        )
+        header_box = (
+            np.ones((height, self._size * self._total_columns, 3), np.uint8) * 255
+        )
         for idx, text in enumerate(self._faces.filenames):
-            cv2.putText(header_box,
-                        text,
-                        (text_x[idx], text_y),
-                        font,
-                        font_scale,
-                        (0, 0, 0),
-                        1,
-                        lineType=cv2.LINE_AA)
+            cv2.putText(
+                header_box,
+                text,
+                (text_x[idx], text_y),
+                font,
+                font_scale,
+                (0, 0, 0),
+                1,
+                lineType=cv2.LINE_AA,
+            )
         logger.debug("header_box.shape: %s", header_box.shape)
         return header_box
 
@@ -267,7 +297,9 @@ class FacesDisplay():  # pylint:disable=too-many-instance-attributes
         -------
         The given image with a border drawn around the outside
         """
-        cv2.rectangle(image, (0, 0), (self._size - 1, self._size - 1), (255, 255, 255), 1)
+        cv2.rectangle(
+            image, (0, 0), (self._size - 1, self._size - 1), (255, 255, 255), 1
+        )
         image = np.clip(image, 0.0, 255.0)
         return image.astype("uint8")
 
@@ -282,18 +314,23 @@ class ImagesCanvas(ttk.Frame):  # pylint:disable=too-many-ancestors
     parent
         The parent tkinter object that holds the canvas
     """
+
     def __init__(self, app: Preview, parent: ttk.PanedWindow) -> None:
-        logger.debug("Initializing %s: (app: %s, parent: %s)",
-                     self.__class__.__name__, app, parent)
+        logger.debug(
+            "Initializing %s: (app: %s, parent: %s)",
+            self.__class__.__name__,
+            app,
+            parent,
+        )
         super().__init__(parent)
         self.pack(expand=True, fill=tk.BOTH, padx=2, pady=2)
 
         self._display: FacesDisplay = parent.preview_display  # type: ignore
         self._canvas = tk.Canvas(self, bd=0, highlightthickness=0)
         self._canvas.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
-        self._display_canvas = self._canvas.create_image(0, 0,
-                                                         image=self._display.tk_image,
-                                                         anchor=tk.NW)
+        self._display_canvas = self._canvas.create_image(
+            0, 0, image=self._display.tk_image, anchor=tk.NW
+        )
         self.bind("<Configure>", self._resize)
         logger.debug("Initialized %s", self.__class__.__name__)
 

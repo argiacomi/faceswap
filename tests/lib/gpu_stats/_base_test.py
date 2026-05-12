@@ -1,5 +1,6 @@
 #!/usr/bin python3
-""" Pytest unit tests for :mod:`lib.gpu_stats._base` """
+"""Pytest unit tests for :mod:`lib.gpu_stats._base`"""
+
 import typing as T
 
 from dataclasses import dataclass
@@ -15,40 +16,47 @@ from lib.utils import get_backend
 
 @dataclass
 class _DummyData:
-    """ Dummy data for initializing and testing :class:`~lib.gpu_stats._base._GPUStats` """
+    """Dummy data for initializing and testing :class:`~lib.gpu_stats._base._GPUStats`"""
+
     device_count = 2
     active_devices = [0, 1]
     handles = [0, 1]
     driver = "test_driver"
-    device_names = ['test_device_0', 'test_device_1']
+    device_names = ["test_device_0", "test_device_1"]
     vram = [1024, 2048]
     free_vram = [512, 1024]
 
 
 @pytest.fixture(name="gpu_stats_instance")
 def fixture__gpu_stats_instance(mocker: pytest_mock.MockerFixture) -> _GPUStats:
-    """ Create a fixture of the :class:`~lib.gpu_stats._base._GPUStats` object
+    """Create a fixture of the :class:`~lib.gpu_stats._base._GPUStats` object
 
     Parameters
     ----------
     mocker: :class:`pytest_mock.MockerFixture`
         Mocker for dummying in function calls
     """
-    mocker.patch.object(_GPUStats, '_initialize')
-    mocker.patch.object(_GPUStats, '_shutdown')
-    mocker.patch.object(_GPUStats, '_get_device_count', return_value=_DummyData.device_count)
-    mocker.patch.object(_GPUStats, '_get_active_devices', return_value=_DummyData.active_devices)
-    mocker.patch.object(_GPUStats, '_get_handles', return_value=_DummyData.handles)
-    mocker.patch.object(_GPUStats, '_get_driver', return_value=_DummyData.driver)
-    mocker.patch.object(_GPUStats, '_get_device_names', return_value=_DummyData.device_names)
-    mocker.patch.object(_GPUStats, '_get_vram', return_value=_DummyData.vram)
-    mocker.patch.object(_GPUStats, '_get_free_vram', return_value=_DummyData.free_vram)
+    mocker.patch.object(_GPUStats, "_initialize")
+    mocker.patch.object(_GPUStats, "_shutdown")
+    mocker.patch.object(
+        _GPUStats, "_get_device_count", return_value=_DummyData.device_count
+    )
+    mocker.patch.object(
+        _GPUStats, "_get_active_devices", return_value=_DummyData.active_devices
+    )
+    mocker.patch.object(_GPUStats, "_get_handles", return_value=_DummyData.handles)
+    mocker.patch.object(_GPUStats, "_get_driver", return_value=_DummyData.driver)
+    mocker.patch.object(
+        _GPUStats, "_get_device_names", return_value=_DummyData.device_names
+    )
+    mocker.patch.object(_GPUStats, "_get_vram", return_value=_DummyData.vram)
+    mocker.patch.object(_GPUStats, "_get_free_vram", return_value=_DummyData.free_vram)
     gpu_stats = _GPUStats()
     return gpu_stats
 
 
 def test__gpu_stats_init_(gpu_stats_instance: _GPUStats) -> None:
-    """ Test that the base :class:`~lib.gpu_stats._base._GPUStats` class initializes correctly
+    """Test that the base :class:`~lib.gpu_stats._base._GPUStats` class initializes correctly
 
     Parameters
     ----------
@@ -71,7 +79,7 @@ def test__gpu_stats_init_(gpu_stats_instance: _GPUStats) -> None:
 
 
 def test__gpu_stats_properties(gpu_stats_instance: _GPUStats) -> None:
-    """ Test that the :class:`~lib.gpu_stats._base._GPUStats` properties are set and formatted
+    """Test that the :class:`~lib.gpu_stats._base._GPUStats` properties are set and formatted
     correctly.
 
     Parameters
@@ -79,17 +87,20 @@ def test__gpu_stats_properties(gpu_stats_instance: _GPUStats) -> None:
     gpu_stats_instance: :class:`_GPUStats`
         Fixture instance of the _GPUStats base class
     """
-    assert gpu_stats_instance.cli_devices == ['0: test_device_0', '1: test_device_1']
-    assert gpu_stats_instance.sys_info == GPUInfo(vram=_DummyData.vram,
-                                                  vram_free=_DummyData.free_vram,
-                                                  driver=_DummyData.driver,
-                                                  devices=_DummyData.device_names,
-                                                  devices_active=_DummyData.active_devices)
+    assert gpu_stats_instance.cli_devices == ["0: test_device_0", "1: test_device_1"]
+    assert gpu_stats_instance.sys_info == GPUInfo(
+        vram=_DummyData.vram,
+        vram_free=_DummyData.free_vram,
+        driver=_DummyData.driver,
+        devices=_DummyData.device_names,
+        devices_active=_DummyData.active_devices,
+    )
 
 
-def test__gpu_stats_get_card_most_free(mocker: pytest_mock.MockerFixture,
-                                       gpu_stats_instance: _GPUStats) -> None:
-    """ Confirm that :func:`ib.gpu_stats._base._GPUStats.get_card_most_free` functions
+def test__gpu_stats_get_card_most_free(
+    mocker: pytest_mock.MockerFixture, gpu_stats_instance: _GPUStats
+) -> None:
+    """Confirm that :func:`ib.gpu_stats._base._GPUStats.get_card_most_free` functions
     correctly
 
     Parameters
@@ -99,23 +110,22 @@ def test__gpu_stats_get_card_most_free(mocker: pytest_mock.MockerFixture,
     gpu_stats_instance: :class:`_GPUStats`
         Fixture instance of the _GPUStats base class
     """
-    assert gpu_stats_instance.get_card_most_free() == BiggestGPUInfo(card_id=1,
-                                                                     device='test_device_1',
-                                                                     free=1024,
-                                                                     total=2048)
-    mocker.patch.object(_GPUStats, '_get_active_devices', return_value=[])
+    assert gpu_stats_instance.get_card_most_free() == BiggestGPUInfo(
+        card_id=1, device="test_device_1", free=1024, total=2048
+    )
+    mocker.patch.object(_GPUStats, "_get_active_devices", return_value=[])
     gpu_stats = _GPUStats()
-    assert gpu_stats.get_card_most_free() == BiggestGPUInfo(card_id=-1,
-                                                            device='No GPU devices found',
-                                                            free=2048,
-                                                            total=2048)
+    assert gpu_stats.get_card_most_free() == BiggestGPUInfo(
+        card_id=-1, device="No GPU devices found", free=2048, total=2048
+    )
 
 
 def test__gpu_stats_no_active_devices(
-        caplog: pytest.LogCaptureFixture,
-        gpu_stats_instance: _GPUStats,  # pylint:disable=unused-argument
-        mocker: pytest_mock.MockerFixture) -> None:
-    """ Ensure that no active GPUs raises a warning when not in CPU mode
+    caplog: pytest.LogCaptureFixture,
+    gpu_stats_instance: _GPUStats,  # pylint:disable=unused-argument
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """Ensure that no active GPUs raises a warning when not in CPU mode
 
     Parameters
     ----------
@@ -129,6 +139,6 @@ def test__gpu_stats_no_active_devices(
     if get_backend() == "cpu":
         return
     caplog.set_level("WARNING")
-    mocker.patch.object(_GPUStats, '_get_active_devices', return_value=[])
+    mocker.patch.object(_GPUStats, "_get_active_devices", return_value=[])
     _GPUStats()
     assert "No GPU detected" in caplog.messages

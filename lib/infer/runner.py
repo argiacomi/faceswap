@@ -1,5 +1,6 @@
 #! /usr/env/bin/python3
-"""Handles extract plugins and runners """
+"""Handles extract plugins and runners"""
+
 from __future__ import annotations
 
 import logging
@@ -41,6 +42,7 @@ class PluginThreads:
     name
         The name of the plugin that the threads are being created for
     """
+
     def __init__(self, name: str) -> None:
         self._name = name
         self._threads: dict[str, FSThread] = {}
@@ -69,14 +71,19 @@ class PluginThreads:
         obj = f"{self.__class__.__name__}(name={self._name})"
         threads = self.enabled
         alive = [x.is_alive() for x in self._threads.values()]
-        error = None if not threads else list(self._threads.values())[0].error_state.has_error
+        error = (
+            None
+            if not threads
+            else list(self._threads.values())[0].error_state.has_error
+        )
         info = f"[threads: {threads}, alive: {alive}, error: {error}]"
         return f"{obj} {info}"
 
-    def register_thread(self,
-                        name: str,
-                        target: T.Callable[[T.Literal["pre_process", "process", "post_process"]],
-                                           None]) -> None:
+    def register_thread(
+        self,
+        name: str,
+        target: T.Callable[[T.Literal["pre_process", "process", "post_process"]], None],
+    ) -> None:
         """Register a thread
 
         Parameters
@@ -88,7 +95,7 @@ class PluginThreads:
         """
         full_name = f"{self._name}.{name}"
         logger.debug("[%s] Registering thread: '%s'", self._name, name)
-        self._threads[name] = FSThread(target=target, name=full_name, args=(name, ))
+        self._threads[name] = FSThread(target=target, name=full_name, args=(name,))
 
     def start(self) -> None:
         """Start the plugin's threads"""
@@ -133,7 +140,9 @@ class PluginThreads:
             logger.debug("Error state already registered: %s", state)
             return
         if self._threads:
-            raise RuntimeError("You cannot register an ErrorState object when threads exist")
+            raise RuntimeError(
+                "You cannot register an ErrorState object when threads exist"
+            )
         self._external_error_state = state
 
 
@@ -148,6 +157,7 @@ class ExtractRunner(T.Generic[HandlerT]):
     handler
         The plugin handler that this runner will execute
     """
+
     def __init__(self, handler: HandlerT) -> None:
         logger.debug(parse_class_init(locals()))
         self._handler: HandlerT = handler
@@ -177,16 +187,21 @@ class ExtractRunner(T.Generic[HandlerT]):
         The media object with populated detected faces for a frame
         """
         if self._output_iterator is None:
-            raise RuntimeError(f"[{self._plugin_name}] You can only iterate the final runner in a "
-                               "pipeline chain.")
+            raise RuntimeError(
+                f"[{self._plugin_name}] You can only iterate the final runner in a "
+                "pipeline chain."
+            )
         retval = next((self._output_iterator), None)
         if self._threads.error_state.has_error:
             current = current_thread()
             if current is main_thread():
                 self._threads.error_state.re_raise()
             else:
-                logger.debug("[%s.%s] Thread error detected in worker thread",
-                             current.name, self.__class__.__name__)
+                logger.debug(
+                    "[%s.%s] Thread error detected in worker thread",
+                    current.name,
+                    self.__class__.__name__,
+                )
                 retval = None
         if retval is None:
             raise StopIteration
@@ -221,13 +236,18 @@ class ExtractRunner(T.Generic[HandlerT]):
             return
         logger.trace(  # type:ignore[attr-defined]
             "[%s.out] Deleting %s of %s images with no bounding boxes",
-            self._plugin_name, len(no_boxes), len(batch.images))
+            self._plugin_name,
+            len(no_boxes),
+            len(batch.images),
+        )
         for idx in no_boxes:
             batch.images[idx] = np.empty(shape=(0, 0, 3), dtype=np.uint8)
 
-    def _clean_output(self,
-                      batch: ExtractBatch | ExtractSignal,
-                      next_process: T.Literal["process", "post_process", "out"]) -> None:
+    def _clean_output(
+        self,
+        batch: ExtractBatch | ExtractSignal,
+        next_process: T.Literal["process", "post_process", "out"],
+    ) -> None:
         """Remove any images from the batch that have no detected faces and delete any internal
         plugin attributes when outputting from the plugin
 
@@ -261,32 +281,43 @@ class ExtractRunner(T.Generic[HandlerT]):
         """
         queue_names = list(self._queues)
         queue_index = queue_names.index(process) + 1
-        next_process = T.cast(T.Literal["process", "post_process", "out"],
-                              queue_names[queue_index])
+        next_process = T.cast(
+            T.Literal["process", "post_process", "out"], queue_names[queue_index]
+        )
         assert next_process in ("process", "post_process", "out")
         queue = self._queues[next_process]
         self._clean_output(batch, next_process)
-        logger.trace("[%s.%s] Outputting to '%s': %s",  # type:ignore[attr-defined]
-                     self._plugin_name,
-                     process,
-                     next_process,
-                     batch.name if isinstance(batch, ExtractSignal) else batch)
+        logger.trace(
+            "[%s.%s] Outputting to '%s': %s",  # type:ignore[attr-defined]
+            self._plugin_name,
+            process,
+            next_process,
+            batch.name if isinstance(batch, ExtractSignal) else batch,
+        )
 
         while True:
             if self._threads.error_state.has_error:
-                logger.debug("[%s.%s] thread error detected. Not putting",
-                             self._plugin_name, process)
+                logger.debug(
+                    "[%s.%s] thread error detected. Not putting",
+                    self._plugin_name,
+                    process,
+                )
                 return
             try:
-                logger.trace("[%s.%s] Putting to out queue: %s",  # type:ignore[attr-defined]
-                             self._plugin_name,
-                             process,
-                             batch.name if isinstance(batch, ExtractSignal) else batch)
+                logger.trace(
+                    "[%s.%s] Putting to out queue: %s",  # type:ignore[attr-defined]
+                    self._plugin_name,
+                    process,
+                    batch.name if isinstance(batch, ExtractSignal) else batch,
+                )
                 queue.put(batch, timeout=0.2)
                 break
             except QueueFull:
-                logger.trace("[%s.%s] Waiting to put item",  # type:ignore[attr-defined]
-                             self._plugin_name, process)
+                logger.trace(
+                    "[%s.%s] Waiting to put item",  # type:ignore[attr-defined]
+                    self._plugin_name,
+                    process,
+                )
                 continue
 
         if next_process == "out" and isinstance(batch, ExtractSignal):
@@ -312,7 +343,10 @@ class ExtractRunner(T.Generic[HandlerT]):
         if self.handler.plugin_type == "detect" or batch.frame_ids.size:
             return False
         logger.trace(  # type:ignore[attr-defined]
-            "[%s.%s] Passing through batch with no detections",  self._plugin_name, process)
+            "[%s.%s] Passing through batch with no detections",
+            self._plugin_name,
+            process,
+        )
         self._put_data(process, batch)
         return True
 
@@ -321,13 +355,17 @@ class ExtractRunner(T.Generic[HandlerT]):
         queue = self._queues[process]
         name = f"{self._plugin_name}_{process}"
         if list(self._queues).index(process) == 0:
-            iterator: InboundIterator | InputIterator | InterimIterator = self._inbound_iterator
+            iterator: InboundIterator | InputIterator | InterimIterator = (
+                self._inbound_iterator
+            )
         else:
-            iterator = InterimIterator(queue,
-                                       name,
-                                       self.handler.plugin_type,
-                                       self.handler.batch_size,
-                                       self._threads.error_state)
+            iterator = InterimIterator(
+                queue,
+                name,
+                self.handler.plugin_type,
+                self.handler.batch_size,
+                self._threads.error_state,
+            )
         for batch in iterator:
             if batch == ExtractSignal.FLUSH:  # pass flush downstream
                 self._put_data(process, batch)
@@ -357,19 +395,24 @@ class ExtractRunner(T.Generic[HandlerT]):
             self._handler.process(batch)
             return batch
 
-        logger.debug("[%s.process] Splitting passthrough batch of size %s for plugin size of %s",
-                     self._plugin_name, in_size, batch_size)
+        logger.debug(
+            "[%s.process] Splitting passthrough batch of size %s for plugin size of %s",
+            self._plugin_name,
+            in_size,
+            batch_size,
+        )
         retval = batch[0:batch_size]
         self._handler.process(retval)
 
         for start in range(batch_size, in_size, batch_size):
-            feed = batch[start:start + batch_size]
+            feed = batch[start : start + batch_size]
             self._handler.process(feed)
             retval.append(feed)
         return retval
 
-    def _process_batches(self, process: T.Literal["pre_process", "process", "post_process"]
-                         ) -> None:
+    def _process_batches(
+        self, process: T.Literal["pre_process", "process", "post_process"]
+    ) -> None:
         """Obtain items from inbound queue for the process, pass to the relevant handler's
         processor and for  output to the next queue
 
@@ -425,7 +468,9 @@ class ExtractRunner(T.Generic[HandlerT]):
         in_queue = Queue(maxsize=1) if input_runner is None else input_runner.out_queue
         for idx, thread in enumerate(self._threads.enabled):
             queue = in_queue if idx == 0 else Queue(maxsize=1)
-            logger.debug("[%s] Adding in queue for thread '%s'", self._plugin_name, thread)
+            logger.debug(
+                "[%s] Adding in queue for thread '%s'", self._plugin_name, thread
+            )
             retval[thread] = queue
         logger.debug("[%s] Adding out queue", self._plugin_name)
         retval["out"] = Queue(maxsize=1)
@@ -446,17 +491,21 @@ class ExtractRunner(T.Generic[HandlerT]):
         """
         retval: InputIterator | InboundIterator
         if self._is_first:
-            retval = InputIterator(list(self._queues.values())[0],
-                                   f"{self._plugin_name}",
-                                   self.handler.plugin_type,
-                                   self.handler.batch_size,
-                                   self._threads.error_state)
+            retval = InputIterator(
+                list(self._queues.values())[0],
+                f"{self._plugin_name}",
+                self.handler.plugin_type,
+                self.handler.batch_size,
+                self._threads.error_state,
+            )
         else:
-            retval = InboundIterator(list(self._queues.values())[0],
-                                     f"{self._plugin_name}",
-                                     self.handler.plugin_type,
-                                     self.handler.batch_size,
-                                     self._threads.error_state)
+            retval = InboundIterator(
+                list(self._queues.values())[0],
+                f"{self._plugin_name}",
+                self.handler.plugin_type,
+                self.handler.batch_size,
+                self._threads.error_state,
+            )
         logger.debug("[%s.in] Got inbound iterator: %s", self._plugin_name, retval)
         return retval
 
@@ -479,12 +528,14 @@ class ExtractRunner(T.Generic[HandlerT]):
                 logger.debug("[%s] Waiting on queue", self._plugin_name)
                 continue
 
-    def put_direct(self,  # noqa: C901
-                   filename: str,
-                   image: npt.NDArray[np.uint8],
-                   detected_faces: list[DetectedFace],
-                   is_aligned: bool = False,
-                   frame_size: tuple[int, int] | None = None) -> ExtractBatch:
+    def put_direct(
+        self,  # noqa: C901
+        filename: str,
+        image: npt.NDArray[np.uint8],
+        detected_faces: list[DetectedFace],
+        is_aligned: bool = False,
+        frame_size: tuple[int, int] | None = None,
+    ) -> ExtractBatch:
         """Put an item directly into this runner's plugin and return the result
 
         Parameters
@@ -513,24 +564,32 @@ class ExtractRunner(T.Generic[HandlerT]):
             The output from this plugin for the given input
         """
         if isinstance(self._inbound_iterator, InputIterator):
-            raise ValueError("'put_direct' should not be used on the first runner in a "
-                             "pipeline. Use the runner's `put` method")
+            raise ValueError(
+                "'put_direct' should not be used on the first runner in a "
+                "pipeline. Use the runner's `put` method"
+            )
         if self.handler.plugin_type not in ("detect", "align") and not is_aligned:
             raise ValueError(f"'{self.handler.plugin_type}' requires aligned input")
         if self.handler.plugin_type in ("detect", "align") and is_aligned:
             raise ValueError(f"'{self.handler.plugin_type}' requires non-aligned input")
         if is_aligned and not frame_size:
             raise ValueError("Aligned input must provide the original frame_size")
-        batch = ExtractBatch(filenames=[filename], images=[image], is_aligned=is_aligned)
-        batch.bboxes = np.array([[f.left, f.top, f.right, f.bottom]
-                                 for f in detected_faces], dtype=np.int32)
-        batch.frame_ids = np.zeros((batch.bboxes.shape[0], ), dtype=np.int32)
+        batch = ExtractBatch(
+            filenames=[filename], images=[image], is_aligned=is_aligned
+        )
+        batch.bboxes = np.array(
+            [[f.left, f.top, f.right, f.bottom] for f in detected_faces], dtype=np.int32
+        )
+        batch.frame_ids = np.zeros((batch.bboxes.shape[0],), dtype=np.int32)
         batch.frame_sizes = [frame_size] if frame_size else None
         if self.handler.plugin_type not in ("detect", "align"):
-            landmarks = np.array([f.landmarks_xy for f in detected_faces], dtype=np.float32)
+            landmarks = np.array(
+                [f.landmarks_xy for f in detected_faces], dtype=np.float32
+            )
             batch.landmarks = landmarks
-            batch.landmark_type = LandmarkType.from_shape(T.cast(tuple[int, int],
-                                                                 landmarks.shape[1:]))
+            batch.landmark_type = LandmarkType.from_shape(
+                T.cast(tuple[int, int], landmarks.shape[1:])
+            )
         original_out = self._queues["out"]  # Unhook queue from next runner
         self._queues["out"] = Queue(maxsize=1)
         self._put_to_input(batch)
@@ -538,11 +597,17 @@ class ExtractRunner(T.Generic[HandlerT]):
 
         result: list[ExtractBatch] = []
         while True:
-            if self._threads.error_state.has_error and current_thread() == main_thread():
+            if (
+                self._threads.error_state.has_error
+                and current_thread() == main_thread()
+            ):
                 self._threads.error_state.re_raise()
             if self._threads.error_state.has_error:
-                logger.debug("[%s.%s] Thread error detected in worker thread",
-                             current_thread().name, self.__class__.__name__)
+                logger.debug(
+                    "[%s.%s] Thread error detected in worker thread",
+                    current_thread().name,
+                    self.__class__.__name__,
+                )
                 break
             try:
                 out = self._queues["out"].get(timeout=0.2)
@@ -561,34 +626,40 @@ class ExtractRunner(T.Generic[HandlerT]):
         return retval
 
     @T.overload
-    def put(self,
-            filename: str,
-            image: npt.NDArray[np.uint8],
-            detected_faces: list[DetectedFace] | None = None,
-            source: str | None = None,
-            is_aligned: bool = False,
-            frame_metadata: PNGSource | None = None,
-            passthrough: T.Literal[False] = False) -> None: ...
+    def put(
+        self,
+        filename: str,
+        image: npt.NDArray[np.uint8],
+        detected_faces: list[DetectedFace] | None = None,
+        source: str | None = None,
+        is_aligned: bool = False,
+        frame_metadata: PNGSource | None = None,
+        passthrough: T.Literal[False] = False,
+    ) -> None: ...
 
     @T.overload
-    def put(self,
-            filename: str,
-            image: npt.NDArray[np.uint8],
-            detected_faces: list[DetectedFace] | None = None,
-            source: str | None = None,
-            is_aligned: bool = False,
-            frame_metadata: PNGSource | None = None,
-            *,
-            passthrough: T.Literal[True]) -> FrameFaces: ...
+    def put(
+        self,
+        filename: str,
+        image: npt.NDArray[np.uint8],
+        detected_faces: list[DetectedFace] | None = None,
+        source: str | None = None,
+        is_aligned: bool = False,
+        frame_metadata: PNGSource | None = None,
+        *,
+        passthrough: T.Literal[True],
+    ) -> FrameFaces: ...
 
-    def put(self,
-            filename: str,
-            image: npt.NDArray[np.uint8],
-            detected_faces: list[DetectedFace] | None = None,
-            source: str | None = None,
-            is_aligned: bool = False,
-            frame_metadata: PNGSource | None = None,
-            passthrough: bool = False) -> None | FrameFaces:
+    def put(
+        self,
+        filename: str,
+        image: npt.NDArray[np.uint8],
+        detected_faces: list[DetectedFace] | None = None,
+        source: str | None = None,
+        is_aligned: bool = False,
+        frame_metadata: PNGSource | None = None,
+        passthrough: bool = False,
+    ) -> None | FrameFaces:
         """Put a frame into the pipeline.
 
         Note
@@ -620,12 +691,14 @@ class ExtractRunner(T.Generic[HandlerT]):
         -------
         If passthrough is ``True`` returns the output FrameFaces object, otherwise ``None``
         """
-        item = FrameFaces(filename=filename,
-                          image=image,
-                          source=source,
-                          is_aligned=is_aligned,
-                          frame_metadata=frame_metadata,
-                          passthrough=passthrough)
+        item = FrameFaces(
+            filename=filename,
+            image=image,
+            source=source,
+            is_aligned=is_aligned,
+            frame_metadata=frame_metadata,
+            passthrough=passthrough,
+        )
         if detected_faces is not None:
             item.detected_faces = detected_faces
         self._put_to_input(item)
@@ -691,14 +764,19 @@ class ExtractRunner(T.Generic[HandlerT]):
         logger.debug(
             "[%s] Set pipeline interfaces to %s",
             self.__class__.__name__,
-            [f"{f.__self__.__class__.__name__}.{f.__func__.__name__}"  # type:ignore[union-attr]
-             for f in (self.put, self.put_media, self.stop, self.flush)]
+            [
+                f"{f.__self__.__class__.__name__}.{f.__func__.__name__}"  # type:ignore[union-attr]
+                for f in (self.put, self.put_media, self.stop, self.flush)
+            ],
         )
 
         del input_runner._output_iterator
         input_runner._output_iterator = None  # pylint:disable=protected-access
-        logger.debug("[%s] Removed output iterator from %s",
-                     self.__class__.__name__, input_runner.__class__.__name__)
+        logger.debug(
+            "[%s] Removed output iterator from %s",
+            self.__class__.__name__,
+            input_runner.__class__.__name__,
+        )
 
     def _register_plugin(self, input_runner: ExtractRunner | None = None) -> None:
         """Register the plugin into the plugin tracker
@@ -714,18 +792,25 @@ class ExtractRunner(T.Generic[HandlerT]):
             logger.debug("[%s] Registering new pipeline: '%s'", name, self.uuid)
             _PLUGIN_REGISTER[self.uuid] = [self]
             return
-        uid, chain = next((k, v) for k, v in _PLUGIN_REGISTER.items() if input_runner in v)
+        uid, chain = next(
+            (k, v) for k, v in _PLUGIN_REGISTER.items() if input_runner in v
+        )
         logger.debug("[%s] Adding to existing pipeline: '%s'", name, uid)
         chain.insert(chain.index(input_runner) + 1, self)
 
     def start(self) -> None:
         """Start the threads. Callback for when the profiler has finished executing"""
         if self._threads.is_alive():
-            logger.warning("Start called on runner '%s' when threads are already active. This is "
-                           "almost definitely not desired", self.__class__.__name__)
+            logger.warning(
+                "Start called on runner '%s' when threads are already active. This is "
+                "almost definitely not desired",
+                self.__class__.__name__,
+            )
             return
         if self._uuid is None:
-            raise ValueError(f"Runner '{self.__class__.__name__}' must be called before starting")
+            raise ValueError(
+                f"Runner '{self.__class__.__name__}' must be called before starting"
+            )
 
         if self.handler.do_compile:
             self.handler.init_model()  # Need to compile the model in main thread
@@ -749,21 +834,27 @@ class ExtractRunner(T.Generic[HandlerT]):
             already been called
         """
         if input_runner is not None and input_runner._uuid is None:
-            raise ValueError(f"Input runner '{input_runner.__class__.__name__}' must be called "
-                             f"prior to adding to '{self.__class__.__name__}'")
+            raise ValueError(
+                f"Input runner '{input_runner.__class__.__name__}' must be called "
+                f"prior to adding to '{self.__class__.__name__}'"
+            )
         if self._uuid is not None:
-            raise ValueError(f"Runner '{self.__class__.__name__}' has already been called")
+            raise ValueError(
+                f"Runner '{self.__class__.__name__}' has already been called"
+            )
         self._uuid = uuid4().hex
 
         self._is_first = input_runner is None
         self._queues = self._get_queues(input_runner)
 
         self._inbound_iterator = self._get_inbound_iterator()
-        self._output_iterator = OutputIterator(self._queues["out"],
-                                               f"{self._plugin_name}_out",
-                                               self.handler.plugin_type,
-                                               self.handler.batch_size,
-                                               self._threads.error_state)
+        self._output_iterator = OutputIterator(
+            self._queues["out"],
+            f"{self._plugin_name}_out",
+            self.handler.plugin_type,
+            self.handler.batch_size,
+            self._threads.error_state,
+        )
         self._cascade_interfaces(input_runner)
         self._register_plugin(input_runner)
         if not profile:

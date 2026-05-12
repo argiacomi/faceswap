@@ -1,5 +1,6 @@
 #! /usr/env/bin/python3
 """Dataclass objects for holding and serializing alignments data"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field, fields, MISSING
@@ -17,6 +18,7 @@ from .constants import CenteringType
 @dataclass
 class DataclassDict:
     """Parent DataClass that has methods for loading to and from a dict for data serialization"""
+
     def __repr__(self) -> str:
         """Pretty print for logging"""
         params = {}
@@ -68,7 +70,9 @@ class DataclassDict:
         return retval
 
     @classmethod
-    def _convert_dtype(cls, data_type: T.Any, val: T.Any) -> DataclassDict | np.ndarray | None:
+    def _convert_dtype(
+        cls, data_type: T.Any, val: T.Any
+    ) -> DataclassDict | np.ndarray | None:
         """Convert a serialized dict to a DataclassDict or list to a numpy array of the correct
         dtype
 
@@ -103,7 +107,9 @@ class DataclassDict:
         return np.array(val, dtype=dtype)
 
     @classmethod
-    def _parse_dict(cls, field_type: T.Any, value: dict[str, T.Any]) -> dict[str, T.Any]:
+    def _parse_dict(
+        cls, field_type: T.Any, value: dict[str, T.Any]
+    ) -> dict[str, T.Any]:
         """Parse incoming serialized dicts into their correct nested objects
 
         Parameters
@@ -129,8 +135,9 @@ class DataclassDict:
         return retval
 
     @classmethod
-    def _parse_list(cls, field_type: T.Any, value: list[T.Any] | tuple[T.Any]
-                    ) -> list[T.Any] | tuple[T.Any]:
+    def _parse_list(
+        cls, field_type: T.Any, value: list[T.Any] | tuple[T.Any]
+    ) -> list[T.Any] | tuple[T.Any]:
         """Parse incoming serialized lists into their correct nested objects
 
         Parameters
@@ -146,7 +153,8 @@ class DataclassDict:
         """
         origin = T.get_origin(field_type)
         assert origin in (list, tuple), (
-            f"value: {type(value)} field: {T.get_origin(field_type)}")
+            f"value: {type(value)} field: {T.get_origin(field_type)}"
+        )
         dtype = T.get_args(field_type)[0]
         items = []
         for v in value:
@@ -155,7 +163,9 @@ class DataclassDict:
                 items.append(converted)
                 continue
             items.append(v)
-        retval = T.cast(list[T.Any] | tuple[T.Any], tuple(items) if origin is tuple else items)
+        retval = T.cast(
+            list[T.Any] | tuple[T.Any], tuple(items) if origin is tuple else items
+        )
         return retval
 
     @classmethod
@@ -169,14 +179,21 @@ class DataclassDict:
         """
         inbound = set(data_dict)
         all_fields = set(f.name for f in fields(cls))
-        required = set(f.name for f in fields(cls)
-                       if f.default is MISSING and f.default_factory is MISSING)
+        required = set(
+            f.name
+            for f in fields(cls)
+            if f.default is MISSING and f.default_factory is MISSING
+        )
         if not inbound.issubset(all_fields):
-            raise ValueError(f"Dictionary keys {sorted(inbound)} should be a subset of dataclass "
-                             f"params {sorted(all_fields)}")
+            raise ValueError(
+                f"Dictionary keys {sorted(inbound)} should be a subset of dataclass "
+                f"params {sorted(all_fields)}"
+            )
         if not required.issubset(inbound):
-            raise ValueError(f"Dataclass params {sorted(required)} should be a subset of "
-                             f"dictionary keys {sorted(inbound)}")
+            raise ValueError(
+                f"Dataclass params {sorted(required)} should be a subset of "
+                f"dictionary keys {sorted(inbound)}"
+            )
         type_hints = T.get_type_hints(cls)
         kwargs: dict[str, T.Any] = {}
         for f in fields(cls):
@@ -201,6 +218,7 @@ class DataclassDict:
 @dataclass(repr=False)
 class MaskAlignmentsFile(DataclassDict):
     """Dataclass for storing Masks in alignments files and PNG Headers"""
+
     mask: bytes
     """The zlib compressed UINT8 mask of shape (stored_size, stored_size)"""
     affine_matrix: npt.NDArray[np.float32]
@@ -217,6 +235,7 @@ class MaskAlignmentsFile(DataclassDict):
 class PNGAlignments(DataclassDict):
     """Base Dataclass for storing a single faces' Alignment Information in Alignments files and PNG
     Headers."""
+
     x: int
     """The left most point of the bounding box"""
     y: int
@@ -250,6 +269,7 @@ class PNGAlignments(DataclassDict):
 @dataclass(repr=False)
 class PNGSource(DataclassDict):
     """Dataclass for storing additional meta information in PNG headers."""
+
     alignments_version: float
     """The alignments file version that created the alignments data"""
     original_filename: str
@@ -267,6 +287,7 @@ class PNGSource(DataclassDict):
 @dataclass(repr=False)
 class PNGHeader(DataclassDict):
     """Dataclass for storing all alignment and meta information in PNG Headers."""
+
     alignments: PNGAlignments
     """The alignment information for the face"""
     source: PNGSource
@@ -277,6 +298,7 @@ class PNGHeader(DataclassDict):
 class FileAlignments(PNGAlignments):
     """Dataclass that holds the same information as PNGAlignments as well as a thumbnail for a
     single face"""
+
     thumb: npt.NDArray[np.uint8] | None = None
     """96px JPEG thumbnail of the aligned face image stored as a list"""
 
@@ -284,7 +306,10 @@ class FileAlignments(PNGAlignments):
 @dataclass(repr=False)
 class AlignmentsEntry(DataclassDict):
     """Holds the alignments entry for a single frame in the Alignments data dictionary"""
+
     faces: list[FileAlignments] = field(default_factory=list)
     """The detected faces in a frame"""
-    video_meta: dict[T.Literal["pts_time", "keyframe"], int] = field(default_factory=dict)
+    video_meta: dict[T.Literal["pts_time", "keyframe"], int] = field(
+        default_factory=dict
+    )
     """The keyframe to pts timestamp mapping for video data"""

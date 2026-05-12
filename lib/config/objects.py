@@ -1,11 +1,21 @@
 #! /usr/env/bin/python3
-""" Dataclass objects for holding and validating Faceswap Config items """
+"""Dataclass objects for holding and validating Faceswap Config items"""
+
 from __future__ import annotations
 
 import gettext
 import logging
-from typing import (Any, cast, Generic, get_args, get_origin, get_type_hints,
-                    Literal, TypeVar, Union)
+from typing import (
+    Any,
+    cast,
+    Generic,
+    get_args,
+    get_origin,
+    get_type_hints,
+    Literal,
+    TypeVar,
+    Union,
+)
 import types
 
 from dataclasses import dataclass, field
@@ -26,7 +36,7 @@ T = TypeVar("T")
 # TODO allow list items other than strings
 @dataclass
 class ConfigItem(Generic[T]):  # pylint:disable=too-many-instance-attributes
-    """ A dataclass for storing config items loaded from config.ini files and dynamically assigning
+    """A dataclass for storing config items loaded from config.ini files and dynamically assigning
     and validating that the correct datatype is used.
 
     The value loaded from the .ini config file can be accessed with either:
@@ -72,6 +82,7 @@ class ConfigItem(Generic[T]):  # pylint:disable=too-many-instance-attributes
         can be changed for existing models, and will override the value saved in the state file
         with the updated value in config. Default: ``True``
     """
+
     datatype: type[T]
     """ type : A python type class. The datatype of the config value. One of `int`, `float`, `str`,
     `bool` or `list`. `list` will only contain `str` items """
@@ -108,14 +119,16 @@ class ConfigItem(Generic[T]):  # pylint:disable=too-many-instance-attributes
 
     @property
     def helptext(self) -> str:
-        """ str | Description of the config option with additional formating and helptext added
-        from the item parameters """
+        """str | Description of the config option with additional formating and helptext added
+        from the item parameters"""
         retval = f"{self.info}\n"
         if not self.fixed:
             retval += _("\nThis option can be updated for existing models.\n")
         if self.datatype == list:
-            retval += _("\nIf selecting multiple options then each option should be separated "
-                        "by a space or a comma (e.g. item1, item2, item3)\n")
+            retval += _(
+                "\nIf selecting multiple options then each option should be separated "
+                "by a space or a comma (e.g. item1, item2, item3)\n"
+            )
         if self.choices and self.choices != "colorchooser":
             retval += _("\nChoose from: {}").format(self.choices)
         elif self.datatype == bool:
@@ -127,15 +140,19 @@ class ConfigItem(Generic[T]):  # pylint:disable=too-many-instance-attributes
         elif self.datatype == float:
             assert self.min_max is not None
             cmin, cmax = self.min_max
-            retval += _("\nSelect a decimal number between {} and {}").format(cmin, cmax)
-        default = ", ".join(self.default) if isinstance(self.default, list) else self.default
+            retval += _("\nSelect a decimal number between {} and {}").format(
+                cmin, cmax
+            )
+        default = (
+            ", ".join(self.default) if isinstance(self.default, list) else self.default
+        )
         retval += _("\n[Default: {}]").format(default)
         return retval
 
     @property
     def value(self) -> T:
-        """ Any : The config value for this item loaded from the config .ini file. String values
-        will always be lowercase, regardless of what is loaded from Config """
+        """Any : The config value for this item loaded from the config .ini file. String values
+        will always be lowercase, regardless of what is loaded from Config"""
         retval = self._value
         if isinstance(self._value, str):
             retval = cast(T, self._value.lower())
@@ -145,21 +162,23 @@ class ConfigItem(Generic[T]):  # pylint:disable=too-many-instance-attributes
 
     @property
     def ini_value(self) -> str:
-        """ str : The current value of the ConfigItem as a string for writing to a .ini file """
+        """str : The current value of the ConfigItem as a string for writing to a .ini file"""
         if isinstance(self._value, list):
             return ", ".join(str(x) for x in self._value)
         return str(self._value)
 
     @property
     def name(self) -> str:
-        """str: The name associated with this option """
+        """str: The name associated with this option"""
         return self._name
 
-    def _validate_type(self,  # pylint:disable=too-many-return-statements
-                       expected_type: Any,
-                       attr: Any,
-                       depth=1) -> bool:
-        """ Validate that provided types are correct when this Dataclass is initialized
+    def _validate_type(
+        self,  # pylint:disable=too-many-return-statements
+        expected_type: Any,
+        attr: Any,
+        depth=1,
+    ) -> bool:
+        """Validate that provided types are correct when this Dataclass is initialized
 
         Parameters
         ----------
@@ -191,12 +210,14 @@ class ConfigItem(Generic[T]):  # pylint:disable=too-many-instance-attributes
 
         if attr == "datatype":
             assert value in (str, bool, float, int, list), (
-                "'datatype' must be one of str, bool, float, int or list. Got {value}")
+                "'datatype' must be one of str, bool, float, int or list. Got {value}"
+            )
             return True
 
         if expected_type == T:  # type:ignore[misc]
             assert attr_type == self.datatype, (
-               f"'{attr}' expected: {self.datatype}. Got: {attr_type}")
+                f"'{attr}' expected: {self.datatype}. Got: {attr_type}"
+            )
             return True
 
         if get_origin(expected_type) is Literal:
@@ -208,8 +229,12 @@ class ConfigItem(Generic[T]):  # pylint:disable=too-many-instance-attributes
                     return True
 
         if get_origin(expected_type) in (list, tuple) and attr_type in (list, tuple):
-            sub_expected = [self.datatype if v == T  # type:ignore[misc]
-                            else v for v in get_args(expected_type)]
+            sub_expected = [
+                self.datatype
+                if v == T  # type:ignore[misc]
+                else v
+                for v in get_args(expected_type)
+            ]
             return set(type(v) for v in value).issubset(sub_expected)
 
         if depth == 1:
@@ -218,7 +243,7 @@ class ConfigItem(Generic[T]):  # pylint:disable=too-many-instance-attributes
         return False
 
     def _validate_required(self) -> None:
-        """ Validate that required parameters are populated
+        """Validate that required parameters are populated
 
         Raises
         ------
@@ -231,7 +256,7 @@ class ConfigItem(Generic[T]):  # pylint:disable=too-many-instance-attributes
             raise ValueError("Option info must me provided")
 
     def _validate_choices(self) -> None:
-        """ Validate that choices have been used correctly
+        """Validate that choices have been used correctly
 
         Raises
         ------
@@ -240,14 +265,24 @@ class ConfigItem(Generic[T]):  # pylint:disable=too-many-instance-attributes
         """
         if self.choices == "colorchooser":
             if not isinstance(self.default, str):
-                raise ValueError(f"Config Item default must be a string when selecting "
-                                 f"choice='colorchooser'. Got {type(self.default)}")
+                raise ValueError(
+                    f"Config Item default must be a string when selecting "
+                    f"choice='colorchooser'. Got {type(self.default)}"
+                )
             if not self.default.startswith("#") or len(self.default) != 7:
-                raise ValueError(f"Hex color codes should start with a '#' and be 6 "
-                                 f"characters long. Got: '{self.default}'")
-        elif self.choices and isinstance(self.default, str) and self.default not in self.choices:
-            raise ValueError(f"Config item default value '{self.default}' must exist in "
-                             f"in choices {self.choices}")
+                raise ValueError(
+                    f"Hex color codes should start with a '#' and be 6 "
+                    f"characters long. Got: '{self.default}'"
+                )
+        elif (
+            self.choices
+            and isinstance(self.default, str)
+            and self.default not in self.choices
+        ):
+            raise ValueError(
+                f"Config item default value '{self.default}' must exist in "
+                f"in choices {self.choices}"
+            )
 
         if isinstance(self.choices, list) and self.choices:
             unique_choices = set(x.lower() for x in self.choices)
@@ -259,14 +294,16 @@ class ConfigItem(Generic[T]):  # pylint:disable=too-many-instance-attributes
                 assert isinstance(self.default, str), type(self.default)
                 defaults = {self.default.lower()}
             if not defaults.issubset(unique_choices):
-                raise ValueError(f"Config item default {self.default} must exist in choices "
-                                 f"{self.choices}")
+                raise ValueError(
+                    f"Config item default {self.default} must exist in choices "
+                    f"{self.choices}"
+                )
 
         if not self.choices and isinstance(self.default, list):
             raise ValueError("Config item of type list must have choices defined")
 
     def _validate_numeric(self) -> None:
-        """ Validate that float and int values have been set correctly
+        """Validate that float and int values have been set correctly
 
         Raises
         ------
@@ -276,14 +313,18 @@ class ConfigItem(Generic[T]):  # pylint:disable=too-many-instance-attributes
         # NOTE: Have to include datatype filter in next check to exclude bools
         if self.datatype in (float, int) and isinstance(self.default, (float, int)):
             if self.rounding <= 0:
-                raise ValueError(f"Config Item rounding must be a positive number for "
-                                 f"datatypes float and int. Got {self.rounding}")
+                raise ValueError(
+                    f"Config Item rounding must be a positive number for "
+                    f"datatypes float and int. Got {self.rounding}"
+                )
             if self.min_max is None or len(self.min_max) != 2:
-                raise ValueError(f"Config Item min_max must be a tuple of (<minimum>, "
-                                 f"<maximum>) values. Got {self.min_max}")
+                raise ValueError(
+                    f"Config Item min_max must be a tuple of (<minimum>, "
+                    f"<maximum>) values. Got {self.min_max}"
+                )
 
     def __post_init__(self) -> None:
-        """ Validate and type check that the given parameters are valid and set the default value.
+        """Validate and type check that the given parameters are valid and set the default value.
 
         Raises
         ------
@@ -303,17 +344,17 @@ class ConfigItem(Generic[T]):  # pylint:disable=too-many-instance-attributes
         self._validate_numeric()
 
     def get(self) -> T:
-        """ Obtain the currently stored configuration value
+        """Obtain the currently stored configuration value
 
         Returns
         -------
         Any
             The config value for this item loaded from the config .ini file. String values will
-            always be lowecase, regardless of what is loaded from Config """
+            always be lowecase, regardless of what is loaded from Config"""
         return self.value
 
     def _parse_list(self, value: str | list[str]) -> list[str]:
-        """ Parse inbound list values. These can be space/comma-separated strings or a list.
+        """Parse inbound list values. These can be space/comma-separated strings or a list.
 
         Parameters
         ----------
@@ -331,11 +372,13 @@ class ConfigItem(Generic[T]):  # pylint:disable=too-many-instance-attributes
             return [str(x) for x in value]
         delimiter = "," if "," in value else None
         retval = list(set(x.strip() for x in value.split(delimiter)))
-        logger.debug("[%s] Processed str value '%s' to unique list %s", self._name, value, retval)
+        logger.debug(
+            "[%s] Processed str value '%s' to unique list %s", self._name, value, retval
+        )
         return retval
 
     def _validate_selection(self, value: str | list[str]) -> str | list[str]:
-        """ Validate that the given value is valid within the stored choices
+        """Validate that the given value is valid within the stored choices
 
         Parameters
         ----------
@@ -353,8 +396,12 @@ class ConfigItem(Generic[T]):  # pylint:disable=too-many-instance-attributes
 
         if isinstance(value, str):
             if value.lower() not in choices:
-                logger.warning("[%s] '%s' is not a valid config choice. Defaulting to '%s'",
-                               self._name, value, self.default)
+                logger.warning(
+                    "[%s] '%s' is not a valid config choice. Defaulting to '%s'",
+                    self._name,
+                    value,
+                    self.default,
+                )
                 return cast(str, self.default)
             return value
 
@@ -364,13 +411,17 @@ class ConfigItem(Generic[T]):  # pylint:disable=too-many-instance-attributes
         valid = [x for x in value if x.lower() in choices]
         valid = valid if valid else cast(list[str], self.default)
         invalid = [x for x in value if x.lower() not in choices]
-        logger.warning("[%s] The option(s) %s are not valid selections. Setting to: %s",
-                       self._name, invalid, valid)
+        logger.warning(
+            "[%s] The option(s) %s are not valid selections. Setting to: %s",
+            self._name,
+            invalid,
+            valid,
+        )
 
         return valid
 
     def set(self, value: T) -> None:
-        """ Set the item's option value
+        """Set the item's option value
 
         Parameters
         ----------
@@ -383,18 +434,22 @@ class ConfigItem(Generic[T]):  # pylint:disable=too-many-instance-attributes
             If the given value does not pass type and content validation checks
         """
         if not self._name:
-            raise ValueError("The name of this object should have been set before any value is"
-                             "added")
+            raise ValueError(
+                "The name of this object should have been set before any value isadded"
+            )
 
         if self.datatype is list:
             if not isinstance(value, (str, list)):
-                raise ValueError(f"[{self._name}] List values should be set as a Str or List. Got "
-                                 f"{type(value)} ({value})")
+                raise ValueError(
+                    f"[{self._name}] List values should be set as a Str or List. Got "
+                    f"{type(value)} ({value})"
+                )
             value = cast(T, self._parse_list(value))
 
         if not isinstance(value, self.datatype):
             raise ValueError(
-                f"[{self._name}] Expected {self.datatype} got {type(value)} ({value})")
+                f"[{self._name}] Expected {self.datatype} got {type(value)} ({value})"
+            )
 
         if isinstance(self.choices, list) and self.choices:
             assert isinstance(value, (list, str))
@@ -403,13 +458,15 @@ class ConfigItem(Generic[T]):  # pylint:disable=too-many-instance-attributes
         if self.choices == "colorchooser":
             assert isinstance(value, str)
             if not value.startswith("#") or len(value) != 7:
-                raise ValueError(f"Hex color codes should start with a '#' and be 6 "
-                                 f"characters long. Got: '{value}'")
+                raise ValueError(
+                    f"Hex color codes should start with a '#' and be 6 "
+                    f"characters long. Got: '{value}'"
+                )
 
         self._value = value
 
     def set_name(self, name: str) -> None:
-        """ Set the logging name for this object for display purposes
+        """Set the logging name for this object for display purposes
 
         Parameters
         ----------
@@ -421,19 +478,19 @@ class ConfigItem(Generic[T]):  # pylint:disable=too-many-instance-attributes
         self._name = name
 
     def __call__(self) -> T:
-        """ Obtain the currently stored configuration value
+        """Obtain the currently stored configuration value
 
         Returns
         -------
         Any
             The config value for this item loaded from the config .ini file. String values will
-            always be lowecase, regardless of what is loaded from Config """
+            always be lowecase, regardless of what is loaded from Config"""
         return self.value
 
 
 @dataclass
 class ConfigSection:
-    """ Dataclass for holding information about configuration sections and the contained
+    """Dataclass for holding information about configuration sections and the contained
     configuration items
 
     Parameters
@@ -443,13 +500,14 @@ class ConfigSection:
     options : dict[str, :class:`ConfigItem`]
         Dictionary of configuration option name to the options for the section
     """
+
     helptext: str
     options: dict[str, ConfigItem]
 
 
 @dataclass
 class GlobalSection:
-    """ A dataclass for holding and identifying global sub-sections for plugin groups. Any global
+    """A dataclass for holding and identifying global sub-sections for plugin groups. Any global
     subsections must inherit from this.
 
     Parameters
@@ -457,6 +515,7 @@ class GlobalSection:
     helptext : str
         The helptext to be displayed for the global configuration section
     """
+
     helptext: str
 
 

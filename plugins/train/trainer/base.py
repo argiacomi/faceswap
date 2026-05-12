@@ -6,6 +6,7 @@ At present there is only the :class:`~plugins.train.trainer.original` plugin, so
 inherits from this class. If further plugins are developed, then common code should be kept here,
 with "original" unique code split out to the original plugin.
 """
+
 from __future__ import annotations
 import abc
 import logging
@@ -46,6 +47,7 @@ class TrainConfig:
     snapshot interval
         The number of iterations between snapshots. Default -1 (Disabled)
     """
+
     folders: list[str]
     """List of folders to be used as inputs to the model. Folders are provided in processing order
     (eg: [A, B, ...])"""
@@ -76,6 +78,7 @@ class TrainerBase(abc.ABC):
     config
         The Training Configuration options
     """
+
     def __init__(self, model: ModelBase, config: TrainConfig) -> None:
         self.model = model
         """The model plugin to train the batch on"""
@@ -106,8 +109,9 @@ class TrainerBase(abc.ABC):
         self.loss_func = loss
 
     @abc.abstractmethod
-    def get_sampler(self) -> type[torch.utils.data.RandomSampler |
-                                  torch.utils.data.DistributedSampler]:
+    def get_sampler(
+        self,
+    ) -> type[torch.utils.data.RandomSampler | torch.utils.data.DistributedSampler]:
         """Override to set the sampler that the Torch DataLoader should use
 
         Returns
@@ -116,10 +120,9 @@ class TrainerBase(abc.ABC):
         """
 
     @abc.abstractmethod
-    def train_batch(self,
-                    inputs: list[torch.Tensor],
-                    targets: list[torch.Tensor],
-                    meta: BatchMeta) -> list[BatchLoss]:
+    def train_batch(
+        self, inputs: list[torch.Tensor], targets: list[torch.Tensor], meta: BatchMeta
+    ) -> list[BatchLoss]:
         """Override to run a single forward and backwards pass through the model for a single batch
 
         Parameters

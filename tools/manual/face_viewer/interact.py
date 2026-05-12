@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-""" Handles the viewport area for mouse hover actions and the active frame """
+"""Handles the viewport area for mouse hover actions and the active frame"""
+
 from __future__ import annotations
 import logging
 import tkinter as tk
@@ -18,8 +19,8 @@ if T.TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class HoverBox():
-    """ Handle the current mouse location when over the :class:`Viewport`.
+class HoverBox:
+    """Handle the current mouse location when over the :class:`Viewport`.
 
     Highlights the face currently underneath the cursor and handles actions when clicking
     on a face.
@@ -29,6 +30,7 @@ class HoverBox():
     viewport: :class:`Viewport`
         The viewport object for the :class:`~tools.manual.faceviewer.frame.FacesViewer` canvas
     """
+
     def __init__(self, viewport: Viewport) -> None:
         logger.debug(parse_class_init(locals()))
         self._viewport = viewport
@@ -36,16 +38,18 @@ class HoverBox():
         self._grid = viewport._canvas.layout
         self._globals = viewport._canvas._globals
         self._navigation = viewport._canvas._display_frame.navigation
-        self._box = self._canvas.create_rectangle(0.,  # type:ignore[call-overload]
-                                                  0.,
-                                                  float(self._size),
-                                                  float(self._size),
-                                                  outline="#0000ff",
-                                                  width=2,
-                                                  state="hidden",
-                                                  fill="#0000ff",
-                                                  stipple="gray12",
-                                                  tags="hover_box")
+        self._box = self._canvas.create_rectangle(
+            0.0,  # type:ignore[call-overload]
+            0.0,
+            float(self._size),
+            float(self._size),
+            outline="#0000ff",
+            width=2,
+            state="hidden",
+            fill="#0000ff",
+            stipple="gray12",
+            tags="hover_box",
+        )
         self._current_frame_index = None
         self._current_face_index = None
         self._canvas.bind("<Leave>", lambda e: self._clear())
@@ -55,11 +59,11 @@ class HoverBox():
 
     @property
     def _size(self) -> int:
-        """ int: the currently set viewport face size in pixels. """
+        """int: the currently set viewport face size in pixels."""
         return self._viewport.face_size
 
     def on_hover(self, event: tk.Event | None) -> None:
-        """ Highlight the face and set the mouse cursor for the mouse's current location.
+        """Highlight the face and set the mouse cursor for the mouse's current location.
 
         Parameters
         ----------
@@ -69,22 +73,31 @@ class HoverBox():
             mouse event) then the location of the cursor will be calculated
         """
         if event is None:
-            pnts = np.array((self._canvas.winfo_pointerx(), self._canvas.winfo_pointery()))
+            pnts = np.array(
+                (self._canvas.winfo_pointerx(), self._canvas.winfo_pointery())
+            )
             pnts -= np.array((self._canvas.winfo_rootx(), self._canvas.winfo_rooty()))
         else:
             pnts = np.array((event.x, event.y))
 
-        coords = (int(self._canvas.canvasx(pnts[0])), int(self._canvas.canvasy(pnts[1])))
+        coords = (
+            int(self._canvas.canvasx(pnts[0])),
+            int(self._canvas.canvasy(pnts[1])),
+        )
         face = self._viewport.face_from_point(*coords)
         frame_idx, face_idx = face[:2]
 
-        if frame_idx == self._current_frame_index and face_idx == self._current_face_index:
+        if (
+            frame_idx == self._current_frame_index
+            and face_idx == self._current_face_index
+        ):
             return
 
         is_zoomed = self._globals.is_zoomed
-        if (-1 in face or (frame_idx == self._globals.frame_index
-                           and (not is_zoomed or
-                                (is_zoomed and face_idx == self._globals.face_index)))):
+        if -1 in face or (
+            frame_idx == self._globals.frame_index
+            and (not is_zoomed or (is_zoomed and face_idx == self._globals.face_index))
+        ):
             self._clear()
             self._canvas.config(cursor="")
             self._current_frame_index = None
@@ -99,12 +112,12 @@ class HoverBox():
         self._current_face_index = face_idx
 
     def _clear(self) -> None:
-        """ Hide the hover box when the mouse is not over a face. """
+        """Hide the hover box when the mouse is not over a face."""
         if self._canvas.itemcget(self._box, "state") != "hidden":
             self._canvas.itemconfig(self._box, state="hidden")
 
     def _highlight(self, top_left: np.ndarray) -> None:
-        """ Display the hover box around the face that the mouse is currently over.
+        """Display the hover box around the face that the mouse is currently over.
 
         Parameters
         ----------
@@ -117,19 +130,29 @@ class HoverBox():
         self._canvas.tag_raise(self._box)
 
     def _select_frame(self) -> None:
-        """ Select the face and the subsequent frame (in the editor view) when a face is clicked
-        on in the :class:`Viewport`. """
+        """Select the face and the subsequent frame (in the editor view) when a face is clicked
+        on in the :class:`Viewport`."""
         frame_id = self._current_frame_index
         is_zoomed = self._globals.is_zoomed
-        logger.debug("Face clicked. Global frame index: %s, Current frame_id: %s, is_zoomed: %s",
-                     self._globals.frame_index, frame_id, is_zoomed)
-        if frame_id is None or (frame_id == self._globals.frame_index and not is_zoomed):
+        logger.debug(
+            "Face clicked. Global frame index: %s, Current frame_id: %s, is_zoomed: %s",
+            self._globals.frame_index,
+            frame_id,
+            is_zoomed,
+        )
+        if frame_id is None or (
+            frame_id == self._globals.frame_index and not is_zoomed
+        ):
             return
         face_idx = self._current_face_index if is_zoomed else 0
         self._globals.set_face_index(face_idx)
         transport_id = self._grid.transport_index_from_frame(frame_id)
-        logger.trace("frame_index: %s, transport_id: %s, face_idx: %s",
-                     frame_id, transport_id, face_idx)
+        logger.trace(
+            "frame_index: %s, transport_id: %s, face_idx: %s",
+            frame_id,
+            transport_id,
+            face_idx,
+        )
         if transport_id is None:
             return
         self._navigation.stop_playback()
@@ -140,7 +163,7 @@ class HoverBox():
 
 @dataclass
 class Asset:
-    """ Holds all of the display assets identifiers for the active frame's face viewer objects
+    """Holds all of the display assets identifiers for the active frame's face viewer objects
 
     Parameters
     ----------
@@ -153,6 +176,7 @@ class Asset:
     boxes: list[int]
         Indices for a frame's bounding box object ids displayed in the active frame
     """
+
     images: list[int]
     """list[int]: Indices for a frame's tk image ids displayed in the active frame"""
     meshes: list[dict[T.Literal["polygon", "line"], list[int]]]
@@ -166,8 +190,8 @@ class Asset:
     frame"""
 
 
-class ActiveFrame():
-    """ Handles the display of faces and annotations for the currently active frame.
+class ActiveFrame:
+    """Handles the display of faces and annotations for the currently active frame.
 
     Parameters
     ----------
@@ -176,6 +200,7 @@ class ActiveFrame():
     tk_edited_variable: :class:`tkinter.BooleanVar`
         The tkinter callback variable indicating that a face has been edited
     """
+
     def __init__(self, viewport: Viewport, tk_edited_variable: tk.BooleanVar) -> None:
         logger.debug(parse_class_init(locals()))
         self._objects = viewport._objects
@@ -185,48 +210,53 @@ class ActiveFrame():
         self._canvas = viewport._canvas
         self._globals = viewport._canvas._globals
         self._navigation = viewport._canvas._display_frame.navigation
-        self._last_execution: dict[T.Literal["frame_index", "size"],
-                                   int] = {"frame_index": -1, "size": viewport.face_size}
-        self._tk_vars: dict[T.Literal["selected_editor", "edited"],
-                            tk.StringVar | tk.BooleanVar] = {
+        self._last_execution: dict[T.Literal["frame_index", "size"], int] = {
+            "frame_index": -1,
+            "size": viewport.face_size,
+        }
+        self._tk_vars: dict[
+            T.Literal["selected_editor", "edited"], tk.StringVar | tk.BooleanVar
+        ] = {
             "selected_editor": self._canvas._display_frame.tk_selected_action,
-            "edited": tk_edited_variable}
+            "edited": tk_edited_variable,
+        }
         self._assets: Asset = Asset([], [], [], [])
 
-        self._globals.var_update_active_viewport.trace_add("write",
-                                                           lambda *e: self._reload_callback())
+        self._globals.var_update_active_viewport.trace_add(
+            "write", lambda *e: self._reload_callback()
+        )
         tk_edited_variable.trace_add("write", lambda *e: self._update_on_edit())
         logger.debug("Initialized: %s", self.__class__.__name__)
 
     @property
     def frame_index(self) -> int:
-        """ int: The frame index of the currently displayed frame. """
+        """int: The frame index of the currently displayed frame."""
         return self._globals.frame_index
 
     @property
     def current_frame(self) -> np.ndarray:
-        """ :class:`numpy.ndarray`: A BGR version of the frame currently being displayed. """
+        """:class:`numpy.ndarray`: A BGR version of the frame currently being displayed."""
         return self._globals.current_frame.image
 
     @property
     def _size(self) -> int:
-        """ int: The size of the thumbnails displayed in the viewport, in pixels. """
+        """int: The size of the thumbnails displayed in the viewport, in pixels."""
         return self._viewport.face_size
 
     @property
     def _optional_annotations(self) -> dict[T.Literal["mesh", "mask"], bool]:
-        """ dict[Literal["mesh", "mask"], bool]: The currently selected optional
-        annotations """
+        """dict[Literal["mesh", "mask"], bool]: The currently selected optional
+        annotations"""
         return self._canvas.optional_annotations
 
     def _reload_callback(self) -> None:
-        """ If a frame has changed, triggering the variable, then update the active frame. Return
-        having done nothing if the variable is resetting. """
+        """If a frame has changed, triggering the variable, then update the active frame. Return
+        having done nothing if the variable is resetting."""
         if self._globals.var_update_active_viewport.get():
             self.reload_annotations()
 
     def reload_annotations(self) -> None:
-        """ Handles the reloading of annotations for the currently active faces.
+        """Handles the reloading of annotations for the currently active faces.
 
         Highlights the faces within the viewport of those faces that exist in the currently
         displaying frame. Applies annotations based on the optional annotations and current
@@ -254,7 +284,7 @@ class ActiveFrame():
         self._last_execution["frame_index"] = self.frame_index
 
     def _clear_previous(self) -> None:
-        """ Reverts the previously selected annotations to their default state. """
+        """Reverts the previously selected annotations to their default state."""
         logger.trace("Clearing previous active frame")  # type:ignore[attr-defined]
         self._canvas.itemconfig("active_highlighter", state="hidden")
 
@@ -263,17 +293,24 @@ class ActiveFrame():
             self._canvas.itemconfig(tag, **self._viewport.mesh_kwargs[key], width=1)
             self._canvas.dtag(tag)
 
-        if self._viewport.selected_editor == "mask" and not self._optional_annotations["mask"]:
+        if (
+            self._viewport.selected_editor == "mask"
+            and not self._optional_annotations["mask"]
+        ):
             for name, tk_face in self._tk_faces.items():
                 if name.startswith(f"{self._last_execution['frame_index']}_"):
                     tk_face.update_mask(None)
 
     def _set_active_objects(self) -> None:
-        """ Collect the objects that exist in the currently active frame from the main grid. """
+        """Collect the objects that exist in the currently active frame from the main grid."""
         if self._grid.is_valid:
             rows, cols = np.where(self._objects.visible_grid[0] == self.frame_index)
-            logger.trace("Setting active objects: (rows: %s, "  # type:ignore[attr-defined]
-                         "columns: %s)", rows, cols)
+            logger.trace(
+                "Setting active objects: (rows: %s, "  # type:ignore[attr-defined]
+                "columns: %s)",
+                rows,
+                cols,
+            )
             self._assets.images = self._objects.images[rows, cols].tolist()
             self._assets.meshes = self._objects.meshes[rows, cols].tolist()
             self._assets.faces = self._objects.visible_faces[rows, cols].tolist()
@@ -284,19 +321,21 @@ class ActiveFrame():
             self._assets.faces = []
 
     def _check_active_in_view(self) -> None:
-        """  If the frame has changed, there are faces in the frame, but they don't appear in the
-        viewport, then bring the active faces to the top of the viewport. """
-        if (not self._assets.images and
-                self._last_execution["frame_index"] != self.frame_index and
-                self._grid.frame_has_faces(self.frame_index)):
+        """If the frame has changed, there are faces in the frame, but they don't appear in the
+        viewport, then bring the active faces to the top of the viewport."""
+        if (
+            not self._assets.images
+            and self._last_execution["frame_index"] != self.frame_index
+            and self._grid.frame_has_faces(self.frame_index)
+        ):
             y_coord = self._grid.y_coord_from_frame(self.frame_index)
             logger.trace("Active not in view. Moving to: %s", y_coord)  # type:ignore[attr-defined]
             self._canvas.yview_moveto(y_coord / self._canvas.bbox("backdrop")[3])
             self._viewport.update()
 
     def move_to_top(self) -> None:
-        """ Move the currently selected frame's faces to the top of the viewport if they are moving
-        off the bottom of the viewer. """
+        """Move the currently selected frame's faces to the top of the viewport if they are moving
+        off the bottom of the viewer."""
         height = self._canvas.bbox("backdrop")[3]
         bot = int(self._canvas.coords(self._assets.images[-1])[1] + self._size)
 
@@ -312,39 +351,47 @@ class ActiveFrame():
             return
 
         if self._canvas.winfo_height() > self._size:
-            logger.trace("Viewport taller than single face height. "  # type:ignore[attr-defined]
-                         "Moving Active faces to top: %s", top)
+            logger.trace(
+                "Viewport taller than single face height. "  # type:ignore[attr-defined]
+                "Moving Active faces to top: %s",
+                top,
+            )
             self._canvas.yview_moveto(top / height)
             self._viewport.update()
         elif self._canvas.winfo_height() <= self._size and y_top != top:
-            logger.trace("Viewport shorter than single face height. "  # type:ignore[attr-defined]
-                         "Moving Active faces to top: %s", top)
+            logger.trace(
+                "Viewport shorter than single face height. "  # type:ignore[attr-defined]
+                "Moving Active faces to top: %s",
+                top,
+            )
             self._canvas.yview_moveto(top / height)
             self._viewport.update()
 
     def _create_new_boxes(self) -> None:
-        """ The highlight boxes (border around selected faces) are the only additional annotations
+        """The highlight boxes (border around selected faces) are the only additional annotations
         that are required for the highlighter. If more faces are displayed in the current frame
         than highlight boxes are available, then new boxes are created to accommodate the
-        additional faces. """
+        additional faces."""
         new_boxes_count = max(0, len(self._assets.images) - len(self._assets.boxes))
         if new_boxes_count == 0:
             return
         logger.debug("new_boxes_count: %s", new_boxes_count)
         for _ in range(new_boxes_count):
-            box = self._canvas.create_rectangle(0.,  # type:ignore[call-overload]
-                                                0.,
-                                                float(self._viewport.face_size),
-                                                float(self._viewport.face_size),
-                                                outline="#00FF00",
-                                                width=2,
-                                                state="hidden",
-                                                tags=["active_highlighter"])
+            box = self._canvas.create_rectangle(
+                0.0,  # type:ignore[call-overload]
+                0.0,
+                float(self._viewport.face_size),
+                float(self._viewport.face_size),
+                outline="#00FF00",
+                width=2,
+                state="hidden",
+                tags=["active_highlighter"],
+            )
             logger.trace("Created new highlight_box: %s", box)  # type:ignore[attr-defined]
             self._assets.boxes.append(box)
 
     def _update_on_edit(self) -> None:
-        """ Update the active faces on a frame edit. """
+        """Update the active faces on a frame edit."""
         if not self._tk_vars["edited"].get():
             return
         self._set_active_objects()
@@ -353,12 +400,18 @@ class ActiveFrame():
         self._tk_vars["edited"].set(False)
 
     def _update_face(self) -> None:
-        """ Update the highlighted annotations for faces in the currently selected frame. """
-        for face_idx, (image_id, mesh_ids, box_id, det_face), in enumerate(
-                zip(self._assets.images,
-                    self._assets.meshes,
-                    self._assets.boxes,
-                    self._assets.faces)):
+        """Update the highlighted annotations for faces in the currently selected frame."""
+        for (
+            face_idx,
+            (image_id, mesh_ids, box_id, det_face),
+        ) in enumerate(
+            zip(
+                self._assets.images,
+                self._assets.meshes,
+                self._assets.boxes,
+                self._assets.faces,
+            )
+        ):
             if det_face is None:
                 continue
             top_left = self._canvas.coords(image_id)
@@ -370,7 +423,7 @@ class ActiveFrame():
         self._last_execution["size"] = self._viewport.face_size
 
     def _show_box(self, item_id: int, coordinates: list[float]) -> None:
-        """ Display the highlight box around the given coordinates.
+        """Display the highlight box around the given coordinates.
 
         Parameters
         ----------
@@ -382,12 +435,14 @@ class ActiveFrame():
         self._canvas.coords(item_id, *coordinates)
         self._canvas.itemconfig(item_id, state="normal")
 
-    def _show_mesh(self,
-                   mesh_ids: dict[T.Literal["polygon", "line"], list[int]],
-                   face_index: int,
-                   detected_face: DetectedFace,
-                   top_left: list[float]) -> None:
-        """ Display the mesh annotation for the given face, at the given location.
+    def _show_mesh(
+        self,
+        mesh_ids: dict[T.Literal["polygon", "line"], list[int]],
+        face_index: int,
+        detected_face: DetectedFace,
+        top_left: list[float],
+    ) -> None:
+        """Display the mesh annotation for the given face, at the given location.
 
         Parameters
         ----------
@@ -401,20 +456,30 @@ class ActiveFrame():
         top_left: list[float]
             The (x, y) top left co-ordinates of the mesh's bounding box
         """
-        state = "normal" if (self._tk_vars["selected_editor"].get() != "Mask" or
-                             self._optional_annotations["mesh"]) else "hidden"
+        state = (
+            "normal"
+            if (
+                self._tk_vars["selected_editor"].get() != "Mask"
+                or self._optional_annotations["mesh"]
+            )
+            else "hidden"
+        )
         kwargs: dict[T.Literal["polygon", "line"], dict[str, T.Any]] = {
-            "polygon": {"fill": "", "width": 2, "outline": self._canvas.control_colors["Mesh"]},
-            "line": {"fill": self._canvas.control_colors["Mesh"], "width": 2}}
+            "polygon": {
+                "fill": "",
+                "width": 2,
+                "outline": self._canvas.control_colors["Mesh"],
+            },
+            "line": {"fill": self._canvas.control_colors["Mesh"], "width": 2},
+        }
 
         assert isinstance(self._tk_vars["edited"], tk.BooleanVar)
-        edited = (self._tk_vars["edited"].get() and
-                  self._tk_vars["selected_editor"].get() not in ("Mask", "View"))
-        landmarks = self._viewport.get_landmarks(self.frame_index,
-                                                 face_index,
-                                                 detected_face,
-                                                 top_left,
-                                                 edited)
+        edited = self._tk_vars["edited"].get() and self._tk_vars[
+            "selected_editor"
+        ].get() not in ("Mask", "View")
+        landmarks = self._viewport.get_landmarks(
+            self.frame_index, face_index, detected_face, top_left, edited
+        )
         for key, kwarg in kwargs.items():
             if key not in mesh_ids:
                 continue

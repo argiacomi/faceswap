@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Tool to preview swaps and tweak configuration prior to running a convert """
+"""Tool to preview swaps and tweak configuration prior to running a convert"""
+
 from __future__ import annotations
 import gettext
 import logging
@@ -55,10 +56,13 @@ class Preview(tk.Tk):
     arguments
         The :mod:`argparse` arguments as passed in from :mod:`tools.py`
     """
+
     _w: str
 
     def __init__(self, arguments: Namespace) -> None:
-        logger.debug("Initializing %s: (arguments: '%s'", self.__class__.__name__, arguments)
+        logger.debug(
+            "Initializing %s: (arguments: '%s'", self.__class__.__name__, arguments
+        )
         super().__init__()
         arguments = handle_deprecated_cli_opts(arguments)
         self._config_tools = ConfigTools(arguments.config_file)
@@ -115,11 +119,7 @@ class Preview(tk.Tk):
         initialize_images()
         get_config().set_geometry(940, 600, fullscreen=False)
         self.title("Faceswap.py - Convert Settings")
-        self.tk.call(
-            "wm",
-            "iconphoto",
-            self._w,
-            get_images().icons["favicon"])  # pylint:disable=protected-access
+        self.tk.call("wm", "iconphoto", self._w, get_images().icons["favicon"])  # pylint:disable=protected-access
         logger.debug("Initialized tkinter")
 
     def process(self) -> None:
@@ -150,24 +150,23 @@ class Preview(tk.Tk):
 
     def _build_ui(self) -> None:
         """Build the elements for displaying preview images and options panels."""
-        container = ttk.PanedWindow(self,
-                                    orient=tk.VERTICAL)
+        container = ttk.PanedWindow(self, orient=tk.VERTICAL)
         container.pack(fill=tk.BOTH, expand=True)
-        setattr(container, "preview_display", self._display)  # TODO subclass not setattr
+        setattr(
+            container, "preview_display", self._display
+        )  # TODO subclass not setattr
         self._image_canvas = ImagesCanvas(self, container)
         container.add(self._image_canvas, weight=3)
 
         options_frame = ttk.Frame(container)
         self._cli_frame = ActionFrame(self, options_frame)
-        self._opts_book = OptionsBook(options_frame,
-                                      self._config_tools,
-                                      self._refresh)
+        self._opts_book = OptionsBook(options_frame, self._config_tools, self._refresh)
         container.add(options_frame, weight=1)
         self.update_idletasks()
         container.sashpos(0, int(400 * get_config().scaling_factor))
 
 
-class Dispatcher():
+class Dispatcher:
     """Handles the app level tk.Variables and the threading events. Dispatches events to the
     correct location and handles GUI state whilst events are handled
 
@@ -176,6 +175,7 @@ class Dispatcher():
     app
         The main tkinter Preview app
     """
+
     def __init__(self, app: Preview):
         logger.debug("Initializing %s: (app: %s)", self.__class__.__name__, app)
         self._app = app
@@ -242,7 +242,9 @@ class Dispatcher():
         """Sends a trigger to the patching thread that it needs to be run. Waits for the patching
         to complete prior to triggering a display refresh and unsetting the busy indicators"""
         if self._is_updating:
-            logger.debug("Request to run patch when it is already running. Adding stacked event.")
+            logger.debug(
+                "Request to run patch when it is already running. Adding stacked event."
+            )
             self._stacked_event = True
             return
         self._is_updating = True
@@ -251,7 +253,7 @@ class Dispatcher():
         self._wait_for_patch()
 
 
-class Samples():
+class Samples:
     """The display samples.
 
     Obtains and holds :attr:`sample_size` semi random test faces for displaying in the
@@ -272,41 +274,55 @@ class Samples():
     """
 
     def __init__(self, app: Preview, arguments: Namespace, sample_size: int) -> None:
-        logger.debug("Initializing %s: (app: %s, arguments: '%s', sample_size: %s)",
-                     self.__class__.__name__, app, arguments, sample_size)
+        logger.debug(
+            "Initializing %s: (app: %s, arguments: '%s', sample_size: %s)",
+            self.__class__.__name__,
+            app,
+            arguments,
+            sample_size,
+        )
         self._sample_size = sample_size
         self._app = app
         self._input_images: list[ConvertItem] = []
         self._predicted_images: list[tuple[ConvertItem, np.ndarray]] = []
 
         is_video = check_for_video(arguments.input_dir)
-        self._alignments = Alignments(arguments.alignments_path,
-                                      arguments.input_dir,
-                                      is_extract=False,
-                                      input_is_video=is_video)
+        self._alignments = Alignments(
+            arguments.alignments_path,
+            arguments.input_dir,
+            is_extract=False,
+            input_is_video=is_video,
+        )
 
         if not self._alignments.have_alignments_file:
             logger.error("Alignments file not found at: '%s'", self._alignments.file)
             sys.exit(1)
 
         video_meta = self._alignments.video_meta_data
-        self._images = SingleFrameLoader(arguments.input_dir, video_meta_data=video_meta)
+        self._images = SingleFrameLoader(
+            arguments.input_dir, video_meta_data=video_meta
+        )
 
         if is_video and video_meta is None:
             video_meta = self._images.video_meta_data
             assert video_meta is not None
-            self._alignments.save_video_meta_data(video_meta["pts_time"], video_meta["keyframes"])
+            self._alignments.save_video_meta_data(
+                video_meta["pts_time"], video_meta["keyframes"]
+            )
 
         if self._images.is_video:
-            self._alignments.update_legacy_has_source(os.path.basename(arguments.input_dir))
+            self._alignments.update_legacy_has_source(
+                os.path.basename(arguments.input_dir)
+            )
 
         self._filelist = self._get_filelist()
         self._indices = self._get_indices()
 
         self._predictor = Predict(self._sample_size, arguments)
         self._predictor.launch(queue_manager.get_queue("preview_predict_in"))
-        self._app._display.set_centering_offset(self._predictor.centering,
-                                                self._predictor.y_offset)
+        self._app._display.set_centering_offset(
+            self._predictor.centering, self._predictor.y_offset
+        )
         self.generate()
 
         logger.debug("Initialized %s", self.__class__.__name__)
@@ -314,9 +330,11 @@ class Samples():
     @property
     def available_masks(self) -> list[str]:
         """The mask names that are available for every face in the alignments file"""
-        retval = [key
-                  for key, val in self.alignments.mask_summary.items()
-                  if val == self.alignments.faces_count]
+        retval = [
+            key
+            for key, val in self.alignments.mask_summary.items()
+            if val == self.alignments.faces_count
+        ]
         return retval
 
     @property
@@ -356,15 +374,20 @@ class Samples():
             A list of filenames of frames that contain faces.
         """
         logger.debug("Filtering file list to frames with faces")
-        retval = [filename for filename in self._images.file_list
-                  if self._alignments.frame_has_faces(os.path.basename(filename))]
+        retval = [
+            filename
+            for filename in self._images.file_list
+            if self._alignments.frame_has_faces(os.path.basename(filename))
+        ]
         logger.debug("Filtered out frames: %s", self._images.count - len(retval))
         try:
             assert retval
         except AssertionError as err:
-            msg = ("No faces were found in any of the frames passed in. Make sure you are passing "
-                   "in a frames source rather than extracted faces, and that you have provided "
-                   "the correct alignments file.")
+            msg = (
+                "No faces were found in any of the frames passed in. Make sure you are passing "
+                "in a frames source rather than extracted faces, and that you have provided "
+                "the correct alignments file."
+            )
             raise FaceswapError(msg) from err
         return retval
 
@@ -382,15 +405,20 @@ class Samples():
         no_files = len(self._filelist)
         self._sample_size = min(self._sample_size, no_files)
         crop = no_files % self._sample_size
-        top_tail = list(range(no_files))[
-            crop // 2:no_files - (crop - (crop // 2))]
+        top_tail = list(range(no_files))[crop // 2 : no_files - (crop - (crop // 2))]
         # Partition the indices
         size = len(top_tail)
-        retval = [top_tail[start:start + size // self._sample_size]
-                  for start in range(0, size, size // self._sample_size)]
-        logger.debug("Indices pools: %s", [f"{idx}: (start: {min(pool)}, "
-                                           f"end: {max(pool)}, size: {len(pool)})"
-                                           for idx, pool in enumerate(retval)])
+        retval = [
+            top_tail[start : start + size // self._sample_size]
+            for start in range(0, size, size // self._sample_size)
+        ]
+        logger.debug(
+            "Indices pools: %s",
+            [
+                f"{idx}: (start: {min(pool)}, end: {max(pool)}, size: {len(pool)})"
+                for idx, pool in enumerate(retval)
+            ],
+        )
         return retval
 
     def generate(self) -> None:
@@ -425,9 +453,10 @@ class Samples():
             if self._images.is_video and basename.isdigit():
                 frame_no = int(basename)
             elif self._images.is_video:
-                frame_no = int(os.path.splitext(basename)[0][filename.rfind("_") + 1:])
+                frame_no = int(os.path.splitext(basename)[0][filename.rfind("_") + 1 :])
                 logger.trace(  # type:ignore[attr-defined]
-                    "Extracted frame_no %s from filename '%s'", frame_no, basename)
+                    "Extracted frame_no %s from filename '%s'", frame_no, basename
+                )
             else:
                 frame_no = self._images.file_list.index(filename)
 
@@ -441,8 +470,10 @@ class Samples():
             self._input_images.append(ConvertItem(inbound=inbound))
         self._app.display.source = self._input_images
         self._app.display.update_source = True
-        logger.debug("Selected frames: %s",
-                     [frame.inbound.filename for frame in self._input_images])
+        logger.debug(
+            "Selected frames: %s",
+            [frame.inbound.filename for frame in self._input_images],
+        )
 
     def _predict(self) -> None:
         """Predict from the loaded frames.
@@ -457,8 +488,9 @@ class Samples():
             idx = 0
             while idx < self._sample_size:
                 logger.debug("Predicting face %s of %s", idx + 1, self._sample_size)
-                items: (T.Literal["EOF"] |
-                        list[tuple[ConvertItem, np.ndarray]]) = self._predictor.out_queue.get()
+                items: T.Literal["EOF"] | list[tuple[ConvertItem, np.ndarray]] = (
+                    self._predictor.out_queue.get()
+                )
                 if items == "EOF":
                     logger.debug("Received EOF")
                     break
@@ -469,7 +501,7 @@ class Samples():
         logger.debug("Predicted faces")
 
 
-class Patch():
+class Patch:
     """The Patch pipeline
 
     Runs in it's own thread. Takes the output from the Faceswap model predictor and runs the faces
@@ -487,29 +519,40 @@ class Patch():
     converter_arguments
         The currently selected converter command line arguments for the patch queue
     """
+
     def __init__(self, app: Preview, arguments: Namespace) -> None:
-        logger.debug("Initializing %s: (app: %s, arguments: '%s')",
-                     self.__class__.__name__, app, arguments)
+        logger.debug(
+            "Initializing %s: (app: %s, arguments: '%s')",
+            self.__class__.__name__,
+            app,
+            arguments,
+        )
         self._app = app
         self._queue_patch_in = queue_manager.get_queue("preview_patch_in")
-        self.converter_arguments: dict[str, T.Any] | None = None  # Updated converter args
+        self.converter_arguments: dict[str, T.Any] | None = (
+            None  # Updated converter args
+        )
 
-        config_file = arguments.config_file if hasattr(arguments, "config_file") else None
-        self._converter = Converter(output_size=app._samples.predictor.output_size,
-                                    coverage_ratio=app._samples.predictor.coverage_ratio,
-                                    centering=app._samples.predictor.centering,
-                                    draw_transparent=False,
-                                    pre_encode=None,
-                                    arguments=self._generate_converter_arguments(
-                                        arguments,
-                                        app._samples.available_masks),
-                                    config_file=config_file)
-        self._thread = Thread(target=self._process,
-                              name="patch_thread",
-                              args=(self._queue_patch_in,
-                                    self._app.dispatcher.needs_patch,
-                                    app._samples),
-                              daemon=True)
+        config_file = (
+            arguments.config_file if hasattr(arguments, "config_file") else None
+        )
+        self._converter = Converter(
+            output_size=app._samples.predictor.output_size,
+            coverage_ratio=app._samples.predictor.coverage_ratio,
+            centering=app._samples.predictor.centering,
+            draw_transparent=False,
+            pre_encode=None,
+            arguments=self._generate_converter_arguments(
+                arguments, app._samples.available_masks
+            ),
+            config_file=config_file,
+        )
+        self._thread = Thread(
+            target=self._process,
+            name="patch_thread",
+            args=(self._queue_patch_in, self._app.dispatcher.needs_patch, app._samples),
+            daemon=True,
+        )
         self._thread.start()
         logger.debug("Initializing %s", self.__class__.__name__)
 
@@ -519,8 +562,9 @@ class Patch():
         return self._converter
 
     @staticmethod
-    def _generate_converter_arguments(arguments: Namespace,
-                                      available_masks: list[str]) -> Namespace:
+    def _generate_converter_arguments(
+        arguments: Namespace, available_masks: list[str]
+    ) -> Namespace:
         """Add the default converter arguments to the initial arguments. Ensure the mask selection
         is available.
 
@@ -544,7 +588,9 @@ class Patch():
                 continue
             option = item.get("dest", item["opts"][1].replace("--", ""))
             if option == "mask_type" and value not in valid_masks:
-                logger.debug("Amending default mask from '%s' to '%s'", value, valid_masks[0])
+                logger.debug(
+                    "Amending default mask from '%s' to '%s'", value, valid_masks[0]
+                )
                 value = valid_masks[0]
             # Skip options already in arguments
             if hasattr(arguments, option):
@@ -554,10 +600,9 @@ class Patch():
         logger.debug(arguments)
         return arguments
 
-    def _process(self,
-                 patch_queue_in: EventQueue,
-                 trigger_event: Event,
-                 samples: Samples) -> None:
+    def _process(
+        self, patch_queue_in: EventQueue, trigger_event: Event, samples: Samples
+    ) -> None:
         """The face patching process.
 
         Runs in a thread, and waits for an event to be set. Once triggered, runs a patching
@@ -572,8 +617,13 @@ class Patch():
         samples
             The Samples for display.
         """
-        logger.debug("Launching patch process thread: (patch_queue_in: %s, trigger_event: %s, "
-                     "samples: %s)", patch_queue_in, trigger_event, samples)
+        logger.debug(
+            "Launching patch process thread: (patch_queue_in: %s, trigger_event: %s, "
+            "samples: %s)",
+            patch_queue_in,
+            trigger_event,
+            samples,
+        )
         patch_queue_out = queue_manager.get_queue("preview_patch_out")
         while True:
             trigger = trigger_event.wait(1)
@@ -585,7 +635,9 @@ class Patch():
             with self._app.lock:
                 self._update_converter_arguments()
                 self._converter.reinitialize()
-            swapped = self._patch_faces(patch_queue_in, patch_queue_out, samples.sample_size)
+            swapped = self._patch_faces(
+                patch_queue_in, patch_queue_out, samples.sample_size
+            )
             with self._app.lock:
                 self._app.display.destination = swapped
 
@@ -619,15 +671,13 @@ class Patch():
         logger.debug("feeding swapped faces to converter")
         for item in samples.predicted_images:
             patch_queue_in.put(item)
-        logger.debug("fed %s swapped faces to converter",
-                     len(samples.predicted_images))
+        logger.debug("fed %s swapped faces to converter", len(samples.predicted_images))
         logger.debug("Putting EOF to converter")
         patch_queue_in.put("EOF")
 
-    def _patch_faces(self,
-                     queue_in: EventQueue,
-                     queue_out: EventQueue,
-                     sample_size: int) -> list[np.ndarray]:
+    def _patch_faces(
+        self, queue_in: EventQueue, queue_out: EventQueue, sample_size: int
+    ) -> list[np.ndarray]:
         """Patch faces.
 
         Run the convert process on the swapped faces and return the patched faces.

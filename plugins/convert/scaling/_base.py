@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-""" Parent class for scaling Adjustments for faceswap.py converter """
+"""Parent class for scaling Adjustments for faceswap.py converter"""
 
 import logging
 import numpy as np
@@ -10,19 +10,20 @@ from plugins.convert import convert_config
 logger = logging.getLogger(__name__)
 
 
-class Adjustment():
-    """ Parent class for scaling adjustments """
+class Adjustment:
+    """Parent class for scaling adjustments"""
+
     def __init__(self, config_file=None):
         logger.debug(parse_class_init(locals()))
         convert_config.load_config(config_file=config_file)
         logger.debug("Initialized %s", self.__class__.__name__)
 
     def process(self, new_face):
-        """ Override for specific scaling adjustment process """
+        """Override for specific scaling adjustment process"""
         raise NotImplementedError
 
     def run(self, new_face):
-        """ Perform selected adjustment on face """
+        """Perform selected adjustment on face"""
         # pylint:disable=duplicate-code
         logger.trace("Performing scaling adjustment")  # type:ignore[attr-defined]
         # Remove Mask for processing
@@ -37,6 +38,8 @@ class Adjustment():
         if reinsert_mask and new_face.shape[2] != 4:
             # Reinsert Mask
             assert final_mask is not None
-            new_face = np.concatenate((new_face, np.expand_dims(final_mask, axis=-1)), -1)
+            new_face = np.concatenate(
+                (new_face, np.expand_dims(final_mask, axis=-1)), -1
+            )
         logger.trace("Performed scaling adjustment")  # type:ignore[attr-defined]
         return new_face

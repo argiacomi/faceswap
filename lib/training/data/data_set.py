@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Handles Data loading and augmentation for feeding Faceswap Models"""
+
 from __future__ import annotations
 
 import abc
@@ -31,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 
 def to_float32(in_array: npt.NDArray[np.uint8]) -> npt.NDArray[np.float32]:
-    """ Cast an UINT8 array in 0-255 range to float32 in 0.0-1.0 range.
+    """Cast an UINT8 array in 0-255 range to float32 in 0.0-1.0 range.
 
     Parameters
     ----------
@@ -42,9 +43,9 @@ def to_float32(in_array: npt.NDArray[np.uint8]) -> npt.NDArray[np.float32]:
     -------
     The array cast to 0.0 - 1.0 float32
     """
-    return ne.evaluate("x / c",
-                       local_dict={"x": in_array, "c": np.float32(255)},
-                       casting="unsafe")
+    return ne.evaluate(
+        "x / c", local_dict={"x": in_array, "c": np.float32(255)}, casting="unsafe"
+    )
 
 
 def get_label(index: int, num_identities: int, next_identity: bool = False) -> str:
@@ -69,7 +70,9 @@ def get_label(index: int, num_identities: int, next_identity: bool = False) -> s
     if num_identities > len(identities):
         identities += [chr(i) for i in range(97, 97 + 26)]
     if num_identities > len(identities):
-        raise FaceswapError(f"Too many identities: {num_identities}. Max: {len(identities)}")
+        raise FaceswapError(
+            f"Too many identities: {num_identities}. Max: {len(identities)}"
+        )
     identities = identities[:num_identities]
     index = index % num_identities
     if not next_identity:
@@ -90,12 +93,17 @@ def get_sorted_images(folder: str) -> list[str]:
     -------
     The sorted list of full paths to the training images within the folder
     """
-    return list(sorted(os.path.join(folder, f) for f in os.listdir(folder)
-                       if os.path.splitext(f)[-1] == ".png"))
+    return list(
+        sorted(
+            os.path.join(folder, f)
+            for f in os.listdir(folder)
+            if os.path.splitext(f)[-1] == ".png"
+        )
+    )
 
 
 class _MaskProcessing:  # pylint:disable=too-many-instance-attributes
-    """ Handle the extraction and processing of masks from faceswap PNG headers
+    """Handle the extraction and processing of masks from faceswap PNG headers
 
     Parameters
     ----------
@@ -110,12 +118,15 @@ class _MaskProcessing:  # pylint:disable=too-many-instance-attributes
     y_offset
         The amount of vertical offset applied to the training images
     """
-    def __init__(self,
-                 side: str,
-                 size: int,
-                 coverage_ratio: float,
-                 centering: CenteringType,
-                 y_offset: float) -> None:
+
+    def __init__(
+        self,
+        side: str,
+        size: int,
+        coverage_ratio: float,
+        centering: CenteringType,
+        y_offset: float,
+    ) -> None:
         logger.debug(parse_class_init(locals()))
         self._side = side.upper()
         self._name = f"{self.__class__.__name__}.{self._side}"
@@ -126,25 +137,31 @@ class _MaskProcessing:  # pylint:disable=too-many-instance-attributes
         self._dilation = cfg.Loss.mask_dilation()
         self._kernel = cfg.Loss.mask_blur_kernel()
         self._threshold = cfg.Loss.mask_threshold()
-        self._lm_masks: dict[T.Literal["components", "extended", "eye", "mouth"],
-                             T.Literal["face", "face_extended", "eye", "mouth"]] = {
-                                 "components": "face",
-                                 "extended": "face_extended",
-                                 "eye": "eye",
-                                 "mouth": "mouth"
-                                 }
+        self._lm_masks: dict[
+            T.Literal["components", "extended", "eye", "mouth"],
+            T.Literal["face", "face_extended", "eye", "mouth"],
+        ] = {
+            "components": "face",
+            "extended": "face_extended",
+            "eye": "eye",
+            "mouth": "mouth",
+        }
         self._area_dilatation = 2.5
         self._area_kernel = size // 16
 
     def __repr__(self) -> str:
-        """ Pretty print for logging """
-        params = (f"side={repr(self._side)}, size={repr(self._dims[0])}, coverage_ratio="
-                  f"{repr(self._coverage)}, centering={repr(self._centering)}, "
-                  f"y_offset={repr(self._y_offset)}")
+        """Pretty print for logging"""
+        params = (
+            f"side={repr(self._side)}, size={repr(self._dims[0])}, coverage_ratio="
+            f"{repr(self._coverage)}, centering={repr(self._centering)}, "
+            f"y_offset={repr(self._y_offset)}"
+        )
         return f"{self.__class__.__name__}({params})"
 
-    def _check_mask_exists(self, masks: list[str], mask_type: str, filename: str) -> None:
-        """ Check that the requested mask exists in the given masks dictionary
+    def _check_mask_exists(
+        self, masks: list[str], mask_type: str, filename: str
+    ) -> None:
+        """Check that the requested mask exists in the given masks dictionary
 
         Parameters
         ----------
@@ -164,16 +181,22 @@ class _MaskProcessing:  # pylint:disable=too-many-instance-attributes
         exist_masks = masks + list(self._lm_masks)
         if mask_type in exist_masks:
             return
-        msg = (f"The masks that exist for this face are: {exist_masks}" if exist_masks
-               else "No masks exist for this face")
+        msg = (
+            f"The masks that exist for this face are: {exist_masks}"
+            if exist_masks
+            else "No masks exist for this face"
+        )
         raise FaceswapError(
             f"You have selected the mask type '{mask_type}' but at least one "
             "face does not contain the selected mask.\n"
-            f"The face that failed was: '{filename}'\n{msg}")
+            f"The face that failed was: '{filename}'\n{msg}"
+        )
 
-    def _get_landmarks_mask(self,
-                            mask_type: T.Literal["face", "face_extended", "eye", "mouth"],
-                            aligned: AlignedFace) -> npt.NDArray[np.uint8]:
+    def _get_landmarks_mask(
+        self,
+        mask_type: T.Literal["face", "face_extended", "eye", "mouth"],
+        aligned: AlignedFace,
+    ) -> npt.NDArray[np.uint8]:
         """Obtain a landmarks based mask directly from the aligned face object
 
         Parameters
@@ -195,14 +218,14 @@ class _MaskProcessing:  # pylint:disable=too-many-instance-attributes
             dilation = self._area_dilatation
             kernel = self._area_kernel
             blur_type = "gaussian"
-        mask = aligned.get_landmark_mask(mask_type,
-                                         dilation=dilation,
-                                         blur_kernel=kernel,
-                                         blur_type=blur_type)
+        mask = aligned.get_landmark_mask(
+            mask_type, dilation=dilation, blur_kernel=kernel, blur_type=blur_type
+        )
         return mask
 
-    def _get_face_mask(self, mask_header: MaskAlignmentsFile, pose: PoseEstimate
-                       ) -> npt.NDArray[np.uint8]:
+    def _get_face_mask(
+        self, mask_header: MaskAlignmentsFile, pose: PoseEstimate
+    ) -> npt.NDArray[np.uint8]:
         """Obtain a stored face mask from the PNG image header
 
         Parameters
@@ -219,25 +242,31 @@ class _MaskProcessing:  # pylint:disable=too-many-instance-attributes
         mask = Mask().from_dict(mask_header)
         mask.set_dilation(self._dilation)
         mask.set_blur_and_threshold(blur_kernel=self._kernel, threshold=self._threshold)
-        mask.set_sub_crop(pose.offset[mask.stored_centering],
-                          pose.offset[self._centering],
-                          self._centering,
-                          self._coverage,
-                          self._y_offset)
+        mask.set_sub_crop(
+            pose.offset[mask.stored_centering],
+            pose.offset[self._centering],
+            self._centering,
+            self._coverage,
+            self._y_offset,
+        )
         face_mask = mask.mask
         if face_mask.shape[0] == self._dims[0]:
             retval = face_mask
         else:
             retval = np.empty((*self._dims, 1), dtype=face_mask.dtype)
-            interpolator = cv2.INTER_CUBIC if mask.stored_size < self._dims[0] else cv2.INTER_AREA
+            interpolator = (
+                cv2.INTER_CUBIC if mask.stored_size < self._dims[0] else cv2.INTER_AREA
+            )
             cv2.resize(face_mask, self._dims, interpolation=interpolator, dst=retval)
         return retval
 
-    def __call__(self,
-                 masks: dict[str, MaskAlignmentsFile],
-                 mask_type: str,
-                 filename: str,
-                 aligned: AlignedFace) -> npt.NDArray[np.uint8]:
+    def __call__(
+        self,
+        masks: dict[str, MaskAlignmentsFile],
+        mask_type: str,
+        filename: str,
+        aligned: AlignedFace,
+    ) -> npt.NDArray[np.uint8]:
         """Obtain the training mask cropped to coverage at maximum model input/output size
 
         Parameters
@@ -257,15 +286,30 @@ class _MaskProcessing:  # pylint:disable=too-many-instance-attributes
         """
         logger.trace(  # type:ignore[attr-defined]
             "[%s] filename: '%s', mask_type: '%s', masks: %s, aligned: %s",
-            self._name, filename, mask_type, masks, aligned)
+            self._name,
+            filename,
+            mask_type,
+            masks,
+            aligned,
+        )
         self._check_mask_exists(list(masks), mask_type, filename)
         if mask_type in self._lm_masks:
-            retval = self._get_landmarks_mask(self._lm_masks[
-                T.cast(T.Literal["components", "extended", "eye", "mouth"], mask_type)], aligned)
+            retval = self._get_landmarks_mask(
+                self._lm_masks[
+                    T.cast(
+                        T.Literal["components", "extended", "eye", "mouth"], mask_type
+                    )
+                ],
+                aligned,
+            )
         else:
             retval = self._get_face_mask(masks[mask_type], aligned.pose)
-        logger.trace("[%s] Got mask '%s': %s",  # type:ignore[attr-defined]
-                     self._name, mask_type, format_array(retval))
+        logger.trace(
+            "[%s] Got mask '%s': %s",  # type:ignore[attr-defined]
+            self._name,
+            mask_type,
+            format_array(retval),
+        )
         return retval[..., 0]
 
 
@@ -279,18 +323,19 @@ class _BaseSet(Dataset, abc.ABC):
     image_folder
         Full path to a folder containing training images
     """
+
     def __init__(self, side: str, image_folder: str) -> None:
         self._image_list = get_sorted_images(image_folder)
         self._side = side.upper()
         self._image_folder = image_folder
         self._name = f"{self.__class__.__name__}.{self._side}"
         self._centering: CenteringType = T.cast("CenteringType", cfg.centering())
-        self._coverage = cfg.coverage() / 100.
-        self._y_offset = cfg.vertical_offset() / 100.
+        self._coverage = cfg.coverage() / 100.0
+        self._y_offset = cfg.vertical_offset() / 100.0
         self._mask_types = self._get_configured_masks()
 
     def __repr__(self) -> str:
-        """ Pretty print for logging """
+        """Pretty print for logging"""
         params = f"side={repr(self._side)}, image_folder={repr(self._image_folder)}"
         return f"{self.__class__.__name__}({params})"
 
@@ -307,11 +352,13 @@ class _BaseSet(Dataset, abc.ABC):
         list of configured masks types in the order [<face mask type>, <eye>, <mouth>]
         """
 
-    def _get_face(self,
-                  image: npt.NDArray[np.uint8],
-                  alignments: PNGAlignments,
-                  size: int,
-                  coverage: float) -> AlignedFace:
+    def _get_face(
+        self,
+        image: npt.NDArray[np.uint8],
+        alignments: PNGAlignments,
+        size: int,
+        coverage: float,
+    ) -> AlignedFace:
         """Obtain the face patch cropped to coverage at maximum model input/output size
 
         Parameters
@@ -329,16 +376,22 @@ class _BaseSet(Dataset, abc.ABC):
         -------
         The face patch ready for augmentation
         """
-        logger.trace("[%s] image: %s alignments: %s",  # type:ignore[attr-defined]
-                     self._name, format_array(image), alignments)
-        retval = AlignedFace(alignments.landmarks_xy,
-                             image=image,
-                             centering=self._centering,
-                             size=size,
-                             coverage_ratio=coverage,
-                             y_offset=self._y_offset,
-                             dtype="uint8",
-                             is_aligned=True)
+        logger.trace(
+            "[%s] image: %s alignments: %s",  # type:ignore[attr-defined]
+            self._name,
+            format_array(image),
+            alignments,
+        )
+        retval = AlignedFace(
+            alignments.landmarks_xy,
+            image=image,
+            centering=self._centering,
+            size=size,
+            coverage_ratio=coverage,
+            y_offset=self._y_offset,
+            dtype="uint8",
+            is_aligned=True,
+        )
         logger.trace("[%s] face: %s", self._name, retval)  # type:ignore[attr-defined]
         return retval
 
@@ -356,23 +409,19 @@ class TrainSet(_BaseSet):
         The size to return samples at. This should be the maximum of the model input/output
         size for train sets or the model input size for preview sets
     """
-    def __init__(self,
-                 side: str,
-                 image_folder: str,
-                 size: int) -> None:
+
+    def __init__(self, side: str, image_folder: str, size: int) -> None:
         logger.debug(parse_class_init(locals()))
         super().__init__(side, image_folder)
         self._size = size
         self._out_shape = (self._size, self._size, 3 + len(self._mask_types))
-        self._mask = _MaskProcessing(self._side,
-                                     self._size,
-                                     self._coverage,
-                                     self._centering,
-                                     self._y_offset)
+        self._mask = _MaskProcessing(
+            self._side, self._size, self._coverage, self._centering, self._y_offset
+        )
 
     def __repr__(self) -> str:
-        """ Pretty print for logging """
-        return (f"{super().__repr__()[:-1]}, size={repr(self._size)})")
+        """Pretty print for logging"""
+        return f"{super().__repr__()[:-1]}, size={repr(self._size)})"
 
     def _get_configured_masks(self) -> list[str]:
         """Obtain a list of configured training masks
@@ -382,8 +431,9 @@ class TrainSet(_BaseSet):
         list of configured masks types in the order [<face mask type>, <eye>, <mouth>]
         """
         retval = []
-        if cfg.Loss.mask_type() is not None and (cfg.Loss.learn_mask() or
-                                                 cfg.Loss.penalized_mask_loss()):
+        if cfg.Loss.mask_type() is not None and (
+            cfg.Loss.learn_mask() or cfg.Loss.penalized_mask_loss()
+        ):
             retval.append(cfg.Loss.mask_type())
         if cfg.Loss.penalized_mask_loss() and cfg.Loss.eye_multiplier() > 1:
             retval.append("eye")
@@ -409,21 +459,28 @@ class TrainSet(_BaseSet):
             The image file index
         """
         filename = self._image_list[index]
-        logger.trace("[%s] Loading image %s: %s",  # type:ignore[attr-defined]
-                     self._name, index, filename)
+        logger.trace(
+            "[%s] Loading image %s: %s",  # type:ignore[attr-defined]
+            self._name,
+            index,
+            filename,
+        )
         meta: PNGHeader
-        image, meta = read_image(filename,
-                                 raise_error=False,
-                                 with_metadata=True)
+        image, meta = read_image(filename, raise_error=False, with_metadata=True)
         face = self._get_face(image, meta.alignments, self._size, self._coverage)
         img = T.cast("npt.NDArray[np.uint8]", face.face)
         retval = np.empty(self._out_shape, dtype=img.dtype)
         retval[..., :3] = img
         for i, mask_type in enumerate(self._mask_types):
-            retval[..., 3 + i] = self._mask(meta.alignments.mask, mask_type, filename, face)
+            retval[..., 3 + i] = self._mask(
+                meta.alignments.mask, mask_type, filename, face
+            )
 
-        logger.trace("[%s] images and masks: %s",  # type:ignore[attr-defined]
-                     self._name, format_array(retval))
+        logger.trace(
+            "[%s] images and masks: %s",  # type:ignore[attr-defined]
+            self._name,
+            format_array(retval),
+        )
         return retval, index
 
 
@@ -447,13 +504,16 @@ class PreviewSet(_BaseSet):
         Set to 0 for random previews from the image folder. Set to a positive integer for this
         number of images to use for a static timelapse. Default: 0
     """
-    def __init__(self,
-                 side: str,
-                 image_folder: str,
-                 input_size: int,
-                 output_size: int,
-                 color_order: T.Literal["bgr", "rgb"],
-                 num_images: int = 0) -> None:
+
+    def __init__(
+        self,
+        side: str,
+        image_folder: str,
+        input_size: int,
+        output_size: int,
+        color_order: T.Literal["bgr", "rgb"],
+        num_images: int = 0,
+    ) -> None:
         logger.debug(parse_class_init(locals()))
         super().__init__(side, image_folder)
         self._input_size = input_size
@@ -461,21 +521,25 @@ class PreviewSet(_BaseSet):
         self._color_order = color_order
         self._num_images = num_images
         if num_images and num_images != len(self._image_list):
-            logger.debug("[%s] Filtering image list of %s for timelapse: %s",
-                         self._name, len(self._image_list), num_images)
+            logger.debug(
+                "[%s] Filtering image list of %s for timelapse: %s",
+                self._name,
+                len(self._image_list),
+                num_images,
+            )
             self._image_list = self._image_list[:num_images]
 
         self._full_size = 2 * int(np.rint((self._output_size / self._coverage) / 2))
-        self._mask = _MaskProcessing(self._side,
-                                     self._full_size,
-                                     1.0,
-                                     self._centering,
-                                     self._y_offset)
+        self._mask = _MaskProcessing(
+            self._side, self._full_size, 1.0, self._centering, self._y_offset
+        )
 
     def __repr__(self) -> str:
-        """ Pretty print for logging """
-        params = (f"input_size={self._input_size}, output_size={self._output_size}, "
-                  f"color_order={repr(self._color_order)}, num_images={self._num_images}")
+        """Pretty print for logging"""
+        params = (
+            f"input_size={self._input_size}, output_size={self._output_size}, "
+            f"color_order={repr(self._color_order)}, num_images={self._num_images}"
+        )
         return f"{super().__repr__()[:-1]}, {params})"
 
     def _get_configured_masks(self) -> list[str]:
@@ -486,8 +550,9 @@ class PreviewSet(_BaseSet):
         list of configured masks types in the order [<face mask type>, <eye>, <mouth>]
         """
         retval = []
-        if cfg.Loss.mask_type() is not None and (cfg.Loss.learn_mask() or
-                                                 cfg.Loss.penalized_mask_loss()):
+        if cfg.Loss.mask_type() is not None and (
+            cfg.Loss.learn_mask() or cfg.Loss.penalized_mask_loss()
+        ):
             retval.append(cfg.Loss.mask_type())
         logger.debug("[%s] Configured masks: %s", self._name, retval)
         return retval
@@ -508,24 +573,27 @@ class PreviewSet(_BaseSet):
             An output face at full coverage with the mask in the 4th channel
         """
         filename = self._image_list[index]
-        logger.trace("[%s] Loading image %s: %s",  # type:ignore[attr-defined]
-                     self._name, index, filename)
+        logger.trace(
+            "[%s] Loading image %s: %s",  # type:ignore[attr-defined]
+            self._name,
+            index,
+            filename,
+        )
         meta: PNGHeader
-        image, meta = read_image(filename,
-                                 raise_error=False,
-                                 with_metadata=True)
+        image, meta = read_image(filename, raise_error=False, with_metadata=True)
 
-        in_face = self._get_face(image, meta.alignments, self._input_size, self._coverage)
+        in_face = self._get_face(
+            image, meta.alignments, self._input_size, self._coverage
+        )
         in_img = T.cast("npt.NDArray[np.uint8]", in_face.face)
         out_face = self._get_face(image, meta.alignments, self._full_size, 1.0)
         out_img = np.empty((self._full_size, self._full_size, 4), dtype=np.uint8)
         out_img[..., :3] = T.cast("npt.NDArray[np.uint8]", out_face.face)
 
         if self._mask_types:
-            out_img[..., 3] = self._mask(meta.alignments.mask,
-                                         self._mask_types[0],
-                                         filename,
-                                         out_face)
+            out_img[..., 3] = self._mask(
+                meta.alignments.mask, self._mask_types[0], filename, out_face
+            )
         else:
             out_img[..., 3] = np.zeros_like(out_img[..., 0])[..., None] + 255
 
@@ -535,8 +603,14 @@ class PreviewSet(_BaseSet):
 
         feed = torch.from_numpy(to_float32(in_img))
         target = torch.from_numpy(to_float32(out_img))
-        logger.trace("[%s] feed: %s (%s), target: %s (%s)",  # type:ignore[attr-defined]
-                     self._name, feed.shape, feed.dtype, target.shape, target.dtype)
+        logger.trace(
+            "[%s] feed: %s (%s), target: %s (%s)",  # type:ignore[attr-defined]
+            self._name,
+            feed.shape,
+            feed.dtype,
+            target.shape,
+            target.dtype,
+        )
         return feed, target
 
 
@@ -552,6 +626,7 @@ class MultiDataset(Dataset):
         ``True`` if data from each of the datasets should be read randomly. ``False`` if all
         datasets should return the item for the given index
     """
+
     def __init__(self, datasets: tuple[_BaseSet, ...], is_random: bool = True) -> None:
         super().__init__()
         self._datasets = datasets
@@ -562,7 +637,7 @@ class MultiDataset(Dataset):
         self._is_random = is_random
 
     def __repr__(self) -> str:
-        """ Pretty print for logging """
+        """Pretty print for logging"""
         params = f"datasets={self._datasets}, is_random={self._is_random}"
         return f"{self.__class__.__name__}({params})"
 
@@ -595,12 +670,14 @@ class MultiDataset(Dataset):
             while filled < self._len:
                 perm = np.random.permutation(ds_len)
                 take = min(ds_len, self._len - filled)
-                retval[idx, filled:filled + take] = perm[:take]
+                retval[idx, filled : filled + take] = perm[:take]
                 filled += take
                 if take < ds_len:
                     self._remainder[idx] = perm[take:]
 
-        logger.debug("[MultiDataset] Shuffled dataset indices: %s", format_array(retval))
+        logger.debug(
+            "[MultiDataset] Shuffled dataset indices: %s", format_array(retval)
+        )
         return retval
 
     def shuffle(self) -> None:
@@ -615,13 +692,16 @@ class MultiDataset(Dataset):
         tuple of arrays of shape (num_inputs, ...) for each input dataset's output
         """
         if self._is_random:
-            results: list[tuple[np.ndarray, ...]] = [dataset[self._indices[i][index]]
-                                                     for i, dataset in enumerate(self._datasets)]
+            results: list[tuple[np.ndarray, ...]] = [
+                dataset[self._indices[i][index]]
+                for i, dataset in enumerate(self._datasets)
+            ]
         else:
             results = [dataset[index] for dataset in self._datasets]
 
-        retval = tuple(np.stack([res[i] for res in results])
-                       for i in range(len(results[0])))
+        retval = tuple(
+            np.stack([res[i] for res in results]) for i in range(len(results[0]))
+        )
         return retval
 
 

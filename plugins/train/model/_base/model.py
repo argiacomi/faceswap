@@ -3,6 +3,7 @@
 
 See :mod:`~plugins.train.model.original` for an annotated example for how to create model plugins.
 """
+
 from __future__ import annotations
 import logging
 import os
@@ -28,7 +29,7 @@ if T.TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class ModelBase():  # pylint:disable=too-many-instance-attributes
+class ModelBase:  # pylint:disable=too-many-instance-attributes
     """Base class that all model plugins should inherit from.
 
     Parameters
@@ -42,10 +43,10 @@ class ModelBase():  # pylint:disable=too-many-instance-attributes
         ``True`` if the model is being loaded for inference, ``False`` if the model is being loaded
         for training. Default: ``False``
     """
-    def __init__(self,
-                 model_dir: str,
-                 arguments: argparse.Namespace,
-                 predict: bool = False) -> None:
+
+    def __init__(
+        self, model_dir: str, arguments: argparse.Namespace, predict: bool = False
+    ) -> None:
         logger.debug(parse_class_init(locals()))
         # Input shape must be set within the plugin after initializing
         self.input_shape: tuple[int, ...] = ()
@@ -55,7 +56,9 @@ class ModelBase():  # pylint:disable=too-many-instance-attributes
         If the inputs have different sizes for `"A"` and `"B"` this should be a `list` of 2 3
         dimensional shape `tuples`, 1 for each side respectively."""
 
-        self.color_order: T.Literal["bgr", "rgb"] = "bgr"  # Override for image color channel order
+        self.color_order: T.Literal["bgr", "rgb"] = (
+            "bgr"  # Override for image color channel order
+        )
 
         self._args = arguments
         self._is_predict = predict
@@ -64,26 +67,33 @@ class ModelBase():  # pylint:disable=too-many-instance-attributes
         cfg.load_config(config_file=arguments.config_file)
 
         if cfg.Loss.penalized_mask_loss() and cfg.Loss.mask_type() == "none":
-            raise FaceswapError("Penalized Mask Loss has been selected but you have not chosen a "
-                                "Mask to use. Please select a mask or disable Penalized Mask "
-                                "Loss.")
+            raise FaceswapError(
+                "Penalized Mask Loss has been selected but you have not chosen a "
+                "Mask to use. Please select a mask or disable Penalized Mask "
+                "Loss."
+            )
 
         if cfg.Loss.learn_mask() and cfg.Loss.mask_type() == "none":
-            raise FaceswapError("'Learn Mask' has been selected but you have not chosen a Mask to "
-                                "use. Please select a mask or disable 'Learn Mask'.")
+            raise FaceswapError(
+                "'Learn Mask' has been selected but you have not chosen a Mask to "
+                "use. Please select a mask or disable 'Learn Mask'."
+            )
 
         self._mixed_precision = cfg.mixed_precision()
-        self._io = IO(self, model_dir,
-                      self._is_predict,
-                      T.cast(T.Literal["never", "always", "exit"], cfg.Optimizer.save_optimizer()))
+        self._io = IO(
+            self,
+            model_dir,
+            self._is_predict,
+            T.cast(
+                T.Literal["never", "always", "exit"], cfg.Optimizer.save_optimizer()
+            ),
+        )
         self._check_multiple_models()
 
-        self._state = State(model_dir,
-                            self.name,
-                            False if self._is_predict else self._args.no_logs)
-        self._settings = Settings(self._args,
-                                  self._mixed_precision,
-                                  self._is_predict)
+        self._state = State(
+            model_dir, self.name, False if self._is_predict else self._args.no_logs
+        )
+        self._settings = Settings(self._args, self._mixed_precision, self._is_predict)
         logger.debug("Initialized ModelBase (%s)", self.__class__.__name__)
 
     @property
@@ -100,7 +110,7 @@ class ModelBase():  # pylint:disable=too-many-instance-attributes
 
         To ensure consistent rounding and guaranteed even image size, the calculation for coverage
         should always be: :math:`(original_size * coverage_ratio // 2) * 2`"""
-        return cfg.coverage() / 100.
+        return cfg.coverage() / 100.0
 
     @property
     def io(self) -> IO:  # pylint:disable=invalid-name
@@ -123,15 +133,19 @@ class ModelBase():  # pylint:disable=too-many-instance-attributes
     @property
     def input_shapes(self) -> list[tuple[None, int, int, int]]:
         """A flattened list corresponding to all of the inputs to the model."""
-        shapes = [T.cast(tuple[None, int, int, int], inputs.shape)
-                  for inputs in self.model.inputs]
+        shapes = [
+            T.cast(tuple[None, int, int, int], inputs.shape)
+            for inputs in self.model.inputs
+        ]
         return shapes
 
     @property
     def output_shapes(self) -> list[tuple[None, int, int, int]]:
         """A flattened list corresponding to all of the outputs of the model."""
-        shapes = [T.cast(tuple[None, int, int, int], output.shape)
-                  for output in self.model.outputs]
+        shapes = [
+            T.cast(tuple[None, int, int, int], output.shape)
+            for output in self.model.outputs
+        ]
         return shapes
 
     @property
@@ -182,14 +196,18 @@ class ModelBase():  # pylint:disable=too-many-instance-attributes
             return
 
         if len(multiple_models) == 1:
-            msg = (f"You have requested to train with the '{self.name}' plugin, but a model file "
-                   f"for the '{multiple_models[0]}' plugin already exists in the folder "
-                   f"'{self.io.model_dir}'.\nPlease select a different model folder.")
+            msg = (
+                f"You have requested to train with the '{self.name}' plugin, but a model file "
+                f"for the '{multiple_models[0]}' plugin already exists in the folder "
+                f"'{self.io.model_dir}'.\nPlease select a different model folder."
+            )
         else:
             p_types = "', '".join(multiple_models)
-            msg = (f"There are multiple plugin types ('{p_types}') stored in the model folder '"
-                   f"{self.io.model_dir}'. This is not supported.\nPlease split the model files "
-                   "into their own folders before proceeding")
+            msg = (
+                f"There are multiple plugin types ('{p_types}') stored in the model folder '"
+                f"{self.io.model_dir}'. This is not supported.\nPlease split the model files "
+                "into their own folders before proceeding"
+            )
         raise FaceswapError(msg)
 
     def build(self) -> None:
@@ -217,8 +235,9 @@ class ModelBase():  # pylint:disable=too-many-instance-attributes
             inputs = self._get_inputs()
             if not self._settings.use_mixed_precision and not is_summary:
                 # Store layer names which can be switched to mixed precision
-                model, mp_layers = self._settings.get_mixed_precision_layers(self.build_model,
-                                                                             inputs)
+                model, mp_layers = self._settings.get_mixed_precision_layers(
+                    self.build_model, inputs
+                )
                 self._state.add_mixed_precision_layers(mp_layers)
                 self._model = model
             else:
@@ -230,7 +249,9 @@ class ModelBase():  # pylint:disable=too-many-instance-attributes
     def _validate_input_shape(self) -> None:
         """Validate that the input shape is either a single shape tuple of 3 dimensions or
         a list of 2 shape tuples of 3 dimensions."""
-        assert len(self.input_shape) == 3, "Input shape should be a 3 dimensional shape tuple"
+        assert len(self.input_shape) == 3, (
+            "Input shape should be a 3 dimensional shape tuple"
+        )
 
     def _get_inputs(self) -> list[keras.layers.Input]:
         """Obtain the standardized inputs for the model.
@@ -245,8 +266,10 @@ class ModelBase():  # pylint:disable=too-many-instance-attributes
         """
         logger.debug("Getting inputs")
         input_shapes = [self.input_shape, self.input_shape]
-        inputs = [keras.layers.Input(shape=shape, name=f"face_in_{side}")
-                  for side, shape in zip(("a", "b"), input_shapes)]
+        inputs = [
+            keras.layers.Input(shape=shape, name=f"face_in_{side}")
+            for side, shape in zip(("a", "b"), input_shapes)
+        ]
         logger.debug("inputs: %s", inputs)
         return inputs
 

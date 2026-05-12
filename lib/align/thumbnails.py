@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Handles the generation of thumbnail JPGs for storing inside an alignments file/png header"""
+
 from __future__ import annotations
 
 import logging
@@ -16,7 +17,7 @@ if T.TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class Thumbnails():
+class Thumbnails:
     """Thumbnail images stored in the alignments file.
 
     The thumbnails are stored as low resolution (64px), low quality JPG in the alignments file
@@ -27,6 +28,7 @@ class Thumbnails():
     alignments
         The parent alignments class that these thumbs belong to
     """
+
     def __init__(self, alignments: align.alignments.Alignments) -> None:
         logger.debug(parse_class_init(locals()))
         self._alignments_dict = alignments.data
@@ -37,9 +39,11 @@ class Thumbnails():
     def has_thumbnails(self) -> bool:
         """``True`` if all faces in the alignments file contain thumbnail images otherwise
         ``False``."""
-        retval = all(np.any(T.cast(np.ndarray, face.thumb is not None))
-                     for frame in self._alignments_dict.values()
-                     for face in frame.faces)
+        retval = all(
+            np.any(T.cast(np.ndarray, face.thumb is not None))
+            for frame in self._alignments_dict.values()
+            for face in frame.faces
+        )
         logger.trace(retval)  # type:ignore[attr-defined]
         return retval
 
@@ -57,11 +61,16 @@ class Thumbnails():
         -------
         The encoded JPG thumbnail
         """
-        retval = self._alignments_dict[self._frame_list[frame_index]].faces[face_index].thumb
+        retval = (
+            self._alignments_dict[self._frame_list[frame_index]].faces[face_index].thumb
+        )
         assert retval is not None
         logger.trace(  # type:ignore[attr-defined]
             "frame index: %s, face_index: %s, thumb shape: %s",
-            frame_index, face_index, retval.shape)
+            frame_index,
+            face_index,
+            retval.shape,
+        )
         return retval
 
     def add_thumbnail(self, frame: str, face_index: int, thumb: np.ndarray) -> None:
@@ -76,8 +85,13 @@ class Thumbnails():
         thumb
             The encoded JPG thumbnail at 64px to add to the alignments file
         """
-        logger.debug("frame: %s, face_index: %s, thumb shape: %s thumb dtype: %s",
-                     frame, face_index, thumb.shape, thumb.dtype)
+        logger.debug(
+            "frame: %s, face_index: %s, thumb shape: %s thumb dtype: %s",
+            frame,
+            face_index,
+            thumb.shape,
+            thumb.dtype,
+        )
         self._alignments_dict[frame].faces[face_index].thumb = thumb
 
 

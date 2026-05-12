@@ -1,5 +1,6 @@
 #! /usr/env/bin/python3
 """LDR FliP loss from Nvidia"""
+
 from __future__ import annotations
 
 import logging
@@ -76,17 +77,20 @@ class LDRFLIPLoss(nn.Module):  # pylint:disable=too-many-instance-attributes
         ``True`` to output the loss function as a HxWx1 image output. ``False`` to reduce to mean
         for each item in the batch. Default: ``False``
     """
+
     _c_max: torch.Tensor
 
-    def __init__(self,
-                 computed_distance_exponent: float = 0.7,
-                 feature_exponent: float = 0.5,
-                 lower_threshold_exponent: float = 0.4,
-                 upper_threshold_exponent: float = 0.95,
-                 epsilon: float = 1e-15,
-                 pixels_per_degree: float | None = None,
-                 color_order: T.Literal["bgr", "rgb"] = "bgr",
-                 spatial_output: bool = True) -> None:
+    def __init__(
+        self,
+        computed_distance_exponent: float = 0.7,
+        feature_exponent: float = 0.5,
+        lower_threshold_exponent: float = 0.4,
+        upper_threshold_exponent: float = 0.95,
+        epsilon: float = 1e-15,
+        pixels_per_degree: float | None = None,
+        color_order: T.Literal["bgr", "rgb"] = "bgr",
+        spatial_output: bool = True,
+    ) -> None:
         logger.debug(parse_class_init(locals()))
         super().__init__()
         self._computed_distance_exponent = computed_distance_exponent
@@ -107,13 +111,15 @@ class LDRFLIPLoss(nn.Module):  # pylint:disable=too-many-instance-attributes
 
         hunt_adjusted_green = self._hunt_adjustment(
             self._rgb2lab(torch.Tensor([[[[0.0]], [[1.0]], [[0.0]]]]).float())
-            )
+        )
         hunt_adjusted_blue = self._hunt_adjustment(
             self._rgb2lab(torch.Tensor([[[[0.0]], [[0.0]], [[1.0]]]]).float())
-            )
-        self.register_buffer("_c_max",
-                             self._hyab(hunt_adjusted_green,
-                                        hunt_adjusted_blue) ** self._computed_distance_exponent)
+        )
+        self.register_buffer(
+            "_c_max",
+            self._hyab(hunt_adjusted_green, hunt_adjusted_blue)
+            ** self._computed_distance_exponent,
+        )
 
     @classmethod
     def _hunt_adjustment(cls, image: torch.Tensor) -> torch.Tensor:
@@ -163,12 +169,17 @@ class LDRFLIPLoss(nn.Module):  # pylint:disable=too-many-instance-attributes
         The redistributed per-pixel HyAB distances (in range [0,1])
         """
         pcc_max = self._pc * self._c_max
-        return torch.where(power_delta_e_hyab < pcc_max,
-                           (self._pt / pcc_max) * power_delta_e_hyab,
-                           self._pt + ((power_delta_e_hyab - pcc_max) /
-                                       (self._c_max - pcc_max)) * (1.0 - self._pt))
+        return torch.where(
+            power_delta_e_hyab < pcc_max,
+            (self._pt / pcc_max) * power_delta_e_hyab,
+            self._pt
+            + ((power_delta_e_hyab - pcc_max) / (self._c_max - pcc_max))
+            * (1.0 - self._pt),
+        )
 
-    def _color_pipeline(self, y_true: torch.Tensor, y_pred: torch.Tensor) -> torch.Tensor:
+    def _color_pipeline(
+        self, y_true: torch.Tensor, y_pred: torch.Tensor
+    ) -> torch.Tensor:
         """Perform the color processing part of the FLIP loss function
 
         Parameters
@@ -188,10 +199,12 @@ class LDRFLIPLoss(nn.Module):  # pylint:disable=too-many-instance-attributes
         preprocessed_true = self._hunt_adjustment(self._rgb2lab(filtered_true))
         preprocessed_pred = self._hunt_adjustment(self._rgb2lab(filtered_pred))
         delta = self._hyab(preprocessed_true, preprocessed_pred)
-        power_delta = delta ** self._computed_distance_exponent
+        power_delta = delta**self._computed_distance_exponent
         return self._redistribute_errors(power_delta)
 
-    def _process_features(self, y_true: torch.Tensor, y_pred: torch.Tensor) -> torch.Tensor:
+    def _process_features(
+        self, y_true: torch.Tensor, y_pred: torch.Tensor
+    ) -> torch.Tensor:
         """Perform the color processing part of the FLIP loss function
 
         Parameters
@@ -205,18 +218,24 @@ class LDRFLIPLoss(nn.Module):  # pylint:disable=too-many-instance-attributes
         -------
         The exponentiated features delta
         """
-        col_y_true = (y_true[:, 0:1] + 16) / 116.
-        col_y_pred = (y_pred[:, 0:1] + 16) / 116.
+        col_y_true = (y_true[:, 0:1] + 16) / 116.0
+        col_y_pred = (y_pred[:, 0:1] + 16) / 116.0
 
         edges_true = self._feature_detector(col_y_true, "edge")
         points_true = self._feature_detector(col_y_true, "point")
         edges_pred = self._feature_detector(col_y_pred, "edge")
         points_pred = self._feature_detector(col_y_pred, "point")
 
-        delta = torch.maximum(torch.abs(torch.norm(edges_true, dim=1, keepdim=True) -
-                                        torch.norm(edges_pred, dim=1, keepdim=True)),
-                              torch.abs(torch.norm(points_pred, dim=1, keepdim=True) -
-                                        torch.norm(points_true, dim=1, keepdim=True)))
+        delta = torch.maximum(
+            torch.abs(
+                torch.norm(edges_true, dim=1, keepdim=True)
+                - torch.norm(edges_pred, dim=1, keepdim=True)
+            ),
+            torch.abs(
+                torch.norm(points_pred, dim=1, keepdim=True)
+                - torch.norm(points_true, dim=1, keepdim=True)
+            ),
+        )
 
         delta = torch.clamp(delta, min=self._epsilon)
         return ((1 / np.sqrt(2)) * delta) ** self._feature_exponent
@@ -239,8 +258,8 @@ class LDRFLIPLoss(nn.Module):  # pylint:disable=too-many-instance-attributes
             y_true = torch.flip(y_true, dims=[1])
             y_pred = torch.flip(y_pred, dims=[1])
 
-        y_true = torch.clamp(y_true, 0, 1.)
-        y_pred = torch.clamp(y_pred, 0, 1.)
+        y_true = torch.clamp(y_true, 0, 1.0)
+        y_pred = torch.clamp(y_pred, 0, 1.0)
         true_ycxcz = self._rgb2ycxcz(y_true)
         pred_ycxcz = self._rgb2ycxcz(y_pred)
 
@@ -264,6 +283,7 @@ class _SpatialFilters(nn.Module):
         The estimated number of pixels per degree of visual angle of the observer. This effectively
         impacts the tolerance when calculating loss.
     """
+
     _spatial_filters: torch.Tensor
 
     def __init__(self, pixels_per_degree: float) -> None:
@@ -274,28 +294,38 @@ class _SpatialFilters(nn.Module):
         self.register_buffer("_spatial_filters", self._generate_spatial_filters())
         self._ycxcz2rgb = ColorSpaceConvert(from_space="ycxcz", to_space="rgb")
 
-    def _get_evaluation_domain(self,
-                               b1_a: float,
-                               b2_a: float,
-                               b1_rg: float,
-                               b2_rg: float,
-                               b1_by: float,
-                               b2_by: float) -> tuple[np.ndarray, int]:
+    def _get_evaluation_domain(
+        self,
+        b1_a: float,
+        b2_a: float,
+        b1_rg: float,
+        b2_rg: float,
+        b1_by: float,
+        b2_by: float,
+    ) -> tuple[np.ndarray, int]:
         """Get the evaluation domain for the spatial filters"""
         max_scale_parameter = max([b1_a, b2_a, b1_rg, b2_rg, b1_by, b2_by])
         delta_x = 1.0 / self._pixels_per_degree
-        radius = int(np.ceil(3 * np.sqrt(max_scale_parameter / (2 * np.pi**2))
-                             * self._pixels_per_degree))
+        radius = int(
+            np.ceil(
+                3
+                * np.sqrt(max_scale_parameter / (2 * np.pi**2))
+                * self._pixels_per_degree
+            )
+        )
         ax_x, ax_y = np.meshgrid(range(-radius, radius + 1), range(-radius, radius + 1))
         domain = (ax_x * delta_x) ** 2 + (ax_y * delta_x) ** 2
         return domain, radius
 
     @classmethod
-    def _generate_weights(cls, channel: dict[str, float], domain: np.ndarray) -> np.ndarray:
+    def _generate_weights(
+        cls, channel: dict[str, float], domain: np.ndarray
+    ) -> np.ndarray:
         """Generate the weights for the spacial filters"""
         a_1, b_1, a_2, b_2 = channel["a1"], channel["b1"], channel["a2"], channel["b2"]
-        grad = (a_1 * np.sqrt(np.pi / b_1) * np.exp(-np.pi ** 2 * domain / b_1) +
-                a_2 * np.sqrt(np.pi / b_2) * np.exp(-np.pi ** 2 * domain / b_2))
+        grad = a_1 * np.sqrt(np.pi / b_1) * np.exp(
+            -(np.pi**2) * domain / b_1
+        ) + a_2 * np.sqrt(np.pi / b_2) * np.exp(-(np.pi**2) * domain / b_2)
         grad = grad / np.sum(grad)
         grad = np.reshape(grad, (1, *grad.shape))
         return grad
@@ -309,19 +339,27 @@ class _SpatialFilters(nn.Module):
         The spatial filter kernel for the channels ("A" (Achromatic CSF), "RG" (Red-Green CSF) or
         "BY" (Blue-Yellow CSF)) corresponding to the spatial contrast sensitivity function
         """
-        mapping = {"A": {"a1": 1, "b1": 0.0047, "a2": 0, "b2": 1e-5},
-                   "RG": {"a1": 1, "b1": 0.0053, "a2": 0, "b2": 1e-5},
-                   "BY": {"a1": 34.1, "b1": 0.04, "a2": 13.5, "b2": 0.025}}
+        mapping = {
+            "A": {"a1": 1, "b1": 0.0047, "a2": 0, "b2": 1e-5},
+            "RG": {"a1": 1, "b1": 0.0053, "a2": 0, "b2": 1e-5},
+            "BY": {"a1": 34.1, "b1": 0.04, "a2": 13.5, "b2": 0.025},
+        }
 
-        domain, radius = self._get_evaluation_domain(mapping["A"]["b1"],
-                                                     mapping["A"]["b2"],
-                                                     mapping["RG"]["b1"],
-                                                     mapping["RG"]["b2"],
-                                                     mapping["BY"]["b1"],
-                                                     mapping["BY"]["b2"])
+        domain, radius = self._get_evaluation_domain(
+            mapping["A"]["b1"],
+            mapping["A"]["b2"],
+            mapping["RG"]["b1"],
+            mapping["RG"]["b2"],
+            mapping["BY"]["b1"],
+            mapping["BY"]["b2"],
+        )
         self._radius = radius
-        weights = np.array([self._generate_weights(mapping[channel], domain)
-                            for channel in ("A", "RG", "BY")])
+        weights = np.array(
+            [
+                self._generate_weights(mapping[channel], domain)
+                for channel in ("A", "RG", "BY")
+            ]
+        )
         return torch.from_numpy(weights).float()
 
     def forward(self, image: torch.Tensor) -> torch.Tensor:
@@ -337,12 +375,17 @@ class _SpatialFilters(nn.Module):
         The input image transformed to linear RGB after filtering with spatial contrast sensitivity
         functions
         """
-        img_pad = F.pad(image, (self._radius, self._radius, self._radius, self._radius),
-                        mode="replicate")
-        image_tilde_opponent = F.conv2d(img_pad,  # pylint:disable=not-callable
-                                        self._spatial_filters,
-                                        groups=3)
-        return torch.clamp(self._ycxcz2rgb(image_tilde_opponent), 0., 1.)
+        img_pad = F.pad(
+            image,
+            (self._radius, self._radius, self._radius, self._radius),
+            mode="replicate",
+        )
+        image_tilde_opponent = F.conv2d(
+            img_pad,  # pylint:disable=not-callable
+            self._spatial_filters,
+            groups=3,
+        )
+        return torch.clamp(self._ycxcz2rgb(image_tilde_opponent), 0.0, 1.0)
 
 
 class _FeatureDetection(nn.Module):
@@ -355,6 +398,7 @@ class _FeatureDetection(nn.Module):
     pixels_per_degree
         The number of pixels per degree of visual angle of the observer
     """
+
     _grads_edge: torch.Tensor
     _grads_point: torch.Tensor
 
@@ -365,14 +409,20 @@ class _FeatureDetection(nn.Module):
         self._std = 0.5 * width * pixels_per_degree
         self._radius = int(np.ceil(3 * self._std))
 
-        grid = np.meshgrid(range(-self._radius, self._radius + 1),
-                           range(-self._radius, self._radius + 1))
-        gradient = np.exp(-(grid[0] ** 2 + grid[1] ** 2) / (2 * (self._std ** 2)))
-        self.register_buffer("_grads_edge",
-                             torch.from_numpy(np.multiply(-grid[0], gradient)).float())
-        self.register_buffer("_grads_point",
-                             torch.from_numpy(np.multiply(grid[0] ** 2 / (self._std ** 2) - 1,
-                                                          gradient)).float())
+        grid = np.meshgrid(
+            range(-self._radius, self._radius + 1),
+            range(-self._radius, self._radius + 1),
+        )
+        gradient = np.exp(-(grid[0] ** 2 + grid[1] ** 2) / (2 * (self._std**2)))
+        self.register_buffer(
+            "_grads_edge", torch.from_numpy(np.multiply(-grid[0], gradient)).float()
+        )
+        self.register_buffer(
+            "_grads_point",
+            torch.from_numpy(
+                np.multiply(grid[0] ** 2 / (self._std**2) - 1, gradient)
+            ).float(),
+        )
 
     def forward(self, image: torch.Tensor, feature_type: str) -> torch.Tensor:
         """Run the feature detection
@@ -393,16 +443,25 @@ class _FeatureDetection(nn.Module):
         negative_weights_sum = -grad_x[grad_x < 0].sum()
         positive_weights_sum = grad_x[grad_x > 0].sum()
 
-        grad_x = torch.where(grad_x < 0,
-                             grad_x / negative_weights_sum,
-                             grad_x / positive_weights_sum)
+        grad_x = torch.where(
+            grad_x < 0, grad_x / negative_weights_sum, grad_x / positive_weights_sum
+        )
         kernel = grad_x[None, None]
-        pad = (self._radius, self._radius, self._radius, self._radius,)
+        pad = (
+            self._radius,
+            self._radius,
+            self._radius,
+            self._radius,
+        )
 
-        features_x = F.conv2d(F.pad(image, pad, mode="replicate"),  # pylint:disable=not-callable
-                              kernel)
-        features_y = F.conv2d(F.pad(image, pad, mode="replicate"),  # pylint:disable=not-callable
-                              kernel.swapaxes(2, 3))
+        features_x = F.conv2d(
+            F.pad(image, pad, mode="replicate"),  # pylint:disable=not-callable
+            kernel,
+        )
+        features_y = F.conv2d(
+            F.pad(image, pad, mode="replicate"),  # pylint:disable=not-callable
+            kernel.swapaxes(2, 3),
+        )
         return torch.cat([features_x, features_y], dim=1)
 
 

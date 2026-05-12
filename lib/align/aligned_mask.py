@@ -25,7 +25,7 @@ if T.TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class Mask():  # pylint:disable=too-many-instance-attributes
+class Mask:  # pylint:disable=too-many-instance-attributes
     """Face Mask information and convenience methods
 
     Holds a Faceswap mask as generated from :mod:`plugins.extract.mask` and the information
@@ -48,9 +48,10 @@ class Mask():  # pylint:disable=too-many-instance-attributes
     stored_centering
         The centering that the mask is stored at. One of `"legacy"`, `"face"`, `"head"`
     """
-    def __init__(self,
-                 storage_size: int = 128,
-                 storage_centering: CenteringType = "face") -> None:
+
+    def __init__(
+        self, storage_size: int = 128, storage_centering: CenteringType = "face"
+    ) -> None:
         logger.trace(parse_class_init(locals()))  # type:ignore[attr-defined]
         self.stored_size = storage_size
         self.stored_centering: CenteringType = storage_centering
@@ -63,7 +64,10 @@ class Mask():  # pylint:disable=too-many-instance-attributes
         self._blur_passes: int = 0
         self._blur_kernel: float | int = 0
         self._threshold = 0.0
-        self._dilation: tuple[T.Literal["erode", "dilate"], np.ndarray | None] = ("erode", None)
+        self._dilation: tuple[T.Literal["erode", "dilate"], np.ndarray | None] = (
+            "erode",
+            None,
+        )
         self._sub_crop_size = 0
         self._sub_crop_slices: dict[T.Literal["in", "out"], list[slice]] = {}
 
@@ -72,8 +76,11 @@ class Mask():  # pylint:disable=too-many-instance-attributes
 
     def __repr__(self) -> str:
         """Pretty print for logging"""
-        params = {k.replace("stored", "storage"): v for k, v in self.__dict__.items()
-                  if k in ("stored_size", "stored_centering")}
+        params = {
+            k.replace("stored", "storage"): v
+            for k, v in self.__dict__.items()
+            if k in ("stored_size", "stored_centering")
+        }
         s_params = ", ".join(f"{k}={repr(v)}" for k, v in params.items())
         return f"{self.__class__.__name__}({s_params})"
 
@@ -82,20 +89,28 @@ class Mask():  # pylint:disable=too-many-instance-attributes
         """The mask at the size of :attr:`stored_size` with any requested blurring, threshold
         amount and centering applied."""
         mask = self.stored_mask
-        if self._dilation[-1] is not None or self._threshold != 0.0 or self._blur_kernel != 0:
+        if (
+            self._dilation[-1] is not None
+            or self._threshold != 0.0
+            or self._blur_kernel != 0
+        ):
             mask = mask.copy()
         self._dilate_mask(mask)
         if self._threshold != 0.0:
             mask[mask < self._threshold] = 0.0
             mask[mask > 255.0 - self._threshold] = 255.0
         if self._blur_kernel != 0 and self._blur_type is not None:
-            mask = BlurMask(self._blur_type,
-                            mask,
-                            self._blur_kernel,
-                            passes=self._blur_passes).blurred
+            mask = BlurMask(
+                self._blur_type, mask, self._blur_kernel, passes=self._blur_passes
+            ).blurred
         if self._sub_crop_size:  # Crop the mask to the given centering
-            out = np.zeros((self._sub_crop_size, self._sub_crop_size, 1), dtype=mask.dtype)
-            slice_in, slice_out = self._sub_crop_slices["in"], self._sub_crop_slices["out"]
+            out = np.zeros(
+                (self._sub_crop_size, self._sub_crop_size, 1), dtype=mask.dtype
+            )
+            slice_in, slice_out = (
+                self._sub_crop_slices["in"],
+                self._sub_crop_slices["out"],
+            )
             out[slice_out[0], slice_out[1], :] = mask[slice_in[0], slice_in[1], :]
             mask = out
         logger.trace("mask shape: %s", mask.shape)  # type:ignore[attr-defined]
@@ -114,10 +129,15 @@ class Mask():  # pylint:disable=too-many-instance-attributes
     @property
     def original_roi(self) -> np.ndarray:
         """The original region of interest of the mask in the source frame."""
-        points = np.array([[0, 0],
-                           [0, self.stored_size - 1],
-                           [self.stored_size - 1, self.stored_size - 1],
-                           [self.stored_size - 1, 0]], np.int32).reshape((-1, 1, 2))
+        points = np.array(
+            [
+                [0, 0],
+                [0, self.stored_size - 1],
+                [self.stored_size - 1, self.stored_size - 1],
+                [self.stored_size - 1, 0],
+            ],
+            np.int32,
+        ).reshape((-1, 1, 2))
         matrix = cv2.invertAffineTransform(self.affine_matrix[:2])
         roi = cv2.transform(points, matrix).reshape((4, 2))
         logger.trace("Returning: %s", roi)  # type:ignore[attr-defined]
@@ -166,17 +186,27 @@ class Mask():  # pylint:disable=too-many-instance-attributes
         The mask affined to the original full frame of the given dimensions
         """
         frame = np.zeros((width, height, 1), dtype=np.uint8)
-        mask = cv2.warpAffine(self.mask,
-                              self.affine_matrix[:2],
-                              (width, height),
-                              frame,
-                              flags=cv2.WARP_INVERSE_MAP | self.interpolator,
-                              borderMode=cv2.BORDER_CONSTANT)
-        logger.trace("mask shape: %s, mask dtype: %s, mask min: %s, "  # type:ignore[attr-defined]
-                     "mask max: %s", mask.shape, mask.dtype, mask.min(), mask.max())
+        mask = cv2.warpAffine(
+            self.mask,
+            self.affine_matrix[:2],
+            (width, height),
+            frame,
+            flags=cv2.WARP_INVERSE_MAP | self.interpolator,
+            borderMode=cv2.BORDER_CONSTANT,
+        )
+        logger.trace(
+            "mask shape: %s, mask dtype: %s, mask min: %s, "  # type:ignore[attr-defined]
+            "mask max: %s",
+            mask.shape,
+            mask.dtype,
+            mask.min(),
+            mask.max(),
+        )
         return mask
 
-    def add(self, mask: npt.NDArray[np.uint8], affine_matrix: npt.NDArray[np.float32]) -> T.Self:
+    def add(
+        self, mask: npt.NDArray[np.uint8], affine_matrix: npt.NDArray[np.float32]
+    ) -> T.Self:
         """Add a Faceswap mask to this :class:`Mask`.
 
         The mask should be the original output from  :mod:`plugins.extract.mask`
@@ -194,9 +224,15 @@ class Mask():  # pylint:disable=too-many-instance-attributes
         -------
         This mask object
         """
-        logger.trace("mask shape: %s, mask dtype: %s, mask min: %s, "  # type:ignore[attr-defined]
-                     "mask max: %s, affine_matrix: %s)",
-                     mask.shape, mask.dtype, mask.min(), affine_matrix, mask.max())
+        logger.trace(
+            "mask shape: %s, mask dtype: %s, mask min: %s, "  # type:ignore[attr-defined]
+            "mask max: %s, affine_matrix: %s)",
+            mask.shape,
+            mask.dtype,
+            mask.min(),
+            affine_matrix,
+            mask.max(),
+        )
         self._affine_matrix = self._adjust_affine_matrix(mask.shape[0], affine_matrix)
         scale = (self._affine_matrix[0, 0] ** 2 + self._affine_matrix[1, 0] ** 2) ** 0.5
         self._interpolator = cv2.INTER_LINEAR if scale < 1.0 else cv2.INTER_AREA
@@ -218,10 +254,13 @@ class Mask():  # pylint:disable=too-many-instance-attributes
             new_mask = mask
         else:
             dims = (self.stored_size, self.stored_size)
-            interpolation = cv2.INTER_AREA if self.stored_size < size else cv2.INTER_LINEAR
-            new_mask = T.cast("npt.NDArray[np.uint8]", cv2.resize(mask,
-                                                                  dims,
-                                                                  interpolation=interpolation))
+            interpolation = (
+                cv2.INTER_AREA if self.stored_size < size else cv2.INTER_LINEAR
+            )
+            new_mask = T.cast(
+                "npt.NDArray[np.uint8]",
+                cv2.resize(mask, dims, interpolation=interpolation),
+            )
         self._mask = compress(new_mask.tobytes())
 
     def set_dilation(self, amount: float) -> None:
@@ -238,17 +277,26 @@ class Mask():  # pylint:disable=too-many-instance-attributes
             return
 
         action: T.Literal["erode", "dilate"] = "erode" if amount < 0 else "dilate"
-        kernel = int(round(self.stored_size * abs(amount / 100.), 0))
-        self._dilation = (action, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel, kernel)))
+        kernel = int(round(self.stored_size * abs(amount / 100.0), 0))
+        self._dilation = (
+            action,
+            cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel, kernel)),
+        )
 
-        logger.trace("action: '%s', amount: %s, kernel: %s, ",  # type:ignore[attr-defined]
-                     action, amount, kernel)
+        logger.trace(
+            "action: '%s', amount: %s, kernel: %s, ",  # type:ignore[attr-defined]
+            action,
+            amount,
+            kernel,
+        )
 
-    def set_blur_and_threshold(self,
-                               blur_kernel: int = 0,
-                               blur_type: T.Literal["gaussian", "normalized"] | None = "gaussian",
-                               blur_passes: int = 1,
-                               threshold: int = 0) -> None:
+    def set_blur_and_threshold(
+        self,
+        blur_kernel: int = 0,
+        blur_type: T.Literal["gaussian", "normalized"] | None = "gaussian",
+        blur_passes: int = 1,
+        threshold: int = 0,
+    ) -> None:
         """Set the internal blur kernel and threshold amount for returned masks
 
         Parameters
@@ -265,9 +313,14 @@ class Mask():  # pylint:disable=too-many-instance-attributes
             The threshold amount to minimize/maximize mask values to 0 and 100. Percentage value.
             Default: 0
         """
-        logger.trace("blur_kernel: %s, blur_type: %s, "  # type:ignore[attr-defined]
-                     "blur_passes: %s, threshold: %s",
-                     blur_kernel, blur_type, blur_passes, threshold)
+        logger.trace(
+            "blur_kernel: %s, blur_type: %s, "  # type:ignore[attr-defined]
+            "blur_passes: %s, threshold: %s",
+            blur_kernel,
+            blur_type,
+            blur_passes,
+            threshold,
+        )
         if blur_type is not None:
             blur_kernel += 0 if blur_kernel == 0 or blur_kernel % 2 == 1 else 1
             self._blur_kernel = blur_kernel
@@ -275,12 +328,14 @@ class Mask():  # pylint:disable=too-many-instance-attributes
             self._blur_passes = blur_passes
         self._threshold = (threshold / 100.0) * 255.0
 
-    def set_sub_crop(self,
-                     source_offset: np.ndarray,
-                     target_offset: np.ndarray,
-                     centering: CenteringType,
-                     coverage_ratio: float = 1.0,
-                     y_offset: float = 0.0) -> None:
+    def set_sub_crop(
+        self,
+        source_offset: np.ndarray,
+        target_offset: np.ndarray,
+        centering: CenteringType,
+        coverage_ratio: float = 1.0,
+        y_offset: float = 0.0,
+    ) -> None:
         """Set the internal crop area of the mask to be returned.
 
         This impacts the returned mask from :attr:`mask` if the requested mask is required for
@@ -303,33 +358,49 @@ class Mask():  # pylint:disable=too-many-instance-attributes
         if centering == self.stored_centering and coverage_ratio == 1.0:
             return
 
-        center = get_adjusted_center(self.stored_size,
-                                     source_offset,
-                                     target_offset,
-                                     self.stored_centering,
-                                     y_offset)
-        crop_size = get_sub_crop_size(self.stored_centering,
-                                      centering,
-                                      self.stored_size,
-                                      coverage_ratio=coverage_ratio)
+        center = get_adjusted_center(
+            self.stored_size,
+            source_offset,
+            target_offset,
+            self.stored_centering,
+            y_offset,
+        )
+        crop_size = get_sub_crop_size(
+            self.stored_centering,
+            centering,
+            self.stored_size,
+            coverage_ratio=coverage_ratio,
+        )
         roi = np.array([center - crop_size // 2, center + crop_size // 2]).ravel()
 
         self._sub_crop_size = crop_size
-        self._sub_crop_slices["in"] = [slice(max(roi[1], 0), max(roi[3], 0)),
-                                       slice(max(roi[0], 0), max(roi[2], 0))]
+        self._sub_crop_slices["in"] = [
+            slice(max(roi[1], 0), max(roi[3], 0)),
+            slice(max(roi[0], 0), max(roi[2], 0)),
+        ]
         self._sub_crop_slices["out"] = [
-            slice(max(roi[1] * -1, 0),
-                  crop_size - min(crop_size, max(0, roi[3] - self.stored_size))),
-            slice(max(roi[0] * -1, 0),
-                  crop_size - min(crop_size, max(0, roi[2] - self.stored_size)))]
+            slice(
+                max(roi[1] * -1, 0),
+                crop_size - min(crop_size, max(0, roi[3] - self.stored_size)),
+            ),
+            slice(
+                max(roi[0] * -1, 0),
+                crop_size - min(crop_size, max(0, roi[2] - self.stored_size)),
+            ),
+        ]
 
-        logger.trace("src_size: %s, coverage_ratio: %s, "  # type:ignore[attr-defined]
-                     "sub_crop_size: %s, sub_crop_slices: %s",
-                     roi, coverage_ratio, self._sub_crop_size, self._sub_crop_slices)
+        logger.trace(
+            "src_size: %s, coverage_ratio: %s, "  # type:ignore[attr-defined]
+            "sub_crop_size: %s, sub_crop_slices: %s",
+            roi,
+            coverage_ratio,
+            self._sub_crop_size,
+            self._sub_crop_slices,
+        )
 
     @classmethod
     def _matrix_2to3(cls, matrix: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
-        """ Update a legacy (2x3) affine matrix to (3x3)
+        """Update a legacy (2x3) affine matrix to (3x3)
 
         Parameters
         ----------
@@ -342,9 +413,11 @@ class Mask():  # pylint:disable=too-many-instance-attributes
         """
         if matrix.shape[0] == 3:
             return matrix
-        return np.concatenate([matrix, np.array([[0., 0., 1.]], dtype=np.float32)])
+        return np.concatenate([matrix, np.array([[0.0, 0.0, 1.0]], dtype=np.float32)])
 
-    def _adjust_affine_matrix(self, mask_size: int, affine_matrix: np.ndarray) -> np.ndarray:
+    def _adjust_affine_matrix(
+        self, mask_size: int, affine_matrix: np.ndarray
+    ) -> np.ndarray:
         """Adjust the affine matrix for the mask's storage size
 
         Parameters
@@ -360,11 +433,17 @@ class Mask():  # pylint:disable=too-many-instance-attributes
             The affine matrix adjusted for the mask at its stored dimensions.
         """
         zoom = self.stored_size / mask_size
-        zoom_mat = np.array([[zoom, 0, 0.], [0, zoom, 0.]])
+        zoom_mat = np.array([[zoom, 0, 0.0], [0, zoom, 0.0]])
         adjust_mat = np.dot(zoom_mat, self._matrix_2to3(affine_matrix))
-        logger.trace("storage_size: %s, mask_size: %s, zoom: %s, "  # type:ignore[attr-defined]
-                     "original matrix: %s, adjusted_matrix: %s", self.stored_size, mask_size, zoom,
-                     affine_matrix.shape, adjust_mat.shape)
+        logger.trace(
+            "storage_size: %s, mask_size: %s, zoom: %s, "  # type:ignore[attr-defined]
+            "original matrix: %s, adjusted_matrix: %s",
+            self.stored_size,
+            mask_size,
+            zoom,
+            affine_matrix.shape,
+            adjust_mat.shape,
+        )
         return adjust_mat
 
     def to_dict(self, is_png=False) -> MaskAlignmentsFile:
@@ -383,11 +462,13 @@ class Mask():  # pylint:disable=too-many-instance-attributes
         """
         assert self._mask is not None
         affine_matrix = self.affine_matrix.tolist() if is_png else self.affine_matrix
-        retval = MaskAlignmentsFile(mask=self._mask,
-                                    affine_matrix=affine_matrix,
-                                    interpolator=self.interpolator,
-                                    stored_size=self.stored_size,
-                                    stored_centering=self.stored_centering)
+        retval = MaskAlignmentsFile(
+            mask=self._mask,
+            affine_matrix=affine_matrix,
+            interpolator=self.interpolator,
+            stored_size=self.stored_size,
+            stored_centering=self.stored_centering,
+        )
         logger.trace(retval)  # type:ignore[attr-defined]
         return retval
 
@@ -423,7 +504,7 @@ class Mask():  # pylint:disable=too-many-instance-attributes
         return self
 
 
-class LandmarksMask():
+class LandmarksMask:
     """Create a single channel mask from aligned landmark points.
 
     Landmarks masks are created on the fly, so the stored centering and size should be the same as
@@ -457,15 +538,18 @@ class LandmarksMask():
     blur_passes
         The number of passed to perform when blurring. Default: 1
     """
-    def __init__(self,
-                 area: T.Literal["eye", "mouth", "face", "face_extended"],
-                 landmark_type: LandmarkType,
-                 landmarks: npt.NDArray[np.float32],
-                 size: int,
-                 dilation: float = 0.0,
-                 blur_kernel: int = 0,
-                 blur_type: T.Literal["gaussian", "normalized"] | None = "gaussian",
-                 blur_passes: int = 1) -> None:
+
+    def __init__(
+        self,
+        area: T.Literal["eye", "mouth", "face", "face_extended"],
+        landmark_type: LandmarkType,
+        landmarks: npt.NDArray[np.float32],
+        size: int,
+        dilation: float = 0.0,
+        blur_kernel: int = 0,
+        blur_type: T.Literal["gaussian", "normalized"] | None = "gaussian",
+        blur_passes: int = 1,
+    ) -> None:
         logger.debug(parse_class_init(locals()))
         self._area = area
         self._landmark_type = landmark_type
@@ -491,10 +575,21 @@ class LandmarksMask():
 
     def __repr__(self) -> str:
         """Pretty print for logging"""
-        params = {f"{k[1:]}": format_array(v) if isinstance(v, np.ndarray) else v
-                  for k, v in self.__dict__.items()
-                  if k in ("_area", "_landmark_type", "_landmarks", "_size",
-                           "_dilation", "_blur_kernel", "_blur_type", "blur_passes")}
+        params = {
+            f"{k[1:]}": format_array(v) if isinstance(v, np.ndarray) else v
+            for k, v in self.__dict__.items()
+            if k
+            in (
+                "_area",
+                "_landmark_type",
+                "_landmarks",
+                "_size",
+                "_dilation",
+                "_blur_kernel",
+                "_blur_type",
+                "blur_passes",
+            )
+        }
         s_params = ", ".join(f"{k}={repr(v)}" for k, v in params.items())
         return f"{self.__class__.__name__}({s_params})"
 
@@ -505,32 +600,46 @@ class LandmarksMask():
         -------
         The slices required to extract landmark points for creating a mask
         """
-        parts = LANDMARK_PARTS if self._area in ("eye", "mouth") else LANDMARK_MASK_PARTS
+        parts = (
+            LANDMARK_PARTS if self._area in ("eye", "mouth") else LANDMARK_MASK_PARTS
+        )
         if self._landmark_type not in parts:
             raise FaceswapError(
-                f"Landmark based masks cannot be created for {self._landmark_type.name}")
+                f"Landmark based masks cannot be created for {self._landmark_type.name}"
+            )
 
         lm_parts = parts[self._landmark_type]
-        mapped = {"mouth": ["mouth_outer"],
-                  "eye": ["right_eye", "left_eye"],
-                  "face": list(lm_parts),
-                  "face_extended": list(lm_parts)}[self._area]
+        mapped = {
+            "mouth": ["mouth_outer"],
+            "eye": ["right_eye", "left_eye"],
+            "face": list(lm_parts),
+            "face_extended": list(lm_parts),
+        }[self._area]
 
         if not all(parts in lm_parts for parts in mapped):
             raise FaceswapError(
-                f"Landmark based masks cannot be created for {self._landmark_type.name}")
+                f"Landmark based masks cannot be created for {self._landmark_type.name}"
+            )
 
         if self._area in ("eye", "mouth"):
-            retval: list[slice] | list[list[slice]] = [slice(*lm_parts[v][:2]) for v in mapped]
+            retval: list[slice] | list[list[slice]] = [
+                slice(*lm_parts[v][:2]) for v in mapped
+            ]
         else:
-            retval = [[slice(*p) for p in T.cast(list[tuple[int, int]], lm_parts[v])]
-                      for v in mapped]
-        logger.trace("[LM_MASK] area: '%s', slices: %s",  # type:ignore[attr-defined]
-                     self._area, retval)
+            retval = [
+                [slice(*p) for p in T.cast(list[tuple[int, int]], lm_parts[v])]
+                for v in mapped
+            ]
+        logger.trace(
+            "[LM_MASK] area: '%s', slices: %s",  # type:ignore[attr-defined]
+            self._area,
+            retval,
+        )
         return retval
 
-    def _extend_face_landmarks(self,
-                               landmarks: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
+    def _extend_face_landmarks(
+        self, landmarks: npt.NDArray[np.float32]
+    ) -> npt.NDArray[np.float32]:
         """Adjust the top of the face mask to extend above eyebrows
 
         Parameters
@@ -552,8 +661,12 @@ class LandmarksMask():
         qr_pnt = (landmarks[45] + mr_pnt) // 2
 
         # Top of the eye arrays
-        bot_l = np.array((ql_pnt, landmarks[36], landmarks[37], landmarks[38], landmarks[39]))
-        bot_r = np.array((landmarks[42], landmarks[43], landmarks[44], landmarks[45], qr_pnt))
+        bot_l = np.array(
+            (ql_pnt, landmarks[36], landmarks[37], landmarks[38], landmarks[39])
+        )
+        bot_r = np.array(
+            (landmarks[42], landmarks[43], landmarks[44], landmarks[45], qr_pnt)
+        )
 
         # Eyebrow arrays
         top_l = landmarks[17:22]
@@ -579,11 +692,15 @@ class LandmarksMask():
             landmarks = self._extend_face_landmarks(landmarks)
 
         if self._area in ("eye", "mouth"):
-            retval = [np.rint(landmarks[zone]).astype(np.int32)
-                      for zone in T.cast(list[slice], slices)]
+            retval = [
+                np.rint(landmarks[zone]).astype(np.int32)
+                for zone in T.cast(list[slice], slices)
+            ]
         else:
-            retval = [np.concatenate([np.rint(landmarks[x]).astype(np.int32) for x in zone])
-                      for zone in T.cast(list[list[slice]], slices)]
+            retval = [
+                np.concatenate([np.rint(landmarks[x]).astype(np.int32) for x in zone])
+                for zone in T.cast(list[list[slice]], slices)
+            ]
         return retval
 
     def _dilate(self, mask: npt.NDArray[np.uint8]):
@@ -596,8 +713,10 @@ class LandmarksMask():
         """
         if self.dilation == 0.0:
             return
-        kernel_size = int(round(self._size * abs(self.dilation / 100.), 0))
-        element = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+        kernel_size = int(round(self._size * abs(self.dilation / 100.0), 0))
+        element = cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE, (kernel_size, kernel_size)
+        )
         func = cv2.erode if self.dilation < 0 else cv2.dilate
         func(mask, element, dst=mask, iterations=1)
 
@@ -615,23 +734,27 @@ class LandmarksMask():
             mask = np.zeros((self._size, self._size, 1), dtype=np.uint8)
             for pts in points:
                 lms = np.rint(pts).astype("int")
-                cv2.fillConvexPoly(mask, cv2.convexHull(lms), [255], lineType=cv2.LINE_AA)
+                cv2.fillConvexPoly(
+                    mask, cv2.convexHull(lms), [255], lineType=cv2.LINE_AA
+                )
             self._original_mask = mask
 
         mask = self._original_mask.copy()
         self._dilate(mask)
 
         if self.blur_kernel != 0 and self.blur_type is not None:
-            mask = BlurMask(self.blur_type,
-                            mask,
-                            self.blur_kernel,
-                            passes=self.blur_passes).blurred
-        logger.trace("[LM_MASK] mask: (shape: %s, dtype: %s)",  # type:ignore[attr-defined]
-                     mask.shape, mask.dtype)
+            mask = BlurMask(
+                self.blur_type, mask, self.blur_kernel, passes=self.blur_passes
+            ).blurred
+        logger.trace(
+            "[LM_MASK] mask: (shape: %s, dtype: %s)",  # type:ignore[attr-defined]
+            mask.shape,
+            mask.dtype,
+        )
         return mask
 
 
-class BlurMask():
+class BlurMask:
     """Factory class to return the correct blur object for requested blur type.
 
     Works for square images only. Currently supports Gaussian and Normalized Box Filters.
@@ -660,12 +783,15 @@ class BlurMask():
     >>> print(new_mask.shape)
     (128, 128, 1)
     """
-    def __init__(self,
-                 blur_type: T.Literal["gaussian", "normalized"],
-                 mask: np.ndarray,
-                 kernel: int | float,
-                 is_ratio: bool = False,
-                 passes: int = 1) -> None:
+
+    def __init__(
+        self,
+        blur_type: T.Literal["gaussian", "normalized"],
+        mask: np.ndarray,
+        kernel: int | float,
+        is_ratio: bool = False,
+        passes: int = 1,
+    ) -> None:
         logger.trace(parse_class_init(locals()))  # type:ignore[attr-defined]
         self._blur_type: T.Literal["gaussian", "normalized"] = blur_type
         self._mask = mask
@@ -684,20 +810,25 @@ class BlurMask():
             k_tup = kwargs["ksize"]
             assert isinstance(k_tup, tuple)
             k_size = int(k_tup[0])
-            logger.trace("Pass: %s, kernel_size: %s",  # type:ignore[attr-defined]
-                         i + 1, (k_size, k_size))
+            logger.trace(
+                "Pass: %s, kernel_size: %s",  # type:ignore[attr-defined]
+                i + 1,
+                (k_size, k_size),
+            )
             blurred = func(blurred, **kwargs)
             k_size = int(round(k_size * self._multipass_factor))
             kwargs["ksize"] = self._get_kernel_tuple(k_size)
         blurred = blurred[..., None]
-        logger.trace("Returning blurred mask. Shape: %s",  # type:ignore[attr-defined]
-                     blurred.shape)
+        logger.trace(
+            "Returning blurred mask. Shape: %s",  # type:ignore[attr-defined]
+            blurred.shape,
+        )
         return blurred
 
     @property
     def _multipass_factor(self) -> float:
         """For multiple passes the kernel must be scaled down. This value is
-            different for box filter and gaussian"""
+        different for box filter and gaussian"""
         factor = {"gaussian": 0.8, "normalized": 0.5}
         return factor[self._blur_type]
 
@@ -712,13 +843,15 @@ class BlurMask():
         return {"gaussian": cv2.GaussianBlur, "normalized": cv2.blur}
 
     @property
-    def _kwarg_requirements(self) -> dict[T.Literal["gaussian", "normalized"], list[str]]:
-        """:attr:`_blur_type` mapped to cv2 Function required keyword arguments. """
-        return {"gaussian": ['ksize', 'sigmaX'], "normalized": ['ksize']}
+    def _kwarg_requirements(
+        self,
+    ) -> dict[T.Literal["gaussian", "normalized"], list[str]]:
+        """:attr:`_blur_type` mapped to cv2 Function required keyword arguments."""
+        return {"gaussian": ["ksize", "sigmaX"], "normalized": ["ksize"]}
 
     @property
     def _kwarg_mapping(self) -> dict[str, int | tuple[int, int]]:
-        """cv2 function keyword arguments mapped to their parameters. """
+        """cv2 function keyword arguments mapped to their parameters."""
         return {"ksize": self._kernel_size, "sigmaX": self._sigma}
 
     def _get_kernel_size(self, kernel: int | float, is_ratio: bool) -> int:
@@ -744,7 +877,7 @@ class BlurMask():
             return int(kernel)
 
         mask_diameter = np.sqrt(np.sum(self._mask))
-        radius = round(max(1., mask_diameter * kernel / 100.))
+        radius = round(max(1.0, mask_diameter * kernel / 100.0))
         kernel_size = int(radius * 2 + 1)
         logger.trace("kernel_size: %s", kernel_size)  # type:ignore[attr-defined]
         return kernel_size
@@ -768,9 +901,11 @@ class BlurMask():
         return retval
 
     def _get_kwargs(self) -> dict[str, int | tuple[int, int]]:
-        """the valid keyword arguments for the requested :attr:`_blur_type` """
-        retval = {k_word: self._kwarg_mapping[k_word]
-                  for k_word in self._kwarg_requirements[self._blur_type]}
+        """the valid keyword arguments for the requested :attr:`_blur_type`"""
+        retval = {
+            k_word: self._kwarg_mapping[k_word]
+            for k_word in self._kwarg_requirements[self._blur_type]
+        }
         logger.trace("BlurMask kwargs: %s", retval)  # type:ignore[attr-defined]
         return retval
 

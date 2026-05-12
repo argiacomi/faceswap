@@ -27,13 +27,15 @@ class TFace(FacePlugin):
     """
 
     def __init__(self) -> None:
-        super().__init__(input_size=112,
-                         batch_size=cfg.batch_size(),
-                         is_rgb=True,
-                         dtype="float32",
-                         scale=(0, 1),
-                         force_cpu=cfg.cpu(),
-                         centering="legacy")
+        super().__init__(
+            input_size=112,
+            batch_size=cfg.batch_size(),
+            is_rgb=True,
+            dtype="float32",
+            scale=(0, 1),
+            force_cpu=cfg.cpu(),
+            centering="legacy",
+        )
         self._backbone = cfg.backbone()
         self.storage_name = f"{self.storage_name}_{self._backbone}"
         self.model: IRNet

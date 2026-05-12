@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """DARK heatmap decoding for heatmap based aligners."""
+
 import logging
 
 import cv2
@@ -23,6 +24,7 @@ class Dark:
     size
         The size of the heatmap
     """
+
     def __init__(self, num_points: int, size: int, blur_kernel: int = 11):
         logger.debug(parse_class_init(locals()))
         self._num_points = num_points
@@ -31,7 +33,7 @@ class Dark:
         self._border = (blur_kernel - 1) // 2
 
     def get_max_preds(self, batch_heatmaps: np.ndarray) -> np.ndarray:
-        """ get predictions from score maps
+        """get predictions from score maps
 
         Parameters
         ----------
@@ -43,7 +45,9 @@ class Dark:
         coords
             The derived points from the heatmaps (B, N, 2)
         """
-        assert isinstance(batch_heatmaps, np.ndarray), "batch_heatmaps should be numpy.ndarray"
+        assert isinstance(batch_heatmaps, np.ndarray), (
+            "batch_heatmaps should be numpy.ndarray"
+        )
         assert batch_heatmaps.ndim == 4, "batch_images should be 4-ndim"
 
         batch = batch_heatmaps.shape[0]
@@ -78,31 +82,46 @@ class Dark:
         """
         batch_size = heatmap.shape[0]
         origin_max = heatmap.reshape(batch_size, self._num_points, -1).max(axis=2)
-        padded = np.pad(heatmap,
-                        ((0, 0),
-                         (0, 0),
-                         (self._border, self._border),
-                         (self._border, self._border)),
-                        mode="constant")
+        padded = np.pad(
+            heatmap,
+            (
+                (0, 0),
+                (0, 0),
+                (self._border, self._border),
+                (self._border, self._border),
+            ),
+            mode="constant",
+        )
         reshaped = padded.reshape(  # pylint:disable=too-many-function-args)
             batch_size * self._num_points,
             self._size + 2 * self._border,
-            self._size + 2 * self._border
-            )
-        blurred = np.stack([cv2.GaussianBlur(img, (self._blur_kernel, self._blur_kernel), 0)
-                            for img in reshaped])
-        blurred = blurred.reshape(batch_size,
-                                  self._num_points,
-                                  self._size + 2 * self._border,
-                                  self._size + 2 * self._border)
-        cropped = blurred[:, :, self._border:-self._border, self._border:-self._border]
+            self._size + 2 * self._border,
+        )
+        blurred = np.stack(
+            [
+                cv2.GaussianBlur(img, (self._blur_kernel, self._blur_kernel), 0)
+                for img in reshaped
+            ]
+        )
+        blurred = blurred.reshape(
+            batch_size,
+            self._num_points,
+            self._size + 2 * self._border,
+            self._size + 2 * self._border,
+        )
+        cropped = blurred[
+            :, :, self._border : -self._border, self._border : -self._border
+        ]
         new_max = cropped.reshape(batch_size, self._num_points, -1).max(axis=2)
         scale = origin_max / (new_max + 1e-8)  # avoid division by zero
         scale = scale[:, :, None, None]
         return cropped * scale
 
-    def taylor(self, heatmap: np.ndarray, coords: np.ndarray  # pylint:disable=too-many-locals
-               ) -> np.ndarray:
+    def taylor(
+        self,
+        heatmap: np.ndarray,
+        coords: np.ndarray,  # pylint:disable=too-many-locals
+    ) -> np.ndarray:
         """Sub-pixel refine the predictions
 
         Parameters
@@ -127,12 +146,22 @@ class Dark:
 
         dx = 0.5 * (hm[flat_idx, py_f, px_f + 1] - hm[flat_idx, py_f, px_f - 1])
         dy = 0.5 * (hm[flat_idx, py_f + 1, px_f] - hm[flat_idx, py_f - 1, px_f])
-        dxx = 0.25 * (hm[flat_idx, py_f, px_f + 2] - 2 *
-                      hm[flat_idx, py_f, px_f] + hm[flat_idx, py_f, px_f - 2])
-        dyy = 0.25 * (hm[flat_idx, py_f + 2, px_f] - 2 *
-                      hm[flat_idx, py_f, px_f] + hm[flat_idx, py_f - 2, px_f])
-        dxy = 0.25 * (hm[flat_idx, py_f + 1, px_f + 1] - hm[flat_idx, py_f - 1, px_f + 1] -
-                      hm[flat_idx, py_f + 1, px_f - 1] + hm[flat_idx, py_f - 1, px_f - 1])
+        dxx = 0.25 * (
+            hm[flat_idx, py_f, px_f + 2]
+            - 2 * hm[flat_idx, py_f, px_f]
+            + hm[flat_idx, py_f, px_f - 2]
+        )
+        dyy = 0.25 * (
+            hm[flat_idx, py_f + 2, px_f]
+            - 2 * hm[flat_idx, py_f, px_f]
+            + hm[flat_idx, py_f - 2, px_f]
+        )
+        dxy = 0.25 * (
+            hm[flat_idx, py_f + 1, px_f + 1]
+            - hm[flat_idx, py_f - 1, px_f + 1]
+            - hm[flat_idx, py_f + 1, px_f - 1]
+            + hm[flat_idx, py_f - 1, px_f - 1]
+        )
 
         dx = dx.reshape(batch, self._num_points)
         dy = dy.reshape(batch, self._num_points)
@@ -140,7 +169,7 @@ class Dark:
         dyy = dyy.reshape(batch, self._num_points)
         dxy = dxy.reshape(batch, self._num_points)
 
-        det = dxx * dyy - dxy ** 2
+        det = dxx * dyy - dxy**2
         inv_det = 1.0 / (det + 1e-8)
 
         offset_x = -inv_det * (dyy * dx - dxy * dy)

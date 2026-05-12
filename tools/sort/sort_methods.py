@@ -4,6 +4,7 @@
 All sorting methods inherit from :class:`SortMethod` and control functions for sorting one item,
 sorting a full list of scores and binning based on those sorted scores.
 """
+
 from __future__ import annotations
 import logging
 import operator
@@ -32,7 +33,7 @@ if T.TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class SortMethod():
+class SortMethod:
     """Parent class for sort methods. All sort methods should inherit from this class
 
     Parameters
@@ -47,17 +48,27 @@ class SortMethod():
         Set to ``True`` if this class is going to be called exclusively for binning.
         Default: ``False``
     """
+
     _log_mask_once = False
 
-    def __init__(self,
-                 arguments: Namespace,
-                 loader_type: T.Literal["face", "meta", "all"] = "meta",
-                 is_group: bool = False) -> None:
-        logger.debug("Initializing %s: loader_type: '%s' is_group: %s, arguments: %s",
-                     self.__class__.__name__, loader_type, is_group, arguments)
+    def __init__(
+        self,
+        arguments: Namespace,
+        loader_type: T.Literal["face", "meta", "all"] = "meta",
+        is_group: bool = False,
+    ) -> None:
+        logger.debug(
+            "Initializing %s: loader_type: '%s' is_group: %s, arguments: %s",
+            self.__class__.__name__,
+            loader_type,
+            is_group,
+            arguments,
+        )
         self._is_group = is_group
         self._log_once = True
-        self._method = arguments.group_method if self._is_group else arguments.sort_method
+        self._method = (
+            arguments.group_method if self._is_group else arguments.sort_method
+        )
 
         self._num_bins: int = arguments.num_bins
         self._bin_names: list[str] = []
@@ -71,7 +82,7 @@ class SortMethod():
 
     @property
     def loader_type(self) -> T.Literal["face", "meta", "all"]:
-        """ ["face", "meta", "all"]: The loader that this sorter uses"""
+        """["face", "meta", "all"]: The loader that this sorter uses"""
         return self._loader_type
 
     @property
@@ -80,7 +91,9 @@ class SortMethod():
         process is called when this property is first accessed"""
         if not self._binned:
             self._binned = self._binning()
-            logger.debug({f"bin_{idx}": len(bin_) for idx, bin_ in enumerate(self._binned)})
+            logger.debug(
+                {f"bin_{idx}": len(bin_) for idx, bin_ in enumerate(self._binned)}
+            )
         return self._binned
 
     @property
@@ -128,8 +141,10 @@ class SortMethod():
             self.score_image(filename, image, alignments)
 
         self.sort()
-        logger.debug("sorted list: %s",
-                     [r[0] if isinstance(r, (tuple, list)) else r for r in self._result])
+        logger.debug(
+            "sorted list: %s",
+            [r[0] if isinstance(r, (tuple, list)) else r for r in self._result],
+        )
 
     @classmethod
     def _get_unique_labels(cls, numbers: np.ndarray) -> list[str]:
@@ -159,12 +174,16 @@ class SortMethod():
         else:
             pre, post = zip(*[str(r).split(".") for r in rounded])
             rpad = max(len(x) for x in post)
-            retval = [f"{str(int(left))}.{str(int(right)).ljust(rpad, '0')}"
-                      for left, right in zip(pre, post)]
+            retval = [
+                f"{str(int(left))}.{str(int(right)).ljust(rpad, '0')}"
+                for left, right in zip(pre, post)
+            ]
         logger.debug("rounded values: %s, formatted labels: %s", rounded, retval)
         return retval
 
-    def _binning_linear_threshold(self, units: str = "", multiplier: int = 1) -> list[list[str]]:
+    def _binning_linear_threshold(
+        self, units: str = "", multiplier: int = 1
+    ) -> list[list[str]]:
         """Standard linear binning method for binning by threshold.
 
         The minimum and maximum result from :attr:`_result` are taken, A range is created between
@@ -188,14 +207,21 @@ class SortMethod():
         thresholds = np.linspace(sizes.min(), sizes.max(), self._num_bins + 1)
         labels = self._get_unique_labels(thresholds * multiplier)
 
-        self._bin_names = [f"{self._method}_{idx:03d}_"
-                           f"{labels[idx]}{units}_to_{labels[idx + 1]}{units}"
-                           for idx in range(self._num_bins)]
+        self._bin_names = [
+            f"{self._method}_{idx:03d}_{labels[idx]}{units}_to_{labels[idx + 1]}{units}"
+            for idx in range(self._num_bins)
+        ]
 
         bins: list[list[str]] = [[] for _ in range(self._num_bins)]
         for filename, result in self._result:
-            bin_idx = next(bin_id for bin_id, thresh in enumerate(thresholds)
-                           if result <= thresh) - 1
+            bin_idx = (
+                next(
+                    bin_id
+                    for bin_id, thresh in enumerate(thresholds)
+                    if result <= thresh
+                )
+                - 1
+            )
             bins[bin_idx].append(filename)
 
         return bins
@@ -215,7 +241,9 @@ class SortMethod():
         if not self._bin_names:
             self._bin_names = [f"{self._method}_{i:03d}" for i in range(len(retval))]
 
-        logger.debug({bin_name: len(bin_) for bin_name, bin_ in zip(self._bin_names, retval)})
+        logger.debug(
+            {bin_name: len(bin_) for bin_name, bin_ in zip(self._bin_names, retval)}
+        )
 
         return retval
 
@@ -226,10 +254,9 @@ class SortMethod():
         """
         raise NotImplementedError()
 
-    def score_image(self,
-                    filename: str,
-                    image: np.ndarray | None,
-                    alignments: PNGAlignments | None) -> None:
+    def score_image(
+        self, filename: str, image: np.ndarray | None, alignments: PNGAlignments | None
+    ) -> None:
         """Override for sort method's specific logic. This method should be executed to get a
         single score from a single image  and add the result to :attr:`_result`
 
@@ -274,10 +301,7 @@ class SortMethod():
         The original image with the mask applied
         """
         det_face = DetectedFace().from_png_meta(alignments)
-        det_face.load_aligned(image,
-                              size=256,
-                              centering="legacy",
-                              is_aligned=True)
+        det_face.load_aligned(image, size=256, centering="legacy", is_aligned=True)
         aln_face = det_face.aligned
         if aln_face.landmark_type != LandmarkType.LM_2D_68:
             mask = None
@@ -285,8 +309,10 @@ class SortMethod():
             mask = det_face.get_landmark_mask("face")
 
         if mask is None and not cls._log_mask_once:
-            logger.warning("Masks cannot be generated for the available landmark types. Results "
-                           "are likely to be sub-standard")
+            logger.warning(
+                "Masks cannot be generated for the available landmark types. Results "
+                "are likely to be sub-standard"
+            )
             cls._log_mask_once = True
 
         assert aln_face.face is not None
@@ -310,10 +336,10 @@ class SortMultiMethod(SortMethod):
     group_method
         A sort method object used for sorting and binning the images
     """
-    def __init__(self,
-                 arguments: Namespace,
-                 sort_method: SortMethod,
-                 group_method: SortMethod) -> None:
+
+    def __init__(
+        self, arguments: Namespace, sort_method: SortMethod, group_method: SortMethod
+    ) -> None:
         self._sorter = sort_method
         self._grouper = group_method
         self._is_built = False
@@ -342,10 +368,9 @@ class SortMultiMethod(SortMethod):
         self._grouper._iterator = retval  # pylint:disable=protected-access
         return retval
 
-    def score_image(self,
-                    filename: str,
-                    image: np.ndarray | None,
-                    alignments: PNGAlignments | None) -> None:
+    def score_image(
+        self, filename: str, image: np.ndarray | None, alignments: PNGAlignments | None
+    ) -> None:
         """Score a single image for sort method and add the result to :attr:`_result`
 
         Parameters
@@ -383,7 +408,9 @@ class SortMultiMethod(SortMethod):
         """
         sorted_ = self._result
         output: list[list[str]] = []
-        for bin_ in tqdm(self._binned, desc="Binning and sorting", file=sys.stdout, leave=False):
+        for bin_ in tqdm(
+            self._binned, desc="Binning and sorting", file=sys.stdout, leave=False
+        ):
             indices: dict[int, str] = {}
             for filename in bin_:
                 indices[sorted_.index(filename)] = filename  # pyright:ignore[reportArgumentType]
@@ -402,6 +429,7 @@ class SortBlur(SortMethod):
         Set to ``True`` if this class is going to be called exclusively for binning.
         Default: ``False``
     """
+
     def __init__(self, arguments: Namespace, is_group: bool = False) -> None:
         super().__init__(arguments, loader_type="all", is_group=is_group)
         method = arguments.group_method if self._is_group else arguments.sort_method
@@ -432,9 +460,9 @@ class SortBlur(SortMethod):
         score = np.var(blur_map) / np.sqrt(image.shape[0] * image.shape[1])
         return score
 
-    def estimate_blur_fft(self,
-                          image: np.ndarray,
-                          alignments: PNGAlignments | None = None) -> float:
+    def estimate_blur_fft(
+        self, image: np.ndarray, alignments: PNGAlignments | None = None
+    ) -> float:
         """Estimate the amount of blur a fft filtered image has.
 
         Parameters
@@ -464,7 +492,7 @@ class SortBlur(SortMethod):
         c_height, c_width = (int(height / 2.0), int(width / 2.0))
         fft = np.fft.fft2(image)
         fft_shift = np.fft.fftshift(fft)
-        fft_shift[c_height - 75:c_height + 75, c_width - 75:c_width + 75] = 0
+        fft_shift[c_height - 75 : c_height + 75, c_width - 75 : c_width + 75] = 0
         ifft_shift = np.fft.ifftshift(fft_shift)
         shift_back = np.fft.ifft2(ifft_shift)
         magnitude = np.log(np.abs(shift_back))
@@ -472,10 +500,9 @@ class SortBlur(SortMethod):
 
         return score
 
-    def score_image(self,
-                    filename: str,
-                    image: np.ndarray | None,
-                    alignments: PNGAlignments | None) -> None:
+    def score_image(
+        self, filename: str, image: np.ndarray | None, alignments: PNGAlignments | None
+    ) -> None:
         """Score a single image for blur or blur-fft and add the result to :attr:`_result`
 
         Parameters
@@ -523,9 +550,10 @@ class SortColor(SortMethod):
         Set to ``True`` if this class is going to be called exclusively for binning.
         Default: ``False``
     """
+
     def __init__(self, arguments: Namespace, is_group: bool = False) -> None:
         super().__init__(arguments, loader_type="face", is_group=is_group)
-        self._desired_channel = {'gray': 0, 'luma': 0, 'orange': 1, 'green': 2}
+        self._desired_channel = {"gray": 0, "luma": 0, "orange": 1, "green": 2}
 
         method = arguments.group_method if self._is_group else arguments.sort_method
         self._method = method.replace("color_", "")
@@ -542,14 +570,20 @@ class SortColor(SortMethod):
         -------
         The color converted image
         """
-        if self._method == 'gray':
+        if self._method == "gray":
             conversion = np.array([[0.0722], [0.7152], [0.2126]])
         else:
-            conversion = np.array([[0.25, 0.5, 0.25], [-0.5, 0.0, 0.5], [-0.25, 0.5, -0.25]])
+            conversion = np.array(
+                [[0.25, 0.5, 0.25], [-0.5, 0.0, 0.5], [-0.25, 0.5, -0.25]]
+            )
 
-        operation = 'ijk, kl -> ijl' if self._method == "gray" else 'ijl, kl -> ijk'
-        path = np.einsum_path(operation, image[..., :3], conversion, optimize='optimal')[0]
-        return np.einsum(operation, image[..., :3], conversion, optimize=path).astype('float32')
+        operation = "ijk, kl -> ijl" if self._method == "gray" else "ijl, kl -> ijk"
+        path = np.einsum_path(
+            operation, image[..., :3], conversion, optimize="optimal"
+        )[0]
+        return np.einsum(operation, image[..., :3], conversion, optimize=path).astype(
+            "float32"
+        )
 
     def _near_split(self, bin_range: int) -> list[int]:
         """Obtain the split for the given number of bins for the given range
@@ -583,7 +617,9 @@ class SortColor(SortMethod):
         # Get edges of bins from 0 to 100
         bins_edges = self._near_split(100)
         # Get the proper bin number for each img order
-        img_bins = np.digitize([float(x[1]) for x in self._result], bins_edges, right=True)
+        img_bins = np.digitize(
+            [float(x[1]) for x in self._result], bins_edges, right=True
+        )
 
         # Place imgs in bins
         for idx, _bin in enumerate(img_bins):
@@ -592,10 +628,9 @@ class SortColor(SortMethod):
         retval = [b for b in bins if b]
         return retval
 
-    def score_image(self,
-                    filename: str,
-                    image: np.ndarray | None,
-                    alignments: PNGAlignments | None) -> None:
+    def score_image(
+        self, filename: str, image: np.ndarray | None, alignments: PNGAlignments | None
+    ) -> None:
         """Score a single image for color
 
         Parameters
@@ -617,7 +652,9 @@ class SortColor(SortMethod):
 
         assert image is not None
         if self._method == "black":
-            score = np.ndarray.all(image == [0, 0, 0], axis=2).sum()/image.size*100*3
+            score = (
+                np.ndarray.all(image == [0, 0, 0], axis=2).sum() / image.size * 100 * 3
+            )
         else:
             channel_to_sort = self._desired_channel[self._method]
             score = np.average(self._convert_color(image), axis=(0, 1))[channel_to_sort]
@@ -636,14 +673,17 @@ class SortColor(SortMethod):
         Calculates the sum of black pixels, gets the percentage X 3 channels
         """
         img_list_len = len(self._result)
-        for i in tqdm(range(0, img_list_len - 1),
-                      desc="Comparing black pixels", file=sys.stdout,
-                      leave=False):
-            for j in range(0, img_list_len-i-1):
-                if self._result[j][1] > self._result[j+1][1]:
+        for i in tqdm(
+            range(0, img_list_len - 1),
+            desc="Comparing black pixels",
+            file=sys.stdout,
+            leave=False,
+        ):
+            for j in range(0, img_list_len - i - 1):
+                if self._result[j][1] > self._result[j + 1][1]:
                     temp = self._result[j]
-                    self._result[j] = self._result[j+1]
-                    self._result[j+1] = temp
+                    self._result[j] = self._result[j + 1]
+                    self._result[j + 1] = temp
 
 
 class SortFace(SortMethod):
@@ -657,6 +697,7 @@ class SortFace(SortMethod):
         Set to ``True`` if this class is going to be called exclusively for binning.
         Default: ``False``
     """
+
     def __init__(self, arguments: Namespace, is_group: bool = False) -> None:
         super().__init__(arguments, loader_type="all", is_group=is_group)
         self._plugin = Identity(arguments.identity, config_file=arguments.config_file)
@@ -669,11 +710,10 @@ class SortFace(SortMethod):
         self._plugin_thread = FSThread(self._score_from_plugin)
         self._from_plugin: list[tuple[str, npt.NDArray[np.float32]]] = []
         self._alignment_queue: Queue[tuple[str, PNGAlignments]] = Queue(
-            maxsize=self._plugin.batch_size * 3)
+            maxsize=self._plugin.batch_size * 3
+        )
 
-    def _score_from_header(self,
-                           filename: str,
-                           alignments: PNGAlignments) -> bool:
+    def _score_from_header(self, filename: str, alignments: PNGAlignments) -> bool:
         """Reads header information from the PNG file to look for the identity embedding
 
         Parameters
@@ -695,9 +735,11 @@ class SortFace(SortMethod):
 
     def _score_from_plugin(self):
         """Obtain the embedding from the identity plugin"""
-        logger.info("%s Embeddings are being written to the image header. "
-                    "Sorting by this method should be quicker next time",
-                    self._storage_name.title())
+        logger.info(
+            "%s Embeddings are being written to the image header. "
+            "Sorting by this method should be quicker next time",
+            self._storage_name.title(),
+        )
 
         assert self._runner is not None
         for media in self._runner:
@@ -723,10 +765,9 @@ class SortFace(SortMethod):
         self._plugin_thread.join()
         self._result += self._from_plugin
 
-    def score_image(self,
-                    filename: str,
-                    image: np.ndarray | None,
-                    alignments: PNGAlignments | None) -> None:
+    def score_image(
+        self, filename: str, image: np.ndarray | None, alignments: PNGAlignments | None
+    ) -> None:
         """Score a single image for sort method and add the result to :attr:`_result`. Attempts
         to pull identity information from the PNG metadata. If not available, pulls the information
         from the Identity plugin and stores in the PNG header for future use
@@ -742,10 +783,12 @@ class SortFace(SortMethod):
         """
         # pylint:disable=duplicate-code
         if not alignments:
-            msg = ("The images to be sorted do not contain alignment data. Images must have "
-                   "been generated by Faceswap's Extract process.\nIf you are sorting an "
-                   "older face set, then you should re-extract the faces from your source "
-                   "alignments file to generate this data.")
+            msg = (
+                "The images to be sorted do not contain alignment data. Images must have "
+                "been generated by Faceswap's Extract process.\nIf you are sorting an "
+                "older face set, then you should re-extract the faces from your source "
+                "alignments file to generate this data."
+            )
             raise FaceswapError(msg)
 
         if self._plugin_thread.error_state.has_error:
@@ -763,18 +806,22 @@ class SortFace(SortMethod):
 
         self._alignment_queue.put((filename, alignments))
 
-        face = DetectedFace(left=alignments.x,  # Only include required items
-                            width=alignments.w,
-                            top=alignments.y,
-                            height=alignments.h,
-                            landmarks_xy=alignments.landmarks_xy)
+        face = DetectedFace(
+            left=alignments.x,  # Only include required items
+            width=alignments.w,
+            top=alignments.y,
+            height=alignments.h,
+            landmarks_xy=alignments.landmarks_xy,
+        )
         assert self._runner is not None
         try:
-            self._runner.put(filename,
-                             T.cast("npt.NDArray[np.uint8]", image),
-                             [face],
-                             is_aligned=True,
-                             frame_metadata=self._iterator.cached_source_data[filename])
+            self._runner.put(
+                filename,
+                T.cast("npt.NDArray[np.uint8]", image),
+                [face],
+                is_aligned=True,
+                frame_metadata=self._iterator.cached_source_data[filename],
+            )
         except Exception:
             self._plugin_thread.error_state.set(sys.exc_info())
             raise
@@ -827,15 +874,18 @@ class SortHistogram(SortMethod):
         Set to ``True`` if this class is going to be called exclusively for binning.
         Default: ``False``
     """
+
     def __init__(self, arguments: Namespace, is_group: bool = False) -> None:
         super().__init__(arguments, loader_type="all", is_group=is_group)
         method = arguments.group_method if self._is_group else arguments.sort_method
         self._is_dissim = method == "hist-dissim"
-        self._threshold: float = 0.3 if arguments.threshold < 0.0 else arguments.threshold
+        self._threshold: float = (
+            0.3 if arguments.threshold < 0.0 else arguments.threshold
+        )
 
-    def _calc_histogram(self,
-                        image: np.ndarray,
-                        alignments: PNGAlignments | None) -> np.ndarray:
+    def _calc_histogram(
+        self, image: np.ndarray, alignments: PNGAlignments | None
+    ) -> np.ndarray:
         if alignments:
             image = self._mask_face(image, alignments)
         return cv2.calcHist([image], [0], None, [256], [0, 256])
@@ -844,17 +894,19 @@ class SortHistogram(SortMethod):
         """Sort histograms by dissimilarity"""
         result = T.cast(list[tuple[str, np.ndarray]], self._result)
         img_list_len = len(result)
-        for i in tqdm(range(0, img_list_len),
-                      desc="Comparing histograms",
-                      file=sys.stdout,
-                      leave=False):
+        for i in tqdm(
+            range(0, img_list_len),
+            desc="Comparing histograms",
+            file=sys.stdout,
+            leave=False,
+        ):
             score_total = 0.0
             for j in range(0, img_list_len):
                 if i == j:
                     continue
-                score_total += cv2.compareHist(result[i][1],
-                                               result[j][1],
-                                               cv2.HISTCMP_BHATTACHARYYA)
+                score_total += cv2.compareHist(
+                    result[i][1], result[j][1], cv2.HISTCMP_BHATTACHARYYA
+                )
             result[i][2] = score_total  # pyright:ignore
 
         self._result = sorted(result, key=operator.itemgetter(2), reverse=True)
@@ -863,20 +915,25 @@ class SortHistogram(SortMethod):
         """Sort histograms by similarity"""
         result = T.cast(list[tuple[str, np.ndarray]], self._result)
         img_list_len = len(result)
-        for i in tqdm(range(0, img_list_len - 1),
-                      desc="Comparing histograms",
-                      file=sys.stdout,
-                      leave=False):
+        for i in tqdm(
+            range(0, img_list_len - 1),
+            desc="Comparing histograms",
+            file=sys.stdout,
+            leave=False,
+        ):
             min_score = float("inf")
             j_min_score = i + 1
             for j in range(i + 1, img_list_len):
-                score = cv2.compareHist(result[i][1],
-                                        result[j][1],
-                                        cv2.HISTCMP_BHATTACHARYYA)
+                score = cv2.compareHist(
+                    result[i][1], result[j][1], cv2.HISTCMP_BHATTACHARYYA
+                )
                 if score < min_score:
                     min_score = score
                     j_min_score = j
-            (self._result[i + 1], self._result[j_min_score]) = (result[j_min_score], result[i + 1])
+            (self._result[i + 1], self._result[j_min_score]) = (
+                result[j_min_score],
+                result[i + 1],
+            )
 
     @classmethod
     def _get_avg_score(cls, image: np.ndarray, references: list[np.ndarray]) -> float:
@@ -918,10 +975,9 @@ class SortHistogram(SortMethod):
         reference_groups[0] = [T.cast(np.ndarray, self._result[0][1])]
         bins.append([self._result[0][0]])
 
-        for i in tqdm(range(1, img_list_len),
-                      desc="Grouping",
-                      file=sys.stdout,
-                      leave=False):
+        for i in tqdm(
+            range(1, img_list_len), desc="Grouping", file=sys.stdout, leave=False
+        ):
             current_key = -1
             current_score = float("inf")
             img = T.cast(np.ndarray, self._result[i][1])
@@ -939,10 +995,9 @@ class SortHistogram(SortMethod):
 
         return bins
 
-    def score_image(self,
-                    filename: str,
-                    image: np.ndarray | None,
-                    alignments: PNGAlignments | None) -> None:
+    def score_image(
+        self, filename: str, image: np.ndarray | None, alignments: PNGAlignments | None
+    ) -> None:
         """Collect the histogram for the given face
 
         Parameters

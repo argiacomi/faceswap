@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-""" The default options for the faceswap BiSeNet Face Parsing plugin.
+"""The default options for the faceswap BiSeNet Face Parsing plugin.
 
 Defaults files should be named `<plugin_name>_defaults.py`
 
@@ -25,6 +25,7 @@ Items will be grouped together as per their `group` parameter, but otherwise wil
 the order that they are added to this module.
 from lib.config import ConfigItem
 """
+
 # pylint:disable=duplicate-code
 from lib.config import ConfigItem
 
@@ -33,7 +34,7 @@ HELPTEXT = (
     "Custom (dummy) Mask options..\n"
     "The custom mask just fills a face patch with all 0's (masked out) or all 1's (masked in) for "
     "later manual editing. It does not use the GPU for creation."
-    )
+)
 
 
 batch_size = ConfigItem(
@@ -41,9 +42,10 @@ batch_size = ConfigItem(
     default=16,
     group="settings",
     info="The batch size to use. To a point, higher batch sizes equal better performance, "
-         "but setting it too high can harm performance.",
+    "but setting it too high can harm performance.",
     rounding=1,
-    min_max=(1, 64))
+    min_max=(1, 64),
+)
 
 centering = ConfigItem(
     datatype=str,
@@ -51,13 +53,15 @@ centering = ConfigItem(
     default="face",
     info="Whether to create a dummy mask with face or head centering.",
     choices=["face", "head"],
-    gui_radio=True)
+    gui_radio=True,
+)
 
 fill = ConfigItem(
     datatype=bool,
     default=False,
     group="settings",
     info="Whether the mask should be filled (True) in which case the custom mask will be "
-         "created with the whole area masked in (i.e. you would need to manually edit out "
-         "the background) or unfilled (False) in which case you would need to manually "
-         "edit in the face.")
+    "created with the whole area masked in (i.e. you would need to manually edit out "
+    "the background) or unfilled (False) in which case you would need to manually "
+    "edit in the face.",
+)

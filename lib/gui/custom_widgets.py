@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-""" Custom widgets for Faceswap GUI """
+"""Custom widgets for Faceswap GUI"""
 
 import logging
 import platform
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 class ContextMenu(tk.Menu):  # pylint:disable=too-many-ancestors
-    """ A Pop up menu to be triggered when right clicking on widgets that this menu has been
+    """A Pop up menu to be triggered when right clicking on widgets that this menu has been
     applied to.
 
     This widget provides a simple right click pop up menu to the widget passed in with `Cut`,
@@ -37,34 +37,46 @@ class ContextMenu(tk.Menu):  # pylint:disable=too-many-ancestors
     >>> right_click_menu = ContextMenu(text_box)
     >>> right_click_menu.cm_bind()
     """
+
     def __init__(self, widget):
-        logger.debug("Initializing %s: (widget_class: '%s')",
-                     self.__class__.__name__, widget.winfo_class())
+        logger.debug(
+            "Initializing %s: (widget_class: '%s')",
+            self.__class__.__name__,
+            widget.winfo_class(),
+        )
         super().__init__(tearoff=0)
         self._widget = widget
         self._standard_actions()
         logger.debug("Initialized %s", self.__class__.__name__)
 
     def _standard_actions(self):
-        """ Standard menu actions """
-        self.add_command(label="Cut", command=lambda: self._widget.event_generate("<<Cut>>"))
-        self.add_command(label="Copy", command=lambda: self._widget.event_generate("<<Copy>>"))
-        self.add_command(label="Paste", command=lambda: self._widget.event_generate("<<Paste>>"))
+        """Standard menu actions"""
+        self.add_command(
+            label="Cut", command=lambda: self._widget.event_generate("<<Cut>>")
+        )
+        self.add_command(
+            label="Copy", command=lambda: self._widget.event_generate("<<Copy>>")
+        )
+        self.add_command(
+            label="Paste", command=lambda: self._widget.event_generate("<<Paste>>")
+        )
         self.add_separator()
         self.add_command(label="Select all", command=self._select_all)
 
     def cm_bind(self):
-        """ Bind the menu to the given widgets Right Click event
+        """Bind the menu to the given widgets Right Click event
 
         After associating a widget with this :class:`ContextMenu` this function should be called
         to bind it to the right click button
         """
         button = "<Button-2>" if platform.system() == "Darwin" else "<Button-3>"
         logger.debug("Binding '%s' to '%s'", button, self._widget.winfo_class())
-        self._widget.bind(button, lambda event: self.tk_popup(event.x_root, event.y_root))
+        self._widget.bind(
+            button, lambda event: self.tk_popup(event.x_root, event.y_root)
+        )
 
     def _select_all(self):
-        """ Select all for Text or Entry widgets """
+        """Select all for Text or Entry widgets"""
         logger.debug("Selecting all for '%s'", self._widget.winfo_class())
         if self._widget.winfo_class() == "Text":
             self._widget.focus_force()
@@ -75,7 +87,7 @@ class ContextMenu(tk.Menu):  # pylint:disable=too-many-ancestors
 
 
 class RightClickMenu(tk.Menu):  # pylint:disable=too-many-ancestors
-    """ A Pop up menu that can be bound to a right click mouse event to bring up a context menu
+    """A Pop up menu that can be bound to a right click mouse event to bring up a context menu
 
     Parameters
     ----------
@@ -90,10 +102,15 @@ class RightClickMenu(tk.Menu):  # pylint:disable=too-many-ancestors
         be given hotkeys. NB: The hotkey is not bound by this class, that needs to be done in code.
         Giving hotkeys here means that they will be displayed in the menu though. Default: ``None``
     """
+
     # TODO This should probably be merged with Context Menu
     def __init__(self, labels, actions, hotkeys=None):
-        logger.debug("Initializing %s: (labels: %s, actions: %s)", self.__class__.__name__, labels,
-                     actions)
+        logger.debug(
+            "Initializing %s: (labels: %s, actions: %s)",
+            self.__class__.__name__,
+            labels,
+            actions,
+        )
         super().__init__(tearoff=0)
         self._labels = labels
         self._actions = actions
@@ -102,7 +119,7 @@ class RightClickMenu(tk.Menu):  # pylint:disable=too-many-ancestors
         logger.debug("Initialized %s", self.__class__.__name__)
 
     def _create_menu(self):
-        """ Create the menu based on :attr:`_labels` and :attr:`_actions`. """
+        """Create the menu based on :attr:`_labels` and :attr:`_actions`."""
         for idx, (label, action) in enumerate(zip(self._labels, self._actions)):
             kwargs = {"label": label, "command": action}
             if isinstance(self._hotkeys, (list, tuple)) and self._hotkeys[idx]:
@@ -110,7 +127,7 @@ class RightClickMenu(tk.Menu):  # pylint:disable=too-many-ancestors
             self.add_command(**kwargs)
 
     def popup(self, event):
-        """ Pop up the right click menu.
+        """Pop up the right click menu.
 
         Parameters
         ----------
@@ -121,7 +138,7 @@ class RightClickMenu(tk.Menu):  # pylint:disable=too-many-ancestors
 
 
 class ConsoleOut(ttk.Frame):  # pylint:disable=too-many-ancestors
-    """ The Console out section of the GUI.
+    """The Console out section of the GUI.
 
     A Read only text box for displaying the output from stdout/stderr.
 
@@ -137,8 +154,12 @@ class ConsoleOut(ttk.Frame):  # pylint:disable=too-many-ancestors
     """
 
     def __init__(self, parent, debug):
-        logger.debug("Initializing %s: (parent: %s, debug: %s)",
-                     self.__class__.__name__, parent, debug)
+        logger.debug(
+            "Initializing %s: (parent: %s, debug: %s)",
+            self.__class__.__name__,
+            parent,
+            debug,
+        )
         super().__init__(parent, relief=tk.SOLID, padding=1, style="Console.TFrame")
         self._theme = get_config().user_theme["console"]
         self._console = _ReadOnlyText(self, relief=tk.FLAT)
@@ -149,26 +170,29 @@ class ConsoleOut(ttk.Frame):  # pylint:disable=too-many-ancestors
         self._debug = debug
         self._build_console()
         self._add_tags()
-        self.pack(side=tk.TOP, anchor=tk.W, padx=10, pady=(2, 0),
-                  fill=tk.BOTH, expand=True)
+        self.pack(
+            side=tk.TOP, anchor=tk.W, padx=10, pady=(2, 0), fill=tk.BOTH, expand=True
+        )
         logger.debug("Initialized %s", self.__class__.__name__)
 
     def _set_console_clear_var_trace(self):
-        """ Set a trace on the console clear tkinter variable to trigger :func:`_clear` """
+        """Set a trace on the console clear tkinter variable to trigger :func:`_clear`"""
         logger.debug("Set clear trace")
         self._console_clear.trace("w", self._clear)
 
     def _build_console(self):
-        """ Build and place the console  and add stdout/stderr redirection """
+        """Build and place the console  and add stdout/stderr redirection"""
         logger.debug("Build console")
-        self._console.config(width=100,
-                             height=6,
-                             bg=self._theme["background_color"],
-                             fg=self._theme["stdout_color"])
+        self._console.config(
+            width=100,
+            height=6,
+            bg=self._theme["background_color"],
+            fg=self._theme["stdout_color"],
+        )
 
-        scrollbar = ttk.Scrollbar(self,
-                                  command=self._console.yview,
-                                  style="Console.Vertical.TScrollbar")
+        scrollbar = ttk.Scrollbar(
+            self, command=self._console.yview, style="Console.Vertical.TScrollbar"
+        )
         self._console.configure(yscrollcommand=scrollbar.set)
 
         scrollbar.pack(side=tk.RIGHT, fill="y")
@@ -177,7 +201,7 @@ class ConsoleOut(ttk.Frame):  # pylint:disable=too-many-ancestors
         logger.debug("Built console")
 
     def _add_tags(self):
-        """ Add tags to text widget to color based on output """
+        """Add tags to text widget to color based on output"""
         logger.debug("Adding text color tags")
         self._console.tag_config("default", foreground=self._theme["stdout_color"])
         self._console.tag_config("stderr", foreground=self._theme["stderr_color"])
@@ -188,7 +212,7 @@ class ConsoleOut(ttk.Frame):  # pylint:disable=too-many-ancestors
         self._console.tag_config("error", foreground=self._theme["error_color"])
 
     def _redirect_console(self):
-        """ Redirect stdout/stderr to console Text Box """
+        """Redirect stdout/stderr to console Text Box"""
         logger.debug("Redirect console")
         if self._debug:
             logger.info("Console debug activated. Outputting to main terminal")
@@ -198,7 +222,7 @@ class ConsoleOut(ttk.Frame):  # pylint:disable=too-many-ancestors
         logger.debug("Redirected console")
 
     def _clear(self, *args):  # pylint:disable=unused-argument
-        """ Clear the console output screen """
+        """Clear the console output screen"""
         logger.debug("Clear console")
         if not self._console_clear.get():
             logger.debug("Console not set for clearing. Skipping")
@@ -209,7 +233,7 @@ class ConsoleOut(ttk.Frame):  # pylint:disable=too-many-ancestors
 
 
 class _ReadOnlyText(tk.Text):  # pylint:disable=too-many-ancestors
-    """ A read only text widget.
+    """A read only text widget.
 
     Standard tkinter Text widgets are read/write by default. As we want to make the console
     display writable by the Faceswap process but not the user, we need to redirect its insert and
@@ -217,6 +241,7 @@ class _ReadOnlyText(tk.Text):  # pylint:disable=too-many-ancestors
 
     Source: https://stackoverflow.com/questions/3842155
     """
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.redirector = _WidgetRedirector(self)
@@ -224,8 +249,8 @@ class _ReadOnlyText(tk.Text):  # pylint:disable=too-many-ancestors
         self.delete = self.redirector.register("delete", lambda *args, **kw: "break")
 
 
-class _SysOutRouter():
-    """ Route stdout/stderr to the given text box.
+class _SysOutRouter:
+    """Route stdout/stderr to the given text box.
 
     Parameters
     ----------
@@ -236,8 +261,12 @@ class _SysOutRouter():
     """
 
     def __init__(self, console, out_type):
-        logger.debug("Initializing %s: (console: %s, out_type: '%s')",
-                     self.__class__.__name__, console, out_type)
+        logger.debug(
+            "Initializing %s: (console: %s, out_type: '%s')",
+            self.__class__.__name__,
+            console,
+            out_type,
+        )
         self._console = console
         self._out_type = out_type
         self._recolor = re.compile(r".+?(\s\d+:\d+:\d+\s)(?P<lvl>[A-Z]+)\s")
@@ -245,7 +274,7 @@ class _SysOutRouter():
         logger.debug("Initialized %s", self.__class__.__name__)
 
     def _get_tag(self, string):
-        """ Set the tag based on regex of log output """
+        """Set the tag based on regex of log output"""
         if self._out_type == "stderr":
             # Output all stderr in red
             return self._out_type
@@ -257,14 +286,14 @@ class _SysOutRouter():
         return tag
 
     def write(self, string):
-        """ Capture stdout/stderr """
+        """Capture stdout/stderr"""
         string = self._ansi_escape.sub("", string)
         self._console.insert(tk.END, string, self._get_tag(string))
         self._console.see(tk.END)
 
     @staticmethod
     def flush():
-        """ If flush is forced, send it to normal terminal """
+        """If flush is forced, send it to normal terminal"""
         sys.__stdout__.flush()
 
 
@@ -307,10 +336,11 @@ class _WidgetRedirector:
     Since renaming to orig fails with TclError when orig already exists, only one
     WidgetDirector can exist for a given widget.
     """
+
     def __init__(self, widget):
         self._operations = {}
-        self.widget = widget                                # widget instance
-        self.tk_ = tk_ = widget.tk                          # widget's root
+        self.widget = widget  # widget instance
+        self.tk_ = tk_ = widget.tk  # widget's root
         wgt = widget._w  # pylint:disable=protected-access  # widget's (full) Tk pathname
         self.orig = wgt + "_orig"
         # Rename the Tcl command within Tcl:
@@ -320,8 +350,10 @@ class _WidgetRedirector:
         tk_.createcommand(wgt, self.dispatch)
 
     def __repr__(self):
-        return (f"{self.__class__.__name__}({self.widget.__class__.__name__}"
-                f"<{self.widget._w}>)")  # pylint:disable=protected-access
+        return (
+            f"{self.__class__.__name__}({self.widget.__class__.__name__}"
+            f"<{self.widget._w}>)"
+        )  # pylint:disable=protected-access
 
     def close(self):
         "de-register operations and revert redirection created by .__init__."
@@ -420,7 +452,7 @@ class _OriginalCommand:
 
 
 class StatusBar(ttk.Frame):  # pylint:disable=too-many-ancestors
-    """ Status Bar for displaying the Status Message and  Progress Bar at the bottom of the GUI.
+    """Status Bar for displaying the Status Message and  Progress Bar at the bottom of the GUI.
 
     Parameters
     ----------
@@ -449,11 +481,11 @@ class StatusBar(ttk.Frame):  # pylint:disable=too-many-ancestors
     @property
     def message(self) -> tk.StringVar:
         """:class:`tkinter.StringVar`: The variable to hold the status bar message on the left
-        hand side of the status bar. """
+        hand side of the status bar."""
         return self._message
 
     def _status(self, hide_status: bool) -> None:
-        """ Place Status label into left of the status bar.
+        """Place Status label into left of the status bar.
 
         Parameters
         ----------
@@ -470,14 +502,13 @@ class StatusBar(ttk.Frame):  # pylint:disable=too-many-ancestors
         lbltitle = ttk.Label(statusframe, text="Status:", width=6, anchor=tk.W)
         lbltitle.pack(side=tk.LEFT, expand=False)
 
-        lblstatus = ttk.Label(statusframe,
-                              width=40,
-                              textvariable=self._message,
-                              anchor=tk.W)
+        lblstatus = ttk.Label(
+            statusframe, width=40, textvariable=self._message, anchor=tk.W
+        )
         lblstatus.pack(side=tk.LEFT, anchor=tk.W, fill=tk.X, expand=True)
 
     def _progress_bar(self) -> ttk.Progressbar:
-        """ Place progress bar into right of the status bar.
+        """Place progress bar into right of the status bar.
 
         Returns
         -------
@@ -490,17 +521,19 @@ class StatusBar(ttk.Frame):  # pylint:disable=too-many-ancestors
         lblmessage = ttk.Label(progressframe, textvariable=self._pbar_message)
         lblmessage.pack(side=tk.LEFT, padx=3, fill=tk.X, expand=True)
 
-        pbar = ttk.Progressbar(progressframe,
-                               length=200,
-                               variable=self._pbar_position,
-                               maximum=100,
-                               mode=self._mode)
+        pbar = ttk.Progressbar(
+            progressframe,
+            length=200,
+            variable=self._pbar_position,
+            maximum=100,
+            mode=self._mode,
+        )
         pbar.pack(side=tk.LEFT, padx=2, fill=tk.X, expand=True)
         pbar.pack_forget()
         return pbar
 
     def start(self, mode: T.Literal["indeterminate", "determinate"]) -> None:
-        """ Set progress bar mode and display,
+        """Set progress bar mode and display,
 
         Parameters
         ----------
@@ -511,7 +544,7 @@ class StatusBar(ttk.Frame):  # pylint:disable=too-many-ancestors
         self._pbar.pack()
 
     def stop(self) -> None:
-        """ Reset progress bar and hide """
+        """Reset progress bar and hide"""
         self._pbar_message.set("")
         self._pbar_position.set(0)
         self._mode = "determinate"
@@ -519,7 +552,7 @@ class StatusBar(ttk.Frame):  # pylint:disable=too-many-ancestors
         self._pbar.pack_forget()
 
     def _set_mode(self, mode: T.Literal["indeterminate", "determinate"]) -> None:
-        """ Set the progress bar mode
+        """Set the progress bar mode
 
         Parameters
         ----------
@@ -536,7 +569,7 @@ class StatusBar(ttk.Frame):  # pylint:disable=too-many-ancestors
             self._pbar.config(maximum=100)
 
     def set_mode(self, mode: T.Literal["indeterminate", "determinate"]) -> None:
-        """ Set the mode of a currently displayed progress bar and reset position to 0.
+        """Set the mode of a currently displayed progress bar and reset position to 0.
 
         If the given mode is the same as the currently configured mode, returns without performing
         any action.
@@ -551,8 +584,10 @@ class StatusBar(ttk.Frame):  # pylint:disable=too-many-ancestors
         self.stop()
         self.start(mode)
 
-    def progress_update(self, message: str, position: int, update_position: bool = True) -> None:
-        """ Update the GUIs progress bar and position.
+    def progress_update(
+        self, message: str, position: int, update_position: bool = True
+    ) -> None:
+        """Update the GUIs progress bar and position.
 
         Parameters
         ----------
@@ -570,7 +605,7 @@ class StatusBar(ttk.Frame):  # pylint:disable=too-many-ancestors
 
 
 class Tooltip:  # pylint:disable=too-few-public-methods
-    """ Create a tooltip for a given widget as the mouse goes on it.
+    """Create a tooltip for a given widget as the mouse goes on it.
 
     Parameters
     ----------
@@ -599,8 +634,17 @@ class Tooltip:  # pylint:disable=too-few-public-methods
     Adapted from StackOverflow: http://stackoverflow.com/questions/3221956 and
     http://www.daniweb.com/programming/software-development/code/484591/a-tooltip-class-for-tkinter
     """
-    def __init__(self, widget, *, pad=(5, 3, 5, 3), text="widget info",
-                 text_variable=None, wait_time=400, wrap_length=250):
+
+    def __init__(
+        self,
+        widget,
+        *,
+        pad=(5, 3, 5, 3),
+        text="widget info",
+        text_variable=None,
+        wait_time=400,
+        wrap_length=250,
+    ):
 
         self._waittime = wait_time  # in milliseconds, originally 500
         self.wrap_length = wrap_length  # in pixels, originally 180
@@ -616,37 +660,44 @@ class Tooltip:  # pylint:disable=too-few-public-methods
         self._topwidget = None
 
     def _on_enter(self, event=None):  # pylint:disable=unused-argument
-        """ Schedule on an enter event """
+        """Schedule on an enter event"""
         self._schedule()
 
     def _on_leave(self, event=None):  # pylint:disable=unused-argument
-        """ remove schedule on a leave event """
+        """remove schedule on a leave event"""
         self._unschedule()
         self._hide()
 
     def _schedule(self):
-        """ Show the tooltip after wait period """
+        """Show the tooltip after wait period"""
         self._unschedule()
         self._ident = self._widget.after(self._waittime, self._show)
 
     def _unschedule(self):
-        """ Hide the tooltip """
+        """Hide the tooltip"""
         id_ = self._ident
         self._ident = None
         if id_:
             self._widget.after_cancel(id_)
 
     def _show(self):
-        """ Show the tooltip """
-        def tip_pos_calculator(widget, label,  # pylint:disable=too-many-locals
-                               *,
-                               tip_delta=(10, 5), pad=(5, 3, 5, 3)):
-            """ Calculate the tooltip position """
+        """Show the tooltip"""
+
+        def tip_pos_calculator(
+            widget,
+            label,  # pylint:disable=too-many-locals
+            *,
+            tip_delta=(10, 5),
+            pad=(5, 3, 5, 3),
+        ):
+            """Calculate the tooltip position"""
 
             s_width, s_height = widget.winfo_screenwidth(), widget.winfo_screenheight()
 
-            width, height = (pad[0] + label.winfo_reqwidth() + pad[2],
-                             pad[1] + label.winfo_reqheight() + pad[3])
+            width, height = (
+                pad[0] + label.winfo_reqwidth() + pad[2],
+                pad[1] + label.winfo_reqheight() + pad[3],
+            )
 
             mouse_x, mouse_y = widget.winfo_pointerxy()
 
@@ -659,7 +710,6 @@ class Tooltip:  # pylint:disable=too-few-public-methods
             offscreen = (x_delta, y_delta) != (0, 0)
 
             if offscreen:
-
                 if x_delta:
                     x_1 = mouse_x - tip_delta[0] - width
 
@@ -684,35 +734,41 @@ class Tooltip:  # pylint:disable=too-few-public-methods
         self._topwidget = tk.Toplevel(widget)
         if platform.system() == "Darwin":
             # For Mac OS
-            self._topwidget.tk.call("::tk::unsupported::MacWindowStyle",
-                                    "style", self._topwidget._w,  # pylint:disable=protected-access
-                                    "help", "none")
+            self._topwidget.tk.call(
+                "::tk::unsupported::MacWindowStyle",
+                "style",
+                self._topwidget._w,  # pylint:disable=protected-access
+                "help",
+                "none",
+            )
 
         # Leaves only the label and removes the app window
         self._topwidget.wm_overrideredirect(True)
 
-        win = tk.Frame(self._topwidget,
-                       background=self._theme["background_color"],
-                       highlightbackground=self._theme["border_color"],
-                       highlightcolor=self._theme["border_color"],
-                       highlightthickness=1,
-                       borderwidth=0)
+        win = tk.Frame(
+            self._topwidget,
+            background=self._theme["background_color"],
+            highlightbackground=self._theme["border_color"],
+            highlightcolor=self._theme["border_color"],
+            highlightthickness=1,
+            borderwidth=0,
+        )
 
         text = self._text
         if self._text_variable and self._text_variable.get():
             text += f"\n\nCurrent value: '{self._text_variable.get()}'"
-        label = tk.Label(win,
-                         text=text,
-                         justify=tk.LEFT,
-                         background=self._theme["background_color"],
-                         foreground=self._theme["font_color"],
-                         relief=tk.SOLID,
-                         borderwidth=0,
-                         wraplength=self.wrap_length)
+        label = tk.Label(
+            win,
+            text=text,
+            justify=tk.LEFT,
+            background=self._theme["background_color"],
+            foreground=self._theme["font_color"],
+            relief=tk.SOLID,
+            borderwidth=0,
+            wraplength=self.wrap_length,
+        )
 
-        label.grid(padx=(pad[0], pad[2]),
-                   pady=(pad[1], pad[3]),
-                   sticky=tk.NSEW)
+        label.grid(padx=(pad[0], pad[2]), pady=(pad[1], pad[3]), sticky=tk.NSEW)
         win.grid()
 
         xpos, ypos = tip_pos_calculator(widget, label)
@@ -720,7 +776,7 @@ class Tooltip:  # pylint:disable=too-few-public-methods
         self._topwidget.wm_geometry(f"+{xpos}+{ypos}")
 
     def _hide(self):
-        """ Hide the tooltip """
+        """Hide the tooltip"""
         topwidget = self._topwidget
         if topwidget:
             topwidget.destroy()
@@ -728,7 +784,7 @@ class Tooltip:  # pylint:disable=too-few-public-methods
 
 
 class MultiOption(ttk.Checkbutton):  # pylint:disable=too-many-ancestors
-    """ Similar to the standard :class:`ttk.Radio` widget, but with the ability to select
+    """Similar to the standard :class:`ttk.Radio` widget, but with the ability to select
     multiple pre-defined options. Selected options are generated as `nargs` for the argument
     parser to consume.
 
@@ -743,6 +799,7 @@ class MultiOption(ttk.Checkbutton):  # pylint:disable=too-many-ancestors
         The output of this variable will be a string containing a space separated list of the
         selected check button options
     """
+
     def __init__(self, parent, value, variable, **kwargs):
         self._tk_var = tk.BooleanVar()
         self._tk_var.set(value in variable.get().split())
@@ -754,23 +811,24 @@ class MultiOption(ttk.Checkbutton):  # pylint:disable=too-many-ancestors
 
     @property
     def _master_list(self):
-        """ list: The contents of the check box group's :attr:`_master_variable` in list form.
-        Selected check boxes will appear in this list. """
+        """list: The contents of the check box group's :attr:`_master_variable` in list form.
+        Selected check boxes will appear in this list."""
         retval = self._master_variable.get().split()
         logger.trace(retval)
         return retval
 
     @property
     def _master_needs_update(self):
-        """ bool: ``True`` if :attr:`_master_variable` requires updating otherwise ``False``. """
+        """bool: ``True`` if :attr:`_master_variable` requires updating otherwise ``False``."""
         active = self._tk_var.get()
-        retval = ((active and self._value not in self._master_list) or
-                  (not active and self._value in self._master_list))
+        retval = (active and self._value not in self._master_list) or (
+            not active and self._value in self._master_list
+        )
         logger.trace(retval)
         return retval
 
     def _on_update(self, *args):  # pylint:disable=unused-argument
-        """ Update the master variable on a check button change.
+        """Update the master variable on a check button change.
 
         The value for this checked option is added or removed from the :attr:`_master_variable`
         on a ``True``, ``False`` change for this check button.
@@ -782,16 +840,17 @@ class MultiOption(ttk.Checkbutton):  # pylint:disable=too-many-ancestors
         """
         if not self._master_needs_update:
             return
-        new_vals = self._master_list + [self._value] if self._tk_var.get() else [
-            val
-            for val in self._master_list
-            if val != self._value]
+        new_vals = (
+            self._master_list + [self._value]
+            if self._tk_var.get()
+            else [val for val in self._master_list if val != self._value]
+        )
         val = " ".join(new_vals)
         logger.trace("Setting master variable to: %s", val)
         self._master_variable.set(val)
 
     def _on_master_update(self, *args):  # pylint:disable=unused-argument
-        """ Update the check button on a master variable change (e.g. load .fsw file in the GUI).
+        """Update the check button on a master variable change (e.g. load .fsw file in the GUI).
 
         The value for this option is set to ``True`` or ``False`` depending on it's existence in
         the :attr:`_master_variable`
@@ -809,7 +868,7 @@ class MultiOption(ttk.Checkbutton):  # pylint:disable=too-many-ancestors
 
 
 class PopupProgress(tk.Toplevel):
-    """ A simple pop up progress bar that appears of the center of the root window.
+    """A simple pop up progress bar that appears of the center of the root window.
 
     When this is called, the root will be disabled until the :func:`close` method is called.
 
@@ -828,16 +887,21 @@ class PopupProgress(tk.Toplevel):
     >>>     progress.update(1)
     >>> progress.close()
     """
+
     def __init__(self, title, total):
         super().__init__()
         self._total = total
         if platform.system() == "Darwin":  # For Mac OS
-            self.tk.call("::tk::unsupported::MacWindowStyle",
-                         "style", self._w,  # pylint:disable=protected-access
-                         "help", "none")
+            self.tk.call(
+                "::tk::unsupported::MacWindowStyle",
+                "style",
+                self._w,  # pylint:disable=protected-access
+                "help",
+                "none",
+            )
         # Leaves only the label and removes the app window
         self.wm_overrideredirect(True)
-        self.attributes('-topmost', 'true')
+        self.attributes("-topmost", "true")
         self.transient()
 
         self._lbl_title = self._set_title(title)
@@ -846,20 +910,26 @@ class PopupProgress(tk.Toplevel):
         offset = np.array((self.master.winfo_rootx(), self.master.winfo_rooty()))
         # TODO find way to get dimensions of the pop up without it flicking onto the screen
         self.update_idletasks()
-        center = np.array((
-            (self.master.winfo_width() // 2) - (self.winfo_width() // 2),
-            (self.master.winfo_height() // 2) - (self.winfo_height() // 2))) + offset
+        center = (
+            np.array(
+                (
+                    (self.master.winfo_width() // 2) - (self.winfo_width() // 2),
+                    (self.master.winfo_height() // 2) - (self.winfo_height() // 2),
+                )
+            )
+            + offset
+        )
         self.wm_geometry(f"+{center[0]}+{center[1]}")
         get_config().set_cursor_busy()
         self.grab_set()
 
     @property
     def progress_bar(self):
-        """ :class:`tkinter.ttk.Progressbar`: The progress bar object within the pop up window. """
+        """:class:`tkinter.ttk.Progressbar`: The progress bar object within the pop up window."""
         return self._progress_bar
 
     def _set_title(self, title):
-        """ Set the initial title of the pop up progress bar.
+        """Set the initial title of the pop up progress bar.
 
         Parameters
         ----------
@@ -878,7 +948,7 @@ class PopupProgress(tk.Toplevel):
         return lbl
 
     def _get_progress_bar(self):
-        """ Set up the progress bar with the supplied total.
+        """Set up the progress bar with the supplied total.
 
         Returns
         -------
@@ -887,15 +957,14 @@ class PopupProgress(tk.Toplevel):
         """
         frame = ttk.Frame(self)
         frame.pack(side=tk.BOTTOM, padx=5, pady=(0, 5))
-        pbar = ttk.Progressbar(frame,
-                               length=400,
-                               maximum=self._total,
-                               mode="determinate")
+        pbar = ttk.Progressbar(
+            frame, length=400, maximum=self._total, mode="determinate"
+        )
         pbar.pack(side=tk.LEFT)
         return pbar
 
     def step(self, amount):
-        """ Increment the progress bar.
+        """Increment the progress bar.
 
         Parameters
         ----------
@@ -906,14 +975,14 @@ class PopupProgress(tk.Toplevel):
         self._progress_bar.update_idletasks()
 
     def stop(self):
-        """ Stop the progress bar, re-enable the root window and destroy the pop up window. """
+        """Stop the progress bar, re-enable the root window and destroy the pop up window."""
         self._progress_bar.stop()
         get_config().set_cursor_default()
         self.grab_release()
         self.destroy()
 
     def update_title(self, title):
-        """ Update the title that displays above the progress bar.
+        """Update the title that displays above the progress bar.
 
         Parameters
         ----------
@@ -925,7 +994,7 @@ class PopupProgress(tk.Toplevel):
 
 
 class ToggledFrame(ttk.Frame):  # pylint:disable=too-many-ancestors
-    """ A collapsible and expandable frame.
+    """A collapsible and expandable frame.
 
     The frame contains a header given in the text argument, and adds an expand contract button.
     Clicking on the header will expand and contract the sub-frame below
@@ -942,9 +1011,18 @@ class ToggledFrame(ttk.Frame):  # pylint:disable=too-many-ancestors
         If provided, this variable will control the expanded (``True``) and minimized (``False``)
         state of the widget. Set to None to create the variable internally. Default: ``None``
     """
-    def __init__(self, parent, *args, text="", theme="CPanel", toggle_var=None, **kwargs):
-        logger.debug("Initializing %s: (parent: %s, text: %s, theme: %s, toggle_var: %s)",
-                     self.__class__.__name__, parent, text, theme, toggle_var)
+
+    def __init__(
+        self, parent, *args, text="", theme="CPanel", toggle_var=None, **kwargs
+    ):
+        logger.debug(
+            "Initializing %s: (parent: %s, text: %s, theme: %s, toggle_var: %s)",
+            self.__class__.__name__,
+            parent,
+            text,
+            theme,
+            toggle_var,
+        )
 
         theme = "CPanel" if not theme else theme
         theme = theme[:-1] if theme[-1] == "." else theme
@@ -961,7 +1039,9 @@ class ToggledFrame(ttk.Frame):  # pylint:disable=too-many-ancestors
 
         self._build_header(theme)
 
-        self.sub_frame = ttk.Frame(self, style=f"{theme}.Subframe.Group.TFrame", padding=1)
+        self.sub_frame = ttk.Frame(
+            self, style=f"{theme}.Subframe.Group.TFrame", padding=1
+        )
 
         if self.is_expanded:
             self.sub_frame.pack(fill=tk.X, expand=True)
@@ -970,11 +1050,11 @@ class ToggledFrame(ttk.Frame):  # pylint:disable=too-many-ancestors
 
     @property
     def is_expanded(self):
-        """ bool: ``True`` if the Toggle Frame is expanded. ``False`` if it is minimized. """
+        """bool: ``True`` if the Toggle Frame is expanded. ``False`` if it is minimized."""
         return self._toggle_var.get()
 
     def _build_header(self, theme):
-        """ The Header row. Contains the title text and is made clickable to expand and contract
+        """The Header row. Contains the title text and is made clickable to expand and contract
         the sub-frame.
 
         Parameters
@@ -983,17 +1063,21 @@ class ToggledFrame(ttk.Frame):  # pylint:disable=too-many-ancestors
         """
         header_frame = ttk.Frame(self, name="toggledframe_header")
 
-        text_label = ttk.Label(header_frame,
-                               name="toggledframe_headerlbl",
-                               text=self._text,
-                               style=f"{theme}.Groupheader.TLabel",
-                               cursor="hand2")
-        toggle_button = ttk.Label(header_frame,
-                                  name="toggledframe_headerbtn",
-                                  textvariable=self._icon_var,
-                                  style=f"{theme}.Groupheader.TLabel",
-                                  cursor="hand2",
-                                  width=2)
+        text_label = ttk.Label(
+            header_frame,
+            name="toggledframe_headerlbl",
+            text=self._text,
+            style=f"{theme}.Groupheader.TLabel",
+            cursor="hand2",
+        )
+        toggle_button = ttk.Label(
+            header_frame,
+            name="toggledframe_headerbtn",
+            textvariable=self._icon_var,
+            style=f"{theme}.Groupheader.TLabel",
+            cursor="hand2",
+            width=2,
+        )
         text_label.bind("<Button-1>", self._toggle)
         toggle_button.bind("<Button-1>", self._toggle)
 
@@ -1002,14 +1086,14 @@ class ToggledFrame(ttk.Frame):  # pylint:disable=too-many-ancestors
         header_frame.pack(fill=tk.X, expand=True)
 
     def _toggle(self, event):  # pylint:disable=unused-argument
-        """ Toggle the sub-frame between contracted or expanded, and update the toggle icon
+        """Toggle the sub-frame between contracted or expanded, and update the toggle icon
         appropriately.
 
         Parameters
         ----------
         event: tkinter event
             Required but unused
-         """
+        """
         if self.is_expanded:
             self.sub_frame.forget()
             self._icon_var.set("+")

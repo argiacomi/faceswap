@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-""" CLIP: https://github.com/openai/CLIP. This implementation only ports the visual transformer
+"""CLIP: https://github.com/openai/CLIP. This implementation only ports the visual transformer
 part of the model.
 """
+
 # TODO Fix Resnet. It is correct until final MHA
 from __future__ import annotations
 import inspect
@@ -24,13 +25,24 @@ if T.TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-TypeModels = T.Literal["RN50", "RN101", "RN50x4", "RN50x16", "RN50x64", "ViT-B-16",
-                       "ViT-B-32", "ViT-L-14", "ViT-L-14-336px", "FaRL-B-16-16", "FaRL-B-16-64"]
+TypeModels = T.Literal[
+    "RN50",
+    "RN101",
+    "RN50x4",
+    "RN50x16",
+    "RN50x64",
+    "ViT-B-16",
+    "ViT-B-32",
+    "ViT-L-14",
+    "ViT-L-14-336px",
+    "FaRL-B-16-16",
+    "FaRL-B-16-64",
+]
 
 
 @dataclass
 class ViTConfig:
-    """ Configuration settings for ViT
+    """Configuration settings for ViT
 
     Parameters
     ----------
@@ -48,6 +60,7 @@ class ViTConfig:
     git_id: int, optional
         The id of the model weights file stored in deepfakes_models repo if they exist. Default: 0
     """
+
     embed_dim: int
     resolution: int
     layer_conf: int | tuple[int, int, int, int]
@@ -56,42 +69,83 @@ class ViTConfig:
     git_id: int = 0
 
     def __post_init__(self):
-        """ Validate that patch_size is given correctly """
+        """Validate that patch_size is given correctly"""
         assert (isinstance(self.layer_conf, (tuple, list)) and self.patch == 0) or (
-            isinstance(self.layer_conf, int) and self.patch > 0)
+            isinstance(self.layer_conf, int) and self.patch > 0
+        )
 
 
-MODEL_CONFIG: dict[TypeModels, ViTConfig] = {  # Each model has a different set of parameters
+MODEL_CONFIG: dict[
+    TypeModels, ViTConfig
+] = {  # Each model has a different set of parameters
     "RN50": ViTConfig(
-        embed_dim=1024, resolution=224, layer_conf=(3, 4, 6, 3), width=64, patch=0, git_id=21),
+        embed_dim=1024,
+        resolution=224,
+        layer_conf=(3, 4, 6, 3),
+        width=64,
+        patch=0,
+        git_id=21,
+    ),
     "RN101": ViTConfig(
-        embed_dim=512, resolution=224, layer_conf=(3, 4, 23, 3), width=64, patch=0, git_id=22),
+        embed_dim=512,
+        resolution=224,
+        layer_conf=(3, 4, 23, 3),
+        width=64,
+        patch=0,
+        git_id=22,
+    ),
     "RN50x4": ViTConfig(
-        embed_dim=640, resolution=288, layer_conf=(4, 6, 10, 6), width=80, patch=0, git_id=23),
+        embed_dim=640,
+        resolution=288,
+        layer_conf=(4, 6, 10, 6),
+        width=80,
+        patch=0,
+        git_id=23,
+    ),
     "RN50x16": ViTConfig(
-        embed_dim=768, resolution=384, layer_conf=(6, 8, 18, 8), width=96, patch=0, git_id=24),
+        embed_dim=768,
+        resolution=384,
+        layer_conf=(6, 8, 18, 8),
+        width=96,
+        patch=0,
+        git_id=24,
+    ),
     "RN50x64": ViTConfig(
-        embed_dim=1024, resolution=448, layer_conf=(3, 15, 36, 10), width=128, patch=0, git_id=25),
+        embed_dim=1024,
+        resolution=448,
+        layer_conf=(3, 15, 36, 10),
+        width=128,
+        patch=0,
+        git_id=25,
+    ),
     "ViT-B-16": ViTConfig(
-        embed_dim=512, resolution=224, layer_conf=12, width=768, patch=16, git_id=26),
+        embed_dim=512, resolution=224, layer_conf=12, width=768, patch=16, git_id=26
+    ),
     "ViT-B-32": ViTConfig(
-        embed_dim=512, resolution=224, layer_conf=12, width=768, patch=32, git_id=27),
+        embed_dim=512, resolution=224, layer_conf=12, width=768, patch=32, git_id=27
+    ),
     "ViT-L-14": ViTConfig(
-        embed_dim=768, resolution=224, layer_conf=24, width=1024, patch=14, git_id=28),
+        embed_dim=768, resolution=224, layer_conf=24, width=1024, patch=14, git_id=28
+    ),
     "ViT-L-14-336px": ViTConfig(
-        embed_dim=768, resolution=336, layer_conf=24, width=1024, patch=14, git_id=29),
+        embed_dim=768, resolution=336, layer_conf=24, width=1024, patch=14, git_id=29
+    ),
     "FaRL-B-16-16": ViTConfig(
-        embed_dim=512, resolution=224, layer_conf=12, width=768, patch=16, git_id=30),
+        embed_dim=512, resolution=224, layer_conf=12, width=768, patch=16, git_id=30
+    ),
     "FaRL-B-16-64": ViTConfig(
-        embed_dim=512, resolution=224, layer_conf=12, width=768, patch=16, git_id=31)}
+        embed_dim=512, resolution=224, layer_conf=12, width=768, patch=16, git_id=31
+    ),
+}
 
 
 # ################## #
 # VISUAL TRANSFORMER #
 # ################## #
 
-class Transformer():
-    """ A class representing a Transformer model with attention mechanism and residual connections.
+
+class Transformer:
+    """A class representing a Transformer model with attention mechanism and residual connections.
 
     Parameters
     ----------
@@ -111,18 +165,28 @@ class Transformer():
     __call__() -> :class:`keras.models.Model`:
         Calls the Transformer layers.
     """
+
     _layer_names: dict[str, int] = {}
     """ dict[str, int] for tracking unique layer names"""
 
-    def __init__(self,
-                 width: int,
-                 num_layers: int,
-                 heads: int,
-                 attn_mask: KerasTensor = None,
-                 name: str = "transformer") -> None:
-        logger.debug("Initializing: %s (width: %s, num_layers: %s, heads: %s, attn_mask: %s, "
-                     "name: %s)",
-                     self.__class__.__name__, width, num_layers, heads, attn_mask, name)
+    def __init__(
+        self,
+        width: int,
+        num_layers: int,
+        heads: int,
+        attn_mask: KerasTensor = None,
+        name: str = "transformer",
+    ) -> None:
+        logger.debug(
+            "Initializing: %s (width: %s, num_layers: %s, heads: %s, attn_mask: %s, "
+            "name: %s)",
+            self.__class__.__name__,
+            width,
+            num_layers,
+            heads,
+            attn_mask,
+            name,
+        )
         self._width = width
         self._num_layers = num_layers
         self._heads = heads
@@ -132,7 +196,7 @@ class Transformer():
 
     @classmethod
     def _get_name(cls, name: str) -> str:
-        """ Return unique layer name for requested block.
+        """Return unique layer name for requested block.
 
         As blocks can be used multiple times, auto appends an integer to the end of the requested
         name to keep all block names unique
@@ -154,7 +218,7 @@ class Transformer():
 
     @classmethod
     def _mlp(cls, inputs: KerasTensor, key_dim: int, name: str) -> KerasTensor:
-        """" Multilayer Perceptron for Block Attention
+        """ " Multilayer Perceptron for Block Attention
 
         Parameters
         ----------
@@ -176,13 +240,15 @@ class Transformer():
         var_x = layers.Dense(key_dim, name=f"{name}_c_proj")(var_x)
         return var_x
 
-    def residual_attention_block(self,
-                                 inputs: KerasTensor,
-                                 key_dim: int,
-                                 num_heads: int,
-                                 attn_mask: KerasTensor,
-                                 name: str = "ResidualAttentionBlock") -> KerasTensor:
-        """ Call the residual attention block
+    def residual_attention_block(
+        self,
+        inputs: KerasTensor,
+        key_dim: int,
+        num_heads: int,
+        attn_mask: KerasTensor,
+        name: str = "ResidualAttentionBlock",
+    ) -> KerasTensor:
+        """Call the residual attention block
 
         Parameters
         ----------
@@ -206,9 +272,8 @@ class Transformer():
 
         var_x = layers.LayerNormalization(epsilon=1e-05, name=f"{name}_ln_1")(inputs)
         var_x = layers.MultiHeadAttention(
-            num_heads=num_heads,
-            key_dim=key_dim // num_heads,
-            name=f"{name}_attn")(var_x, var_x, var_x, attention_mask=attn_mask)
+            num_heads=num_heads, key_dim=key_dim // num_heads, name=f"{name}_attn"
+        )(var_x, var_x, var_x, attention_mask=attn_mask)
         var_x = layers.Add()([inputs, var_x])
         var_y = var_x
         var_x = layers.LayerNormalization(epsilon=1e-05, name=f"{name}_ln_2")(var_x)
@@ -216,7 +281,7 @@ class Transformer():
         return var_x
 
     def __call__(self, inputs: KerasTensor) -> KerasTensor:
-        """ Call the Transformer layers
+        """Call the Transformer layers
 
         Parameters
         ----------
@@ -231,16 +296,18 @@ class Transformer():
         logger.debug("Calling %s with input: %s", self.__class__.__name__, inputs.shape)
         var_x = inputs
         for _ in range(self._num_layers):
-            var_x = self.residual_attention_block(var_x,
-                                                  self._width,
-                                                  self._heads,
-                                                  self._attn_mask,
-                                                  name=f"{self._name}_resblocks")
+            var_x = self.residual_attention_block(
+                var_x,
+                self._width,
+                self._heads,
+                self._attn_mask,
+                name=f"{self._name}_resblocks",
+            )
         return var_x
 
 
 class EmbeddingLayer(layers.Layer):  # pylint:disable=too-many-ancestors,abstract-method
-    """ Parent class for trainable embedding variables
+    """Parent class for trainable embedding variables
 
     Parameters
     ----------
@@ -253,33 +320,38 @@ class EmbeddingLayer(layers.Layer):  # pylint:disable=too-many-ancestors,abstrac
     dtype: str, optional
         The datatype for the layer. Mixed precision can mess up the embeddings. Default: "float32"
     """
-    def __init__(self,
-                 input_shape: tuple[int, ...],
-                 scale: int,
-                 name: str,
-                 *args,
-                 dtype="float32",
-                 **kwargs) -> None:
+
+    def __init__(
+        self,
+        input_shape: tuple[int, ...],
+        scale: int,
+        name: str,
+        *args,
+        dtype="float32",
+        **kwargs,
+    ) -> None:
         super().__init__(name=name, dtype=dtype, *args, **kwargs)
         self._input_shape = input_shape
         self._scale = scale
         self._var: KerasTensor
 
     def build(self, input_shape: tuple[int, ...]) -> None:
-        """ Add the weights
+        """Add the weights
 
         Parameters
         ----------
         input_shape: tuple[int, ...
             The input shape of the incoming tensor
         """
-        self._var = Variable(self._scale * np.random.normal(size=self._input_shape),
-                             trainable=True,
-                             dtype=self.dtype)
+        self._var = Variable(
+            self._scale * np.random.normal(size=self._input_shape),
+            trainable=True,
+            dtype=self.dtype,
+        )
         super().build(input_shape)
 
     def get_config(self) -> dict[str, T.Any]:
-        """ Get the config dictionary for the layer
+        """Get the config dictionary for the layer
 
         Returns
         -------
@@ -293,10 +365,15 @@ class EmbeddingLayer(layers.Layer):  # pylint:disable=too-many-ancestors,abstrac
 
 
 class ClassEmbedding(EmbeddingLayer):  # pylint:disable=too-many-ancestors,abstract-method
-    """ Trainable Class Embedding layer """
-    def call(self, inputs: KerasTensor, *args, **kwargs  # pylint:disable=arguments-differ
-             ) -> KerasTensor:
-        """ Get the Class Embedding layer
+    """Trainable Class Embedding layer"""
+
+    def call(
+        self,
+        inputs: KerasTensor,
+        *args,
+        **kwargs,  # pylint:disable=arguments-differ
+    ) -> KerasTensor:
+        """Get the Class Embedding layer
 
         Parameters
         ----------
@@ -312,10 +389,15 @@ class ClassEmbedding(EmbeddingLayer):  # pylint:disable=too-many-ancestors,abstr
 
 
 class PositionalEmbedding(EmbeddingLayer):  # pylint:disable=too-many-ancestors,abstract-method
-    """ Trainable Positional Embedding layer """
-    def call(self, inputs: KerasTensor, *args, **kwargs  # pylint:disable=arguments-differ
-             ) -> KerasTensor:
-        """ Get the Positional Embedding layer
+    """Trainable Positional Embedding layer"""
+
+    def call(
+        self,
+        inputs: KerasTensor,
+        *args,
+        **kwargs,  # pylint:disable=arguments-differ
+    ) -> KerasTensor:
+        """Get the Positional Embedding layer
 
         Parameters
         ----------
@@ -331,10 +413,15 @@ class PositionalEmbedding(EmbeddingLayer):  # pylint:disable=too-many-ancestors,
 
 
 class Projection(EmbeddingLayer):  # pylint:disable=too-many-ancestors,abstract-method
-    """ Trainable Projection Embedding Layer """
-    def call(self, inputs: KerasTensor, *args, **kwargs  # pylint:disable=arguments-differ
-             ) -> KerasTensor:
-        """ Get the Projection layer
+    """Trainable Projection Embedding Layer"""
+
+    def call(
+        self,
+        inputs: KerasTensor,
+        *args,
+        **kwargs,  # pylint:disable=arguments-differ
+    ) -> KerasTensor:
+        """Get the Projection layer
 
         Parameters
         ----------
@@ -349,8 +436,8 @@ class Projection(EmbeddingLayer):  # pylint:disable=too-many-ancestors,abstract-
         return ops.tile(ops.transpose(self._var)[None], [inputs.shape[0], 1, 1])
 
 
-class VisualTransformer():
-    """ A class representing a Visual Transformer model for image classification tasks.
+class VisualTransformer:
+    """A class representing a Visual Transformer model for image classification tasks.
 
     Parameters
     ----------
@@ -374,18 +461,29 @@ class VisualTransformer():
     __call__() -> :class:`keras.models.Model`:
         Builds and returns the Visual Transformer model.
     """
-    def __init__(self,
-                 input_resolution: int,
-                 patch_size: int,
-                 width: int,
-                 num_layers: int,
-                 heads: int,
-                 output_dim: int,
-                 name: str = "VisualTransformer") -> None:
-        logger.debug("Initializing: %s (input_resolution: %s, patch_size: %s, width: %s, "
-                     "layers: %s, heads: %s, output_dim: %s, name: %s)",
-                     self.__class__.__name__, input_resolution, patch_size, width, num_layers,
-                     heads, output_dim, name)
+
+    def __init__(
+        self,
+        input_resolution: int,
+        patch_size: int,
+        width: int,
+        num_layers: int,
+        heads: int,
+        output_dim: int,
+        name: str = "VisualTransformer",
+    ) -> None:
+        logger.debug(
+            "Initializing: %s (input_resolution: %s, patch_size: %s, width: %s, "
+            "layers: %s, heads: %s, output_dim: %s, name: %s)",
+            self.__class__.__name__,
+            input_resolution,
+            patch_size,
+            width,
+            num_layers,
+            heads,
+            output_dim,
+            name,
+        )
         self._input_resolution = input_resolution
         self._patch_size = patch_size
         self._width = width
@@ -396,7 +494,7 @@ class VisualTransformer():
         logger.debug("Initialized: %s", self.__class__.__name__)
 
     def __call__(self) -> models.Model:
-        """ Builds and returns the Visual Transformer model.
+        """Builds and returns the Visual Transformer model.
 
         Returns
         -------
@@ -404,34 +502,43 @@ class VisualTransformer():
             The Visual Transformer model.
         """
         inputs = layers.Input([self._input_resolution, self._input_resolution, 3])
-        var_x: KerasTensor = layers.Conv2D(self._width,  # shape = [*, grid, grid, width]
-                                           self._patch_size,
-                                           strides=self._patch_size,
-                                           use_bias=False,
-                                           name=f"{self._name}_conv1")(inputs)
+        var_x: KerasTensor = layers.Conv2D(
+            self._width,  # shape = [*, grid, grid, width]
+            self._patch_size,
+            strides=self._patch_size,
+            use_bias=False,
+            name=f"{self._name}_conv1",
+        )(inputs)
 
-        var_x = layers.Reshape((-1, self._width))(var_x)  # shape = [*, grid ** 2, width]
+        var_x = layers.Reshape((-1, self._width))(
+            var_x
+        )  # shape = [*, grid ** 2, width]
 
-        class_embed = ClassEmbedding((self._width, ),
-                                     self._width ** -0.5,
-                                     name=f"{self._name}_class_embedding")(var_x)
+        class_embed = ClassEmbedding(
+            (self._width,), self._width**-0.5, name=f"{self._name}_class_embedding"
+        )(var_x)
         var_x = layers.Concatenate(axis=1)([class_embed, var_x])
 
-        pos_embed = PositionalEmbedding(((self._input_resolution // self._patch_size) ** 2 + 1,
-                                        self._width),
-                                        self._width ** -0.5,
-                                        name=f"{self._name}_positional_embedding")(var_x)
+        pos_embed = PositionalEmbedding(
+            ((self._input_resolution // self._patch_size) ** 2 + 1, self._width),
+            self._width**-0.5,
+            name=f"{self._name}_positional_embedding",
+        )(var_x)
         var_x = layers.Add()([var_x, pos_embed])
-        var_x = layers.LayerNormalization(epsilon=1e-05, name=f"{self._name}_ln_pre")(var_x)
-        var_x = Transformer(self._width,
-                            self._num_layers,
-                            self._heads,
-                            name=f"{self._name}_transformer")(var_x)
-        var_x = layers.LayerNormalization(epsilon=1e-05,
-                                          name=f"{self._name}_ln_post")(var_x[:, 0, :])
-        proj = Projection((self._width, self._output_dim),
-                          self._width ** -0.5,
-                          name=f"{self._name}_proj")(var_x)
+        var_x = layers.LayerNormalization(epsilon=1e-05, name=f"{self._name}_ln_pre")(
+            var_x
+        )
+        var_x = Transformer(
+            self._width, self._num_layers, self._heads, name=f"{self._name}_transformer"
+        )(var_x)
+        var_x = layers.LayerNormalization(epsilon=1e-05, name=f"{self._name}_ln_post")(
+            var_x[:, 0, :]
+        )
+        proj = Projection(
+            (self._width, self._output_dim),
+            self._width**-0.5,
+            name=f"{self._name}_proj",
+        )(var_x)
         var_x = layers.Dot(axes=-1)([var_x, proj])
         return models.Model(inputs=inputs, outputs=var_x, name=self._name)
 
@@ -439,8 +546,8 @@ class VisualTransformer():
 # ################ #
 # MODIEFIED RESNET #
 # ################ #
-class Bottleneck():
-    """ A ResNet bottleneck block that performs a sequence of convolutions, batch normalization,
+class Bottleneck:
+    """A ResNet bottleneck block that performs a sequence of convolutions, batch normalization,
     and ReLU activation operations on an input tensor.
 
     Parameters
@@ -454,17 +561,22 @@ class Bottleneck():
     name: str, optional
         The name of the bottleneck block. Default: "bottleneck"
     """
+
     expansion = 4
     """ int: The factor by which the number of input channels is expanded to get the number of
     output channels."""
 
-    def __init__(self,
-                 inplanes: int,
-                 planes: int,
-                 stride: int = 1,
-                 name: str = "bottleneck") -> None:
-        logger.debug("Initializing: %s (inplanes: %s, planes: %s, stride: %s, name: %s)",
-                     self.__class__.__name__, inplanes, planes, stride, name)
+    def __init__(
+        self, inplanes: int, planes: int, stride: int = 1, name: str = "bottleneck"
+    ) -> None:
+        logger.debug(
+            "Initializing: %s (inplanes: %s, planes: %s, stride: %s, name: %s)",
+            self.__class__.__name__,
+            inplanes,
+            planes,
+            stride,
+            name,
+        )
         self._inplanes = inplanes
         self._planes = planes
         self._stride = stride
@@ -472,7 +584,7 @@ class Bottleneck():
         logger.debug("Initialized: %s", self.__class__.__name__)
 
     def _downsample(self, inputs: KerasTensor) -> KerasTensor:
-        """ Perform downsample if required
+        """Perform downsample if required
 
         Parameters
         ----------
@@ -489,16 +601,18 @@ class Bottleneck():
 
         name = f"{self._name}_downsample"
         out = layers.AveragePooling2D(self._stride, name=f"{name}_avgpool")(inputs)
-        out = layers.Conv2D(self._planes * self.expansion,
-                            1,
-                            strides=1,
-                            use_bias=False,
-                            name=f"{name}_0")(out)
+        out = layers.Conv2D(
+            self._planes * self.expansion,
+            1,
+            strides=1,
+            use_bias=False,
+            name=f"{name}_0",
+        )(out)
         out = layers.BatchNormalization(name=f"{name}_1", epsilon=1e-5)(out)
         return out
 
     def __call__(self, inputs: KerasTensor) -> KerasTensor:
-        """ Performs the forward pass for a Bottleneck block.
+        """Performs the forward pass for a Bottleneck block.
 
         All conv layers have stride 1. an avgpool is performed after the second convolution when
         stride > 1
@@ -513,22 +627,25 @@ class Bottleneck():
         :class:`keras.KerasTensor`
             The result of the forward pass through the Bottleneck block.
         """
-        out = layers.Conv2D(self._planes, 1, use_bias=False, name=f"{self._name}_conv1")(inputs)
+        out = layers.Conv2D(
+            self._planes, 1, use_bias=False, name=f"{self._name}_conv1"
+        )(inputs)
         out = layers.BatchNormalization(name=f"{self._name}_bn1", epsilon=1e-5)(out)
         out = layers.ReLU()(out)
 
         out = layers.ZeroPadding2D(padding=((1, 1), (1, 1)))(out)
-        out = layers.Conv2D(self._planes, 3, use_bias=False, name=f"{self._name}_conv2")(out)
+        out = layers.Conv2D(
+            self._planes, 3, use_bias=False, name=f"{self._name}_conv2"
+        )(out)
         out = layers.BatchNormalization(name=f"{self._name}_bn2", epsilon=1e-5)(out)
         out = layers.ReLU()(out)
 
         if self._stride > 1:
             out = layers.AveragePooling2D(self._stride)(out)
 
-        out = layers.Conv2D(self._planes * self.expansion,
-                            1,
-                            use_bias=False,
-                            name=f"{self._name}_conv3")(out)
+        out = layers.Conv2D(
+            self._planes * self.expansion, 1, use_bias=False, name=f"{self._name}_conv3"
+        )(out)
         out = layers.BatchNormalization(name=f"{self._name}_bn3", epsilon=1e-5)(out)
 
         identity = self._downsample(inputs)
@@ -538,8 +655,8 @@ class Bottleneck():
         return out
 
 
-class AttentionPool2d():
-    """ An Attention Pooling layer that applies a multi-head self-attention mechanism over a
+class AttentionPool2d:
+    """An Attention Pooling layer that applies a multi-head self-attention mechanism over a
     spatial grid of features.
 
     Parameters
@@ -555,15 +672,25 @@ class AttentionPool2d():
     name: str
         The name of the layer.
     """
-    def __init__(self,
-                 spatial_dim: int,
-                 embed_dim: int,
-                 num_heads: int,
-                 output_dim: int | None = None,
-                 name="AttentionPool2d"):
-        logger.debug("Initializing: %s (spatial_dim: %s, embed_dim: %s, num_heads: %s, "
-                     "output_dim: %s, name: %s)",
-                     self.__class__.__name__, spatial_dim, embed_dim, num_heads, output_dim, name)
+
+    def __init__(
+        self,
+        spatial_dim: int,
+        embed_dim: int,
+        num_heads: int,
+        output_dim: int | None = None,
+        name="AttentionPool2d",
+    ):
+        logger.debug(
+            "Initializing: %s (spatial_dim: %s, embed_dim: %s, num_heads: %s, "
+            "output_dim: %s, name: %s)",
+            self.__class__.__name__,
+            spatial_dim,
+            embed_dim,
+            num_heads,
+            output_dim,
+            name,
+        )
 
         self._spatial_dim = spatial_dim
         self._embed_dim = embed_dim
@@ -586,26 +713,36 @@ class AttentionPool2d():
         """
         var_x: KerasTensor
         var_x = layers.Reshape((-1, inputs.shape[-1]))(inputs)  # NHWC -> N(HW)C
-        var_x = layers.Concatenate(axis=1)([ops.mean(var_x, axis=1,  # N(HW)C -> N(HW+1)C
-                                                     keepdims=True), var_x])
-        pos_embed = PositionalEmbedding((self._spatial_dim ** 2 + 1, self._embed_dim),  # N(HW+1)C
-                                        self._embed_dim ** 0.5,
-                                        name=f"{self._name}_positional_embedding")(var_x)
+        var_x = layers.Concatenate(axis=1)(
+            [
+                ops.mean(
+                    var_x,
+                    axis=1,  # N(HW)C -> N(HW+1)C
+                    keepdims=True,
+                ),
+                var_x,
+            ]
+        )
+        pos_embed = PositionalEmbedding(
+            (self._spatial_dim**2 + 1, self._embed_dim),  # N(HW+1)C
+            self._embed_dim**0.5,
+            name=f"{self._name}_positional_embedding",
+        )(var_x)
         var_x = layers.Add()([var_x, pos_embed])
         # TODO At this point torch + keras match. They mismatch after MHA
-        var_x = layers.MultiHeadAttention(num_heads=self._num_heads,
-                                          key_dim=self._embed_dim // self._num_heads,
-                                          output_shape=self._output_dim or self._embed_dim,
-                                          use_bias=True,
-                                          name=f"{self._name}_mha")(var_x[:, :1, ...],
-                                                                    var_x,
-                                                                    var_x)
+        var_x = layers.MultiHeadAttention(
+            num_heads=self._num_heads,
+            key_dim=self._embed_dim // self._num_heads,
+            output_shape=self._output_dim or self._embed_dim,
+            use_bias=True,
+            name=f"{self._name}_mha",
+        )(var_x[:, :1, ...], var_x, var_x)
         # only return the first element in the sequence
         return var_x[:, 0, ...]
 
 
-class ModifiedResNet():
-    """ A ResNet class that is similar to torchvision's but contains the following changes:
+class ModifiedResNet:
+    """A ResNet class that is similar to torchvision's but contains the following changes:
 
     - There are now 3 "stem" convolutions as opposed to 1, with an average pool instead of a max
       pool.
@@ -628,13 +765,16 @@ class ModifiedResNet():
         name: str
             The name of the model. Default is "ModifiedResNet".
     """
-    def __init__(self,
-                 input_resolution: int,
-                 width: int,
-                 layer_config: tuple[int, int, int, int],
-                 output_dim: int,
-                 heads: int,
-                 name="ModifiedResNet"):
+
+    def __init__(
+        self,
+        input_resolution: int,
+        width: int,
+        layer_config: tuple[int, int, int, int],
+        output_dim: int,
+        heads: int,
+        name="ModifiedResNet",
+    ):
         self._input_resolution = input_resolution
         self._width = width
         self._layer_config = layer_config
@@ -643,7 +783,7 @@ class ModifiedResNet():
         self._name = name
 
     def _stem(self, inputs: KerasTensor) -> KerasTensor:
-        """ Applies the stem operation to the input tensor, which consists of 3 convolutional
+        """Applies the stem operation to the input tensor, which consists of 3 convolutional
             layers with BatchNormalization and ReLU activation, followed by an average pooling
             layer.
 
@@ -661,24 +801,26 @@ class ModifiedResNet():
         for i in range(1, 4):
             width = self._width if i == 3 else self._width // 2
             strides = 2 if i == 1 else 1
-            var_x = layers.ZeroPadding2D(padding=((1, 1), (1, 1)), name=f"conv{i}_padding")(var_x)
-            var_x = layers.Conv2D(width,
-                                  3,
-                                  strides=strides,
-                                  use_bias=False,
-                                  name=f"conv{i}")(var_x)
+            var_x = layers.ZeroPadding2D(
+                padding=((1, 1), (1, 1)), name=f"conv{i}_padding"
+            )(var_x)
+            var_x = layers.Conv2D(
+                width, 3, strides=strides, use_bias=False, name=f"conv{i}"
+            )(var_x)
             var_x = layers.BatchNormalization(name=f"bn{i}", epsilon=1e-5)(var_x)
             var_x = layers.ReLU()(var_x)
         var_x = layers.AveragePooling2D(2, name="avgpool")(var_x)
         return var_x
 
-    def _bottleneck(self,
-                    inputs: KerasTensor,
-                    planes: int,
-                    blocks: int,
-                    stride: int = 1,
-                    name: str = "layer") -> KerasTensor:
-        """ A private method that creates a sequential layer of Bottleneck blocks for the
+    def _bottleneck(
+        self,
+        inputs: KerasTensor,
+        planes: int,
+        blocks: int,
+        stride: int = 1,
+        name: str = "layer",
+    ) -> KerasTensor:
+        """A private method that creates a sequential layer of Bottleneck blocks for the
         ModifiedResNet model.
 
         Parameters
@@ -702,13 +844,13 @@ class ModifiedResNet():
         retval: KerasTensor
         retval = Bottleneck(planes, planes, stride, name=f"{name}_0")(inputs)
         for i in range(1, blocks):
-            retval = Bottleneck(planes * Bottleneck.expansion,
-                                planes,
-                                name=f"{name}_{i}")(retval)
+            retval = Bottleneck(
+                planes * Bottleneck.expansion, planes, name=f"{name}_{i}"
+            )(retval)
         return retval
 
     def __call__(self) -> models.Model:
-        """ Implements the forward pass of the ModifiedResNet model.
+        """Implements the forward pass of the ModifiedResNet model.
 
         Returns
         -------
@@ -720,25 +862,29 @@ class ModifiedResNet():
 
         for i in range(4):
             stride = 1 if i == 0 else 2
-            var_x = self._bottleneck(var_x,
-                                     self._width * (2 ** i),
-                                     self._layer_config[i],
-                                     stride=stride,
-                                     name=f"{self._name}_layer{i + 1}")
+            var_x = self._bottleneck(
+                var_x,
+                self._width * (2**i),
+                self._layer_config[i],
+                stride=stride,
+                name=f"{self._name}_layer{i + 1}",
+            )
 
-        var_x = AttentionPool2d(self._input_resolution // 32,
-                                self._width * 32,  # the ResNet feature dimension
-                                self._heads,
-                                self._output_dim,
-                                name=f"{self._name}_attnpool")(var_x)
+        var_x = AttentionPool2d(
+            self._input_resolution // 32,
+            self._width * 32,  # the ResNet feature dimension
+            self._heads,
+            self._output_dim,
+            name=f"{self._name}_attnpool",
+        )(var_x)
         return models.Model(inputs, outputs=var_x, name=self._name)
 
 
 # ### #
 # VIT #
 # ### #
-class ViT():
-    """ Visiual Transform from CLIP
+class ViT:
+    """Visiual Transform from CLIP
 
     A Convolutional Language-Image Pre-Training (CLIP) model that encodes images and text into a
     shared latent space.
@@ -756,13 +902,21 @@ class ViT():
             The required resolution size for the model. ``None`` for default preset size
         load_weights: bool, optional
             ``True`` to load pretrained weights. Default: ``False``
-        """
-    def __init__(self,
-                 name: TypeModels,
-                 input_size: int | None = None,
-                 load_weights: bool = False) -> None:
-        logger.debug("Initializing: %s (name: %s, input_size: %s, load_weights: %s)",
-                     self.__class__.__name__, name, input_size, load_weights)
+    """
+
+    def __init__(
+        self,
+        name: TypeModels,
+        input_size: int | None = None,
+        load_weights: bool = False,
+    ) -> None:
+        logger.debug(
+            "Initializing: %s (name: %s, input_size: %s, load_weights: %s)",
+            self.__class__.__name__,
+            name,
+            input_size,
+            load_weights,
+        )
         assert name in MODEL_CONFIG, ("Name must be one of %s", list(MODEL_CONFIG))
 
         self._name = name
@@ -772,20 +926,20 @@ class ViT():
         self._git_id = config.git_id
 
         res = input_size if input_size is not None else config.resolution
-        self._net = self._get_vision_net(config.layer_conf,
-                                         config.width,
-                                         config.embed_dim,
-                                         res,
-                                         config.patch)
+        self._net = self._get_vision_net(
+            config.layer_conf, config.width, config.embed_dim, res, config.patch
+        )
         logger.debug("Initialized: %s", self.__class__.__name__)
 
-    def _get_vision_net(self,
-                        layer_config: int | tuple[int, int, int, int],
-                        width: int,
-                        embed_dim: int,
-                        resolution: int,
-                        patch_size: int) -> models.Model:
-        """ Obtain the network for the vision layets
+    def _get_vision_net(
+        self,
+        layer_config: int | tuple[int, int, int, int],
+        width: int,
+        embed_dim: int,
+        resolution: int,
+        patch_size: int,
+    ) -> models.Model:
+        """Obtain the network for the vision layets
 
         Parameters
         ----------
@@ -808,23 +962,27 @@ class ViT():
         """
         if isinstance(layer_config, (tuple, list)):
             vision_heads = width * 32 // 64
-            return ModifiedResNet(input_resolution=resolution,
-                                  width=width,
-                                  layer_config=layer_config,
-                                  output_dim=embed_dim,
-                                  heads=vision_heads,
-                                  name="visual")
+            return ModifiedResNet(
+                input_resolution=resolution,
+                width=width,
+                layer_config=layer_config,
+                output_dim=embed_dim,
+                heads=vision_heads,
+                name="visual",
+            )
         vision_heads = width // 64
-        return VisualTransformer(input_resolution=resolution,
-                                 width=width,
-                                 num_layers=layer_config,
-                                 output_dim=embed_dim,
-                                 heads=vision_heads,
-                                 patch_size=patch_size,
-                                 name="visual")
+        return VisualTransformer(
+            input_resolution=resolution,
+            width=width,
+            num_layers=layer_config,
+            output_dim=embed_dim,
+            heads=vision_heads,
+            patch_size=patch_size,
+            name="visual",
+        )
 
     def __call__(self) -> models.Model:
-        """ Get the configured ViT model
+        """Get the configured ViT model
 
         Returns
         -------
@@ -851,8 +1009,11 @@ class ViT():
 
 # Update layers into Keras custom objects
 for name_, obj in inspect.getmembers(sys.modules[__name__]):
-    if (inspect.isclass(obj) and issubclass(obj, layers.Layer)
-            and obj.__module__ == __name__):
+    if (
+        inspect.isclass(obj)
+        and issubclass(obj, layers.Layer)
+        and obj.__module__ == __name__
+    ):
         saving.get_custom_objects().update({name_: obj})
 
 

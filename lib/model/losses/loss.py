@@ -44,16 +44,19 @@ class FocalFrequencyLoss(nn.Module):
     https://arxiv.org/pdf/2012.12821.pdf
     https://github.com/EndlessSora/focal-frequency-loss
     """
+
     _epsilon: torch.Tensor
 
-    def __init__(self,
-                 alpha: float = 1.0,
-                 patch_factor: int = 1,
-                 ave_spectrum: bool = False,
-                 log_matrix: bool = False,
-                 batch_matrix: bool = False,
-                 epsilon: float = 1e-6,
-                 spatial_output: bool = True) -> None:
+    def __init__(
+        self,
+        alpha: float = 1.0,
+        patch_factor: int = 1,
+        ave_spectrum: bool = False,
+        log_matrix: bool = False,
+        batch_matrix: bool = False,
+        epsilon: float = 1e-6,
+        spatial_output: bool = True,
+    ) -> None:
         logger.debug(parse_class_init(locals()))
         super().__init__()
         self._alpha = alpha
@@ -79,7 +82,8 @@ class FocalFrequencyLoss(nn.Module):
         patch_list = []
         rows, cols = inputs.shape[2:4]
         assert cols % self._patch_factor == 0 and rows % self._patch_factor == 0, (
-            "Patch factor must be a divisor of the image height and width")
+            "Patch factor must be a divisor of the image height and width"
+        )
         patch_rows = rows // self._patch_factor
         patch_cols = cols // self._patch_factor
         for i in range(self._patch_factor):
@@ -88,7 +92,7 @@ class FocalFrequencyLoss(nn.Module):
                 row_to = (i + 1) * patch_rows
                 col_from = j * patch_cols
                 col_to = (j + 1) * patch_cols
-                patch_list.append(inputs[:, :, row_from: row_to, col_from:col_to])
+                patch_list.append(inputs[:, :, row_from:row_to, col_from:col_to])
 
         retval = torch.stack(patch_list, dim=1)
         return retval
@@ -109,7 +113,9 @@ class FocalFrequencyLoss(nn.Module):
         freq = torch.stack([freq.real, freq.imag], dim=-1)
         return freq
 
-    def _get_weight_matrix(self, freq_true: torch.Tensor, freq_pred: torch.Tensor) -> torch.Tensor:
+    def _get_weight_matrix(
+        self, freq_true: torch.Tensor, freq_pred: torch.Tensor
+    ) -> torch.Tensor:
         """Calculate a continuous, dynamic weight matrix based on current Euclidean distance.
 
         Parameters
@@ -130,17 +136,21 @@ class FocalFrequencyLoss(nn.Module):
         if self._log_matrix:  # adjust the spectrum weight matrix by logarithm
             weights = torch.log(weights + 1.0)
 
-        if self._batch_matrix:  # calculate the spectrum weight matrix using batch-based statistics
+        if (
+            self._batch_matrix
+        ):  # calculate the spectrum weight matrix using batch-based statistics
             scale = torch.max(weights)
         else:
             scale = torch.amax(weights, dim=(-1, -2), keepdim=True)
         weights = weights / torch.maximum(scale, self._epsilon)
         return torch.clamp(weights, min=0.0, max=1.0)
 
-    def _calculate_loss(self,
-                        freq_true: torch.Tensor,
-                        freq_pred: torch.Tensor,
-                        weight_matrix: torch.Tensor) -> torch.Tensor:
+    def _calculate_loss(
+        self,
+        freq_true: torch.Tensor,
+        freq_pred: torch.Tensor,
+        weight_matrix: torch.Tensor,
+    ) -> torch.Tensor:
         """Perform the loss calculation on the DFT spectrum applying the weights matrix.
 
         Parameters
@@ -155,11 +165,15 @@ class FocalFrequencyLoss(nn.Module):
         The final loss value for each item in the batch
         """
 
-        tmp = torch.square(freq_pred - freq_true)  # freq distance using squared Euclidean distance
+        tmp = torch.square(
+            freq_pred - freq_true
+        )  # freq distance using squared Euclidean distance
 
         freq_distance = tmp[..., 0] + tmp[..., 1]
-        loss = weight_matrix * freq_distance  # dynamic spectrum weighting (Hadamard product)
-        return torch.mean(loss, dim=(1, ) if self._spatial else (1, 2, 3, 4))
+        loss = (
+            weight_matrix * freq_distance
+        )  # dynamic spectrum weighting (Hadamard product)
+        return torch.mean(loss, dim=(1,) if self._spatial else (1, 2, 3, 4))
 
     def forward(self, y_true: torch.Tensor, y_pred: torch.Tensor) -> torch.Tensor:
         """Call the Focal Frequency Loss Function.
@@ -214,10 +228,10 @@ class GeneralizedLoss(nn.Module):
         ``True`` to output the loss values spatially. ``False`` as scalar per item.
         Default: ``True``
     """
-    def __init__(self,
-                 alpha: float = 1.0,
-                 beta: float = 1.0 / 255.0,
-                 spatial_output: bool = True) -> None:
+
+    def __init__(
+        self, alpha: float = 1.0, beta: float = 1.0 / 255.0, spatial_output: bool = True
+    ) -> None:
         logger.debug(parse_class_init(locals()))
         super().__init__()
         self._alpha = alpha
@@ -239,9 +253,14 @@ class GeneralizedLoss(nn.Module):
         The final loss value for each item in the batch
         """
         diff = y_pred - y_true
-        second = (torch.pow(torch.pow(diff/self._beta, 2.) / abs(2. - self._alpha) + 1.,
-                            (self._alpha / 2.)) - 1.)
-        loss = (abs(2. - self._alpha)/self._alpha) * second
+        second = (
+            torch.pow(
+                torch.pow(diff / self._beta, 2.0) / abs(2.0 - self._alpha) + 1.0,
+                (self._alpha / 2.0),
+            )
+            - 1.0
+        )
+        loss = (abs(2.0 - self._alpha) / self._alpha) * second
         if not self._spatial:
             loss = torch.mean(loss, dim=(1, 2, 3))
         return loss * self._beta
@@ -266,8 +285,8 @@ class GradientLoss(nn.Module):
     TV+TV2 Regularization with Non-Convex Sparseness-Inducing Penalty for Image Restoration,
     Chengwu Lu & Hua Huang, 2014 - http://downloads.hindawi.com/journals/mpe/2014/790547.pdf
     """
-    def __init__(self,
-                 spatial_output: bool = True) -> None:
+
+    def __init__(self, spatial_output: bool = True) -> None:
         logger.debug(parse_class_init(locals()))
         super().__init__()
         self.generalized_loss = GeneralizedLoss(alpha=1.9999)
@@ -367,16 +386,15 @@ class GradientLoss(nn.Module):
         The final loss value for each item in the batch
         """
         loss = 0.0
-        loss += self._tv_weight * (self.generalized_loss(self._diff_x(y_true),
-                                                         self._diff_x(y_pred)) +
-                                   self.generalized_loss(self._diff_y(y_true),
-                                                         self._diff_y(y_pred)))
-        loss += self._tv2_weight * (self.generalized_loss(self._diff_xx(y_true),
-                                                          self._diff_xx(y_pred)) +
-                                    self.generalized_loss(self._diff_yy(y_true),
-                                    self._diff_yy(y_pred)) +
-                                    self.generalized_loss(self._diff_xy(y_true),
-                                    self._diff_xy(y_pred)) * 2.)
+        loss += self._tv_weight * (
+            self.generalized_loss(self._diff_x(y_true), self._diff_x(y_pred))
+            + self.generalized_loss(self._diff_y(y_true), self._diff_y(y_pred))
+        )
+        loss += self._tv2_weight * (
+            self.generalized_loss(self._diff_xx(y_true), self._diff_xx(y_pred))
+            + self.generalized_loss(self._diff_yy(y_true), self._diff_yy(y_pred))
+            + self.generalized_loss(self._diff_xy(y_true), self._diff_xy(y_pred)) * 2.0
+        )
         loss = loss / (self._tv_weight + self._tv2_weight)
         # TODO simplify to use MSE instead
         if not self._spatial:
@@ -410,22 +428,26 @@ class LaplacianPyramidLoss(nn.Module):
     https://arxiv.org/abs/1707.05776
     https://github.com/nathanaelbosch/generative-latent-optimization/blob/master/utils.py
     """
+
     _weight: torch.Tensor
     _kernel: torch.Tensor
 
-    def __init__(self,
-                 max_levels: int = 5,
-                 gaussian_size: int = 5,
-                 gaussian_sigma: float = 1.0,
-                 spatial_output: bool = True) -> None:
+    def __init__(
+        self,
+        max_levels: int = 5,
+        gaussian_size: int = 5,
+        gaussian_sigma: float = 1.0,
+        spatial_output: bool = True,
+    ) -> None:
         logger.debug(parse_class_init(locals()))
         super().__init__()
         self._max_levels = max_levels
         self._gaussian_sigma = gaussian_sigma
         self._spatial = spatial_output
-        self.register_buffer("_weight",
-                             torch.Tensor([np.power(2., -2 * idx)
-                                           for idx in range(max_levels + 1)]))
+        self.register_buffer(
+            "_weight",
+            torch.Tensor([np.power(2.0, -2 * idx) for idx in range(max_levels + 1)]),
+        )
         self.register_buffer("_kernel", self._generate_gaussian_kernel(gaussian_size))
 
     def _generate_gaussian_kernel(self, size: int) -> torch.Tensor:
@@ -440,11 +462,11 @@ class LaplacianPyramidLoss(nn.Module):
         -------
             The base three channel Gaussian kernel
         """
-        assert size % 2 == 1, ("kernel size must be uneven")
-        x_1 = np.linspace(- (size // 2), size // 2, size, dtype="float32")
+        assert size % 2 == 1, "kernel size must be uneven"
+        x_1 = np.linspace(-(size // 2), size // 2, size, dtype="float32")
         x_1 /= np.sqrt(2) * self._gaussian_sigma
-        x_2 = x_1 ** 2
-        kernel = np.exp(- x_2[:, None] - x_2[None, :])
+        x_2 = x_1**2
+        kernel = np.exp(-x_2[:, None] - x_2[None, :])
         kernel /= kernel.sum()
 
         kernel = np.tile(kernel, (3, 1, 1, 1))
@@ -463,12 +485,16 @@ class LaplacianPyramidLoss(nn.Module):
         The convolved images
         """
         gauss_size = self._kernel.shape[2]
-        padded_inputs = F.pad(inputs,
-                              (gauss_size // 2, gauss_size // 2, gauss_size // 2, gauss_size // 2),
-                              mode="replicate")
-        return F.conv2d(padded_inputs,  # pylint:disable=not-callable
-                        self._kernel,
-                        groups=3)
+        padded_inputs = F.pad(
+            inputs,
+            (gauss_size // 2, gauss_size // 2, gauss_size // 2, gauss_size // 2),
+            mode="replicate",
+        )
+        return F.conv2d(
+            padded_inputs,  # pylint:disable=not-callable
+            self._kernel,
+            groups=3,
+        )
 
     def _get_laplacian_pyramid(self, inputs: torch.Tensor) -> list[torch.Tensor]:
         """Obtain the Laplacian Pyramid.
@@ -509,15 +535,27 @@ class LaplacianPyramidLoss(nn.Module):
         pyramid_true = self._get_laplacian_pyramid(y_true)
         pyramid_pred = self._get_laplacian_pyramid(y_pred)
 
-        losses = [F.l1_loss(o, t, reduction="none") for o, t in zip(pyramid_true, pyramid_pred)]
+        losses = [
+            F.l1_loss(o, t, reduction="none")
+            for o, t in zip(pyramid_true, pyramid_pred)
+        ]
         if self._spatial:
             size = y_true.shape[-2:]
-            loss = torch.stack(
-                [x if x.shape[-2:] == size else (F.interpolate(x,
-                                                               size=size,
-                                                               mode="bilinear",
-                                                               align_corners=False))
-                 for x in losses]).swapaxes(0, 1) * self._weight[..., None, None, None]
+            loss = (
+                torch.stack(
+                    [
+                        x
+                        if x.shape[-2:] == size
+                        else (
+                            F.interpolate(
+                                x, size=size, mode="bilinear", align_corners=False
+                            )
+                        )
+                        for x in losses
+                    ]
+                ).swapaxes(0, 1)
+                * self._weight[..., None, None, None]
+            )
         else:
             loss = torch.stack([x.mean(dim=(1, 2, 3)) for x in losses]).T * self._weight
         return loss.sum(dim=1)
@@ -554,6 +592,7 @@ class LogCosh(nn.Module):
         ``True`` to output the loss values spatially. ``False`` as scalar per item.
         Default: ``True``
     """
+
     def __init__(self, spatial_output: bool = True) -> None:
         logger.debug(parse_class_init(locals()))
         super().__init__()
@@ -574,8 +613,11 @@ class LogCosh(nn.Module):
         The final loss value for each item in the batch
         """
         diff = y_true - y_pred
-        loss: torch.Tensor = (diff + F.softplus(diff * -2.0) -  # pylint:disable=not-callable
-                              np.log(2))
+        loss: torch.Tensor = (
+            diff
+            + F.softplus(diff * -2.0)  # pylint:disable=not-callable
+            - np.log(2)
+        )
         if not self._spatial:
             loss = loss.mean(dim=(1, 2, 3))
         return loss

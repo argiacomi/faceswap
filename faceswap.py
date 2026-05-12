@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-""" The master faceswap.py script """
+"""The master faceswap.py script"""
+
 import gettext
 import locale
 import os
@@ -8,6 +9,7 @@ import sys
 # Translations don't work by default in Windows, so hack in environment variable
 if sys.platform.startswith("win"):
     import ctypes
+
     windll = ctypes.windll.kernel32
     os.environ["LANG"] = locale.windows_locale[windll.GetUserDefaultUILanguage()]
 
@@ -28,14 +30,14 @@ _PARSER = cli_args.FullHelpArgumentParser()
 
 
 def _bad_args(*args) -> None:  # pylint:disable=unused-argument
-    """ Print help to console when bad arguments are provided. """
+    """Print help to console when bad arguments are provided."""
     print(cli_args)
     _PARSER.print_help()
     sys.exit(0)
 
 
 def _main() -> None:
-    """ The main entry point into Faceswap.
+    """The main entry point into Faceswap.
 
     - Generates the config files, if they don't pre-exist.
     - Compiles the :class:`~lib.cli.args.FullHelpArgumentParser` objects for each section of
@@ -48,10 +50,14 @@ def _main() -> None:
     subparser = _PARSER.add_subparsers()
     ExtractArgs(subparser, "extract", _("Extract the faces from pictures or a video"))
     TrainArgs(subparser, "train", _("Train a model for the two faces A and B"))
-    ConvertArgs(subparser,
-                "convert",
-                _("Convert source pictures or video to a new one with the face swapped"))
-    cli_args.GuiArgs(subparser, "gui", _("Launch the Faceswap Graphical User Interface"))
+    ConvertArgs(
+        subparser,
+        "convert",
+        _("Convert source pictures or video to a new one with the face swapped"),
+    )
+    cli_args.GuiArgs(
+        subparser, "gui", _("Launch the Faceswap Graphical User Interface")
+    )
     _PARSER.set_defaults(func=_bad_args)
     arguments = _PARSER.parse_args()
     arguments.func(arguments)

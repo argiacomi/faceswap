@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-""" The default options for the faceswap Mtcnn Detect plugin.
+"""The default options for the faceswap Mtcnn Detect plugin.
 
 Defaults files should be named `<plugin_name>_defaults.py`
 
@@ -25,6 +25,7 @@ Items will be grouped together as per their `group` parameter, but otherwise wil
 the order that they are added to this module.
 from lib.config import ConfigItem
 """
+
 # pylint:disable=duplicate-code
 from lib.config import ConfigItem
 
@@ -41,9 +42,10 @@ min_size = ConfigItem(
     default=20,
     group="settings",
     info="The minimum size of a face (in pixels) to be accepted as a positive match."
-         "\nLower values use significantly more VRAM and will detect more false positives.",
+    "\nLower values use significantly more VRAM and will detect more false positives.",
     rounding=10,
-    min_max=(20, 1000))
+    min_max=(20, 1000),
+)
 
 scalefactor = ConfigItem(
     datatype=float,
@@ -51,24 +53,27 @@ scalefactor = ConfigItem(
     group="settings",
     info="The scale factor for the image pyramid.",
     rounding=3,
-    min_max=(0.1, 0.9))
+    min_max=(0.1, 0.9),
+)
 
 batch_size = ConfigItem(
     datatype=int,
     default=8,
     group="settings",
     info="The batch size to use. To a point, higher batch sizes equal better performance, "
-         "but setting it too high can harm performance.",
+    "but setting it too high can harm performance.",
     rounding=1,
-    min_max=(1, 256))
+    min_max=(1, 256),
+)
 
 cpu = ConfigItem(
     datatype=bool,
     default=True,
     group="settings",
     info="MTCNN detector still runs fairly quickly on CPU on some setups. "
-         "Enable CPU mode here to use the CPU for this detector to save some VRAM at a "
-         "speed cost.")
+    "Enable CPU mode here to use the CPU for this detector to save some VRAM at a "
+    "speed cost.",
+)
 
 threshold_1 = ConfigItem(
     datatype=float,
@@ -76,7 +81,8 @@ threshold_1 = ConfigItem(
     group="threshold",
     info="First stage threshold for face detection. This stage obtains face candidates.",
     rounding=2,
-    min_max=(0.1, 0.9))
+    min_max=(0.1, 0.9),
+)
 
 threshold_2 = ConfigItem(
     datatype=float,
@@ -84,13 +90,15 @@ threshold_2 = ConfigItem(
     group="threshold",
     info="Second stage threshold for face detection. This stage refines face candidates.",
     rounding=2,
-    min_max=(0.1, 0.9))
+    min_max=(0.1, 0.9),
+)
 
 threshold_3 = ConfigItem(
     datatype=float,
     default=0.7,
     group="threshold",
     info="Third stage threshold for face detection. This stage further refines face "
-         "candidates.",
+    "candidates.",
     rounding=2,
-    min_max=(0.1, 0.9))
+    min_max=(0.1, 0.9),
+)

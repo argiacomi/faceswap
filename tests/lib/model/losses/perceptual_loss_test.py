@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-""" Tests for Faceswap Feature Losses. Adapted from Keras tests. """
+"""Tests for Faceswap Feature Losses. Adapted from Keras tests."""
+
 import pytest
 import numpy as np
 import torch
@@ -16,7 +17,7 @@ _IDS = [f"{x.__name__}[{get_backend().upper()}]" for x in _PARAMS]
 
 @pytest.mark.parametrize("loss_func", _PARAMS, ids=_IDS)
 def test_loss_output(loss_func):
-    """ Basic dtype and value tests for loss functions. """
+    """Basic dtype and value tests for loss functions."""
     y_a = torch.Tensor(np.random.random((2, 3, 128, 128))).cpu()
     y_b = torch.Tensor(np.random.random((2, 3, 128, 128))).cpu()
     metric = loss_func().cpu()

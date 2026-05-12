@@ -1,5 +1,5 @@
 #!/usr/bin python3
-""" The command frame for Faceswap GUI """
+"""The command frame for Faceswap GUI"""
 
 import logging
 import gettext
@@ -21,7 +21,7 @@ _ = _LANG.gettext
 
 
 class CommandNotebook(ttk.Notebook):  # pylint:disable=too-many-ancestors
-    """ Frame to hold each individual tab of the command notebook """
+    """Frame to hold each individual tab of the command notebook"""
 
     def __init__(self, parent):
         logger.debug("Initializing %s: (parent: %s)", self.__class__.__name__, parent)
@@ -38,25 +38,29 @@ class CommandNotebook(ttk.Notebook):  # pylint:disable=too-many-ancestors
 
     @property
     def tab_names(self):
-        """ dict: Command tab titles with their IDs """
-        return {self.tab(tab_id, "text").lower(): tab_id
-                for tab_id in range(0, self.index("end"))}
+        """dict: Command tab titles with their IDs"""
+        return {
+            self.tab(tab_id, "text").lower(): tab_id
+            for tab_id in range(0, self.index("end"))
+        }
 
     @property
     def tools_tab_names(self):
-        """ dict: Tools tab titles with their IDs """
-        return {self.tools_notebook.tab(tab_id, "text").lower(): tab_id
-                for tab_id in range(0, self.tools_notebook.index("end"))}
+        """dict: Tools tab titles with their IDs"""
+        return {
+            self.tools_notebook.tab(tab_id, "text").lower(): tab_id
+            for tab_id in range(0, self.tools_notebook.index("end"))
+        }
 
     def set_running_task_trace(self):
-        """ Set trigger action for the running task
-            to change the action buttons text and command """
+        """Set trigger action for the running task
+        to change the action buttons text and command"""
         logger.debug("Set running trace")
         tk_vars = get_config().tk_vars
         tk_vars.running_task.trace("w", self.change_action_button)
 
     def build_tabs(self):
-        """ Build the tabs for the relevant command """
+        """Build the tabs for the relevant command"""
         logger.debug("Build Tabs")
         cli_opts = get_config().cli_opts
         for category in cli_opts.categories:
@@ -70,7 +74,7 @@ class CommandNotebook(ttk.Notebook):  # pylint:disable=too-many-ancestors
         logger.debug("Built Tabs")
 
     def change_action_button(self, *args):
-        """ Change the action button to relevant control """
+        """Change the action button to relevant control"""
         logger.debug("Update Action Buttons: (args: %s", args)
         tk_vars = get_config().tk_vars
 
@@ -89,8 +93,8 @@ class CommandNotebook(ttk.Notebook):  # pylint:disable=too-many-ancestors
             Tooltip(btnact, text=hlp, wrap_length=200)
 
     def _set_modified_vars(self):
-        """ Set the tkinter variable for each tab to indicate whether contents
-        have been modified """
+        """Set the tkinter variable for each tab to indicate whether contents
+        have been modified"""
         tkvars = {}
         for tab in self.tab_names:
             if tab == "tools":
@@ -107,18 +111,23 @@ class CommandNotebook(ttk.Notebook):  # pylint:disable=too-many-ancestors
 
 
 class ToolsNotebook(ttk.Notebook):  # pylint:disable=too-many-ancestors
-    """ Tools sit in their own tab, but need to inherit objects from the main command notebook """
+    """Tools sit in their own tab, but need to inherit objects from the main command notebook"""
+
     def __init__(self, parent):
         super().__init__(parent)
         self.actionbtns = parent.actionbtns
 
 
 class CommandTab(ttk.Frame):  # pylint:disable=too-many-ancestors
-    """ Frame to hold each individual tab of the command notebook """
+    """Frame to hold each individual tab of the command notebook"""
 
     def __init__(self, parent, category, command):
-        logger.debug("Initializing %s: (category: '%s', command: '%s')",
-                     self.__class__.__name__, category, command)
+        logger.debug(
+            "Initializing %s: (category: '%s', command: '%s')",
+            self.__class__.__name__,
+            category,
+            command,
+        )
         super().__init__(parent, name=f"tab_{command.lower()}")
 
         self.category = category
@@ -129,23 +138,27 @@ class CommandTab(ttk.Frame):  # pylint:disable=too-many-ancestors
         logger.debug("Initialized %s", self.__class__.__name__)
 
     def build_tab(self):
-        """ Build the tab """
+        """Build the tab"""
         logger.debug("Build Tab: '%s'", self.command)
         options = get_config().cli_opts.opts[self.command]
-        cp_opts = [val.panel_option for val in options.values() if isinstance(val, CliOption)]
-        ControlPanel(self,
-                     cp_opts,
-                     label_width=16,
-                     option_columns=3,
-                     columns=1,
-                     header_text=options.get("helptext", None),
-                     style="CPanel")
+        cp_opts = [
+            val.panel_option for val in options.values() if isinstance(val, CliOption)
+        ]
+        ControlPanel(
+            self,
+            cp_opts,
+            label_width=16,
+            option_columns=3,
+            columns=1,
+            header_text=options.get("helptext", None),
+            style="CPanel",
+        )
         self.add_frame_separator()
         ActionFrame(self)
         logger.debug("Built Tab: '%s'", self.command)
 
     def add_frame_separator(self):
-        """ Add a separator between top and bottom frames """
+        """Add a separator between top and bottom frames"""
         logger.debug("Add frame separator")
         sep = ttk.Frame(self, height=2, relief=tk.RIDGE)
         sep.pack(fill=tk.X, pady=(5, 0), side=tk.TOP)
@@ -153,22 +166,23 @@ class CommandTab(ttk.Frame):  # pylint:disable=too-many-ancestors
 
 
 class ActionFrame(ttk.Frame):  # pylint:disable=too-many-ancestors
-    """Action Frame - Displays action controls for the command tab """
+    """Action Frame - Displays action controls for the command tab"""
 
     def __init__(self, parent):
-        logger.debug("Initializing %s: (command: '%s')", self.__class__.__name__, parent.command)
+        logger.debug(
+            "Initializing %s: (command: '%s')", self.__class__.__name__, parent.command
+        )
         super().__init__(parent)
         self.pack(fill=tk.BOTH, padx=5, pady=5, side=tk.BOTTOM, anchor=tk.N)
 
         self.command = parent.command
         self.title = self.command.title()
 
-        self.add_action_button(parent.category,
-                               parent.actionbtns)
+        self.add_action_button(parent.category, parent.actionbtns)
         logger.debug("Initialized %s", self.__class__.__name__)
 
     def add_action_button(self, category, actionbtns):
-        """ Add the action buttons for page """
+        """Add the action buttons for page"""
         logger.debug("Add action buttons: '%s'", self.title)
         actframe = ttk.Frame(self)
         actframe.pack(fill=tk.X, side=tk.RIGHT)
@@ -176,27 +190,31 @@ class ActionFrame(ttk.Frame):  # pylint:disable=too-many-ancestors
         tk_vars = get_config().tk_vars
         var_value = f"{category},{self.command}"
 
-        btngen = ttk.Button(actframe,
-                            image=get_images().icons["generate"],
-                            text=" Generate",
-                            compound=tk.LEFT,
-                            width=14,
-                            command=lambda: tk_vars.generate_command.set(var_value))
+        btngen = ttk.Button(
+            actframe,
+            image=get_images().icons["generate"],
+            text=" Generate",
+            compound=tk.LEFT,
+            width=14,
+            command=lambda: tk_vars.generate_command.set(var_value),
+        )
         btngen.pack(side=tk.LEFT, padx=5)
-        Tooltip(btngen,
-                text=_("Output command line options to the console"),
-                wrap_length=200)
+        Tooltip(
+            btngen,
+            text=_("Output command line options to the console"),
+            wrap_length=200,
+        )
 
-        btnact = ttk.Button(actframe,
-                            image=get_images().icons["start"],
-                            text=f" {self.title}",
-                            compound=tk.LEFT,
-                            width=14,
-                            command=lambda: tk_vars.action_command.set(var_value))
+        btnact = ttk.Button(
+            actframe,
+            image=get_images().icons["start"],
+            text=f" {self.title}",
+            compound=tk.LEFT,
+            width=14,
+            command=lambda: tk_vars.action_command.set(var_value),
+        )
         btnact.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        Tooltip(btnact,
-                text=_("Run the {} script").format(self.title),
-                wrap_length=200)
+        Tooltip(btnact, text=_("Run the {} script").format(self.title), wrap_length=200)
         actionbtns[self.command] = btnact
 
         logger.debug("Added action buttons: '%s'", self.title)

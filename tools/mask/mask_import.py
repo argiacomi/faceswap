@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Import mask processing for faceswap's mask tool"""
+
 from __future__ import annotations
 
 import logging
@@ -48,19 +49,32 @@ class Import:
     mask_type
         The mask type to update to
     """
-    def __init__(self,
-                 import_path: str,
-                 centering: CenteringType,
-                 storage_size: int,
-                 input_is_faces: bool,
-                 loader: loader.Loader,
-                 alignments: align.alignments.Alignments | None,
-                 input_location: str,
-                 mask_type: str) -> None:
-        logger.debug("Initializing %s (import_path: %s, centering: %s, storage_size: %s, "
-                     "input_is_faces: %s, loader: %s, alignments: %s, input_location: %s, "
-                     "mask_type: %s)", self.__class__.__name__, import_path, centering,
-                     storage_size, input_is_faces, loader, alignments, input_location, mask_type)
+
+    def __init__(
+        self,
+        import_path: str,
+        centering: CenteringType,
+        storage_size: int,
+        input_is_faces: bool,
+        loader: loader.Loader,
+        alignments: align.alignments.Alignments | None,
+        input_location: str,
+        mask_type: str,
+    ) -> None:
+        logger.debug(
+            "Initializing %s (import_path: %s, centering: %s, storage_size: %s, "
+            "input_is_faces: %s, loader: %s, alignments: %s, input_location: %s, "
+            "mask_type: %s)",
+            self.__class__.__name__,
+            import_path,
+            centering,
+            storage_size,
+            input_is_faces,
+            loader,
+            alignments,
+            input_location,
+            mask_type,
+        )
 
         self._validate_mask_type(mask_type)
 
@@ -71,7 +85,9 @@ class Import:
         self._re_frame_num = re.compile(r"\d+$")
         self._mapping = self._generate_mapping(import_path, loader)
 
-        self._saver = ImagesSaver(input_location, as_bytes=True) if input_is_faces else None
+        self._saver = (
+            ImagesSaver(input_location, as_bytes=True) if input_is_faces else None
+        )
         self._counts: dict[T.Literal["skip", "update"], int] = {"skip": 0, "update": 0}
 
         logger.debug("Initialized %s", self.__class__.__name__)
@@ -140,8 +156,11 @@ class Import:
         for fname in file_list:
             logger.warning("Extra mask file found: '%s'", os.path.basename(fname))
 
-        logger.warning("%s mask file(s) do not exist in the source data so will not be imported "
-                       "(see above)", len(file_list))
+        logger.warning(
+            "%s mask file(s) do not exist in the source data so will not be imported "
+            "(see above)",
+            len(file_list),
+        )
 
     def _file_list_to_frame_number(self, file_list: list[str]) -> dict[int, str]:
         """Extract frame numbers from mask file names and return as a dictionary
@@ -157,19 +176,28 @@ class Import:
         """
         retval: dict[int, str] = {}
         for filename in file_list:
-            frame_num = self._re_frame_num.findall(os.path.splitext(os.path.basename(filename))[0])
+            frame_num = self._re_frame_num.findall(
+                os.path.splitext(os.path.basename(filename))[0]
+            )
 
             if not frame_num or len(frame_num) > 1:
-                logger.error("Could not detect frame number from mask file '%s'. "
-                             "Check your filenames", os.path.basename(filename))
+                logger.error(
+                    "Could not detect frame number from mask file '%s'. "
+                    "Check your filenames",
+                    os.path.basename(filename),
+                )
                 sys.exit(1)
 
             f_num = int(frame_num[0])
 
             if f_num in retval:
-                logger.error("Frame number %s for mask file '%s' already exists from file: '%s'. "
-                             "Check your filenames",
-                             f_num, os.path.basename(filename), os.path.basename(retval[f_num]))
+                logger.error(
+                    "Frame number %s for mask file '%s' already exists from file: '%s'. "
+                    "Check your filenames",
+                    f_num,
+                    os.path.basename(filename),
+                    os.path.basename(retval[f_num]),
+                )
                 sys.exit(1)
 
             retval[f_num] = filename
@@ -178,7 +206,9 @@ class Import:
 
         return retval
 
-    def _map_video(self, file_list: list[str], source_files: list[str]) -> dict[str, str]:
+    def _map_video(
+        self, file_list: list[str], source_files: list[str]
+    ) -> dict[str, str]:
         """Generate the mapping between the source data and the masks to be imported for
         video sources
 
@@ -205,16 +235,24 @@ class Import:
             retval[os.path.basename(filename)] = mapped
 
         if len(unmapped) == len(source_files):
-            logger.error("No masks map between the source data and the mask folder. "
-                         "Check your filenames")
+            logger.error(
+                "No masks map between the source data and the mask folder. "
+                "Check your filenames"
+            )
             sys.exit(1)
 
         self._warn_extra_masks(list(mask_frames.values()))
-        logger.debug("Source: %s, Mask: %s, Mapped: %s",
-                     len(source_files), len(file_list), len(retval))
+        logger.debug(
+            "Source: %s, Mask: %s, Mapped: %s",
+            len(source_files),
+            len(file_list),
+            len(retval),
+        )
         return retval
 
-    def _map_images(self, file_list: list[str], source_files: list[str]) -> dict[str, str]:
+    def _map_images(
+        self, file_list: list[str], source_files: list[str]
+    ) -> dict[str, str]:
         """Generate the mapping between the source data and the masks to be imported for
         folder of image sources
 
@@ -234,25 +272,39 @@ class Import:
         unmapped = []
         for filename in tqdm(source_files, desc="Mapping masks to input", leave=False):
             fname = os.path.splitext(os.path.basename(filename))[0]
-            mapped = next((f for f in file_list
-                           if os.path.splitext(os.path.basename(f))[0] == fname), "")
+            mapped = next(
+                (
+                    f
+                    for f in file_list
+                    if os.path.splitext(os.path.basename(f))[0] == fname
+                ),
+                "",
+            )
             if not mapped:
                 unmapped.append(filename)
                 continue
             retval[os.path.basename(filename)] = file_list.pop(file_list.index(mapped))
 
         if len(unmapped) == len(source_files):
-            logger.error("No masks map between the source data and the mask folder. "
-                         "Check your filenames")
+            logger.error(
+                "No masks map between the source data and the mask folder. "
+                "Check your filenames"
+            )
             sys.exit(1)
 
         self._warn_extra_masks(file_list)
 
-        logger.debug("Source: %s, Mask: %s, Mapped: %s",
-                     len(source_files), mask_count, len(retval))
+        logger.debug(
+            "Source: %s, Mask: %s, Mapped: %s",
+            len(source_files),
+            mask_count,
+            len(retval),
+        )
         return retval
 
-    def _generate_mapping(self, import_path: str, loader: loader.Loader) -> dict[str, str]:
+    def _generate_mapping(
+        self, import_path: str, loader: loader.Loader
+    ) -> dict[str, str]:
         """Generate the mapping between the source data and the masks to be imported
 
         Parameters
@@ -284,18 +336,22 @@ class Import:
         mask
             The mask to store
         """
-        aligned = AlignedFace(face.landmarks_xy,
-                              mask[..., None] if self._is_faces else mask,
-                              centering=self._centering,
-                              size=self._size,
-                              is_aligned=self._is_faces,
-                              dtype="uint8")
+        aligned = AlignedFace(
+            face.landmarks_xy,
+            mask[..., None] if self._is_faces else mask,
+            centering=self._centering,
+            size=self._size,
+            is_aligned=self._is_faces,
+            dtype="uint8",
+        )
         assert aligned.face is not None
-        face.add_mask(f"custom_{self._centering}",
-                      aligned.face,
-                      aligned.adjusted_matrix,
-                      storage_size=self._size,
-                      storage_centering=self._centering)
+        face.add_mask(
+            f"custom_{self._centering}",
+            aligned.face,
+            aligned.adjusted_matrix,
+            storage_size=self._size,
+            storage_centering=self._centering,
+        )
 
     def _store_mask_face(self, media: FrameFaces, mask: np.ndarray) -> None:
         """Store the mask when the input is aligned faceswap faces
@@ -320,14 +376,14 @@ class Import:
             idx = media.frame_metadata.source_filename
             fname = media.frame_metadata.face_index
             logger.trace("Updating face %s in frame '%s'", idx, fname)  # type:ignore[attr-defined]
-            self._alignments.update_face(idx,
-                                         fname,
-                                         face.to_alignment())
+            self._alignments.update_face(idx, fname, face.to_alignment())
 
         logger.trace("Updating extracted face: '%s'", media.filename)  # type:ignore[attr-defined]
         meta = PNGHeader(alignments=face.to_png_meta(), source=media.frame_metadata)
-        self._saver.save(os.path.basename(media.filename),
-                         encode_image(media.image, ".png", metadata=meta))
+        self._saver.save(
+            os.path.basename(media.filename),
+            encode_image(media.image, ".png", metadata=meta),
+        )
 
     @classmethod
     def _resize_mask(cls, mask: np.ndarray, dims: tuple[int, int]) -> np.ndarray:
@@ -364,16 +420,19 @@ class Import:
             The mask loaded from disk
         """
         assert self._alignments is not None
-        logger.trace("Adding %s mask(s) for '%s'",  # type:ignore[attr-defined]
-                     len(media.detected_faces), media.filename)
+        logger.trace(
+            "Adding %s mask(s) for '%s'",  # type:ignore[attr-defined]
+            len(media.detected_faces),
+            media.filename,
+        )
 
         mask = self._resize_mask(mask, media.image_size)
 
         for idx, face in enumerate(media.detected_faces):
             self._store_mask(face, mask)
-            self._alignments.update_face(os.path.basename(media.filename),
-                                         idx,
-                                         face.to_alignment())
+            self._alignments.update_face(
+                os.path.basename(media.filename), idx, face.to_alignment()
+            )
 
     def import_mask(self, media: FrameFaces) -> None:
         """Import the mask for the given Extract Media object
@@ -386,13 +445,18 @@ class Import:
         mask_file = self._mapping.get(os.path.basename(media.filename))
         if not mask_file:
             self._counts["skip"] += 1
-            logger.warning("No mask file found for: '%s'", os.path.basename(media.filename))
+            logger.warning(
+                "No mask file found for: '%s'", os.path.basename(media.filename)
+            )
             return
 
         mask = T.cast("np.ndarray", cv2.imread(mask_file, cv2.IMREAD_GRAYSCALE))
 
-        logger.trace("Loaded mask for frame '%s': %s",  # type:ignore[attr-defined]
-                     os.path.basename(mask_file), mask.shape)
+        logger.trace(
+            "Loaded mask for frame '%s': %s",  # type:ignore[attr-defined]
+            os.path.basename(mask_file),
+            mask.shape,
+        )
 
         self._counts["update"] += len(media.detected_faces)
 

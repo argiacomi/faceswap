@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-""" The master tools.py script """
+"""The master tools.py script"""
+
 import gettext
 import os
 import sys
@@ -19,13 +20,13 @@ if sys.version_info < (3, 11):
 
 
 def bad_args(*args):  # pylint:disable=unused-argument
-    """ Print help on bad arguments """
+    """Print help on bad arguments"""
     PARSER.print_help()
     sys.exit(0)
 
 
 def _get_cli_opts():
-    """ Optain the subparsers and cli options for available tools """
+    """Optain the subparsers and cli options for available tools"""
     base_path = os.path.realpath(os.path.dirname(sys.argv[0]))
     tools_dir = os.path.join(base_path, "tools")
     for tool_name in sorted(os.listdir(tools_dir)):

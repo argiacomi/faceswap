@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-""" The default options for the faceswap S3Fd Detect plugin.
+"""The default options for the faceswap S3Fd Detect plugin.
 
 Defaults files should be named `<plugin_name>_defaults.py`
 
@@ -25,6 +25,7 @@ Items will be grouped together as per their `group` parameter, but otherwise wil
 the order that they are added to this module.
 from lib.config import ConfigItem
 """
+
 # pylint:disable=duplicate-code
 from lib.config import ConfigItem
 
@@ -33,7 +34,7 @@ HELPTEXT = (
     "S3FD Detector options.\n"
     "Fast on GPU, slow on CPU. Can detect more faces and fewer false positives than other GPU "
     "detectors, but is a lot more resource intensive."
-    )
+)
 
 
 confidence = ConfigItem(
@@ -41,16 +42,18 @@ confidence = ConfigItem(
     default=70,
     group="settings",
     info="The confidence level at which the detector has successfully found a face.\n"
-         "Higher levels will be more discriminating, lower levels will have more false "
-         "positives.",
+    "Higher levels will be more discriminating, lower levels will have more false "
+    "positives.",
     rounding=5,
-    min_max=(25, 100))
+    min_max=(25, 100),
+)
 
 batch_size = ConfigItem(
     datatype=int,
     default=4,
     group="settings",
     info="The batch size to use. To a point, higher batch sizes equal better performance, "
-         "but setting it too high can harm performance.",
+    "but setting it too high can harm performance.",
     rounding=1,
-    min_max=(1, 128))
+    min_max=(1, 128),
+)

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Multithreading/processing utils for faceswap"""
+
 from __future__ import annotations
 import logging
 import typing as T
@@ -16,9 +17,10 @@ if T.TYPE_CHECKING:
     from collections.abc import Callable, Generator
 
 logger = logging.getLogger(__name__)
-_ErrorType: T.TypeAlias = tuple[type[BaseException],
-                                BaseException,
-                                TracebackType] | tuple[T.Any, T.Any, T.Any]
+_ErrorType: T.TypeAlias = (
+    tuple[type[BaseException], BaseException, TracebackType]
+    | tuple[T.Any, T.Any, T.Any]
+)
 _THREAD_NAMES: set[str] = set()
 
 
@@ -57,6 +59,7 @@ class ErrorState:
 
     The "check_and_raise" method should be called from the main thread to check for and re-raise
     any errors"""
+
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self.errors: list[_ErrorType] = []
@@ -83,7 +86,9 @@ class ErrorState:
         """
         with self._lock:
             if self.errors:
-                logger.debug("An error has already been captured and is waiting to be handled.")
+                logger.debug(
+                    "An error has already been captured and is waiting to be handled."
+                )
             logger.debug("Recording error state:", exc_info=exc_info)
             self.errors.append(exc_info)
 
@@ -96,7 +101,7 @@ class ErrorState:
         raise err[1].with_traceback(err[2])
 
     def clear(self) -> None:
-        """Clear any stored errors """
+        """Clear any stored errors"""
         with self._lock:
             self.errors = []
 
@@ -117,16 +122,22 @@ class FSThread(threading.Thread):
     kwargs
         keyword arguments for the target invocation. Default: {}.
     """
+
     error_state = ErrorState()
     """Class attribute to track error state across multiple threads"""
-    def __init__(self,
-                 target: Callable | None = None,
-                 name: str | None = None,
-                 args: tuple = (),
-                 kwargs: dict[str, T.Any] | None = None,
-                 *,
-                 daemon: bool | None = None) -> None:
-        super().__init__(target=target, name=name, args=args, kwargs=kwargs, daemon=daemon)
+
+    def __init__(
+        self,
+        target: Callable | None = None,
+        name: str | None = None,
+        args: tuple = (),
+        kwargs: dict[str, T.Any] | None = None,
+        *,
+        daemon: bool | None = None,
+    ) -> None:
+        super().__init__(
+            target=target, name=name, args=args, kwargs=kwargs, daemon=daemon
+        )
         self.target = target
         self.args = args
         self.kwargs = kwargs = {} if kwargs is None else kwargs
@@ -155,8 +166,12 @@ class FSThread(threading.Thread):
             exc_info = sys.exc_info()
             self.error_state.set(exc_info)
             assert exc_info[0] is not None
-            logger.critical("Error in thread (%s): %s(%s)",
-                            self.name, exc_info[0].__name__, exc_info[1])
+            logger.critical(
+                "Error in thread (%s): %s(%s)",
+                self.name,
+                exc_info[0].__name__,
+                exc_info[1],
+            )
         finally:
             # Avoid a ref-cycle if the thread is running a function with
             # an argument that has a member that points to the thread.
@@ -164,7 +179,7 @@ class FSThread(threading.Thread):
             del self._target, self._args, self._kwargs  # type:ignore[attr-defined]
 
 
-class MultiThread():
+class MultiThread:
     """Threading for IO heavy ops. Catches errors in thread and rethrows to parent.
 
     Parameters
@@ -181,15 +196,22 @@ class MultiThread():
     kwargs
         keyword arguments for the target invocation. Default: {}.
     """
-    def __init__(self,
-                 target: Callable,
-                 *args,
-                 thread_count: int = 1,
-                 name: str | None = None,
-                 **kwargs) -> None:
+
+    def __init__(
+        self,
+        target: Callable,
+        *args,
+        thread_count: int = 1,
+        name: str | None = None,
+        **kwargs,
+    ) -> None:
         self._name = _get_name(name if name else target.__name__)
-        logger.debug("Initializing %s: (target: '%s', thread_count: %s)",
-                     self.__class__.__name__, self._name, thread_count)
+        logger.debug(
+            "Initializing %s: (target: '%s', thread_count: %s)",
+            self.__class__.__name__,
+            self._name,
+            thread_count,
+        )
         logger.trace("args: %s, kwargs: %s", args, kwargs)  # type:ignore
         self.daemon = True
         self._thread_count = thread_count
@@ -208,7 +230,7 @@ class MultiThread():
 
     @property
     def errors(self) -> list[_ErrorType]:
-        """list: List of thread error values """
+        """list: List of thread error values"""
         if not self._threads:
             return []
         return self._threads[0].error_state.errors
@@ -243,16 +265,16 @@ class MultiThread():
         return any(thread.is_alive() for thread in self._threads)
 
     def start(self) -> None:
-        """Start all the threads for the given method, args and kwargs """
+        """Start all the threads for the given method, args and kwargs"""
         logger.debug("Starting thread(s): '%s'", self._name)
         for idx in range(self._thread_count):
             name = self._name if self._thread_count == 1 else f"{self._name}_{idx}"
-            logger.debug("Starting thread %s of %s: '%s'",
-                         idx + 1, self._thread_count, name)
-            thread = FSThread(name=name,
-                              target=self._target,
-                              args=self._args,
-                              kwargs=self._kwargs)
+            logger.debug(
+                "Starting thread %s of %s: '%s'", idx + 1, self._thread_count, name
+            )
+            thread = FSThread(
+                name=name, target=self._target, args=self._args, kwargs=self._kwargs
+            )
             thread.daemon = self.daemon
             thread.start()
             self._threads.append(thread)
@@ -278,8 +300,7 @@ class MultiThread():
             logger.debug("Joining Thread: '%s'", thread.name)  # pylint:disable=protected-access
             thread.join()
             if thread.error_state.has_error:
-                logger.error("Caught exception in thread: '%s'",
-                             thread.name)  # pylint:disable=protected-access
+                logger.error("Caught exception in thread: '%s'", thread.name)  # pylint:disable=protected-access
                 thread.error_state.re_raise()
         del self._threads
         self._threads = []
@@ -313,12 +334,15 @@ class BackgroundGenerator(MultiThread):
     ----------
     https://stackoverflow.com/questions/7323664/
     """
-    def __init__(self,
-                 generator: Callable,
-                 prefetch: int = 1,
-                 name: str | None = None,
-                 args: tuple | None = None,
-                 kwargs: dict[str, T.Any] | None = None) -> None:
+
+    def __init__(
+        self,
+        generator: Callable,
+        prefetch: int = 1,
+        name: str | None = None,
+        args: tuple | None = None,
+        kwargs: dict[str, T.Any] | None = None,
+    ) -> None:
         super().__init__(name=name, target=self._run)
         self.queue: Queue.Queue = Queue.Queue(prefetch)
         self.generator = generator

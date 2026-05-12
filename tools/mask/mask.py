@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Tool to generate masks and previews of masks for existing alignments file"""
+
 from __future__ import annotations
 import logging
 import os
@@ -40,8 +41,11 @@ class Mask:
     arguments
         The :mod:`argparse` arguments as passed in from :mod:`tools.py`
     """
+
     def __init__(self, arguments: Namespace) -> None:
-        logger.debug("Initializing %s: (arguments: %s", self.__class__.__name__, arguments)
+        logger.debug(
+            "Initializing %s: (arguments: %s", self.__class__.__name__, arguments
+        )
         if arguments.batch_mode and arguments.processing == "import":
             logger.error("Batch mode is not supported for 'import' processing")
             sys.exit(0)
@@ -61,13 +65,18 @@ class Mask:
             return [self._args.input]
 
         if not os.path.isdir(self._args.input):
-            logger.error("Batch mode is selected but input '%s' is not a folder", self._args.input)
+            logger.error(
+                "Batch mode is selected but input '%s' is not a folder",
+                self._args.input,
+            )
             sys.exit(1)
 
-        retval = [os.path.join(self._args.input, fname)
-                  for fname in os.listdir(self._args.input)
-                  if os.path.isdir(os.path.join(self._args.input, fname))
-                  or os.path.splitext(fname)[-1].lower() in VIDEO_EXTENSIONS]
+        retval = [
+            os.path.join(self._args.input, fname)
+            for fname in os.listdir(self._args.input)
+            if os.path.isdir(os.path.join(self._args.input, fname))
+            or os.path.splitext(fname)[-1].lower() in VIDEO_EXTENSIONS
+        ]
         logger.info("Batch mode selected. Processing locations: %s", retval)
         return retval
 
@@ -82,8 +91,9 @@ class Mask:
         input_location
             The full path to an input video or folder of images
         """
-        retval = os.path.join(self._args.output,
-                              os.path.splitext(os.path.basename(input_location))[0])
+        retval = os.path.join(
+            self._args.output, os.path.splitext(os.path.basename(input_location))[0]
+        )
         logger.debug("Returning output: '%s' for input: '%s'", retval, input_location)
         return retval
 
@@ -111,8 +121,12 @@ class Mask:
         """
         for idx, location in enumerate(self._input_locations):
             if self._args.batch_mode:
-                logger.info("Processing job %s of %s: %s",
-                            idx + 1, len(self._input_locations), location)
+                logger.info(
+                    "Processing job %s of %s: %s",
+                    idx + 1,
+                    len(self._input_locations),
+                    location,
+                )
                 arguments = Namespace(**self._args.__dict__)
                 arguments.input = location
                 # Due to differences in how alignments are handled for frames/faces, only default
@@ -124,7 +138,7 @@ class Mask:
                 arguments = self._args
 
             if len(self._input_locations) > 1:
-                proc = Process(target=self._run_mask_process, args=(arguments, ))
+                proc = Process(target=self._run_mask_process, args=(arguments,))
                 proc.start()
                 proc.join()
             else:
@@ -143,8 +157,11 @@ class _Mask:
     arguments
         The :mod:`argparse` arguments as passed in from :mod:`tools.py`
     """
+
     def __init__(self, arguments: Namespace) -> None:
-        logger.debug("Initializing %s: (arguments: %s)", self.__class__.__name__, arguments)
+        logger.debug(
+            "Initializing %s: (arguments: %s)", self.__class__.__name__, arguments
+        )
         arguments = handle_deprecated_cli_opts(arguments)
         self._update_type = arguments.processing
         self._input_is_faces = arguments.input_type == "faces"
@@ -154,7 +171,9 @@ class _Mask:
         self._alignments = self._get_alignments(arguments.alignments, arguments.input)
 
         if self._loader.is_video and self._alignments is not None:
-            self._alignments.update_legacy_has_source(os.path.basename(self._loader.location))
+            self._alignments.update_legacy_has_source(
+                os.path.basename(self._loader.location)
+            )
 
         self._loader.add_alignments(self._alignments)
 
@@ -162,24 +181,28 @@ class _Mask:
 
         self._import = None
         if self._update_type == "import":
-            self._import = Import(arguments.mask_path,
-                                  arguments.centering,
-                                  arguments.storage_size,
-                                  self._input_is_faces,
-                                  self._loader,
-                                  self._alignments,
-                                  arguments.input,
-                                  arguments.masker)
+            self._import = Import(
+                arguments.mask_path,
+                arguments.centering,
+                arguments.storage_size,
+                self._input_is_faces,
+                self._loader,
+                self._alignments,
+                arguments.input,
+                arguments.masker,
+            )
 
         self._mask_gen: MaskGenerator | None = None
         if self._update_type in ("all", "missing"):
-            self._mask_gen = MaskGenerator(arguments.masker,
-                                           self._update_type == "all",
-                                           self._input_is_faces,
-                                           self._loader,
-                                           self._alignments,
-                                           arguments.input,
-                                           arguments.config_file)
+            self._mask_gen = MaskGenerator(
+                arguments.masker,
+                self._update_type == "all",
+                self._input_is_faces,
+                self._loader,
+                self._alignments,
+                arguments.input,
+                arguments.config_file,
+            )
 
         logger.debug("Initialized %s", self.__class__.__name__)
 
@@ -195,12 +218,16 @@ class _Mask:
             logger.error("Location cannot be found: '%s'", mask_input)
             sys.exit(0)
         if os.path.isfile(mask_input) and self._input_is_faces:
-            logger.error("Input type 'faces' was selected but input is not a folder: '%s'",
-                         mask_input)
+            logger.error(
+                "Input type 'faces' was selected but input is not a folder: '%s'",
+                mask_input,
+            )
             sys.exit(0)
         logger.debug("input '%s' is valid", mask_input)
 
-    def _get_alignments(self, alignments: str | None, input_location: str) -> Alignments | None:
+    def _get_alignments(
+        self, alignments: str | None, input_location: str
+    ) -> Alignments | None:
         """Obtain the alignments from either the given alignments location or the default
         location.
 
@@ -218,14 +245,19 @@ class _Mask:
         """
         if alignments:
             logger.debug("Alignments location provided: %s", alignments)
-            return Alignments(os.path.dirname(alignments),
-                              filename=os.path.basename(alignments))
+            return Alignments(
+                os.path.dirname(alignments), filename=os.path.basename(alignments)
+            )
         if self._input_is_faces and self._update_type == "output":
-            logger.debug("No alignments file provided for faces. Using PNG Header for output")
+            logger.debug(
+                "No alignments file provided for faces. Using PNG Header for output"
+            )
             return None
         if self._input_is_faces:
-            logger.warning("Faces input selected without an alignments file. Masks wil only "
-                           "be updated in the faces' PNG Header")
+            logger.warning(
+                "Faces input selected without an alignments file. Masks wil only "
+                "be updated in the faces' PNG Header"
+            )
             return None
 
         folder = input_location
@@ -256,8 +288,11 @@ class _Mask:
             filename = os.path.basename(media.filename)
             dims = None
         for idx, face in enumerate(media.detected_faces):
-            face_idx = T.cast("PNGSource",
-                              media.frame_metadata).face_index if self._input_is_faces else idx
+            face_idx = (
+                T.cast("PNGSource", media.frame_metadata).face_index
+                if self._input_is_faces
+                else idx
+            )
             face.image = media.image
             self._output.save(filename, face_idx, face, frame_dims=dims)
 
@@ -286,11 +321,16 @@ class _Mask:
             self._alignments.save()
 
         if self._import.skip_count > 0:
-            logger.warning("No masks were found for %s item(s), so these have not been imported",
-                           self._import.skip_count)
+            logger.warning(
+                "No masks were found for %s item(s), so these have not been imported",
+                self._import.skip_count,
+            )
 
-        logger.info("Imported masks for %s faces of %s",
-                    self._import.update_count, self._import.update_count + self._import.skip_count)
+        logger.info(
+            "Imported masks for %s faces of %s",
+            self._import.update_count,
+            self._import.update_count + self._import.skip_count,
+        )
 
     def _output_masks(self) -> None:
         """Output masks to selected output folder"""

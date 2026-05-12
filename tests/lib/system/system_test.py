@@ -1,5 +1,5 @@
 #!/usr/bin python3
-""" Pytest unit tests for :mod:`lib.system.system` """
+"""Pytest unit tests for :mod:`lib.system.system`"""
 
 import ctypes
 import locale
@@ -17,7 +17,7 @@ from lib.system.system import _lines_from_command, VALID_PYTHON, Packages, Syste
 
 
 def test_valid_python() -> None:
-    """ Confirm python version has a min and max and that it is Python 3 """
+    """Confirm python version has a min and max and that it is Python 3"""
     assert len(VALID_PYTHON) == 2
     assert all(len(v) == 2 for v in VALID_PYTHON)
     assert all(isinstance(x, int) for v in VALID_PYTHON for x in v)
@@ -26,7 +26,7 @@ def test_valid_python() -> None:
 
 
 def test_lines_from_command(mocker: pytest_mock.MockerFixture) -> None:
-    """ Confirm lines from command executes as expected """
+    """Confirm lines from command executes as expected"""
     input_ = ["test", "input"]
     subproc_out = "   this  \nis\n  test\noutput  \n"
     mock_run = mocker.patch("lib.system.system.run")
@@ -39,17 +39,29 @@ def test_lines_from_command(mocker: pytest_mock.MockerFixture) -> None:
 # System
 @pytest.fixture(name="system_instance")
 def system_fixture() -> System:
-    """ Single :class:`lib.system.System` object for tests """
+    """Single :class:`lib.system.System` object for tests"""
     return System()
 
 
 def test_system_init(system_instance: System) -> None:
-    """ Test :class:`lib.system.System` __init__ and attributes """
+    """Test :class:`lib.system.System` __init__ and attributes"""
     assert isinstance(system_instance, System)
 
-    attrs = ["platform", "system", "machine", "release", "processor", "cpu_count",
-             "python_implementation", "python_version", "python_architecture", "encoding",
-             "is_conda", "is_admin", "is_virtual_env"]
+    attrs = [
+        "platform",
+        "system",
+        "machine",
+        "release",
+        "processor",
+        "cpu_count",
+        "python_implementation",
+        "python_version",
+        "python_architecture",
+        "encoding",
+        "is_conda",
+        "is_admin",
+        "is_virtual_env",
+    ]
     assert all(a in system_instance.__dict__ for a in attrs)
     assert all(a in attrs for a in system_instance.__dict__)
 
@@ -63,14 +75,16 @@ def test_system_init(system_instance: System) -> None:
     assert system_instance.python_version == platform.python_version()
     assert system_instance.python_architecture == platform.architecture()[0]
     assert system_instance.encoding == locale.getpreferredencoding()
-    assert system_instance.is_conda == ("conda" in sys.version.lower() or
-                                        os.path.exists(os.path.join(sys.prefix, "conda-meta")))
+    assert system_instance.is_conda == (
+        "conda" in sys.version.lower()
+        or os.path.exists(os.path.join(sys.prefix, "conda-meta"))
+    )
     assert isinstance(system_instance.is_admin, bool)
     assert isinstance(system_instance.is_virtual_env, bool)
 
 
 def test_system_properties(system_instance: System) -> None:
-    """ Test :class:`lib.system.System` properties """
+    """Test :class:`lib.system.System` properties"""
     assert hasattr(system_instance, "is_linux")
     assert isinstance(system_instance.is_linux, bool)
     if platform.system().lower() == "linux":
@@ -94,7 +108,7 @@ def test_system_properties(system_instance: System) -> None:
 
 
 def test_system_get_permissions(system_instance: System) -> None:
-    """ Test :class:`lib.system.System` _get_permissions method """
+    """Test :class:`lib.system.System` _get_permissions method"""
     assert hasattr(system_instance, "_get_permissions")
     is_admin = system_instance._get_permissions()
     if platform.system() == "Windows":
@@ -103,9 +117,10 @@ def test_system_get_permissions(system_instance: System) -> None:
         assert is_admin == (os.getuid() == 0)  # type:ignore  # pylint:disable=no-member
 
 
-def test_system_check_virtual_env(system_instance: System,
-                                  monkeypatch: pytest.MonkeyPatch) -> None:
-    """ Test :class:`lib.system.System` _check_virtual_env method """
+def test_system_check_virtual_env(
+    system_instance: System, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test :class:`lib.system.System` _check_virtual_env method"""
     system_instance.is_conda = True
     monkeypatch.setattr(system_mod.sys, "prefix", "/home/user/miniconda3/envs/testenv")
     assert system_instance._check_virtual_env()
@@ -120,10 +135,12 @@ def test_system_check_virtual_env(system_instance: System,
     assert not system_instance._check_virtual_env()
 
 
-def test_system_validate_python(system_instance: System,
-                                monkeypatch: pytest.MonkeyPatch,
-                                mocker: pytest_mock.MockerFixture) -> None:
-    """ Test :class:`lib.system.System` _validate_python method """
+def test_system_validate_python(
+    system_instance: System,
+    monkeypatch: pytest.MonkeyPatch,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """Test :class:`lib.system.System` _validate_python method"""
     monkeypatch.setattr(system_mod, "VALID_PYTHON", (((3, 11), (3, 13))))
     monkeypatch.setattr(system_mod.sys, "version_info", (3, 12, 0))
     monkeypatch.setattr("builtins.input", lambda _: "")
@@ -147,20 +164,25 @@ def test_system_validate_python(system_instance: System,
         assert sys_exit.called
 
 
-@pytest.mark.parametrize("system_name, machine, is_conda, should_exit", [
-    ("other", "x86_64", False, True),  # Unsupported OS
-    ("darwin", "arm64", True, False),  # Apple Silicon inside conda
-    ("darwin", "arm64", False, True),  # Apple Silicon outside conda
-    ("linux", "x86_64", True, False),  # Supported
-    ("windows", "x86_64", True, False),  # Supported
-    ])
-def test_system_validate(system_instance: System,
-                         mocker: pytest_mock.MockerFixture,
-                         system_name,
-                         machine,
-                         is_conda,
-                         should_exit) -> None:
-    """ Test :class:`lib.system.System` _validate method """
+@pytest.mark.parametrize(
+    "system_name, machine, is_conda, should_exit",
+    [
+        ("other", "x86_64", False, True),  # Unsupported OS
+        ("darwin", "arm64", True, False),  # Apple Silicon inside conda
+        ("darwin", "arm64", False, True),  # Apple Silicon outside conda
+        ("linux", "x86_64", True, False),  # Supported
+        ("windows", "x86_64", True, False),  # Supported
+    ],
+)
+def test_system_validate(
+    system_instance: System,
+    mocker: pytest_mock.MockerFixture,
+    system_name,
+    machine,
+    is_conda,
+    should_exit,
+) -> None:
+    """Test :class:`lib.system.System` _validate method"""
     validate_python = mocker.patch("lib.system.System.validate_python")
     system_instance.system = system_name
     system_instance.machine = machine
@@ -177,23 +199,29 @@ def test_system_validate(system_instance: System,
 # Packages
 @pytest.fixture(name="packages_instance")
 def packages_fixture() -> Packages:
-    """ Single :class:`lib.system.Packages` object for tests """
+    """Single :class:`lib.system.Packages` object for tests"""
     return Packages()
 
 
-def test_packages_init(packages_instance: Packages, mocker: pytest_mock.MockerFixture) -> None:
-    """ Test :class:`lib.system.Packages` __init__ and attributes """
+def test_packages_init(
+    packages_instance: Packages, mocker: pytest_mock.MockerFixture
+) -> None:
+    """Test :class:`lib.system.Packages` __init__ and attributes"""
     assert isinstance(packages_instance, Packages)
 
     attrs = ["_conda_exe", "_installed_python", "_installed_conda"]
     assert all(a in packages_instance.__dict__ for a in attrs)
     assert all(a in attrs for a in packages_instance.__dict__)
 
-    assert isinstance(packages_instance._conda_exe,
-                      str) or packages_instance._conda_exe is None
+    assert (
+        isinstance(packages_instance._conda_exe, str)
+        or packages_instance._conda_exe is None
+    )
     assert isinstance(packages_instance._installed_python, dict)
-    assert isinstance(packages_instance._installed_conda,
-                      list) or packages_instance._installed_conda is None
+    assert (
+        isinstance(packages_instance._installed_conda, list)
+        or packages_instance._installed_conda is None
+    )
 
     which = mocker.patch("lib.system.system.which")
     Packages()
@@ -201,7 +229,7 @@ def test_packages_init(packages_instance: Packages, mocker: pytest_mock.MockerFi
 
 
 def test_packages_properties(packages_instance: Packages) -> None:
-    """ Test :class:`lib.system.Packages` properties """
+    """Test :class:`lib.system.Packages` properties"""
     for prop in ("installed_python", "installed_conda"):
         assert hasattr(packages_instance, prop)
         assert isinstance(getattr(packages_instance, prop), dict)
@@ -210,29 +238,41 @@ def test_packages_properties(packages_instance: Packages) -> None:
         assert isinstance(getattr(packages_instance, pretty), str)
 
 
-def test_packages_get_installed_python(packages_instance: Packages,
-                                       mocker: pytest_mock.MockerFixture,
-                                       monkeypatch: pytest.MonkeyPatch) -> None:
-    """ Test :class:`lib.system.Packages` get_installed_python method """
+def test_packages_get_installed_python(
+    packages_instance: Packages,
+    mocker: pytest_mock.MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test :class:`lib.system.Packages` get_installed_python method"""
     lines_from_command = mocker.patch("lib.system.system._lines_from_command")
     monkeypatch.setattr(system_mod.sys, "executable", "python")
     out = packages_instance._get_installed_python()
-    lines_from_command.assert_called_once_with(["python", "-m", "pip", "freeze", "--local"])
+    lines_from_command.assert_called_once_with(
+        ["python", "-m", "pip", "freeze", "--local"]
+    )
     assert isinstance(out, dict)
 
-    monkeypatch.setattr(system_mod, "_lines_from_command", lambda _: ["pacKage1==1.0.0",
-                                                                      "PACKAGE2==1.1.0",
-                                                                      "# Ignored",
-                                                                      "malformed=1.2.3",
-                                                                      "package3==0.2.1"])
+    monkeypatch.setattr(
+        system_mod,
+        "_lines_from_command",
+        lambda _: [
+            "pacKage1==1.0.0",
+            "PACKAGE2==1.1.0",
+            "# Ignored",
+            "malformed=1.2.3",
+            "package3==0.2.1",
+        ],
+    )
     out = packages_instance._get_installed_python()
     assert out == {"package1": "1.0.0", "package2": "1.1.0", "package3": "0.2.1"}
 
 
-def test_packages_get_installed_conda(packages_instance: Packages,
-                                      mocker: pytest_mock.MockerFixture,
-                                      monkeypatch: pytest.MonkeyPatch) -> None:
-    """ Test :class:`lib.system.Packages` get_installed_conda method """
+def test_packages_get_installed_conda(
+    packages_instance: Packages,
+    mocker: pytest_mock.MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test :class:`lib.system.Packages` get_installed_conda method"""
     packages_instance._conda_exe = None
     packages_instance._installed_conda = None
     packages_instance._get_installed_conda()
@@ -250,7 +290,8 @@ def test_packages_get_installed_conda(packages_instance: Packages,
     _pkgs = [
         "package1            4.15.0           pypi_0              pypi",
         "pkg2                2025b            h78e105d_0          conda-forge",
-        "Packag3             3.1.3            pypi_0              defaults"]
+        "Packag3             3.1.3            pypi_0              defaults",
+    ]
     monkeypatch.setattr(system_mod, "_lines_from_command", lambda _: _pkgs)
     packages_instance._get_installed_conda()
     assert packages_instance._installed_conda == _pkgs

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-""" Queue Manager for faceswap
+"""Queue Manager for faceswap
 
-    NB: Keep this in it's own module! If it gets loaded from
-    a multiprocess on a Windows System it will break Faceswap"""
+NB: Keep this in it's own module! If it gets loaded from
+a multiprocess on a Windows System it will break Faceswap"""
 
 import logging
 import threading
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 class EventQueue(Queue):
-    """ Standard Queue object with a separate global shutdown parameter indicating that the main
+    """Standard Queue object with a separate global shutdown parameter indicating that the main
     process, and by extension this queue, should be shut down.
 
     Parameters
@@ -26,22 +26,24 @@ class EventQueue(Queue):
     maxsize: int, Optional
         Upperbound limit on the number of items that can be placed in the queue. Default: `0`
     """
+
     def __init__(self, shutdown_event: threading.Event, maxsize: int = 0) -> None:
         super().__init__(maxsize=maxsize)
         self._shutdown = shutdown_event
 
     @property
     def shutdown_event(self) -> threading.Event:
-        """ :class:`threading.Event`: The global shutdown event """
+        """:class:`threading.Event`: The global shutdown event"""
         return self._shutdown
 
 
-class _QueueManager():
-    """ Manage :class:`EventQueue` objects for availabilty across processes.
+class _QueueManager:
+    """Manage :class:`EventQueue` objects for availabilty across processes.
 
-        Notes
-        -----
-        Don't import this class directly, instead import via :func:`queue_manager` """
+    Notes
+    -----
+    Don't import this class directly, instead import via :func:`queue_manager`"""
+
     def __init__(self) -> None:
         logger.debug("Initializing %s", self.__class__.__name__)
 
@@ -50,7 +52,7 @@ class _QueueManager():
         logger.debug("Initialized %s", self.__class__.__name__)
 
     def add_queue(self, name: str, maxsize: int = 0, create_new: bool = False) -> str:
-        """ Add a :class:`EventQueue` to the manager.
+        """Add a :class:`EventQueue` to the manager.
 
         Parameters
         ----------
@@ -69,8 +71,12 @@ class _QueueManager():
         str
             The final generated name for the queue
         """
-        logger.debug("QueueManager adding: (name: '%s', maxsize: %s, create_new: %s)",
-                     name, maxsize, create_new)
+        logger.debug(
+            "QueueManager adding: (name: '%s', maxsize: %s, create_new: %s)",
+            name,
+            maxsize,
+            create_new,
+        )
         if not create_new and name in self.queues:
             raise ValueError(f"Queue '{name}' already exists.")
         if create_new and name in self.queues:
@@ -84,7 +90,7 @@ class _QueueManager():
         return name
 
     def del_queue(self, name: str) -> None:
-        """ Remove a queue from the manager
+        """Remove a queue from the manager
 
         Parameters
         ----------
@@ -96,7 +102,7 @@ class _QueueManager():
         logger.debug("QueueManager deleted: '%s'", name)
 
     def get_queue(self, name: str, maxsize: int = 0) -> EventQueue:
-        """ Return a :class:`EventQueue` from the manager. If it doesn't exist, create it.
+        """Return a :class:`EventQueue` from the manager. If it doesn't exist, create it.
 
         Parameters
         ----------
@@ -105,7 +111,7 @@ class _QueueManager():
         maxsize: int, Optional
             The maximum queue size. Set to `0` for unlimited. Only used if the requested queue
             does not already exist. Default: `0`
-         """
+        """
         logger.debug("QueueManager getting: '%s'", name)
         queue = self.queues.get(name)
         if not queue:
@@ -115,10 +121,10 @@ class _QueueManager():
         return queue
 
     def terminate_queues(self) -> None:
-        """ Terminates all managed queues.
+        """Terminates all managed queues.
 
         Sets the global shutdown event, clears and send EOF to all queues.  To be called if there
-        is an error """
+        is an error"""
         logger.debug("QueueManager terminating all queues")
         self.shutdown.set()
         self._flush_queues()
@@ -128,13 +134,13 @@ class _QueueManager():
         logger.debug("QueueManager terminated all queues")
 
     def _flush_queues(self):
-        """ Empty out the contents of every managed queue. """
+        """Empty out the contents of every managed queue."""
         for q_name in self.queues:
             self.flush_queue(q_name)
         logger.debug("QueueManager flushed all queues")
 
     def flush_queue(self, name: str) -> None:
-        """ Flush the contents from a managed queue.
+        """Flush the contents from a managed queue.
 
         Parameters
         ----------
@@ -147,7 +153,7 @@ class _QueueManager():
             queue.get(True, 1)
 
     def debug_monitor(self, update_interval: int = 2) -> None:
-        """ A debug tool for monitoring managed :class:`EventQueues`.
+        """A debug tool for monitoring managed :class:`EventQueues`.
 
         Prints queue sizes to the console for all managed queues.
 
@@ -156,13 +162,14 @@ class _QueueManager():
         update_interval: int, Optional
             The number of seconds between printing information to the console. Default: 2
         """
-        thread = threading.Thread(target=self._debug_queue_sizes,
-                                  args=(update_interval, ))
+        thread = threading.Thread(
+            target=self._debug_queue_sizes, args=(update_interval,)
+        )
         thread.daemon = True
         thread.start()
 
     def _debug_queue_sizes(self, update_interval) -> None:
-        """ Print the queue size for each managed queue to console.
+        """Print the queue size for each managed queue to console.
 
         Parameters
         ----------

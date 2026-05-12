@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-""" The default options for the faceswap Dfl_SAE Model plugin.
+"""The default options for the faceswap Dfl_SAE Model plugin.
 
 Defaults files should be named `<plugin_name>_defaults.py`
 
@@ -25,6 +25,7 @@ Items will be grouped together as per their `group` parameter, but otherwise wil
 the order that they are added to this module.
 from lib.config import ConfigItem
 """
+
 from lib.config import ConfigItem
 
 
@@ -36,8 +37,9 @@ output_size = ConfigItem(
     default=128,
     group="size",
     info="Resolution (in pixels) of the output image to generate on.\n"
-         "BE AWARE Larger resolution will dramatically increase VRAM requirements.\n"
-         "Must be 128 or 256.",
+    "BE AWARE Larger resolution will dramatically increase VRAM requirements.\n"
+    "Must be 128 or 256.",
     rounding=128,
     min_max=(128, 256),
-    fixed=True)
+    fixed=True,
+)

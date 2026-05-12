@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """VGG Obstructed face mask plugin"""
+
 from __future__ import annotations
 import logging
 import typing as T
@@ -23,13 +24,16 @@ logger = logging.getLogger(__name__)
 
 class VGGObstructed(FacePlugin):
     """Neural network to process face image into a segmentation mask of the face"""
+
     def __init__(self) -> None:
-        super().__init__(input_size=500,
-                         batch_size=cfg.batch_size(),
-                         is_rgb=False,
-                         dtype="float32",
-                         scale=(0, 255),
-                         centering="face")
+        super().__init__(
+            input_size=500,
+            batch_size=cfg.batch_size(),
+            is_rgb=False,
+            dtype="float32",
+            scale=(0, 255),
+            centering="face",
+        )
         self.model: VGGObstructedModel
 
     def load_model(self) -> VGGObstructedModel:
@@ -41,9 +45,10 @@ class VGGObstructed(FacePlugin):
         """
         weights = GetModel("Nirkin_500_softmax_v2.pth", 8).model_path
         assert isinstance(weights, str)
-        return T.cast(VGGObstructedModel, self.load_torch_model(VGGObstructedModel(),
-                                                                weights,
-                                                                return_indices=[0]))
+        return T.cast(
+            VGGObstructedModel,
+            self.load_torch_model(VGGObstructedModel(), weights, return_indices=[0]),
+        )
 
     def pre_process(self, batch: np.ndarray) -> np.ndarray:
         """Format the detected faces for prediction
@@ -57,7 +62,9 @@ class VGGObstructed(FacePlugin):
         -------
         The updated images for feeding the model
         """
-        return (batch - np.mean(batch, axis=(1, 2))[:, None, None, :]).transpose(0, 3, 1, 2)
+        return (batch - np.mean(batch, axis=(1, 2))[:, None, None, :]).transpose(
+            0, 3, 1, 2
+        )
 
     def process(self, batch: np.ndarray) -> np.ndarray:
         """Get the masks from the model
@@ -90,15 +97,20 @@ class ConvBlock(nn.Module):
     pool_padding
         The amount of padding to apply to the max pooling layer. Default: 1
     """
-    def __init__(self,
-                 in_channels: int,
-                 filters: int,
-                 iterations: int,
-                 padding: int = 1,
-                 pool_padding: int = 1) -> None:
+
+    def __init__(
+        self,
+        in_channels: int,
+        filters: int,
+        iterations: int,
+        padding: int = 1,
+        pool_padding: int = 1,
+    ) -> None:
         super().__init__()
-        layers = [nn.Conv2d(in_channels, filters, 3, padding=padding),
-                  nn.ReLU(inplace=True)]
+        layers = [
+            nn.Conv2d(in_channels, filters, 3, padding=padding),
+            nn.ReLU(inplace=True),
+        ]
         for _ in range(iterations - 1):
             layers.append(nn.Conv2d(filters, filters, 3, padding=1))
             layers.append(nn.ReLU(inplace=True))
@@ -134,6 +146,7 @@ class ScorePool(nn.Module):
     crop : tuple[int, int]
         The amount of 2D cropping to apply. Tuple of (Left/Top, Right/Bottom) `ints`
     """
+
     def __init__(self, in_channels: int, scale: float, crop: tuple[int, int]) -> None:
         super().__init__()
         self._scale = scale
@@ -154,7 +167,7 @@ class ScorePool(nn.Module):
         """
         x = inputs * self._scale
         x = self.conv(x)
-        x = x[:, :, self._crop[0]:-self._crop[1], self._crop[0]:-self._crop[1]]
+        x = x[:, :, self._crop[0] : -self._crop[1], self._crop[0] : -self._crop[1]]
         return x
 
 
@@ -171,6 +184,7 @@ class VGGObstructedModel(nn.Module):  # pylint:disable=too-many-instance-attribu
     Model file sourced from:
     https://github.com/YuvalNirkin/face_segmentation/releases/download/1.0/face_seg_fcn8s.zip
     """
+
     def __init__(self) -> None:
         super().__init__()
         self.zeropad = nn.ZeroPad2d(100)

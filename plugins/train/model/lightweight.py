@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-""" Lightweight Model by torzdf
-    An extremely limited model for training on low-end graphics cards
-    Based on the original https://www.reddit.com/r/deepfakes/
-    code sample + contributions """
+"""Lightweight Model by torzdf
+An extremely limited model for training on low-end graphics cards
+Based on the original https://www.reddit.com/r/deepfakes/
+code sample + contributions"""
 
 from keras import Input, layers, Model as KModel
 
@@ -14,13 +14,14 @@ from .original import Model as OriginalModel
 
 
 class Model(OriginalModel):
-    """ Lightweight Model for ~2GB Graphics Cards """
+    """Lightweight Model for ~2GB Graphics Cards"""
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.encoder_dim = 512
 
     def encoder(self):
-        """ Encoder Network """
+        """Encoder Network"""
         input_ = Input(shape=self.input_shape)
         var_x = input_
         var_x = Conv2DBlock(128, activation="leakyrelu")(var_x)
@@ -33,7 +34,7 @@ class Model(OriginalModel):
         return KModel(input_, var_x, name="encoder")
 
     def decoder(self, side):
-        """ Decoder Network """
+        """Decoder Network"""
         input_ = Input(shape=(8, 8, 256))
         var_x = input_
         var_x = UpscaleBlock(512, activation="leakyrelu")(var_x)
@@ -47,8 +48,8 @@ class Model(OriginalModel):
             var_y = UpscaleBlock(512, activation="leakyrelu")(var_y)
             var_y = UpscaleBlock(256, activation="leakyrelu")(var_y)
             var_y = UpscaleBlock(128, activation="leakyrelu")(var_y)
-            var_y = Conv2DOutput(1, 5,
-                                 activation="sigmoid",
-                                 name=f"mask_out_{side}")(var_y)
+            var_y = Conv2DOutput(1, 5, activation="sigmoid", name=f"mask_out_{side}")(
+                var_y
+            )
             outputs.append(var_y)
         return KModel(input_, outputs=outputs, name=f"decoder_{side}")

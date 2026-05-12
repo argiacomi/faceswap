@@ -4,6 +4,7 @@ From: https://github.com/deepinsight/insightface and  https://github.com/HuangYG
 
 Released under MIT License
 """
+
 import typing as T
 
 import torch
@@ -22,6 +23,7 @@ class SEModule(nn.Module):
     reduction
         The reduction factor for squeeze and excite
     """
+
     def __init__(self, in_channels: int, reduction: int) -> None:
         super().__init__()
         out_channels = in_channels // reduction
@@ -55,6 +57,7 @@ class BasicBlockIR(nn.Module):
     use_se
         ``True`` to add squeeze and excite layer
     """
+
     def __init__(self, in_channels: int, depth: int, stride: int, use_se: bool) -> None:
         super().__init__()
         if in_channels == depth:
@@ -62,14 +65,16 @@ class BasicBlockIR(nn.Module):
         else:
             self.shortcut_layer = nn.Sequential(
                 nn.Conv2d(in_channels, depth, 1, stride=stride, bias=False),
-                nn.BatchNorm2d(depth))
+                nn.BatchNorm2d(depth),
+            )
         res_layer = [
             nn.BatchNorm2d(in_channels),
             nn.Conv2d(in_channels, depth, 3, stride=1, padding=1, bias=False),
             nn.BatchNorm2d(depth),
             nn.PReLU(depth),
             nn.Conv2d(depth, depth, 3, stride=stride, padding=1, bias=False),
-            nn.BatchNorm2d(depth)]
+            nn.BatchNorm2d(depth),
+        ]
         if use_se:
             res_layer.append(SEModule(depth, 16))
         self.res_layer = nn.Sequential(*res_layer)
@@ -105,6 +110,7 @@ class BottleneckIR(nn.Module):
     use_se
         ``True`` to add squeeze and excite layer
     """
+
     def __init__(self, in_channels: int, depth: int, stride: int, use_se: bool) -> None:
         super().__init__()
         super().__init__()
@@ -114,16 +120,21 @@ class BottleneckIR(nn.Module):
         else:
             self.shortcut_layer = nn.Sequential(
                 nn.Conv2d(in_channels, depth, 1, stride=stride, bias=False),
-                nn.BatchNorm2d(depth))
-        res_layer = [nn.BatchNorm2d(in_channels),
-                     nn.Conv2d(in_channels, shrink_channel, 1, stride=1, padding=0, bias=False),
-                     nn.BatchNorm2d(shrink_channel),
-                     nn.PReLU(shrink_channel),
-                     nn.Conv2d(shrink_channel, shrink_channel, 3, stride=1, padding=1, bias=False),
-                     nn.BatchNorm2d(shrink_channel),
-                     nn.PReLU(shrink_channel),
-                     nn.Conv2d(shrink_channel, depth, 1, stride=stride, padding=0, bias=False),
-                     nn.BatchNorm2d(depth)]
+                nn.BatchNorm2d(depth),
+            )
+        res_layer = [
+            nn.BatchNorm2d(in_channels),
+            nn.Conv2d(in_channels, shrink_channel, 1, stride=1, padding=0, bias=False),
+            nn.BatchNorm2d(shrink_channel),
+            nn.PReLU(shrink_channel),
+            nn.Conv2d(
+                shrink_channel, shrink_channel, 3, stride=1, padding=1, bias=False
+            ),
+            nn.BatchNorm2d(shrink_channel),
+            nn.PReLU(shrink_channel),
+            nn.Conv2d(shrink_channel, depth, 1, stride=stride, padding=0, bias=False),
+            nn.BatchNorm2d(depth),
+        ]
         if use_se:
             res_layer.append(SEModule(depth, 16))
         self.res_layer = nn.Sequential(*res_layer)
@@ -146,7 +157,8 @@ class BottleneckIR(nn.Module):
 
 
 class Flatten(nn.Module):
-    """Flatten layer for IRNet """
+    """Flatten layer for IRNet"""
+
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         """Flatten the inbound layer
 
@@ -180,26 +192,35 @@ class IRNet(nn.Module):
     use_bottleneck
         ``True`` to use the Bottleneck block. ``False`` to use the Basic block. Default: ``False``
     """
-    def __init__(self,
-                 input_size: T.Literal[112, 224],
-                 block_filters: tuple[int, int, int, int],
-                 block_recursions: tuple[int, int, int, int],
-                 num_features: int = 512,
-                 use_se: bool = False,
-                 use_bottleneck: bool = False) -> None:
+
+    def __init__(
+        self,
+        input_size: T.Literal[112, 224],
+        block_filters: tuple[int, int, int, int],
+        block_recursions: tuple[int, int, int, int],
+        num_features: int = 512,
+        use_se: bool = False,
+        use_bottleneck: bool = False,
+    ) -> None:
         super().__init__()
-        self.input_layer = nn.Sequential(nn.Conv2d(3, 64, 3, stride=1, padding=1, bias=False),
-                                         nn.BatchNorm2d(64),
-                                         nn.PReLU(64))
-        self.body = self._get_blocks(block_filters, block_recursions, use_se, use_bottleneck)
+        self.input_layer = nn.Sequential(
+            nn.Conv2d(3, 64, 3, stride=1, padding=1, bias=False),
+            nn.BatchNorm2d(64),
+            nn.PReLU(64),
+        )
+        self.body = self._get_blocks(
+            block_filters, block_recursions, use_se, use_bottleneck
+        )
         self.output_layer = self._get_output_layer(input_size, num_features)
 
     @classmethod
-    def _get_blocks(cls,
-                    block_filters: tuple[int, int, int, int],
-                    block_recursions: tuple[int, int, int, int],
-                    use_se: bool,
-                    use_bottleneck: bool) -> nn.Sequential:
+    def _get_blocks(
+        cls,
+        block_filters: tuple[int, int, int, int],
+        block_recursions: tuple[int, int, int, int],
+        use_se: bool,
+        use_bottleneck: bool,
+    ) -> nn.Sequential:
         """Obtain the IRNet Blocks for the given configuration
 
         Parameters
@@ -228,8 +249,9 @@ class IRNet(nn.Module):
         return nn.Sequential(*layers)
 
     @classmethod
-    def _get_output_layer(cls, input_size: T.Literal[112, 224], num_features: int
-                          ) -> nn.Sequential:
+    def _get_output_layer(
+        cls, input_size: T.Literal[112, 224], num_features: int
+    ) -> nn.Sequential:
         """Obtain the output layer of the model, based on input size and number of layers
 
         Parameters
@@ -244,11 +266,13 @@ class IRNet(nn.Module):
         The output layer of the model
         """
         fc_scale = 7 * 7 if input_size == 112 else 14 * 14
-        return nn.Sequential(nn.BatchNorm2d(num_features),
-                             nn.Dropout(0.4),
-                             Flatten(),
-                             nn.Linear(num_features * fc_scale, 512),
-                             nn.BatchNorm1d(512, affine=False))
+        return nn.Sequential(
+            nn.BatchNorm2d(num_features),
+            nn.Dropout(0.4),
+            Flatten(),
+            nn.Linear(num_features * fc_scale, 512),
+            nn.BatchNorm1d(512, affine=False),
+        )
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         """Forward pass through IRNet
@@ -276,12 +300,14 @@ def ir_18(input_size: T.Literal[112, 224]):
     input_size
         The input size to the model
     """
-    return IRNet(input_size,
-                 block_filters=(64, 64, 128, 256),
-                 block_recursions=(2, 2, 2, 2),
-                 num_features=512,
-                 use_se=False,
-                 use_bottleneck=False)
+    return IRNet(
+        input_size,
+        block_filters=(64, 64, 128, 256),
+        block_recursions=(2, 2, 2, 2),
+        num_features=512,
+        use_se=False,
+        use_bottleneck=False,
+    )
 
 
 def ir_34(input_size: T.Literal[112, 224]) -> IRNet:
@@ -292,12 +318,14 @@ def ir_34(input_size: T.Literal[112, 224]) -> IRNet:
     input_size
         The input size to the model
     """
-    return IRNet(input_size,
-                 block_filters=(64, 64, 128, 256),
-                 block_recursions=(3, 4, 6, 3),
-                 num_features=512,
-                 use_se=False,
-                 use_bottleneck=False)
+    return IRNet(
+        input_size,
+        block_filters=(64, 64, 128, 256),
+        block_recursions=(3, 4, 6, 3),
+        num_features=512,
+        use_se=False,
+        use_bottleneck=False,
+    )
 
 
 def ir_50(input_size: T.Literal[112, 224]) -> IRNet:
@@ -308,12 +336,14 @@ def ir_50(input_size: T.Literal[112, 224]) -> IRNet:
     input_size
         The input size to the model
     """
-    return IRNet(input_size,
-                 block_filters=(64, 64, 128, 256),
-                 block_recursions=(3, 4, 14, 3),
-                 num_features=512,
-                 use_se=False,
-                 use_bottleneck=False)
+    return IRNet(
+        input_size,
+        block_filters=(64, 64, 128, 256),
+        block_recursions=(3, 4, 14, 3),
+        num_features=512,
+        use_se=False,
+        use_bottleneck=False,
+    )
 
 
 def ir_101(input_size: T.Literal[112, 224]) -> IRNet:
@@ -324,12 +354,14 @@ def ir_101(input_size: T.Literal[112, 224]) -> IRNet:
     input_size
         The input size to the model
     """
-    return IRNet(input_size,
-                 block_filters=(64, 64, 128, 256),
-                 block_recursions=(3, 13, 30, 3),
-                 num_features=512,
-                 use_se=False,
-                 use_bottleneck=False)
+    return IRNet(
+        input_size,
+        block_filters=(64, 64, 128, 256),
+        block_recursions=(3, 13, 30, 3),
+        num_features=512,
+        use_se=False,
+        use_bottleneck=False,
+    )
 
 
 def ir_152(input_size: T.Literal[112, 224]) -> IRNet:
@@ -340,12 +372,14 @@ def ir_152(input_size: T.Literal[112, 224]) -> IRNet:
     input_size
         The input size to the model
     """
-    return IRNet(input_size,
-                 block_filters=(64, 256, 512, 1024),
-                 block_recursions=(3, 8, 36, 3),
-                 num_features=2048,
-                 use_se=False,
-                 use_bottleneck=True)
+    return IRNet(
+        input_size,
+        block_filters=(64, 256, 512, 1024),
+        block_recursions=(3, 8, 36, 3),
+        num_features=2048,
+        use_se=False,
+        use_bottleneck=True,
+    )
 
 
 def ir_200(input_size: T.Literal[112, 224]) -> IRNet:
@@ -356,12 +390,14 @@ def ir_200(input_size: T.Literal[112, 224]) -> IRNet:
     input_size
         The input size to the model
     """
-    return IRNet(input_size,
-                 block_filters=(64, 256, 512, 1024),
-                 block_recursions=(3, 24, 36, 3),
-                 num_features=2048,
-                 use_se=False,
-                 use_bottleneck=True)
+    return IRNet(
+        input_size,
+        block_filters=(64, 256, 512, 1024),
+        block_recursions=(3, 24, 36, 3),
+        num_features=2048,
+        use_se=False,
+        use_bottleneck=True,
+    )
 
 
 def ir_se_50(input_size: T.Literal[112, 224]) -> IRNet:
@@ -372,12 +408,14 @@ def ir_se_50(input_size: T.Literal[112, 224]) -> IRNet:
     input_size
         The input size to the model
     """
-    return IRNet(input_size,
-                 block_filters=(64, 64, 128, 256),
-                 block_recursions=(3, 4, 14, 3),
-                 num_features=512,
-                 use_se=True,
-                 use_bottleneck=False)
+    return IRNet(
+        input_size,
+        block_filters=(64, 64, 128, 256),
+        block_recursions=(3, 4, 14, 3),
+        num_features=512,
+        use_se=True,
+        use_bottleneck=False,
+    )
 
 
 def ir_se_101(input_size: T.Literal[112, 224]) -> IRNet:
@@ -388,12 +426,14 @@ def ir_se_101(input_size: T.Literal[112, 224]) -> IRNet:
     input_size
         The input size to the model
     """
-    return IRNet(input_size,
-                 block_filters=(64, 64, 128, 256),
-                 block_recursions=(3, 13, 30, 3),
-                 num_features=512,
-                 use_se=True,
-                 use_bottleneck=False)
+    return IRNet(
+        input_size,
+        block_filters=(64, 64, 128, 256),
+        block_recursions=(3, 13, 30, 3),
+        num_features=512,
+        use_se=True,
+        use_bottleneck=False,
+    )
 
 
 def ir_se_152(input_size: T.Literal[112, 224]) -> IRNet:
@@ -404,12 +444,14 @@ def ir_se_152(input_size: T.Literal[112, 224]) -> IRNet:
     input_size
         The input size to the model
     """
-    return IRNet(input_size,
-                 block_filters=(64, 256, 512, 1024),
-                 block_recursions=(3, 8, 36, 3),
-                 num_features=2048,
-                 use_se=True,
-                 use_bottleneck=True)
+    return IRNet(
+        input_size,
+        block_filters=(64, 256, 512, 1024),
+        block_recursions=(3, 8, 36, 3),
+        num_features=2048,
+        use_se=True,
+        use_bottleneck=True,
+    )
 
 
 def ir_se_200(input_size: T.Literal[112, 224]) -> IRNet:
@@ -420,12 +462,14 @@ def ir_se_200(input_size: T.Literal[112, 224]) -> IRNet:
     input_size
         The input size to the model
     """
-    return IRNet(input_size,
-                 block_filters=(64, 256, 512, 1024),
-                 block_recursions=(3, 24, 36, 3),
-                 num_features=2048,
-                 use_se=True,
-                 use_bottleneck=True)
+    return IRNet(
+        input_size,
+        block_filters=(64, 256, 512, 1024),
+        block_recursions=(3, 24, 36, 3),
+        num_features=2048,
+        use_se=True,
+        use_bottleneck=True,
+    )
 
 
 __all__ = get_module_objects(__name__)

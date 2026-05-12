@@ -1,5 +1,6 @@
 #! /usr/env/bin/python3
-""" Unit test for :mod:`lib.training.tensorboard` """
+"""Unit test for :mod:`lib.training.tensorboard`"""
+
 import os
 
 import pytest
@@ -18,9 +19,11 @@ from lib.training import tensorboard as mod_tb
 def _gen_events_file(tmpdir):
     log_dir = tmpdir.mkdir("logs")
 
-    def _apply(keys=["test1"],  # pylint:disable=dangerous-default-value
-               values=[0.42],
-               global_steps=[4]):
+    def _apply(
+        keys=["test1"],  # pylint:disable=dangerous-default-value
+        values=[0.42],
+        global_steps=[4],
+    ):
         writer = SummaryWriter(log_dir)
         for key, val, step in zip(keys, values, global_steps):
             writer.add_scalar(key, val, global_step=step)
@@ -30,13 +33,18 @@ def _gen_events_file(tmpdir):
     return _apply
 
 
-@pytest.mark.parametrize("entries", ({"loss1": np.random.rand()},
-                                     {f"test{i}": np.random.rand() for i in range(4)},
-                                     {f"another_test{i}": np.random.rand() for i in range(10)}))
+@pytest.mark.parametrize(
+    "entries",
+    (
+        {"loss1": np.random.rand()},
+        {f"test{i}": np.random.rand() for i in range(4)},
+        {f"another_test{i}": np.random.rand() for i in range(10)},
+    ),
+)
 @pytest.mark.parametrize("batch", [1, 42, 69, 1024, 143432])
 @pytest.mark.parametrize("is_live", (True, False), ids=("live", "not_live"))
 def test_RecordIterator(entries, batch, is_live, _gen_events_file):
-    """ Test that our :class:`lib.training.tensorboard.RecordIterator` returns expected results """
+    """Test that our :class:`lib.training.tensorboard.RecordIterator` returns expected results"""
     keys = list(entries)
     vals = list(entries.values())
     batches = [batch + i for i in range(len(keys))]
@@ -67,9 +75,9 @@ def _get_ttb_instance(tmpdir):
     log_dir = tmpdir.mkdir("logs")
 
     def _apply(write_graph=False, update_freq="batch"):
-        instance = mod_tb.TorchTensorBoard(log_dir=log_dir,
-                                           write_graph=write_graph,
-                                           update_freq=update_freq)
+        instance = mod_tb.TorchTensorBoard(
+            log_dir=log_dir, write_graph=write_graph, update_freq=update_freq
+        )
         return log_dir, instance
 
     return _apply
@@ -79,18 +87,22 @@ def _get_logs(temp_path):
     train_logs = os.path.join(temp_path, "train")
     log_files = os.listdir(train_logs)
     assert len(log_files) == 1
-    records = [event_pb2.Event.FromString(record)
-               for record in mod_tb.RecordIterator(os.path.join(train_logs, log_files[0]))]
+    records = [
+        event_pb2.Event.FromString(record)
+        for record in mod_tb.RecordIterator(os.path.join(train_logs, log_files[0]))
+    ]
     return records
 
 
-@pytest.mark.parametrize("write_graph", (True, False), ids=("write_graph", "no_write_graph"))
+@pytest.mark.parametrize(
+    "write_graph", (True, False), ids=("write_graph", "no_write_graph")
+)
 def test_TorchTensorBoard_set_model(write_graph, _get_ttb_instance):
-    """ Test that :class:`lib.training.tensorboard.set_model` functions """
+    """Test that :class:`lib.training.tensorboard.set_model` functions"""
     log_dir, instance = _get_ttb_instance(write_graph=write_graph)
 
     model = Sequential()
-    model.add(layers.Input(shape=(8, )))
+    model.add(layers.Input(shape=(8,)))
     model.add(layers.Dense(4))
     model.add(layers.Dense(4))
 
@@ -98,8 +110,7 @@ def test_TorchTensorBoard_set_model(write_graph, _get_ttb_instance):
     instance.set_model(model)
     instance.on_save()
 
-    logs = [x for x in _get_logs(os.path.join(log_dir))
-            if x.summary.value]
+    logs = [x for x in _get_logs(os.path.join(log_dir)) if x.summary.value]
 
     if not write_graph:
         assert not logs
@@ -112,7 +123,7 @@ def test_TorchTensorBoard_set_model(write_graph, _get_ttb_instance):
 
 
 def test_TorchTensorBoard_on_train_begin(_get_ttb_instance):
-    """ Test that :class:`lib.training.tensorboard.on_train_begin` functions """
+    """Test that :class:`lib.training.tensorboard.on_train_begin` functions"""
     _, instance = _get_ttb_instance()
     instance.on_train_begin()
     assert instance._global_train_batch == 0
@@ -120,11 +131,16 @@ def test_TorchTensorBoard_on_train_begin(_get_ttb_instance):
 
 
 @pytest.mark.parametrize("batch", (1, 3, 57, 124))
-@pytest.mark.parametrize("logs", ({"loss_a": 2.45, "loss_b": 1.56},
-                                  {"loss_c": 0.54, "loss_d": 0.51},
-                                  {"loss_c": 0.69, "loss_d": 0.42, "loss_g": 2.69}))
+@pytest.mark.parametrize(
+    "logs",
+    (
+        {"loss_a": 2.45, "loss_b": 1.56},
+        {"loss_c": 0.54, "loss_d": 0.51},
+        {"loss_c": 0.69, "loss_d": 0.42, "loss_g": 2.69},
+    ),
+)
 def test_TorchTensorBoard_on_train_batch_end(batch, logs, _get_ttb_instance):
-    """ Test that :class:`lib.training.tensorboard.on_train_batch_end` functions """
+    """Test that :class:`lib.training.tensorboard.on_train_batch_end` functions"""
     log_dir, instance = _get_ttb_instance()
 
     assert not os.path.exists(os.path.join(log_dir, "train"))
@@ -132,8 +148,7 @@ def test_TorchTensorBoard_on_train_batch_end(batch, logs, _get_ttb_instance):
     instance.on_train_batch_end(batch, logs)
     instance.on_save()
 
-    tb_logs = [x for x in _get_logs(os.path.join(log_dir))
-               if x.summary.value]
+    tb_logs = [x for x in _get_logs(os.path.join(log_dir)) if x.summary.value]
 
     assert len(tb_logs) == len(logs)
     for (k, v), out in zip(logs.items(), tb_logs):
@@ -144,7 +159,7 @@ def test_TorchTensorBoard_on_train_batch_end(batch, logs, _get_ttb_instance):
 
 
 def test_TorchTensorBoard_on_save(_get_ttb_instance, mocker):
-    """ Test that :class:`lib.training.tensorboard.on_save` functions """
+    """Test that :class:`lib.training.tensorboard.on_save` functions"""
     # Implicitly checked in other tests, so just make sure it calls flush on the writer
     _, instance = _get_ttb_instance()
     instance._train_writer.flush = mocker.MagicMock()
@@ -154,7 +169,7 @@ def test_TorchTensorBoard_on_save(_get_ttb_instance, mocker):
 
 
 def test_TorchTensorBoard_on_train_end(_get_ttb_instance, mocker):
-    """ Test that :class:`lib.training.tensorboard.on_train_end` functions """
+    """Test that :class:`lib.training.tensorboard.on_train_end` functions"""
     # Saving is already implicitly checked in other tests, so just make sure it calls flush and
     # close on the train writer
     _, instance = _get_ttb_instance()

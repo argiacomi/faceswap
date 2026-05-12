@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Aligned faces for faceswap.py"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -15,8 +16,14 @@ from lib.logger import parse_class_init
 from lib.utils import get_module_objects
 
 from .constants import CenteringType, EXTRACT_RATIOS, LandmarkType, MEAN_FACE
-from .aligned_utils import (get_base_size, get_sub_crop_size, get_matrix_scaling, points_to_68,
-                            sub_crop, transform_image)
+from .aligned_utils import (
+    get_base_size,
+    get_sub_crop_size,
+    get_matrix_scaling,
+    points_to_68,
+    sub_crop,
+    transform_image,
+)
 from .aligned_mask import LandmarksMask
 from .pose import PoseEstimate
 
@@ -64,6 +71,7 @@ class _FaceCache:  # pylint:disable=too-many-instance-attributes
     cropped_slices
         The slices for an input full head image and output cropped image. Default: `{}`
     """
+
     pose: PoseEstimate | None = None
     original_roi: np.ndarray | None = None
     landmarks: np.ndarray | None = None
@@ -73,8 +81,9 @@ class _FaceCache:  # pylint:disable=too-many-instance-attributes
     adjusted_matrix: np.ndarray | None = None
     interpolators: tuple[int, int] = (0, 0)
     cropped_roi: dict[CenteringType, np.ndarray] = field(default_factory=dict)
-    cropped_slices: dict[CenteringType, dict[T.Literal["in", "out"],
-                                             tuple[slice, slice]]] = field(default_factory=dict)
+    cropped_slices: dict[
+        CenteringType, dict[T.Literal["in", "out"], tuple[slice, slice]]
+    ] = field(default_factory=dict)
 
     _locks: dict[str, Lock] = field(default_factory=dict)
 
@@ -97,7 +106,7 @@ class _FaceCache:  # pylint:disable=too-many-instance-attributes
         return self._locks[name]
 
 
-class AlignedFace():  # pylint:disable=too-many-instance-attributes
+class AlignedFace:  # pylint:disable=too-many-instance-attributes
     """Class to align a face.
 
     Holds the aligned landmarks and face image, as well as associated matrices and information
@@ -134,16 +143,19 @@ class AlignedFace():  # pylint:disable=too-many-instance-attributes
         Only used if `is_aligned` is ``True``. ``True`` indicates that the aligned image being
         loaded is a legacy extracted face rather than a current head extracted face
     """
-    def __init__(self,
-                 landmarks: np.ndarray,
-                 image: np.ndarray | None = None,
-                 centering: CenteringType = "face",
-                 size: int = 64,
-                 coverage_ratio: float = 1.0,
-                 y_offset: float = 0.0,
-                 dtype: str | None = None,
-                 is_aligned: bool = False,
-                 is_legacy: bool = False) -> None:
+
+    def __init__(
+        self,
+        landmarks: np.ndarray,
+        image: np.ndarray | None = None,
+        centering: CenteringType = "face",
+        size: int = 64,
+        coverage_ratio: float = 1.0,
+        y_offset: float = 0.0,
+        dtype: str | None = None,
+        is_aligned: bool = False,
+        is_legacy: bool = False,
+    ) -> None:
         logger.trace(parse_class_init(locals()))  # type:ignore[attr-defined]
         self._frame_landmarks = landmarks
         self._landmark_type = LandmarkType.from_shape(landmarks.shape)
@@ -153,20 +165,30 @@ class AlignedFace():  # pylint:disable=too-many-instance-attributes
         self._y_offset = y_offset
         self._dtype = dtype
         self._is_aligned = is_aligned
-        self._source_centering: CenteringType = "legacy" if is_legacy and is_aligned else "head"
+        self._source_centering: CenteringType = (
+            "legacy" if is_legacy and is_aligned else "head"
+        )
         self._padding = self._padding_from_coverage(size, coverage_ratio)
 
         lookup = self._landmark_type
-        self._mean_lookup = LandmarkType.LM_2D_51 if lookup in (LandmarkType.LM_2D_68,
-                                                                LandmarkType.LM_2D_98) else lookup
+        self._mean_lookup = (
+            LandmarkType.LM_2D_51
+            if lookup in (LandmarkType.LM_2D_68, LandmarkType.LM_2D_98)
+            else lookup
+        )
 
         self._cache = _FaceCache()
-        self._matrices: dict[CenteringType, np.ndarray] = {"legacy": self._get_default_matrix()}
+        self._matrices: dict[CenteringType, np.ndarray] = {
+            "legacy": self._get_default_matrix()
+        }
 
         self._face = self.extract_face(image)
-        logger.trace("Initialized: %s (padding: %s, face shape: %s)",  # type:ignore[attr-defined]
-                     self.__class__.__name__, self._padding,
-                     self._face if self._face is None else self._face.shape)
+        logger.trace(
+            "Initialized: %s (padding: %s, face shape: %s)",  # type:ignore[attr-defined]
+            self.__class__.__name__,
+            self._padding,
+            self._face if self._face is None else self._face.shape,
+        )
 
     @property
     def centering(self) -> T.Literal["legacy", "head", "face"]:
@@ -198,8 +220,11 @@ class AlignedFace():  # pylint:disable=too-many-instance-attributes
             matrix = self._matrices["legacy"].copy()
             matrix[:, 2] -= self.pose.offset[self._centering]
             self._matrices[self._centering] = matrix
-            logger.trace("original matrix: %s, new matrix: %s",  # type:ignore[attr-defined]
-                         self._matrices["legacy"], matrix)
+            logger.trace(
+                "original matrix: %s, new matrix: %s",  # type:ignore[attr-defined]
+                self._matrices["legacy"],
+                matrix,
+            )
         return self._matrices[self._centering]
 
     @property
@@ -207,8 +232,12 @@ class AlignedFace():  # pylint:disable=too-many-instance-attributes
         """The estimated pose in 3D space."""
         with self._cache.lock("pose"):
             if self._cache.pose is None:
-                lms = np.nan_to_num(cv2.transform(np.expand_dims(self._frame_landmarks, axis=1),
-                                    self._matrices["legacy"]).squeeze())
+                lms = np.nan_to_num(
+                    cv2.transform(
+                        np.expand_dims(self._frame_landmarks, axis=1),
+                        self._matrices["legacy"],
+                    ).squeeze()
+                )
                 self._cache.pose = PoseEstimate(lms, self._landmark_type)
         return self._cache.pose
 
@@ -228,7 +257,7 @@ class AlignedFace():  # pylint:disable=too-many-instance-attributes
     def face(self) -> np.ndarray | None:
         """The aligned face at the given :attr:`size` at the specified :attr:`coverage` in the
         given :attr:`dtype`. If an :attr:`image` has not been provided then an the attribute will
-        return ``None``. """
+        return ``None``."""
         return self._face
 
     @property
@@ -236,10 +265,14 @@ class AlignedFace():  # pylint:disable=too-many-instance-attributes
         """The location of the extracted face box within the original frame."""
         with self._cache.lock("original_roi"):
             if self._cache.original_roi is None:
-                roi = np.array([[0, 0],
-                                [0, self._size - 1],
-                                [self._size - 1, self._size - 1],
-                                [self._size - 1, 0]])
+                roi = np.array(
+                    [
+                        [0, 0],
+                        [0, self._size - 1],
+                        [self._size - 1, self._size - 1],
+                        [self._size - 1, 0],
+                    ]
+                )
                 roi = np.rint(self.transform_points(roi, invert=True)).astype("int32")
                 logger.trace("original roi: %s", roi)  # type:ignore[attr-defined]
                 self._cache.original_roi = roi
@@ -287,7 +320,10 @@ class AlignedFace():  # pylint:disable=too-many-instance-attributes
         aligning the image."""
         with self._cache.lock("average_distance"):
             if not self._cache.average_distance:
-                if self._landmark_type not in (LandmarkType.LM_2D_68, LandmarkType.LM_2D_98):
+                if self._landmark_type not in (
+                    LandmarkType.LM_2D_68,
+                    LandmarkType.LM_2D_98,
+                ):
                     return 0.0
                 mean_face = MEAN_FACE[self._mean_lookup]
                 lms = self.normalized_landmarks
@@ -306,23 +342,33 @@ class AlignedFace():  # pylint:disable=too-many-instance-attributes
         negative values indicate that eyes/eyebrows are misaligned below the mouth."""
         with self._cache.lock("relative_eye_mouth_position"):
             if not self._cache.relative_eye_mouth_position:
-                if self._landmark_type not in (LandmarkType.LM_2D_68, LandmarkType.LM_2D_98):
+                if self._landmark_type not in (
+                    LandmarkType.LM_2D_68,
+                    LandmarkType.LM_2D_98,
+                ):
                     position = 1.0  # arbitrary positive value
                 else:
                     lms = self.normalized_landmarks
                     if self._landmark_type != LandmarkType.LM_2D_68:
                         lms = points_to_68(lms)
-                    lowest_eyes = np.max(self.normalized_landmarks[np.r_[17:27, 36:48], 1])
+                    lowest_eyes = np.max(
+                        self.normalized_landmarks[np.r_[17:27, 36:48], 1]
+                    )
                     highest_mouth = np.min(self.normalized_landmarks[48:68, 1])
                     position = highest_mouth - lowest_eyes
                     logger.trace(  # type:ignore[attr-defined]
                         "lowest_eyes: %s, highest_mouth: %s, relative_eye_mouth_position: %s",
-                        lowest_eyes, highest_mouth, position)
+                        lowest_eyes,
+                        highest_mouth,
+                        position,
+                    )
                 self._cache.relative_eye_mouth_position = position
         return self._cache.relative_eye_mouth_position
 
     @classmethod
-    def _padding_from_coverage(cls, size: int, coverage_ratio: float) -> dict[CenteringType, int]:
+    def _padding_from_coverage(
+        cls, size: int, coverage_ratio: float
+    ) -> dict[CenteringType, int]:
         """Return the image padding for a face from coverage_ratio set against a pre-padded
         training image.
 
@@ -337,9 +383,14 @@ class AlignedFace():  # pylint:disable=too-many-instance-attributes
         -------
         The padding required, in pixels for 'head', 'face' and 'legacy' face types
         """
-        retval = {_type: round(size * (EXTRACT_RATIOS[_type] + coverage_ratio - 1) /
-                               (2 * coverage_ratio))
-                  for _type in T.get_args(T.Literal["legacy", "face", "head"])}
+        retval = {
+            _type: round(
+                size
+                * (EXTRACT_RATIOS[_type] + coverage_ratio - 1)
+                / (2 * coverage_ratio)
+            )
+            for _type in T.get_args(T.Literal["legacy", "face", "head"])
+        }
         logger.trace(retval)  # type:ignore[attr-defined]
         return retval
 
@@ -379,11 +430,15 @@ class AlignedFace():  # pylint:disable=too-many-instance-attributes
         mat = self.adjusted_matrix
         if self.y_offset:
             mat = mat.copy()
-            mat[1, 2] += (self.y_offset * (self._size - self.padding * 2))
+            mat[1, 2] += self.y_offset * (self._size - self.padding * 2)
         mat = cv2.invertAffineTransform(mat) if invert else mat
         retval = cv2.transform(retval, mat).squeeze()
         logger.trace(  # type:ignore[attr-defined]
-            "invert: %s, Original points: %s, transformed points: %s", invert, points, retval)
+            "invert: %s, Original points: %s, transformed points: %s",
+            invert,
+            points,
+            retval,
+        )
         return retval
 
     def extract_face(self, image: np.ndarray | None) -> np.ndarray | None:
@@ -402,17 +457,25 @@ class AlignedFace():  # pylint:disable=too-many-instance-attributes
         ``None`` if no image has been provided.
         """
         if image is None:
-            logger.trace("_extract_face called without a loaded "  # type:ignore[attr-defined]
-                         "image. Returning empty face.")
+            logger.trace(
+                "_extract_face called without a loaded "  # type:ignore[attr-defined]
+                "image. Returning empty face."
+            )
             return None
 
         if self._is_aligned:
             # Crop out the sub face from full head
             image = self._convert_centering(image)
 
-        if self._is_aligned and image.shape[0] != self._size:  # Resize the given aligned face
-            interpolation = cv2.INTER_CUBIC if image.shape[0] < self._size else cv2.INTER_AREA
-            retval = cv2.resize(image, (self._size, self._size), interpolation=interpolation)
+        if (
+            self._is_aligned and image.shape[0] != self._size
+        ):  # Resize the given aligned face
+            interpolation = (
+                cv2.INTER_CUBIC if image.shape[0] < self._size else cv2.INTER_AREA
+            )
+            retval = cv2.resize(
+                image, (self._size, self._size), interpolation=interpolation
+            )
         elif self._is_aligned:
             retval = image
         else:
@@ -439,23 +502,30 @@ class AlignedFace():  # pylint:disable=too-many-instance-attributes
         """
         logger.trace(  # type:ignore[attr-defined]
             "image_size: %s, target_size: %s, coverage_ratio: %s",
-            image.shape[0], self.size, self._coverage_ratio)
+            image.shape[0],
+            self.size,
+            self._coverage_ratio,
+        )
 
         img_size = image.shape[0]
-        target_size = get_sub_crop_size(self._source_centering,
-                                        self._centering,
-                                        img_size,
-                                        self._coverage_ratio)
+        target_size = get_sub_crop_size(
+            self._source_centering, self._centering, img_size, self._coverage_ratio
+        )
         base_size = get_base_size(img_size, self._source_centering, 1.0)
         padding_diff = (img_size - target_size) / 2
-        delta = self.pose.offset[self._centering] - self.pose.offset[self._source_centering]
+        delta = (
+            self.pose.offset[self._centering] - self.pose.offset[self._source_centering]
+        )
         if self.y_offset:
             delta[1] -= self.y_offset
         offset = np.rint(delta * base_size + padding_diff).astype("int32")
         retval = sub_crop(image, offset, target_size)
         logger.trace(  # type:ignore[attr-defined]
             "Cropped from aligned extract: (centering: %s, in shape: %s, out shape: %s)",
-            self._centering, image.shape, retval.shape)
+            self._centering,
+            image.shape,
+            retval.shape,
+        )
         return retval
 
     def split_mask(self) -> np.ndarray:
@@ -476,12 +546,14 @@ class AlignedFace():  # pylint:disable=too-many-instance-attributes
         self._face = self._face[..., :3]
         return mask
 
-    def get_landmark_mask(self,
-                          area: T.Literal["eye", "mouth", "face", "face_extended"],
-                          dilation: float = 0,
-                          blur_kernel: int = 0,
-                          blur_type: T.Literal["gaussian", "normalized"] | None = "gaussian",
-                          blur_passes: int = 1) -> npt.NDArray[np.uint8]:
+    def get_landmark_mask(
+        self,
+        area: T.Literal["eye", "mouth", "face", "face_extended"],
+        dilation: float = 0,
+        blur_kernel: int = 0,
+        blur_type: T.Literal["gaussian", "normalized"] | None = "gaussian",
+        blur_passes: int = 1,
+    ) -> npt.NDArray[np.uint8]:
         """Obtain a :class:`~lib.align.aligned_mask.LandmarksMask` based mask for this face
 
         Landmark based masks are generated from Aligned Face landmark points.
@@ -508,18 +580,22 @@ class AlignedFace():  # pylint:disable=too-many-instance-attributes
         The requested Landmarks Mask
         """
         logger.trace("area: %s, dilation: %s", area, dilation)  # type:ignore[attr-defined]
-        mask = LandmarksMask(area,
-                             self.landmark_type,
-                             self.landmarks,
-                             self.size,
-                             dilation=dilation,
-                             blur_kernel=blur_kernel,
-                             blur_type=blur_type,
-                             blur_passes=blur_passes)
+        mask = LandmarksMask(
+            area,
+            self.landmark_type,
+            self.landmarks,
+            self.size,
+            dilation=dilation,
+            blur_kernel=blur_kernel,
+            blur_type=blur_type,
+            blur_passes=blur_passes,
+        )
         return mask.mask
 
 
-def _umeyama(source: np.ndarray, destination: np.ndarray, estimate_scale: bool) -> np.ndarray:
+def _umeyama(
+    source: np.ndarray, destination: np.ndarray, estimate_scale: bool
+) -> np.ndarray:
     """Estimate N-D similarity transformation with or without scaling.
 
     Imported, and slightly adapted, directly from:
@@ -596,7 +672,9 @@ def _umeyama(source: np.ndarray, destination: np.ndarray, estimate_scale: bool) 
     return retval
 
 
-def batch_umeyama(source: np.ndarray, destination: np.ndarray, estimate_scale: bool) -> np.ndarray:
+def batch_umeyama(
+    source: np.ndarray, destination: np.ndarray, estimate_scale: bool
+) -> np.ndarray:
     """A batch implementation to estimate N-D similarity transformation with or without scaling.
 
     Parameters
@@ -622,12 +700,12 @@ def batch_umeyama(source: np.ndarray, destination: np.ndarray, estimate_scale: b
     batch_size, num, dim = source.shape  # (B, M, N)
 
     # Compute mean of source and destination.
-    src_mean = source.mean(axis=1)       # (B, N)
+    src_mean = source.mean(axis=1)  # (B, N)
     dst_mean = destination.mean(axis=0)  # (N, )
 
     # Subtract mean from source and destination.
     src_demean = source - src_mean[:, None]  # (B, M, N)
-    dst_demean = destination - dst_mean      # (M, N)
+    dst_demean = destination - dst_mean  # (M, N)
 
     # Eq. (38).
     a = dst_demean.T @ src_demean / num  # (B, N, N)

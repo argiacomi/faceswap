@@ -5,6 +5,7 @@ https://arxiv.org/abs/1708.05237
 Adapted from S3FD Port in FAN:
 https://github.com/1adrianb/face-alignment
 """
+
 from __future__ import annotations
 import logging
 import typing as T
@@ -26,12 +27,15 @@ logger = logging.getLogger(__name__)
 
 class S3FD(ExtractPlugin):
     """S3FD detector for face detection"""
+
     def __init__(self) -> None:
-        super().__init__(input_size=640,
-                         batch_size=cfg.batch_size(),
-                         is_rgb=False,
-                         dtype="float32",
-                         scale=(0, 255))
+        super().__init__(
+            input_size=640,
+            batch_size=cfg.batch_size(),
+            is_rgb=False,
+            dtype="float32",
+            scale=(0, 255),
+        )
         self.model: S3FDModel
         self._model_path = self._get_weights_path()
         self._average_img = np.array([104.0, 117.0, 123.0], dtype="float32")
@@ -56,7 +60,9 @@ class S3FD(ExtractPlugin):
         -------
         The loaded S3FD model
         """
-        weights = GetModel(model_filename="s3fd_torch_v3.pth", git_model_id=11).model_path
+        weights = GetModel(
+            model_filename="s3fd_torch_v3.pth", git_model_id=11
+        ).model_path
         assert isinstance(weights, str)
         return T.cast(S3FDModel, self.load_torch_model(S3FDModel(), weights))
 
@@ -106,16 +112,23 @@ class S3FD(ExtractPlugin):
         Decoded bounding box predictions
         """
         variances = [0.1, 0.2]
-        boxes = np.concatenate((priors[:, :2] + location[:, :2] * variances[0] * priors[:, 2:],
-                                priors[:, 2:] * np.exp(location[:, 2:] * variances[1])), axis=1)
+        boxes = np.concatenate(
+            (
+                priors[:, :2] + location[:, :2] * variances[0] * priors[:, 2:],
+                priors[:, 2:] * np.exp(location[:, 2:] * variances[1]),
+            ),
+            axis=1,
+        )
         boxes[:, :2] -= boxes[:, 2:] / 2
         boxes[:, 2:] += boxes[:, :2]
         return boxes
 
-    def _process_bbox(self,  # pylint:disable=too-many-locals
-                      o_cls: np.ndarray,
-                      o_reg: np.ndarray,
-                      stride: int) -> list[list[np.ndarray]]:
+    def _process_bbox(
+        self,  # pylint:disable=too-many-locals
+        o_cls: np.ndarray,
+        o_reg: np.ndarray,
+        stride: int,
+    ) -> list[list[np.ndarray]]:
         """Process a bounding box
 
         Parameters
@@ -138,7 +151,9 @@ class S3FD(ExtractPlugin):
             if score < self._confidence:
                 continue
             loc = o_reg[:, :, h_idx, w_idx].copy()
-            priors = np.array([[axc / 1.0, ayc / 1.0, stride * 4 / 1.0, stride * 4 / 1.0]])
+            priors = np.array(
+                [[axc / 1.0, ayc / 1.0, stride * 4 / 1.0, stride * 4 / 1.0]]
+            )
             box = self.decode(loc, priors)
             x_1, y_1, x_2, y_2 = box[0] * 1.0
             retval.append([x_1, y_1, x_2, y_2, score])
@@ -159,7 +174,7 @@ class S3FD(ExtractPlugin):
         retval = []
         for i in range(len(bbox_list) // 2):
             o_cls, o_reg = bbox_list[i * 2], bbox_list[i * 2 + 1]
-            stride = 2 ** (i + 2)    # 4,8,16,32,64,128
+            stride = 2 ** (i + 2)  # 4,8,16,32,64,128
             retval.extend(self._process_bbox(o_cls, o_reg, stride))
 
         return_numpy = np.array(retval) if len(retval) != 0 else np.zeros((1, 5))
@@ -191,13 +206,16 @@ class S3FD(ExtractPlugin):
             min_of_xy = np.minimum(boxes[best_rest[0], 2:4], boxes[best_rest[1], 2:4])
             width_height = np.maximum(0, min_of_xy - max_of_xy + 1)
             intersection_areas = width_height[:, 0] * width_height[:, 1]
-            iou = intersection_areas / (areas[best_rest[0]] +
-                                        areas[best_rest[1]] - intersection_areas)
+            iou = intersection_areas / (
+                areas[best_rest[0]] + areas[best_rest[1]] - intersection_areas
+            )
 
             overlapping_boxes = (iou > threshold).nonzero()[0]
             if len(overlapping_boxes) != 0:
                 overlap_set = ranked_indices[overlapping_boxes + 1]
-                vote = np.average(boxes[overlap_set, :4], axis=0, weights=boxes[overlap_set, 4])
+                vote = np.average(
+                    boxes[overlap_set, :4], axis=0, weights=boxes[overlap_set, 4]
+                )
                 boxes[best_rest[0], :4] = vote
             retained_box_indices.append(best_rest[0])
 
@@ -220,7 +238,7 @@ class S3FD(ExtractPlugin):
         ret = []
         batch_size = range(batch[0].shape[0])
         for img in batch_size:
-            bbox_list = [scale[img:img+1] for scale in batch]
+            bbox_list = [scale[img : img + 1] for scale in batch]
             boxes = self._post_process(bbox_list)
             final_list = self._nms(boxes, 0.5)
             ret.append(final_list[..., :4])
@@ -242,6 +260,7 @@ class L2Norm(nn.Module):
     scale
         The scaling for initial weights. Default: `1.0`
     """
+
     def __init__(self, n_channels: int, scale: float) -> None:
         super().__init__()
         self.n_channels = n_channels
@@ -268,6 +287,7 @@ class L2Norm(nn.Module):
 
 class S3FDModel(nn.Module):  # pylint:disable=too-many-instance-attributes
     """The S3FD Model, adapted from https://github.com/1adrianb/face-alignment"""
+
     def __init__(self) -> None:
         super().__init__()
         self.conv1_1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1)
@@ -301,12 +321,24 @@ class S3FDModel(nn.Module):  # pylint:disable=too-many-instance-attributes
         self.conv4_3_norm = L2Norm(512, scale=8)
         self.conv5_3_norm = L2Norm(512, scale=5)
 
-        self.conv3_3_norm_mbox_conf = nn.Conv2d(256, 4, kernel_size=3, stride=1, padding=1)
-        self.conv3_3_norm_mbox_loc = nn.Conv2d(256, 4, kernel_size=3, stride=1, padding=1)
-        self.conv4_3_norm_mbox_conf = nn.Conv2d(512, 2, kernel_size=3, stride=1, padding=1)
-        self.conv4_3_norm_mbox_loc = nn.Conv2d(512, 4, kernel_size=3, stride=1, padding=1)
-        self.conv5_3_norm_mbox_conf = nn.Conv2d(512, 2, kernel_size=3, stride=1, padding=1)
-        self.conv5_3_norm_mbox_loc = nn.Conv2d(512, 4, kernel_size=3, stride=1, padding=1)
+        self.conv3_3_norm_mbox_conf = nn.Conv2d(
+            256, 4, kernel_size=3, stride=1, padding=1
+        )
+        self.conv3_3_norm_mbox_loc = nn.Conv2d(
+            256, 4, kernel_size=3, stride=1, padding=1
+        )
+        self.conv4_3_norm_mbox_conf = nn.Conv2d(
+            512, 2, kernel_size=3, stride=1, padding=1
+        )
+        self.conv4_3_norm_mbox_loc = nn.Conv2d(
+            512, 4, kernel_size=3, stride=1, padding=1
+        )
+        self.conv5_3_norm_mbox_conf = nn.Conv2d(
+            512, 2, kernel_size=3, stride=1, padding=1
+        )
+        self.conv5_3_norm_mbox_loc = nn.Conv2d(
+            512, 4, kernel_size=3, stride=1, padding=1
+        )
 
         self.fc7_mbox_conf = nn.Conv2d(1024, 2, kernel_size=3, stride=1, padding=1)
         self.fc7_mbox_loc = nn.Conv2d(1024, 4, kernel_size=3, stride=1, padding=1)
@@ -315,8 +347,10 @@ class S3FDModel(nn.Module):  # pylint:disable=too-many-instance-attributes
         self.conv7_2_mbox_conf = nn.Conv2d(256, 2, kernel_size=3, stride=1, padding=1)
         self.conv7_2_mbox_loc = nn.Conv2d(256, 4, kernel_size=3, stride=1, padding=1)
 
-    def forward(self,  # pylint:disable=too-many-locals,too-many-statements
-                inputs: torch.Tensor) -> list[torch.Tensor]:
+    def forward(
+        self,  # pylint:disable=too-many-locals,too-many-statements
+        inputs: torch.Tensor,
+    ) -> list[torch.Tensor]:
         """Run the forward pass through S3FD
 
         Parameters
@@ -386,7 +420,20 @@ class S3FDModel(nn.Module):  # pylint:disable=too-many-instance-attributes
         b_max = torch.max(torch.max(chunk[0], chunk[1]), chunk[2])
         cls1 = torch.cat([b_max, chunk[3]], dim=1)
 
-        outputs = [cls1, reg1, cls2, reg2, cls3, reg3, cls4, reg4, cls5, reg5, cls6, reg6]
+        outputs = [
+            cls1,
+            reg1,
+            cls2,
+            reg2,
+            cls3,
+            reg3,
+            cls4,
+            reg4,
+            cls5,
+            reg5,
+            cls6,
+            reg6,
+        ]
         for i in range(len(outputs) // 2):
             outputs[i * 2] = F.softmax(outputs[i * 2], dim=1)
 

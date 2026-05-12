@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Handles updating of an alignments file from an older version to the current version."""
+
 from __future__ import annotations
 
 import logging
@@ -17,7 +18,7 @@ from .objects import AlignmentsEntry
 logger = logging.getLogger(__name__)
 
 
-class _Updater():
+class _Updater:
     """Base class for inheriting to test for and update of an alignments file property
 
     Parameters
@@ -27,6 +28,7 @@ class _Updater():
     version
         The alignments file version that has been loaded
     """
+
     def __init__(self, alignments: dict[str, T.Any], version: float) -> None:
         logger.debug(parse_class_init(locals()))
         self._alignments = alignments
@@ -99,7 +101,10 @@ class VideoExtension(_Updater):
     video_filename
         The video filename that holds these alignments
     """
-    def __init__(self, alignments: dict[str, T.Any], version: float, video_filename: str) -> None:
+
+    def __init__(
+        self, alignments: dict[str, T.Any], version: float, video_filename: str
+    ) -> None:
         self._video_name, self._extension = os.path.splitext(video_filename)
         super().__init__(alignments, version)
         self._alignments: dict[str, AlignmentsEntry]
@@ -126,8 +131,11 @@ class VideoExtension(_Updater):
             logger.debug("Alignments file contains correct key extensions. Skipping")
             return False
 
-        logger.debug("Needs update for video extension (version: %s, extension: %s)",
-                     self._version, self._extension)
+        logger.debug(
+            "Needs update for video extension (version: %s, extension: %s)",
+            self._version,
+            self._extension,
+        )
         return True
 
     def update(self) -> int:
@@ -161,6 +169,7 @@ class FileStructure(_Updater):
     """Alignments were structured: {frame_name: <list of faces>}. We need to be able to store
     information at the frame level, so new structure is:  {frame_name: {faces: <list of faces>}}
     """
+
     def test(self) -> bool:
         """Test whether the alignments file is laid out in the old structure of
         `{frame_name: [faces]}`
@@ -189,7 +198,8 @@ class FileStructure(_Updater):
 
 
 class LandmarkRename(_Updater):
-    """Landmarks renamed from landmarksXY to landmarks_xy for PEP compliance """
+    """Landmarks renamed from landmarksXY to landmarks_xy for PEP compliance"""
+
     def test(self) -> bool:
         """check for legacy landmarksXY keys.
 
@@ -197,10 +207,12 @@ class LandmarkRename(_Updater):
         -------
         ``True`` if the alignments file contains legacy `landmarksXY` keys otherwise ``False``
         """
-        return (any(key == "landmarksXY"
-                    for val in self._alignments.values()
-                    for alignment in val["faces"]
-                    for key in alignment))
+        return any(
+            key == "landmarksXY"
+            for val in self._alignments.values()
+            for alignment in val["faces"]
+            for key in alignment
+        )
 
     def update(self) -> int:
         """Update legacy `landmarksXY` keys to PEP compliant `landmarks_xy` keys.
@@ -220,6 +232,7 @@ class LandmarkRename(_Updater):
 
 class NumpyToList(_Updater):
     """Landmarks stored as a numpy array instead of a list"""
+
     def test(self) -> bool:
         """check for legacy landmarks and thumbnails stored as :class:`numpy.ndarray` rather than
         list
@@ -228,10 +241,12 @@ class NumpyToList(_Updater):
         -------
         ``True`` if any landmarks or thumbnails are a numpy array otherwise ``False``
         """
-        return any(isinstance(face["landmarks_xy"], np.ndarray)
-                   or isinstance(face.get("thumb"), np.ndarray)
-                   for val in self._alignments.values()
-                   for face in val["faces"])
+        return any(
+            isinstance(face["landmarks_xy"], np.ndarray)
+            or isinstance(face.get("thumb"), np.ndarray)
+            for val in self._alignments.values()
+            for face in val["faces"]
+        )
 
     def update(self) -> int:
         """Update landmarks and thumbnails stored as :class:`numpy.ndarray` to `list`.
@@ -256,7 +271,7 @@ class NumpyToList(_Updater):
 
 class MaskCentering(_Updater):
     """Masks not containing the stored_centering parameters. Prior to this implementation all
-    masks were stored with face centering """
+    masks were stored with face centering"""
 
     def test(self) -> bool:
         """Mask centering was introduced in alignments version 2.2
@@ -287,7 +302,8 @@ class MaskCentering(_Updater):
 
 class IdentityAndVideoMeta(_Updater):
     """Prior to version 2.3 the identity key did not exist and the video_meta key was not
-    compulsory. These should now both always appear, but do not need to be populated. """
+    compulsory. These should now both always appear, but do not need to be populated."""
+
     def test(self) -> bool:
         """Identity Key was introduced in alignments version 2.3
 

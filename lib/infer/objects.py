@@ -1,5 +1,6 @@
 #! /usr/env/bin/python3
-"""Objects used for extraction plugins, runners and pipeline """
+"""Objects used for extraction plugins, runners and pipeline"""
+
 from __future__ import annotations
 import logging
 import typing as T
@@ -30,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 class ExtractSignal(IntEnum):
     """Signals to send to the extraction pipeline"""
+
     FLUSH = 1
     """Flush all queued items"""
     SHUTDOWN = 2
@@ -49,6 +51,7 @@ class ExtractBatchAligned:
         The type of landmarks that the batch holds or ``None`` if not available.
         Default: ``None`` (to be populated later)
     """
+
     landmarks: npt.NDArray[np.float32] | None = None
     """The face landmarks found for this batch in frame space or ``None`` if not populated"""
     landmark_type: LandmarkType | None = None
@@ -56,12 +59,22 @@ class ExtractBatchAligned:
 
     # The following "_cache_" attributes are cached on demand and accessed through their
     # corresponding "non _cache_" properties
-    _cache_landmarks_68: npt.NDArray[np.float32] | None = field(init=False, default=None)
-    _cache_landmarks_normalized: npt.NDArray[np.float32] | None = field(init=False, default=None)
+    _cache_landmarks_68: npt.NDArray[np.float32] | None = field(
+        init=False, default=None
+    )
+    _cache_landmarks_normalized: npt.NDArray[np.float32] | None = field(
+        init=False, default=None
+    )
     _cache_matrices: npt.NDArray[np.float32] | None = field(init=False, default=None)
-    _cache_offsets_legacy: npt.NDArray[np.float32] | None = field(init=False, default=None)
-    _cache_offsets_face: npt.NDArray[np.float32] | None = field(init=False, default=None)
-    _cache_offsets_head: npt.NDArray[np.float32] | None = field(init=False, default=None)
+    _cache_offsets_legacy: npt.NDArray[np.float32] | None = field(
+        init=False, default=None
+    )
+    _cache_offsets_face: npt.NDArray[np.float32] | None = field(
+        init=False, default=None
+    )
+    _cache_offsets_head: npt.NDArray[np.float32] | None = field(
+        init=False, default=None
+    )
     _cache_rotation: npt.NDArray[np.float32] | None = field(init=False, default=None)
     _cache_translation: npt.NDArray[np.float32] | None = field(init=False, default=None)
 
@@ -79,7 +92,7 @@ class ExtractBatchAligned:
 
     @property
     def landmarks_68(self) -> npt.NDArray[np.float32]:
-        """ The stored landmarks as 68 point landmarks if supported, or original landmarks if not (
+        """The stored landmarks as 68 point landmarks if supported, or original landmarks if not (
         4 point ROI landmarks)"""
         if self._cache_landmarks_68 is not None:
             return self._cache_landmarks_68
@@ -102,7 +115,9 @@ class ExtractBatchAligned:
         if self.landmarks is None or not self.landmarks.size:
             return np.empty((0, 68, 2), dtype=np.float32)
 
-        self._cache_landmarks_normalized = batch_transform(self.matrices, self.landmarks_68)
+        self._cache_landmarks_normalized = batch_transform(
+            self.matrices, self.landmarks_68
+        )
         return self._cache_landmarks_normalized
 
     @property
@@ -120,7 +135,9 @@ class ExtractBatchAligned:
         else:
             points = self.landmarks_68[:, 17:]
             lookup = LandmarkType.LM_2D_51
-        self._cache_matrices = batch_umeyama(points, MEAN_FACE[lookup], True).astype(np.float32)
+        self._cache_matrices = batch_umeyama(points, MEAN_FACE[lookup], True).astype(
+            np.float32
+        )
         return self._cache_matrices
 
     @property
@@ -260,8 +277,11 @@ class ExtractBatchAligned:
             The object containing data to be appended to this object
         """
         if batch.landmarks is not None:
-            self.landmarks = (np.concatenate([self.landmarks, batch.landmarks])
-                              if self.landmarks is not None else batch.landmarks)
+            self.landmarks = (
+                np.concatenate([self.landmarks, batch.landmarks])
+                if self.landmarks is not None
+                else batch.landmarks
+            )
             if self.landmark_type is None:
                 self.landmark_type = batch.landmark_type
 
@@ -307,20 +327,24 @@ class ExtractBatchMask:
     masks
         The masks for this batch. Default: empty array (must be populated later)
     """
+
     centering: CenteringType
     """The centering type of the masks"""
     matrices: npt.NDArray[np.float32]
     """The normalized matrices required to take the masks from (0, 1) to full frame"""
     storage_size: int = field(default=0)
     """The pixel size to store the mask at in the alignments file"""
-    masks: npt.NDArray[np.uint8] = field(default_factory=lambda: np.empty((0, 0, 0),
-                                                                          dtype=np.uint8))
+    masks: npt.NDArray[np.uint8] = field(
+        default_factory=lambda: np.empty((0, 0, 0), dtype=np.uint8)
+    )
     """The masks for this batch"""
 
     def __repr__(self) -> str:
         """Pretty print arrays"""
-        params = {k: format_array(v) if isinstance(v, np.ndarray) else repr(v)
-                  for k, v in self.__dict__.items()}
+        params = {
+            k: format_array(v) if isinstance(v, np.ndarray) else repr(v)
+            for k, v in self.__dict__.items()
+        }
         s_params = ", ".join(f"{k}={v}" for k, v in params.items())
         return f"{self.__class__.__name__}({s_params})"
 
@@ -336,10 +360,12 @@ class ExtractBatchMask:
         -------
         The sliced data from this batch
         """
-        return ExtractBatchMask(self.centering,
-                                self.matrices[indices],
-                                storage_size=self.storage_size,
-                                masks=self.masks[indices])
+        return ExtractBatchMask(
+            self.centering,
+            self.matrices[indices],
+            storage_size=self.storage_size,
+            masks=self.masks[indices],
+        )
 
     def append(self, mask_batch: ExtractBatchMask) -> None:
         """Append the given mask batch object to this batch mask object
@@ -395,6 +421,7 @@ class ExtractBatch:  # pylint:disable=too-many-instance-attributes
         `True`` if the contents of this item are meant to pass straight through the extraction
         pipeline for immediate return
     """
+
     # Input required information
     filenames: list[str] = field(default_factory=list)
     """The original frame filenames"""
@@ -412,20 +439,25 @@ class ExtractBatch:  # pylint:disable=too-many-instance-attributes
     """Whether this item should pass straight through the pipeline for immediate return"""
 
     # Final data for output
-    bboxes: npt.NDArray[np.int32] = field(init=False,
-                                          default_factory=lambda: np.empty((0, 4), dtype=np.int32))
+    bboxes: npt.NDArray[np.int32] = field(
+        init=False, default_factory=lambda: np.empty((0, 4), dtype=np.int32)
+    )
     """The bounding boxes found for this batch"""
-    aligned: ExtractBatchAligned = field(init=False, default_factory=ExtractBatchAligned)
+    aligned: ExtractBatchAligned = field(
+        init=False, default_factory=ExtractBatchAligned
+    )
     """Holds the face landmarks found for this batch any any aligned data"""
     masks: dict[str, ExtractBatchMask] = field(init=False, default_factory=dict)
     """The masks for this batch"""
-    identities: dict[str, npt.NDArray[np.float32]] = field(init=False, default_factory=dict)
+    identities: dict[str, npt.NDArray[np.float32]] = field(
+        init=False, default_factory=dict
+    )
     """The identity matrices for face recognition found for this batch"""
 
     # Internal batch structure
-    frame_ids: npt.NDArray[np.int32] = field(init=False,
-                                             default_factory=lambda: np.empty((0, ),
-                                                                              dtype=np.int32))
+    frame_ids: npt.NDArray[np.int32] = field(
+        init=False, default_factory=lambda: np.empty((0,), dtype=np.int32)
+    )
     """A mapping of each box to which frame they came from"""
 
     # Internal holder for passing data between processes. Deleted at output from each plugin
@@ -519,20 +551,32 @@ class ExtractBatch:  # pylint:disable=too-many-instance-attributes
         frame_start = 0 if indices.start == 0 else frame_ids[0]
 
         frame_end = frame_ids[-1] + 1
-        if indices.stop < self.bboxes.shape[0] and self.frame_ids[indices.stop] > frame_end:
+        if (
+            indices.stop < self.bboxes.shape[0]
+            and self.frame_ids[indices.stop] > frame_end
+        ):
             # catch any zero box frames between now and next split request
             frame_end = self.frame_ids[indices.stop]
 
-        frame_sizes = None if self.frame_sizes is None else self.frame_sizes[frame_start:frame_end]
-        frame_metadata = (None if self.frame_metadata is None
-                          else self.frame_metadata[frame_start:frame_end])
-        retval = ExtractBatch(self.filenames[frame_start:frame_end],
-                              self.images[frame_start:frame_end],
-                              sources=self.sources[frame_start:frame_end],
-                              is_aligned=self.is_aligned,
-                              frame_sizes=frame_sizes,
-                              frame_metadata=frame_metadata,
-                              passthrough=self.passthrough)
+        frame_sizes = (
+            None
+            if self.frame_sizes is None
+            else self.frame_sizes[frame_start:frame_end]
+        )
+        frame_metadata = (
+            None
+            if self.frame_metadata is None
+            else self.frame_metadata[frame_start:frame_end]
+        )
+        retval = ExtractBatch(
+            self.filenames[frame_start:frame_end],
+            self.images[frame_start:frame_end],
+            sources=self.sources[frame_start:frame_end],
+            is_aligned=self.is_aligned,
+            frame_sizes=frame_sizes,
+            frame_metadata=frame_metadata,
+            passthrough=self.passthrough,
+        )
         retval.bboxes = self.bboxes[indices]
         retval.aligned = self.aligned[indices]
         retval.masks = {k: v[indices] for k, v in self.masks.items()}
@@ -585,18 +629,29 @@ class ExtractBatch:  # pylint:disable=too-many-instance-attributes
 
         existing_filenames = self.filenames[:]
         self.filenames.extend(f for f in batch.filenames if f not in existing_filenames)
-        self.images.extend(batch.images[i] for i, f in enumerate(batch.filenames)
-                           if f not in existing_filenames)
-        self.sources.extend(batch.sources[i] for i, f in enumerate(batch.filenames)
-                            if f not in existing_filenames)
+        self.images.extend(
+            batch.images[i]
+            for i, f in enumerate(batch.filenames)
+            if f not in existing_filenames
+        )
+        self.sources.extend(
+            batch.sources[i]
+            for i, f in enumerate(batch.filenames)
+            if f not in existing_filenames
+        )
 
         if self.frame_sizes is not None and batch.frame_sizes is not None:
-            self.frame_sizes.extend(batch.frame_sizes[i] for i, f in enumerate(batch.filenames)
-                                    if f not in existing_filenames)
+            self.frame_sizes.extend(
+                batch.frame_sizes[i]
+                for i, f in enumerate(batch.filenames)
+                if f not in existing_filenames
+            )
         if self.frame_metadata is not None and batch.frame_metadata is not None:
-            self.frame_metadata.extend(batch.frame_metadata[i]
-                                       for i, f in enumerate(batch.filenames)
-                                       if f not in existing_filenames)
+            self.frame_metadata.extend(
+                batch.frame_metadata[i]
+                for i, f in enumerate(batch.filenames)
+                if f not in existing_filenames
+            )
 
         self.bboxes = np.concatenate([self.bboxes, batch.bboxes])
         self.frame_ids = np.concatenate([self.frame_ids, batch.frame_ids])
@@ -609,9 +664,11 @@ class ExtractBatch:  # pylint:disable=too-many-instance-attributes
                 self.masks[name] = masks
 
         for name, identities in batch.identities.items():
-            self.identities[name] = (np.concatenate([self.identities[name], identities])
-                                     if name in self.identities
-                                     else identities)
+            self.identities[name] = (
+                np.concatenate([self.identities[name], identities])
+                if name in self.identities
+                else identities
+            )
 
         if hasattr(self, "data"):
             self.data = np.concatenate([self.data, batch.data])
@@ -632,14 +689,18 @@ class ExtractBatch:  # pylint:disable=too-many-instance-attributes
         -------
         A new ExtractBatch object populated from the given FrameFaces object
         """
-        retval = cls([media.filename],
-                     [media.image],
-                     sources=[media.source],
-                     is_aligned=media.is_aligned,
-                     frame_sizes=[media.image_size] if media.is_aligned else None,
-                     frame_metadata=[media.frame_metadata] if media.frame_metadata else None,
-                     passthrough=media.passthrough)
-        retval.frame_ids = np.fromiter((0 for _ in range(len(media.bboxes))), dtype=np.int32)
+        retval = cls(
+            [media.filename],
+            [media.image],
+            sources=[media.source],
+            is_aligned=media.is_aligned,
+            frame_sizes=[media.image_size] if media.is_aligned else None,
+            frame_metadata=[media.frame_metadata] if media.frame_metadata else None,
+            passthrough=media.passthrough,
+        )
+        retval.frame_ids = np.fromiter(
+            (0 for _ in range(len(media.bboxes))), dtype=np.int32
+        )
         retval.bboxes = media.bboxes
         retval.identities = media.identities
         retval.masks = media.masks
@@ -661,32 +722,45 @@ class ExtractBatch:  # pylint:disable=too-many-instance-attributes
             bounding boxes pre-exist or if more than one frame is held in this batch
         """
         if not self.filenames:
-            raise ValueError("Filenames must be populated prior to adding detected faces")
+            raise ValueError(
+                "Filenames must be populated prior to adding detected faces"
+            )
         if not self.images:
             raise ValueError("Images must be populated prior to adding detected faces")
         if len(self.filenames) != len(self.images) != 1:
             raise ValueError("Only 1 filename and image should be the batch")
         if np.any(self.bboxes):
-            raise ValueError("An empty ExtractBatch object is required to add detected faces")
+            raise ValueError(
+                "An empty ExtractBatch object is required to add detected faces"
+            )
         self.frame_ids = np.fromiter((0 for _ in range(len(faces))), dtype=np.int32)
-        self.aligned.landmark_type = LandmarkType.from_shape(T.cast(tuple[int, int],
-                                                             faces[0].landmarks_xy.shape))
+        self.aligned.landmark_type = LandmarkType.from_shape(
+            T.cast(tuple[int, int], faces[0].landmarks_xy.shape)
+        )
         num_faces = len(faces)
         self.bboxes = np.empty((num_faces, 4), dtype=np.int32)
-        self.aligned.landmarks = np.empty((num_faces, *faces[0].landmarks_xy.shape),
-                                          dtype=np.float32)
-        self.identities = {k: np.empty((num_faces, *v.shape), dtype=np.float32)
-                           for k, v in faces[0].identity.items()}
+        self.aligned.landmarks = np.empty(
+            (num_faces, *faces[0].landmarks_xy.shape), dtype=np.float32
+        )
+        self.identities = {
+            k: np.empty((num_faces, *v.shape), dtype=np.float32)
+            for k, v in faces[0].identity.items()
+        }
         self.masks = {
-            k: ExtractBatchMask(v.stored_centering,
-                                np.empty((num_faces, 2, 3), dtype=np.float32),
-                                storage_size=v.stored_size,
-                                masks=np.empty((num_faces, v.stored_size, v.stored_size),
-                                               dtype=np.uint8))
+            k: ExtractBatchMask(
+                v.stored_centering,
+                np.empty((num_faces, 2, 3), dtype=np.float32),
+                storage_size=v.stored_size,
+                masks=np.empty(
+                    (num_faces, v.stored_size, v.stored_size), dtype=np.uint8
+                ),
+            )
             for k, v in faces[0].mask.items()
-            }
+        }
         for i, f in enumerate(faces):
-            self.bboxes[i] = np.array([f.left, f.top, f.right, f.bottom], dtype=np.int32)
+            self.bboxes[i] = np.array(
+                [f.left, f.top, f.right, f.bottom], dtype=np.int32
+            )
             self.aligned.landmarks[i] = f.landmarks_xy
             for k, idn in f.identity.items():
                 self.identities[k][i] = idn
@@ -750,20 +824,25 @@ class FrameFaces:  # pylint:disable=too-many-instance-attributes
         ``True`` if this item is meant to be passed straight through the extraction pipeline with
         no batching or caching. for immediate return. Default: ``False``
     """
-    def __init__(self,  # pylint:disable=too-many-arguments,too-many-positional-arguments
-                 filename: str,
-                 image: npt.NDArray[np.uint8],
-                 bboxes: npt.NDArray[np.int32] | None = None,
-                 landmarks: npt.NDArray[np.float32] | None = None,
-                 identities: dict[str, npt.NDArray[np.float32]] | None = None,
-                 masks: dict[str, ExtractBatchMask] | None = None,
-                 source: str | None = None,
-                 is_aligned: bool = False,
-                 frame_metadata: PNGSource | None = None,
-                 passthrough: bool = False) -> None:
+
+    def __init__(
+        self,  # pylint:disable=too-many-arguments,too-many-positional-arguments
+        filename: str,
+        image: npt.NDArray[np.uint8],
+        bboxes: npt.NDArray[np.int32] | None = None,
+        landmarks: npt.NDArray[np.float32] | None = None,
+        identities: dict[str, npt.NDArray[np.float32]] | None = None,
+        masks: dict[str, ExtractBatchMask] | None = None,
+        source: str | None = None,
+        is_aligned: bool = False,
+        frame_metadata: PNGSource | None = None,
+        passthrough: bool = False,
+    ) -> None:
         logger.trace(parse_class_init(locals()))  # type:ignore[attr-defined]
         if is_aligned:
-            assert frame_metadata is not None, "frame_metadata is required for aligned images"
+            assert frame_metadata is not None, (
+                "frame_metadata is required for aligned images"
+            )
 
         self.filename = filename
         """The original file name of the original frame"""
@@ -790,9 +869,14 @@ class FrameFaces:  # pylint:disable=too-many-instance-attributes
 
         self.aligned = ExtractBatchAligned(
             landmarks=landmarks if landmarks is None else landmarks,
-            landmark_type=(None if landmarks is None
-                           else LandmarkType.from_shape(T.cast(tuple[int, int],
-                                                               landmarks.shape[1:]))))
+            landmark_type=(
+                None
+                if landmarks is None
+                else LandmarkType.from_shape(
+                    T.cast(tuple[int, int], landmarks.shape[1:])
+                )
+            ),
+        )
         """Holds the face landmarks found for this batch any any aligned data"""
         self._name = self.__class__.__name__
         """The name of this object for logging"""
@@ -833,27 +917,34 @@ class FrameFaces:  # pylint:disable=too-many-instance-attributes
             The landmarks to set
         """
         self.aligned.landmarks = value
-        self.aligned.landmark_type = LandmarkType.from_shape(T.cast(tuple[int, int],
-                                                                    value.shape[1:]))
+        self.aligned.landmark_type = LandmarkType.from_shape(
+            T.cast(tuple[int, int], value.shape[1:])
+        )
 
     @property
     def detected_faces(self) -> list[DetectedFace]:
         """A list of DetectedFace objects within the :attr:`image`"""
-        return [DetectedFace(left=int(box[0]),
-                             top=int(box[1]),
-                             width=int(box[2] - box[0]),
-                             height=int(box[3] - box[1]),
-                             landmarks_xy=(None if self.landmarks is None
-                                           or not self.landmarks.size
-                                           else self.landmarks[idx]),
-                             mask={k: Mask(storage_size=m.storage_size,
-                                           storage_centering=m.centering).add(
-                                               m.masks[idx],
-                                               m.matrices[idx])
-                                   for k, m in self.masks.items()},
-                             identity={k: i[idx] for k, i in self.identities.items()
-                                       if i.size})
-                for idx, box in enumerate(self.bboxes)]
+        return [
+            DetectedFace(
+                left=int(box[0]),
+                top=int(box[1]),
+                width=int(box[2] - box[0]),
+                height=int(box[3] - box[1]),
+                landmarks_xy=(
+                    None
+                    if self.landmarks is None or not self.landmarks.size
+                    else self.landmarks[idx]
+                ),
+                mask={
+                    k: Mask(
+                        storage_size=m.storage_size, storage_centering=m.centering
+                    ).add(m.masks[idx], m.matrices[idx])
+                    for k, m in self.masks.items()
+                },
+                identity={k: i[idx] for k, i in self.identities.items() if i.size},
+            )
+            for idx, box in enumerate(self.bboxes)
+        ]
 
     @detected_faces.setter
     def detected_faces(self, faces: list[DetectedFace]) -> None:
@@ -871,24 +962,40 @@ class FrameFaces:  # pylint:disable=too-many-instance-attributes
             fields are populated
         """
         if not self.filename or not self.image.size:
-            raise ValueError("Filename and image must be populated before adding DetectedFace "
-                             "objects")
-        if np.any(self.bboxes) or self.landmarks is not None or self.masks or self.identities:
-            raise ValueError("The FrameFaces object must not be pre-populated when adding"
-                             "DetectedFace objects")
+            raise ValueError(
+                "Filename and image must be populated before adding DetectedFace "
+                "objects"
+            )
+        if (
+            np.any(self.bboxes)
+            or self.landmarks is not None
+            or self.masks
+            or self.identities
+        ):
+            raise ValueError(
+                "The FrameFaces object must not be pre-populated when adding"
+                "DetectedFace objects"
+            )
         for face in faces:
             if None not in (face.left, face.top, face.width, face.height):
-                bbox = np.array([[face.left, face.top, face.right, face.bottom]], dtype=np.int32)
+                bbox = np.array(
+                    [[face.left, face.top, face.right, face.bottom]], dtype=np.int32
+                )
                 self.bboxes = np.concatenate([self.bboxes, bbox])
             if face.has_landmarks:
                 landmarks = np.array(face.landmarks_xy, dtype=np.float32)[None]
-                self.landmarks = (landmarks if self.landmarks is None
-                                  else np.concatenate([self.landmarks, landmarks]))
+                self.landmarks = (
+                    landmarks
+                    if self.landmarks is None
+                    else np.concatenate([self.landmarks, landmarks])
+                )
             for k, m in face.mask.items():
-                msk = ExtractBatchMask(m.stored_centering,
-                                       m.affine_matrix[None],
-                                       m.stored_size,
-                                       m.mask[None])
+                msk = ExtractBatchMask(
+                    m.stored_centering,
+                    m.affine_matrix[None],
+                    m.stored_size,
+                    m.mask[None],
+                )
                 if k not in self.masks:
                     self.masks[k] = msk
                 else:
@@ -913,8 +1020,10 @@ class FrameFaces:  # pylint:disable=too-many-instance-attributes
         The shape of the original image
         """
         if self.is_aligned:
-            assert (self.frame_metadata is not None and
-                    self.frame_metadata.source_frame_dims is not None)
+            assert (
+                self.frame_metadata is not None
+                and self.frame_metadata.source_frame_dims is not None
+            )
             dims = self.frame_metadata.source_frame_dims
             return (*dims, 3)
         return T.cast(tuple[int, int, int], self.image.shape)
@@ -932,7 +1041,9 @@ class FrameFaces:  # pylint:disable=too-many-instance-attributes
         assert batch.passthrough == self.passthrough
         assert batch.frame_metadata == self.frame_metadata
 
-        if not np.any(self.image):  # Image potentially deleted from previous split batch
+        if not np.any(
+            self.image
+        ):  # Image potentially deleted from previous split batch
             self.image = batch.image
         self.bboxes = np.concatenate([self.bboxes, batch.bboxes])
         self.aligned.append(batch.aligned)
@@ -943,14 +1054,19 @@ class FrameFaces:  # pylint:disable=too-many-instance-attributes
                 self.masks[name] = masks
 
         for name, identities in batch.identities.items():
-            self.identities[name] = (np.concatenate([self.identities[name], identities])
-                                     if name in self.identities
-                                     else identities)
+            self.identities[name] = (
+                np.concatenate([self.identities[name], identities])
+                if name in self.identities
+                else identities
+            )
 
     def remove_image(self) -> None:
         """Delete the image and reset :attr:`image` to ``None``."""
-        logger.trace("[%s] Removing image for filename: '%s'",  # type:ignore[attr-defined]
-                     self._name, self.filename)
+        logger.trace(
+            "[%s] Removing image for filename: '%s'",  # type:ignore[attr-defined]
+            self._name,
+            self.filename,
+        )
         del self.image
         self.image = np.empty((0, 0, 3), dtype=np.uint8)
 
@@ -962,12 +1078,17 @@ def frame_faces_to_alignment(media: FrameFaces) -> list[PNGAlignments]:
         return []
     assert media.landmarks is not None
     assert media.landmarks.shape[0] == len(media)
-    assert all(m.masks.shape[0] == m.matrices.shape[0] == len(media) for m in media.masks.values())
+    assert all(
+        m.masks.shape[0] == m.matrices.shape[0] == len(media)
+        for m in media.masks.values()
+    )
     assert all(i.shape[0] == len(media) for i in media.identities.values())
 
     masks = {}
     for k, v in media.masks.items():
-        scales = np.hypot(v.matrices[..., 0, 0], v.matrices[..., 1, 0])  # Always same x/y scaling
+        scales = np.hypot(
+            v.matrices[..., 0, 0], v.matrices[..., 1, 0]
+        )  # Always same x/y scaling
         interpolators = np.where(scales > 1.0, cv2.INTER_LINEAR, cv2.INTER_AREA)
         store_masks = v.masks
         mats = v.matrices
@@ -975,25 +1096,35 @@ def frame_faces_to_alignment(media: FrameFaces) -> list[PNGAlignments]:
             store_masks = batch_resize(v.masks[..., None], v.storage_size)[..., 0]
             mats = mats.copy()
             mats[:, :2] *= v.storage_size / v.masks.shape[1]
-        masks[k] = {"mask": [compress(m.tobytes()) for m in store_masks],
-                    "mats": mats.tolist(),
-                    "interpolators": interpolators.tolist(),
-                    "size": v.storage_size,
-                    "centering": v.centering}
+        masks[k] = {
+            "mask": [compress(m.tobytes()) for m in store_masks],
+            "mats": mats.tolist(),
+            "interpolators": interpolators.tolist(),
+            "size": v.storage_size,
+            "centering": v.centering,
+        }
 
-    return [PNGAlignments(x=int(bbox[0]),
-                          y=int(bbox[1]),
-                          w=int(bbox[2] - bbox[0]),
-                          h=int(bbox[3] - bbox[1]),
-                          landmarks_xy=lms,
-                          mask={k: MaskAlignmentsFile(mask=m["mask"][idx],
-                                                      affine_matrix=m["mats"][idx],
-                                                      interpolator=int(m["interpolators"][idx]),
-                                                      stored_size=m["size"],
-                                                      stored_centering=m["centering"])
-                                for k, m in masks.items()},
-                          identity={k: i[idx].tolist() for k, i in media.identities.items()})
-            for idx, (bbox, lms) in enumerate(zip(media.bboxes, media.landmarks.tolist()))]
+    return [
+        PNGAlignments(
+            x=int(bbox[0]),
+            y=int(bbox[1]),
+            w=int(bbox[2] - bbox[0]),
+            h=int(bbox[3] - bbox[1]),
+            landmarks_xy=lms,
+            mask={
+                k: MaskAlignmentsFile(
+                    mask=m["mask"][idx],
+                    affine_matrix=m["mats"][idx],
+                    interpolator=int(m["interpolators"][idx]),
+                    stored_size=m["size"],
+                    stored_centering=m["centering"],
+                )
+                for k, m in masks.items()
+            },
+            identity={k: i[idx].tolist() for k, i in media.identities.items()},
+        )
+        for idx, (bbox, lms) in enumerate(zip(media.bboxes, media.landmarks.tolist()))
+    ]
 
 
 __all__ = get_module_objects(__name__)

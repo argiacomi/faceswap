@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Holds estimated pose information for a faceswap aligned face """
+"""Holds estimated pose information for a faceswap aligned face"""
+
 from __future__ import annotations
 
 import logging
@@ -21,8 +22,37 @@ if T.TYPE_CHECKING:
     from .constants import CenteringType
 
 
-_CORE_LMS = np.array([6, 7, 8, 9, 10, 17, 21, 22, 26, 31, 32, 33, 34,
-                      35, 36, 39, 42, 45, 48, 50, 51, 52, 54, 56, 57, 58], dtype="int32")
+_CORE_LMS = np.array(
+    [
+        6,
+        7,
+        8,
+        9,
+        10,
+        17,
+        21,
+        22,
+        26,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        39,
+        42,
+        45,
+        48,
+        50,
+        51,
+        52,
+        54,
+        56,
+        57,
+        58,
+    ],
+    dtype="int32",
+)
 """The indices used from 68 point landmarks to align to a 3D head"""
 
 _DISTORTION_COEFFICIENTS = np.zeros((4, 1), dtype="float32")
@@ -34,12 +64,14 @@ _MEAN_FACE3D = MEAN_FACE[LandmarkType.LM_3D_26]
 _CENTER_OFFSETS: dict[CenteringType, npt.NDArray[np.float32]] = {
     "legacy": np.array([0.0, 0.0, 0.0], dtype="float32"),
     "head": np.array([0.0, 0.0, -2.3], dtype="float32"),
-    "face": np.array([0.0, -1.5, 4.2], dtype="float32")
-    }
+    "face": np.array([0.0, -1.5, 4.2], dtype="float32"),
+}
 """The offsets required to shift the center point of a head in 3D space relative to legacy
 centering"""
 
-_HEAD_CENTER_POINTS = np.array([[6., 0., -2.3], [0., 6., -2.3], [0., 0., 3.7]], dtype=np.float32)
+_HEAD_CENTER_POINTS = np.array(
+    [[6.0, 0.0, -2.3], [0.0, 6.0, -2.3], [0.0, 0.0, 3.7]], dtype=np.float32
+)
 """Points approximately equidistant from the center of a skull in normalized 3D space"""
 
 
@@ -56,26 +88,34 @@ def get_camera_matrix(focal_length: int = 4) -> np.ndarray:
     An estimated camera matrix
     """
     focal_length = 4
-    camera_matrix = np.array([[focal_length, 0, 0.5],
-                              [0, focal_length, 0.5],
-                              [0, 0, 1]], dtype="double")
+    camera_matrix = np.array(
+        [[focal_length, 0, 0.5], [0, focal_length, 0.5], [0, 0, 1]], dtype="double"
+    )
     logger.trace("camera_matrix: %s", camera_matrix)  # type:ignore[attr-defined]
     return camera_matrix
 
 
-def get_xyz_2d(rotation: npt.NDArray[np.float32],
-               translation: npt.NDArray[np.float32],
-               camera_matrix: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
+def get_xyz_2d(
+    rotation: npt.NDArray[np.float32],
+    translation: npt.NDArray[np.float32],
+    camera_matrix: npt.NDArray[np.float32],
+) -> npt.NDArray[np.float32]:
     """projected (x, y) coordinates for each x, y, z point at a constant distance from the adjusted
     center of the skull (0.5, 0.5) in 2D space."""
-    return cv2.projectPoints(_HEAD_CENTER_POINTS,
-                             rotation,
-                             translation,
-                             camera_matrix,
-                             _DISTORTION_COEFFICIENTS)[0].squeeze(1).astype(np.float32)
+    return (
+        cv2.projectPoints(
+            _HEAD_CENTER_POINTS,
+            rotation,
+            translation,
+            camera_matrix,
+            _DISTORTION_COEFFICIENTS,
+        )[0]
+        .squeeze(1)
+        .astype(np.float32)
+    )
 
 
-class PoseEstimate():
+class PoseEstimate:
     """Estimates pose from a generic 3D head model for the given 2D face landmarks.
 
     Parameters
@@ -90,6 +130,7 @@ class PoseEstimate():
     Head Pose Estimation using OpenCV and Dlib - https://www.learnopencv.com/tag/solvepnp/
     3D Model points - http://aifi.isr.uc.pt/Downloads/OpenGL/glAnthropometric3DModel.cpp
     """
+
     _logged_once = False
 
     def __init__(self, landmarks: np.ndarray, landmarks_type: LandmarkType) -> None:
@@ -97,13 +138,18 @@ class PoseEstimate():
         self._xyz_2d: np.ndarray | None = None
 
         if landmarks_type not in (LandmarkType.LM_2D_68, LandmarkType.LM_2D_98):
-            self._log_once(f"Pose estimation is not available for {landmarks_type} landmarks. "
-                           "Pose and offset data will all be returned as the incorrect value "
-                           "of '0'",)
+            self._log_once(
+                f"Pose estimation is not available for {landmarks_type} landmarks. "
+                "Pose and offset data will all be returned as the incorrect value "
+                "of '0'",
+            )
         self._landmarks_type = landmarks_type
         self._camera_matrix = get_camera_matrix()
-        lms = landmarks if landmarks_type in (LandmarkType.LM_2D_4,
-                                              LandmarkType.LM_2D_68) else points_to_68(landmarks)
+        lms = (
+            landmarks
+            if landmarks_type in (LandmarkType.LM_2D_4, LandmarkType.LM_2D_68)
+            else points_to_68(landmarks)
+        )
         self._rotation, self._translation = self._solve_pnp(lms)
         self._offset = self._get_offset()
         self._pitch_yaw_roll: tuple[float, float, float] = (0, 0, 0)
@@ -159,7 +205,9 @@ class PoseEstimate():
         proj_matrix = np.zeros((3, 4), dtype="float32")
         proj_matrix[:3, :3] = cv2.Rodrigues(self._rotation)[0]
         euler = cv2.decomposeProjectionMatrix(proj_matrix)[-1]
-        self._pitch_yaw_roll = T.cast(tuple[float, float, float], tuple(euler.squeeze()))
+        self._pitch_yaw_roll = T.cast(
+            tuple[float, float, float], tuple(euler.squeeze())
+        )
         logger.trace("yaw_pitch: %s", self._pitch_yaw_roll)  # type:ignore[attr-defined]
 
     def _solve_pnp(self, landmarks: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -186,13 +234,19 @@ class PoseEstimate():
             translation = rotation.copy()
         else:
             points = landmarks[_CORE_LMS]
-            _, rotation, translation = cv2.solvePnP(_MEAN_FACE3D,
-                                                    points,
-                                                    self._camera_matrix,
-                                                    _DISTORTION_COEFFICIENTS,
-                                                    flags=cv2.SOLVEPNP_ITERATIVE)
-        logger.trace("points: %s, rotation: %s, translation: %s",  # type:ignore[attr-defined]
-                     points, rotation, translation)
+            _, rotation, translation = cv2.solvePnP(
+                _MEAN_FACE3D,
+                points,
+                self._camera_matrix,
+                _DISTORTION_COEFFICIENTS,
+                flags=cv2.SOLVEPNP_ITERATIVE,
+            )
+        logger.trace(
+            "points: %s, rotation: %s, translation: %s",  # type:ignore[attr-defined]
+            points,
+            rotation,
+            translation,
+        )
         return rotation, translation
 
     def _get_offset(self) -> dict[CenteringType, npt.NDArray[np.float32]]:
@@ -214,11 +268,17 @@ class PoseEstimate():
                 if key == "legacy":
                     offset[key] = legacy
                     continue
-                center = cv2.projectPoints(np.array([points]).astype("float32"),
-                                           self._rotation,
-                                           self._translation,
-                                           self._camera_matrix,
-                                           _DISTORTION_COEFFICIENTS)[0].squeeze().astype("float32")
+                center = (
+                    cv2.projectPoints(
+                        np.array([points]).astype("float32"),
+                        self._rotation,
+                        self._translation,
+                        self._camera_matrix,
+                        _DISTORTION_COEFFICIENTS,
+                    )[0]
+                    .squeeze()
+                    .astype("float32")
+                )
                 logger.trace("center %s: %s", key, center)  # type:ignore[attr-defined]
                 offset[key] = center - np.array([0.5, 0.5], dtype="float32")
         logger.trace("offset: %s", offset)  # type:ignore[attr-defined]
@@ -226,7 +286,8 @@ class PoseEstimate():
 
 
 class Batch3D:
-    """Functions to perform 3D space calculations on batches """
+    """Functions to perform 3D space calculations on batches"""
+
     _camera_matrix = get_camera_matrix()
     _legacy_offset = np.array([[0.0, 0.0]], dtype="float32")
     _to_center_shift = np.array([[0.5, 0.5]], dtype="float32")
@@ -250,12 +311,22 @@ class Batch3D:
         ```
         """
         core_lms = np.ascontiguousarray(landmarks[:, _CORE_LMS])
-        retval = np.array([cv2.solvePnP(_MEAN_FACE3D,
-                                        lms,
-                                        cls._camera_matrix,
-                                        _DISTORTION_COEFFICIENTS,
-                                        flags=cv2.SOLVEPNP_ITERATIVE)[1:]
-                           for lms in core_lms]).astype("float32").swapaxes(0, 1)
+        retval = (
+            np.array(
+                [
+                    cv2.solvePnP(
+                        _MEAN_FACE3D,
+                        lms,
+                        cls._camera_matrix,
+                        _DISTORTION_COEFFICIENTS,
+                        flags=cv2.SOLVEPNP_ITERATIVE,
+                    )[1:]
+                    for lms in core_lms
+                ]
+            )
+            .astype("float32")
+            .swapaxes(0, 1)
+        )
         return retval
 
     @classmethod
@@ -284,7 +355,9 @@ class Batch3D:
         k[:, 2, 1] = units[:, 0]
 
         ident = np.eye(3, dtype="float32")
-        retval = ident + np.sin(theta)[:, None] * k + (1 - np.cos(theta))[:, None] * (k @ k)
+        retval = (
+            ident + np.sin(theta)[:, None] * k + (1 - np.cos(theta))[:, None] * (k @ k)
+        )
         return retval
 
     @classmethod
@@ -333,14 +406,17 @@ class Batch3D:
         The (N, ) yaw, in degrees
         """
         rod = cls.rodrigues(vectors)
-        return np.degrees(np.arctan2(-rod[:, 2, 0],
-                                     np.sqrt(rod[:, 2, 1] ** 2 + rod[:, 2, 2] ** 2)))
+        return np.degrees(
+            np.arctan2(-rod[:, 2, 0], np.sqrt(rod[:, 2, 1] ** 2 + rod[:, 2, 2] ** 2))
+        )
 
     @classmethod
-    def project_points(cls,
-                       points: npt.NDArray[np.float32],
-                       rotation_vectors: npt.NDArray[np.float32],
-                       translation_vectors: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
+    def project_points(
+        cls,
+        points: npt.NDArray[np.float32],
+        rotation_vectors: npt.NDArray[np.float32],
+        translation_vectors: npt.NDArray[np.float32],
+    ) -> npt.NDArray[np.float32]:
         """Batch protection of points from 3D space to 2D space
 
         Parameters
@@ -357,8 +433,10 @@ class Batch3D:
         The (N, M, 2) projected points in 2D space
         """
         rot = cls.rodrigues(rotation_vectors)
-        x_cam = np.einsum('nij,nmj->nmi', rot, points) + translation_vectors.swapaxes(1, 2)
-        x_y = x_cam[..., :2] / x_cam[..., 2: 3]
+        x_cam = np.einsum("nij,nmj->nmi", rot, points) + translation_vectors.swapaxes(
+            1, 2
+        )
+        x_y = x_cam[..., :2] / x_cam[..., 2:3]
 
         cam = cls._camera_matrix
         retval = np.empty_like(x_y)
@@ -367,10 +445,12 @@ class Batch3D:
         return retval
 
     @classmethod
-    def get_offsets(cls,
-                    centering: CenteringType,
-                    rotation_vectors: npt.NDArray[np.float32],
-                    translation_vectors: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
+    def get_offsets(
+        cls,
+        centering: CenteringType,
+        rotation_vectors: npt.NDArray[np.float32],
+        translation_vectors: npt.NDArray[np.float32],
+    ) -> npt.NDArray[np.float32]:
         """Obtain the offset for moving normalized 68 point landmarks from legacy centering
 
         Parameters
@@ -390,9 +470,9 @@ class Batch3D:
         if centering == "legacy":
             return np.broadcast_to(cls._legacy_offset, (batch_size, 2))
         points3d = np.broadcast_to(_CENTER_OFFSETS[centering][None], (batch_size, 3))
-        offsets = cls.project_points(points3d[:, None, :],
-                                     rotation_vectors,
-                                     translation_vectors)[:, 0]
+        offsets = cls.project_points(
+            points3d[:, None, :], rotation_vectors, translation_vectors
+        )[:, 0]
         return offsets - cls._to_center_shift
 
 

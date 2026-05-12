@@ -38,13 +38,15 @@ class VGGFace2(FacePlugin):
     """
 
     def __init__(self) -> None:
-        super().__init__(input_size=224,
-                         batch_size=cfg.batch_size(),
-                         is_rgb=False,
-                         dtype="float32",
-                         scale=(0, 255),
-                         force_cpu=cfg.cpu(),
-                         centering="legacy")
+        super().__init__(
+            input_size=224,
+            batch_size=cfg.batch_size(),
+            is_rgb=False,
+            dtype="float32",
+            scale=(0, 255),
+            force_cpu=cfg.cpu(),
+            centering="legacy",
+        )
         self.model: VGGFace2Model
 
         # Average image provided in https://github.com/ox-vgg/vgg_face2
@@ -107,12 +109,19 @@ class ConvBlock(nn.Module):
     stride
         The stride length for the first and last convolution
     """
-    def __init__(self, in_channels: int, filters: int, kernel: int, stride: int = 2) -> None:
+
+    def __init__(
+        self, in_channels: int, filters: int, kernel: int, stride: int = 2
+    ) -> None:
         super().__init__()
         bottleneck = filters // 4
-        self.reduce_conv = nn.Conv2d(in_channels, bottleneck, 1, stride=stride, bias=False)
+        self.reduce_conv = nn.Conv2d(
+            in_channels, bottleneck, 1, stride=stride, bias=False
+        )
         self.reduce_bn = nn.BatchNorm2d(bottleneck, eps=0.001, momentum=0.01)
-        self.conv = nn.Conv2d(bottleneck, bottleneck, kernel, stride=1, padding=1, bias=False)
+        self.conv = nn.Conv2d(
+            bottleneck, bottleneck, kernel, stride=1, padding=1, bias=False
+        )
         self.bn = nn.BatchNorm2d(bottleneck, eps=0.001, momentum=0.01)
         self.increase_conv = nn.Conv2d(bottleneck, filters, 1, stride=1, bias=False)
         self.increase_bn = nn.BatchNorm2d(filters, eps=0.001, momentum=0.01)
@@ -150,6 +159,7 @@ class IdentityBlock(nn.Module):
     kernel
         The kernel size of middle conv layer of the block
     """
+
     def __init__(self, in_channels: int, filters: int, kernel: int) -> None:
         super().__init__()
         self.reduce_conv = nn.Conv2d(in_channels, filters, 1, bias=False)
@@ -181,6 +191,7 @@ class ResNet50(nn.Module):
     """ResNet50 imported for VGG-Face2 adapted from
     https://github.com/WeidiXie/Keras-VGGFace2-ResNet50
     """
+
     def __init__(self) -> None:
         super().__init__()
         self.conv = nn.Conv2d(3, 64, 7, stride=2, bias=False)
@@ -219,6 +230,7 @@ class VGGFace2Model(nn.Module):
     """VGG-Face 2 model with resnet 50 backbone. Adapted from
     https://github.com/WeidiXie/Keras-VGGFace2-ResNet50
     """
+
     def __init__(self) -> None:
         super().__init__()
         self.resnet = ResNet50()

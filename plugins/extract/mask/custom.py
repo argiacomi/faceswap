@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Custom Mask for faceswap.py"""
+
 from __future__ import annotations
 import logging
 import typing as T
@@ -19,15 +20,18 @@ logger = logging.getLogger(__name__)
 class Custom(FacePlugin):
     """A mask that fills the whole face area with 1s or 0s (depending on user selected settings)
     for custom editing."""
+
     # pylint:disable=duplicate-code
 
     def __init__(self):
-        super().__init__(input_size=256,
-                         batch_size=cfg.batch_size(),
-                         is_rgb=False,
-                         dtype="uint8",
-                         scale=(0, 255),
-                         centering=T.cast("CenteringType", cfg.centering()))
+        super().__init__(
+            input_size=256,
+            batch_size=cfg.batch_size(),
+            is_rgb=False,
+            dtype="uint8",
+            scale=(0, 255),
+            centering=T.cast("CenteringType", cfg.centering()),
+        )
         # Separate storage for face and head masks
         self.storage_name = f"{self.storage_name}_{self.centering}"
         self._fill = cfg.fill()
@@ -37,7 +41,7 @@ class Custom(FacePlugin):
         logger.debug("No mask model to initialize")
 
     def pre_process(self, batch: np.ndarray) -> np.ndarray:
-        """ Return a zero array of the same shape and dtype as the input array
+        """Return a zero array of the same shape and dtype as the input array
 
         Parameters
         ----------

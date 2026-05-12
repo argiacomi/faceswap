@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-""" DFaker Model
-    Based on the dfaker model: https://github.com/dfaker """
+"""DFaker Model
+Based on the dfaker model: https://github.com/dfaker"""
+
 import logging
 import sys
 
@@ -16,7 +17,8 @@ logger = logging.getLogger(__name__)
 
 
 class Model(OriginalModel):
-    """ Dfaker Model """
+    """Dfaker Model"""
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._output_size = cfg.output_size()
@@ -28,14 +30,16 @@ class Model(OriginalModel):
         self.kernel_initializer = initializers.RandomNormal(0, 0.02)
 
     def decoder(self, side):
-        """ Decoder Network """
+        """Decoder Network"""
         input_ = Input(shape=(8, 8, 512))
         var_x = input_
 
         if self._output_size == 256:
             var_x = UpscaleBlock(1024, activation=None)(var_x)
             var_x = layers.LeakyReLU(negative_slope=0.2)(var_x)
-            var_x = ResidualBlock(1024, kernel_initializer=self.kernel_initializer)(var_x)
+            var_x = ResidualBlock(1024, kernel_initializer=self.kernel_initializer)(
+                var_x
+            )
         var_x = UpscaleBlock(512, activation=None)(var_x)
         var_x = layers.LeakyReLU(negative_slope=0.2)(var_x)
         var_x = ResidualBlock(512, kernel_initializer=self.kernel_initializer)(var_x)

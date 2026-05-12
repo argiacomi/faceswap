@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-""" The default options for the faceswap Manual_Balance Color plugin.
+"""The default options for the faceswap Manual_Balance Color plugin.
 
 Defaults files should be named `<plugin_name>_defaults.py`
 
@@ -25,6 +25,7 @@ Items will be grouped together as per their `group` parameter, but otherwise wil
 the order that they are added to this module.
 from lib.config import ConfigItem
 """
+
 from lib.config import ConfigItem
 
 
@@ -36,61 +37,65 @@ colorspace = ConfigItem(
     default="HSV",
     group="color balance",
     info="The colorspace to use for adjustment: The three adjustment sliders will "
-         "effect the image differently depending on which colorspace is selected:"
-         "\n\t RGB: Red, Green, Blue. An additive colorspace where colors are obtained "
-         "by a linear combination of Red, Green, and Blue values. The three channels "
-         "are correlated by the amount of light hitting the surface. In RGB color "
-         "space the color information is separated into three channels but the same "
-         "three channels also encode brightness information."
-         "\n\t HSV: Hue, Saturation, Value. Hue - Dominant wavelength. Saturation - "
-         "Purity / shades of color. Value - Intensity. Best thing is that it uses only "
-         "one channel to describe color (H), making it very intuitive to specify color."
-         "\n\t LAB: Lightness, A, B. Lightness - Intensity. A - Color range from green "
-         "to magenta. B - Color range from blue to yellow. The L channel is "
-         "independent of color information and encodes brightness only. The other two "
-         "channels encode color."
-         "\n\t YCrCb: Y - Luminance or Luma component obtained from RGB after gamma "
-         "correction. Cr - how far is the red component from Luma. Cb - how far is the "
-         "blue component from Luma. Separates the luminance and chrominance components "
-         "into different channels.",
+    "effect the image differently depending on which colorspace is selected:"
+    "\n\t RGB: Red, Green, Blue. An additive colorspace where colors are obtained "
+    "by a linear combination of Red, Green, and Blue values. The three channels "
+    "are correlated by the amount of light hitting the surface. In RGB color "
+    "space the color information is separated into three channels but the same "
+    "three channels also encode brightness information."
+    "\n\t HSV: Hue, Saturation, Value. Hue - Dominant wavelength. Saturation - "
+    "Purity / shades of color. Value - Intensity. Best thing is that it uses only "
+    "one channel to describe color (H), making it very intuitive to specify color."
+    "\n\t LAB: Lightness, A, B. Lightness - Intensity. A - Color range from green "
+    "to magenta. B - Color range from blue to yellow. The L channel is "
+    "independent of color information and encodes brightness only. The other two "
+    "channels encode color."
+    "\n\t YCrCb: Y - Luminance or Luma component obtained from RGB after gamma "
+    "correction. Cr - how far is the red component from Luma. Cb - how far is the "
+    "blue component from Luma. Separates the luminance and chrominance components "
+    "into different channels.",
     choices=["RGB", "HSV", "LAB", "YCrCb"],
-    gui_radio=True)
+    gui_radio=True,
+)
 
 balance_1 = ConfigItem(
     datatype=float,
     default=0.0,
     group="color balance",
     info="Balance of channel 1:"
-         "\n\tRGB: Red"
-         "\n\tHSV: Hue"
-         "\n\tLAB: Lightness"
-         "\n\tYCrCb: Luma",
+    "\n\tRGB: Red"
+    "\n\tHSV: Hue"
+    "\n\tLAB: Lightness"
+    "\n\tYCrCb: Luma",
     rounding=1,
-    min_max=(-100.0, 100.0))
+    min_max=(-100.0, 100.0),
+)
 
 balance_2 = ConfigItem(
     datatype=float,
     default=0.0,
     group="color balance",
     info="Balance of channel 2:"
-         "\n\tRGB: Green"
-         "\n\tHSV: Saturation"
-         "\n\tLAB: Green > Magenta"
-         "\n\tYCrCb: Distance of red from Luma",
+    "\n\tRGB: Green"
+    "\n\tHSV: Saturation"
+    "\n\tLAB: Green > Magenta"
+    "\n\tYCrCb: Distance of red from Luma",
     rounding=1,
-    min_max=(-100.0, 100.0))
+    min_max=(-100.0, 100.0),
+)
 
 balance_3 = ConfigItem(
     datatype=float,
     default=0.0,
     group="color balance",
     info="Balance of channel 3:"
-         "\n\tRGB: Blue"
-         "\n\tHSV: Intensity"
-         "\n\tLAB: Blue > Yellow"
-         "\n\tYCrCb: Distance of blue from Luma",
+    "\n\tRGB: Blue"
+    "\n\tHSV: Intensity"
+    "\n\tLAB: Blue > Yellow"
+    "\n\tYCrCb: Distance of blue from Luma",
     rounding=1,
-    min_max=(-100.0, 100.0))
+    min_max=(-100.0, 100.0),
+)
 
 contrast = ConfigItem(
     datatype=float,
@@ -98,7 +103,8 @@ contrast = ConfigItem(
     group="brightness contrast",
     info="Amount of contrast applied.",
     rounding=1,
-    min_max=(-100.0, 100.0))
+    min_max=(-100.0, 100.0),
+)
 
 brightness = ConfigItem(
     datatype=float,
@@ -106,4 +112,5 @@ brightness = ConfigItem(
     group="brightness contrast",
     info="Amount of brighness applied.",
     rounding=1,
-    min_max=(-100.0, 100.0))
+    min_max=(-100.0, 100.0),
+)

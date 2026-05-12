@@ -1,5 +1,6 @@
 #!/usr/bin python3
 """Face and landmarks detection for faceswap.py"""
+
 from __future__ import annotations
 import logging
 import typing as T
@@ -21,7 +22,7 @@ if T.TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class DetectedFace():  # pylint:disable=too-many-instance-attributes
+class DetectedFace:  # pylint:disable=too-many-instance-attributes
     """Detected face and landmark information
 
     Holds information about a detected face, it's location in a source image
@@ -52,15 +53,18 @@ class DetectedFace():  # pylint:disable=too-many-instance-attributes
     mask
         The generated mask(s) for the face as generated in :mod:`plugins.extract.mask`.
     """
-    def __init__(self,
-                 image: np.ndarray | None = None,
-                 left: int | None = None,
-                 width: int | None = None,
-                 top: int | None = None,
-                 height: int | None = None,
-                 landmarks_xy: np.ndarray | None = None,
-                 mask: dict[str, aligned_mask.Mask] | None = None,
-                 identity: dict[str, np.ndarray] | None = None) -> None:
+
+    def __init__(
+        self,
+        image: np.ndarray | None = None,
+        left: int | None = None,
+        width: int | None = None,
+        top: int | None = None,
+        height: int | None = None,
+        landmarks_xy: np.ndarray | None = None,
+        mask: dict[str, aligned_mask.Mask] | None = None,
+        identity: dict[str, np.ndarray] | None = None,
+    ) -> None:
         logger.trace(parse_class_init(locals()))  # type:ignore[attr-defined]
         self.image = image
         """This is a generic image placeholder that should not be relied on to be holding a
@@ -90,13 +94,27 @@ class DetectedFace():  # pylint:disable=too-many-instance-attributes
 
     def __repr__(self) -> str:
         """Pretty print for logging"""
-        params = {k: v for k, v in self.__dict__.items()
-                  if k in ("image", "left", "width", "top",
-                           "height", "bottom", "_landmarks_xy", "mask")}
         params = {
-            k[1:] if k.startswith("_") else k: format_array(v) if isinstance(v, np.ndarray) else v
+            k: v
+            for k, v in self.__dict__.items()
+            if k
+            in (
+                "image",
+                "left",
+                "width",
+                "top",
+                "height",
+                "bottom",
+                "_landmarks_xy",
+                "mask",
+            )
+        }
+        params = {
+            k[1:] if k.startswith("_") else k: format_array(v)
+            if isinstance(v, np.ndarray)
+            else v
             for k, v in params.items()
-            }
+        }
         s_params = ", ".join(f"{k}={v}" for k, v in params.items())
         return f"{self.__class__.__name__}({s_params})"
 
@@ -134,12 +152,14 @@ class DetectedFace():  # pylint:disable=too-many-instance-attributes
         """Identity mechanism as key, identity embedding as value"""
         return self._identity
 
-    def add_mask(self,
-                 name: str,
-                 mask: npt.NDArray[np.uint8],
-                 affine_matrix: np.ndarray,
-                 storage_size: int = 128,
-                 storage_centering: CenteringType = "face") -> None:
+    def add_mask(
+        self,
+        name: str,
+        mask: npt.NDArray[np.uint8],
+        affine_matrix: np.ndarray,
+        storage_size: int = 128,
+        storage_centering: CenteringType = "face",
+    ) -> None:
         """Add a :class:`~lib.align.aligned_mask.Mask` to this detected face
 
         The mask should be the original output from  :mod:`plugins.extract.mask`
@@ -162,10 +182,18 @@ class DetectedFace():  # pylint:disable=too-many-instance-attributes
             The centering to store the mask at. One of `"legacy"`, `"face"`, `"head"`.
             Default: `"face"`
         """
-        logger.trace("name: '%s', mask shape: %s, affine_matrix: %s, "  # type:ignore[attr-defined]
-                     "storage_size: %s, storage_centering: %s)", name,
-                     mask.shape, affine_matrix, storage_size, storage_centering)
-        fs_mask = aligned_mask.Mask(storage_size=storage_size, storage_centering=storage_centering)
+        logger.trace(
+            "name: '%s', mask shape: %s, affine_matrix: %s, "  # type:ignore[attr-defined]
+            "storage_size: %s, storage_centering: %s)",
+            name,
+            mask.shape,
+            affine_matrix,
+            storage_size,
+            storage_centering,
+        )
+        fs_mask = aligned_mask.Mask(
+            storage_size=storage_size, storage_centering=storage_centering
+        )
         fs_mask.add(mask, affine_matrix)
         self.mask[name] = fs_mask
 
@@ -181,7 +209,11 @@ class DetectedFace():  # pylint:disable=too-many-instance-attributes
         logger.trace("landmarks shape: '%s'", landmarks.shape)  # type:ignore[attr-defined]
         self._landmarks_xy = landmarks
 
-    def add_identity(self, name: str, embedding: np.ndarray, ) -> None:
+    def add_identity(
+        self,
+        name: str,
+        embedding: np.ndarray,
+    ) -> None:
         """Add an identity embedding to this detected face. If an identity already exists for the
         given :attr:`name` it will be overwritten
 
@@ -192,20 +224,25 @@ class DetectedFace():  # pylint:disable=too-many-instance-attributes
         embedding
             The identity embedding
         """
-        logger.trace("name: '%s', embedding shape: %s",  # type:ignore[attr-defined]
-                     name, embedding.shape)
+        logger.trace(
+            "name: '%s', embedding shape: %s",  # type:ignore[attr-defined]
+            name,
+            embedding.shape,
+        )
         self._identity[name] = embedding
 
     def clear_all_identities(self) -> None:
-        """Remove all stored identity embeddings """
+        """Remove all stored identity embeddings"""
         self._identity = {}
 
-    def get_landmark_mask(self,
-                          area: T.Literal["eye", "mouth", "face", "face_extended"],
-                          dilation: float = 0,
-                          blur_kernel: int = 0,
-                          blur_type: T.Literal["gaussian", "normalized"] | None = "gaussian",
-                          blur_passes: int = 1) -> npt.NDArray[np.uint8]:
+    def get_landmark_mask(
+        self,
+        area: T.Literal["eye", "mouth", "face", "face_extended"],
+        dilation: float = 0,
+        blur_kernel: int = 0,
+        blur_type: T.Literal["gaussian", "normalized"] | None = "gaussian",
+        blur_passes: int = 1,
+    ) -> npt.NDArray[np.uint8]:
         """Obtain a :class:`~lib.align.aligned_mask.LandmarksMask` for this face
 
         Landmark based masks are generated from Aligned Face landmark points. An aligned face must
@@ -233,15 +270,17 @@ class DetectedFace():  # pylint:disable=too-many-instance-attributes
         -------
         The generated landmarks mask for the selected area
         """
-        return self.aligned.get_landmark_mask(area,
-                                              dilation=dilation,
-                                              blur_kernel=blur_kernel,
-                                              blur_type=blur_type,
-                                              blur_passes=blur_passes)
+        return self.aligned.get_landmark_mask(
+            area,
+            dilation=dilation,
+            blur_kernel=blur_kernel,
+            blur_type=blur_type,
+            blur_passes=blur_passes,
+        )
 
-    def store_training_masks(self,
-                             masks: list[np.ndarray | None],
-                             delete_masks: bool = False) -> None:
+    def store_training_masks(
+        self, masks: list[np.ndarray | None], delete_masks: bool = False
+    ) -> None:
         """Concatenate and compress the given training masks and store for retrieval.
 
         Parameters
@@ -261,7 +300,10 @@ class DetectedFace():  # pylint:disable=too-many-instance-attributes
         if not valid:
             return
         combined = np.concatenate(valid, axis=-1)
-        self._training_masks = (compress(combined), T.cast(tuple[int, int, int], combined.shape))
+        self._training_masks = (
+            compress(combined),
+            T.cast(tuple[int, int, int], combined.shape),
+        )
 
     def get_training_masks(self) -> np.ndarray | None:
         """Obtain the decompressed combined training masks.
@@ -273,11 +315,12 @@ class DetectedFace():  # pylint:disable=too-many-instance-attributes
         """
         if not self._training_masks:
             return None
-        return np.frombuffer(decompress(self._training_masks[0]),
-                             dtype="uint8").reshape(self._training_masks[1])
+        return np.frombuffer(
+            decompress(self._training_masks[0]), dtype="uint8"
+        ).reshape(self._training_masks[1])
 
     def to_alignment(self) -> FileAlignments:
-        """ Return the detected face formatted for an alignments file
+        """Return the detected face formatted for an alignments file
 
         Returns
         -------
@@ -285,23 +328,35 @@ class DetectedFace():  # pylint:disable=too-many-instance-attributes
         ``landmarks_xy``, ``mask``. The additional key ``thumb`` will be provided if the
         detected face object contains a thumbnail.
         """
-        if (self.left is None or self.width is None or self.top is None or self.height is None):
-            raise AssertionError("Some detected face variables have not been initialized")
+        if (
+            self.left is None
+            or self.width is None
+            or self.top is None
+            or self.height is None
+        ):
+            raise AssertionError(
+                "Some detected face variables have not been initialized"
+            )
         thumb = None if self.thumbnail is None else self.thumbnail.tolist()
-        alignment = FileAlignments(x=self.left,
-                                   w=self.width,
-                                   y=self.top,
-                                   h=self.height,
-                                   landmarks_xy=self.landmarks_xy.tolist(),
-                                   mask={name: mask.to_dict()
-                                         for name, mask in self.mask.items()},
-                                   identity=self._identity,
-                                   thumb=thumb)
+        alignment = FileAlignments(
+            x=self.left,
+            w=self.width,
+            y=self.top,
+            h=self.height,
+            landmarks_xy=self.landmarks_xy.tolist(),
+            mask={name: mask.to_dict() for name, mask in self.mask.items()},
+            identity=self._identity,
+            thumb=thumb,
+        )
         logger.trace("Returning: %s", alignment)  # type:ignore[attr-defined]
         return alignment
 
-    def from_alignment(self, alignment: FileAlignments | PNGAlignments,
-                       image: np.ndarray | None = None, with_thumb: bool = False) -> T.Self:
+    def from_alignment(
+        self,
+        alignment: FileAlignments | PNGAlignments,
+        image: np.ndarray | None = None,
+        with_thumb: bool = False,
+    ) -> T.Self:
         """Set the attributes of this class from an alignments file and optionally load the face
         into the ``image`` attribute.
 
@@ -321,8 +376,12 @@ class DetectedFace():  # pylint:disable=too-many-instance-attributes
         This DetectedFace object populated by the incoming alignment dict
         """
 
-        logger.trace("Creating from alignment: (alignment: %s,"  # type:ignore[attr-defined]
-                     " has_image: %s)", alignment, bool(image is not None))
+        logger.trace(
+            "Creating from alignment: (alignment: %s,"  # type:ignore[attr-defined]
+            " has_image: %s)",
+            alignment,
+            bool(image is not None),
+        )
         self.left = alignment.x
         self.width = alignment.w
         self.top = alignment.y
@@ -344,9 +403,16 @@ class DetectedFace():  # pylint:disable=too-many-instance-attributes
                 self.mask[name].from_dict(mask)
         if image is not None and image.any():
             self._image_to_face(image)
-        logger.trace("Created from alignment: (left: %s, width: %s, "  # type:ignore[attr-defined]
-                     "top: %s, height: %s, landmarks: %s, mask: %s)",
-                     self.left, self.width, self.top, self.height, self.landmarks_xy, self.mask)
+        logger.trace(
+            "Created from alignment: (left: %s, width: %s, "  # type:ignore[attr-defined]
+            "top: %s, height: %s, landmarks: %s, mask: %s)",
+            self.left,
+            self.width,
+            self.top,
+            self.height,
+            self.landmarks_xy,
+            self.mask,
+        )
         return self
 
     def to_png_meta(self) -> PNGAlignments:
@@ -357,8 +423,15 @@ class DetectedFace():  # pylint:disable=too-many-instance-attributes
         The alignments dict will be returned with the keys ``x``, ``w``, ``y``, ``h``,
         ``landmarks_xy`` and ``mask``
         """
-        if (self.left is None or self.width is None or self.top is None or self.height is None):
-            raise AssertionError("Some detected face variables have not been initialized")
+        if (
+            self.left is None
+            or self.width is None
+            or self.top is None
+            or self.height is None
+        ):
+            raise AssertionError(
+                "Some detected face variables have not been initialized"
+            )
         alignment = PNGAlignments(
             x=self.left,
             w=self.width,
@@ -366,7 +439,8 @@ class DetectedFace():  # pylint:disable=too-many-instance-attributes
             h=self.height,
             landmarks_xy=self.landmarks_xy.tolist(),
             mask={name: mask.to_png_meta() for name, mask in self.mask.items()},
-            identity=self._identity)
+            identity=self._identity,
+        )
         return alignment
 
     def from_png_meta(self, alignment: PNGAlignments) -> T.Self:
@@ -392,10 +466,17 @@ class DetectedFace():  # pylint:disable=too-many-instance-attributes
         self._identity = {}
         for key, val in alignment.identity.items():
             self._identity[key] = np.array(val, dtype="float32")
-        logger.trace("Created from png exif header: (left: %s, "  # type:ignore[attr-defined]
-                     "width: %s, top: %s  height: %s, landmarks: %s, mask: %s, identity: %s)",
-                     self.left, self.width, self.top, self.height, self.landmarks_xy, self.mask,
-                     {k: v.shape for k, v in self._identity.items()})
+        logger.trace(
+            "Created from png exif header: (left: %s, "  # type:ignore[attr-defined]
+            "width: %s, top: %s  height: %s, landmarks: %s, mask: %s, identity: %s)",
+            self.left,
+            self.width,
+            self.top,
+            self.height,
+            self.landmarks_xy,
+            self.mask,
+            {k: v.shape for k, v in self._identity.items()},
+        )
         return self
 
     def _image_to_face(self, image: np.ndarray) -> None:
@@ -407,20 +488,21 @@ class DetectedFace():  # pylint:disable=too-many-instance-attributes
             The image to be cropped
         """
         logger.trace("Cropping face from image")  # type:ignore[attr-defined]
-        self.image = image[self.top: self.bottom,
-                           self.left: self.right]
+        self.image = image[self.top : self.bottom, self.left : self.right]
 
     # <<< Aligned Face methods and properties >>> #
-    def load_aligned(self,
-                     image: np.ndarray | None,
-                     size: int = 256,
-                     dtype: str | None = None,
-                     centering: CenteringType = "head",
-                     coverage_ratio: float = 1.0,
-                     y_offset: float = 0.0,
-                     force: bool = False,
-                     is_aligned: bool = False,
-                     is_legacy: bool = False) -> None:
+    def load_aligned(
+        self,
+        image: np.ndarray | None,
+        size: int = 256,
+        dtype: str | None = None,
+        centering: CenteringType = "head",
+        coverage_ratio: float = 1.0,
+        y_offset: float = 0.0,
+        force: bool = False,
+        is_aligned: bool = False,
+        is_legacy: bool = False,
+    ) -> None:
         """Align a face from a given image.
 
         Aligning a face is a relatively expensive task and is not required for all uses of
@@ -469,20 +551,28 @@ class DetectedFace():  # pylint:disable=too-many-instance-attributes
         """
         if self._aligned and not force:
             # Don't reload an already aligned face
-            logger.trace("Skipping alignment calculation for already "  # type:ignore[attr-defined]
-                         "aligned face")
+            logger.trace(
+                "Skipping alignment calculation for already "  # type:ignore[attr-defined]
+                "aligned face"
+            )
         else:
-            logger.trace("Loading aligned face: (size: %s, "  # type:ignore[attr-defined]
-                         "dtype: %s)", size, dtype)
-            self._aligned = AlignedFace(self.landmarks_xy,
-                                        image=image,
-                                        centering=centering,
-                                        size=size,
-                                        coverage_ratio=coverage_ratio,
-                                        y_offset=y_offset,
-                                        dtype=dtype,
-                                        is_aligned=is_aligned,
-                                        is_legacy=is_aligned and is_legacy)
+            logger.trace(
+                "Loading aligned face: (size: %s, "  # type:ignore[attr-defined]
+                "dtype: %s)",
+                size,
+                dtype,
+            )
+            self._aligned = AlignedFace(
+                self.landmarks_xy,
+                image=image,
+                centering=centering,
+                size=size,
+                coverage_ratio=coverage_ratio,
+                y_offset=y_offset,
+                dtype=dtype,
+                is_aligned=is_aligned,
+                is_legacy=is_aligned and is_legacy,
+            )
 
 
 __all__ = get_module_objects(__name__)

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Launches the correct script with the given Command Line Arguments"""
+
 from __future__ import annotations
 
 import logging
@@ -27,7 +28,7 @@ if T.TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class ScriptExecutor():
+class ScriptExecutor:
     """Loads the relevant script modules and executes the script.
 
     This class is initialized in each of the arg parsers for the relevant command, then execute
@@ -38,11 +39,12 @@ class ScriptExecutor():
     command
         The faceswap command that is being executed
     """
+
     def __init__(self, command: str) -> None:
         self._command = command.lower()
 
     def _set_environment_variables(self) -> None:
-        """Set the number of threads that numexpr can use. """
+        """Set the number of threads that numexpr can use."""
         # Allocate a decent number of threads to numexpr to suppress warnings
         cpu_count = os.cpu_count()
         allocate = max(1, cpu_count - cpu_count // 3 if cpu_count is not None else 1)
@@ -96,12 +98,16 @@ class ScriptExecutor():
 
         torch_ver = get_torch_version()
         if torch_ver < min_ver:
-            msg = (f"The minimum supported PyTorch is version {min_ver} but you have version "
-                   f"{torch_ver} installed. Please upgrade PyTorch.")
+            msg = (
+                f"The minimum supported PyTorch is version {min_ver} but you have version "
+                f"{torch_ver} installed. Please upgrade PyTorch."
+            )
             self._handle_import_error(msg)
         if torch_ver > max_ver:
-            msg = (f"The maximum supported PyTorch is version {max_ver} but you have version "
-                   f"{torch_ver} installed. Please downgrade PyTorch.")
+            msg = (
+                f"The maximum supported PyTorch is version {max_ver} but you have version "
+                f"{torch_ver} installed. Please downgrade PyTorch."
+            )
             self._handle_import_error(msg)
         logger.debug("Installed PyTorch Version: %s", torch_ver)
 
@@ -117,7 +123,7 @@ class ScriptExecutor():
         """
         if "gui" in sys.argv and platform.system() == "Windows":
             logger.error(message)
-            logger.info("Press \"ENTER\" to dismiss the message and close FaceSwap")
+            logger.info('Press "ENTER" to dismiss the message and close FaceSwap')
             input()
             sys.exit(1)
         else:
@@ -146,12 +152,16 @@ class ScriptExecutor():
         try:
             import tkinter  # noqa pylint:disable=unused-import,import-outside-toplevel
         except ImportError as err:
-            logger.error("It looks like TkInter isn't installed for your OS, so the GUI has been "
-                         "disabled. To enable the GUI please install the TkInter application. You "
-                         "can try:")
+            logger.error(
+                "It looks like TkInter isn't installed for your OS, so the GUI has been "
+                "disabled. To enable the GUI please install the TkInter application. You "
+                "can try:"
+            )
             logger.info("Anaconda: conda install tk")
-            logger.info("Windows/macOS: Install ActiveTcl Community Edition from "
-                        "http://www.activestate.com")
+            logger.info(
+                "Windows/macOS: Install ActiveTcl Community Edition from "
+                "http://www.activestate.com"
+            )
             logger.info("Ubuntu/Mint/Debian: sudo apt install python3-tk")
             logger.info("Arch: sudo pacman -S tk")
             logger.info("CentOS/Redhat: sudo yum install tkinter")
@@ -171,8 +181,10 @@ class ScriptExecutor():
         """
         if not os.environ.get("DISPLAY", None) and os.name != "nt":
             if platform.system() == "Darwin":
-                logger.info("macOS users need to install XQuartz. "
-                            "See https://support.apple.com/en-gb/HT201341")
+                logger.info(
+                    "macOS users need to install XQuartz. "
+                    "See https://support.apple.com/en-gb/HT201341"
+                )
             raise FaceswapError("No display detected. GUI mode has been disabled.")
 
     def execute_script(self, arguments: argparse.Namespace) -> None:
@@ -207,10 +219,12 @@ class ScriptExecutor():
         except Exception:  # pylint:disable=broad-except
             crash_file = crash_log()
             logger.exception("Got Exception on main handler:")
-            logger.critical("An unexpected crash has occurred. Crash report written to '%s'. "
-                            "You MUST provide this file if seeking assistance. Please verify you "
-                            "are running the latest version of faceswap before reporting",
-                            crash_file)
+            logger.critical(
+                "An unexpected crash has occurred. Crash report written to '%s'. "
+                "You MUST provide this file if seeking assistance. Please verify you "
+                "are running the latest version of faceswap before reporting",
+                crash_file,
+            )
 
         finally:
             safe_shutdown(got_error=not success)
@@ -236,8 +250,10 @@ class ScriptExecutor():
         assert GPUStats is not None
         if arguments.exclude_gpus:
             if not all(idx.isdigit() for idx in arguments.exclude_gpus):
-                logger.error("GPUs passed to the ['-X', '--exclude-gpus'] argument must all be "
-                             "integers.")
+                logger.error(
+                    "GPUs passed to the ['-X', '--exclude-gpus'] argument must all be "
+                    "integers."
+                )
                 sys.exit(1)
             arguments.exclude_gpus = [int(idx) for idx in arguments.exclude_gpus]
             GPUStats().exclude_devices(arguments.exclude_gpus)

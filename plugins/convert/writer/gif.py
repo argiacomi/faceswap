@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Animated GIF writer for faceswap.py converter"""
+
 from __future__ import annotations
 
 import logging
@@ -41,11 +42,14 @@ class Writer(Output):
     kwargs
         Any additional standard :class:`plugins.convert.writer._base.Output` key word arguments.
     """
-    def __init__(self,
-                 output_folder: str,
-                 total_count: int,
-                 frame_ranges: list[tuple[int, int]] | None,
-                 **kwargs) -> None:
+
+    def __init__(
+        self,
+        output_folder: str,
+        total_count: int,
+        frame_ranges: list[tuple[int, int]] | None,
+        **kwargs,
+    ) -> None:
         logger.debug(parse_class_init(locals()))
         super().__init__(output_folder, **kwargs)
         self._frame_order: deque[int] = self._set_frame_order(total_count, frame_ranges)
@@ -95,11 +99,14 @@ class Writer(Output):
         while self._frame_order:
             if self._frame_order[0] not in self.cache:
                 logger.trace(  # type: ignore[attr-defined]
-                    "[GIF] Next frame not ready. Continuing")
+                    "[GIF] Next frame not ready. Continuing"
+                )
                 break
             save_no = self._frame_order.popleft()
-            logger.trace("[GIF] Rendering from cache. Frame no: %s",  # type: ignore[attr-defined]
-                         save_no)
+            logger.trace(
+                "[GIF] Rendering from cache. Frame no: %s",  # type: ignore[attr-defined]
+                save_no,
+            )
             img = self.cache.pop(save_no)
             if img.size != self._dimensions:
                 img = cv2.resize(img, self._dimensions)
@@ -118,7 +125,8 @@ class Writer(Output):
             The converted image to be written
         """
         logger.trace(  # type: ignore[attr-defined]
-            "[GIF] Received frame: (filename: '%s', shape: %s", filename, image.shape)
+            "[GIF] Received frame: (filename: '%s', shape: %s", filename, image.shape
+        )
         dimensions = (image.shape[1], image.shape[0])
         if not self._gif_file:
             self._set_gif_filename(filename)
@@ -166,7 +174,7 @@ class Writer(Output):
         -------
         The quantized PIL image
         """
-        img = Image.fromarray(mapped, mode='P')
+        img = Image.fromarray(mapped, mode="P")
         del mapped
         img.putpalette(palette)
         if cfg.dithering():
@@ -189,8 +197,9 @@ class Writer(Output):
         logger.info("[GIF] Mapping colors...")
         _, mapped_flat = tree.query(images.reshape(-1, 3))
         del images
-        mapped = T.cast("npt.NDArray[np.uint8]",
-                        mapped_flat.reshape(im_shape[:3]).astype(np.uint8))
+        mapped = T.cast(
+            "npt.NDArray[np.uint8]", mapped_flat.reshape(im_shape[:3]).astype(np.uint8)
+        )
         flat_palette = palette.flatten().tobytes()
         imgs = [self._quantize_frame(im, flat_palette) for im in mapped]
         return imgs
@@ -200,16 +209,20 @@ class Writer(Output):
         if not self._images:
             return
         assert self._gif_file is not None
-        logger.info("[GIF] Creating GIF. Depending on the number of frames this may take a "
-                    "while...")
+        logger.info(
+            "[GIF] Creating GIF. Depending on the number of frames this may take a "
+            "while..."
+        )
         imgs = self._quantize_images()
         assert self._gif_file is not None
         logger.info("[GIF] Saving...")
-        imgs[0].save(self._gif_file,
-                     save_all=True,
-                     append_images=imgs[1:],
-                     duration=1000 / cfg.fps(),
-                     loop=cfg.loop())
+        imgs[0].save(
+            self._gif_file,
+            save_all=True,
+            append_images=imgs[1:],
+            duration=1000 / cfg.fps(),
+            loop=cfg.loop(),
+        )
 
 
 __all__ = get_module_objects(__name__)

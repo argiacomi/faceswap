@@ -1,5 +1,6 @@
 #!/usr/env/bin/python3
 """General utility functions for Faceswap inference"""
+
 from __future__ import annotations
 
 import logging
@@ -21,9 +22,9 @@ if T.TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def random_input_from_plugin(plugin: ExtractPlugin,
-                             batch_size: int,
-                             channels_last: bool) -> np.ndarray:
+def random_input_from_plugin(
+    plugin: ExtractPlugin, batch_size: int, channels_last: bool
+) -> np.ndarray:
     """Obtain a random input array from a plugin's information for the given batch size
 
     Parameters
@@ -42,17 +43,21 @@ def random_input_from_plugin(plugin: ExtractPlugin,
     size = plugin.input_size
     low, high = plugin.scale
     im_range = high - low
-    retval = np.random.random((batch_size, 3, size, size)).astype(plugin.dtype) * im_range
+    retval = (
+        np.random.random((batch_size, 3, size, size)).astype(plugin.dtype) * im_range
+    )
     retval += low
     if channels_last:
         retval = retval.transpose(0, 2, 3, 1)
     return retval
 
 
-def get_torch_modules(obj: T.Any,  # noqa: C901  # pylint:disable=too-many-branches,too-many-return-statements
-                      mod: str | None = None,
-                      seen: set[int] | None = None,
-                      results: list[torch.nn.Module] | None = None) -> list[torch.nn.Module]:
+def get_torch_modules(
+    obj: T.Any,  # noqa: C901  # pylint:disable=too-many-branches,too-many-return-statements
+    mod: str | None = None,
+    seen: set[int] | None = None,
+    results: list[torch.nn.Module] | None = None,
+) -> list[torch.nn.Module]:
     """Recursively search a plugin's model attribute to find any parent :class:`torch.nn.Module`s
 
     Parameters
@@ -110,9 +115,11 @@ def get_torch_modules(obj: T.Any,  # noqa: C901  # pylint:disable=too-many-branc
     return retval
 
 
-def warmup_plugin(plugin: ExtractPlugin,  # noqa: C901
-                  batch_size: int,
-                  channels_last: bool | None = None) -> bool | None:
+def warmup_plugin(
+    plugin: ExtractPlugin,  # noqa: C901
+    batch_size: int,
+    channels_last: bool | None = None,
+) -> bool | None:
     """Warm up a plugin that contains torch modules. If channels_last is ``None`` then attempt to
     send a channels first batch through. If it fails, send a channels last batch through
 
@@ -159,7 +166,9 @@ def warmup_plugin(plugin: ExtractPlugin,  # noqa: C901
             is_chan_last = chan_last
             break
         except Exception as err:  # pylint:disable=broad-except
-            logger.debug("Exception with channels_last=%s: %s", chan_last, str(err).strip())
+            logger.debug(
+                "Exception with channels_last=%s: %s", chan_last, str(err).strip()
+            )
 
     if cv2_setlevel is not None:
         cv2_setlevel(cv2_loglevel)
@@ -186,21 +195,29 @@ def compile_models(plugin: ExtractPlugin, modules: list[torch.nn.Module]) -> Non
             _COMPILE_LOGGED.set()
             sleep(0.5)  # Let other plugins log their output first
             logger.info("Compiling PyTorch models...")
-        channels_last = warmup_plugin(plugin, 1)  # Make sure we don't trace on wrong channel order
+        channels_last = warmup_plugin(
+            plugin, 1
+        )  # Make sure we don't trace on wrong channel order
         for mod in modules:
-            logger.verbose("Compiling %s (%s)...",  # type:ignore[attr-defined]
-                           plugin.name, mod.__class__.__name__)
+            logger.verbose(
+                "Compiling %s (%s)...",  # type:ignore[attr-defined]
+                plugin.name,
+                mod.__class__.__name__,
+            )
             mod.compile(
                 fullgraph=True,
                 dynamic=False,  # We handle dynamic BS in code
-                options={"triton.cudagraphs": True,  # Required to stop worker speed back to eager
-                         "triton.cudagraph_trees": False,  # Optimize for static shapes
-                         "triton.cudagraph_support_input_mutation": True,
-                         "shape_padding": True,  # Pad tensors for Tensor core usage
-                         "epilogue_fusion": True,
-                         "coordinate_descent_tuning": True,  # Can sometimes find better kernels
-                         "max_autotune": True,
-                         "max_autotune_report_choices_stats": False})
+                options={
+                    "triton.cudagraphs": True,  # Required to stop worker speed back to eager
+                    "triton.cudagraph_trees": False,  # Optimize for static shapes
+                    "triton.cudagraph_support_input_mutation": True,
+                    "shape_padding": True,  # Pad tensors for Tensor core usage
+                    "epilogue_fusion": True,
+                    "coordinate_descent_tuning": True,  # Can sometimes find better kernels
+                    "max_autotune": True,
+                    "max_autotune_report_choices_stats": False,
+                },
+            )
         # Send the warmup batch here as we need to keep the lock when tracing
         warmup_plugin(plugin, plugin.batch_size, channels_last=channels_last)
     torch.cuda.empty_cache()  # Need to clear cache or we may run out of VRAM

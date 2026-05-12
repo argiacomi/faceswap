@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Tensorboard call back for PyTorch logging. Hopefully temporary until a native Keras version
 is implemented"""
+
 from __future__ import annotations
 
 import logging
@@ -28,7 +29,8 @@ class RecordIterator:
         ``True`` if the log file is for a live training session that will constantly provide data.
         Default: ``False``
     """
-    _max_record_size = 1024 ** 3
+
+    _max_record_size = 1024**3
     """Maximum size for a TFRecord. Caps at 1GB to protect against nonsense length bytes"""
 
     def __init__(self, log_file, is_live: bool = False) -> None:
@@ -49,8 +51,11 @@ class RecordIterator:
         if not self._is_live or not self._log_file.closed:
             return
 
-        logger.trace("Re-opening '%s' and Seeking to %s",  # type:ignore[attr-defined]
-                     self._file_path, self._position)
+        logger.trace(
+            "Re-opening '%s' and Seeking to %s",  # type:ignore[attr-defined]
+            self._file_path,
+            self._position,
+        )
         self._log_file = open(self._file_path, "rb")  # pylint:disable=consider-using-with
         self._log_file.seek(self._position, 0)
 
@@ -58,8 +63,10 @@ class RecordIterator:
         """Close the event file. If live data, record the current position"""
         if self._is_live:
             self._position = self._log_file.tell()
-            logger.trace("Setting live position to %s",  # type:ignore[attr-defined]
-                         self._position)
+            logger.trace(
+                "Setting live position to %s",  # type:ignore[attr-defined]
+                self._position,
+            )
 
         logger.trace("EOF. Closing '%s'", self._file_path)  # type:ignore[attr-defined]
         self._log_file.close()
@@ -86,10 +93,15 @@ class RecordIterator:
             self._on_file_end()
             raise StopIteration
 
-        read_len = int(struct.unpack('Q', b_header)[0])
+        read_len = int(struct.unpack("Q", b_header)[0])
         if read_len > self._max_record_size:
-            logger.debug("Implausible record length %s in '%s' at offset %s; treating as partial "
-                         "and stopping.", read_len, self._file_path, record_start)
+            logger.debug(
+                "Implausible record length %s in '%s' at offset %s; treating as partial "
+                "and stopping.",
+                read_len,
+                self._file_path,
+                record_start,
+            )
             self._log_file.seek(record_start, 0)
             self._on_file_end()
             raise StopIteration
@@ -97,7 +109,9 @@ class RecordIterator:
         len_crc = self._log_file.read(4)
         data = self._log_file.read(read_len)
         data_crc = self._log_file.read(4)
-        if len(len_crc) < 4 or len(data) < read_len or len(data_crc) < 4:  # Partial read
+        if (
+            len(len_crc) < 4 or len(data) < read_len or len(data_crc) < 4
+        ):  # Partial read
             self._log_file.seek(record_start, 0)
             self._on_file_end()
             raise StopIteration
@@ -131,10 +145,13 @@ class TorchTensorBoard(keras.callbacks.Callback):
         Scalars
         tutorial](https://www.tensorflow.org/tensorboard/scalars_and_keras#batch-level_logging)
     """
-    def __init__(self,
-                 log_dir: str = "logs",
-                 write_graph: bool = True,
-                 update_freq: T.Literal["batch", "epoch"] | int = "epoch") -> None:
+
+    def __init__(
+        self,
+        log_dir: str = "logs",
+        write_graph: bool = True,
+        update_freq: T.Literal["batch", "epoch"] | int = "epoch",
+    ) -> None:
         logger.debug(parse_class_init(locals()))
         super().__init__()
         self.log_dir = str(log_dir)
@@ -194,9 +211,9 @@ class TorchTensorBoard(keras.callbacks.Callback):
         self._global_train_batch = 0
         self._previous_epoch_iterations = 0
 
-    def on_train_batch_end(self,
-                           batch: int,
-                           logs: dict[str, float | dict[str, float]] | None = None) -> None:
+    def on_train_batch_end(
+        self, batch: int, logs: dict[str, float | dict[str, float]] | None = None
+    ) -> None:
         """Update Tensorboard logs on batch end
 
         Parameters

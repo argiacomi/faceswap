@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-""" Custom Layers for faceswap.py. """
+"""Custom Layers for faceswap.py."""
+
 from __future__ import annotations
 
 import inspect
@@ -21,7 +22,8 @@ logger = logging.getLogger(__name__)
 
 
 class _GlobalPooling2D(Layer):  # pylint:disable=too-many-ancestors
-    """Abstract class for different global pooling 2D layers. """
+    """Abstract class for different global pooling 2D layers."""
+
     def __init__(self, data_format: str | None = None, **kwargs) -> None:
         logger.debug(parse_class_init(locals()))
 
@@ -30,9 +32,11 @@ class _GlobalPooling2D(Layer):  # pylint:disable=too-many-ancestors
         self.input_spec = InputSpec(ndim=4)
         logger.debug("Initialized %s", self.__class__.__name__)
 
-    def compute_output_shape(self, input_shape: tuple[int, ...]  # pylint:disable=arguments-differ
-                             ) -> tuple[int, ...]:
-        """ Compute the output shape based on the input shape.
+    def compute_output_shape(
+        self,
+        input_shape: tuple[int, ...],  # pylint:disable=arguments-differ
+    ) -> tuple[int, ...]:
+        """Compute the output shape based on the input shape.
 
         Parameters
         ----------
@@ -43,9 +47,13 @@ class _GlobalPooling2D(Layer):  # pylint:disable=too-many-ancestors
             return (input_shape[0], input_shape[3])
         return (input_shape[0], input_shape[1])
 
-    def call(self, inputs: KerasTensor, *args, **kwargs  # pylint:disable=arguments-differ
-             ) -> KerasTensor:
-        """ Override to call the layer.
+    def call(
+        self,
+        inputs: KerasTensor,
+        *args,
+        **kwargs,  # pylint:disable=arguments-differ
+    ) -> KerasTensor:
+        """Override to call the layer.
 
         Parameters
         ----------
@@ -61,17 +69,21 @@ class _GlobalPooling2D(Layer):  # pylint:disable=too-many-ancestors
         raise NotImplementedError
 
     def get_config(self) -> dict[str, T.Any]:
-        """ Set the Keras config """
+        """Set the Keras config"""
         config = {"data_format": self.data_format}
         base_config = super().get_config()
         return dict(list(base_config.items()) + list(config.items()))
 
 
 class GlobalMinPooling2D(_GlobalPooling2D):  # pylint:disable=too-many-ancestors,abstract-method
-    """Global minimum pooling operation for spatial data. """
+    """Global minimum pooling operation for spatial data."""
 
-    def call(self, inputs: KerasTensor, *args, **kwargs  # pylint:disable=arguments-differ
-             ) -> KerasTensor:
+    def call(
+        self,
+        inputs: KerasTensor,
+        *args,
+        **kwargs,  # pylint:disable=arguments-differ
+    ) -> KerasTensor:
         """This is where the layer's logic lives.
 
         Parameters
@@ -92,10 +104,14 @@ class GlobalMinPooling2D(_GlobalPooling2D):  # pylint:disable=too-many-ancestors
 
 
 class GlobalStdDevPooling2D(_GlobalPooling2D):  # pylint:disable=too-many-ancestors,abstract-method
-    """Global standard deviation pooling operation for spatial data. """
+    """Global standard deviation pooling operation for spatial data."""
 
-    def call(self, inputs: KerasTensor, *args, **kwargs  # pylint:disable=arguments-differ
-             ) -> KerasTensor:
+    def call(
+        self,
+        inputs: KerasTensor,
+        *args,
+        **kwargs,  # pylint:disable=arguments-differ
+    ) -> KerasTensor:
         """This is where the layer's logic lives.
 
         Parameters
@@ -116,7 +132,7 @@ class GlobalStdDevPooling2D(_GlobalPooling2D):  # pylint:disable=too-many-ancest
 
 
 class KResizeImages(Layer):  # pylint:disable=too-many-ancestors,abstract-method
-    """ A custom upscale function that uses :class:`keras.backend.resize_images` to upsample.
+    """A custom upscale function that uses :class:`keras.backend.resize_images` to upsample.
 
     Parameters
     ----------
@@ -127,19 +143,26 @@ class KResizeImages(Layer):  # pylint:disable=too-many-ancestors,abstract-method
     kwargs: dict
         The standard Keras Layer keyword arguments (if any)
     """
-    def __init__(self,
-                 size: int = 2,
-                 interpolation: T.Literal["nearest", "bilinear"] = "nearest",
-                 **kwargs) -> None:
+
+    def __init__(
+        self,
+        size: int = 2,
+        interpolation: T.Literal["nearest", "bilinear"] = "nearest",
+        **kwargs,
+    ) -> None:
         logger.debug(parse_class_init(locals()))
         super().__init__(**kwargs)
         self.size = size
         self.interpolation = interpolation
         logger.debug("Initialized %s", self.__class__.__name__)
 
-    def call(self, inputs: KerasTensor, *args, **kwargs  # pylint:disable=arguments-differ
-             ) -> KerasTensor:
-        """ Call the upsample layer
+    def call(
+        self,
+        inputs: KerasTensor,
+        *args,
+        **kwargs,  # pylint:disable=arguments-differ
+    ) -> KerasTensor:
+        """Call the upsample layer
 
         Parameters
         ----------
@@ -154,14 +177,15 @@ class KResizeImages(Layer):  # pylint:disable=too-many-ancestors,abstract-method
         height, width = inputs.shape[1:3]
         assert height is not None and width is not None
         size = int(round(width * self.size)), int(round(height * self.size))
-        retval = ops.image.resize(inputs,
-                                  size,
-                                  interpolation=self.interpolation,
-                                  data_format="channels_last")
+        retval = ops.image.resize(
+            inputs, size, interpolation=self.interpolation, data_format="channels_last"
+        )
         return retval
 
-    def compute_output_shape(self, input_shape: tuple[int, ...]  # pylint:disable=arguments-differ
-                             ) -> tuple[int, ...]:
+    def compute_output_shape(
+        self,
+        input_shape: tuple[int, ...],  # pylint:disable=arguments-differ
+    ) -> tuple[int, ...]:
         """Computes the output shape of the layer.
 
         This is the input shape with size dimensions multiplied by :attr:`size`
@@ -178,7 +202,12 @@ class KResizeImages(Layer):  # pylint:disable=too-many-ancestors,abstract-method
             An input shape tuple
         """
         batch, height, width, channels = input_shape
-        return (batch, int(round(height * self.size)), int(round(width * self.size)), channels)
+        return (
+            batch,
+            int(round(height * self.size)),
+            int(round(width * self.size)),
+            channels,
+        )
 
     def get_config(self) -> dict[str, T.Any]:
         """Returns the config of the layer.
@@ -194,7 +223,7 @@ class KResizeImages(Layer):  # pylint:disable=too-many-ancestors,abstract-method
 
 
 class L2Normalize(Layer):  # pylint:disable=too-many-ancestors,abstract-method
-    """ Normalizes a tensor w.r.t. the L2 norm alongside the specified axis.
+    """Normalizes a tensor w.r.t. the L2 norm alongside the specified axis.
 
     Parameters
     ----------
@@ -203,15 +232,18 @@ class L2Normalize(Layer):  # pylint:disable=too-many-ancestors,abstract-method
     kwargs: dict
         The standard Keras Layer keyword arguments (if any)
     """
+
     def __init__(self, axis: int, **kwargs) -> None:
         logger.debug(parse_class_init(locals()))
         self.axis = axis
         super().__init__(**kwargs)
         logger.debug("Initialized %s", self.__class__.__name__)
 
-    def compute_output_shape(self, input_shape: tuple[int, ...]  # pylint:disable=arguments-differ
-                             ) -> tuple[int, ...]:
-        """ Compute the output shape based on the input shape.
+    def compute_output_shape(
+        self,
+        input_shape: tuple[int, ...],  # pylint:disable=arguments-differ
+    ) -> tuple[int, ...]:
+        """Compute the output shape based on the input shape.
 
         Parameters
         ----------
@@ -220,8 +252,12 @@ class L2Normalize(Layer):  # pylint:disable=too-many-ancestors,abstract-method
         """
         return input_shape
 
-    def call(self, inputs: KerasTensor, *args, **kwargs  # pylint:disable=arguments-differ
-             ) -> KerasTensor:
+    def call(
+        self,
+        inputs: KerasTensor,
+        *args,
+        **kwargs,  # pylint:disable=arguments-differ
+    ) -> KerasTensor:
         """This is where the layer's logic lives.
 
         Parameters
@@ -257,7 +293,7 @@ class L2Normalize(Layer):  # pylint:disable=too-many-ancestors,abstract-method
 
 
 class PixelShuffler(Layer):  # pylint:disable=too-many-ancestors,abstract-method
-    """ PixelShuffler layer for Keras.
+    """PixelShuffler layer for Keras.
 
     This layer requires a Convolution2D prior to it, having output filters computed according to
     the formula :math:`filters = k * (scale_factor * scale_factor)` where `k` is a user defined
@@ -295,18 +331,25 @@ class PixelShuffler(Layer):  # pylint:disable=too-many-ancestors,abstract-method
     ----------
     https://gist.github.com/t-ae/6e1016cc188104d123676ccef3264981
     """
-    def __init__(self,
-                 size: int | tuple[int, int] = (2, 2),
-                 data_format: str | None = None,
-                 **kwargs) -> None:
+
+    def __init__(
+        self,
+        size: int | tuple[int, int] = (2, 2),
+        data_format: str | None = None,
+        **kwargs,
+    ) -> None:
         logger.debug(parse_class_init(locals()))
         super().__init__(**kwargs)
         self.data_format = "channels_last" if data_format is None else data_format
         self.size = (size, size) if isinstance(size, int) else tuple(size)
         logger.debug("Initialized %s", self.__class__.__name__)
 
-    def call(self, inputs: KerasTensor, *args, **kwargs  # pylint:disable=arguments-differ
-             ) -> KerasTensor:
+    def call(
+        self,
+        inputs: KerasTensor,
+        *args,
+        **kwargs,  # pylint:disable=arguments-differ
+    ) -> KerasTensor:
         """This is where the layer's logic lives.
 
         Parameters
@@ -321,9 +364,10 @@ class PixelShuffler(Layer):  # pylint:disable=too-many-ancestors,abstract-method
         """
         input_shape = inputs.shape
         if len(input_shape) != 4:
-            raise ValueError("Inputs should have rank " +
-                             str(4) +
-                             "; Received input shape:", str(input_shape))
+            raise ValueError(
+                "Inputs should have rank " + str(4) + "; Received input shape:",
+                str(input_shape),
+            )
 
         out = None
         if self.data_format == "channels_first":
@@ -335,7 +379,9 @@ class PixelShuffler(Layer):  # pylint:disable=too-many-ancestors,abstract-method
             o_height, o_width = height * r_height, width * r_width
             o_channels = channels // (r_height * r_width)
 
-            out = ops.reshape(inputs, (batch_size, r_height, r_width, o_channels, height, width))
+            out = ops.reshape(
+                inputs, (batch_size, r_height, r_width, o_channels, height, width)
+            )
             out = ops.transpose(out, (0, 3, 4, 1, 5, 2))
             out = ops.reshape(out, (batch_size, o_channels, o_height, o_width))
         elif self.data_format == "channels_last":
@@ -347,14 +393,18 @@ class PixelShuffler(Layer):  # pylint:disable=too-many-ancestors,abstract-method
             o_height, o_width = height * r_height, width * r_width
             o_channels = channels // (r_height * r_width)
 
-            out = ops.reshape(inputs, (batch_size, height, width, r_height, r_width, o_channels))
+            out = ops.reshape(
+                inputs, (batch_size, height, width, r_height, r_width, o_channels)
+            )
             out = ops.transpose(out, (0, 1, 3, 2, 4, 5))
             out = ops.reshape(out, (batch_size, o_height, o_width, o_channels))
         assert out is not None
         return T.cast("KerasTensor", out)
 
-    def compute_output_shape(self,    # pylint:disable=arguments-differ
-                             input_shape: tuple[int | None, ...]) -> tuple[int | None, ...]:
+    def compute_output_shape(
+        self,  # pylint:disable=arguments-differ
+        input_shape: tuple[int | None, ...],
+    ) -> tuple[int | None, ...]:
         """Computes the output shape of the layer.
 
         Assumes that the layer will be built to match that input shape provided.
@@ -371,9 +421,10 @@ class PixelShuffler(Layer):  # pylint:disable=too-many-ancestors,abstract-method
             An input shape tuple
         """
         if len(input_shape) != 4:
-            raise ValueError("Inputs should have rank " +
-                             str(4) +
-                             "; Received input shape:", str(input_shape))
+            raise ValueError(
+                "Inputs should have rank " + str(4) + "; Received input shape:",
+                str(input_shape),
+            )
 
         retval: tuple[int | None, ...]
         if self.data_format == "channels_first":
@@ -390,10 +441,7 @@ class PixelShuffler(Layer):  # pylint:disable=too-many-ancestors,abstract-method
             if channels * self.size[0] * self.size[1] != input_shape[1]:
                 raise ValueError("channels of input and size are incompatible")
 
-            retval = (input_shape[0],
-                      channels,
-                      height,
-                      width)
+            retval = (input_shape[0], channels, height, width)
         else:
             height = None
             width = None
@@ -408,10 +456,7 @@ class PixelShuffler(Layer):  # pylint:disable=too-many-ancestors,abstract-method
             if channels * self.size[0] * self.size[1] != input_shape[3]:
                 raise ValueError("channels of input and size are incompatible")
 
-            retval = (input_shape[0],
-                      height,
-                      width,
-                      channels)
+            retval = (input_shape[0], height, width, channels)
         return retval
 
     def get_config(self) -> dict[str, T.Any]:
@@ -429,15 +474,14 @@ class PixelShuffler(Layer):  # pylint:disable=too-many-ancestors,abstract-method
         dict
             A python dictionary containing the layer configuration
         """
-        config = {"size": self.size,
-                  "data_format": self.data_format}
+        config = {"size": self.size, "data_format": self.data_format}
         base_config = super().get_config()
 
         return dict(list(base_config.items()) + list(config.items()))
 
 
 class QuickGELU(Layer):  # pylint:disable=too-many-ancestors,abstract-method
-    """ Applies GELU approximation that is fast but somewhat inaccurate.
+    """Applies GELU approximation that is fast but somewhat inaccurate.
 
     Parameters
     ----------
@@ -446,14 +490,17 @@ class QuickGELU(Layer):  # pylint:disable=too-many-ancestors,abstract-method
     kwargs: dict
         The standard Keras Layer keyword arguments (if any)
     """
+
     def __init__(self, name: str = "QuickGELU", **kwargs) -> None:
         logger.debug(parse_class_init(locals()))
         super().__init__(name=name, **kwargs)
         logger.debug("Initialized %s", self.__class__.__name__)
 
-    def compute_output_shape(self, input_shape: tuple[int, ...]  # pylint:disable=arguments-differ
-                             ) -> tuple[int, ...]:
-        """ Compute the output shape based on the input shape.
+    def compute_output_shape(
+        self,
+        input_shape: tuple[int, ...],  # pylint:disable=arguments-differ
+    ) -> tuple[int, ...]:
+        """Compute the output shape based on the input shape.
 
         Parameters
         ----------
@@ -462,9 +509,13 @@ class QuickGELU(Layer):  # pylint:disable=too-many-ancestors,abstract-method
         """
         return input_shape
 
-    def call(self, inputs: KerasTensor, *args, **kwargs  # pylint:disable=arguments-differ
-             ) -> KerasTensor:
-        """ Call the QuickGELU layerr
+    def call(
+        self,
+        inputs: KerasTensor,
+        *args,
+        **kwargs,  # pylint:disable=arguments-differ
+    ) -> KerasTensor:
+        """Call the QuickGELU layerr
 
         Parameters
         ----------
@@ -493,6 +544,7 @@ class ReflectionPadding2D(Layer):  # pylint:disable=too-many-ancestors,abstract-
     kwargs: dict
         The standard Keras Layer keyword arguments (if any)
     """
+
     def __init__(self, stride: int = 2, kernel_size: int = 5, **kwargs) -> None:
         logger.debug(parse_class_init(locals()))
 
@@ -546,13 +598,19 @@ class ReflectionPadding2D(Layer):  # pylint:disable=too-many-ancestors,abstract-
         else:
             padding_width = max(kernel_width - (in_width % self.stride), 0)
 
-        return (input_shape[0],
-                input_shape[1] + padding_height,
-                input_shape[2] + padding_width,
-                input_shape[3])
+        return (
+            input_shape[0],
+            input_shape[1] + padding_height,
+            input_shape[2] + padding_width,
+            input_shape[3],
+        )
 
-    def call(self, inputs: KerasTensor, *args, **kwargs  # pylint:disable=arguments-differ
-             ) -> KerasTensor:
+    def call(
+        self,
+        inputs: KerasTensor,
+        *args,
+        **kwargs,  # pylint:disable=arguments-differ
+    ) -> KerasTensor:
         """This is where the layer's logic lives.
 
         Parameters
@@ -586,9 +644,11 @@ class ReflectionPadding2D(Layer):  # pylint:disable=too-many-ancestors,abstract-
         padding_left = padding_width // 2
         padding_right = padding_width - padding_left
 
-        return ops.pad(inputs,
-                       [[0, 0], [padding_top, padding_bot], [padding_left, padding_right], [0, 0]],
-                       mode="reflect")
+        return ops.pad(
+            inputs,
+            [[0, 0], [padding_top, padding_bot], [padding_left, padding_right], [0, 0]],
+            mode="reflect",
+        )
 
     def get_config(self) -> dict[str, T.Any]:
         """Returns the config of the layer.
@@ -605,14 +665,13 @@ class ReflectionPadding2D(Layer):  # pylint:disable=too-many-ancestors,abstract-
         dict
             A python dictionary containing the layer configuration
         """
-        config = {"stride": self.stride,
-                  "kernel_size": self.kernel_size}
+        config = {"stride": self.stride, "kernel_size": self.kernel_size}
         base_config = super().get_config()
         return dict(list(base_config.items()) + list(config.items()))
 
 
 class Swish(Layer):  # pylint:disable=too-many-ancestors,abstract-method
-    """ Swish Activation Layer implementation for Keras.
+    """Swish Activation Layer implementation for Keras.
 
     Parameters
     ----------
@@ -625,15 +684,18 @@ class Swish(Layer):  # pylint:disable=too-many-ancestors,abstract-method
     -----------
     Swish: a Self-Gated Activation Function: https://arxiv.org/abs/1710.05941v1
     """
+
     def __init__(self, beta: float = 1.0, **kwargs) -> None:
         logger.debug(parse_class_init(locals()))
         super().__init__(**kwargs)
         self.beta = beta
         logger.debug("Initialized %s", self.__class__.__name__)
 
-    def compute_output_shape(self, input_shape: tuple[int, ...]  # pylint:disable=arguments-differ
-                             ) -> tuple[int, ...]:
-        """ Compute the output shape based on the input shape.
+    def compute_output_shape(
+        self,
+        input_shape: tuple[int, ...],  # pylint:disable=arguments-differ
+    ) -> tuple[int, ...]:
+        """Compute the output shape based on the input shape.
 
         Parameters
         ----------
@@ -642,9 +704,13 @@ class Swish(Layer):  # pylint:disable=too-many-ancestors,abstract-method
         """
         return input_shape
 
-    def call(self, inputs: KerasTensor, *args, **kwargs  # pylint:disable=arguments-differ
-             ) -> KerasTensor:
-        """ Call the Swish Activation function.
+    def call(
+        self,
+        inputs: KerasTensor,
+        *args,
+        **kwargs,  # pylint:disable=arguments-differ
+    ) -> KerasTensor:
+        """Call the Swish Activation function.
 
         Parameters
         ----------
@@ -674,7 +740,7 @@ class Swish(Layer):  # pylint:disable=too-many-ancestors,abstract-method
 
 
 class ScalarOp(Layer):  # pylint:disable=too-many-ancestors,abstract-method
-    """ A layer for scalar operations for migrating TFLambdaOps in Keras 2 models to Keras 3. This
+    """A layer for scalar operations for migrating TFLambdaOps in Keras 2 models to Keras 3. This
     layer should not be used directly
 
     Parameters
@@ -684,17 +750,22 @@ class ScalarOp(Layer):  # pylint:disable=too-many-ancestors,abstract-method
     value: float
         The scalar value to use
     """
-    def __init__(self,
-                 operation: T.Literal["multiply", "truediv", "add", "subtract"],
-                 value: float,
-                 **kwargs) -> None:
+
+    def __init__(
+        self,
+        operation: T.Literal["multiply", "truediv", "add", "subtract"],
+        value: float,
+        **kwargs,
+    ) -> None:
         logger.debug(parse_class_init(locals()))
         assert operation in ("multiply", "truediv", "add", "subtract")
         self._operation = operation
-        self._operator = {"multiply": operator.mul,
-                          "truediv": operator.truediv,
-                          "add": operator.add,
-                          "subtract": operator.sub}[operation]
+        self._operator = {
+            "multiply": operator.mul,
+            "truediv": operator.truediv,
+            "add": operator.add,
+            "subtract": operator.sub,
+        }[operation]
         self._value = value
 
         if "name" not in kwargs:
@@ -703,9 +774,11 @@ class ScalarOp(Layer):  # pylint:disable=too-many-ancestors,abstract-method
 
         logger.debug("Initialized %s", self.__class__.__name__)
 
-    def compute_output_shape(self, input_shape: tuple[int, ...]  # pylint:disable=arguments-differ
-                             ) -> tuple[int, ...]:
-        """ Output shape is the same as the input shape.
+    def compute_output_shape(
+        self,
+        input_shape: tuple[int, ...],  # pylint:disable=arguments-differ
+    ) -> tuple[int, ...]:
+        """Output shape is the same as the input shape.
 
         Parameters
         ----------
@@ -714,9 +787,13 @@ class ScalarOp(Layer):  # pylint:disable=too-many-ancestors,abstract-method
         """
         return input_shape
 
-    def call(self, inputs: KerasTensor, *args, **kwargs  # pylint:disable=arguments-differ
-             ) -> KerasTensor:
-        """ Call the Scalar operation function.
+    def call(
+        self,
+        inputs: KerasTensor,
+        *args,
+        **kwargs,  # pylint:disable=arguments-differ
+    ) -> KerasTensor:
+        """Call the Scalar operation function.
 
         Parameters
         ----------

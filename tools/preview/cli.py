@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-""" Command Line Arguments for tools """
+"""Command Line Arguments for tools"""
+
 import gettext
 import typing as T
 
@@ -17,22 +18,24 @@ _HELPTEXT = _("This command allows you to preview swaps to tweak convert setting
 
 
 class PreviewArgs(FaceSwapArgs):
-    """ Class to parse the command line arguments for Preview (Convert Settings) tool """
+    """Class to parse the command line arguments for Preview (Convert Settings) tool"""
 
     @staticmethod
     def get_info() -> str:
-        """ Return command information
+        """Return command information
 
         Returns
         -------
         str
             Top line information about the Preview tool
         """
-        return _("Preview tool\nAllows you to configure your convert settings with a live preview")
+        return _(
+            "Preview tool\nAllows you to configure your convert settings with a live preview"
+        )
 
     @staticmethod
     def get_argument_list() -> list[dict[str, T.Any]]:
-        """ Put the arguments in a list so that they are accessible from both argparse and gui
+        """Put the arguments in a list so that they are accessible from both argparse and gui
 
         Returns
         -------
@@ -40,39 +43,54 @@ class PreviewArgs(FaceSwapArgs):
             Top command line options for the preview tool
         """
         argument_list = []
-        argument_list.append({
-            "opts": ("-i", "--input-dir"),
-            "action": DirOrFileFullPaths,
-            "filetypes": "video",
-            "dest": "input_dir",
-            "group": _("data"),
-            "required": True,
-            "help": _(
-                "Input directory or video. Either a directory containing the image files you wish "
-                "to process or path to a video file.")})
-        argument_list.append({
-            "opts": ("-a", "--alignments"),
-            "action": FileFullPaths,
-            "filetypes": "alignments",
-            "type": str,
-            "group": _("data"),
-            "dest": "alignments_path",
-            "help": _(
-                "Path to the alignments file for the input, if not at the default location")})
-        argument_list.append({
-            "opts": ("-m", "--model-dir"),
-            "action": DirFullPaths,
-            "dest": "model_dir",
-            "group": _("data"),
-            "required": True,
-            "help": _(
-                "Model directory. A directory containing the trained model you wish to process.")})
-        argument_list.append({
-            "opts": ("-s", "--swap-model"),
-            "action": "store_true",
-            "dest": "swap_model",
-            "default": False,
-            "help": _("Swap the model. Instead of A -> B, swap B -> A")})
+        argument_list.append(
+            {
+                "opts": ("-i", "--input-dir"),
+                "action": DirOrFileFullPaths,
+                "filetypes": "video",
+                "dest": "input_dir",
+                "group": _("data"),
+                "required": True,
+                "help": _(
+                    "Input directory or video. Either a directory containing the image files you wish "
+                    "to process or path to a video file."
+                ),
+            }
+        )
+        argument_list.append(
+            {
+                "opts": ("-a", "--alignments"),
+                "action": FileFullPaths,
+                "filetypes": "alignments",
+                "type": str,
+                "group": _("data"),
+                "dest": "alignments_path",
+                "help": _(
+                    "Path to the alignments file for the input, if not at the default location"
+                ),
+            }
+        )
+        argument_list.append(
+            {
+                "opts": ("-m", "--model-dir"),
+                "action": DirFullPaths,
+                "dest": "model_dir",
+                "group": _("data"),
+                "required": True,
+                "help": _(
+                    "Model directory. A directory containing the trained model you wish to process."
+                ),
+            }
+        )
+        argument_list.append(
+            {
+                "opts": ("-s", "--swap-model"),
+                "action": "store_true",
+                "dest": "swap_model",
+                "default": False,
+                "help": _("Swap the model. Instead of A -> B, swap B -> A"),
+            }
+        )
         return argument_list
 
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-""" The global and GUI Command Line Argument options for faceswap.py """
+"""The global and GUI Command Line Argument options for faceswap.py"""
 
 import argparse
 import gettext
@@ -29,14 +29,15 @@ _ = _LANG.gettext
 
 
 class FullHelpArgumentParser(argparse.ArgumentParser):
-    """ Extends :class:`argparse.ArgumentParser` to output full help on bad arguments. """
+    """Extends :class:`argparse.ArgumentParser` to output full help on bad arguments."""
+
     def error(self, message: str) -> T.NoReturn:
         self.print_help(sys.stderr)
         self.exit(2, f"{self.prog}: error: {message}\n")
 
 
 class SmartFormatter(argparse.HelpFormatter):
-    """ Extends the class :class:`argparse.HelpFormatter` to allow custom formatting in help text.
+    """Extends the class :class:`argparse.HelpFormatter` to allow custom formatting in help text.
 
     Adapted from: https://stackoverflow.com/questions/3853722
 
@@ -47,16 +48,19 @@ class SmartFormatter(argparse.HelpFormatter):
     Prefixing a new line within the help text with "L|" will turn that line into a list item in
     both the cli help text and the GUI.
     """
-    def __init__(self,
-                 prog: str,
-                 indent_increment: int = 2,
-                 max_help_position: int = 24,
-                 width: int | None = None) -> None:
+
+    def __init__(
+        self,
+        prog: str,
+        indent_increment: int = 2,
+        max_help_position: int = 24,
+        width: int | None = None,
+    ) -> None:
         super().__init__(prog, indent_increment, max_help_position, width)
-        self._whitespace_matcher_limited = re.compile(r'[ \r\f\v]+', re.ASCII)
+        self._whitespace_matcher_limited = re.compile(r"[ \r\f\v]+", re.ASCII)
 
     def _split_lines(self, text: str, width: int) -> list[str]:
-        """ Split the given text by the given display width.
+        """Split the given text by the given display width.
 
         If the text is not prefixed with "R|" then the standard
         :func:`argparse.HelpFormatter._split_lines` function is used, otherwise raw
@@ -75,7 +79,7 @@ class SmartFormatter(argparse.HelpFormatter):
             A list of split strings
         """
         if text.startswith("R|"):
-            text = self._whitespace_matcher_limited.sub(' ', text).strip()[2:]
+            text = self._whitespace_matcher_limited.sub(" ", text).strip()[2:]
             output = []
             for txt in text.splitlines():
                 indent = ""
@@ -84,13 +88,15 @@ class SmartFormatter(argparse.HelpFormatter):
                     txt = f"  - {txt[2:]}"
                 output.extend(textwrap.wrap(txt, width, subsequent_indent=indent))
             return output
-        return argparse.HelpFormatter._split_lines(self,  # pylint:disable=protected-access
-                                                   text,
-                                                   width)
+        return argparse.HelpFormatter._split_lines(
+            self,  # pylint:disable=protected-access
+            text,
+            width,
+        )
 
 
-class FaceSwapArgs():
-    """ Faceswap argument parser functions that are universal to all commands.
+class FaceSwapArgs:
+    """Faceswap argument parser functions that are universal to all commands.
 
     This is the parent class to all subsequent argparsers which holds global arguments that pertain
     to all commands.
@@ -108,10 +114,13 @@ class FaceSwapArgs():
     description: str, optional
         The description for the given command. Default: "default"
     """
-    def __init__(self,
-                 subparser: argparse._SubParsersAction | None,
-                 command: str,
-                 description: str = "default") -> None:
+
+    def __init__(
+        self,
+        subparser: argparse._SubParsersAction | None,
+        command: str,
+        description: str = "default",
+    ) -> None:
         self.global_arguments = self._get_global_arguments()
         self.info: str = self.get_info()
         self.argument_list = self.get_argument_list()
@@ -126,7 +135,7 @@ class FaceSwapArgs():
 
     @staticmethod
     def get_info() -> str:
-        """ Returns the information text for the current command.
+        """Returns the information text for the current command.
 
         This function should be overridden with the actual command help text for each
         commands' parser.
@@ -140,7 +149,7 @@ class FaceSwapArgs():
 
     @staticmethod
     def get_argument_list() -> list[dict[str, T.Any]]:
-        """ Returns the argument list for the current command.
+        """Returns the argument list for the current command.
 
         The argument list should be a list of dictionaries pertaining to each option for a command.
         This function should be overridden with the actual argument list for each command's
@@ -158,7 +167,7 @@ class FaceSwapArgs():
 
     @staticmethod
     def get_optional_arguments() -> list[dict[str, T.Any]]:
-        """ Returns the optional argument list for the current command.
+        """Returns the optional argument list for the current command.
 
         The optional arguments list is not always required, but is used when there are shared
         options between multiple commands (e.g. convert and extract). Only override if required.
@@ -173,7 +182,7 @@ class FaceSwapArgs():
 
     @staticmethod
     def _get_global_arguments() -> list[dict[str, T.Any]]:
-        """ Returns the global Arguments list that are required for ALL commands in Faceswap.
+        """Returns the global Arguments list that are required for ALL commands in Faceswap.
 
         This method should NOT be overridden.
 
@@ -184,61 +193,81 @@ class FaceSwapArgs():
         """
         global_args: list[dict[str, T.Any]] = []
         if _GPUS:
-            global_args.append({
-                "opts": ("-X", "--exclude-gpus"),
-                "dest": "exclude_gpus",
-                "action": MultiOption,
-                "type": str.lower,
-                "nargs": "+",
-                "choices": [str(idx) for idx in range(len(_GPUS))],
+            global_args.append(
+                {
+                    "opts": ("-X", "--exclude-gpus"),
+                    "dest": "exclude_gpus",
+                    "action": MultiOption,
+                    "type": str.lower,
+                    "nargs": "+",
+                    "choices": [str(idx) for idx in range(len(_GPUS))],
+                    "group": _("Global Options"),
+                    "help": _(
+                        "R|Exclude GPUs from use by Faceswap. Select the number(s) which correspond "
+                        "to any GPU(s) that you do not wish to be made available to Faceswap. "
+                        "Selecting all GPUs here will force Faceswap into CPU mode."
+                        "\nL|{}".format(" \nL|".join(_GPUS))
+                    ),
+                }
+            )
+        global_args.append(
+            {
+                "opts": ("-C", "--configfile"),
+                "action": FileFullPaths,
+                "filetypes": "ini",
+                "type": str,
+                "dest": "config_file",
                 "group": _("Global Options"),
                 "help": _(
-                    "R|Exclude GPUs from use by Faceswap. Select the number(s) which correspond "
-                    "to any GPU(s) that you do not wish to be made available to Faceswap. "
-                    "Selecting all GPUs here will force Faceswap into CPU mode."
-                    "\nL|{}".format(' \nL|'.join(_GPUS)))})
-        global_args.append({
-            "opts": ("-C", "--configfile"),
-            "action": FileFullPaths,
-            "filetypes": "ini",
-            "type": str,
-            "dest": "config_file",
-            "group": _("Global Options"),
-            "help": _(
-                "Optionally override the saved config with the path to a custom config file.")})
-        global_args.append({
-            "opts": ("-L", "--loglevel"),
-            "type": str.upper,
-            "dest": "loglevel",
-            "default": "INFO",
-            "choices": ("INFO", "VERBOSE", "DEBUG", "TRACE"),
-            "group": _("Global Options"),
-            "help": _(
-                "Log level. Stick with INFO or VERBOSE unless you need to file an error report. "
-                "Be careful with TRACE as it will generate a lot of data")})
-        global_args.append({
-            "opts": ("-F", "--logfile"),
-            "action": SaveFileFullPaths,
-            "filetypes": 'log',
-            "type": str,
-            "dest": "logfile",
-            "default": None,
-            "group": _("Global Options"),
-            "help": _("Path to store the logfile. Leave blank to store in the faceswap folder")})
+                    "Optionally override the saved config with the path to a custom config file."
+                ),
+            }
+        )
+        global_args.append(
+            {
+                "opts": ("-L", "--loglevel"),
+                "type": str.upper,
+                "dest": "loglevel",
+                "default": "INFO",
+                "choices": ("INFO", "VERBOSE", "DEBUG", "TRACE"),
+                "group": _("Global Options"),
+                "help": _(
+                    "Log level. Stick with INFO or VERBOSE unless you need to file an error report. "
+                    "Be careful with TRACE as it will generate a lot of data"
+                ),
+            }
+        )
+        global_args.append(
+            {
+                "opts": ("-F", "--logfile"),
+                "action": SaveFileFullPaths,
+                "filetypes": "log",
+                "type": str,
+                "dest": "logfile",
+                "default": None,
+                "group": _("Global Options"),
+                "help": _(
+                    "Path to store the logfile. Leave blank to store in the faceswap folder"
+                ),
+            }
+        )
         # These are hidden arguments to indicate that the GUI/Colab is being used
-        global_args.append({
-            "opts": ("-G", "--gui"),
-            "action": "store_true",
-            "dest": "redirect_gui",
-            "default": False,
-            "help": argparse.SUPPRESS})
+        global_args.append(
+            {
+                "opts": ("-G", "--gui"),
+                "action": "store_true",
+                "dest": "redirect_gui",
+                "default": False,
+                "help": argparse.SUPPRESS,
+            }
+        )
         return global_args
 
     @staticmethod
-    def _create_parser(subparser: argparse._SubParsersAction,
-                       command: str,
-                       description: str) -> argparse.ArgumentParser:
-        """ Create the parser for the selected command.
+    def _create_parser(
+        subparser: argparse._SubParsersAction, command: str, description: str
+    ) -> argparse.ArgumentParser:
+        """Create the parser for the selected command.
 
         Parameters
         ----------
@@ -255,29 +284,39 @@ class FaceSwapArgs():
         :class:`~lib.cli.args.FullHelpArgumentParser`
             The parser for the given command
         """
-        parser = subparser.add_parser(command,
-                                      help=description,
-                                      description=description,
-                                      epilog="Questions and feedback: https://faceswap.dev/forum",
-                                      formatter_class=SmartFormatter)
+        parser = subparser.add_parser(
+            command,
+            help=description,
+            description=description,
+            epilog="Questions and feedback: https://faceswap.dev/forum",
+            formatter_class=SmartFormatter,
+        )
         return parser
 
     def _add_arguments(self) -> None:
-        """ Parse the list of dictionaries containing the command line arguments and convert to
-        argparse parser arguments. """
+        """Parse the list of dictionaries containing the command line arguments and convert to
+        argparse parser arguments."""
         options = self.global_arguments + self.argument_list + self.optional_arguments
         for option in options:
             args = option["opts"]
-            kwargs = {key: option[key] for key in option.keys() if key not in ("opts", "group")}
+            kwargs = {
+                key: option[key]
+                for key in option.keys()
+                if key not in ("opts", "group")
+            }
             self.parser.add_argument(*args, **kwargs)
 
     def _process_suppressions(self) -> None:
-        """ Certain options are only available for certain backends.
+        """Certain options are only available for certain backends.
 
         Suppresses command line options that are not available for the running backend.
         """
         fs_backend = get_backend()
-        for opt_list in [self.global_arguments, self.argument_list, self.optional_arguments]:
+        for opt_list in [
+            self.global_arguments,
+            self.argument_list,
+            self.optional_arguments,
+        ]:
             for opts in opt_list:
                 if opts.get("backend", None) is None:
                     continue
@@ -291,11 +330,11 @@ class FaceSwapArgs():
 
 
 class GuiArgs(FaceSwapArgs):
-    """ Creates the command line arguments for the GUI. """
+    """Creates the command line arguments for the GUI."""
 
     @staticmethod
     def get_argument_list() -> list[dict[str, T.Any]]:
-        """ Returns the argument list for GUI arguments.
+        """Returns the argument list for GUI arguments.
 
         Returns
         -------
@@ -303,12 +342,15 @@ class GuiArgs(FaceSwapArgs):
             The list of command line options for the GUI
         """
         argument_list: list[dict[str, T.Any]] = []
-        argument_list.append({
-            "opts": ("-d", "--debug"),
-            "action": "store_true",
-            "dest": "debug",
-            "default": False,
-            "help": _("Output to Shell console instead of GUI console")})
+        argument_list.append(
+            {
+                "opts": ("-d", "--debug"),
+                "action": "store_true",
+                "dest": "debug",
+                "default": False,
+                "help": _("Output to Shell console instead of GUI console"),
+            }
+        )
         return argument_list
 
 

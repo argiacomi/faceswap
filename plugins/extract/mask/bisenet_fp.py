@@ -4,6 +4,7 @@
 Architecture and Pre-Trained Model ported from PyTorch to Keras by TorzDF from
 https://github.com/zllrunning/face-parsing.PyTorch
 """
+
 from __future__ import annotations
 import logging
 import typing as T
@@ -26,14 +27,17 @@ logger = logging.getLogger(__name__)
 
 class BiSeNetFP(FacePlugin):
     """Neural network to process face image into a segmentation mask of the face"""
+
     def __init__(self) -> None:
-        super().__init__(input_size=512,
-                         batch_size=cfg.batch_size(),
-                         is_rgb=True,
-                         dtype="float32",
-                         scale=(0, 1),
-                         force_cpu=cfg.cpu(),
-                         centering="head" if cfg.include_hair() else "face")
+        super().__init__(
+            input_size=512,
+            batch_size=cfg.batch_size(),
+            is_rgb=True,
+            dtype="float32",
+            scale=(0, 1),
+            force_cpu=cfg.cpu(),
+            centering="head" if cfg.include_hair() else "face",
+        )
         self.model: BiSeNet
         self._is_faceswap, self._git_version = self._check_weights_selection()
         self._segment_indices = self._get_segment_indices()
@@ -102,11 +106,16 @@ class BiSeNetFP(FacePlugin):
         -------
         The loaded BiSeNetFP model
         """
-        weights = GetModel(f"bisenet_face_parsing_v{self._git_version}.pth", 14).model_path
+        weights = GetModel(
+            f"bisenet_face_parsing_v{self._git_version}.pth", 14
+        ).model_path
         assert isinstance(weights, str)
-        return T.cast(BiSeNet, self.load_torch_model(BiSeNet(5 if self._is_faceswap else 19),
-                                                     weights,
-                                                     return_indices=[0]))
+        return T.cast(
+            BiSeNet,
+            self.load_torch_model(
+                BiSeNet(5 if self._is_faceswap else 19), weights, return_indices=[0]
+            ),
+        )
 
     def pre_process(self, batch: np.ndarray) -> np.ndarray:
         """Format the detected faces for prediction
@@ -152,6 +161,7 @@ class BiSeNetFP(FacePlugin):
         pred = batch.argmax(-1).astype("uint8")
         return np.isin(pred, self._segment_indices).astype("float32")
 
+
 # BiSeNet Face-Parsing Model
 
 # MIT License
@@ -191,9 +201,12 @@ class BasicBlock(nn.Module):
     stride
         The strides of the convolution along the height and width. Default: `1`
     """
+
     def __init__(self, in_channels: int, filters: int, stride: int = 1):
         super().__init__()
-        self.conv1 = nn.Conv2d(in_channels, filters, 3, stride=stride, padding=1, bias=False)
+        self.conv1 = nn.Conv2d(
+            in_channels, filters, 3, stride=stride, padding=1, bias=False
+        )
         self.bn1 = nn.BatchNorm2d(filters)
         self.conv2 = nn.Conv2d(filters, filters, 3, stride=1, padding=1, bias=False)
         self.bn2 = nn.BatchNorm2d(filters)
@@ -203,7 +216,7 @@ class BasicBlock(nn.Module):
             self.downsample = nn.Sequential(
                 nn.Conv2d(in_channels, filters, 1, stride=stride, bias=False),
                 nn.BatchNorm2d(filters),
-                )
+            )
 
     def forward(self, inputs: Tensor) -> Tensor:
         """Call the ResNet 18 basic block.
@@ -225,7 +238,8 @@ class BasicBlock(nn.Module):
 
 
 class ResNet18(nn.Module):
-    """ResNet 18 block. Used at the start of BiSeNet Face Parsing. """
+    """ResNet 18 block. Used at the start of BiSeNet Face Parsing."""
+
     def __init__(self):
         super().__init__()
         self.conv1 = nn.Conv2d(3, 64, 7, stride=2, padding=3, bias=False)
@@ -237,11 +251,9 @@ class ResNet18(nn.Module):
         self.layer4 = self._basic_layer(256, 512, 2, stride=2)
 
     @classmethod
-    def _basic_layer(cls,
-                     in_channels: int,
-                     filters: int,
-                     num_blocks: int,
-                     stride: int = 1) -> nn.Sequential:
+    def _basic_layer(
+        cls, in_channels: int, filters: int, num_blocks: int, stride: int = 1
+    ) -> nn.Sequential:
         """The basic layer for ResNet 18. Recursively builds from :func:`_basic_block`.
 
         Parameters
@@ -302,19 +314,24 @@ class ConvBNReLU(nn.Module):
     padding
         The amount of padding to apply prior to the first Convolutional Layer. Default: `1`
     """
-    def __init__(self,
-                 in_channels: int,
-                 filters: int,
-                 kernel_size: int = 3,
-                 strides: int = 1,
-                 padding: int = 1) -> None:
+
+    def __init__(
+        self,
+        in_channels: int,
+        filters: int,
+        kernel_size: int = 3,
+        strides: int = 1,
+        padding: int = 1,
+    ) -> None:
         super().__init__()
-        self.conv = nn.Conv2d(in_channels,
-                              filters,
-                              kernel_size,
-                              stride=strides,
-                              padding=padding,
-                              bias=False)
+        self.conv = nn.Conv2d(
+            in_channels,
+            filters,
+            kernel_size,
+            stride=strides,
+            padding=padding,
+            bias=False,
+        )
         self.bn = nn.BatchNorm2d(filters)
 
     def forward(self, inputs: Tensor) -> Tensor:
@@ -345,9 +362,12 @@ class BiSeNetOutput(nn.Module):
     num_class
         The number of classes to generate
     """
+
     def __init__(self, in_channels: int, filters: int, num_classes: int) -> None:
         super().__init__()
-        self.conv1 = ConvBNReLU(in_channels, filters, kernel_size=3, strides=1, padding=1)
+        self.conv1 = ConvBNReLU(
+            in_channels, filters, kernel_size=3, strides=1, padding=1
+        )
         self.conv_out = nn.Conv2d(filters, num_classes, 1, bias=False)
 
     def forward(self, inputs: Tensor) -> Tensor:
@@ -376,9 +396,12 @@ class AttentionRefinementModule(nn.Module):
         The dimensionality of the output space (i.e. the number of output filters in the
         convolution).
     """
+
     def __init__(self, in_channels: int, filters: int) -> None:
         super().__init__()
-        self.conv = ConvBNReLU(in_channels, filters, kernel_size=3, strides=1, padding=1)
+        self.conv = ConvBNReLU(
+            in_channels, filters, kernel_size=3, strides=1, padding=1
+        )
         self.conv_atten = nn.Conv2d(filters, filters, kernel_size=1, bias=False)
         self.bn_atten = nn.BatchNorm2d(filters)
         self.sigmoid_atten = nn.Sigmoid()
@@ -403,7 +426,8 @@ class AttentionRefinementModule(nn.Module):
 
 
 class ContextPath(nn.Module):
-    """The Context Path block for BiSeNet Face Parsing. """
+    """The Context Path block for BiSeNet Face Parsing."""
+
     def __init__(self):
         super().__init__()
         self.resnet = ResNet18()
@@ -429,14 +453,22 @@ class ContextPath(nn.Module):
         dim_8 = feat8.size()[2:]
         dim_16 = feat16.size()[2:]
         dim_32 = feat32.size()[2:]
-        avg = F.interpolate(self.conv_avg(F.avg_pool2d(feat32,  # pylint:disable=not-callable
-                                                       feat32.size()[2:])),
-                            dim_32,
-                            mode='nearest')
-        feat32 = self.conv_head32(F.interpolate(self.arm32(feat32) + avg, dim_16, mode='nearest'))
-        feat16 = self.conv_head16(F.interpolate(self.arm16(feat16) + feat32,
-                                                dim_8,
-                                                mode='nearest'))
+        avg = F.interpolate(
+            self.conv_avg(
+                F.avg_pool2d(
+                    feat32,  # pylint:disable=not-callable
+                    feat32.size()[2:],
+                )
+            ),
+            dim_32,
+            mode="nearest",
+        )
+        feat32 = self.conv_head32(
+            F.interpolate(self.arm32(feat32) + avg, dim_16, mode="nearest")
+        )
+        feat16 = self.conv_head16(
+            F.interpolate(self.arm16(feat16) + feat32, dim_8, mode="nearest")
+        )
         return feat8, feat16, feat32
 
 
@@ -451,11 +483,18 @@ class FeatureFusionModule(nn.Module):
         The dimensionality of the output space (i.e. the number of output filters in the
         convolution).
     """
+
     def __init__(self, in_channels: int, filters: int) -> None:
         super().__init__()
-        self.convblk = ConvBNReLU(in_channels, filters, kernel_size=1, strides=1, padding=0)
-        self.conv1 = nn.Conv2d(filters, filters // 4, 1, stride=1, padding=0, bias=False)
-        self.conv2 = nn.Conv2d(filters // 4, filters, 1, stride=1, padding=0, bias=False)
+        self.convblk = ConvBNReLU(
+            in_channels, filters, kernel_size=1, strides=1, padding=0
+        )
+        self.conv1 = nn.Conv2d(
+            filters, filters // 4, 1, stride=1, padding=0, bias=False
+        )
+        self.conv2 = nn.Conv2d(
+            filters // 4, filters, 1, stride=1, padding=0, bias=False
+        )
         self.relu = nn.ReLU(inplace=True)
         self.sigmoid = nn.Sigmoid()
 
@@ -474,8 +513,9 @@ class FeatureFusionModule(nn.Module):
         The output from the block
         """
         feat = self.convblk(torch.cat([feat_spatial, feat_context], dim=1))
-        attention = self.sigmoid(self.conv2(self.relu(self.conv1(
-            F.avg_pool2d(feat, feat.size()[2:])))))  # pylint:disable=not-callable
+        attention = self.sigmoid(
+            self.conv2(self.relu(self.conv1(F.avg_pool2d(feat, feat.size()[2:]))))
+        )  # pylint:disable=not-callable
 
         return torch.mul(feat, attention) + feat
 
@@ -490,6 +530,7 @@ class BiSeNet(nn.Module):
     num_classes
         The number of segmentation classes to create
     """
+
     def __init__(self, num_classes: int) -> None:
         super().__init__()
         self.cp = ContextPath()
@@ -515,11 +556,15 @@ class BiSeNet(nn.Module):
         feat_sp, feat_cp8, feat_cp16 = self.cp(inputs)
         feat_fuse = self.ffm(feat_sp, feat_cp8)
 
-        feats = [self.conv_out(feat_fuse),
-                 self.conv_out16(feat_cp8),
-                 self.conv_out32(feat_cp16)]
-        output = tuple(F.interpolate(feat, dims, mode='bilinear', align_corners=True)
-                       for feat in feats)
+        feats = [
+            self.conv_out(feat_fuse),
+            self.conv_out16(feat_cp8),
+            self.conv_out32(feat_cp16),
+        ]
+        output = tuple(
+            F.interpolate(feat, dims, mode="bilinear", align_corners=True)
+            for feat in feats
+        )
         assert len(output) == 3
         return output
 

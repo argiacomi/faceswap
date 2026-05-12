@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Original Trainer """
+"""Original Trainer"""
+
 from __future__ import annotations
 
 import logging
@@ -31,10 +32,9 @@ class Trainer(TrainerBase):
         """
         return torch.utils.data.RandomSampler
 
-    def _forward(self,
-                 inputs: list[torch.Tensor],
-                 targets: list[torch.Tensor],
-                 meta: BatchMeta) -> list[BatchLoss]:
+    def _forward(
+        self, inputs: list[torch.Tensor], targets: list[torch.Tensor], meta: BatchMeta
+    ) -> list[BatchLoss]:
         """Perform the forward pass on the model
 
         Parameters
@@ -54,10 +54,14 @@ class Trainer(TrainerBase):
         predictions = self.model.model(inputs, training=True)
         num_sides = len(inputs)
         num_outputs = len(predictions) // num_sides
-        losses = [self.loss_func([t[:, i] for t in targets],
-                                 predictions[i * num_outputs:i * num_outputs + num_outputs],
-                                 meta[i])
-                  for i in range(num_sides)]
+        losses = [
+            self.loss_func(
+                [t[:, i] for t in targets],
+                predictions[i * num_outputs : i * num_outputs + num_outputs],
+                meta[i],
+            )
+            for i in range(num_sides)
+        ]
         logger.trace("Losses: %s", losses)  # type:ignore[attr-defined]
         return losses
 
@@ -69,8 +73,9 @@ class Trainer(TrainerBase):
         all_loss
             The loss for each output from the model
         """
-        total_loss = T.cast(torch.Tensor,
-                            self.model.model.optimizer.scale_loss(ops.sum(all_loss)))
+        total_loss = T.cast(
+            torch.Tensor, self.model.model.optimizer.scale_loss(ops.sum(all_loss))
+        )
         total_loss.backward()
 
         trainable_weights = self.model.model.trainable_weights[:]
@@ -80,10 +85,9 @@ class Trainer(TrainerBase):
         with torch.no_grad():
             self.model.model.optimizer.apply(gradients, trainable_weights)
 
-    def train_batch(self,
-                    inputs: list[torch.Tensor],
-                    targets: list[torch.Tensor],
-                    meta: BatchMeta) -> list[BatchLoss]:
+    def train_batch(
+        self, inputs: list[torch.Tensor], targets: list[torch.Tensor], meta: BatchMeta
+    ) -> list[BatchLoss]:
         """Run a single forward and backwards pass through the model for a single batch
 
         Parameters

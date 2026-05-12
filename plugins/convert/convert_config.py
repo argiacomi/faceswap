@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-""" Default configurations for convert """
+"""Default configurations for convert"""
 
 import logging
 import os
@@ -10,10 +10,10 @@ logger = logging.getLogger(__name__)
 
 
 class _Config(FaceswapConfig):
-    """ Config File for Convert """
+    """Config File for Convert"""
 
     def set_defaults(self, helptext=""):
-        """ Set the default values for config """
+        """Set the default values for config"""
         super().set_defaults(helptext=helptext)
         self._defaults_from_plugin(os.path.dirname(__file__))
 
@@ -22,7 +22,7 @@ _CONFIG: _Config | None = None
 
 
 def load_config(config_file: str | None = None) -> _Config:
-    """ Load the Extraction configuration .ini file
+    """Load the Extraction configuration .ini file
 
     Parameters
     ----------

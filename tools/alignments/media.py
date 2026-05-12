@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Media items (Alignments, Faces, Frames) for alignments tool"""
+
 from __future__ import annotations
 import logging
 from operator import itemgetter
@@ -12,8 +13,13 @@ from tqdm import tqdm
 
 from lib.align import Alignments, DetectedFace
 from lib.align.objects import PNGHeader
-from lib.image import (generate_thumbnail, ImagesLoader, png_write_meta, read_image,
-                       read_image_meta_batch)
+from lib.image import (
+    generate_thumbnail,
+    ImagesLoader,
+    png_write_meta,
+    read_image,
+    read_image_meta_batch,
+)
 from lib.utils import get_module_objects, IMAGE_EXTENSIONS
 from lib.video import count_frames, VIDEO_EXTENSIONS
 
@@ -33,9 +39,13 @@ class AlignmentData(Alignments):
     alignments_file
         Full path to an alignments file
     """
+
     def __init__(self, alignments_file: str) -> None:
-        logger.debug("Initializing %s: (alignments file: '%s')",
-                     self.__class__.__name__, alignments_file)
+        logger.debug(
+            "Initializing %s: (alignments file: '%s')",
+            self.__class__.__name__,
+            alignments_file,
+        )
         logger.info("[ALIGNMENT DATA]")  # Tidy up cli output
         folder, filename = self.check_file_exists(alignments_file)
         super().__init__(folder, filename=filename)
@@ -44,7 +54,7 @@ class AlignmentData(Alignments):
 
     @staticmethod
     def check_file_exists(alignments_file: str) -> tuple[str, str]:
-        """ Check if the alignments file exists, and returns a tuple of the folder and filename.
+        """Check if the alignments file exists, and returns a tuple of the folder and filename.
 
         Parameters
         ----------
@@ -64,16 +74,17 @@ class AlignmentData(Alignments):
             sys.exit(0)
         if folder:
             logger.verbose(  # type:ignore[attr-defined]
-                "Alignments file exists at '%s'", alignments_file)
+                "Alignments file exists at '%s'", alignments_file
+            )
         return folder, filename
 
     def save(self) -> None:
-        """Backup copy of old alignments and save new alignments """
+        """Backup copy of old alignments and save new alignments"""
         self.backup()
         super().save()
 
 
-class MediaLoader():
+class MediaLoader:
     """Class to load images.
 
     Parameters
@@ -85,6 +96,7 @@ class MediaLoader():
         analyzing a video file. If the count is not passed in, it will be calculated.
         Default: ``None``
     """
+
     def __init__(self, folder: str, count: int | None = None):
         logger.debug("Initializing %s: (folder: '%s')", self.__class__.__name__, folder)
         logger.info("[%s DATA]", self.__class__.__name__.upper())
@@ -130,9 +142,11 @@ class MediaLoader():
             logger.error(err)
             sys.exit(0)
 
-        if (load_type == "Frames" and
-                os.path.isfile(self.folder) and
-                os.path.splitext(self.folder)[1].lower() in VIDEO_EXTENSIONS):
+        if (
+            load_type == "Frames"
+            and os.path.isfile(self.folder)
+            and os.path.splitext(self.folder)[1].lower() in VIDEO_EXTENSIONS
+        ):
             logger.verbose("Video exists at: '%s'", self.folder)  # type:ignore[attr-defined]
             retval = cv2.VideoCapture(self.folder)
         else:
@@ -145,16 +159,23 @@ class MediaLoader():
         """Check whether passed in file has a valid extension"""
         extension = os.path.splitext(filename)[1]
         retval = extension.lower() in IMAGE_EXTENSIONS
-        logger.trace("Filename has valid extension: '%s': %s",  # type:ignore[attr-defined]
-                     filename, retval)
+        logger.trace(
+            "Filename has valid extension: '%s': %s",  # type:ignore[attr-defined]
+            filename,
+            retval,
+        )
         return retval
 
     def sorted_items(self) -> list[dict[str, str]] | list[tuple[str, PNGHeader]]:
         """Override for specific folder processing"""
         raise NotImplementedError()
 
-    def process_folder(self) -> (Generator[dict[str, str], None, None] |
-                                 Generator[tuple[str, PNGHeader], None, None]):
+    def process_folder(
+        self,
+    ) -> (
+        Generator[dict[str, str], None, None]
+        | Generator[tuple[str, PNGHeader], None, None]
+    ):
         """Override for specific folder processing"""
         raise NotImplementedError()
 
@@ -197,14 +218,15 @@ class MediaLoader():
         assert self._vid_reader is not None
         frame = os.path.splitext(filename)[0]
         logger.trace("Loading video frame: '%s'", frame)  # type:ignore[attr-defined]
-        frame_no = int(frame[frame.rfind("_") + 1:]) - 1
+        frame_no = int(frame[frame.rfind("_") + 1 :]) - 1
         self._vid_reader.set(cv2.CAP_PROP_POS_FRAMES, frame_no)
 
         _, image = self._vid_reader.read()
         return image
 
-    def stream(self, skip_list: list[int] | None = None
-               ) -> Generator[tuple[str, np.ndarray], None, None]:
+    def stream(
+        self, skip_list: list[int] | None = None
+    ) -> Generator[tuple[str, np.ndarray], None, None]:
         """Load the images in :attr:`folder` in the order they are received from
         :class:`lib.image.ImagesLoader` in a background thread.
 
@@ -228,10 +250,12 @@ class MediaLoader():
             yield filename_image[0], filename_image[1]
 
     @staticmethod
-    def save_image(output_folder: str,
-                   filename: str,
-                   image: np.ndarray,
-                   metadata: PNGHeader | None = None) -> None:
+    def save_image(
+        output_folder: str,
+        filename: str,
+        image: np.ndarray,
+        metadata: PNGHeader | None = None,
+    ) -> None:
         """Save an image
 
         Parameters
@@ -268,14 +292,14 @@ class Faces(MediaLoader):
         - When the remove-faces job is being run, when the process will only load faces that exist
         in the alignments file. Default: ``None``
     """
+
     def __init__(self, folder: str, alignments: Alignments | None = None) -> None:
         self._alignments = alignments
         super().__init__(folder)
 
-    def _handle_duplicate(self,
-                          fullpath: str,
-                          header_dict: PNGHeader,
-                          seen: dict[str, list[int]]) -> bool:
+    def _handle_duplicate(
+        self, fullpath: str, header_dict: PNGHeader, seen: dict[str, list[int]]
+    ) -> bool:
         """Check whether the given face has already been seen for the source frame and face index
         from an existing face. Can happen when filenames have changed due to sorting etc. and users
         have done multiple extractions/copies and placed all of the faces in the same folder
@@ -321,22 +345,30 @@ class Faces(MediaLoader):
         dupe_count = 0
         seen: dict[str, list[int]] = {}
 
-        if self._alignments is not None and self._alignments.version < 2.1:  # Legacy updating
-            filelist = [os.path.join(self.folder, face)
-                        for face in os.listdir(self.folder)
-                        if self.valid_extension(face)]
+        if (
+            self._alignments is not None and self._alignments.version < 2.1
+        ):  # Legacy updating
+            filelist = [
+                os.path.join(self.folder, face)
+                for face in os.listdir(self.folder)
+                if self.valid_extension(face)
+            ]
         else:
-            filelist = [os.path.join(self.folder, face)
-                        for face in os.listdir(self.folder)
-                        if os.path.splitext(face)[-1] == ".png"]
+            filelist = [
+                os.path.join(self.folder, face)
+                for face in os.listdir(self.folder)
+                if os.path.splitext(face)[-1] == ".png"
+            ]
 
-        for fullpath, metadata in tqdm(read_image_meta_batch(filelist),
-                                       total=len(filelist),
-                                       desc="Reading Face Data"):
-
+        for fullpath, metadata in tqdm(
+            read_image_meta_batch(filelist),
+            total=len(filelist),
+            desc="Reading Face Data",
+        ):
             if "itxt" not in metadata or "source" not in metadata["itxt"]:
-                logger.warning("Non-Faceswap extracted face found. Image skipped: '%s'",
-                               fullpath)
+                logger.warning(
+                    "Non-Faceswap extracted face found. Image skipped: '%s'", fullpath
+                )
                 continue
             sub_dict = T.cast(PNGHeader, PNGHeader.from_dict(metadata["itxt"]))
 
@@ -344,8 +376,10 @@ class Faces(MediaLoader):
                 dupe_count += 1
                 continue
 
-            if (self._alignments is not None and  # filter existing
-                    not self._alignments.frame_exists(sub_dict.source.source_filename)):
+            if (
+                self._alignments is not None  # filter existing
+                and not self._alignments.frame_exists(sub_dict.source.source_filename)
+            ):
                 filter_count += 1
                 continue
 
@@ -353,13 +387,18 @@ class Faces(MediaLoader):
             yield retval
 
         if self._alignments is not None:
-            logger.debug("Faces filtered out that did not exist in alignments file: %s",
-                         filter_count)
+            logger.debug(
+                "Faces filtered out that did not exist in alignments file: %s",
+                filter_count,
+            )
 
         if dupe_count > 0:
-            logger.warning("%s Duplicate face images were found. These files have been moved to "
-                           "'%s' from where they can be safely deleted",
-                           dupe_count, os.path.join(self.folder, "_duplicates"))
+            logger.warning(
+                "%s Duplicate face images were found. These files have been moved to "
+                "'%s' from where they can be safely deleted",
+                dupe_count,
+                os.path.join(self.folder, "_duplicates"),
+            )
 
     def load_items(self) -> dict[str, list[int]]:
         """Load the face names into dictionary.
@@ -388,7 +427,7 @@ class Faces(MediaLoader):
 
 
 class Frames(MediaLoader):
-    """Object to hold the frames that are to be checked against """
+    """Object to hold the frames that are to be checked against"""
 
     def process_folder(self) -> Generator[dict[str, str], None, None]:
         """Iterate through the frames folder pulling the base filename
@@ -414,9 +453,11 @@ class Frames(MediaLoader):
             filename = os.path.splitext(frame)[0]
             file_extension = os.path.splitext(frame)[1]
 
-            retval = {"frame_fullname": frame,
-                      "frame_name": filename,
-                      "frame_extension": file_extension}
+            retval = {
+                "frame_fullname": frame,
+                "frame_name": filename,
+                "frame_extension": file_extension,
+            }
             logger.trace(retval)  # type:ignore[attr-defined]
             yield retval
 
@@ -433,9 +474,11 @@ class Frames(MediaLoader):
             idx = i + 1
             # Keep filename format for outputted face
             filename = f"{vid_name}_{idx:06d}"
-            retval = {"frame_fullname": f"{filename}{ext}",
-                      "frame_name": filename,
-                      "frame_extension": ext}
+            retval = {
+                "frame_fullname": f"{filename}{ext}",
+                "frame_name": filename,
+                "frame_extension": ext,
+            }
             logger.trace(retval)  # type:ignore[attr-defined]
             yield retval
 
@@ -448,8 +491,10 @@ class Frames(MediaLoader):
         """
         frames: dict[str, tuple[str, str]] = {}
         for frame in T.cast(list[dict[str, str]], self.file_list_sorted):
-            frames[frame["frame_fullname"]] = (frame["frame_name"],
-                                               frame["frame_extension"])
+            frames[frame["frame_fullname"]] = (
+                frame["frame_name"],
+                frame["frame_extension"],
+            )
         logger.trace(frames)  # type:ignore[attr-defined]
         return frames
 
@@ -460,12 +505,12 @@ class Frames(MediaLoader):
         -------
         The sorted list of frame information
         """
-        items = sorted(self.process_folder(), key=lambda x: (x["frame_name"]))
+        items = sorted(self.process_folder(), key=lambda x: x["frame_name"])
         logger.trace(items)  # type:ignore[attr-defined]
         return items
 
 
-class ExtractedFaces():
+class ExtractedFaces:
     """Holds the extracted faces and matrix for alignments
 
     Parameters
@@ -477,9 +522,15 @@ class ExtractedFaces():
     size
         The extract face size. Default: 512
     """
-    def __init__(self, frames: Frames, alignments: AlignmentData, size: int = 512) -> None:
-        logger.trace("Initializing %s: size: %s",  # type:ignore[attr-defined]
-                     self.__class__.__name__, size)
+
+    def __init__(
+        self, frames: Frames, alignments: AlignmentData, size: int = 512
+    ) -> None:
+        logger.trace(
+            "Initializing %s: size: %s",  # type:ignore[attr-defined]
+            self.__class__.__name__,
+            size,
+        )
         self.size = size
         self.alignments = alignments
         self.frames = frames
@@ -503,17 +554,20 @@ class ExtractedFaces():
         self.current_frame = None
         alignments = self.alignments.get_faces_in_frame(frame)
         logger.trace(  # type:ignore[attr-defined]
-            "Alignments for frame: (frame: '%s', alignments: %s)", frame, alignments)
+            "Alignments for frame: (frame: '%s', alignments: %s)", frame, alignments
+        )
         if not alignments:
             self.faces = []
             return
         image = self.frames.load_image(frame) if image is None else image
-        self.faces = [self.extract_one_face(alignment, image) for alignment in alignments]
+        self.faces = [
+            self.extract_one_face(alignment, image) for alignment in alignments
+        ]
         self.current_frame = frame
 
-    def extract_one_face(self,
-                         alignment: FileAlignments,
-                         image: np.ndarray) -> DetectedFace:
+    def extract_one_face(
+        self, alignment: FileAlignments, image: np.ndarray
+    ) -> DetectedFace:
         """Extract one face from image
 
         Parameters
@@ -528,17 +582,19 @@ class ExtractedFaces():
         The detected face object for the given alignment with the aligned face loaded
         """
         logger.trace(  # type:ignore[attr-defined]
-            "Extracting one face: (frame: '%s', alignment: %s)", self.current_frame, alignment)
+            "Extracting one face: (frame: '%s', alignment: %s)",
+            self.current_frame,
+            alignment,
+        )
         face = DetectedFace()
         face.from_alignment(alignment, image=image)
         face.load_aligned(image, size=self.size, centering="head")
         face.thumbnail = generate_thumbnail(face.aligned.face, size=80, quality=60)
         return face
 
-    def get_faces_in_frame(self,
-                           frame: str,
-                           update: bool = False,
-                           image: np.ndarray | None = None) -> list[DetectedFace]:
+    def get_faces_in_frame(
+        self, frame: str, update: bool = False, image: np.ndarray | None = None
+    ) -> list[DetectedFace]:
         """Return the faces for the selected frame
 
         Parameters
@@ -586,7 +642,7 @@ class ExtractedFaces():
             if top_left[1] == top_right[1]:
                 length = len_y
             else:
-                length = int(((len_x ** 2) + (len_y ** 2)) ** 0.5)
+                length = int(((len_x**2) + (len_y**2)) ** 0.5)
             sizes.append(length)
         logger.trace("sizes: '%s'", sizes)  # type:ignore[attr-defined]
         return sizes

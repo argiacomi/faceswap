@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-""" Package for handling alignments files, detected faces and aligned faces along with their
-associated objects. """
+"""Package for handling alignments files, detected faces and aligned faces along with their
+associated objects."""
+
 from __future__ import annotations
 import typing as T
 
@@ -10,6 +11,7 @@ from .preview_cv import PreviewBuffer, TriggerType
 
 if T.TYPE_CHECKING:
     from .preview_cv import PreviewBase
+
     Preview: type[PreviewBase]
 
 try:

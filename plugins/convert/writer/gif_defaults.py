@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-""" The default options for the faceswap Gif Writer plugin.
+"""The default options for the faceswap Gif Writer plugin.
 
 Defaults files should be named `<plugin_name>_defaults.py`
 
@@ -25,12 +25,15 @@ Items will be grouped together as per their `group` parameter, but otherwise wil
 the order that they are added to this module.
 from lib.config import ConfigItem
 """
+
 from lib.config import ConfigItem
 
 
-HELPTEXT = ("Options for outputting converted frames to an animated GIF.\n"
-            "Note: GIF creation needs to load all images into RAM so you should only use short "
-            "sequences")
+HELPTEXT = (
+    "Options for outputting converted frames to an animated GIF.\n"
+    "Note: GIF creation needs to load all images into RAM so you should only use short "
+    "sequences"
+)
 
 
 fps = ConfigItem(
@@ -39,7 +42,8 @@ fps = ConfigItem(
     group="settings",
     info="Frames per Second.",
     rounding=1,
-    min_max=(1, 60))
+    min_max=(1, 60),
+)
 
 loop = ConfigItem(
     datatype=int,
@@ -47,19 +51,22 @@ loop = ConfigItem(
     group="settings",
     info="The number of iterations. Set to 0 to loop indefinitely.",
     rounding=1,
-    min_max=(0, 100))
+    min_max=(0, 100),
+)
 
 palette_size = ConfigItem(
     datatype=str,
     default="256",
     group="settings",
     info="The number of colors to quantize the image to. Is rounded to the nearest power of "
-         "two.",
-    choices=["2", "4", "8", "16", "32", "64", "128", "256"])
+    "two.",
+    choices=["2", "4", "8", "16", "32", "64", "128", "256"],
+)
 
 dithering = ConfigItem(
     datatype=bool,
     default=False,
     group="settings",
     info="Apply dithering. Improves gradients but adds noise. Good for natural images, bad for "
-         "sharp images.")
+    "sharp images.",
+)

@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
-""" Original - VillainGuy model
-    Based on the original https://www.reddit.com/r/deepfakes/ code sample + contributions
-    Adapted from a model by VillainGuy (https://github.com/VillainGuy) """
+"""Original - VillainGuy model
+Based on the original https://www.reddit.com/r/deepfakes/ code sample + contributions
+Adapted from a model by VillainGuy (https://github.com/VillainGuy)"""
 
 from keras import initializers, Input, layers, Model as KModel
 
 from lib.model.layers import PixelShuffler
-from lib.model.nn_blocks import (Conv2DOutput, Conv2DBlock, ResidualBlock, SeparableConv2DBlock,
-                                 UpscaleBlock)
+from lib.model.nn_blocks import (
+    Conv2DOutput,
+    Conv2DBlock,
+    ResidualBlock,
+    SeparableConv2DBlock,
+    UpscaleBlock,
+)
 from plugins.train.train_config import Loss as cfg_loss
 
 from .original import Model as OriginalModel
@@ -16,7 +21,8 @@ from . import villain_defaults as cfg
 
 
 class Model(OriginalModel):
-    """ Villain Faceswap Model """
+    """Villain Faceswap Model"""
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.input_shape = (128, 128, 3)
@@ -24,7 +30,7 @@ class Model(OriginalModel):
         self.kernel_initializer = initializers.RandomNormal(0, 0.02)
 
     def encoder(self):
-        """ Encoder Network """
+        """Encoder Network"""
         kwargs = {"kernel_initializer": self.kernel_initializer}
         input_ = Input(shape=self.input_shape)
         in_conv_filters = self.input_shape[0]
@@ -60,7 +66,7 @@ class Model(OriginalModel):
         return KModel(input_, var_x, name="encoder")
 
     def decoder(self, side):
-        """ Decoder Network """
+        """Decoder Network"""
         kwargs = {"kernel_initializer": self.kernel_initializer}
         decoder_shape = self.input_shape[0] // 8
         input_ = Input(shape=(decoder_shape, decoder_shape, 512))

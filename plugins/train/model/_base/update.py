@@ -1,5 +1,6 @@
 #! /usr/env/bin/python3
-"""Updating legacy faceswap models to the current version """
+"""Updating legacy faceswap models to the current version"""
+
 import json
 import logging
 import os
@@ -34,6 +35,7 @@ class Legacy:  # pylint:disable=too-few-public-methods
     model_path
         Full path to the legacy Keras 2.x model h5 file to upgrade
     """
+
     def __init__(self, model_path: str):
         logger.debug(parse_class_init(locals()))
         self._old_model_file = model_path
@@ -62,11 +64,15 @@ class Legacy:  # pylint:disable=too-few-public-methods
         s_version = T.cast(str | None, h5file.attrs.get("keras_version"))
         s_config = T.cast(str | None, h5file.attrs.get("model_config"))
         if not s_version or not s_config:
-            raise FaceswapError(f"'{self._old_model_file}' is not a valid Faceswap 2 model file")
+            raise FaceswapError(
+                f"'{self._old_model_file}' is not a valid Faceswap 2 model file"
+            )
 
         version = s_version.split(".")[:2]
         if len(version) != 2 or version[0] != "2":
-            raise FaceswapError(f"'{self._old_model_file}' is not a valid Faceswap 2 model file")
+            raise FaceswapError(
+                f"'{self._old_model_file}' is not a valid Faceswap 2 model file"
+            )
 
         retval = json.loads(s_config)
         logger.debug("Loaded keras 2.x model config: %s", retval)
@@ -107,7 +113,8 @@ class Legacy:  # pylint:disable=too-few-public-methods
         state_file = f"{os.path.splitext(self._old_model_file)[0]}_state.json"
         if not os.path.isfile(state_file):
             raise FaceswapError(
-                f"The state file '{state_file}' does not exist. This model cannot be ported")
+                f"The state file '{state_file}' does not exist. This model cannot be ported"
+            )
 
         with open(state_file, "r", encoding="utf-8") as ifile:
             config = json.load(ifile)
@@ -118,19 +125,30 @@ class Legacy:  # pylint:disable=too-few-public-methods
 
         # Import here to prevent circular imports
         from plugins.train.model.phaze_a import _MODEL_MAPPING  # pylint:disable=C0415
+
         vit_info = _MODEL_MAPPING.get(net_name)
 
         if not scaling or not vit_info:
             raise FaceswapError(
                 f"Clip network could not be found in '{state_file}'. Discovered network is "
-                f"'{net_name}' with encoder scaling: {scaling}. This model cannot be ported")
+                f"'{net_name}' with encoder scaling: {scaling}. This model cannot be ported"
+            )
 
-        input_size = int(max(vit_info.min_size, ((vit_info.default_size * scaling) // 16) * 16))
-        vit_model = ViT(T.cast(TypeModelsViT, vit_info.keras_name), input_size=input_size)()
+        input_size = int(
+            max(vit_info.min_size, ((vit_info.default_size * scaling) // 16) * 16)
+        )
+        vit_model = ViT(
+            T.cast(TypeModelsViT, vit_info.keras_name), input_size=input_size
+        )()
 
         retval = vit_model.get_config()
         del vit_model
-        logger.debug("Got new config for '%s' at input size: %s: %s", net_name, input_size, retval)
+        logger.debug(
+            "Got new config for '%s' at input size: %s: %s",
+            net_name,
+            input_size,
+            retval,
+        )
         return retval
 
     def _convert_lambda_config(self, layer: dict[str, T.Any]):
@@ -184,7 +202,9 @@ class Legacy:  # pylint:disable=too-few-public-methods
             config = layer["config"]
             old, new = "alpha", "negative_slope"
             if old in config:
-                logger.debug("Updating '%s' kwarg '%s' to '%s'", layer["name"], old, new)
+                logger.debug(
+                    "Updating '%s' kwarg '%s' to '%s'", layer["name"], old, new
+                )
                 config[new] = config[old]
                 del config[old]
 
@@ -197,16 +217,29 @@ class Legacy:  # pylint:disable=too-few-public-methods
             # TFLambdaOp are not supported
             self._convert_lambda_config(layer)
 
-        if layer["class_name"] in ("DepthwiseConv2D",
-                                   "SeparableConv2D",
-                                   "Conv2DTranspose") and "groups" in layer["config"]:
+        if (
+            layer["class_name"]
+            in ("DepthwiseConv2D", "SeparableConv2D", "Conv2DTranspose")
+            and "groups" in layer["config"]
+        ):
             # groups parameter doesn't exist in Keras 3. Hopefully it still works the same
-            logger.debug("Removing groups from %s '%s'", layer["class_name"], layer["name"])
+            logger.debug(
+                "Removing groups from %s '%s'", layer["class_name"], layer["name"]
+            )
             del layer["config"]["groups"]
 
         if layer["class_name"] == "SeparableConv2D":
-            for key in ("kernel_initializer", "kernel_regularizer", "kernel_constraint"):
-                logger.debug("Removing '%s' from %s '%s'", key, layer["class_name"], layer["name"])
+            for key in (
+                "kernel_initializer",
+                "kernel_regularizer",
+                "kernel_constraint",
+            ):
+                logger.debug(
+                    "Removing '%s' from %s '%s'",
+                    key,
+                    layer["class_name"],
+                    layer["name"],
+                )
                 del layer["config"][key]
 
         if "dtype" in layer["config"]:
@@ -219,18 +252,25 @@ class Legacy:  # pylint:disable=too-few-public-methods
                 actual_dtype = old_dtype["config"]["name"]
 
             if actual_dtype is not None:
-                new_dtype = {"module": "keras",
-                             "class_name": "DTypePolicy",
-                             "config": {"name": actual_dtype},
-                             "registered_name": None}
-                logger.debug("Updating dtype for '%s' from %s to %s", layer["name"],
-                             old_dtype, new_dtype)
+                new_dtype = {
+                    "module": "keras",
+                    "class_name": "DTypePolicy",
+                    "config": {"name": actual_dtype},
+                    "registered_name": None,
+                }
+                logger.debug(
+                    "Updating dtype for '%s' from %s to %s",
+                    layer["name"],
+                    old_dtype,
+                    new_dtype,
+                )
                 layer["config"]["dtype"] = new_dtype
 
-    def _process_inbounds(self,
-                          layer_name: str,
-                          inbound_nodes: list[list[list[str | int]]] | list[list[str | int]]
-                          ) -> None:
+    def _process_inbounds(
+        self,
+        layer_name: str,
+        inbound_nodes: list[list[list[str | int]]] | list[list[str | int]],
+    ) -> None:
         """If the inbound nodes are from a shared functional model, decrement the node index by
         one. Operation is performed in place
 
@@ -243,15 +283,21 @@ class Legacy:  # pylint:disable=too-few-public-methods
         """
         to_process = T.cast(
             list[list[list[str | int]]],
-            inbound_nodes if isinstance(inbound_nodes[0][0], list) else [inbound_nodes])
+            inbound_nodes if isinstance(inbound_nodes[0][0], list) else [inbound_nodes],
+        )
 
         for inbound in to_process:
             for node in inbound:
                 name, node_index = node[0], node[1]
                 assert isinstance(name, str) and isinstance(node_index, int)
                 if name in self._functional and node_index > 0:
-                    logger.debug("Updating '%s' inbound node index for '%s' from %s to %s",
-                                 layer_name, name, node_index, node_index - 1)
+                    logger.debug(
+                        "Updating '%s' inbound node index for '%s' from %s to %s",
+                        layer_name,
+                        name,
+                        node_index,
+                        node_index - 1,
+                    )
                     node[1] = node_index - 1
 
     def _update_layers(self, layer_list: list[dict[str, T.Any]]) -> None:
@@ -273,7 +319,8 @@ class Legacy:  # pylint:disable=too-few-public-methods
                     self._functional.add(layer["name"])
 
                 layer["config"]["output_layers"] = self._unwrap_outputs(
-                    layer["config"]["output_layers"])
+                    layer["config"]["output_layers"]
+                )
 
                 self._update_layers(layer["config"]["layers"])
 
@@ -301,7 +348,8 @@ class Legacy:  # pylint:disable=too-few-public-methods
             raise FaceswapError(
                 f"The destination archive folder '{dst_path}' already exists. Either delete this "
                 "folder, select a different model folder, or remove the legacy model files from "
-                f"your model folder '{model_dir}'.")
+                f"your model folder '{model_dir}'."
+            )
 
         if os.path.exists(dst_path):
             logger.info("Removing pre-existing empty folder '%s'", dst_path)
@@ -322,8 +370,12 @@ class Legacy:  # pylint:disable=too-few-public-methods
         """
         model_dir = os.path.dirname(self._new_model_file)
         model_name = os.path.splitext(os.path.basename(self._new_model_file))[0]
-        logger.debug("Restoring required '%s 'files from '%s' to '%s'",
-                     model_name, archive_dir, model_dir)
+        logger.debug(
+            "Restoring required '%s 'files from '%s' to '%s'",
+            model_name,
+            archive_dir,
+            model_dir,
+        )
 
         for fname in os.listdir(archive_dir):
             fullpath = os.path.join(archive_dir, fname)
@@ -373,12 +425,13 @@ class PatchKerasConfig:
     model_path
         Full path to the keras model to be patched for the current version
     """
+
     def __init__(self, model_path: str) -> None:
         logger.debug(parse_class_init(locals()))
         self._model_path = model_path
         self._items, self._config = self._load_model()
         metadata = json.loads(self._items["metadata.json"])
-        self._version = tuple(int(x) for x in metadata['keras_version'].split(".")[:2])
+        self._version = tuple(int(x) for x in metadata["keras_version"].split(".")[:2])
         logger.debug("Initialized: %s", self.__class__.__name__)
 
     def _load_model(self) -> tuple[dict[str, bytes], dict[str, T.Any]]:
@@ -393,11 +446,18 @@ class PatchKerasConfig:
             The model configuration dictionary from the keras 3 model file
         """
         with zipfile.ZipFile(self._model_path, "r") as zf:
-            items = {f.filename: zf.read(f) for f in zf.filelist if f.filename != "config.json"}
+            items = {
+                f.filename: zf.read(f)
+                for f in zf.filelist
+                if f.filename != "config.json"
+            }
             config = json.loads(zf.read("config.json"))
 
-        logger.debug("Loaded legacy existing items %s and 'config.json' from model '%s'",
-                     list(items), self._model_path)
+        logger.debug(
+            "Loaded legacy existing items %s and 'config.json' from model '%s'",
+            list(items),
+            self._model_path,
+        )
         return items, config
 
     def _update_nn_blocks(self, layer: dict[str, T.Any]):
@@ -413,14 +473,18 @@ class PatchKerasConfig:
         layer
             A layer config dictionary from a keras 3 model
         """
-        if (layer.get("module") == "lib.model.nn_blocks" and
-                layer.get("class_name") in ("Conv2D", "DepthwiseConv2D")):
+        if layer.get("module") == "lib.model.nn_blocks" and layer.get("class_name") in (
+            "Conv2D",
+            "DepthwiseConv2D",
+        ):
             new_module = "keras.layers"
-            logger.debug("Updating Keras %s layer '%s' to '%s': %s",
-                         ".".join(str(x) for x in self._version),
-                         f"{layer['module']}.{layer['class_name']}",
-                         f"{new_module}.{layer['class_name']}",
-                         layer["name"])
+            logger.debug(
+                "Updating Keras %s layer '%s' to '%s': %s",
+                ".".join(str(x) for x in self._version),
+                f"{layer['module']}.{layer['class_name']}",
+                f"{new_module}.{layer['class_name']}",
+                layer["name"],
+            )
             layer["module"] = new_module
 
     def _parse_inbound_args(self, inbound: list | dict[str, T.Any]) -> None:
@@ -446,8 +510,11 @@ class PatchKerasConfig:
         if "." in arg_conf["keras_history"][0]:
             new_hist = arg_conf["keras_history"][:]
             new_hist[0] = new_hist[0].replace(".", "_")
-            logger.debug("Updating Inbound Keras history from '%s' to '%s'",
-                         arg_conf["keras_history"], new_hist)
+            logger.debug(
+                "Updating Inbound Keras history from '%s' to '%s'",
+                arg_conf["keras_history"],
+                new_hist,
+            )
             arg_conf["keras_history"] = new_hist
 
     def _update_dot_naming(self, layer: dict[str, T.Any]):
@@ -464,14 +531,19 @@ class PatchKerasConfig:
         """
         if "." in layer["name"]:
             new_name = layer["name"].replace(".", "_")
-            logger.debug("Updating Keras layer name from '%s' to '%s'", layer["name"], new_name)
+            logger.debug(
+                "Updating Keras layer name from '%s' to '%s'", layer["name"], new_name
+            )
             layer["name"] = new_name
 
         config = layer["config"]
         if "." in config["name"]:
             new_name = config["name"].replace(".", "_")
-            logger.debug("Updating Keras config layer name from '%s' to '%s'",
-                         config["name"], new_name)
+            logger.debug(
+                "Updating Keras config layer name from '%s' to '%s'",
+                config["name"],
+                new_name,
+            )
             config["name"] = new_name
 
         inbound = layer["inbound_nodes"]
@@ -503,7 +575,9 @@ class PatchKerasConfig:
     def _save_model(self) -> None:
         """Save the updated keras model"""
         logger.info("Updating Keras model '%s'...", self._model_path)
-        with zipfile.ZipFile(self._model_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        with zipfile.ZipFile(
+            self._model_path, "w", compression=zipfile.ZIP_DEFLATED
+        ) as zf:
             for filename, data in self._items.items():
                 zf.writestr(filename, data)
             zf.writestr("config.json", json.dumps(self._config).encode("utf-8"))

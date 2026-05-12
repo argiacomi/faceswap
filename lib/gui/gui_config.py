@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-""" Default configurations for the GUI """
+"""Default configurations for the GUI"""
 
 import logging
 import os
@@ -15,19 +15,21 @@ logger = logging.getLogger(__name__)
 
 
 class _Config(FaceswapConfig):
-    """ Config File for GUI """
+    """Config File for GUI"""
+
     def set_defaults(self, helptext="") -> None:
-        """ Set the default values for config """
+        """Set the default values for config"""
         logger.debug("Setting defaults")
         super().set_defaults(
-            helptext="Faceswap GUI Options.\nConfigure the appearance and behavior of the GUI")
+            helptext="Faceswap GUI Options.\nConfigure the appearance and behavior of the GUI"
+        )
         # Font choices cannot be added until tkinter has been launched
         logger.debug("Adding font list from tkinter")
         self.sections["global"].options["font"].choices = get_clean_fonts()
 
 
 def get_commands() -> list[str]:
-    """ Return commands formatted for GUI
+    """Return commands formatted for GUI
 
     Returns
     -------
@@ -36,19 +38,25 @@ def get_commands() -> list[str]:
     """
     command_path = os.path.join(PROJECT_ROOT, "scripts")
     tools_path = os.path.join(PROJECT_ROOT, "tools")
-    commands = [os.path.splitext(item)[0] for item in os.listdir(command_path)
-                if os.path.splitext(item)[1] == ".py"
-                and os.path.splitext(item)[0] not in ("gui", "fs_media")
-                and not os.path.splitext(item)[0].startswith("_")]
-    tools = [os.path.splitext(item)[0] for item in os.listdir(tools_path)
-             if os.path.splitext(item)[1] == ".py"
-             and os.path.splitext(item)[0] not in ("gui", "cli")
-             and not os.path.splitext(item)[0].startswith("_")]
+    commands = [
+        os.path.splitext(item)[0]
+        for item in os.listdir(command_path)
+        if os.path.splitext(item)[1] == ".py"
+        and os.path.splitext(item)[0] not in ("gui", "fs_media")
+        and not os.path.splitext(item)[0].startswith("_")
+    ]
+    tools = [
+        os.path.splitext(item)[0]
+        for item in os.listdir(tools_path)
+        if os.path.splitext(item)[1] == ".py"
+        and os.path.splitext(item)[0] not in ("gui", "cli")
+        and not os.path.splitext(item)[0].startswith("_")
+    ]
     return commands + tools
 
 
 def get_clean_fonts() -> list[str]:
-    """ Return a sane list of fonts for the system that has both regular and bold variants.
+    """Return a sane list of fonts for the system that has both regular and bold variants.
 
     Pre-pend "default" to the beginning of the list.
 
@@ -70,16 +78,19 @@ def get_clean_fonts() -> list[str]:
         # Return the font list with any @prefixed or non-Unicode characters stripped and default
         # prefixed
         logger.debug("No bold/regular fonts found. Running simple filter")
-        retval = sorted([fnt for fnt in tk_font.families()
-                         if not fnt.startswith("@") and not any(ord(c) > 127 for c in fnt)])
+        retval = sorted(
+            [
+                fnt
+                for fnt in tk_font.families()
+                if not fnt.startswith("@") and not any(ord(c) > 127 for c in fnt)
+            ]
+        )
     return ["default"] + retval
 
 
 fullscreen = ConfigItem(
-    datatype=bool,
-    default=False,
-    group="startup",
-    info="Start Faceswap maximized.")
+    datatype=bool, default=False, group="startup", info="Start Faceswap maximized."
+)
 
 
 tab = ConfigItem(
@@ -87,7 +98,8 @@ tab = ConfigItem(
     default="extract",
     group="startup",
     info="Start Faceswap in this tab.",
-    choices=get_commands())
+    choices=get_commands(),
+)
 
 
 options_panel_width = ConfigItem(
@@ -95,9 +107,10 @@ options_panel_width = ConfigItem(
     default=30,
     group="layout",
     info="How wide the lefthand option panel is as a percentage of GUI width at "
-         "startup.",
+    "startup.",
     min_max=(10, 90),
-    rounding=1)
+    rounding=1,
+)
 
 
 console_panel_height = ConfigItem(
@@ -105,9 +118,10 @@ console_panel_height = ConfigItem(
     default=20,
     group="layout",
     info="How tall the bottom console panel is as a percentage of GUI height at "
-         "startup.",
+    "startup.",
     min_max=(10, 90),
-    rounding=1)
+    rounding=1,
+)
 
 
 icon_size = ConfigItem(
@@ -116,7 +130,8 @@ icon_size = ConfigItem(
     group="layout",
     info="Pixel size for icons. NB: Size is scaled by DPI.",
     min_max=(10, 20),
-    rounding=1)
+    rounding=1,
+)
 
 
 font = ConfigItem(
@@ -124,7 +139,8 @@ font = ConfigItem(
     default="default",
     group="font",
     info="Global font",
-    choices=["default"])  # Cannot get tk fonts until tk is loaded, so real value populated later
+    choices=["default"],
+)  # Cannot get tk fonts until tk is loaded, so real value populated later
 
 
 font_size = ConfigItem(
@@ -133,7 +149,8 @@ font_size = ConfigItem(
     group="font",
     info="Global font size.",
     min_max=(6, 12),
-    rounding=1)
+    rounding=1,
+)
 
 
 autosave_last_session = ConfigItem(
@@ -141,11 +158,12 @@ autosave_last_session = ConfigItem(
     default="prompt",
     group="startup",
     info="Automatically save the current settings on close and reload on startup"
-         "\n\tnever - Don't autosave session"
-         "\n\tprompt - Prompt to reload last session on launch"
-         "\n\talways - Always load last session on launch",
+    "\n\tnever - Don't autosave session"
+    "\n\tprompt - Prompt to reload last session on launch"
+    "\n\talways - Always load last session on launch",
     choices=["never", "prompt", "always"],
-    gui_radio=True)
+    gui_radio=True,
+)
 
 
 timeout = ConfigItem(
@@ -153,9 +171,10 @@ timeout = ConfigItem(
     default=120,
     group="behavior",
     info="Training can take some time to save and shutdown. Set the timeout "
-         "in seconds before giving up and force quitting.",
+    "in seconds before giving up and force quitting.",
     min_max=(10, 600),
-    rounding=10)
+    rounding=10,
+)
 
 
 auto_load_model_stats = ConfigItem(
@@ -163,11 +182,12 @@ auto_load_model_stats = ConfigItem(
     default=True,
     group="behavior",
     info="Auto load model statistics into the Analysis tab when selecting a model "
-         "in Train or Convert tabs.")
+    "in Train or Convert tabs.",
+)
 
 
 def load_config(config_file: str | None = None) -> None:
-    """ Load the GUI configuration .ini file
+    """Load the GUI configuration .ini file
 
     Parameters
     ----------

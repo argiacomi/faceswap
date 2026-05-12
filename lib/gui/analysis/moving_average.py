@@ -1,5 +1,5 @@
 #!/usr/bin python3
-""" Calculate Exponential Moving Average for faceswap GUI Stats. """
+"""Calculate Exponential Moving Average for faceswap GUI Stats."""
 
 import logging
 
@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 class ExponentialMovingAverage:
-    """ Reshapes data before calculating exponential moving average, then iterates once over the
+    """Reshapes data before calculating exponential moving average, then iterates once over the
     rows to calculate the offset without precision issues.
 
     Parameters
@@ -27,20 +27,21 @@ class ExponentialMovingAverage:
     -----
     Adapted from: https://stackoverflow.com/questions/42869495
     """
+
     def __init__(self, data: np.ndarray, amount: float) -> None:
         logger.debug(parse_class_init(locals()))
         assert data.ndim == 1
         amount = min(max(amount, 0.001), 0.999)
 
         self._data = np.nan_to_num(data)
-        self._alpha = 1. - amount
+        self._alpha = 1.0 - amount
         self._dtype = "float32" if data.dtype == np.float32 else "float64"
         self._row_size = self._get_max_row_size()
         self._out = np.empty_like(data, dtype=self._dtype)
         logger.debug("Initialized %s", self.__class__.__name__)
 
     def __call__(self) -> np.ndarray:
-        """ Perform the exponential moving average calculation.
+        """Perform the exponential moving average calculation.
 
         Returns
         -------
@@ -48,13 +49,15 @@ class ExponentialMovingAverage:
             The smoothed data
         """
         if self._data.size <= self._row_size:
-            self._ewma_vectorized(self._data, self._out)  # Normal function can handle this input
+            self._ewma_vectorized(
+                self._data, self._out
+            )  # Normal function can handle this input
         else:
             self._ewma_vectorized_safe()  # Use the safe version
         return self._out
 
     def _get_max_row_size(self) -> int:
-        """ Calculate the maximum row size for the running platform for the given dtype.
+        """Calculate the maximum row size for the running platform for the given dtype.
 
         Returns
         -------
@@ -74,20 +77,26 @@ class ExponentialMovingAverage:
         return retval
 
     def _ewma_vectorized_safe(self) -> None:
-        """ Perform the vectorized exponential moving average in a safe way. """
+        """Perform the vectorized exponential moving average in a safe way."""
         num_rows = int(self._data.size // self._row_size)  # the number of rows to use
         leftover = int(self._data.size % self._row_size)  # the amount of data leftover
         first_offset = self._data[0]
 
         if leftover > 0:
             # set temporary results to slice view of out parameter
-            out_main_view = np.reshape(self._out[:-leftover], (num_rows, self._row_size))
-            data_main_view = np.reshape(self._data[:-leftover], (num_rows, self._row_size))
+            out_main_view = np.reshape(
+                self._out[:-leftover], (num_rows, self._row_size)
+            )
+            data_main_view = np.reshape(
+                self._data[:-leftover], (num_rows, self._row_size)
+            )
         else:
             out_main_view = self._out.reshape(-1, self._row_size)
             data_main_view = self._data.reshape(-1, self._row_size)
 
-        self._ewma_vectorized_2d(data_main_view, out_main_view)  # get the scaled cumulative sums
+        self._ewma_vectorized_2d(
+            data_main_view, out_main_view
+        )  # get the scaled cumulative sums
 
         scaling_factors = (1 - self._alpha) ** np.arange(1, self._row_size + 1)
         last_scaling_factor = scaling_factors[-1]
@@ -105,15 +114,16 @@ class ExponentialMovingAverage:
 
         if leftover > 0:
             # process trailing data in the 2nd slice of the out parameter
-            self._ewma_vectorized(self._data[-leftover:],
-                                  self._out[-leftover:],
-                                  offset=out_main_view[-1, -1])
+            self._ewma_vectorized(
+                self._data[-leftover:],
+                self._out[-leftover:],
+                offset=out_main_view[-1, -1],
+            )
 
-    def _ewma_vectorized(self,
-                         data: np.ndarray,
-                         out: np.ndarray,
-                         offset: float | None = None) -> None:
-        """ Calculates the exponential moving average over a vector. Will fail for large inputs.
+    def _ewma_vectorized(
+        self, data: np.ndarray, out: np.ndarray, offset: float | None = None
+    ) -> None:
+        """Calculates the exponential moving average over a vector. Will fail for large inputs.
 
         The result is processed in place into the array passed to the `out` parameter
 
@@ -133,11 +143,18 @@ class ExponentialMovingAverage:
         offset = data[0] if offset is None else offset
 
         # scaling_factors -> 0 as len(data) gets large. This leads to divide-by-zeros below
-        scaling_factors = np.power(1. - self._alpha, np.arange(data.size + 1, dtype=self._dtype),
-                                   dtype=self._dtype)
+        scaling_factors = np.power(
+            1.0 - self._alpha,
+            np.arange(data.size + 1, dtype=self._dtype),
+            dtype=self._dtype,
+        )
         # create cumulative sum array
-        np.multiply(data, (self._alpha * scaling_factors[-2]) / scaling_factors[:-1],
-                    dtype=self._dtype, out=out)
+        np.multiply(
+            data,
+            (self._alpha * scaling_factors[-2]) / scaling_factors[:-1],
+            dtype=self._dtype,
+            out=out,
+        )
         np.cumsum(out, dtype=self._dtype, out=out)
 
         out /= scaling_factors[-2::-1]  # cumulative sums / scaling
@@ -147,7 +164,7 @@ class ExponentialMovingAverage:
             out += noffset * scaling_factors[1:]
 
     def _ewma_vectorized_2d(self, data: np.ndarray, out: np.ndarray) -> None:
-        """ Calculates the exponential moving average over the last axis.
+        """Calculates the exponential moving average over the last axis.
 
         The result is processed in place into the array passed to the `out` parameter
 
@@ -163,15 +180,23 @@ class ExponentialMovingAverage:
             return
 
         # calculate the moving average
-        scaling_factors = np.power(1. - self._alpha, np.arange(data.shape[1] + 1,
-                                                               dtype=self._dtype),
-                                   dtype=self._dtype)
+        scaling_factors = np.power(
+            1.0 - self._alpha,
+            np.arange(data.shape[1] + 1, dtype=self._dtype),
+            dtype=self._dtype,
+        )
         # create a scaled cumulative sum array
-        np.multiply(data,
-                    np.multiply(self._alpha * scaling_factors[-2],
-                                np.ones((data.shape[0], 1), dtype=self._dtype),
-                                dtype=self._dtype) / scaling_factors[np.newaxis, :-1],
-                    dtype=self._dtype, out=out)
+        np.multiply(
+            data,
+            np.multiply(
+                self._alpha * scaling_factors[-2],
+                np.ones((data.shape[0], 1), dtype=self._dtype),
+                dtype=self._dtype,
+            )
+            / scaling_factors[np.newaxis, :-1],
+            dtype=self._dtype,
+            out=out,
+        )
         np.cumsum(out, axis=1, dtype=self._dtype, out=out)
         out /= scaling_factors[np.newaxis, -2::-1]
 

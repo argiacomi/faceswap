@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-""" Dynamically import the correct GPU Stats library based on the faceswap backend and the machine
-being used. """
+"""Dynamically import the correct GPU Stats library based on the faceswap backend and the machine
+being used."""
 
 from lib.utils import get_backend
 

@@ -1,5 +1,5 @@
 #! /usr/env/bin/python3
-""" Iterators for ingesting into and passing data through extract plugin runners """
+"""Iterators for ingesting into and passing data through extract plugin runners"""
 
 from __future__ import annotations
 
@@ -50,12 +50,15 @@ class ExtractIterator(T.Generic[QueueItemInT, QueueItemOutT], abc.ABC):
     error_state
         The pipeline threads' global Error State object
     """
-    def __init__(self,
-                 queue: Queue[QueueItemInT | ExtractSignal],
-                 name: str,
-                 plugin_type: T.Literal["detect", "align", "mask", "identity", "file"],
-                 batch_size: int,
-                 error_state: ErrorState) -> None:
+
+    def __init__(
+        self,
+        queue: Queue[QueueItemInT | ExtractSignal],
+        name: str,
+        plugin_type: T.Literal["detect", "align", "mask", "identity", "file"],
+        batch_size: int,
+        error_state: ErrorState,
+    ) -> None:
         logger.debug(parse_class_init(locals()))
         self._queue = queue
         self._name = f"{name}.{self.__class__.__name__.replace('Iterator', '').lower()}"
@@ -68,22 +71,21 @@ class ExtractIterator(T.Generic[QueueItemInT, QueueItemOutT], abc.ABC):
         self._shutdown = False
 
     def __iter__(self) -> T.Self:
-        """ This is an iterator """
+        """This is an iterator"""
         return self
 
     def __repr__(self) -> str:
-        """ Pretty print for logging """
-        params = {k[1:]: repr(v)
-                  for k, v in self.__dict__.items()
-                  if k in ("_queue",
-                           "_batch_size",
-                           "_name",
-                           "_plugin_type")}
+        """Pretty print for logging"""
+        params = {
+            k[1:]: repr(v)
+            for k, v in self.__dict__.items()
+            if k in ("_queue", "_batch_size", "_name", "_plugin_type")
+        }
         s_params = ", ".join(f"{k}={v}" for k, v in params.items())
         return f"{self.__class__.__name__}({s_params})"
 
     def _from_queue(self) -> QueueItemInT | ExtractSignal | None:
-        """ Get the next item from the queue on a 1 second timeout.
+        """Get the next item from the queue on a 1 second timeout.
 
         Returns
         -------
@@ -95,8 +97,11 @@ class ExtractIterator(T.Generic[QueueItemInT, QueueItemOutT], abc.ABC):
         except QueueEmpty:
             logger.trace("[%s] No item available", self._name)  # type:ignore[attr-defined]
             return None
-        logger.trace("[%s] From queue: %s",  # type:ignore[attr-defined]
-                     self._name, retval.name if isinstance(retval, ExtractSignal) else retval)
+        logger.trace(
+            "[%s] From queue: %s",  # type:ignore[attr-defined]
+            self._name,
+            retval.name if isinstance(retval, ExtractSignal) else retval,
+        )
         return retval
 
     def _has_zero_detections(self) -> bool:
@@ -119,7 +124,7 @@ class ExtractIterator(T.Generic[QueueItemInT, QueueItemOutT], abc.ABC):
         return zero_detects >= self._zero_detect_threshold
 
     def _from_fifo(self) -> QueueItemOutT | None:
-        """ Pop the next item available in the fifo list. 1 item always remains in the list for
+        """Pop the next item available in the fifo list. 1 item always remains in the list for
         appending to and should be flushed at the last iteration
 
         Returns
@@ -128,26 +133,35 @@ class ExtractIterator(T.Generic[QueueItemInT, QueueItemOutT], abc.ABC):
             The next available item or ``None`` if no items are available
         """
         if not self._fifo:
-            logger.trace("[%s.fifo] FIFO empty",  self._name)  # type:ignore[attr-defined]
+            logger.trace("[%s.fifo] FIFO empty", self._name)  # type:ignore[attr-defined]
             return None
         if self._has_zero_detections():
             retval = self._fifo.pop(0)
-            logger.debug("[%s.fifo] Popping from FIFO due to accumulated zero detections "
-                         "(frames: %s, faces: %s)", self._name,
-                         len(T.cast(ExtractBatch, retval).filenames),
-                         len(T.cast(ExtractBatch, retval).frame_ids))
+            logger.debug(
+                "[%s.fifo] Popping from FIFO due to accumulated zero detections "
+                "(frames: %s, faces: %s)",
+                self._name,
+                len(T.cast(ExtractBatch, retval).filenames),
+                len(T.cast(ExtractBatch, retval).frame_ids),
+            )
             return retval
         if len(self._fifo) <= 1:
-            logger.trace("[%s.fifo] No items available. batches: %s",  # type:ignore[attr-defined]
-                         self._name, len(self._fifo))
+            logger.trace(
+                "[%s.fifo] No items available. batches: %s",  # type:ignore[attr-defined]
+                self._name,
+                len(self._fifo),
+            )
             return None
         retval = self._fifo.pop(0)
-        logger.trace("[%s.fifo] Popping: %s",  # type:ignore[attr-defined]
-                     self._name, retval)
+        logger.trace(
+            "[%s.fifo] Popping: %s",  # type:ignore[attr-defined]
+            self._name,
+            retval,
+        )
         return retval
 
     def _handle_signals(self) -> ExtractSignal | None:
-        """ Check if :attr:`_flush` or :attr:`_eof` have been set. If so, log and reset them. If
+        """Check if :attr:`_flush` or :attr:`_eof` have been set. If so, log and reset them. If
         flush has been set return the FLUSH enum
 
         Returns
@@ -172,8 +186,10 @@ class ExtractIterator(T.Generic[QueueItemInT, QueueItemOutT], abc.ABC):
         logger.debug("[%s] sending FLUSH downstream", self._name)
         return ExtractSignal.FLUSH
 
-    def _handle_inbound_signal(self, inbound: ExtractSignal) -> QueueItemOutT | ExtractSignal:
-        """ Handle any received signals from the queue
+    def _handle_inbound_signal(
+        self, inbound: ExtractSignal
+    ) -> QueueItemOutT | ExtractSignal:
+        """Handle any received signals from the queue
 
         Parameters
         ----------
@@ -192,13 +208,17 @@ class ExtractIterator(T.Generic[QueueItemInT, QueueItemOutT], abc.ABC):
             If a shutdown signal has been received and there are no items queued for output
         """
         signal = inbound.name
-        logger.debug("[%s] %s received. FIFO size: %s", self._name, signal, len(self._fifo))
+        logger.debug(
+            "[%s] %s received. FIFO size: %s", self._name, signal, len(self._fifo)
+        )
 
         if self._fifo:
             setattr(self, f"_{signal.lower()}", True)
             assert len(self._fifo) == 1  # Final batch should remain
             retval = self._fifo.pop(0)
-            logger.debug("[%s] Returning final queued output item: %s", self._name, retval)
+            logger.debug(
+                "[%s] Returning final queued output item: %s", self._name, retval
+            )
             return retval
 
         if inbound == ExtractSignal.SHUTDOWN:
@@ -208,7 +228,7 @@ class ExtractIterator(T.Generic[QueueItemInT, QueueItemOutT], abc.ABC):
         return inbound
 
     def _check_error(self) -> None:
-        """ Check whether there has been a thread error and stop iteration if so
+        """Check whether there has been a thread error and stop iteration if so
 
         Raises
         ------
@@ -221,7 +241,7 @@ class ExtractIterator(T.Generic[QueueItemInT, QueueItemOutT], abc.ABC):
 
     @abc.abstractmethod
     def __next__(self) -> QueueItemOutT | ExtractSignal:
-        """ Override to return the next batch item from the iterator
+        """Override to return the next batch item from the iterator
 
         Returns
         -------
@@ -232,7 +252,7 @@ class ExtractIterator(T.Generic[QueueItemInT, QueueItemOutT], abc.ABC):
 
 
 class InputIterator(ExtractIterator[FrameFaces, ExtractBatch]):
-    """ An iterator that processes FrameFaces data that is input to a plugin pipeline to create
+    """An iterator that processes FrameFaces data that is input to a plugin pipeline to create
     ExtractBatch objects at the correct batch size for processing through the pipeline's first
     plugin
 
@@ -247,8 +267,9 @@ class InputIterator(ExtractIterator[FrameFaces, ExtractBatch]):
     batch_size
         The batch size that data should be returned from the iterator
     """
+
     def _append_to_fifo(self, batch: ExtractBatch) -> None:
-        """ Append batch items to :attr:`_fifo` when it is either empty, or the last item in the
+        """Append batch items to :attr:`_fifo` when it is either empty, or the last item in the
         FIFO is the correct batch size
 
         Adds the batch object to FIFO splitting to the plugin's batch size if required
@@ -273,10 +294,13 @@ class InputIterator(ExtractIterator[FrameFaces, ExtractBatch]):
             i += self._fifo[-1].bboxes.shape[0]
         logger.trace(  # type:ignore[attr-defined]
             "[%s] Split batch with %s boxes to FIFO boxes of size: %s",
-            self._name, num_boxes, [len(b) for b in self._fifo])
+            self._name,
+            num_boxes,
+            [len(b) for b in self._fifo],
+        )
 
     def _add_data_to_batch(self, media: FrameFaces) -> None:
-        """ Add the incoming FrameFaces data to either the last existing extractor batch object
+        """Add the incoming FrameFaces data to either the last existing extractor batch object
         or a new one.
 
         Parameters
@@ -295,7 +319,11 @@ class InputIterator(ExtractIterator[FrameFaces, ExtractBatch]):
             return
 
         last_fifo = self._fifo[-1]
-        exist_size = len(last_fifo.filenames) if self._plugin_type == "detect" else len(last_fifo)
+        exist_size = (
+            len(last_fifo.filenames)
+            if self._plugin_type == "detect"
+            else len(last_fifo)
+        )
 
         if exist_size == self._batch_size:  # Append straight onto the end of FIFO
             self._append_to_fifo(in_batch)
@@ -312,7 +340,10 @@ class InputIterator(ExtractIterator[FrameFaces, ExtractBatch]):
             last_fifo.append(in_batch)
             logger.trace(  # type:ignore[attr-defined]
                 "[%s] Added batch with %s items to existing batch of %s items",
-                self._name, to_add, exist_size)
+                self._name,
+                to_add,
+                exist_size,
+            )
             return
 
         # Only FrameFaces containing detected faces that need to be added to the last item in the
@@ -321,11 +352,14 @@ class InputIterator(ExtractIterator[FrameFaces, ExtractBatch]):
         last_fifo.append(split_batch)
         logger.trace(  # type:ignore[attr-defined]
             "[%s] Added batch with %s items to existing batch of %s items",
-            self._name, capacity, exist_size)
-        self._append_to_fifo(in_batch[capacity:capacity + (num_boxes - capacity)])
+            self._name,
+            capacity,
+            exist_size,
+        )
+        self._append_to_fifo(in_batch[capacity : capacity + (num_boxes - capacity)])
 
     def __next__(self) -> ExtractBatch | ExtractSignal:
-        """ Get the next batch of data from the iterator. Depending on the plugin type calling this
+        """Get the next batch of data from the iterator. Depending on the plugin type calling this
         iterator, a batch object will be returned for the given batch size of frames (for detect
         plugins) or faces (for all other plugins)
 
@@ -363,7 +397,7 @@ class InputIterator(ExtractIterator[FrameFaces, ExtractBatch]):
 
 
 class InboundIterator(ExtractIterator[ExtractBatch, ExtractBatch]):
-    """ An iterator that processes ExtractBatch data from a previous plugin and configures it as
+    """An iterator that processes ExtractBatch data from a previous plugin and configures it as
     an input for the current plugin.
 
     An Inbound iterator assumes that the plugin's batch size are the number of faces (not frames)
@@ -382,8 +416,9 @@ class InboundIterator(ExtractIterator[ExtractBatch, ExtractBatch]):
     batch_size
         The batch size that data should be returned from the iterator
     """
+
     def _batch_to_fifo(self, in_batch: ExtractBatch) -> None:
-        """ Batch the incoming data into an object batched for the current plugin's batch size and
+        """Batch the incoming data into an object batched for the current plugin's batch size and
         add to :attr:`_fifo`
 
         Parameters
@@ -396,12 +431,19 @@ class InboundIterator(ExtractIterator[ExtractBatch, ExtractBatch]):
             batch = self._fifo[-1]
             logger.trace(  # type:ignore[attr-defined]
                 "[%s] Adding %s face(s) from %s image(s) to partial batch with %s face(s)",
-                self._name, len(in_batch), len(in_batch.images), len(batch))
+                self._name,
+                len(in_batch),
+                len(in_batch.images),
+                len(batch),
+            )
             batch.append(in_batch)
             return
 
-        logger.trace("[%s] Adding new batch for %s face(s)",  # type:ignore[attr-defined]
-                     self._name, len(in_batch))
+        logger.trace(
+            "[%s] Adding new batch for %s face(s)",  # type:ignore[attr-defined]
+            self._name,
+            len(in_batch),
+        )
         self._fifo.append(in_batch)
 
     def _handle_non_split_batch(self, batch: ExtractBatch) -> tuple[int, int]:
@@ -422,7 +464,9 @@ class InboundIterator(ExtractIterator[ExtractBatch, ExtractBatch]):
         """
         partial = self._fifo and len(self._fifo[-1]) != self._batch_size
         num_boxes = len(batch)
-        capacity = self._batch_size - len(self._fifo[-1]) if partial else self._batch_size
+        capacity = (
+            self._batch_size - len(self._fifo[-1]) if partial else self._batch_size
+        )
         if num_boxes not in (0, capacity):  # Batch needs splitting
             return num_boxes, capacity
 
@@ -436,11 +480,12 @@ class InboundIterator(ExtractIterator[ExtractBatch, ExtractBatch]):
             num_boxes,
             self._fifo[-1].__class__.__name__,
             len(self._fifo[-1].filenames),
-            len(self._fifo[-1]))
+            len(self._fifo[-1]),
+        )
         return 0, 0
 
     def _append_no_boxes(self, batch: ExtractBatch) -> None:
-        """ Incoming batches will only be processed until the last frame containing a face. Append
+        """Incoming batches will only be processed until the last frame containing a face. Append
         any frames at the end of the incoming batch, that do not contain any faces, to the last
         queued batch
 
@@ -454,13 +499,17 @@ class InboundIterator(ExtractIterator[ExtractBatch, ExtractBatch]):
             return
         logger.trace(  # type:ignore[attr-defined]
             "[%s] Appending %s frames without faces to last batch",
-            self._name, len(batch.filenames[start:]))
-        self._batch_to_fifo(ExtractBatch(batch.filenames[start:],
-                                         batch.images[start:],
-                                         batch.sources[start:]))
+            self._name,
+            len(batch.filenames[start:]),
+        )
+        self._batch_to_fifo(
+            ExtractBatch(
+                batch.filenames[start:], batch.images[start:], batch.sources[start:]
+            )
+        )
 
     def _rebatch_data(self, batch: ExtractBatch) -> None:  # pylint:disable=too-many-locals
-        """ Process the incoming batch data and re-batch it for the requested plugin batch size
+        """Process the incoming batch data and re-batch it for the requested plugin batch size
         into the correct object and store in :attr:`_fifo`
 
         Parameters
@@ -489,11 +538,14 @@ class InboundIterator(ExtractIterator[ExtractBatch, ExtractBatch]):
             batch.__class__.__name__,
             len(batch.filenames),
             len(batch),
-            ", ".join(f"{b.__class__.__name__}(frames={len(b.filenames)}, faces={len(b)})"
-                      for b in self._fifo[-count:]))
+            ", ".join(
+                f"{b.__class__.__name__}(frames={len(b.filenames)}, faces={len(b)})"
+                for b in self._fifo[-count:]
+            ),
+        )
 
     def __next__(self) -> ExtractBatch | ExtractSignal:
-        """ Get the next batch of data from the iterator. Depending on the plugin type calling this
+        """Get the next batch of data from the iterator. Depending on the plugin type calling this
         iterator, a batch object will be returned for the given batch size of frames (for detect
         plugins) or faces (for all other plugins)
 
@@ -514,7 +566,9 @@ class InboundIterator(ExtractIterator[ExtractBatch, ExtractBatch]):
 
         while True:
             self._check_error()
-            retval = self._from_fifo()  # In loop as re-batching may need to run multiple times
+            retval = (
+                self._from_fifo()
+            )  # In loop as re-batching may need to run multiple times
             if retval is not None:
                 return retval
 
@@ -523,7 +577,9 @@ class InboundIterator(ExtractIterator[ExtractBatch, ExtractBatch]):
                 continue
 
             if isinstance(batch, ExtractBatch) and batch.passthrough and self._fifo:
-                raise RuntimeError("Pipeline must be empty when adding a passthrough object")
+                raise RuntimeError(
+                    "Pipeline must be empty when adding a passthrough object"
+                )
 
             if isinstance(batch, ExtractBatch) and batch.passthrough:
                 return batch
@@ -536,7 +592,7 @@ class InboundIterator(ExtractIterator[ExtractBatch, ExtractBatch]):
 
 
 class InterimIterator(ExtractIterator[ExtractBatch, ExtractBatch]):
-    """ An iterator that simply collects interim ExtractBatch objects from the given queue and
+    """An iterator that simply collects interim ExtractBatch objects from the given queue and
     yields them
 
     Parameters
@@ -550,8 +606,9 @@ class InterimIterator(ExtractIterator[ExtractBatch, ExtractBatch]):
     batch_size
         The batch size that data should be returned from the iterator
     """
+
     def __next__(self) -> ExtractBatch | ExtractSignal:
-        """ Get the next batch of data from the iterator
+        """Get the next batch of data from the iterator
 
         Returns
         -------
@@ -578,13 +635,16 @@ class InterimIterator(ExtractIterator[ExtractBatch, ExtractBatch]):
         if batch == ExtractSignal.FLUSH:
             logger.debug("[%s] FLUSH Received", self._name)
 
-        logger.trace("[%s] Releasing batch: %s",  # type:ignore[attr-defined]
-                     self._name, batch.name if isinstance(batch, ExtractSignal) else batch)
+        logger.trace(
+            "[%s] Releasing batch: %s",  # type:ignore[attr-defined]
+            self._name,
+            batch.name if isinstance(batch, ExtractSignal) else batch,
+        )
         return batch
 
 
 class OutputIterator(ExtractIterator[ExtractBatch, FrameFaces]):
-    """ Handles parsing incoming ExtractBatch objects into FrameFaces objects and yielding one
+    """Handles parsing incoming ExtractBatch objects into FrameFaces objects and yielding one
     frame at a time from the pipeline
 
     Parameters
@@ -598,8 +658,9 @@ class OutputIterator(ExtractIterator[ExtractBatch, FrameFaces]):
     batch_size
         The batch size that data should be returned from the iterator
     """
+
     def _to_extract_media(self, batch: ExtractBatch) -> None:
-        """ Process the incoming batch data into FrameFaces objects and return the next stored in
+        """Process the incoming batch data into FrameFaces objects and return the next stored in
         local cache for output
 
         Parameters
@@ -610,12 +671,9 @@ class OutputIterator(ExtractIterator[ExtractBatch, FrameFaces]):
         merge = self._fifo and batch.filenames[0] == self._fifo[-1].filename
         lengths = batch.lengths
         starts = np.cumsum(lengths, dtype=np.int32) - lengths
-        for idx, (filename, image, source, start, length) in enumerate(zip(batch.filenames,
-                                                                           batch.images,
-                                                                           batch.sources,
-                                                                           starts,
-                                                                           lengths)):
-
+        for idx, (filename, image, source, start, length) in enumerate(
+            zip(batch.filenames, batch.images, batch.sources, starts, lengths)
+        ):
             end = start + length
             media = FrameFaces(
                 filename,
@@ -625,13 +683,20 @@ class OutputIterator(ExtractIterator[ExtractBatch, FrameFaces]):
                 masks={k: v[start:end] for k, v in batch.masks.items()},
                 source=source,
                 is_aligned=batch.is_aligned,
-                frame_metadata=None if batch.frame_metadata is None else batch.frame_metadata[idx],
-                passthrough=batch.passthrough)
+                frame_metadata=None
+                if batch.frame_metadata is None
+                else batch.frame_metadata[idx],
+                passthrough=batch.passthrough,
+            )
             media.aligned = batch.aligned[start:end]
 
             if merge and idx == 0:
                 logger.trace(  # type:ignore[attr-defined]
-                    "[%s] Merging %s faces to last batch: '%s'", self._name, len(media), filename)
+                    "[%s] Merging %s faces to last batch: '%s'",
+                    self._name,
+                    len(media),
+                    filename,
+                )
                 self._fifo[-1].append(media)
             else:
                 self._fifo.append(media)
@@ -640,7 +705,8 @@ class OutputIterator(ExtractIterator[ExtractBatch, FrameFaces]):
                 "[%s] Split to FrameFaces: '%s' (%s faces)",
                 self._name,
                 self._fifo[-1].filename,
-                len(self._fifo[-1]))
+                len(self._fifo[-1]),
+            )
 
     def _handle_passthrough_batch(self, batch: ExtractBatch) -> FrameFaces:
         """Handle a batch when it is a passthrough object
@@ -662,25 +728,29 @@ class OutputIterator(ExtractIterator[ExtractBatch, FrameFaces]):
             If the batch does not contain exactly one frame
         """
         if self._fifo:
-            raise RuntimeError("Pipeline must be empty when adding a passthrough object")
+            raise RuntimeError(
+                "Pipeline must be empty when adding a passthrough object"
+            )
         if len(batch.filenames) != 1:
             raise ValueError("Exactly 1 image should exist when passing through")
 
         meta = batch.frame_metadata[0] if batch.frame_metadata else None
-        retval = FrameFaces(batch.filenames[0],
-                            batch.images[0],
-                            bboxes=batch.bboxes,
-                            identities=batch.identities,
-                            masks=batch.masks,
-                            source=batch.sources[0],
-                            is_aligned=batch.is_aligned,
-                            frame_metadata=meta,
-                            passthrough=batch.passthrough)
+        retval = FrameFaces(
+            batch.filenames[0],
+            batch.images[0],
+            bboxes=batch.bboxes,
+            identities=batch.identities,
+            masks=batch.masks,
+            source=batch.sources[0],
+            is_aligned=batch.is_aligned,
+            frame_metadata=meta,
+            passthrough=batch.passthrough,
+        )
         retval.aligned = batch.aligned
         return retval
 
     def __next__(self) -> FrameFaces:
-        """ Get the next batch of data from the iterator
+        """Get the next batch of data from the iterator
 
         Returns
         -------

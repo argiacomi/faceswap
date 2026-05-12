@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-""" The default options for the faceswap Cv2_Dnn Detect plugin.
+"""The default options for the faceswap Cv2_Dnn Detect plugin.
 
 Defaults files should be named `<plugin_name>_defaults.py`
 
@@ -25,6 +25,7 @@ Items will be grouped together as per their `group` parameter, but otherwise wil
 the order that they are added to this module.
 from lib.config import ConfigItem
 """
+
 from lib.config import ConfigItem
 
 
@@ -40,6 +41,7 @@ confidence = ConfigItem(
     default=50,
     group="settings",
     info="The confidence level at which the detector has successfully found a face.\nHigher "
-         "levels will be more discriminating, lower levels will have more false positives.",
+    "levels will be more discriminating, lower levels will have more false positives.",
     rounding=5,
-    min_max=(25, 100))
+    min_max=(25, 100),
+)

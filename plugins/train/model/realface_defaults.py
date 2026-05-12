@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-""" The default options for the faceswap Realface Model plugin.
+"""The default options for the faceswap Realface Model plugin.
 
 Defaults files should be named `<plugin_name>_defaults.py`
 
@@ -25,6 +25,7 @@ Items will be grouped together as per their `group` parameter, but otherwise wil
 the order that they are added to this module.
 from lib.config import ConfigItem
 """
+
 # pylint:disable=duplicate-code
 from lib.config import ConfigItem
 
@@ -41,34 +42,37 @@ input_size = ConfigItem(
     default=64,
     group="size",
     info="Resolution (in pixels) of the input image to train on.\n"
-         "BE AWARE Larger resolution will dramatically increase VRAM requirements.\n"
-         "Higher resolutions may increase prediction accuracy, but does not effect the "
-         "resulting output size.\nMust be between 64 and 128 and be divisible by 16.",
+    "BE AWARE Larger resolution will dramatically increase VRAM requirements.\n"
+    "Higher resolutions may increase prediction accuracy, but does not effect the "
+    "resulting output size.\nMust be between 64 and 128 and be divisible by 16.",
     rounding=16,
     min_max=(64, 128),
-    fixed=True)
+    fixed=True,
+)
 
 output_size = ConfigItem(
     datatype=int,
     default=128,
     group="size",
     info="Output image resolution (in pixels).\nBe aware that larger resolution will "
-         "increase VRAM requirements.\nNB: Must be between 64 and 256 and be divisible "
-         "by 16.",
+    "increase VRAM requirements.\nNB: Must be between 64 and 256 and be divisible "
+    "by 16.",
     rounding=16,
     min_max=(64, 256),
-    fixed=True)
+    fixed=True,
+)
 
 dense_nodes = ConfigItem(
     datatype=int,
     default=1536,
     group="network",
     info="Number of nodes for decoder. Might affect your model's ability to learn in "
-         "general.\nNote that: Lower values will affect the ability to predict "
-         "details.",
+    "general.\nNote that: Lower values will affect the ability to predict "
+    "details.",
     rounding=64,
     min_max=(768, 2048),
-    fixed=True)
+    fixed=True,
+)
 
 complexity_encoder = ConfigItem(
     datatype=int,
@@ -77,7 +81,8 @@ complexity_encoder = ConfigItem(
     info="Encoder Convolution Layer Complexity. sensible ranges: 128 to 150.",
     rounding=4,
     min_max=(96, 160),
-    fixed=True)
+    fixed=True,
+)
 
 complexity_decoder = ConfigItem(
     datatype=int,
@@ -86,4 +91,5 @@ complexity_decoder = ConfigItem(
     info="Decoder Complexity.",
     rounding=4,
     min_max=(512, 544),
-    fixed=True)
+    fixed=True,
+)

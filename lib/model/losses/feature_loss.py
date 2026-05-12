@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Custom Feature Map Loss Functions for faceswap.py"""
+
 from __future__ import annotations
 from dataclasses import dataclass, field
 import logging
@@ -36,6 +37,7 @@ class NetInfo:
     pad_amount
         For trunk networks, the amount of zero padding applied to each feature output
     """
+
     model_id: int = 0
     model_name: str = ""
     net: Callable | None = None
@@ -43,31 +45,43 @@ class NetInfo:
     pad_amount: list[int] | int = 0
 
 
-_NETS = {"alex": NetInfo(model_id=15,
-                         model_name="alexnet_imagenet_no_top_v2.pth",
-                         net=alexnet,
-                         outputs=[f"features.{i}" for i in (0, 3, 6, 8, 10)],
-                         pad_amount=[2, 2, 1, 1, 1]),
-         "squeeze": NetInfo(model_id=16,
-                            model_name="squeezenet_imagenet_no_top_v2.pth",
-                            net=squeezenet1_1,
-                            outputs=[f"features.{i}" for i in (0, 4, 7, 9, 10, 11, 12)],
-                            pad_amount=1),
-         "vgg16": NetInfo(model_id=17,
-                          model_name="vgg16_imagenet_no_top_v2.pth",
-                          net=vgg16,
-                          outputs=[f"features.{i}" for i in (2, 7, 14, 21, 29)],
-                          pad_amount=1)}
+_NETS = {
+    "alex": NetInfo(
+        model_id=15,
+        model_name="alexnet_imagenet_no_top_v2.pth",
+        net=alexnet,
+        outputs=[f"features.{i}" for i in (0, 3, 6, 8, 10)],
+        pad_amount=[2, 2, 1, 1, 1],
+    ),
+    "squeeze": NetInfo(
+        model_id=16,
+        model_name="squeezenet_imagenet_no_top_v2.pth",
+        net=squeezenet1_1,
+        outputs=[f"features.{i}" for i in (0, 4, 7, 9, 10, 11, 12)],
+        pad_amount=1,
+    ),
+    "vgg16": NetInfo(
+        model_id=17,
+        model_name="vgg16_imagenet_no_top_v2.pth",
+        net=vgg16,
+        outputs=[f"features.{i}" for i in (2, 7, 14, 21, 29)],
+        pad_amount=1,
+    ),
+}
 
-_LINEAR = {"alex": NetInfo(model_id=18,
-                           model_name="alexnet_lpips_v2.pth",
-                           outputs=[64, 192, 384, 256, 256]),
-           "squeeze": NetInfo(model_id=19,
-                              model_name="squeezenet_lpips_v2.pth",
-                              outputs=[64, 128, 256, 384, 384, 512, 512]),
-           "vgg16": NetInfo(model_id=20,
-                            model_name="vgg16_lpips_v2.pth",
-                            outputs=[64, 128, 256, 512, 512])}
+_LINEAR = {
+    "alex": NetInfo(
+        model_id=18, model_name="alexnet_lpips_v2.pth", outputs=[64, 192, 384, 256, 256]
+    ),
+    "squeeze": NetInfo(
+        model_id=19,
+        model_name="squeezenet_lpips_v2.pth",
+        outputs=[64, 128, 256, 384, 384, 512, 512],
+    ),
+    "vgg16": NetInfo(
+        model_id=20, model_name="vgg16_lpips_v2.pth", outputs=[64, 128, 256, 512, 512]
+    ),
+}
 
 
 class _LPIPSTrunkNet(nn.Module):
@@ -83,10 +97,13 @@ class _LPIPSTrunkNet(nn.Module):
     load_weights
         ``True`` if pretrained trunk network weights should be loaded, otherwise ``False``
     """
-    def __init__(self,
-                 net_name: T.Literal["alex", "squeeze", "vgg16"],
-                 eval_mode: bool,
-                 load_weights: bool) -> None:
+
+    def __init__(
+        self,
+        net_name: T.Literal["alex", "squeeze", "vgg16"],
+        eval_mode: bool,
+        load_weights: bool,
+    ) -> None:
         logger.debug(parse_class_init(locals()))
         super().__init__()
         self._net_name = net_name
@@ -99,10 +116,13 @@ class _LPIPSTrunkNet(nn.Module):
     def __repr__(self) -> str:
         """Pretty print for logging"""
         _repr = super().__repr__()
-        params = ", ".join(f"{k[1:]}={repr(v)}" for k, v in self.__dict__.items()
-                           if k.startswith(("_net_name", "_eval_mode", "_load_weights")))
+        params = ", ".join(
+            f"{k[1:]}={repr(v)}"
+            for k, v in self.__dict__.items()
+            if k.startswith(("_net_name", "_eval_mode", "_load_weights"))
+        )
         pfx = f"{self.__class__.__name__}("
-        return f"{pfx}{params})({_repr[len(pfx):]}"
+        return f"{pfx}{params})({_repr[len(pfx) :]}"
 
     def _get_net(self) -> nn.Module:
         """Load the trunk, set the weights and feature outputs
@@ -114,9 +134,9 @@ class _LPIPSTrunkNet(nn.Module):
         net_info = _NETS[self._net_name]
         model_def = net_info.net
         assert model_def is not None
-        net = feature_extraction.create_feature_extractor(model_def(),
-                                                          return_nodes=T.cast(list[str],
-                                                                              net_info.outputs))
+        net = feature_extraction.create_feature_extractor(
+            model_def(), return_nodes=T.cast(list[str], net_info.outputs)
+        )
         if self._load_weights:
             weights_path = GetModel(net_info.model_name, net_info.model_id).model_path
             assert isinstance(weights_path, str)
@@ -128,7 +148,9 @@ class _LPIPSTrunkNet(nn.Module):
         return net
 
     @classmethod
-    def _normalize_output(cls, inputs: torch.Tensor, epsilon: float = 1e-10) -> torch.Tensor:
+    def _normalize_output(
+        cls, inputs: torch.Tensor, epsilon: float = 1e-10
+    ) -> torch.Tensor:
         """Normalize the output tensors from the trunk network.
 
         Parameters
@@ -167,11 +189,14 @@ class _LPIPSLinearNet(nn.Module):
     use_dropout
         ``True`` if a dropout layer should be used in the Linear network otherwise ``False``
     """
-    def __init__(self,
-                 net_name: T.Literal["alex", "squeeze", "vgg16"],
-                 eval_mode: bool,
-                 load_weights: bool,
-                 use_dropout: bool) -> None:
+
+    def __init__(
+        self,
+        net_name: T.Literal["alex", "squeeze", "vgg16"],
+        eval_mode: bool,
+        load_weights: bool,
+        use_dropout: bool,
+    ) -> None:
         logger.debug(parse_class_init(locals()))
         super().__init__()
         self._net_name = net_name
@@ -280,22 +305,25 @@ class LPIPSLoss(nn.Module):  # pylint:disable=too-many-instance-attributes
     color_order
         The RGB/BGR order of the input images
     """
+
     _shift: torch.Tensor
     _scale: torch.Tensor
 
-    def __init__(self,  # pylint:disable=too-many-arguments,too-many-positional-arguments
-                 trunk_network: T.Literal["alex", "squeeze", "vgg16"],
-                 trunk_pretrained: bool = True,
-                 trunk_eval_mode: bool = True,
-                 linear_pretrained: bool = True,
-                 linear_eval_mode: bool = True,
-                 linear_use_dropout: bool = True,
-                 lpips: bool = True,
-                 spatial_output: bool = True,
-                 normalize: bool = True,
-                 ret_per_layer: bool = False,
-                 crop: bool = False,
-                 color_order: T.Literal["bgr", "rgb"] = "bgr") -> None:
+    def __init__(
+        self,  # pylint:disable=too-many-arguments,too-many-positional-arguments
+        trunk_network: T.Literal["alex", "squeeze", "vgg16"],
+        trunk_pretrained: bool = True,
+        trunk_eval_mode: bool = True,
+        linear_pretrained: bool = True,
+        linear_eval_mode: bool = True,
+        linear_use_dropout: bool = True,
+        lpips: bool = True,
+        spatial_output: bool = True,
+        normalize: bool = True,
+        ret_per_layer: bool = False,
+        crop: bool = False,
+        color_order: T.Literal["bgr", "rgb"] = "bgr",
+    ) -> None:
         super().__init__()
         logger.debug(parse_class_init(locals()))
         self._spatial = spatial_output
@@ -306,22 +334,26 @@ class LPIPSLoss(nn.Module):  # pylint:disable=too-many-instance-attributes
 
         self._is_rgb = color_order == "rgb"
 
-        self.register_buffer("_shift",
-                             torch.Tensor([-.030, -.088, -.188]).float()[None, :, None, None])
-        self.register_buffer("_scale",
-                             torch.Tensor([.458, .448, .450]).float()[None, :, None, None])
-        self._trunk_net = _LPIPSTrunkNet(trunk_network, trunk_eval_mode, trunk_pretrained)
-        self._linear_net = _LPIPSLinearNet(trunk_network,
-                                           linear_eval_mode,
-                                           linear_pretrained,
-                                           linear_use_dropout)
+        self.register_buffer(
+            "_shift",
+            torch.Tensor([-0.030, -0.088, -0.188]).float()[None, :, None, None],
+        )
+        self.register_buffer(
+            "_scale", torch.Tensor([0.458, 0.448, 0.450]).float()[None, :, None, None]
+        )
+        self._trunk_net = _LPIPSTrunkNet(
+            trunk_network, trunk_eval_mode, trunk_pretrained
+        )
+        self._linear_net = _LPIPSLinearNet(
+            trunk_network, linear_eval_mode, linear_pretrained, linear_use_dropout
+        )
         if trunk_eval_mode and linear_eval_mode:
             self.eval()
 
     @classmethod
-    def _get_crop_amount(cls,
-                         do_crop: bool,
-                         trunk_network: T.Literal["alex", "squeeze", "vgg16"]) -> list[int]:
+    def _get_crop_amount(
+        cls, do_crop: bool, trunk_network: T.Literal["alex", "squeeze", "vgg16"]
+    ) -> list[int]:
         """Obtain the amount to crop from the side of each feature map output when cropping is
         selected
 
@@ -347,8 +379,12 @@ class LPIPSLoss(nn.Module):  # pylint:disable=too-many-instance-attributes
                 retval = []
             else:
                 retval = [info.pad_amount for _ in range(len(info.outputs))]
-        logger.debug("[LPIPSLoss] Crop amounts for '%s' do_crop=%s: %s",
-                     trunk_network, do_crop, retval)
+        logger.debug(
+            "[LPIPSLoss] Crop amounts for '%s' do_crop=%s: %s",
+            trunk_network,
+            do_crop,
+            retval,
+        )
         return retval
 
     def _process_diffs(self, inputs: list[torch.Tensor]) -> list[torch.Tensor]:
@@ -388,11 +424,14 @@ class LPIPSLoss(nn.Module):  # pylint:disable=too-many-instance-attributes
         the height, width axes.
         """
         if self._spatial:
-            return nn.Upsample(output_dims, mode="bilinear", align_corners=False)(inputs)
+            return nn.Upsample(output_dims, mode="bilinear", align_corners=False)(
+                inputs
+            )
         return torch.mean(inputs, dim=(2, 3), keepdim=True)
 
-    def forward(self, y_true: torch.Tensor, y_pred: torch.Tensor
-                ) -> torch.Tensor | tuple[torch.Tensor, list[torch.Tensor]]:
+    def forward(
+        self, y_true: torch.Tensor, y_pred: torch.Tensor
+    ) -> torch.Tensor | tuple[torch.Tensor, list[torch.Tensor]]:
         """Perform the LPIPS Loss Function.
 
         Parameters
@@ -420,13 +459,16 @@ class LPIPSLoss(nn.Module):  # pylint:disable=too-many-instance-attributes
         net_true = self._trunk_net(y_true)
         net_pred = self._trunk_net(y_pred)
 
-        diffs = [(out_true - out_pred) ** 2
-                 for out_true, out_pred in zip(net_true, net_pred)]
+        diffs = [
+            (out_true - out_pred) ** 2 for out_true, out_pred in zip(net_true, net_pred)
+        ]
 
         dims = y_true.shape[2:4]
         if self._crop_amount:
-            diffs = [d[:, :, i:-i, i: -i] if i else d
-                     for d, i in zip(diffs, self._crop_amount)]
+            diffs = [
+                d[:, :, i:-i, i:-i] if i else d
+                for d, i in zip(diffs, self._crop_amount)
+            ]
 
         dims = dims if self._spatial else y_true.shape[2:4]
         res = [self._process_output(diff, dims) for diff in self._process_diffs(diffs)]

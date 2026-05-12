@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Handles the generation of masks from faceswap for updating into an alignments file"""
+
 from __future__ import annotations
 
 import logging
@@ -42,24 +43,31 @@ class MaskGenerator:
     config_file
         Full path to a custom config file to load. ``None`` for default config
     """
-    def __init__(self,
-                 mask_type: str,
-                 update_all: bool,
-                 input_is_faces: bool,
-                 loader: loader.Loader,
-                 alignments: align.alignments.Alignments | None,
-                 input_location: str,
-                 config_file: str | None) -> None:
+
+    def __init__(
+        self,
+        mask_type: str,
+        update_all: bool,
+        input_is_faces: bool,
+        loader: loader.Loader,
+        alignments: align.alignments.Alignments | None,
+        input_location: str,
+        config_file: str | None,
+    ) -> None:
         logger.debug(parse_class_init(locals()))
         self._update_all = update_all
         self._is_faces = input_is_faces
         self._alignments = alignments
 
-        self._extractor = T.cast("ExtractRunner[ExtractHandlerFace]",
-                                 Mask(mask_type, config_file=config_file)())
+        self._extractor = T.cast(
+            "ExtractRunner[ExtractHandlerFace]",
+            Mask(mask_type, config_file=config_file)(),
+        )
         self._mask_type = self._extractor.handler.plugin.storage_name
         self._input_thread = self._set_loader_thread(loader)
-        self._saver = ImagesSaver(input_location, as_bytes=True) if input_is_faces else None
+        self._saver = (
+            ImagesSaver(input_location, as_bytes=True) if input_is_faces else None
+        )
 
         self._counts: dict[T.Literal["face", "update"], int] = {"face": 0, "update": 0}
 
@@ -86,8 +94,12 @@ class MaskGenerator:
 
         retval = not face.mask or face.mask.get(self._mask_type, None) is None
 
-        logger.trace("Needs updating: %s, '%s' - %s",  # type:ignore[attr-defined]
-                     retval, frame, idx)
+        logger.trace(
+            "Needs updating: %s, '%s' - %s",  # type:ignore[attr-defined]
+            retval,
+            frame,
+            idx,
+        )
         return retval
 
     def _feed_extractor(self, loader: loader.Loader) -> None:
@@ -106,21 +118,27 @@ class MaskGenerator:
             if self._is_faces:
                 assert media.frame_metadata is not None
                 assert len(media) == 1
-                needs_update = self._needs_update(media.frame_metadata.source_filename,
-                                                  media.frame_metadata.face_index,
-                                                  media.detected_faces[0])
+                needs_update = self._needs_update(
+                    media.frame_metadata.source_filename,
+                    media.frame_metadata.face_index,
+                    media.detected_faces[0],
+                )
             else:
                 # To keep face indexes correct/cover off where only one face in an image is missing
                 # a mask where there are multiple faces we process all faces again for any frames
                 # which have missing masks.
-                needs_update = any(self._needs_update(os.path.basename(media.filename),
-                                                      idx,
-                                                      detected_face)
-                                   for idx, detected_face in enumerate(media.detected_faces))
+                needs_update = any(
+                    self._needs_update(
+                        os.path.basename(media.filename), idx, detected_face
+                    )
+                    for idx, detected_face in enumerate(media.detected_faces)
+                )
 
             if not needs_update:
-                logger.trace("No masks need updating in '%s'",  # type:ignore[attr-defined]
-                             media.filename)
+                logger.trace(
+                    "No masks need updating in '%s'",  # type:ignore[attr-defined]
+                    media.filename,
+                )
                 continue
 
             logger.trace("Passing to extractor: '%s'", media.filename)  # type:ignore[attr-defined]
@@ -139,7 +157,7 @@ class MaskGenerator:
             The loader for loading source images/video from disk
         """
         logger.debug("Starting load thread: (loader: %s)", loader)
-        in_thread = FSThread(self._feed_extractor, args=(loader, ))
+        in_thread = FSThread(self._feed_extractor, args=(loader,))
         in_thread.start()
         logger.debug("Started load thread: %s", in_thread)
         return in_thread
@@ -166,8 +184,10 @@ class MaskGenerator:
 
         logger.trace("Updating extracted face: '%s'", media.filename)  # type:ignore[attr-defined]
         meta = PNGHeader(alignments=face.to_png_meta(), source=media.frame_metadata)
-        self._saver.save(os.path.basename(media.filename),
-                         encode_image(media.image, ".png", metadata=meta))
+        self._saver.save(
+            os.path.basename(media.filename),
+            encode_image(media.image, ".png", metadata=meta),
+        )
 
     def _update_from_frame(self, media: FrameFaces) -> None:
         """Update the alignments file
@@ -179,8 +199,11 @@ class MaskGenerator:
         """
         assert self._alignments is not None
         fname = os.path.basename(media.filename)
-        logger.trace("Updating %s faces in frame '%s'",  # type:ignore[attr-defined]
-                     len(media), fname)
+        logger.trace(
+            "Updating %s faces in frame '%s'",  # type:ignore[attr-defined]
+            len(media),
+            fname,
+        )
         for idx, face in enumerate(media.detected_faces):
             self._alignments.update_face(fname, idx, face.to_alignment())
 
@@ -199,10 +222,15 @@ class MaskGenerator:
             self._saver.close()
 
         if self._counts["update"] == 0:
-            logger.warning("No masks were updated of the %s faces seen", self._counts["face"])
+            logger.warning(
+                "No masks were updated of the %s faces seen", self._counts["face"]
+            )
         else:
-            logger.info("Updated masks for %s faces of %s",
-                        self._counts["update"], self._counts["face"])
+            logger.info(
+                "Updated masks for %s faces of %s",
+                self._counts["update"],
+                self._counts["face"],
+            )
 
     def process(self) -> T.Generator[FrameFaces, None, None]:
         """Process the output from the extractor pipeline

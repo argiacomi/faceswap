@@ -1,5 +1,6 @@
 #! /usr/env/bin/python3
 """Interfaces for Faceswap extract plugins"""
+
 from __future__ import annotations
 
 import abc
@@ -23,7 +24,7 @@ if T.TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class _TorchInfer():
+class _TorchInfer:
     """Handles loading PyTorch models and handling data transfer for plugins that use PyTorch
 
     Parameters
@@ -34,6 +35,7 @@ class _TorchInfer():
         For Torch models, force running on the CPU, rather than the accelerated device. Sets the
         :class:`torch.device` to :attr:`device`. Default: ``False``
     """
+
     def __init__(self, name: str, force_cpu: bool) -> None:
         logger.debug(parse_class_init(locals()))
         self._name = f"{self.__class__.__name__[1:]}.{name}"
@@ -64,24 +66,32 @@ class _TorchInfer():
         The device that torch should use
         """
         if cpu:
-            logger.debug("[%s] CPU mode selected. Returning CPU device context", self._name)
+            logger.debug(
+                "[%s] CPU mode selected. Returning CPU device context", self._name
+            )
             return torch.device("cpu")
 
         if torch.cuda.is_available():
-            logger.debug("[%s] Cuda available. Returning Cuda device context", self._name)
+            logger.debug(
+                "[%s] Cuda available. Returning Cuda device context", self._name
+            )
             return torch.device("cuda")
 
         if torch.backends.mps.is_available():
             logger.debug("[%s] MPS available. Returning MPS device context", self._name)
             return torch.device("mps")
 
-        logger.debug("[%s] No backends available. Returning CPU device context", self._name)
+        logger.debug(
+            "[%s] No backends available. Returning CPU device context", self._name
+        )
         return torch.device("cpu")
 
-    def load_torch_model(self,
-                         model: torch.nn.Module,
-                         weights_path: str,
-                         return_indices: list[int] | None) -> torch.nn.Module:
+    def load_torch_model(
+        self,
+        model: torch.nn.Module,
+        weights_path: str,
+        return_indices: list[int] | None,
+    ) -> torch.nn.Module:
         """Load a PyTorch model, apply the weights and pass a warmup batch through
 
         Parameters
@@ -126,8 +136,12 @@ class _TorchInfer():
 
         if not isinstance(batch, torch.Tensor):
             assert isinstance(batch, (list, tuple))
-            logger.debug("[%s] Setting _output_is_list to True for %s (length: %s)",
-                         self._name, type(batch), len(batch))
+            logger.debug(
+                "[%s] Setting _output_is_list to True for %s (length: %s)",
+                self._name,
+                type(batch),
+                len(batch),
+            )
             self._output_is_list = True
             self._output_length = len(batch)
 
@@ -146,16 +160,26 @@ class _TorchInfer():
         The result from the PyTorch model
         """
         if self._model is None:
-            raise ValueError("Plugin function 'load_torch_model' must have been called to use "
-                             "this function")
+            raise ValueError(
+                "Plugin function 'load_torch_model' must have been called to use "
+                "this function"
+            )
 
         with torch.inference_mode():
             if self._use_pinned:
-                feed = torch.from_numpy(batch).pin_memory().to(self.device,
-                                                               non_blocking=True,
-                                                               memory_format=torch.channels_last)
+                feed = (
+                    torch.from_numpy(batch)
+                    .pin_memory()
+                    .to(
+                        self.device,
+                        non_blocking=True,
+                        memory_format=torch.channels_last,
+                    )
+                )
             else:
-                feed = torch.from_numpy(batch).to(self.device, memory_format=torch.channels_last)
+                feed = torch.from_numpy(batch).to(
+                    self.device, memory_format=torch.channels_last
+                )
             out = self._model(feed)
 
             if not self._first_batch_seen:
@@ -164,11 +188,14 @@ class _TorchInfer():
             if self._return_indices:
                 out = itemgetter(*self._return_indices)(out)
 
-            out = [x.to("cpu").numpy()
-                   for x in out] if self._output_is_list else out.to("cpu").numpy()
+            out = (
+                [x.to("cpu").numpy() for x in out]
+                if self._output_is_list
+                else out.to("cpu").numpy()
+            )
 
         if self._output_is_list:
-            retval = np.empty((self._output_length, ), dtype="object")
+            retval = np.empty((self._output_length,), dtype="object")
             retval[:] = out
             return retval
         return T.cast(np.ndarray, out)
@@ -198,13 +225,16 @@ class ExtractPlugin(abc.ABC):
         For Torch models, force running on the CPU, rather than the accelerated device. Sets the
         :class:`torch.device` to :attr:`device`. Default: ``False``
     """
-    def __init__(self,
-                 input_size: int,
-                 batch_size: int = 1,
-                 is_rgb: bool = False,
-                 dtype: str = "float32",
-                 scale: tuple[int, int] = (0, 1),
-                 force_cpu: bool = False) -> None:
+
+    def __init__(
+        self,
+        input_size: int,
+        batch_size: int = 1,
+        is_rgb: bool = False,
+        dtype: str = "float32",
+        scale: tuple[int, int] = (0, 1),
+        force_cpu: bool = False,
+    ) -> None:
         logger.debug(parse_class_init(locals()))
         self.input_size = input_size
         """The size of the plugin's input in pixels"""
@@ -225,8 +255,11 @@ class ExtractPlugin(abc.ABC):
 
     def __repr__(self) -> str:
         """Pretty print for logging"""
-        params = {k: v for k, v in self.__dict__.items()
-                  if k in ["input_size", "batch_size", "is_rgb", "dtype", "scale"]}
+        params = {
+            k: v
+            for k, v in self.__dict__.items()
+            if k in ["input_size", "batch_size", "is_rgb", "dtype", "scale"]
+        }
         params["force_cpu"] = self.device.type == "cpu"
         s_params = ", ".join(f"{k}={repr(v)}" for k, v in params.items())
         return f"{self.__class__.__name__}({s_params})"
@@ -315,10 +348,12 @@ class ExtractPlugin(abc.ABC):
         """
         return batch
 
-    def load_torch_model(self,
-                         model: torch.nn.Module,
-                         weights_path: str,
-                         return_indices: list[int] | None = None) -> torch.nn.Module:
+    def load_torch_model(
+        self,
+        model: torch.nn.Module,
+        weights_path: str,
+        return_indices: list[int] | None = None,
+    ) -> torch.nn.Module:
         """Load a PyTorch model, apply the weights and pass a warmup batch through
 
         This function does not need to be used, but some default Faceswap optimizations are
@@ -387,25 +422,31 @@ class FacePlugin(ExtractPlugin):
     centering
         The centering that the mask should be stored at
     """
-    def __init__(self,
-                 input_size: int,
-                 batch_size: int = 1,
-                 is_rgb: bool = False,
-                 dtype: str = "float32",
-                 scale: tuple[int, int] = (0, 1),
-                 force_cpu: bool = False,
-                 centering: T.Literal["face", "head", "legacy"] = "face") -> None:
+
+    def __init__(
+        self,
+        input_size: int,
+        batch_size: int = 1,
+        is_rgb: bool = False,
+        dtype: str = "float32",
+        scale: tuple[int, int] = (0, 1),
+        force_cpu: bool = False,
+        centering: T.Literal["face", "head", "legacy"] = "face",
+    ) -> None:
         super().__init__(  # pylint:disable=too-many-arguments,too-many-positional-arguments
             input_size=input_size,
             batch_size=batch_size,
             is_rgb=is_rgb,
             dtype=dtype,
             scale=scale,
-            force_cpu=force_cpu)
+            force_cpu=force_cpu,
+        )
 
         self.centering: CenteringType = centering
         """The aligned centering of the image patch to feed the model"""
-        self.storage_name = self.__module__.rsplit(".", maxsplit=1)[-1].replace("_", "-")
+        self.storage_name = self.__module__.rsplit(".", maxsplit=1)[-1].replace(
+            "_", "-"
+        )
         """str : Dictionary safe name for storing the serialized data"""
 
     def __repr__(self) -> str:

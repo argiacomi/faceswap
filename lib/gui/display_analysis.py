@@ -1,5 +1,5 @@
 #!/usr/bin python3
-""" Analysis tab of Display Frame of the Faceswap GUI """
+"""Analysis tab of Display Frame of the Faceswap GUI"""
 
 import csv
 import gettext
@@ -25,7 +25,7 @@ _ = _LANG.gettext
 
 
 class Analysis(DisplayPage):  # pylint:disable=too-many-ancestors
-    """ Session Analysis Tab.
+    """Session Analysis Tab.
 
     The area of the GUI that holds the session summary stats for model training sessions.
 
@@ -38,6 +38,7 @@ class Analysis(DisplayPage):  # pylint:disable=too-many-ancestors
     helptext: str
         The help text to display for the summary statistics page
     """
+
     def __init__(self, parent, tab_name, helptext):
         logger.debug(parse_class_init(locals()))
         super().__init__(parent, tab_name, helptext)
@@ -52,7 +53,7 @@ class Analysis(DisplayPage):  # pylint:disable=too-many-ancestors
         logger.debug("Initialized: %s", self.__class__.__name__)
 
     def set_vars(self):
-        """ Set the analysis specific tkinter variables to :attr:`vars`.
+        """Set the analysis specific tkinter variables to :attr:`vars`.
 
         The tracked variables are the global variables that:
             * Trigger when a graph refresh has been requested.
@@ -64,13 +65,15 @@ class Analysis(DisplayPage):  # pylint:disable=too-many-ancestors
         dict
             The dictionary of variable names to tkinter variables
         """
-        return {"selected_id": tk.StringVar(),
-                "refresh_graph": get_config().tk_vars.refresh_graph,
-                "is_training": get_config().tk_vars.is_training,
-                "analysis_folder": get_config().tk_vars.analysis_folder}
+        return {
+            "selected_id": tk.StringVar(),
+            "refresh_graph": get_config().tk_vars.refresh_graph,
+            "is_training": get_config().tk_vars.is_training,
+            "analysis_folder": get_config().tk_vars.analysis_folder,
+        }
 
     def on_tab_select(self):
-        """ Callback for when the analysis tab is selected.
+        """Callback for when the analysis tab is selected.
 
         Update the statistics with the latest values.
         """
@@ -78,7 +81,7 @@ class Analysis(DisplayPage):  # pylint:disable=too-many-ancestors
         self._reset_session()
 
     def _get_main_frame(self):
-        """ Get the main frame to the sub-notebook to hold stats and session data.
+        """Get the main frame to the sub-notebook to hold stats and session data.
 
         Returns
         -------
@@ -92,7 +95,7 @@ class Analysis(DisplayPage):  # pylint:disable=too-many-ancestors
         return retval
 
     def _set_callbacks(self):
-        """ Adds callbacks to update the analysis summary statistics and add them to :attr:`vars`
+        """Adds callbacks to update the analysis summary statistics and add them to :attr:`vars`
 
         Training graph refresh - Updates the stats for the current training session when the graph
         has been updated.
@@ -103,7 +106,7 @@ class Analysis(DisplayPage):  # pylint:disable=too-many-ancestors
         self.vars["analysis_folder"].trace("w", self._populate_from_folder)
 
     def _update_current_session(self, *args):  # pylint:disable=unused-argument
-        """ Update the currently training session data on a graph update callback. """
+        """Update the currently training session data on a graph update callback."""
         if not self.vars["refresh_graph"].get():
             return
         if not self._tab_is_active:
@@ -113,12 +116,12 @@ class Analysis(DisplayPage):  # pylint:disable=too-many-ancestors
         self._reset_session()
 
     def _reset_session_info(self):
-        """ Reset the session info status to default """
+        """Reset the session info status to default"""
         logger.debug("Resetting session info")
         self.set_info("No session data loaded")
 
     def _populate_from_folder(self, *args):  # pylint:disable=unused-argument
-        """ Populate the Analysis tab from a model folder.
+        """Populate the Analysis tab from a model folder.
 
         Triggered when :attr:`vars` ``analysis_folder`` variable is is set.
         """
@@ -131,9 +134,9 @@ class Analysis(DisplayPage):  # pylint:disable=too-many-ancestors
             self._clear_session()
             return
 
-        state_files = [fname
-                       for fname in os.listdir(folder)
-                       if fname.endswith("_state.json")]
+        state_files = [
+            fname for fname in os.listdir(folder) if fname.endswith("_state.json")
+        ]
         if not state_files:
             logger.debug("No state files found in folder: '%s'", folder)
             self._clear_session()
@@ -148,7 +151,7 @@ class Analysis(DisplayPage):  # pylint:disable=too-many-ancestors
 
     @classmethod
     def _get_model_name(cls, model_dir, state_file):
-        """ Obtain the model name from a state file's file name.
+        """Obtain the model name from a state file's file name.
 
         Parameters
         ----------
@@ -173,7 +176,7 @@ class Analysis(DisplayPage):  # pylint:disable=too-many-ancestors
         return model_name
 
     def _set_session_summary(self, message):
-        """ Set the summary data and info message.
+        """Set the summary data and info message.
 
         Parameters
         ----------
@@ -182,9 +185,9 @@ class Analysis(DisplayPage):  # pylint:disable=too-many-ancestors
         """
         if self._thread is None:
             logger.debug("Setting session summary. (message: '%s')", message)
-            self._thread = LongRunningTask(target=self._summarise_data,
-                                           args=(Session, ),
-                                           widget=self)
+            self._thread = LongRunningTask(
+                target=self._summarise_data, args=(Session,), widget=self
+            )
             self._thread.start()
             self.after(1000, lambda msg=message: self._set_session_summary(msg))
         elif not self._thread.complete.is_set():
@@ -205,7 +208,7 @@ class Analysis(DisplayPage):  # pylint:disable=too-many-ancestors
 
     @classmethod
     def _summarise_data(cls, session):
-        """ Summarize data in a LongRunningThread as it can take a while.
+        """Summarize data in a LongRunningThread as it can take a while.
 
         Parameters
         ----------
@@ -215,7 +218,7 @@ class Analysis(DisplayPage):  # pylint:disable=too-many-ancestors
         return session.full_summary
 
     def _clear_session(self):
-        """ Clear the currently displayed analysis data from the Tree-View. """
+        """Clear the currently displayed analysis data from the Tree-View."""
         logger.debug("Clearing session")
         if not Session.is_loaded:
             logger.trace("No session loaded. Returning")
@@ -227,7 +230,7 @@ class Analysis(DisplayPage):  # pylint:disable=too-many-ancestors
             Session.clear()
 
     def _load_session(self, full_path=None):
-        """ Load the session statistics from a model's state file into the Analysis tab of the GUI
+        """Load the session statistics from a model's state file into the Analysis tab of the GUI
         display window.
 
         If a model's log files cannot be found within the model folder then the session is cleared.
@@ -237,7 +240,7 @@ class Analysis(DisplayPage):  # pylint:disable=too-many-ancestors
         full_path: str, optional
             The path to the state file to load session information from. If this is ``None`` then
             a file dialog is popped to enable the user to choose a state file. Default: ``None``
-         """
+        """
         logger.debug("Loading session")
         if full_path is None:
             full_path = FileHandler("filename", "state").return_file
@@ -257,8 +260,8 @@ class Analysis(DisplayPage):  # pylint:disable=too-many-ancestors
         self._set_session_summary(msg)
 
     def _reset_session(self):
-        """ Reset currently training sessions. Clears the current session and loads in the latest
-        data. """
+        """Reset currently training sessions. Clears the current session and loads in the latest
+        data."""
         logger.debug("Reset current training session")
         if not Session.is_training:
             logger.debug("Training not running")
@@ -270,7 +273,7 @@ class Analysis(DisplayPage):  # pylint:disable=too-many-ancestors
         self._set_session_summary("Currently running training session")
 
     def _save_session(self):
-        """ Launch a file dialog pop-up to save the current analysis data to a CSV file. """
+        """Launch a file dialog pop-up to save the current analysis data to a CSV file."""
         logger.debug("Saving session")
         if not self._summary:
             logger.debug("No summary data loaded. Nothing to save")
@@ -290,14 +293,15 @@ class Analysis(DisplayPage):  # pylint:disable=too-many-ancestors
                 csvout.writerow(row)
 
 
-class _Options():  # pylint:disable=too-few-public-methods
-    """ Options buttons for the Analysis tab.
+class _Options:  # pylint:disable=too-few-public-methods
+    """Options buttons for the Analysis tab.
 
     Parameters
     ----------
     parent: :class:`Analysis`
         The Analysis Display Tab that holds the options buttons
     """
+
     def __init__(self, parent):
         logger.debug(parse_class_init(locals()))
         self._parent = parent
@@ -306,7 +310,7 @@ class _Options():  # pylint:disable=too-few-public-methods
         logger.debug("Initialized: %s", self.__class__.__name__)
 
     def _add_buttons(self):
-        """ Add the option buttons.
+        """Add the option buttons.
 
         Returns
         -------
@@ -317,9 +321,9 @@ class _Options():  # pylint:disable=too-few-public-methods
         for btntype in ("clear", "save", "load"):
             logger.debug("Adding button: '%s'", btntype)
             cmd = getattr(self._parent, f"_{btntype}_session")
-            btn = ttk.Button(self._parent.optsframe,
-                             image=get_images().icons[btntype],
-                             command=cmd)
+            btn = ttk.Button(
+                self._parent.optsframe, image=get_images().icons[btntype], command=cmd
+            )
             btn.pack(padx=2, side=tk.RIGHT)
             hlp = self._set_help(btntype)
             Tooltip(btn, text=hlp, wrap_length=200)
@@ -329,7 +333,7 @@ class _Options():  # pylint:disable=too-few-public-methods
 
     @classmethod
     def _set_help(cls, button_type):
-        """ Set the help text for option buttons.
+        """Set the help text for option buttons.
 
         Parameters
         ----------
@@ -349,13 +353,13 @@ class _Options():  # pylint:disable=too-few-public-methods
         return hlp
 
     def _add_training_callback(self):
-        """ Add a callback to the training tkinter variable to disable save and clear buttons
-        when a model is training. """
+        """Add a callback to the training tkinter variable to disable save and clear buttons
+        when a model is training."""
         var = self._parent.vars["is_training"]
         var.trace("w", self._set_buttons_state)
 
     def _set_buttons_state(self, *args):  # pylint:disable=unused-argument
-        """ Callback to enable/disable button when training is commenced and stopped. """
+        """Callback to enable/disable button when training is commenced and stopped."""
         is_training = self._parent.vars["is_training"].get()
         state = "disabled" if is_training else "!disabled"
         for name, button in self._buttons.items():
@@ -366,7 +370,7 @@ class _Options():  # pylint:disable=too-few-public-methods
 
 
 class StatsData(ttk.Frame):  # pylint:disable=too-many-ancestors
-    """ Stats frame of analysis tab.
+    """Stats frame of analysis tab.
 
     Holds the tree-view containing the summarized session statistics in the Analysis tab.
 
@@ -379,6 +383,7 @@ class StatsData(ttk.Frame):  # pylint:disable=too-many-ancestors
     helptext: str
         The help text to display for the summary statistics page
     """
+
     def __init__(self, parent, selected_id, helptext):
         logger.debug(parse_class_init(locals()))
         super().__init__(parent)
@@ -386,13 +391,17 @@ class StatsData(ttk.Frame):  # pylint:disable=too-many-ancestors
 
         self._canvas = tk.Canvas(self, bd=0, highlightthickness=0)
         tree_frame = ttk.Frame(self._canvas)
-        self._tree_canvas = self._canvas.create_window((0, 0), window=tree_frame, anchor=tk.NW)
+        self._tree_canvas = self._canvas.create_window(
+            (0, 0), window=tree_frame, anchor=tk.NW
+        )
         self._sub_frame = ttk.Frame(tree_frame)
 
         self._add_label()
 
         self._tree = ttk.Treeview(self._sub_frame, height=1, selectmode=tk.BROWSE)
-        self._scrollbar = ttk.Scrollbar(tree_frame, orient="vertical", command=self._tree.yview)
+        self._scrollbar = ttk.Scrollbar(
+            tree_frame, orient="vertical", command=self._tree.yview
+        )
 
         self._columns = self._tree_configure(helptext)
         self._canvas.bind("<Configure>", self._resize_frame)
@@ -406,13 +415,13 @@ class StatsData(ttk.Frame):  # pylint:disable=too-many-ancestors
         logger.debug("Initialized: %s", self.__class__.__name__)
 
     def _add_label(self):
-        """ Add the title above the tree-view. """
+        """Add the title above the tree-view."""
         logger.debug("Adding Treeview title")
         lbl = ttk.Label(self._sub_frame, text="Session Stats", anchor=tk.CENTER)
         lbl.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
 
     def _resize_frame(self, event):
-        """ Resize the options frame to fit the canvas.
+        """Resize the options frame to fit the canvas.
 
         Parameters
         ----------
@@ -422,11 +431,13 @@ class StatsData(ttk.Frame):  # pylint:disable=too-many-ancestors
         logger.debug("Resize Analysis Frame")
         canvas_width = event.width
         canvas_height = event.height
-        self._canvas.itemconfig(self._tree_canvas, width=canvas_width, height=canvas_height)
+        self._canvas.itemconfig(
+            self._tree_canvas, width=canvas_width, height=canvas_height
+        )
         logger.debug("Resized Analysis Frame")
 
     def _tree_configure(self, helptext):
-        """ Build a tree-view widget to hold the sessions stats.
+        """Build a tree-view widget to hold the sessions stats.
 
         Parameters
         ----------
@@ -446,7 +457,7 @@ class StatsData(ttk.Frame):  # pylint:disable=too-many-ancestors
         return self._tree_columns()
 
     def _tree_columns(self):
-        """ Add the columns to the totals tree-view.
+        """Add the columns to the totals tree-view.
 
         Returns
         -------
@@ -454,13 +465,15 @@ class StatsData(ttk.Frame):  # pylint:disable=too-many-ancestors
             The list of tree-view columns
         """
         logger.debug("Adding Treeview columns")
-        columns = (("session", 40, "#"),
-                   ("start", 130, None),
-                   ("end", 130, None),
-                   ("elapsed", 90, None),
-                   ("batch", 50, None),
-                   ("iterations", 90, None),
-                   ("rate", 60, "EGs/sec"))
+        columns = (
+            ("session", 40, "#"),
+            ("start", 130, None),
+            ("end", 130, None),
+            ("elapsed", 90, None),
+            ("batch", 50, None),
+            ("iterations", 90, None),
+            ("rate", 60, "EGs/sec"),
+        )
         self._tree["columns"] = [column[0] for column in columns]
 
         for column in columns:
@@ -474,7 +487,7 @@ class StatsData(ttk.Frame):  # pylint:disable=too-many-ancestors
         return [column[0] for column in columns]
 
     def tree_insert_data(self, sessions_summary):
-        """ Insert the summary data into the statistics tree-view.
+        """Insert the summary data into the statistics tree-view.
 
         Parameters
         ----------
@@ -495,17 +508,17 @@ class StatsData(ttk.Frame):  # pylint:disable=too-many-ancestors
             self._tree.insert("", "end", **kwargs)
 
     def tree_clear(self):
-        """ Clear all of the summary data from the tree-view. """
+        """Clear all of the summary data from the tree-view."""
         logger.debug("Clearing treeview data")
         try:
-            self._tree.delete(* self._tree.get_children())
+            self._tree.delete(*self._tree.get_children())
             self._tree.configure(height=1)
         except tk.TclError:
             # Catch non-existent tree view when rebuilding the GUI
             pass
 
     def _select_item(self, event):
-        """ Update the session summary info with the selected item or launch graph.
+        """Update the session summary info with the selected item or launch graph.
 
         If the mouse is clicked on the graph icon, then the session summary pop-up graph is
         launched. Otherwise the selected ID is stored.
@@ -526,7 +539,7 @@ class StatsData(ttk.Frame):  # pylint:disable=too-many-ancestors
                 self._data_popup(data_points)
 
     def _check_valid_data(self, values):
-        """ Check there is valid data available for popping up a graph.
+        """Check there is valid data available for popping up a graph.
 
         Parameters
         ----------
@@ -535,13 +548,15 @@ class StatsData(ttk.Frame):  # pylint:disable=too-many-ancestors
         """
         col_indices = [self._columns.index("batch"), self._columns.index("iterations")]
         for idx in col_indices:
-            if (isinstance(values[idx], int) or values[idx].isdigit()) and int(values[idx]) == 0:
+            if (isinstance(values[idx], int) or values[idx].isdigit()) and int(
+                values[idx]
+            ) == 0:
                 logger.warning("No data to graph for selected session")
                 return False
         return True
 
     def _data_popup(self, data_points):
-        """ Pop up a window and control it's position
+        """Pop up a window and control it's position
 
         The default view is rolling average over 500 points. If there are fewer data points than
         this, switch the default to smoothed,
@@ -553,13 +568,9 @@ class StatsData(ttk.Frame):  # pylint:disable=too-many-ancestors
         """
         logger.debug("Popping up data window")
         scaling_factor = get_config().scaling_factor
-        toplevel = SessionPopUp(self._selected_id.get(),
-                                data_points)
+        toplevel = SessionPopUp(self._selected_id.get(), data_points)
         toplevel.title(self._data_popup_title())
-        toplevel.tk.call(
-            'wm',
-            'iconphoto',
-            toplevel._w, get_images().icons["favicon"])  # pylint:disable=protected-access
+        toplevel.tk.call("wm", "iconphoto", toplevel._w, get_images().icons["favicon"])  # pylint:disable=protected-access
 
         root = get_config().root
         offset = (root.winfo_x() + 20, root.winfo_y() + 20)
@@ -570,7 +581,7 @@ class StatsData(ttk.Frame):  # pylint:disable=too-many-ancestors
         toplevel.update()
 
     def _data_popup_title(self):
-        """ Get the summary graph popup title.
+        """Get the summary graph popup title.
 
         Returns
         -------

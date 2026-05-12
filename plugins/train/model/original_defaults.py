@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-""" The default options for the faceswap Original Model plugin.
+"""The default options for the faceswap Original Model plugin.
 
 Defaults files should be named `<plugin_name>_defaults.py`
 
@@ -25,6 +25,7 @@ Items will be grouped together as per their `group` parameter, but otherwise wil
 the order that they are added to this module.
 from lib.config import ConfigItem
 """
+
 # pylint:disable=duplicate-code
 from lib.config import ConfigItem
 
@@ -37,5 +38,6 @@ lowmem = ConfigItem(
     default=False,
     group="settings",
     info="Lower memory mode. Set to 'True' if having issues with VRAM useage.\n"
-         "NB: Models with a changed lowmem mode are not compatible with each other.",
-    fixed=True)
+    "NB: Models with a changed lowmem mode are not compatible with each other.",
+    fixed=True,
+)

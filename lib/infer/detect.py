@@ -1,5 +1,6 @@
 #! /usr/env/bin/python3
-"""Handles face detection plugins and runners """
+"""Handles face detection plugins and runners"""
+
 from __future__ import annotations
 
 import logging
@@ -43,13 +44,16 @@ class Detect(ExtractHandler):
     config_file
         Full path to a custom config file to load. ``None`` for default config
     """
-    def __init__(self,
-                 plugin: str,
-                 rotation: str | None = None,
-                 min_size: int = 0,
-                 max_size: int = 0,
-                 compile_model: bool = False,
-                 config_file: str | None = None) -> None:
+
+    def __init__(
+        self,
+        plugin: str,
+        rotation: str | None = None,
+        min_size: int = 0,
+        max_size: int = 0,
+        compile_model: bool = False,
+        config_file: str | None = None,
+    ) -> None:
         logger.debug(parse_class_init(locals()))
         super().__init__(plugin, compile_model=compile_model, config_file=config_file)
         self._rotation = rotation
@@ -57,23 +61,25 @@ class Detect(ExtractHandler):
         """Responsible for rotating feed images for the model"""
         self._empty_bbox = np.empty((0, 4), dtype="float32")
         """An empty detection result, that will never be used so only needs to be created once"""
-        self._min_size = min_size / 100.
+        self._min_size = min_size / 100.0
         """The user selected shortest frame dim multiplier to accept for minimum size"""
-        self._max_size = max_size / 100.
+        self._max_size = max_size / 100.0
         """The user selected shortest frame dim multiplier to accept for maximum size"""
         self._filter_counts = 0
 
     def __repr__(self) -> str:
         """Pretty print for logging"""
         retval = super().__repr__()[:-1]
-        retval += (f", rotation={repr(self._rotation)}, min_size={int(self._min_size * 100)}, "
-                   f"max_size={int(self._max_size * 100)})")
+        retval += (
+            f", rotation={repr(self._rotation)}, min_size={int(self._min_size * 100)}, "
+            f"max_size={int(self._max_size * 100)})"
+        )
         return retval
 
     # Pre-processing
-    def _get_matrices(self,
-                      images: list[npt.NDArray[np.uint8]],
-                      filenames: list[str]) -> npt.NDArray[np.float32]:
+    def _get_matrices(
+        self, images: list[npt.NDArray[np.uint8]], filenames: list[str]
+    ) -> npt.NDArray[np.float32]:
         """Calculate the scales and padding required to take each image in this batch to model
         input size and store the matrices in the batch object
 
@@ -98,16 +104,19 @@ class Detect(ExtractHandler):
         retval[:, 1, 1] = scales
         retval[:, 0, 2] = pad_xy[:, 0]
         retval[:, 1, 2] = pad_xy[:, 1]
-        retval[:, 2, 2] = 1.
+        retval[:, 2, 2] = 1.0
 
         logger.trace(  # type:ignore[attr-defined]
             "[%s_pre_process] filenames: %s, matrices: %s",
-            self.plugin.name, filenames, format_array(retval))
+            self.plugin.name,
+            filenames,
+            format_array(retval),
+        )
         return retval
 
-    def _scale_images(self,
-                      images: list[npt.NDArray[np.uint8]],
-                      matrices: npt.NDArray[np.float32]) -> npt.NDArray[np.uint8]:
+    def _scale_images(
+        self, images: list[npt.NDArray[np.uint8]], matrices: npt.NDArray[np.float32]
+    ) -> npt.NDArray[np.uint8]:
         """Scale the image and pad to given size
 
         Parameters
@@ -121,12 +130,18 @@ class Detect(ExtractHandler):
         -------
         The scaled images
         """
-        retval = np.zeros((len(images), self.plugin.input_size, self.plugin.input_size, 3),
-                          dtype=images[0].dtype)
-        interpolators = np.where(matrices[:, 0, 0] < 1.0, cv2.INTER_AREA, cv2.INTER_CUBIC)
+        retval = np.zeros(
+            (len(images), self.plugin.input_size, self.plugin.input_size, 3),
+            dtype=images[0].dtype,
+        )
+        interpolators = np.where(
+            matrices[:, 0, 0] < 1.0, cv2.INTER_AREA, cv2.INTER_CUBIC
+        )
         dims = (self.plugin.input_size, self.plugin.input_size)
         warp_mats = matrices[:, :2]
-        for idx, (image, mat, interpolator) in enumerate(zip(images, warp_mats, interpolators)):
+        for idx, (image, mat, interpolator) in enumerate(
+            zip(images, warp_mats, interpolators)
+        ):
             image = image[..., 2::-1] if self.plugin.is_rgb else image
             cv2.warpAffine(image, mat, dims, dst=retval[idx], flags=interpolator)
         logger.trace("Resized batch shape: %s", retval.shape)  # type:ignore[attr-defined]
@@ -150,12 +165,14 @@ class Detect(ExtractHandler):
         batch.data = self.plugin.pre_process(images)
 
     # Processing
-    def _process_rotations(self,
-                           predictions: npt.NDArray[np.float32],
-                           mask_requires: npt.NDArray[np.bool_],
-                           indices_angle: npt.NDArray[np.int32],
-                           box_list: list[npt.NDArray[np.float32] | None],
-                           rotation_index: int) -> None:
+    def _process_rotations(
+        self,
+        predictions: npt.NDArray[np.float32],
+        mask_requires: npt.NDArray[np.bool_],
+        indices_angle: npt.NDArray[np.int32],
+        box_list: list[npt.NDArray[np.float32] | None],
+        rotation_index: int,
+    ) -> None:
         """Process the output after a rotation, and store the discovered boxes and the angle index
         they were discovered at
 
@@ -172,8 +189,11 @@ class Detect(ExtractHandler):
         rotation_index
             The current angle index we are iterating
         """
-        bboxes = (self.plugin.post_process(predictions) if self._overridden["post_process"]
-                  else predictions)
+        bboxes = (
+            self.plugin.post_process(predictions)
+            if self._overridden["post_process"]
+            else predictions
+        )
         mask_found = np.array([np.any(n) for n in bboxes], dtype="bool")
         indices_requires = np.flatnonzero(mask_requires)
         indices_angle[indices_requires[mask_found]] = rotation_index
@@ -199,7 +219,7 @@ class Detect(ExtractHandler):
         batch_size = input_images.shape[0]
         box_list: list[None | np.ndarray] = [None for _ in range(batch_size)]
         boxes: np.ndarray | None = None
-        indices_angle = np.zeros((batch_size, ), dtype="int32")
+        indices_angle = np.zeros((batch_size,), dtype="int32")
 
         idx = 0
         mask_requires = np.array([True for _ in range(batch_size)])
@@ -213,7 +233,8 @@ class Detect(ExtractHandler):
                     mask_requires.sum(),
                     batch_size,
                     idx,
-                    batch.filenames)
+                    batch.filenames,
+                )
 
                 break
             result = self._predict(feed)
@@ -231,21 +252,26 @@ class Detect(ExtractHandler):
                     process,
                     batch_size,
                     idx + 1,
-                    batch.filenames)
+                    batch.filenames,
+                )
                 break
             idx += 1
 
-        boxes = (np.array([self._empty_bbox if b is None else b for b in box_list],
-                          dtype="object")
-                 if boxes is None else boxes)
+        boxes = (
+            np.array(
+                [self._empty_bbox if b is None else b for b in box_list], dtype="object"
+            )
+            if boxes is None
+            else boxes
+        )
         batch.data = np.empty(2, dtype="object")
         batch.data[0] = indices_angle
         batch.data[1] = boxes
 
     # Post-Processing
-    def _stack_boxes(self,
-                     batch: ExtractBatch,
-                     predictions: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
+    def _stack_boxes(
+        self, batch: ExtractBatch, predictions: npt.NDArray[np.float32]
+    ) -> npt.NDArray[np.float32]:
         """Stack the detected boxes into a single array, remove any zero sized boxes, collate the
         indexing information and add to batch
 
@@ -260,7 +286,9 @@ class Detect(ExtractHandler):
         -------
         The stacked detection boxes from all frames in the batch.
         """
-        valid = np.fromiter((i for i, p in enumerate(predictions) if np.any(p)), dtype=np.int32)
+        valid = np.fromiter(
+            (i for i, p in enumerate(predictions) if np.any(p)), dtype=np.int32
+        )
         if not valid.size:
             batch.frame_ids = valid
             return self._empty_bbox
@@ -270,7 +298,9 @@ class Detect(ExtractHandler):
         batch.frame_ids = np.repeat(valid, lengths)
         return np.vstack(result).astype(np.float32)
 
-    def _scale_boxes(self, batch: ExtractBatch, predictions: npt.NDArray[np.float32]) -> None:
+    def _scale_boxes(
+        self, batch: ExtractBatch, predictions: npt.NDArray[np.float32]
+    ) -> None:
         """Scale the detected faces back out to original image size, round to int and add to the
         batch object
 
@@ -290,9 +320,11 @@ class Detect(ExtractHandler):
         predictions /= mats[:, 0, 0][:, None]
         np.rint(predictions, out=predictions)
         batch.bboxes = predictions.astype("int32")
-        logger.trace("[%s.out] Finalized batch: %s",  # type:ignore[attr-defined]
-                     self.plugin.name,
-                     batch)
+        logger.trace(
+            "[%s.out] Finalized batch: %s",  # type:ignore[attr-defined]
+            self.plugin.name,
+            batch,
+        )
 
     def _filter_boxes(self, batch: ExtractBatch) -> None:
         """Filter out any detections that are smaller or larger than :attr:`_min_size` and
@@ -307,8 +339,10 @@ class Detect(ExtractHandler):
             return
 
         frames = np.array([i.shape[:2] for i in batch.images]).min(axis=1)
-        sizes = np.maximum(batch.bboxes[:, 2] - batch.bboxes[:, 0],
-                           batch.bboxes[:, 3] - batch.bboxes[:, 1])
+        sizes = np.maximum(
+            batch.bboxes[:, 2] - batch.bboxes[:, 0],
+            batch.bboxes[:, 3] - batch.bboxes[:, 1],
+        )
 
         mins = (frames * self._min_size).astype("int32")[batch.frame_ids]
         if self._max_size:
@@ -328,7 +362,8 @@ class Detect(ExtractHandler):
             len(sizes),
             int(self._min_size * 100),
             int(self._max_size * 100),
-            batch.filenames)
+            batch.filenames,
+        )
 
         batch.bboxes = batch.bboxes[keep]
         batch.frame_ids = batch.frame_ids[keep]
@@ -360,13 +395,15 @@ class Detect(ExtractHandler):
         self._filter_boxes(batch)
 
     def output_info(self) -> None:
-        """Output the counts of filtered items """
+        """Output the counts of filtered items"""
         if not self._filter_counts:
             return
-        logger.info("[Detect filter] Scale (min: %s, max: %s): %s",
-                    f"{int(self._min_size * 100)}%",
-                    f"{int(self._max_size * 100)}%",
-                    self._filter_counts)
+        logger.info(
+            "[Detect filter] Scale (min: %s, max: %s): %s",
+            f"{int(self._min_size * 100)}%",
+            f"{int(self._max_size * 100)}%",
+            self._filter_counts,
+        )
 
 
 class Rotator:
@@ -381,6 +418,7 @@ class Rotator:
     image_size
         The size of the square image to obtain rotation matrices for
     """
+
     def __init__(self, angles: str | None, image_size: int) -> None:
         logger.debug(parse_class_init(locals()))
         self._size = image_size
@@ -406,7 +444,9 @@ class Rotator:
         The rotation angles between 0 and 360 for the given step size
         """
         retval = np.arange(0, 360, step_size, dtype="float32")
-        logger.debug("Setting rotation angles to %s from step size: %s", retval, step_size)
+        logger.debug(
+            "Setting rotation angles to %s from step size: %s", retval, step_size
+        )
         return retval
 
     def _get_angles(self, rotation: str | None) -> npt.NDArray[np.float32]:
@@ -444,7 +484,7 @@ class Rotator:
         rot = self._matrices[:, :, :2]
         trans = self._matrices[:, :, 2]
         rot_inv = np.transpose(rot, (0, 2, 1))
-        trans_inv = -np.einsum('nij, nj->ni', rot_inv, trans)
+        trans_inv = -np.einsum("nij, nj->ni", rot_inv, trans)
         retval = np.concatenate([rot_inv, trans_inv[..., None]], axis=2)
         logger.debug("Precomputed inverse rotation matrices: %s", retval.tolist())
         return retval
@@ -483,20 +523,18 @@ class Rotator:
         size = (self._size, self._size)
 
         for i, img in enumerate(images):
-            cv2.warpAffine(img,
-                           mat,
-                           size,
-                           dst=retval[i],
-                           borderMode=cv2.BORDER_REPLICATE)
+            cv2.warpAffine(
+                img, mat, size, dst=retval[i], borderMode=cv2.BORDER_REPLICATE
+            )
 
         if self._channels_first:
             retval = retval.transpose(0, 3, 1, 2)
 
         return retval
 
-    def un_rotate(self,
-                  indices_angle: npt.NDArray[np.int32],
-                  roi: npt.NDArray[np.float32]) -> None:
+    def un_rotate(
+        self, indices_angle: npt.NDArray[np.int32], roi: npt.NDArray[np.float32]
+    ) -> None:
         """Un-rotate the given bounding boxes for the given angle indices and update in place
 
         Parameters

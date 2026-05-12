@@ -1,5 +1,6 @@
 #!/usr/bin python3
 """Utilities for working with videos"""
+
 from __future__ import annotations
 
 import logging
@@ -32,8 +33,19 @@ av.logging.set_level(av.logging.VERBOSE)
 logging.getLogger("libav").setLevel(logger.getEffectiveLevel())
 
 
-VIDEO_EXTENSIONS = [".avi", ".flv", ".mkv", ".mov", ".mp4", ".mpeg", ".mpg", ".webm", ".wmv",
-                    ".ts", ".vob"]
+VIDEO_EXTENSIONS = [
+    ".avi",
+    ".flv",
+    ".mkv",
+    ".mov",
+    ".mp4",
+    ".mpeg",
+    ".mpg",
+    ".webm",
+    ".wmv",
+    ".ts",
+    ".vob",
+]
 """List of lowercase valid Video extensions with preceding period"""
 
 
@@ -91,7 +103,7 @@ def validate_video_file(file_path: str) -> str:
 
 # TODO look for instances of this and see if we can roll it into VideoInfo
 def count_frames(filename, fast=False):
-    """ Count the number of frames in a video file
+    """Count the number of frames in a video file
 
     There is no guaranteed accurate way to get a count of video frames without iterating through
     a video and decoding every frame.
@@ -125,10 +137,13 @@ def count_frames(filename, fast=False):
     cmd.extend(["-f", "null", "-"])
 
     logger.debug("FFMPEG Command: '%s'", " ".join(cmd))
-    process = subprocess.Popen(cmd,
-                               stderr=subprocess.STDOUT,
-                               stdout=subprocess.PIPE,
-                               universal_newlines=True, encoding="utf8")
+    process = subprocess.Popen(
+        cmd,
+        stderr=subprocess.STDOUT,
+        stdout=subprocess.PIPE,
+        universal_newlines=True,
+        encoding="utf8",
+    )
     p_bar = None
     duration = None
     update = 0
@@ -136,7 +151,6 @@ def count_frames(filename, fast=False):
     stdout = process.stdout
     assert stdout is not None
     while True:
-
         output = stdout.readline().strip()
         if output == "" and process.poll() is not None:
             break
@@ -144,17 +158,23 @@ def count_frames(filename, fast=False):
         if output.startswith("Duration:"):
             logger.debug("Duration line: %s", output)
             idx = output.find("Duration:") + len("Duration:")
-            duration = int(convert_to_secs(*output[idx:].split(",", 1)[0].strip().split(":")))
+            duration = int(
+                convert_to_secs(*output[idx:].split(",", 1)[0].strip().split(":"))
+            )
             logger.debug("duration: %s", duration)
         if output.startswith("frame="):
             logger.debug("frame line: %s", output)
             if p_bar is None:
                 logger.debug("Initializing tqdm")
-                p_bar = tqdm(desc="Analyzing Video", leave=False, total=duration, unit="secs")
+                p_bar = tqdm(
+                    desc="Analyzing Video", leave=False, total=duration, unit="secs"
+                )
             time_idx = output.find("time=") + len("time=")
             frame_idx = output.find("frame=") + len("frame=")
             frames = int(output[frame_idx:].strip().split(" ")[0].strip())
-            vid_time = int(convert_to_secs(*output[time_idx:].split(" ")[0].strip().split(":")))
+            vid_time = int(
+                convert_to_secs(*output[time_idx:].split(" ")[0].strip().split(":"))
+            )
             logger.debug("frames: %s, vid_time: %s", frames, vid_time)
             prev_update = update
             update = vid_time
@@ -186,18 +206,23 @@ class VideoInfo:
         The keyframe frame indices if available or ``None`` to retrieve from the video.
         Default: ``None``
     """
-    def __init__(self,
-                 video_file: str,
-                 fast_count: bool = True,
-                 stream_index: int = 0,
-                 pts: list[int] | None = None,
-                 keyframes: list[int] | None = None) -> None:
+
+    def __init__(
+        self,
+        video_file: str,
+        fast_count: bool = True,
+        stream_index: int = 0,
+        pts: list[int] | None = None,
+        keyframes: list[int] | None = None,
+    ) -> None:
         logger.debug(parse_class_init(locals()))
         self._video_file = validate_video_file(video_file)
         self._fast_count = fast_count
         self._stream_index = stream_index
         self._pts = None if pts is None else np.array(pts, dtype=np.int64)
-        self._keyframes = None if keyframes is None else np.array(keyframes, dtype=np.int64)
+        self._keyframes = (
+            None if keyframes is None else np.array(keyframes, dtype=np.int64)
+        )
         self._num_keyframes = -1
 
         self._duration = self._get_duration()
@@ -205,13 +230,12 @@ class VideoInfo:
 
     def __repr__(self) -> str:
         """Pretty print for logging"""
-        params = {k[1:]: v.tolist() if isinstance(v, np.ndarray) else v
-                  for k, v in self.__dict__.items()
-                  if k in ("_video_file",
-                           "_fast_count",
-                           "_stream_index",
-                           "_pts",
-                           "_keyframes")}
+        params = {
+            k[1:]: v.tolist() if isinstance(v, np.ndarray) else v
+            for k, v in self.__dict__.items()
+            if k
+            in ("_video_file", "_fast_count", "_stream_index", "_pts", "_keyframes")
+        }
         s_params = ", ".join(f"{k}={repr(v)}" for k, v in params.items())
         return f"{self.__class__.__name__}({s_params})"
 
@@ -278,8 +302,10 @@ class VideoInfo:
         stream = container.streams.video[self._stream_index]
         stream.thread_type = "AUTO"
         if stream.time_base is None:
-            raise FaceswapError(f"Video file '{self._video_file}' cannot be processed. Missing "
-                                "duration metadata")
+            raise FaceswapError(
+                f"Video file '{self._video_file}' cannot be processed. Missing "
+                "duration metadata"
+            )
         return stream
 
     def _get_duration(self) -> int:
@@ -305,29 +331,44 @@ class VideoInfo:
             stream = self._get_stream(container)
             if stream.duration is not None and stream.time_base is not None:
                 duration = int(stream.duration * stream.time_base)
-                logger.debug("[%s] '%s' duration from stream: %s",
-                             self.__class__.__name__, self._video_file, duration)
+                logger.debug(
+                    "[%s] '%s' duration from stream: %s",
+                    self.__class__.__name__,
+                    self._video_file,
+                    duration,
+                )
             elif container.duration is None:
-                raise FaceswapError(f"Video file '{self._video_file}' cannot be processed. "
-                                    "Missing duration metadata")
+                raise FaceswapError(
+                    f"Video file '{self._video_file}' cannot be processed. "
+                    "Missing duration metadata"
+                )
             else:
                 duration = int(container.duration / 1000000)
-                logger.debug("[%s] '%s' duration from container: %s",
-                             self.__class__.__name__, self._video_file, duration)
+                logger.debug(
+                    "[%s] '%s' duration from container: %s",
+                    self.__class__.__name__,
+                    self._video_file,
+                    duration,
+                )
         return duration
 
     def _get_pts_and_keyframes(self) -> None:
         """Parse the video for Presentation Time Stamps and keyframes and populate to :attr:`_pts`
         and :attr:`_keyframes"""
-        logger.debug("[%s] Parsing video for PTS and keyframes: '%s'",
-                     self.__class__.__name__, self._video_file)
+        logger.debug(
+            "[%s] Parsing video for PTS and keyframes: '%s'",
+            self.__class__.__name__,
+            self._video_file,
+        )
         pts: list[int] = []
         keyframes: list[int] = []
         with av.open(self._video_file, "r") as container:
             stream = self._get_stream(container)
             assert stream.time_base is not None
 
-            p_bar = tqdm(desc="Analyzing Video", leave=False, total=self.duration, unit="secs")
+            p_bar = tqdm(
+                desc="Analyzing Video", leave=False, total=self.duration, unit="secs"
+            )
             i = last_update = offset = 0
             decoder = container.decode(stream)
             while True:
@@ -336,8 +377,11 @@ class VideoInfo:
                 except StopIteration:
                     break
                 except av.error.InvalidDataError:
-                    logger.warning("Invalid data encountered at frame %s in video '%s'",
-                                   i, self._video_file)
+                    logger.warning(
+                        "Invalid data encountered at frame %s in video '%s'",
+                        i,
+                        self._video_file,
+                    )
                     continue
                 assert frame.pts is not None
                 if i == 0:
@@ -353,8 +397,14 @@ class VideoInfo:
                 last_update = cur_sec
         self._pts = np.array(pts, dtype=np.int64)
         self._keyframes = np.array(keyframes, dtype=np.int64)
-        logger.debug("[%s] '%s' frame_pts: %s, keyframes: %s, frame_count: %s",
-                     self.__class__.__name__, self._video_file, pts, keyframes, len(pts))
+        logger.debug(
+            "[%s] '%s' frame_pts: %s, keyframes: %s, frame_count: %s",
+            self.__class__.__name__,
+            self._video_file,
+            pts,
+            keyframes,
+            len(pts),
+        )
 
 
 class VideoReader:
@@ -377,20 +427,21 @@ class VideoReader:
         The keyframe frame indices if available or ``None`` to retrieve from the video.
         Default: ``None``
     """
-    def __init__(self,
-                 video_file: str,
-                 fast_count: bool = True,
-                 stream_index: int = 0,
-                 pts: list[int] | None = None,
-                 keyframes: list[int] | None = None) -> None:
+
+    def __init__(
+        self,
+        video_file: str,
+        fast_count: bool = True,
+        stream_index: int = 0,
+        pts: list[int] | None = None,
+        keyframes: list[int] | None = None,
+    ) -> None:
         logger.debug(parse_class_init(locals()))
         self._video_file = validate_video_file(video_file)
         self._stream_index = stream_index
-        self._info = VideoInfo(self._video_file,
-                               fast_count,
-                               self._stream_index,
-                               pts,
-                               keyframes)
+        self._info = VideoInfo(
+            self._video_file, fast_count, self._stream_index, pts, keyframes
+        )
 
         self._container = av.open(self._video_file, "r")
         self._stream = self._container.streams.video[stream_index]
@@ -408,18 +459,20 @@ class VideoReader:
         return self._info
 
     def __iter__(self) -> T.Self:
-        """ This is an iterator """
+        """This is an iterator"""
         return self
 
     def __repr__(self) -> str:
-        """ Pretty print for logging """
+        """Pretty print for logging"""
         pts = self._info._pts
         keyframes = self._info._keyframes
-        params = {"video_file": self._video_file,
-                  "fast_count": self._info._fast_count,
-                  "stream_index": self._stream_index,
-                  "pts": pts if pts is None else pts.tolist(),
-                  "keyframes": keyframes if keyframes is None else keyframes.tolist()}
+        params = {
+            "video_file": self._video_file,
+            "fast_count": self._info._fast_count,
+            "stream_index": self._stream_index,
+            "pts": pts if pts is None else pts.tolist(),
+            "keyframes": keyframes if keyframes is None else keyframes.tolist(),
+        }
         s_params = ", ".join(f"{k}={repr(v)}" for k, v in params.items())
         return f"{self.__class__.__name__}({s_params})"
 
@@ -430,7 +483,9 @@ class VideoReader:
 
     def close(self) -> None:
         """Shut down the AV Container object"""
-        logger.debug("[%s] '%s' Closing container", self.__class__.__name__, self._video_file)
+        logger.debug(
+            "[%s] '%s' Closing container", self.__class__.__name__, self._video_file
+        )
         self._container.close()
 
     def __next__(self) -> av.VideoFrame:
@@ -448,8 +503,10 @@ class VideoReader:
             except StopIteration:
                 break
             except av.error.InvalidDataError:
-                logger.warning("Invalid data encountered at frame %s. Skipping.",
-                               self._current_index)
+                logger.warning(
+                    "Invalid data encountered at frame %s. Skipping.",
+                    self._current_index,
+                )
                 continue
         if frame is None:
             logger.debug("[%s] Closing Frame Iterator", self.__class__.__name__)
@@ -470,13 +527,20 @@ class VideoReader:
             The keyframe that appears directly prior to the given target frame
         """
         if index in self._info.keyframes:
-            logger.trace("[%s] Index is keyframe: %s",  # type:ignore[attr-defined]
-                         self.__class__.__name__, index)
+            logger.trace(
+                "[%s] Index is keyframe: %s",  # type:ignore[attr-defined]
+                self.__class__.__name__,
+                index,
+            )
             return index
         keyframe_index = np.searchsorted(self._info.keyframes, index, side="left") - 1
         keyframe = int(self._info.keyframes[keyframe_index])
-        logger.trace("[%s] Previous keyframe for frame %s: %s",  # type:ignore[attr-defined]
-                     self.__class__.__name__, index, keyframe)
+        logger.trace(
+            "[%s] Previous keyframe for frame %s: %s",  # type:ignore[attr-defined]
+            self.__class__.__name__,
+            index,
+            keyframe,
+        )
         return keyframe
 
     def _jump_to_keyframe(self, index: int, target_pts: int) -> None:
@@ -494,30 +558,47 @@ class VideoReader:
         if index == self._current_index:
             logger.trace(  # type:ignore[attr-defined]
                 "[%s] Requested frame is next queued. Not seeking: %s",
-                self.__class__.__name__, index)
+                self.__class__.__name__,
+                index,
+            )
             return
 
         if index < self._current_index:  # Moving backwards
-            logger.trace("[%s] Seeking backwards from %s to %s",  # type:ignore[attr-defined]
-                         self.__class__.__name__, self._current_index, index)
-            self._container.seek(target_pts, backward=True, any_frame=False, stream=self._stream)
+            logger.trace(
+                "[%s] Seeking backwards from %s to %s",  # type:ignore[attr-defined]
+                self.__class__.__name__,
+                self._current_index,
+                index,
+            )
+            self._container.seek(
+                target_pts, backward=True, any_frame=False, stream=self._stream
+            )
             self._decoder = self._container.decode(self._stream)
             self._current_index = self._get_previous_keyframe(index)
             return
 
-        next_key_index = np.searchsorted(self._info.keyframes, self._current_index, side="right")
+        next_key_index = np.searchsorted(
+            self._info.keyframes, self._current_index, side="right"
+        )
         next_keyframe = self._info.keyframes[next_key_index]
 
         if next_keyframe > index:
             logger.trace(  # type:ignore[attr-defined]
                 "[%s] Next keyframe is past target. Not seeking: %s",
-                self.__class__.__name__, next_keyframe)
+                self.__class__.__name__,
+                next_keyframe,
+            )
             return
 
         next_keyframe = self._get_previous_keyframe(index)
-        logger.trace("[%s] Seeking forwards to %s",  # type:ignore[attr-defined]
-                     self.__class__.__name__, next_keyframe)
-        self._container.seek(target_pts, backward=True, any_frame=False, stream=self._stream)
+        logger.trace(
+            "[%s] Seeking forwards to %s",  # type:ignore[attr-defined]
+            self.__class__.__name__,
+            next_keyframe,
+        )
+        self._container.seek(
+            target_pts, backward=True, any_frame=False, stream=self._stream
+        )
         self._decoder = self._container.decode(self._stream)
         self._current_index = next_keyframe
 
@@ -536,7 +617,11 @@ class VideoReader:
         target_pts = int(self._info.pts[index])
         logger.trace(  # type:ignore[attr-defined]
             "[%s] Requested frame: %s, current frame: %s, target pts: %s",
-            self.__class__.__name__, index, self._current_index, target_pts)
+            self.__class__.__name__,
+            index,
+            self._current_index,
+            target_pts,
+        )
         self._jump_to_keyframe(index, target_pts)
         frame = next(self)
         assert frame.pts is not None
@@ -545,8 +630,11 @@ class VideoReader:
             frame = next(self)
             assert frame.pts is not None
             current_pts = frame.pts
-        logger.trace("[%s] Returning frame: %s",  # type:ignore[attr-defined]
-                     self.__class__.__name__, frame)
+        logger.trace(
+            "[%s] Returning frame: %s",  # type:ignore[attr-defined]
+            self.__class__.__name__,
+            frame,
+        )
         return frame
 
 
@@ -567,12 +655,15 @@ class VideoMux:  # pylint:disable=too-many-instance-attributes
     mux_audio
         ``True`` to mux order from the source video to the output
     """
-    def __init__(self,
-                 source_video: str,
-                 destination_video: str,
-                 codec: T.Literal["libx264", "libx265"],
-                 codec_parameters: dict[str, str],
-                 mux_audio: bool = True) -> None:
+
+    def __init__(
+        self,
+        source_video: str,
+        destination_video: str,
+        codec: T.Literal["libx264", "libx265"],
+        codec_parameters: dict[str, str],
+        mux_audio: bool = True,
+    ) -> None:
         logger.debug(parse_class_init(locals()))
         self._source_video = validate_video_file(source_video)
         self._destination_video = destination_video
@@ -580,10 +671,12 @@ class VideoMux:  # pylint:disable=too-many-instance-attributes
         self._codec_parameters = codec_parameters
         self._mux_audio = mux_audio
 
-        self._containers: dict[T.Literal["src", "dst"], InputContainer | OutputContainer] = {
+        self._containers: dict[
+            T.Literal["src", "dst"], InputContainer | OutputContainer
+        ] = {
             "src": av.open(self._source_video, "r"),
-            "dst": av.open(self._destination_video, "w")
-            }
+            "dst": av.open(self._destination_video, "w"),
+        }
 
         self._next_audio_packet: av.Packet | None = None
         self._audio_packets, self._fps = self._analyze_source()
@@ -595,13 +688,21 @@ class VideoMux:  # pylint:disable=too-many-instance-attributes
         self._frame_index = 0
 
     def __repr__(self) -> str:
-        """ Pretty print for logging """
-        opts = ["_source_video", "_destination_video", "_codec", "_codec_parameters", "_mux_audio"]
+        """Pretty print for logging"""
+        opts = [
+            "_source_video",
+            "_destination_video",
+            "_codec",
+            "_codec_parameters",
+            "_mux_audio",
+        ]
         params = {k[1:]: v for k, v in self.__dict__.items() if k in opts}
         s_params = ", ".join(f"{k}={repr(v)}" for k, v in params.items())
         return f"{self.__class__.__name__}({s_params})"
 
-    def _analyze_source(self) -> tuple[T.Generator[av.Packet, None, None] | None, Fraction]:
+    def _analyze_source(
+        self,
+    ) -> tuple[T.Generator[av.Packet, None, None] | None, Fraction]:
         """Analyze the source to obtain the audio packets and the frame rate
 
         Returns
@@ -618,34 +719,47 @@ class VideoMux:  # pylint:disable=too-many-instance-attributes
         logger.debug("[%s] Source fps: %s", self.__class__.__name__, fps)
 
         if not self._mux_audio:
-            logger.debug("[%s] Not muxing audio due to input parameters", self.__class__.__name__)
+            logger.debug(
+                "[%s] Not muxing audio due to input parameters", self.__class__.__name__
+            )
             return None, fps
 
         audio = next((s for s in src.streams if s.type == "audio"), None)
         if audio is None:
-            logger.warning("No audio stream could be found in the source video '%s'. Audio mux "
-                           "will be disabled.", self._source_video)
+            logger.warning(
+                "No audio stream could be found in the source video '%s'. Audio mux "
+                "will be disabled.",
+                self._source_video,
+            )
             self._mux_audio = False
             return None, fps
 
         packets = (p for p in src.demux(audio) if p.dts is not None)
-        logger.debug("[%s] Muxing audio from source: %s", self.__class__.__name__, packets)
+        logger.debug(
+            "[%s] Muxing audio from source: %s", self.__class__.__name__, packets
+        )
         self._next_audio_packet = next(packets)
-        logger.debug("[%s] Queued first audio packet: %s",
-                     self.__class__.__name__, self._next_audio_packet)
+        logger.debug(
+            "[%s] Queued first audio packet: %s",
+            self.__class__.__name__,
+            self._next_audio_packet,
+        )
         return packets, fps
 
-    def _set_output_streams(self) -> dict[T.Literal["audio", "video"],
-                                          av.AudioStream | av.VideoStream]:
+    def _set_output_streams(
+        self,
+    ) -> dict[T.Literal["audio", "video"], av.AudioStream | av.VideoStream]:
         """Set the output audio and video streams
 
         Returns
         -------
         The output streams. Audio stream is only included if muxing audio is selected and supported
         """
-        retval:  dict[T.Literal["audio", "video"], av.AudioStream | av.VideoStream] = {}
+        retval: dict[T.Literal["audio", "video"], av.AudioStream | av.VideoStream] = {}
         dst = T.cast("OutputContainer", self._containers["dst"])
-        video = dst.add_stream(self._codec, rate=self._fps, options=self._codec_parameters)
+        video = dst.add_stream(
+            self._codec, rate=self._fps, options=self._codec_parameters
+        )
         assert isinstance(video, av.VideoStream)
         video.thread_type = "AUTO"
         video.pix_fmt = "yuv420p"
@@ -660,10 +774,12 @@ class VideoMux:  # pylint:disable=too-many-instance-attributes
         logger.debug("[%s] Added output streams: %s", self.__class__.__name__, retval)
         return retval
 
-    def _add_rescale_filter(self,
-                            input_dimensions: tuple[int, int],
-                            output_dimensions: tuple[int, int],
-                            pixel_format: str) -> None:
+    def _add_rescale_filter(
+        self,
+        input_dimensions: tuple[int, int],
+        output_dimensions: tuple[int, int],
+        pixel_format: str,
+    ) -> None:
         """Add a rescale filter if the input dimensions are not divisible by 16
 
         Parameters
@@ -679,17 +795,23 @@ class VideoMux:  # pylint:disable=too-many-instance-attributes
             return
         self._graph = av.filter.Graph()
         str_dims = f"{output_dimensions[0]}:{output_dimensions[1]}"
-        filters = [self._graph.add_buffer(width=input_dimensions[0],
-                                          height=input_dimensions[1],
-                                          format=av.VideoFormat(pixel_format),
-                                          time_base=Fraction(1, self._fps)),
-                   self._graph.add("scale", f"{str_dims}:force_original_aspect_ratio=1"),
-                   self._graph.add("pad", f"{str_dims}:(ow-iw)/2:(oh-ih)/2"),
-                   self._graph.add("buffersink")]
+        filters = [
+            self._graph.add_buffer(
+                width=input_dimensions[0],
+                height=input_dimensions[1],
+                format=av.VideoFormat(pixel_format),
+                time_base=Fraction(1, self._fps),
+            ),
+            self._graph.add("scale", f"{str_dims}:force_original_aspect_ratio=1"),
+            self._graph.add("pad", f"{str_dims}:(ow-iw)/2:(oh-ih)/2"),
+            self._graph.add("buffersink"),
+        ]
         for i in range(len(filters) - 1):
             filters[i].link_to(filters[i + 1])
         self._graph.configure()
-        logger.debug("[%s] Created scale filter: %s", self.__class__.__name__, self._graph)
+        logger.debug(
+            "[%s] Created scale filter: %s", self.__class__.__name__, self._graph
+        )
 
     def _initialize_video(self, image: npt.NDArray[np.uint8]) -> None:
         """Initialize the video dimensions based on the first frame seen. We scale dimensions to be
@@ -702,13 +824,22 @@ class VideoMux:  # pylint:disable=too-many-instance-attributes
         """
         vid = T.cast(av.VideoStream, self._streams["video"])
         input_dimensions = (image.shape[1], image.shape[0])
-        output_dimensions = (int(ceil(input_dimensions[0] / 16) * 16),
-                             int(ceil(input_dimensions[1] / 16) * 16))
+        output_dimensions = (
+            int(ceil(input_dimensions[0] / 16) * 16),
+            int(ceil(input_dimensions[1] / 16) * 16),
+        )
         vid.width = output_dimensions[0]
         vid.height = output_dimensions[1]
-        logger.debug("[%s] Set video dimensions for first frame input: %s output: %s (%s)",
-                     self.__class__.__name__, input_dimensions, output_dimensions, vid)
-        self._add_rescale_filter(input_dimensions, output_dimensions, T.cast(str, vid.pix_fmt))
+        logger.debug(
+            "[%s] Set video dimensions for first frame input: %s output: %s (%s)",
+            self.__class__.__name__,
+            input_dimensions,
+            output_dimensions,
+            vid,
+        )
+        self._add_rescale_filter(
+            input_dimensions, output_dimensions, T.cast(str, vid.pix_fmt)
+        )
 
         logger.debug("[%s] Initialized video stream", self.__class__.__name__)
         self._initialized = True
@@ -732,13 +863,20 @@ class VideoMux:  # pylint:disable=too-many-instance-attributes
             self._graph.push(frame.reformat(format=vid.pix_fmt))
             frame = T.cast(av.VideoFrame, self._graph.pull())
 
-        logger.trace("[%s] Encoded frame of shape %s to: %s",  # type:ignore[attr-defined]
-                     self.__class__.__name__, image.shape, frame)
+        logger.trace(
+            "[%s] Encoded frame of shape %s to: %s",  # type:ignore[attr-defined]
+            self.__class__.__name__,
+            image.shape,
+            frame,
+        )
 
         packets = vid.encode(frame)
         self._video_packets.extend(packets)
-        logger.trace("[%s] Added video packets: %s",  # type:ignore[attr-defined]
-                     self.__class__.__name__, packets)
+        logger.trace(
+            "[%s] Added video packets: %s",  # type:ignore[attr-defined]
+            self.__class__.__name__,
+            packets,
+        )
         self._frame_index += 1
 
     def _timestamp(self, packet: av.Packet) -> float:
@@ -771,7 +909,10 @@ class VideoMux:  # pylint:disable=too-many-instance-attributes
         if next_ts >= timestamp:
             logger.trace(  # type:ignore[attr-defined]
                 "[%s] Next audio timestamp %s >= video timestamp %s. No audio to stream",
-                self.__class__.__name__, next_ts, timestamp)
+                self.__class__.__name__,
+                next_ts,
+                timestamp,
+            )
             return None
 
         assert self._audio_packets is not None
@@ -780,7 +921,12 @@ class VideoMux:  # pylint:disable=too-many-instance-attributes
         logger.trace(  # type:ignore[attr-defined]
             "[%s] Returning audio packet %s for timestamp %s < video timestamp: %s. Next  queued "
             "packet: %s",
-            self.__class__.__name__, retval, next_ts, timestamp, self._next_audio_packet)
+            self.__class__.__name__,
+            retval,
+            next_ts,
+            timestamp,
+            self._next_audio_packet,
+        )
         retval.stream = self._streams["audio"]
         return retval
 
@@ -794,11 +940,17 @@ class VideoMux:  # pylint:disable=too-many-instance-attributes
                     audio = self._get_audio_packet(self._timestamp(video))
                     if audio is None:
                         break
-                    logger.trace("[%s] Muxing audio: %s",  # type:ignore[attr-defined]
-                                 self.__class__.__name__, audio)
+                    logger.trace(
+                        "[%s] Muxing audio: %s",  # type:ignore[attr-defined]
+                        self.__class__.__name__,
+                        audio,
+                    )
                     out.mux(audio)
-            logger.trace("[%s] Muxing video: %s",  # type:ignore[attr-defined]
-                         self.__class__.__name__, video)
+            logger.trace(
+                "[%s] Muxing video: %s",  # type:ignore[attr-defined]
+                self.__class__.__name__,
+                video,
+            )
             out.mux(video)
 
     def encode(self, image: npt.NDArray[np.uint8] | None) -> None:
