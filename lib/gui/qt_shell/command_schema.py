@@ -17,6 +17,10 @@ class OptionSpec:
     default: object = ""
     choices: tuple[str, ...] = ()
     nargs: bool = False
+    action: str | None = None
+    group: str | None = None
+    helptext: str = ""
+    browser_modes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

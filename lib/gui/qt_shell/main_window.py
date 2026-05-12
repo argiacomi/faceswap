@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 from lib.gui.models.project import ProjectFile
 from lib.gui.qt_shell.command_panel import CommandPanel
 from lib.gui.qt_shell.command_schema import CommandSchema
+from lib.gui.qt_shell.command_schema_service import CommandSchemaService
 from lib.gui.qt_shell.job_runner import JobRunner
 from lib.gui.services.command_builder import CommandBuilder
 from lib.gui.services.command_context import CommandExecutionContext
@@ -60,7 +61,7 @@ class MainWindow(QMainWindow):
     def __init__(self, schema: CommandSchema | None = None) -> None:
         super().__init__()
         root = Path(PROJECT_ROOT)
-        self._schema = CommandSchema.prototype() if schema is None else schema
+        self._schema = self._load_schema() if schema is None else schema
         self._builder = CommandBuilder(base_path=str(root))
         self._project_store = ProjectStore(get_serializer("json"))
         self._recent_files = RecentFilesStore(
@@ -83,7 +84,7 @@ class MainWindow(QMainWindow):
         self._set_running(False)
         self._console.write_line("Faceswap Qt shell prototype")
         self._console.write_line(
-            "Scope: service wiring, command generation and QProcess jobs"
+            "Scope: real CLI metadata rendering, command generation and QProcess jobs"
         )
 
     def _build_ui(self) -> None:
@@ -316,6 +317,11 @@ class MainWindow(QMainWindow):
         """Display an error in both console and dialog form."""
         self._console.write_line(f"Error: {message}")
         QMessageBox.critical(self, "Qt Shell Prototype", message)
+
+    @staticmethod
+    def _load_schema() -> CommandSchema:
+        """Load real core Faceswap CLI metadata for the Qt shell."""
+        return CommandSchemaService().from_real_cli_metadata(categories=("faceswap",))
 
     @staticmethod
     def _recent_cache() -> Path:

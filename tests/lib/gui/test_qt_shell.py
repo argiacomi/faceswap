@@ -3,12 +3,12 @@
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
-import importlib
 from pathlib import Path
 
 from PySide6.QtCore import QProcess
-from PySide6.QtWidgets import QCheckBox, QComboBox, QLineEdit
+from PySide6.QtWidgets import QCheckBox, QComboBox, QLabel, QLineEdit, QPushButton
 
 
 class _ProcessDouble:
@@ -100,14 +100,45 @@ class _CliOptions:
     }
 
 
+def _force_cpu_backend(monkeypatch) -> None:  # type:ignore[no-untyped-def]
+    """Force stable CPU CLI metadata for real CLI discovery tests."""
+    monkeypatch.setenv("FACESWAP_BACKEND", "cpu")
+    from lib.utils import set_backend
+
+    set_backend("cpu")
+
+
 def test_qt_shell_imports_without_tk_config() -> None:
     """The Qt shell should import without initializing Tk GUI configuration."""
-    importlib.import_module("lib.gui.qt_shell.main_window")
+    sys.modules.pop("lib.gui.control_helper", None)
+
+    import lib.gui.qt_shell.main_window  # noqa: F401
+
+    assert "lib.gui.control_helper" not in sys.modules
+
+
+def test_qt_shell_does_not_initialize_tk_config(monkeypatch, qtbot) -> None:  # type:ignore[no-untyped-def]
+    """The Qt shell should construct without initializing Tk GUI config."""
+    _force_cpu_backend(monkeypatch)
+
+    import lib.gui.utils as gui_utils
+
+    def fail(*args, **kwargs):  # type:ignore[no-untyped-def]
+        raise AssertionError("Tk GUI config initialized")
+
+    monkeypatch.setattr(gui_utils, "initialize_config", fail)
+    monkeypatch.setattr(gui_utils, "initialize_images", fail)
+
+    from lib.gui.qt_shell.main_window import MainWindow
+
+    window = MainWindow()
+    qtbot.addWidget(window)
 
 
 def test_main_window_constructs(qtbot, monkeypatch, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
     """The Qt shell main window should construct without starting the app loop."""
     monkeypatch.setenv("HOME", str(tmp_path))
+    _force_cpu_backend(monkeypatch)
 
     from lib.gui.qt_shell.main_window import MainWindow
 
@@ -130,6 +161,95 @@ def test_command_schema_service_adapts_cli_like_options() -> None:
     assert options[1].value_type is bool
     assert options[2].choices == ("one", "two")
     assert options[3].nargs is True
+
+
+def test_command_schema_service_discovers_real_faceswap_cli_metadata(
+    monkeypatch,
+) -> None:
+    """CommandSchemaService should build extract/train/convert from real CLI metadata."""
+    _force_cpu_backend(monkeypatch)
+    sys.modules.pop("lib.gui.control_helper", None)
+
+    from lib.gui.qt_shell.command_schema_service import CommandSchemaService
+
+    schema = CommandSchemaService().from_real_cli_metadata(categories=("faceswap",))
+    extract_options = {option.switch: option for option in schema.options("extract")}
+
+    assert schema.categories == ("faceswap",)
+    assert schema.commands("faceswap")[:3] == ("extract", "train", "convert")
+    assert {"-i", "-o", "-D", "-A"}.issubset(extract_options)
+    assert {"-A", "-B", "-m", "-t"}.issubset(
+        {option.switch for option in schema.options("train")}
+    )
+    assert {"-i", "-o", "-m", "-w"}.issubset(
+        {option.switch for option in schema.options("convert")}
+    )
+    assert extract_options["-i"].group == "Data"
+    assert extract_options["-i"].browser_modes == ("folder", "file")
+    assert "Input directory" in extract_options["-i"].helptext
+    assert "lib.gui.control_helper" not in sys.modules
+
+
+def test_real_cli_metadata_renders_extract_train_convert(qtbot, monkeypatch) -> None:  # type:ignore[no-untyped-def]
+    """CommandPanel should render real extract/train/convert CLI metadata."""
+    _force_cpu_backend(monkeypatch)
+
+    from lib.gui.qt_shell.command_panel import CommandPanel
+    from lib.gui.qt_shell.command_schema_service import CommandSchemaService
+
+    schema = CommandSchemaService().from_real_cli_metadata(categories=("faceswap",))
+    panel = CommandPanel(schema)
+    qtbot.addWidget(panel)
+
+    for command, switches in {
+        "extract": {"-i", "-o", "-D", "-A"},
+        "train": {"-A", "-B", "-m", "-t"},
+        "convert": {"-i", "-o", "-m", "-w"},
+    }.items():
+        panel.set_command(command, {})
+        assert panel.command_spec()[0:2] == ("faceswap", command)
+        assert switches.issubset(set(panel.renderer.rendered_switches))
+
+
+def test_command_schema_renders_groups_tooltips_and_browse_buttons(qtbot) -> None:  # type:ignore[no-untyped-def]
+    """CommandPanel should expose group/help/path metadata without full Tk parity."""
+    from lib.gui.qt_shell.command_panel import CommandPanel
+    from lib.gui.qt_shell.command_schema import CommandSchema, CommandSpec, OptionSpec
+
+    schema = CommandSchema(
+        (
+            CommandSpec(
+                "faceswap",
+                "extract",
+                (
+                    OptionSpec(
+                        "Input Dir",
+                        "-i",
+                        group="Data",
+                        helptext="Pick an input directory or file.",
+                        browser_modes=("folder", "file"),
+                    ),
+                ),
+            ),
+        )
+    )
+
+    panel = CommandPanel(schema)
+    qtbot.addWidget(panel)
+    renderer = panel.renderer
+    input_widget = renderer.widget_for_switch("-i")
+    labels = {
+        label.text().replace("<b>", "").replace("</b>", "")
+        for label in renderer.findChildren(QLabel)
+    }
+
+    assert isinstance(input_widget, QLineEdit)
+    assert input_widget.toolTip() == "Pick an input directory or file."
+    assert "Data" in labels
+    assert [button.text() for button in renderer.findChildren(QPushButton)] == [
+        "Folder",
+        "File",
+    ]
 
 
 def test_command_schema_renders_widgets(qtbot) -> None:  # type:ignore[no-untyped-def]
@@ -210,6 +330,53 @@ def test_command_schema_widget_values(qtbot) -> None:  # type:ignore[no-untyped-
             "--files": ["file one.png", "file_two.png"],
         },
     )
+
+
+def test_store_false_option_emits_when_unchecked(qtbot) -> None:  # type:ignore[no-untyped-def]
+    """store_false checkboxes should emit their switch when unchecked."""
+    from lib.gui.qt_shell.command_panel import CommandPanel
+    from lib.gui.qt_shell.command_schema import CommandSchema, CommandSpec, OptionSpec
+    from lib.gui.services.command_builder import CommandBuilder
+
+    schema = CommandSchema(
+        (
+            CommandSpec(
+                "faceswap",
+                "extract",
+                (
+                    OptionSpec(
+                        "Enabled Feature",
+                        "--disable-feature",
+                        bool,
+                        True,
+                        action="store_false",
+                    ),
+                ),
+            ),
+        )
+    )
+
+    panel = CommandPanel(schema)
+    qtbot.addWidget(panel)
+    widget = panel.renderer.widget_for_switch("--disable-feature")
+    assert isinstance(widget, QCheckBox)
+
+    assert widget.isChecked() is True
+    assert CommandBuilder.build_options(panel.command_spec()[2]) == []
+
+    widget.setChecked(False)
+
+    assert panel.command_spec()[2] == {"--disable-feature": True}
+    assert CommandBuilder.build_options(panel.command_spec()[2]) == [
+        "--disable-feature"
+    ]
+
+    panel.set_command("extract", {"--disable-feature": True})
+
+    assert widget.isChecked() is False
+    assert CommandBuilder.build_options(panel.command_spec()[2]) == [
+        "--disable-feature"
+    ]
 
 
 def test_command_schema_nargs_splitting_preserves_windows_paths(monkeypatch) -> None:
