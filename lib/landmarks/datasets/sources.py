@@ -125,25 +125,28 @@ def extract_archive_to_temp(archive: str | os.PathLike[str]) -> T.Iterator[Path]
         yield destination
 
 
-def _archive_or_dir(path: Path) -> Path | None:
-    """Return ``path`` if it is an existing archive or directory."""
-    if path.is_dir():
-        return path
-    if path.is_file() and any(str(path).lower().endswith(suffix) for suffix in ARCHIVE_SUFFIXES):
+def is_archive(path: Path) -> bool:
+    """Return whether ``path`` has a supported archive suffix."""
+    return path.is_file() and any(str(path).lower().endswith(suffix) for suffix in ARCHIVE_SUFFIXES)
+
+
+def _existing_source(path: Path) -> Path | None:
+    """Return ``path`` if it is an existing file or directory."""
+    if path.is_dir() or path.is_file():
         return path
     return None
 
 
 def _cached_source(spec: DatasetSourceSpec, cache_dir: Path) -> Path | None:
-    """Return a cached archive or extracted source directory for ``spec``."""
+    """Return a cached archive, file, or extracted source directory for ``spec``."""
     cache_root = cache_dir / spec.cache_root_name
     if spec.canonical_archive:
-        candidate = _archive_or_dir(cache_root / spec.canonical_archive)
+        candidate = _existing_source(cache_root / spec.canonical_archive)
         if candidate is not None:
             logger.info("Using cached %s source: %s", spec.dataset, candidate)
             return candidate
     for name in spec.cache_aliases:
-        candidate = _archive_or_dir(cache_root / name)
+        candidate = _existing_source(cache_root / name)
         if candidate is not None:
             logger.info("Using cached %s source alias: %s", spec.dataset, candidate)
             return candidate
@@ -154,7 +157,7 @@ def _cached_source(spec: DatasetSourceSpec, cache_dir: Path) -> Path | None:
             return candidate
     if cache_root.is_dir():
         for child in sorted(cache_root.iterdir()):
-            candidate = _archive_or_dir(child)
+            candidate = _existing_source(child)
             if candidate is not None:
                 logger.info("Using cached %s source candidate: %s", spec.dataset, candidate)
                 return candidate
