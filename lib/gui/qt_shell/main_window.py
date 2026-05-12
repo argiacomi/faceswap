@@ -79,7 +79,9 @@ class MainWindow(QMainWindow):
         self._command_panel = CommandPanel(self._schema)
         self._console = ConsolePane()
         self._progress = QProgressBar()
+        self._display_tabs_widget: QTabWidget | None = None
         self._display_controller: DisplayController | None = None
+        self._view_actions: dict[str, QAction] = {}
         self._run_action: QAction | None = None
         self._stop_action: QAction | None = None
         self._run_menu_action: QAction | None = None
@@ -124,6 +126,7 @@ class MainWindow(QMainWindow):
         tabs.addTab(self._analysis_panel(), "Analysis")
         tabs.addTab(self._display_placeholder("Preview"), "Preview")
         tabs.addTab(self._display_placeholder("Graph"), "Graph")
+        self._display_tabs_widget = tabs
         self._display_controller = DisplayController(
             tabs,
             analysis_factory=self._analysis_panel,
@@ -132,6 +135,7 @@ class MainWindow(QMainWindow):
             preserve_existing_tabs=True,
             parent=self,
         )
+        self._sync_view_actions()
         return tabs
 
     def _analysis_panel(self) -> QWidget:
@@ -207,9 +211,12 @@ class MainWindow(QMainWindow):
         self._stop_menu_action = command_menu.addAction("Stop", self._stop_job)
 
         view_menu = menu_bar.addMenu("View")
-        view_menu.addAction("Analysis")
-        view_menu.addAction("Preview")
-        view_menu.addAction("Graph")
+        for label in DisplayController._ORDER:  # pylint:disable=protected-access
+            action = view_menu.addAction(label)
+            action.triggered.connect(
+                lambda _checked=False, tab_name=label: self._show_display_tab(tab_name)
+            )
+            self._view_actions[label] = action
 
     def _build_toolbar(self) -> None:
         """Build the top toolbar."""
@@ -227,7 +234,8 @@ class MainWindow(QMainWindow):
     def _build_statusbar(self) -> None:
         """Build QStatusBar and QProgressBar status panel."""
         status = QStatusBar()
-        self._progress.setRange(0, 0)
+        self._progress.setObjectName("qt-shell-progress")
+        self._reset_progress()
         self._progress.setVisible(False)
         status.addPermanentWidget(self._progress)
         self.setStatusBar(status)
@@ -241,6 +249,37 @@ class MainWindow(QMainWindow):
         self._runner.stderr.connect(self._console.write)
         self._runner.progress.connect(self._consume_runtime_event)
         self._runner.finished.connect(self._job_finished)
+
+    def _show_display_tab(self, name: str) -> None:
+        """Switch to a visible display tab from the View menu."""
+        if self._display_tabs_widget is None:
+            return
+        for index in range(self._display_tabs_widget.count()):
+            if self._display_tabs_widget.tabText(index) != name:
+                continue
+            if self._display_tabs_widget.isTabVisible(index):
+                self._display_tabs_widget.setCurrentIndex(index)
+            return
+
+    def _sync_view_actions(self) -> None:
+        """Keep View menu actions in sync with display tab visibility."""
+        if self._display_controller is None:
+            visible_tabs: set[str] = {DisplayController.ANALYSIS}
+        else:
+            visible_tabs = set(self._display_controller.visible_tab_names())
+
+        for name, action in self._view_actions.items():
+            action.setEnabled(name in visible_tabs)
+
+        tabs = self._display_tabs_widget
+        if tabs is None or tabs.currentIndex() == -1:
+            return
+        if tabs.isTabVisible(tabs.currentIndex()):
+            return
+        for index in range(tabs.count()):
+            if tabs.isTabVisible(index):
+                tabs.setCurrentIndex(index)
+                return
 
     def _generate_command(self) -> None:
         """Generate command text through CommandBuilder."""
@@ -275,6 +314,7 @@ class MainWindow(QMainWindow):
             return
         if self._display_controller is not None:
             self._display_controller.set_runtime_state(command, running=True)
+        self._sync_view_actions()
         self._set_running(True)
         self.statusBar().showMessage(f"Running {category} {command}")
 
@@ -287,13 +327,42 @@ class MainWindow(QMainWindow):
         self._set_running(False)
         if self._display_controller is not None:
             self._display_controller.set_runtime_state(None, running=False)
+        self._sync_view_actions()
         self._console.write_line(f"\nProcess finished with exit code {exit_code}")
         self.statusBar().showMessage(f"Process finished with exit code {exit_code}", 5000)
 
     def _consume_runtime_event(self, event: object) -> None:
-        """Route structured runtime events to the display controller."""
+        """Route structured runtime events to runtime-aware UI widgets."""
         if self._display_controller is not None:
             self._display_controller.consume_event(event)
+        self._update_runtime_status(event)
+        self._sync_view_actions()
+
+    def _update_runtime_status(self, event: object) -> None:
+        """Update status and progress widgets from a runtime event."""
+        message = getattr(event, "message", "")
+        if isinstance(message, str) and message:
+            self.statusBar().showMessage(message)
+
+        payload = getattr(event, "payload", None)
+        payload = payload if isinstance(payload, dict) else {}
+        progress = getattr(event, "progress", None)
+        if isinstance(progress, int | float) and not isinstance(progress, bool):
+            self._progress.setRange(0, 100)
+            self._progress.setValue(max(0, min(100, int(progress))))
+            return
+
+        mode = payload.get("mode")
+        kind = getattr(event, "kind", "")
+        if mode == "indeterminate" or kind == "progress":
+            self._progress.setRange(0, 0)
+        elif mode == "determinate":
+            self._progress.setRange(0, 100)
+
+    def _reset_progress(self) -> None:
+        """Reset the progress bar to an idle determinate state."""
+        self._progress.setRange(0, 100)
+        self._progress.setValue(0)
 
     def _build_command(self, *, generate: bool) -> tuple[str, str, dict[str, object], list[str]]:
         """Build command args from the selected panel state."""
@@ -321,6 +390,9 @@ class MainWindow(QMainWindow):
         self._project = ProjectFile()
         self._project_filename = None
         self._command_panel.clear_values()
+        if self._display_controller is not None:
+            self._display_controller.set_runtime_state(None, running=False)
+        self._sync_view_actions()
         self._console.write_line("New prototype project")
         self.statusBar().showMessage("New prototype project", 5000)
 
@@ -402,6 +474,8 @@ class MainWindow(QMainWindow):
             if action is not None:
                 action.setEnabled(running)
         self._progress.setVisible(running)
+        if not running:
+            self._reset_progress()
 
     def _show_error(self, message: str) -> None:
         """Display an error in both console and dialog form."""
