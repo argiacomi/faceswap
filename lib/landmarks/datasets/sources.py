@@ -137,8 +137,15 @@ def _existing_source(path: Path) -> Path | None:
     return None
 
 
+def _generic_cache_candidate(path: Path) -> Path | None:
+    """Return generic cache candidates without accepting arbitrary files."""
+    if path.is_dir() or is_archive(path):
+        return path
+    return None
+
+
 def _cached_source(spec: DatasetSourceSpec, cache_dir: Path) -> Path | None:
-    """Return a cached archive, file, or extracted source directory for ``spec``."""
+    """Return a cached archive, explicit alias file, or extracted source directory for ``spec``."""
     cache_root = cache_dir / spec.cache_root_name
     if spec.canonical_archive:
         candidate = _existing_source(cache_root / spec.canonical_archive)
@@ -157,7 +164,7 @@ def _cached_source(spec: DatasetSourceSpec, cache_dir: Path) -> Path | None:
             return candidate
     if cache_root.is_dir():
         for child in sorted(cache_root.iterdir()):
-            candidate = _existing_source(child)
+            candidate = _generic_cache_candidate(child)
             if candidate is not None:
                 logger.info("Using cached %s source candidate: %s", spec.dataset, candidate)
                 return candidate
