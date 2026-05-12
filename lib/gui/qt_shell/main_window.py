@@ -269,7 +269,7 @@ class MainWindow(QMainWindow):
         self._console.write_line(f"$ {' '.join(CommandBuilder.quote_args(args))}")
         self._write_context(command, values)
         try:
-            self._runner.start(args)
+            self._runner.start(args, command=command)
         except (RuntimeError, ValueError) as err:
             self._show_error(str(err))
             return
