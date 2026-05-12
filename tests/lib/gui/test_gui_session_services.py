@@ -255,6 +255,10 @@ def test_gui_session_uses_state_as_source_of_truth(tmp_path: Path) -> None:
 
     assert not hasattr(session, "_filename")
     assert not hasattr(session, "_options")
+    assert not hasattr(session, "_dirname")
+    assert not hasattr(session, "_basename")
+    assert session._state.dirname == str(tmp_path)  # pylint:disable=protected-access
+    assert session._state.basename == "project.fsw"  # pylint:disable=protected-access
     assert session._cli_options == {"extract": {"Input Dir": "/input"}}  # pylint:disable=protected-access
 
 
@@ -281,6 +285,8 @@ def test_tasks_set_active_task_writes_through_state(monkeypatch) -> None:
     assert tasks._state.options is options  # pylint:disable=protected-access
     assert not hasattr(tasks, "_filename")
     assert not hasattr(tasks, "_options")
+    assert not hasattr(tasks, "_dirname")
+    assert not hasattr(tasks, "_basename")
 
 
 def test_tasks_set_active_task_clears_state_when_no_task(monkeypatch) -> None:
@@ -319,6 +325,8 @@ def test_last_session_save_uses_state_filename(tmp_path: Path, monkeypatch) -> N
     assert serializer.saved_filename == str(filename)
     assert serializer.saved_payload == {"tab_name": "extract"}
     assert not hasattr(last_session, "_filename")
+    assert not hasattr(last_session, "_dirname")
+    assert not hasattr(last_session, "_basename")
 
 
 def test_last_session_load_uses_state_filename(tmp_path: Path, monkeypatch) -> None:
@@ -339,3 +347,5 @@ def test_last_session_load_uses_state_filename(tmp_path: Path, monkeypatch) -> N
         ({"tab_name": "extract"}, None)
     ]
     assert not hasattr(last_session, "_filename")
+    assert not hasattr(last_session, "_dirname")
+    assert not hasattr(last_session, "_basename")
