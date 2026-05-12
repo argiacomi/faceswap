@@ -53,7 +53,7 @@ Mypy may be allowed to fail in CI. Inspect and report relevant new errors.
 ### Unit tests
 
 ```bash
-mamba run -n faceswap env KERAS_BACKEND=torch KERAS_TORCH_DEVICE=CPU FACESWAP_BACKEND=cpu py.test -v tests/
+mamba run -n faceswap env KERAS_BACKEND=torch KERAS_TORCH_DEVICE=CPU FACESWAP_BACKEND=cpu pytest -v tests/
 ```
 
 ### End-to-end smoke tests

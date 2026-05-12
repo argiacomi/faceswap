@@ -1,9 +1,15 @@
-#!/usr/bin/env python3
 """Tests for GUI command construction."""
 
 from __future__ import annotations
 
-from lib.gui.services.command_builder import CommandBuilder
+import os
+
+from lib.gui.command_builder import CommandBuilder
+
+
+def script_path(base_path: str) -> str:
+    """Return the platform-native faceswap.py path."""
+    return os.path.join(base_path, "faceswap.py")
 
 
 def test_build_preserves_zero_values() -> None:
@@ -19,7 +25,7 @@ def test_build_preserves_zero_values() -> None:
     assert args == [
         "python",
         "-u",
-        "/faceswap/faceswap.py",
+        script_path("/faceswap"),
         "extract",
         "-a",
         "0",
@@ -39,7 +45,7 @@ def test_build_skips_empty_values() -> None:
         {"-a": None, "-b": False, "-c": "", "-d": [], "-e": ()},
     )
 
-    assert args == ["python", "-u", "/faceswap/faceswap.py", "extract", "-G"]
+    assert args == ["python", "-u", script_path("/faceswap"), "extract", "-G"]
 
 
 def test_build_groups_short_boolean_switches() -> None:
@@ -55,7 +61,7 @@ def test_build_groups_short_boolean_switches() -> None:
     assert args == [
         "python",
         "-u",
-        "/faceswap/faceswap.py",
+        script_path("/faceswap"),
         "extract",
         "-ab",
         "--long",
@@ -72,7 +78,7 @@ def test_build_expands_sequence_values() -> None:
     assert args == [
         "python",
         "-u",
-        "/faceswap/faceswap.py",
+        script_path("/faceswap"),
         "extract",
         "-i",
         "one",
@@ -94,7 +100,7 @@ def test_generate_command_omits_unbuffered_and_gui_flags_and_quotes_spaces() -> 
 
     assert args == [
         "python",
-        '"/face swap/faceswap.py"',
+        f'"{script_path("/face swap")}"',
         "extract",
         "-b",
         "-i",
