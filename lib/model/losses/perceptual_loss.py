@@ -144,11 +144,7 @@ class GMSDLoss(nn.Module):
         lower = torch.square(true_edge) + torch.square(pred_edge)
         gms = (upper + epsilon) / (lower + epsilon)
         # per-pixel similarity reasonable proxy for spatial loss
-        loss = (
-            1.0 - gms.mean(dim=1)[:, None]
-            if self._spatial
-            else torch.std(gms, dim=(1, 2, 3))
-        )
+        loss = 1.0 - gms.mean(dim=1)[:, None] if self._spatial else torch.std(gms, dim=(1, 2, 3))
         return loss
 
 

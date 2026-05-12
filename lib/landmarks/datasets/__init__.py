@@ -165,9 +165,7 @@ def build_cofw_manifest(
     for index, entry in enumerate(entries):
         if not isinstance(entry, dict):
             raise ValueError(f"COFW entry {index + 1} must be an object")
-        points = np.asarray(
-            entry.get("ground_truth", entry.get("landmarks")), dtype="float32"
-        )
+        points = np.asarray(entry.get("ground_truth", entry.get("landmarks")), dtype="float32")
         conditions = dict(entry.get("conditions", {}))
         samples.append(
             {

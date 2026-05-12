@@ -8,25 +8,21 @@ import typing as T
 from lib.gui.qt_shell.command_schema import CommandSchema, CommandSpec, OptionSpec
 from lib.gui.services.command_schema_discovery import (
     CommandSchemaDiscovery,
-    DiscoveredCommand,
     DiscoveredCliOption,
+    DiscoveredCommand,
 )
 
 
 class CommandSchemaService:
     """Build a Qt command schema from Faceswap CLI option metadata."""
 
-    def from_real_cli_metadata(
-        self, categories: T.Iterable[str] | None = None
-    ) -> CommandSchema:
+    def from_real_cli_metadata(self, categories: T.Iterable[str] | None = None) -> CommandSchema:
         """Build a CommandSchema from real Faceswap CLI metadata."""
         return self.from_discovered_commands(
             CommandSchemaDiscovery().discover(categories=categories)
         )
 
-    def from_discovered_commands(
-        self, commands: T.Iterable[DiscoveredCommand]
-    ) -> CommandSchema:
+    def from_discovered_commands(self, commands: T.Iterable[DiscoveredCommand]) -> CommandSchema:
         """Build a CommandSchema from GUI-neutral CLI discovery results."""
         return CommandSchema(
             CommandSpec(
@@ -86,9 +82,7 @@ class CommandSchemaService:
             if option.opts
         )
 
-    def _options_for_command(
-        self, options: T.Mapping[str, object]
-    ) -> tuple[OptionSpec, ...]:
+    def _options_for_command(self, options: T.Mapping[str, object]) -> tuple[OptionSpec, ...]:
         """Return Qt option specs from a command's GUI option metadata."""
         option_specs = [
             spec
@@ -106,7 +100,7 @@ class CommandSchemaService:
             return None
 
         choices = getattr(panel_option, "choices", None)
-        if isinstance(choices, (list, tuple)):
+        if isinstance(choices, list | tuple):
             choices = tuple(str(choice) for choice in choices)
         else:
             choices = ()
@@ -142,7 +136,7 @@ class CommandSchemaService:
         if not isinstance(sysbrowser, dict):
             return ()
         browser = sysbrowser.get("browser", ())
-        if not isinstance(browser, (list, tuple)):
+        if not isinstance(browser, list | tuple):
             return ()
         return tuple(str(mode) for mode in browser if str(mode) != "context")
 
@@ -150,7 +144,7 @@ class CommandSchemaService:
     def _slider_min_max(panel_option: object) -> tuple[float | None, float | None]:
         """Return slider bounds from legacy panel metadata."""
         min_max = getattr(panel_option, "min_max", None)
-        if not isinstance(min_max, (list, tuple)) or len(min_max) != 2:
+        if not isinstance(min_max, list | tuple) or len(min_max) != 2:
             return None, None
         return float(min_max[0]), float(min_max[1])
 
@@ -158,6 +152,6 @@ class CommandSchemaService:
     def _slider_rounding(panel_option: object) -> float | None:
         """Return slider rounding from legacy panel metadata."""
         rounding = getattr(panel_option, "rounding", None)
-        if isinstance(rounding, (float, int)):
+        if isinstance(rounding, float | int):
             return float(rounding)
         return None

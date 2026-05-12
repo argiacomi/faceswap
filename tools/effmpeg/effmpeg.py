@@ -218,10 +218,7 @@ class Effmpeg:
                     "The file chosen as the reference video is not a video, either "
                     f"leave the field blank or type 'None': {self.ref_vid.path}"
                 )
-        elif (
-            self.args.action in self._actions_can_use_ref_video
-            and self.ref_vid.is_type("none")
-        ):
+        elif self.args.action in self._actions_can_use_ref_video and self.ref_vid.is_type("none"):
             logger.warning(
                 "Warning: no reference video was supplied, even though "
                 "one may be used with the chosen action. If this is "

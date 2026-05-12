@@ -11,6 +11,7 @@ from PySide6.QtGui import QAction, QTextCursor
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QMainWindow,
     QMessageBox,
@@ -69,9 +70,7 @@ class MainWindow(QMainWindow):
         self._schema = self._load_schema() if schema is None else schema
         self._builder = CommandBuilder(base_path=str(root))
         self._project_store = ProjectStore(get_serializer("json"))
-        self._recent_files = RecentFilesStore(
-            get_serializer("json"), str(self._recent_cache())
-        )
+        self._recent_files = RecentFilesStore(get_serializer("json"), str(self._recent_cache()))
         self._project = ProjectFile()
         self._project_filename: str | None = None
         self._runner = JobRunner(self)
@@ -119,6 +118,7 @@ class MainWindow(QMainWindow):
         """Create right display tabs used only for Analysis, Preview and Graph."""
         tabs = QTabWidget()
         tabs.setObjectName("qt-shell-display-tabs")
+        tabs.setMinimumWidth(0)
         tabs.addTab(self._analysis_panel(), "Analysis")
         tabs.addTab(self._display_placeholder("Preview"), "Preview")
         tabs.addTab(self._display_placeholder("Graph"), "Graph")
@@ -127,6 +127,7 @@ class MainWindow(QMainWindow):
     def _analysis_panel(self) -> QWidget:
         """Create the right-side Analysis panel skeleton."""
         panel = QWidget()
+        panel.setMinimumWidth(0)
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(12, 12, 12, 8)
         layout.setSpacing(8)
@@ -138,6 +139,9 @@ class MainWindow(QMainWindow):
 
         table = QTableWidget(0, 8)
         table.setObjectName("qt-shell-session-stats")
+        table.setMinimumWidth(0)
+        table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         table.setHorizontalHeaderLabels(
             (
                 "Graphs",
@@ -166,10 +170,12 @@ class MainWindow(QMainWindow):
     def _display_placeholder(name: str) -> QWidget:
         """Create a right-panel placeholder for display-only tabs."""
         panel = QWidget()
+        panel.setMinimumWidth(0)
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(12, 12, 12, 8)
         label = QLabel(f"{name} display placeholder")
         label.setAlignment(Qt.AlignCenter)
+        label.setWordWrap(True)
         label.setObjectName(f"qt-shell-{name.lower()}-placeholder")
         layout.addWidget(label, 1)
         return panel
@@ -267,13 +273,9 @@ class MainWindow(QMainWindow):
         """Update UI state when the process exits."""
         self._set_running(False)
         self._console.write_line(f"\nProcess finished with exit code {exit_code}")
-        self.statusBar().showMessage(
-            f"Process finished with exit code {exit_code}", 5000
-        )
+        self.statusBar().showMessage(f"Process finished with exit code {exit_code}", 5000)
 
-    def _build_command(
-        self, *, generate: bool
-    ) -> tuple[str, str, dict[str, object], list[str]]:
+    def _build_command(self, *, generate: bool) -> tuple[str, str, dict[str, object], list[str]]:
         """Build command args from the selected panel state."""
         category, command, values = self._command_panel.command_spec()
         if not category or not command:
@@ -389,9 +391,7 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _load_schema() -> CommandSchema:
         """Load real Faceswap and tools CLI metadata for the Qt shell."""
-        return CommandSchemaService().from_real_cli_metadata(
-            categories=("faceswap", "tools")
-        )
+        return CommandSchemaService().from_real_cli_metadata(categories=("faceswap", "tools"))
 
     @staticmethod
     def _recent_cache() -> Path:
