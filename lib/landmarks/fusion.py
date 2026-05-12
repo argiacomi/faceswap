@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import typing as T
-
 from dataclasses import dataclass
 
 import numpy as np
@@ -109,9 +108,7 @@ def weighted_average(
         kept_indices = rejection.kept
         rejected_indices = rejection.rejected
 
-    stack = np.stack(
-        [_prediction_points(predictions[idx]) for idx in kept_indices], axis=0
-    )
+    stack = np.stack([_prediction_points(predictions[idx]) for idx in kept_indices], axis=0)
     selected_weights = (
         np.ones((len(kept_indices), stack.shape[1]), dtype="float32")
         if weights is None
@@ -128,9 +125,7 @@ def weighted_average(
         schema=CANONICAL_SCHEMA,
         strategy=strategy,
         weights=normalized,
-        sources=tuple(
-            _prediction_source(predictions[idx], idx) for idx in kept_indices
-        ),
+        sources=tuple(_prediction_source(predictions[idx], idx) for idx in kept_indices),
         kept_indices=tuple(kept_indices),
         rejected_indices=tuple(rejected_indices),
     )

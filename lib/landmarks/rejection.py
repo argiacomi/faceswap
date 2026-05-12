@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import typing as T
-
 from dataclasses import dataclass
 
 import numpy as np

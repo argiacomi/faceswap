@@ -1,0 +1,7 @@
+method: hard_drop
+threshold: 3.5
+available_methods:
+  - none
+  - hard_drop
+  - downweight
+  - weighted_median

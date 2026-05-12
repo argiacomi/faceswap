@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import typing as T
-
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -92,9 +91,7 @@ class LandmarkPrediction:
             raise ValueError("provide either landmarks or points, not both")
 
         raw = np.asarray(landmarks, dtype="float32")
-        schema_name = (
-            infer_schema(raw) if schema is None else canonicalize_schema(schema)
-        )
+        schema_name = infer_schema(raw) if schema is None else canonicalize_schema(schema)
         points_array = normalize_landmark_array(raw, schema=schema_name)
         name = model_name if source is None else source
         if source_landmark_count is None:
@@ -152,18 +149,14 @@ class LandmarkPrediction:
 
 def canonicalize_schema(schema: str | object) -> str:
     """Normalize schema names and Faceswap enum-like values to local schema names."""
-    if hasattr(schema, "name"):
-        raw = str(getattr(schema, "name"))
-    else:
-        raw = str(schema)
+    raw = str(schema.name) if hasattr(schema, "name") else str(schema)
     key = raw.strip().lower().replace("-", "_")
     if key in SUPPORTED_SCHEMAS:
         return key
     if key in _SCHEMA_ALIASES:
         return _SCHEMA_ALIASES[key]
     raise ValueError(
-        f"Unsupported landmark schema '{schema}'. "
-        f"Supported schemas: {sorted(SUPPORTED_SCHEMAS)}"
+        f"Unsupported landmark schema '{schema}'. Supported schemas: {sorted(SUPPORTED_SCHEMAS)}"
     )
 
 
@@ -172,9 +165,7 @@ def infer_schema(points: np.ndarray) -> str:
     if points.ndim != 2:
         raise ValueError(f"landmarks must be 2D, got shape {points.shape}")
     matches = [
-        schema.name
-        for schema in SUPPORTED_SCHEMAS.values()
-        if points.shape == schema.shape
+        schema.name for schema in SUPPORTED_SCHEMAS.values() if points.shape == schema.shape
     ]
     if not matches:
         raise ValueError(f"Cannot infer landmark schema from shape {points.shape}")
@@ -219,11 +210,7 @@ def to_canonical_68(
 ) -> np.ndarray:
     """Return a 68-point 2D landmark array."""
     array = normalize_landmark_array(points, schema=source_schema)
-    schema = (
-        infer_schema(array)
-        if source_schema is None
-        else canonicalize_schema(source_schema)
-    )
+    schema = infer_schema(array) if source_schema is None else canonicalize_schema(source_schema)
     if schema == CANONICAL_SCHEMA:
         return array.astype("float32", copy=True)
     if schema == "2d_98":

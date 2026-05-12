@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import typing as T
-
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -20,9 +19,7 @@ class EvaluationSample:
 
     sample_id: str
     ground_truth: np.ndarray
-    predictions: T.Mapping[str, LandmarkPrediction | np.ndarray] = field(
-        default_factory=dict
-    )
+    predictions: T.Mapping[str, LandmarkPrediction | np.ndarray] = field(default_factory=dict)
     normalizer: float | None = None
 
 

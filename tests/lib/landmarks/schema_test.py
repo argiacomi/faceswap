@@ -66,15 +66,11 @@ def test_to_canonical_68_from_98_point_schema() -> None:
     """98-point inputs reuse Faceswap's existing 98-to-68 mapping."""
     points = np.arange(196, dtype="float32").reshape((98, 2))
     expected = points[MAP_2D_68[LandmarkType.LM_2D_98]]
-    np.testing.assert_array_equal(
-        to_canonical_68(points, source_schema="2d_98"), expected
-    )
+    np.testing.assert_array_equal(to_canonical_68(points, source_schema="2d_98"), expected)
 
 
 def test_normalize_landmarks_public_wrapper() -> None:
     """Public normalization wrapper maps supported inputs to canonical 68."""
     points = np.arange(196, dtype="float32").reshape((98, 2))
     expected = points[MAP_2D_68[LandmarkType.LM_2D_98]]
-    np.testing.assert_array_equal(
-        normalize_landmarks(points, source_schema="2d_98"), expected
-    )
+    np.testing.assert_array_equal(normalize_landmarks(points, source_schema="2d_98"), expected)

@@ -61,7 +61,5 @@ def test_draw_landmarks_returns_modified_copy() -> None:
 def test_make_debug_overlay_handles_multiple_predictions() -> None:
     """Overlay helper draws multiple predictions on one image."""
     image = np.zeros((12, 12, 3), dtype="uint8")
-    output = make_debug_overlay(
-        image, {"first": _points(2, 3), "second": _points(5, 6)}
-    )
+    output = make_debug_overlay(image, {"first": _points(2, 3), "second": _points(5, 6)})
     assert output.sum() > 0

@@ -43,9 +43,7 @@ def test_cache_key_for_array_uses_image_content() -> None:
     image = np.zeros((4, 4, 3), dtype="uint8")
     changed = image.copy()
     changed[0, 0, 0] = 1
-    assert cache_key_for_array(image, "adapter") != cache_key_for_array(
-        changed, "adapter"
-    )
+    assert cache_key_for_array(image, "adapter") != cache_key_for_array(changed, "adapter")
 
 
 def test_metrics_for_shifted_landmarks() -> None:

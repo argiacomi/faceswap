@@ -15,15 +15,11 @@ Color = tuple[int, int, int]
 def _coerce_image(image: np.ndarray, *, copy: bool) -> np.ndarray:
     array = np.array(image, copy=copy)
     if array.ndim not in (2, 3):
-        raise ValueError(
-            f"debug images must be 2D or 3D arrays, got shape {array.shape}"
-        )
+        raise ValueError(f"debug images must be 2D or 3D arrays, got shape {array.shape}")
     return array
 
 
-def _paint_numpy(
-    image: np.ndarray, x_val: int, y_val: int, color: Color, radius: int
-) -> None:
+def _paint_numpy(image: np.ndarray, x_val: int, y_val: int, color: Color, radius: int) -> None:
     height, width = image.shape[:2]
     x_min = max(0, x_val - radius)
     x_max = min(width, x_val + radius + 1)
@@ -32,9 +28,7 @@ def _paint_numpy(
     if image.ndim == 2:
         image[y_min:y_max, x_min:x_max] = color[0]
     else:
-        image[y_min:y_max, x_min:x_max, : min(3, image.shape[2])] = color[
-            : image.shape[2]
-        ]
+        image[y_min:y_max, x_min:x_max, : min(3, image.shape[2])] = color[: image.shape[2]]
 
 
 def draw_landmarks(

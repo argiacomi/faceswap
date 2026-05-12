@@ -3,6 +3,8 @@
 # NOTE: Do not import keras/pytorch in this script, as it is accessed before they should be loaded
 
 from __future__ import annotations
+
+import hashlib
 import inspect
 import json
 import logging
@@ -11,14 +13,15 @@ import sys
 import tkinter as tk
 import typing as T
 import zipfile
-
 from importlib import import_module
 from multiprocessing import current_process
 from re import finditer
-from socket import timeout as socket_timeout, error as socket_error
+from socket import error as socket_error
+from socket import timeout as socket_timeout
 from threading import get_ident
 from time import time
-from urllib import request, error as urlliberror
+from urllib import error as urlliberror
+from urllib import request
 
 try:
     import numpy as np
@@ -802,6 +805,96 @@ class GetModel():
                     p_bar.update(len(buffer))
                     out_file.write(buffer)
         p_bar.close()
+
+
+class GetModelFromUrl:
+    """Download a single model artifact from an explicit URL into the Faceswap cache.
+
+    This is intentionally small and mirrors the public surface of :class:`GetModel`
+    for plugins whose upstream weights are not hosted in the Faceswap model release
+    bucket.
+    """
+
+    def __init__(self, model_filename: str, url: str, sha256: str) -> None:
+        self.logger = logging.getLogger(__name__)
+        self._model_filename = model_filename
+        self._url = url
+        self._sha256 = sha256
+        self._cache_dir = os.path.join(PROJECT_ROOT, ".fs_cache")
+        self._chunk_size = 1024 * 1024
+        self._retries = 6
+        self._get()
+
+    @property
+    def model_path(self) -> str:
+        """The model path in the cache folder."""
+        return os.path.join(self._cache_dir, self._model_filename)
+
+    @property
+    def _partial_path(self) -> str:
+        """The temporary partial download path."""
+        return f"{self.model_path}.part"
+
+    def _get(self) -> None:
+        """Ensure the model exists and matches the expected SHA256."""
+        os.makedirs(self._cache_dir, exist_ok=True)
+        if os.path.exists(self.model_path) and self._hash_file(self.model_path) == self._sha256:
+            self.logger.debug("[GetModelFromUrl] Model exists: %s", self.model_path)
+            return
+        if os.path.exists(self.model_path):
+            os.remove(self.model_path)
+        self._download_model()
+        actual = self._hash_file(self._partial_path)
+        if actual != self._sha256:
+            os.remove(self._partial_path)
+            raise FaceswapError(
+                f"Downloaded model hash mismatch for {self._model_filename}. "
+                f"Expected {self._sha256}, got {actual}."
+            )
+        os.replace(self._partial_path, self.model_path)
+
+    def _download_model(self) -> None:
+        """Download the model file to a temporary partial path."""
+        if os.path.exists(self._partial_path):
+            os.remove(self._partial_path)
+        self.logger.info(
+            "Downloading model: '%s' from: %s", self._model_filename, self._url
+        )
+        for attempt in range(self._retries):
+            try:
+                with (
+                    request.urlopen(self._url, timeout=10) as response,
+                    open(self._partial_path, "wb") as out_file,
+                ):
+                    while True:
+                        buffer = response.read(self._chunk_size)
+                        if not buffer:
+                            break
+                        out_file.write(buffer)
+                return
+            except (socket_error, socket_timeout,
+                    urlliberror.HTTPError, urlliberror.URLError) as err:
+                if attempt + 1 < self._retries:
+                    self.logger.warning(
+                        "Error downloading model (%s). Retrying %s of %s...",
+                        str(err),
+                        attempt + 2,
+                        self._retries,
+                    )
+                else:
+                    raise FaceswapError(
+                        f"Failed to download model '{self._model_filename}' from "
+                        f"{self._url}: {err}"
+                    ) from err
+
+    @staticmethod
+    def _hash_file(filename: str) -> str:
+        """Return the SHA256 hash for ``filename``."""
+        sha = hashlib.sha256()
+        with open(filename, "rb") as infile:
+            for chunk in iter(lambda: infile.read(1024 * 1024), b""):
+                sha.update(chunk)
+        return sha.hexdigest()
 
 
 class DebugTimes():

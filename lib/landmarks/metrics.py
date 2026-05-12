@@ -8,9 +8,7 @@ import numpy as np
 from lib.landmarks.schema import to_canonical_68
 
 
-def _paired_points(
-    predicted: np.ndarray, target: np.ndarray
-) -> tuple[np.ndarray, np.ndarray]:
+def _paired_points(predicted: np.ndarray, target: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     pred = to_canonical_68(predicted)
     truth = to_canonical_68(target)
     if pred.shape != truth.shape:
@@ -42,9 +40,7 @@ def normalized_mean_error(
     pred, truth = _paired_points(predicted, target)
     if normalizer is None:
         normalizer = float(
-            np.linalg.norm(
-                truth[interocular_indices[0]] - truth[interocular_indices[1]]
-            )
+            np.linalg.norm(truth[interocular_indices[0]] - truth[interocular_indices[1]])
         )
     if normalizer <= 0:
         raise ValueError("normalizer must be greater than zero")
