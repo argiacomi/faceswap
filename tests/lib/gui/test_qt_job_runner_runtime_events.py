@@ -214,6 +214,8 @@ def test_job_runner_accepts_command_when_starting(monkeypatch) -> None:
             return None
 
     class _ProcessStartDouble:
+        NotRunning = QProcess.NotRunning
+
         def __init__(self, _parent=None) -> None:  # type:ignore[no-untyped-def]
             self.readyReadStandardOutput = _SignalDouble()
             self.readyReadStandardError = _SignalDouble()
@@ -253,6 +255,8 @@ def test_job_runner_infers_command_from_argv(monkeypatch) -> None:
             return None
 
     class _ProcessStartDouble:
+        NotRunning = QProcess.NotRunning
+
         def __init__(self, _parent=None) -> None:  # type:ignore[no-untyped-def]
             self.readyReadStandardOutput = _SignalDouble()
             self.readyReadStandardError = _SignalDouble()
