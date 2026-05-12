@@ -353,6 +353,99 @@ def test_audit_only_rejects_cross_group_overlap(tmp_path: Path) -> None:
     assert audit["overlap"] == {"allow_overlap": True, "duplicate_count": 1, "has_overlap": True}
 
 
+def test_audit_reports_duplicate_sample_ids(tmp_path: Path) -> None:
+    """Audit output reports repeated sample IDs."""
+    output = tmp_path / "out"
+    output.mkdir()
+    np.save(str(output / "landmarks.npy"), _points_68())
+    (output / "manifest.json").write_text(
+        json.dumps(
+            {
+                "dataset": "cofw",
+                "samples": [
+                    {
+                        "sample_id": "duplicate",
+                        "dataset": "cofw",
+                        "condition": "default",
+                        "landmarks": "landmarks.npy",
+                    },
+                    {
+                        "sample_id": "duplicate",
+                        "dataset": "cofw",
+                        "condition": "default",
+                        "landmarks": "landmarks.npy",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    audit_path = audit_existing_manifest(output)
+    audit = json.loads(audit_path.read_text(encoding="utf-8"))
+
+    assert audit["duplicate_sample_ids"] == ["duplicate"]
+
+
+def test_audit_reports_missing_images(tmp_path: Path) -> None:
+    """Audit output reports manifest image paths that do not exist."""
+    output = tmp_path / "out"
+    output.mkdir()
+    np.save(str(output / "landmarks.npy"), _points_68())
+    (output / "manifest.json").write_text(
+        json.dumps(
+            {
+                "dataset": "cofw",
+                "samples": [
+                    {
+                        "sample_id": "missing-image",
+                        "dataset": "cofw",
+                        "condition": "default",
+                        "image": "missing.png",
+                        "landmarks": "landmarks.npy",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    audit_path = audit_existing_manifest(output)
+    audit = json.loads(audit_path.read_text(encoding="utf-8"))
+
+    assert audit["missing_images"] == ["missing.png"]
+    assert audit["missing_landmarks"] == []
+
+
+def test_audit_reports_invalid_landmark_shape(tmp_path: Path) -> None:
+    """Audit output reports landmark arrays that are not [68, 2]."""
+    output = tmp_path / "out"
+    output.mkdir()
+    np.save(str(output / "bad_landmarks.npy"), np.zeros((67, 2), dtype="float32"))
+    (output / "manifest.json").write_text(
+        json.dumps(
+            {
+                "dataset": "cofw",
+                "samples": [
+                    {
+                        "sample_id": "bad-shape",
+                        "dataset": "cofw",
+                        "condition": "default",
+                        "landmarks": "bad_landmarks.npy",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    audit_path = audit_existing_manifest(output)
+    audit = json.loads(audit_path.read_text(encoding="utf-8"))
+
+    assert audit["landmark_shape_counts"] == {"67x2": 1}
+    assert audit["invalid_landmarks"] == [{"sample_id": "bad-shape", "shape": "67x2"}]
+
+
 def test_safe_zip_blocks_path_traversal(tmp_path: Path) -> None:
     """Zip extraction blocks path traversal."""
     archive = tmp_path / "evil.zip"
@@ -363,13 +456,23 @@ def test_safe_zip_blocks_path_traversal(tmp_path: Path) -> None:
         safe_zip_extractall(zf, tmp_path / "dest")
 
 
-def _make_tar(path: Path, member_name: str, *, symlink: bool = False) -> Path:
+def _make_tar(
+    path: Path,
+    member_name: str,
+    *,
+    symlink: bool = False,
+    hardlink: bool = False,
+) -> Path:
     """Create a small tar archive for safe extraction tests."""
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode="w") as tf:
         info = tarfile.TarInfo(member_name)
         if symlink:
             info.type = tarfile.SYMTYPE
+            info.linkname = "/etc/passwd"
+            tf.addfile(info)
+        elif hardlink:
+            info.type = tarfile.LNKTYPE
             info.linkname = "/etc/passwd"
             tf.addfile(info)
         else:
@@ -391,4 +494,11 @@ def test_safe_tar_blocks_symlink(tmp_path: Path) -> None:
     """Tar extraction blocks symlinks."""
     archive = _make_tar(tmp_path / "evil_link.tar", "bad_link", symlink=True)
     with tarfile.open(archive, "r:*") as tf, pytest.raises(ValueError, match="symlink"):
+        safe_tar_extractall(tf, tmp_path / "dest")
+
+
+def test_safe_tar_blocks_hardlink(tmp_path: Path) -> None:
+    """Tar extraction blocks hardlinks."""
+    archive = _make_tar(tmp_path / "evil_hardlink.tar", "bad_link", hardlink=True)
+    with tarfile.open(archive, "r:*") as tf, pytest.raises(ValueError, match="hardlink"):
         safe_tar_extractall(tf, tmp_path / "dest")
