@@ -154,7 +154,7 @@ jobs:
                   python-version: ${{ matrix.python-version }}
                   cache: pip
                   cache-dependency-path: |
-                      requirements/requirements_base.txt
+                      requirements/_requirements_base.txt
                       requirements/requirements_${{ matrix.backend }}.txt
 
             - name: Install dependencies
@@ -208,7 +208,7 @@ jobs:
                   python-version: ${{ matrix.python-version }}
                   cache: pip
                   cache-dependency-path: |
-                      requirements/requirements_base.txt
+                      requirements/_requirements_base.txt
                       requirements/requirements_${{ matrix.backend }}.txt
 
             - name: Install dependencies
