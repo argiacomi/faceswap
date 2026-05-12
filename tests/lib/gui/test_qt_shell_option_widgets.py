@@ -257,10 +257,7 @@ def test_browse_buttons_get_stable_object_names(qtbot) -> None:  # type:ignore[n
     )
     qtbot.addWidget(panel)
 
-    assert {
-        button.objectName()
-        for button in panel.renderer.findChildren(QPushButton)
-    } == {
+    assert {button.objectName() for button in panel.renderer.findChildren(QPushButton)} == {
         "qt-shell-browser-folder",
         "qt-shell-browser-file",
         "qt-shell-browser-files",
