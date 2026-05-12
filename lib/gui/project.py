@@ -188,8 +188,7 @@ class _GuiSession:  # pylint:disable=too-few-public-methods
 
     # GUI STATE SETTING
     def _set_options(self, command: str | None = None) -> None:
-        """Set the GUI options based on the currently stored properties of :attr:`_options`
-        and sets the active tab.
+        """Set the GUI options based on the current session state and set the active tab.
 
         Parameters
         ----------
@@ -383,7 +382,7 @@ class _GuiSession:  # pylint:disable=too-few-public-methods
         """Collect the options in the current GUI state and save.
 
         Obtains the current options set in the GUI with the selected tab and applies them to
-        :attr:`_options`. Saves :attr:`_options` to :attr:`_filename`. Resets :attr:_modified_vars
+        session state. Saves the versioned project file to the current filename. Resets modified vars
         for either the given command or all commands,
 
         Parameters
@@ -998,8 +997,7 @@ class LastSession(_GuiSession):
     def from_dict(
         self, options: dict[str, str | dict[str, bool | int | float | str]]
     ) -> None:
-        """Set the :attr:`_options` property based on the given options dictionary
-        and update the GUI to use these values.
+        """Set session options from the given dictionary and update the GUI.
 
         This function is required for reloading the GUI state when the GUI has been force
         refreshed on a config change.

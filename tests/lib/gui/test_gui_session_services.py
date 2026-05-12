@@ -134,32 +134,33 @@ def _session(tmp_path: Path) -> tuple[_GuiSession, _ProjectStore]:
     """Build a minimally initialized GUI session."""
     store = _ProjectStore()
     session = _GuiSession.__new__(_GuiSession)
-    session._filename = str(tmp_path / "project.fsw")  # pylint:disable=protected-access
-    Path(session._filename).touch()
+    filename = str(tmp_path / "project.fsw")
+    Path(filename).touch()
+
     session._project_store = store  # pylint:disable=protected-access
     session._config = _Config()
     session._file_picker = None  # pylint:disable=protected-access
-    session._options = None  # pylint:disable=protected-access
     session._saved_tasks = None  # pylint:disable=protected-access
     session._modified = False  # pylint:disable=protected-access
     session._modified_tracker = _ModifiedTracker()  # pylint:disable=protected-access
     session._recent_files = _RecentFiles()  # pylint:disable=protected-access
     session._option_applier = _OptionApplier(True)  # pylint:disable=protected-access
-    session._state = ProjectSessionState()  # pylint:disable=protected-access
+    session._state = ProjectSessionState(filename=filename)  # pylint:disable=protected-access
     return session, store
 
 
 def test_gui_session_load_uses_project_store(tmp_path: Path) -> None:
-    """Loading migrates project files into the GUI's flat option shape."""
+    """Loading migrates project files into session state."""
     session, _ = _session(tmp_path)
+    filename = session._state.filename  # pylint:disable=protected-access
 
-    options = session._load_options()  # pylint:disable=protected-access
+    session._load_state()  # pylint:disable=protected-access
 
-    assert options == {
+    assert session._state.filename == filename  # pylint:disable=protected-access
+    assert session._state.options == {  # pylint:disable=protected-access
         "extract": {"Input Dir": "/input"},
         "tab_name": "extract",
     }
-    assert session._state.filename == session._filename  # pylint:disable=protected-access
     assert session._state.project is not None  # pylint:disable=protected-access
 
 
@@ -170,19 +171,19 @@ def test_gui_session_save_uses_project_store(tmp_path: Path, monkeypatch) -> Non
 
     session._save()  # pylint:disable=protected-access
 
-    assert store.saved_filename == session._filename
+    assert store.saved_filename == session._state.filename  # pylint:disable=protected-access
     assert store.saved_project.model_dump() == {
         "version": 2,
         "tab_name": "extract",
         "tasks": {"extract": {"Input Dir": "/input"}},
     }
-    assert session._options == {
+    assert session._state.options == {  # pylint:disable=protected-access
         "extract": {"Input Dir": "/input"},
         "tab_name": "extract",
     }
     assert session._modified_tracker.reset_command is None  # pylint:disable=protected-access
     assert session._recent_files.added == (  # pylint:disable=protected-access
-        session._filename,
+        session._state.filename,  # pylint:disable=protected-access
         "project",
     )
 
@@ -192,15 +193,16 @@ def test_gui_session_set_options_delegates_to_option_applier(
 ) -> None:
     """Loaded options should be delegated to the GUI option applier."""
     session, _ = _session(tmp_path)
-    session._options = {  # pylint:disable=protected-access
+    options: dict[str, str | dict[str, T.Any]] = {
         "tab_name": "extract",
         "extract": {"Input Dir": "/input"},
     }
+    session._state.set_options(options)  # pylint:disable=protected-access
 
     session._set_options()  # pylint:disable=protected-access
 
     assert session._option_applier.calls == [  # pylint:disable=protected-access
-        (session._options, None)
+        (options, None)
     ]
     assert session._config.tk_vars.console_clear.get() is False
 
@@ -210,15 +212,30 @@ def test_gui_session_set_options_delegates_to_option_applier_missing_command(
 ) -> None:
     """Missing command option application should preserve console clear behavior."""
     session, _ = _session(tmp_path)
-    session._options = {  # pylint:disable=protected-access
+    options: dict[str, str | dict[str, T.Any]] = {
         "tab_name": "extract",
         "extract": {"Input Dir": "/input"},
     }
+    session._state.set_options(options)  # pylint:disable=protected-access
     session._option_applier = _OptionApplier(False)  # pylint:disable=protected-access
 
     session._set_options("train")  # pylint:disable=protected-access
 
     assert session._option_applier.calls == [  # pylint:disable=protected-access
-        (session._options, "train")
+        (options, "train")
     ]
     assert session._config.tk_vars.console_clear.get() is True
+
+
+def test_gui_session_uses_state_as_source_of_truth(tmp_path: Path) -> None:
+    """Session helpers should use ProjectSessionState rather than legacy attributes."""
+    session, _ = _session(tmp_path)
+    options: dict[str, str | dict[str, T.Any]] = {
+        "tab_name": "extract",
+        "extract": {"Input Dir": "/input"},
+    }
+    session._state.set_options(options)  # pylint:disable=protected-access
+
+    assert not hasattr(session, "_filename")
+    assert not hasattr(session, "_options")
+    assert session._cli_options == {"extract": {"Input Dir": "/input"}}  # pylint:disable=protected-access
