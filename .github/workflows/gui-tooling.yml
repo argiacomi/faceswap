@@ -25,6 +25,10 @@ jobs:
               with:
                   python-version: '3.13'
                   cache: pip
+                  cache-dependency-path: |
+                      requirements/_requirements_base.txt
+                      requirements/requirements_cpu.txt
+                      requirements/_requirements_dev.txt
 
             - name: Install system GUI dependencies
               run: |
@@ -49,6 +53,7 @@ jobs:
             - name: Install GUI tooling dependencies
               run: |
                   python -m pip install --upgrade pip
+                  python -m pip install -r requirements/requirements_cpu.txt
                   python -m pip install -r requirements/_requirements_dev.txt
 
             - name: Run scoped pre-commit hooks
