@@ -31,6 +31,7 @@ from lib.gui.models.project import ProjectFile
 from lib.gui.qt_shell.command_panel import CommandPanel
 from lib.gui.qt_shell.command_schema import CommandSchema
 from lib.gui.qt_shell.command_schema_service import CommandSchemaService
+from lib.gui.qt_shell.display_controller import DisplayController
 from lib.gui.qt_shell.job_runner import JobRunner
 from lib.gui.services.command_builder import CommandBuilder
 from lib.gui.services.command_context import CommandExecutionContext
@@ -78,6 +79,7 @@ class MainWindow(QMainWindow):
         self._command_panel = CommandPanel(self._schema)
         self._console = ConsolePane()
         self._progress = QProgressBar()
+        self._display_controller: DisplayController | None = None
         self._run_action: QAction | None = None
         self._stop_action: QAction | None = None
         self._run_menu_action: QAction | None = None
@@ -122,6 +124,14 @@ class MainWindow(QMainWindow):
         tabs.addTab(self._analysis_panel(), "Analysis")
         tabs.addTab(self._display_placeholder("Preview"), "Preview")
         tabs.addTab(self._display_placeholder("Graph"), "Graph")
+        self._display_controller = DisplayController(
+            tabs,
+            analysis_factory=self._analysis_panel,
+            preview_factory=lambda: self._display_placeholder("Preview"),
+            graph_factory=lambda: self._display_placeholder("Graph"),
+            preserve_existing_tabs=True,
+            parent=self,
+        )
         return tabs
 
     def _analysis_panel(self) -> QWidget:
@@ -229,6 +239,7 @@ class MainWindow(QMainWindow):
         self._command_panel.run_requested.connect(self._run_command)
         self._runner.stdout.connect(self._console.write)
         self._runner.stderr.connect(self._console.write)
+        self._runner.progress.connect(self._consume_runtime_event)
         self._runner.finished.connect(self._job_finished)
 
     def _generate_command(self) -> None:
@@ -262,6 +273,8 @@ class MainWindow(QMainWindow):
         except (RuntimeError, ValueError) as err:
             self._show_error(str(err))
             return
+        if self._display_controller is not None:
+            self._display_controller.set_runtime_state(command, running=True)
         self._set_running(True)
         self.statusBar().showMessage(f"Running {category} {command}")
 
@@ -272,8 +285,15 @@ class MainWindow(QMainWindow):
     def _job_finished(self, exit_code: int) -> None:
         """Update UI state when the process exits."""
         self._set_running(False)
+        if self._display_controller is not None:
+            self._display_controller.set_runtime_state(None, running=False)
         self._console.write_line(f"\nProcess finished with exit code {exit_code}")
         self.statusBar().showMessage(f"Process finished with exit code {exit_code}", 5000)
+
+    def _consume_runtime_event(self, event: object) -> None:
+        """Route structured runtime events to the display controller."""
+        if self._display_controller is not None:
+            self._display_controller.consume_event(event)
 
     def _build_command(self, *, generate: bool) -> tuple[str, str, dict[str, object], list[str]]:
         """Build command args from the selected panel state."""
