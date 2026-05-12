@@ -302,3 +302,33 @@ def test_main_window_display_controller_reacts_to_runner_progress(qtbot) -> None
         "Preview",
         "Graph",
     )
+
+
+def test_split_output_units_handles_carriage_return_updates() -> None:
+    """Carriage-return progress updates should be split into parseable units."""
+    from lib.gui.qt_shell.job_runner import JobRunner
+
+    units, remainder = JobRunner._split_output_units("25%\r50%\r100%\n")
+
+    assert units == ["25%\r", "50%\r", "100%\n"]
+    assert remainder == ""
+
+
+def test_split_output_units_preserves_partial_trailing_output() -> None:
+    """Trailing output without a terminator should remain buffered."""
+    from lib.gui.qt_shell.job_runner import JobRunner
+
+    units, remainder = JobRunner._split_output_units("plain\npartial")
+
+    assert units == ["plain\n"]
+    assert remainder == "partial"
+
+
+def test_split_output_units_flushes_partial_trailing_output() -> None:
+    """Flush should emit the final unterminated output unit."""
+    from lib.gui.qt_shell.job_runner import JobRunner
+
+    units, remainder = JobRunner._split_output_units("plain\npartial", flush=True)
+
+    assert units == ["plain\n", "partial"]
+    assert remainder == ""
