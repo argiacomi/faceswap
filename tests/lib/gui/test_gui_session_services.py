@@ -6,7 +6,11 @@ from __future__ import annotations
 import typing as T
 from pathlib import Path
 
-from lib.gui.project import _GuiSession  # pylint:disable=protected-access
+from lib.gui.project import (  # pylint:disable=protected-access
+    LastSession,
+    Tasks,
+    _GuiSession,
+)
 from lib.gui.services.project_session_state import ProjectSessionState
 from lib.gui.services.project_store import ProjectStore
 
@@ -38,15 +42,19 @@ class _ProjectStore:
 class _Serializer:
     """Serializer test double."""
 
-    def __init__(self, payload: dict[str, object]) -> None:
-        self.payload = payload
+    def __init__(self, payload: dict[str, object] | None = None) -> None:
+        self.payload = payload or {}
+        self.saved_filename: str | None = None
+        self.saved_payload: dict[str, object] | None = None
 
     def load(self, filename: str) -> dict[str, object]:
         """Return the configured payload."""
         return self.payload
 
     def save(self, filename: str, payload: dict[str, object]) -> None:
-        """Unused save stub."""
+        """Capture saved payload."""
+        self.saved_filename = filename
+        self.saved_payload = payload
 
 
 class _CliOptions:
@@ -81,6 +89,12 @@ class _TkVars:
         self.console_clear = _BoolVar(False)
 
 
+class _Project:
+    """Minimal project test double."""
+
+    filename = None
+
+
 class _Config:
     """Minimal config test double."""
 
@@ -88,6 +102,7 @@ class _Config:
         self.cli_opts = _CliOptions()
         self.modified_vars = {}
         self.tk_vars = _TkVars()
+        self.project = _Project()
 
 
 class _ModifiedTracker:
@@ -228,7 +243,7 @@ def test_gui_session_set_options_delegates_to_option_applier_missing_command(
 
 
 def test_gui_session_uses_state_as_source_of_truth(tmp_path: Path) -> None:
-    """Session helpers should use ProjectSessionState rather than legacy attributes."""
+    """Session helpers should use ProjectSessionState rather than legacy attrs."""
     session, _ = _session(tmp_path)
     options: dict[str, str | dict[str, T.Any]] = {
         "tab_name": "extract",
@@ -239,3 +254,86 @@ def test_gui_session_uses_state_as_source_of_truth(tmp_path: Path) -> None:
     assert not hasattr(session, "_filename")
     assert not hasattr(session, "_options")
     assert session._cli_options == {"extract": {"Input Dir": "/input"}}  # pylint:disable=protected-access
+
+
+def test_tasks_set_active_task_writes_through_state(monkeypatch) -> None:
+    """Active task selection should update ProjectSessionState."""
+    tasks = Tasks.__new__(Tasks)
+    options: dict[str, str | dict[str, T.Any]] = {
+        "tab_name": "extract",
+        "extract": {"Input Dir": "/input"},
+    }
+    tasks._state = ProjectSessionState()  # pylint:disable=protected-access
+    tasks._tasks = {  # pylint:disable=protected-access
+        "extract": {
+            "filename": "/task.fst",
+            "options": options,
+            "is_project": False,
+        }
+    }
+    monkeypatch.setattr(type(tasks), "_active_tab", property(lambda self: "extract"))
+
+    tasks._set_active_task()  # pylint:disable=protected-access
+
+    assert tasks._state.filename == "/task.fst"  # pylint:disable=protected-access
+    assert tasks._state.options is options  # pylint:disable=protected-access
+    assert not hasattr(tasks, "_filename")
+    assert not hasattr(tasks, "_options")
+
+
+def test_tasks_set_active_task_clears_state_when_no_task(monkeypatch) -> None:
+    """Missing active task should clear ProjectSessionState."""
+    tasks = Tasks.__new__(Tasks)
+    tasks._state = ProjectSessionState(  # pylint:disable=protected-access
+        filename="/task.fst",
+        _options={
+            "tab_name": "extract",
+            "extract": {"Input Dir": "/input"},
+        },
+    )
+    tasks._tasks = {}  # pylint:disable=protected-access
+    monkeypatch.setattr(type(tasks), "_active_tab", property(lambda self: "extract"))
+
+    tasks._set_active_task()  # pylint:disable=protected-access
+
+    assert tasks._state.filename is None  # pylint:disable=protected-access
+    assert tasks._state.options is None  # pylint:disable=protected-access
+
+
+def test_last_session_save_uses_state_filename(tmp_path: Path, monkeypatch) -> None:
+    """LastSession should save through ProjectSessionState.filename."""
+    filename = tmp_path / ".last_session.json"
+    serializer = _Serializer()
+
+    last_session = LastSession.__new__(LastSession)
+    last_session._state = ProjectSessionState(filename=str(filename))  # pylint:disable=protected-access
+    last_session._serializer = serializer  # pylint:disable=protected-access
+    last_session._config = _Config()  # pylint:disable=protected-access
+    monkeypatch.setattr(type(last_session), "_enabled", property(lambda self: True))
+    monkeypatch.setattr(last_session, "to_dict", lambda: {"tab_name": "extract"})
+
+    last_session.save()
+
+    assert serializer.saved_filename == str(filename)
+    assert serializer.saved_payload == {"tab_name": "extract"}
+    assert not hasattr(last_session, "_filename")
+
+
+def test_last_session_load_uses_state_filename(tmp_path: Path, monkeypatch) -> None:
+    """LastSession should load through ProjectSessionState.filename."""
+    filename = tmp_path / ".last_session.json"
+    filename.write_text("{}", encoding="utf-8")
+    last_session = LastSession.__new__(LastSession)
+    last_session._state = ProjectSessionState(filename=str(filename))  # pylint:disable=protected-access
+    last_session._serializer = _Serializer({"tab_name": "extract"})  # pylint:disable=protected-access
+    last_session._config = _Config()  # pylint:disable=protected-access
+    last_session._option_applier = _OptionApplier(True)  # pylint:disable=protected-access
+    monkeypatch.setattr(last_session, "_set_project", lambda: None)
+
+    last_session.load()
+
+    assert last_session._state.options == {"tab_name": "extract"}  # pylint:disable=protected-access
+    assert last_session._option_applier.calls == [  # pylint:disable=protected-access
+        ({"tab_name": "extract"}, None)
+    ]
+    assert not hasattr(last_session, "_filename")
