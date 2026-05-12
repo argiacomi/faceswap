@@ -222,7 +222,7 @@ def build_cofw_manifest(
             raise FileNotFoundError(f"COFW JSON not found: {source}")
         image_base = root if image_root is None else Path(image_root)
         payload = json.loads(source.read_text(encoding="utf-8"))
-        entries = payload.get("samples", payload)
+        entries = payload.get("samples", payload) if isinstance(payload, dict) else payload
         if not isinstance(entries, list):
             raise ValueError("COFW JSON must contain a list or a 'samples' list")
         samples = []
