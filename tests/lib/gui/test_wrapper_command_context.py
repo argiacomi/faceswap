@@ -14,7 +14,9 @@ class _PreviewExtract:
         self.output_path: str | None = None
         self.batch_mode: bool | None = None
 
-    def set_faceswap_output_path(self, output_path: str, *, batch_mode: bool = False) -> None:
+    def set_faceswap_output_path(
+        self, output_path: str, *, batch_mode: bool = False
+    ) -> None:
         """Capture preview output arguments."""
         self.output_path = output_path
         self.batch_mode = batch_mode
@@ -51,7 +53,9 @@ def test_apply_execution_context_sets_training_session_and_preview(monkeypatch) 
     assert images.preview_extract.batch_mode is True
 
 
-def test_apply_execution_context_skips_training_session_for_generated_commands(monkeypatch) -> None:
+def test_apply_execution_context_skips_training_session_for_generated_commands(
+    monkeypatch,
+) -> None:
     """Generated commands should not update training session state."""
     images = _Images()
     wrapper = ProcessWrapper.__new__(ProcessWrapper)
@@ -69,7 +73,9 @@ def test_apply_execution_context_skips_training_session_for_generated_commands(m
     assert wrapper._training_session_location == {}  # pylint:disable=protected-access
 
 
-def test_apply_execution_context_skips_preview_for_generated_commands(monkeypatch) -> None:
+def test_apply_execution_context_skips_preview_for_generated_commands(
+    monkeypatch,
+) -> None:
     """Generated commands should not update preview image state."""
     images = _Images()
     wrapper = ProcessWrapper.__new__(ProcessWrapper)

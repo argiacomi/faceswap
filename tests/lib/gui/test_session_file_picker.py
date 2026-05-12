@@ -110,6 +110,7 @@ def test_open_uses_file_handler_when_filename_missing(tmp_path: Path) -> None:
     assert return_file.closed is True
     assert file_handler.calls == [("open", "config_project", {})]
 
+
 def test_open_rejects_dialog_file_with_wrong_extension(tmp_path: Path) -> None:
     """Dialog-selected project files with the wrong extension should be rejected."""
     filename = tmp_path / "task.fst"
@@ -119,6 +120,7 @@ def test_open_rejects_dialog_file_with_wrong_extension(tmp_path: Path) -> None:
 
     assert picker.open("project") is None
     assert return_file.closed is True
+
 
 def test_open_returns_none_when_dialog_cancelled() -> None:
     """Open should return None when the file dialog is cancelled."""
@@ -136,7 +138,9 @@ def test_save_as_returns_selected_file(tmp_path: Path) -> None:
     file_handler = _FileHandler(return_file)
     picker = SessionFilePicker(file_handler)
 
-    picked = picker.save_as("task", title="Save Task As...", initial_folder=str(tmp_path))
+    picked = picker.save_as(
+        "task", title="Save Task As...", initial_folder=str(tmp_path)
+    )
 
     assert picked == PickedFile(str(filename))
     assert return_file.closed is True

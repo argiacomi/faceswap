@@ -88,7 +88,9 @@ class CommandBuilder:
         return [arg for group in cls.build_option_groups(values) for arg in group]
 
     @classmethod
-    def build_option_groups(cls, values: T.Mapping[str, object]) -> list[tuple[str, ...]]:
+    def build_option_groups(
+        cls, values: T.Mapping[str, object]
+    ) -> list[tuple[str, ...]]:
         """Build grouped CLI switch/value arguments from a mapping.
 
         This preserves the legacy ``gen_cli_arguments()`` tuple shape while sharing the same

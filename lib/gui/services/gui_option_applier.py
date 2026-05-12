@@ -42,9 +42,7 @@ class GuiOptionApplier:
         """Apply a loaded project/task payload to GUI variables."""
         if command is None:
             command_options = {
-                key: value
-                for key, value in options.items()
-                if isinstance(value, dict)
+                key: value for key, value in options.items() if isinstance(value, dict)
             }
             active_tab = self._tab_name(options)
         else:
