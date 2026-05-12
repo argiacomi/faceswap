@@ -30,6 +30,14 @@ class _BufferedProcessDouble:
         self._stderr = b""
         return stderr
 
+    def write_stdout(self, stdout: bytes) -> None:
+        """Replace stdout buffer for another fake ready-read cycle."""
+        self._stdout = stdout
+
+    def write_stderr(self, stderr: bytes) -> None:
+        """Replace stderr buffer for another fake ready-read cycle."""
+        self._stderr = stderr
+
 
 def test_job_runner_emits_progress_event_from_tqdm_stdout() -> None:
     """Qt JobRunner should emit RuntimeEvent values parsed from stdout."""
@@ -110,6 +118,91 @@ def test_job_runner_preserves_plain_stdout_output() -> None:
 
     assert stdout == ["ordinary console line\n"]
     assert progress == []
+
+
+def test_job_runner_handles_mixed_plain_and_tqdm_stdout_chunk() -> None:
+    """One stdout read can contain both console output and parsed progress."""
+    from lib.gui.qt_shell.job_runner import JobRunner
+
+    runner = JobRunner()
+    runner.process = _BufferedProcessDouble(
+        b"plain line\n"
+        b"Extracting:  25%|##5       | 5/20 [00:02<00:06,  2.50it/s]\n"
+        b"another plain line\n"
+    )  # type:ignore[assignment]
+    runner._runtime.command = "extract"  # pylint:disable=protected-access
+    progress = []
+    stdout = []
+    runner.progress.connect(progress.append)
+    runner.stdout.connect(stdout.append)
+
+    runner._stdout()  # pylint:disable=protected-access
+
+    assert stdout == ["plain line\n", "another plain line\n"]
+    assert len(progress) == 1
+    assert progress[0].kind == "progress"
+    assert progress[0].progress == 25.0
+
+
+def test_job_runner_handles_multiple_progress_lines_in_one_chunk() -> None:
+    """One stdout read can contain multiple parsed progress lines."""
+    from lib.gui.qt_shell.job_runner import JobRunner
+
+    runner = JobRunner()
+    runner.process = _BufferedProcessDouble(
+        b"Extracting:  25%|##5       | 5/20 [00:02<00:06,  2.50it/s]\n"
+        b"Extracting:  50%|#####     | 10/20 [00:04<00:04,  2.50it/s]\n"
+    )  # type:ignore[assignment]
+    runner._runtime.command = "extract"  # pylint:disable=protected-access
+    progress = []
+    stdout = []
+    runner.progress.connect(progress.append)
+    runner.stdout.connect(stdout.append)
+
+    runner._stdout()  # pylint:disable=protected-access
+
+    assert stdout == []
+    assert [event.progress for event in progress] == [25.0, 50.0]
+
+
+def test_job_runner_preserves_partial_tqdm_stdout_until_complete() -> None:
+    """Progress split across QProcess reads should parse only after terminator arrives."""
+    from lib.gui.qt_shell.job_runner import JobRunner
+
+    process = _BufferedProcessDouble(
+        b"Extracting:  25%|##5       | 5/20 [00:02<"
+    )
+    runner = JobRunner()
+    runner.process = process  # type:ignore[assignment]
+    runner._runtime.command = "extract"  # pylint:disable=protected-access
+    progress = []
+    stdout = []
+    runner.progress.connect(progress.append)
+    runner.stdout.connect(stdout.append)
+
+    runner._stdout()  # pylint:disable=protected-access
+    process.write_stdout(b"00:06,  2.50it/s]\n")
+    runner._stdout()  # pylint:disable=protected-access
+
+    assert stdout == []
+    assert len(progress) == 1
+    assert progress[0].progress == 25.0
+
+
+def test_job_runner_preserves_partial_plain_stdout_until_finished(qtbot) -> None:  # type:ignore[no-untyped-def]
+    """Trailing partial plain output should be flushed when the process finishes."""
+    from lib.gui.qt_shell.job_runner import JobRunner
+
+    runner = JobRunner()
+    runner.process = _BufferedProcessDouble(b"partial plain output")  # type:ignore[assignment]
+    runner._runtime.command = "extract"  # pylint:disable=protected-access
+    stdout = []
+    runner.stdout.connect(stdout.append)
+
+    with qtbot.waitSignal(runner.finished, timeout=1000):
+        runner._finished(0, QProcess.NormalExit)  # pylint:disable=protected-access
+
+    assert stdout == ["partial plain output"]
 
 
 def test_job_runner_accepts_command_when_starting(monkeypatch) -> None:
