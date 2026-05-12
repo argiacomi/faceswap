@@ -4,9 +4,9 @@ repos:
     hooks:
       - id: ruff
         args: [--fix]
-        files: ^(lib/gui/services|lib/gui/models|tests/lib/gui)/.*\.py$
+        files: ^(lib/gui/services|lib/gui/models|lib/gui/qt_shell|tests/lib/gui)/.*\.py$
       - id: ruff-format
-        files: ^(lib/gui/services|lib/gui/models|tests/lib/gui)/.*\.py$
+        files: ^(lib/gui/services|lib/gui/models|lib/gui/qt_shell|tests/lib/gui)/.*\.py$
 
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: v1.14.1
