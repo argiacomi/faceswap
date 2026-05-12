@@ -3,8 +3,8 @@
 
 from __future__ import annotations
 
-from lib.gui.services.job_runner import JobRunner, ProcessRuntimeService
 from lib.gui.services.runtime_events import RuntimeEvent
+from lib.gui.services.runtime_service import JobRunner, ProcessRuntimeService
 
 
 def _collect_events(runner: ProcessRuntimeService) -> list[RuntimeEvent]:
