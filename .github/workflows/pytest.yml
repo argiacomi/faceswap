@@ -14,172 +14,224 @@ jobs:
         defaults:
             run:
                 shell: bash -el {0}
+        env:
+            KERAS_BACKEND: torch
+            KERAS_TORCH_DEVICE: CPU
+            FACESWAP_BACKEND: ${{ matrix.backend }}
         strategy:
             fail-fast: false
             matrix:
-                # TODO revert. Despite documentation to the contrary, MacOS runners are always x86-64
-                #os: ["ubuntu-latest", "windows-latest", "macos-latest"]
-                os: ['ubuntu-latest', 'windows-latest']
+                os: [ubuntu-latest, windows-latest]
                 python-version: ['3.11', '3.12', '3.13']
-                backend: ['nvidia', 'cpu', 'rocm', 'apple-silicon']
+                backend: [nvidia, cpu, rocm, apple-silicon]
                 exclude:
-                    # CPU + Nvidia only on Windows
-                    - os: 'windows-latest'
-                      backend: 'rocm'
+                    - os: windows-latest
+                      backend: rocm
                     - os: windows-latest
                       backend: apple-silicon
-                    # No apple-silicon on Linux
                     - os: ubuntu-latest
                       backend: apple-silicon
-                    # Only Apple-Silicon on MacOS
-                    - os: 'macos-latest'
-                      backend: 'rocm'
-                    - os: 'macos-latest'
-                      backend: 'cpu'
-                    - os: 'macos-latest'
-                      backend: 'nvidia'
         steps:
-            - uses: actions/checkout@v3
+            - name: Check out repository
+              uses: actions/checkout@v5
+
             - name: Cleanup space
-              # We run out of space on rocm. Ref: https://github.com/actions/runner-images/issues/709
-              if: matrix.backend == 'rocm'
+              if: runner.os == 'Linux' && matrix.backend == 'rocm'
               run: |
                   sudo rm -rf "/usr/local/share/boost" "$AGENT_TOOLSDIRECTORY"
-            - name: Set cache date
-              run: echo "DATE=$(date +'%Y%m%d')" >> $GITHUB_ENV
-            # TODO Re-enable. Currently disabled as it does not seem to get used and takes a lot of space
-            #- name: Cache conda
-            #  uses: actions/cache@v3
-            #  env:
-            #    # Increase this value to manually reset cache
-            #    CACHE_NUMBER: 1
-            #    REQ_FILE: ./requirements/requirements_${{ matrix.backend }}.txt
-            #  with:
-            #    path: ~/conda_pkgs_dir
-            #    key: ${{ runner.os }}-${{ matrix.backend }}-conda-${{ matrix.python-version }}-${{ env.CACHE_NUMBER }}-${{ env.DATE }}-${{ hashFiles('./requirements/requirements.txt', env.REQ_FILE) }}
+
+            - name: Install Linux GUI dependencies
+              if: runner.os == 'Linux'
+              run: |
+                  sudo apt-get update
+                  sudo apt-get install -y \
+                    python3-tk \
+                    xvfb \
+                    xauth \
+                    x11-utils \
+                    libegl1 \
+                    libgl1 \
+                    libdbus-1-3 \
+                    libxkbcommon-x11-0 \
+                    libxcb-cursor0 \
+                    libxcb-icccm4 \
+                    libxcb-image0 \
+                    libxcb-keysyms1 \
+                    libxcb-randr0 \
+                    libxcb-render-util0 \
+                    libxcb-xinerama0 \
+                    libxcb-xfixes0
+
             - name: Set up Conda
               uses: conda-incubator/setup-miniconda@v2
               with:
                   python-version: ${{ matrix.python-version }}
-                  miniconda-version: 'latest'
+                  miniconda-version: latest
                   auto-update-conda: true
                   activate-environment: faceswap
+
             - name: Conda info
-              run: conda info && conda list
-            - name: Install
+              run: |
+                  conda info
+                  conda list
+
+            - name: Install dependencies
               run: |
                   python setup.py --installer --dev --${{ matrix.backend }}
-                  pip install wheel pytest-xvfb types-attrs types-cryptography types-pyOpenSSL
+                  python -m pip install --upgrade pip
+                  python -m pip install wheel pytest-xvfb types-attrs types-cryptography types-pyOpenSSL
+
             - name: Lint with flake8
               run: |
-                  # stop the build if there are Python syntax errors or undefined names
                   flake8 . --select=E9,F63,F7,F82 --show-source
                   flake8 . --exit-zero
-            - name: MyPy Typing
+
+            - name: MyPy typing
               continue-on-error: true
-              run: |
-                  mypy .
+              run: mypy .
+
             - name: SysInfo
               run: python -m lib.system.sysinfo
-            - name: Unit Tests
-              # These backends will fail as GPU drivers not available
+
+            - name: Unit tests
               if: matrix.backend == 'cpu'
               run: |
-                  KERAS_BACKEND=torch KERAS_TORCH_DEVICE=CPU FACESWAP_BACKEND="${{ matrix.backend }}" pytest -v tests/;
-            - name: End to End Tests
-              # These backends will fail as GPU drivers not available
+                  if [[ "$RUNNER_OS" == "Linux" ]]; then
+                    QT_QPA_PLATFORM=xcb xvfb-run -a python -m pytest -v tests/
+                  else
+                    python -m pytest -v tests/
+                  fi
+
+            - name: End-to-end tests
               if: matrix.backend == 'cpu'
               run: |
-                  KERAS_BACKEND=torch KERAS_TORCH_DEVICE=CPU FACESWAP_BACKEND="${{ matrix.backend }}" python tests/simple_tests.py;
+                  if [[ "$RUNNER_OS" == "Linux" ]]; then
+                    QT_QPA_PLATFORM=xcb xvfb-run -a python tests/simple_tests.py
+                  else
+                    python tests/simple_tests.py
+                  fi
 
     build_linux:
-        name: 'pip (ubuntu-latest, ${{ matrix.backend }} ${{ matrix.python-version }})'
+        name: pip (ubuntu-latest, ${{ matrix.backend }} ${{ matrix.python-version }})
         runs-on: ubuntu-latest
+        env:
+            KERAS_BACKEND: torch
+            KERAS_TORCH_DEVICE: CPU
+            FACESWAP_BACKEND: ${{ matrix.backend }}
         strategy:
             fail-fast: false
             matrix:
                 python-version: ['3.11', '3.12', '3.13']
-                backend: ['cpu']
-                include:
-                    - backend: 'cpu'
+                backend: [cpu]
         steps:
-            - uses: actions/checkout@v5
-            - name: Set up Python ${{ matrix.python-version }}
-              uses: actions/setup-python@v6
-              with:
-                  python-version: ${{ matrix.python-version }}
-                  cache: 'pip'
-                  cache-dependency-path: |
-                      './requirements/requirements_base.txt'
-                      './requirements/requirements_${{ matrix.backend }}.txt'
-            - name: Install dependencies
-              run: |
-                  python -m pip install --upgrade pip
-                  pip install -r ./requirements/requirements_${{ matrix.backend }}.txt
-                  pip install -r ./requirements/_requirements_dev.txt
-                  pip install wheel pytest-xvfb types-attrs types-cryptography types-pyOpenSSL
-            - name: Lint with flake8
-              run: |
-                  # stop the build if there are Python syntax errors or undefined names
-                  flake8 . --select=E9,F63,F7,F82 --show-source
-                  # exit-zero treats all errors as warnings.
-                  flake8 . --exit-zero
-            - name: MyPy Typing
-              continue-on-error: true
-              run: |
-                  mypy .
-            - name: SysInfo
-              run: FACESWAP_BACKEND="${{ matrix.backend }}" python -m lib.system.sysinfo
-            - name: Unit Tests
-              run: |
-                  KERAS_BACKEND=torch KERAS_TORCH_DEVICE=CPU FACESWAP_BACKEND="${{ matrix.backend }}" pytest -v tests/;
-            - name: End to End Tests
-              run: |
-                  KERAS_BACKEND=torch KERAS_TORCH_DEVICE=CPU FACESWAP_BACKEND="${{ matrix.backend }}" python tests/simple_tests.py;
+            - name: Check out repository
+              uses: actions/checkout@v5
 
-    build_windows:
-        name: 'pip (windows-latest, ${{ matrix.backend }} ${{ matrix.python-version }})'
-        runs-on: windows-latest
-        strategy:
-            fail-fast: false
-            matrix:
-                python-version: ['3.11', '3.12', '3.13']
-                backend: ['cpu']
-                include:
-                    - backend: 'cpu'
-        steps:
-            - uses: actions/checkout@v5
+            - name: Install Linux GUI dependencies
+              run: |
+                  sudo apt-get update
+                  sudo apt-get install -y \
+                    python3-tk \
+                    xvfb \
+                    xauth \
+                    x11-utils \
+                    libegl1 \
+                    libgl1 \
+                    libdbus-1-3 \
+                    libxkbcommon-x11-0 \
+                    libxcb-cursor0 \
+                    libxcb-icccm4 \
+                    libxcb-image0 \
+                    libxcb-keysyms1 \
+                    libxcb-randr0 \
+                    libxcb-render-util0 \
+                    libxcb-xinerama0 \
+                    libxcb-xfixes0
+
             - name: Set up Python ${{ matrix.python-version }}
               uses: actions/setup-python@v6
               with:
                   python-version: ${{ matrix.python-version }}
-                  cache: 'pip'
+                  cache: pip
                   cache-dependency-path: |
-                      './requirements/requirements_base.txt'
-                      './requirements/requirements_${{ matrix.backend }}.txt'
+                      requirements/requirements_base.txt
+                      requirements/requirements_${{ matrix.backend }}.txt
+
             - name: Install dependencies
               run: |
                   python -m pip install --upgrade pip
-                  pip install types-attrs types-cryptography types-pyOpenSSL wheel
-                  pip install -r ./requirements/_requirements_dev.txt
-                  pip install -r ./requirements/requirements_${{ matrix.backend }}.txt
-            - name: Set Faceswap Backend EnvVar
-              run: echo "FACESWAP_BACKEND=${{ matrix.backend }}" | Out-File -FilePath $env:GITHUB_ENV -Append
-            - name: Set Keras Backend EnvVar
-              run: echo "KERAS_BACKEND=torch" | Out-File -FilePath $env:GITHUB_ENV -Append
+                  python -m pip install -r requirements/requirements_${{ matrix.backend }}.txt
+                  python -m pip install -r requirements/_requirements_dev.txt
+                  python -m pip install wheel pytest-xvfb types-attrs types-cryptography types-pyOpenSSL
+
             - name: Lint with flake8
               run: |
-                  # stop the build if there are Python syntax errors or undefined names
                   flake8 . --select=E9,F63,F7,F82 --show-source
-                  # exit-zero treats all errors as warnings.
                   flake8 . --exit-zero
-            - name: MyPy Typing
+
+            - name: MyPy typing
               continue-on-error: true
-              run: |
-                  mypy .
+              run: mypy .
+
             - name: SysInfo
               run: python -m lib.system.sysinfo
-            - name: Unit Tests
-              run: pytest -v tests
-            - name: End to End Tests
+
+            - name: Unit tests
+              env:
+                  QT_QPA_PLATFORM: xcb
+              run: xvfb-run -a python -m pytest -v tests/
+
+            - name: End-to-end tests
+              env:
+                  QT_QPA_PLATFORM: xcb
+              run: xvfb-run -a python tests/simple_tests.py
+
+    build_windows:
+        name: pip (windows-latest, ${{ matrix.backend }} ${{ matrix.python-version }})
+        runs-on: windows-latest
+        env:
+            KERAS_BACKEND: torch
+            KERAS_TORCH_DEVICE: CPU
+            FACESWAP_BACKEND: ${{ matrix.backend }}
+        strategy:
+            fail-fast: false
+            matrix:
+                python-version: ['3.11', '3.12', '3.13']
+                backend: [cpu]
+        steps:
+            - name: Check out repository
+              uses: actions/checkout@v5
+
+            - name: Set up Python ${{ matrix.python-version }}
+              uses: actions/setup-python@v6
+              with:
+                  python-version: ${{ matrix.python-version }}
+                  cache: pip
+                  cache-dependency-path: |
+                      requirements/requirements_base.txt
+                      requirements/requirements_${{ matrix.backend }}.txt
+
+            - name: Install dependencies
+              run: |
+                  python -m pip install --upgrade pip
+                  python -m pip install types-attrs types-cryptography types-pyOpenSSL wheel
+                  python -m pip install -r requirements/_requirements_dev.txt
+                  python -m pip install -r requirements/requirements_${{ matrix.backend }}.txt
+
+            - name: Lint with flake8
+              run: |
+                  flake8 . --select=E9,F63,F7,F82 --show-source
+                  flake8 . --exit-zero
+
+            - name: MyPy typing
+              continue-on-error: true
+              run: mypy .
+
+            - name: SysInfo
+              run: python -m lib.system.sysinfo
+
+            - name: Unit tests
+              run: python -m pytest -v tests/
+
+            - name: End-to-end tests
               run: python tests/simple_tests.py
