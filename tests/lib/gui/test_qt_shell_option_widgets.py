@@ -1,137 +1,285 @@
 #!/usr/bin/env python3
-"""Qt right display panel tests."""
+"""Qt command option widget tests."""
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QLabel, QSplitter, QTableWidget, QTabWidget
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QGroupBox,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QRadioButton,
+    QSlider,
+)
+
+from lib.gui.services.command_builder import CommandBuilder
 
 
-def test_analysis_panel_renders_session_stats_placeholder(  # type:ignore[no-untyped-def]
-    qtbot,
-    monkeypatch,
-    tmp_path,
-) -> None:
-    """MainWindow should render the Analysis tab session table skeleton."""
-    monkeypatch.setenv("HOME", str(tmp_path))
+def _command_panel(*options):  # type:ignore[no-untyped-def]
+    """Return a CommandPanel backed by a single extract command."""
+    from lib.gui.qt_shell.command_panel import CommandPanel
+    from lib.gui.qt_shell.command_schema import CommandSchema, CommandSpec
 
-    from lib.gui.qt_shell.command_schema import CommandSchema, CommandSpec, OptionSpec
-    from lib.gui.qt_shell.main_window import MainWindow
-
-    schema = CommandSchema(
-        (
-            CommandSpec(
-                "faceswap",
-                "extract",
-                (OptionSpec("Input", "-i"),),
-            ),
+    return CommandPanel(
+        CommandSchema(
+            (
+                CommandSpec(
+                    "faceswap",
+                    "extract",
+                    tuple(options),
+                ),
+            )
         )
     )
-    window = MainWindow(schema)
-    qtbot.addWidget(window)
-    table = window.findChild(QTableWidget, "qt-shell-session-stats")
-    labels = {label.text() for label in window.findChildren(QLabel)}
-
-    assert table is not None
-    assert table.columnCount() == 8
-    assert [table.horizontalHeaderItem(idx).text() for idx in range(8)] == [
-        "Graphs",
-        "#",
-        "Start",
-        "End",
-        "Elapsed",
-        "Batch",
-        "Iterations",
-        "EGs/sec",
-    ]
-    assert "Session Stats" in labels
-    assert "No session data loaded" in labels
 
 
-def test_analysis_panel_disables_horizontal_scrolling(  # type:ignore[no-untyped-def]
-    qtbot,
-    monkeypatch,
-    tmp_path,
-) -> None:
-    """Analysis table should fit the available width instead of scrolling sideways."""
-    monkeypatch.setenv("HOME", str(tmp_path))
+def _option_spec(*args, **kwargs):  # type:ignore[no-untyped-def]
+    """Return an OptionSpec without importing Qt shell schema at module import time."""
+    from lib.gui.qt_shell.command_schema import OptionSpec
 
-    from lib.gui.qt_shell.command_schema import CommandSchema, CommandSpec, OptionSpec
-    from lib.gui.qt_shell.main_window import MainWindow
+    return OptionSpec(*args, **kwargs)
 
-    schema = CommandSchema(
-        (
-            CommandSpec(
-                "faceswap",
-                "extract",
-                (OptionSpec("Input", "-i"),),
-            ),
+
+def test_radio_option_extracts_and_restores_value(qtbot) -> None:  # type:ignore[no-untyped-def]
+    """Radio metadata should render exclusive choices and restore stored values."""
+    panel = _command_panel(
+        _option_spec(
+            "Mode",
+            "--mode",
+            str,
+            "one",
+            ("one", "two"),
+            is_radio=True,
         )
     )
-    window = MainWindow(schema)
-    qtbot.addWidget(window)
-    table = window.findChild(QTableWidget, "qt-shell-session-stats")
+    qtbot.addWidget(panel)
+    widget = panel.renderer.widget_for_switch("--mode")
+    buttons = {button.text(): button for button in widget.findChildren(QRadioButton)}
 
-    assert table is not None
-    assert table.horizontalScrollBarPolicy() == Qt.ScrollBarAlwaysOff
-    assert table.minimumWidth() == 0
+    buttons["two"].setChecked(True)
+
+    assert panel.command_spec()[2] == {"--mode": "two"}
+
+    panel.set_command("extract", {"--mode": "one"})
+    widget = panel.renderer.widget_for_switch("--mode")
+    buttons = {button.text(): button for button in widget.findChildren(QRadioButton)}
+
+    assert buttons["one"].isChecked() is True
+    assert panel.command_spec()[2] == {"--mode": "one"}
 
 
-def test_right_display_panel_is_display_only(  # type:ignore[no-untyped-def]
-    qtbot,
-    monkeypatch,
-    tmp_path,
-) -> None:
-    """The large right panel should expose display tabs, not command output."""
-    monkeypatch.setenv("HOME", str(tmp_path))
-
-    from lib.gui.qt_shell.command_schema import CommandSchema, CommandSpec, OptionSpec
-    from lib.gui.qt_shell.main_window import MainWindow
-
-    schema = CommandSchema(
-        (
-            CommandSpec(
-                "faceswap",
-                "extract",
-                (OptionSpec("Input", "-i"),),
-            ),
+def test_multi_option_extracts_and_restores_values(qtbot) -> None:  # type:ignore[no-untyped-def]
+    """Multi-option metadata should emit selected choices and restore stored choices."""
+    panel = _command_panel(
+        _option_spec(
+            "Features",
+            "--features",
+            str,
+            ("fast",),
+            ("fast", "safe", "slow"),
+            is_multi_option=True,
         )
     )
-    window = MainWindow(schema)
-    qtbot.addWidget(window)
-    tabs = window.findChild(QTabWidget, "qt-shell-display-tabs")
+    qtbot.addWidget(panel)
+    widget = panel.renderer.widget_for_switch("--features")
+    checkboxes = {checkbox.text(): checkbox for checkbox in widget.findChildren(QCheckBox)}
 
-    assert tabs is not None
-    assert tabs.minimumWidth() == 0
-    assert [tabs.tabText(index) for index in range(tabs.count())] == [
-        "Analysis",
-        "Preview",
-        "Graph",
-    ]
+    checkboxes["safe"].setChecked(True)
+    checkboxes["fast"].setChecked(False)
+
+    assert panel.command_spec()[2] == {"--features": ["safe"]}
+
+    panel.set_command("extract", {"--features": ["fast", "slow"]})
+    widget = panel.renderer.widget_for_switch("--features")
+    checkboxes = {checkbox.text(): checkbox for checkbox in widget.findChildren(QCheckBox)}
+
+    assert checkboxes["fast"].isChecked() is True
+    assert checkboxes["safe"].isChecked() is False
+    assert checkboxes["slow"].isChecked() is True
+    assert panel.command_spec()[2] == {"--features": ["fast", "slow"]}
 
 
-def test_main_panels_are_adjustable(  # type:ignore[no-untyped-def]
-    qtbot,
-    monkeypatch,
-    tmp_path,
-) -> None:
-    """Main command/display and top/console panels should be QSplitters."""
-    monkeypatch.setenv("HOME", str(tmp_path))
-
-    from lib.gui.qt_shell.command_schema import CommandSchema, CommandSpec, OptionSpec
-    from lib.gui.qt_shell.main_window import MainWindow
-
-    schema = CommandSchema(
-        (
-            CommandSpec(
-                "faceswap",
-                "extract",
-                (OptionSpec("Input", "-i"),),
-            ),
+def test_empty_multi_option_skips_cli_emission(qtbot) -> None:  # type:ignore[no-untyped-def]
+    """An empty multi-option selection should be omitted from built CLI args."""
+    panel = _command_panel(
+        _option_spec(
+            "Features",
+            "--features",
+            str,
+            "",
+            ("fast", "safe"),
+            is_multi_option=True,
         )
     )
-    window = MainWindow(schema)
-    qtbot.addWidget(window)
+    qtbot.addWidget(panel)
+    widget = panel.renderer.widget_for_switch("--features")
 
-    assert isinstance(window.findChild(QSplitter, "qt-shell-main-splitter"), QSplitter)
-    assert isinstance(window.findChild(QSplitter, "qt-shell-vertical-splitter"), QSplitter)
+    for checkbox in widget.findChildren(QCheckBox):
+        checkbox.setChecked(False)
+
+    assert panel.command_spec()[2] == {"--features": ""}
+    assert CommandBuilder.build_options(panel.command_spec()[2]) == []
+
+
+def test_store_false_checkbox_emits_when_unchecked(qtbot) -> None:  # type:ignore[no-untyped-def]
+    """store_false checkboxes should emit their switch when unchecked."""
+    panel = _command_panel(
+        _option_spec(
+            "Enabled Feature",
+            "--disable-feature",
+            bool,
+            True,
+            action="store_false",
+        )
+    )
+    qtbot.addWidget(panel)
+    widget = panel.renderer.widget_for_switch("--disable-feature")
+    assert isinstance(widget, QCheckBox)
+
+    assert widget.isChecked() is True
+    assert CommandBuilder.build_options(panel.command_spec()[2]) == []
+
+    widget.setChecked(False)
+
+    assert panel.command_spec()[2] == {"--disable-feature": True}
+    assert CommandBuilder.build_options(panel.command_spec()[2]) == ["--disable-feature"]
+
+    panel.set_command("extract", {"--disable-feature": True})
+    widget = panel.renderer.widget_for_switch("--disable-feature")
+    assert isinstance(widget, QCheckBox)
+
+    assert widget.isChecked() is False
+    assert CommandBuilder.build_options(panel.command_spec()[2]) == ["--disable-feature"]
+
+
+def test_int_slider_extracts_restores_and_clamps(qtbot) -> None:  # type:ignore[no-untyped-def]
+    """Integer sliders should sync their line edit, restore values and clamp bounds."""
+    panel = _command_panel(
+        _option_spec(
+            "Batch Size",
+            "--batch-size",
+            int,
+            64,
+            action="Slider",
+            slider_min=1,
+            slider_max=256,
+            slider_rounding=1,
+        )
+    )
+    qtbot.addWidget(panel)
+    widget = panel.renderer.widget_for_switch("--batch-size")
+    slider = widget.findChild(QSlider)
+    line_edit = widget.findChild(QLineEdit)
+    assert slider is not None
+    assert line_edit is not None
+
+    assert slider.value() == 64
+    assert line_edit.text() == "64"
+    assert panel.command_spec()[2] == {"--batch-size": 64}
+
+    panel.set_command("extract", {"--batch-size": 128})
+    widget = panel.renderer.widget_for_switch("--batch-size")
+    slider = widget.findChild(QSlider)
+    line_edit = widget.findChild(QLineEdit)
+    assert slider is not None
+    assert line_edit is not None
+    assert slider.value() == 128
+    assert line_edit.text() == "128"
+
+    line_edit.setText("300")
+    line_edit.editingFinished.emit()
+    assert slider.value() == 256
+    assert line_edit.text() == "256"
+    assert panel.command_spec()[2] == {"--batch-size": 256}
+
+    line_edit.setText("-5")
+    line_edit.editingFinished.emit()
+    assert slider.value() == 1
+    assert line_edit.text() == "1"
+
+    line_edit.setText("bad")
+    line_edit.editingFinished.emit()
+    assert slider.value() == 64
+    assert line_edit.text() == "64"
+
+
+def test_float_slider_extracts_rounds_and_clamps(qtbot) -> None:  # type:ignore[no-untyped-def]
+    """Float sliders should preserve configured precision and clamp bounds."""
+    panel = _command_panel(
+        _option_spec(
+            "Threshold",
+            "--threshold",
+            float,
+            0.5,
+            action="Slider",
+            slider_min=0.01,
+            slider_max=0.99,
+            slider_rounding=2,
+        )
+    )
+    qtbot.addWidget(panel)
+    widget = panel.renderer.widget_for_switch("--threshold")
+    slider = widget.findChild(QSlider)
+    line_edit = widget.findChild(QLineEdit)
+    assert slider is not None
+    assert line_edit is not None
+
+    assert slider.value() == 50
+    assert line_edit.text() == "0.5"
+
+    line_edit.setText("0.456")
+    line_edit.editingFinished.emit()
+    assert slider.value() == 46
+    assert line_edit.text() == "0.46"
+    assert panel.command_spec()[2] == {"--threshold": 0.46}
+
+    line_edit.setText("2.5")
+    line_edit.editingFinished.emit()
+    assert slider.value() == 99
+    assert line_edit.text() == "0.99"
+
+    line_edit.setText("bad")
+    line_edit.editingFinished.emit()
+    assert slider.value() == 50
+    assert line_edit.text() == "0.5"
+
+
+def test_browse_buttons_get_stable_object_names(qtbot) -> None:  # type:ignore[no-untyped-def]
+    """Path options should wrap line edits with browse buttons named by mode."""
+    panel = _command_panel(
+        _option_spec(
+            "Input",
+            "-i",
+            helptext="Pick paths",
+            browser_modes=("folder", "file", "files", "save"),
+        )
+    )
+    qtbot.addWidget(panel)
+
+    assert {
+        button.objectName()
+        for button in panel.renderer.findChildren(QPushButton)
+    } == {
+        "qt-shell-browser-folder",
+        "qt-shell-browser-file",
+        "qt-shell-browser-files",
+        "qt-shell-browser-save",
+    }
+    assert isinstance(panel.renderer.widget_for_switch("-i"), QLineEdit)
+
+
+def test_group_sections_render_labels_and_containers(qtbot) -> None:  # type:ignore[no-untyped-def]
+    """Grouped options should render titled group sections."""
+    panel = _command_panel(
+        _option_spec("Input", "-i", group="Data"),
+        _option_spec("Output", "-o", group="Data"),
+        _option_spec("Debug", "--debug", bool, False, group="_master"),
+    )
+    qtbot.addWidget(panel)
+    group_labels = panel.renderer.findChildren(QLabel, "qt-shell-option-group-label")
+    groups = panel.renderer.findChildren(QGroupBox, "qt-shell-option-group")
+
+    assert [label.text() for label in group_labels] == ["Data"]
+    assert len(groups) == 1
+    assert set(panel.renderer.rendered_switches) == {"-i", "-o", "--debug"}
