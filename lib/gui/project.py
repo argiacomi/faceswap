@@ -14,7 +14,13 @@ from lib.logger import parse_class_init
 from lib.serializer import get_serializer
 from lib.utils import get_module_objects
 
-from .project_models import ProjectFile
+from .models.project import ProjectFile
+from .services.gui_option_applier import GuiOptionApplier
+from .services.modified_state_tracker import ModifiedStateTracker
+from .services.project_session_state import ProjectSessionState
+from .services.project_store import ProjectStore
+from .services.recent_files_store import RecentFilesStore
+from .services.session_file_picker import SessionFilePicker
 
 if T.TYPE_CHECKING:
     from .utils import FileHandler
@@ -42,14 +48,25 @@ class _GuiSession:  # pylint:disable=too-few-public-methods
         logger.debug(parse_class_init(locals()))
         self._serializer = get_serializer("json")
         self._config = config
+        self._project_store = ProjectStore(self._serializer)
+        recent_filename = os.path.join(self._config.path_cache, ".recent.json")
+        self._recent_files = RecentFilesStore(self._serializer, recent_filename)
+        self._modified_tracker = ModifiedStateTracker(self._config.modified_vars)
 
         self._options: dict[str, str | dict[str, bool | int | float | str]] | None = (
             None
         )
-        self._file_handler = file_handler
+        self._option_applier = GuiOptionApplier(
+            self._config.cli_opts,
+            self._config.set_active_tab_by_name,
+        )
+        self._file_picker = (
+            None if file_handler is None else SessionFilePicker(file_handler)
+        )
         self._filename: str | None = None
         self._saved_tasks = None
         self._modified = False
+        self._state = ProjectSessionState()
 
     @property
     def _active_tab(self) -> str:
@@ -163,58 +180,21 @@ class _GuiSession:  # pylint:disable=too-few-public-methods
         filename: str | None = None,
         session_type: T.Literal["all", "project", "task"] = "project",
     ) -> bool:
-        """Set the :attr:`_filename` attribute.
-
-        :attr:`_filename` is set either from a given filename or the result from
-        a :attr:`_file_handler`.
-
-        Parameters
-        ----------
-        filename
-            An optional filename. If given then this filename will be used otherwise it will be
-            collected by a :attr:`_file_handler`
-
-        session_type
-            The session type that the filename is being set for. Dictates the type of file handler
-            that is opened. Default: `"Project"`
-
-        Returns
-        -------
-        ``True`` if filename has been successfully set otherwise ``False``
-        """
+        """Set the current session filename."""
         logger.debug("filename: '%s', session_type: '%s'", filename, session_type)
-        handler = T.cast(
-            T.Literal["config_all", "config_project", "config_task"],
-            f"config_{session_type}",
-        )
-        if filename is None:
-            logger.debug("Popping file handler")
-            assert self._file_handler is not None
-            cfg_file = self._file_handler("open", handler).return_file
-            if not cfg_file:
-                logger.debug("No filename given")
-                return False
-            filename = cfg_file.name
-            cfg_file.close()
-            assert filename is not None
+        assert self._file_picker is not None
 
-        if not os.path.isfile(filename):
-            msg = f"File does not exist: '{filename}'"
-            logger.error(msg)
-            return False
-        ext = os.path.splitext(filename)[1]
-        if (session_type == "project" and ext != ".fsw") or (
-            session_type == "task" and ext != ".fst"
-        ):
+        picked = self._file_picker.open(session_type, filename)
+        if picked is None:
             logger.debug(
-                "Invalid file extension for session type: (session_type: '%s', "
-                "extension: '%s')",
+                "No valid filename selected. session_type: '%s', filename: '%s'",
                 session_type,
-                ext,
+                filename,
             )
             return False
-        logger.debug("Setting filename: '%s'", filename)
-        self._filename = filename
+
+        logger.debug("Setting filename: '%s'", picked.filename)
+        self._filename = picked.filename
         return True
 
     # GUI STATE SETTING
@@ -228,77 +208,14 @@ class _GuiSession:  # pylint:disable=too-few-public-methods
             The tab to set the options for. If None then sets options for all tabs.
             Default: ``None``
         """
-        opts = self._get_options_for_command(command) if command else self._cli_options
-        logger.debug("command: %s, opts: %s", command, opts)
-        if opts is None:
-            logger.debug("No options found. Returning")
-            return
-        for cmd, opt in opts.items():
-            self._set_gui_state_for_command(cmd, opt)
         assert self._options is not None
-        tab_name = self._options.get("tab_name", None) if command is None else command
-        tab_name = tab_name if tab_name is not None else "extract"
-        logger.debug("tab_name: %s", tab_name)
-        assert isinstance(tab_name, str)
-        self._config.set_active_tab_by_name(tab_name)
-
-    def _get_options_for_command(
-        self, command: str
-    ) -> dict[str, dict[str, bool | int | float | str]] | None:
-        """Return a single command's options from :attr:`_options` formatted consistently with
-        an all options dict.
-
-        Parameters
-        ----------
-        command
-            The command to return the options for
-
-        Returns
-        -------
-        dict: The options for a single command in the format {command: options}. If the command
-        is not found then returns ``None``
-        """
-        logger.debug(command)
-        assert self._options is not None
-        opts = T.cast(
-            dict[str, int | float | bool | str] | None, self._options.get(command, None)
-        )
-        if opts is None:
-            self._config.tk_vars.console_clear.set(True)
-            logger.info("No  %s section found in file", command)
-            retval = None
-        else:
-            retval = {command: opts}
-        logger.debug(retval)
-        return retval
-
-    def _set_gui_state_for_command(
-        self, command: str, options: dict[str, bool | int | float | str]
-    ) -> None:
-        """Set the GUI state for the given command.
-
-        Parameters
-        ----------
-        command
-            The tab to set the options for
-        options
-            The option values to set the GUI to
-        """
-        logger.debug("command: %s: options: %s", command, options)
-        if not options:
-            logger.debug("No options provided, not updating GUI")
+        logger.debug("command: %s, options: %s", command, self._options)
+        applied = self._option_applier.apply_project(self._options, command=command)
+        if applied:
             return
-        for src_opt, src_val in options.items():
-            opt_var = self._config.cli_opts.get_one_option_variable(command, src_opt)
-            if not opt_var:
-                continue
-            logger.trace(  # type:ignore[attr-defined]
-                "setting option: (src_opt: %s, opt_var: %s, src_val: %s)",
-                src_opt,
-                opt_var,
-                src_val,
-            )
-            opt_var.set(src_val)
+
+        self._config.tk_vars.console_clear.set(True)
+        logger.info("No %s section found in file", command)
 
     def _reset_modified_var(self, command: str | None = None) -> None:
         """Reset :attr:`_modified_vars` variables back to unmodified (`False`) for all
@@ -310,12 +227,8 @@ class _GuiSession:  # pylint:disable=too-few-public-methods
             The command to reset the modified tkinter variable for. If ``None`` then all tkinter
             modified variables are reset to `False`. Default: ``None``
         """
-        for key, tk_var in self._modified_vars.items():
-            if (command is None or command == key) and tk_var.get():
-                logger.debug(
-                    "Reset modified state for: (command: %s key: %s)", command, key
-                )
-                tk_var.set(False)
+        logger.debug("Reset modified state for: %s", command)
+        self._modified_tracker.reset(command)
 
     # RECENT FILE HANDLING
     def _add_to_recent(self, command: str | None = None) -> None:
@@ -331,32 +244,8 @@ class _GuiSession:  # pylint:disable=too-few-public-methods
         if self._filename is None:
             logger.debug("No filename for selected file. Not adding to recent.")
             return
-        recent_filename = os.path.join(self._config.path_cache, ".recent.json")
-        logger.debug(
-            "Adding to recent files '%s': (%s, %s)",
-            recent_filename,
-            self._filename,
-            command,
-        )
-        if not os.path.exists(recent_filename) or os.path.getsize(recent_filename) == 0:
-            logger.debug("Starting with empty recent_files list")
-            recent_files: list[tuple[str, str]] | None = []
-        else:
-            logger.debug("loading recent_files list: %s", recent_filename)
-            assert self._serializer is not None
-            recent_files = self._serializer.load(  # pyright:ignore[reportCallIssue]
-                recent_filename
-            )
-        logger.debug("Initial recent files: %s", recent_files)
-        recent_files = self._del_from_recent(self._filename, recent_files)
-        assert recent_files is not None
         f_type = "project" if command is None else command
-        recent_files.insert(0, (self._filename, f_type))
-        recent_files = recent_files[:20]
-        logger.debug("Final recent files: %s", recent_files)
-
-        assert self._serializer is not None
-        self._serializer.save(recent_filename, recent_files)  # pyright:ignore[reportCallIssue]
+        self._recent_files.add(self._filename, f_type)
 
     def _del_from_recent(
         self,
@@ -381,35 +270,17 @@ class _GuiSession:  # pylint:disable=too-few-public-methods
         -------
         List of recent files and their filetypes
         """
-        recent_filename = os.path.join(self._config.path_cache, ".recent.json")
         if recent_files is None:
-            logger.debug("Loading file list from disk: %s", recent_filename)
-            if (
-                not os.path.exists(recent_filename)
-                or os.path.getsize(recent_filename) == 0
-            ):
-                logger.debug("No recent file list")
-                return None
-            assert self._serializer is not None
-            recent_files = self._serializer.load(  # pyright:ignore[reportCallIssue]
-                recent_filename
-            )
-        assert recent_files is not None
-        filenames = [recent[0] for recent in recent_files]
-        if filename in filenames:
-            idx = filenames.index(filename)
-            logger.debug("Removing from recent file list: %s", filename)
-            del recent_files[idx]
-            if save:
-                logger.debug("Saving recent files list: %s", recent_filename)
-                assert self._serializer is not None
-                self._serializer.save(
-                    recent_filename,  # pyright:ignore[reportCallIssue]
-                    recent_files,
-                )
+            removed = self._recent_files.remove(filename, save=save)
         else:
-            logger.debug("Filename '%s' does not appear in recent file list", filename)
-        return recent_files
+            removed = [
+                item
+                for item in RecentFilesStore.decode_many(recent_files)
+                if item.filename != filename
+            ]
+            if save:
+                self._recent_files.save(removed)
+        return [(item.filename, item.kind) for item in removed]
 
     def _get_lone_task(self) -> str | None:
         """Get the sole command name from :attr:`_options`.
@@ -433,36 +304,26 @@ class _GuiSession:  # pylint:disable=too-few-public-methods
         -------
         ``True`` if successfully loaded otherwise ``False``
         """
-        if self._file_exists:
-            logger.debug("Loading config")
-            assert self._serializer is not None
-            raw_options = self._serializer.load(  # pyright:ignore[reportCallIssue]
-                self._filename
-            )
-            self._options = self._deserialize_options(raw_options)
-            self._check_valid_choices()
-            retval = True
-        else:
+        if not self._file_exists:
             logger.debug("File doesn't exist. Aborting")
-            retval = False
-        return retval
+            return False
 
-    def _deserialize_options(
-        self, raw_options: dict[str, T.Any]
-    ) -> dict[str, str | dict[str, bool | int | float | str]]:
-        """Deserialize a project/task payload from disk into the GUI's legacy flat shape."""
-        project_file = ProjectFile.from_mapping(raw_options)
-        return project_file.to_legacy_options()
+        logger.debug("Loading config")
+        try:
+            self._options = self._load_options()
+        except ValueError as err:
+            logger.error("Invalid project file: %s", err)
+            messagebox.showerror("Invalid Project File", str(err))
+            return False
+        self._check_valid_choices()
+        return True
 
-    def _serialize_options(
-        self, command: str | None = None
-    ) -> dict[str, int | str | dict[str, dict[str, T.Any]]]:
-        """Serialize stored options to the versioned project/task file shape."""
-        assert self._options is not None
-        project_file = ProjectFile.from_legacy_options(
-            self._options, tab_name=self._active_tab
-        )
-        return project_file.model_dump()
+    def _load_options(self) -> dict[str, str | dict[str, bool | int | float | str]]:
+        """Load project/task options from disk into the GUI's legacy flat shape."""
+        assert self._filename is not None
+        project_file = self._project_store.load(self._filename)
+        self._state.load(self._filename, project_file)
+        return self._state.legacy_options
 
     def _check_valid_choices(self) -> None:
         """Check whether the loaded file has any selected combo/radio/multi-option values that are
@@ -499,41 +360,29 @@ class _GuiSession:  # pylint:disable=too-few-public-methods
     def _save_as_to_filename(
         self, session_type: T.Literal["all", "task", "project"]
     ) -> bool:
-        """Set :attr:`_filename` from a save as dialog.
-
-        Parameters
-        ----------
-        session_type: ['all', 'task', 'project']
-            The type of session to pop the save as dialog for. Limits the allowed filetypes
-
-        Returns
-        -------
-        True if :attr:`filename` successfully set otherwise ``False``
-        """
+        """Set the current session filename from a save-as dialog."""
         logger.debug("Popping save as file handler. session_type: '%s'", session_type)
+        assert self._file_picker is not None
+
         title = (
             f"Save {f'{session_type.title()} ' if session_type != 'all' else ''}As..."
         )
-        assert self._file_handler is not None
-        cfg_file = self._file_handler(
-            "save",
-            T.cast(
-                T.Literal["config_all", "config_project", "config_task"],
-                f"config_{session_type}",
-            ),
+        picked = self._file_picker.save_as(
+            session_type,
             title=title,
             initial_folder=self._dirname,
-        ).return_file
-        if not cfg_file:
+        )
+
+        if picked is None:
             logger.debug("No filename provided. session_type: '%s'", session_type)
             return False
-        self._filename = cfg_file.name
+
+        self._filename = picked.filename
         logger.debug(
-            "Set filename: (session_type: '%s', filename: '%s'",
+            "Set filename: (session_type: '%s', filename: '%s')",
             session_type,
             self._filename,
         )
-        cfg_file.close()
         return True
 
     def _save(self, command: str | None = None) -> None:
@@ -549,17 +398,14 @@ class _GuiSession:  # pylint:disable=too-few-public-methods
             The tab to collect the current state for. If ``None`` then collects the current
             state for all tabs. Default: ``None``
         """
-        self._options = T.cast(
-            dict[str, str | dict[str, bool | int | float | str]],
-            self._current_gui_state(command),
-        )
-        self._options["tab_name"] = self._active_tab
+        tasks = self._current_gui_state(command)
+        project_file = ProjectFile(tab_name=self._active_tab, tasks=tasks)
+        self._options = project_file.to_legacy_options()
         logger.debug(
             "Saving options: (filename: %s, options: %s", self._filename, self._options
         )
-        assert self._serializer is not None
-        payload = self._serialize_options(command)
-        self._serializer.save(self._filename, payload)  # pyright:ignore[reportCallIssue]
+        assert self._filename is not None
+        self._project_store.save(self._filename, project_file)
         self._reset_modified_var(command)
         self._add_to_recent(command)
 
@@ -878,7 +724,7 @@ class Project(_GuiSession):
     @property
     def _project_modified(self) -> bool:
         """``True`` if the project has been modified otherwise ``False``."""
-        return any(var.get() for var in self._modified_vars.values())
+        return self._modified_tracker.any_modified()
 
     @property
     def _tasks(self) -> Tasks:
@@ -1045,34 +891,30 @@ class Project(_GuiSession):
     def new(self, *args) -> None:  # pylint:disable=unused-argument
         """Create a new project with default options.
 
-        Pops a file handler to select location.
-
         Parameters
         ----------
         *args
             Unused, but needs to be present for arguments passed by tkinter event handling
         """
         logger.debug("Creating new project")
+
         if not self.confirm_close():
-            logger.debug("Creating new project cancelled")
+            logger.debug("New project cancelled")
             return
-        assert self._file_handler is not None
-        cfg_file = self._file_handler(
-            "save",
-            "config_project",
-            title="New Project...",
-            initial_folder=self._basename,
-        ).return_file
-        if not cfg_file:
-            logger.debug("No filename selected")
+
+        if not self._save_as_to_filename("project"):
+            logger.debug("No filename selected for new project")
             return
-        self._filename = cfg_file.name
-        cfg_file.close()
 
         self.set_default_options()
-        self._config.cli_opts.reset()
+        self._set_options()
+        self._tasks.clear_tasks()
+        self._reset_modified_var()
+        self._modified = False
         self._save()
         self._update_root_title()
+
+        logger.debug("Created new project: '%s'", self._filename)
 
     def close(self, *args) -> None:  # pylint:disable=unused-argument
         """Clear the current project and set all options to default.
@@ -1191,11 +1033,14 @@ class LastSession(_GuiSession):
         )
         return opts
 
-    def _deserialize_options(
-        self, raw_options: dict[str, T.Any]
-    ) -> dict[str, str | dict[str, bool | int | float | str]]:
-        """Deserialize last session payloads without project/task model coercion."""
-        return T.cast(dict[str, str | dict[str, bool | int | float | str]], raw_options)
+    def _load_options(self) -> dict[str, str | dict[str, bool | int | float | str]]:
+        """Load last-session payloads without project/task model coercion."""
+        assert self._filename is not None
+        assert self._serializer is not None
+        return T.cast(
+            dict[str, str | dict[str, bool | int | float | str]],
+            self._serializer.load(self._filename),  # pyright:ignore[reportCallIssue]
+        )
 
     def ask_load(self) -> None:
         """Pop a message box to ask the user if they wish to load their last session."""
@@ -1254,7 +1099,7 @@ class LastSession(_GuiSession):
             assert self._serializer is not None
             self._serializer.save(self._filename, opts)  # pyright:ignore[reportCallIssue]
             logger.debug(
-                "Saved last session. (filename: '%s', opts: %s", self._filename, opts
+                "Saved last session. (filename: %s, options: %s", self._filename, opts
             )
 
 

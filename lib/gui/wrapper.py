@@ -20,6 +20,8 @@ from lib.gui import gui_config as cfg
 from lib.utils import get_module_objects
 
 from .analysis import Session
+from .services.command_builder import CommandBuilder
+from .services.command_context import CommandExecutionContext
 from .utils import LongRunningTask, get_config, get_images, preview_trigger
 
 if os.name == "nt":
@@ -181,55 +183,42 @@ class ProcessWrapper:
         )
         command = self._command if not command else command
         assert command is not None
-        script = f"{category}.py"
-        pathexecscript = os.path.join(
-            os.path.realpath(os.path.dirname(sys.argv[0])), script
+
+        values = get_config().cli_opts.get_cli_argument_values(command)
+        args = CommandBuilder().build(
+            category,
+            command,
+            values,
+            gui_mode=True,
+            generate=generate,
         )
+        context = CommandExecutionContext.from_values(command, values)
+        self._apply_execution_context(context, generate=generate)
 
-        args = [sys.executable] if generate else [sys.executable, "-u"]
-        args.extend([pathexecscript, command])
-
-        cli_opts = get_config().cli_opts
-        for cliopt in cli_opts.gen_cli_arguments(command):
-            args.extend(cliopt)
-            if command == "train" and not generate:
-                self._get_training_session_info(cliopt)
-
-        if not generate:
-            args.append("-G")  # Indicate to Faceswap that we are running the GUI
-        if generate:
-            # Delimit args with spaces
-            args = [
-                f'"{arg}"'
-                if " " in arg
-                and not arg.startswith(("[", "("))
-                and not arg.endswith(("]", ")"))
-                else arg
-                for arg in args
-            ]
         logger.debug("Built cli arguments: (%s)", args)
         return args
 
-    def _get_training_session_info(self, cli_option: tuple[str, ...]) -> None:
-        """Set the model folder and model name to :`attr:_training_session_location` so the global
-        session picks them up for logging to the graph and analysis tab.
+    def _apply_execution_context(
+        self, context: CommandExecutionContext, *, generate: bool = False
+    ) -> None:
+        """Apply GUI side effects derived from command values."""
+        if generate:
+            return
 
-        Parameters
-        ----------
-        cli_option: list[str]
-            The command line option to be checked for model folder or name
-        """
-        if cli_option[0] == "-t":
-            self._training_session_location["model_name"] = (
-                cli_option[1].lower().replace("-", "_")
-            )
+        if context.model_name is not None:
+            self._training_session_location["model_name"] = context.model_name
             logger.debug(
                 "model_name: '%s'", self._training_session_location["model_name"]
             )
-        if cli_option[0] == "-m":
-            self._training_session_location["model_folder"] = cli_option[1]
+        if context.model_folder is not None:
+            self._training_session_location["model_folder"] = context.model_folder
             logger.debug(
                 "model_folder: '%s'", self._training_session_location["model_folder"]
+            )
+
+        if context.preview_output_path is not None:
+            get_images().preview_extract.set_faceswap_output_path(
+                context.preview_output_path, batch_mode=context.batch_mode
             )
 
     def terminate(self, message: str) -> None:

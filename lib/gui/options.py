@@ -9,6 +9,7 @@ import os
 import shlex
 import sys
 import typing as T
+import warnings
 from argparse import SUPPRESS
 from dataclasses import dataclass
 from importlib import import_module
@@ -17,6 +18,8 @@ from lib.cli import actions
 from lib.utils import get_module_objects
 
 from .control_helper import ControlPanelOption
+from .services.command_builder import CommandBuilder
+from .services.command_context import CommandExecutionContext
 from .utils import get_images
 
 if T.TYPE_CHECKING:
@@ -625,6 +628,28 @@ class CliOptions:
         logger.debug("command: '%s', ctl_dict: %s", command, ctl_dict)
         return ctl_dict
 
+    def get_cli_argument_values(self, command: str) -> dict[str, object]:
+        """Return current option values keyed by CLI switch for the selected command.
+
+        Unlike :func:`get_option_values`, this returns data for command execution rather than
+        project/session persistence.
+        """
+        return {
+            option.opts[0]: self._normalize_cli_value(option)
+            for _, option in self._gen_command_options(command)
+        }
+
+    def _normalize_cli_value(self, option: CliOption) -> object:
+        """Normalize a GUI option value for command building."""
+        value = option.panel_option.get()
+        if option.nargs is None:
+            return value
+        if isinstance(value, str):
+            return self._split_nargs(value, option.opts[0])
+        if isinstance(value, tuple):
+            return list(value)
+        return value
+
     def get_one_option_variable(self, command: str, title: str) -> Variable | None:
         """Return a single :class:`tkinter.Variable` tk_var for the specified command and
         control_title
@@ -666,50 +691,24 @@ class CliOptions:
     def gen_cli_arguments(
         self, command: str
     ) -> T.Generator[tuple[str, ...], None, None]:
-        """Yield the generated cli arguments for the selected command
+        """Yield grouped CLI arguments for the selected command.
 
-        Parameters
-        ----------
-        command: str
-            The command to generate the command line arguments for
-
-        Yields
-        ------
-        tuple[str, ...]
-            The generated command line arguments
+        Deprecated. Use :meth:`get_cli_argument_values` with
+        :class:`lib.gui.services.command_builder.CommandBuilder` instead.
         """
-        output_dir = None
-        switches = ""
-        args = []
-        for _, option in self._gen_command_options(command):
-            str_val = str(option.panel_option.get())
-            switch = option.opts[0]
-            batch_mode = command == "extract" and switch == "-b"  # Check for batch mode
-            if (
-                command in ("extract", "convert") and switch == "-o"
-            ):  # Output location for preview
-                output_dir = str_val
+        warnings.warn(
+            "CliOptions.gen_cli_arguments() is deprecated. Use "
+            "get_cli_argument_values() with CommandBuilder instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        values = self.get_cli_argument_values(command)
+        yield from CommandBuilder.build_option_groups(values)
 
-            if str_val in ("False", ""):  # skip no value opts
-                continue
-
-            if str_val == "True":  # store_true just output the switch
-                switches += switch[1:]
-                continue
-
-            if option.nargs is not None:
-                val = self._split_nargs(str_val, switch)
-                arg = (switch, *val)
-            else:
-                arg = (switch, str_val)
-            args.append(arg)
-
-        switch_args = [] if not switches else [(f"-{switches}",)]
-        yield from switch_args + args
-
-        if command in ("extract", "convert") and output_dir is not None:
+        context = CommandExecutionContext.from_values(command, values)
+        if context.preview_output_path is not None:
             get_images().preview_extract.set_faceswap_output_path(
-                output_dir, batch_mode=batch_mode
+                context.preview_output_path, batch_mode=context.batch_mode
             )
 
 
