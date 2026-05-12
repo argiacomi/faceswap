@@ -60,6 +60,8 @@ class _Serializer:
 class _CliOptions:
     """CLI option state test double."""
 
+    opts: dict[str, dict[str, object]] = {}
+
     def get_option_values(self, command: str | None = None):
         """Return current GUI option values."""
         if command is None:
@@ -176,7 +178,7 @@ def test_gui_session_load_uses_project_store(tmp_path: Path) -> None:
         "extract": {"Input Dir": "/input"},
         "tab_name": "extract",
     }
-    assert session._state.project is not None  # pylint:disable=protected-access
+    assert session._state.has_options is True  # pylint:disable=protected-access
 
 
 def test_gui_session_save_uses_project_store(tmp_path: Path, monkeypatch) -> None:
