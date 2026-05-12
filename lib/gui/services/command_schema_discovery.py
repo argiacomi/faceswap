@@ -29,6 +29,9 @@ class DiscoveredCliOption:
     browser_modes: tuple[str, ...] = ()
     is_radio: bool = False
     is_multi_option: bool = False
+    slider_min: float | None = None
+    slider_max: float | None = None
+    slider_rounding: float | None = None
 
 
 @dataclass(frozen=True)
@@ -189,12 +192,13 @@ class CommandSchemaDiscovery:
             return None
 
         raw_opts = option.get("opts", ())
-        if not isinstance(raw_opts, list | tuple) or not raw_opts:
+        if not isinstance(raw_opts, (list, tuple)) or not raw_opts:
             return None
         opts = tuple(str(opt) for opt in raw_opts)
         nargs = option.get("nargs")
         group = option.get("group")
         action = cls._action_name(option.get("action"))
+        slider_min, slider_max = cls._slider_min_max(option, action)
 
         return DiscoveredCliOption(
             title=cls._set_control_title(opts),
@@ -209,6 +213,9 @@ class CommandSchemaDiscovery:
             browser_modes=cls._browser_modes(action),
             is_radio=action == "Radio",
             is_multi_option=action == "MultiOption",
+            slider_min=slider_min,
+            slider_max=slider_max,
+            slider_rounding=cls._slider_rounding(option, action),
         )
 
     @staticmethod
@@ -230,7 +237,7 @@ class CommandSchemaDiscovery:
     @staticmethod
     def _get_choices(choices: object) -> tuple[str, ...]:
         """Normalize CLI choices for Qt option rendering."""
-        if isinstance(choices, list | tuple):
+        if isinstance(choices, (list, tuple)):
             return tuple(str(choice) for choice in choices)
         return ()
 
@@ -256,6 +263,28 @@ class CommandSchemaDiscovery:
             "SaveFileFullPaths": ("save",),
         }
         return modes.get(action or "", ())
+
+    @staticmethod
+    def _slider_min_max(
+        option: dict[str, T.Any], action: str | None
+    ) -> tuple[float | None, float | None]:
+        """Return slider bounds from CLI metadata."""
+        if action != "Slider":
+            return None, None
+        min_max = option.get("min_max")
+        if not isinstance(min_max, (list, tuple)) or len(min_max) != 2:
+            return None, None
+        return float(min_max[0]), float(min_max[1])
+
+    @staticmethod
+    def _slider_rounding(option: dict[str, T.Any], action: str | None) -> float | None:
+        """Return slider rounding metadata."""
+        if action != "Slider":
+            return None
+        rounding = option.get("rounding")
+        if isinstance(rounding, (float, int)):
+            return float(rounding)
+        return None
 
 
 __all__ = ["CommandSchemaDiscovery", "DiscoveredCliOption", "DiscoveredCommand"]

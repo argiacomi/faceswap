@@ -10,15 +10,20 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QTextCursor
 from PySide6.QtWidgets import (
     QFileDialog,
+    QHBoxLayout,
     QLabel,
     QMainWindow,
     QMessageBox,
     QPlainTextEdit,
     QProgressBar,
+    QPushButton,
     QSplitter,
     QStatusBar,
+    QTableWidget,
     QTabWidget,
     QToolBar,
+    QVBoxLayout,
+    QWidget,
 )
 
 from lib.gui.models.project import ProjectFile
@@ -104,18 +109,51 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(main)
 
     def _display_tabs(self) -> QTabWidget:
-        """Create right display tabs without preview or graph parity."""
+        """Create right display tabs with an Analysis placeholder."""
         tabs = QTabWidget()
-        placeholder = QLabel(
-            "Display placeholder\n\n"
-            "Training preview, graph and project editor are intentionally omitted."
-        )
-        placeholder.setAlignment(Qt.AlignCenter)
-        tabs.addTab(placeholder, "Display")
+        tabs.addTab(self._analysis_panel(), "Analysis")
         self._command_preview.setReadOnly(True)
         self._command_preview.setPlaceholderText("Generated command preview")
         tabs.addTab(self._command_preview, "Command")
         return tabs
+
+    def _analysis_panel(self) -> QWidget:
+        """Create the right-side Analysis panel skeleton."""
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(12, 12, 12, 8)
+        layout.setSpacing(8)
+
+        title = QLabel("Session Stats")
+        title.setAlignment(Qt.AlignCenter)
+        title.setObjectName("qt-shell-analysis-title")
+        layout.addWidget(title)
+
+        table = QTableWidget(0, 8)
+        table.setObjectName("qt-shell-session-stats")
+        table.setHorizontalHeaderLabels(
+            (
+                "Graphs",
+                "#",
+                "Start",
+                "End",
+                "Elapsed",
+                "Batch",
+                "Iterations",
+                "EGs/sec",
+            )
+        )
+        layout.addWidget(table, 1)
+
+        footer = QHBoxLayout()
+        footer.addWidget(QLabel("No session data loaded"))
+        footer.addStretch(1)
+        for text in ("Open", "Save", "Clear"):
+            button = QPushButton(text)
+            button.setObjectName(f"qt-shell-analysis-{text.lower()}")
+            footer.addWidget(button)
+        layout.addLayout(footer)
+        return panel
 
     def _build_menus(self) -> None:
         """Build prototype project and command menus."""

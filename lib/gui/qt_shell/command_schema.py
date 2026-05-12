@@ -3,8 +3,8 @@
 
 from __future__ import annotations
 
-import typing as T
 from dataclasses import dataclass
+import typing as T
 
 
 @dataclass(frozen=True)
@@ -23,6 +23,9 @@ class OptionSpec:
     browser_modes: tuple[str, ...] = ()
     is_radio: bool = False
     is_multi_option: bool = False
+    slider_min: float | None = None
+    slider_max: float | None = None
+    slider_rounding: float | None = None
 
 
 @dataclass(frozen=True)
@@ -32,6 +35,7 @@ class CommandSpec:
     category: str
     command: str
     options: tuple[OptionSpec, ...]
+    info: str = ""
 
 
 class CommandSchema:
@@ -55,6 +59,11 @@ class CommandSchema:
         """Return option specs for the given command."""
         spec = self._by_command.get(command)
         return spec.options if spec is not None else self.default_options()
+
+    def command_info(self, command: str) -> str:
+        """Return description text for the given command."""
+        spec = self._by_command.get(command)
+        return "" if spec is None else spec.info
 
     def category_for_command(self, command: str) -> str | None:
         """Return the category that owns the given command."""
@@ -84,6 +93,7 @@ class CommandSchema:
                         OptionSpec("Aligner", "-A"),
                         OptionSpec("Batch Mode", "-b", bool, False),
                     ),
+                    "Extract faces from image or video sources.",
                 ),
                 CommandSpec(
                     "faceswap",
@@ -94,6 +104,7 @@ class CommandSchema:
                         OptionSpec("Model Dir", "-m"),
                         OptionSpec("Trainer", "-t"),
                     ),
+                    "Train a Faceswap model.",
                 ),
                 CommandSpec(
                     "faceswap",
@@ -104,6 +115,7 @@ class CommandSchema:
                         OptionSpec("Model Dir", "-m"),
                         OptionSpec("Trainer", "-t"),
                     ),
+                    "Swap faces in image or video sources.",
                 ),
                 CommandSpec("tools", "alignments", cls.default_options()),
                 CommandSpec("tools", "preview", cls.default_options()),

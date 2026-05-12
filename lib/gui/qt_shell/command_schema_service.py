@@ -8,8 +8,8 @@ import typing as T
 from lib.gui.qt_shell.command_schema import CommandSchema, CommandSpec, OptionSpec
 from lib.gui.services.command_schema_discovery import (
     CommandSchemaDiscovery,
-    DiscoveredCliOption,
     DiscoveredCommand,
+    DiscoveredCliOption,
 )
 
 
@@ -33,6 +33,7 @@ class CommandSchemaService:
                 command.category,
                 command.command,
                 self._options_from_discovered(command.options),
+                command.info,
             )
             for command in commands
         )
@@ -77,6 +78,9 @@ class CommandSchemaService:
                 browser_modes=option.browser_modes,
                 is_radio=option.is_radio,
                 is_multi_option=option.is_multi_option,
+                slider_min=option.slider_min,
+                slider_max=option.slider_max,
+                slider_rounding=option.slider_rounding,
             )
             for option in options
             if option.opts
@@ -102,7 +106,7 @@ class CommandSchemaService:
             return None
 
         choices = getattr(panel_option, "choices", None)
-        if isinstance(choices, list | tuple):
+        if isinstance(choices, (list, tuple)):
             choices = tuple(str(choice) for choice in choices)
         else:
             choices = ()
@@ -113,6 +117,7 @@ class CommandSchemaService:
 
         default = getattr(panel_option, "default", "")
         browser_modes = CommandSchemaService._browser_modes_from_panel(panel_option)
+        slider_min, slider_max = CommandSchemaService._slider_min_max(panel_option)
         return OptionSpec(
             title=getattr(panel_option, "title", title),
             switch=str(switches[0]),
@@ -125,6 +130,9 @@ class CommandSchemaService:
             browser_modes=browser_modes,
             is_radio=bool(getattr(panel_option, "is_radio", False)),
             is_multi_option=bool(getattr(panel_option, "is_multi_option", False)),
+            slider_min=slider_min,
+            slider_max=slider_max,
+            slider_rounding=CommandSchemaService._slider_rounding(panel_option),
         )
 
     @staticmethod
@@ -134,6 +142,22 @@ class CommandSchemaService:
         if not isinstance(sysbrowser, dict):
             return ()
         browser = sysbrowser.get("browser", ())
-        if not isinstance(browser, list | tuple):
+        if not isinstance(browser, (list, tuple)):
             return ()
         return tuple(str(mode) for mode in browser if str(mode) != "context")
+
+    @staticmethod
+    def _slider_min_max(panel_option: object) -> tuple[float | None, float | None]:
+        """Return slider bounds from legacy panel metadata."""
+        min_max = getattr(panel_option, "min_max", None)
+        if not isinstance(min_max, (list, tuple)) or len(min_max) != 2:
+            return None, None
+        return float(min_max[0]), float(min_max[1])
+
+    @staticmethod
+    def _slider_rounding(panel_option: object) -> float | None:
+        """Return slider rounding from legacy panel metadata."""
+        rounding = getattr(panel_option, "rounding", None)
+        if isinstance(rounding, (float, int)):
+            return float(rounding)
+        return None
