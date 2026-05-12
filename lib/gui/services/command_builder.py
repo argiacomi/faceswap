@@ -108,7 +108,7 @@ class CommandBuilder:
                 else:
                     groups.append((switch,))
                 continue
-            if isinstance(value, (list, tuple)):
+            if isinstance(value, list | tuple):
                 groups.append((switch, *(str(item) for item in value)))
                 continue
             groups.append((switch, str(value)))
@@ -122,7 +122,7 @@ class CommandBuilder:
             return True
         if isinstance(value, str) and value == "":
             return True
-        if isinstance(value, (list, tuple)) and not value:
+        if isinstance(value, list | tuple) and not value:
             return True
         return False
 

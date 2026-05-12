@@ -8,8 +8,8 @@ import typing as T
 from lib.gui.qt_shell.command_schema import CommandSchema, CommandSpec, OptionSpec
 from lib.gui.services.command_schema_discovery import (
     CommandSchemaDiscovery,
-    DiscoveredCommand,
     DiscoveredCliOption,
+    DiscoveredCommand,
 )
 
 
@@ -75,6 +75,8 @@ class CommandSchemaService:
                 group=option.group,
                 helptext=option.helptext,
                 browser_modes=option.browser_modes,
+                is_radio=option.is_radio,
+                is_multi_option=option.is_multi_option,
             )
             for option in options
             if option.opts
@@ -100,7 +102,7 @@ class CommandSchemaService:
             return None
 
         choices = getattr(panel_option, "choices", None)
-        if isinstance(choices, (list, tuple)):
+        if isinstance(choices, list | tuple):
             choices = tuple(str(choice) for choice in choices)
         else:
             choices = ()
@@ -121,6 +123,8 @@ class CommandSchemaService:
             group=getattr(panel_option, "group", None),
             helptext=getattr(panel_option, "helptext", "") or "",
             browser_modes=browser_modes,
+            is_radio=bool(getattr(panel_option, "is_radio", False)),
+            is_multi_option=bool(getattr(panel_option, "is_multi_option", False)),
         )
 
     @staticmethod
@@ -130,6 +134,6 @@ class CommandSchemaService:
         if not isinstance(sysbrowser, dict):
             return ()
         browser = sysbrowser.get("browser", ())
-        if not isinstance(browser, (list, tuple)):
+        if not isinstance(browser, list | tuple):
             return ()
         return tuple(str(mode) for mode in browser if str(mode) != "context")

@@ -3,9 +3,9 @@
 
 from __future__ import annotations
 
+import typing as T
 from dataclasses import dataclass
 from pathlib import Path
-import typing as T
 
 from lib.utils import get_module_objects
 
@@ -73,7 +73,7 @@ class RecentFilesStore:
     @staticmethod
     def _decode(row: object) -> RecentFile | None:
         """Decode a serializer row into a recent-file entry."""
-        if not isinstance(row, (list, tuple)) or len(row) != 2:
+        if not isinstance(row, list | tuple) or len(row) != 2:
             return None
 
         filename, kind = row

@@ -3,9 +3,10 @@
 
 # pylint:disable=protected-access
 from __future__ import annotations
+
 import os
 import typing as T
-
+from contextlib import suppress
 from shutil import rmtree
 from time import time
 from unittest.mock import MagicMock
@@ -13,16 +14,15 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 import pytest_mock
-
 from tensorboard.compat.proto import event_pb2
 
 from lib.gui.analysis.event_reader import (
+    EventData,
+    TensorBoardLogs,
     _Cache,
     _CacheData,
     _EventParser,
     _LogFiles,
-    EventData,
-    TensorBoardLogs,
 )
 
 if T.TYPE_CHECKING:
@@ -332,10 +332,8 @@ class TestTensorBoardLogs:
         tblogs_instance = TensorBoardLogs(tmp_path, False)
 
         def teardown():
-            try:
+            with suppress(PermissionError):
                 rmtree(tmp_path)
-            except PermissionError:
-                pass
 
         request.addfinalizer(teardown)
         return tblogs_instance

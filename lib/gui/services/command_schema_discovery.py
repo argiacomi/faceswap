@@ -27,6 +27,8 @@ class DiscoveredCliOption:
     helptext: str = ""
     action: str | None = None
     browser_modes: tuple[str, ...] = ()
+    is_radio: bool = False
+    is_multi_option: bool = False
 
 
 @dataclass(frozen=True)
@@ -187,7 +189,7 @@ class CommandSchemaDiscovery:
             return None
 
         raw_opts = option.get("opts", ())
-        if not isinstance(raw_opts, (list, tuple)) or not raw_opts:
+        if not isinstance(raw_opts, list | tuple) or not raw_opts:
             return None
         opts = tuple(str(opt) for opt in raw_opts)
         nargs = option.get("nargs")
@@ -205,6 +207,8 @@ class CommandSchemaDiscovery:
             helptext=str(option.get("help", "")),
             action=action,
             browser_modes=cls._browser_modes(action),
+            is_radio=action == "Radio",
+            is_multi_option=action == "MultiOption",
         )
 
     @staticmethod
@@ -226,7 +230,7 @@ class CommandSchemaDiscovery:
     @staticmethod
     def _get_choices(choices: object) -> tuple[str, ...]:
         """Normalize CLI choices for Qt option rendering."""
-        if isinstance(choices, (list, tuple)):
+        if isinstance(choices, list | tuple):
             return tuple(str(choice) for choice in choices)
         return ()
 

@@ -3,8 +3,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import typing as T
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
@@ -21,6 +21,8 @@ class OptionSpec:
     group: str | None = None
     helptext: str = ""
     browser_modes: tuple[str, ...] = ()
+    is_radio: bool = False
+    is_multi_option: bool = False
 
 
 @dataclass(frozen=True)

@@ -9,14 +9,17 @@ import typing as T
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QCheckBox,
     QComboBox,
     QFileDialog,
     QFormLayout,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
+    QRadioButton,
     QVBoxLayout,
     QWidget,
 )
@@ -25,13 +28,16 @@ from lib.gui.qt_shell.command_schema import CommandSchema, OptionSpec
 
 
 class OptionsFormRenderer(QWidget):
-    """Dynamic QWidget/QFormLayout option renderer."""
+    """Dynamic schema-backed Qt option renderer."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._layout = QFormLayout(self)
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(5, 5, 5, 5)
+        self._layout.setSpacing(8)
         self._specs: tuple[OptionSpec, ...] = ()
         self._widgets: dict[str, QWidget] = {}
+        self._radio_groups: dict[str, QButtonGroup] = {}
 
     @property
     def rendered_switches(self) -> tuple[str, ...]:
@@ -40,17 +46,17 @@ class OptionsFormRenderer(QWidget):
 
     def set_options(self, specs: tuple[OptionSpec, ...]) -> None:
         """Render a fresh set of command option controls."""
-        while self._layout.rowCount():
-            self._layout.removeRow(0)
+        self._clear_layout(self._layout)
         self._widgets.clear()
+        self._radio_groups.clear()
         self._specs = specs
-        current_group: str | None = None
-        for spec in specs:
-            current_group = self._add_group_header(spec, current_group)
-            widget = self._build_widget(spec)
-            self._widgets[spec.switch] = widget
-            label = self._label_for(spec)
-            self._layout.addRow(label, self._row_widget(spec, widget))
+        for group, group_specs in self._grouped_specs(specs):
+            form = self._add_group_section(group)
+            for spec in group_specs:
+                widget = self._build_widget(spec)
+                self._widgets[spec.switch] = widget
+                form.addRow(self._label_for(spec), self._row_widget(spec, widget))
+        self._layout.addStretch(1)
 
     def values(self) -> dict[str, object]:
         """Return command values keyed by CLI switch."""
@@ -59,38 +65,68 @@ class OptionsFormRenderer(QWidget):
     def apply_values(self, values: T.Mapping[str, object]) -> None:
         """Apply stored switch-keyed values to rendered controls."""
         for spec in self._specs:
+            value = values.get(spec.switch, spec.default)
             widget = self._widgets[spec.switch]
-            if isinstance(widget, QCheckBox):
+            if spec.switch in self._radio_groups:
+                self._set_radio_value(spec, value)
+            elif self._is_multi_select(spec):
+                self._set_multi_values(widget, value)
+            elif isinstance(widget, QCheckBox):
                 widget.setChecked(
-                    self._checked_for_value(
-                        spec,
-                        values.get(spec.switch, spec.default),
-                        spec.switch in values,
-                    )
+                    self._checked_for_value(spec, value, spec.switch in values)
                 )
             elif isinstance(widget, QComboBox):
-                widget.setCurrentText(
-                    self._string_value(values.get(spec.switch, spec.default))
-                )
+                widget.setCurrentText(self._string_value(value))
             elif isinstance(widget, QLineEdit):
-                widget.setText(
-                    self._string_value(values.get(spec.switch, spec.default))
-                )
+                widget.setText(self._string_value(value))
 
     def widget_for_switch(self, switch: str) -> QWidget:
         """Return the rendered input widget for a CLI switch."""
         return self._widgets[switch]
 
-    def _add_group_header(
-        self, spec: OptionSpec, current_group: str | None
-    ) -> str | None:
-        """Add a section label when the option group changes."""
-        if not spec.group or spec.group == current_group:
-            return current_group
-        label = QLabel(f"<b>{spec.group}</b>")
-        label.setObjectName("qt-shell-option-group")
-        self._layout.addRow(label)
-        return spec.group
+    @classmethod
+    def _clear_layout(cls, layout: QVBoxLayout | QFormLayout | QHBoxLayout) -> None:
+        """Remove and delete child widgets from a layout."""
+        while layout.count():
+            item = layout.takeAt(0)
+            child_layout = item.layout()
+            widget = item.widget()
+            if child_layout is not None:
+                cls._clear_layout(child_layout)
+            if widget is not None:
+                widget.deleteLater()
+
+    @staticmethod
+    def _grouped_specs(
+        specs: tuple[OptionSpec, ...],
+    ) -> tuple[tuple[str | None, tuple[OptionSpec, ...]], ...]:
+        """Group option specs in first-seen order."""
+        group_order: list[str | None] = []
+        grouped: dict[str | None, list[OptionSpec]] = {}
+        for spec in specs:
+            if spec.group not in grouped:
+                group_order.append(spec.group)
+                grouped[spec.group] = []
+            grouped[spec.group].append(spec)
+        return tuple((group, tuple(grouped[group])) for group in group_order)
+
+    def _add_group_section(self, group: str | None) -> QFormLayout:
+        """Add a visually separated section for one CLI option group."""
+        has_title = bool(group and group != "_master")
+        section: QWidget = QGroupBox() if has_title else QWidget()
+        section.setObjectName(
+            "qt-shell-option-group" if has_title else "qt-shell-option-group-master"
+        )
+        form = QFormLayout(section)
+        form.setContentsMargins(10, 8, 10, 10)
+        form.setHorizontalSpacing(12)
+        form.setVerticalSpacing(6)
+        if has_title:
+            label = QLabel(f"<b>{str(group).title()}</b>")
+            label.setObjectName("qt-shell-option-group-label")
+            form.addRow(label)
+        self._layout.addWidget(section)
+        return form
 
     def _label_for(self, spec: OptionSpec) -> QLabel:
         """Return a label with optional help tooltip."""
@@ -104,9 +140,12 @@ class OptionsFormRenderer(QWidget):
         if spec.value_type is bool:
             widget = QCheckBox()
             widget.setChecked(self._checked_for_value(spec, spec.default, False))
+        elif self._is_multi_select(spec):
+            widget = self._build_multi_select(spec)
+        elif self._is_radio_group(spec):
+            widget = self._build_radio_group(spec)
         elif spec.nargs:
-            widget = QLineEdit()
-            widget.setText(self._string_value(spec.default))
+            widget = QLineEdit(self._string_value(spec.default))
         elif spec.choices:
             widget = QComboBox()
             default = self._string_value(spec.default)
@@ -115,18 +154,51 @@ class OptionsFormRenderer(QWidget):
             widget.addItems(spec.choices)
             widget.setCurrentText(default)
         else:
-            widget = QLineEdit()
-            widget.setText(self._string_value(spec.default))
-
+            widget = QLineEdit(self._string_value(spec.default))
         if spec.helptext:
             widget.setToolTip(spec.helptext)
+        return widget
+
+    def _build_radio_group(self, spec: OptionSpec) -> QWidget:
+        """Build a compact exclusive choice widget for radio metadata."""
+        widget = QWidget()
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+        group = QButtonGroup(widget)
+        group.setExclusive(True)
+        default = self._string_value(spec.default)
+        for choice in spec.choices:
+            button = QRadioButton(choice)
+            button.setChecked(choice == default)
+            if spec.helptext:
+                button.setToolTip(spec.helptext)
+            group.addButton(button)
+            layout.addWidget(button)
+        layout.addStretch(1)
+        self._radio_groups[spec.switch] = group
+        return widget
+
+    def _build_multi_select(self, spec: OptionSpec) -> QWidget:
+        """Build a compact multi-select widget only for multi-option metadata."""
+        widget = QWidget()
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+        selected = self._value_set(spec.default)
+        for choice in spec.choices:
+            checkbox = QCheckBox(choice)
+            checkbox.setChecked(choice in selected)
+            if spec.helptext:
+                checkbox.setToolTip(spec.helptext)
+            layout.addWidget(checkbox)
+        layout.addStretch(1)
         return widget
 
     def _row_widget(self, spec: OptionSpec, widget: QWidget) -> QWidget:
         """Return the row widget, wrapping path options with browse buttons."""
         if not spec.browser_modes or not isinstance(widget, QLineEdit):
             return widget
-
         row = QWidget()
         layout = QHBoxLayout(row)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -144,15 +216,37 @@ class OptionsFormRenderer(QWidget):
     def _value_for(self, spec: OptionSpec) -> object:
         """Read and normalize an option widget value."""
         widget = self._widgets[spec.switch]
+        if spec.switch in self._radio_groups:
+            button = self._radio_groups[spec.switch].checkedButton()
+            return "" if button is None else button.text()
+        if self._is_multi_select(spec):
+            return [
+                checkbox.text()
+                for checkbox in widget.findChildren(QCheckBox)
+                if checkbox.isChecked()
+            ]
         if isinstance(widget, QCheckBox):
             checked = widget.isChecked()
             return not checked if spec.action == "store_false" else checked
         if isinstance(widget, QComboBox):
             return widget.currentText()
-        if not isinstance(widget, QLineEdit):
-            return ""
-        text = widget.text().strip()
-        return self._split_nargs(text) if spec.nargs and text else text
+        if isinstance(widget, QLineEdit):
+            text = widget.text().strip()
+            return self._split_nargs(text) if spec.nargs and text else text
+        return ""
+
+    def _set_radio_value(self, spec: OptionSpec, value: object) -> None:
+        """Restore one radio value."""
+        text = self._string_value(value)
+        for button in self._radio_groups[spec.switch].buttons():
+            if isinstance(button, QRadioButton):
+                button.setChecked(button.text() == text)
+
+    def _set_multi_values(self, widget: QWidget, value: object) -> None:
+        """Restore multi-select values."""
+        selected = self._value_set(value)
+        for checkbox in widget.findChildren(QCheckBox):
+            checkbox.setChecked(checkbox.text() in selected)
 
     def _browse(self, mode: str, widget: QLineEdit) -> None:
         """Populate a line edit from a simple QFileDialog browser mode."""
@@ -171,20 +265,28 @@ class OptionsFormRenderer(QWidget):
             value, _ = QFileDialog.getSaveFileName(self, "Save File", widget.text())
         else:
             value = ""
-
         if value:
             widget.setText(value)
 
     @staticmethod
+    def _is_radio_group(spec: OptionSpec) -> bool:
+        """Return true when metadata clearly asks for a compact radio group."""
+        return spec.is_radio and bool(spec.choices) and len(spec.choices) <= 4
+
+    @staticmethod
+    def _is_multi_select(spec: OptionSpec) -> bool:
+        """Return true when metadata clearly asks for a multi-select widget."""
+        return spec.is_multi_option and bool(spec.choices)
+
+    @staticmethod
     def _browser_label(mode: str) -> str:
         """Return a compact label for a browser mode."""
-        labels = {
+        return {
             "folder": "Folder",
             "file": "File",
             "files": "Files",
             "save": "Save",
-        }
-        return labels.get(mode, "Browse")
+        }.get(mode, "Browse")
 
     @staticmethod
     def _checked_for_value(
@@ -195,6 +297,20 @@ class OptionsFormRenderer(QWidget):
         if spec.action == "store_false" and value_is_command_value:
             return not checked
         return checked
+
+    @classmethod
+    def _value_set(cls, value: object) -> set[str]:
+        """Return a comparable string set for multi-select values."""
+        if value is None or value is False or value == "":
+            return set()
+        if isinstance(value, str):
+            try:
+                return set(cls._split_nargs(value))
+            except ValueError:
+                return {part.strip() for part in value.split(",") if part.strip()}
+        if isinstance(value, (list, tuple, set)):
+            return {str(item) for item in value}
+        return {str(value)}
 
     @staticmethod
     def _join_paths(paths: T.Iterable[str]) -> str:

@@ -320,8 +320,10 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _load_schema() -> CommandSchema:
-        """Load real core Faceswap CLI metadata for the Qt shell."""
-        return CommandSchemaService().from_real_cli_metadata(categories=("faceswap",))
+        """Load real Faceswap and tools CLI metadata for the Qt shell."""
+        return CommandSchemaService().from_real_cli_metadata(
+            categories=("faceswap", "tools")
+        )
 
     @staticmethod
     def _recent_cache() -> Path:
