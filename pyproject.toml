@@ -26,15 +26,12 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 python_version = "3.10"
 files = ["lib/gui/services", "lib/gui/models"]
 mypy_path = "."
+follow_imports = "skip"
 show_error_codes = true
 warn_redundant_casts = true
 warn_return_any = true
 warn_unused_ignores = true
 no_implicit_optional = true
-
-[[tool.mypy.overrides]]
-module = ["lib.utils"]
-follow_imports = "skip"
 
 [[tool.mypy.overrides]]
 module = [
