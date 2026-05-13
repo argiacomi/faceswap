@@ -11,7 +11,6 @@ from pathlib import Path
 
 import numpy as np
 
-from lib.landmarks.ensemble.outliers import reject_outliers, weighted_median
 from lib.landmarks.ensemble.weights import load_weights, weights_matrix_for_models
 from lib.landmarks.eval.metrics import (
     evaluate_prediction,
@@ -99,49 +98,38 @@ def _fuse_variant(
 ) -> tuple[FusionResult, int]:
     """Fuse one ensemble variant and return its rejected landmark count."""
     if variant == "plain_average":
-        return plain_average(predictions), 0
+        return plain_average(predictions, outlier_method="none"), 0
 
     matrix = weights_matrix_for_models(weights, tuple(model_names))
     if variant == "static_weighted":
-        return static_weighted(predictions, matrix), 0
+        return static_weighted(predictions, matrix, outlier_method="none"), 0
 
-    stack = np.stack([prediction.canonical_68().points for prediction in predictions], axis=0)
-    method = "hard_drop"
-    if variant == "static_weighted_downweight":
-        method = "downweight"
-    if variant in {"static_weighted_outliers", "static_weighted_downweight"}:
-        rejection = reject_outliers(
-            stack,
+    variant_methods = {
+        "static_weighted_none": "none",
+        "static_weighted_outliers": "hard_drop",
+        "static_weighted_hard_drop": "hard_drop",
+        "static_weighted_downweight": "downweight",
+        "weighted_median": "weighted_median",
+    }
+    if variant in variant_methods:
+        fused = static_weighted(
+            predictions,
             matrix,
-            model_names=model_names,
-            threshold=outlier_threshold,
-            method=method,
+            outlier_threshold=outlier_threshold,
+            outlier_method=variant_methods[variant],
         )
-        points = (stack * rejection.weights[..., None]).sum(axis=0).astype("float32")
         return (
             FusionResult(
-                points=points,
+                points=fused.points,
                 schema=CANONICAL_SCHEMA,
                 strategy=variant,
-                weights=rejection.weights,
-                sources=tuple(model_names),
-                kept_indices=tuple(range(len(model_names))),
+                weights=fused.weights,
+                sources=fused.sources,
+                kept_indices=fused.kept_indices,
+                rejected_indices=fused.rejected_indices,
+                rejected_landmarks=fused.rejected_landmarks,
             ),
-            len(rejection.rejected),
-        )
-
-    if variant == "weighted_median":
-        points = weighted_median(stack, matrix)
-        return (
-            FusionResult(
-                points=points,
-                schema=CANONICAL_SCHEMA,
-                strategy=variant,
-                weights=matrix,
-                sources=tuple(model_names),
-                kept_indices=tuple(range(len(model_names))),
-            ),
-            0,
+            fused.rejected_landmarks,
         )
 
     raise ValueError(f"Unknown ensemble variant '{variant}'")
@@ -158,7 +146,11 @@ def run_quality_harness(
     failure_threshold: float = 0.08,
     outlier_threshold: float = 3.5,
 ) -> dict[str, T.Any]:
-    """Evaluate cached model predictions and ensemble variants."""
+    """Evaluate cached model predictions and ensemble variants.
+
+    ``outlier_threshold`` is measured in robust z-score units for outlier-aware
+    variants.
+    """
     samples = load_manifest(manifest_path)
     cache = DiskPredictionCache(cache_dir)
     out_dir = Path(output_dir)

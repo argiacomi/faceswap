@@ -8,7 +8,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from lib.landmarks.rejection import reject_landmark_outliers
+from lib.landmarks.rejection import reject_outliers as adjust_outlier_weights
+from lib.landmarks.rejection import weighted_median
 from lib.landmarks.schema import CANONICAL_SCHEMA, LandmarkPrediction, to_canonical_68
 
 
@@ -23,6 +24,7 @@ class FusionResult:
     sources: tuple[str, ...]
     kept_indices: tuple[int, ...]
     rejected_indices: tuple[int, ...] = ()
+    rejected_landmarks: int = 0
 
 
 def _prediction_points(prediction: LandmarkPrediction | np.ndarray) -> np.ndarray:
@@ -96,38 +98,66 @@ def weighted_average(
     *,
     reject_outliers: bool = False,
     outlier_threshold: float = 3.5,
+    outlier_method: str | None = None,
     strategy: str = "static_weighted",
 ) -> FusionResult:
-    """Fuse predictions with static weights and optional outlier rejection."""
+    """Fuse predictions with static weights and optional per-landmark rejection.
+
+    ``outlier_threshold`` is measured in robust z-score units. ``outlier_method``
+    supports ``none``, ``hard_drop``, ``downweight``, and ``weighted_median``.
+    When omitted, ``reject_outliers=True`` keeps the historical ``hard_drop``
+    behavior and ``False`` uses ``none``.
+    """
     if not predictions:
         raise ValueError("at least one prediction is required")
-    kept_indices = list(range(len(predictions)))
-    rejected_indices: list[int] = []
-    if reject_outliers:
-        rejection = reject_landmark_outliers(predictions, threshold=outlier_threshold)
-        kept_indices = rejection.kept
-        rejected_indices = rejection.rejected
-
-    stack = np.stack([_prediction_points(predictions[idx]) for idx in kept_indices], axis=0)
+    method = outlier_method or ("hard_drop" if reject_outliers else "none")
+    if method not in ("none", "hard_drop", "downweight", "weighted_median"):
+        raise ValueError(
+            "outlier_method must be one of: none, hard_drop, downweight, weighted_median"
+        )
+    stack = np.stack([_prediction_points(prediction) for prediction in predictions], axis=0)
     selected_weights = (
-        np.ones((len(kept_indices), stack.shape[1]), dtype="float32")
+        np.ones((len(predictions), stack.shape[1]), dtype="float32")
         if weights is None
-        else np.asarray(weights, dtype="float32")[kept_indices]
+        else np.asarray(weights, dtype="float32")
     )
     normalized = normalize_weight_matrix(
         selected_weights,
-        model_count=len(kept_indices),
+        model_count=len(predictions),
         landmark_count=stack.shape[1],
     )
-    points = (stack * normalized[..., None]).sum(axis=0).astype("float32")
+    rejected_indices: list[int] = []
+    rejected_landmarks = 0
+    if method == "weighted_median":
+        points = weighted_median(stack, normalized)
+    elif method == "none":
+        points = (stack * normalized[..., None]).sum(axis=0).astype("float32")
+    else:
+        rejection = adjust_outlier_weights(
+            stack,
+            normalized,
+            model_names=[
+                _prediction_source(prediction, idx) for idx, prediction in enumerate(predictions)
+            ],
+            threshold=outlier_threshold,
+            method=method,
+        )
+        normalized = rejection.weights
+        rejected_landmarks = len(rejection.rejected)
+        rejected_indices = [idx for idx in range(len(predictions)) if np.all(normalized[idx] <= 0)]
+        points = (stack * normalized[..., None]).sum(axis=0).astype("float32")
+    kept_indices = [idx for idx in range(len(predictions)) if idx not in set(rejected_indices)]
     return FusionResult(
         points=points,
         schema=CANONICAL_SCHEMA,
         strategy=strategy,
         weights=normalized,
-        sources=tuple(_prediction_source(predictions[idx], idx) for idx in kept_indices),
+        sources=tuple(
+            _prediction_source(prediction, idx) for idx, prediction in enumerate(predictions)
+        ),
         kept_indices=tuple(kept_indices),
         rejected_indices=tuple(rejected_indices),
+        rejected_landmarks=rejected_landmarks,
     )
 
 
@@ -136,6 +166,7 @@ def plain_average(
     *,
     reject_outliers: bool = False,
     outlier_threshold: float = 3.5,
+    outlier_method: str | None = None,
 ) -> FusionResult:
     """Fuse predictions with equal weights."""
     return weighted_average(
@@ -143,6 +174,7 @@ def plain_average(
         weights=None,
         reject_outliers=reject_outliers,
         outlier_threshold=outlier_threshold,
+        outlier_method=outlier_method,
         strategy="plain_average",
     )
 
@@ -153,6 +185,7 @@ def static_weighted(
     *,
     reject_outliers: bool = False,
     outlier_threshold: float = 3.5,
+    outlier_method: str | None = None,
 ) -> FusionResult:
     """Fuse predictions with static per-model or per-landmark weights."""
     return weighted_average(
@@ -160,5 +193,6 @@ def static_weighted(
         weights=weights,
         reject_outliers=reject_outliers,
         outlier_threshold=outlier_threshold,
+        outlier_method=outlier_method,
         strategy="static_weighted",
     )

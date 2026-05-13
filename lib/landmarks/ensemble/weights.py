@@ -72,6 +72,8 @@ def weights_from_errors(
     """Convert per-model per-landmark error arrays into inverse-error weights."""
     if epsilon <= 0:
         raise ValueError("epsilon must be greater than zero")
+    if not errors:
+        raise ValueError("errors cannot be empty")
     model_names = tuple(errors)
     matrix = np.asarray([errors[name] for name in model_names], dtype="float32")
     if matrix.shape != (len(model_names), landmark_count):
@@ -101,4 +103,4 @@ def save_weights(path: str | Path, weights: T.Mapping[str, T.Sequence[float]]) -
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
     payload = {"schema": "2d_68", "weights": normalize_static_weights(weights)}
-    output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    output.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")

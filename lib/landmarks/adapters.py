@@ -59,6 +59,21 @@ class LandmarkAdapter(ABC):
     def predict(self, image: np.ndarray, *, face: object | None = None) -> LandmarkPrediction:
         """Predict landmarks for an image or detected face."""
 
+    def predict_landmarks_68(
+        self,
+        image: np.ndarray,
+        *,
+        matrix: np.ndarray | None = None,
+        face: object | None = None,
+    ) -> np.ndarray:
+        """Return canonical ``(68, 2)`` landmarks in original-frame pixel space.
+
+        ``matrix`` is required when an adapter reports normalized crop
+        coordinates. It must map normalized crop coordinates to frame pixels.
+        """
+        prediction = self.predict(image, face=face)
+        return self.to_frame_prediction(prediction, matrix=matrix).points
+
     def predict_batch(
         self,
         images: np.ndarray,
@@ -218,6 +233,18 @@ class FaceswapAlignerAdapter(LandmarkAdapter):
         """Predict one prepared crop with the wrapped Faceswap plugin."""
         del face
         return self.predict_batch(image[None])[0]
+
+    def predict_landmarks_68(
+        self,
+        image: np.ndarray,
+        *,
+        matrix: np.ndarray | None = None,
+        face: object | None = None,
+    ) -> np.ndarray:
+        """Return wrapped plugin landmarks as canonical frame-space ``(68, 2)``."""
+        del face
+        matrices = None if matrix is None else np.asarray(matrix, dtype="float32")[None]
+        return self.predict_batch(image[None], matrices=matrices)[0].points
 
     def predict_batch(
         self,

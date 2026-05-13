@@ -202,10 +202,9 @@ class Ensemble(ExtractPlugin):
     def _fuse_face(
         self,
         predictions: list[tuple[LandmarkAdapter, LandmarkPrediction]],
-        matrix: np.ndarray,
         errors: list[str],
     ) -> np.ndarray:
-        """Fuse one face's adapter predictions and return normalized crop points."""
+        """Fuse one face's adapter predictions and return frame-space points."""
         if len(predictions) < self._min_models:
             raise ValueError(
                 "Not enough successful landmark adapters for ensemble face: "
@@ -238,7 +237,29 @@ class Ensemble(ExtractPlugin):
                 "strategy": fused.strategy,
             }
         )
-        return frame_to_normalized_crop(fused.points, matrix)
+        return fused.points
+
+    def predict_landmarks_68(
+        self,
+        image: np.ndarray,
+        *,
+        matrix: np.ndarray | None = None,
+    ) -> np.ndarray:
+        """Return fused canonical ``(68, 2)`` landmarks in original-frame pixels.
+
+        The input image is a prepared ensemble crop. ``matrix`` maps normalized
+        crop coordinates for that crop into the original frame. If omitted, an
+        identity matrix is used, matching warmup/test calls that already operate
+        in frame space.
+        """
+        matrices = (
+            np.eye(3, dtype="float32")[None]
+            if matrix is None
+            else np.asarray(matrix, dtype="float32")[None]
+        )
+        per_face, errors = self._collect_predictions(image[None], matrices)
+        self.last_debug_metadata = []
+        return self._fuse_face(per_face[0], errors)
 
     def process(self, batch: np.ndarray) -> np.ndarray:
         """Run adapter predictions, fuse in frame space and return normalized landmarks."""
@@ -247,7 +268,10 @@ class Ensemble(ExtractPlugin):
         self.last_debug_metadata = []
         output = np.empty((batch.shape[0], 68, 2), dtype="float32")
         for idx, predictions in enumerate(per_face):
-            output[idx] = self._fuse_face(predictions, matrices[idx], errors)
+            output[idx] = frame_to_normalized_crop(
+                self._fuse_face(predictions, errors),
+                matrices[idx],
+            )
         return output
 
 

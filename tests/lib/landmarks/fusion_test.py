@@ -87,3 +87,85 @@ def test_weighted_average_rejects_outlier_prediction() -> None:
     assert result.kept_indices == (0, 1)
     assert result.rejected_indices == (2,)
     np.testing.assert_allclose(result.points, _points(1.05), rtol=1e-6)
+
+
+def test_hard_drop_no_outlier_keeps_all_models() -> None:
+    """Hard-drop rejection leaves close predictions unchanged."""
+    result = plain_average(
+        [_points(1.0), _points(1.1), _points(1.2)],
+        outlier_method="hard_drop",
+        outlier_threshold=3.5,
+    )
+
+    assert result.kept_indices == (0, 1, 2)
+    assert result.rejected_indices == ()
+    np.testing.assert_allclose(result.weights.sum(axis=0), np.ones(68))
+    np.testing.assert_allclose(result.points, _points(1.1), rtol=1e-6)
+
+
+def test_hard_drop_one_model_outlier_uses_remaining_models() -> None:
+    """A single distant model is removed consistently by the canonical path."""
+    result = plain_average(
+        [_points(1.0), _points(1.1), _points(100.0)],
+        outlier_method="hard_drop",
+        outlier_threshold=3.5,
+    )
+
+    assert result.kept_indices == (0, 1)
+    assert result.rejected_indices == (2,)
+    np.testing.assert_allclose(result.weights[2], np.zeros(68))
+    np.testing.assert_allclose(result.points, _points(1.05), rtol=1e-6)
+
+
+def test_hard_drop_all_model_disagreement_keeps_median_model() -> None:
+    """When every model disagrees, hard drop preserves the median prediction."""
+    result = plain_average(
+        [_points(0.0), _points(100.0), _points(200.0)],
+        outlier_method="hard_drop",
+        outlier_threshold=3.5,
+    )
+
+    assert result.kept_indices == (1,)
+    assert result.rejected_indices == (0, 2)
+    np.testing.assert_allclose(result.points, _points(100.0), rtol=1e-6)
+
+
+def test_all_model_rejection_falls_back_to_one_model_per_landmark() -> None:
+    """If a threshold rejects every model for a landmark, the closest model survives."""
+    result = plain_average(
+        [_points(0.0), _points(10.0)],
+        outlier_method="hard_drop",
+        outlier_threshold=0.1,
+    )
+
+    assert result.kept_indices == (0,)
+    assert result.rejected_indices == (1,)
+    np.testing.assert_allclose(result.weights.sum(axis=0), np.ones(68))
+    np.testing.assert_allclose(result.points, _points(0.0), rtol=1e-6)
+
+
+def test_downweight_reduces_outlier_influence_without_rejection() -> None:
+    """Downweight keeps all models while reducing outlier contribution."""
+    result = plain_average(
+        [_points(1.0), _points(1.1), _points(100.0)],
+        outlier_method="downweight",
+        outlier_threshold=3.5,
+    )
+
+    assert result.kept_indices == (0, 1, 2)
+    assert result.rejected_indices == ()
+    assert np.all(result.weights[2] < result.weights[0])
+    np.testing.assert_allclose(result.points, _points(12.044444), rtol=1e-6)
+
+
+def test_weighted_median_method_uses_static_weights() -> None:
+    """Weighted median is available through the same fusion option."""
+    result = weighted_average(
+        [_points(0.0), _points(10.0), _points(100.0)],
+        weights=[0.2, 0.6, 0.2],
+        outlier_method="weighted_median",
+    )
+
+    assert result.kept_indices == (0, 1, 2)
+    assert result.rejected_indices == ()
+    np.testing.assert_allclose(result.points, _points(10.0), rtol=1e-6)
