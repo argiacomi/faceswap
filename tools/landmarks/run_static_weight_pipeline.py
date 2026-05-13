@@ -242,10 +242,10 @@ def _build_datasets(args: argparse.Namespace, paths: PipelinePaths, summary: dic
     """Build or merge requested dataset manifests."""
     datasets = _parse_csv(args.datasets)
     successful = 0
-    for index, dataset in enumerate(datasets):
-        def _run_one(dataset: str = dataset, index: int = index) -> None:
+    for dataset in datasets:
+        def _run_one(dataset: str = dataset) -> None:
             build_quality_dataset_main(
-                _dataset_build_args(args, dataset, paths, first=successful == 0 and index == 0)
+                _dataset_build_args(args, dataset, paths, first=successful == 0)
             )
 
         try:
@@ -276,19 +276,28 @@ def _cache_predictions(args: argparse.Namespace, paths: PipelinePaths) -> None:
         args.models,
         "--cache-dir",
         str(paths.cache),
-        "--checkpoint-tag",
-        args.checkpoint_tag,
     ]
     if args.refresh_predictions:
         argv.append("--refresh")
     if mode == "import":
+        argv.extend(["--checkpoint", args.checkpoint_tag])
         roots = _prediction_roots(args.prediction_root)
         if not roots:
             raise ValueError("prediction import mode requires at least one --prediction-root")
         for root in roots:
             argv.extend(["--prediction-root", root])
     else:
-        argv.extend(["--run-models", "--batch-size", str(args.batch_size), "--device", args.device])
+        argv.extend(
+            [
+                "--checkpoint-tag",
+                args.checkpoint_tag,
+                "--run-models",
+                "--batch-size",
+                str(args.batch_size),
+                "--device",
+                args.device,
+            ]
+        )
         if args.no_gt_roi:
             argv.append("--no-gt-roi")
         if args.gt_roi_scale is not None:
