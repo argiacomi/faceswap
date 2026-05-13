@@ -26,6 +26,9 @@ class Gui:
         self.app = QApplication.instance() or QApplication(sys.argv)
         self.theme = apply_theme(self.app)
         self.root = MainWindow()
+        resize = getattr(self.root, "resize", None)
+        if callable(resize):
+            resize(1280, 760)
 
     def process(self) -> None:
         """Show and execute the Qt event loop unless running in smoke-test mode."""

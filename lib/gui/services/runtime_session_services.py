@@ -95,6 +95,38 @@ class RuntimeTerminationPolicy:
         return command.lower().replace(".py", "")
 
 
+class ProcessTreeTerminator:
+    """Best-effort process-tree cleanup helper.
+
+    ``psutil`` is optional for this project, so callers still fall back to their native
+    process handle when it is unavailable.
+    """
+
+    def terminate(self, pid: int, *, timeout_seconds: float) -> bool:
+        """Terminate descendants for ``pid`` and return whether psutil handled it."""
+        try:
+            import psutil
+        except ImportError:
+            return False
+        try:
+            root = psutil.Process(pid)
+        except (psutil.Error, ValueError):
+            return False
+        children = root.children(recursive=True)
+        for child in children:
+            try:
+                child.terminate()
+            except psutil.Error:
+                continue
+        _gone, alive = psutil.wait_procs(children, timeout=max(0.0, timeout_seconds))
+        for child in alive:
+            try:
+                child.kill()
+            except psutil.Error:
+                continue
+        return True
+
+
 class TrainingSessionRuntimeService:
     """Shared training-session lifecycle helper for runtime process output."""
 

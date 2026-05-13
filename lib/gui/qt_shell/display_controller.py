@@ -24,7 +24,7 @@ class DisplayController(QObject):
     GRAPH = "Graph"
 
     _ORDER = (ANALYSIS, PREVIEW, GRAPH)
-    _PREVIEW_COMMANDS = frozenset(("extract", "convert", "train"))
+    _PREVIEW_COMMANDS = frozenset(("extract", "convert"))
     _GRAPH_COMMANDS = frozenset(("train",))
     _TERMINAL_STATES = frozenset(
         (

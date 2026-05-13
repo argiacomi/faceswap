@@ -299,7 +299,6 @@ def test_main_window_display_controller_reacts_to_runner_progress(qtbot) -> None
 
     assert window._display_controller.visible_tab_names() == (  # pylint:disable=protected-access
         "Analysis",
-        "Preview",
         "Graph",
     )
 

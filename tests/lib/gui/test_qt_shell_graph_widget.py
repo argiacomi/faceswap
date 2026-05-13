@@ -59,12 +59,34 @@ def test_graph_widget_clear_resets_state(qtbot) -> None:  # type:ignore[no-untyp
     widget = TrainingGraphWidget()
     qtbot.addWidget(widget)
     widget.set_snapshot(_snapshot())
+    widget.zoom_in()
 
     widget.clear()
 
     assert widget.series == ()
     assert widget.selected_keys == ()
     assert widget.status_text == "No graph data loaded"
+    assert widget.zoom == 1.0
+    assert widget.pan == 0.0
+
+
+def test_graph_widget_zoom_and_reset_view(qtbot) -> None:  # type:ignore[no-untyped-def]
+    """Graph widget should expose bounded zoom controls."""
+    widget = TrainingGraphWidget()
+    qtbot.addWidget(widget)
+    widget.set_snapshot(_snapshot())
+
+    widget.zoom_in()
+    assert widget.zoom > 1.0
+
+    widget.zoom_out()
+    assert widget.zoom == 1.0
+
+    widget.zoom_in()
+    widget.reset_view()
+
+    assert widget.zoom == 1.0
+    assert widget.pan == 0.0
 
 
 def test_graph_widget_saves_image_when_data_loaded(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]

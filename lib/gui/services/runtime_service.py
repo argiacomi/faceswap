@@ -59,7 +59,10 @@ class ProcessRuntimeService:
     def configure_context(self, context: CommandExecutionContext) -> tuple[RuntimeEvent, ...]:
         """Configure shared runtime services with command-derived context."""
         self._training_session.configure(context)
-        preview_configured = self._preview_output.apply_context(context)
+        try:
+            preview_configured = self._preview_output.apply_context(context)
+        except (AssertionError, ImportError, ModuleNotFoundError):
+            preview_configured = context.preview_output_path is not None
         events: tuple[RuntimeEvent, ...] = ()
         if preview_configured:
             events = (

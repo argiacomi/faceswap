@@ -6,8 +6,8 @@ from __future__ import annotations
 import typing as T
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, Qt
-from PySide6.QtGui import QAction, QTextCursor
+from PySide6.QtCore import QEvent, QSize, Qt
+from PySide6.QtGui import QAction, QIcon, QTextCursor
 from PySide6.QtWidgets import (
     QFileDialog,
     QLabel,
@@ -33,6 +33,7 @@ from lib.gui.qt_shell.display_controller import DisplayController
 from lib.gui.qt_shell.graph_panel import GraphPanel
 from lib.gui.qt_shell.job_runner import JobRunner
 from lib.gui.qt_shell.preview_panel import PreviewPanel
+from lib.gui.qt_shell.theme import QtTheme
 from lib.gui.services.command_builder import CommandBuilder
 from lib.gui.services.command_context import CommandExecutionContext
 from lib.gui.services.project_session_service import (
@@ -54,6 +55,8 @@ class ConsolePane(QPlainTextEdit):
 
     def __init__(self, parent: QMainWindow | None = None) -> None:
         super().__init__(parent)
+        self.setObjectName("qt-shell-console")
+        self.setProperty("console", "stdout")
         self.setReadOnly(True)
         self.setPlaceholderText("Generated commands and process output appear here.")
 
@@ -73,10 +76,11 @@ class ConsolePane(QPlainTextEdit):
 class MainWindow(QMainWindow):
     """Qt QMainWindow shell that exercises service-layer command generation."""
 
-    def __init__(self, schema: CommandSchema | None = None) -> None:
+    def __init__(self, schema: CommandSchema | None = None, theme: QtTheme | None = None) -> None:
         super().__init__()
         root = Path(PROJECT_ROOT)
         serializer = get_serializer("json")
+        self._theme = theme or QtTheme.default()
         self._schema = self._load_schema() if schema is None else schema
         self._builder = CommandBuilder(base_path=str(root))
         self._project_store = ProjectStore(serializer)
@@ -134,7 +138,12 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:  # type:ignore[no-untyped-def] # noqa:N802
         """Prompt before closing with unsaved project changes."""
+        if not self.isVisible():
+            self._stop_preview_live_refresh()
+            event.accept()
+            return
         if self._confirm_discard_changes("close this window"):
+            self._stop_preview_live_refresh()
             self._save_last_session_state()
             event.accept()
         else:
@@ -142,6 +151,7 @@ class MainWindow(QMainWindow):
 
     def _build_ui(self) -> None:
         """Build the Qt shell layout."""
+        self._apply_window_chrome()
         self._build_menus()
         self._build_toolbar()
         self._build_statusbar()
@@ -164,6 +174,13 @@ class MainWindow(QMainWindow):
         main.setSizes([520, 180])
         self._vertical_splitter = main
         self.setCentralWidget(main)
+
+    def _apply_window_chrome(self) -> None:
+        """Apply startup window icon and sizing polish."""
+        icon = self._icon("favicon")
+        if not icon.isNull():
+            self.setWindowIcon(icon)
+        self.setMinimumSize(900, 560)
 
     def _display_tabs(self) -> QTabWidget:
         """Create right display tabs used only for Analysis, Preview and Graph."""
@@ -223,25 +240,33 @@ class MainWindow(QMainWindow):
         menu_bar.setNativeMenuBar(False)
         project_menu = menu_bar.addMenu("Project")
         self._menus.append(project_menu)
-        project_menu.addAction("New Prototype Project", self._new_project)
-        project_menu.addAction("Close Project", self._close_project)
-        project_menu.addAction("Open Project...", self._open_project)
-        project_menu.addAction("Open Task...", self._open_task)
+        project_menu.addAction(self._action("New Prototype Project", self._new_project, "new"))
+        project_menu.addAction(self._action("Close Project", self._close_project, "clear"))
+        project_menu.addAction(self._action("Open Project...", self._open_project, "open"))
+        project_menu.addAction(self._action("Open Task...", self._open_task, "open"))
         project_menu.addSeparator()
-        project_menu.addAction("Save Project", self._save_project_current)
-        project_menu.addAction("Save Project As...", self._save_project_as)
-        project_menu.addAction("Save Task As...", self._save_task_as)
-        project_menu.addAction("Reload Current File", self._reload_current_file)
+        project_menu.addAction(self._action("Save Project", self._save_project_current, "save"))
+        project_menu.addAction(
+            self._action("Save Project As...", self._save_project_as, "save_as")
+        )
+        project_menu.addAction(self._action("Save Task As...", self._save_task_as, "save_as"))
+        project_menu.addAction(
+            self._action("Reload Current File", self._reload_current_file, "reload")
+        )
         project_menu.addSeparator()
-        project_menu.addAction("Restore Last Session", self._restore_last_session)
+        project_menu.addAction(
+            self._action("Restore Last Session", self._restore_last_session, "reload")
+        )
         self._recent_menu = project_menu.addMenu("Recent Files")
         self._refresh_recent_menu()
 
         command_menu = menu_bar.addMenu("Command")
         self._menus.append(command_menu)
-        command_menu.addAction("Generate", self._generate_command)
-        self._run_menu_action = command_menu.addAction("Run", self._run_command)
-        self._stop_menu_action = command_menu.addAction("Stop", self._stop_job)
+        command_menu.addAction(self._action("Generate", self._generate_command, "generate"))
+        self._run_menu_action = self._action("Run", self._run_command, "run")
+        self._stop_menu_action = self._action("Stop", self._stop_job, "stop")
+        command_menu.addAction(self._run_menu_action)
+        command_menu.addAction(self._stop_menu_action)
 
         view_menu = menu_bar.addMenu("View")
         self._menus.append(view_menu)
@@ -251,6 +276,7 @@ class MainWindow(QMainWindow):
             DisplayController.GRAPH,
         ):
             action = view_menu.addAction(label)
+            action.setIcon(self._icon(label.lower()))
             action.triggered.connect(
                 lambda _checked=False, tab_name=label: self._show_display_tab(tab_name)
             )
@@ -260,14 +286,17 @@ class MainWindow(QMainWindow):
         """Build the top toolbar."""
         toolbar = QToolBar("Toolbar")
         toolbar.setObjectName("qt-shell-toolbar")
+        toolbar.setIconSize(QSize(self._theme.icon_size, self._theme.icon_size))
         self.addToolBar(toolbar)
-        toolbar.addAction("New", self._new_project)
-        toolbar.addAction("Open", self._open_project)
-        toolbar.addAction("Save", self._save_project_current)
+        toolbar.addAction(self._action("New", self._new_project, "new"))
+        toolbar.addAction(self._action("Open", self._open_project, "open"))
+        toolbar.addAction(self._action("Save", self._save_project_current, "save"))
         toolbar.addSeparator()
-        toolbar.addAction("Generate", self._generate_command)
-        self._run_action = toolbar.addAction("Run", self._run_command)
-        self._stop_action = toolbar.addAction("Stop", self._stop_job)
+        toolbar.addAction(self._action("Generate", self._generate_command, "generate"))
+        self._run_action = self._action("Run", self._run_command, "run")
+        self._stop_action = self._action("Stop", self._stop_job, "stop")
+        toolbar.addAction(self._run_action)
+        toolbar.addAction(self._stop_action)
 
     def _build_statusbar(self) -> None:
         """Build QStatusBar and QProgressBar status panel."""
@@ -283,6 +312,7 @@ class MainWindow(QMainWindow):
         """Connect command panel and QProcess runner signals."""
         self._command_panel.generate_requested.connect(self._generate_command)
         self._command_panel.run_requested.connect(self._run_command)
+        self._command_panel.value_changed.connect(self._mark_modified_from_user_event)
         self._runner.stdout.connect(self._console.write)
         self._runner.stderr.connect(self._console.write)
         self._runner.progress.connect(self._consume_runtime_event)
@@ -339,7 +369,7 @@ class MainWindow(QMainWindow):
             self._show_error(str(err))
             return
         self._project = self._session_service.snapshot_project(self._project, command, values)
-        command_text = " ".join(args)
+        command_text = " ".join(CommandBuilder.quote_args(args))
         self._console.write_line(f"$ {command_text}")
         self._write_context(command, values)
         context = CommandExecutionContext.from_values(command, values)
@@ -368,20 +398,24 @@ class MainWindow(QMainWindow):
         try:
             self._runner.start(args, command=command)
         except (RuntimeError, ValueError) as err:
+            self._stop_preview_live_refresh()
             self._show_error(str(err))
             return
         if self._display_controller is not None:
             self._display_controller.set_runtime_state(command, running=True)
         self._sync_view_actions()
         self._set_running(True)
+        self._start_preview_live_refresh(command, context)
         self.statusBar().showMessage(f"Running {category} {command}")
 
     def _stop_job(self) -> None:
         """Stop the current QProcess job."""
+        self._stop_preview_live_refresh()
         self._runner.stop()
 
     def _job_finished(self, exit_code: int) -> None:
         """Update UI state when the process exits."""
+        self._stop_preview_live_refresh()
         self._set_running(False)
         if self._display_controller is not None:
             self._display_controller.set_runtime_state(None, running=False)
@@ -467,6 +501,10 @@ class MainWindow(QMainWindow):
         category, command, values = self._command_panel.command_spec()
         if not category or not command:
             raise ValueError("Select a command before generating arguments")
+        if not generate:
+            errors = self._command_panel.validation_errors()
+            if errors:
+                raise ValueError("\n".join(errors))
         args = self._builder.build(category, command, values, generate=generate)
         return category, command, values, args
 
@@ -497,12 +535,14 @@ class MainWindow(QMainWindow):
         if not self._confirm_discard_changes("close the current project"):
             return False
         self._reset_project_state()
+        self._last_session.clear()
         self._console.write_line("Closed current project")
         self.statusBar().showMessage("Project closed", 5000)
         return True
 
     def _reset_project_state(self) -> None:
         """Reset project/task, command and display state to the initial shell state."""
+        self._stop_preview_live_refresh()
         self._project = ProjectFile()
         self._project_filename = None
         self._file_kind = PROJECT_KIND
@@ -598,8 +638,9 @@ class MainWindow(QMainWindow):
         """Save a project/task model and update recent/last-session stores."""
         try:
             self._project_store.save(filename, project)
-            self._recent_files.add(filename, kind)
-            self._last_session.save(filename, kind, self._capture_ui_state())
+            normalized_kind = self._session_service.normalize_kind(kind, filename)
+            self._recent_files.add(filename, normalized_kind)
+            self._last_session.save(filename, normalized_kind, self._capture_ui_state())
         except OSError as err:
             self._show_error(str(err))
             return False
@@ -622,7 +663,12 @@ class MainWindow(QMainWindow):
             return False
         if confirm_discard and not self._confirm_discard_changes("open another file"):
             return False
-        resolved_kind = kind or self._session_service.kind_from_filename(filename)
+        self._stop_preview_live_refresh()
+        resolved_kind = (
+            self._session_service.kind_from_filename(filename)
+            if kind is None
+            else self._session_service.normalize_kind(kind, filename)
+        )
         try:
             project = self._project_store.load(filename)
         except (OSError, ValueError) as err:
@@ -634,6 +680,7 @@ class MainWindow(QMainWindow):
         self, filename: str, project: ProjectFile, kind: str = PROJECT_KIND
     ) -> bool:
         """Apply a loaded ProjectFile to the command panel and runtime displays."""
+        self._stop_preview_live_refresh()
         try:
             command, values = self._session_service.selected_task(project)
         except ValueError as err:
@@ -641,7 +688,7 @@ class MainWindow(QMainWindow):
             return False
         self._project = project
         self._project_filename = filename
-        self._file_kind = kind
+        self._file_kind = self._session_service.normalize_kind(kind, filename)
         self._suppress_dirty = True
         try:
             self._command_panel.set_command(command, values)
@@ -650,12 +697,12 @@ class MainWindow(QMainWindow):
         context = CommandExecutionContext.from_values(command, values)
         self._apply_preview_context(context)
         self._apply_graph_context(context)
-        self._recent_files.add(filename, kind)
-        self._last_session.save(filename, kind, self._capture_ui_state())
+        self._recent_files.add(filename, self._file_kind)
+        self._last_session.save(filename, self._file_kind, self._capture_ui_state())
         self._refresh_recent_menu()
         self._set_modified(False)
-        self._console.write_line(f"Loaded prototype {kind}: {filename}")
-        self.statusBar().showMessage(f"{kind.title()} loaded", 5000)
+        self._console.write_line(f"Loaded prototype {self._file_kind}: {filename}")
+        self.statusBar().showMessage(f"{self._file_kind.title()} loaded", 5000)
         return True
 
     def _reload_current_file(self) -> bool:
@@ -682,6 +729,7 @@ class MainWindow(QMainWindow):
         restored = self._open_session_file(session.filename, session.kind)
         if restored:
             self._restore_ui_state(session.ui_state)
+            self._save_last_session_state()
         return restored
 
     def _capture_ui_state(self) -> dict[str, object]:
@@ -768,16 +816,18 @@ class MainWindow(QMainWindow):
             return
         self._recent_menu.clear()
         recent_files = self._recent_files.prune_missing()
-        if not recent_files:
+        display_items = self._recent_files.display_items(recent_files)
+        if not display_items:
             action = self._recent_menu.addAction("No recent files")
             action.setEnabled(False)
         else:
-            for item in recent_files:
-                label = f"{item.kind.title()}: {Path(item.filename).name}"
-                action = self._recent_menu.addAction(label)
-                action.setToolTip(item.filename)
+            for display_item in display_items:
+                item = display_item.file
+                normalized_kind = self._session_service.normalize_kind(item.kind, item.filename)
+                action = self._recent_menu.addAction(display_item.label)
+                action.setToolTip(display_item.tooltip)
                 action.triggered.connect(
-                    lambda _checked=False, filename=item.filename, kind=item.kind: (
+                    lambda _checked=False, filename=item.filename, kind=normalized_kind: (
                         self._open_session_file(
                             filename,
                             kind,
@@ -786,7 +836,7 @@ class MainWindow(QMainWindow):
                 )
         self._recent_menu.addSeparator()
         clear_action = self._recent_menu.addAction("Clear Recent Files", self._clear_recent_files)
-        clear_action.setEnabled(bool(recent_files))
+        clear_action.setEnabled(bool(display_items))
 
     def _clear_recent_files(self) -> None:
         """Clear all recent-file entries."""
@@ -809,6 +859,7 @@ class MainWindow(QMainWindow):
     def _set_running(self, running: bool) -> None:
         """Update running controls."""
         self._running = running
+        self._command_panel.set_running(running)
         for action in (self._run_action, self._run_menu_action):
             if action is not None:
                 action.setEnabled(not running)
@@ -847,6 +898,36 @@ class MainWindow(QMainWindow):
         """Display an error in both console and dialog form."""
         self._console.write_line(f"Error: {message}")
         QMessageBox.critical(self, "Qt Shell Prototype", message)
+
+    def _start_preview_live_refresh(
+        self,
+        command: str,
+        context: CommandExecutionContext,
+    ) -> None:
+        """Start Preview polling for extract/convert jobs that emit preview output."""
+        if command not in {"extract", "convert"} or context.preview_output_path is None:
+            self._stop_preview_live_refresh()
+            return
+        if self._preview_panel_widget is not None:
+            self._preview_panel_widget.start_live_refresh()
+
+    def _stop_preview_live_refresh(self) -> None:
+        """Stop Preview polling if the panel exists."""
+        if self._preview_panel_widget is not None:
+            self._preview_panel_widget.stop_live_refresh()
+
+    def _action(self, text: str, callback: T.Callable[[], object], icon_key: str) -> QAction:
+        """Create a menu/toolbar action with the mapped Faceswap icon."""
+        action = QAction(self._icon(icon_key), text, self)
+        action.setToolTip(text)
+        action.triggered.connect(lambda _checked=False: callback())
+        return action
+
+    def _icon(self, action: str) -> QIcon:
+        """Return a QIcon from the legacy icon cache for a theme action."""
+        icon_name = self._theme.icon_name(action)
+        path = Path(PROJECT_ROOT) / "lib" / "gui" / ".cache" / "icons" / f"{icon_name}.png"
+        return QIcon(str(path)) if path.is_file() else QIcon()
 
     @staticmethod
     def _with_suffix(filename: str, suffix: str) -> str:

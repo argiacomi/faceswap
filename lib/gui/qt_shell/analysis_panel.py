@@ -116,6 +116,7 @@ class AnalysisPanel(QWidget):
 
     def _build_ui(self) -> None:
         """Build the panel layout."""
+        self.setObjectName("qt-shell-analysis-panel")
         self.setMinimumWidth(0)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 8)

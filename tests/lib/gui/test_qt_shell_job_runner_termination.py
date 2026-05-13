@@ -46,7 +46,7 @@ def test_stop_sends_interrupt_for_train_before_terminate(qtbot, monkeypatch) -> 
     killed: list[tuple[int, signal.Signals]] = []
     messages: list[str] = []
     runner.stdout.connect(messages.append)
-    monkeypatch.setattr("lib.gui.qt_shell.job_runner.os.name", "posix")
+    monkeypatch.setattr("lib.gui.qt_shell.job_runner.IS_WINDOWS", False)
     monkeypatch.setattr(os, "kill", lambda pid, sig: killed.append((pid, sig)))
     monkeypatch.setattr("lib.gui.qt_shell.job_runner.QTimer.singleShot", lambda *_args: None)
 
@@ -63,7 +63,7 @@ def test_stop_falls_back_to_terminate_when_train_interrupt_fails(qtbot, monkeypa
     process = _ProcessDouble(pid=4321)
     runner.process = process  # type:ignore[assignment]
     runner._runtime.command = "train"  # pylint:disable=protected-access
-    monkeypatch.setattr("lib.gui.qt_shell.job_runner.os.name", "posix")
+    monkeypatch.setattr("lib.gui.qt_shell.job_runner.IS_WINDOWS", False)
     monkeypatch.setattr(os, "kill", lambda _pid, _sig: (_ for _ in ()).throw(OSError()))
     monkeypatch.setattr("lib.gui.qt_shell.job_runner.QTimer.singleShot", lambda *_args: None)
 
@@ -78,7 +78,7 @@ def test_stop_uses_terminate_for_train_on_windows(qtbot, monkeypatch) -> None:  
     process = _ProcessDouble(pid=4321)
     runner.process = process  # type:ignore[assignment]
     runner._runtime.command = "train"  # pylint:disable=protected-access
-    monkeypatch.setattr("lib.gui.qt_shell.job_runner.os.name", "nt")
+    monkeypatch.setattr("lib.gui.qt_shell.job_runner.IS_WINDOWS", True)
     monkeypatch.setattr("lib.gui.qt_shell.job_runner.QTimer.singleShot", lambda *_args: None)
 
     runner.stop()
@@ -95,7 +95,7 @@ def test_stop_uses_terminate_for_non_train(qtbot, monkeypatch) -> None:  # type:
     killed: list[tuple[int, signal.Signals]] = []
     messages: list[str] = []
     runner.stdout.connect(messages.append)
-    monkeypatch.setattr("lib.gui.qt_shell.job_runner.os.name", "posix")
+    monkeypatch.setattr("lib.gui.qt_shell.job_runner.IS_WINDOWS", False)
     monkeypatch.setattr(os, "kill", lambda pid, sig: killed.append((pid, sig)))
     monkeypatch.setattr("lib.gui.qt_shell.job_runner.QTimer.singleShot", lambda *_args: None)
 
@@ -113,7 +113,7 @@ def test_stop_schedules_kill_fallback_for_train(qtbot, monkeypatch) -> None:  # 
     runner.process = process  # type:ignore[assignment]
     runner._runtime.command = "train"  # pylint:disable=protected-access
     scheduled: list[int] = []
-    monkeypatch.setattr("lib.gui.qt_shell.job_runner.os.name", "posix")
+    monkeypatch.setattr("lib.gui.qt_shell.job_runner.IS_WINDOWS", False)
     monkeypatch.setattr(os, "kill", lambda _pid, _sig: None)
     monkeypatch.setattr(
         "lib.gui.qt_shell.job_runner.QTimer.singleShot",
@@ -133,6 +133,23 @@ def test_kill_fallback_kills_still_running_process() -> None:
 
     runner._kill_if_running()  # pylint:disable=protected-access
 
+    assert process.kill_count == 1
+
+
+def test_kill_fallback_invokes_tree_terminator() -> None:
+    """Kill fallback should attempt child-process cleanup before root kill."""
+    runner = JobRunner()
+    process = _ProcessDouble(pid=2468)
+    runner.process = process  # type:ignore[assignment]
+    runner._pending_termination_plan = runner._termination_policy.plan("extract")  # pylint:disable=protected-access
+    calls: list[tuple[int, float]] = []
+    runner._tree_terminator.terminate = (  # type:ignore[method-assign] # pylint:disable=protected-access
+        lambda pid, *, timeout_seconds: calls.append((pid, timeout_seconds)) or True
+    )
+
+    runner._kill_if_running()  # pylint:disable=protected-access
+
+    assert calls == [(2468, 5.0)]
     assert process.kill_count == 1
 
 

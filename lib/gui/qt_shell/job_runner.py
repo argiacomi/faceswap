@@ -11,9 +11,14 @@ from PySide6.QtCore import QObject, QProcess, QTimer, Signal
 
 from lib.gui.services.command_context import CommandExecutionContext
 from lib.gui.services.runtime_service import ProcessRuntimeService
-from lib.gui.services.runtime_session_services import RuntimeTerminationPolicy
+from lib.gui.services.runtime_session_services import (
+    ProcessTreeTerminator,
+    RuntimeTerminationPlan,
+    RuntimeTerminationPolicy,
+)
 
 StreamName = T.Literal["stdout", "stderr"]
+IS_WINDOWS = os.name == "nt"
 
 
 class JobRunner(QObject):
@@ -30,6 +35,8 @@ class JobRunner(QObject):
         self._runtime = ProcessRuntimeService()
         self._runtime.add_event_callback(self.progress.emit)
         self._termination_policy = RuntimeTerminationPolicy()
+        self._tree_terminator = ProcessTreeTerminator()
+        self._pending_termination_plan: RuntimeTerminationPlan | None = None
         self._stdout_buffer = ""
         self._stderr_buffer = ""
 
@@ -61,6 +68,7 @@ class JobRunner(QObject):
         if self.process is None or self.process.state() == QProcess.NotRunning:
             return
         plan = self._termination_policy.plan(self._runtime.command)
+        self._pending_termination_plan = plan
         self.stdout.emit(f"{plan.message}\n")
         if not (plan.interrupt_first and self._interrupt_process()):
             self.process.terminate()
@@ -68,7 +76,7 @@ class JobRunner(QObject):
 
     def _interrupt_process(self) -> bool:
         """Request graceful interruption for train jobs where the platform supports it."""
-        if self.process is None or os.name == "nt":
+        if self.process is None or IS_WINDOWS:
             return False
         try:
             pid = int(self.process.processId())
@@ -85,7 +93,24 @@ class JobRunner(QObject):
     def _kill_if_running(self) -> None:
         """Kill the process if terminate did not stop it."""
         if self.process is not None and self.process.state() != QProcess.NotRunning:
+            plan = self._pending_termination_plan
+            pid = self._process_id()
+            if plan is not None and pid is not None:
+                self._tree_terminator.terminate(
+                    pid,
+                    timeout_seconds=plan.tree_timeout_seconds,
+                )
             self.process.kill()
+
+    def _process_id(self) -> int | None:
+        """Return the current QProcess id when available."""
+        if self.process is None:
+            return None
+        try:
+            pid = int(self.process.processId())
+        except (AttributeError, TypeError, ValueError):
+            return None
+        return pid if pid > 0 else None
 
     def _stdout(self) -> None:
         """Emit decoded stdout or structured runtime events."""
@@ -113,6 +138,7 @@ class JobRunner(QObject):
         self._stderr()
         self._flush_output_buffers()
         self._runtime.finish(exit_code)
+        self._pending_termination_plan = None
         self.process = None
         self.finished.emit(exit_code)
 

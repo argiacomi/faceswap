@@ -244,6 +244,24 @@ def test_process_runtime_service_configures_preview_output_context() -> None:
     }
 
 
+def test_process_runtime_service_keeps_preview_event_when_tk_images_unavailable() -> None:
+    """Qt preview events should not require the legacy Tk image singleton."""
+    preview = PreviewOutputRuntimeService(
+        images_provider=lambda: (_ for _ in ()).throw(AssertionError("no tk"))
+    )
+    runtime = ProcessRuntimeService("extract", preview_output=preview)
+    events = []
+    runtime.add_event_callback(events.append)
+
+    configured_events = runtime.configure_context(
+        CommandExecutionContext.from_values("extract", {"-o": "/preview"})
+    )
+
+    assert configured_events == tuple(events)
+    assert len(events) == 1
+    assert events[0].payload["preview_output_path"] == "/preview"
+
+
 def test_process_runtime_service_skips_preview_event_without_output_path() -> None:
     """Runtime context without preview output should not emit preview events."""
     preview = PreviewOutputRuntimeService(images_provider=lambda: _ImagesDouble())

@@ -47,6 +47,9 @@ class GraphPanel(QWidget):
         self._open_button = QPushButton("Open")
         self._refresh_button = QPushButton("Refresh")
         self._export_button = QPushButton("Export")
+        self._zoom_in_button = QPushButton("Zoom In")
+        self._zoom_out_button = QPushButton("Zoom Out")
+        self._reset_view_button = QPushButton("Reset")
         self._clear_button = QPushButton("Clear")
         self._build_ui()
         self._connect_signals()
@@ -169,9 +172,12 @@ class GraphPanel(QWidget):
             self._open_button,
             self._refresh_button,
             self._export_button,
+            self._zoom_in_button,
+            self._zoom_out_button,
+            self._reset_view_button,
             self._clear_button,
         ):
-            button.setObjectName(f"qt-shell-graph-{button.text().lower()}")
+            button.setObjectName(f"qt-shell-graph-{button.text().lower().replace(' ', '-')}")
             footer.addWidget(button)
         layout.addLayout(footer)
 
@@ -180,6 +186,11 @@ class GraphPanel(QWidget):
         self._open_button.clicked.connect(lambda _checked=False: self._open_source_dialog())
         self._refresh_button.clicked.connect(lambda _checked=False: self.refresh_graph())
         self._export_button.clicked.connect(lambda _checked=False: self._export_graph_dialog())
+        self._zoom_in_button.clicked.connect(lambda _checked=False: self._graph_widget.zoom_in())
+        self._zoom_out_button.clicked.connect(lambda _checked=False: self._graph_widget.zoom_out())
+        self._reset_view_button.clicked.connect(
+            lambda _checked=False: self._graph_widget.reset_view()
+        )
         self._clear_button.clicked.connect(lambda _checked=False: self.clear_graph())
         self._session_combo.currentIndexChanged.connect(self._session_changed)
         self._key_combo.currentIndexChanged.connect(self._loss_key_changed)
@@ -208,7 +219,7 @@ class GraphPanel(QWidget):
             "PNG files (*.png);;All files (*)",
         )
         if filename:
-            self.save_graph_image(filename)
+            self.save_graph_image(self._with_suffix(filename, ".png"))
 
     def _session_changed(self, index: int) -> None:
         """Refresh graph data when the selected session changes."""
@@ -306,6 +317,9 @@ class GraphPanel(QWidget):
         active_graph = has_source or has_graph_data
         self._refresh_button.setEnabled(active_graph)
         self._export_button.setEnabled(bool(self._graph_widget.series))
+        self._zoom_in_button.setEnabled(bool(self._graph_widget.series))
+        self._zoom_out_button.setEnabled(bool(self._graph_widget.series))
+        self._reset_view_button.setEnabled(bool(self._graph_widget.series))
         self._clear_button.setEnabled(active_graph)
         self._session_combo.setEnabled(active_graph and self._service.is_loaded)
         self._key_combo.setEnabled(has_graph_data)
@@ -316,6 +330,12 @@ class GraphPanel(QWidget):
         self._graph_widget.clear()
         self._graph_text.setPlainText("No graph data loaded")
         self._sync_actions()
+
+    @staticmethod
+    def _with_suffix(filename: str, suffix: str) -> str:
+        """Return filename with suffix when the user omitted one."""
+        path = Path(filename)
+        return str(path if path.suffix else path.with_suffix(suffix))
 
     @classmethod
     def _sparkline(cls, values: tuple[float, ...]) -> str:

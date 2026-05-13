@@ -62,16 +62,16 @@ def test_convert_progress_event_creates_preview_tab(qtbot) -> None:  # type:igno
     assert controller.visible_tab_names() == ("Analysis", "Preview")
 
 
-def test_train_runtime_event_creates_preview_and_graph_tabs(qtbot) -> None:  # type:ignore[no-untyped-def]
-    """Training should expose both Preview and Graph tabs."""
+def test_train_runtime_event_creates_graph_tab_without_preview(qtbot) -> None:  # type:ignore[no-untyped-def]
+    """Training should expose Graph but not extract/convert Preview."""
     controller, _tabs = _controller(qtbot)
 
     controller.consume_event(
         _RuntimeEvent("runtime", payload={"command": "train", "state": "started"})
     )
 
-    assert controller.tab_names() == ("Analysis", "Preview", "Graph")
-    assert controller.visible_tab_names() == ("Analysis", "Preview", "Graph")
+    assert controller.tab_names() == ("Analysis", "Graph")
+    assert controller.visible_tab_names() == ("Analysis", "Graph")
     assert controller.command == "train"
 
 
@@ -84,7 +84,7 @@ def test_runtime_display_state_payload_controls_tabs(qtbot) -> None:  # type:ign
     )
 
     assert consumed is True
-    assert controller.visible_tab_names() == ("Analysis", "Preview", "Graph")
+    assert controller.visible_tab_names() == ("Analysis", "Graph")
 
 
 def test_terminal_runtime_event_removes_dynamic_tabs(qtbot) -> None:  # type:ignore[no-untyped-def]
@@ -130,4 +130,4 @@ def test_preserve_existing_tabs_hides_instead_of_removing(qtbot) -> None:  # typ
     controller.set_runtime_state("train", running=True)
 
     assert controller.tab_names() == ("Analysis", "Preview", "Graph")
-    assert controller.visible_tab_names() == ("Analysis", "Preview", "Graph")
+    assert controller.visible_tab_names() == ("Analysis", "Graph")

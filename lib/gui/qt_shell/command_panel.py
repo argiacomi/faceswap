@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 import shlex
 import typing as T
+from html import escape
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -34,6 +35,8 @@ from lib.gui.qt_shell.command_schema import CommandSchema, OptionSpec
 
 class OptionsFormRenderer(QWidget):
     """Dynamic schema-backed Qt option renderer."""
+
+    value_changed = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -173,6 +176,7 @@ class OptionsFormRenderer(QWidget):
         self._apply_widget_policy(widget)
         if spec.helptext:
             widget.setToolTip(spec.helptext)
+        self._connect_value_signal(widget, spec)
         return widget
 
     def _build_radio_group(self, spec: OptionSpec) -> QWidget:
@@ -348,6 +352,53 @@ class OptionsFormRenderer(QWidget):
             value = ""
         if value:
             widget.setText(value)
+            self.value_changed.emit()
+
+    def validation_errors(self) -> tuple[str, ...]:
+        """Return inline validation errors for rendered option values."""
+        errors: list[str] = []
+        values = self.values()
+        for spec in self._specs:
+            if not self._is_required(spec):
+                continue
+            if self._is_empty_value(values.get(spec.switch)):
+                errors.append(f"{spec.title} is required")
+        return tuple(errors)
+
+    def _connect_value_signal(self, widget: QWidget, spec: OptionSpec) -> None:
+        """Connect widget value changes to the renderer-level signal."""
+        if isinstance(widget, QLineEdit):
+            widget.textEdited.connect(lambda _text: self.value_changed.emit())
+        elif isinstance(widget, QCheckBox):
+            widget.clicked.connect(lambda _checked=False: self.value_changed.emit())
+        elif isinstance(widget, QComboBox):
+            widget.activated.connect(lambda _index=0: self.value_changed.emit())
+        elif self._is_radio_group(spec) or self._is_multi_select(spec):
+            for checkbox in widget.findChildren(QCheckBox):
+                checkbox.clicked.connect(lambda _checked=False: self.value_changed.emit())
+            for radio in widget.findChildren(QRadioButton):
+                radio.clicked.connect(lambda _checked=False: self.value_changed.emit())
+        elif self._is_slider(spec):
+            slider = widget.findChild(QSlider)
+            line_edit = widget.findChild(QLineEdit)
+            if slider is not None:
+                slider.sliderReleased.connect(self.value_changed.emit)
+            if line_edit is not None:
+                line_edit.textEdited.connect(lambda _text: self.value_changed.emit())
+
+    @staticmethod
+    def _is_required(spec: OptionSpec) -> bool:
+        """Return whether option metadata indicates a required argument."""
+        return "[required]" in spec.helptext.lower() or "required" in spec.title.lower()
+
+    @staticmethod
+    def _is_empty_value(value: object) -> bool:
+        """Return whether a value is empty for validation purposes."""
+        if value is None or value is False:
+            return True
+        if isinstance(value, str):
+            return value == ""
+        return bool(isinstance(value, list | tuple) and not value)
 
     @staticmethod
     def _is_radio_group(spec: OptionSpec) -> bool:
@@ -511,6 +562,7 @@ class CommandPanel(QWidget):
 
     generate_requested = Signal()
     run_requested = Signal()
+    value_changed = Signal()
 
     def __init__(self, schema: CommandSchema, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -521,13 +573,16 @@ class CommandPanel(QWidget):
         self._primary_tabs = QTabBar()
         self._tool_tabs = QTabBar()
         self._command_info = QLabel()
+        self._validation_label = QLabel()
         self._renderer = OptionsFormRenderer()
+        self._generate_button = QPushButton("Generate")
         self._run_button = QPushButton("Run")
         self._syncing_tabs = False
         self._build()
         self._primary_tabs.currentChanged.connect(self._set_primary_tab)
         self._tool_tabs.currentChanged.connect(self._set_tool_tab)
         self._command.currentTextChanged.connect(self._set_command_options)
+        self._renderer.value_changed.connect(self._value_changed)
         self._set_primary_tab(self._primary_tabs.currentIndex())
 
     @property
@@ -558,6 +613,15 @@ class CommandPanel(QWidget):
         """Reset rendered fields to empty/default values."""
         self._set_command_options(self._command.currentText())
 
+    def set_running(self, running: bool) -> None:
+        """Disable command execution controls while a job is running."""
+        self._generate_button.setEnabled(not running)
+        self._run_button.setEnabled(not running)
+
+    def validation_errors(self) -> tuple[str, ...]:
+        """Return current command option validation errors."""
+        return self._renderer.validation_errors()
+
     def _build(self) -> None:
         """Build command panel widgets."""
         layout = QVBoxLayout(self)
@@ -572,6 +636,12 @@ class CommandPanel(QWidget):
         self._command_info.setObjectName("qt-shell-command-info")
         layout.addWidget(self._command_info)
 
+        self._validation_label.setWordWrap(True)
+        self._validation_label.setObjectName("qt-shell-command-errors")
+        self._validation_label.setProperty("status", "error")
+        self._validation_label.setVisible(False)
+        layout.addWidget(self._validation_label)
+
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -580,10 +650,9 @@ class CommandPanel(QWidget):
         layout.addWidget(scroll, 1)
 
         buttons = QHBoxLayout()
-        generate = QPushButton("Generate")
-        generate.clicked.connect(self.generate_requested)
+        self._generate_button.clicked.connect(self.generate_requested)
         self._run_button.clicked.connect(self.run_requested)
-        buttons.addWidget(generate)
+        buttons.addWidget(self._generate_button)
         buttons.addWidget(self._run_button)
         layout.addLayout(buttons)
 
@@ -594,7 +663,7 @@ class CommandPanel(QWidget):
         self._primary_tabs.setExpanding(False)
         self._tool_tabs.setExpanding(False)
         self._primary_tabs.setUsesScrollButtons(False)
-        self._tool_tabs.setUsesScrollButtons(False)
+        self._tool_tabs.setUsesScrollButtons(True)
 
         for command in self._schema.commands("faceswap"):
             self._primary_tabs.addTab(command.title())
@@ -646,21 +715,33 @@ class CommandPanel(QWidget):
         """Render fields for the selected command."""
         self._renderer.set_options(self._schema.options(command))
         self._set_command_info(command)
+        self._update_validation()
         self._run_button.setText(command.title() if command else "Run")
 
     def _set_command_info(self, command: str) -> None:
         """Render command summary text from CLI metadata."""
         info = self._schema.command_info(command)
         if not info:
-            self._command_info.setText(command.title() if command else "")
+            self._command_info.setText(escape(command.title()) if command else "")
             return
         lines = [line.strip() for line in info.splitlines() if line.strip()]
         heading = lines[0] if lines else command.title()
         detail = "\n".join(lines[1:])
         if detail:
-            self._command_info.setText(f"<b>{heading}</b><br>{detail}")
+            self._command_info.setText(f"<b>{escape(heading)}</b><br>{escape(detail)}")
         else:
-            self._command_info.setText(f"<b>{heading}</b>")
+            self._command_info.setText(f"<b>{escape(heading)}</b>")
+
+    def _value_changed(self) -> None:
+        """Forward renderer changes after refreshing inline validation."""
+        self._update_validation()
+        self.value_changed.emit()
+
+    def _update_validation(self) -> None:
+        """Display current validation errors inline."""
+        errors = self.validation_errors()
+        self._validation_label.setText("\n".join(errors))
+        self._validation_label.setVisible(bool(errors))
 
     def _select_tabs_for_command(self, category: str | None, command: str) -> None:
         """Synchronize visible tabs after a project load or programmatic command set."""

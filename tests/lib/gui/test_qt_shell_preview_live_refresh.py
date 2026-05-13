@@ -98,3 +98,39 @@ def test_clear_preview_stops_live_refresh(qtbot, tmp_path: Path) -> None:  # typ
 
     assert panel.is_live_refreshing is False
     assert _status(panel).text() == "No preview images loaded"
+
+
+def test_main_window_starts_and_stops_preview_polling_for_extract(  # type:ignore[no-untyped-def]
+    qtbot,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """MainWindow should own preview polling for preview-capable jobs."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    from lib.gui.qt_shell.command_schema import CommandSchema, CommandSpec, OptionSpec
+    from lib.gui.qt_shell.main_window import MainWindow
+
+    schema = CommandSchema(
+        (
+            CommandSpec(
+                "faceswap",
+                "extract",
+                (OptionSpec("Output", "-o"),),
+            ),
+        )
+    )
+    window = MainWindow(schema)
+    qtbot.addWidget(window)
+    window._runner.configure_runtime_context = lambda _context: None  # type:ignore[method-assign] # pylint:disable=protected-access
+    window._runner.start = lambda _args, command=None: None  # type:ignore[method-assign] # pylint:disable=protected-access
+    window._command_panel.set_command("extract", {"-o": str(tmp_path)})  # pylint:disable=protected-access
+
+    window._run_command()  # pylint:disable=protected-access
+
+    assert window._preview_panel_widget is not None  # pylint:disable=protected-access
+    assert window._preview_panel_widget.is_live_refreshing is True  # pylint:disable=protected-access
+
+    window._job_finished(0)  # pylint:disable=protected-access
+
+    assert window._preview_panel_widget.is_live_refreshing is False  # pylint:disable=protected-access

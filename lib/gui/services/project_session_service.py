@@ -39,6 +39,23 @@ class ProjectSessionService:
             return PROJECT_KIND
         return default
 
+    @classmethod
+    def normalize_kind(
+        cls,
+        kind: str | None,
+        filename: str | Path | None = None,
+    ) -> str:
+        """Normalize current and legacy project/task kind values."""
+        if kind == PROJECT_KIND:
+            return PROJECT_KIND
+        if kind == TASK_KIND:
+            return TASK_KIND
+        if filename is not None and Path(filename).suffix.lower() == PROJECT_EXTENSION:
+            return PROJECT_KIND if kind is None else TASK_KIND
+        if filename is not None and Path(filename).suffix.lower() == TASK_EXTENSION:
+            return TASK_KIND
+        return TASK_KIND if kind else PROJECT_KIND
+
     @staticmethod
     def title(filename: str | None, *, modified: bool) -> str:
         """Return a window title for current filename and dirty state."""
@@ -100,8 +117,7 @@ class LastSessionStore:
         ui_state = payload.get("ui_state", {})
         if not isinstance(filename, str) or not isinstance(kind, str):
             return None
-        if kind not in {PROJECT_KIND, TASK_KIND}:
-            return None
+        kind = ProjectSessionService.normalize_kind(kind, filename)
         if not Path(filename).exists():
             return None
         if not isinstance(ui_state, dict):
@@ -116,7 +132,10 @@ class LastSessionStore:
     ) -> None:
         """Save a last-session entry."""
         self._filename.parent.mkdir(parents=True, exist_ok=True)
-        payload: dict[str, T.Any] = {"filename": filename, "kind": kind}
+        payload: dict[str, T.Any] = {
+            "filename": filename,
+            "kind": ProjectSessionService.normalize_kind(kind, filename),
+        }
         if ui_state is not None:
             payload["ui_state"] = dict(ui_state)
         self._serializer.save(str(self._filename), payload)

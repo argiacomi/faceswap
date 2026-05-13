@@ -25,6 +25,15 @@ def test_kind_from_filename_routes_project_and_task_extensions() -> None:
     assert service.kind_from_filename("unknown.json", default=TASK_KIND) == TASK_KIND
 
 
+def test_normalize_kind_accepts_legacy_command_kinds() -> None:
+    """Legacy recent-file command names should normalize to task entries."""
+    service = ProjectSessionService()
+
+    assert service.normalize_kind("extract", "task.fst") == TASK_KIND
+    assert service.normalize_kind("train", "legacy.fsw") == TASK_KIND
+    assert service.normalize_kind(None, "project.fsw") == PROJECT_KIND
+
+
 def test_title_renders_basename_and_dirty_marker() -> None:
     """Window title should reflect current file and dirty state."""
     service = ProjectSessionService()
@@ -82,6 +91,20 @@ def test_last_session_store_round_trips_existing_file(tmp_path: Path) -> None:
     assert loaded is not None
     assert loaded.filename == str(project_file)
     assert loaded.kind == PROJECT_KIND
+
+
+def test_last_session_store_normalizes_legacy_kind(tmp_path: Path) -> None:
+    """Last session cache should restore older command-kind task entries."""
+    session_file = tmp_path / "last.json"
+    task_file = tmp_path / "example.fst"
+    task_file.write_text("{}", encoding="utf-8")
+    store = LastSessionStore(get_serializer("json"), str(session_file))
+
+    store.save(str(task_file), "train")
+    loaded = store.load()
+
+    assert loaded is not None
+    assert loaded.kind == TASK_KIND
 
 
 def test_last_session_store_ignores_missing_file(tmp_path: Path) -> None:

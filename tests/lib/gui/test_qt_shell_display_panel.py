@@ -138,7 +138,7 @@ def test_view_menu_actions_follow_runtime_display_visibility(  # type:ignore[no-
         _RuntimeEvent("runtime", payload={"command": "train", "state": "started"})
     )
 
-    assert _view_action_enabled(window, "Preview") is True
+    assert _view_action_enabled(window, "Preview") is False
     assert _view_action_enabled(window, "Graph") is True
 
     _trigger_view_action(window, "Graph")
