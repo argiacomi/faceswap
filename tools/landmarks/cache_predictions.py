@@ -185,8 +185,21 @@ def _square_roi_from_bbox(
     )
 
 
-def _roi_from_truth(sample: LandmarkSample, *, scale: float = 1.25) -> np.ndarray:
-    """Derive a validation-only ROI from ground-truth landmarks."""
+def _scale_roi(
+    bbox: tuple[float, float, float, float],
+    *,
+    scale: float,
+) -> np.ndarray:
+    """Return ``bbox`` as-is, or square-scaled when ``scale`` is not 1.0."""
+    if scale <= 0:
+        raise ValueError("gt_roi_scale must be greater than zero")
+    if np.isclose(scale, 1.0):
+        return np.asarray(bbox, dtype="float32")
+    return _square_roi_from_bbox(bbox, scale=scale)
+
+
+def _roi_from_truth(sample: LandmarkSample, *, scale: float = 1.0) -> np.ndarray:
+    """Derive a validation-only raw ROI from ground-truth landmarks."""
     try:
         raw = np.load(sample.landmarks).astype("float32")
         points = normalize_landmarks(raw)
@@ -201,7 +214,7 @@ def _roi_from_truth(sample: LandmarkSample, *, scale: float = 1.25) -> np.ndarra
         raise ValueError(f"sample '{sample.sample_id}' has no finite GT landmarks for ROI")
     left, top = np.min(finite, axis=0)
     right, bottom = np.max(finite, axis=0)
-    return _square_roi_from_bbox((float(left), float(top), float(right), float(bottom)), scale=scale)
+    return _scale_roi((float(left), float(top), float(right), float(bottom)), scale=scale)
 
 
 def _base_roi_for_sample(
@@ -209,25 +222,27 @@ def _base_roi_for_sample(
     entry: dict[str, T.Any],
     *,
     allow_gt_roi: bool,
+    gt_roi_scale: float = 1.0,
 ) -> tuple[np.ndarray, str]:
-    """Return the base face ROI and source label for one manifest sample."""
+    """Return the raw face ROI and source label for one manifest sample."""
     bbox = _entry_bbox(entry)
     if bbox is not None:
-        return _square_roi_from_bbox(bbox), "manifest_bbox"
+        return np.asarray(bbox, dtype="float32"), "manifest_bbox"
     if not allow_gt_roi:
         raise ValueError(
             f"sample '{sample.sample_id}' is missing face_bbox/bbox and GT-derived ROI is disabled"
         )
-    return _roi_from_truth(sample), "gt_landmarks"
+    return _roi_from_truth(sample, scale=gt_roi_scale), "gt_landmarks"
 
 
-def _plugin_adjusted_roi(adapter: LandmarkAdapter, base_roi: np.ndarray) -> np.ndarray:
-    """Let a wrapped plugin adjust the base detection ROI when possible."""
+def _model_roi_for_adapter(adapter: LandmarkAdapter, raw_roi: np.ndarray) -> np.ndarray:
+    """Return the model crop ROI, letting Faceswap plugins own crop expansion."""
     plugin = getattr(adapter, "plugin", None)
-    if plugin is None or not hasattr(plugin, "pre_process"):
-        return base_roi.astype("float32", copy=False)
-    adjusted = plugin.pre_process(np.asarray(base_roi, dtype="float32")[None])
-    return np.asarray(adjusted[0], dtype="float32")
+    if plugin is not None and hasattr(plugin, "pre_process"):
+        adjusted = plugin.pre_process(np.asarray(raw_roi, dtype="float32")[None])
+        return np.asarray(adjusted[0], dtype="float32")
+    values = tuple(float(value) for value in np.asarray(raw_roi, dtype="float32").reshape(4))
+    return _square_roi_from_bbox(values, scale=1.25)
 
 
 def _load_image_bgr(path: str | Path) -> np.ndarray:
@@ -303,7 +318,6 @@ def _model_config(
     model_roi: np.ndarray,
     roi_source: str,
     device: str,
-    batch_size: int,
 ) -> dict[str, T.Any]:
     """Return cache config metadata for a model/sample prediction run."""
     plugin = getattr(adapter, "plugin", None)
@@ -318,7 +332,6 @@ def _model_config(
         "model_roi": [float(value) for value in model_roi.tolist()],
         "roi_source": roi_source,
         "device": device,
-        "batch_size": batch_size,
     }
 
 
@@ -344,16 +357,21 @@ def _prepare_run_items(
     checkpoint: str,
     refresh: bool,
     allow_gt_roi: bool,
+    gt_roi_scale: float = 1.0,
     device: str,
-    batch_size: int,
 ) -> tuple[list[_RunItem], int]:
     """Build run plans and count reusable cache hits."""
     items: list[_RunItem] = []
     reused = 0
     for sample in samples:
         entry = entries.get(sample.sample_id, {})
-        base_roi, roi_source = _base_roi_for_sample(sample, entry, allow_gt_roi=allow_gt_roi)
-        model_roi = _plugin_adjusted_roi(adapter, base_roi)
+        base_roi, roi_source = _base_roi_for_sample(
+            sample,
+            entry,
+            allow_gt_roi=allow_gt_roi,
+            gt_roi_scale=gt_roi_scale,
+        )
+        model_roi = _model_roi_for_adapter(adapter, base_roi)
         matrix = roi_to_matrix(model_roi)
         config = _model_config(
             model=model,
@@ -363,7 +381,6 @@ def _prepare_run_items(
             model_roi=model_roi,
             roi_source=roi_source,
             device=device,
-            batch_size=batch_size,
         )
         if not refresh and _fresh_cached_run(
             cache,
@@ -398,6 +415,7 @@ def _run_model_predictions(
     device: str,
     refresh: bool,
     allow_gt_roi: bool,
+    gt_roi_scale: float = 1.0,
     adapters: dict[str, LandmarkAdapter] | None = None,
 ) -> tuple[int, int]:
     """Run selected model adapters from a manifest into the disk cache."""
@@ -418,8 +436,8 @@ def _run_model_predictions(
             checkpoint=checkpoint,
             refresh=refresh,
             allow_gt_roi=allow_gt_roi,
+            gt_roi_scale=gt_roi_scale,
             device=device,
-            batch_size=batch_size,
         )
         reused += model_reused
         input_size = int(getattr(getattr(adapter, "plugin", None), "input_size", 256))
@@ -521,6 +539,12 @@ def main(argv: list[str] | None = None) -> int:
         help="Require face_bbox/bbox in the manifest instead of deriving validation ROIs from GT landmarks.",
     )
     parser.add_argument(
+        "--gt-roi-scale",
+        type=float,
+        default=1.0,
+        help="Optional validation-only scale for GT-derived ROIs before model preprocessing.",
+    )
+    parser.add_argument(
         "--log-level",
         default="INFO",
         choices=("DEBUG", "INFO", "WARNING", "ERROR"),
@@ -532,6 +556,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     if args.batch_size <= 0:
         raise SystemExit("--batch-size must be greater than zero")
+    if args.gt_roi_scale <= 0:
+        raise SystemExit("--gt-roi-scale must be greater than zero")
 
     if args.manifest:
         if not args.models:
@@ -546,6 +572,7 @@ def main(argv: list[str] | None = None) -> int:
                 device=args.device,
                 refresh=args.refresh,
                 allow_gt_roi=not args.no_gt_roi,
+                gt_roi_scale=args.gt_roi_scale,
             )
         else:
             written, reused = _import_manifest_predictions(args)
