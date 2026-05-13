@@ -95,8 +95,11 @@ class MainWindow(QMainWindow):
         self._progress = QProgressBar()
         self._menus: list[object] = []
         self._recent_menu: QMenu | None = None
+        self._main_splitter: QSplitter | None = None
+        self._vertical_splitter: QSplitter | None = None
         self._display_tabs_widget: QTabWidget | None = None
         self._display_controller: DisplayController | None = None
+        self._analysis_panel_widget: AnalysisPanel | None = None
         self._preview_panel_widget: PreviewPanel | None = None
         self._graph_panel_widget: GraphPanel | None = None
         self._view_actions: dict[str, QAction] = {}
@@ -132,6 +135,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:  # type:ignore[no-untyped-def] # noqa:N802
         """Prompt before closing with unsaved project changes."""
         if self._confirm_discard_changes("close this window"):
+            self._save_last_session_state()
             event.accept()
         else:
             event.ignore()
@@ -149,6 +153,7 @@ class MainWindow(QMainWindow):
         top.setStretchFactor(0, 0)
         top.setStretchFactor(1, 1)
         top.setSizes([420, 840])
+        self._main_splitter = top
         main = QSplitter(Qt.Vertical)
         main.setObjectName("qt-shell-vertical-splitter")
         main.setChildrenCollapsible(False)
@@ -157,6 +162,7 @@ class MainWindow(QMainWindow):
         main.setStretchFactor(0, 3)
         main.setStretchFactor(1, 1)
         main.setSizes([520, 180])
+        self._vertical_splitter = main
         self.setCentralWidget(main)
 
     def _display_tabs(self) -> QTabWidget:
@@ -180,8 +186,10 @@ class MainWindow(QMainWindow):
         return tabs
 
     def _analysis_panel(self) -> QWidget:
-        """Create the right-side Analysis runtime panel."""
-        return AnalysisPanel(parent=self)
+        """Create or return the right-side Analysis runtime panel."""
+        if self._analysis_panel_widget is None:
+            self._analysis_panel_widget = AnalysisPanel(parent=self)
+        return self._analysis_panel_widget
 
     def _preview_panel(self) -> QWidget:
         """Create or return the right-side Preview runtime panel."""
@@ -377,11 +385,9 @@ class MainWindow(QMainWindow):
         self._set_running(False)
         if self._display_controller is not None:
             self._display_controller.set_runtime_state(None, running=False)
-        if self._preview_panel_widget is not None:
-            self._preview_panel_widget.refresh_preview()
-        if self._graph_panel_widget is not None:
-            self._graph_panel_widget.refresh_graph()
+        self._refresh_runtime_panels(preview=True, graph=True, analysis=True)
         self._sync_view_actions()
+        self._save_last_session_state()
         self._console.write_line(f"\nProcess finished with exit code {exit_code}")
         self.statusBar().showMessage(f"Process finished with exit code {exit_code}", 5000)
 
@@ -390,7 +396,7 @@ class MainWindow(QMainWindow):
         if self._display_controller is not None:
             self._display_controller.consume_event(event)
         self._update_runtime_status(event)
-        self._refresh_graph_from_event(event)
+        self._refresh_displays_from_event(event)
         self._sync_view_actions()
 
     def _update_runtime_status(self, event: object) -> None:
@@ -429,11 +435,31 @@ class MainWindow(QMainWindow):
         if self._graph_panel_widget is not None:
             self._graph_panel_widget.apply_context(context)
 
-    def _refresh_graph_from_event(self, event: object) -> None:
-        """Refresh Graph panel when runtime events announce new graph data."""
+    def _refresh_displays_from_event(self, event: object) -> None:
+        """Refresh runtime display panels when structured events request it."""
         payload = getattr(event, "payload", None)
         payload = payload if isinstance(payload, dict) else {}
-        if self._graph_panel_widget is not None and payload.get("graph_refresh"):
+        kind = getattr(event, "kind", "")
+        refresh_all = bool(payload.get("saved_model") or payload.get("session_refresh"))
+        self._refresh_runtime_panels(
+            preview=refresh_all or bool(payload.get("preview_refresh")),
+            graph=refresh_all or bool(payload.get("graph_refresh")),
+            analysis=refresh_all or bool(payload.get("analysis_refresh") or kind == "saved_model"),
+        )
+
+    def _refresh_runtime_panels(
+        self,
+        *,
+        preview: bool = False,
+        graph: bool = False,
+        analysis: bool = False,
+    ) -> None:
+        """Refresh loaded runtime panels without changing their configured sources."""
+        if analysis and self._analysis_panel_widget is not None:
+            self._analysis_panel_widget.refresh_session()
+        if preview and self._preview_panel_widget is not None:
+            self._preview_panel_widget.refresh_preview()
+        if graph and self._graph_panel_widget is not None:
             self._graph_panel_widget.refresh_graph()
 
     def _build_command(self, *, generate: bool) -> tuple[str, str, dict[str, object], list[str]]:
@@ -485,6 +511,8 @@ class MainWindow(QMainWindow):
             self._command_panel.clear_values()
         finally:
             self._suppress_dirty = False
+        if self._analysis_panel_widget is not None:
+            self._analysis_panel_widget.clear_session()
         if self._preview_panel_widget is not None:
             self._preview_panel_widget.clear_preview()
         if self._graph_panel_widget is not None:
@@ -571,7 +599,7 @@ class MainWindow(QMainWindow):
         try:
             self._project_store.save(filename, project)
             self._recent_files.add(filename, kind)
-            self._last_session.save(filename, kind)
+            self._last_session.save(filename, kind, self._capture_ui_state())
         except OSError as err:
             self._show_error(str(err))
             return False
@@ -623,7 +651,7 @@ class MainWindow(QMainWindow):
         self._apply_preview_context(context)
         self._apply_graph_context(context)
         self._recent_files.add(filename, kind)
-        self._last_session.save(filename, kind)
+        self._last_session.save(filename, kind, self._capture_ui_state())
         self._refresh_recent_menu()
         self._set_modified(False)
         self._console.write_line(f"Loaded prototype {kind}: {filename}")
@@ -651,7 +679,70 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("No last session to restore", 5000)
             self._console.write_line("No last session to restore")
             return False
-        return self._open_session_file(session.filename, session.kind)
+        restored = self._open_session_file(session.filename, session.kind)
+        if restored:
+            self._restore_ui_state(session.ui_state)
+        return restored
+
+    def _capture_ui_state(self) -> dict[str, object]:
+        """Capture restorable Qt shell UI/session state."""
+        state: dict[str, object] = {"window_size": [self.width(), self.height()]}
+        if self._display_tabs_widget is not None and self._display_tabs_widget.currentIndex() >= 0:
+            state["display_tab"] = self._display_tabs_widget.tabText(
+                self._display_tabs_widget.currentIndex()
+            )
+        if self._main_splitter is not None:
+            state["main_splitter"] = self._main_splitter.sizes()
+        if self._vertical_splitter is not None:
+            state["vertical_splitter"] = self._vertical_splitter.sizes()
+        if self._analysis_panel_widget is not None:
+            state["analysis_source"] = self._analysis_panel_widget.source_path
+        if self._preview_panel_widget is not None:
+            state["preview_source"] = self._preview_panel_widget.source_path
+        if self._graph_panel_widget is not None:
+            state["graph_source"] = self._graph_panel_widget.source_path
+        return state
+
+    def _restore_ui_state(self, state: T.Mapping[str, object]) -> None:
+        """Restore Qt shell UI/session state from the last-session cache."""
+        window_size = state.get("window_size")
+        if isinstance(window_size, list | tuple) and len(window_size) == 2:
+            width, height = window_size
+            if isinstance(width, int) and isinstance(height, int):
+                self.resize(width, height)
+        self._restore_splitter(self._main_splitter, state.get("main_splitter"))
+        self._restore_splitter(self._vertical_splitter, state.get("vertical_splitter"))
+        if self._analysis_panel_widget is not None:
+            self._analysis_panel_widget.restore_source(self._string_or_none(state.get("analysis_source")))
+        if self._preview_panel_widget is not None:
+            self._preview_panel_widget.restore_source(self._string_or_none(state.get("preview_source")))
+        if self._graph_panel_widget is not None:
+            self._graph_panel_widget.restore_source(self._string_or_none(state.get("graph_source")))
+        display_tab = self._string_or_none(state.get("display_tab"))
+        if display_tab:
+            self._show_display_tab(display_tab)
+
+    @staticmethod
+    def _restore_splitter(splitter: QSplitter | None, sizes: object) -> None:
+        """Restore splitter sizes from saved state."""
+        if splitter is None or not isinstance(sizes, list | tuple):
+            return
+        if all(isinstance(size, int) for size in sizes):
+            splitter.setSizes(list(sizes))
+
+    @staticmethod
+    def _string_or_none(value: object) -> str | None:
+        """Return a non-empty string or None."""
+        return value if isinstance(value, str) and value else None
+
+    def _save_last_session_state(self) -> None:
+        """Persist current UI state for the active project/task file."""
+        if self._project_filename is not None:
+            self._last_session.save(
+                self._project_filename,
+                self._file_kind,
+                self._capture_ui_state(),
+            )
 
     def _refresh_recent_menu(self) -> None:
         """Refresh recent-file menu actions."""
