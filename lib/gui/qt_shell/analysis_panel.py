@@ -121,8 +121,8 @@ class AnalysisPanel(QWidget):
         self._table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self._table.setHorizontalHeaderLabels(AnalysisSessionService.TABLE_HEADERS)
-        self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         layout.addWidget(self._table, 1)
 
         footer = QHBoxLayout()
