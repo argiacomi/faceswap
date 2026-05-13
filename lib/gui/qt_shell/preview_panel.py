@@ -20,7 +20,11 @@ from PySide6.QtWidgets import (
 )
 
 from lib.gui.services.command_context import CommandExecutionContext
-from lib.gui.services.preview_output_service import PreviewOutputError, PreviewOutputImage, PreviewOutputService
+from lib.gui.services.preview_output_service import (
+    PreviewOutputError,
+    PreviewOutputImage,
+    PreviewOutputService,
+)
 
 
 class PreviewPanel(QWidget):
@@ -139,9 +143,9 @@ class PreviewPanel(QWidget):
 
     def _connect_signals(self) -> None:
         """Connect panel signals."""
-        self._open_button.clicked.connect(self._open_output_dialog)
-        self._refresh_button.clicked.connect(self.refresh_preview)
-        self._clear_button.clicked.connect(self.clear_preview)
+        self._open_button.clicked.connect(lambda _checked=False: self._open_output_dialog())
+        self._refresh_button.clicked.connect(lambda _checked=False: self.refresh_preview())
+        self._clear_button.clicked.connect(lambda _checked=False: self.clear_preview())
         self._image_list.currentItemChanged.connect(self._current_image_changed)
 
     def _open_output_dialog(self) -> None:
