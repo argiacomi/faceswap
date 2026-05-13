@@ -61,6 +61,16 @@ class RecentFilesStore:
 
         return recent_files
 
+    def prune_missing(self) -> list[RecentFile]:
+        """Remove recent entries whose target files no longer exist."""
+        recent_files = [item for item in self.load() if Path(item.filename).exists()]
+        self.save(recent_files)
+        return recent_files
+
+    def clear(self) -> None:
+        """Clear all recent files."""
+        self.save([])
+
     @classmethod
     def decode_many(cls, payload: object) -> list[RecentFile]:
         """Decode a serializer payload into recent-file entries."""

@@ -27,6 +27,9 @@ if T.TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+GUI_SHELL_ENV = "FACESWAP_GUI_SHELL"
+GUI_SHELLS = ("tk", "qt")
+
 
 class ScriptExecutor:
     """Loads the relevant script modules and executes the script.
@@ -42,6 +45,7 @@ class ScriptExecutor:
 
     def __init__(self, command: str) -> None:
         self._command = command.lower()
+        self._gui_shell = "tk"
 
     def _set_environment_variables(self) -> None:
         """Set the number of threads that numexpr can use."""
@@ -61,7 +65,7 @@ class ScriptExecutor:
             os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
     def _import_script(self) -> Callable:
-        """Imports the relevant script as indicated by :attr:`_command` from the scripts folder.
+        """Imports the relevant script as indicated by :attr:`_command`.
 
         Returns
         -------
@@ -72,7 +76,11 @@ class ScriptExecutor:
         self._test_for_gui()
         cmd = os.path.basename(sys.argv[0])
         src = f"tools.{self._command.lower()}" if cmd == "tools.py" else "scripts"
-        mod = ".".join((src, self._command.lower()))
+        command = self._command.lower()
+        if command == "gui" and self._gui_shell == "qt":
+            mod = "scripts.gui_qt"
+        else:
+            mod = ".".join((src, command))
         module = import_module(mod)
         script = getattr(module, self._command.title())
         return script
@@ -133,7 +141,10 @@ class ScriptExecutor:
         """If running the gui, performs check to ensure necessary prerequisites are present."""
         if self._command != "gui":
             return
-        self._test_tkinter()
+        if self._gui_shell == "qt":
+            self._test_pyside6()
+        else:
+            self._test_tkinter()
         self._check_display()
 
     @classmethod
@@ -169,6 +180,18 @@ class ScriptExecutor:
             raise FaceswapError("TkInter not found") from err
 
     @classmethod
+    def _test_pyside6(cls) -> None:
+        """If the user selected Qt, test whether PySide6 is available."""
+        try:
+            import PySide6.QtWidgets  # noqa:F401 # pylint:disable=unused-import,import-outside-toplevel
+        except ImportError as err:
+            logger.error(
+                "It looks like PySide6 isn't installed, so the Qt GUI shell cannot launch. "
+                "Install PySide6 or run with '--shell tk'."
+            )
+            raise FaceswapError("PySide6 not found") from err
+
+    @classmethod
     def _check_display(cls) -> None:
         """Check whether there is a display to output the GUI to.
 
@@ -198,6 +221,8 @@ class ScriptExecutor:
         arguments
             The command line arguments to be passed to the executing script.
         """
+        if self._command == "gui":
+            self._gui_shell = self._resolve_gui_shell(arguments)
         is_gui = hasattr(arguments, "redirect_gui") and arguments.redirect_gui
         log_setup(arguments.loglevel, arguments.logfile, self._command, is_gui)
         success = False
@@ -228,6 +253,17 @@ class ScriptExecutor:
 
         finally:
             safe_shutdown(got_error=not success)
+
+    @staticmethod
+    def _resolve_gui_shell(arguments: argparse.Namespace) -> str:
+        """Resolve the selected GUI shell from CLI arguments or environment."""
+        shell = getattr(arguments, "gui_shell", None) or os.environ.get(GUI_SHELL_ENV, "tk")
+        shell = str(shell).lower()
+        if shell not in GUI_SHELLS:
+            raise FaceswapError(
+                f"Invalid GUI shell '{shell}'. Expected one of: {', '.join(GUI_SHELLS)}"
+            )
+        return shell
 
     def _configure_backend(self, arguments: argparse.Namespace) -> None:
         """Configure the backend.

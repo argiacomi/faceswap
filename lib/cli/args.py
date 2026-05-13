@@ -346,6 +346,27 @@ class GuiArgs(FaceSwapArgs):
                 "help": _("Output to Shell console instead of GUI console"),
             }
         )
+        argument_list.append(
+            {
+                "opts": ("--shell",),
+                "choices": ("tk", "qt"),
+                "dest": "gui_shell",
+                "default": None,
+                "help": _(
+                    "GUI shell to launch. Defaults to Tk. Can also be set with "
+                    "FACESWAP_GUI_SHELL."
+                ),
+            }
+        )
+        argument_list.append(
+            {
+                "opts": ("--no-gui-exec",),
+                "action": "store_true",
+                "dest": "no_gui_exec",
+                "default": False,
+                "help": argparse.SUPPRESS,
+            }
+        )
         return argument_list
 
 
