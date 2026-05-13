@@ -5,6 +5,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from PySide6.QtWidgets import QLineEdit, QMessageBox
+
 from lib.gui.models.project import ProjectFile
 from lib.gui.services.project_session_service import PROJECT_KIND, TASK_KIND
 
@@ -41,6 +43,20 @@ def test_window_title_tracks_dirty_state(qtbot, monkeypatch, tmp_path: Path) -> 
     window._set_modified(False)  # pylint:disable=protected-access
 
     assert window.windowTitle() == "Faceswap Qt Shell Prototype - example.fsw"
+
+
+def test_option_edit_marks_project_dirty(qtbot, monkeypatch, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+    """User edits in option widgets should mark the current project dirty."""
+    window = _main_window(qtbot, monkeypatch, tmp_path)
+    window._project_filename = str(tmp_path / "dirty.fsw")  # pylint:disable=protected-access
+    window._set_modified(False)  # pylint:disable=protected-access
+    widget = window._command_panel.renderer.widget_for_switch("-i")  # pylint:disable=protected-access
+    assert isinstance(widget, QLineEdit)
+
+    qtbot.keyClicks(widget, "/input")
+
+    assert window._modified is True  # pylint:disable=protected-access
+    assert window.windowTitle() == "Faceswap Qt Shell Prototype - dirty.fsw*"
 
 
 def test_save_project_persists_all_project_tasks(qtbot, monkeypatch, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
@@ -97,6 +113,110 @@ def test_open_task_routes_kind_and_applies_command(qtbot, monkeypatch, tmp_path:
     assert window._file_kind == TASK_KIND  # pylint:disable=protected-access
     assert window._modified is False  # pylint:disable=protected-access
     assert window.windowTitle() == "Faceswap Qt Shell Prototype - task.fst"
+
+
+def test_open_session_file_can_be_cancelled_by_dirty_prompt(  # type:ignore[no-untyped-def]
+    qtbot,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """Opening another file should respect the unsaved-changes prompt."""
+    window = _main_window(qtbot, monkeypatch, tmp_path)
+    original = str(tmp_path / "original.fsw")
+    next_file = str(tmp_path / "next.fsw")
+    window._project_filename = original  # pylint:disable=protected-access
+    window._set_modified(True)  # pylint:disable=protected-access
+    window._project_store.save(  # pylint:disable=protected-access
+        next_file,
+        ProjectFile(tab_name="train", tasks={"train": {"-m": "next"}}),
+    )
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *_args, **_kwargs: QMessageBox.StandardButton.No,
+    )
+
+    opened = window._open_session_file(next_file, PROJECT_KIND)  # pylint:disable=protected-access
+
+    assert opened is False
+    assert window._project_filename == original  # pylint:disable=protected-access
+    assert window._modified is True  # pylint:disable=protected-access
+
+
+def test_new_project_can_be_cancelled_by_dirty_prompt(  # type:ignore[no-untyped-def]
+    qtbot,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """New Project should preserve current state when the discard prompt is declined."""
+    window = _main_window(qtbot, monkeypatch, tmp_path)
+    filename = str(tmp_path / "dirty.fsw")
+    window._project_filename = filename  # pylint:disable=protected-access
+    window._set_modified(True)  # pylint:disable=protected-access
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *_args, **_kwargs: QMessageBox.StandardButton.No,
+    )
+
+    created = window._new_project()  # pylint:disable=protected-access
+
+    assert created is False
+    assert window._project_filename == filename  # pylint:disable=protected-access
+    assert window._modified is True  # pylint:disable=protected-access
+
+
+def test_new_project_discards_after_confirmation(  # type:ignore[no-untyped-def]
+    qtbot,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """New Project should reset current state after discard confirmation."""
+    window = _main_window(qtbot, monkeypatch, tmp_path)
+    window._project_filename = str(tmp_path / "dirty.fsw")  # pylint:disable=protected-access
+    window._set_modified(True)  # pylint:disable=protected-access
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *_args, **_kwargs: QMessageBox.StandardButton.Yes,
+    )
+
+    created = window._new_project()  # pylint:disable=protected-access
+
+    assert created is True
+    assert window._project_filename is None  # pylint:disable=protected-access
+    assert window._modified is False  # pylint:disable=protected-access
+    assert window.windowTitle() == "Faceswap Qt Shell Prototype - Untitled"
+
+
+def test_reload_current_file_prompts_and_reloads(  # type:ignore[no-untyped-def]
+    qtbot,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """Reload should discard dirty state only after confirmation and load disk state."""
+    window = _main_window(qtbot, monkeypatch, tmp_path)
+    filename = str(tmp_path / "reload.fsw")
+    window._project_store.save(  # pylint:disable=protected-access
+        filename,
+        ProjectFile(tab_name="train", tasks={"train": {"-m": "from-disk"}}),
+    )
+    window._project_filename = filename  # pylint:disable=protected-access
+    window._file_kind = PROJECT_KIND  # pylint:disable=protected-access
+    window._set_modified(True)  # pylint:disable=protected-access
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *_args, **_kwargs: QMessageBox.StandardButton.Yes,
+    )
+
+    reloaded = window._reload_current_file()  # pylint:disable=protected-access
+    _, command, values = window._command_panel.command_spec()  # pylint:disable=protected-access
+
+    assert reloaded is True
+    assert command == "train"
+    assert values["-m"] == "from-disk"
+    assert window._modified is False  # pylint:disable=protected-access
 
 
 def test_recent_menu_routes_saved_files(qtbot, monkeypatch, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
