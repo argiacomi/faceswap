@@ -18,6 +18,15 @@ class RecentFile:
     kind: str
 
 
+@dataclass(frozen=True)
+class RecentFileDisplay:
+    """A recent GUI file entry with a menu-friendly display label."""
+
+    file: RecentFile
+    label: str
+    tooltip: str
+
+
 class RecentFilesStore:
     """Read, update and save the GUI recent-files list."""
 
@@ -67,6 +76,12 @@ class RecentFilesStore:
         self.save(recent_files)
         return recent_files
 
+    def display_items(self, recent_files: list[RecentFile] | None = None) -> list[RecentFileDisplay]:
+        """Return recent files with duplicate-aware menu labels."""
+        recent_files = self.load() if recent_files is None else recent_files
+        duplicate_names = self._duplicate_basenames(recent_files)
+        return [self._display_item(item, duplicate_names) for item in recent_files]
+
     def clear(self) -> None:
         """Clear all recent files."""
         self.save([])
@@ -89,6 +104,25 @@ class RecentFilesStore:
             return None
 
         return RecentFile(filename=filename, kind=kind)
+
+    @staticmethod
+    def _duplicate_basenames(recent_files: list[RecentFile]) -> set[str]:
+        """Return basenames that appear more than once in recent files."""
+        counts: dict[str, int] = {}
+        for item in recent_files:
+            name = Path(item.filename).name
+            counts[name] = counts.get(name, 0) + 1
+        return {name for name, count in counts.items() if count > 1}
+
+    @staticmethod
+    def _display_item(item: RecentFile, duplicate_names: set[str]) -> RecentFileDisplay:
+        """Return a duplicate-aware display item for one recent file."""
+        path = Path(item.filename)
+        label = f"{item.kind.title()}: {path.name}"
+        if path.name in duplicate_names:
+            parent = str(path.parent)
+            label = f"{label} ({parent})"
+        return RecentFileDisplay(file=item, label=label, tooltip=item.filename)
 
 
 __all__ = get_module_objects(__name__)
