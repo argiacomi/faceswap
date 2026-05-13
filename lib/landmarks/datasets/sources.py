@@ -58,8 +58,8 @@ OFFICIAL_SOURCE_NOTES: dict[str, str] = {
     ),
     "MERL-RAV": (
         "MERL-RAV labels are available at "
-        f"{MERL_RAV_LABELS_URL}, but the images come from AFLW and must be requested "
-        "separately. Place an organized image+label directory in the cache or pass "
+        f"{MERL_RAV_LABELS_URL}, but AFLW images must be requested separately. "
+        "Place an organized image+label directory in the cache or pass "
         "--source-dir/--source-zip."
     ),
     "AFLW2000-3D": f"Official AFLW2000-3D archive: {AFLW2000_3D_URL}.",
