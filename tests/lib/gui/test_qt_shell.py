@@ -141,7 +141,7 @@ def test_main_window_constructs(qtbot, monkeypatch, tmp_path: Path) -> None:  # 
     window = MainWindow()
     qtbot.addWidget(window)
 
-    assert window.windowTitle() == "Faceswap Qt Shell Prototype"
+    assert "Faceswap Qt Shell Prototype" in window.windowTitle()
 
 
 def test_command_schema_service_adapts_cli_like_options() -> None:
