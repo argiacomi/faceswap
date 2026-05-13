@@ -346,11 +346,16 @@ def _write_extraction_marker(destination: Path, payload: dict[str, T.Any]) -> No
     marker.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def _extracted_cache_has_content(destination: Path) -> bool:
+    """Return whether an extracted cache directory contains source payload files."""
+    return destination.is_dir() and any(
+        item.name != EXTRACTION_MARKER for item in destination.iterdir()
+    )
+
+
 def _extraction_is_fresh(destination: Path, payload: dict[str, T.Any]) -> bool:
     """Return whether ``destination`` already contains a matching extraction."""
-    if not destination.is_dir() or not any(
-        item.name != EXTRACTION_MARKER for item in destination.iterdir()
-    ):
+    if not _extracted_cache_has_content(destination):
         return False
     current = _read_extraction_marker(destination)
     return current == payload
@@ -441,6 +446,13 @@ def resolve_multipart_dataset_source(
         for part in spec.parts:
             verify_sha256(archives[part.name], part.sha256, label=f"{spec.dataset} {part.name}")
         return _extract_multipart_archives(archives, spec, extracted, force=False)
+    if not force_download and _extracted_cache_has_content(extracted):
+        logger.info(
+            "Using cached %s multipart extracted source without archives: %s",
+            spec.dataset,
+            extracted,
+        )
+        return extracted
 
     if no_download:
         raise FileNotFoundError(

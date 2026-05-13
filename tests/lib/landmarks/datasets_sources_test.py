@@ -180,6 +180,27 @@ def test_resolve_multipart_dataset_source_downloads_extracts_and_reuses(tmp_path
     assert (resolved / "WFLW_images" / "images" / "sample.jpg").is_file()
 
 
+def test_resolve_multipart_dataset_source_reuses_extracted_cache_without_archives(
+    tmp_path: Path,
+) -> None:
+    """A manually populated multipart extracted cache can be used offline."""
+    cache_dir = tmp_path / "cache"
+    extracted = cache_dir / "wflw" / "extracted"
+    (extracted / "WFLW_annotations").mkdir(parents=True)
+    (extracted / "WFLW_images" / "images").mkdir(parents=True)
+    (extracted / "WFLW_annotations" / "list_98pt_rect_attr_test.txt").write_text(
+        _points_98_row(), encoding="utf-8"
+    )
+    (extracted / "WFLW_images" / "images" / "sample.jpg").write_bytes(b"image")
+    spec = _wflw_multipart_spec(
+        tmp_path / "missing-annotations.tar.gz", tmp_path / "missing-images.zip"
+    )
+
+    resolved = resolve_multipart_dataset_source(spec, cache_dir=cache_dir, no_download=True)
+
+    assert resolved == extracted
+
+
 def test_resolve_multipart_dataset_source_refreshes_when_either_archive_changes(
     tmp_path: Path,
 ) -> None:
