@@ -4,12 +4,19 @@
 300W uses native 68-point landmarks, which makes it a direct fit for the
 canonical 68-point ensemble pipeline. This builder consumes extracted 300W-style
 folders containing ``.pts`` annotation files and matching image files.
+
+The official iBUG 300-W package is distributed as four split zip parts behind an
+iBUG download form. We therefore do not pretend this is a normal silent network
+fallback. Instead, the builder records the official URLs, detects the four parts
+when the user places them in the standard cache, concatenates them into a local
+``300w.zip``, and extracts that archive.
 """
 
 from __future__ import annotations
 
 import contextlib
 import logging
+import os
 import typing as T
 from pathlib import Path
 
@@ -26,6 +33,7 @@ from lib.landmarks.datasets import (
 from lib.landmarks.datasets.sources import (
     DEFAULT_CACHE_DIR,
     DatasetSourceSpec,
+    extract_archive_to_cache,
     is_archive,
     resolve_dataset_source,
 )
@@ -33,16 +41,29 @@ from lib.landmarks.schema import normalize_landmarks
 
 logger = logging.getLogger(__name__)
 
+W300_OFFICIAL_PAGE = "https://ibug.doc.ic.ac.uk/resources/facial-point-annotations/"
+W300_OFFICIAL_PART_URLS = (
+    "https://ibug.doc.ic.ac.uk/download/annotations/300w.zip.001",
+    "https://ibug.doc.ic.ac.uk/download/annotations/300w.zip.002",
+    "https://ibug.doc.ic.ac.uk/download/annotations/300w.zip.003",
+    "https://ibug.doc.ic.ac.uk/download/annotations/300w.zip.004",
+)
+W300_OFFICIAL_PART_NAMES = tuple(Path(url).name for url in W300_OFFICIAL_PART_URLS)
+W300_COMBINED_ARCHIVE = "300w.zip"
+
 W300_SOURCE = DatasetSourceSpec(
     dataset="300W",
     cache_subdir="300w",
-    canonical_archive="300w.zip",
-    cache_aliases=("300W.zip", "300W.tar.gz", "300W.tgz", "300w_68.json"),
+    canonical_archive=W300_COMBINED_ARCHIVE,
+    cache_aliases=("300W.zip", "300W.tar.gz", "300W.tgz"),
     extracted_aliases=("300W", "300w", "300-W", "300_W"),
     manual_hint=(
-        "Provide --source-dir/--source-zip containing extracted 300W .pts annotations "
-        "and matching images, or place an archive/extracted dataset under "
-        ".fs_cache/landmark_quality/300w."
+        "Official 300-W is distributed by iBUG as four split zip parts behind "
+        "their download form. Download part1-part4 from "
+        f"{W300_OFFICIAL_PAGE} and place them in .fs_cache/landmark_quality/300w "
+        "as 300w.zip.001, 300w.zip.002, 300w.zip.003, 300w.zip.004; or pass "
+        "--source-dir/--source-zip for an already extracted/combined source. "
+        "iBUG states the annotations are for research purposes only."
     ),
 )
 
@@ -104,6 +125,116 @@ def _landmark_bbox(points: np.ndarray) -> list[float]:
     return [float(left), float(top), float(right), float(bottom)]
 
 
+def _cache_root(cache_dir: str | Path) -> Path:
+    """Return the 300W cache root."""
+    return Path(cache_dir) / W300_SOURCE.cache_root_name
+
+
+def _official_part_paths(cache_dir: str | Path) -> list[Path]:
+    """Return official split part paths under the standard 300W cache."""
+    root = _cache_root(cache_dir)
+    return [root / name for name in W300_OFFICIAL_PART_NAMES]
+
+
+def _official_source_help(cache_dir: str | Path, *, missing: T.Sequence[Path] | None = None) -> str:
+    """Return a setup message for official 300-W sources."""
+    root = _cache_root(cache_dir)
+    lines = [
+        f"300W official source not ready in {root}.",
+        f"Download the four official iBUG parts from {W300_OFFICIAL_PAGE}",
+        "Expected cache files:",
+        *(f"  {root / name}" for name in W300_OFFICIAL_PART_NAMES),
+        "Official part URLs:",
+        *(f"  {url}" for url in W300_OFFICIAL_PART_URLS),
+        "The iBUG page requires a download form and states the annotations are for research purposes only, so the pipeline will not silently fetch these files without user setup.",
+    ]
+    if missing:
+        lines.insert(1, "Missing parts: " + ", ".join(path.name for path in missing))
+    return "\n".join(lines)
+
+
+def _looks_like_html(path: Path) -> bool:
+    """Return whether a downloaded official part looks like the iBUG form HTML."""
+    try:
+        prefix = path.read_bytes()[:128].lstrip().lower()
+    except OSError:
+        return False
+    return prefix.startswith(b"<!doctype html") or prefix.startswith(b"<html")
+
+
+def _combine_official_parts(cache_dir: str | Path, *, force: bool = False) -> Path | None:
+    """Combine cached official 300-W split zip parts into one local zip archive."""
+    root = _cache_root(cache_dir)
+    parts = _official_part_paths(cache_dir)
+    existing = [path for path in parts if path.is_file()]
+    if not existing:
+        return None
+    missing = [path for path in parts if not path.is_file()]
+    if missing:
+        raise FileNotFoundError(_official_source_help(cache_dir, missing=missing))
+    html_parts = [path for path in parts if _looks_like_html(path)]
+    if html_parts:
+        raise ValueError(
+            "300W cached part appears to be the iBUG download form HTML, not the archive payload: "
+            + ", ".join(str(path) for path in html_parts)
+            + "\n"
+            + _official_source_help(cache_dir)
+        )
+    combined = root / W300_COMBINED_ARCHIVE
+    if combined.is_file() and not force:
+        logger.info("Using cached combined 300W archive: %s", combined)
+        return combined
+    root.mkdir(parents=True, exist_ok=True)
+    tmp = combined.with_suffix(combined.suffix + ".part")
+    if tmp.exists():
+        tmp.unlink()
+    logger.info("Combining official 300W split archives into: %s", combined)
+    with tmp.open("wb") as outfile:
+        for part in parts:
+            with part.open("rb") as infile:
+                while True:
+                    chunk = infile.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    outfile.write(chunk)
+    os.replace(tmp, combined)
+    return combined
+
+
+def _resolve_300w_source(
+    *,
+    cache_dir: str | Path,
+    source_dir: str | Path | None,
+    source_zip: str | Path | None,
+    download_url: str | None,
+    force_download: bool,
+    no_download: bool,
+) -> Path:
+    """Resolve a 300W source, including the official multipart cache layout."""
+    try:
+        return resolve_dataset_source(
+            W300_SOURCE,
+            cache_dir=cache_dir,
+            source_dir=source_dir,
+            source_zip=source_zip,
+            download_url=download_url,
+            force_download=force_download,
+            no_download=no_download,
+        )
+    except FileNotFoundError as err:
+        if source_dir is not None or source_zip is not None or download_url:
+            raise
+        combined = _combine_official_parts(cache_dir, force=force_download)
+        if combined is None:
+            raise FileNotFoundError(_official_source_help(cache_dir)) from err
+        return extract_archive_to_cache(
+            combined,
+            _cache_root(cache_dir) / "extracted",
+            force=force_download,
+            label="300W official multipart archive",
+        )
+
+
 def _build_from_root(
     root: Path,
     output_dir: str | Path,
@@ -137,6 +268,8 @@ def _build_from_root(
                 "metadata": {
                     "image_id": image.relative_to(root).as_posix(),
                     "annotation_file": annotation.relative_to(root).as_posix(),
+                    "official_source_page": W300_OFFICIAL_PAGE,
+                    "official_part_urls": list(W300_OFFICIAL_PART_URLS),
                     "face_bbox": _landmark_bbox(points),
                     "face_bbox_source": "300w_68_landmark_extrema",
                 },
@@ -174,8 +307,7 @@ def build_300w_manifest(
     write_overlays: bool = False,
 ) -> Path:
     """Build a 300W manifest from extracted ``.pts`` annotations and images."""
-    resolved = resolve_dataset_source(
-        W300_SOURCE,
+    resolved = _resolve_300w_source(
         cache_dir=cache_dir,
         source_dir=source_dir,
         source_zip=source_zip,
