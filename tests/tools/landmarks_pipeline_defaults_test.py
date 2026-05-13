@@ -50,3 +50,32 @@ def test_static_weight_pipeline_skip_dataset_build_dry_run_reuses_default_manife
     assert payload["args"]["output_root"] == str(
         DEFAULT_CACHE_DIR / "runs" / "static_weight_validation"
     )
+
+
+def test_wflw_official_download_suppresses_default_source_dir(tmp_path: Path, monkeypatch) -> None:
+    """Official WFLW download mode must not forward a default extracted source dir."""
+    monkeypatch.chdir(tmp_path)
+    default_source = tmp_path / DEFAULT_CACHE_DIR / "wflw" / "extracted"
+    default_source.mkdir(parents=True)
+    args = run_static_weight_pipeline._build_parser().parse_args(  # pylint:disable=protected-access
+        [
+            "--output-root",
+            str(tmp_path / "run"),
+            "--datasets",
+            "wflw",
+            "--build-datasets",
+            "--wflw-download-official",
+        ]
+    )
+    paths = run_static_weight_pipeline.PipelinePaths(tmp_path / "run")
+
+    argv = run_static_weight_pipeline._dataset_build_args(  # pylint:disable=protected-access
+        args,
+        "wflw",
+        paths,
+        first=True,
+    )
+
+    assert args.wflw_source_dir == str(DEFAULT_CACHE_DIR / "wflw" / "extracted")
+    assert "--wflw-download-official" in argv
+    assert "--source-dir" not in argv

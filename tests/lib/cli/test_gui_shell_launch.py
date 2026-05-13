@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import argparse
-from argparse import Namespace
+from argparse import ArgumentParser, Namespace
 
 import pytest
 
@@ -21,6 +21,34 @@ def test_gui_args_include_hidden_no_exec_flag() -> None:
     assert hidden_arg["action"] == "store_true"
     assert hidden_arg["dest"] == "no_gui_exec"
     assert hidden_arg["help"] == argparse.SUPPRESS
+
+
+def test_gui_args_include_explicit_qt_alias() -> None:
+    """GUI args should expose --qt as a clear experimental Qt launcher alias."""
+    qt_arg = next(option for option in GuiArgs.get_argument_list() if "--qt" in option["opts"])
+
+    assert qt_arg["action"] == "store_const"
+    assert qt_arg["const"] == "qt"
+    assert qt_arg["dest"] == "gui_shell"
+    assert qt_arg["default"] is None
+
+
+def test_gui_qt_alias_parses_to_qt_shell() -> None:
+    """The --qt alias should parse to the same gui_shell value as --shell qt."""
+    parser = ArgumentParser()
+    for option in GuiArgs.get_argument_list():
+        parser.add_argument(
+            *option["opts"],
+            **{key: value for key, value in option.items() if key not in ("opts", "group")},
+        )
+
+    alias_args = parser.parse_args(["--qt"])
+    shell_args = parser.parse_args(["--shell", "qt"])
+    default_args = parser.parse_args([])
+
+    assert alias_args.gui_shell == "qt"
+    assert shell_args.gui_shell == "qt"
+    assert default_args.gui_shell is None
 
 
 def test_resolve_gui_shell_defaults_to_tk(monkeypatch) -> None:  # type:ignore[no-untyped-def]
