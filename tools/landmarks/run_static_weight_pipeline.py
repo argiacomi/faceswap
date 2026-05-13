@@ -62,7 +62,11 @@ class PipelinePaths:
         object.__setattr__(self, "weighted_metrics", self.root / "weighted_metrics")
         object.__setattr__(self, "debug", self.root / "debug")
         object.__setattr__(self, "summary", self.root / "run_summary.json")
-        object.__setattr__(self, "detector_bbox_report", self.root / "dataset" / "detector_bboxes.json")
+        object.__setattr__(
+            self,
+            "detector_bbox_report",
+            self.root / "dataset" / "detector_bboxes.json",
+        )
 
 
 def _parse_csv(value: str) -> tuple[str, ...]:
@@ -260,27 +264,32 @@ def _build_datasets(
     _require_manifest_samples(paths.manifest)
 
 
+
 def _apply_detector_bboxes(args: argparse.Namespace, paths: PipelinePaths) -> dict[str, T.Any]:
+    """Enrich the manifest with detector-derived face bboxes."""
     if args.bbox_source != "faceswap-detector":
         return {}
+
     from tools.landmarks.apply_detector_bboxes import apply_detector_bboxes, build_parser
 
-    detector_args = build_parser().parse_args(
-        [
-            "--manifest",
-            str(paths.manifest),
-            "--detector",
-            args.detector,
-            "--selection",
-            args.detector_selection,
-            "--on-missing",
-            args.detector_on_missing,
-            "--output-json",
-            str(paths.detector_bbox_report),
-            "--log-level",
-            args.log_level,
-        ]
-    )
+    detector_argv = [
+        "--manifest",
+        str(paths.manifest),
+        "--detector",
+        args.detector,
+        "--selection",
+        args.detector_selection,
+        "--min-iou",
+        str(args.detector_min_iou),
+        "--on-missing",
+        args.detector_on_missing,
+        "--output-json",
+        str(paths.detector_bbox_report),
+        "--log-level",
+        args.log_level,
+    ]
+
+    detector_args = build_parser().parse_args(detector_argv)
     return apply_detector_bboxes(detector_args)
 
 
@@ -466,7 +475,9 @@ def _update_summary_outputs(
     summary["cache_counts"] = _cache_counts(paths.manifest, paths.cache, models)
     if paths.detector_bbox_report.is_file():
         try:
-            summary["detector_bboxes"] = json.loads(paths.detector_bbox_report.read_text(encoding="utf-8"))
+            summary["detector_bboxes"] = json.loads(
+                paths.detector_bbox_report.read_text(encoding="utf-8")
+            )
         except Exception:
             summary["detector_bboxes"] = {"path": str(paths.detector_bbox_report)}
     if paths.weight_file.is_file():
@@ -495,7 +506,7 @@ def _dry_run(args: argparse.Namespace, paths: PipelinePaths, summary: dict[str, 
     else:
         planned.append("dataset:reuse-existing")
     if args.bbox_source == "faceswap-detector":
-        planned.append(f"detector_bboxes:{args.detector}")
+        planned.append(f"detector_bboxes:{args.detector}:{args.detector_selection}")
     planned.append(
         f"predictions:{_prediction_mode(args)}"
         if args.run_predictions and not args.skip_predictions
@@ -538,15 +549,35 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--device", default="auto")
     parser.add_argument(
         "--bbox-source",
-        choices=("manifest", "gt", "faceswap-detector"),
+        choices=("manifest", "faceswap-detector"),
         default="manifest",
-        help="ROI source for prediction crops. 'manifest' uses explicit face_bbox or dataset defaults, "
-        "'gt' removes explicit detector/face boxes so cache_predictions uses GT-derived ROIs, and "
-        "'faceswap-detector' enriches the manifest with detector-derived face_bbox values.",
+        help=(
+            "ROI source for prediction crops. 'manifest' uses manifest face_bbox / "
+            "dataset defaults. 'faceswap-detector' enriches the manifest with "
+            "detector-derived face_bbox values before prediction."
+        ),
     )
     parser.add_argument("--detector", default="cv2-dnn")
-    parser.add_argument("--detector-selection", choices=("confidence", "largest"), default="confidence")
-    parser.add_argument("--detector-on-missing", choices=("error", "skip", "gt"), default="error")
+    parser.add_argument(
+        "--detector-selection",
+        choices=("gt-iou", "confidence", "largest"),
+        default="gt-iou",
+        help=(
+            "How to choose a detector box. Use gt-iou for labeled validation "
+            "sets so the selected detection matches the GT face."
+        ),
+    )
+    parser.add_argument("--detector-min-iou", type=float, default=0.25)
+    parser.add_argument(
+        "--detector-on-missing",
+        choices=("error", "skip", "gt"),
+        default="error",
+        help=(
+            "What to do when no detector box can be matched. 'error' is strict, "
+            "'skip' keeps the sample without changing face_bbox, and 'gt' falls "
+            "back to a GT-landmark bbox."
+        ),
+    )
     parser.add_argument("--no-gt-roi", action="store_true")
     parser.add_argument("--gt-roi-scale", type=float, default=1.0)
     parser.add_argument("--write-overlays", action="store_true")
@@ -610,6 +641,8 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("--failure-viewer-limit must be greater than zero")
     if args.gt_roi_scale <= 0:
         raise SystemExit("--gt-roi-scale must be greater than zero")
+    if args.detector_min_iou < 0.0 or args.detector_min_iou > 1.0:
+        raise SystemExit("--detector-min-iou must be between 0 and 1")
     if args.dry_run:
         return _dry_run(args, paths, summary)
 
@@ -628,7 +661,9 @@ def main(argv: list[str] | None = None) -> int:
         else:
             _require_manifest_samples(paths.manifest)
         if args.bbox_source == "faceswap-detector":
-            detector_summary = _stage(summary, "detector_bboxes", lambda: _apply_detector_bboxes(args, paths))
+            detector_summary = _stage(
+                summary, "detector_bboxes", lambda: _apply_detector_bboxes(args, paths)
+            )
             summary["detector_bboxes"] = detector_summary
         if args.run_predictions and not args.skip_predictions:
             _stage(summary, "cache_predictions", lambda: _cache_predictions(args, paths))
