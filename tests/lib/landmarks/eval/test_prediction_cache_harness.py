@@ -160,9 +160,7 @@ def test_failure_viewer_writes_overlays_reports_and_contact_sheets(tmp_path: Pat
         ]
     )
     debug_records = json.loads((tmp_path / "debug" / "debug_records.json").read_text())
-    regression_records = json.loads(
-        (tmp_path / "debug" / "ensemble_regressions.json").read_text()
-    )
+    regression_records = json.loads((tmp_path / "debug" / "ensemble_regressions.json").read_text())
 
     assert result == 0
     assert (tmp_path / "debug" / "worst_cases.json").is_file()
