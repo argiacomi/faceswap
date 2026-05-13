@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 import signal
 import sys
 import typing as T
@@ -22,6 +21,12 @@ from lib.utils import get_module_objects
 from .analysis import Session
 from .services.command_builder import CommandBuilder
 from .services.command_context import CommandExecutionContext
+from .services.runtime_events import RuntimeEvent
+from .services.runtime_service import ProcessRuntimeService
+from .services.runtime_session_services import (
+    PreviewOutputRuntimeService,
+    TrainingSessionRuntimeService,
+)
 from .utils import LongRunningTask, get_config, get_images, preview_trigger
 
 if os.name == "nt":
@@ -43,6 +48,13 @@ class ProcessWrapper:
 
         self._statusbar = get_config().statusbar
         self._training_session_location: dict[T.Literal["model_name", "model_folder"], str] = {}
+        self._training_session_service = TrainingSessionRuntimeService(
+            Session, graph_refresh_callback=self._refresh_graph
+        )
+        self._preview_output_service = PreviewOutputRuntimeService(
+            images_provider=get_images,
+            preview_trigger_provider=preview_trigger,
+        )
         self._task = FaceswapControl(self)
         logger.debug("Initialized %s", self.__class__.__name__)
 
@@ -56,6 +68,10 @@ class ProcessWrapper:
         logger.debug("Setting tk variable traces")
         self._tk_vars.action_command.trace("w", self._action_command)
         self._tk_vars.generate_command.trace("w", self._generate_command)
+
+    def _refresh_graph(self) -> None:
+        """Trigger a graph/analysis refresh from a runtime service event."""
+        self._tk_vars.refresh_graph.set(True)
 
     def _action_command(self, *args: tuple[str, str, str]):  # pylint:disable=unused-argument
         """Callback for when the Action button is pressed. Process command line options and
@@ -203,6 +219,9 @@ class ProcessWrapper:
         if generate:
             return
 
+        if hasattr(self, "_training_session_service"):
+            self._training_session_service.configure(context)
+
         if context.model_name is not None:
             self._training_session_location["model_name"] = context.model_name
             logger.debug("model_name: '%s'", self._training_session_location["model_name"])
@@ -210,7 +229,9 @@ class ProcessWrapper:
             self._training_session_location["model_folder"] = context.model_folder
             logger.debug("model_folder: '%s'", self._training_session_location["model_folder"])
 
-        if context.preview_output_path is not None:
+        if hasattr(self, "_preview_output_service"):
+            self._preview_output_service.apply_context(context)
+        elif context.preview_output_path is not None:
             get_images().preview_extract.set_faceswap_output_path(
                 context.preview_output_path, batch_mode=context.batch_mode
             )
@@ -228,12 +249,18 @@ class ProcessWrapper:
         self._tk_vars.running_task.set(False)
         if self._task.command == "train":
             self._tk_vars.is_training.set(False)
-            Session.stop_training()
+            if hasattr(self, "_training_session_service"):
+                self._training_session_service.stop()
+            else:
+                Session.stop_training()
         self._statusbar.stop()
         self._statusbar.message.set(message)
         self._tk_vars.display.set("")
-        get_images().delete_preview()
-        preview_trigger().clear(trigger_type=None)
+        if hasattr(self, "_preview_output_service"):
+            self._preview_output_service.cleanup()
+        else:
+            get_images().delete_preview()
+            preview_trigger().clear(trigger_type=None)
         self._command = None
         logger.debug("Terminated Faceswap processes")
         print("Process exited.")
@@ -256,19 +283,8 @@ class FaceswapControl:
         self._process: Popen | None = None
         self._thread: LongRunningTask | None = None
         self._ui_queue: Queue[tuple[str, T.Any]] = Queue()
-        self._train_stats: dict[T.Literal["iterations", "timestamp"], int | float | None] = {
-            "iterations": 0,
-            "timestamp": None,
-        }
-        self._consoleregex: dict[T.Literal["loss", "tqdm", "ffmpeg"], re.Pattern] = {
-            "loss": re.compile(r"[\W]+(\d+)?[\W]+([a-zA-Z\s]*)[\W]+?(\d+\.\d+)"),
-            "tqdm": re.compile(
-                r"(?P<dsc>.*?)(?P<pct>\d+%).*?(?P<itm>\S+/\S+)\W\["
-                r"(?P<tme>[\d+:]+<.*),\W(?P<rte>.*)[a-zA-Z/]*\]"
-            ),
-            "ffmpeg": re.compile(r"([a-zA-Z]+)=\s*(-?[\d|N/A]\S+)"),
-        }
-        self._first_loss_seen = False
+        self._runtime = ProcessRuntimeService(training_session=wrapper._training_session_service)
+        self._runtime.add_event_callback(self._queue_runtime_event)
         self._config.root.after(50, self._drain_ui_queue)
         logger.debug("Initialized %s", self.__class__.__name__)
 
@@ -288,6 +304,10 @@ class FaceswapControl:
             Arguments for the UI action
         """
         self._ui_queue.put((action, *args))
+
+    def _queue_runtime_event(self, event: RuntimeEvent) -> None:
+        """Queue a runtime event for execution on the Tkinter main thread."""
+        self._queue_ui_update("runtime_event", event)
 
     def _drain_ui_queue(self) -> None:
         """Run queued UI actions on the Tkinter main thread."""
@@ -316,12 +336,38 @@ class FaceswapControl:
             self._statusbar.progress_update(args[0], args[1], args[2])
         elif action == "status_mode":
             self._statusbar.set_mode(args[0])
-        elif action == "training_stdout":
-            self._process_training_stdout(args[0])
+        elif action == "runtime_event":
+            self._handle_runtime_event(args[0])
         elif action == "terminate":
             self._wrapper.terminate(args[0])
         else:
             logger.debug("Unknown queued UI action: %s", action)
+
+    def _handle_runtime_event(self, event: RuntimeEvent) -> None:
+        """Apply a structured runtime event to the legacy Tk widgets."""
+        payload = event.payload or {}
+
+        if event.kind == "progress":
+            position = int(event.progress) if event.progress is not None else 0
+            self._statusbar.progress_update(event.message, position, event.progress is not None)
+            return
+
+        if event.kind == "training_session":
+            if payload.get("graph_refresh"):
+                self._config.tk_vars.refresh_graph.set(True)
+            return
+
+        if event.kind != "status":
+            return
+
+        mode = payload.get("mode")
+        if mode in ("determinate", "indeterminate"):
+            self._statusbar.set_mode(mode)
+
+        if payload.get("parser") == "loss":
+            self._statusbar.progress_update(event.message, 0, False)
+        elif event.message:
+            self._statusbar.message.set(event.message)
 
     def execute_script(self, command: str, args: list[str]) -> None:
         """Execute the requested Faceswap Script
@@ -336,6 +382,7 @@ class FaceswapControl:
         logger.debug("Executing Faceswap: (command: '%s', args: %s)", command, args)
         self._thread = None
         self._command = command
+        self._runtime.command = command
 
         proc = Popen(
             args,  # pylint:disable=consider-using-with
@@ -352,24 +399,6 @@ class FaceswapControl:
         self._thread_stderr()
         logger.debug("Executed Faceswap")
 
-    def _process_training_determinate_function(self, output: str) -> bool:
-        """Process an stdout/stderr message to check for determinate TQDM output when training
-
-        Parameters
-        ----------
-        output: str
-            The stdout/stderr string to test
-
-        Returns
-        -------
-        bool
-            ``True`` if a determinate TQDM line was parsed when training otherwise ``False``
-        """
-        if self._command == "train" and not self._first_loss_seen and self._capture_tqdm(output):
-            self._queue_ui_update("status_mode", "determinate")
-            return True
-        return False
-
     def _process_progress_stdout(self, output: str) -> bool:
         """Process stdout for any faceswap processes that update the status/progress bar(s)
 
@@ -383,55 +412,7 @@ class FaceswapControl:
         bool
             ``True`` if all actions have been completed on the output line otherwise ``False``
         """
-        if self._process_training_determinate_function(output):
-            return True
-
-        if self._command == "train" and self._capture_loss(output):
-            return True
-
-        if self._command == "train" and output.strip() == "\x1b[2K":  # Clear line command for cli
-            return True
-
-        if self._command == "effmpeg" and self._capture_ffmpeg(output):
-            return True
-
-        return bool(self._command not in ("train", "effmpeg") and self._capture_tqdm(output))
-
-    def _process_training_stdout(self, output: str) -> None:
-        """Process any triggers that are required to update the GUI when Faceswap is running a
-        training session.
-
-        Parameters
-        ----------
-        output: str
-            The output line read from stdout
-        """
-        tk_vars = get_config().tk_vars
-        if self._command != "train" or not tk_vars.is_training.get():
-            return
-
-        t_output = output.strip().lower()
-        if "[saved model]" not in t_output or t_output.endswith("[saved model]"):
-            # Not a saved model line or saving the model for a reason other than standard saving
-            return
-
-        logger.debug("Trigger GUI Training update")
-        logger.trace(
-            "tk_vars: %s",
-            {
-                itm: var.get()  # type:ignore[attr-defined]
-                for itm, var in tk_vars.__dict__.items()
-            },
-        )
-        if not Session.is_training:
-            # Don't initialize session until after the first save as state file must exist first
-            logger.debug("Initializing curret training session")
-            Session.initialize_session(
-                self._session_info["model_folder"],
-                self._session_info["model_name"],
-                is_training=True,
-            )
-        tk_vars.refresh_graph.set(True)
+        return self._runtime.process_stdout(output).consumed
 
     def _read_stdout(self) -> None:
         """Read stdout from the subprocess."""
@@ -454,14 +435,12 @@ class FaceswapControl:
                 continue
 
             if output.strip():
-                self._queue_ui_update("training_stdout", output)
                 self._queue_ui_update("stdout", output.rstrip())
 
         returncode = self._process.poll()
         assert returncode is not None
-        self._first_loss_seen = False
-        message = self._set_final_status(returncode)
-        self._queue_ui_update("terminate", message)
+        event = self._runtime.finish(returncode)
+        self._queue_ui_update("terminate", event.message)
         logger.debug("Terminated stdout reader. returncode: %s", returncode)
 
     def _read_stderr(self) -> None:
@@ -481,9 +460,7 @@ class FaceswapControl:
             if output == "" and self._process.poll() is not None:
                 break
             if output:
-                if self._command != "train" and self._capture_tqdm(output):
-                    continue
-                if self._process_training_determinate_function(output):
+                if self._runtime.process_stderr(output).consumed:
                     continue
                 self._queue_ui_update("stderr", output.strip())
         logger.debug("Terminated stderr reader")
@@ -503,152 +480,6 @@ class FaceswapControl:
         thread.daemon = True
         thread.start()
         logger.debug("Threaded stderr")
-
-    def _capture_loss(self, string: str) -> bool:
-        """Capture loss values from stdout
-
-        Parameters
-        ----------
-        string: str
-            An output line read from stdout
-
-        Returns
-        -------
-        bool
-            ``True`` if a loss line was captured from stdout, otherwise ``False``
-        """
-        logger.trace("Capturing loss")  # type:ignore[attr-defined]
-        if not str.startswith(string, "["):
-            logger.trace("Not loss message. Returning False")  # type:ignore[attr-defined]
-            return False
-
-        loss = self._consoleregex["loss"].findall(string)
-        if len(loss) != 2 or not all(len(itm) == 3 for itm in loss):
-            logger.trace("Not loss message. Returning False")  # type:ignore[attr-defined]
-            return False
-
-        message = f"Total Iterations: {int(loss[0][0])} | "
-        message += "  ".join([f"{itm[1]}: {itm[2]}" for itm in loss])
-        if not message:
-            logger.trace(  # type:ignore[attr-defined]
-                "Error creating loss message. Returning False"
-            )
-            return False
-
-        iterations = self._train_stats["iterations"]
-        assert isinstance(iterations, int)
-
-        if iterations == 0:
-            # Set initial timestamp
-            self._train_stats["timestamp"] = time()
-
-        iterations += 1
-        self._train_stats["iterations"] = iterations
-
-        elapsed = self._calculate_elapsed()
-        message = (
-            f"Elapsed: {elapsed} | "
-            f"Session Iterations: {self._train_stats['iterations']}  {message}"
-        )
-
-        if not self._first_loss_seen:
-            self._queue_ui_update("status_mode", "indeterminate")
-            self._first_loss_seen = True
-
-        self._queue_ui_update("progress_update", message, 0, False)
-        logger.trace("Succesfully captured loss: %s", message)  # type:ignore[attr-defined]
-        return True
-
-    def _calculate_elapsed(self) -> str:
-        """Calculate and format time since training started
-
-        Returns
-        -------
-        str
-            The amount of time elapsed since training started in HH:mm:ss format
-        """
-        now = time()
-        timestamp = self._train_stats["timestamp"]
-        assert isinstance(timestamp, float)
-        elapsed_time = now - timestamp
-        try:
-            i_hrs = int(elapsed_time // 3600)
-            hrs = f"{i_hrs:02d}" if i_hrs < 10 else str(i_hrs)
-            mins = f"{(int(elapsed_time % 3600) // 60):02d}"
-            secs = f"{(int(elapsed_time % 3600) % 60):02d}"
-        except ZeroDivisionError:
-            hrs = mins = secs = "00"
-        return f"{hrs}:{mins}:{secs}"
-
-    def _capture_tqdm(self, string: str) -> bool:
-        """Capture tqdm output for progress bar
-
-        Parameters
-        ----------
-        string: str
-            An output line read from stdout
-
-        Returns
-        -------
-        bool
-            ``True`` if a tqdm line was captured from stdout, otherwise ``False``
-        """
-        logger.trace("Capturing tqdm")  # type:ignore[attr-defined]
-        mtqdm = self._consoleregex["tqdm"].match(string)
-        if not mtqdm:
-            return False
-        tqdm = mtqdm.groupdict()
-        if any("?" in val for val in tqdm.values()):
-            logger.trace("tqdm initializing. Skipping")  # type:ignore[attr-defined]
-            return True
-        description = tqdm["dsc"].strip()
-        description = description if description == "" else f"{description[:-1]}  |  "
-        processtime = (
-            f"Elapsed: {tqdm['tme'].split('<')[0]}  Remaining: {tqdm['tme'].split('<')[1]}"
-        )
-        msg = f"{description}{processtime}  |  {tqdm['rte']}  |  {tqdm['itm']}  |  {tqdm['pct']}"
-
-        position = tqdm["pct"].replace("%", "")
-        position = int(position) if position.isdigit() else 0
-
-        self._queue_ui_update("progress_update", msg, position, True)
-        logger.trace("Succesfully captured tqdm message: %s", msg)  # type:ignore[attr-defined]
-        return True
-
-    def _capture_ffmpeg(self, string: str) -> bool:
-        """Capture ffmpeg output for progress bar
-
-        Parameters
-        ----------
-        string: str
-            An output line read from stdout
-
-        Returns
-        -------
-        bool
-            ``True`` if an ffmpeg line was captured from stdout, otherwise ``False``
-        """
-        logger.trace("Capturing ffmpeg")  # type:ignore[attr-defined]
-        ffmpeg = self._consoleregex["ffmpeg"].findall(string)
-        if len(ffmpeg) < 7:
-            logger.trace("Not ffmpeg message. Returning False")  # type:ignore[attr-defined]
-            return False
-
-        message = ""
-        for item in ffmpeg:
-            message += f"{item[0]}: {item[1]}  "
-        if not message:
-            logger.trace(  # type:ignore[attr-defined]
-                "Error creating ffmpeg message. Returning False"
-            )
-            return False
-
-        self._queue_ui_update("progress_update", message, 0, False)
-        logger.trace(
-            "Succesfully captured ffmpeg message: %s",  # type:ignore[attr-defined]
-            message,
-        )
-        return True
 
     def terminate(self) -> None:
         """Terminate the running process in a LongRunningTask so console can still be updated
@@ -773,34 +604,6 @@ class FaceswapControl:
                 msg = f"Process {proc} survived SIGKILL. Giving up"
                 logger.debug(msg)
                 self._queue_ui_update("stdout", msg)
-
-    def _set_final_status(self, returncode: int) -> str:
-        """Set the status bar output based on subprocess return code and reset training stats
-
-        Parameters
-        ----------
-        returncode: int
-            The returncode from the terminated process
-
-        Returns
-        -------
-        str
-            The final statusbar text
-        """
-        logger.debug("Setting final status. returncode: %s", returncode)
-        self._train_stats = {"iterations": 0, "timestamp": None}
-        if returncode in (0, 3221225786):
-            status = "Ready"
-        elif returncode == -15:
-            status = f"Terminated - {self._command}.py"
-        elif returncode == -9:
-            status = f"Killed - {self._command}.py"
-        elif returncode == -6:
-            status = f"Aborted - {self._command}.py"
-        else:
-            status = f"Failed - {self._command}.py. Return Code: {returncode}"
-        logger.debug("Set final status: %s", status)
-        return status
 
 
 __all__ = get_module_objects(__name__)

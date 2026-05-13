@@ -11,6 +11,8 @@ import pytest
 from lib.gui.display import DisplayNotebook
 from lib.gui.display_page import DisplayOptionalPage
 from lib.gui.options import CliOption, CliOptions
+from lib.gui.services.runtime_events import RuntimeEvent
+from lib.gui.services.runtime_service import ProcessRuntimeService
 from lib.gui.wrapper import FaceswapControl, ProcessWrapper
 
 
@@ -55,10 +57,20 @@ class _FakeStatusbar:
     def __init__(self) -> None:
         self.message = _FakeVar()
         self.stop_called = False
+        self.modes: list[str] = []
+        self.progress_updates: list[tuple[str, int, bool]] = []
 
     def stop(self) -> None:
         """Record that the status bar was stopped."""
         self.stop_called = True
+
+    def set_mode(self, mode: str) -> None:
+        """Record status bar mode updates."""
+        self.modes.append(mode)
+
+    def progress_update(self, message: str, position: int, determinate: bool) -> None:
+        """Record progress bar updates."""
+        self.progress_updates.append((message, position, determinate))
 
 
 class _FakePsutilProcess:
@@ -245,6 +257,76 @@ def test_terminate_targets_launched_process_pid_only(
     assert process_ids == [12345]
     assert root.terminated is True
     assert child.terminated is True
+
+
+def test_faceswap_control_process_stdout_queues_runtime_events() -> None:
+    """FaceswapControl should pass parsed stdout through the shared runtime service."""
+    control = FaceswapControl.__new__(FaceswapControl)
+    control._runtime = ProcessRuntimeService(command="extract")  # pylint:disable=protected-access
+    queued: list[tuple[str, object]] = []
+    control._queue_ui_update = lambda *args: queued.append(args)  # type:ignore[method-assign]
+    control._runtime.add_event_callback(  # pylint:disable=protected-access
+        control._queue_runtime_event  # pylint:disable=protected-access
+    )
+
+    consumed = control._process_progress_stdout(  # pylint:disable=protected-access
+        "Extracting:  25%|##5       | 5/20 [00:02<00:06,  2.50it/s]\n"
+    )
+
+    assert consumed is True
+    assert len(queued) == 1
+    assert queued[0][0] == "runtime_event"
+    event = queued[0][1]
+    assert isinstance(event, RuntimeEvent)
+    assert event.kind == "progress"
+    assert event.progress == 25.0
+
+
+def test_faceswap_control_runtime_progress_event_updates_statusbar() -> None:
+    """Runtime progress events should update the legacy Tk status bar."""
+    control = FaceswapControl.__new__(FaceswapControl)
+    statusbar = _FakeStatusbar()
+    control._statusbar = statusbar  # pylint:disable=protected-access
+
+    control._handle_runtime_event(  # pylint:disable=protected-access
+        RuntimeEvent("progress", "Halfway", 42.9)
+    )
+
+    assert statusbar.progress_updates == [("Halfway", 42, True)]
+
+
+def test_faceswap_control_runtime_status_event_updates_mode_and_loss() -> None:
+    """Runtime status events should preserve training loss status behavior."""
+    control = FaceswapControl.__new__(FaceswapControl)
+    statusbar = _FakeStatusbar()
+    control._statusbar = statusbar  # pylint:disable=protected-access
+
+    control._handle_runtime_event(  # pylint:disable=protected-access
+        RuntimeEvent(
+            "status",
+            "Elapsed: 00:00:01 | loss: 1.0",
+            payload={"mode": "indeterminate", "parser": "loss"},
+        )
+    )
+
+    assert statusbar.modes == ["indeterminate"]
+    assert statusbar.progress_updates == [("Elapsed: 00:00:01 | loss: 1.0", 0, False)]
+
+
+def test_faceswap_control_training_session_event_refreshes_graph() -> None:
+    """Training session runtime events should refresh the legacy graph display."""
+    control = FaceswapControl.__new__(FaceswapControl)
+    refresh_graph = _FakeVar(False)
+    control._config = SimpleNamespace(  # pylint:disable=protected-access
+        tk_vars=SimpleNamespace(refresh_graph=refresh_graph)
+    )
+    control._statusbar = _FakeStatusbar()  # pylint:disable=protected-access
+
+    control._handle_runtime_event(  # pylint:disable=protected-access
+        RuntimeEvent("training_session", payload={"graph_refresh": True})
+    )
+
+    assert refresh_graph.get() is True
 
 
 def test_display_optional_page_close_cancels_scheduled_callbacks() -> None:
