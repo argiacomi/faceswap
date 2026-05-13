@@ -7,6 +7,7 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QFileDialog,
     QHBoxLayout,
     QHeaderView,
@@ -120,8 +121,8 @@ class AnalysisPanel(QWidget):
         self._table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self._table.setHorizontalHeaderLabels(AnalysisSessionService.TABLE_HEADERS)
-        self._table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self._table.setSelectionBehavior(QTableWidget.SelectRows)
+        self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
         layout.addWidget(self._table, 1)
 
         footer = QHBoxLayout()
