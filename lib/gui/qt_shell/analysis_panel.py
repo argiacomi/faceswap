@@ -24,6 +24,7 @@ from lib.gui.services.analysis_session_service import (
     AnalysisSessionService,
     AnalysisTableRow,
 )
+from lib.gui.services.analysis_summary_service import AnalysisSummaryService
 
 
 class AnalysisPanel(QWidget):
@@ -36,6 +37,7 @@ class AnalysisPanel(QWidget):
     ) -> None:
         super().__init__(parent)
         self._service = service or AnalysisSessionService()
+        self._summary_service = AnalysisSummaryService()
         self._title = QLabel("Session Stats")
         self._source_label = QLabel("No session source loaded")
         self._status_label = QLabel("No session data loaded")
@@ -75,7 +77,7 @@ class AnalysisPanel(QWidget):
             return False
         self._render_rows(rows)
         self._update_source_label()
-        self._set_loaded_status(len(rows))
+        self._update_summary_status()
         self._sync_actions()
         return True
 
@@ -88,7 +90,7 @@ class AnalysisPanel(QWidget):
             self._sync_actions()
             return False
         self._render_rows(rows)
-        self._set_loaded_status(len(rows))
+        self._update_summary_status()
         self._sync_actions()
         return True
 
@@ -197,14 +199,10 @@ class AnalysisPanel(QWidget):
             return "✓" if value else ""
         return "" if value is None else str(value)
 
-    def _set_loaded_status(self, row_count: int) -> None:
-        """Update status text for current row count."""
-        if row_count == 0:
-            self._status_label.setText("No session data loaded")
-        elif row_count == 1:
-            self._status_label.setText("Loaded 1 session row")
-        else:
-            self._status_label.setText(f"Loaded {row_count} session rows")
+    def _update_summary_status(self) -> None:
+        """Update footer status from current summary metrics."""
+        metrics = self._summary_service.from_session(self._service)
+        self._status_label.setText(metrics.status_text)
 
     def _update_source_label(self) -> None:
         """Update source label from service source."""
