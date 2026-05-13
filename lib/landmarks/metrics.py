@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Evaluation metrics for landmark predictions."""
+"""Evaluation metrics for landmark predictions.
+
+By default, NME uses the iBUG/300W interocular convention: mean point error
+divided by the ground-truth distance between outer eye corners 36 and 45 in the
+canonical 68-point ordering. Datasets with a different published convention
+should pass an explicit ``normalizer`` or ``interocular_indices``.
+"""
 
 from __future__ import annotations
 

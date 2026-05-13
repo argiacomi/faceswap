@@ -15,6 +15,8 @@ from lib.landmarks.ensemble.weights import weights_from_errors
 from lib.landmarks.eval.harness import run_quality_harness
 from lib.landmarks.eval.prediction_cache import DiskPredictionCache
 from lib.landmarks.schema import LandmarkPrediction
+from tools.landmarks.cache_predictions import main as cache_predictions_main
+from tools.landmarks.run_quality_harness import main as run_quality_harness_main
 
 
 def _points(offset: float = 0.0) -> np.ndarray:
@@ -43,6 +45,24 @@ def test_disk_prediction_cache_round_trip(tmp_path: Path) -> None:
     assert cache.available_models("sample") == ("hrnet",)
     assert loaded.model_name == "hrnet"
     np.testing.assert_array_equal(loaded.landmarks, prediction.landmarks)
+
+
+def test_disk_prediction_cache_reuses_fresh_entries(tmp_path: Path) -> None:
+    """Fresh cache writes are reused unless refresh is requested."""
+    cache = DiskPredictionCache(tmp_path)
+    prediction = LandmarkPrediction(
+        landmarks=_points(),
+        model_name="hrnet",
+        coordinate_space="frame",
+    )
+
+    path = cache.write("sample", prediction, checkpoint="ckpt", config={"version": 1})
+    first_mtime = path.stat().st_mtime_ns
+    reused_path = cache.write("sample", prediction, checkpoint="ckpt", config={"version": 1})
+
+    assert reused_path == path
+    assert path.stat().st_mtime_ns == first_mtime
+    assert cache.is_fresh("sample", prediction, checkpoint="ckpt", config={"version": 1})
 
 
 def test_dataset_builder_and_harness(tmp_path: Path) -> None:
@@ -80,6 +100,117 @@ def test_dataset_builder_and_harness(tmp_path: Path) -> None:
     assert "weighted_median" in result["overall"]
     assert "wflw" in result["datasets"]
     assert result["regions"]
+    for name in (
+        "per_landmark_error.csv",
+        "per_region_error.csv",
+        "per_condition_error.csv",
+        "ensemble_regressions.csv",
+        "best_variant_summary.json",
+    ):
+        assert (tmp_path / "metrics" / name).is_file()
+    best_summary = json.loads(
+        (tmp_path / "metrics" / "best_variant_summary.json").read_text(encoding="utf-8")
+    )
+    assert best_summary["best_single_model"] == "hrnet"
+    assert "plain_average" in best_summary["ensemble_deltas_vs_best_single"]
+    assert "default" in best_summary["failure_rate_by_condition"]
+
+
+def test_harness_requires_selected_models_in_cache(tmp_path: Path) -> None:
+    """Selected models must be present in the disk cache."""
+    source = tmp_path / "source"
+    source.mkdir()
+    cv2.imwrite(str(source / "sample.png"), np.zeros((8, 8, 3), dtype="uint8"))
+    np.save(str(source / "sample.npy"), _points())
+    manifest = build_manifest(source, tmp_path / "dataset", dataset="wflw")
+    DiskPredictionCache(tmp_path / "cache").write(
+        "sample",
+        LandmarkPrediction(_points(), model_name="hrnet"),
+        config="hrnet",
+    )
+
+    with pytest.raises(FileNotFoundError, match="spiga"):
+        run_quality_harness(
+            manifest,
+            tmp_path / "cache",
+            models=("hrnet", "spiga"),
+            output_dir=tmp_path / "metrics",
+        )
+
+
+def test_cache_predictions_cli_batches_manifest_roots(tmp_path: Path) -> None:
+    """Prediction cache CLI reads a manifest and selected model roots."""
+    dataset = tmp_path / "dataset"
+    dataset.mkdir()
+    np.save(str(dataset / "truth.npy"), _points())
+    manifest = dataset / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "samples": [
+                    {
+                        "sample_id": "sample",
+                        "image": "sample.png",
+                        "landmarks": "truth.npy",
+                        "dataset": "fixture",
+                        "condition": "clean",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    root = tmp_path / "predictions"
+    root.mkdir()
+    np.save(str(root / "sample.npy"), _points(0.25))
+
+    result = cache_predictions_main(
+        [
+            "--manifest",
+            str(manifest),
+            "--models",
+            "hrnet",
+            "--prediction-root",
+            f"hrnet={root}",
+            "--cache-dir",
+            str(tmp_path / "cache"),
+        ]
+    )
+
+    assert result == 0
+    cached = DiskPredictionCache(tmp_path / "cache").read("sample", "hrnet")
+    np.testing.assert_array_equal(cached.landmarks, _points(0.25))
+
+
+def test_quality_harness_cli_fails_on_threshold(tmp_path: Path) -> None:
+    """Harness CLI exits non-zero when any sample exceeds the failure threshold."""
+    source = tmp_path / "source"
+    source.mkdir()
+    cv2.imwrite(str(source / "sample.png"), np.zeros((8, 8, 3), dtype="uint8"))
+    np.save(str(source / "sample.npy"), _points())
+    manifest = build_manifest(source, tmp_path / "dataset", dataset="wflw")
+    DiskPredictionCache(tmp_path / "cache").write(
+        "sample",
+        LandmarkPrediction(_points(10.0), model_name="hrnet"),
+        config="hrnet",
+    )
+
+    result = run_quality_harness_main(
+        [
+            "--manifest",
+            str(manifest),
+            "--cache-dir",
+            str(tmp_path / "cache"),
+            "--output-dir",
+            str(tmp_path / "metrics"),
+            "--models",
+            "hrnet",
+            "--failure-threshold",
+            "0.01",
+        ]
+    )
+
+    assert result == 1
 
 
 def test_weights_from_errors_prefers_lower_error() -> None:

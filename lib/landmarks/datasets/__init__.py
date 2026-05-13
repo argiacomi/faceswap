@@ -22,9 +22,10 @@ from lib.landmarks.datasets.sources import (
 from lib.landmarks.schema import normalize_landmarks
 
 logger = logging.getLogger(__name__)
-SUPPORTED_DATASETS = ("wflw", "cofw", "directory")
+SUPPORTED_DATASETS = ("wflw", "cofw", "merl-rav", "aflw2000-3d", "directory")
 IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".bmp")
 MANIFEST_MODES = ("replace", "merge")
+WFLW_ATTRIBUTE_NAMES = ("pose", "expression", "illumination", "makeup", "occlusion", "blur")
 WFLW_SOURCE = DatasetSourceSpec(
     dataset="WFLW",
     cache_subdir="wflw",
@@ -45,6 +46,28 @@ COFW_SOURCE = DatasetSourceSpec(
     manual_hint=(
         "Provide --cofw-json, or place cofw_68.json/an archive/extracted dataset under "
         ".fs_cache/landmark_quality/cofw."
+    ),
+)
+MERL_RAV_SOURCE = DatasetSourceSpec(
+    dataset="MERL-RAV",
+    cache_subdir="merl-rav",
+    canonical_archive="merl-rav.zip",
+    cache_aliases=("MERL-RAV.zip", "MERL_RAV.zip", "merl_rav.json"),
+    extracted_aliases=("MERL-RAV", "MERL_RAV", "merl-rav", "merl_rav"),
+    manual_hint=(
+        "Provide --source-dir/--source-zip containing a JSON-style manifest or "
+        "a directory tree of image/npy landmark pairs."
+    ),
+)
+AFLW2000_3D_SOURCE = DatasetSourceSpec(
+    dataset="AFLW2000-3D",
+    cache_subdir="aflw2000-3d",
+    canonical_archive="aflw2000-3d.zip",
+    cache_aliases=("AFLW2000-3D.zip", "AFLW2000_3D.zip", "aflw2000_3d.json"),
+    extracted_aliases=("AFLW2000-3D", "AFLW2000_3D", "aflw2000-3d", "aflw2000_3d"),
+    manual_hint=(
+        "Provide --source-dir/--source-zip containing a JSON-style manifest or "
+        "a directory tree of image/npy landmark pairs."
     ),
 )
 
@@ -85,6 +108,7 @@ def build_manifest(
         raise ValueError(f"unsupported dataset '{dataset}'")
     src = Path(source_dir)
     scenario_groups = _explicit_scenario_groups(scenarios)
+    condition = _fallback_condition_label(scenario)
     samples: list[dict[str, T.Any]] = []
     for landmarks in sorted(src.glob("*.npy")):
         image = _matching_image(landmarks)
@@ -94,7 +118,8 @@ def build_manifest(
             {
                 "sample_id": landmarks.stem,
                 "dataset": dataset_name,
-                "condition": scenario,
+                "condition": condition,
+                "conditions": (condition,),
                 "image": str(image.resolve()),
                 "landmarks": str(landmarks.resolve()),
                 "source": {"dataset": dataset_name, "source_id": landmarks.stem},
@@ -128,6 +153,7 @@ def build_directory_manifest(
     dataset_name = dataset.lower()
     src = Path(source_dir)
     scenario_groups = _explicit_scenario_groups(scenarios)
+    condition = _fallback_condition_label(scenario)
     samples = []
     for landmarks in sorted(src.rglob("*.npy")):
         image = _matching_image(landmarks)
@@ -138,7 +164,8 @@ def build_directory_manifest(
             {
                 "sample_id": sample_id,
                 "dataset": dataset_name,
-                "condition": scenario,
+                "condition": condition,
+                "conditions": (condition,),
                 "image": str(image.resolve()),
                 "landmarks": str(landmarks.resolve()),
                 "source": {"dataset": dataset_name, "source_id": sample_id},
@@ -153,6 +180,78 @@ def build_directory_manifest(
         allow_overlap=allow_overlap,
         write_overlays=write_overlays,
         scenario_groups=scenario_groups,
+    )
+
+
+def build_merl_rav_manifest(
+    output_dir: str | Path,
+    *,
+    source_dir: str | Path | None = None,
+    source_zip: str | Path | None = None,
+    cache_dir: str | Path = DEFAULT_CACHE_DIR,
+    download_url: str | None = None,
+    force_download: bool = False,
+    no_download: bool = False,
+    scenario: str = "default",
+    scenarios: T.Sequence[str] | None = None,
+    samples_per_scenario: int | None = None,
+    manifest_mode: str = "replace",
+    allow_overlap: bool = False,
+    write_overlays: bool = False,
+) -> Path:
+    """Build a MERL-RAV manifest from JSON-style manifests or image/npy directories."""
+    return _build_json_or_directory_dataset_manifest(
+        "merl-rav",
+        MERL_RAV_SOURCE,
+        output_dir,
+        source_dir=source_dir,
+        source_zip=source_zip,
+        cache_dir=cache_dir,
+        download_url=download_url,
+        force_download=force_download,
+        no_download=no_download,
+        scenario=scenario,
+        scenarios=scenarios,
+        samples_per_scenario=samples_per_scenario,
+        manifest_mode=manifest_mode,
+        allow_overlap=allow_overlap,
+        write_overlays=write_overlays,
+    )
+
+
+def build_aflw2000_3d_manifest(
+    output_dir: str | Path,
+    *,
+    source_dir: str | Path | None = None,
+    source_zip: str | Path | None = None,
+    cache_dir: str | Path = DEFAULT_CACHE_DIR,
+    download_url: str | None = None,
+    force_download: bool = False,
+    no_download: bool = False,
+    scenario: str = "default",
+    scenarios: T.Sequence[str] | None = None,
+    samples_per_scenario: int | None = None,
+    manifest_mode: str = "replace",
+    allow_overlap: bool = False,
+    write_overlays: bool = False,
+) -> Path:
+    """Build an AFLW2000-3D manifest from JSON-style manifests or image/npy directories."""
+    return _build_json_or_directory_dataset_manifest(
+        "aflw2000-3d",
+        AFLW2000_3D_SOURCE,
+        output_dir,
+        source_dir=source_dir,
+        source_zip=source_zip,
+        cache_dir=cache_dir,
+        download_url=download_url,
+        force_download=force_download,
+        no_download=no_download,
+        scenario=scenario,
+        scenarios=scenarios,
+        samples_per_scenario=samples_per_scenario,
+        manifest_mode=manifest_mode,
+        allow_overlap=allow_overlap,
+        write_overlays=write_overlays,
     )
 
 
@@ -202,20 +301,25 @@ def build_wflw_manifest(
         for index, line in enumerate(annotations.read_text(encoding="utf-8").splitlines()):
             if not line.strip():
                 continue
-            parts = line.split()
-            if len(parts) < 197:
-                raise ValueError(f"WFLW line {index + 1} has too few fields")
-            points = np.asarray([float(value) for value in parts[:196]], dtype="float32")
-            image_rel = parts[-1]
+            points, bbox, attributes, image_rel = _parse_wflw_line(line, index + 1)
             sample_id = Path(image_rel).with_suffix("").as_posix()
+            condition_labels = _labels_from_wflw_attributes(attributes)
+            condition = (
+                condition_labels[0] if condition_labels else _fallback_condition_label(scenario)
+            )
             samples.append(
                 {
                     "sample_id": sample_id,
                     "dataset": "wflw",
-                    "condition": scenario,
+                    "condition": condition,
+                    "conditions": condition_labels or (condition,),
                     "image": str((root / image_rel).resolve()),
                     "source_schema": "2d_98",
                     "source": {"dataset": "wflw", "source_id": image_rel},
+                    "metadata": {
+                        "bbox": bbox,
+                        "attributes": attributes,
+                    },
                     "points": normalize_landmarks(points.reshape(98, 2), source_schema="2d_98"),
                 }
             )
@@ -291,12 +395,18 @@ def build_cofw_manifest(
         for index, entry in enumerate(entries):
             if not isinstance(entry, dict):
                 raise ValueError(f"COFW entry {index + 1} must be an object")
-            raw_points = entry.get("ground_truth", entry.get("landmarks"))
+            raw_points = _entry_landmark_values(entry)
             if raw_points is None:
                 raise ValueError(f"COFW entry {index + 1} missing landmarks")
-            points = np.asarray(raw_points, dtype="float32")
-            conditions = dict(entry.get("conditions", {}))
-            condition = str(conditions.get("scenario", scenario))
+            points, source_schema = _normalize_points_for_manifest(raw_points)
+            metadata = _entry_metadata(entry)
+            conditions = _entry_conditions(entry)
+            condition_labels = _condition_labels_from_metadata(
+                conditions,
+                metadata,
+                default=scenario,
+            )
+            condition = condition_labels[0]
             image_value = str(entry.get("image", ""))
             image_path = Path(image_value)
             if image_value and not image_path.is_absolute():
@@ -307,9 +417,12 @@ def build_cofw_manifest(
                     "sample_id": sample_id,
                     "dataset": "cofw",
                     "condition": condition,
+                    "conditions": condition_labels,
                     "image": image_value,
+                    "source_schema": source_schema,
                     "source": {"dataset": "cofw", "source_id": image_value or sample_id},
-                    "points": normalize_landmarks(points),
+                    "metadata": metadata,
+                    "points": points,
                 }
             )
         return _write_manifest_and_audit(
@@ -365,6 +478,107 @@ def audit_existing_manifest(
     return audit
 
 
+def _build_json_or_directory_dataset_manifest(
+    dataset_name: str,
+    source_spec: DatasetSourceSpec,
+    output_dir: str | Path,
+    *,
+    source_dir: str | Path | None = None,
+    source_zip: str | Path | None = None,
+    cache_dir: str | Path = DEFAULT_CACHE_DIR,
+    download_url: str | None = None,
+    force_download: bool = False,
+    no_download: bool = False,
+    scenario: str = "default",
+    scenarios: T.Sequence[str] | None = None,
+    samples_per_scenario: int | None = None,
+    manifest_mode: str = "replace",
+    allow_overlap: bool = False,
+    write_overlays: bool = False,
+) -> Path:
+    """Build a manifest from a JSON-style manifest, falling back to directory pairs."""
+    resolved = resolve_dataset_source(
+        source_spec,
+        cache_dir=cache_dir,
+        source_dir=source_dir,
+        source_zip=source_zip,
+        download_url=download_url,
+        force_download=force_download,
+        no_download=no_download,
+    )
+    cleanup: contextlib.AbstractContextManager[Path] | None = None
+    try:
+        if resolved.is_file() and not is_archive(resolved):
+            source = resolved
+            root = source.parent
+        else:
+            cleanup = _source_root(resolved)
+            root = cleanup.__enter__()
+            source = _find_dataset_json(root, dataset_name)
+        if source is None:
+            return build_directory_manifest(
+                root,
+                output_dir,
+                dataset=dataset_name,
+                scenario=scenario,
+                scenarios=scenarios,
+                samples_per_scenario=samples_per_scenario,
+                manifest_mode=manifest_mode,
+                allow_overlap=allow_overlap,
+                write_overlays=write_overlays,
+            )
+        image_base = root
+        scenario_groups = _explicit_scenario_groups(scenarios)
+        samples: list[dict[str, T.Any]] = []
+        for index, entry in enumerate(_parse_json_entries(source, dataset_name)):
+            raw_points = _entry_landmark_values(entry)
+            if raw_points is None:
+                raise ValueError(f"{dataset_name} entry {index + 1} missing landmarks")
+            points, source_schema = _normalize_points_for_manifest(raw_points)
+            metadata = _entry_metadata(entry)
+            condition_labels = _condition_labels_from_metadata(
+                _entry_conditions(entry),
+                metadata,
+                default=scenario,
+            )
+            image_value = str(entry.get("image", entry.get("image_path", "")))
+            image_path = Path(image_value)
+            if image_value and not image_path.is_absolute():
+                image_value = str((image_base / image_path).resolve())
+            sample_id = str(
+                entry.get("sample_id")
+                or entry.get("id")
+                or Path(image_value).with_suffix("").name
+                or index
+            )
+            samples.append(
+                {
+                    "sample_id": sample_id,
+                    "dataset": dataset_name,
+                    "condition": condition_labels[0],
+                    "conditions": condition_labels,
+                    "image": image_value,
+                    "source_schema": source_schema,
+                    "source": {"dataset": dataset_name, "source_id": image_value or sample_id},
+                    "metadata": metadata,
+                    "points": points,
+                }
+            )
+        return _write_manifest_and_audit(
+            _filter_samples(samples, scenario_groups, samples_per_scenario),
+            Path(output_dir),
+            dataset_name,
+            scenario,
+            manifest_mode=manifest_mode,
+            allow_overlap=allow_overlap,
+            write_overlays=write_overlays,
+            scenario_groups=scenario_groups,
+        )
+    finally:
+        if cleanup is not None:
+            cleanup.__exit__(None, None, None)
+
+
 @contextlib.contextmanager
 def _source_root(source: Path) -> T.Iterator[Path]:
     """Yield an extracted root directory for a source archive or directory."""
@@ -409,6 +623,205 @@ def _find_cofw_json(root: Path) -> Path:
     return candidates[0]
 
 
+def _find_dataset_json(root: Path, dataset: str) -> Path | None:
+    """Find a JSON-style manifest for ``dataset`` under ``root``."""
+    dataset_tokens = {dataset.lower(), dataset.lower().replace("-", "_")}
+    candidates = [
+        path
+        for path in root.rglob("*.json")
+        if path.name != "dataset_audit.json" and path.name != "metrics.json"
+    ]
+    if not candidates:
+        return None
+    return sorted(
+        candidates,
+        key=lambda p: (
+            p.name != "manifest.json",
+            not any(token in p.stem.lower() for token in dataset_tokens),
+            len(p.parts),
+            p.name,
+        ),
+    )[0]
+
+
+def _parse_json_entries(source: Path, dataset: str) -> list[dict[str, T.Any]]:
+    """Return sample entries from a JSON-style dataset manifest."""
+    payload = json.loads(source.read_text(encoding="utf-8"))
+    entries = (
+        payload.get("samples", payload.get("entries", payload))
+        if isinstance(payload, dict)
+        else payload
+    )
+    if not isinstance(entries, list):
+        raise ValueError(f"{dataset} JSON must contain a list or a 'samples' list")
+    if not all(isinstance(entry, dict) for entry in entries):
+        raise ValueError(f"{dataset} JSON entries must be objects")
+    return list(entries)
+
+
+def _entry_landmark_values(entry: dict[str, T.Any]) -> T.Any:
+    """Return landmark data from common JSON manifest keys."""
+    for key in ("ground_truth", "landmarks", "points", "pts"):
+        if key in entry:
+            return entry[key]
+    return None
+
+
+def _normalize_points_for_manifest(raw_points: T.Any) -> tuple[np.ndarray, str]:
+    """Normalize 2D/3D landmark arrays into canonical 68x2 manifest points."""
+    array = np.asarray(raw_points, dtype="float32")
+    if array.ndim == 1:
+        if array.size % 3 == 0 and array.size // 3 == 68:
+            array = array.reshape((68, 3))
+        elif array.size % 2 == 0:
+            array = array.reshape((-1, 2))
+    if array.ndim != 2:
+        raise ValueError(f"landmarks must be a 2D array, got shape {array.shape}")
+    if not np.all(np.isfinite(array)):
+        raise ValueError("landmarks contain NaN or infinite values")
+    if array.shape == (68, 3):
+        return np.ascontiguousarray(array[:, :2], dtype="float32"), "3d_68"
+    if array.shape[1] == 3:
+        array = array[:, :2]
+    if array.shape == (98, 2):
+        return normalize_landmarks(array, source_schema="2d_98"), "2d_98"
+    if array.shape == (68, 2):
+        return normalize_landmarks(array, source_schema="2d_68"), "2d_68"
+    return normalize_landmarks(array), f"2d_{array.shape[0]}"
+
+
+def _entry_metadata(entry: dict[str, T.Any]) -> dict[str, T.Any]:
+    """Copy non-structural JSON metadata for manifest preservation."""
+    metadata = dict(entry.get("metadata", {})) if isinstance(entry.get("metadata"), dict) else {}
+    for key in (
+        "occlusion",
+        "occlusions",
+        "occluded",
+        "visibility",
+        "visible",
+        "attributes",
+        "pose",
+        "expression",
+        "illumination",
+        "makeup",
+        "blur",
+    ):
+        if key in entry:
+            metadata[key] = entry[key]
+    return metadata
+
+
+def _entry_conditions(entry: dict[str, T.Any]) -> dict[str, T.Any]:
+    """Return condition metadata from a JSON entry."""
+    raw = entry.get("conditions", {})
+    if isinstance(raw, dict):
+        return dict(raw)
+    if isinstance(raw, (list, tuple)):
+        return {"labels": list(raw)}
+    if raw:
+        return {"scenario": raw}
+    return {}
+
+
+def _truthy_condition(value: T.Any) -> bool:
+    """Return whether a metadata value marks a condition as present."""
+    if isinstance(value, str):
+        return value.strip().lower() not in {"", "0", "false", "none", "no", "clean"}
+    if isinstance(value, (list, tuple, set)):
+        return any(_truthy_condition(item) for item in value)
+    if isinstance(value, np.ndarray):
+        return bool(np.asarray(value).size and np.any(value))
+    return bool(value)
+
+
+def _normalize_condition_label(value: T.Any) -> str:
+    """Normalize user/dataset condition labels while preserving their meaning."""
+    label = str(value).strip().lower().replace("-", "_").replace(" ", "_")
+    while "__" in label:
+        label = label.replace("__", "_")
+    return label.strip("_") or "default"
+
+
+def _fallback_condition_label(value: T.Any) -> str:
+    """Return the condition label for unlabelled samples."""
+    return _normalize_condition_label(value)
+
+
+def _condition_labels_from_metadata(
+    conditions: dict[str, T.Any],
+    metadata: dict[str, T.Any],
+    *,
+    default: str,
+) -> tuple[str, ...]:
+    """Build normalized condition labels from explicit and occlusion metadata."""
+    labels: list[str] = []
+    raw_labels = conditions.get("labels")
+    if isinstance(raw_labels, (list, tuple, set)):
+        labels.extend(_normalize_condition_label(label) for label in raw_labels)
+    elif raw_labels:
+        labels.append(_normalize_condition_label(raw_labels))
+    scenario = conditions.get("scenario") or conditions.get("condition")
+    if scenario:
+        labels.append(_normalize_condition_label(scenario))
+    for key, value in {**conditions, **metadata}.items():
+        normalized_key = _normalize_condition_label(key)
+        if normalized_key in {"scenario", "condition", "labels"}:
+            continue
+        if normalized_key in {"occlusion", "occlusions", "occluded", "visibility", "visible"}:
+            if normalized_key in {"visibility", "visible"}:
+                visible_values = np.asarray(value).ravel()
+                if _truthy_condition(value) and not all(bool(item) for item in visible_values):
+                    labels.append("occlusion")
+            elif _truthy_condition(value):
+                labels.append("occlusion")
+        elif normalized_key in WFLW_ATTRIBUTE_NAMES and _truthy_condition(value):
+            labels.append(normalized_key)
+    labels = [
+        _normalize_condition_label(label) for label in labels if _normalize_condition_label(label)
+    ]
+    if not labels:
+        labels = [_fallback_condition_label(default)]
+    return tuple(dict.fromkeys(labels))
+
+
+def _parse_wflw_line(
+    line: str,
+    line_number: int,
+) -> tuple[np.ndarray, list[float], dict[str, int], str]:
+    """Parse one WFLW annotation row, including bbox and six official attributes."""
+    parts = line.split()
+    if len(parts) < 197:
+        raise ValueError(f"WFLW line {line_number} has too few fields")
+    try:
+        points = np.asarray([float(value) for value in parts[:196]], dtype="float32")
+    except ValueError as err:
+        raise ValueError(f"WFLW line {line_number} has invalid landmark coordinates") from err
+    bbox: list[float] = []
+    if len(parts) >= 201:
+        try:
+            bbox = [float(value) for value in parts[196:200]]
+        except ValueError as err:
+            raise ValueError(f"WFLW line {line_number} has invalid bbox values") from err
+    attributes = dict.fromkeys(WFLW_ATTRIBUTE_NAMES, 0)
+    if len(parts) >= 207:
+        try:
+            values = [int(float(value)) for value in parts[200:206]]
+        except ValueError as err:
+            raise ValueError(f"WFLW line {line_number} has invalid attribute values") from err
+        attributes = dict(zip(WFLW_ATTRIBUTE_NAMES, values, strict=True))
+        image_rel = " ".join(parts[206:])
+    else:
+        image_rel = parts[-1]
+    if not image_rel:
+        raise ValueError(f"WFLW line {line_number} is missing image path")
+    return points, bbox, attributes, image_rel
+
+
+def _labels_from_wflw_attributes(attributes: dict[str, int]) -> tuple[str, ...]:
+    """Return active normalized WFLW condition labels."""
+    return tuple(name for name in WFLW_ATTRIBUTE_NAMES if int(attributes.get(name, 0)) != 0)
+
+
 def _explicit_scenario_groups(scenarios: T.Sequence[str] | None = None) -> tuple[str, ...]:
     """Return explicitly requested scenario groups.
 
@@ -417,7 +830,11 @@ def _explicit_scenario_groups(scenarios: T.Sequence[str] | None = None) -> tuple
     """
     if scenarios is None:
         return ()
-    return tuple(dict.fromkeys(str(value).strip() for value in scenarios if str(value).strip()))
+    return tuple(
+        dict.fromkeys(
+            _normalize_condition_label(value) for value in scenarios if str(value).strip()
+        )
+    )
 
 
 def _filter_samples(
@@ -431,13 +848,15 @@ def _filter_samples(
     counts: dict[str, int] = {}
     filtered: list[dict[str, T.Any]] = []
     for sample in samples:
-        condition = str(sample.get("condition", "default"))
-        if allowed and condition not in allowed:
+        condition_labels = _entry_condition_labels(sample, "default")
+        if allowed and not set(condition_labels).intersection(allowed):
             continue
-        if limit is not None and counts.get(condition, 0) >= limit:
+        primary = condition_labels[0]
+        if limit is not None and counts.get(primary, 0) >= limit:
             continue
         filtered.append(dict(sample))
-        counts[condition] = counts.get(condition, 0) + 1
+        for condition in condition_labels:
+            counts[condition] = counts.get(condition, 0) + 1
     return filtered
 
 
@@ -449,7 +868,11 @@ def _replacement_groups(
     """Return manifest groups that should be replaced during merge."""
     if scenario_groups:
         return tuple(scenario_groups)
-    generated = tuple(dict.fromkeys(str(entry.get("condition", scenario)) for entry in entries))
+    generated = tuple(
+        dict.fromkeys(
+            label for entry in entries for label in _entry_condition_labels(entry, scenario)
+        )
+    )
     return generated or (scenario,)
 
 
@@ -488,6 +911,21 @@ def _source_key_for_entry(entry: dict[str, T.Any]) -> tuple[str, str]:
         or ""
     )
     return dataset, str(source_id)
+
+
+def _entry_condition_labels(entry: dict[str, T.Any], default: str) -> tuple[str, ...]:
+    """Return normalized condition labels for a manifest entry."""
+    raw = entry.get("conditions")
+    labels: list[str] = []
+    if isinstance(raw, (list, tuple, set)):
+        labels.extend(_normalize_condition_label(value) for value in raw)
+    elif raw:
+        labels.append(_normalize_condition_label(raw))
+    condition = entry.get("condition", default)
+    if condition:
+        labels.append(_normalize_condition_label(condition))
+    labels = [label for label in labels if label]
+    return tuple(dict.fromkeys(labels)) or (_normalize_condition_label(default),)
 
 
 def duplicate_source_audit(entries: T.Sequence[dict[str, T.Any]]) -> list[dict[str, T.Any]]:
@@ -549,7 +987,7 @@ def _merge_manifest_entries(
         for entry in _load_existing_manifest_entries(manifest_path)
         if not (
             str(entry.get("dataset")) == dataset
-            and str(entry.get("condition", "default")) in replaced
+            and set(_entry_condition_labels(entry, "default")).intersection(replaced)
         )
     ]
     return sorted(
@@ -668,6 +1106,7 @@ def _build_audit(
     duplicate_sources: list[dict[str, T.Any]] | None = None,
     *,
     allow_overlap: bool = False,
+    expected_condition_groups: T.Sequence[str] = (),
 ) -> dict[str, T.Any]:
     """Build a dataset audit payload for landmark manifests."""
     condition_counts: dict[str, int] = {}
@@ -684,13 +1123,15 @@ def _build_audit(
     )
 
     for sample in manifest_samples:
-        condition = str(sample.get("condition", scenario))
+        condition_labels = _entry_condition_labels(sample, scenario)
         sample_dataset = str(sample.get("dataset", dataset))
-        condition_counts[condition] = condition_counts.get(condition, 0) + 1
+        for label in condition_labels:
+            condition_counts[label] = condition_counts.get(label, 0) + 1
         dataset_counts[sample_dataset] = dataset_counts.get(sample_dataset, 0) + 1
         source_schema = str(sample.get("source_schema", "2d_68"))
         source_schema_counts[source_schema] = source_schema_counts.get(source_schema, 0) + 1
-        selected_by_group.setdefault(condition, []).append(list(_source_key_for_entry(sample)))
+        for label in condition_labels:
+            selected_by_group.setdefault(label, []).append(list(_source_key_for_entry(sample)))
         image = str(sample.get("image", ""))
         if image and not _entry_path(image, output_dir).is_file():
             missing_images.append(image)
@@ -713,11 +1154,20 @@ def _build_audit(
 
     if duplicate_sources is None:
         duplicate_sources = duplicate_source_audit(manifest_samples)
+    expected_conditions = tuple(
+        dict.fromkeys(_normalize_condition_label(group) for group in expected_condition_groups)
+    )
+    condition_shortfalls = {
+        group: {"count": condition_counts.get(group, 0), "minimum": 1}
+        for group in expected_conditions
+        if condition_counts.get(group, 0) < 1
+    }
     return {
         "schema_version": 1,
         "dataset": dataset,
         "total_entries": len(manifest_samples),
         "condition_counts": dict(sorted(condition_counts.items())),
+        "condition_shortfalls": condition_shortfalls,
         "count_per_dataset": dict(sorted(dataset_counts.items())),
         "count_per_source_schema": dict(sorted(source_schema_counts.items())),
         "landmark_shape_counts": dict(sorted(shape_counts.items())),
@@ -805,6 +1255,7 @@ def _write_manifest_and_audit(
                 scenario,
                 duplicates,
                 allow_overlap=allow_overlap,
+                expected_condition_groups=scenario_groups,
             ),
             indent=2,
             sort_keys=True,

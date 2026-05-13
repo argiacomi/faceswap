@@ -57,6 +57,18 @@ def test_metrics_for_shifted_landmarks() -> None:
     )
 
 
+def test_normalized_mean_error_uses_ibug_outer_eye_corners_by_default() -> None:
+    """Default NME normalizes by canonical 68 outer eye corners 36 and 45."""
+    truth = np.zeros((68, 2), dtype="float32")
+    truth[36] = [10.0, 20.0]
+    truth[45] = [60.0, 20.0]
+    predicted = truth.copy()
+    predicted[:, 0] += 5.0
+
+    assert mean_point_error(predicted, truth) == pytest.approx(5.0)
+    assert normalized_mean_error(predicted, truth) == pytest.approx(5.0 / 50.0)
+
+
 def test_failure_rate_and_auc() -> None:
     """Distribution metrics handle simple normalized error arrays."""
     errors = np.array([0.01, 0.02, 0.10], dtype="float32")

@@ -24,6 +24,7 @@ class PredictionCacheMetadata:
     coordinate_space: str
     config_hash: str
     source_landmark_count: int
+    prediction_hash: str
 
 
 def config_hash(config: T.Mapping[str, T.Any] | str) -> str:
@@ -34,6 +35,12 @@ def config_hash(config: T.Mapping[str, T.Any] | str) -> str:
         else json.dumps(config, sort_keys=True, separators=(",", ":"))
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def prediction_hash(points: np.ndarray) -> str:
+    """Return a stable hash for a prediction array."""
+    array = np.ascontiguousarray(points.astype("float32", copy=False))
+    return hashlib.sha256(array.tobytes()).hexdigest()
 
 
 class DiskPredictionCache:
@@ -61,6 +68,41 @@ class DiskPredictionCache:
             return {}
         return json.loads(path.read_text(encoding="utf-8"))
 
+    def metadata_entry(
+        self,
+        prediction: LandmarkPrediction,
+        *,
+        checkpoint: str = "",
+        config: T.Mapping[str, T.Any] | str = "",
+    ) -> PredictionCacheMetadata:
+        """Build the metadata entry for a prediction."""
+        return PredictionCacheMetadata(
+            model_name=prediction.model_name,
+            checkpoint=checkpoint,
+            schema=prediction.schema,
+            coordinate_space=prediction.coordinate_space,
+            config_hash=config_hash(config),
+            source_landmark_count=prediction.source_landmark_count,
+            prediction_hash=prediction_hash(prediction.landmarks),
+        )
+
+    def is_fresh(
+        self,
+        sample_id: str,
+        prediction: LandmarkPrediction,
+        *,
+        checkpoint: str = "",
+        config: T.Mapping[str, T.Any] | str = "",
+    ) -> bool:
+        """Return whether a cached prediction already matches metadata."""
+        model_name = prediction.model_name
+        path = self.prediction_path(sample_id, model_name)
+        if not path.is_file():
+            return False
+        metadata = self.load_metadata(sample_id)
+        expected = asdict(self.metadata_entry(prediction, checkpoint=checkpoint, config=config))
+        return metadata.get(model_name) == expected
+
     def write(
         self,
         sample_id: str,
@@ -68,22 +110,20 @@ class DiskPredictionCache:
         *,
         checkpoint: str = "",
         config: T.Mapping[str, T.Any] | str = "",
+        refresh: bool = False,
     ) -> Path:
         """Write one prediction and update sample metadata."""
         sample_dir = self.sample_dir(sample_id)
         sample_dir.mkdir(parents=True, exist_ok=True)
         model_name = prediction.model_name
         path = self.prediction_path(sample_id, model_name)
+        if not refresh and self.is_fresh(
+            sample_id, prediction, checkpoint=checkpoint, config=config
+        ):
+            return path
         np.save(str(path), prediction.landmarks.astype("float32", copy=False))
         metadata = self.load_metadata(sample_id)
-        entry = PredictionCacheMetadata(
-            model_name=model_name,
-            checkpoint=checkpoint,
-            schema=prediction.schema,
-            coordinate_space=prediction.coordinate_space,
-            config_hash=config_hash(config),
-            source_landmark_count=prediction.source_landmark_count,
-        )
+        entry = self.metadata_entry(prediction, checkpoint=checkpoint, config=config)
         metadata[model_name] = asdict(entry)
         self.metadata_path(sample_id).write_text(
             json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8"

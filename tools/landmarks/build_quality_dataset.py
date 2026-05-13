@@ -10,9 +10,11 @@ from pathlib import Path
 from lib.landmarks.datasets import (
     SUPPORTED_DATASETS,
     audit_existing_manifest,
+    build_aflw2000_3d_manifest,
     build_cofw_manifest,
     build_directory_manifest,
     build_manifest,
+    build_merl_rav_manifest,
     build_wflw_manifest,
 )
 from lib.landmarks.datasets.sources import DEFAULT_CACHE_DIR
@@ -145,6 +147,8 @@ def _validate_args(args: argparse.Namespace) -> None:
             raise ValueError("--dataset directory requires --source-dir")
         if args.source_zip or args.wflw_annotations or args.cofw_json:
             raise ValueError("--dataset directory only supports --source-dir")
+    if args.dataset in {"merl-rav", "aflw2000-3d"} and (args.wflw_annotations or args.cofw_json):
+        raise ValueError(f"--dataset {args.dataset} only supports --source-dir/--source-zip")
     if args.no_download and args.force_download:
         raise ValueError("--no-download and --force-download cannot be combined")
 
@@ -185,6 +189,38 @@ def main(argv: list[str] | None = None) -> int:
             args.cofw_json,
             args.output_dir,
             image_root=args.image_root,
+            source_dir=args.source_dir,
+            source_zip=args.source_zip,
+            cache_dir=args.cache_dir,
+            download_url=args.download_url,
+            force_download=args.force_download,
+            no_download=args.no_download,
+            scenario=args.scenario,
+            scenarios=scenarios,
+            samples_per_scenario=args.samples_per_scenario,
+            manifest_mode=args.manifest_mode,
+            allow_overlap=args.allow_overlap,
+            write_overlays=args.write_overlays,
+        )
+    elif args.dataset == "merl-rav":
+        manifest = build_merl_rav_manifest(
+            args.output_dir,
+            source_dir=args.source_dir,
+            source_zip=args.source_zip,
+            cache_dir=args.cache_dir,
+            download_url=args.download_url,
+            force_download=args.force_download,
+            no_download=args.no_download,
+            scenario=args.scenario,
+            scenarios=scenarios,
+            samples_per_scenario=args.samples_per_scenario,
+            manifest_mode=args.manifest_mode,
+            allow_overlap=args.allow_overlap,
+            write_overlays=args.write_overlays,
+        )
+    elif args.dataset == "aflw2000-3d":
+        manifest = build_aflw2000_3d_manifest(
+            args.output_dir,
             source_dir=args.source_dir,
             source_zip=args.source_zip,
             cache_dir=args.cache_dir,

@@ -18,10 +18,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--variants", default="plain_average,static_weighted")
     parser.add_argument("--weights", default=None)
     parser.add_argument("--failure-threshold", type=float, default=0.08)
+    parser.add_argument("--outlier-threshold", type=float, default=3.5)
+    parser.add_argument("--max-nme", type=float, default=None)
+    parser.add_argument("--max-failure-rate", type=float, default=None)
     args = parser.parse_args(argv)
     models = tuple(item.strip() for item in args.models.split(",") if item.strip()) or None
     variants = tuple(item.strip() for item in args.variants.split(",") if item.strip())
-    run_quality_harness(
+    result = run_quality_harness(
         args.manifest,
         args.cache_dir,
         models=models,
@@ -29,8 +32,27 @@ def main(argv: list[str] | None = None) -> int:
         weights_path=args.weights,
         output_dir=args.output_dir,
         failure_threshold=args.failure_threshold,
+        outlier_threshold=args.outlier_threshold,
     )
     print(f"Wrote landmark metrics to: {args.output_dir}")
+    failures = []
+    if result.get("threshold_failed"):
+        failures.append(f"sample failure threshold exceeded ({args.failure_threshold:.6f})")
+    for label, metrics in sorted(result.get("overall", {}).items()):
+        if args.max_nme is not None and metrics.get("nme", 0.0) > args.max_nme:
+            failures.append(f"{label} nme={metrics['nme']:.6f} > {args.max_nme:.6f}")
+        if (
+            args.max_failure_rate is not None
+            and metrics.get("failure_rate", 0.0) > args.max_failure_rate
+        ):
+            failures.append(
+                f"{label} failure_rate={metrics['failure_rate']:.6f} > {args.max_failure_rate:.6f}"
+            )
+    if failures:
+        print("Landmark quality thresholds failed:")
+        for failure in failures:
+            print(f"  {failure}")
+        return 1
     return 0
 
 

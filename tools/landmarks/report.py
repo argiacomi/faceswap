@@ -16,6 +16,7 @@ def main(argv: list[str] | None = None) -> int:
     with open(args.metrics, encoding="utf-8") as infile:
         metrics = json.load(infile)
     overall = metrics.get("overall", {})
+    summary = metrics.get("best_variant", {})
     best_single = min(
         (
             (name, data)
@@ -32,7 +33,18 @@ def main(argv: list[str] | None = None) -> int:
         key=lambda item: item[1].get("nme", float("inf")),
         default=(None, {}),
     )
-    report = {"overall": overall, "best_single_model": best_single[0], "deltas": {}}
+    report = {
+        "overall": overall,
+        "best_single_model": summary.get("best_single_model", best_single[0]),
+        "best_single": summary.get("best_single", best_single[1]),
+        "best_variant": summary.get("best_variant", summary.get("label", "")),
+        "best_variant_metrics": summary.get("best_variant_metrics", {}),
+        "deltas": dict(summary.get("ensemble_deltas_vs_best_single", {})),
+        "failure_rate_by_condition": summary.get(
+            "failure_rate_by_condition", metrics.get("conditions", {})
+        ),
+        "threshold_failed": metrics.get("threshold_failed", False),
+    }
     for variant in (
         "plain_average",
         "static_weighted",
@@ -40,7 +52,7 @@ def main(argv: list[str] | None = None) -> int:
         "static_weighted_downweight",
         "weighted_median",
     ):
-        if variant in overall and best_single[0] is not None:
+        if variant in overall and best_single[0] is not None and variant not in report["deltas"]:
             report["deltas"][variant] = overall[variant].get("nme", 0) - best_single[1].get(
                 "nme", 0
             )

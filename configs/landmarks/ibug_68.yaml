@@ -1,0 +1,56 @@
+# Canonical Faceswap/iBUG 68-point landmark schema.
+#
+# Coordinates are 2D image-space points in x/y order. Part names follow
+# Faceswap's subject-relative convention: "left" and "right" describe the face,
+# not the viewer. In normal image coordinates x increases left-to-right.
+name: ibug_68
+schema: 2d_68
+points: 68
+dimensions: 2
+coordinate_order:
+  - x
+  - y
+index_base: 0
+source: Faceswap LM_2D_68 / iBUG 68 ordering
+parts:
+  jaw:
+    start: 0
+    end: 17
+    closed: false
+  chin:
+    start: 7
+    end: 9
+    closed: false
+  right_eyebrow:
+    start: 17
+    end: 22
+    closed: false
+  left_eyebrow:
+    start: 22
+    end: 27
+    closed: false
+  nose:
+    start: 27
+    end: 36
+    closed: false
+  right_eye:
+    start: 36
+    end: 42
+    closed: true
+  left_eye:
+    start: 42
+    end: 48
+    closed: true
+  mouth_outer:
+    start: 48
+    end: 60
+    closed: true
+  mouth_inner:
+    start: 60
+    end: 68
+    closed: true
+nme:
+  default_normalizer: interocular_outer_corners
+  interocular_indices:
+    right_eye_outer: 36
+    left_eye_outer: 45

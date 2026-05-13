@@ -1,5 +1,22 @@
 #!/usr/bin/env python3
-"""Canonical landmark schema helpers for ensemble predictions."""
+"""Canonical landmark schema helpers for ensemble predictions.
+
+The public canonical schema is ``2d_68``: the Faceswap/iBUG 68-point layout in
+``(x, y)`` order. Its index ranges match ``LANDMARK_PARTS[LM_2D_68]``:
+
+* 0-16 jaw
+* 17-21 subject-right eyebrow
+* 22-26 subject-left eyebrow
+* 27-35 nose
+* 36-41 subject-right eye
+* 42-47 subject-left eye
+* 48-59 outer mouth
+* 60-67 inner mouth
+
+Subject-left and subject-right describe the face, not the viewer. In normal
+image coordinates, x increases left-to-right, so subject-right features appear
+on the left side of a frontal image.
+"""
 
 from __future__ import annotations
 
