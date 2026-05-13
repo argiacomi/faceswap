@@ -22,6 +22,8 @@ def install_preview_job_lifecycle(main_window_class: type) -> None:
     original_finish = main_window_class._job_finished
     original_reset = main_window_class._reset_project_state
     original_apply_project = main_window_class._apply_project
+    original_open_file = main_window_class._open_session_file
+    original_reload = main_window_class._reload_current_file
 
     @functools.wraps(original_run)
     def run_command(self, *args, **kwargs):  # type:ignore[no-untyped-def]
@@ -57,11 +59,23 @@ def install_preview_job_lifecycle(main_window_class: type) -> None:
         _stop_preview_live_refresh(self)
         return original_apply_project(self, *args, **kwargs)
 
+    @functools.wraps(original_open_file)
+    def open_session_file(self, *args, **kwargs):  # type:ignore[no-untyped-def]
+        _stop_preview_live_refresh(self)
+        return original_open_file(self, *args, **kwargs)
+
+    @functools.wraps(original_reload)
+    def reload_current_file(self, *args, **kwargs):  # type:ignore[no-untyped-def]
+        _stop_preview_live_refresh(self)
+        return original_reload(self, *args, **kwargs)
+
     main_window_class._run_command = run_command
     main_window_class._stop_job = stop_job
     main_window_class._job_finished = job_finished
     main_window_class._reset_project_state = reset_project_state
     main_window_class._apply_project = apply_project
+    main_window_class._open_session_file = open_session_file
+    main_window_class._reload_current_file = reload_current_file
     main_window_class._preview_job_lifecycle_installed = True
 
 
