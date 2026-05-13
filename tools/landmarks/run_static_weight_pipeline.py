@@ -28,6 +28,13 @@ from tools.landmarks.failure_viewer import main as failure_viewer_main
 
 logger = logging.getLogger(__name__)
 DEFAULT_OUTPUT_ROOT = DEFAULT_CACHE_DIR / "runs" / "static_weight_validation"
+_EXCLUSIVE_SOURCE_FLAGS = (
+    "--wflw-annotations",
+    "--wflw-download-official",
+    "--cofw-json",
+    "--source-zip",
+    "--download-url",
+)
 
 
 @dataclass(frozen=True)
@@ -70,6 +77,12 @@ def _parse_csv(value: str) -> tuple[str, ...]:
 def _append_if(argv: list[str], flag: str, value: str) -> None:
     if value:
         argv.extend([flag, value])
+
+
+def _append_source_dir_if_no_competing_source(argv: list[str], value: str) -> None:
+    """Append source-dir only when no explicit source/download mode is active."""
+    if value and not any(flag in argv for flag in _EXCLUSIVE_SOURCE_FLAGS):
+        argv.extend(["--source-dir", value])
 
 
 def _default_dataset_source_dir(dataset: str) -> str:
@@ -197,17 +210,17 @@ def _dataset_build_args(
     if dataset == "wflw":
         _append_if(argv, "--wflw-annotations", args.wflw_annotations)
         _append_if(argv, "--image-root", args.wflw_image_root)
-        _append_if(argv, "--source-dir", args.wflw_source_dir)
         _append_if(argv, "--source-zip", args.wflw_source_zip)
         _append_if(argv, "--download-url", args.wflw_download_url)
         if args.wflw_download_official:
             argv.append("--wflw-download-official")
+        _append_source_dir_if_no_competing_source(argv, args.wflw_source_dir)
     elif dataset == "cofw":
         _append_if(argv, "--cofw-json", args.cofw_json)
         _append_if(argv, "--image-root", args.cofw_image_root)
-        _append_if(argv, "--source-dir", args.cofw_source_dir)
         _append_if(argv, "--source-zip", args.cofw_source_zip)
         _append_if(argv, "--download-url", args.cofw_download_url)
+        _append_source_dir_if_no_competing_source(argv, args.cofw_source_dir)
     elif dataset == "directory":
         if not args.directory_source_dir:
             raise ValueError(
@@ -217,13 +230,13 @@ def _dataset_build_args(
         if args.recursive:
             argv.append("--recursive")
     elif dataset == "merl-rav":
-        _append_if(argv, "--source-dir", args.merl_rav_source_dir)
         _append_if(argv, "--source-zip", args.merl_rav_source_zip)
         _append_if(argv, "--download-url", args.merl_rav_download_url)
+        _append_source_dir_if_no_competing_source(argv, args.merl_rav_source_dir)
     elif dataset == "aflw2000-3d":
-        _append_if(argv, "--source-dir", args.aflw2000_3d_source_dir)
         _append_if(argv, "--source-zip", args.aflw2000_3d_source_zip)
         _append_if(argv, "--download-url", args.aflw2000_3d_download_url)
+        _append_source_dir_if_no_competing_source(argv, args.aflw2000_3d_source_dir)
     return argv
 
 
