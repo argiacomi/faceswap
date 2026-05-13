@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 import cv2
@@ -212,6 +213,36 @@ def test_static_weight_pipeline_reports_failed_stage(tmp_path: Path) -> None:
     assert result == 1
     assert "manifest not found" in payload["failed_stage_error"]
     assert payload["dataset_counts"] == {}
+
+
+def test_static_weight_pipeline_logs_expected_failures_without_traceback(
+    tmp_path: Path,
+    caplog,
+) -> None:
+    """Expected source/config errors should be concise at normal log levels."""
+    root = tmp_path / "run"
+    caplog.set_level(logging.ERROR)
+
+    result = pipeline_main(
+        [
+            "--output-root",
+            str(root),
+            "--datasets",
+            "wflw",
+            "--build-datasets",
+            "--skip-predictions",
+            "--skip-baseline",
+            "--skip-failure-viewer",
+            "--models",
+            "hrnet",
+        ]
+    )
+
+    payload = _summary(root)
+    assert result == 1
+    assert "WFLW source not found" in payload["failed_stage_error"]
+    assert "Pipeline failed: FileNotFoundError" in caplog.text
+    assert "Traceback" not in caplog.text
 
 
 def test_static_weight_pipeline_rejects_empty_built_manifest(tmp_path: Path) -> None:

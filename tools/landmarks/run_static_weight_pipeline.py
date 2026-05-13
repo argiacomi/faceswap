@@ -507,6 +507,14 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _log_pipeline_failure(args: argparse.Namespace, err: Exception) -> None:
+    """Log pipeline failures concisely unless debug logging is requested."""
+    if args.log_level == "DEBUG":
+        logger.exception("Pipeline failed")
+        return
+    logger.error("Pipeline failed: %s: %s", type(err).__name__, err)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     logging.basicConfig(
@@ -552,7 +560,7 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as err:
         exit_code = 1
         summary["failed_stage_error"] = f"{type(err).__name__}: {err}"
-        logger.exception("Pipeline failed")
+        _log_pipeline_failure(args, err)
     finally:
         _update_summary_outputs(summary, paths, args, baseline=baseline, weighted=weighted)
         _write_summary(paths, summary)
