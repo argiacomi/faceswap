@@ -22,6 +22,7 @@ from lib.landmarks.datasets import (
     build_merl_rav_manifest,
     build_wflw_manifest,
 )
+from lib.landmarks.datasets.cofw68 import resolve_cofw68_json
 from lib.landmarks.datasets.polish import polish_landmark_dataset_artifacts
 from lib.landmarks.datasets.sources import DEFAULT_CACHE_DIR, resolve_wflw_official_source
 from lib.landmarks.datasets.visual_overlays import write_indexed_region_overlays
@@ -95,7 +96,13 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Download official WFLW annotations and images into the dataset cache.",
     )
-    parser.add_argument("--cofw-json", default=None)
+    parser.add_argument(
+        "--cofw-json",
+        default=None,
+        help="Explicit COFW-68 JSON export. If omitted, --dataset cofw resolves "
+        "or builds .fs_cache/landmark_quality/cofw/cofw_68.json from the "
+        "Caltech COFW color archive and the COFW-68 annotation benchmark.",
+    )
     parser.add_argument("--image-root", default=None)
     parser.add_argument("--recursive", action="store_true")
     parser.add_argument(
@@ -196,6 +203,19 @@ def _wflw_source_dir(args: argparse.Namespace) -> str | None:
     )
 
 
+def _cofw_json(args: argparse.Namespace) -> str | None:
+    """Return an explicit or auto-materialized COFW-68 JSON export path."""
+    if args.cofw_json or args.source_dir or args.source_zip or args.download_url:
+        return args.cofw_json
+    return str(
+        resolve_cofw68_json(
+            cache_dir=args.cache_dir,
+            force_download=args.force_download,
+            no_download=args.no_download,
+        )
+    )
+
+
 def _polish_output(args: argparse.Namespace) -> None:
     """Write donor-parity audit/source notes and optional indexed/region overlays."""
     if args.write_overlays:
@@ -236,7 +256,7 @@ def main(argv: list[str] | None = None) -> int:
         )
     elif args.dataset == "cofw":
         manifest = build_cofw_manifest(
-            args.cofw_json,
+            _cofw_json(args),
             args.output_dir,
             image_root=args.image_root,
             source_dir=args.source_dir,
