@@ -15,9 +15,7 @@ from lib.cli.launcher import GUI_SHELL_ENV, FaceswapError, ScriptExecutor
 def test_gui_args_include_hidden_no_exec_flag() -> None:
     """GUI args should expose a hidden no-exec flag for launch smoke tests."""
     hidden_arg = next(
-        option
-        for option in GuiArgs.get_argument_list()
-        if "--no-gui-exec" in option["opts"]
+        option for option in GuiArgs.get_argument_list() if "--no-gui-exec" in option["opts"]
     )
 
     assert hidden_arg["action"] == "store_true"

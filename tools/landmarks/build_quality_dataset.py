@@ -161,7 +161,12 @@ def _validate_args(args: argparse.Namespace) -> None:
     if args.dataset == "directory":
         if not args.source_dir:
             raise ValueError("--dataset directory requires --source-dir")
-        if args.source_zip or args.wflw_annotations or args.wflw_download_official or args.cofw_json:
+        if (
+            args.source_zip
+            or args.wflw_annotations
+            or args.wflw_download_official
+            or args.cofw_json
+        ):
             raise ValueError("--dataset directory only supports --source-dir")
     if args.dataset in {"merl-rav", "aflw2000-3d"} and (
         args.wflw_annotations or args.wflw_download_official or args.cofw_json

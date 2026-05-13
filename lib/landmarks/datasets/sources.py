@@ -375,8 +375,7 @@ def _multipart_fingerprint(
     return {
         "multipart": True,
         "parts": {
-            part.name: _archive_fingerprint(archives[part.name], part.sha256)
-            for part in parts
+            part.name: _archive_fingerprint(archives[part.name], part.sha256) for part in parts
         },
     }
 

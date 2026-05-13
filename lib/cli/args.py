@@ -353,8 +353,7 @@ class GuiArgs(FaceSwapArgs):
                 "dest": "gui_shell",
                 "default": None,
                 "help": _(
-                    "GUI shell to launch. Defaults to Tk. Can also be set with "
-                    "FACESWAP_GUI_SHELL."
+                    "GUI shell to launch. Defaults to Tk. Can also be set with FACESWAP_GUI_SHELL."
                 ),
             }
         )
