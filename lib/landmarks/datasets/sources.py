@@ -116,6 +116,9 @@ def _archive_names(spec: DatasetSourceSpec) -> tuple[str, ...]:
 def _archive_name(spec: DatasetSourceSpec) -> str:
     """Return the canonical archive name used for new downloads."""
     names = _archive_names(spec)
+    archive_names = [name for name in names if any(name.lower().endswith(suffix) for suffix in ARCHIVE_SUFFIXES)]
+    if archive_names:
+        return archive_names[0]
     return names[0] if names else f"{spec.dataset.lower()}.zip"
 
 
@@ -295,6 +298,17 @@ def _extraction_is_fresh(destination: Path, payload: dict[str, T.Any]) -> bool:
     return current == payload
 
 
+def _extracted_matches_archive(
+    extracted: Path,
+    archive: Path,
+    expected_sha256: str | None,
+) -> bool:
+    """Return whether ``extracted`` was produced from the current ``archive``."""
+    if not archive.is_file() or not extracted.is_dir():
+        return False
+    return _extraction_is_fresh(extracted, _archive_fingerprint(archive, expected_sha256))
+
+
 def extract_archive_to_cache(
     archive: str | os.PathLike[str],
     destination: str | os.PathLike[str],
@@ -358,31 +372,88 @@ def _generic_cache_candidate(path: Path) -> Path | None:
     return None
 
 
-def _cached_source(spec: DatasetSourceSpec, cache_dir: Path) -> Path | None:
-    """Return a cached archive, explicit alias file, or extracted source directory for ``spec``."""
-    cache_root = cache_dir / spec.cache_root_name
+def _known_cached_sources(spec: DatasetSourceSpec, cache_root: Path) -> tuple[Path | None, Path | None]:
+    """Return the first known archive and non-archive cache candidates."""
+    archive: Path | None = None
+    direct: Path | None = None
+    for name in _archive_names(spec):
+        candidate = _existing_source(cache_root / name)
+        if candidate is None:
+            continue
+        if is_archive(candidate):
+            archive = archive or candidate
+        else:
+            direct = direct or candidate
+    return archive, direct
+
+
+def _generic_cached_archive(cache_root: Path) -> Path | None:
+    """Return the first generic archive candidate in ``cache_root``."""
+    if not cache_root.is_dir():
+        return None
+    for child in sorted(cache_root.iterdir()):
+        if is_archive(child):
+            return child
+    return None
+
+
+def _generic_cached_directory(cache_root: Path) -> Path | None:
+    """Return the first generic directory candidate in ``cache_root``."""
+    if not cache_root.is_dir():
+        return None
+    for child in sorted(cache_root.iterdir()):
+        if child.name == EXTRACTED_DIR_NAME:
+            continue
+        candidate = _generic_cache_candidate(child)
+        if candidate is not None and candidate.is_dir():
+            return candidate
+    return None
+
+
+def _cached_extracted_source(
+    spec: DatasetSourceSpec,
+    cache_root: Path,
+    archive: Path | None,
+) -> Path | None:
+    """Return a reusable extracted source only when it cannot be stale."""
+    expected_sha256 = _effective_sha256(spec)
     extracted = cache_root / EXTRACTED_DIR_NAME
+    if archive is not None:
+        if _extracted_matches_archive(extracted, archive, expected_sha256):
+            logger.info("Using fresh cached %s extracted source: %s", spec.dataset, extracted)
+            return extracted
+        return None
     if extracted.is_dir():
-        logger.info("Using cached %s extracted source: %s", spec.dataset, extracted)
+        logger.info("Using cached %s extracted source without archive: %s", spec.dataset, extracted)
         return extracted
     for name in spec.extracted_aliases:
         candidate = cache_root / name
         if candidate.is_dir():
-            logger.info("Using cached %s extracted source: %s", spec.dataset, candidate)
+            logger.info("Using cached %s extracted source alias: %s", spec.dataset, candidate)
             return candidate
-    for name in _archive_names(spec):
-        candidate = _existing_source(cache_root / name)
-        if candidate is not None:
-            logger.info("Using cached %s source: %s", spec.dataset, candidate)
-            return candidate
-    if cache_root.is_dir():
-        for child in sorted(cache_root.iterdir()):
-            if child.name == EXTRACTED_DIR_NAME:
-                continue
-            candidate = _generic_cache_candidate(child)
-            if candidate is not None:
-                logger.info("Using cached %s source candidate: %s", spec.dataset, candidate)
-                return candidate
+    return None
+
+
+def _cached_source(spec: DatasetSourceSpec, cache_dir: Path) -> Path | None:
+    """Return a cached archive, explicit alias file, or safe extracted source."""
+    cache_root = cache_dir / spec.cache_root_name
+    known_archive, known_direct = _known_cached_sources(spec, cache_root)
+    generic_archive = None if known_archive is not None else _generic_cached_archive(cache_root)
+    archive = known_archive or generic_archive
+
+    extracted = _cached_extracted_source(spec, cache_root, archive)
+    if extracted is not None:
+        return extracted
+    if archive is not None:
+        logger.info("Using cached %s source archive: %s", spec.dataset, archive)
+        return archive
+    if known_direct is not None:
+        logger.info("Using cached %s source: %s", spec.dataset, known_direct)
+        return known_direct
+    generic_dir = _generic_cached_directory(cache_root)
+    if generic_dir is not None:
+        logger.info("Using cached %s source candidate: %s", spec.dataset, generic_dir)
+        return generic_dir
     return None
 
 
