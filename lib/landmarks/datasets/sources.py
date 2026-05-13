@@ -25,7 +25,7 @@ EXTRACTION_MARKER = ".source.json"
 
 WFLW_ANNOTATIONS_URL = "https://wywu.github.io/projects/LAB/support/WFLW_annotations.tar.gz"
 WFLW_IMAGES_GOOGLE_DRIVE_FILE_ID = "1hzBd48JIdWTJSsATBEB_eFVvPL1bx6UC"
-COFW_COLOR_URL = "http://www.vision.caltech.edu/xpburgos/ICCV13/Data/COFW_color.zip"
+COFW_COLOR_URL = "https://data.caltech.edu/records/bc0bf-nc666/files/COFW_color.zip?download=1"
 MERL_RAV_LABELS_URL = (
     "https://github.com/abhi1kumar/MERL-RAV_dataset/archive/refs/heads/master.zip"
 )

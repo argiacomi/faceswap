@@ -15,18 +15,21 @@ if str(_REPO_ROOT) not in sys.path:
 from lib.landmarks.datasets import (
     SUPPORTED_DATASETS,
     audit_existing_manifest,
-    build_aflw2000_3d_manifest,
     build_cofw_manifest,
     build_directory_manifest,
     build_manifest,
-    build_merl_rav_manifest,
     build_wflw_manifest,
 )
+from lib.landmarks.datasets.aflw2000_3d import build_aflw2000_3d_manifest
+from lib.landmarks.datasets.cofw68 import resolve_cofw68_json
+from lib.landmarks.datasets.merl_rav import build_merl_rav_manifest
 from lib.landmarks.datasets.polish import polish_landmark_dataset_artifacts
 from lib.landmarks.datasets.sources import DEFAULT_CACHE_DIR, resolve_wflw_official_source
 from lib.landmarks.datasets.visual_overlays import write_indexed_region_overlays
+from lib.landmarks.datasets.w300 import build_300w_manifest
 
 logger = logging.getLogger(__name__)
+CLI_SUPPORTED_DATASETS = tuple(dict.fromkeys((*SUPPORTED_DATASETS, "300w")))
 
 
 def _parse_csv(value: str | None) -> tuple[str, ...] | None:
@@ -40,7 +43,7 @@ def _parse_csv(value: str | None) -> tuple[str, ...] | None:
 def _build_arg_parser() -> argparse.ArgumentParser:
     """Return the landmark dataset builder argument parser."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--dataset", required=True, choices=SUPPORTED_DATASETS)
+    parser.add_argument("--dataset", required=True, choices=CLI_SUPPORTED_DATASETS)
     parser.add_argument(
         "--source-dir",
         default=None,
@@ -95,7 +98,13 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Download official WFLW annotations and images into the dataset cache.",
     )
-    parser.add_argument("--cofw-json", default=None)
+    parser.add_argument(
+        "--cofw-json",
+        default=None,
+        help="Explicit COFW-68 JSON export. If omitted, --dataset cofw resolves "
+        "or builds .fs_cache/landmark_quality/cofw/cofw_68.json from the "
+        "Caltech COFW color archive and the COFW-68 annotation benchmark.",
+    )
     parser.add_argument("--image-root", default=None)
     parser.add_argument("--recursive", action="store_true")
     parser.add_argument(
@@ -161,6 +170,8 @@ def _validate_args(args: argparse.Namespace) -> None:
         )
     if args.dataset == "wflw" and args.cofw_json:
         raise ValueError("--cofw-json is only valid with --dataset cofw")
+    if args.dataset != "cofw" and args.cofw_json:
+        raise ValueError("--cofw-json is only valid with --dataset cofw")
     if args.dataset == "cofw" and (args.wflw_annotations or args.wflw_download_official):
         raise ValueError("WFLW source options are only valid with --dataset wflw")
     if args.dataset != "wflw" and args.wflw_download_official:
@@ -175,7 +186,7 @@ def _validate_args(args: argparse.Namespace) -> None:
             or args.cofw_json
         ):
             raise ValueError("--dataset directory only supports --source-dir")
-    if args.dataset in {"merl-rav", "aflw2000-3d"} and (
+    if args.dataset in {"merl-rav", "aflw2000-3d", "300w"} and (
         args.wflw_annotations or args.wflw_download_official or args.cofw_json
     ):
         raise ValueError(f"--dataset {args.dataset} only supports --source-dir/--source-zip")
@@ -189,6 +200,19 @@ def _wflw_source_dir(args: argparse.Namespace) -> str | None:
         return args.source_dir
     return str(
         resolve_wflw_official_source(
+            cache_dir=args.cache_dir,
+            force_download=args.force_download,
+            no_download=args.no_download,
+        )
+    )
+
+
+def _cofw_json(args: argparse.Namespace) -> str | None:
+    """Return an explicit or auto-materialized COFW-68 JSON export path."""
+    if args.cofw_json or args.source_dir or args.source_zip or args.download_url:
+        return args.cofw_json
+    return str(
+        resolve_cofw68_json(
             cache_dir=args.cache_dir,
             force_download=args.force_download,
             no_download=args.no_download,
@@ -236,9 +260,25 @@ def main(argv: list[str] | None = None) -> int:
         )
     elif args.dataset == "cofw":
         manifest = build_cofw_manifest(
-            args.cofw_json,
+            _cofw_json(args),
             args.output_dir,
             image_root=args.image_root,
+            source_dir=args.source_dir,
+            source_zip=args.source_zip,
+            cache_dir=args.cache_dir,
+            download_url=args.download_url,
+            force_download=args.force_download,
+            no_download=args.no_download,
+            scenario=args.scenario,
+            scenarios=scenarios,
+            samples_per_scenario=args.samples_per_scenario,
+            manifest_mode=args.manifest_mode,
+            allow_overlap=args.allow_overlap,
+            write_overlays=args.write_overlays,
+        )
+    elif args.dataset == "300w":
+        manifest = build_300w_manifest(
+            args.output_dir,
             source_dir=args.source_dir,
             source_zip=args.source_zip,
             cache_dir=args.cache_dir,

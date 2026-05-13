@@ -364,7 +364,9 @@ class GuiArgs(FaceSwapArgs):
                 "const": "qt",
                 "dest": "gui_shell",
                 "default": None,
-                "help": _("Launch the experimental Qt GUI shell. Tk remains the default GUI shell."),
+                "help": _(
+                    "Launch the experimental Qt GUI shell. Tk remains the default GUI shell."
+                ),
             }
         )
         argument_list.append(

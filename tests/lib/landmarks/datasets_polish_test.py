@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from lib.landmarks.datasets.polish import polish_landmark_dataset_artifacts
 from tools.landmarks import build_quality_dataset
 
 
@@ -18,6 +19,17 @@ def _points_68() -> np.ndarray:
         (
             np.linspace(10, 74, 68, dtype="float32"),
             np.linspace(12, 76, 68, dtype="float32"),
+        ),
+        axis=1,
+    )
+
+
+def _points_98() -> np.ndarray:
+    """Return deterministic 98-point WFLW landmarks."""
+    return np.stack(
+        (
+            np.linspace(20, 216, 98, dtype="float32"),
+            np.linspace(30, 226, 98, dtype="float32"),
         ),
         axis=1,
     )
@@ -123,3 +135,45 @@ def test_cli_rewrites_rich_source_notes(tmp_path: Path) -> None:
     assert "AutoMask donor audit shape" in notes
     assert "### COFW" in notes
     assert "COFW color images" in notes
+
+
+def test_polish_normalizes_wflw_annotation_bbox_for_prediction_roi(tmp_path: Path) -> None:
+    """WFLW annotation bbox is preserved separately from validation face_bbox."""
+    output = tmp_path / "out"
+    output.mkdir()
+    landmark_path = output / "landmarks.npy"
+    points = _points_98()
+    np.save(str(landmark_path), points)
+    (output / "manifest.json").write_text(
+        json.dumps(
+            {
+                "dataset": "wflw",
+                "samples": [
+                    {
+                        "sample_id": "sample",
+                        "dataset": "wflw",
+                        "condition": "default",
+                        "conditions": ["default"],
+                        "image": "sample.jpg",
+                        "landmarks": "landmarks.npy",
+                        "source_schema": "2d_98",
+                        "metadata": {"bbox": [1000, 1000, 2000, 2000]},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (output / "dataset_audit.json").write_text("{}\n", encoding="utf-8")
+
+    polish_landmark_dataset_artifacts(output)
+
+    manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
+    metadata = manifest["samples"][0]["metadata"]
+    assert "bbox" not in metadata
+    assert metadata["wflw_annotation_bbox"] == [1000, 1000, 2000, 2000]
+    assert metadata["face_bbox_source"] == "wflw_98_landmark_extrema"
+    np.testing.assert_allclose(
+        metadata["face_bbox"],
+        [float(points[:, 0].min()), float(points[:, 1].min()), float(points[:, 0].max()), float(points[:, 1].max())],
+    )

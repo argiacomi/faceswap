@@ -45,6 +45,7 @@ class PipelinePaths:
     weighted_metrics: Path = field(init=False)
     debug: Path = field(init=False)
     summary: Path = field(init=False)
+    detector_bbox_report: Path = field(init=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "dataset", self.root / "dataset")
@@ -61,6 +62,11 @@ class PipelinePaths:
         object.__setattr__(self, "weighted_metrics", self.root / "weighted_metrics")
         object.__setattr__(self, "debug", self.root / "debug")
         object.__setattr__(self, "summary", self.root / "run_summary.json")
+        object.__setattr__(
+            self,
+            "detector_bbox_report",
+            self.root / "dataset" / "detector_bboxes.json",
+        )
 
 
 def _parse_csv(value: str) -> tuple[str, ...]:
@@ -129,10 +135,15 @@ def _initial_summary(args: argparse.Namespace, paths: PipelinePaths) -> dict[str
         "cache_counts": {},
         "generated_weight_path": "",
         "baseline_best_model": "",
+        "baseline_best_single_metrics": {},
+        "baseline_best_variant": "",
+        "baseline_best_variant_metrics": {},
         "weighted_best_variant": "",
+        "weighted_best_variant_metrics": {},
         "ensemble_deltas_vs_best_single": {},
         "threshold_failed": False,
         "ensemble_improved_over_best_single": None,
+        "bbox_source": args.bbox_source,
     }
 
 
@@ -143,22 +154,43 @@ def _write_summary(paths: PipelinePaths, summary: dict[str, T.Any]) -> None:
     )
 
 
+def _format_duration(seconds: float) -> str:
+    """Return a compact human-readable duration."""
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    minutes, remainder = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{int(minutes)}m {remainder:.0f}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{int(hours)}h {int(minutes)}m {remainder:.0f}s"
+
+
+def _progress(message: str) -> None:
+    """Print a human-visible pipeline progress message."""
+    print(f"[{time.strftime('%H:%M:%S')}] {message}", file=sys.stderr, flush=True)
+
+
 def _stage(summary: dict[str, T.Any], name: str, fn: T.Callable[[], T.Any]) -> T.Any:
     started = time.time()
     record: dict[str, T.Any] = {"name": name, "status": "running", "error": ""}
     summary["stages"].append(record)
+    _progress(f"START {name}")
     try:
         result = fn()
     except Exception as err:
+        duration = round(time.time() - started, 3)
         record.update(
             {
                 "status": "failed",
                 "error": f"{type(err).__name__}: {err}",
-                "duration_seconds": round(time.time() - started, 3),
+                "duration_seconds": duration,
             }
         )
+        _progress(f"FAIL  {name} after {_format_duration(duration)}: {type(err).__name__}: {err}")
         raise
-    record.update({"status": "ok", "duration_seconds": round(time.time() - started, 3)})
+    duration = round(time.time() - started, 3)
+    record.update({"status": "ok", "duration_seconds": duration})
+    _progress(f"OK    {name} in {_format_duration(duration)}")
     return result
 
 
@@ -214,6 +246,10 @@ def _dataset_build_args(
         _append_if(argv, "--source-zip", args.cofw_source_zip)
         _append_if(argv, "--download-url", args.cofw_download_url)
         _append_source_dir_if_no_competing_source(argv, args.cofw_source_dir)
+    elif dataset == "300w":
+        _append_if(argv, "--source-zip", args.w300_source_zip)
+        _append_if(argv, "--download-url", args.w300_download_url)
+        _append_source_dir_if_no_competing_source(argv, args.w300_source_dir)
     elif dataset == "directory":
         if not args.directory_source_dir:
             raise ValueError(
@@ -239,7 +275,9 @@ def _build_datasets(
     from tools.landmarks.build_quality_dataset import main as build_quality_dataset_main
 
     successful = 0
-    for dataset in _parse_csv(args.datasets):
+    datasets = _parse_csv(args.datasets)
+    _progress(f"Building datasets: {', '.join(datasets)}")
+    for dataset in datasets:
         first = successful == 0
 
         def _run_one(dataset: str = dataset, first: bool = first) -> None:
@@ -255,6 +293,34 @@ def _build_datasets(
     if successful == 0:
         raise RuntimeError("no dataset manifests were built successfully")
     _require_manifest_samples(paths.manifest)
+
+
+def _apply_detector_bboxes(args: argparse.Namespace, paths: PipelinePaths) -> dict[str, T.Any]:
+    """Enrich the manifest with detector-derived face bboxes."""
+    if args.bbox_source != "faceswap-detector":
+        return {}
+
+    from tools.landmarks.apply_detector_bboxes import apply_detector_bboxes, build_parser
+
+    detector_argv = [
+        "--manifest",
+        str(paths.manifest),
+        "--detector",
+        args.detector,
+        "--selection",
+        args.detector_selection,
+        "--min-iou",
+        str(args.detector_min_iou),
+        "--on-missing",
+        args.detector_on_missing,
+        "--output-json",
+        str(paths.detector_bbox_report),
+        "--log-level",
+        args.log_level,
+    ]
+
+    detector_args = build_parser().parse_args(detector_argv)
+    return apply_detector_bboxes(detector_args)
 
 
 def _require_manifest_samples(manifest_path: Path) -> None:
@@ -426,6 +492,14 @@ def _cache_counts(
     return {"samples": sample_count, "predictions": prediction_count, "models": model_counts}
 
 
+def _compact_best(result: dict[str, T.Any] | None) -> dict[str, T.Any]:
+    """Return the harness best-variant block if present."""
+    if not result:
+        return {}
+    best = result.get("best_variant", {})
+    return best if isinstance(best, dict) else {}
+
+
 def _update_summary_outputs(
     summary: dict[str, T.Any],
     paths: PipelinePaths,
@@ -437,21 +511,142 @@ def _update_summary_outputs(
     models = _parse_csv(args.models)
     summary["dataset_counts"] = _dataset_counts(paths.manifest)
     summary["cache_counts"] = _cache_counts(paths.manifest, paths.cache, models)
+    if paths.detector_bbox_report.is_file():
+        try:
+            summary["detector_bboxes"] = json.loads(
+                paths.detector_bbox_report.read_text(encoding="utf-8")
+            )
+        except Exception:
+            summary["detector_bboxes"] = {"path": str(paths.detector_bbox_report)}
     if paths.weight_file.is_file():
         summary["generated_weight_path"] = str(paths.weight_file)
-    if baseline:
-        summary["baseline_best_model"] = str(baseline.get("best_single_model", ""))
-    if weighted:
-        best = weighted.get("best_variant", {})
-        summary["weighted_best_variant"] = str(best.get("best_variant") or best.get("label") or "")
-        deltas = weighted.get("ensemble_deltas_vs_best_single", {})
-        summary["ensemble_deltas_vs_best_single"] = deltas
-        summary["threshold_failed"] = bool(weighted.get("threshold_failed"))
+    baseline_best = _compact_best(baseline)
+    if baseline_best:
+        summary["baseline_best_model"] = str(baseline_best.get("best_single_model", ""))
+        summary["baseline_best_single_metrics"] = baseline_best.get("best_single", {})
+        summary["baseline_best_variant"] = str(baseline_best.get("best_variant", ""))
+        summary["baseline_best_variant_metrics"] = baseline_best.get("best_variant_metrics", {})
+    weighted_best = _compact_best(weighted)
+    if weighted_best:
+        summary["weighted_best_variant"] = str(
+            weighted_best.get("best_variant") or weighted_best.get("label") or ""
+        )
+        summary["weighted_best_variant_metrics"] = weighted_best.get(
+            "best_variant_metrics"
+        ) or weighted_best.get("metrics", {})
+        summary["ensemble_deltas_vs_best_single"] = weighted_best.get(
+            "ensemble_deltas_vs_best_single", {}
+        )
+        summary["threshold_failed"] = bool(weighted_best.get("threshold_failed"))
+        deltas = summary["ensemble_deltas_vs_best_single"]
         summary["ensemble_improved_over_best_single"] = (
             any(float(delta) < 0 for delta in deltas.values()) if deltas else None
         )
-    elif baseline:
-        summary["threshold_failed"] = bool(baseline.get("threshold_failed"))
+    elif baseline_best:
+        summary["threshold_failed"] = bool(baseline_best.get("threshold_failed"))
+
+
+def _metric_percent(metrics: T.Mapping[str, T.Any], key: str) -> str:
+    """Return a percentage metric string for NME/failure rate values."""
+    value = metrics.get("overall_nme", metrics.get(key, None)) if key == "nme" else metrics.get(key)
+    if value is None or value == "":
+        return "n/a"
+    return f"{float(value) * 100:.2f}%"
+
+
+def _metric_float(metrics: T.Mapping[str, T.Any], key: str) -> str:
+    value = metrics.get(key)
+    if value is None or value == "":
+        return "n/a"
+    return f"{float(value):.4f}"
+
+
+def _format_metrics(label: str, metrics: T.Mapping[str, T.Any]) -> str:
+    if not metrics:
+        return f"{label}: n/a"
+    return (
+        f"{label}: NME {_metric_percent(metrics, 'nme')}, "
+        f"FR {_metric_percent(metrics, 'failure_rate')}, "
+        f"AUC {_metric_float(metrics, 'auc')}"
+    )
+
+
+def _format_dataset_counts(counts: T.Mapping[str, T.Any]) -> str:
+    if not counts:
+        return "none"
+    total = counts.get("total", 0)
+    parts = [f"{key}={value}" for key, value in sorted(counts.items()) if key != "total"]
+    if parts:
+        return f"total={total} ({', '.join(parts)})"
+    return f"total={total}"
+
+
+def _format_cache_counts(counts: T.Mapping[str, T.Any]) -> str:
+    if not counts:
+        return "none"
+    model_counts = counts.get("models", {}) if isinstance(counts.get("models"), dict) else {}
+    models = ", ".join(f"{model}={count}" for model, count in sorted(model_counts.items()))
+    return (
+        f"samples={counts.get('samples', 0)}, "
+        f"predictions={counts.get('predictions', 0)}"
+        + (f" ({models})" if models else "")
+    )
+
+
+def _best_delta(summary: T.Mapping[str, T.Any], variant: str) -> str:
+    deltas = summary.get("ensemble_deltas_vs_best_single", {})
+    if not isinstance(deltas, dict) or variant not in deltas:
+        return "n/a"
+    delta = float(deltas[variant])
+    sign = "+" if delta >= 0 else ""
+    return f"{sign}{delta * 100:.3f} pp NME"
+
+
+def _format_run_report(summary: dict[str, T.Any], *, exit_code: int) -> str:
+    """Return a compact human-readable final pipeline report."""
+    status = "FAILED" if exit_code else "COMPLETE"
+    weighted_variant = str(summary.get("weighted_best_variant") or "")
+    lines = [
+        "",
+        f"Pipeline {status}",
+        f"Output root: {summary.get('output_root', '')}",
+        f"Run summary: {Path(str(summary.get('output_root', ''))) / 'run_summary.json'}",
+        f"Datasets: {_format_dataset_counts(summary.get('dataset_counts', {}))}",
+        f"Prediction cache: {_format_cache_counts(summary.get('cache_counts', {}))}",
+        f"BBox source: {summary.get('bbox_source', 'manifest')}",
+    ]
+    failed_error = summary.get("failed_stage_error")
+    if failed_error:
+        lines.append(f"Failure: {failed_error}")
+    lines.extend(
+        [
+            _format_metrics(
+                f"Best single ({summary.get('baseline_best_model') or 'n/a'})",
+                summary.get("baseline_best_single_metrics", {}),
+            ),
+            _format_metrics(
+                f"Best weighted ({weighted_variant or 'n/a'})",
+                summary.get("weighted_best_variant_metrics", {}),
+            ),
+        ]
+    )
+    if weighted_variant:
+        lines.append(
+            f"Weighted delta vs best single: {_best_delta(summary, weighted_variant)}"
+        )
+    improved = summary.get("ensemble_improved_over_best_single")
+    if improved is not None:
+        lines.append(
+            "Finding: ensemble improved over best single"
+            if improved
+            else "Finding: ensemble did not beat best single"
+        )
+    if summary.get("threshold_failed"):
+        lines.append("Threshold: failed at least one configured failure threshold")
+    if summary.get("generated_weight_path"):
+        lines.append(f"Weights: {summary['generated_weight_path']}")
+    lines.append(f"Metrics: {summary.get('output_root', '')}/weighted_metrics/best_variant_summary.json")
+    return "\n".join(lines)
 
 
 def _dry_run(args: argparse.Namespace, paths: PipelinePaths, summary: dict[str, T.Any]) -> int:
@@ -462,6 +657,8 @@ def _dry_run(args: argparse.Namespace, paths: PipelinePaths, summary: dict[str, 
         planned.extend(f"dataset:{dataset}" for dataset in _parse_csv(args.datasets))
     else:
         planned.append("dataset:reuse-existing")
+    if args.bbox_source == "faceswap-detector":
+        planned.append(f"detector_bboxes:{args.detector}:{args.detector_selection}")
     planned.append(
         f"predictions:{_prediction_mode(args)}"
         if args.run_predictions and not args.skip_predictions
@@ -476,6 +673,9 @@ def _dry_run(args: argparse.Namespace, paths: PipelinePaths, summary: dict[str, 
     summary["planned_stages"] = planned
     _write_summary(paths, summary)
     print(f"Dry run only. Planned stages written to: {paths.summary}")
+    print("Planned stages:")
+    for index, stage in enumerate(planned, start=1):
+        print(f"  {index}. {stage}")
     return 0
 
 
@@ -502,6 +702,37 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--refresh-predictions", action="store_true")
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--device", default="auto")
+    parser.add_argument(
+        "--bbox-source",
+        choices=("manifest", "faceswap-detector"),
+        default="manifest",
+        help=(
+            "ROI source for prediction crops. 'manifest' uses manifest face_bbox / "
+            "dataset defaults. 'faceswap-detector' enriches the manifest with "
+            "detector-derived face_bbox values before prediction."
+        ),
+    )
+    parser.add_argument("--detector", default="cv2-dnn")
+    parser.add_argument(
+        "--detector-selection",
+        choices=("gt-iou", "confidence", "largest"),
+        default="gt-iou",
+        help=(
+            "How to choose a detector box. Use gt-iou for labeled validation "
+            "sets so the selected detection matches the GT face."
+        ),
+    )
+    parser.add_argument("--detector-min-iou", type=float, default=0.25)
+    parser.add_argument(
+        "--detector-on-missing",
+        choices=("error", "skip", "gt"),
+        default="error",
+        help=(
+            "What to do when no detector box can be matched. 'error' is strict, "
+            "'skip' keeps the sample without changing face_bbox, and 'gt' falls "
+            "back to a GT-landmark bbox."
+        ),
+    )
     parser.add_argument("--no-gt-roi", action="store_true")
     parser.add_argument("--gt-roi-scale", type=float, default=1.0)
     parser.add_argument("--write-overlays", action="store_true")
@@ -530,6 +761,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cofw-source-dir", default=_default_dataset_source_dir("cofw"))
     parser.add_argument("--cofw-source-zip", default="")
     parser.add_argument("--cofw-download-url", default="")
+    parser.add_argument("--300w-source-dir", dest="w300_source_dir", default=_default_dataset_source_dir("300w"))
+    parser.add_argument("--300w-source-zip", dest="w300_source_zip", default="")
+    parser.add_argument("--300w-download-url", dest="w300_download_url", default="")
     parser.add_argument("--merl-rav-source-dir", default=_default_dataset_source_dir("merl-rav"))
     parser.add_argument("--merl-rav-source-zip", default="")
     parser.add_argument("--merl-rav-download-url", default="")
@@ -565,6 +799,8 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("--failure-viewer-limit must be greater than zero")
     if args.gt_roi_scale <= 0:
         raise SystemExit("--gt-roi-scale must be greater than zero")
+    if args.detector_min_iou < 0.0 or args.detector_min_iou > 1.0:
+        raise SystemExit("--detector-min-iou must be between 0 and 1")
     if args.dry_run:
         return _dry_run(args, paths, summary)
 
@@ -572,6 +808,10 @@ def main(argv: list[str] | None = None) -> int:
     weighted: dict[str, T.Any] | None = None
     exit_code = 0
     _ensure_dirs(paths)
+    _progress(
+        "Pipeline start: "
+        f"datasets={args.datasets}, models={args.models}, output_root={paths.root}"
+    )
     try:
         if not args.skip_dataset_build and (args.build_datasets or not paths.manifest.is_file()):
             _stage(summary, "build_datasets", lambda: _build_datasets(args, paths, summary))
@@ -582,18 +822,30 @@ def main(argv: list[str] | None = None) -> int:
             )
         else:
             _require_manifest_samples(paths.manifest)
+            _progress(f"Using existing manifest: {paths.manifest}")
+        if args.bbox_source == "faceswap-detector":
+            detector_summary = _stage(
+                summary, "detector_bboxes", lambda: _apply_detector_bboxes(args, paths)
+            )
+            summary["detector_bboxes"] = detector_summary
         if args.run_predictions and not args.skip_predictions:
             _stage(summary, "cache_predictions", lambda: _cache_predictions(args, paths))
+        else:
+            _progress("Skipping prediction caching")
         if not args.skip_baseline:
             baseline = _stage(
                 summary, "baseline_harness", lambda: _run_harness(args, paths, weighted=False)
             )
+        else:
+            _progress("Skipping baseline harness")
         _stage(summary, "compute_static_weights", lambda: _compute_weights(args, paths))
         weighted = _stage(
             summary, "weighted_harness", lambda: _run_harness(args, paths, weighted=True)
         )
         if not args.skip_failure_viewer:
             _stage(summary, "failure_viewer", lambda: _run_failure_viewer(args, paths))
+        else:
+            _progress("Skipping failure viewer")
     except Exception as err:
         exit_code = 1
         summary["failed_stage_error"] = f"{type(err).__name__}: {err}"
@@ -602,10 +854,8 @@ def main(argv: list[str] | None = None) -> int:
         _update_summary_outputs(summary, paths, args, baseline=baseline, weighted=weighted)
         _write_summary(paths, summary)
 
-    print(
-        f"Pipeline {'failed' if exit_code else 'complete'}. See: {paths.summary}",
-        file=sys.stderr if exit_code else sys.stdout,
-    )
+    report = _format_run_report(summary, exit_code=exit_code)
+    print(report, file=sys.stderr if exit_code else sys.stdout)
     return exit_code
 
 

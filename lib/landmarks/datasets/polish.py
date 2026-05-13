@@ -125,28 +125,87 @@ def _stats(values: list[float]) -> dict[str, float] | None:
     return {"min": ordered[0], "median": float(statistics.median(ordered)), "max": ordered[-1]}
 
 
+def _entry_landmark_points(entry: dict[str, T.Any], output_dir: Path) -> np.ndarray | None:
+    """Return entry landmark points when the on-disk array is readable."""
+    landmark_value = str(entry.get("landmarks", ""))
+    landmark_path = entry_path(landmark_value, output_dir) if landmark_value else None
+    if landmark_path is None or not landmark_path.is_file():
+        return None
+    points = np.load(str(landmark_path)).astype("float32")
+    if points.ndim != 2 or points.shape[1] < 2 or not points.size:
+        return None
+    return points[:, :2]
+
+
+def _landmark_bbox(points: np.ndarray) -> list[float]:
+    """Return left/top/right/bottom bbox for finite landmark points."""
+    finite = points[np.all(np.isfinite(points), axis=1)]
+    if finite.size == 0:
+        raise ValueError("landmarks contain no finite points")
+    left, top = np.min(finite, axis=0)
+    right, bottom = np.max(finite, axis=0)
+    return [float(left), float(top), float(right), float(bottom)]
+
+
+def _normalize_wflw_validation_bboxes(
+    output_dir: str | Path,
+    payload: dict[str, T.Any],
+    entries: list[dict[str, T.Any]],
+) -> bool:
+    """Make WFLW 98-point manifests use a true face ROI for validation crops.
+
+    WFLW annotation rectangles are not the crop source used by upstream ORFormer
+    evaluation. Keep that rectangle for provenance as ``wflw_annotation_bbox``
+    and expose a landmark-extrema ``face_bbox`` for cache prediction ROIs.
+    """
+    root = Path(output_dir)
+    changed = False
+    for entry in entries:
+        if str(entry.get("dataset", "")).lower() != "wflw":
+            continue
+        if str(entry.get("source_schema", "")).lower() != "2d_98":
+            continue
+        metadata = entry.setdefault("metadata", {})
+        if not isinstance(metadata, dict):
+            metadata = {}
+            entry["metadata"] = metadata
+        if "bbox" in metadata:
+            metadata.setdefault("wflw_annotation_bbox", metadata.pop("bbox"))
+            changed = True
+        points = _entry_landmark_points(entry, root)
+        if points is not None:
+            face_bbox = _landmark_bbox(points)
+            if metadata.get("face_bbox") != face_bbox:
+                metadata["face_bbox"] = face_bbox
+                changed = True
+            if metadata.get("face_bbox_source") != "wflw_98_landmark_extrema":
+                metadata["face_bbox_source"] = "wflw_98_landmark_extrema"
+                changed = True
+    if changed:
+        rewrite_manifest(root, payload, entries)
+        logger.info("Normalized WFLW validation face bboxes in manifest: %s", root / "manifest.json")
+    return changed
+
+
 def _landmark_features(entry: dict[str, T.Any], output_dir: Path) -> dict[str, float]:
     features: dict[str, float] = {}
     metadata = entry.get("metadata", {}) if isinstance(entry.get("metadata"), dict) else {}
-    bbox = metadata.get("bbox")
+    bbox = metadata.get("face_bbox") or metadata.get("bbox")
     if isinstance(bbox, (list, tuple)) and len(bbox) >= 4:
         x1, y1, x2, y2 = (float(value) for value in bbox[:4])
         width = abs(x2 - x1)
         height = abs(y2 - y1)
         features.update({"bbox_width": width, "bbox_height": height, "bbox_area": width * height})
-    landmark_value = str(entry.get("landmarks", ""))
-    landmark_path = entry_path(landmark_value, output_dir) if landmark_value else None
-    if landmark_path is not None and landmark_path.is_file():
-        points = np.load(str(landmark_path)).astype("float32")
-        if points.ndim == 2 and points.shape[1] >= 2 and points.size:
-            features.update(
-                {
-                    "landmark_x_span": float(np.max(points[:, 0]) - np.min(points[:, 0])),
-                    "landmark_y_span": float(np.max(points[:, 1]) - np.min(points[:, 1])),
-                    "landmark_centroid_x": float(np.mean(points[:, 0])),
-                    "landmark_centroid_y": float(np.mean(points[:, 1])),
-                }
-            )
+    points = _entry_landmark_points(entry, output_dir)
+    if points is not None:
+        features.update(
+            {
+                "landmark_x_span": float(np.max(points[:, 0]) - np.min(points[:, 0])),
+                "landmark_y_span": float(np.max(points[:, 1]) - np.min(points[:, 1])),
+                "landmark_centroid_x": float(np.mean(points[:, 0])),
+                "landmark_centroid_y": float(np.mean(points[:, 1])),
+            }
+        )
     return features
 
 
@@ -306,6 +365,8 @@ def polish_landmark_dataset_artifacts(
     output_dir: str | Path, *, allow_overlap: bool = False
 ) -> dict[str, Path]:
     """Polish audit and source-note artifacts after build or audit-only runs."""
+    payload, entries = manifest_entries(output_dir)
+    _normalize_wflw_validation_bboxes(output_dir, payload, entries)
     return {
         "audit": enrich_dataset_audit(output_dir, allow_overlap=allow_overlap),
         "source_notes": write_source_notes(output_dir),

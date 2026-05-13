@@ -6,9 +6,14 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import sys
 import typing as T
 from dataclasses import dataclass
 from pathlib import Path
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 import cv2
 import numpy as np
@@ -151,18 +156,30 @@ def _bbox_values(raw: T.Any) -> tuple[float, float, float, float] | None:
     return left, top, third, fourth
 
 
-def _entry_bbox(entry: dict[str, T.Any]) -> tuple[float, float, float, float] | None:
-    """Return an explicit face bbox from a manifest entry when present."""
-    for key in ("face_bbox", "bbox"):
-        bbox = _bbox_values(entry.get(key))
-        if bbox is not None:
-            return bbox
+def _entry_face_bbox(entry: dict[str, T.Any]) -> tuple[float, float, float, float] | None:
+    """Return an explicit face bbox only, ignoring generic annotation bboxes."""
+    bbox = _bbox_values(entry.get("face_bbox"))
+    if bbox is not None:
+        return bbox
     metadata = entry.get("metadata")
     if isinstance(metadata, dict):
-        for key in ("face_bbox", "bbox"):
-            bbox = _bbox_values(metadata.get(key))
-            if bbox is not None:
-                return bbox
+        return _bbox_values(metadata.get("face_bbox"))
+    return None
+
+
+def _entry_bbox(entry: dict[str, T.Any]) -> tuple[float, float, float, float] | None:
+    """Return an explicit face bbox from a manifest entry when present."""
+    face_bbox = _entry_face_bbox(entry)
+    if face_bbox is not None:
+        return face_bbox
+    bbox = _bbox_values(entry.get("bbox"))
+    if bbox is not None:
+        return bbox
+    metadata = entry.get("metadata")
+    if isinstance(metadata, dict):
+        bbox = _bbox_values(metadata.get("bbox"))
+        if bbox is not None:
+            return bbox
     return None
 
 
@@ -217,6 +234,13 @@ def _roi_from_truth(sample: LandmarkSample, *, scale: float = 1.0) -> np.ndarray
     return _scale_roi((float(left), float(top), float(right), float(bottom)), scale=scale)
 
 
+def _is_wflw_98_entry(sample: LandmarkSample, entry: dict[str, T.Any]) -> bool:
+    """Return whether an entry is a native WFLW 98-point validation sample."""
+    if sample.dataset.lower() != "wflw":
+        return False
+    return str(entry.get("source_schema", "")).lower() == "2d_98"
+
+
 def _base_roi_for_sample(
     sample: LandmarkSample,
     entry: dict[str, T.Any],
@@ -225,6 +249,16 @@ def _base_roi_for_sample(
     gt_roi_scale: float = 1.0,
 ) -> tuple[np.ndarray, str]:
     """Return the raw face ROI and source label for one manifest sample."""
+    face_bbox = _entry_face_bbox(entry)
+    if face_bbox is not None:
+        return np.asarray(face_bbox, dtype="float32"), "manifest_face_bbox"
+    if _is_wflw_98_entry(sample, entry):
+        if not allow_gt_roi:
+            raise ValueError(
+                f"sample '{sample.sample_id}' is a WFLW 98-point sample without face_bbox; "
+                "GT-derived ROI is required because WFLW annotation bbox is not a model crop ROI"
+            )
+        return _roi_from_truth(sample, scale=gt_roi_scale), "gt_landmarks_wflw_98"
     bbox = _entry_bbox(entry)
     if bbox is not None:
         return np.asarray(bbox, dtype="float32"), "manifest_bbox"
