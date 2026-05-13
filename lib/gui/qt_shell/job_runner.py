@@ -33,8 +33,8 @@ class JobRunner(QObject):
         self._stderr_buffer = ""
 
     def configure_runtime_context(self, context: CommandExecutionContext) -> None:
-        """Configure runtime services with command-derived context."""
-        self._runtime.training_session.configure(context)
+        """Configure shared runtime services with command-derived context."""
+        self._runtime.configure_context(context)
 
     def start(self, argv: list[str], *, command: str | None = None) -> None:
         """Start a command using QProcess."""
