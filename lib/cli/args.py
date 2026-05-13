@@ -358,6 +358,15 @@ class GuiArgs(FaceSwapArgs):
                 ),
             }
         )
+        argument_list.append(
+            {
+                "opts": ("--no-gui-exec",),
+                "action": "store_true",
+                "dest": "no_gui_exec",
+                "default": False,
+                "help": argparse.SUPPRESS,
+            }
+        )
         return argument_list
 
 
