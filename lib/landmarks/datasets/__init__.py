@@ -107,6 +107,8 @@ def build_manifest(
     if dataset_name not in SUPPORTED_DATASETS:
         raise ValueError(f"unsupported dataset '{dataset}'")
     src = Path(source_dir)
+    if not src.is_dir():
+        raise FileNotFoundError(f"{dataset_name} source directory not found: {src}")
     scenario_groups = _explicit_scenario_groups(scenarios)
     condition = _fallback_condition_label(scenario)
     samples: list[dict[str, T.Any]] = []
@@ -152,6 +154,8 @@ def build_directory_manifest(
     """Build a manifest from a directory tree of ``*.npy`` landmarks."""
     dataset_name = dataset.lower()
     src = Path(source_dir)
+    if not src.is_dir():
+        raise FileNotFoundError(f"{dataset_name} source directory not found: {src}")
     scenario_groups = _explicit_scenario_groups(scenarios)
     condition = _fallback_condition_label(scenario)
     samples = []

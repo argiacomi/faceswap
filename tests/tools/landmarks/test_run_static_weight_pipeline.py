@@ -214,6 +214,41 @@ def test_static_weight_pipeline_reports_failed_stage(tmp_path: Path) -> None:
     assert payload["dataset_counts"] == {}
 
 
+def test_static_weight_pipeline_rejects_empty_built_manifest(tmp_path: Path) -> None:
+    """An empty built manifest should fail before prediction import or weighting."""
+    root = tmp_path / "run"
+    source = tmp_path / "empty-source"
+    source.mkdir()
+
+    result = pipeline_main(
+        [
+            "--output-root",
+            str(root),
+            "--datasets",
+            "directory",
+            "--directory-source-dir",
+            str(source),
+            "--build-datasets",
+            "--run-predictions",
+            "--prediction-mode",
+            "import",
+            "--prediction-root",
+            f"hrnet={tmp_path / 'preds'}",
+            "--models",
+            "hrnet",
+            "--skip-failure-viewer",
+        ]
+    )
+
+    payload = _summary(root)
+    stage_names = [stage["name"] for stage in payload["stages"]]
+    assert result == 1
+    assert "manifest contains no validation samples" in payload["failed_stage_error"]
+    assert "cache_predictions" not in stage_names
+    assert "compute_static_weights" not in stage_names
+    assert payload["dataset_counts"] == {"total": 0}
+
+
 def test_static_weight_pipeline_continue_on_dataset_error(tmp_path: Path) -> None:
     """Dataset-specific failures can be skipped when later datasets succeed."""
     root = tmp_path / "run"

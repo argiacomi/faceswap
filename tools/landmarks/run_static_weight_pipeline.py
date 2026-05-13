@@ -238,6 +238,19 @@ def _build_datasets(
             logger.exception("Dataset build failed for %s; continuing", dataset)
     if successful == 0:
         raise RuntimeError("no dataset manifests were built successfully")
+    _require_manifest_samples(paths.manifest)
+
+
+def _require_manifest_samples(manifest_path: Path) -> None:
+    """Raise a clear error when the validation manifest is empty."""
+    sample_count = sum(1 for _sample in load_manifest(manifest_path))
+    if sample_count:
+        return
+    raise ValueError(
+        f"manifest contains no validation samples: {manifest_path}. "
+        "For --datasets directory, ensure --directory-source-dir contains matching "
+        "*.npy landmarks and same-stem image files; pass --recursive for nested fixtures."
+    )
 
 
 def _prediction_mode(args: argparse.Namespace) -> str:
@@ -522,6 +535,8 @@ def main(argv: list[str] | None = None) -> int:
                 f"manifest not found at {paths.manifest}. "
                 "Pass --build-datasets or create it first."
             )
+        else:
+            _require_manifest_samples(paths.manifest)
         if args.run_predictions and not args.skip_predictions:
             _stage(summary, "cache_predictions", lambda: _cache_predictions(args, paths))
         if not args.skip_baseline:

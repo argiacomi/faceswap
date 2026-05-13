@@ -8,10 +8,13 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+import pytest
 
 from lib.landmarks.datasets import (
     build_aflw2000_3d_manifest,
     build_cofw_manifest,
+    build_directory_manifest,
+    build_manifest,
     build_merl_rav_manifest,
     build_wflw_manifest,
 )
@@ -37,6 +40,16 @@ def _points_98() -> np.ndarray:
         ),
         axis=1,
     )
+
+
+def test_directory_builders_reject_missing_source_dirs(tmp_path: Path) -> None:
+    """Directory-style manifest builders should not silently write empty manifests."""
+    missing = tmp_path / "missing"
+
+    with pytest.raises(FileNotFoundError, match="source directory not found"):
+        build_manifest(missing, tmp_path / "out-flat", dataset="directory")
+    with pytest.raises(FileNotFoundError, match="source directory not found"):
+        build_directory_manifest(missing, tmp_path / "out-recursive")
 
 
 def test_wflw_builder_preserves_attributes_and_filters_by_normalized_label(
