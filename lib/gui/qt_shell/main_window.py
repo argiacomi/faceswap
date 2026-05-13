@@ -79,6 +79,7 @@ class MainWindow(QMainWindow):
         self._command_panel = CommandPanel(self._schema)
         self._console = ConsolePane()
         self._progress = QProgressBar()
+        self._menus: list[object] = []
         self._display_tabs_widget: QTabWidget | None = None
         self._display_controller: DisplayController | None = None
         self._view_actions: dict[str, QAction] = {}
@@ -199,6 +200,7 @@ class MainWindow(QMainWindow):
         menu_bar = self.menuBar()
         menu_bar.setNativeMenuBar(False)
         project_menu = menu_bar.addMenu("Project")
+        self._menus.append(project_menu)
         project_menu.addAction("New Prototype Project", self._new_project)
         project_menu.addAction("Open Project...", self._open_project)
         project_menu.addAction("Save Project As...", self._save_project_as)
@@ -206,11 +208,13 @@ class MainWindow(QMainWindow):
         project_menu.addAction("List Recent Files", self._list_recent_files)
 
         command_menu = menu_bar.addMenu("Command")
+        self._menus.append(command_menu)
         command_menu.addAction("Generate", self._generate_command)
         self._run_menu_action = command_menu.addAction("Run", self._run_command)
         self._stop_menu_action = command_menu.addAction("Stop", self._stop_job)
 
         view_menu = menu_bar.addMenu("View")
+        self._menus.append(view_menu)
         for label in (DisplayController.ANALYSIS, DisplayController.PREVIEW, DisplayController.GRAPH):
             action = view_menu.addAction(label)
             action.triggered.connect(
