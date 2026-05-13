@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import zipfile
 from pathlib import Path
 
@@ -33,8 +34,14 @@ def _write_wflw_archive(path: Path) -> None:
         zf.writestr("WFLW/WFLW_images/images/sample.jpg", b"not-used-by-manifest-build")
 
 
+def _write_named_archive(path: Path, filename: str, content: str) -> None:
+    """Write a tiny archive with one named text file."""
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr(filename, content)
+
+
 def test_resolve_dataset_source_reuses_cached_extraction(tmp_path: Path) -> None:
-    """A fresh extracted cache directory is preferred without network access."""
+    """A cached extracted directory is used when no archive can make it stale."""
     cache_dir = tmp_path / "cache"
     extracted = cache_dir / "demo" / "extracted"
     extracted.mkdir(parents=True)
@@ -66,6 +73,27 @@ def test_resolve_dataset_source_downloads_and_extracts_archive(tmp_path: Path) -
     assert (cache_dir / "demo" / "demo.zip").is_file()
     assert (resolved / ".source.json").is_file()
     assert (resolved / "WFLW" / "WFLW_annotations" / "list_98pt_rect_attr_test.txt").is_file()
+
+
+def test_resolve_dataset_source_refreshes_stale_extraction_when_archive_changes(tmp_path: Path) -> None:
+    """A stale extracted cache is not trusted when the cached archive changed."""
+    cache_dir = tmp_path / "cache"
+    archive = cache_dir / "demo" / "demo.zip"
+    archive.parent.mkdir(parents=True)
+    spec = DatasetSourceSpec(dataset="Demo", cache_subdir="demo", canonical_archive="demo.zip")
+    _write_named_archive(archive, "old.txt", "old")
+    os.utime(archive, (100, 100))
+
+    first = resolve_dataset_source(spec, cache_dir=cache_dir, no_download=True)
+    assert (first / "old.txt").is_file()
+
+    _write_named_archive(archive, "new.txt", "newer-content")
+    os.utime(archive, (200, 200))
+    second = resolve_dataset_source(spec, cache_dir=cache_dir, no_download=True)
+
+    assert second == first
+    assert not (second / "old.txt").exists()
+    assert (second / "new.txt").read_text(encoding="utf-8") == "newer-content"
 
 
 def test_resolve_dataset_source_rejects_bad_checksum(tmp_path: Path) -> None:
