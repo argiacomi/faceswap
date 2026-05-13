@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import typing as T
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from lib.utils import get_module_objects
@@ -23,6 +23,7 @@ class LastSession:
 
     filename: str
     kind: str
+    ui_state: dict[str, T.Any] = field(default_factory=dict)
 
 
 class ProjectSessionService:
@@ -96,18 +97,29 @@ class LastSessionStore:
             return None
         filename = payload.get("filename")
         kind = payload.get("kind")
+        ui_state = payload.get("ui_state", {})
         if not isinstance(filename, str) or not isinstance(kind, str):
             return None
         if kind not in {PROJECT_KIND, TASK_KIND}:
             return None
         if not Path(filename).exists():
             return None
-        return LastSession(filename, kind)
+        if not isinstance(ui_state, dict):
+            ui_state = {}
+        return LastSession(filename, kind, dict(ui_state))
 
-    def save(self, filename: str, kind: str) -> None:
+    def save(
+        self,
+        filename: str,
+        kind: str,
+        ui_state: T.Mapping[str, T.Any] | None = None,
+    ) -> None:
         """Save a last-session entry."""
         self._filename.parent.mkdir(parents=True, exist_ok=True)
-        self._serializer.save(str(self._filename), {"filename": filename, "kind": kind})
+        payload: dict[str, T.Any] = {"filename": filename, "kind": kind}
+        if ui_state is not None:
+            payload["ui_state"] = dict(ui_state)
+        self._serializer.save(str(self._filename), payload)
 
     def clear(self) -> None:
         """Clear the last-session entry."""
