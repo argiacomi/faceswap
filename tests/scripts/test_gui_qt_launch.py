@@ -19,6 +19,7 @@ class _FakeApp:
 
     def __init__(self, _argv) -> None:  # type:ignore[no-untyped-def]
         self.exec_count = 0
+        self.stylesheet = ""
 
     @classmethod
     def instance(cls):  # type:ignore[no-untyped-def]
@@ -28,6 +29,10 @@ class _FakeApp:
     def exec(self) -> None:
         """Capture event-loop execution."""
         self.exec_count += 1
+
+    def setStyleSheet(self, stylesheet: str) -> None:  # noqa:N802
+        """Capture applied stylesheet."""
+        self.stylesheet = stylesheet
 
 
 class _FakeWindow:
@@ -67,6 +72,18 @@ def test_qt_gui_no_exec_builds_window_without_event_loop(monkeypatch) -> None:  
     assert isinstance(process.root, _FakeWindow)
     assert process.root.show_count == 0
     assert process.app.exec_count == 0
+
+
+def test_qt_gui_applies_default_theme(monkeypatch) -> None:  # type:ignore[no-untyped-def]
+    """Qt launch should apply the default shell stylesheet."""
+    _FakeApp.instance_value = None
+    monkeypatch.setattr(gui_qt, "QApplication", _FakeApp)
+    monkeypatch.setattr(gui_qt, "MainWindow", _FakeWindow)
+
+    process = gui_qt.Gui(Namespace(no_gui_exec=True))
+
+    assert process.theme.name == "Faceswap Dark"
+    assert "QMainWindow" in process.app.stylesheet
 
 
 def test_qt_gui_normal_launch_shows_window_and_runs_owned_event_loop(monkeypatch) -> None:  # type:ignore[no-untyped-def]
