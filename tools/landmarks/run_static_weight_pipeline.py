@@ -54,49 +54,19 @@ class PipelinePaths:
 
 
 def _parse_csv(value: str) -> tuple[str, ...]:
-    """Parse a comma-separated CLI value."""
+    """Parse comma-separated values."""
     return tuple(item.strip() for item in value.split(",") if item.strip())
-
-
-def _prediction_roots(values: T.Sequence[str]) -> list[str]:
-    """Return normalized model=path prediction roots."""
-    roots = []
-    for value in values:
-        if "=" not in value:
-            raise ValueError("--prediction-root must be provided as model=path")
-        model, root = value.split("=", 1)
-        if not model.strip() or not root.strip():
-            raise ValueError("--prediction-root must be provided as model=path")
-        roots.append(f"{model.strip().lower()}={Path(root).expanduser()}")
-    return roots
 
 
 def _git_commit() -> str:
     """Return the current git commit when available."""
     try:
         result = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            check=True,
-            capture_output=True,
-            text=True,
+            ["git", "rev-parse", "HEAD"], check=True, capture_output=True, text=True
         )
     except Exception:  # pragma: no cover - depends on checkout environment
         return ""
     return result.stdout.strip()
-
-
-def _ensure_dirs(paths: PipelinePaths) -> None:
-    """Create the standard run directory structure."""
-    for path in (
-        paths.root,
-        paths.dataset,
-        paths.cache,
-        paths.baseline_metrics,
-        paths.weights,
-        paths.weighted_metrics,
-        paths.debug,
-    ):
-        path.mkdir(parents=True, exist_ok=True)
 
 
 def _json_ready(value: T.Any) -> T.Any:
@@ -110,6 +80,20 @@ def _json_ready(value: T.Any) -> T.Any:
     if isinstance(value, dict):
         return {str(key): _json_ready(item) for key, item in value.items()}
     return value
+
+
+def _ensure_dirs(paths: PipelinePaths) -> None:
+    """Create standard run directories."""
+    for path in (
+        paths.root,
+        paths.dataset,
+        paths.cache,
+        paths.baseline_metrics,
+        paths.weights,
+        paths.weighted_metrics,
+        paths.debug,
+    ):
+        path.mkdir(parents=True, exist_ok=True)
 
 
 def _initial_summary(args: argparse.Namespace, paths: PipelinePaths) -> dict[str, T.Any]:
@@ -131,19 +115,14 @@ def _initial_summary(args: argparse.Namespace, paths: PipelinePaths) -> dict[str
 
 
 def _write_summary(paths: PipelinePaths, summary: dict[str, T.Any]) -> None:
-    """Write ``run_summary.json``."""
+    """Write run_summary.json."""
     paths.root.mkdir(parents=True, exist_ok=True)
     paths.summary.write_text(
-        json.dumps(summary, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
+        json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
 
 
-def _stage(
-    summary: dict[str, T.Any],
-    name: str,
-    fn: T.Callable[[], T.Any],
-) -> T.Any:
+def _stage(summary: dict[str, T.Any], name: str, fn: T.Callable[[], T.Any]) -> T.Any:
     """Run one named stage and record status, duration, and error."""
     started = time.time()
     record: dict[str, T.Any] = {"name": name, "status": "running", "error": ""}
@@ -151,21 +130,39 @@ def _stage(
     try:
         result = fn()
     except Exception as err:  # pylint:disable=broad-except
-        record["status"] = "failed"
-        record["error"] = f"{type(err).__name__}: {err}"
-        record["duration_seconds"] = round(time.time() - started, 3)
+        record.update(
+            {
+                "status": "failed",
+                "error": f"{type(err).__name__}: {err}",
+                "duration_seconds": round(time.time() - started, 3),
+            }
+        )
         raise
-    record["status"] = "ok"
-    record["duration_seconds"] = round(time.time() - started, 3)
+    record.update({"status": "ok", "duration_seconds": round(time.time() - started, 3)})
     return result
 
 
+def _prediction_roots(values: T.Sequence[str]) -> list[str]:
+    """Return normalized model=path prediction roots."""
+    roots = []
+    for value in values:
+        if "=" not in value:
+            raise ValueError("--prediction-root must be provided as model=path")
+        model, root = value.split("=", 1)
+        if not model.strip() or not root.strip():
+            raise ValueError("--prediction-root must be provided as model=path")
+        roots.append(f"{model.strip().lower()}={Path(root).expanduser()}")
+    return roots
+
+
+def _append_if(argv: list[str], flag: str, value: str) -> None:
+    """Append a flag/value pair when value is not empty."""
+    if value:
+        argv.extend([flag, value])
+
+
 def _dataset_build_args(
-    args: argparse.Namespace,
-    dataset: str,
-    paths: PipelinePaths,
-    *,
-    first: bool,
+    args: argparse.Namespace, dataset: str, paths: PipelinePaths, *, first: bool
 ) -> list[str]:
     """Return argv for one dataset build step."""
     argv = [
@@ -182,39 +179,27 @@ def _dataset_build_args(
         argv.append("--write-overlays")
     if args.samples_per_scenario is not None:
         argv.extend(["--samples-per-scenario", str(args.samples_per_scenario)])
-    if args.scenarios:
-        argv.extend(["--scenarios", args.scenarios])
+    _append_if(argv, "--scenarios", args.scenarios)
+    _append_if(argv, "--cache-dir", args.dataset_cache_dir)
     if args.allow_overlap:
         argv.append("--allow-overlap")
-    if args.dataset_cache_dir:
-        argv.extend(["--cache-dir", args.dataset_cache_dir])
     if args.no_download:
         argv.append("--no-download")
     if args.force_download:
         argv.append("--force-download")
 
     if dataset == "wflw":
-        if args.wflw_annotations:
-            argv.extend(["--wflw-annotations", args.wflw_annotations])
-        if args.wflw_image_root:
-            argv.extend(["--image-root", args.wflw_image_root])
-        if args.wflw_source_dir:
-            argv.extend(["--source-dir", args.wflw_source_dir])
-        if args.wflw_source_zip:
-            argv.extend(["--source-zip", args.wflw_source_zip])
-        if args.wflw_download_url:
-            argv.extend(["--download-url", args.wflw_download_url])
+        _append_if(argv, "--wflw-annotations", args.wflw_annotations)
+        _append_if(argv, "--image-root", args.wflw_image_root)
+        _append_if(argv, "--source-dir", args.wflw_source_dir)
+        _append_if(argv, "--source-zip", args.wflw_source_zip)
+        _append_if(argv, "--download-url", args.wflw_download_url)
     elif dataset == "cofw":
-        if args.cofw_json:
-            argv.extend(["--cofw-json", args.cofw_json])
-        if args.cofw_image_root:
-            argv.extend(["--image-root", args.cofw_image_root])
-        if args.cofw_source_dir:
-            argv.extend(["--source-dir", args.cofw_source_dir])
-        if args.cofw_source_zip:
-            argv.extend(["--source-zip", args.cofw_source_zip])
-        if args.cofw_download_url:
-            argv.extend(["--download-url", args.cofw_download_url])
+        _append_if(argv, "--cofw-json", args.cofw_json)
+        _append_if(argv, "--image-root", args.cofw_image_root)
+        _append_if(argv, "--source-dir", args.cofw_source_dir)
+        _append_if(argv, "--source-zip", args.cofw_source_zip)
+        _append_if(argv, "--download-url", args.cofw_download_url)
     elif dataset == "directory":
         if not args.directory_source_dir:
             raise ValueError("--directory-source-dir is required when --datasets includes directory")
@@ -222,31 +207,24 @@ def _dataset_build_args(
         if args.recursive:
             argv.append("--recursive")
     elif dataset == "merl-rav":
-        if args.merl_rav_source_dir:
-            argv.extend(["--source-dir", args.merl_rav_source_dir])
-        if args.merl_rav_source_zip:
-            argv.extend(["--source-zip", args.merl_rav_source_zip])
-        if args.merl_rav_download_url:
-            argv.extend(["--download-url", args.merl_rav_download_url])
+        _append_if(argv, "--source-dir", args.merl_rav_source_dir)
+        _append_if(argv, "--source-zip", args.merl_rav_source_zip)
+        _append_if(argv, "--download-url", args.merl_rav_download_url)
     elif dataset == "aflw2000-3d":
-        if args.aflw2000_3d_source_dir:
-            argv.extend(["--source-dir", args.aflw2000_3d_source_dir])
-        if args.aflw2000_3d_source_zip:
-            argv.extend(["--source-zip", args.aflw2000_3d_source_zip])
-        if args.aflw2000_3d_download_url:
-            argv.extend(["--download-url", args.aflw2000_3d_download_url])
+        _append_if(argv, "--source-dir", args.aflw2000_3d_source_dir)
+        _append_if(argv, "--source-zip", args.aflw2000_3d_source_zip)
+        _append_if(argv, "--download-url", args.aflw2000_3d_download_url)
     return argv
 
 
 def _build_datasets(args: argparse.Namespace, paths: PipelinePaths, summary: dict[str, T.Any]) -> None:
     """Build or merge requested dataset manifests."""
-    datasets = _parse_csv(args.datasets)
     successful = 0
-    for dataset in datasets:
-        def _run_one(dataset: str = dataset) -> None:
-            build_quality_dataset_main(
-                _dataset_build_args(args, dataset, paths, first=successful == 0)
-            )
+    for dataset in _parse_csv(args.datasets):
+        first = successful == 0
+
+        def _run_one(dataset: str = dataset, first: bool = first) -> None:
+            build_quality_dataset_main(_dataset_build_args(args, dataset, paths, first=first))
 
         try:
             _stage(summary, f"dataset:{dataset}", _run_one)
@@ -269,14 +247,7 @@ def _prediction_mode(args: argparse.Namespace) -> str:
 def _cache_predictions(args: argparse.Namespace, paths: PipelinePaths) -> None:
     """Run prediction import or model generation into the cache."""
     mode = _prediction_mode(args)
-    argv = [
-        "--manifest",
-        str(paths.manifest),
-        "--models",
-        args.models,
-        "--cache-dir",
-        str(paths.cache),
-    ]
+    argv = ["--manifest", str(paths.manifest), "--models", args.models, "--cache-dir", str(paths.cache)]
     if args.refresh_predictions:
         argv.append("--refresh")
     if mode == "import":
@@ -296,22 +267,18 @@ def _cache_predictions(args: argparse.Namespace, paths: PipelinePaths) -> None:
                 str(args.batch_size),
                 "--device",
                 args.device,
+                "--gt-roi-scale",
+                str(args.gt_roi_scale),
             ]
         )
         if args.no_gt_roi:
             argv.append("--no-gt-roi")
-        if args.gt_roi_scale is not None:
-            argv.extend(["--gt-roi-scale", str(args.gt_roi_scale)])
     cache_predictions_main(argv)
 
 
 def _compute_weights(args: argparse.Namespace, paths: PipelinePaths) -> None:
     """Compute and write static landmark weights plus report."""
-    weights, mean_errors = compute_static_weights(
-        paths.manifest,
-        paths.cache,
-        _parse_csv(args.models),
-    )
+    weights, mean_errors = compute_static_weights(paths.manifest, paths.cache, _parse_csv(args.models))
     save_weights(paths.weight_file, weights)
     dominant = {}
     if weights:
@@ -319,10 +286,7 @@ def _compute_weights(args: argparse.Namespace, paths: PipelinePaths) -> None:
 
         model_names = list(weights)
         dominant_indices = np.asarray([weights[model] for model in model_names]).argmax(axis=0)
-        dominant = {
-            str(index): model_names[int(model_index)]
-            for index, model_index in enumerate(dominant_indices)
-        }
+        dominant = {str(index): model_names[int(model_index)] for index, model_index in enumerate(dominant_indices)}
     paths.weight_report.write_text(
         json.dumps(
             {
@@ -396,7 +360,8 @@ def _dataset_counts(manifest_path: Path) -> dict[str, int]:
     if not manifest_path.is_file():
         return counts
     for sample in load_manifest(manifest_path):
-        counts[sample.dataset or "unspecified"] = counts.get(sample.dataset or "unspecified", 0) + 1
+        key = sample.dataset or "unspecified"
+        counts[key] = counts.get(key, 0) + 1
     counts["total"] = sum(counts.values())
     return counts
 
@@ -407,8 +372,7 @@ def _cache_counts(manifest_path: Path, cache_dir: Path, models: T.Sequence[str])
         return {"samples": 0, "predictions": 0, "models": {}}
     cache = DiskPredictionCache(cache_dir)
     model_counts = {model: 0 for model in models}
-    sample_count = 0
-    prediction_count = 0
+    sample_count = prediction_count = 0
     for sample in load_manifest(manifest_path):
         sample_count += 1
         available = set(cache.available_models(sample.sample_id))
@@ -441,9 +405,7 @@ def _update_summary_outputs(
         deltas = weighted.get("ensemble_deltas_vs_best_single", {})
         summary["ensemble_deltas_vs_best_single"] = deltas
         summary["threshold_failed"] = bool(weighted.get("threshold_failed"))
-        summary["ensemble_improved_over_best_single"] = (
-            any(float(delta) < 0 for delta in deltas.values()) if deltas else None
-        )
+        summary["ensemble_improved_over_best_single"] = any(float(delta) < 0 for delta in deltas.values()) if deltas else None
     elif baseline:
         summary["threshold_failed"] = bool(baseline.get("threshold_failed"))
 
@@ -456,14 +418,10 @@ def _dry_run(args: argparse.Namespace, paths: PipelinePaths, summary: dict[str, 
         planned.extend(f"dataset:{dataset}" for dataset in _parse_csv(args.datasets))
     else:
         planned.append("dataset:reuse-existing")
-    if args.run_predictions and not args.skip_predictions:
-        planned.append(f"predictions:{_prediction_mode(args)}")
-    else:
-        planned.append("predictions:skipped")
+    planned.append(f"predictions:{_prediction_mode(args)}" if args.run_predictions and not args.skip_predictions else "predictions:skipped")
     if not args.skip_baseline:
         planned.append("baseline_harness")
-    planned.append("compute_static_weights")
-    planned.append("weighted_harness")
+    planned.extend(["compute_static_weights", "weighted_harness"])
     if not args.skip_failure_viewer:
         planned.append("failure_viewer")
     summary["dry_run"] = True
@@ -500,10 +458,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--outlier-threshold", type=float, default=3.5)
     parser.add_argument("--failure-viewer-limit", type=int, default=32)
     parser.add_argument("--baseline-variants", default="plain_average")
-    parser.add_argument(
-        "--weighted-variants",
-        default="static_weighted,static_weighted_outliers,weighted_median",
-    )
+    parser.add_argument("--weighted-variants", default="static_weighted,static_weighted_outliers,weighted_median")
     parser.add_argument("--samples-per-scenario", type=int, default=None)
     parser.add_argument("--scenarios", default="")
     parser.add_argument("--allow-overlap", action="store_true")
@@ -528,11 +483,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--aflw2000-3d-source-zip", default="")
     parser.add_argument("--aflw2000-3d-download-url", default="")
     parser.add_argument("--directory-source-dir", default="")
-    parser.add_argument(
-        "--log-level",
-        default="INFO",
-        choices=("DEBUG", "INFO", "WARNING", "ERROR"),
-    )
+    parser.add_argument("--log-level", default="INFO", choices=("DEBUG", "INFO", "WARNING", "ERROR"))
     return parser
 
 
@@ -540,10 +491,7 @@ def main(argv: list[str] | None = None) -> int:
     """CLI entrypoint."""
     parser = _build_parser()
     args = parser.parse_args(argv)
-    logging.basicConfig(
-        level=getattr(logging, args.log_level),
-        format="%(levelname)s:%(name)s:%(message)s",
-    )
+    logging.basicConfig(level=getattr(logging, args.log_level), format="%(levelname)s:%(name)s:%(message)s")
     paths = PipelinePaths(Path(args.output_root).expanduser())
     summary = _initial_summary(args, paths)
     if args.batch_size <= 0:
@@ -563,19 +511,13 @@ def main(argv: list[str] | None = None) -> int:
         if args.build_datasets and not args.skip_dataset_build:
             _stage(summary, "build_datasets", lambda: _build_datasets(args, paths, summary))
         elif not paths.manifest.is_file():
-            raise FileNotFoundError(
-                f"manifest not found at {paths.manifest}. Pass --build-datasets or create it first."
-            )
-
+            raise FileNotFoundError(f"manifest not found at {paths.manifest}. Pass --build-datasets or create it first.")
         if args.run_predictions and not args.skip_predictions:
             _stage(summary, "cache_predictions", lambda: _cache_predictions(args, paths))
-
         if not args.skip_baseline:
             baseline = _stage(summary, "baseline_harness", lambda: _run_baseline(args, paths))
-
         _stage(summary, "compute_static_weights", lambda: _compute_weights(args, paths))
         weighted = _stage(summary, "weighted_harness", lambda: _run_weighted(args, paths))
-
         if not args.skip_failure_viewer:
             _stage(summary, "failure_viewer", lambda: _run_failure_viewer(args, paths))
     except Exception as err:  # pylint:disable=broad-except
@@ -586,10 +528,7 @@ def main(argv: list[str] | None = None) -> int:
         _update_summary_outputs(summary, paths, args, baseline=baseline, weighted=weighted)
         _write_summary(paths, summary)
 
-    if exit_code:
-        print(f"Pipeline failed. See: {paths.summary}", file=sys.stderr)
-    else:
-        print(f"Pipeline complete. See: {paths.summary}")
+    print(f"Pipeline {'failed' if exit_code else 'complete'}. See: {paths.summary}", file=sys.stderr if exit_code else sys.stdout)
     return exit_code
 
 
