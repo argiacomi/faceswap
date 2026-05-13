@@ -36,7 +36,13 @@ class _CommandPanelDouble:
         return "faceswap", self._command, self._values
 
 
-def _window_class(command: str, values: dict[str, object], *, fail_run: bool = False):
+def _window_class(
+    command: str,
+    values: dict[str, object],
+    *,
+    fail_run: bool = False,
+    running_after_run: bool = True,
+):
     """Return a fresh MainWindow-like class for lifecycle hook tests."""
 
     class _WindowDouble:
@@ -50,7 +56,7 @@ def _window_class(command: str, values: dict[str, object], *, fail_run: bool = F
             self.calls.append("run")
             if fail_run:
                 raise RuntimeError("run failed")
-            self._running = True
+            self._running = running_after_run
 
         def _stop_job(self) -> None:
             self.calls.append("stop")
@@ -132,15 +138,11 @@ def test_failed_run_stops_live_refresh_and_reraises() -> None:
 
 def test_run_that_does_not_enter_running_state_stops_live_refresh() -> None:
     """A handled launch failure should stop Preview polling when running remains false."""
-    Window = _window_class("extract", {"-o": "/preview"})
-
-    def _run_without_start(self) -> None:  # type:ignore[no-untyped-def]
-        self.calls.append("run")
-        self._running = False
-
-    Window._run_command = _run_without_start
-    install_preview_job_lifecycle(Window)
-    window = Window()
+    window = _window_class(
+        "extract",
+        {"-o": "/preview"},
+        running_after_run=False,
+    )()
 
     window._run_command()
 
