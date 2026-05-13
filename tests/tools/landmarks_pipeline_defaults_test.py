@@ -44,3 +44,47 @@ def test_static_weight_pipeline_skip_dataset_build_dry_run_reuses_default_manife
     assert rc == 0
     assert payload["planned_stages"][0] == "dataset:reuse-existing"
     assert payload["args"]["output_root"] == str(DEFAULT_CACHE_DIR / "runs" / "static_weight_validation")
+
+
+def test_wflw_official_download_suppresses_default_source_dir(tmp_path: Path, monkeypatch) -> None:
+    """Official WFLW download mode must not forward a default extracted source dir."""
+    monkeypatch.chdir(tmp_path)
+    default_source = tmp_path / DEFAULT_CACHE_DIR / "wflw" / "extracted"
+    default_source.mkdir(parents=True)
+    captured: list[list[str]] = []
+
+    def fake_build_quality_dataset(argv: list[str]) -> None:
+        captured.append(argv)
+        manifest_dir = tmp_path / "run" / "dataset"
+        manifest_dir.mkdir(parents=True, exist_ok=True)
+        (manifest_dir / "manifest.json").write_text(
+            json.dumps({"dataset": "wflw", "samples": []}) + "\n",
+            encoding="utf-8",
+        )
+
+    monkeypatch.setattr(
+        run_static_weight_pipeline,
+        "build_quality_dataset_main",
+        fake_build_quality_dataset,
+    )
+
+    rc = run_static_weight_pipeline.main(
+        [
+            "--output-root",
+            str(tmp_path / "run"),
+            "--datasets",
+            "wflw",
+            "--build-datasets",
+            "--wflw-download-official",
+            "--skip-predictions",
+            "--skip-baseline",
+            "--skip-failure-viewer",
+            "--models",
+            "hrnet",
+        ]
+    )
+
+    assert rc == 1
+    assert captured
+    assert "--wflw-download-official" in captured[0]
+    assert "--source-dir" not in captured[0]
