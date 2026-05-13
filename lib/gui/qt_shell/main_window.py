@@ -6,7 +6,7 @@ from __future__ import annotations
 import typing as T
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, Qt
 from PySide6.QtGui import QAction, QTextCursor
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -87,6 +87,7 @@ class MainWindow(QMainWindow):
         self._project_filename: str | None = None
         self._file_kind = PROJECT_KIND
         self._modified = False
+        self._suppress_dirty = False
         self._runner = JobRunner(self)
         self._running = False
         self._command_panel = CommandPanel(self._schema)
@@ -105,12 +106,35 @@ class MainWindow(QMainWindow):
         self._stop_menu_action: QAction | None = None
         self._build_ui()
         self._connect_signals()
+        self._install_dirty_event_filters()
         self._set_running(False)
         self._set_modified(False)
         self._console.write_line("Faceswap Qt shell prototype")
         self._console.write_line(
             "Scope: real CLI metadata rendering, command generation and QProcess jobs"
         )
+
+    def eventFilter(self, watched: object, event: QEvent) -> bool:  # noqa:N802
+        """Track command-panel user edits for dirty-state updates."""
+        event_type = event.type()
+        if event_type == QEvent.Type.ChildAdded:
+            child = event.child()  # type:ignore[attr-defined]
+            if isinstance(child, QWidget):
+                self._install_dirty_event_filters(child)
+        elif event_type in {
+            QEvent.Type.KeyRelease,
+            QEvent.Type.MouseButtonRelease,
+            QEvent.Type.Wheel,
+        }:
+            self._mark_modified_from_user_event()
+        return super().eventFilter(watched, event)
+
+    def closeEvent(self, event) -> None:  # type:ignore[no-untyped-def] # noqa:N802
+        """Prompt before closing with unsaved project changes."""
+        if self._confirm_discard_changes("close this window"):
+            event.accept()
+        else:
+            event.ignore()
 
     def _build_ui(self) -> None:
         """Build the Qt shell layout."""
@@ -198,6 +222,7 @@ class MainWindow(QMainWindow):
         project_menu.addAction("Save Project", self._save_project_current)
         project_menu.addAction("Save Project As...", self._save_project_as)
         project_menu.addAction("Save Task As...", self._save_task_as)
+        project_menu.addAction("Reload Current File", self._reload_current_file)
         project_menu.addSeparator()
         project_menu.addAction("Restore Last Session", self._restore_last_session)
         self._recent_menu = project_menu.addMenu("Recent Files")
@@ -253,6 +278,18 @@ class MainWindow(QMainWindow):
         self._runner.stderr.connect(self._console.write)
         self._runner.progress.connect(self._consume_runtime_event)
         self._runner.finished.connect(self._job_finished)
+
+    def _install_dirty_event_filters(self, root: QWidget | None = None) -> None:
+        """Install dirty-state event filters on the command panel and dynamic children."""
+        widget = root or self._command_panel
+        widget.installEventFilter(self)
+        for child in widget.findChildren(QWidget):
+            child.installEventFilter(self)
+
+    def _mark_modified_from_user_event(self) -> None:
+        """Mark the active project/task dirty after a user command-panel edit."""
+        if not self._suppress_dirty:
+            self._set_modified(True)
 
     def _show_display_tab(self, name: str) -> None:
         """Switch to a visible display tab from the View menu."""
@@ -419,12 +456,18 @@ class MainWindow(QMainWindow):
             f"batch_mode={context.batch_mode}"
         )
 
-    def _new_project(self) -> None:
+    def _new_project(self) -> bool:
         """Clear the prototype project state."""
+        if not self._confirm_discard_changes("create a new project"):
+            return False
         self._project = ProjectFile()
         self._project_filename = None
         self._file_kind = PROJECT_KIND
-        self._command_panel.clear_values()
+        self._suppress_dirty = True
+        try:
+            self._command_panel.clear_values()
+        finally:
+            self._suppress_dirty = False
         if self._preview_panel_widget is not None:
             self._preview_panel_widget.clear_preview()
         if self._graph_panel_widget is not None:
@@ -435,6 +478,7 @@ class MainWindow(QMainWindow):
         self._set_modified(False)
         self._console.write_line("New prototype project")
         self.statusBar().showMessage("New prototype project", 5000)
+        return True
 
     def _open_project(self) -> None:
         """Open a project file from disk."""
@@ -446,13 +490,15 @@ class MainWindow(QMainWindow):
 
     def _open_file_dialog(self, kind: str) -> None:
         """Load a project or task file through ProjectStore."""
+        if not self._confirm_discard_changes("open another file"):
+            return
         title = "Open Faceswap Task" if kind == TASK_KIND else "Open Faceswap Project"
         filter_text = "Faceswap task (*.fst);;JSON files (*.json);;All files (*)"
         if kind == PROJECT_KIND:
             filter_text = "Faceswap project (*.fsw);;JSON files (*.json);;All files (*)"
         filename, _ = QFileDialog.getOpenFileName(self, title, "", filter_text)
         if filename:
-            self._open_session_file(filename, kind)
+            self._open_session_file(filename, kind, confirm_discard=False)
 
     def _save_project_current(self) -> None:
         """Save the current project file, or prompt when no project file is active."""
@@ -483,26 +529,30 @@ class MainWindow(QMainWindow):
         if filename:
             self._save_task(self._with_suffix(filename, TASK_EXTENSION))
 
-    def _save_project(self, filename: str) -> None:
+    def _save_project(self, filename: str) -> bool:
         """Persist the full project state."""
         _, command, values = self._command_panel.command_spec()
         self._project = self._session_service.snapshot_project(self._project, command, values)
-        self._save_file(filename, self._project, PROJECT_KIND)
+        if not self._save_file(filename, self._project, PROJECT_KIND):
+            return False
         self._project_filename = filename
         self._file_kind = PROJECT_KIND
         self._set_modified(False)
         self._console.write_line(f"Saved prototype project: {filename}")
         self.statusBar().showMessage("Project saved", 5000)
+        return True
 
-    def _save_task(self, filename: str) -> None:
+    def _save_task(self, filename: str) -> bool:
         """Persist only the current command state as a task file."""
         _, command, values = self._command_panel.command_spec()
         task = self._session_service.snapshot_task(command, values)
-        self._save_file(filename, task, TASK_KIND)
+        if not self._save_file(filename, task, TASK_KIND):
+            return False
         self._console.write_line(f"Saved prototype task: {filename}")
         self.statusBar().showMessage("Task saved", 5000)
+        return True
 
-    def _save_file(self, filename: str, project: ProjectFile, kind: str) -> None:
+    def _save_file(self, filename: str, project: ProjectFile, kind: str) -> bool:
         """Save a project/task model and update recent/last-session stores."""
         try:
             self._project_store.save(filename, project)
@@ -510,30 +560,43 @@ class MainWindow(QMainWindow):
             self._last_session.save(filename, kind)
         except OSError as err:
             self._show_error(str(err))
-            return
+            return False
         self._refresh_recent_menu()
+        return True
 
-    def _open_session_file(self, filename: str, kind: str | None = None) -> None:
+    def _open_session_file(
+        self,
+        filename: str,
+        kind: str | None = None,
+        *,
+        confirm_discard: bool = True,
+    ) -> bool:
         """Open a project or task file by filename."""
+        if confirm_discard and not self._confirm_discard_changes("open another file"):
+            return False
         resolved_kind = kind or self._session_service.kind_from_filename(filename)
         try:
             project = self._project_store.load(filename)
         except (OSError, ValueError) as err:
             self._show_error(str(err))
-            return
-        self._apply_project(filename, project, resolved_kind)
+            return False
+        return self._apply_project(filename, project, resolved_kind)
 
-    def _apply_project(self, filename: str, project: ProjectFile, kind: str = PROJECT_KIND) -> None:
+    def _apply_project(self, filename: str, project: ProjectFile, kind: str = PROJECT_KIND) -> bool:
         """Apply a loaded ProjectFile to the command panel and runtime displays."""
         try:
             command, values = self._session_service.selected_task(project)
         except ValueError as err:
             self._show_error(str(err))
-            return
+            return False
         self._project = project
         self._project_filename = filename
         self._file_kind = kind
-        self._command_panel.set_command(command, values)
+        self._suppress_dirty = True
+        try:
+            self._command_panel.set_command(command, values)
+        finally:
+            self._suppress_dirty = False
         context = CommandExecutionContext.from_values(command, values)
         self._apply_preview_context(context)
         self._apply_graph_context(context)
@@ -543,15 +606,30 @@ class MainWindow(QMainWindow):
         self._set_modified(False)
         self._console.write_line(f"Loaded prototype {kind}: {filename}")
         self.statusBar().showMessage(f"{kind.title()} loaded", 5000)
+        return True
 
-    def _restore_last_session(self) -> None:
+    def _reload_current_file(self) -> bool:
+        """Reload the active project/task file from disk."""
+        if self._project_filename is None:
+            self.statusBar().showMessage("No current file to reload", 5000)
+            self._console.write_line("No current file to reload")
+            return False
+        if not self._confirm_discard_changes("reload the current file"):
+            return False
+        return self._open_session_file(
+            self._project_filename,
+            self._file_kind,
+            confirm_discard=False,
+        )
+
+    def _restore_last_session(self) -> bool:
         """Restore the last opened project or task file."""
         session = self._last_session.load()
         if session is None:
             self.statusBar().showMessage("No last session to restore", 5000)
             self._console.write_line("No last session to restore")
-            return
-        self._open_session_file(session.filename, session.kind)
+            return False
+        return self._open_session_file(session.filename, session.kind)
 
     def _refresh_recent_menu(self) -> None:
         """Refresh recent-file menu actions."""
@@ -607,6 +685,19 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(
             self._session_service.title(self._project_filename, modified=self._modified)
         )
+
+    def _confirm_discard_changes(self, action: str) -> bool:
+        """Return whether the user confirmed discarding unsaved changes."""
+        if not self._modified:
+            return True
+        response = QMessageBox.question(
+            self,
+            "Unsaved Changes",
+            f"Discard unsaved changes and {action}?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return response == QMessageBox.StandardButton.Yes
 
     def _show_error(self, message: str) -> None:
         """Display an error in both console and dialog form."""
