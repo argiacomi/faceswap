@@ -53,6 +53,19 @@ class PreviewPanel(QWidget):
         """Return the backing preview output service."""
         return self._service
 
+    @property
+    def source_path(self) -> str | None:
+        """Return the configured preview source path, if any."""
+        source = self._service.source
+        return None if source is None else str(source)
+
+    def restore_source(self, source: str | None) -> bool:
+        """Restore a Preview source from saved UI state."""
+        if not source:
+            return False
+        self.configure_output(source)
+        return True
+
     def apply_context(self, context: CommandExecutionContext) -> bool:
         """Apply command-derived preview output context."""
         if context.preview_output_path is None:
