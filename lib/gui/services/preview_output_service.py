@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import typing as T
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -45,16 +44,24 @@ class PreviewOutputService:
         """Return discovered preview image files."""
         return self._images
 
-    def load(self, source: str | Path) -> tuple[PreviewOutputImage, ...]:
-        """Load preview images from a source file or folder."""
-        resolved = self.resolve_source(source)
-        self._source = resolved
-        self._images = self._find_images(resolved)
-        return self._images
+    def configure(self, source: str | Path | None) -> None:
+        """Set a preview source without requiring it to exist yet."""
+        self._source = None if source is None else Path(source)
+        self._images = ()
 
-    def refresh(self) -> tuple[PreviewOutputImage, ...]:
+    def load(self, source: str | Path) -> tuple[PreviewOutputImage, ...]:
+        """Load preview images from an existing source file or folder."""
+        self.configure(source)
+        return self.refresh(validate=True)
+
+    def refresh(self, *, validate: bool = False) -> tuple[PreviewOutputImage, ...]:
         """Refresh images from the current source."""
         if self._source is None:
+            self._images = ()
+            return ()
+        if validate:
+            self.resolve_source(self._source)
+        elif not self._source.exists():
             self._images = ()
             return ()
         self._images = self._find_images(self._source)
