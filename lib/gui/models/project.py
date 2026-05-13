@@ -22,7 +22,15 @@ class ProjectFile:
     @classmethod
     def from_mapping(cls, payload: T.Mapping[str, T.Any]) -> ProjectFile:
         """Build a versioned model from either current or legacy on-disk data."""
-        if "version" in payload or "tasks" in payload:
+        if "tasks" in payload:
+            return cls._from_versioned_mapping(payload)
+        legacy_options = cls._legacy_options_payload(payload)
+        if legacy_options is not None:
+            return cls.from_legacy_options(
+                legacy_options,
+                tab_name=cls._legacy_tab_name(payload, legacy_options),
+            )
+        if "version" in payload:
             return cls._from_versioned_mapping(payload)
         return cls.from_legacy_options(payload)
 
@@ -68,6 +76,36 @@ class ProjectFile:
             "tab_name": self.tab_name,
             "tasks": {command: dict(values) for command, values in self.tasks.items()},
         }
+
+    @classmethod
+    def _legacy_options_payload(
+        cls, payload: T.Mapping[str, T.Any]
+    ) -> T.Mapping[str, T.Any] | None:
+        """Return embedded legacy options from known wrapper shapes."""
+        for key in ("options", "project", "task"):
+            options = payload.get(key)
+            if isinstance(options, dict):
+                return options
+        return None
+
+    @classmethod
+    def _legacy_tab_name(
+        cls,
+        payload: T.Mapping[str, T.Any],
+        options: T.Mapping[str, T.Any],
+    ) -> str:
+        """Resolve active tab from known legacy wrapper and option keys."""
+        for value in (
+            payload.get("tab_name"),
+            payload.get("tab"),
+            payload.get("command"),
+            options.get("tab_name"),
+            options.get("tab"),
+            options.get("command"),
+        ):
+            if isinstance(value, str) and value:
+                return value
+        return "extract"
 
     @classmethod
     def _version(cls, value: T.Any) -> int:
