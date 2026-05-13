@@ -16,6 +16,7 @@ from lib.landmarks.datasets.sources import (
     DatasetSourceSpec,
     MultiDatasetSourceSpec,
     MultiSourcePart,
+    extract_archive_to_cache,
     resolve_dataset_source,
     resolve_multipart_dataset_source,
 )
@@ -45,8 +46,8 @@ def _write_named_archive(path: Path, filename: str, content: str) -> None:
         zf.writestr(filename, content)
 
 
-def _write_tar_gz(path: Path, files: dict[str, str]) -> None:
-    """Write a tiny tar.gz archive with string files."""
+def _write_tar(path: Path, files: dict[str, str], *, gzip: bool = False) -> None:
+    """Write a tiny tar archive with string files."""
     staging = path.parent / f"{path.name}.staging"
     staging.mkdir()
     try:
@@ -54,7 +55,8 @@ def _write_tar_gz(path: Path, files: dict[str, str]) -> None:
             target = staging / name
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, encoding="utf-8")
-        with tarfile.open(path, "w:gz") as tf:
+        mode = "w:gz" if gzip else "w"
+        with tarfile.open(path, mode) as tf:
             for file_path in sorted(staging.rglob("*")):
                 if file_path.is_file():
                     tf.add(file_path, arcname=file_path.relative_to(staging).as_posix())
@@ -66,6 +68,11 @@ def _write_tar_gz(path: Path, files: dict[str, str]) -> None:
                 child.rmdir()
         if staging.exists():
             staging.rmdir()
+
+
+def _write_tar_gz(path: Path, files: dict[str, str]) -> None:
+    """Write a tiny tar.gz archive with string files."""
+    _write_tar(path, files, gzip=True)
 
 
 def _write_wflw_annotations_archive(path: Path, *, image_rel: str = "images/sample.jpg") -> None:
@@ -135,6 +142,53 @@ def test_resolve_dataset_source_downloads_and_extracts_archive(tmp_path: Path) -
     assert (cache_dir / "demo" / "demo.zip").is_file()
     assert (resolved / ".source.json").is_file()
     assert (resolved / "WFLW" / "WFLW_annotations" / "list_98pt_rect_attr_test.txt").is_file()
+
+
+@pytest.mark.parametrize(
+    ("archive_name", "archive_kind"),
+    (
+        ("source.zip", "zip"),
+        ("source.tar", "tar"),
+        ("source.tar.gz", "tar_gz"),
+        ("source.tgz", "tar_gz"),
+    ),
+)
+def test_extract_archive_to_cache_supports_zip_tar_and_gzipped_tar(
+    tmp_path: Path,
+    archive_name: str,
+    archive_kind: str,
+) -> None:
+    """Dataset archive extraction supports zip, tar, tar.gz, and tgz sources."""
+    archive = tmp_path / archive_name
+    if archive_kind == "zip":
+        _write_named_archive(archive, "nested/sample.txt", "ok")
+    else:
+        _write_tar(archive, {"nested/sample.txt": "ok"}, gzip=archive_kind == "tar_gz")
+
+    extracted = extract_archive_to_cache(archive, tmp_path / "extracted")
+
+    assert (extracted / "nested" / "sample.txt").read_text(encoding="utf-8") == "ok"
+
+
+def test_extract_archive_to_cache_reports_invalid_zip_archive(tmp_path: Path) -> None:
+    """Misdownloaded or corrupt zip files fail with an actionable error."""
+    archive = tmp_path / "source.zip"
+    archive.write_text("<html>not a zip</html>", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Invalid zip archive"):
+        extract_archive_to_cache(archive, tmp_path / "extracted")
+
+
+def test_extract_archive_to_cache_uses_archive_signature_before_suffix(
+    tmp_path: Path,
+) -> None:
+    """Official sources may have misleading suffixes; use the real archive signature."""
+    archive = tmp_path / "source.zip"
+    _write_tar(archive, {"nested/sample.txt": "ok"}, gzip=True)
+
+    extracted = extract_archive_to_cache(archive, tmp_path / "extracted")
+
+    assert (extracted / "nested" / "sample.txt").read_text(encoding="utf-8") == "ok"
 
 
 def test_resolve_dataset_source_refreshes_stale_extraction_when_archive_changes(

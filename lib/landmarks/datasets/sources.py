@@ -287,20 +287,57 @@ def safe_tar_extractall(tf: tarfile.TarFile, destination: str | os.PathLike[str]
         target = (dest / member.name).resolve()
         if not _is_relative_to(target, dest):
             raise ValueError(f"Blocked tar path traversal member: {member.name}")
-    tf.extractall(dest)
+    try:
+        tf.extractall(dest, filter="data")
+    except TypeError:  # pragma: no cover - older Python without tar extraction filters
+        tf.extractall(dest)
+
+
+def _archive_format(archive_path: Path) -> str | None:
+    """Return the supported archive format implied by ``archive_path``."""
+    if zipfile.is_zipfile(archive_path):
+        return "zip"
+    if tarfile.is_tarfile(archive_path):
+        return "tar"
+    name = archive_path.name.lower()
+    if name.endswith(".zip"):
+        return "zip"
+    if name.endswith((".tar", ".tar.gz", ".tgz")):
+        return "tar"
+    return None
+
+
+def _invalid_archive_error(archive_path: Path, expected: str) -> ValueError:
+    """Return a clear error for corrupt or misdownloaded archives."""
+    return ValueError(
+        f"Invalid {expected} archive: {archive_path}. "
+        "Remove the cached file and retry with --force-download, or provide a valid "
+        ".zip, .tar, .tar.gz, or .tgz source archive."
+    )
 
 
 def _extract_archive(archive_path: Path, destination: Path) -> None:
     """Extract ``archive_path`` into ``destination``."""
-    suffixes = "".join(archive_path.suffixes[-2:]).lower()
-    if archive_path.suffix.lower() == ".zip":
-        with zipfile.ZipFile(archive_path, "r") as zf:
-            safe_zip_extractall(zf, destination)
-    elif suffixes in {".tar.gz", ".tgz"} or archive_path.suffix.lower() == ".tar":
-        with tarfile.open(archive_path, "r:*") as tf:
-            safe_tar_extractall(tf, destination)
-    else:
-        raise ValueError(f"Unsupported archive format: {archive_path}")
+    archive_type = _archive_format(archive_path)
+    if archive_type == "zip":
+        if not zipfile.is_zipfile(archive_path):
+            raise _invalid_archive_error(archive_path, "zip")
+        try:
+            with zipfile.ZipFile(archive_path, "r") as zf:
+                safe_zip_extractall(zf, destination)
+        except zipfile.BadZipFile as err:
+            raise _invalid_archive_error(archive_path, "zip") from err
+        return
+    if archive_type == "tar":
+        if not tarfile.is_tarfile(archive_path):
+            raise _invalid_archive_error(archive_path, "tar")
+        try:
+            with tarfile.open(archive_path, "r:*") as tf:
+                safe_tar_extractall(tf, destination)
+        except tarfile.TarError as err:
+            raise _invalid_archive_error(archive_path, "tar") from err
+        return
+    raise ValueError(f"Unsupported archive format: {archive_path}")
 
 
 @contextlib.contextmanager
