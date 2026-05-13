@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Service helpers for extracting training graph series from Analysis sessions."""
+"""Service helpers for extracting graph series from Analysis sessions."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from lib.utils import get_module_objects
 
 
 class TrainingGraphError(ValueError):
-    """Raised when training graph data cannot be resolved or loaded."""
+    """Raised when graph data cannot be resolved or loaded."""
 
 
 class TrainingGraphSessionProtocol(T.Protocol):
@@ -39,7 +39,7 @@ class TrainingGraphSessionProtocol(T.Protocol):
 
 @dataclass(frozen=True)
 class TrainingGraphSource:
-    """Resolved model source details for training graph data."""
+    """Resolved model source details for graph data."""
 
     model_dir: Path
     model_name: str
@@ -75,7 +75,7 @@ class TrainingGraphSeries:
 
 @dataclass(frozen=True)
 class TrainingGraphSnapshot:
-    """A refreshed set of training graph series."""
+    """A refreshed set of graph series."""
 
     source: TrainingGraphSource | None
     session_id: int | None
@@ -93,7 +93,7 @@ class TrainingGraphSnapshot:
 
 
 class TrainingGraphService:
-    """Read training loss graph data from the legacy Analysis session adapter."""
+    """Read loss graph data from the legacy Analysis session adapter."""
 
     STATE_SUFFIX = "_state.json"
 
@@ -117,6 +117,11 @@ class TrainingGraphService:
     def session_id(self) -> int | None:
         """Return the currently selected session id, or ``None`` for all sessions."""
         return self._session_id
+
+    @property
+    def session_ids(self) -> tuple[int, ...]:
+        """Return available session ids from the loaded Analysis session."""
+        return tuple(self._session.session_ids) if self._session.is_loaded else ()
 
     @property
     def loss_keys(self) -> tuple[str, ...]:
@@ -165,9 +170,9 @@ class TrainingGraphService:
     def load_configured_source(self, *, is_training: bool = False) -> TrainingGraphSnapshot:
         """Load the configured source when its state file exists."""
         if self._source is None:
-            raise TrainingGraphError("No training graph source configured")
+            raise TrainingGraphError("No graph source configured")
         if not self._source.state_file.is_file():
-            raise TrainingGraphError(f"Training graph state file does not exist: {self._source.state_file}")
+            raise TrainingGraphError(f"Graph state file does not exist: {self._source.state_file}")
         self._session.initialize_session(
             str(self._source.model_dir), self._source.model_name, is_training
         )
@@ -187,12 +192,14 @@ class TrainingGraphService:
         keys = tuple(sorted(self._session.get_loss_keys(self._session_id)))
         self._loss_keys = keys
         loss = self._session.get_loss(self._session_id)
-        series = tuple(
-            TrainingGraphSeries(name, self._to_float_tuple(values))
-            for name, values in sorted(loss.items())
-            if name in keys
-        )
-        self._snapshot = TrainingGraphSnapshot(self._source, self._session_id, series)
+        graph_series: list[TrainingGraphSeries] = []
+        for name, values in sorted(loss.items()):
+            if name not in keys:
+                continue
+            converted = self._to_float_tuple(values)
+            if converted:
+                graph_series.append(TrainingGraphSeries(name, converted))
+        self._snapshot = TrainingGraphSnapshot(self._source, self._session_id, tuple(graph_series))
         return self._snapshot
 
     def clear(self) -> None:
@@ -210,9 +217,9 @@ class TrainingGraphService:
         elif path.is_file():
             state_file = path
         else:
-            raise TrainingGraphError(f"Training graph source does not exist: {path}")
+            raise TrainingGraphError(f"Graph source does not exist: {path}")
         if not state_file.name.endswith(self.STATE_SUFFIX):
-            raise TrainingGraphError(f"Training graph source is not a model state file: {state_file}")
+            raise TrainingGraphError(f"Graph source is not a model state file: {state_file}")
         model_name = state_file.name[: -len(self.STATE_SUFFIX)]
         return TrainingGraphSource(state_file.parent, model_name)
 
@@ -232,11 +239,17 @@ class TrainingGraphService:
             iterable = values.tolist()
         except AttributeError:
             iterable = values
-        return tuple(
-            float(value)
-            for value in iterable
-            if not isinstance(value, bool) and float(value) == float(value)
-        )
+        converted = []
+        for value in iterable:
+            if isinstance(value, bool):
+                continue
+            try:
+                number = float(value)
+            except (TypeError, ValueError):
+                continue
+            if number == number:
+                converted.append(number)
+        return tuple(converted)
 
 
 __all__ = get_module_objects(__name__)
