@@ -233,6 +233,7 @@ class Ensemble(ExtractPlugin):
                 "weights": fused.weights.tolist(),
                 "kept_indices": fused.kept_indices,
                 "rejected_indices": fused.rejected_indices,
+                "rejected_landmarks": fused.rejected_landmarks,
                 "adapter_errors": tuple(errors),
                 "strategy": fused.strategy,
             }

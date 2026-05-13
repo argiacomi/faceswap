@@ -18,15 +18,46 @@ def write_overlay(
     image_path: str | Path,
     predictions: T.Mapping[str, np.ndarray],
     output_path: str | Path,
+    *,
+    rejected_landmarks: T.Mapping[str, T.Sequence[int]] | None = None,
 ) -> Path:
     """Write one prediction overlay image."""
     image = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
     if image is None:
         raise FileNotFoundError(image_path)
     overlay = make_debug_overlay(image, predictions)
+    if rejected_landmarks:
+        overlay = draw_rejected_landmarks(overlay, predictions, rejected_landmarks)
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
     cv2.imwrite(str(output), overlay)
+    return output
+
+
+def draw_rejected_landmarks(
+    image: np.ndarray,
+    predictions: T.Mapping[str, np.ndarray],
+    rejected_landmarks: T.Mapping[str, T.Sequence[int]],
+    *,
+    color: tuple[int, int, int] = (0, 0, 255),
+) -> np.ndarray:
+    """Draw cross marks on rejected model/landmark pairs."""
+    output = np.array(image, copy=True)
+    height, width = output.shape[:2]
+    for name, indexes in rejected_landmarks.items():
+        points = predictions.get(name)
+        if points is None:
+            continue
+        array = np.asarray(points, dtype="float32")
+        for index in indexes:
+            if index < 0 or index >= len(array):
+                continue
+            x_val = int(round(float(array[index, 0])))
+            y_val = int(round(float(array[index, 1])))
+            if x_val < 0 or y_val < 0 or x_val >= width or y_val >= height:
+                continue
+            cv2.line(output, (x_val - 4, y_val - 4), (x_val + 4, y_val + 4), color, 1)
+            cv2.line(output, (x_val - 4, y_val + 4), (x_val + 4, y_val - 4), color, 1)
     return output
 
 

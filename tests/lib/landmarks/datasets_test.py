@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import cv2
 import numpy as np
 
 from lib.landmarks.datasets import (
@@ -73,6 +74,34 @@ def test_wflw_builder_preserves_attributes_and_filters_by_normalized_label(
     }
     assert audit["condition_counts"] == {"illumination": 1, "occlusion": 1, "pose": 1}
     assert audit["condition_shortfalls"] == {}
+    assert np.load(tmp_path / "out" / sample["landmarks"]).shape == (68, 2)
+
+
+def test_wflw_builder_writes_visual_mapping_overlay(tmp_path: Path) -> None:
+    """The WFLW 98-to-68 mapping is inspectable through generated GT overlays."""
+    image_dir = tmp_path / "images"
+    image_dir.mkdir()
+    image_path = image_dir / "sample.jpg"
+    assert cv2.imwrite(str(image_path), np.zeros((256, 256, 3), dtype="uint8"))
+    points = _points_98()
+    row = (
+        " ".join(str(value) for value in points.reshape(-1))
+        + " 1 2 3 4"
+        + " 0 0 0 0 0 0"
+        + " images/sample.jpg\n"
+    )
+    annotation = tmp_path / "list_98pt_rect_attr_test.txt"
+    annotation.write_text(row, encoding="utf-8")
+
+    manifest_path = build_wflw_manifest(annotation, tmp_path / "out", write_overlays=True)
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    sample = payload["samples"][0]
+    overlay_path = tmp_path / "out" / sample["metadata"]["overlay"]
+
+    assert sample["source_schema"] == "2d_98"
+    assert sample["metadata"]["overlay"].endswith("landmarks_gt.png")
+    assert overlay_path.is_file()
+    assert cv2.imread(str(overlay_path), cv2.IMREAD_COLOR) is not None
     assert np.load(tmp_path / "out" / sample["landmarks"]).shape == (68, 2)
 
 

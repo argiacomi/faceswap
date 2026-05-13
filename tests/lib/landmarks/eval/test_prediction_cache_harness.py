@@ -16,6 +16,7 @@ from lib.landmarks.eval.harness import run_quality_harness
 from lib.landmarks.eval.prediction_cache import DiskPredictionCache
 from lib.landmarks.schema import LandmarkPrediction
 from tools.landmarks.cache_predictions import main as cache_predictions_main
+from tools.landmarks.failure_viewer import main as failure_viewer_main
 from tools.landmarks.run_quality_harness import main as run_quality_harness_main
 
 
@@ -114,6 +115,64 @@ def test_dataset_builder_and_harness(tmp_path: Path) -> None:
     assert best_summary["best_single_model"] == "hrnet"
     assert "plain_average" in best_summary["ensemble_deltas_vs_best_single"]
     assert "default" in best_summary["failure_rate_by_condition"]
+
+
+def test_failure_viewer_writes_overlays_reports_and_contact_sheets(tmp_path: Path) -> None:
+    """Failure viewer renders GT, model, fused, rejected, and summary artifacts."""
+    source = tmp_path / "source"
+    source.mkdir()
+    cv2.imwrite(str(source / "sample.png"), np.zeros((96, 96, 3), dtype="uint8"))
+    np.save(str(source / "sample.npy"), _points())
+    manifest = build_manifest(source, tmp_path / "dataset", dataset="wflw")
+    cache = DiskPredictionCache(tmp_path / "cache")
+    for model_name, offset in (("hrnet", 0.0), ("spiga", 0.25), ("orformer", 20.0)):
+        cache.write(
+            "sample",
+            LandmarkPrediction(_points(offset), model_name=model_name),
+            config=model_name,
+        )
+    run_quality_harness(
+        manifest,
+        tmp_path / "cache",
+        models=("hrnet", "spiga", "orformer"),
+        variants=("plain_average", "static_weighted_outliers", "weighted_median"),
+        output_dir=tmp_path / "metrics",
+        failure_threshold=1.0,
+        outlier_threshold=0.1,
+    )
+
+    result = failure_viewer_main(
+        [
+            "--metrics",
+            str(tmp_path / "metrics" / "metrics.json"),
+            "--manifest",
+            str(manifest),
+            "--cache-dir",
+            str(tmp_path / "cache"),
+            "--output-dir",
+            str(tmp_path / "debug"),
+            "--models",
+            "hrnet,spiga,orformer",
+            "--limit",
+            "8",
+            "--outlier-threshold",
+            "0.1",
+        ]
+    )
+    debug_records = json.loads((tmp_path / "debug" / "debug_records.json").read_text())
+    regression_records = json.loads(
+        (tmp_path / "debug" / "ensemble_regressions.json").read_text()
+    )
+
+    assert result == 0
+    assert (tmp_path / "debug" / "worst_cases.json").is_file()
+    assert (tmp_path / "debug" / "worst_cases.csv").is_file()
+    assert (tmp_path / "debug" / "worst_contact_sheet.png").is_file()
+    assert (tmp_path / "debug" / "ensemble_regressions_contact_sheet.png").is_file()
+    assert debug_records
+    assert regression_records
+    assert any(record["rejected_model_landmarks"] for record in debug_records)
+    assert all(Path(record["overlay"]).is_file() for record in debug_records)
 
 
 def test_harness_requires_selected_models_in_cache(tmp_path: Path) -> None:
