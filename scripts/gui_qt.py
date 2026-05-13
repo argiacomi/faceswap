@@ -9,6 +9,7 @@ import sys
 from PySide6.QtWidgets import QApplication
 
 from lib.gui.qt_shell.main_window import MainWindow
+from lib.gui.qt_shell.theme import apply_theme
 from lib.utils import get_module_objects
 
 QT_NO_EXEC_ENV = "FACESWAP_QT_NO_EXEC"
@@ -23,6 +24,7 @@ class Gui:
         self._owns_app = QApplication.instance() is None
         self._no_exec = self._resolve_no_exec(arguments)
         self.app = QApplication.instance() or QApplication(sys.argv)
+        self.theme = apply_theme(self.app)
         self.root = MainWindow()
 
     def process(self) -> None:
