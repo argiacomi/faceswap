@@ -218,10 +218,11 @@ class GraphPanel(QWidget):
     def _sync_actions(self) -> None:
         """Enable buttons based on current graph state."""
         has_source = self._service.source is not None
-        loaded = self._service.is_loaded
-        self._refresh_button.setEnabled(has_source or loaded)
-        self._clear_button.setEnabled(has_source or loaded or not self._service.snapshot.is_empty)
-        self._session_combo.setEnabled(loaded)
+        has_graph_data = not self._service.snapshot.is_empty
+        active_graph = has_source or has_graph_data
+        self._refresh_button.setEnabled(active_graph)
+        self._clear_button.setEnabled(active_graph)
+        self._session_combo.setEnabled(active_graph and self._service.is_loaded)
 
     def _set_error(self, message: str) -> None:
         """Render an in-panel error."""
