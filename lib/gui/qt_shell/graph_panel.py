@@ -53,6 +53,18 @@ class GraphPanel(QWidget):
         """Return the backing graph service."""
         return self._service
 
+    @property
+    def source_path(self) -> str | None:
+        """Return the current graph model state file path, if configured."""
+        source = self._service.source
+        return None if source is None else str(source.state_file)
+
+    def restore_source(self, source: str | None) -> bool:
+        """Restore a Graph source from saved UI state."""
+        if not source:
+            return False
+        return self.load_source(source)
+
     def apply_context(self, context: CommandExecutionContext) -> bool:
         """Apply command-derived model context to the graph panel."""
         source = self._service.configure(
