@@ -17,6 +17,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from lib.landmarks.datasets.sources import DEFAULT_CACHE_DIR
 from lib.landmarks.ensemble.weights import save_weights
 from lib.landmarks.eval.harness import load_manifest, run_quality_harness
 from lib.landmarks.eval.prediction_cache import DiskPredictionCache
@@ -26,6 +27,7 @@ from tools.landmarks.compute_static_weights import compute_static_weights
 from tools.landmarks.failure_viewer import main as failure_viewer_main
 
 logger = logging.getLogger(__name__)
+DEFAULT_OUTPUT_ROOT = DEFAULT_CACHE_DIR / "runs" / "static_weight_validation"
 
 
 @dataclass(frozen=True)
@@ -68,6 +70,12 @@ def _parse_csv(value: str) -> tuple[str, ...]:
 def _append_if(argv: list[str], flag: str, value: str) -> None:
     if value:
         argv.extend([flag, value])
+
+
+def _default_dataset_source_dir(dataset: str) -> str:
+    """Return a conventional local extracted source path when it exists."""
+    candidate = DEFAULT_CACHE_DIR / dataset / "extracted"
+    return str(candidate) if candidate.is_dir() else ""
 
 
 def _git_commit() -> str:
@@ -242,7 +250,6 @@ def _build_datasets(
 
 
 def _require_manifest_samples(manifest_path: Path) -> None:
-    """Raise a clear error when the validation manifest is empty."""
     sample_count = sum(1 for _sample in load_manifest(manifest_path))
     if sample_count:
         return
@@ -426,7 +433,8 @@ def _update_summary_outputs(
 def _dry_run(args: argparse.Namespace, paths: PipelinePaths, summary: dict[str, T.Any]) -> int:
     _ensure_dirs(paths)
     planned = []
-    if args.build_datasets and not args.skip_dataset_build:
+    if not args.skip_dataset_build:
+        planned.append("dataset:auto-build-or-reuse")
         planned.extend(f"dataset:{dataset}" for dataset in _parse_csv(args.datasets))
     else:
         planned.append("dataset:reuse-existing")
@@ -450,9 +458,9 @@ def _dry_run(args: argparse.Namespace, paths: PipelinePaths, summary: dict[str, 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--datasets", default="wflw,cofw")
-    parser.add_argument("--output-root", required=True)
+    parser.add_argument("--output-root", default=str(DEFAULT_OUTPUT_ROOT))
     parser.add_argument("--models", default="hrnet,spiga,orformer")
-    parser.add_argument("--build-datasets", action="store_true")
+    parser.add_argument("--build-datasets", action="store_true", help="Force dataset rebuild even when manifest exists.")
     parser.add_argument("--run-predictions", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--continue-on-error", action="store_true")
@@ -480,27 +488,27 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--scenarios", default="")
     parser.add_argument("--allow-overlap", action="store_true")
     parser.add_argument("--recursive", action="store_true")
-    parser.add_argument("--dataset-cache-dir", default="")
+    parser.add_argument("--dataset-cache-dir", default=str(DEFAULT_CACHE_DIR))
     parser.add_argument("--no-download", action="store_true")
     parser.add_argument("--force-download", action="store_true")
     parser.add_argument("--wflw-annotations", default="")
     parser.add_argument("--wflw-image-root", default="")
-    parser.add_argument("--wflw-source-dir", default="")
+    parser.add_argument("--wflw-source-dir", default=_default_dataset_source_dir("wflw"))
     parser.add_argument("--wflw-source-zip", default="")
     parser.add_argument("--wflw-download-url", default="")
     parser.add_argument("--wflw-download-official", action="store_true")
     parser.add_argument("--cofw-json", default="")
     parser.add_argument("--cofw-image-root", default="")
-    parser.add_argument("--cofw-source-dir", default="")
+    parser.add_argument("--cofw-source-dir", default=_default_dataset_source_dir("cofw"))
     parser.add_argument("--cofw-source-zip", default="")
     parser.add_argument("--cofw-download-url", default="")
-    parser.add_argument("--merl-rav-source-dir", default="")
+    parser.add_argument("--merl-rav-source-dir", default=_default_dataset_source_dir("merl-rav"))
     parser.add_argument("--merl-rav-source-zip", default="")
     parser.add_argument("--merl-rav-download-url", default="")
-    parser.add_argument("--aflw2000-3d-source-dir", default="")
+    parser.add_argument("--aflw2000-3d-source-dir", default=_default_dataset_source_dir("aflw2000-3d"))
     parser.add_argument("--aflw2000-3d-source-zip", default="")
     parser.add_argument("--aflw2000-3d-download-url", default="")
-    parser.add_argument("--directory-source-dir", default="")
+    parser.add_argument("--directory-source-dir", default=_default_dataset_source_dir("directory"))
     parser.add_argument(
         "--log-level", default="INFO", choices=("DEBUG", "INFO", "WARNING", "ERROR")
     )
@@ -508,7 +516,6 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _log_pipeline_failure(args: argparse.Namespace, err: Exception) -> None:
-    """Log pipeline failures concisely unless debug logging is requested."""
     if args.log_level == "DEBUG":
         logger.exception("Pipeline failed")
         return
@@ -536,12 +543,12 @@ def main(argv: list[str] | None = None) -> int:
     exit_code = 0
     _ensure_dirs(paths)
     try:
-        if args.build_datasets and not args.skip_dataset_build:
+        if not args.skip_dataset_build and (args.build_datasets or not paths.manifest.is_file()):
             _stage(summary, "build_datasets", lambda: _build_datasets(args, paths, summary))
         elif not paths.manifest.is_file():
             raise FileNotFoundError(
                 f"manifest not found at {paths.manifest}. "
-                "Pass --build-datasets or create it first."
+                "Remove --skip-dataset-build, pass --build-datasets, or create it first."
             )
         else:
             _require_manifest_samples(paths.manifest)
