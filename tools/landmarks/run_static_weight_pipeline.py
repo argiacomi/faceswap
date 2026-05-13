@@ -13,6 +13,10 @@ import typing as T
 from dataclasses import dataclass, field
 from pathlib import Path
 
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
 from lib.landmarks.ensemble.weights import save_weights
 from lib.landmarks.eval.harness import load_manifest, run_quality_harness
 from lib.landmarks.eval.prediction_cache import DiskPredictionCache
