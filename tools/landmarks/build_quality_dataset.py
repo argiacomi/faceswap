@@ -22,7 +22,9 @@ from lib.landmarks.datasets import (
     build_merl_rav_manifest,
     build_wflw_manifest,
 )
+from lib.landmarks.datasets.polish import polish_landmark_dataset_artifacts
 from lib.landmarks.datasets.sources import DEFAULT_CACHE_DIR, resolve_wflw_official_source
+from lib.landmarks.datasets.visual_overlays import write_indexed_region_overlays
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +80,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--write-overlays",
         action="store_true",
-        help="Write visual landmark overlays when source images are readable.",
+        help="Write GT, indexed, and region visual landmark overlays when source images are readable.",
     )
     parser.add_argument(
         "--audit-only",
@@ -138,7 +140,7 @@ def _validate_args(args: argparse.Namespace) -> None:
         ):
             raise ValueError(
                 "--audit-only only accepts --dataset, --output-dir, "
-                "--allow-overlap, and logging options"
+                "--allow-overlap, --write-overlays, and logging options"
             )
         if args.no_download or args.force_download or args.download_url:
             raise ValueError("--audit-only does not use download or cache source options")
@@ -152,7 +154,6 @@ def _validate_args(args: argparse.Namespace) -> None:
         bool(args.source_zip),
     ]
     if sum(source_modes) > 1:
-        # image_root is an adjunct, not a source mode. Avoid ambiguous datasets.
         raise ValueError(
             "Pass only one source mode: --wflw-annotations, "
             "--wflw-download-official, --cofw-json, --source-dir, or --source-zip"
@@ -192,6 +193,13 @@ def _wflw_source_dir(args: argparse.Namespace) -> str | None:
             no_download=args.no_download,
         )
     )
+
+
+def _polish_output(args: argparse.Namespace) -> None:
+    """Write donor-parity audit/source notes and optional indexed/region overlays."""
+    if args.write_overlays:
+        write_indexed_region_overlays(args.output_dir)
+    polish_landmark_dataset_artifacts(args.output_dir, allow_overlap=args.allow_overlap)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -299,6 +307,7 @@ def main(argv: list[str] | None = None) -> int:
             allow_overlap=args.allow_overlap,
             write_overlays=args.write_overlays,
         )
+    _polish_output(args)
     logger.info("Wrote landmark manifest: %s", manifest)
     print(f"Wrote landmark manifest: {manifest}")
     return 0
