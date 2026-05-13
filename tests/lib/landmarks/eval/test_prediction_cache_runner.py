@@ -70,6 +70,20 @@ class _CountingStaticAdapter(StaticLandmarkAdapter):
         return super().predict_batch(images, matrices=matrices, faces=faces)
 
 
+class _RecordingPlugin:
+    """Minimal plugin double that records the ROI passed to pre_process."""
+
+    input_size = 256
+
+    def __init__(self) -> None:
+        self.seen: np.ndarray | None = None
+
+    def pre_process(self, batch: np.ndarray) -> np.ndarray:
+        """Record raw ROI input and return the plugin-owned crop ROI."""
+        self.seen = batch.copy()
+        return batch.astype("float32", copy=False)
+
+
 def test_run_model_predictions_writes_cache_with_complete_metadata(tmp_path: Path) -> None:
     """A fake model adapter can generate frame-space cached predictions from a manifest."""
     manifest = _write_manifest(tmp_path)
@@ -106,6 +120,32 @@ def test_run_model_predictions_writes_cache_with_complete_metadata(tmp_path: Pat
     assert len(metadata["prediction_hash"]) == 64
 
 
+def test_plugin_preprocess_receives_raw_manifest_bbox(tmp_path: Path) -> None:
+    """Faceswap plugins own crop expansion; the runner must not pre-expand ROI boxes."""
+    manifest = _write_manifest(tmp_path)
+    adapter = _CountingStaticAdapter(
+        LandmarkAdapterConfig("hrnet", coordinate_space="normalized_crop"),
+        np.full((68, 2), 0.5, dtype="float32"),
+    )
+    plugin = _RecordingPlugin()
+    adapter.plugin = plugin  # type:ignore[attr-defined]
+
+    cache_predictions._run_model_predictions(
+        manifest_path=manifest,
+        models=("hrnet",),
+        cache_dir=tmp_path / "cache",
+        checkpoint="validation-v1",
+        batch_size=1,
+        device="cpu",
+        refresh=False,
+        allow_gt_roi=True,
+        adapters={"hrnet": adapter},
+    )
+
+    assert plugin.seen is not None
+    np.testing.assert_allclose(plugin.seen[0], np.array([20, 25, 80, 85], dtype="float32"))
+
+
 def test_run_model_predictions_reuses_fresh_cache_and_refresh_forces_regeneration(tmp_path: Path) -> None:
     """Fresh metadata skips model execution unless refresh is requested."""
     manifest = _write_manifest(tmp_path)
@@ -118,16 +158,15 @@ def test_run_model_predictions_reuses_fresh_cache_and_refresh_forces_regeneratio
         models=("hrnet",),
         cache_dir=tmp_path / "cache",
         checkpoint="validation-v1",
-        batch_size=1,
         device="cpu",
         allow_gt_roi=True,
         adapters={"hrnet": adapter},
     )
 
-    assert cache_predictions._run_model_predictions(refresh=False, **kwargs) == (1, 0)
-    assert cache_predictions._run_model_predictions(refresh=False, **kwargs) == (0, 1)
+    assert cache_predictions._run_model_predictions(batch_size=1, refresh=False, **kwargs) == (1, 0)
+    assert cache_predictions._run_model_predictions(batch_size=8, refresh=False, **kwargs) == (0, 1)
     assert adapter.calls == 1
-    assert cache_predictions._run_model_predictions(refresh=True, **kwargs) == (1, 0)
+    assert cache_predictions._run_model_predictions(batch_size=1, refresh=True, **kwargs) == (1, 0)
     assert adapter.calls == 2
 
 
