@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+import signal
 import typing as T
 
 from PySide6.QtCore import QObject, QProcess, QTimer, Signal
@@ -61,8 +62,25 @@ class JobRunner(QObject):
             return
         plan = self._termination_policy.plan(self._runtime.command)
         self.stdout.emit(f"{plan.message}\n")
-        self.process.terminate()
+        if not (plan.interrupt_first and self._interrupt_process()):
+            self.process.terminate()
         QTimer.singleShot(plan.grace_ms, self._kill_if_running)
+
+    def _interrupt_process(self) -> bool:
+        """Request graceful interruption for train jobs where the platform supports it."""
+        if self.process is None or os.name == "nt":
+            return False
+        try:
+            pid = int(self.process.processId())
+        except (AttributeError, TypeError, ValueError):
+            return False
+        if pid <= 0:
+            return False
+        try:
+            os.kill(pid, signal.SIGINT)
+        except OSError:
+            return False
+        return True
 
     def _kill_if_running(self) -> None:
         """Kill the process if terminate did not stop it."""
