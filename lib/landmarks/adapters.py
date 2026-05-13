@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import importlib
+import logging
 import typing as T
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -16,6 +18,14 @@ from lib.landmarks.schema import (
     LandmarkPrediction,
     canonicalize_schema,
 )
+
+logger = logging.getLogger(__name__)
+
+SUPPORTED_MODEL_PLUGINS: dict[str, tuple[str, str, str | None]] = {
+    "hrnet": ("plugins.extract.align.hrnet", "HRNet", "2d_68"),
+    "spiga": ("plugins.extract.align.spiga", "SPIGA", None),
+    "orformer": ("plugins.extract.align.orformer", "ORFormer", None),
+}
 
 
 @dataclass(frozen=True)
@@ -273,3 +283,63 @@ class FaceswapAlignerAdapter(LandmarkAdapter):
             )
             predictions.append(self.to_frame_prediction(prediction, matrix=matrix))
         return predictions
+
+
+def schema_from_plugin(plugin: object) -> str:
+    """Infer an adapter schema from known model configuration attributes."""
+    model_config = getattr(plugin, "_model_config", None)
+    count = getattr(model_config, "num_landmarks", 68)
+    return f"2d_{count}"
+
+
+def _set_plugin_device(plugin: object, device: str | None) -> None:
+    """Override a Faceswap torch plugin device before model loading."""
+    if not device or device == "auto":
+        return
+    torch_infer = getattr(plugin, "_torch", None)
+    if torch_infer is None:
+        return
+    try:
+        import torch
+    except ImportError as err:  # pragma: no cover - torch is present in normal Faceswap envs
+        raise RuntimeError("device selection for landmark adapters requires torch") from err
+    torch_device = torch.device(device)
+    torch_infer.device = torch_device
+    torch_infer._use_pinned = torch.cuda.is_available() and torch_device.type == "cuda"
+
+
+def build_landmark_adapter(
+    model_name: str,
+    *,
+    device: str | None = None,
+    input_is_rgb: bool = False,
+    input_scale: tuple[int, int] = (0, 255),
+) -> LandmarkAdapter:
+    """Build a supported landmark adapter by model name.
+
+    The returned adapter wraps the existing Faceswap aligner plugin and emits
+    canonical 68-point frame-space predictions when supplied crop-to-frame
+    matrices.
+    """
+    name = model_name.strip().lower()
+    if name not in SUPPORTED_MODEL_PLUGINS:
+        raise ValueError(
+            f"Unsupported landmark model '{model_name}'. Supported models: {sorted(SUPPORTED_MODEL_PLUGINS)}"
+        )
+    module_name, class_name, schema = SUPPORTED_MODEL_PLUGINS[name]
+    module = importlib.import_module(module_name)
+    plugin_cls = getattr(module, class_name)
+    plugin = plugin_cls()
+    _set_plugin_device(plugin, device)
+    adapter_schema = schema or schema_from_plugin(plugin)
+    logger.info("Built landmark adapter '%s' with schema %s", name, adapter_schema)
+    return FaceswapAlignerAdapter(
+        LandmarkAdapterConfig(
+            name=name,
+            schema=adapter_schema,
+            coordinate_space="normalized_crop",
+        ),
+        plugin,
+        input_is_rgb=input_is_rgb,
+        input_scale=input_scale,
+    )
