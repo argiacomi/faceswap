@@ -5,8 +5,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtWidgets import QMenu
-
 from lib.gui.models.project import ProjectFile
 from lib.gui.services.project_session_service import PROJECT_KIND, TASK_KIND
 
@@ -117,7 +115,8 @@ def test_recent_menu_routes_saved_files(qtbot, monkeypatch, tmp_path: Path) -> N
     window._recent_files.add(first, PROJECT_KIND)  # pylint:disable=protected-access
     window._recent_files.add(second, TASK_KIND)  # pylint:disable=protected-access
     window._refresh_recent_menu()  # pylint:disable=protected-access
-    recent_menu = window.findChildren(QMenu)[1]
+    recent_menu = window._recent_menu  # pylint:disable=protected-access
+    assert recent_menu is not None
 
     recent_menu.actions()[0].trigger()
 
