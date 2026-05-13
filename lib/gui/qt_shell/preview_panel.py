@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -30,6 +30,8 @@ from lib.gui.services.preview_output_service import (
 class PreviewPanel(QWidget):
     """Runtime Preview panel for loading and refreshing extract/convert output images."""
 
+    DEFAULT_REFRESH_MS = 1500
+
     def __init__(
         self,
         service: PreviewOutputService | None = None,
@@ -37,6 +39,8 @@ class PreviewPanel(QWidget):
     ) -> None:
         super().__init__(parent)
         self._service = service or PreviewOutputService()
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.setInterval(self.DEFAULT_REFRESH_MS)
         self._source_label = QLabel("No preview source configured")
         self._status_label = QLabel("No preview images loaded")
         self._image_label = QLabel("No preview selected")
@@ -58,6 +62,24 @@ class PreviewPanel(QWidget):
         """Return the configured preview source path, if any."""
         source = self._service.source
         return None if source is None else str(source)
+
+    @property
+    def is_live_refreshing(self) -> bool:
+        """Return whether preview live refresh is active."""
+        return self._refresh_timer.isActive()
+
+    def start_live_refresh(self, interval_ms: int | None = None) -> None:
+        """Start periodic preview refresh for running jobs."""
+        if interval_ms is not None:
+            self._refresh_timer.setInterval(max(250, interval_ms))
+        if self._service.source is not None:
+            self._refresh_timer.start()
+            self._sync_actions()
+
+    def stop_live_refresh(self) -> None:
+        """Stop periodic preview refresh."""
+        self._refresh_timer.stop()
+        self._sync_actions()
 
     def restore_source(self, source: str | None) -> bool:
         """Restore a Preview source from saved UI state."""
@@ -86,6 +108,7 @@ class PreviewPanel(QWidget):
 
     def refresh_preview(self, *, validate: bool = False) -> bool:
         """Refresh preview image discovery and render the first available image."""
+        selected = self._selected_image_path()
         try:
             images = self._service.refresh(validate=validate)
         except (PreviewOutputError, OSError, ValueError) as err:
@@ -94,7 +117,7 @@ class PreviewPanel(QWidget):
             self._image_label.setText("No preview selected")
             self._sync_actions()
             return False
-        self._render_images(images)
+        self._render_images(images, selected_path=selected)
         self._update_source_label()
         self._set_status(len(images))
         self._sync_actions()
@@ -102,6 +125,7 @@ class PreviewPanel(QWidget):
 
     def clear_preview(self) -> None:
         """Clear preview source and rendered image state."""
+        self.stop_live_refresh()
         self._service.clear()
         self._image_list.clear()
         self._source_label.setText("No preview source configured")
@@ -160,6 +184,7 @@ class PreviewPanel(QWidget):
         self._refresh_button.clicked.connect(lambda _checked=False: self.refresh_preview())
         self._clear_button.clicked.connect(lambda _checked=False: self.clear_preview())
         self._image_list.currentItemChanged.connect(self._current_image_changed)
+        self._refresh_timer.timeout.connect(lambda: self.refresh_preview())
 
     def _open_output_dialog(self) -> None:
         """Prompt for preview output source and load it."""
@@ -176,18 +201,31 @@ class PreviewPanel(QWidget):
         if folder:
             self.load_output(folder)
 
-    def _render_images(self, images: tuple[PreviewOutputImage, ...]) -> None:
+    def _render_images(
+        self,
+        images: tuple[PreviewOutputImage, ...],
+        *,
+        selected_path: str | None = None,
+    ) -> None:
         """Render image filenames into the list widget."""
         self._image_list.clear()
         self._image_label.setPixmap(QPixmap())
         if not images:
             self._image_label.setText("No preview selected")
             return
-        for image in images:
+        selected_row = 0
+        for row, image in enumerate(images):
             item = QListWidgetItem(image.name)
             item.setData(Qt.UserRole, str(image.path))
             self._image_list.addItem(item)
-        self._image_list.setCurrentRow(0)
+            if selected_path == str(image.path):
+                selected_row = row
+        self._image_list.setCurrentRow(selected_row)
+
+    def _selected_image_path(self) -> str | None:
+        """Return the currently selected preview image path."""
+        current = self._image_list.currentItem()
+        return None if current is None else str(current.data(Qt.UserRole))
 
     def _current_image_changed(
         self,
@@ -209,16 +247,17 @@ class PreviewPanel(QWidget):
     def _set_status(self, image_count: int) -> None:
         """Update status text from current source and image count."""
         source = self._service.source
+        live = " (live)" if self.is_live_refreshing else ""
         if source is None:
             self._status_label.setText("No preview source configured")
         elif not source.exists():
-            self._status_label.setText(f"Waiting for preview output: {source}")
+            self._status_label.setText(f"Waiting for preview output: {source}{live}")
         elif image_count == 0:
-            self._status_label.setText("No preview images found")
+            self._status_label.setText(f"No preview images found{live}")
         elif image_count == 1:
-            self._status_label.setText("Loaded 1 preview image")
+            self._status_label.setText(f"Loaded 1 preview image{live}")
         else:
-            self._status_label.setText(f"Loaded {image_count} preview images")
+            self._status_label.setText(f"Loaded {image_count} preview images{live}")
 
     def _update_source_label(self) -> None:
         """Update source label text."""
