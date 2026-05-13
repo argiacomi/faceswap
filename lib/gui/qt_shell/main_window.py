@@ -10,17 +10,13 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QTextCursor
 from PySide6.QtWidgets import (
     QFileDialog,
-    QHBoxLayout,
-    QHeaderView,
     QLabel,
     QMainWindow,
     QMessageBox,
     QPlainTextEdit,
     QProgressBar,
-    QPushButton,
     QSplitter,
     QStatusBar,
-    QTableWidget,
     QTabWidget,
     QToolBar,
     QVBoxLayout,
@@ -28,6 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 from lib.gui.models.project import ProjectFile
+from lib.gui.qt_shell.analysis_panel import AnalysisPanel
 from lib.gui.qt_shell.command_panel import CommandPanel
 from lib.gui.qt_shell.command_schema import CommandSchema
 from lib.gui.qt_shell.command_schema_service import CommandSchemaService
@@ -140,46 +137,8 @@ class MainWindow(QMainWindow):
         return tabs
 
     def _analysis_panel(self) -> QWidget:
-        """Create the right-side Analysis panel skeleton."""
-        panel = QWidget()
-        panel.setMinimumWidth(0)
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(12, 12, 12, 8)
-        layout.setSpacing(8)
-
-        title = QLabel("Session Stats")
-        title.setAlignment(Qt.AlignCenter)
-        title.setObjectName("qt-shell-analysis-title")
-        layout.addWidget(title)
-
-        table = QTableWidget(0, 8)
-        table.setObjectName("qt-shell-session-stats")
-        table.setMinimumWidth(0)
-        table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        table.setHorizontalHeaderLabels(
-            (
-                "Graphs",
-                "#",
-                "Start",
-                "End",
-                "Elapsed",
-                "Batch",
-                "Iterations",
-                "EGs/sec",
-            )
-        )
-        layout.addWidget(table, 1)
-
-        footer = QHBoxLayout()
-        footer.addWidget(QLabel("No session data loaded"))
-        footer.addStretch(1)
-        for text in ("Open", "Save", "Clear"):
-            button = QPushButton(text)
-            button.setObjectName(f"qt-shell-analysis-{text.lower()}")
-            footer.addWidget(button)
-        layout.addLayout(footer)
-        return panel
+        """Create the right-side Analysis runtime panel."""
+        return AnalysisPanel(parent=self)
 
     @staticmethod
     def _display_placeholder(name: str) -> QWidget:
