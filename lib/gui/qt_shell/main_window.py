@@ -216,6 +216,7 @@ class MainWindow(QMainWindow):
         project_menu = menu_bar.addMenu("Project")
         self._menus.append(project_menu)
         project_menu.addAction("New Prototype Project", self._new_project)
+        project_menu.addAction("Close Project", self._close_project)
         project_menu.addAction("Open Project...", self._open_project)
         project_menu.addAction("Open Task...", self._open_task)
         project_menu.addSeparator()
@@ -460,6 +461,22 @@ class MainWindow(QMainWindow):
         """Clear the prototype project state."""
         if not self._confirm_discard_changes("create a new project"):
             return False
+        self._reset_project_state()
+        self._console.write_line("New prototype project")
+        self.statusBar().showMessage("New prototype project", 5000)
+        return True
+
+    def _close_project(self) -> bool:
+        """Close the current project/task state."""
+        if not self._confirm_discard_changes("close the current project"):
+            return False
+        self._reset_project_state()
+        self._console.write_line("Closed current project")
+        self.statusBar().showMessage("Project closed", 5000)
+        return True
+
+    def _reset_project_state(self) -> None:
+        """Reset project/task, command and display state to the initial shell state."""
         self._project = ProjectFile()
         self._project_filename = None
         self._file_kind = PROJECT_KIND
@@ -476,9 +493,6 @@ class MainWindow(QMainWindow):
             self._display_controller.set_runtime_state(None, running=False)
         self._sync_view_actions()
         self._set_modified(False)
-        self._console.write_line("New prototype project")
-        self.statusBar().showMessage("New prototype project", 5000)
-        return True
 
     def _open_project(self) -> None:
         """Open a project file from disk."""
@@ -572,6 +586,12 @@ class MainWindow(QMainWindow):
         confirm_discard: bool = True,
     ) -> bool:
         """Open a project or task file by filename."""
+        if not Path(filename).exists():
+            self._recent_files.remove(filename)
+            self._refresh_recent_menu()
+            self.statusBar().showMessage("Recent file no longer exists", 5000)
+            self._console.write_line(f"Recent file no longer exists: {filename}")
+            return False
         if confirm_discard and not self._confirm_discard_changes("open another file"):
             return False
         resolved_kind = kind or self._session_service.kind_from_filename(filename)
@@ -638,27 +658,38 @@ class MainWindow(QMainWindow):
         if self._recent_menu is None:
             return
         self._recent_menu.clear()
-        recent_files = self._recent_files.load()
+        recent_files = self._recent_files.prune_missing()
         if not recent_files:
             action = self._recent_menu.addAction("No recent files")
             action.setEnabled(False)
-            return
-        for item in recent_files:
-            label = f"{item.kind.title()}: {Path(item.filename).name}"
-            action = self._recent_menu.addAction(label)
-            action.setToolTip(item.filename)
-            action.triggered.connect(
-                lambda _checked=False, filename=item.filename, kind=item.kind: (
-                    self._open_session_file(
-                        filename,
-                        kind,
+        else:
+            for item in recent_files:
+                label = f"{item.kind.title()}: {Path(item.filename).name}"
+                action = self._recent_menu.addAction(label)
+                action.setToolTip(item.filename)
+                action.triggered.connect(
+                    lambda _checked=False, filename=item.filename, kind=item.kind: (
+                        self._open_session_file(
+                            filename,
+                            kind,
+                        )
                     )
                 )
-            )
+        self._recent_menu.addSeparator()
+        clear_action = self._recent_menu.addAction("Clear Recent Files", self._clear_recent_files)
+        clear_action.setEnabled(bool(recent_files))
+
+    def _clear_recent_files(self) -> None:
+        """Clear all recent-file entries."""
+        self._recent_files.clear()
+        self._refresh_recent_menu()
+        self._console.write_line("Cleared recent files")
+        self.statusBar().showMessage("Recent files cleared", 5000)
 
     def _list_recent_files(self) -> None:
         """Print recent files from RecentFilesStore to the console."""
-        recent_files = self._recent_files.load()
+        recent_files = self._recent_files.prune_missing()
+        self._refresh_recent_menu()
         if not recent_files:
             self._console.write_line("No recent files")
             return
