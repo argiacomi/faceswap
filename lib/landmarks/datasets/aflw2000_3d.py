@@ -18,7 +18,6 @@ from pathlib import Path
 import numpy as np
 
 from lib.landmarks.datasets import (
-    AFLW2000_3D_SOURCE,
     IMAGE_EXTS,
     _condition_labels_from_metadata,
     _explicit_scenario_groups,
@@ -26,10 +25,28 @@ from lib.landmarks.datasets import (
     _source_root,
     _write_manifest_and_audit,
 )
-from lib.landmarks.datasets.sources import DEFAULT_CACHE_DIR, is_archive, resolve_dataset_source
+from lib.landmarks.datasets.sources import (
+    DEFAULT_CACHE_DIR,
+    DatasetSourceSpec,
+    is_archive,
+    resolve_dataset_source,
+)
 from lib.landmarks.schema import normalize_landmarks
 
 logger = logging.getLogger(__name__)
+
+AFLW2000_3D_URL = "http://www.cbsr.ia.ac.cn/users/xiangyuzhu/projects/3DDFA/Database/AFLW2000-3D.zip"
+AFLW2000_3D_SHA256 = "252bc35274d65ff27b6e573aa96c2f4c116ad88452cc984fb882258c0ed6e2d8"
+AFLW2000_3D_SOURCE = DatasetSourceSpec(
+    dataset="AFLW2000-3D",
+    cache_subdir="aflw2000-3d",
+    canonical_archive="AFLW2000-3D.zip",
+    cache_aliases=("AFLW2000_3D.zip", "aflw2000-3d.zip", "aflw2000_3d.zip"),
+    extracted_aliases=("AFLW2000-3D", "AFLW2000_3D", "aflw2000-3d", "aflw2000_3d"),
+    url=AFLW2000_3D_URL,
+    sha256=AFLW2000_3D_SHA256,
+    manual_hint="Provide an extracted AFLW2000-3D directory/archive with image+.mat pairs.",
+)
 
 
 def _load_mat(path: Path) -> dict[str, T.Any]:
