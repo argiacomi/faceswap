@@ -46,35 +46,31 @@ class PipelinePaths:
         object.__setattr__(self, "cache", self.root / "cache")
         object.__setattr__(self, "baseline_metrics", self.root / "baseline_metrics")
         object.__setattr__(self, "weights", self.root / "weights")
-        object.__setattr__(
-            self, "weight_file", self.root / "weights" / "static_landmark_weights.json"
-        )
-        object.__setattr__(
-            self, "weight_report", self.root / "weights" / "static_weight_report.json"
-        )
+        object.__setattr__(self, "weight_file", self.root / "weights" / "static_landmark_weights.json")
+        object.__setattr__(self, "weight_report", self.root / "weights" / "static_weight_report.json")
         object.__setattr__(self, "weighted_metrics", self.root / "weighted_metrics")
         object.__setattr__(self, "debug", self.root / "debug")
         object.__setattr__(self, "summary", self.root / "run_summary.json")
 
 
 def _parse_csv(value: str) -> tuple[str, ...]:
-    """Parse comma-separated values."""
     return tuple(item.strip() for item in value.split(",") if item.strip())
 
 
+def _append_if(argv: list[str], flag: str, value: str) -> None:
+    if value:
+        argv.extend([flag, value])
+
+
 def _git_commit() -> str:
-    """Return the current git commit when available."""
     try:
-        result = subprocess.run(
-            ["git", "rev-parse", "HEAD"], check=True, capture_output=True, text=True
-        )
-    except Exception:  # pragma: no cover - depends on checkout environment
+        result = subprocess.run(["git", "rev-parse", "HEAD"], check=True, capture_output=True, text=True)
+    except Exception:
         return ""
     return result.stdout.strip()
 
 
 def _json_ready(value: T.Any) -> T.Any:
-    """Return a JSON-serializable copy of common argparse values."""
     if isinstance(value, Path):
         return str(value)
     if isinstance(value, tuple):
@@ -87,21 +83,11 @@ def _json_ready(value: T.Any) -> T.Any:
 
 
 def _ensure_dirs(paths: PipelinePaths) -> None:
-    """Create standard run directories."""
-    for path in (
-        paths.root,
-        paths.dataset,
-        paths.cache,
-        paths.baseline_metrics,
-        paths.weights,
-        paths.weighted_metrics,
-        paths.debug,
-    ):
+    for path in (paths.root, paths.dataset, paths.cache, paths.baseline_metrics, paths.weights, paths.weighted_metrics, paths.debug):
         path.mkdir(parents=True, exist_ok=True)
 
 
 def _initial_summary(args: argparse.Namespace, paths: PipelinePaths) -> dict[str, T.Any]:
-    """Create the run summary skeleton."""
     return {
         "args": _json_ready(vars(args)),
         "git_commit": _git_commit(),
@@ -119,35 +105,24 @@ def _initial_summary(args: argparse.Namespace, paths: PipelinePaths) -> dict[str
 
 
 def _write_summary(paths: PipelinePaths, summary: dict[str, T.Any]) -> None:
-    """Write run_summary.json."""
     paths.root.mkdir(parents=True, exist_ok=True)
-    paths.summary.write_text(
-        json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    paths.summary.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def _stage(summary: dict[str, T.Any], name: str, fn: T.Callable[[], T.Any]) -> T.Any:
-    """Run one named stage and record status, duration, and error."""
     started = time.time()
     record: dict[str, T.Any] = {"name": name, "status": "running", "error": ""}
     summary["stages"].append(record)
     try:
         result = fn()
-    except Exception as err:  # pylint:disable=broad-except
-        record.update(
-            {
-                "status": "failed",
-                "error": f"{type(err).__name__}: {err}",
-                "duration_seconds": round(time.time() - started, 3),
-            }
-        )
+    except Exception as err:
+        record.update({"status": "failed", "error": f"{type(err).__name__}: {err}", "duration_seconds": round(time.time() - started, 3)})
         raise
     record.update({"status": "ok", "duration_seconds": round(time.time() - started, 3)})
     return result
 
 
 def _prediction_roots(values: T.Sequence[str]) -> list[str]:
-    """Return normalized model=path prediction roots."""
     roots = []
     for value in values:
         if "=" not in value:
@@ -159,26 +134,8 @@ def _prediction_roots(values: T.Sequence[str]) -> list[str]:
     return roots
 
 
-def _append_if(argv: list[str], flag: str, value: str) -> None:
-    """Append a flag/value pair when value is not empty."""
-    if value:
-        argv.extend([flag, value])
-
-
-def _dataset_build_args(
-    args: argparse.Namespace, dataset: str, paths: PipelinePaths, *, first: bool
-) -> list[str]:
-    """Return argv for one dataset build step."""
-    argv = [
-        "--dataset",
-        dataset,
-        "--output-dir",
-        str(paths.dataset),
-        "--manifest-mode",
-        "replace" if first else "merge",
-        "--log-level",
-        args.log_level,
-    ]
+def _dataset_build_args(args: argparse.Namespace, dataset: str, paths: PipelinePaths, *, first: bool) -> list[str]:
+    argv = ["--dataset", dataset, "--output-dir", str(paths.dataset), "--manifest-mode", "replace" if first else "merge", "--log-level", args.log_level]
     if args.write_overlays:
         argv.append("--write-overlays")
     if args.samples_per_scenario is not None:
@@ -198,6 +155,8 @@ def _dataset_build_args(
         _append_if(argv, "--source-dir", args.wflw_source_dir)
         _append_if(argv, "--source-zip", args.wflw_source_zip)
         _append_if(argv, "--download-url", args.wflw_download_url)
+        if args.wflw_download_official:
+            argv.append("--wflw-download-official")
     elif dataset == "cofw":
         _append_if(argv, "--cofw-json", args.cofw_json)
         _append_if(argv, "--image-root", args.cofw_image_root)
@@ -206,9 +165,7 @@ def _dataset_build_args(
         _append_if(argv, "--download-url", args.cofw_download_url)
     elif dataset == "directory":
         if not args.directory_source_dir:
-            raise ValueError(
-                "--directory-source-dir is required when --datasets includes directory"
-            )
+            raise ValueError("--directory-source-dir is required when --datasets includes directory")
         argv.extend(["--source-dir", args.directory_source_dir])
         if args.recursive:
             argv.append("--recursive")
@@ -223,10 +180,7 @@ def _dataset_build_args(
     return argv
 
 
-def _build_datasets(
-    args: argparse.Namespace, paths: PipelinePaths, summary: dict[str, T.Any]
-) -> None:
-    """Build or merge requested dataset manifests."""
+def _build_datasets(args: argparse.Namespace, paths: PipelinePaths, summary: dict[str, T.Any]) -> None:
     successful = 0
     for dataset in _parse_csv(args.datasets):
         first = successful == 0
@@ -246,23 +200,14 @@ def _build_datasets(
 
 
 def _prediction_mode(args: argparse.Namespace) -> str:
-    """Return import or run prediction mode."""
     if args.prediction_mode != "auto":
         return args.prediction_mode
     return "import" if args.prediction_root else "run"
 
 
 def _cache_predictions(args: argparse.Namespace, paths: PipelinePaths) -> None:
-    """Run prediction import or model generation into the cache."""
     mode = _prediction_mode(args)
-    argv = [
-        "--manifest",
-        str(paths.manifest),
-        "--models",
-        args.models,
-        "--cache-dir",
-        str(paths.cache),
-    ]
+    argv = ["--manifest", str(paths.manifest), "--models", args.models, "--cache-dir", str(paths.cache)]
     if args.refresh_predictions:
         argv.append("--refresh")
     if mode == "import":
@@ -273,109 +218,42 @@ def _cache_predictions(args: argparse.Namespace, paths: PipelinePaths) -> None:
         for root in roots:
             argv.extend(["--prediction-root", root])
     else:
-        argv.extend(
-            [
-                "--checkpoint-tag",
-                args.checkpoint_tag,
-                "--run-models",
-                "--batch-size",
-                str(args.batch_size),
-                "--device",
-                args.device,
-                "--gt-roi-scale",
-                str(args.gt_roi_scale),
-            ]
-        )
+        argv.extend(["--checkpoint-tag", args.checkpoint_tag, "--run-models", "--batch-size", str(args.batch_size), "--device", args.device, "--gt-roi-scale", str(args.gt_roi_scale)])
         if args.no_gt_roi:
             argv.append("--no-gt-roi")
     cache_predictions_main(argv)
 
 
 def _compute_weights(args: argparse.Namespace, paths: PipelinePaths) -> None:
-    """Compute and write static landmark weights plus report."""
-    weights, mean_errors = compute_static_weights(
-        paths.manifest, paths.cache, _parse_csv(args.models)
-    )
+    weights, mean_errors = compute_static_weights(paths.manifest, paths.cache, _parse_csv(args.models))
     save_weights(paths.weight_file, weights)
     dominant = {}
     if weights:
         import numpy as np
-
         model_names = list(weights)
         dominant_indices = np.asarray([weights[model] for model in model_names]).argmax(axis=0)
-        dominant = {
-            str(index): model_names[int(model_index)]
-            for index, model_index in enumerate(dominant_indices)
-        }
-    paths.weight_report.write_text(
-        json.dumps(
-            {
-                "models": list(weights),
-                "mean_errors": mean_errors,
-                "dominant_model_by_landmark": dominant,
-                "weights": weights,
-            },
-            indent=2,
-            sort_keys=True,
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+        dominant = {str(index): model_names[int(model_index)] for index, model_index in enumerate(dominant_indices)}
+    paths.weight_report.write_text(json.dumps({"models": list(weights), "mean_errors": mean_errors, "dominant_model_by_landmark": dominant, "weights": weights}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def _run_baseline(args: argparse.Namespace, paths: PipelinePaths) -> dict[str, T.Any]:
-    """Run baseline quality harness."""
+def _run_harness(args: argparse.Namespace, paths: PipelinePaths, *, weighted: bool) -> dict[str, T.Any]:
     return run_quality_harness(
         paths.manifest,
         paths.cache,
         models=_parse_csv(args.models),
-        variants=_parse_csv(args.baseline_variants),
-        output_dir=paths.baseline_metrics,
-        failure_threshold=args.failure_threshold,
-        outlier_threshold=args.outlier_threshold,
-    )
-
-
-def _run_weighted(args: argparse.Namespace, paths: PipelinePaths) -> dict[str, T.Any]:
-    """Run weighted quality harness with generated static weights."""
-    return run_quality_harness(
-        paths.manifest,
-        paths.cache,
-        models=_parse_csv(args.models),
-        variants=_parse_csv(args.weighted_variants),
-        weights_path=paths.weight_file,
-        output_dir=paths.weighted_metrics,
+        variants=_parse_csv(args.weighted_variants if weighted else args.baseline_variants),
+        weights_path=paths.weight_file if weighted else None,
+        output_dir=paths.weighted_metrics if weighted else paths.baseline_metrics,
         failure_threshold=args.failure_threshold,
         outlier_threshold=args.outlier_threshold,
     )
 
 
 def _run_failure_viewer(args: argparse.Namespace, paths: PipelinePaths) -> None:
-    """Generate debug overlays and contact sheets."""
-    failure_viewer_main(
-        [
-            "--metrics",
-            str(paths.weighted_metrics / "metrics.json"),
-            "--manifest",
-            str(paths.manifest),
-            "--cache-dir",
-            str(paths.cache),
-            "--output-dir",
-            str(paths.debug),
-            "--models",
-            args.models,
-            "--weights",
-            str(paths.weight_file),
-            "--limit",
-            str(args.failure_viewer_limit),
-            "--outlier-threshold",
-            str(args.outlier_threshold),
-        ]
-    )
+    failure_viewer_main(["--metrics", str(paths.weighted_metrics / "metrics.json"), "--manifest", str(paths.manifest), "--cache-dir", str(paths.cache), "--output-dir", str(paths.debug), "--models", args.models, "--weights", str(paths.weight_file), "--limit", str(args.failure_viewer_limit), "--outlier-threshold", str(args.outlier_threshold)])
 
 
 def _dataset_counts(manifest_path: Path) -> dict[str, int]:
-    """Return sample counts by dataset."""
     counts: dict[str, int] = {}
     if not manifest_path.is_file():
         return counts
@@ -386,10 +264,7 @@ def _dataset_counts(manifest_path: Path) -> dict[str, int]:
     return counts
 
 
-def _cache_counts(
-    manifest_path: Path, cache_dir: Path, models: T.Sequence[str]
-) -> dict[str, T.Any]:
-    """Return cache prediction counts by model and sample."""
+def _cache_counts(manifest_path: Path, cache_dir: Path, models: T.Sequence[str]) -> dict[str, T.Any]:
     if not manifest_path.is_file():
         return {"samples": 0, "predictions": 0, "models": {}}
     cache = DiskPredictionCache(cache_dir)
@@ -405,15 +280,7 @@ def _cache_counts(
     return {"samples": sample_count, "predictions": prediction_count, "models": model_counts}
 
 
-def _update_summary_outputs(
-    summary: dict[str, T.Any],
-    paths: PipelinePaths,
-    args: argparse.Namespace,
-    *,
-    baseline: dict[str, T.Any] | None,
-    weighted: dict[str, T.Any] | None,
-) -> None:
-    """Populate output-derived run summary fields."""
+def _update_summary_outputs(summary: dict[str, T.Any], paths: PipelinePaths, args: argparse.Namespace, *, baseline: dict[str, T.Any] | None, weighted: dict[str, T.Any] | None) -> None:
     models = _parse_csv(args.models)
     summary["dataset_counts"] = _dataset_counts(paths.manifest)
     summary["cache_counts"] = _cache_counts(paths.manifest, paths.cache, models)
@@ -427,26 +294,19 @@ def _update_summary_outputs(
         deltas = weighted.get("ensemble_deltas_vs_best_single", {})
         summary["ensemble_deltas_vs_best_single"] = deltas
         summary["threshold_failed"] = bool(weighted.get("threshold_failed"))
-        summary["ensemble_improved_over_best_single"] = (
-            any(float(delta) < 0 for delta in deltas.values()) if deltas else None
-        )
+        summary["ensemble_improved_over_best_single"] = any(float(delta) < 0 for delta in deltas.values()) if deltas else None
     elif baseline:
         summary["threshold_failed"] = bool(baseline.get("threshold_failed"))
 
 
 def _dry_run(args: argparse.Namespace, paths: PipelinePaths, summary: dict[str, T.Any]) -> int:
-    """Write a dry-run summary without executing pipeline stages."""
     _ensure_dirs(paths)
     planned = []
     if args.build_datasets and not args.skip_dataset_build:
         planned.extend(f"dataset:{dataset}" for dataset in _parse_csv(args.datasets))
     else:
         planned.append("dataset:reuse-existing")
-    planned.append(
-        f"predictions:{_prediction_mode(args)}"
-        if args.run_predictions and not args.skip_predictions
-        else "predictions:skipped"
-    )
+    planned.append(f"predictions:{_prediction_mode(args)}" if args.run_predictions and not args.skip_predictions else "predictions:skipped")
     if not args.skip_baseline:
         planned.append("baseline_harness")
     planned.extend(["compute_static_weights", "weighted_harness"])
@@ -460,7 +320,6 @@ def _dry_run(args: argparse.Namespace, paths: PipelinePaths, summary: dict[str, 
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    """Return CLI parser."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--datasets", default="wflw,cofw")
     parser.add_argument("--output-root", required=True)
@@ -486,9 +345,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--outlier-threshold", type=float, default=3.5)
     parser.add_argument("--failure-viewer-limit", type=int, default=32)
     parser.add_argument("--baseline-variants", default="plain_average")
-    parser.add_argument(
-        "--weighted-variants", default="static_weighted,static_weighted_outliers,weighted_median"
-    )
+    parser.add_argument("--weighted-variants", default="static_weighted,static_weighted_outliers,weighted_median")
     parser.add_argument("--samples-per-scenario", type=int, default=None)
     parser.add_argument("--scenarios", default="")
     parser.add_argument("--allow-overlap", action="store_true")
@@ -501,6 +358,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--wflw-source-dir", default="")
     parser.add_argument("--wflw-source-zip", default="")
     parser.add_argument("--wflw-download-url", default="")
+    parser.add_argument("--wflw-download-official", action="store_true")
     parser.add_argument("--cofw-json", default="")
     parser.add_argument("--cofw-image-root", default="")
     parser.add_argument("--cofw-source-dir", default="")
@@ -513,19 +371,13 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--aflw2000-3d-source-zip", default="")
     parser.add_argument("--aflw2000-3d-download-url", default="")
     parser.add_argument("--directory-source-dir", default="")
-    parser.add_argument(
-        "--log-level", default="INFO", choices=("DEBUG", "INFO", "WARNING", "ERROR")
-    )
+    parser.add_argument("--log-level", default="INFO", choices=("DEBUG", "INFO", "WARNING", "ERROR"))
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
-    """CLI entrypoint."""
-    parser = _build_parser()
-    args = parser.parse_args(argv)
-    logging.basicConfig(
-        level=getattr(logging, args.log_level), format="%(levelname)s:%(name)s:%(message)s"
-    )
+    args = _build_parser().parse_args(argv)
+    logging.basicConfig(level=getattr(logging, args.log_level), format="%(levelname)s:%(name)s:%(message)s")
     paths = PipelinePaths(Path(args.output_root).expanduser())
     summary = _initial_summary(args, paths)
     if args.batch_size <= 0:
@@ -545,18 +397,16 @@ def main(argv: list[str] | None = None) -> int:
         if args.build_datasets and not args.skip_dataset_build:
             _stage(summary, "build_datasets", lambda: _build_datasets(args, paths, summary))
         elif not paths.manifest.is_file():
-            raise FileNotFoundError(
-                f"manifest not found at {paths.manifest}. Pass --build-datasets or create it first."  # noqa: E501
-            )
+            raise FileNotFoundError(f"manifest not found at {paths.manifest}. Pass --build-datasets or create it first.")
         if args.run_predictions and not args.skip_predictions:
             _stage(summary, "cache_predictions", lambda: _cache_predictions(args, paths))
         if not args.skip_baseline:
-            baseline = _stage(summary, "baseline_harness", lambda: _run_baseline(args, paths))
+            baseline = _stage(summary, "baseline_harness", lambda: _run_harness(args, paths, weighted=False))
         _stage(summary, "compute_static_weights", lambda: _compute_weights(args, paths))
-        weighted = _stage(summary, "weighted_harness", lambda: _run_weighted(args, paths))
+        weighted = _stage(summary, "weighted_harness", lambda: _run_harness(args, paths, weighted=True))
         if not args.skip_failure_viewer:
             _stage(summary, "failure_viewer", lambda: _run_failure_viewer(args, paths))
-    except Exception as err:  # pylint:disable=broad-except
+    except Exception as err:
         exit_code = 1
         summary["failed_stage_error"] = f"{type(err).__name__}: {err}"
         logger.exception("Pipeline failed")
@@ -564,10 +414,7 @@ def main(argv: list[str] | None = None) -> int:
         _update_summary_outputs(summary, paths, args, baseline=baseline, weighted=weighted)
         _write_summary(paths, summary)
 
-    print(
-        f"Pipeline {'failed' if exit_code else 'complete'}. See: {paths.summary}",
-        file=sys.stderr if exit_code else sys.stdout,
-    )
+    print(f"Pipeline {'failed' if exit_code else 'complete'}. See: {paths.summary}", file=sys.stderr if exit_code else sys.stdout)
     return exit_code
 
 
