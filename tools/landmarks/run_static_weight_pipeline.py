@@ -221,6 +221,10 @@ def _dataset_build_args(
         _append_if(argv, "--source-zip", args.cofw_source_zip)
         _append_if(argv, "--download-url", args.cofw_download_url)
         _append_source_dir_if_no_competing_source(argv, args.cofw_source_dir)
+    elif dataset == "300w":
+        _append_if(argv, "--source-zip", args.w300_source_zip)
+        _append_if(argv, "--download-url", args.w300_download_url)
+        _append_source_dir_if_no_competing_source(argv, args.w300_source_dir)
     elif dataset == "directory":
         if not args.directory_source_dir:
             raise ValueError(
@@ -262,7 +266,6 @@ def _build_datasets(
     if successful == 0:
         raise RuntimeError("no dataset manifests were built successfully")
     _require_manifest_samples(paths.manifest)
-
 
 
 def _apply_detector_bboxes(args: argparse.Namespace, paths: PipelinePaths) -> dict[str, T.Any]:
@@ -606,6 +609,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cofw-source-dir", default=_default_dataset_source_dir("cofw"))
     parser.add_argument("--cofw-source-zip", default="")
     parser.add_argument("--cofw-download-url", default="")
+    parser.add_argument("--300w-source-dir", dest="w300_source_dir", default=_default_dataset_source_dir("300w"))
+    parser.add_argument("--300w-source-zip", dest="w300_source_zip", default="")
+    parser.add_argument("--300w-download-url", dest="w300_download_url", default="")
     parser.add_argument("--merl-rav-source-dir", default=_default_dataset_source_dir("merl-rav"))
     parser.add_argument("--merl-rav-source-zip", default="")
     parser.add_argument("--merl-rav-download-url", default="")
