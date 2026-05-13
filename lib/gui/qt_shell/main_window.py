@@ -713,14 +713,32 @@ class MainWindow(QMainWindow):
         self._restore_splitter(self._main_splitter, state.get("main_splitter"))
         self._restore_splitter(self._vertical_splitter, state.get("vertical_splitter"))
         if self._analysis_panel_widget is not None:
-            self._analysis_panel_widget.restore_source(self._string_or_none(state.get("analysis_source")))
+            self._analysis_panel_widget.restore_source(
+                self._string_or_none(state.get("analysis_source"))
+            )
         if self._preview_panel_widget is not None:
-            self._preview_panel_widget.restore_source(self._string_or_none(state.get("preview_source")))
+            self._preview_panel_widget.restore_source(
+                self._string_or_none(state.get("preview_source"))
+            )
         if self._graph_panel_widget is not None:
-            self._graph_panel_widget.restore_source(self._string_or_none(state.get("graph_source")))
+            self._graph_panel_widget.restore_source(
+                self._string_or_none(state.get("graph_source"))
+            )
         display_tab = self._string_or_none(state.get("display_tab"))
         if display_tab:
-            self._show_display_tab(display_tab)
+            self._restore_display_tab(display_tab)
+
+    def _restore_display_tab(self, name: str) -> None:
+        """Restore a saved display tab, making it visible when it still exists."""
+        if self._display_tabs_widget is None:
+            return
+        for index in range(self._display_tabs_widget.count()):
+            if self._display_tabs_widget.tabText(index) != name:
+                continue
+            self._display_tabs_widget.setTabVisible(index, True)
+            self._display_tabs_widget.setCurrentIndex(index)
+            self._sync_view_actions()
+            return
 
     @staticmethod
     def _restore_splitter(splitter: QSplitter | None, sizes: object) -> None:

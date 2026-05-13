@@ -69,6 +69,8 @@ def test_restore_ui_state_restores_geometry_and_panel_sources(  # type:ignore[no
     """MainWindow should restore display tab, geometry and panel source paths."""
     window = _main_window(qtbot, monkeypatch, tmp_path)
     restored: dict[str, object] = {}
+    main_splitter_sizes = window._main_splitter.sizes()  # pylint:disable=protected-access
+    vertical_splitter_sizes = window._vertical_splitter.sizes()  # pylint:disable=protected-access
     monkeypatch.setattr(
         window._analysis_panel_widget,  # pylint:disable=protected-access
         "restore_source",
@@ -89,8 +91,8 @@ def test_restore_ui_state_restores_geometry_and_panel_sources(  # type:ignore[no
         {
             "display_tab": "Preview",
             "window_size": [900, 600],
-            "main_splitter": [300, 600],
-            "vertical_splitter": [500, 100],
+            "main_splitter": main_splitter_sizes,
+            "vertical_splitter": vertical_splitter_sizes,
             "analysis_source": "analysis_state.json",
             "preview_source": "preview-output",
             "graph_source": "graph_state.json",
@@ -105,8 +107,10 @@ def test_restore_ui_state_restores_geometry_and_panel_sources(  # type:ignore[no
         "graph": "graph_state.json",
     }
     assert tabs.tabText(tabs.currentIndex()) == "Preview"
-    assert window._main_splitter.sizes() == [300, 600]  # pylint:disable=protected-access
-    assert window._vertical_splitter.sizes() == [500, 100]  # pylint:disable=protected-access
+    assert window._main_splitter.sizes() == main_splitter_sizes  # pylint:disable=protected-access
+    assert (  # pylint:disable=protected-access
+        window._vertical_splitter.sizes() == vertical_splitter_sizes
+    )
     assert window.width() == 900
     assert window.height() == 600
 
