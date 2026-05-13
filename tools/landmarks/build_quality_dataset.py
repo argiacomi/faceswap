@@ -17,7 +17,7 @@ from lib.landmarks.datasets import (
     build_merl_rav_manifest,
     build_wflw_manifest,
 )
-from lib.landmarks.datasets.sources import DEFAULT_CACHE_DIR
+from lib.landmarks.datasets.sources import DEFAULT_CACHE_DIR, resolve_wflw_official_source
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +82,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "without regenerating data.",
     )
     parser.add_argument("--wflw-annotations", default=None)
+    parser.add_argument(
+        "--wflw-download-official",
+        action="store_true",
+        help="Download official WFLW annotations and images into the dataset cache.",
+    )
     parser.add_argument("--cofw-json", default=None)
     parser.add_argument("--image-root", default=None)
     parser.add_argument("--recursive", action="store_true")
@@ -117,7 +122,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 def _validate_args(args: argparse.Namespace) -> None:
     """Validate source-mode combinations before building a manifest."""
     if args.audit_only:
-        if any((args.wflw_annotations, args.cofw_json, args.source_dir, args.source_zip)):
+        if any(
+            (
+                args.wflw_annotations,
+                args.wflw_download_official,
+                args.cofw_json,
+                args.source_dir,
+                args.source_zip,
+            )
+        ):
             raise ValueError(
                 "--audit-only only accepts --dataset, --output-dir, "
                 "--allow-overlap, and logging options"
@@ -128,6 +141,7 @@ def _validate_args(args: argparse.Namespace) -> None:
 
     source_modes = [
         bool(args.wflw_annotations),
+        bool(args.wflw_download_official),
         bool(args.cofw_json),
         bool(args.source_dir),
         bool(args.source_zip),
@@ -136,21 +150,38 @@ def _validate_args(args: argparse.Namespace) -> None:
         # image_root is an adjunct, not a source mode. Avoid ambiguous datasets.
         raise ValueError(
             "Pass only one source mode: --wflw-annotations, "
-            "--cofw-json, --source-dir, or --source-zip"
+            "--wflw-download-official, --cofw-json, --source-dir, or --source-zip"
         )
     if args.dataset == "wflw" and args.cofw_json:
         raise ValueError("--cofw-json is only valid with --dataset cofw")
-    if args.dataset == "cofw" and args.wflw_annotations:
-        raise ValueError("--wflw-annotations is only valid with --dataset wflw")
+    if args.dataset == "cofw" and (args.wflw_annotations or args.wflw_download_official):
+        raise ValueError("WFLW source options are only valid with --dataset wflw")
+    if args.dataset != "wflw" and args.wflw_download_official:
+        raise ValueError("--wflw-download-official is only valid with --dataset wflw")
     if args.dataset == "directory":
         if not args.source_dir:
             raise ValueError("--dataset directory requires --source-dir")
-        if args.source_zip or args.wflw_annotations or args.cofw_json:
+        if args.source_zip or args.wflw_annotations or args.wflw_download_official or args.cofw_json:
             raise ValueError("--dataset directory only supports --source-dir")
-    if args.dataset in {"merl-rav", "aflw2000-3d"} and (args.wflw_annotations or args.cofw_json):
+    if args.dataset in {"merl-rav", "aflw2000-3d"} and (
+        args.wflw_annotations or args.wflw_download_official or args.cofw_json
+    ):
         raise ValueError(f"--dataset {args.dataset} only supports --source-dir/--source-zip")
     if args.no_download and args.force_download:
         raise ValueError("--no-download and --force-download cannot be combined")
+
+
+def _wflw_source_dir(args: argparse.Namespace) -> str | None:
+    """Return an explicit WFLW source dir, resolving official multipart downloads."""
+    if not args.wflw_download_official:
+        return args.source_dir
+    return str(
+        resolve_wflw_official_source(
+            cache_dir=args.cache_dir,
+            force_download=args.force_download,
+            no_download=args.no_download,
+        )
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -171,7 +202,7 @@ def main(argv: list[str] | None = None) -> int:
             args.wflw_annotations,
             args.output_dir,
             image_root=args.image_root,
-            source_dir=args.source_dir,
+            source_dir=_wflw_source_dir(args),
             source_zip=args.source_zip,
             cache_dir=args.cache_dir,
             download_url=args.download_url,

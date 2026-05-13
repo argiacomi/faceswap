@@ -90,6 +90,54 @@ class DatasetSourceSpec:
         return self.cache_subdir.strip("/") or self.dataset.lower()
 
 
+@dataclass(frozen=True)
+class MultiSourcePart:
+    """One archive/source that contributes to a multipart dataset cache."""
+
+    name: str
+    archive_name: str
+    url: str | None = None
+    google_drive_file_id: str | None = None
+    sha256: str | None = None
+
+
+@dataclass(frozen=True)
+class MultiDatasetSourceSpec:
+    """Known source information for datasets distributed as multiple archives."""
+
+    dataset: str
+    cache_subdir: str
+    parts: tuple[MultiSourcePart, ...]
+    manual_hint: str = ""
+
+    @property
+    def cache_root_name(self) -> str:
+        """Return the cache subdirectory for this dataset."""
+        return self.cache_subdir.strip("/") or self.dataset.lower()
+
+
+WFLW_OFFICIAL_SOURCE = MultiDatasetSourceSpec(
+    dataset="WFLW",
+    cache_subdir="wflw",
+    parts=(
+        MultiSourcePart(
+            name="annotations",
+            archive_name="WFLW_annotations.tar.gz",
+            url=WFLW_ANNOTATIONS_URL,
+        ),
+        MultiSourcePart(
+            name="images",
+            archive_name="WFLW_images.zip",
+            google_drive_file_id=WFLW_IMAGES_GOOGLE_DRIVE_FILE_ID,
+        ),
+    ),
+    manual_hint=(
+        "Official WFLW requires both annotation and image downloads. "
+        "Google Drive image downloads require the optional 'gdown' dependency."
+    ),
+)
+
+
 def _default_source_value(spec: DatasetSourceSpec, key: str) -> str | None:
     """Return a default source value for ``spec`` when the spec leaves it unset."""
     defaults = DEFAULT_DOWNLOAD_SOURCES.get(spec.dataset, {})
@@ -128,7 +176,7 @@ def _archive_name(spec: DatasetSourceSpec) -> str:
     return names[0] if names else f"{spec.dataset.lower()}.zip"
 
 
-def _manual_hint(spec: DatasetSourceSpec) -> str:
+def _manual_hint(spec: DatasetSourceSpec | MultiDatasetSourceSpec) -> str:
     """Return the best manual setup hint for ``spec``."""
     parts = [
         item for item in (spec.manual_hint, OFFICIAL_SOURCE_NOTES.get(spec.dataset, "")) if item
@@ -317,6 +365,116 @@ def _extracted_matches_archive(
     if not archive.is_file() or not extracted.is_dir():
         return False
     return _extraction_is_fresh(extracted, _archive_fingerprint(archive, expected_sha256))
+
+
+def _multipart_fingerprint(
+    archives: T.Mapping[str, Path],
+    parts: T.Sequence[MultiSourcePart],
+) -> dict[str, T.Any]:
+    """Return extraction freshness metadata for a multipart dataset source."""
+    return {
+        "multipart": True,
+        "parts": {
+            part.name: _archive_fingerprint(archives[part.name], part.sha256)
+            for part in parts
+        },
+    }
+
+
+def _multipart_archives_are_cached(
+    spec: MultiDatasetSourceSpec,
+    cache_root: Path,
+) -> dict[str, Path] | None:
+    """Return cached archive paths when all multipart source parts are present."""
+    archives = {part.name: cache_root / part.archive_name for part in spec.parts}
+    if all(path.is_file() for path in archives.values()):
+        return archives
+    return None
+
+
+def _extract_multipart_archives(
+    archives: T.Mapping[str, Path],
+    spec: MultiDatasetSourceSpec,
+    destination: Path,
+    *,
+    force: bool,
+) -> Path:
+    """Extract all multipart archives into one managed cache directory."""
+    payload = _multipart_fingerprint(archives, spec.parts)
+    if not force and _extraction_is_fresh(destination, payload):
+        logger.info("Using cached extracted %s multipart source: %s", spec.dataset, destination)
+        return destination
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    tmp_dir = Path(
+        tempfile.mkdtemp(prefix=f"{destination.name}.", suffix=".part", dir=destination.parent)
+    )
+    try:
+        for part in spec.parts:
+            logger.info("Extracting %s %s into cache: %s", spec.dataset, part.name, destination)
+            _extract_archive(archives[part.name], tmp_dir)
+        _write_extraction_marker(tmp_dir, payload)
+        if destination.exists():
+            if destination.is_dir():
+                shutil.rmtree(destination)
+            else:
+                destination.unlink()
+        os.replace(tmp_dir, destination)
+    except Exception:
+        if tmp_dir.exists():
+            shutil.rmtree(tmp_dir)
+        raise
+    return destination
+
+
+def resolve_multipart_dataset_source(
+    spec: MultiDatasetSourceSpec,
+    *,
+    cache_dir: str | os.PathLike[str] = DEFAULT_CACHE_DIR,
+    force_download: bool = False,
+    no_download: bool = False,
+) -> Path:
+    """Download/cache/extract a dataset distributed across multiple archives."""
+    cache_root = Path(cache_dir) / spec.cache_root_name
+    extracted = cache_root / EXTRACTED_DIR_NAME
+    archives = None if force_download else _multipart_archives_are_cached(spec, cache_root)
+    if archives is not None:
+        for part in spec.parts:
+            verify_sha256(archives[part.name], part.sha256, label=f"{spec.dataset} {part.name}")
+        return _extract_multipart_archives(archives, spec, extracted, force=False)
+
+    if no_download:
+        raise FileNotFoundError(
+            f"{spec.dataset} multipart source not found in {cache_root}. "
+            f"Download disabled by --no-download.{_manual_hint(spec)}"
+        )
+
+    archives = {}
+    for part in spec.parts:
+        archives[part.name] = download(
+            part.url,
+            cache_root / part.archive_name,
+            force=force_download,
+            google_drive_file_id=part.google_drive_file_id,
+            expected_sha256=part.sha256,
+            label=f"{spec.dataset} {part.name}",
+        )
+    return _extract_multipart_archives(archives, spec, extracted, force=force_download)
+
+
+def resolve_wflw_official_source(
+    *,
+    cache_dir: str | os.PathLike[str] = DEFAULT_CACHE_DIR,
+    force_download: bool = False,
+    no_download: bool = False,
+) -> Path:
+    """Resolve official WFLW annotations plus image archives into the dataset cache."""
+    return resolve_multipart_dataset_source(
+        WFLW_OFFICIAL_SOURCE,
+        cache_dir=cache_dir,
+        force_download=force_download,
+        no_download=no_download,
+    )
 
 
 def extract_archive_to_cache(
