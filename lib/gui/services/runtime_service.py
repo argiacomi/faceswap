@@ -9,22 +9,24 @@ from lib.utils import get_module_objects
 
 from .progress_parser import ProgressParser
 from .runtime_events import ParsedRuntimeOutput, RuntimeEvent
+from .runtime_session_services import RuntimeTerminationPolicy, TrainingSessionRuntimeService
 
 RuntimeEventCallback = T.Callable[[RuntimeEvent], None]
 JobEventCallback = RuntimeEventCallback
 
 
 class ProcessRuntimeService:
-    """Emit structured events parsed from a running job's stdout/stderr.
+    """Emit structured events parsed from a running job's stdout/stderr."""
 
-    This is intentionally narrow for the first runtime-events pass. Existing process launching and
-    console rendering can keep their behavior while callers route process output through this class
-    to receive progress/status events.
-    """
-
-    def __init__(self, command: str | None = None) -> None:
+    def __init__(
+        self,
+        command: str | None = None,
+        *,
+        training_session: TrainingSessionRuntimeService | None = None,
+    ) -> None:
         self._command = command
         self._parser = ProgressParser()
+        self._training_session = training_session or TrainingSessionRuntimeService()
         self._event_callbacks: list[RuntimeEventCallback] = []
 
     @property
@@ -37,6 +39,11 @@ class ProcessRuntimeService:
         self._command = value
         self._parser.reset()
 
+    @property
+    def training_session(self) -> TrainingSessionRuntimeService:
+        """Return the training-session service used for saved-model runtime events."""
+        return self._training_session
+
     def add_event_callback(self, callback: RuntimeEventCallback) -> None:
         """Register a callback for emitted runtime events."""
         self._event_callbacks.append(callback)
@@ -48,7 +55,12 @@ class ProcessRuntimeService:
     def process_stdout(self, output: str) -> ParsedRuntimeOutput:
         """Parse one stdout line and emit any structured events."""
         parsed = self._parser.parse_stdout(self._command, output)
-        self._emit_all(parsed.events)
+        session_events = self._training_session.events_for_stdout(self._command, output)
+        self._emit_all((*parsed.events, *session_events))
+        if session_events:
+            return ParsedRuntimeOutput(
+                events=(*parsed.events, *session_events), consumed=parsed.consumed
+            )
         return parsed
 
     def process_stderr(self, output: str) -> ParsedRuntimeOutput:
@@ -60,6 +72,8 @@ class ProcessRuntimeService:
     def finish(self, returncode: int) -> RuntimeEvent:
         """Emit the final status event for the job."""
         event = self._parser.final_status(self._command, returncode)
+        if RuntimeTerminationPolicy.normalize_command(self._command) == "train":
+            self._training_session.stop()
         self._emit(event)
         return event
 

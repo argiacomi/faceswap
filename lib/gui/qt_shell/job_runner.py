@@ -8,7 +8,9 @@ import typing as T
 
 from PySide6.QtCore import QObject, QProcess, QTimer, Signal
 
+from lib.gui.services.command_context import CommandExecutionContext
 from lib.gui.services.runtime_service import ProcessRuntimeService
+from lib.gui.services.runtime_session_services import RuntimeTerminationPolicy
 
 StreamName = T.Literal["stdout", "stderr"]
 
@@ -26,8 +28,13 @@ class JobRunner(QObject):
         self.process: QProcess | None = None
         self._runtime = ProcessRuntimeService()
         self._runtime.add_event_callback(self.progress.emit)
+        self._termination_policy = RuntimeTerminationPolicy()
         self._stdout_buffer = ""
         self._stderr_buffer = ""
+
+    def configure_runtime_context(self, context: CommandExecutionContext) -> None:
+        """Configure runtime services with command-derived context."""
+        self._runtime.training_session.configure(context)
 
     def start(self, argv: list[str], *, command: str | None = None) -> None:
         """Start a command using QProcess."""
@@ -49,11 +56,13 @@ class JobRunner(QObject):
         self.process.start()
 
     def stop(self) -> None:
-        """Terminate the running process, escalating to kill if it does not exit."""
+        """Terminate the running process according to the command-aware policy."""
         if self.process is None or self.process.state() == QProcess.NotRunning:
             return
+        plan = self._termination_policy.plan(self._runtime.command)
+        self.stdout.emit(f"{plan.message}\n")
         self.process.terminate()
-        QTimer.singleShot(5000, self._kill_if_running)
+        QTimer.singleShot(plan.grace_ms, self._kill_if_running)
 
     def _kill_if_running(self) -> None:
         """Kill the process if terminate did not stop it."""
