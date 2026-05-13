@@ -73,6 +73,13 @@ def _append_grouped(
     groups.setdefault(group_name, {}).setdefault(label, []).append(value)
 
 
+def _scenario_bucket(sample: LandmarkSample) -> str:
+    """Return the dataset/scenario bucket used for macro overall scoring."""
+    dataset = sample.dataset or "unspecified"
+    condition = sample.condition or "unspecified"
+    return f"{dataset}:{condition}"
+
+
 def _summarize_group(
     groups: dict[str, dict[str, list[float]]],
     *,
@@ -86,6 +93,47 @@ def _summarize_group(
         }
         for group, labels in sorted(groups.items())
     }
+
+
+def _summarize_bucket_weighted(
+    bucket_errors: dict[str, dict[str, list[float]]],
+    *,
+    failure_threshold: float,
+) -> dict[str, dict[str, T.Any]]:
+    """Summarize labels using equal-weighted scenario buckets.
+
+    Each dataset/condition bucket contributes one equally weighted score for each
+    label, regardless of how many samples are present in that bucket. This avoids
+    large or easy datasets hiding failures in smaller hard-condition buckets.
+    The returned ``nme`` and ``overall_nme`` are intentionally identical so older
+    downstream code that sorts by ``nme`` uses the scenario-bucket aggregate.
+    """
+    bucket_summaries = _summarize_group(
+        bucket_errors, failure_threshold=failure_threshold
+    )
+    labels = sorted({label for values in bucket_errors.values() for label in values})
+    output: dict[str, dict[str, T.Any]] = {}
+    for label in labels:
+        summaries = [
+            labels_for_bucket[label]
+            for labels_for_bucket in bucket_summaries.values()
+            if label in labels_for_bucket
+        ]
+        if not summaries:
+            continue
+        output[label] = {
+            "count": float(sum(summary["count"] for summary in summaries)),
+            "scenario_bucket_count": float(len(summaries)),
+            "overall_nme": float(np.mean([summary["nme"] for summary in summaries])),
+            "nme": float(np.mean([summary["nme"] for summary in summaries])),
+            "auc": float(np.mean([summary["auc"] for summary in summaries])),
+            "failure_rate": float(
+                np.mean([summary["failure_rate"] for summary in summaries])
+            ),
+            "aggregation": "equal_weighted_scenario_buckets",
+            "bucket_weighting": "equal_per_dataset_condition",
+        }
+    return output
 
 
 def _fuse_variant(
@@ -163,6 +211,7 @@ def run_quality_harness(
     grouped_errors: dict[str, list[float]] = {}
     dataset_errors: dict[str, dict[str, list[float]]] = {}
     condition_errors: dict[str, dict[str, list[float]]] = {}
+    scenario_bucket_errors: dict[str, dict[str, list[float]]] = {}
     region_errors: dict[str, dict[str, list[float]]] = {}
     threshold_failed = False
 
@@ -217,6 +266,12 @@ def run_quality_harness(
             )
             _append_grouped(dataset_errors, sample.dataset, name, float(metrics["nme"]))
             _append_grouped(condition_errors, sample.condition, name, float(metrics["nme"]))
+            _append_grouped(
+                scenario_bucket_errors,
+                _scenario_bucket(sample),
+                name,
+                float(metrics["nme"]),
+            )
             for region, error in metrics["per_region_error"].items():
                 _append_grouped(region_errors, region, name, float(error))
         best_single_model = None
@@ -287,14 +342,33 @@ def run_quality_harness(
                     )
                 _append_grouped(dataset_errors, sample.dataset, variant, float(metrics["nme"]))
                 _append_grouped(condition_errors, sample.condition, variant, float(metrics["nme"]))
+                _append_grouped(
+                    scenario_bucket_errors,
+                    _scenario_bucket(sample),
+                    variant,
+                    float(metrics["nme"]),
+                )
                 for region, error in metrics["per_region_error"].items():
                     _append_grouped(region_errors, region, variant, float(error))
 
+    pooled_overall = {
+        name: summarize_errors(values, failure_threshold=failure_threshold)
+        for name, values in sorted(grouped_errors.items())
+    }
+    scenario_weighted_overall = _summarize_bucket_weighted(
+        scenario_bucket_errors,
+        failure_threshold=failure_threshold,
+    )
+    scenario_buckets = _summarize_group(
+        scenario_bucket_errors,
+        failure_threshold=failure_threshold,
+    )
     summary = {
-        "overall": {
-            name: summarize_errors(values, failure_threshold=failure_threshold)
-            for name, values in sorted(grouped_errors.items())
-        },
+        "overall": scenario_weighted_overall,
+        "overall_nme_aggregation": "equal_weighted_dataset_condition_scenario_buckets",
+        "overall_pooled": pooled_overall,
+        "overall_scenario_weighted": scenario_weighted_overall,
+        "scenario_buckets": scenario_buckets,
         "datasets": _summarize_group(dataset_errors, failure_threshold=failure_threshold),
         "conditions": _summarize_group(condition_errors, failure_threshold=failure_threshold),
         "regions": {
@@ -310,6 +384,7 @@ def run_quality_harness(
         failure_threshold=failure_threshold,
         conditions=summary["conditions"],
         threshold_failed=threshold_failed,
+        overall_metrics=scenario_weighted_overall,
     )
     summary["best_variant"] = best_summary
     summary["best_single_model"] = best_summary["best_single_model"]
@@ -338,6 +413,12 @@ def run_quality_harness(
     _write_csv(out_dir / "per_landmark_error.csv", per_landmark_rows)
     _write_csv(out_dir / "per_region_error.csv", per_region_rows)
     _write_condition_csv(out_dir / "per_condition_error.csv", condition_errors, failure_threshold)
+    _write_condition_csv(
+        out_dir / "per_scenario_bucket_error.csv",
+        scenario_bucket_errors,
+        failure_threshold,
+        condition_column="scenario_bucket",
+    )
     _write_csv(
         out_dir / "ensemble_regressions.csv",
         ensemble_regressions,
@@ -405,9 +486,10 @@ def _best_variant_summary(
     failure_threshold: float,
     conditions: dict[str, dict[str, dict[str, float]]],
     threshold_failed: bool,
+    overall_metrics: dict[str, dict[str, T.Any]] | None = None,
 ) -> dict[str, T.Any]:
     """Return the best aggregate model/variant summary."""
-    summaries = {
+    summaries = overall_metrics or {
         label: summarize_errors(values, failure_threshold=failure_threshold)
         for label, values in grouped_errors.items()
         if values
@@ -443,6 +525,7 @@ def _best_variant_summary(
             "ensemble_deltas_vs_best_single": {},
             "failure_rate_by_condition": {},
             "threshold_failed": threshold_failed,
+            "overall_nme_aggregation": "equal_weighted_dataset_condition_scenario_buckets",
         }
     label, metrics = min(summaries.items(), key=lambda item: item[1]["nme"])
     return {
@@ -455,6 +538,7 @@ def _best_variant_summary(
         "ensemble_deltas_vs_best_single": deltas,
         "failure_rate_by_condition": conditions,
         "threshold_failed": threshold_failed,
+        "overall_nme_aggregation": "equal_weighted_dataset_condition_scenario_buckets",
     }
 
 
@@ -482,6 +566,8 @@ def _write_condition_csv(
     path: Path,
     condition_errors: dict[str, dict[str, list[float]]],
     failure_threshold: float,
+    *,
+    condition_column: str = "condition",
 ) -> None:
     """Write condition-level summary metrics."""
     rows = []
@@ -489,7 +575,7 @@ def _write_condition_csv(
         for label, values in sorted(labels.items()):
             rows.append(
                 {
-                    "condition": condition,
+                    condition_column: condition,
                     "label": label,
                     **summarize_errors(values, failure_threshold=failure_threshold),
                 }
