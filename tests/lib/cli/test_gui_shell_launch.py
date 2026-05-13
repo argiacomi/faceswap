@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 from argparse import Namespace
 
 import pytest
@@ -21,7 +22,7 @@ def test_gui_args_include_hidden_no_exec_flag() -> None:
 
     assert hidden_arg["action"] == "store_true"
     assert hidden_arg["dest"] == "no_gui_exec"
-    assert hidden_arg["help"] == pytest.importorskip("argparse").SUPPRESS
+    assert hidden_arg["help"] == argparse.SUPPRESS
 
 
 def test_resolve_gui_shell_defaults_to_tk(monkeypatch) -> None:  # type:ignore[no-untyped-def]
