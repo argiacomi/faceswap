@@ -26,8 +26,10 @@ from lib.landmarks.datasets.cofw68 import resolve_cofw68_json
 from lib.landmarks.datasets.polish import polish_landmark_dataset_artifacts
 from lib.landmarks.datasets.sources import DEFAULT_CACHE_DIR, resolve_wflw_official_source
 from lib.landmarks.datasets.visual_overlays import write_indexed_region_overlays
+from lib.landmarks.datasets.w300 import build_300w_manifest
 
 logger = logging.getLogger(__name__)
+CLI_SUPPORTED_DATASETS = tuple(dict.fromkeys((*SUPPORTED_DATASETS, "300w")))
 
 
 def _parse_csv(value: str | None) -> tuple[str, ...] | None:
@@ -41,7 +43,7 @@ def _parse_csv(value: str | None) -> tuple[str, ...] | None:
 def _build_arg_parser() -> argparse.ArgumentParser:
     """Return the landmark dataset builder argument parser."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--dataset", required=True, choices=SUPPORTED_DATASETS)
+    parser.add_argument("--dataset", required=True, choices=CLI_SUPPORTED_DATASETS)
     parser.add_argument(
         "--source-dir",
         default=None,
@@ -168,6 +170,8 @@ def _validate_args(args: argparse.Namespace) -> None:
         )
     if args.dataset == "wflw" and args.cofw_json:
         raise ValueError("--cofw-json is only valid with --dataset cofw")
+    if args.dataset != "cofw" and args.cofw_json:
+        raise ValueError("--cofw-json is only valid with --dataset cofw")
     if args.dataset == "cofw" and (args.wflw_annotations or args.wflw_download_official):
         raise ValueError("WFLW source options are only valid with --dataset wflw")
     if args.dataset != "wflw" and args.wflw_download_official:
@@ -182,7 +186,7 @@ def _validate_args(args: argparse.Namespace) -> None:
             or args.cofw_json
         ):
             raise ValueError("--dataset directory only supports --source-dir")
-    if args.dataset in {"merl-rav", "aflw2000-3d"} and (
+    if args.dataset in {"merl-rav", "aflw2000-3d", "300w"} and (
         args.wflw_annotations or args.wflw_download_official or args.cofw_json
     ):
         raise ValueError(f"--dataset {args.dataset} only supports --source-dir/--source-zip")
@@ -259,6 +263,22 @@ def main(argv: list[str] | None = None) -> int:
             _cofw_json(args),
             args.output_dir,
             image_root=args.image_root,
+            source_dir=args.source_dir,
+            source_zip=args.source_zip,
+            cache_dir=args.cache_dir,
+            download_url=args.download_url,
+            force_download=args.force_download,
+            no_download=args.no_download,
+            scenario=args.scenario,
+            scenarios=scenarios,
+            samples_per_scenario=args.samples_per_scenario,
+            manifest_mode=args.manifest_mode,
+            allow_overlap=args.allow_overlap,
+            write_overlays=args.write_overlays,
+        )
+    elif args.dataset == "300w":
+        manifest = build_300w_manifest(
+            args.output_dir,
             source_dir=args.source_dir,
             source_zip=args.source_zip,
             cache_dir=args.cache_dir,
