@@ -212,6 +212,73 @@ def test_process_runtime_service_emits_training_session_events_from_stdout() -> 
     assert session.initialized == [("/models", "model_a", True)]
 
 
+def test_process_runtime_service_configures_preview_output_context() -> None:
+    """Runtime context configuration should apply shared preview side effects."""
+    images = _ImagesDouble()
+    trigger = _PreviewTriggerDouble()
+    preview = PreviewOutputRuntimeService(
+        images_provider=lambda: images,
+        preview_trigger_provider=lambda: trigger,
+    )
+    runtime = ProcessRuntimeService("extract", preview_output=preview)
+    events = []
+    runtime.add_event_callback(events.append)
+    context = CommandExecutionContext.from_values(
+        "extract",
+        {"-o": "/preview", "-b": True},
+    )
+
+    configured_events = runtime.configure_context(context)
+
+    assert images.preview_extract.output_paths == [("/preview", True)]
+    assert preview.preview_output_path == "/preview"
+    assert preview.batch_mode is True
+    assert configured_events == tuple(events)
+    assert len(events) == 1
+    assert events[0].kind == "preview_output"
+    assert events[0].payload == {
+        "preview_output": True,
+        "preview_refresh": True,
+        "preview_output_path": "/preview",
+        "batch_mode": True,
+    }
+
+
+def test_process_runtime_service_skips_preview_event_without_output_path() -> None:
+    """Runtime context without preview output should not emit preview events."""
+    preview = PreviewOutputRuntimeService(images_provider=lambda: _ImagesDouble())
+    runtime = ProcessRuntimeService("extract", preview_output=preview)
+    events = []
+    runtime.add_event_callback(events.append)
+
+    configured_events = runtime.configure_context(CommandExecutionContext())
+
+    assert configured_events == ()
+    assert events == []
+    assert preview.preview_output_path is None
+
+
+def test_process_runtime_service_cleans_preview_output_on_finish() -> None:
+    """Final runtime cleanup should clear shared preview side effects."""
+    images = _ImagesDouble()
+    trigger = _PreviewTriggerDouble()
+    preview = PreviewOutputRuntimeService(
+        images_provider=lambda: images,
+        preview_trigger_provider=lambda: trigger,
+    )
+    runtime = ProcessRuntimeService("extract", preview_output=preview)
+    runtime.configure_context(
+        CommandExecutionContext.from_values("extract", {"-o": "/preview"})
+    )
+
+    runtime.finish(0)
+
+    assert images.delete_count == 1
+    assert trigger.clear_calls == [None]
+    assert preview.preview_output_path is None
+    assert preview.batch_mode is False
+
+
 def test_process_runtime_service_stops_training_session_only_for_train() -> None:
     """Final runtime cleanup should stop training only for train commands."""
     session = _TrainingSessionDouble(is_training=True)

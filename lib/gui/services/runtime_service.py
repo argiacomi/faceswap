@@ -7,9 +7,14 @@ import typing as T
 
 from lib.utils import get_module_objects
 
+from .command_context import CommandExecutionContext
 from .progress_parser import ProgressParser
 from .runtime_events import ParsedRuntimeOutput, RuntimeEvent
-from .runtime_session_services import RuntimeTerminationPolicy, TrainingSessionRuntimeService
+from .runtime_session_services import (
+    PreviewOutputRuntimeService,
+    RuntimeTerminationPolicy,
+    TrainingSessionRuntimeService,
+)
 
 RuntimeEventCallback = T.Callable[[RuntimeEvent], None]
 JobEventCallback = RuntimeEventCallback
@@ -23,10 +28,12 @@ class ProcessRuntimeService:
         command: str | None = None,
         *,
         training_session: TrainingSessionRuntimeService | None = None,
+        preview_output: PreviewOutputRuntimeService | None = None,
     ) -> None:
         self._command = command
         self._parser = ProgressParser()
         self._training_session = training_session or TrainingSessionRuntimeService()
+        self._preview_output = preview_output or PreviewOutputRuntimeService()
         self._event_callbacks: list[RuntimeEventCallback] = []
 
     @property
@@ -43,6 +50,32 @@ class ProcessRuntimeService:
     def training_session(self) -> TrainingSessionRuntimeService:
         """Return the training-session service used for saved-model runtime events."""
         return self._training_session
+
+    @property
+    def preview_output(self) -> PreviewOutputRuntimeService:
+        """Return the preview-output side-effect service for this runtime."""
+        return self._preview_output
+
+    def configure_context(self, context: CommandExecutionContext) -> tuple[RuntimeEvent, ...]:
+        """Configure shared runtime services with command-derived context."""
+        self._training_session.configure(context)
+        preview_configured = self._preview_output.apply_context(context)
+        events: tuple[RuntimeEvent, ...] = ()
+        if preview_configured:
+            events = (
+                RuntimeEvent(
+                    kind="preview_output",
+                    message="Preview output configured",
+                    payload={
+                        "preview_output": True,
+                        "preview_refresh": True,
+                        "preview_output_path": context.preview_output_path or "",
+                        "batch_mode": context.batch_mode,
+                    },
+                ),
+            )
+            self._emit_all(events)
+        return events
 
     def add_event_callback(self, callback: RuntimeEventCallback) -> None:
         """Register a callback for emitted runtime events."""
@@ -70,10 +103,11 @@ class ProcessRuntimeService:
         return parsed
 
     def finish(self, returncode: int) -> RuntimeEvent:
-        """Emit the final status event for the job."""
+        """Emit the final status event for the job and clean runtime side effects."""
         event = self._parser.final_status(self._command, returncode)
         if RuntimeTerminationPolicy.normalize_command(self._command) == "train":
             self._training_session.stop()
+        self._preview_output.cleanup()
         self._emit(event)
         return event
 
