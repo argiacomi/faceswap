@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from lib.gui.qt_shell.graph_widget import TrainingGraphWidget
 from lib.gui.services.command_context import CommandExecutionContext
 from lib.gui.services.training_graph_service import (
     TrainingGraphError,
@@ -40,9 +41,12 @@ class GraphPanel(QWidget):
         self._source_label = QLabel("No graph source configured")
         self._status_label = QLabel("No graph data loaded")
         self._session_combo = QComboBox()
+        self._key_combo = QComboBox()
+        self._graph_widget = TrainingGraphWidget()
         self._graph_text = QPlainTextEdit()
         self._open_button = QPushButton("Open")
         self._refresh_button = QPushButton("Refresh")
+        self._export_button = QPushButton("Export")
         self._clear_button = QPushButton("Clear")
         self._build_ui()
         self._connect_signals()
@@ -104,10 +108,18 @@ class GraphPanel(QWidget):
         self._sync_actions()
         return True
 
+    def save_graph_image(self, filename: str | Path) -> bool:
+        """Save the currently rendered graph image to disk."""
+        saved = self._graph_widget.save_image(filename)
+        self._status_label.setText("Graph image saved" if saved else "No graph image to save")
+        return saved
+
     def clear_graph(self) -> None:
         """Clear graph source and rendered graph state."""
         self._service.clear()
         self._session_combo.clear()
+        self._key_combo.clear()
+        self._graph_widget.clear()
         self._graph_text.setPlainText("No graph data loaded")
         self._source_label.setText("No graph source configured")
         self._status_label.setText("No graph data loaded")
@@ -135,19 +147,30 @@ class GraphPanel(QWidget):
         controls.addWidget(QLabel("Session:"))
         self._session_combo.setObjectName("qt-shell-graph-session")
         controls.addWidget(self._session_combo)
+        controls.addWidget(QLabel("Loss:"))
+        self._key_combo.setObjectName("qt-shell-graph-key")
+        controls.addWidget(self._key_combo)
         controls.addStretch(1)
         layout.addLayout(controls)
+
+        layout.addWidget(self._graph_widget, 2)
 
         self._graph_text.setObjectName("qt-shell-graph-text")
         self._graph_text.setReadOnly(True)
         self._graph_text.setPlainText("No graph data loaded")
+        self._graph_text.setMaximumHeight(120)
         layout.addWidget(self._graph_text, 1)
 
         footer = QHBoxLayout()
         self._status_label.setObjectName("qt-shell-graph-status")
         footer.addWidget(self._status_label)
         footer.addStretch(1)
-        for button in (self._open_button, self._refresh_button, self._clear_button):
+        for button in (
+            self._open_button,
+            self._refresh_button,
+            self._export_button,
+            self._clear_button,
+        ):
             button.setObjectName(f"qt-shell-graph-{button.text().lower()}")
             footer.addWidget(button)
         layout.addLayout(footer)
@@ -156,8 +179,10 @@ class GraphPanel(QWidget):
         """Connect panel signals."""
         self._open_button.clicked.connect(lambda _checked=False: self._open_source_dialog())
         self._refresh_button.clicked.connect(lambda _checked=False: self.refresh_graph())
+        self._export_button.clicked.connect(lambda _checked=False: self._export_graph_dialog())
         self._clear_button.clicked.connect(lambda _checked=False: self.clear_graph())
         self._session_combo.currentIndexChanged.connect(self._session_changed)
+        self._key_combo.currentIndexChanged.connect(self._loss_key_changed)
 
     def _open_source_dialog(self) -> None:
         """Prompt for a model state file or folder and load it."""
@@ -174,6 +199,17 @@ class GraphPanel(QWidget):
         if folder:
             self.load_source(folder)
 
+    def _export_graph_dialog(self) -> None:
+        """Prompt for an image output path and save the rendered graph."""
+        filename, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Training Graph",
+            "training_graph.png",
+            "PNG files (*.png);;All files (*)",
+        )
+        if filename:
+            self.save_graph_image(filename)
+
     def _session_changed(self, index: int) -> None:
         """Refresh graph data when the selected session changes."""
         if index < 0 or not self._service.is_loaded:
@@ -186,23 +222,36 @@ class GraphPanel(QWidget):
         self._render_snapshot(snapshot)
         self._sync_actions()
 
-    def _render_snapshot(self, snapshot: TrainingGraphSnapshot) -> None:
+    def _loss_key_changed(self, index: int) -> None:
+        """Rerender graph when the selected loss key changes."""
+        if index < 0:
+            return
+        self._render_snapshot(self._service.snapshot, sync_keys=False)
+        self._sync_actions()
+
+    def _render_snapshot(self, snapshot: TrainingGraphSnapshot, *, sync_keys: bool = True) -> None:
         """Render graph snapshot and status text."""
         if snapshot.is_empty:
+            self._graph_widget.clear()
             self._graph_text.setPlainText("No graph data loaded")
             self._status_label.setText("No graph data loaded")
+            if sync_keys:
+                self._sync_key_combo(snapshot)
             return
+        if sync_keys:
+            self._sync_key_combo(snapshot)
+        selected_keys = self._selected_loss_keys(snapshot)
+        self._graph_widget.set_snapshot(snapshot, selected_keys=selected_keys)
         lines = []
         for series in snapshot.series:
+            if selected_keys and series.name not in selected_keys:
+                continue
             lines.append(f"{series.name}: {self._sparkline(series.values)}")
             lines.append(
                 f"  points={series.count} min={series.minimum:.6g} max={series.maximum:.6g}"
             )
-        self._graph_text.setPlainText("\n".join(lines))
-        names = ", ".join(series.name for series in snapshot.series)
-        self._status_label.setText(
-            f"Loaded {len(snapshot.series)} series, {snapshot.point_count} points: {names}"
-        )
+        self._graph_text.setPlainText("\n".join(lines) or "No selected graph data loaded")
+        self._status_label.setText(self._graph_widget.status_text)
 
     def _sync_session_combo(self) -> None:
         """Populate session selector from the backing session."""
@@ -219,6 +268,29 @@ class GraphPanel(QWidget):
                 break
         self._session_combo.blockSignals(False)
 
+    def _sync_key_combo(self, snapshot: TrainingGraphSnapshot) -> None:
+        """Populate loss-key selector from the current graph snapshot."""
+        current = self._key_combo.currentData()
+        keys = tuple(series.name for series in snapshot.series)
+        self._key_combo.blockSignals(True)
+        self._key_combo.clear()
+        if keys:
+            self._key_combo.addItem("All losses", None)
+            for key in keys:
+                self._key_combo.addItem(key, key)
+        for index in range(self._key_combo.count()):
+            if self._key_combo.itemData(index) == current:
+                self._key_combo.setCurrentIndex(index)
+                break
+        self._key_combo.blockSignals(False)
+
+    def _selected_loss_keys(self, snapshot: TrainingGraphSnapshot) -> tuple[str, ...]:
+        """Return selected loss keys, or all available keys."""
+        selected = self._key_combo.currentData()
+        if isinstance(selected, str):
+            return (selected,)
+        return tuple(series.name for series in snapshot.series)
+
     def _update_source_label(self) -> None:
         """Update source label from current service source."""
         source = self._service.source
@@ -233,12 +305,15 @@ class GraphPanel(QWidget):
         has_graph_data = not self._service.snapshot.is_empty
         active_graph = has_source or has_graph_data
         self._refresh_button.setEnabled(active_graph)
+        self._export_button.setEnabled(bool(self._graph_widget.series))
         self._clear_button.setEnabled(active_graph)
         self._session_combo.setEnabled(active_graph and self._service.is_loaded)
+        self._key_combo.setEnabled(has_graph_data)
 
     def _set_error(self, message: str) -> None:
         """Render an in-panel error."""
         self._status_label.setText(message)
+        self._graph_widget.clear()
         self._graph_text.setPlainText("No graph data loaded")
         self._sync_actions()
 
