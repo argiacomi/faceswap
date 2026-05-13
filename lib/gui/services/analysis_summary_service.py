@@ -71,7 +71,6 @@ class AnalysisSummaryService:
         )
 
 
-
 def _to_int(value: T.Any) -> int:
     """Best-effort conversion of legacy summary values to integers."""
     if isinstance(value, bool):

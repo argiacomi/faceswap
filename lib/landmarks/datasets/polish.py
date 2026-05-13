@@ -48,7 +48,9 @@ def manifest_entries(output_dir: str | Path) -> tuple[dict[str, T.Any], list[dic
     return payload, [dict(entry) for entry in entries if isinstance(entry, dict)]
 
 
-def rewrite_manifest(output_dir: str | Path, payload: dict[str, T.Any], entries: list[dict[str, T.Any]]) -> None:
+def rewrite_manifest(
+    output_dir: str | Path, payload: dict[str, T.Any], entries: list[dict[str, T.Any]]
+) -> None:
     """Rewrite manifest entries after post-processing."""
     root = Path(output_dir)
     if "samples" in payload:
@@ -101,13 +103,18 @@ def duplicate_source_audit(entries: list[dict[str, T.Any]]) -> list[dict[str, T.
         key = source_key(entry)
         for condition in entry_conditions(entry):
             grouped.setdefault(key, []).append(
-                {"sample_id": str(entry.get("sample_id") or entry.get("name") or ""), "condition": condition}
+                {
+                    "sample_id": str(entry.get("sample_id") or entry.get("name") or ""),
+                    "condition": condition,
+                }
             )
     duplicates: list[dict[str, T.Any]] = []
     for key, refs in grouped.items():
         groups = sorted({ref["condition"] for ref in refs})
         if len(groups) > 1:
-            duplicates.append({"source_key": list(key), "condition_groups": groups, "entries": refs})
+            duplicates.append(
+                {"source_key": list(key), "condition_groups": groups, "entries": refs}
+            )
     return sorted(duplicates, key=lambda item: tuple(item["source_key"]))
 
 
@@ -152,7 +159,11 @@ def _shortfall_groups(audit: dict[str, T.Any]) -> list[dict[str, T.Any]]:
         return []
     result = []
     for group, payload in sorted(raw.items()):
-        result.append({"scenario_group": group, **payload} if isinstance(payload, dict) else {"scenario_group": group, "shortfall": payload})
+        result.append(
+            {"scenario_group": group, **payload}
+            if isinstance(payload, dict)
+            else {"scenario_group": group, "shortfall": payload}
+        )
     return result
 
 
@@ -178,7 +189,9 @@ def enrich_dataset_audit(output_dir: str | Path, *, allow_overlap: bool = False)
         for condition in entry_conditions(entry):
             count_per_condition[condition] = count_per_condition.get(condition, 0) + 1
             selected_by_group.setdefault(condition, []).append(source_key_json(entry))
-            feature_values_by_group.setdefault(condition, {name: [] for name in LANDMARK_AUDIT_FEATURES})
+            feature_values_by_group.setdefault(
+                condition, {name: [] for name in LANDMARK_AUDIT_FEATURES}
+            )
             for feature, value in features.items():
                 feature_values[feature].append(value)
                 feature_values_by_group[condition][feature].append(value)
@@ -188,10 +201,16 @@ def enrich_dataset_audit(output_dir: str | Path, *, allow_overlap: bool = False)
         duplicates = duplicate_source_audit(entries)
     unique_sources = {tuple(source_key_json(entry)) for entry in entries}
     feature_stats = {
-        feature: stats for feature, values in feature_values.items() if (stats := _stats(values)) is not None
+        feature: stats
+        for feature, values in feature_values.items()
+        if (stats := _stats(values)) is not None
     }
     feature_stats_by_group = {
-        group: {feature: stats for feature, values in by_feature.items() if (stats := _stats(values)) is not None}
+        group: {
+            feature: stats
+            for feature, values in by_feature.items()
+            if (stats := _stats(values)) is not None
+        }
         for group, by_feature in sorted(feature_values_by_group.items())
     }
     audit.update(
@@ -199,19 +218,29 @@ def enrich_dataset_audit(output_dir: str | Path, *, allow_overlap: bool = False)
             "schema_version": audit.get("schema_version", 1),
             "total_entries": len(entries),
             "count_per_condition": dict(sorted(count_per_condition.items())),
-            "condition_counts": audit.get("condition_counts", dict(sorted(count_per_condition.items()))),
+            "condition_counts": audit.get(
+                "condition_counts", dict(sorted(count_per_condition.items()))
+            ),
             "count_per_scenario_group": dict(sorted(count_per_condition.items())),
             "count_per_dataset": dict(sorted(count_per_dataset.items())),
             "count_per_source_schema": dict(sorted(count_per_source_schema.items())),
             "count_per_suite": {"landmark_quality": len(entries)},
             "unique_source_count": len(unique_sources),
             "duplicate_source_ids": duplicates,
-            "overlap": {"allow_overlap": allow_overlap, "has_overlap": bool(duplicates), "duplicate_count": len(duplicates)},
-            "rejected_candidates_due_to_exclusivity": audit.get("rejected_candidates_due_to_exclusivity", []),
+            "overlap": {
+                "allow_overlap": allow_overlap,
+                "has_overlap": bool(duplicates),
+                "duplicate_count": len(duplicates),
+            },
+            "rejected_candidates_due_to_exclusivity": audit.get(
+                "rejected_candidates_due_to_exclusivity", []
+            ),
             "shortfall_groups": _shortfall_groups(audit),
             "feature_stats": feature_stats,
             "feature_stats_by_group": feature_stats_by_group,
-            "selected_source_ids_per_group": {group: values for group, values in sorted(selected_by_group.items())},
+            "selected_source_ids_per_group": {
+                group: values for group, values in sorted(selected_by_group.items())
+            },
             "landmark_quality_entry_count": len(entries),
             "audit_schema_family": "automask_dataset_audit_v1",
         }
@@ -225,31 +254,59 @@ def write_source_notes(output_dir: str | Path) -> Path:
     """Write landmark-specific provenance/source notes."""
     root = Path(output_dir)
     _payload, entries = manifest_entries(root)
-    datasets = sorted({str(entry.get("dataset") or entry.get("source", {}).get("dataset") or "") for entry in entries})
-    display_names = {"wflw": "WFLW", "cofw": "COFW", "merl-rav": "MERL-RAV", "aflw2000-3d": "AFLW2000-3D"}
+    datasets = sorted(
+        {
+            str(entry.get("dataset") or entry.get("source", {}).get("dataset") or "")
+            for entry in entries
+        }
+    )
+    display_names = {
+        "wflw": "WFLW",
+        "cofw": "COFW",
+        "merl-rav": "MERL-RAV",
+        "aflw2000-3d": "AFLW2000-3D",
+    }
     lines = [
         "# Landmark quality dataset source notes",
         "",
         "This directory was populated by `tools/landmarks/build_quality_dataset.py`.",
         "",
-        "Review upstream dataset terms before use or redistribution. Do not commit generated images, landmarks, overlays, or manifests unless licensing has been reviewed.",
+        "Review upstream dataset terms before use or redistribution. Do not commit "
+        "generated images, landmarks, overlays, or manifests unless licensing has been "
+        "reviewed.",
         "",
         "## Audit files",
         "",
-        "`dataset_audit.json` follows the AutoMask donor audit shape where applicable: counts, overlap metadata, selected source IDs, shortfalls, rejected candidates, and feature statistics.",
+        "`dataset_audit.json` follows the AutoMask donor audit shape where applicable: "
+        "counts, overlap metadata, selected source IDs, shortfalls, rejected candidates, "
+        "and feature statistics.",
         "",
         "## Dataset notes",
         "",
     ]
     for dataset in datasets or ["unknown"]:
         display = display_names.get(dataset, dataset or "unknown")
-        lines.extend([f"### {display}", "", OFFICIAL_SOURCE_NOTES.get(display, "Review source-specific licensing and provenance before use."), ""])
+        lines.extend(
+            [
+                f"### {display}",
+                "",
+                OFFICIAL_SOURCE_NOTES.get(
+                    display, "Review source-specific licensing and provenance before use."
+                ),
+                "",
+            ]
+        )
     path = root / "SOURCE_NOTES.md"
     path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
     logger.info("Polished landmark source notes: %s", path)
     return path
 
 
-def polish_landmark_dataset_artifacts(output_dir: str | Path, *, allow_overlap: bool = False) -> dict[str, Path]:
+def polish_landmark_dataset_artifacts(
+    output_dir: str | Path, *, allow_overlap: bool = False
+) -> dict[str, Path]:
     """Polish audit and source-note artifacts after build or audit-only runs."""
-    return {"audit": enrich_dataset_audit(output_dir, allow_overlap=allow_overlap), "source_notes": write_source_notes(output_dir)}
+    return {
+        "audit": enrich_dataset_audit(output_dir, allow_overlap=allow_overlap),
+        "source_notes": write_source_notes(output_dir),
+    }

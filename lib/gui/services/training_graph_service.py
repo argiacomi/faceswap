@@ -98,10 +98,6 @@ class TrainingGraphService:
     STATE_SUFFIX = "_state.json"
 
     def __init__(self, session: TrainingGraphSessionProtocol | None = None) -> None:
-        if session is None:
-            from lib.gui.analysis import Session
-
-            session = Session
         self._session = session
         self._source: TrainingGraphSource | None = None
         self._session_id: int | None = None
@@ -121,7 +117,8 @@ class TrainingGraphService:
     @property
     def session_ids(self) -> tuple[int, ...]:
         """Return available session ids from the loaded Analysis session."""
-        return tuple(self._session.session_ids) if self._session.is_loaded else ()
+        session = self._session_or_default(import_default=False)
+        return tuple(session.session_ids) if session is not None and session.is_loaded else ()
 
     @property
     def loss_keys(self) -> tuple[str, ...]:
@@ -136,7 +133,8 @@ class TrainingGraphService:
     @property
     def is_loaded(self) -> bool:
         """Return whether the backing session is loaded."""
-        return self._session.is_loaded
+        session = self._session_or_default(import_default=False)
+        return False if session is None else session.is_loaded
 
     def configure(
         self,
@@ -164,7 +162,9 @@ class TrainingGraphService:
         """Load a graph source from a state file or model folder and refresh graph data."""
         source = self.resolve_source(state_file_or_folder)
         self._source = source
-        self._session.initialize_session(str(source.model_dir), source.model_name, is_training)
+        session = self._session_or_default(import_default=True)
+        assert session is not None
+        session.initialize_session(str(source.model_dir), source.model_name, is_training)
         return self.refresh()
 
     def load_configured_source(self, *, is_training: bool = False) -> TrainingGraphSnapshot:
@@ -173,7 +173,9 @@ class TrainingGraphService:
             raise TrainingGraphError("No graph source configured")
         if not self._source.state_file.is_file():
             raise TrainingGraphError(f"Graph state file does not exist: {self._source.state_file}")
-        self._session.initialize_session(
+        session = self._session_or_default(import_default=True)
+        assert session is not None
+        session.initialize_session(
             str(self._source.model_dir), self._source.model_name, is_training
         )
         return self.refresh()
@@ -185,13 +187,14 @@ class TrainingGraphService:
 
     def refresh(self) -> TrainingGraphSnapshot:
         """Refresh loss graph data from the loaded Analysis session."""
-        if not self._session.is_loaded:
+        session = self._session_or_default(import_default=False)
+        if session is None or not session.is_loaded:
             self._loss_keys = ()
             self._snapshot = TrainingGraphSnapshot(self._source, self._session_id, ())
             return self._snapshot
-        keys = tuple(sorted(self._session.get_loss_keys(self._session_id)))
+        keys = tuple(sorted(session.get_loss_keys(self._session_id)))
         self._loss_keys = keys
-        loss = self._session.get_loss(self._session_id)
+        loss = session.get_loss(self._session_id)
         graph_series: list[TrainingGraphSeries] = []
         for name, values in sorted(loss.items()):
             if name not in keys:
@@ -231,6 +234,15 @@ class TrainingGraphService:
         if not state_files:
             raise TrainingGraphError(f"No model state file found in folder: {folder}")
         return state_files[0]
+
+    def _session_or_default(self, *, import_default: bool) -> TrainingGraphSessionProtocol | None:
+        """Return the injected Analysis session or lazy-load the legacy singleton."""
+        if self._session is not None or not import_default:
+            return self._session
+        from lib.gui.analysis import Session
+
+        self._session = Session
+        return self._session
 
     @staticmethod
     def _to_float_tuple(values: T.Any) -> tuple[float, ...]:

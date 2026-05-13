@@ -145,7 +145,7 @@ def test_graph_panel_loads_state_file_and_renders_series(qtbot, tmp_path: Path) 
     assert "loss_a:" in graph_text
     assert "loss_b:" in graph_text
     assert "points=3" in graph_text
-    assert _label(panel, "status").text().startswith("Loaded 2 series, 3 points")
+    assert _label(panel, "status").text().startswith("Rendered 2 series, 3 points")
     assert combo.isEnabled() is True
     assert combo.count() == 3
     assert combo.itemText(0) == "All sessions"

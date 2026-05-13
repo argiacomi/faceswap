@@ -135,7 +135,7 @@ def test_analysis_panel_loads_session_rows(qtbot, tmp_path: Path) -> None:  # ty
     assert table.item(0, 7).text() == "53.3"
     assert table.item(1, 0).text() == ""
     assert _label(panel, "source").text() == f"my_model  |  {tmp_path}"
-    assert _label(panel, "status").text() == "Loaded 2 session rows"
+    assert _label(panel, "status").text() == "Loaded session: 2 rows, 1 graph, 200 iterations"
     assert _button(panel, "refresh").isEnabled() is True
     assert _button(panel, "save").isEnabled() is True
     assert _button(panel, "clear").isEnabled() is True
@@ -158,7 +158,7 @@ def test_analysis_panel_refresh_replaces_rows(qtbot, tmp_path: Path) -> None:  #
     assert table.item(0, 1).text() == "2"
     assert table.item(0, 5).text() == "32"
     assert table.item(0, 6).text() == "200"
-    assert _label(panel, "status").text() == "Loaded 1 session row"
+    assert _label(panel, "status").text() == "Loaded session: 1 row, 1 graph, 200 iterations"
 
 
 def test_analysis_panel_saves_csv(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]

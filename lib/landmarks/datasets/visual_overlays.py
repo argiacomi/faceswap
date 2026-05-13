@@ -98,8 +98,12 @@ def _draw_regions(image, landmarks: np.ndarray):
             points.append((x, y))
             cv2.circle(overlay, (x, y), 2, color, -1)
         if len(points) > 1:
-            cv2.polylines(overlay, [np.asarray(points, dtype=np.int32)], False, color, 1, cv2.LINE_AA)
-        cv2.putText(overlay, name, (4, legend_y), cv2.FONT_HERSHEY_SIMPLEX, 0.35, color, 1, cv2.LINE_AA)
+            cv2.polylines(
+                overlay, [np.asarray(points, dtype=np.int32)], False, color, 1, cv2.LINE_AA
+            )
+        cv2.putText(
+            overlay, name, (4, legend_y), cv2.FONT_HERSHEY_SIMPLEX, 0.35, color, 1, cv2.LINE_AA
+        )
         legend_y += 13
     return overlay
 

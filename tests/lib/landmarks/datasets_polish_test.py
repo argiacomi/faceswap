@@ -37,7 +37,21 @@ def test_cli_writes_indexed_region_overlays_and_donor_audit_fields(tmp_path: Pat
     source = tmp_path / "source"
     source.mkdir()
     _write_png(source / "sample.png")
-    np.save(str(source / "sample.npy"), _points_68())
+    cofw_json = source / "cofw.json"
+    cofw_json.write_text(
+        json.dumps(
+            {
+                "samples": [
+                    {
+                        "sample_id": "sample",
+                        "image": "sample.png",
+                        "landmarks": _points_68().tolist(),
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
 
     rc = build_quality_dataset.main(
         [
@@ -77,7 +91,21 @@ def test_cli_rewrites_rich_source_notes(tmp_path: Path) -> None:
     source = tmp_path / "source"
     source.mkdir()
     _write_png(source / "sample.png")
-    np.save(str(source / "sample.npy"), _points_68())
+    cofw_json = source / "cofw.json"
+    cofw_json.write_text(
+        json.dumps(
+            {
+                "samples": [
+                    {
+                        "sample_id": "sample",
+                        "image": "sample.png",
+                        "landmarks": _points_68().tolist(),
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
 
     build_quality_dataset.main(
         [

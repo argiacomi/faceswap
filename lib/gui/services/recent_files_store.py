@@ -76,7 +76,10 @@ class RecentFilesStore:
         self.save(recent_files)
         return recent_files
 
-    def display_items(self, recent_files: list[RecentFile] | None = None) -> list[RecentFileDisplay]:
+    def display_items(
+        self,
+        recent_files: list[RecentFile] | None = None,
+    ) -> list[RecentFileDisplay]:
         """Return recent files with duplicate-aware menu labels."""
         recent_files = self.load() if recent_files is None else recent_files
         duplicate_names = self._duplicate_basenames(recent_files)

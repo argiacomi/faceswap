@@ -18,13 +18,6 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from lib.landmarks.datasets.sources import DEFAULT_CACHE_DIR
-from lib.landmarks.ensemble.weights import save_weights
-from lib.landmarks.eval.harness import load_manifest, run_quality_harness
-from lib.landmarks.eval.prediction_cache import DiskPredictionCache
-from tools.landmarks.build_quality_dataset import main as build_quality_dataset_main
-from tools.landmarks.cache_predictions import main as cache_predictions_main
-from tools.landmarks.compute_static_weights import compute_static_weights
-from tools.landmarks.failure_viewer import main as failure_viewer_main
 
 logger = logging.getLogger(__name__)
 DEFAULT_OUTPUT_ROOT = DEFAULT_CACHE_DIR / "runs" / "static_weight_validation"
@@ -230,6 +223,8 @@ def _dataset_build_args(
 def _build_datasets(
     args: argparse.Namespace, paths: PipelinePaths, summary: dict[str, T.Any]
 ) -> None:
+    from tools.landmarks.build_quality_dataset import main as build_quality_dataset_main
+
     successful = 0
     for dataset in _parse_csv(args.datasets):
         first = successful == 0
@@ -250,6 +245,8 @@ def _build_datasets(
 
 
 def _require_manifest_samples(manifest_path: Path) -> None:
+    from lib.landmarks.eval.harness import load_manifest
+
     sample_count = sum(1 for _sample in load_manifest(manifest_path))
     if sample_count:
         return
@@ -267,6 +264,8 @@ def _prediction_mode(args: argparse.Namespace) -> str:
 
 
 def _cache_predictions(args: argparse.Namespace, paths: PipelinePaths) -> None:
+    from tools.landmarks.cache_predictions import main as cache_predictions_main
+
     mode = _prediction_mode(args)
     argv = [
         "--manifest",
@@ -305,6 +304,9 @@ def _cache_predictions(args: argparse.Namespace, paths: PipelinePaths) -> None:
 
 
 def _compute_weights(args: argparse.Namespace, paths: PipelinePaths) -> None:
+    from lib.landmarks.ensemble.weights import save_weights
+    from tools.landmarks.compute_static_weights import compute_static_weights
+
     weights, mean_errors = compute_static_weights(
         paths.manifest, paths.cache, _parse_csv(args.models)
     )
@@ -338,6 +340,8 @@ def _compute_weights(args: argparse.Namespace, paths: PipelinePaths) -> None:
 def _run_harness(
     args: argparse.Namespace, paths: PipelinePaths, *, weighted: bool
 ) -> dict[str, T.Any]:
+    from lib.landmarks.eval.harness import run_quality_harness
+
     return run_quality_harness(
         paths.manifest,
         paths.cache,
@@ -351,6 +355,8 @@ def _run_harness(
 
 
 def _run_failure_viewer(args: argparse.Namespace, paths: PipelinePaths) -> None:
+    from tools.landmarks.failure_viewer import main as failure_viewer_main
+
     failure_viewer_main(
         [
             "--metrics",
@@ -377,6 +383,8 @@ def _dataset_counts(manifest_path: Path) -> dict[str, int]:
     counts: dict[str, int] = {}
     if not manifest_path.is_file():
         return counts
+    from lib.landmarks.eval.harness import load_manifest
+
     for sample in load_manifest(manifest_path):
         key = sample.dataset or "unspecified"
         counts[key] = counts.get(key, 0) + 1
@@ -389,6 +397,9 @@ def _cache_counts(
 ) -> dict[str, T.Any]:
     if not manifest_path.is_file():
         return {"samples": 0, "predictions": 0, "models": {}}
+    from lib.landmarks.eval.harness import load_manifest
+    from lib.landmarks.eval.prediction_cache import DiskPredictionCache
+
     cache = DiskPredictionCache(cache_dir)
     model_counts = {model: 0 for model in models}
     sample_count = prediction_count = 0
@@ -460,7 +471,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--datasets", default="wflw,cofw")
     parser.add_argument("--output-root", default=str(DEFAULT_OUTPUT_ROOT))
     parser.add_argument("--models", default="hrnet,spiga,orformer")
-    parser.add_argument("--build-datasets", action="store_true", help="Force dataset rebuild even when manifest exists.")
+    parser.add_argument(
+        "--build-datasets",
+        action="store_true",
+        help="Force dataset rebuild even when manifest exists.",
+    )
     parser.add_argument("--run-predictions", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--continue-on-error", action="store_true")
@@ -505,7 +520,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--merl-rav-source-dir", default=_default_dataset_source_dir("merl-rav"))
     parser.add_argument("--merl-rav-source-zip", default="")
     parser.add_argument("--merl-rav-download-url", default="")
-    parser.add_argument("--aflw2000-3d-source-dir", default=_default_dataset_source_dir("aflw2000-3d"))
+    parser.add_argument(
+        "--aflw2000-3d-source-dir", default=_default_dataset_source_dir("aflw2000-3d")
+    )
     parser.add_argument("--aflw2000-3d-source-zip", default="")
     parser.add_argument("--aflw2000-3d-download-url", default="")
     parser.add_argument("--directory-source-dir", default=_default_dataset_source_dir("directory"))

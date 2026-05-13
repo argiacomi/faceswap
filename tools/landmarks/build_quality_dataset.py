@@ -80,7 +80,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--write-overlays",
         action="store_true",
-        help="Write GT, indexed, and region visual landmark overlays when source images are readable.",
+        help="Write GT, indexed, and region visual landmark overlays when source "
+        "images are readable.",
     )
     parser.add_argument(
         "--audit-only",

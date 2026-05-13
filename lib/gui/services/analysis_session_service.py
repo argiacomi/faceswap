@@ -107,10 +107,6 @@ class AnalysisSessionService:
         *,
         require_logs: bool = True,
     ) -> None:
-        if session is None:
-            from lib.gui.analysis import Session
-
-            session = Session
         self._session = session
         self._require_logs = require_logs
         self._source: AnalysisSessionSource | None = None
@@ -139,7 +135,14 @@ class AnalysisSessionService:
     @property
     def is_loaded(self) -> bool:
         """Return whether the service has loaded summary data."""
-        return self._session.is_loaded
+        session = self._session_or_default(import_default=False)
+        return False if session is None else session.is_loaded
+
+    @property
+    def is_training(self) -> bool:
+        """Return whether the loaded session is currently training."""
+        session = self._session_or_default(import_default=False)
+        return False if session is None else session.is_training
 
     def load_session(
         self, state_file_or_folder: str | Path, *, is_training: bool = False
@@ -155,7 +158,9 @@ class AnalysisSessionService:
         """
         source = self.resolve_source(state_file_or_folder)
         self.clear_session()
-        self._session.initialize_session(
+        session = self._session_or_default(import_default=True)
+        assert session is not None
+        session.initialize_session(
             str(source.model_dir), source.model_name, is_training=is_training
         )
         self._source = source
@@ -163,10 +168,11 @@ class AnalysisSessionService:
 
     def refresh_summaries(self) -> tuple[AnalysisTableRow, ...]:
         """Refresh cached summaries from the loaded session."""
-        if not self._session.is_loaded:
+        session = self._session_or_default(import_default=False)
+        if session is None or not session.is_loaded:
             self._summary = []
             return ()
-        self._summary = [dict(row) for row in self._session.full_summary]
+        self._summary = [dict(row) for row in session.full_summary]
         return self.table_rows
 
     def save_csv(self, filename: str | Path) -> int:
@@ -185,8 +191,9 @@ class AnalysisSessionService:
         """Clear cached summaries and the injected legacy session."""
         self._summary = []
         self._source = None
-        if self._session.is_loaded:
-            self._session.clear()
+        session = self._session_or_default(import_default=False)
+        if session is not None and session.is_loaded:
+            session.clear()
 
     def resolve_source(self, state_file_or_folder: str | Path) -> AnalysisSessionSource:
         """Resolve a model state file from a file path or folder."""
@@ -224,6 +231,15 @@ class AnalysisSessionService:
         logs_dir = source.model_dir / f"{source.model_name}_logs"
         if not logs_dir.is_dir():
             raise AnalysisSessionError(f"No logs folder found for analysis session: {logs_dir}")
+
+    def _session_or_default(self, *, import_default: bool) -> AnalysisSessionProtocol | None:
+        """Return the injected Analysis session or lazy-load the legacy singleton."""
+        if self._session is not None or not import_default:
+            return self._session
+        from lib.gui.analysis import Session
+
+        self._session = Session
+        return self._session
 
 
 def _has_graph_data(batch: T.Any, iterations: T.Any) -> bool:

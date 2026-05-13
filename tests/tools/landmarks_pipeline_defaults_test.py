@@ -19,7 +19,9 @@ def test_static_weight_pipeline_dry_run_uses_default_output_root(
 
     rc = run_static_weight_pipeline.main(["--dry-run"])
 
-    summary_path = tmp_path / DEFAULT_CACHE_DIR / "runs" / "static_weight_validation" / "run_summary.json"
+    summary_path = (
+        tmp_path / DEFAULT_CACHE_DIR / "runs" / "static_weight_validation" / "run_summary.json"
+    )
     payload = json.loads(summary_path.read_text(encoding="utf-8"))
     assert rc == 0
     assert summary_path.is_file()
@@ -39,8 +41,12 @@ def test_static_weight_pipeline_skip_dataset_build_dry_run_reuses_default_manife
 
     rc = run_static_weight_pipeline.main(["--dry-run", "--skip-dataset-build"])
 
-    summary_path = tmp_path / DEFAULT_CACHE_DIR / "runs" / "static_weight_validation" / "run_summary.json"
+    summary_path = (
+        tmp_path / DEFAULT_CACHE_DIR / "runs" / "static_weight_validation" / "run_summary.json"
+    )
     payload = json.loads(summary_path.read_text(encoding="utf-8"))
     assert rc == 0
     assert payload["planned_stages"][0] == "dataset:reuse-existing"
-    assert payload["args"]["output_root"] == str(DEFAULT_CACHE_DIR / "runs" / "static_weight_validation")
+    assert payload["args"]["output_root"] == str(
+        DEFAULT_CACHE_DIR / "runs" / "static_weight_validation"
+    )

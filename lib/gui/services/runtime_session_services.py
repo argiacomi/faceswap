@@ -262,7 +262,12 @@ class PreviewOutputRuntimeService:
             else:
                 from lib.gui.utils import get_images
             self._images_provider = get_images
-        return self._images_provider()
+        try:
+            return self._images_provider()
+        except (AssertionError, ImportError, ModuleNotFoundError):
+            if optional:
+                return None
+            raise
 
     def _preview_trigger(self, *, optional: bool = False) -> T.Any:
         """Return the configured preview trigger helper."""
@@ -275,7 +280,12 @@ class PreviewOutputRuntimeService:
             else:
                 from lib.gui.utils import preview_trigger
             self._preview_trigger_provider = preview_trigger
-        return self._preview_trigger_provider()
+        try:
+            return self._preview_trigger_provider()
+        except (AssertionError, ImportError, ModuleNotFoundError):
+            if optional:
+                return None
+            raise
 
 
 __all__ = get_module_objects(__name__)

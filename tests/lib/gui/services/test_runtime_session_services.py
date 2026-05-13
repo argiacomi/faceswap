@@ -267,9 +267,7 @@ def test_process_runtime_service_cleans_preview_output_on_finish() -> None:
         preview_trigger_provider=lambda: trigger,
     )
     runtime = ProcessRuntimeService("extract", preview_output=preview)
-    runtime.configure_context(
-        CommandExecutionContext.from_values("extract", {"-o": "/preview"})
-    )
+    runtime.configure_context(CommandExecutionContext.from_values("extract", {"-o": "/preview"}))
 
     runtime.finish(0)
 

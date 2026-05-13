@@ -113,7 +113,7 @@ class TrainingGraphWidget(QWidget):
             pen.setWidth(2 + (index % 2))
             painter.setPen(pen)
             points = self._points_for_series(series, minimum, maximum, rect)
-            for start, end in zip(points, points[1:]):
+            for start, end in zip(points, points[1:], strict=False):
                 painter.drawLine(start, end)
         painter.setPen(self.palette().text().color())
         painter.drawText(rect.left(), self.height() - 8, self._legend())

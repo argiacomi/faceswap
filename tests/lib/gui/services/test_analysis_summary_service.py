@@ -6,7 +6,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from lib.gui.services.analysis_session_service import AnalysisSessionSource, AnalysisTableRow
-from lib.gui.services.analysis_summary_service import AnalysisSummaryMetrics, AnalysisSummaryService
+from lib.gui.services.analysis_summary_service import (
+    AnalysisSummaryMetrics,
+    AnalysisSummaryService,
+)
 
 
 class _SessionServiceDouble:

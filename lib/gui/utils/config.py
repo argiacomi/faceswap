@@ -6,26 +6,30 @@ from __future__ import annotations
 import logging
 import os
 import sys
-import tkinter as tk
 import typing as T
 from dataclasses import dataclass, field
 
-from lib.gui import gui_config as cfg
-from lib.gui.project import Project, Tasks
-from lib.gui.theme import Style
 from lib.utils import PROJECT_ROOT, get_module_objects
 
-from .file_handler import FileHandler
-
 if T.TYPE_CHECKING:
+    import tkinter as tk
+
     from lib.gui.command import CommandNotebook, ToolsNotebook
     from lib.gui.custom_widgets import StatusBar
     from lib.gui.options import CliOptions
+    from lib.gui.project import Project, Tasks
 
 logger = logging.getLogger(__name__)
 
 PATH_CACHE = os.path.join(PROJECT_ROOT, "lib", "gui", ".cache")
 _CONFIG: Config | None = None
+
+
+def _tkinter() -> T.Any:
+    """Import tkinter only when the Tk GUI is initialized."""
+    import tkinter as tk
+
+    return tk
 
 
 def initialize_config(
@@ -82,6 +86,7 @@ class GlobalVariables:
 
     def __init__(self) -> None:
         logger.debug("Initializing %s", self.__class__.__name__)
+        tk = _tkinter()
         self._display = tk.StringVar()
         self._running_task = tk.BooleanVar()
         self._is_training = tk.BooleanVar()
@@ -190,6 +195,11 @@ class Config:  # pylint:disable=too-many-public-methods
             cli_opts,
             statusbar,
         )
+        tk = _tkinter()
+        from lib.gui.project import Project, Tasks
+        from lib.gui.theme import Style
+        from lib.gui.utils.file_handler import FileHandler
+
         self._default_font = T.cast(dict, tk.font.nametofont("TkDefaultFont").configure())[
             "family"
         ]
@@ -303,6 +313,8 @@ class Config:  # pylint:disable=too-many-public-methods
     def default_font(self) -> tuple[str, int]:
         """tuple: The selected font as configured in user settings. First item is the font (`str`)
         second item the font size (`int`)."""
+        from lib.gui import gui_config as cfg
+
         font = cfg.font()
         font = self._default_font if font == "default" else font
         return (font, cfg.font_size())
