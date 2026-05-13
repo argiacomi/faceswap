@@ -30,6 +30,7 @@ from lib.gui.qt_shell.command_schema import CommandSchema
 from lib.gui.qt_shell.command_schema_service import CommandSchemaService
 from lib.gui.qt_shell.display_controller import DisplayController
 from lib.gui.qt_shell.job_runner import JobRunner
+from lib.gui.qt_shell.preview_panel import PreviewPanel
 from lib.gui.services.command_builder import CommandBuilder
 from lib.gui.services.command_context import CommandExecutionContext
 from lib.gui.services.project_store import ProjectStore
@@ -79,6 +80,7 @@ class MainWindow(QMainWindow):
         self._menus: list[object] = []
         self._display_tabs_widget: QTabWidget | None = None
         self._display_controller: DisplayController | None = None
+        self._preview_panel_widget: PreviewPanel | None = None
         self._view_actions: dict[str, QAction] = {}
         self._run_action: QAction | None = None
         self._stop_action: QAction | None = None
@@ -122,13 +124,13 @@ class MainWindow(QMainWindow):
         tabs.setObjectName("qt-shell-display-tabs")
         tabs.setMinimumWidth(0)
         tabs.addTab(self._analysis_panel(), "Analysis")
-        tabs.addTab(self._display_placeholder("Preview"), "Preview")
+        tabs.addTab(self._preview_panel(), "Preview")
         tabs.addTab(self._display_placeholder("Graph"), "Graph")
         self._display_tabs_widget = tabs
         self._display_controller = DisplayController(
             tabs,
             analysis_factory=self._analysis_panel,
-            preview_factory=lambda: self._display_placeholder("Preview"),
+            preview_factory=self._preview_panel,
             graph_factory=lambda: self._display_placeholder("Graph"),
             preserve_existing_tabs=True,
             parent=self,
@@ -139,6 +141,12 @@ class MainWindow(QMainWindow):
     def _analysis_panel(self) -> QWidget:
         """Create the right-side Analysis runtime panel."""
         return AnalysisPanel(parent=self)
+
+    def _preview_panel(self) -> QWidget:
+        """Create or return the right-side Preview runtime panel."""
+        if self._preview_panel_widget is None:
+            self._preview_panel_widget = PreviewPanel(parent=self)
+        return self._preview_panel_widget
 
     @staticmethod
     def _display_placeholder(name: str) -> QWidget:
@@ -259,6 +267,7 @@ class MainWindow(QMainWindow):
         command_text = " ".join(args)
         self._console.write_line(f"$ {command_text}")
         self._write_context(command, values)
+        self._apply_preview_context(CommandExecutionContext.from_values(command, values))
         self.statusBar().showMessage("Generated command through CommandBuilder", 5000)
 
     def _run_command(self) -> None:
@@ -274,6 +283,9 @@ class MainWindow(QMainWindow):
         self._project = ProjectFile(tab_name=command, tasks={command: values})
         self._console.write_line(f"$ {' '.join(CommandBuilder.quote_args(args))}")
         self._write_context(command, values)
+        context = CommandExecutionContext.from_values(command, values)
+        self._apply_preview_context(context)
+        self._runner.configure_runtime_context(context)
         try:
             self._runner.start(args, command=command)
         except (RuntimeError, ValueError) as err:
@@ -294,6 +306,8 @@ class MainWindow(QMainWindow):
         self._set_running(False)
         if self._display_controller is not None:
             self._display_controller.set_runtime_state(None, running=False)
+        if self._preview_panel_widget is not None:
+            self._preview_panel_widget.refresh_preview()
         self._sync_view_actions()
         self._console.write_line(f"\nProcess finished with exit code {exit_code}")
         self.statusBar().showMessage(f"Process finished with exit code {exit_code}", 5000)
@@ -331,6 +345,11 @@ class MainWindow(QMainWindow):
         self._progress.setRange(0, 100)
         self._progress.setValue(0)
 
+    def _apply_preview_context(self, context: CommandExecutionContext) -> None:
+        """Apply preview output context to the Preview panel when available."""
+        if self._preview_panel_widget is not None:
+            self._preview_panel_widget.apply_context(context)
+
     def _build_command(self, *, generate: bool) -> tuple[str, str, dict[str, object], list[str]]:
         """Build command args from the selected panel state."""
         category, command, values = self._command_panel.command_spec()
@@ -357,6 +376,8 @@ class MainWindow(QMainWindow):
         self._project = ProjectFile()
         self._project_filename = None
         self._command_panel.clear_values()
+        if self._preview_panel_widget is not None:
+            self._preview_panel_widget.clear_preview()
         if self._display_controller is not None:
             self._display_controller.set_runtime_state(None, running=False)
         self._sync_view_actions()
@@ -417,6 +438,7 @@ class MainWindow(QMainWindow):
         self._project = project
         self._project_filename = filename
         self._command_panel.set_command(command, values)
+        self._apply_preview_context(CommandExecutionContext.from_values(command, values))
         self._recent_files.add(filename, "project")
         self._console.write_line(f"Loaded prototype project: {filename}")
         self.statusBar().showMessage("Project loaded", 5000)
