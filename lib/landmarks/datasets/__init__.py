@@ -301,12 +301,25 @@ def build_wflw_manifest(
             raise FileNotFoundError(f"WFLW annotation file not found: {annotations}")
         root = inferred_image_root if image_root is None else Path(image_root)
         scenario_groups = _explicit_scenario_groups(scenarios)
-        samples = []
+        parsed_rows = []
+        image_counts: dict[str, int] = {}
         for index, line in enumerate(annotations.read_text(encoding="utf-8").splitlines()):
-            if not line.strip():
+            stripped = line.strip()
+            if not stripped:
                 continue
-            points, bbox, attributes, image_rel = _parse_wflw_line(line, index + 1)
-            sample_id = Path(image_rel).with_suffix("").as_posix()
+            points, bbox, attributes, image_rel = _parse_wflw_line(stripped, index + 1)
+            parsed_rows.append((points, bbox, attributes, image_rel))
+            image_counts[image_rel] = image_counts.get(image_rel, 0) + 1
+
+        samples = []
+        image_occurrences: dict[str, int] = {}
+        for points, bbox, attributes, image_rel in parsed_rows:
+            image_occurrences[image_rel] = image_occurrences.get(image_rel, 0) + 1
+            sample_id = _wflw_sample_id(
+                image_rel,
+                image_occurrences[image_rel],
+                image_counts[image_rel],
+            )
             condition_labels = _labels_from_wflw_attributes(attributes)
             condition = (
                 condition_labels[0] if condition_labels else _fallback_condition_label(scenario)
@@ -319,10 +332,11 @@ def build_wflw_manifest(
                     "conditions": condition_labels or (condition,),
                     "image": str((root / image_rel).resolve()),
                     "source_schema": "2d_98",
-                    "source": {"dataset": "wflw", "source_id": image_rel},
+                    "source": {"dataset": "wflw", "source_id": sample_id},
                     "metadata": {
                         "bbox": bbox,
                         "attributes": attributes,
+                        "image_id": image_rel,
                     },
                     "points": normalize_landmarks(points.reshape(98, 2), source_schema="2d_98"),
                 }
@@ -340,6 +354,14 @@ def build_wflw_manifest(
     finally:
         if cleanup is not None:
             cleanup.__exit__(None, None, None)
+
+
+def _wflw_sample_id(image_rel: str, occurrence: int, total_occurrences: int) -> str:
+    """Return a stable WFLW face sample id for an annotation row."""
+    base = Path(image_rel).with_suffix("").as_posix()
+    if total_occurrences <= 1:
+        return base
+    return f"{base}#face-{occurrence:02d}"
 
 
 def build_cofw_manifest(

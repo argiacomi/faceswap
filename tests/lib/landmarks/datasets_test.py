@@ -118,6 +118,31 @@ def test_wflw_builder_writes_visual_mapping_overlay(tmp_path: Path) -> None:
     assert np.load(tmp_path / "out" / sample["landmarks"]).shape == (68, 2)
 
 
+def test_wflw_builder_disambiguates_multiple_faces_in_same_image(tmp_path: Path) -> None:
+    """WFLW may annotate multiple distinct faces in one source image."""
+    points = _points_98()
+    rows = []
+    for attr_values in ("1 0 0 0 0 0", "0 0 0 0 1 0"):
+        rows.append(
+            " ".join(str(value) for value in points.reshape(-1))
+            + " 1 2 3 4"
+            + f" {attr_values}"
+            + " images/group.jpg\n"
+        )
+    annotation = tmp_path / "list_98pt_rect_attr_test.txt"
+    annotation.write_text("".join(rows), encoding="utf-8")
+
+    manifest_path = build_wflw_manifest(annotation, tmp_path / "out")
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    audit = json.loads((tmp_path / "out" / "dataset_audit.json").read_text())
+    sample_ids = [sample["sample_id"] for sample in payload["samples"]]
+    source_ids = [sample["source"]["source_id"] for sample in payload["samples"]]
+
+    assert sorted(sample_ids) == ["images/group#face-01", "images/group#face-02"]
+    assert sorted(source_ids) == sorted(sample_ids)
+    assert audit["duplicate_source_ids"] == []
+
+
 def test_cofw_builder_preserves_occlusion_metadata(tmp_path: Path) -> None:
     """COFW JSON occlusion metadata contributes normalized coverage labels."""
     source = tmp_path / "cofw.json"
