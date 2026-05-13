@@ -53,6 +53,18 @@ class AnalysisPanel(QWidget):
         """Return the backing Analysis session service."""
         return self._service
 
+    @property
+    def source_path(self) -> str | None:
+        """Return the current Analysis source state file path, if loaded."""
+        source = self._service.source
+        return None if source is None else str(source.state_file)
+
+    def restore_source(self, source: str | None) -> bool:
+        """Restore an Analysis source from saved UI state."""
+        if not source:
+            return False
+        return self.load_session(source)
+
     def load_session(self, source: str | Path) -> bool:
         """Load a session source and render summary rows."""
         try:
