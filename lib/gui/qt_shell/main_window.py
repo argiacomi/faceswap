@@ -268,6 +268,7 @@ class MainWindow(QMainWindow):
         self._project = ProjectFile(tab_name=command, tasks={command: values})
         self._console.write_line(f"$ {' '.join(CommandBuilder.quote_args(args))}")
         self._write_context(command, values)
+        self._runner.configure_runtime_context(CommandExecutionContext.from_values(command, values))
         try:
             self._runner.start(args, command=command)
         except (RuntimeError, ValueError) as err:
