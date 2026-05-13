@@ -170,6 +170,8 @@ class ExtractArgs(ExtractConvertArgs):
                     "quality. A ResNet and MobileNet version are available (configurable in Detect"
                     " "
                     "settings). The MobileNet version is light enough to run on CPU."
+                    "\nL|scrfd: Good InsightFace detector. Defaults to SCRFD-10GF, with "
+                    "SCRFD-34GF available in Detect settings."
                     "\nL|s3fd: Good detector. Slow on CPU, faster on GPU. Can detect more faces "
                     "and "
                     "fewer false positives than other GPU detectors, but is a lot more resource "
