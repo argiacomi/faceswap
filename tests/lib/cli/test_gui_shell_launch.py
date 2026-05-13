@@ -7,7 +7,21 @@ from argparse import Namespace
 
 import pytest
 
+from lib.cli.args import GuiArgs
 from lib.cli.launcher import GUI_SHELL_ENV, FaceswapError, ScriptExecutor
+
+
+def test_gui_args_include_hidden_no_exec_flag() -> None:
+    """GUI args should expose a hidden no-exec flag for launch smoke tests."""
+    hidden_arg = next(
+        option
+        for option in GuiArgs.get_argument_list()
+        if "--no-gui-exec" in option["opts"]
+    )
+
+    assert hidden_arg["action"] == "store_true"
+    assert hidden_arg["dest"] == "no_gui_exec"
+    assert hidden_arg["help"] == pytest.importorskip("argparse").SUPPRESS
 
 
 def test_resolve_gui_shell_defaults_to_tk(monkeypatch) -> None:  # type:ignore[no-untyped-def]
