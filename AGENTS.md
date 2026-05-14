@@ -30,7 +30,7 @@ The project is cross-platform and backend-sensitive. Account for Linux, macOS, C
 Use:
 
 ```bash
-mamba run -n faceswap <command>
+mamba run -n faceswap rtk <command>
 ```
 
 ## Validation
@@ -38,14 +38,14 @@ mamba run -n faceswap <command>
 ### Ruff lint and format
 
 ```bash
-mamba run -n faceswap ruff check . --fix
-mamba run -n faceswap ruff format .
+mamba run -n faceswap rtk ruff check . --fix
+mamba run -n faceswap rtk ruff format .
 ```
 
 ### Type check
 
 ```bash
-mamba run -n faceswap mypy .
+mamba run -n faceswap rtk mypy .
 ```
 
 Mypy may be allowed to fail in CI. Inspect and report relevant new errors.
@@ -53,13 +53,13 @@ Mypy may be allowed to fail in CI. Inspect and report relevant new errors.
 ### Unit tests
 
 ```bash
-mamba run -n faceswap env KERAS_BACKEND=torch KERAS_TORCH_DEVICE=CPU FACESWAP_BACKEND=cpu pytest -v tests/
+mamba run -n faceswap env KERAS_BACKEND=torch KERAS_TORCH_DEVICE=CPU FACESWAP_BACKEND=cpu rtk pytest -v tests/
 ```
 
 ### End-to-end smoke tests
 
 ```bash
-mamba run -n faceswap env KERAS_BACKEND=torch KERAS_TORCH_DEVICE=CPU FACESWAP_BACKEND=cpu python tests/simple_tests.py
+mamba run -n faceswap env KERAS_BACKEND=torch KERAS_TORCH_DEVICE=CPU FACESWAP_BACKEND=cpu rtk python tests/simple_tests.py
 ```
 
 If a full test run is too expensive, run targeted tests and state exactly what was and was not run.

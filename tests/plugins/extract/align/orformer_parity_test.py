@@ -32,7 +32,7 @@ the test will pick them up automatically.
 Running the test
 ----------------
     mamba run -n faceswap env KERAS_BACKEND=torch KERAS_TORCH_DEVICE=CPU \
-        FACESWAP_BACKEND=cpu py.test -v \
+        FACESWAP_BACKEND=cpu pytest -v \
         tests/plugins/extract/align/orformer_parity_test.py
 
 If the fixture directory is absent or empty the test is skipped.
