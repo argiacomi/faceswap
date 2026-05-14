@@ -441,12 +441,7 @@ _LEGACY_COLOR_TOKENS: dict[str, dict[str, tuple[str, ...]]] = {
         "info_border": ("group_panel_info_border", "info_border"),
         "header_color": ("group_panel_header_color", "accent"),
         "header_font": ("group_panel_header_font", "accent_text"),
-        "group_background": (
-            "group_panel_group_background",
-            "panel_alt",
-            "section",
-            "input_focus",
-        ),
+        "group_background": ("group_panel_group_background", "panel_alt", "section", "input_focus"),
         "group_border": ("group_panel_group_border", "border"),
         "group_font": ("group_panel_group_font", "text"),
         "control_color": ("group_panel_control_color", "muted_text", "button_hover"),
