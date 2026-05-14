@@ -11,8 +11,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-
-from lib.landmarks.progress import progress_iter
+from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
@@ -180,7 +179,14 @@ def apply_detector_bboxes(args: argparse.Namespace) -> dict[str, T.Any]:
     written = missing = 0
     records: list[dict[str, T.Any]] = []
     show_progress = getattr(args, "log_level", "INFO") != "ERROR"
-    for entry in progress_iter(entries, label="Detector bboxes", enabled=show_progress):
+    iterator = tqdm(
+        entries,
+        total=len(entries),
+        desc="Detector bboxes",
+        unit="sample",
+        disable=not show_progress,
+    )
+    for entry in iterator:
         sid = _sample_id(entry)
         metadata = entry.setdefault("metadata", {})
         if not isinstance(metadata, dict):
