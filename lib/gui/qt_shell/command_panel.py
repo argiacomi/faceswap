@@ -32,6 +32,8 @@ from PySide6.QtWidgets import (
 
 from lib.gui.qt_shell.command_schema import CommandSchema, OptionSpec
 
+IS_WINDOWS = os.name == "nt"
+
 
 class OptionsFormRenderer(QWidget):
     """Dynamic schema-backed Qt option renderer."""
@@ -539,8 +541,8 @@ class OptionsFormRenderer(QWidget):
     @staticmethod
     def _split_nargs(value: str) -> list[str]:
         """Split a multi-value CLI option preserving platform-specific path syntax."""
-        parts = shlex.split(value, posix=os.name != "nt")
-        if os.name == "nt":
+        parts = shlex.split(value, posix=not IS_WINDOWS)
+        if IS_WINDOWS:
             parts = [
                 part[1:-1] if len(part) >= 2 and part[0] == part[-1] and part[0] in "\"'" else part
                 for part in parts

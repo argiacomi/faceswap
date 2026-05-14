@@ -373,7 +373,7 @@ def test_command_schema_nargs_splitting_preserves_windows_paths(monkeypatch) -> 
     """nargs splitting should not mangle Windows paths with backslashes."""
     from lib.gui.qt_shell import command_panel
 
-    monkeypatch.setattr(command_panel.os, "name", "nt")
+    monkeypatch.setattr(command_panel, "IS_WINDOWS", True)
 
     assert command_panel.OptionsFormRenderer._split_nargs(
         r'"C:\Input Folder\one.png" C:\out\two.png'

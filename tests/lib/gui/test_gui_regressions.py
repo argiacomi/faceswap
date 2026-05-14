@@ -215,7 +215,7 @@ def test_invalid_generate_does_not_clear_running_task(
 
 def test_windows_path_parsing_for_nargs(monkeypatch: pytest.MonkeyPatch) -> None:
     """Windows nargs parsing preserves backslashes in quoted paths."""
-    monkeypatch.setattr("lib.gui.options.os.name", "nt")
+    monkeypatch.setattr("lib.gui.options.IS_WINDOWS", True)
     value = r'"C:\Users\Drew\input one.jpg" "C:\Users\Drew\input two.jpg"'
 
     assert CliOptions._split_nargs(value, "-i") == [

@@ -29,6 +29,7 @@ if T.TYPE_CHECKING:
     from lib.cli.args import FaceSwapArgs
 
 logger = logging.getLogger(__name__)
+IS_WINDOWS = os.name == "nt"
 
 
 @dataclass
@@ -655,11 +656,11 @@ class CliOptions:
     def _split_nargs(cls, value: str, switch: str) -> list[str]:
         """Split a multi-value CLI option preserving platform-specific path syntax."""
         try:
-            parts = shlex.split(value, posix=os.name != "nt")
+            parts = shlex.split(value, posix=not IS_WINDOWS)
         except ValueError as err:
             raise ValueError(f"Invalid quoted argument for {switch}: {value}") from err
 
-        if os.name == "nt":
+        if IS_WINDOWS:
             parts = [
                 part[1:-1] if len(part) >= 2 and part[0] == part[-1] and part[0] in "\"'" else part
                 for part in parts
