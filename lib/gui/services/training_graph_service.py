@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import csv
 import typing as T
 from dataclasses import dataclass
 from pathlib import Path
@@ -90,6 +91,13 @@ class TrainingGraphSnapshot:
     def is_empty(self) -> bool:
         """Return whether there are no points to plot."""
         return self.point_count == 0
+
+    def series_for_keys(self, selected_keys: tuple[str, ...] = ()) -> tuple[TrainingGraphSeries, ...]:
+        """Return selected series or all series when no keys are supplied."""
+        if not selected_keys:
+            return self.series
+        selected = set(selected_keys)
+        return tuple(series for series in self.series if series.name in selected)
 
 
 class TrainingGraphService:
@@ -204,6 +212,28 @@ class TrainingGraphService:
                 graph_series.append(TrainingGraphSeries(name, converted))
         self._snapshot = TrainingGraphSnapshot(self._source, self._session_id, tuple(graph_series))
         return self._snapshot
+
+    def save_csv(
+        self,
+        filename: str | Path,
+        *,
+        selected_keys: tuple[str, ...] = (),
+    ) -> int:
+        """Save the current snapshot to CSV and return the number of data rows written."""
+        series = self._snapshot.series_for_keys(selected_keys)
+        if not series:
+            return 0
+        max_count = max(item.count for item in series)
+        fieldnames = ("iteration", *(item.name for item in series))
+        with Path(filename).open("w", encoding="utf-8", newline="") as outfile:
+            writer = csv.DictWriter(outfile, fieldnames=fieldnames)
+            writer.writeheader()
+            for index in range(max_count):
+                row: dict[str, int | float | str] = {"iteration": index + 1}
+                for item in series:
+                    row[item.name] = item.values[index] if index < item.count else ""
+                writer.writerow(row)
+        return max_count
 
     def clear(self) -> None:
         """Clear graph source and cached graph data."""
