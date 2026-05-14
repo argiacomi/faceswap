@@ -8,7 +8,7 @@ import sys
 
 from PySide6.QtWidgets import QApplication
 
-from lib.gui.qt_shell.main_window import MainWindow
+from lib.gui.qt_shell import MainWindow
 from lib.gui.qt_shell.theme import apply_theme
 from lib.utils import get_module_objects
 
