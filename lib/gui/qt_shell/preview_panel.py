@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -479,7 +479,8 @@ class PreviewPanel(QWidget):
     def _sync_actions(self) -> None:
         """Enable actions based on configured preview state."""
         has_source = self._service.source is not None
-        has_image = not self._image_label.pixmap().isNull()
+        pixmap = self._image_label.pixmap()
+        has_image = pixmap is not None and not pixmap.isNull()
         self._refresh_button.setEnabled(has_source)
         self._clear_button.setEnabled(has_source or self._image_list.count() > 0)
         self._zoom_in_button.setEnabled(has_image)
