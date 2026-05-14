@@ -136,6 +136,31 @@ def _summarize_bucket_weighted(
     return output
 
 
+def _worst_scenario_buckets(
+    scenario_buckets: dict[str, dict[str, dict[str, float]]],
+    label: str,
+    *,
+    limit: int = 10,
+) -> list[dict[str, T.Any]]:
+    """Return the worst dataset/condition buckets for one label by NME."""
+    rows: list[dict[str, T.Any]] = []
+    for bucket, labels in scenario_buckets.items():
+        metrics = labels.get(label)
+        if not metrics:
+            continue
+        rows.append(
+            {
+                "scenario_bucket": bucket,
+                "nme": metrics.get("nme", 0.0),
+                "failure_rate": metrics.get("failure_rate", 0.0),
+                "auc": metrics.get("auc", 0.0),
+                "count": metrics.get("count", 0.0),
+            }
+        )
+    rows.sort(key=lambda row: (float(row["nme"]), float(row["failure_rate"])), reverse=True)
+    return rows[:limit]
+
+
 def _fuse_variant(
     variant: str,
     predictions: T.Sequence[LandmarkPrediction],
@@ -383,6 +408,7 @@ def run_quality_harness(
         variants=variants,
         failure_threshold=failure_threshold,
         conditions=summary["conditions"],
+        scenario_buckets=scenario_buckets,
         threshold_failed=threshold_failed,
         overall_metrics=scenario_weighted_overall,
     )
@@ -485,6 +511,7 @@ def _best_variant_summary(
     variants: T.Sequence[str],
     failure_threshold: float,
     conditions: dict[str, dict[str, dict[str, float]]],
+    scenario_buckets: dict[str, dict[str, dict[str, float]]],
     threshold_failed: bool,
     overall_metrics: dict[str, dict[str, T.Any]] | None = None,
 ) -> dict[str, T.Any]:
@@ -524,6 +551,10 @@ def _best_variant_summary(
             "best_variant_metrics": {},
             "ensemble_deltas_vs_best_single": {},
             "failure_rate_by_condition": {},
+            "failure_rate_by_scenario_bucket": {},
+            "worst_scenario_buckets": [],
+            "worst_best_single_scenario_buckets": [],
+            "worst_best_variant_scenario_buckets": [],
             "threshold_failed": threshold_failed,
             "overall_nme_aggregation": "equal_weighted_dataset_condition_scenario_buckets",
         }
@@ -537,6 +568,14 @@ def _best_variant_summary(
         "best_variant_metrics": best_variant_metrics,
         "ensemble_deltas_vs_best_single": deltas,
         "failure_rate_by_condition": conditions,
+        "failure_rate_by_scenario_bucket": scenario_buckets,
+        "worst_scenario_buckets": _worst_scenario_buckets(scenario_buckets, label),
+        "worst_best_single_scenario_buckets": _worst_scenario_buckets(
+            scenario_buckets, best_single_label
+        ),
+        "worst_best_variant_scenario_buckets": _worst_scenario_buckets(
+            scenario_buckets, best_variant_label
+        ),
         "threshold_failed": threshold_failed,
         "overall_nme_aggregation": "equal_weighted_dataset_condition_scenario_buckets",
     }
