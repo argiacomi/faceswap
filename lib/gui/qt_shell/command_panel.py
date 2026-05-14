@@ -580,6 +580,8 @@ class CommandPanel(QWidget):
         self._generate_button = QPushButton("Generate")
         self._run_button = QPushButton("Run")
         self._syncing_tabs = False
+        self._command_value_cache: dict[str, dict[str, object]] = {}
+        self._active_cached_command: str | None = None
         self._build()
         self._primary_tabs.currentChanged.connect(self._set_primary_tab)
         self._tool_tabs.currentChanged.connect(self._set_tool_tab)
@@ -602,6 +604,8 @@ class CommandPanel(QWidget):
 
     def set_command(self, command: str, values: T.Mapping[str, object]) -> None:
         """Apply a command and values from a loaded project."""
+        if command:
+            self._command_value_cache[command] = dict(values)
         category = self._schema.category_for_command(command)
         if category is not None:
             self._set_category(category)
@@ -609,10 +613,11 @@ class CommandPanel(QWidget):
             self._command.addItem(command)
         self._command.setCurrentText(command)
         self._select_tabs_for_command(category, command)
-        self._renderer.apply_values(values)
+        self._set_command_options(command)
 
     def clear_values(self) -> None:
         """Reset rendered fields to empty/default values."""
+        self._command_value_cache.pop(self._command.currentText(), None)
         self._set_command_options(self._command.currentText())
 
     def set_running(self, running: bool) -> None:
@@ -715,10 +720,16 @@ class CommandPanel(QWidget):
 
     def _set_command_options(self, command: str) -> None:
         """Render fields for the selected command."""
+        previous = self._active_cached_command
+        if previous and previous != command and self._renderer.rendered_switches:
+            self._command_value_cache[previous] = self._renderer.values()
         self._renderer.set_options(self._schema.options(command))
+        if command in self._command_value_cache:
+            self._renderer.apply_values(self._command_value_cache[command])
         self._set_command_info(command)
         self._update_validation()
         self._run_button.setText(command.title() if command else "Run")
+        self._active_cached_command = command
 
     def _set_command_info(self, command: str) -> None:
         """Render command summary text from CLI metadata."""

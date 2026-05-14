@@ -34,6 +34,16 @@ def test_normalize_kind_accepts_legacy_command_kinds() -> None:
     assert service.normalize_kind(None, "project.fsw") == PROJECT_KIND
 
 
+def test_normalize_kind_falls_back_to_extension_for_invalid_values() -> None:
+    """Unexpected kind values should fall back to extension rather than task by default."""
+    service = ProjectSessionService()
+
+    assert service.normalize_kind("bad", "project.fsw") == PROJECT_KIND
+    assert service.normalize_kind("bad", "task.fst") == TASK_KIND
+    assert service.normalize_kind("bad", "unknown.json") == PROJECT_KIND
+    assert service.normalize_kind(None, "project.fsw") == PROJECT_KIND
+
+
 def test_title_renders_basename_and_dirty_marker() -> None:
     """Window title should reflect current file and dirty state."""
     service = ProjectSessionService()
@@ -101,6 +111,36 @@ def test_last_session_store_normalizes_legacy_kind(tmp_path: Path) -> None:
     store = LastSessionStore(get_serializer("json"), str(session_file))
 
     store.save(str(task_file), "train")
+    loaded = store.load()
+
+    assert loaded is not None
+    assert loaded.kind == TASK_KIND
+
+
+def test_last_session_store_uses_extension_for_invalid_cached_kind(tmp_path: Path) -> None:
+    """Invalid cached last-session kind should restore according to file extension."""
+    session_file = tmp_path / "last.json"
+    project_file = tmp_path / "example.fsw"
+    project_file.write_text("{}", encoding="utf-8")
+    serializer = get_serializer("json")
+    serializer.save(str(session_file), {"filename": str(project_file), "kind": "bad"})
+    store = LastSessionStore(serializer, str(session_file))
+
+    loaded = store.load()
+
+    assert loaded is not None
+    assert loaded.kind == PROJECT_KIND
+
+
+def test_last_session_store_uses_extension_when_kind_is_missing(tmp_path: Path) -> None:
+    """Missing cached last-session kind should not block extension-based restore."""
+    session_file = tmp_path / "last.json"
+    task_file = tmp_path / "example.fst"
+    task_file.write_text("{}", encoding="utf-8")
+    serializer = get_serializer("json")
+    serializer.save(str(session_file), {"filename": str(task_file)})
+    store = LastSessionStore(serializer, str(session_file))
+
     loaded = store.load()
 
     assert loaded is not None

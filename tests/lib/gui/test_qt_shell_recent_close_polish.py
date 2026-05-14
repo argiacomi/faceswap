@@ -121,6 +121,56 @@ def test_refresh_recent_menu_prunes_missing_files(  # type:ignore[no-untyped-def
     assert window._recent_menu.actions()[0].text() == "Project: existing.fsw"  # pylint:disable=protected-access
 
 
+def test_recent_menu_uses_duplicate_aware_display_labels(  # type:ignore[no-untyped-def]
+    qtbot,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """Duplicate recent basenames should include parent paths in menu labels."""
+    window = _main_window(qtbot, monkeypatch, tmp_path)
+    first = tmp_path / "first" / "same.fsw"
+    second = tmp_path / "second" / "same.fsw"
+    first.parent.mkdir()
+    second.parent.mkdir()
+    first.write_text("{}", encoding="utf-8")
+    second.write_text("{}", encoding="utf-8")
+    window._recent_files.add(str(second), TASK_KIND)  # pylint:disable=protected-access
+    window._recent_files.add(str(first), PROJECT_KIND)  # pylint:disable=protected-access
+
+    window._refresh_recent_menu()  # pylint:disable=protected-access
+
+    assert window._recent_menu is not None  # pylint:disable=protected-access
+    labels = [action.text() for action in window._recent_menu.actions()[:2]]  # pylint:disable=protected-access
+    assert labels == [
+        f"Project: same.fsw ({first.parent})",
+        f"Task: same.fsw ({second.parent})",
+    ]
+
+
+def test_recent_menu_routes_actions_with_normalized_kind(  # type:ignore[no-untyped-def]
+    qtbot,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """Recent actions should open their file with a normalized project/task kind."""
+    window = _main_window(qtbot, monkeypatch, tmp_path)
+    legacy_task = tmp_path / "legacy.fst"
+    legacy_task.write_text("{}", encoding="utf-8")
+    window._recent_files.add(str(legacy_task), "train")  # pylint:disable=protected-access
+    opened = []
+    monkeypatch.setattr(
+        window,
+        "_open_session_file",
+        lambda filename, kind: opened.append((filename, kind)),
+    )
+
+    window._refresh_recent_menu()  # pylint:disable=protected-access
+    assert window._recent_menu is not None  # pylint:disable=protected-access
+    window._recent_menu.actions()[0].trigger()  # pylint:disable=protected-access
+
+    assert opened == [(str(legacy_task), TASK_KIND)]
+
+
 def test_clear_recent_files_resets_menu(  # type:ignore[no-untyped-def]
     qtbot,
     monkeypatch,

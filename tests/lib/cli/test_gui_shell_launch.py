@@ -9,7 +9,7 @@ from argparse import ArgumentParser, Namespace
 import pytest
 
 from lib.cli.args import GuiArgs
-from lib.cli.launcher import GUI_SHELL_ENV, FaceswapError, ScriptExecutor
+from lib.cli.launcher import GUI_SHELL_ENV, QT_NO_EXEC_ENV, FaceswapError, ScriptExecutor
 
 
 def test_gui_args_include_hidden_no_exec_flag() -> None:
@@ -86,6 +86,18 @@ def test_resolve_gui_shell_rejects_invalid_environment(monkeypatch) -> None:  # 
         ScriptExecutor._resolve_gui_shell(Namespace(gui_shell=None))  # pylint:disable=protected-access
 
 
+def test_resolve_gui_no_exec_reads_cli_and_environment(monkeypatch) -> None:  # type:ignore[no-untyped-def]
+    """Qt no-exec smoke mode should resolve from CLI args or environment."""
+    monkeypatch.delenv(QT_NO_EXEC_ENV, raising=False)
+
+    assert ScriptExecutor._resolve_gui_no_exec(Namespace(no_gui_exec=True)) is True  # pylint:disable=protected-access
+    assert ScriptExecutor._resolve_gui_no_exec(Namespace(no_gui_exec=False)) is False  # pylint:disable=protected-access
+
+    monkeypatch.setenv(QT_NO_EXEC_ENV, "1")
+
+    assert ScriptExecutor._resolve_gui_no_exec(Namespace(no_gui_exec=False)) is True  # pylint:disable=protected-access
+
+
 def test_import_script_uses_qt_gui_module(monkeypatch) -> None:  # type:ignore[no-untyped-def]
     """Qt shell selection should import scripts.gui_qt instead of scripts.gui."""
     imported = []
@@ -146,6 +158,21 @@ def test_qt_shell_checks_pyside6_not_tk(monkeypatch) -> None:  # type:ignore[no-
     executor._test_for_gui()  # pylint:disable=protected-access
 
     assert calls == ["qt", "display"]
+
+
+def test_qt_no_exec_skips_display_preflight(monkeypatch) -> None:  # type:ignore[no-untyped-def]
+    """Qt no-exec smoke launch should check PySide6 without requiring a display."""
+    calls = []
+    executor = ScriptExecutor("gui")
+    executor._gui_shell = "qt"  # pylint:disable=protected-access
+    executor._gui_no_exec = True  # pylint:disable=protected-access
+    monkeypatch.setattr(executor, "_test_pyside6", lambda: calls.append("qt"))
+    monkeypatch.setattr(executor, "_test_tkinter", lambda: calls.append("tk"))
+    monkeypatch.setattr(executor, "_check_display", lambda: calls.append("display"))
+
+    executor._test_for_gui()  # pylint:disable=protected-access
+
+    assert calls == ["qt"]
 
 
 def test_tk_shell_checks_tk_not_pyside6(monkeypatch) -> None:  # type:ignore[no-untyped-def]

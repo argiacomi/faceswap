@@ -29,6 +29,8 @@ logger = logging.getLogger(__name__)
 
 GUI_SHELL_ENV = "FACESWAP_GUI_SHELL"
 GUI_SHELLS = ("tk", "qt")
+QT_NO_EXEC_ENV = "FACESWAP_QT_NO_EXEC"
+_TRUE_VALUES = {"1", "true", "yes", "on"}
 
 
 class ScriptExecutor:
@@ -46,6 +48,7 @@ class ScriptExecutor:
     def __init__(self, command: str) -> None:
         self._command = command.lower()
         self._gui_shell = "tk"
+        self._gui_no_exec = False
 
     def _set_environment_variables(self) -> None:
         """Set the number of threads that numexpr can use."""
@@ -144,6 +147,8 @@ class ScriptExecutor:
             return
         if self._gui_shell == "qt":
             self._test_pyside6()
+            if self._gui_no_exec:
+                return
         else:
             self._test_tkinter()
         self._check_display()
@@ -224,6 +229,7 @@ class ScriptExecutor:
         """
         if self._command == "gui":
             self._gui_shell = self._resolve_gui_shell(arguments)
+            self._gui_no_exec = self._resolve_gui_no_exec(arguments)
         is_gui = hasattr(arguments, "redirect_gui") and arguments.redirect_gui
         log_setup(arguments.loglevel, arguments.logfile, self._command, is_gui)
         success = False
@@ -254,6 +260,13 @@ class ScriptExecutor:
 
         finally:
             safe_shutdown(got_error=not success)
+
+    @staticmethod
+    def _resolve_gui_no_exec(arguments: argparse.Namespace) -> bool:
+        """Return whether Qt GUI launch should skip display preflight for smoke tests."""
+        if bool(getattr(arguments, "no_gui_exec", False)):
+            return True
+        return os.environ.get(QT_NO_EXEC_ENV, "").lower() in _TRUE_VALUES
 
     @staticmethod
     def _resolve_gui_shell(arguments: argparse.Namespace) -> str:
