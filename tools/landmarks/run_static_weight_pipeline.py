@@ -723,7 +723,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "detector-derived face_bbox values before prediction."
         ),
     )
-    parser.add_argument("--detector", default="cv2-dnn")
+    parser.add_argument("--detector", default="scrfd")
     parser.add_argument(
         "--detector-selection",
         choices=("gt-iou", "confidence", "largest"),

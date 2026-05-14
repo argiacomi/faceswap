@@ -89,9 +89,10 @@ def _cofw_images(images_mat: Path) -> list[np.ndarray]:
     if raw is None:
         raise ValueError(f"COFW image mat missing 'IsT': {images_mat}")
     images: list[np.ndarray] = []
-    iterable = (
-        raw.reshape(-1) if isinstance(raw, np.ndarray) and raw.dtype == object else np.asarray(raw)
-    )
+    if isinstance(raw, np.ndarray) and raw.dtype == object:
+        iterable = raw.reshape(-1)
+    else:
+        iterable = np.asarray(raw)
     for item in iterable:
         image = np.asarray(item)
         if image.size == 0:
@@ -161,8 +162,7 @@ def build_cofw68_json_from_sources(
     annotations = _annotation_files(annotation_root)
     if len(images) < len(annotations):
         raise ValueError(
-            f"COFW image count ({len(images)}) is smaller than "
-            f"COFW-68 annotation count ({len(annotations)})"
+            f"COFW image count ({len(images)}) is smaller than COFW-68 annotation count ({len(annotations)})"
         )
     bboxes = _load_bboxes(annotation_root, len(annotations))
     samples: list[dict[str, T.Any]] = []

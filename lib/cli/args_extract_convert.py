@@ -116,8 +116,8 @@ class ExtractArgs(ExtractConvertArgs):
             default_detector = "mtcnn"
             default_aligner = "cv2-dnn"
         else:
-            default_detector = "retinaface"
-            default_aligner = "hrnet"
+            default_detector = "scrfd"
+            default_aligner = "orformer"
 
         argument_list: list[dict[str, T.Any]] = []
         argument_list.append(

@@ -96,11 +96,10 @@ def test_build_300w_manifest_from_official_split_cache(tmp_path: Path) -> None:
     chunk_size = max(1, len(payload) // len(W300_OFFICIAL_PART_NAMES))
     offset = 0
     for index, name in enumerate(W300_OFFICIAL_PART_NAMES):
-        chunk = (
-            payload[offset:]
-            if index == len(W300_OFFICIAL_PART_NAMES) - 1
-            else payload[offset : offset + chunk_size]
-        )
+        if index == len(W300_OFFICIAL_PART_NAMES) - 1:
+            chunk = payload[offset:]
+        else:
+            chunk = payload[offset : offset + chunk_size]
         offset += len(chunk)
         (cache_root / name).write_bytes(chunk)
 

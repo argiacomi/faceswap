@@ -24,10 +24,7 @@ from lib.landmarks.datasets.aflw2000_3d import build_aflw2000_3d_manifest
 from lib.landmarks.datasets.cofw68 import resolve_cofw68_json
 from lib.landmarks.datasets.merl_rav import build_merl_rav_manifest
 from lib.landmarks.datasets.polish import polish_landmark_dataset_artifacts
-from lib.landmarks.datasets.sources import (
-    DEFAULT_CACHE_DIR,
-    resolve_wflw_official_source,
-)
+from lib.landmarks.datasets.sources import DEFAULT_CACHE_DIR, resolve_wflw_official_source
 from lib.landmarks.datasets.visual_overlays import write_indexed_region_overlays
 from lib.landmarks.datasets.w300 import build_300w_manifest
 
