@@ -4,14 +4,19 @@
 from __future__ import annotations
 
 import argparse
+import importlib
+import inspect
 import json
 import logging
+import pkgutil
 import typing as T
 from pathlib import Path
 
 import cv2
 import numpy as np
 from tqdm import tqdm
+
+from plugins.extract.base import ExtractPlugin
 
 logger = logging.getLogger(__name__)
 
@@ -95,15 +100,100 @@ def _iou(a: T.Sequence[float], b: T.Sequence[float]) -> float:
     return 0.0 if union <= 0 else inter / union
 
 
-def _build_detector(name: str) -> T.Any:
+def _normalize_detector_name(name: str) -> str:
+    """Return the plugin module name for a CLI detector name."""
+    aliases = {
+        "cv2-dnn": "cv2_dnn",
+        "cv2dnn": "cv2_dnn",
+        "s3fd": "s3fd",
+        "scrfd": "scrfd",
+    }
     key = name.strip().lower().replace("_", "-")
-    if key not in {"cv2-dnn", "cv2dnn"}:
-        raise ValueError(f"unsupported detector '{name}'. Supported detectors: cv2-dnn")
-    from plugins.extract.detect.cv2_dnn import CV2DNNDetect
+    return aliases.get(key, key.replace("-", "_"))
 
-    detector = CV2DNNDetect()
+
+def _available_detectors() -> tuple[str, ...]:
+    """Return importable Faceswap detector plugin module names."""
+    try:
+        import plugins.extract.detect as detect_package
+    except Exception:
+        return ()
+    names = []
+    for module in pkgutil.iter_modules(detect_package.__path__):
+        if module.ispkg or module.name.startswith("_") or module.name.endswith("_defaults"):
+            continue
+        names.append(module.name.replace("_", "-"))
+    return tuple(sorted(names))
+
+
+def _detector_class(module_name: str) -> type[ExtractPlugin]:
+    """Return the concrete Faceswap detector plugin class for a module."""
+    try:
+        module = importlib.import_module(f"plugins.extract.detect.{module_name}")
+    except ModuleNotFoundError as err:
+        available = ", ".join(_available_detectors()) or "none discovered"
+        raise ValueError(
+            f"unsupported detector '{module_name.replace('_', '-')}'. Available detectors: {available}"
+        ) from err
+    candidates: list[type[ExtractPlugin]] = []
+    for _, value in inspect.getmembers(module, inspect.isclass):
+        if value is ExtractPlugin:
+            continue
+        if issubclass(value, ExtractPlugin) and value.__module__ == module.__name__:
+            candidates.append(T.cast(type[ExtractPlugin], value))
+    if not candidates:
+        raise ValueError(f"detector module has no ExtractPlugin subclass: {module.__name__}")
+    if len(candidates) > 1:
+        logger.debug("Multiple detector classes found in %s; using %s", module.__name__, candidates[0].__name__)
+    return candidates[0]
+
+
+def _build_detector(name: str) -> ExtractPlugin:
+    """Build and load a Faceswap detector plugin by CLI name."""
+    module_name = _normalize_detector_name(name)
+    cls = _detector_class(module_name)
+    detector = cls()
     detector.model = detector.load_model()
+    logger.info("Loaded detector plugin '%s' (%s)", name, detector.__class__.__name__)
     return detector
+
+
+def _prepare_detector_batch(detector: ExtractPlugin, image_path: Path) -> tuple[np.ndarray, float, int, int, tuple[int, int]]:
+    """Read and prepare one image for a Faceswap detector plugin."""
+    image = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
+    if image is None:
+        raise FileNotFoundError(f"failed to read image: {image_path}")
+    image_shape = image.shape[:2]
+    if detector.is_rgb:
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    input_size = int(detector.input_size)
+    canvas, scale, pad_left, pad_top = _letterbox(image, input_size)
+    if tuple(detector.scale) == (0, 1):
+        canvas = canvas / 255.0
+    elif tuple(detector.scale) != (0, 255):
+        low, high = detector.scale
+        canvas = ((canvas / 255.0) * (high - low)) + low
+    batch = np.asarray([canvas], dtype=detector.dtype)
+    return batch, scale, pad_left, pad_top, image_shape
+
+
+def _boxes_and_scores(detector: ExtractPlugin, batch: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Run detector and return boxes plus optional confidence scores.
+
+    Faceswap detector plugins are expected to return boxes from ``post_process``
+    in model-input coordinates. Most plugins return only left/top/right/bottom.
+    If a plugin returns a fifth column, this helper treats it as confidence.
+    """
+    processed = detector.process(detector.pre_process(batch))
+    detected = detector.post_process(processed)
+    boxes = np.asarray(detected[0], dtype="float32")
+    if boxes.size == 0:
+        return np.empty((0, 4), dtype="float32"), np.empty((0,), dtype="float32")
+    boxes = np.atleast_2d(boxes)
+    if boxes.shape[1] < 4:
+        raise DetectionError(f"detector returned invalid box shape: {boxes.shape}")
+    scores = boxes[:, 4].astype("float32") if boxes.shape[1] >= 5 else np.ones((boxes.shape[0],), dtype="float32")
+    return boxes[:, :4].astype("float32"), scores
 
 
 def _select_index(
@@ -130,24 +220,17 @@ def _select_index(
 
 
 def _detect_one(
-    detector: T.Any,
+    detector: ExtractPlugin,
     image_path: Path,
     *,
     selection: str,
     target: list[float] | None,
     min_iou: float,
 ) -> tuple[list[float], float, float | None]:
-    image = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
-    if image is None:
-        raise FileNotFoundError(f"failed to read image: {image_path}")
-    canvas, scale, pad_left, pad_top = _letterbox(image, int(detector.input_size))
-    batch = np.asarray([canvas], dtype="float32")
-    raw = detector.process(detector.pre_process(batch))[0]
-    detections = raw[raw[:, 2] >= float(detector.confidence)]
-    if not len(detections):
+    batch, scale, pad_left, pad_top, image_shape = _prepare_detector_batch(detector, image_path)
+    detector_boxes, scores = _boxes_and_scores(detector, batch)
+    if not len(detector_boxes):
         raise DetectionError(f"no detection in {image_path}")
-    scores = detections[:, 2]
-    detector_boxes = detections[:, 3:7] * float(detector.input_size)
     frame_boxes = np.asarray(
         [
             _box_to_frame(
@@ -155,7 +238,7 @@ def _detect_one(
                 scale=scale,
                 pad_left=pad_left,
                 pad_top=pad_top,
-                image_shape=image.shape[:2],
+                image_shape=image_shape,
             )
             for box in detector_boxes
         ],
@@ -256,7 +339,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--output-manifest", default="")
     parser.add_argument("--output-json", default="")
-    parser.add_argument("--detector", default="cv2-dnn")
+    parser.add_argument(
+        "--detector",
+        default="scrfd",
+        help="Faceswap detector plugin name, for example scrfd, s3fd, or cv2-dnn.",
+    )
     parser.add_argument("--selection", choices=("confidence", "largest", "gt-iou"), default="gt-iou")
     parser.add_argument("--min-iou", type=float, default=0.25)
     parser.add_argument("--on-missing", choices=("error", "skip", "gt"), default="error")
