@@ -41,7 +41,9 @@ def _capture_preview_refresh(window, monkeypatch):  # type:ignore[no-untyped-def
     return calls
 
 
-def _patch_runner_start(window, monkeypatch, *, fail: bool = False) -> list[tuple[str, tuple[str, ...]]]:  # type:ignore[no-untyped-def]
+def _patch_runner_start(
+    window, monkeypatch, *, fail: bool = False
+) -> list[tuple[str, tuple[str, ...]]]:  # type:ignore[no-untyped-def]
     """Patch the job runner start method and return captured invocations."""
     starts: list[tuple[str, tuple[str, ...]]] = []
 
