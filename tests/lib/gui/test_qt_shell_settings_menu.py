@@ -9,7 +9,7 @@ import pytest
 
 pytest.importorskip("PySide6.QtWidgets")
 
-from PySide6.QtWidgets import QMainWindow, QMenu  # noqa:E402
+from PySide6.QtWidgets import QMainWindow, QMenu, QToolBar  # noqa:E402
 
 SETTINGS_MENU_LABEL = "Settings"
 CONFIGURE_SETTINGS_LABEL = "Configure Settings..."
@@ -43,6 +43,22 @@ def _settings_menu(window: QMainWindow) -> QMenu:
     menu = window.findChild(QMenu, "qt-shell-settings-menu")
     assert menu is not None, "Settings menu not found"
     return menu
+
+
+def _toolbar(window: QMainWindow) -> QToolBar:
+    """Return the main toolbar."""
+    toolbar = window.findChild(QToolBar, "qt-shell-toolbar")
+    assert toolbar is not None, "Toolbar not found"
+    return toolbar
+
+
+def _toolbar_settings_actions(window: QMainWindow):
+    """Return command-specific settings toolbar actions in UI order."""
+    return [
+        action
+        for action in _toolbar(window).actions()
+        if action.objectName().startswith("qt-shell-toolbar-settings-")
+    ]
 
 
 def test_settings_menu_is_inserted_between_project_and_command(
@@ -112,3 +128,73 @@ def test_settings_menu_action_routes_to_dialog(qtbot, monkeypatch, tmp_path: Pat
     assert created[0].activate_count == 2
     assert created[0].selected == ["train"]
     assert dialog is created[0]
+
+
+def test_toolbar_contains_command_specific_settings_actions(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:  # type:ignore[no-untyped-def]
+    """Toolbar should expose Extract, Train and Convert settings shortcuts."""
+    window = _main_window(qtbot, monkeypatch, tmp_path)
+
+    actions = _toolbar_settings_actions(window)
+
+    assert [action.objectName() for action in actions] == [
+        "qt-shell-toolbar-settings-extract",
+        "qt-shell-toolbar-settings-train",
+        "qt-shell-toolbar-settings-convert",
+    ]
+    assert [action.text() for action in actions] == [
+        "Configure Extract settings...",
+        "Configure Train settings...",
+        "Configure Convert settings...",
+    ]
+    assert [action.toolTip() for action in actions] == [
+        "Configure Extract settings...",
+        "Configure Train settings...",
+        "Configure Convert settings...",
+    ]
+
+
+def test_toolbar_settings_actions_route_to_command_sections(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:  # type:ignore[no-untyped-def]
+    """Toolbar settings shortcuts should route to command-specific dialog sections."""
+    import lib.gui.qt_shell.main_window as main_window_module
+
+    created: list[object] = []
+
+    class _DialogDouble:
+        def __init__(self, section=None, parent=None) -> None:  # type:ignore[no-untyped-def]
+            self.section = section
+            self.parent = parent
+            self.show_count = 0
+            self.raise_count = 0
+            self.activate_count = 0
+            self.selected: list[str] = []
+            created.append(self)
+
+        def show(self) -> None:
+            self.show_count += 1
+
+        def raise_(self) -> None:
+            self.raise_count += 1
+
+        def activateWindow(self) -> None:  # noqa:N802
+            self.activate_count += 1
+
+        def _select_initial_section(self, section: str) -> None:
+            self.selected.append(section)
+
+    monkeypatch.setattr(main_window_module, "SettingsDialog", _DialogDouble)
+    window = _main_window(qtbot, monkeypatch, tmp_path)
+
+    for action in _toolbar_settings_actions(window):
+        action.trigger()
+
+    assert len(created) == 1
+    assert created[0].section == "extract"
+    assert created[0].parent is window
+    assert created[0].selected == ["train", "convert"]
+    assert created[0].show_count == 3
+    assert created[0].raise_count == 3
+    assert created[0].activate_count == 3
