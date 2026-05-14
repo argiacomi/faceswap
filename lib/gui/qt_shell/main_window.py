@@ -321,6 +321,21 @@ class MainWindow(QMainWindow):
         self._stop_action = self._action("Stop", self._stop_job, "stop")
         toolbar.addAction(self._run_action)
         toolbar.addAction(self._stop_action)
+        toolbar.addSeparator()
+        for name in ("extract", "train", "convert"):
+            action = self._settings_action(name)
+            toolbar.addAction(action)
+
+    def _settings_action(self, name: str) -> QAction:
+        """Build a taskbar settings action that opens the dialog for one command."""
+        tooltip = f"Configure {name.title()} settings..."
+        action = QAction(self._icon(f"settings_{name}"), tooltip, self)
+        action.setObjectName(f"qt-shell-toolbar-settings-{name}")
+        action.setToolTip(tooltip)
+        action.triggered.connect(
+            lambda _checked=False, section=name: self._open_settings_dialog(section)
+        )
+        return action
 
     def _build_statusbar(self) -> None:
         """Build QStatusBar and QProgressBar status panel."""

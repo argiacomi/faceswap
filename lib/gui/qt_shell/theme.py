@@ -68,6 +68,9 @@ class QtTheme:
         "analysis": "context",
         "preview": "view",
         "graph": "graph",
+        "settings_extract": "settings_extract",
+        "settings_train": "settings_train",
+        "settings_convert": "settings_convert",
     }
 
     @classmethod
