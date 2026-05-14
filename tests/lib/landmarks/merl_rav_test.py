@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for native MERL-RAV organized manifest building."""
+"""Tests for native MERL-RAV manifest building."""
 
 from __future__ import annotations
 
@@ -62,10 +62,32 @@ def test_build_merl_rav_manifest_from_organized_pts_and_images(tmp_path: Path) -
     assert sample["metadata"]["externally_occluded_count"] == 1
     assert sample["metadata"]["self_occluded_count"] == 0
     assert sample["metadata"]["face_bbox_source"] == "merl_rav_68_landmark_extrema"
-    assert sample["metadata"]["aflw_images_required"] is True
+    assert sample["metadata"]["aflw_image_source"] == "organized_merl_rav"
     assert landmarks.shape == (68, 2)
     assert landmarks[5, 0] > 0
     assert landmarks[5, 1] > 0
+
+
+def test_build_merl_rav_manifest_matches_separate_aflw_image_source(tmp_path: Path) -> None:
+    """MERL-RAV labels can be matched to an extracted AFLW image source."""
+    labels_root = tmp_path / "labels_repo" / "merl_rav_labels"
+    aflw_root = tmp_path / "aflw_data"
+    points = _points_68()
+    _write_pts(labels_root / "frontal" / "testset" / "labels" / "image20056_pose.pts", points)
+    _write_png(aflw_root / "0" / "image20056_60645.jpg")
+
+    manifest = build_merl_rav_manifest(
+        tmp_path / "out",
+        source_dir=tmp_path / "labels_repo",
+        aflw_source_dir=aflw_root,
+    )
+
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    sample = payload["samples"][0]
+    assert sample["image"].endswith("image20056_60645.jpg")
+    assert sample["conditions"] == ["frontal", "testset"]
+    assert sample["metadata"]["aflw_image_source"] == "resolved_aflw_image_cache"
+    assert sample["metadata"]["image_id"] == "0/image20056_60645.jpg"
 
 
 def test_merl_rav_skips_self_occluded_unestimated_landmarks(tmp_path: Path) -> None:
