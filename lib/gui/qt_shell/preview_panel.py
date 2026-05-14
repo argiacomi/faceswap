@@ -25,6 +25,7 @@ from lib.gui.services.preview_output_service import (
     PreviewOutputImage,
     PreviewOutputService,
 )
+from lib.gui.utils.config import PATH_CACHE
 
 
 class PreviewImageView(QLabel):
@@ -53,6 +54,11 @@ class PreviewImageView(QLabel):
     def pan(self) -> tuple[float, float]:
         """Return normalized horizontal/vertical pan offsets."""
         return self._pan_x, self._pan_y
+
+    @property
+    def has_preview(self) -> bool:
+        """Return whether a source pixmap is loaded."""
+        return not self._source_pixmap.isNull()
 
     def set_preview_pixmap(self, pixmap: QPixmap) -> None:
         """Set the source pixmap and render it through the current view transform."""
@@ -195,6 +201,8 @@ class PreviewPanel(QWidget):
         self._zoom_in_button = QPushButton("Zoom In")
         self._zoom_out_button = QPushButton("Zoom Out")
         self._reset_view_button = QPushButton("Reset View")
+        self._update_train_button = QPushButton("Update")
+        self._mask_button = QPushButton("Mask")
         self._build_ui()
         self._connect_signals()
         self._sync_actions()
@@ -324,6 +332,15 @@ class PreviewPanel(QWidget):
         self._image_label.reset_view()
         self._sync_actions()
 
+    def trigger_training_preview_update(self) -> None:
+        """Request an immediate Tk-compatible training preview refresh."""
+        self._touch_trigger(".preview_trigger")
+        self.refresh_preview()
+
+    def trigger_training_mask_toggle(self) -> None:
+        """Request a Tk-compatible training mask overlay toggle."""
+        self._touch_trigger(".preview_mask_toggle")
+
     def _build_ui(self) -> None:
         """Build the panel layout."""
         self.setObjectName("qt-shell-preview-panel")
@@ -360,6 +377,8 @@ class PreviewPanel(QWidget):
             (self._zoom_in_button, "zoom-in"),
             (self._zoom_out_button, "zoom-out"),
             (self._reset_view_button, "reset-view"),
+            (self._update_train_button, "train-update"),
+            (self._mask_button, "train-mask"),
         ):
             button.setObjectName(f"qt-shell-preview-{name}")
             controls.addWidget(button)
@@ -383,6 +402,10 @@ class PreviewPanel(QWidget):
         self._zoom_in_button.clicked.connect(lambda _checked=False: self.zoom_in())
         self._zoom_out_button.clicked.connect(lambda _checked=False: self.zoom_out())
         self._reset_view_button.clicked.connect(lambda _checked=False: self.reset_view())
+        self._update_train_button.clicked.connect(
+            lambda _checked=False: self.trigger_training_preview_update()
+        )
+        self._mask_button.clicked.connect(lambda _checked=False: self.trigger_training_mask_toggle())
         self._image_list.currentItemChanged.connect(self._current_image_changed)
         self._refresh_timer.timeout.connect(lambda: self.refresh_preview())
 
@@ -458,6 +481,10 @@ class PreviewPanel(QWidget):
             self._status_label.setText(f"No {prefix.lower()} images found{live}")
         elif image_count == 1:
             self._status_label.setText(f"Loaded 1 {prefix.lower()} image{live}")
+        elif self._service.mode == "batch" and self._service.resolved_source != source:
+            self._status_label.setText(
+                f"Loaded {image_count} preview images from latest batch folder{live}"
+            )
         else:
             self._status_label.setText(f"Loaded {image_count} {prefix.lower()} images{live}")
 
@@ -479,10 +506,21 @@ class PreviewPanel(QWidget):
     def _sync_actions(self) -> None:
         """Enable actions based on configured preview state."""
         has_source = self._service.source is not None
-        pixmap = self._image_label.pixmap()
-        has_image = pixmap is not None and not pixmap.isNull()
+        has_image = self._image_label.has_preview
+        is_train = self._service.mode == "train"
         self._refresh_button.setEnabled(has_source)
         self._clear_button.setEnabled(has_source or self._image_list.count() > 0)
         self._zoom_in_button.setEnabled(has_image)
         self._zoom_out_button.setEnabled(has_image and self.zoom > 1.0)
         self._reset_view_button.setEnabled(has_image and (self.zoom > 1.0 or self.pan != (0.0, 0.0)))
+        self._update_train_button.setVisible(is_train)
+        self._mask_button.setVisible(is_train)
+        self._update_train_button.setEnabled(is_train and has_source)
+        self._mask_button.setEnabled(is_train and has_source)
+
+    @staticmethod
+    def _touch_trigger(filename: str) -> None:
+        """Create a Tk-compatible training preview trigger file in the GUI cache."""
+        path = Path(PATH_CACHE) / filename
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch(exist_ok=True)
