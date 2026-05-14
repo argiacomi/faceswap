@@ -102,7 +102,11 @@ class _Panel:
 class _Tabs:
     def __init__(self) -> None:
         self.current = 1
-        self.tabs = [DisplayController.ANALYSIS, DisplayController.PREVIEW, DisplayController.GRAPH]
+        self.tabs = [
+            DisplayController.ANALYSIS,
+            DisplayController.PREVIEW,
+            DisplayController.GRAPH,
+        ]
         self.visible: list[tuple[int, bool]] = []
 
     def currentIndex(self) -> int:  # noqa:N802
@@ -195,8 +199,13 @@ class _Window:
     def _apply_graph_context(self, _context) -> None:  # type:ignore[no-untyped-def]
         return None
 
-    def _capture_ui_state(self) -> dict[str, object]:
-        return MainWindow._capture_ui_state(self)  # type:ignore[arg-type]
+    _capture_ui_state = MainWindow._capture_ui_state
+    _restore_splitter = staticmethod(MainWindow._restore_splitter)
+    _string_or_none = staticmethod(MainWindow._string_or_none)
+    _restore_display_tab = MainWindow._restore_display_tab
+    _set_modified = MainWindow._set_modified
+    _update_window_title = MainWindow._update_window_title
+    _mark_modified_from_user_event = MainWindow._mark_modified_from_user_event
 
 
 def test_capture_ui_state_includes_display_and_runtime_sources() -> None:
@@ -256,9 +265,12 @@ def test_save_file_failure_does_not_update_session_state(tmp_path: Path) -> None
     window = _Window()
     window._project_store = _ProjectStore(fail_save=True)
 
-    assert MainWindow._save_file(  # type:ignore[arg-type]
-        window, str(tmp_path / "project.fsw"), ProjectFile(), PROJECT_KIND
-    ) is False
+    assert (
+        MainWindow._save_file(  # type:ignore[arg-type]
+            window, str(tmp_path / "project.fsw"), ProjectFile(), PROJECT_KIND
+        )
+        is False
+    )
 
     assert window.errors == ["save failed"]
     assert window._recent_files.added == []

@@ -33,6 +33,7 @@ from lib.gui.qt_shell.display_controller import DisplayController
 from lib.gui.qt_shell.graph_panel import GraphPanel
 from lib.gui.qt_shell.job_runner import JobRunner
 from lib.gui.qt_shell.preview_panel import PreviewPanel
+from lib.gui.qt_shell.settings_dialog import SettingsDialog
 from lib.gui.qt_shell.theme import QtTheme
 from lib.gui.services.command_builder import CommandBuilder
 from lib.gui.services.command_context import CommandExecutionContext
@@ -111,6 +112,7 @@ class MainWindow(QMainWindow):
         self._stop_action: QAction | None = None
         self._run_menu_action: QAction | None = None
         self._stop_menu_action: QAction | None = None
+        self._settings_dialog: SettingsDialog | None = None
         self._build_ui()
         self._connect_signals()
         self._install_dirty_event_filters()
@@ -260,6 +262,15 @@ class MainWindow(QMainWindow):
         self._recent_menu = project_menu.addMenu("Recent Files")
         self._refresh_recent_menu()
 
+        settings_menu = menu_bar.addMenu("Settings")
+        settings_menu.setObjectName("qt-shell-settings-menu")
+        self._menus.append(settings_menu)
+        configure = QAction("Configure Settings...", settings_menu)
+        configure.setObjectName("qt-shell-settings-configure")
+        configure.setToolTip("Configure Settings...")
+        configure.triggered.connect(lambda _checked=False: self._open_settings_dialog())
+        settings_menu.addAction(configure)
+
         command_menu = menu_bar.addMenu("Command")
         self._menus.append(command_menu)
         command_menu.addAction(self._action("Generate", self._generate_command, "generate"))
@@ -281,6 +292,19 @@ class MainWindow(QMainWindow):
                 lambda _checked=False, tab_name=label: self._show_display_tab(tab_name)
             )
             self._view_actions[label] = action
+
+    def _open_settings_dialog(self, section: str | None = None) -> SettingsDialog:
+        """Open the Qt settings dialog, reusing an existing window when possible."""
+        dialog = self._settings_dialog
+        if dialog is None:
+            dialog = SettingsDialog(section=section, parent=self)
+            self._settings_dialog = dialog
+        elif section is not None:
+            dialog._select_initial_section(section)  # pylint:disable=protected-access
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+        return dialog
 
     def _build_toolbar(self) -> None:
         """Build the top toolbar."""

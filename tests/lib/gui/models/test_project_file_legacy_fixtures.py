@@ -6,9 +6,13 @@ from __future__ import annotations
 from pathlib import Path
 
 from lib.gui.models.project import ProjectFile
-from lib.gui.services.project_session_service import LastSessionStore, ProjectSessionService, PROJECT_KIND, TASK_KIND
+from lib.gui.services.project_session_service import (
+    PROJECT_KIND,
+    TASK_KIND,
+    LastSessionStore,
+    ProjectSessionService,
+)
 from lib.serializer import get_serializer
-
 
 LEGACY_FLAT_PROJECT = {
     "tab_name": "train",
@@ -84,7 +88,9 @@ def test_project_session_selected_task_uses_active_tab_or_first_task() -> None:
         "train",
         {"-m": "/models", "-t": "model"},
     )
-    assert service.selected_task(ProjectFile(tab_name="missing", tasks={"extract": {"-i": "in"}})) == (
+    assert service.selected_task(
+        ProjectFile(tab_name="missing", tasks={"extract": {"-i": "in"}})
+    ) == (
         "extract",
         {"-i": "in"},
     )
