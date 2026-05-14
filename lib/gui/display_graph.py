@@ -161,10 +161,11 @@ class GraphBase(ttk.Frame):  # pylint:disable=too-many-ancestors
             The data points for the Y Axis
         """
         xmin = self._calcs.start_iteration
-        if self._calcs.start_iteration > 0:
-            xmax = self._calcs.iterations + self._calcs.start_iteration
-        else:
-            xmax = self._calcs.iterations
+        xmax = (
+            self._calcs.iterations + self._calcs.start_iteration
+            if self._calcs.start_iteration > 0
+            else self._calcs.iterations
+        )
         xmax = max(1, xmax - 1)
 
         if data:

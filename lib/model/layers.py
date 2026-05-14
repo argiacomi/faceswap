@@ -96,10 +96,11 @@ class GlobalMinPooling2D(_GlobalPooling2D):  # pylint:disable=too-many-ancestors
         :class:`keras.KerasTensor`
             A tensor or list/tuple of tensors
         """
-        if self.data_format == "channels_last":
-            pooled = ops.min(inputs, axis=[1, 2])
-        else:
-            pooled = ops.min(inputs, axis=[2, 3])
+        pooled = (
+            ops.min(inputs, axis=[1, 2])
+            if self.data_format == "channels_last"
+            else ops.min(inputs, axis=[2, 3])
+        )
         return pooled
 
 
@@ -124,10 +125,11 @@ class GlobalStdDevPooling2D(_GlobalPooling2D):  # pylint:disable=too-many-ancest
         :class:`keras.KerasTensor`
             A tensor or list/tuple of tensors
         """
-        if self.data_format == "channels_last":
-            pooled = ops.std(inputs, axis=[1, 2])
-        else:
-            pooled = ops.std(inputs, axis=[2, 3])
+        pooled = (
+            ops.std(inputs, axis=[1, 2])
+            if self.data_format == "channels_last"
+            else ops.std(inputs, axis=[2, 3])
+        )
         return pooled
 
 
@@ -585,14 +587,16 @@ class ReflectionPadding2D(Layer):  # pylint:disable=too-many-ancestors,abstract-
         in_width, in_height = input_shape[2], input_shape[1]
         kernel_width, kernel_height = self.kernel_size, self.kernel_size
 
-        if (in_height % self.stride) == 0:
-            padding_height = max(kernel_height - self.stride, 0)
-        else:
-            padding_height = max(kernel_height - (in_height % self.stride), 0)
-        if (in_width % self.stride) == 0:
-            padding_width = max(kernel_width - self.stride, 0)
-        else:
-            padding_width = max(kernel_width - (in_width % self.stride), 0)
+        padding_height = (
+            max(kernel_height - self.stride, 0)
+            if in_height % self.stride == 0
+            else max(kernel_height - in_height % self.stride, 0)
+        )
+        padding_width = (
+            max(kernel_width - self.stride, 0)
+            if in_width % self.stride == 0
+            else max(kernel_width - in_width % self.stride, 0)
+        )
 
         return (
             input_shape[0],
@@ -626,14 +630,16 @@ class ReflectionPadding2D(Layer):  # pylint:disable=too-many-ancestors,abstract-
         in_width, in_height = input_shape[2], input_shape[1]
         kernel_width, kernel_height = self.kernel_size, self.kernel_size
 
-        if (in_height % self.stride) == 0:
-            padding_height = max(kernel_height - self.stride, 0)
-        else:
-            padding_height = max(kernel_height - (in_height % self.stride), 0)
-        if (in_width % self.stride) == 0:
-            padding_width = max(kernel_width - self.stride, 0)
-        else:
-            padding_width = max(kernel_width - (in_width % self.stride), 0)
+        padding_height = (
+            max(kernel_height - self.stride, 0)
+            if in_height % self.stride == 0
+            else max(kernel_height - in_height % self.stride, 0)
+        )
+        padding_width = (
+            max(kernel_width - self.stride, 0)
+            if in_width % self.stride == 0
+            else max(kernel_width - in_width % self.stride, 0)
+        )
 
         padding_top = padding_height // 2
         padding_bot = padding_height - padding_top

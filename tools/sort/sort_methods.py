@@ -295,10 +295,11 @@ class SortMethod:
         det_face = DetectedFace().from_png_meta(alignments)
         det_face.load_aligned(image, size=256, centering="legacy", is_aligned=True)
         aln_face = det_face.aligned
-        if aln_face.landmark_type != LandmarkType.LM_2D_68:
-            mask = None
-        else:
-            mask = det_face.get_landmark_mask("face")
+        mask = (
+            None
+            if aln_face.landmark_type != LandmarkType.LM_2D_68
+            else det_face.get_landmark_mask("face")
+        )
 
         if mask is None and not cls._log_mask_once:
             logger.warning(
@@ -352,10 +353,11 @@ class SortMultiMethod(SortMethod):
         -------
         The correct InfoLoader iterator for the current sort method
         """
-        if self._sorter.loader_type == self._grouper.loader_type:
-            retval = InfoLoader(input_dir, self._sorter.loader_type)
-        else:
-            retval = InfoLoader(input_dir, "all")
+        retval = (
+            InfoLoader(input_dir, self._sorter.loader_type)
+            if self._sorter.loader_type == self._grouper.loader_type
+            else InfoLoader(input_dir, "all")
+        )
         self._sorter._iterator = retval  # pylint:disable=protected-access
         self._grouper._iterator = retval  # pylint:disable=protected-access
         return retval
@@ -560,10 +562,11 @@ class SortColor(SortMethod):
         -------
         The color converted image
         """
-        if self._method == "gray":
-            conversion = np.array([[0.0722], [0.7152], [0.2126]])
-        else:
-            conversion = np.array([[0.25, 0.5, 0.25], [-0.5, 0.0, 0.5], [-0.25, 0.5, -0.25]])
+        conversion = (
+            np.array([[0.0722], [0.7152], [0.2126]])
+            if self._method == "gray"
+            else np.array([[0.25, 0.5, 0.25], [-0.5, 0.0, 0.5], [-0.25, 0.5, -0.25]])
+        )
 
         operation = "ijk, kl -> ijl" if self._method == "gray" else "ijl, kl -> ijk"
         path = np.einsum_path(operation, image[..., :3], conversion, optimize="optimal")[0]

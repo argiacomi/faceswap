@@ -7,7 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from lib.gui.services.preview_output_service import PreviewOutputError, PreviewOutputService
+from lib.gui.services.preview_output_service import (
+    PreviewOutputError,
+    PreviewOutputService,
+)
 
 
 def _touch(path: Path) -> Path:

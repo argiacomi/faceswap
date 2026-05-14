@@ -6,16 +6,12 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import sys
 import typing as T
 from pathlib import Path
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
-
 import cv2
 import numpy as np
+from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +29,9 @@ def _read_manifest(path: Path) -> tuple[dict[str, T.Any], list[dict[str, T.Any]]
     return payload, [entry for entry in entries if isinstance(entry, dict)], key
 
 
-def _write_manifest(path: Path, payload: dict[str, T.Any], key: str, entries: list[dict[str, T.Any]]) -> None:
+def _write_manifest(
+    path: Path, payload: dict[str, T.Any], key: str, entries: list[dict[str, T.Any]]
+) -> None:
     payload[key] = entries
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
@@ -70,11 +68,15 @@ def _letterbox(image: np.ndarray, size: int) -> tuple[np.ndarray, float, int, in
     canvas = np.zeros((size, size, image.shape[2]), dtype="float32")
     pad_left = int((size - resized_w) // 2)
     pad_top = int((size - resized_h) // 2)
-    canvas[pad_top : pad_top + resized_h, pad_left : pad_left + resized_w] = resized.astype("float32")
+    canvas[pad_top : pad_top + resized_h, pad_left : pad_left + resized_w] = resized.astype(
+        "float32"
+    )
     return canvas, scale, pad_left, pad_top
 
 
-def _box_to_frame(box: np.ndarray, *, scale: float, pad_left: int, pad_top: int, image_shape: tuple[int, int]) -> list[float]:
+def _box_to_frame(
+    box: np.ndarray, *, scale: float, pad_left: int, pad_top: int, image_shape: tuple[int, int]
+) -> list[float]:
     height, width = image_shape
     left = (float(box[0]) - pad_left) / scale
     top = (float(box[1]) - pad_top) / scale
@@ -119,7 +121,9 @@ def _select_index(
     min_iou: float,
 ) -> tuple[int, float | None]:
     if selection == "largest":
-        areas = np.maximum(0.0, boxes[:, 2] - boxes[:, 0]) * np.maximum(0.0, boxes[:, 3] - boxes[:, 1])
+        areas = np.maximum(0.0, boxes[:, 2] - boxes[:, 0]) * np.maximum(
+            0.0, boxes[:, 3] - boxes[:, 1]
+        )
         return int(np.argmax(areas)), None
     if selection == "gt-iou":
         if target is None:
@@ -177,12 +181,22 @@ def _detect_one(
 
 def apply_detector_bboxes(args: argparse.Namespace) -> dict[str, T.Any]:
     manifest = Path(args.manifest).expanduser().resolve()
-    output = Path(args.output_manifest).expanduser().resolve() if args.output_manifest else manifest
+    output = (
+        Path(args.output_manifest).expanduser().resolve() if args.output_manifest else manifest
+    )
     payload, entries, key = _read_manifest(manifest)
     detector = _build_detector(args.detector)
     written = missing = 0
     records: list[dict[str, T.Any]] = []
-    for entry in entries:
+    show_progress = getattr(args, "log_level", "INFO") != "ERROR"
+    iterator = tqdm(
+        entries,
+        total=len(entries),
+        desc="Detector bboxes",
+        unit="sample",
+        disable=not show_progress,
+    )
+    for entry in iterator:
         sid = _sample_id(entry)
         metadata = entry.setdefault("metadata", {})
         if not isinstance(metadata, dict):
@@ -208,7 +222,7 @@ def apply_detector_bboxes(args: argparse.Namespace) -> dict[str, T.Any]:
                 match_iou = 1.0
                 source = "gt_landmarks_detector_fallback"
             else:
-                logger.warning("No detector bbox for %s: %s", sid, err)
+                logger.debug("No detector bbox for %s: %s", sid, err)
                 records.append({"sample_id": sid, "status": "missing", "error": str(err)})
                 continue
         metadata["face_bbox"] = bbox
@@ -253,20 +267,28 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-manifest", default="")
     parser.add_argument("--output-json", default="")
     parser.add_argument("--detector", default="cv2-dnn")
-    parser.add_argument("--selection", choices=("confidence", "largest", "gt-iou"), default="gt-iou")
+    parser.add_argument(
+        "--selection", choices=("confidence", "largest", "gt-iou"), default="gt-iou"
+    )
     parser.add_argument("--min-iou", type=float, default=0.25)
     parser.add_argument("--on-missing", choices=("error", "skip", "gt"), default="error")
-    parser.add_argument("--log-level", default="INFO", choices=("DEBUG", "INFO", "WARNING", "ERROR"))
+    parser.add_argument(
+        "--log-level", default="INFO", choices=("DEBUG", "INFO", "WARNING", "ERROR")
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    logging.basicConfig(level=getattr(logging, args.log_level), format="%(levelname)s:%(name)s:%(message)s")
+    logging.basicConfig(
+        level=getattr(logging, args.log_level), format="%(levelname)s:%(name)s:%(message)s"
+    )
     if args.min_iou < 0.0 or args.min_iou > 1.0:
         raise SystemExit("--min-iou must be between 0 and 1")
     summary = apply_detector_bboxes(args)
-    print(f"Detector bboxes: written={summary['written']} missing={summary['missing']} total={summary['total']}")
+    print(
+        f"Detector bboxes: written={summary['written']} missing={summary['missing']} total={summary['total']}"
+    )
     return 0
 
 

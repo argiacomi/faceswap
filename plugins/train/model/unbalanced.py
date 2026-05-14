@@ -83,10 +83,11 @@ class Model(ModelBase):
         var_x = UpscaleBlock(decoder_complexity, activation="leakyrelu", **kwargs)(var_x)
         var_x = layers.SpatialDropout2D(0.25)(var_x)
         var_x = UpscaleBlock(decoder_complexity, activation="leakyrelu", **kwargs)(var_x)
-        if self.low_mem:
-            var_x = layers.SpatialDropout2D(0.15)(var_x)
-        else:
-            var_x = layers.SpatialDropout2D(0.25)(var_x)
+        var_x = (
+            layers.SpatialDropout2D(0.15)(var_x)
+            if self.low_mem
+            else layers.SpatialDropout2D(0.25)(var_x)
+        )
         var_x = UpscaleBlock(decoder_complexity // 2, activation="leakyrelu", **kwargs)(var_x)
         var_x = UpscaleBlock(decoder_complexity // 4, activation="leakyrelu", **kwargs)(var_x)
         var_x = Conv2DOutput(3, 5, name="face_out_a")(var_x)

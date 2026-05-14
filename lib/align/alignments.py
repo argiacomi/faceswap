@@ -434,12 +434,11 @@ class Alignments:  # pylint:disable=too-many-public-methods
         logger.debug("filter_dict: %s, filter_out: %s", filter_dict, filter_out)
         for source_frame, frame_data in self._data.items():
             face_indices = filter_dict.get(source_frame, [])
-            if filter_out:
-                filter_list = face_indices
-            else:
-                filter_list = [
-                    idx for idx in range(len(frame_data.faces)) if idx not in face_indices
-                ]
+            filter_list = (
+                face_indices
+                if filter_out
+                else [idx for idx in range(len(frame_data.faces)) if idx not in face_indices]
+            )
             logger.trace(
                 "frame: '%s', filter_list: %s",  # type:ignore[attr-defined]
                 source_frame,

@@ -163,10 +163,11 @@ class Legacy:  # pylint:disable=too-few-public-methods
             raise FaceswapError(f"The TFLambdaOp '{name}' is not supported")
         value = layer["inbound_nodes"][0][-1]["y"]
 
-        if isinstance(layer["config"]["dtype"], str):
-            dtype = layer["config"]["dtype"]
-        else:
-            dtype = layer["config"]["dtype"]["config"]["name"]
+        dtype = (
+            layer["config"]["dtype"]
+            if isinstance(layer["config"]["dtype"], str)
+            else layer["config"]["dtype"]["config"]["name"]
+        )
         new_layer = ScalarOp(operation, value, name=name, dtype=dtype)
 
         logger.debug("Converting legacy TFLambdaOp: %s", layer)

@@ -825,10 +825,11 @@ def nms(
             0.0, s_bboxes[3] - s_bboxes[1] + 1
         )
 
-        if method == "iom":
-            var_o = inter / np.minimum(area[s_sort[-1]], area[s_sort[0:-1]])
-        else:
-            var_o = inter / (area[s_sort[-1]] + area[s_sort[0:-1]] - inter)
+        var_o = (
+            inter / np.minimum(area[s_sort[-1]], area[s_sort[0:-1]])
+            if method == "iom"
+            else inter / (area[s_sort[-1]] + area[s_sort[0:-1]] - inter)
+        )
 
         pick.append(s_sort[-1])
         s_sort = s_sort[np.where(var_o <= threshold)[0]]

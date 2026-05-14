@@ -275,10 +275,13 @@ class Mask:
             anchor = [-1, -1]
             if idx > 0:
                 pos = 1 if idx % 2 == 0 else 0
-                if ratio > 0:
-                    val = max(kernel.shape) - 1 if idx < 3 else 0
-                else:
-                    val = 0 if idx < 3 else max(kernel.shape) - 1
+                val = (
+                    (max(kernel.shape) - 1 if idx < 3 else 0)
+                    if ratio > 0
+                    else 0
+                    if idx < 3
+                    else max(kernel.shape) - 1
+                )
                 anchor[pos] = val
 
             func = cv2.erode if ratio > 0 else cv2.dilate

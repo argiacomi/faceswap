@@ -15,7 +15,11 @@ from keras import saving
 from lib.logger import parse_class_init
 
 # Import the following libs for custom objects
-from lib.model import initializers, layers, normalization  # noqa # pylint:disable=unused-import
+from lib.model import (  # noqa # pylint:disable=unused-import
+    initializers,
+    layers,
+    normalization,
+)
 from lib.model.backup_restore import Backup
 from lib.utils import get_module_objects
 from plugins.train.model._base.model import Inference as FSInference

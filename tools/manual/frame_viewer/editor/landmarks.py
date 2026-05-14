@@ -402,10 +402,11 @@ class Landmarks(Editor):
         shift_x = event.x - self._drag_data["start_location"][0]
         shift_y = event.y - self._drag_data["start_location"][1]
 
-        if self._globals.is_zoomed:
-            scaled_shift = np.array((shift_x, shift_y))
-        else:
-            scaled_shift = self.scale_from_display(np.array((shift_x, shift_y)), do_offset=False)
+        scaled_shift = (
+            np.array((shift_x, shift_y))
+            if self._globals.is_zoomed
+            else self.scale_from_display(np.array((shift_x, shift_y)), do_offset=False)
+        )
         self._det_faces.update.landmark(
             self._globals.frame_index,
             face_idx,
@@ -440,10 +441,11 @@ class Landmarks(Editor):
         box has been drawn."""
         shift_x = event.x - self._drag_data["start_location"][0]
         shift_y = event.y - self._drag_data["start_location"][1]
-        if self._globals.is_zoomed:
-            scaled_shift = np.array((shift_x, shift_y))
-        else:
-            scaled_shift = self.scale_from_display(np.array((shift_x, shift_y)), do_offset=False)
+        scaled_shift = (
+            np.array((shift_x, shift_y))
+            if self._globals.is_zoomed
+            else self.scale_from_display(np.array((shift_x, shift_y)), do_offset=False)
+        )
         self._canvas.move(self._selection_box, shift_x, shift_y)
 
         self._det_faces.update.landmark(

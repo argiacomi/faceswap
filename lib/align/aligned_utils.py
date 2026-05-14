@@ -210,15 +210,17 @@ def get_matrix_scaling(matrix: np.ndarray) -> tuple[int, int]:
     an upscale matrix and (Area, Cubic) for a downscale matrix
     """
     x_scale = np.sqrt(matrix[0, 0] * matrix[0, 0] + matrix[0, 1] * matrix[0, 1])
-    if x_scale == 0:
-        y_scale = 0.0
-    else:
-        y_scale = (matrix[0, 0] * matrix[1, 1] - matrix[0, 1] * matrix[1, 0]) / x_scale
+    y_scale = (
+        0.0
+        if x_scale == 0
+        else (matrix[0, 0] * matrix[1, 1] - matrix[0, 1] * matrix[1, 0]) / x_scale
+    )
     avg_scale = (x_scale + y_scale) * 0.5
-    if avg_scale >= 1.0:
-        interpolators = cv2.INTER_CUBIC, cv2.INTER_AREA
-    else:
-        interpolators = cv2.INTER_AREA, cv2.INTER_CUBIC
+    interpolators = (
+        (cv2.INTER_CUBIC, cv2.INTER_AREA)
+        if avg_scale >= 1.0
+        else (cv2.INTER_AREA, cv2.INTER_CUBIC)
+    )
     logger.trace(
         "interpolator: %s, inverse interpolator: %s",  # type:ignore[attr-defined]
         interpolators[0],

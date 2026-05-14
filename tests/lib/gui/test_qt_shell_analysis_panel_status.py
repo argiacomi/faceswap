@@ -6,7 +6,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from lib.gui.qt_shell.analysis_panel import AnalysisPanel
-from lib.gui.services.analysis_session_service import AnalysisSessionSource, AnalysisTableRow
+from lib.gui.services.analysis_session_service import (
+    AnalysisSessionSource,
+    AnalysisTableRow,
+)
 
 
 class _AnalysisServiceDouble:

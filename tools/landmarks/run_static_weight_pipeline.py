@@ -262,6 +262,14 @@ def _dataset_build_args(
         _append_if(argv, "--source-zip", args.merl_rav_source_zip)
         _append_if(argv, "--download-url", args.merl_rav_download_url)
         _append_source_dir_if_no_competing_source(argv, args.merl_rav_source_dir)
+        _append_if(argv, "--aflw-source-zip", args.merl_rav_aflw_source_zip)
+        _append_if(argv, "--aflw-download-url", args.merl_rav_aflw_download_url)
+        if (
+            args.merl_rav_aflw_source_dir
+            and "--aflw-source-zip" not in argv
+            and "--aflw-download-url" not in argv
+        ):
+            argv.extend(["--aflw-source-dir", args.merl_rav_aflw_source_dir])
     elif dataset == "aflw2000-3d":
         _append_if(argv, "--source-zip", args.aflw2000_3d_source_zip)
         _append_if(argv, "--download-url", args.aflw2000_3d_download_url)
@@ -300,7 +308,10 @@ def _apply_detector_bboxes(args: argparse.Namespace, paths: PipelinePaths) -> di
     if args.bbox_source != "faceswap-detector":
         return {}
 
-    from tools.landmarks.apply_detector_bboxes import apply_detector_bboxes, build_parser
+    from tools.landmarks.apply_detector_bboxes import (
+        apply_detector_bboxes,
+        build_parser,
+    )
 
     detector_argv = [
         "--manifest",
@@ -548,7 +559,9 @@ def _update_summary_outputs(
 
 def _metric_percent(metrics: T.Mapping[str, T.Any], key: str) -> str:
     """Return a percentage metric string for NME/failure rate values."""
-    value = metrics.get("overall_nme", metrics.get(key, None)) if key == "nme" else metrics.get(key)
+    value = (
+        metrics.get("overall_nme", metrics.get(key, None)) if key == "nme" else metrics.get(key)
+    )
     if value is None or value == "":
         return "n/a"
     return f"{float(value) * 100:.2f}%"
@@ -586,10 +599,8 @@ def _format_cache_counts(counts: T.Mapping[str, T.Any]) -> str:
         return "none"
     model_counts = counts.get("models", {}) if isinstance(counts.get("models"), dict) else {}
     models = ", ".join(f"{model}={count}" for model, count in sorted(model_counts.items()))
-    return (
-        f"samples={counts.get('samples', 0)}, "
-        f"predictions={counts.get('predictions', 0)}"
-        + (f" ({models})" if models else "")
+    return f"samples={counts.get('samples', 0)}, predictions={counts.get('predictions', 0)}" + (
+        f" ({models})" if models else ""
     )
 
 
@@ -631,9 +642,7 @@ def _format_run_report(summary: dict[str, T.Any], *, exit_code: int) -> str:
         ]
     )
     if weighted_variant:
-        lines.append(
-            f"Weighted delta vs best single: {_best_delta(summary, weighted_variant)}"
-        )
+        lines.append(f"Weighted delta vs best single: {_best_delta(summary, weighted_variant)}")
     improved = summary.get("ensemble_improved_over_best_single")
     if improved is not None:
         lines.append(
@@ -645,7 +654,9 @@ def _format_run_report(summary: dict[str, T.Any], *, exit_code: int) -> str:
         lines.append("Threshold: failed at least one configured failure threshold")
     if summary.get("generated_weight_path"):
         lines.append(f"Weights: {summary['generated_weight_path']}")
-    lines.append(f"Metrics: {summary.get('output_root', '')}/weighted_metrics/best_variant_summary.json")
+    lines.append(
+        f"Metrics: {summary.get('output_root', '')}/weighted_metrics/best_variant_summary.json"
+    )
     return "\n".join(lines)
 
 
@@ -761,12 +772,29 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cofw-source-dir", default=_default_dataset_source_dir("cofw"))
     parser.add_argument("--cofw-source-zip", default="")
     parser.add_argument("--cofw-download-url", default="")
-    parser.add_argument("--300w-source-dir", dest="w300_source_dir", default=_default_dataset_source_dir("300w"))
+    parser.add_argument(
+        "--300w-source-dir", dest="w300_source_dir", default=_default_dataset_source_dir("300w")
+    )
     parser.add_argument("--300w-source-zip", dest="w300_source_zip", default="")
     parser.add_argument("--300w-download-url", dest="w300_download_url", default="")
     parser.add_argument("--merl-rav-source-dir", default=_default_dataset_source_dir("merl-rav"))
     parser.add_argument("--merl-rav-source-zip", default="")
     parser.add_argument("--merl-rav-download-url", default="")
+    parser.add_argument(
+        "--merl-rav-aflw-source-dir",
+        default=_default_dataset_source_dir("aflw"),
+        help="Explicit AFLW image directory for MERL-RAV label matching.",
+    )
+    parser.add_argument(
+        "--merl-rav-aflw-source-zip",
+        default="",
+        help="Explicit AFLW image archive for MERL-RAV label matching.",
+    )
+    parser.add_argument(
+        "--merl-rav-aflw-download-url",
+        default="",
+        help="Override AFLW image archive URL for MERL-RAV label matching.",
+    )
     parser.add_argument(
         "--aflw2000-3d-source-dir", default=_default_dataset_source_dir("aflw2000-3d")
     )
@@ -809,8 +837,7 @@ def main(argv: list[str] | None = None) -> int:
     exit_code = 0
     _ensure_dirs(paths)
     _progress(
-        "Pipeline start: "
-        f"datasets={args.datasets}, models={args.models}, output_root={paths.root}"
+        f"Pipeline start: datasets={args.datasets}, models={args.models}, output_root={paths.root}"
     )
     try:
         if not args.skip_dataset_build and (args.build_datasets or not paths.manifest.is_file()):

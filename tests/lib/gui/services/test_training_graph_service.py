@@ -7,7 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from lib.gui.services.training_graph_service import TrainingGraphError, TrainingGraphService
+from lib.gui.services.training_graph_service import (
+    TrainingGraphError,
+    TrainingGraphService,
+)
 
 
 class _SessionDouble:

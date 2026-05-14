@@ -187,10 +187,11 @@ class SCRFD(ExtractPlugin):
 
         with torch.inference_mode():
             feed = torch.from_numpy(batch)
-            if self.device.type == "cuda":
-                feed = feed.pin_memory().to(self.device, non_blocking=True)
-            else:
-                feed = feed.to(self.device)
+            feed = (
+                feed.pin_memory().to(self.device, non_blocking=True)
+                if self.device.type == "cuda"
+                else feed.to(self.device)
+            )
 
             if feed.ndim == 4 and feed.shape[-1] == 3:
                 # Keep detector feeds compact on the host, then normalize and reorder on-device.

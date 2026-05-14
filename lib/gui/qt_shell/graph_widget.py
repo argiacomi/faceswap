@@ -9,7 +9,10 @@ from PySide6.QtCore import QPointF, Qt
 from PySide6.QtGui import QPainter, QPaintEvent, QPen, QPixmap
 from PySide6.QtWidgets import QWidget
 
-from lib.gui.services.training_graph_service import TrainingGraphSeries, TrainingGraphSnapshot
+from lib.gui.services.training_graph_service import (
+    TrainingGraphSeries,
+    TrainingGraphSnapshot,
+)
 
 
 class TrainingGraphWidget(QWidget):

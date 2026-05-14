@@ -10,7 +10,11 @@ import cv2
 import numpy as np
 import pytest
 
-from lib.landmarks.datasets import build_cofw_manifest, build_manifest, build_wflw_manifest
+from lib.landmarks.datasets import (
+    build_cofw_manifest,
+    build_manifest,
+    build_wflw_manifest,
+)
 from lib.landmarks.ensemble.weights import weights_from_errors
 from lib.landmarks.eval.harness import run_quality_harness
 from lib.landmarks.eval.prediction_cache import DiskPredictionCache

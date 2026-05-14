@@ -23,10 +23,11 @@ class _FullPaths(argparse.Action):
     """
 
     def __call__(self, parser, namespace, values, option_string=None) -> None:
-        if isinstance(values, list | tuple):
-            vals = [os.path.abspath(os.path.expanduser(val)) for val in values]
-        else:
-            vals = os.path.abspath(os.path.expanduser(values))
+        vals = (
+            [os.path.abspath(os.path.expanduser(val)) for val in values]
+            if isinstance(values, list | tuple)
+            else os.path.abspath(os.path.expanduser(values))
+        )
         setattr(namespace, self.dest, vals)
 
 

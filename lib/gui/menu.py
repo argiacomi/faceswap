@@ -285,7 +285,9 @@ class HelpMenu(tk.Menu):  # pylint:disable=too-many-ancestors
         self.root.config(cursor="watch")
         self._clear_console()
         try:
-            from lib.system.sysinfo import sysinfo  # pylint:disable=import-outside-toplevel
+            from lib.system.sysinfo import (
+                sysinfo,  # pylint:disable=import-outside-toplevel
+            )
 
             info = sysinfo
         except Exception as err:  # pylint:disable=broad-except

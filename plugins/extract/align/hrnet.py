@@ -953,10 +953,7 @@ class HighResolutionNet(nn.Module):  # pylint:disable=too-many-instance-attribut
 
         modules: list[HighResolutionModule] = []
         for i in range(num_modules):
-            if not multi_scale_output and i == num_modules - 1:
-                reset_multi_scale_output = False
-            else:
-                reset_multi_scale_output = True
+            reset_multi_scale_output = not (not multi_scale_output and i == num_modules - 1)
             modules.append(
                 HighResolutionModule(
                     num_branches,

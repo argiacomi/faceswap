@@ -108,9 +108,7 @@ def _summarize_bucket_weighted(
     The returned ``nme`` and ``overall_nme`` are intentionally identical so older
     downstream code that sorts by ``nme`` uses the scenario-bucket aggregate.
     """
-    bucket_summaries = _summarize_group(
-        bucket_errors, failure_threshold=failure_threshold
-    )
+    bucket_summaries = _summarize_group(bucket_errors, failure_threshold=failure_threshold)
     labels = sorted({label for values in bucket_errors.values() for label in values})
     output: dict[str, dict[str, T.Any]] = {}
     for label in labels:
@@ -127,9 +125,7 @@ def _summarize_bucket_weighted(
             "overall_nme": float(np.mean([summary["nme"] for summary in summaries])),
             "nme": float(np.mean([summary["nme"] for summary in summaries])),
             "auc": float(np.mean([summary["auc"] for summary in summaries])),
-            "failure_rate": float(
-                np.mean([summary["failure_rate"] for summary in summaries])
-            ),
+            "failure_rate": float(np.mean([summary["failure_rate"] for summary in summaries])),
             "aggregation": "equal_weighted_scenario_buckets",
             "bucket_weighting": "equal_per_dataset_condition",
         }

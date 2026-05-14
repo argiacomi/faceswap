@@ -73,9 +73,9 @@ def _annotation_files(root: Path) -> list[Path]:
     """Return sorted COFW-68 annotation mat files."""
     files = sorted(
         root.rglob("*_points.mat"),
-        key=lambda item: int(item.stem.split("_", 1)[0])
-        if item.stem.split("_", 1)[0].isdigit()
-        else item.name,
+        key=lambda item: (
+            int(item.stem.split("_", 1)[0]) if item.stem.split("_", 1)[0].isdigit() else item.name
+        ),
     )
     if not files:
         raise FileNotFoundError(f"COFW-68 annotation '*_points.mat' files not found under {root}")
@@ -89,10 +89,9 @@ def _cofw_images(images_mat: Path) -> list[np.ndarray]:
     if raw is None:
         raise ValueError(f"COFW image mat missing 'IsT': {images_mat}")
     images: list[np.ndarray] = []
-    if isinstance(raw, np.ndarray) and raw.dtype == object:
-        iterable = raw.reshape(-1)
-    else:
-        iterable = np.asarray(raw)
+    iterable = (
+        raw.reshape(-1) if isinstance(raw, np.ndarray) and raw.dtype == object else np.asarray(raw)
+    )
     for item in iterable:
         image = np.asarray(item)
         if image.size == 0:
@@ -153,14 +152,17 @@ def build_cofw68_json_from_sources(
     color_root = Path(color_root)
     annotation_root = Path(annotation_root)
     output_json = Path(output_json)
-    image_dir = Path(image_output_dir) if image_output_dir is not None else output_json.parent / "images"
+    image_dir = (
+        Path(image_output_dir) if image_output_dir is not None else output_json.parent / "images"
+    )
     image_dir.mkdir(parents=True, exist_ok=True)
 
     images = _cofw_images(_find_file(color_root, "COFW_test_color.mat"))
     annotations = _annotation_files(annotation_root)
     if len(images) < len(annotations):
         raise ValueError(
-            f"COFW image count ({len(images)}) is smaller than COFW-68 annotation count ({len(annotations)})"
+            f"COFW image count ({len(images)}) is smaller than "
+            f"COFW-68 annotation count ({len(annotations)})"
         )
     bboxes = _load_bboxes(annotation_root, len(annotations))
     samples: list[dict[str, T.Any]] = []

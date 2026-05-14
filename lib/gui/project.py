@@ -325,10 +325,11 @@ class _GuiSession:  # pylint:disable=too-few-public-methods
                     and all(v in data["choices"] for v in data["value"].split())
                 ):
                     continue
-                if data["is_multi"] and isinstance(data["value"], str):
-                    val = " ".join([v for v in data["value"].split() if v in data["choices"]])
-                else:
-                    val = ""
+                val = (
+                    " ".join([v for v in data["value"].split() if v in data["choices"]])
+                    if data["is_multi"] and isinstance(data["value"], str)
+                    else ""
+                )
                 val = val if val else self._default_options[command][option]
                 logger.debug(
                     "Updating invalid value to default: (command: '%s', option: '%s', "

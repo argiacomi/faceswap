@@ -421,10 +421,11 @@ class DiskIO:  # pylint:disable=too-many-instance-attributes
     @property
     def _total_count(self) -> int:
         """The total number of frames to be converted"""
-        if self._frame_ranges and not self._args.keep_unchanged:
-            retval = sum(fr[1] - fr[0] + 1 for fr in self._frame_ranges)
-        else:
-            retval = self._images.count
+        retval = (
+            sum(fr[1] - fr[0] + 1 for fr in self._frame_ranges)
+            if self._frame_ranges and not self._args.keep_unchanged
+            else self._images.count
+        )
         logger.debug(retval)
         return retval
 
@@ -669,10 +670,11 @@ class DiskIO:  # pylint:disable=too-many-instance-attributes
         List of :class:`lib.align.DetectedFace` objects
         """
         logger.trace("Getting faces for: '%s'", filename)  # type:ignore
-        if not self._extractor:
-            detected_faces = self._alignments_faces(os.path.basename(filename), image)
-        else:
-            detected_faces = self._detect_faces(filename, image)
+        detected_faces = (
+            self._alignments_faces(os.path.basename(filename), image)
+            if not self._extractor
+            else self._detect_faces(filename, image)
+        )
         logger.trace("Got %s faces for: '%s'", len(detected_faces), filename)  # type:ignore
         return detected_faces
 

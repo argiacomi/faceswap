@@ -12,7 +12,11 @@ from lib.utils import FaceswapError, get_module_objects, handle_deprecated_cli_o
 from lib.video import VIDEO_EXTENSIONS
 
 from .jobs import Check, Export, Sort, Spatial  # noqa pylint:disable=unused-import
-from .jobs_faces import FromFaces, RemoveFaces, Rename  # noqa pylint:disable=unused-import
+from .jobs_faces import (  # noqa pylint:disable=unused-import
+    FromFaces,
+    RemoveFaces,
+    Rename,
+)
 from .jobs_frames import Draw, Extract  # noqa pylint:disable=unused-import
 from .media import AlignmentData
 

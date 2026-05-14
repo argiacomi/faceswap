@@ -629,10 +629,7 @@ class ExtractedFaces:
             top_left, top_right = roi[0], roi[3]
             len_x = top_right[0] - top_left[0]
             len_y = top_right[1] - top_left[1]
-            if top_left[1] == top_right[1]:
-                length = len_y
-            else:
-                length = int(((len_x**2) + (len_y**2)) ** 0.5)
+            length = len_y if top_left[1] == top_right[1] else int((len_x**2 + len_y**2) ** 0.5)
             sizes.append(length)
         logger.trace("sizes: '%s'", sizes)  # type:ignore[attr-defined]
         return sizes

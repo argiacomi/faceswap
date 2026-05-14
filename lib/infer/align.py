@@ -270,14 +270,15 @@ class Align(ExtractHandler):
             batch.matrices = mats
             batch.data = self._prepare_images(batch, roi, is_final)
         else:  # If we are here we are re-aligning
-            if self._re_feed.total_feeds > 1:
-                mats = self._re_feed(
+            mats = (
+                self._re_feed(
                     self._re_align.default_crop_matrices,
                     with_roi=False,
                     size=self.plugin.input_size,
                 )
-            else:
-                mats = self._re_align.default_crop_matrices
+                if self._re_feed.total_feeds > 1
+                else self._re_align.default_crop_matrices
+            )
             batch.data = self._re_align.get_images(mats, self._re_feed.total_feeds)
 
     def pre_process(self, batch: ExtractBatch) -> None:

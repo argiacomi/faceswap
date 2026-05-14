@@ -10,7 +10,11 @@ from pathlib import Path
 
 import numpy as np
 
-from lib.landmarks.ensemble.weights import MODEL_NAMES, save_weights, weights_from_errors
+from lib.landmarks.ensemble.weights import (
+    MODEL_NAMES,
+    save_weights,
+    weights_from_errors,
+)
 from lib.landmarks.eval.harness import load_manifest
 from lib.landmarks.eval.prediction_cache import DiskPredictionCache
 from lib.landmarks.metrics import per_landmark_error

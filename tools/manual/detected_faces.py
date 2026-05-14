@@ -950,10 +950,11 @@ class FaceUpdate:
         frames_with_faces = [
             idx for idx, faces in enumerate(self._detected_faces.current_faces) if len(faces) > 0
         ]
-        if direction == "prev":
-            idx = next((idx for idx in reversed(frames_with_faces) if idx < frame_index), None)
-        else:
-            idx = next((idx for idx in frames_with_faces if idx > frame_index), None)
+        idx = (
+            next((idx for idx in reversed(frames_with_faces) if idx < frame_index), None)
+            if direction == "prev"
+            else next((idx for idx in frames_with_faces if idx > frame_index), None)
+        )
         if idx is None:
             # No previous/next frame available
             return

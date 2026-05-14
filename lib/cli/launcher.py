@@ -77,10 +77,11 @@ class ScriptExecutor:
         cmd = os.path.basename(sys.argv[0])
         src = f"tools.{self._command.lower()}" if cmd == "tools.py" else "scripts"
         command = self._command.lower()
-        if command == "gui" and self._gui_shell == "qt":
-            mod = "scripts.gui_qt"
-        else:
-            mod = ".".join((src, command))
+        mod = (
+            "scripts.gui_qt"
+            if command == "gui" and self._gui_shell == "qt"
+            else ".".join((src, command))
+        )
         module = import_module(mod)
         script = getattr(module, self._command.title())
         return script

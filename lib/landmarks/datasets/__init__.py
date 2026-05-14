@@ -1033,8 +1033,10 @@ def _copy_image_if_possible(image_value: str, scenario_dir: Path) -> str | None:
     image_path = Path(image_value)
     if not image_path.is_file():
         return None
-    suffix = image_path.suffix if image_path.suffix.lower() in IMAGE_EXTS else ".png"
-    target = scenario_dir / f"frame{suffix.lower()}"
+    image_name = image_path.name
+    if image_path.suffix.lower() not in IMAGE_EXTS:
+        image_name = f"{image_path.stem}.png"
+    target = scenario_dir / image_name
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(image_path, target)
     return target.name

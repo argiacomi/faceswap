@@ -336,10 +336,9 @@ class Detect(ExtractHandler):
         )
 
         mins = (frames * self._min_size).astype("int32")[batch.frame_ids]
-        if self._max_size:
-            maxes = (frames * self._max_size).astype("int32")[batch.frame_ids]
-        else:
-            maxes = sizes
+        maxes = (
+            (frames * self._max_size).astype("int32")[batch.frame_ids] if self._max_size else sizes
+        )
 
         keep = np.nonzero(np.logical_and(mins <= sizes, maxes >= sizes))[0]
         if len(keep) == len(sizes):

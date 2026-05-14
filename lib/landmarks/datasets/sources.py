@@ -17,6 +17,8 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from tqdm import tqdm
+
 logger = logging.getLogger(__name__)
 DEFAULT_CACHE_DIR = Path(".fs_cache/landmark_quality")
 ARCHIVE_SUFFIXES = (".zip", ".tar", ".tar.gz", ".tgz")
@@ -25,7 +27,7 @@ EXTRACTION_MARKER = ".source.json"
 
 WFLW_ANNOTATIONS_URL = "https://wywu.github.io/projects/LAB/support/WFLW_annotations.tar.gz"
 WFLW_IMAGES_GOOGLE_DRIVE_FILE_ID = "1hzBd48JIdWTJSsATBEB_eFVvPL1bx6UC"
-COFW_COLOR_URL = "https://data.caltech.edu/records/bc0bf-nc666/files/COFW_color.zip?download=1"
+COFW_COLOR_URL = "http://www.vision.caltech.edu/xpburgos/ICCV13/Data/COFW_color.zip"
 MERL_RAV_LABELS_URL = (
     "https://github.com/abhi1kumar/MERL-RAV_dataset/archive/refs/heads/master.zip"
 )
@@ -138,6 +140,11 @@ WFLW_OFFICIAL_SOURCE = MultiDatasetSourceSpec(
 )
 
 
+def _progress_enabled() -> bool:
+    """Return whether CLI progress bars should be displayed."""
+    return logger.isEnabledFor(logging.INFO)
+
+
 def _default_source_value(spec: DatasetSourceSpec, key: str) -> str | None:
     """Return a default source value for ``spec`` when the spec leaves it unset."""
     defaults = DEFAULT_DOWNLOAD_SOURCES.get(spec.dataset, {})
@@ -204,6 +211,26 @@ def verify_sha256(path: Path, expected_sha256: str | None, *, label: str = "arch
         )
 
 
+def _download_with_progress(response: T.Any, outfile: T.BinaryIO, *, label: str) -> None:
+    """Copy a URL response to disk with a tqdm byte progress bar."""
+    length = response.headers.get("Content-Length")
+    total = int(length) if length and length.isdigit() else None
+    with tqdm(
+        total=total,
+        desc=f"Download {label}",
+        unit="B",
+        unit_scale=True,
+        unit_divisor=1024,
+        disable=not _progress_enabled(),
+    ) as bar:
+        while True:
+            chunk = response.read(1024 * 1024)
+            if not chunk:
+                break
+            outfile.write(chunk)
+            bar.update(len(chunk))
+
+
 def download(
     url: str | None,
     destination: Path,
@@ -217,7 +244,7 @@ def download(
     destination.parent.mkdir(parents=True, exist_ok=True)
     if destination.is_file() and not force:
         verify_sha256(destination, expected_sha256, label=label)
-        logger.info("Using cached %s: %s", label, destination)
+        logger.debug("Using cached %s: %s", label, destination)
         return destination
     if force and destination.exists():
         logger.debug("Removing cached %s due to force download: %s", label, destination)
@@ -244,7 +271,7 @@ def download(
     try:
         logger.info("Downloading %s into cache: %s", label, destination)
         with urllib.request.urlopen(url) as response, tmp_path.open("wb") as outfile:
-            shutil.copyfileobj(response, outfile)
+            _download_with_progress(response, outfile, label=label)
         if not tmp_path.is_file() or tmp_path.stat().st_size == 0:
             raise OSError(f"download produced an empty file: {tmp_path}")
         verify_sha256(tmp_path, expected_sha256, label=label)
@@ -269,17 +296,25 @@ def _is_relative_to(path: Path, base: Path) -> bool:
 def safe_zip_extractall(zf: zipfile.ZipFile, destination: str | os.PathLike[str]) -> None:
     """Extract a zip file while blocking path traversal."""
     dest = Path(destination).resolve()
-    for member in zf.infolist():
+    members = zf.infolist()
+    for member in members:
         target = (dest / member.filename).resolve()
         if not _is_relative_to(target, dest):
             raise ValueError(f"Blocked zip path traversal member: {member.filename}")
-    zf.extractall(dest)
+    for member in tqdm(
+        members,
+        desc=f"Extract {dest.name}",
+        unit="file",
+        disable=not _progress_enabled(),
+    ):
+        zf.extract(member, dest)
 
 
 def safe_tar_extractall(tf: tarfile.TarFile, destination: str | os.PathLike[str]) -> None:
     """Extract a tar file while blocking path traversal and links."""
     dest = Path(destination).resolve()
-    for member in tf.getmembers():
+    members = tf.getmembers()
+    for member in members:
         if member.issym():
             raise ValueError(f"Blocked tar symlink member: {member.name}")
         if member.islnk():
@@ -287,10 +322,16 @@ def safe_tar_extractall(tf: tarfile.TarFile, destination: str | os.PathLike[str]
         target = (dest / member.name).resolve()
         if not _is_relative_to(target, dest):
             raise ValueError(f"Blocked tar path traversal member: {member.name}")
-    try:
-        tf.extractall(dest, filter="data")
-    except TypeError:  # pragma: no cover - older Python without tar extraction filters
-        tf.extractall(dest)
+    for member in tqdm(
+        members,
+        desc=f"Extract {dest.name}",
+        unit="file",
+        disable=not _progress_enabled(),
+    ):
+        try:
+            tf.extract(member, dest, filter="data")
+        except TypeError:  # pragma: no cover - older Python without tar extraction filters
+            tf.extract(member, dest)
 
 
 def _archive_format(archive_path: Path) -> str | None:
@@ -399,9 +440,7 @@ def _extraction_is_fresh(destination: Path, payload: dict[str, T.Any]) -> bool:
 
 
 def _extracted_matches_archive(
-    extracted: Path,
-    archive: Path,
-    expected_sha256: str | None,
+    extracted: Path, archive: Path, expected_sha256: str | None
 ) -> bool:
     """Return whether ``extracted`` was produced from the current ``archive``."""
     if not archive.is_file() or not extracted.is_dir():
@@ -410,8 +449,7 @@ def _extracted_matches_archive(
 
 
 def _multipart_fingerprint(
-    archives: T.Mapping[str, Path],
-    parts: T.Sequence[MultiSourcePart],
+    archives: T.Mapping[str, Path], parts: T.Sequence[MultiSourcePart]
 ) -> dict[str, T.Any]:
     """Return extraction freshness metadata for a multipart dataset source."""
     return {
@@ -423,8 +461,7 @@ def _multipart_fingerprint(
 
 
 def _multipart_archives_are_cached(
-    spec: MultiDatasetSourceSpec,
-    cache_root: Path,
+    spec: MultiDatasetSourceSpec, cache_root: Path
 ) -> dict[str, Path] | None:
     """Return cached archive paths when all multipart source parts are present."""
     archives = {part.name: cache_root / part.archive_name for part in spec.parts}
@@ -443,7 +480,7 @@ def _extract_multipart_archives(
     """Extract all multipart archives into one managed cache directory."""
     payload = _multipart_fingerprint(archives, spec.parts)
     if not force and _extraction_is_fresh(destination, payload):
-        logger.info("Using cached extracted %s multipart source: %s", spec.dataset, destination)
+        logger.debug("Using cached extracted %s multipart source: %s", spec.dataset, destination)
         return destination
 
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -484,7 +521,7 @@ def resolve_multipart_dataset_source(
             verify_sha256(archives[part.name], part.sha256, label=f"{spec.dataset} {part.name}")
         return _extract_multipart_archives(archives, spec, extracted, force=False)
     if not force_download and _extracted_cache_has_content(extracted):
-        logger.info(
+        logger.debug(
             "Using cached %s multipart extracted source without archives: %s",
             spec.dataset,
             extracted,
@@ -541,7 +578,7 @@ def extract_archive_to_cache(
     destination_path = Path(destination)
     marker_payload = _archive_fingerprint(archive_path, expected_sha256)
     if not force and _extraction_is_fresh(destination_path, marker_payload):
-        logger.info("Using cached extracted %s: %s", label, destination_path)
+        logger.debug("Using cached extracted %s: %s", label, destination_path)
         return destination_path
 
     destination_path.parent.mkdir(parents=True, exist_ok=True)
@@ -629,27 +666,25 @@ def _generic_cached_directory(cache_root: Path) -> Path | None:
 
 
 def _cached_extracted_source(
-    spec: DatasetSourceSpec,
-    cache_root: Path,
-    archive: Path | None,
+    spec: DatasetSourceSpec, cache_root: Path, archive: Path | None
 ) -> Path | None:
     """Return a reusable extracted source only when it cannot be stale."""
     expected_sha256 = _effective_sha256(spec)
     extracted = cache_root / EXTRACTED_DIR_NAME
     if archive is not None:
         if _extracted_matches_archive(extracted, archive, expected_sha256):
-            logger.info("Using fresh cached %s extracted source: %s", spec.dataset, extracted)
+            logger.debug("Using fresh cached %s extracted source: %s", spec.dataset, extracted)
             return extracted
         return None
     if extracted.is_dir():
-        logger.info(
+        logger.debug(
             "Using cached %s extracted source without archive: %s", spec.dataset, extracted
         )
         return extracted
     for name in spec.extracted_aliases:
         candidate = cache_root / name
         if candidate.is_dir():
-            logger.info("Using cached %s extracted source alias: %s", spec.dataset, candidate)
+            logger.debug("Using cached %s extracted source alias: %s", spec.dataset, candidate)
             return candidate
     return None
 
@@ -665,14 +700,14 @@ def _cached_source(spec: DatasetSourceSpec, cache_dir: Path) -> Path | None:
     if extracted is not None:
         return extracted
     if archive is not None:
-        logger.info("Using cached %s source archive: %s", spec.dataset, archive)
+        logger.debug("Using cached %s source archive: %s", spec.dataset, archive)
         return archive
     if known_direct is not None:
-        logger.info("Using cached %s source: %s", spec.dataset, known_direct)
+        logger.debug("Using cached %s source: %s", spec.dataset, known_direct)
         return known_direct
     generic_dir = _generic_cached_directory(cache_root)
     if generic_dir is not None:
-        logger.info("Using cached %s source candidate: %s", spec.dataset, generic_dir)
+        logger.debug("Using cached %s source candidate: %s", spec.dataset, generic_dir)
         return generic_dir
     return None
 

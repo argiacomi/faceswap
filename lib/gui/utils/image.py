@@ -262,10 +262,11 @@ class PreviewExtract:
         list:
             A list of images that have been modified since the last check
         """
-        if not self._modified:
-            retval = image_files
-        else:
-            retval = [fname for fname in image_files if os.path.getmtime(fname) > self._modified]
+        retval = (
+            image_files
+            if not self._modified
+            else [fname for fname in image_files if os.path.getmtime(fname) > self._modified]
+        )
         if not retval:
             logger.debug("No new images in output folder")
         else:
@@ -687,10 +688,11 @@ class PreviewTrigger:
             The trigger to clear. 'update': Full preview update. 'mask_toggle': toggle mask on
             and off. ``None`` - clear all triggers. Default: ``None``
         """
-        if trigger_type is None:
-            triggers = list(self._trigger_files.values())
-        else:
-            triggers = [self._trigger_files[trigger_type]]
+        triggers = (
+            list(self._trigger_files.values())
+            if trigger_type is None
+            else [self._trigger_files[trigger_type]]
+        )
         for trigger in triggers:
             if os.path.isfile(trigger):
                 os.remove(trigger)

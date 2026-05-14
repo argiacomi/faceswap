@@ -6,7 +6,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from lib.gui.qt_shell.graph_widget import TrainingGraphWidget
-from lib.gui.services.training_graph_service import TrainingGraphSeries, TrainingGraphSnapshot
+from lib.gui.services.training_graph_service import (
+    TrainingGraphSeries,
+    TrainingGraphSnapshot,
+)
 
 
 def _snapshot() -> TrainingGraphSnapshot:

@@ -313,10 +313,11 @@ class Output:
             mask_object.set_blur_and_threshold(
                 blur_kernel=self._blur_kernel, threshold=self._threshold
             )
-            if self._full_frame:
-                mask = mask_object.get_full_frame_mask(*reversed(mask_dims))
-            else:
-                mask = mask_object.mask[..., 0]
+            mask = (
+                mask_object.get_full_frame_mask(*reversed(mask_dims))
+                if self._full_frame
+                else mask_object.mask[..., 0]
+            )
             np.maximum(retval, mask, out=retval)
         logger.trace(
             "Final mask (shape: %s, dtype: %s)",  # type:ignore[attr-defined]
@@ -462,10 +463,11 @@ class Output:
         -------
         List of mask type names to be processed
         """
-        if self._mask_type == "bisenet-fp":
-            mask_types = [f"{self._mask_type}_{area}" for area in ("face", "head")]
-        else:
-            mask_types = [self._mask_type]
+        mask_types = (
+            [f"{self._mask_type}_{area}" for area in ("face", "head")]
+            if self._mask_type == "bisenet-fp"
+            else [self._mask_type]
+        )
 
         if self._mask_type == "custom":
             mask_types.append(f"{self._mask_type}_{self._centering}")

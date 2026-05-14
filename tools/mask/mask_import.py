@@ -303,10 +303,11 @@ class Import:
         Source filenames mapped to full path location of mask to be imported
         """
         file_list = self._get_file_list(import_path)
-        if loader.is_video:
-            retval = self._map_video(file_list, loader.file_list)
-        else:
-            retval = self._map_images(file_list, loader.file_list)
+        retval = (
+            self._map_video(file_list, loader.file_list)
+            if loader.is_video
+            else self._map_images(file_list, loader.file_list)
+        )
 
         return retval
 

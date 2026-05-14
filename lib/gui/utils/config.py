@@ -455,16 +455,11 @@ class Config:  # pylint:disable=too-many-public-methods
             :attr:`height` are ignored. Default: ``False``
         """
         self.root.tk.call("tk", "scaling", self.scaling_factor)
-        if fullscreen:
-            initial_dimensions = (
-                self.root.winfo_screenwidth(),
-                self.root.winfo_screenheight(),
-            )
-        else:
-            initial_dimensions = (
-                round(width * self.scaling_factor),
-                round(height * self.scaling_factor),
-            )
+        initial_dimensions = (
+            (self.root.winfo_screenwidth(), self.root.winfo_screenheight())
+            if fullscreen
+            else (round(width * self.scaling_factor), round(height * self.scaling_factor))
+        )
 
         if fullscreen and sys.platform in ("win32", "darwin"):
             self.root.state("zoomed")

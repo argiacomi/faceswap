@@ -437,12 +437,11 @@ class ActionFrame(ttk.Frame):  # pylint:disable=too-many-ancestors
                     group="Command Line Choices",
                 )
             else:
-                if opt == "mask_type":
-                    choices = self._create_mask_choices(
-                        defaults, available_masks, has_predicted_mask
-                    )
-                else:
-                    choices = PluginLoader.get_available_convert_plugins(opt, True)
+                choices = (
+                    self._create_mask_choices(defaults, available_masks, has_predicted_mask)
+                    if opt == "mask_type"
+                    else PluginLoader.get_available_convert_plugins(opt, True)
+                )
                 cp_option = ControlPanelOption(
                     title=opt,
                     dtype=str,

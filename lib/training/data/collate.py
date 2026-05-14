@@ -515,8 +515,8 @@ class Collate:  # pylint:disable=too-many-instance-attributes
         elif self._config.warp:
             feed = self._aug.warp(feed, to_landmarks=False)
 
-        if self._resize_inputs:
-            feed = to_float32(
+        feed = (
+            to_float32(
                 np.array(
                     [
                         cv2.resize(
@@ -528,8 +528,9 @@ class Collate:  # pylint:disable=too-many-instance-attributes
                     ]
                 )
             )
-        else:
-            feed = to_float32(feed)
+            if self._resize_inputs
+            else to_float32(feed)
+        )
 
         feed = feed.reshape(self._num_inputs, self._batch_size, *feed.shape[1:])
         inputs = [torch.from_numpy(x) for x in feed]

@@ -9,7 +9,10 @@ from PySide6.QtWidgets import QComboBox, QLabel, QPushButton
 
 from lib.gui.qt_shell.graph_panel import GraphPanel
 from lib.gui.qt_shell.graph_widget import TrainingGraphWidget
-from lib.gui.services.training_graph_service import TrainingGraphSeries, TrainingGraphSnapshot
+from lib.gui.services.training_graph_service import (
+    TrainingGraphSeries,
+    TrainingGraphSnapshot,
+)
 
 
 class _GraphServiceDouble:

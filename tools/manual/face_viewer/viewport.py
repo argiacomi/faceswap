@@ -404,10 +404,11 @@ class Viewport:
         else:
             x_idx = np.searchsorted(self._objects.visible_grid[2, 0, :], point_x, side="left") - 1
             y_idx = np.searchsorted(self._objects.visible_grid[3, :, 0], point_y, side="left") - 1
-            if x_idx < 0 or y_idx < 0:
-                retval = np.array((-1, -1, -1, -1))
-            else:
-                retval = self._objects.visible_grid[:, y_idx, x_idx]
+            retval = (
+                np.array((-1, -1, -1, -1))
+                if x_idx < 0 or y_idx < 0
+                else self._objects.visible_grid[:, y_idx, x_idx]
+            )
         logger.trace(retval)  # type:ignore[attr-defined]
         return retval
 
@@ -600,10 +601,9 @@ class VisibleObjects:
     def _top_left(self) -> np.ndarray:
         """:class:`numpy.ndarray`: The canvas (`x`, `y`) position of the face currently in the
         viewable area's top left position."""
-        if not np.any(self._images):
-            retval = [0.0, 0.0]
-        else:
-            retval = self._canvas.coords(self._images[0][0])
+        retval = (
+            [0.0, 0.0] if not np.any(self._images) else self._canvas.coords(self._images[0][0])
+        )
         return np.array(retval, dtype="int")
 
     def update(self) -> None:
@@ -700,10 +700,11 @@ class VisibleObjects:
 
         base_coords: list[list[float | int]]
 
-        if not np.any(self._images):
-            base_coords = [[col * self._size, 0] for col in range(columns)]
-        else:
-            base_coords = [self._canvas.coords(item_id) for item_id in self._images[0]]
+        base_coords = (
+            [[col * self._size, 0] for col in range(columns)]
+            if not np.any(self._images)
+            else [self._canvas.coords(item_id) for item_id in self._images[0]]
+        )
         logger.trace(
             "existing rows: %s, required_rows: %s, "  # type:ignore[attr-defined]
             "base_coords: %s",

@@ -175,5 +175,10 @@ def test_polish_normalizes_wflw_annotation_bbox_for_prediction_roi(tmp_path: Pat
     assert metadata["face_bbox_source"] == "wflw_98_landmark_extrema"
     np.testing.assert_allclose(
         metadata["face_bbox"],
-        [float(points[:, 0].min()), float(points[:, 1].min()), float(points[:, 0].max()), float(points[:, 1].max())],
+        [
+            float(points[:, 0].min()),
+            float(points[:, 1].min()),
+            float(points[:, 0].max()),
+            float(points[:, 1].max()),
+        ],
     )

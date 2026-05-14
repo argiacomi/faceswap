@@ -316,10 +316,11 @@ class FaceSwapArgs:
                 if opts.get("backend", None) is None:
                     continue
                 opt_backend = opts.pop("backend")
-                if isinstance(opt_backend, list | tuple):
-                    opt_backend = [backend.lower() for backend in opt_backend]
-                else:
-                    opt_backend = [opt_backend.lower()]
+                opt_backend = (
+                    [backend.lower() for backend in opt_backend]
+                    if isinstance(opt_backend, list | tuple)
+                    else [opt_backend.lower()]
+                )
                 if fs_backend not in opt_backend:
                     opts["help"] = argparse.SUPPRESS
 

@@ -1199,10 +1199,11 @@ class FacesLoader(ImagesLoader):
             The number of images that the loader will encounter if already known, otherwise
             ``None``
         """
-        if isinstance(self.location, list | tuple):
-            file_list = self.location
-        else:
-            file_list = get_image_paths(self.location)
+        file_list = (
+            self.location
+            if isinstance(self.location, list | tuple)
+            else get_image_paths(self.location)
+        )
 
         self._file_list = [
             fname for fname in file_list if os.path.splitext(fname)[-1].lower() == ".png"

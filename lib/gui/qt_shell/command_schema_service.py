@@ -100,10 +100,9 @@ class CommandSchemaService:
             return None
 
         choices = getattr(panel_option, "choices", None)
-        if isinstance(choices, list | tuple):
-            choices = tuple(str(choice) for choice in choices)
-        else:
-            choices = ()
+        choices = (
+            tuple(str(choice) for choice in choices) if isinstance(choices, list | tuple) else ()
+        )
 
         value_type = getattr(panel_option, "dtype", str)
         if not isinstance(value_type, type):

@@ -2,10 +2,14 @@
 """AFLW2000-3D dataset manifest builder.
 
 AFLW2000-3D is distributed as image files paired with MATLAB ``.mat`` files.
-The native 3DDFA annotation file contains 2D landmark projections under the
-``pt2d`` key. For the 68-point ensemble pipeline we consume that 2D projection
-as canonical 68-point ground truth and preserve additional 3D/Pose metadata when
-present.
+The native 3DDFA annotation file contains 68-point 3D landmarks under the
+``pt3d_68`` key. For the 68-point ensemble pipeline we consume the XY projection
+of ``pt3d_68`` as canonical 68-point ground truth and preserve additional
+3D/Pose metadata when present.
+
+Some AFLW2000-3D ``.mat`` files also contain a ``pt2d`` key, but that key may be
+a 21-point sparse annotation and is not the 68-point target used by the standard
+AFLW2000-3D dataset loaders.
 """
 
 from __future__ import annotations
@@ -35,7 +39,9 @@ from lib.landmarks.schema import normalize_landmarks
 
 logger = logging.getLogger(__name__)
 
-AFLW2000_3D_URL = "http://www.cbsr.ia.ac.cn/users/xiangyuzhu/projects/3DDFA/Database/AFLW2000-3D.zip"
+AFLW2000_3D_URL = (
+    "http://www.cbsr.ia.ac.cn/users/xiangyuzhu/projects/3DDFA/Database/AFLW2000-3D.zip"
+)
 AFLW2000_3D_SHA256 = "252bc35274d65ff27b6e573aa96c2f4c116ad88452cc984fb882258c0ed6e2d8"
 AFLW2000_3D_SOURCE = DatasetSourceSpec(
     dataset="AFLW2000-3D",
@@ -67,24 +73,34 @@ def _matching_image(annotation: Path) -> Path | None:
     return None
 
 
-def _pt2d(payload: dict[str, T.Any], *, source: Path) -> np.ndarray:
-    """Return 68x2 2D landmarks from a 3DDFA AFLW2000 annotation payload."""
-    raw = payload.get("pt2d")
-    if raw is None:
-        raise ValueError(f"AFLW2000-3D annotation missing 'pt2d': {source}")
-    points = np.asarray(raw, dtype="float32")
+def _as_68x2(points: np.ndarray, *, source: Path, key: str) -> np.ndarray:
+    """Normalize a MATLAB landmark array to 68x2 XY coordinates."""
+    points = np.asarray(points, dtype="float32")
     points = np.squeeze(points)
-    if points.shape == (2, 68):
-        points = points.T
-    elif points.shape == (3, 68):
+    if points.shape == (3, 68):
         points = points[:2].T
-    elif points.shape == (68, 3):
+    elif points.shape == (2, 68):
+        points = points.T
+    elif points.shape == (68, 3) or points.shape == (68, 2):
         points = points[:, :2]
     if points.shape != (68, 2):
-        raise ValueError(f"AFLW2000-3D pt2d must resolve to 68x2, got {points.shape}: {source}")
+        raise ValueError(
+            f"AFLW2000-3D {key} must resolve to 68x2 XY landmarks, got {points.shape}: {source}"
+        )
     if not np.all(np.isfinite(points)):
-        raise ValueError(f"AFLW2000-3D pt2d contains NaN/Inf values: {source}")
+        raise ValueError(f"AFLW2000-3D {key} contains NaN/Inf values: {source}")
     return np.ascontiguousarray(points, dtype="float32")
+
+
+def _points_68(payload: dict[str, T.Any], *, source: Path) -> tuple[np.ndarray, str]:
+    """Return canonical 68-point XY landmarks and the source key used."""
+    if "pt3d_68" in payload:
+        return _as_68x2(np.asarray(payload["pt3d_68"]), source=source, key="pt3d_68"), "pt3d_68"
+    if "pt2d_68" in payload:
+        return _as_68x2(np.asarray(payload["pt2d_68"]), source=source, key="pt2d_68"), "pt2d_68"
+    if "pt2d" in payload:
+        return _as_68x2(np.asarray(payload["pt2d"]), source=source, key="pt2d"), "pt2d"
+    raise ValueError(f"AFLW2000-3D annotation missing pt3d_68/pt2d_68/pt2d landmarks: {source}")
 
 
 def _landmark_bbox(points: np.ndarray) -> list[float]:
@@ -104,12 +120,24 @@ def _serializable_vector(payload: dict[str, T.Any], key: str) -> list[float] | N
     return [float(value) for value in values.astype("float32").tolist()]
 
 
-def _metadata(payload: dict[str, T.Any], annotation: Path, image: Path, root: Path) -> dict[str, T.Any]:
+def _metadata(
+    payload: dict[str, T.Any],
+    annotation: Path,
+    image: Path,
+    root: Path,
+    *,
+    landmark_source_key: str,
+) -> dict[str, T.Any]:
     """Return metadata preserved from an AFLW2000-3D annotation."""
     metadata: dict[str, T.Any] = {
         "image_id": image.relative_to(root).as_posix(),
         "annotation_file": annotation.relative_to(root).as_posix(),
+        "landmark_source_key": landmark_source_key,
     }
+    if "pt2d" in payload:
+        metadata["pt2d_shape"] = list(np.squeeze(np.asarray(payload["pt2d"])).shape)
+    if "pt3d_68" in payload:
+        metadata["pt3d_68_shape"] = list(np.squeeze(np.asarray(payload["pt3d_68"])).shape)
     for key in ("Pose_Para", "Shape_Para", "Exp_Para"):
         values = _serializable_vector(payload, key)
         if values is not None:
@@ -137,10 +165,16 @@ def _build_from_root(
             logger.debug("Skipping AFLW2000-3D annotation without matching image: %s", annotation)
             continue
         payload = _load_mat(annotation)
-        points = _pt2d(payload, source=annotation)
-        metadata = _metadata(payload, annotation, image, root)
+        points, landmark_source_key = _points_68(payload, source=annotation)
+        metadata = _metadata(
+            payload,
+            annotation,
+            image,
+            root,
+            landmark_source_key=landmark_source_key,
+        )
         metadata["face_bbox"] = _landmark_bbox(points)
-        metadata["face_bbox_source"] = "aflw2000_3d_pt2d_extrema"
+        metadata["face_bbox_source"] = f"aflw2000_3d_{landmark_source_key}_xy_extrema"
         condition_labels = _condition_labels_from_metadata({}, metadata, default=scenario)
         sample_id = annotation.relative_to(root).with_suffix("").as_posix()
         samples.append(

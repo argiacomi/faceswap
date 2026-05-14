@@ -98,10 +98,11 @@ class GraphPanel(QWidget):
     def refresh_graph(self) -> bool:
         """Refresh graph data from the loaded or configured source."""
         try:
-            if not self._service.is_loaded and self._service.source is not None:
-                snapshot = self._service.load_configured_source(is_training=True)
-            else:
-                snapshot = self._service.refresh()
+            snapshot = (
+                self._service.load_configured_source(is_training=True)
+                if not self._service.is_loaded and self._service.source is not None
+                else self._service.refresh()
+            )
         except (TrainingGraphError, OSError, ValueError, AssertionError) as err:
             self._set_error(str(err))
             return False

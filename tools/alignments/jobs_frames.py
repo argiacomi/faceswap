@@ -59,10 +59,9 @@ class Draw:
         """
         now = datetime.now().strftime("%Y%m%d_%H%M%S")
         folder_name = f"drawn_landmarks_{now}"
-        if self._frames.is_video:
-            dest_folder = os.path.dirname(self._frames.folder)
-        else:
-            dest_folder = self._frames.folder
+        dest_folder = (
+            os.path.dirname(self._frames.folder) if self._frames.is_video else self._frames.folder
+        )
         output_folder = os.path.join(dest_folder, folder_name)
         logger.debug("Creating folder: '%s'", output_folder)
         os.makedirs(output_folder)

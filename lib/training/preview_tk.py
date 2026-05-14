@@ -548,10 +548,11 @@ class _Image:
         if self._is_standalone and not self._save_var.get() and not isinstance(args[0], tk.Event):
             return
 
-        if self._is_standalone:
-            root_path = os.path.join(os.path.realpath(os.path.dirname(sys.argv[0])))
-        else:
-            root_path = T.cast(str, args[0])
+        root_path = (
+            os.path.join(os.path.realpath(os.path.dirname(sys.argv[0])))
+            if self._is_standalone
+            else T.cast(str, args[0])
+        )
 
         now = datetime.now().strftime("%Y-%m-%d_%H.%M.%S")
         filename = os.path.join(root_path, f"preview_{now}.png")

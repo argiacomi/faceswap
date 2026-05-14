@@ -469,10 +469,11 @@ class LPIPSLoss(nn.Module):  # pylint:disable=too-many-instance-attributes
         dims = dims if self._spatial else y_true.shape[2:4]
         res = [self._process_output(diff, dims) for diff in self._process_diffs(diffs)]
 
-        if self._spatial:
-            val = torch.stack(res, dim=0).sum(dim=0)
-        else:
-            val = torch.stack([r.sum(dim=(1, 2, 3)) for r in res]).sum(dim=0)
+        val = (
+            torch.stack(res, dim=0).sum(dim=0)
+            if self._spatial
+            else torch.stack([r.sum(dim=(1, 2, 3)) for r in res]).sum(dim=0)
+        )
 
         val *= 0.1  # Reduce by factor of 10 'cos this loss is STRONG. # TODO config
 

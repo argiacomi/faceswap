@@ -101,10 +101,11 @@ class Mask(ExtractHandlerFace):
         self._maybe_log_warning(batch.landmark_type)
         matrices = self._get_matrices(getattr(batch.aligned, self._aligned_mat_name))
 
-        if batch.is_aligned:
-            data = self._pre_process_aligned(batch, matrices)
-        else:
-            data = self._get_faces(batch.images, batch.frame_ids, matrices, with_alpha=True)
+        data = (
+            self._pre_process_aligned(batch, matrices)
+            if batch.is_aligned
+            else self._get_faces(batch.images, batch.frame_ids, matrices, with_alpha=True)
+        )
 
         data = self._format_images(data)
         batch.matrices = data[..., -1]  # type:ignore[assignment]  # Hacky re-use for ROI

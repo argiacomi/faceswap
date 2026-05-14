@@ -63,10 +63,11 @@ def layer_test(
         expected_output_shape = layer.compute_output_shape(input_shape)
 
         # test in functional API
-        if fixed_batch_size:
-            inp = Input(batch_shape=input_shape, dtype=input_dtype)
-        else:
-            inp = Input(shape=input_shape[1:], dtype=input_dtype)
+        inp = (
+            Input(batch_shape=input_shape, dtype=input_dtype)
+            if fixed_batch_size
+            else Input(shape=input_shape[1:], dtype=input_dtype)
+        )
         outp = layer(inp)
         assert outp.dtype == expected_output_dtype
 

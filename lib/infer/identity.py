@@ -667,10 +667,11 @@ class Cluster:
         The [`num_predictions`, 4] linkage vector
         """
         dims = predictions.shape[-1]
-        if self._use_vector_linkage(dims):
-            retval = linkage_vector(predictions, method=method)
-        else:
-            retval = linkage(predictions, method=method, preserve_input=False)
+        retval = (
+            linkage_vector(predictions, method=method)
+            if self._use_vector_linkage(dims)
+            else linkage(predictions, method=method, preserve_input=False)
+        )
         logger.debug("Linkage shape: %s", retval.shape)
         return retval
 

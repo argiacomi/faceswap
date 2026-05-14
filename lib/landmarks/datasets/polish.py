@@ -183,7 +183,9 @@ def _normalize_wflw_validation_bboxes(
                 changed = True
     if changed:
         rewrite_manifest(root, payload, entries)
-        logger.info("Normalized WFLW validation face bboxes in manifest: %s", root / "manifest.json")
+        logger.info(
+            "Normalized WFLW validation face bboxes in manifest: %s", root / "manifest.json"
+        )
     return changed
 
 

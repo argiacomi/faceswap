@@ -19,7 +19,11 @@ from lib.landmarks.ensemble.weights import (
 )
 from lib.landmarks.eval.prediction_cache import DiskPredictionCache
 from lib.landmarks.schema import LandmarkPrediction
-from tools.landmarks.compute_static_weights import DEFAULT_OUTPUT, compute_static_weights, main
+from tools.landmarks.compute_static_weights import (
+    DEFAULT_OUTPUT,
+    compute_static_weights,
+    main,
+)
 
 
 def _points(offset: float = 0.0) -> np.ndarray:
