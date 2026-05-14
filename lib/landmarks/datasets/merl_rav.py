@@ -4,8 +4,11 @@
 MERL-RAV provides 68-point reannotations over AFLW images. The labels are
 public and can be downloaded from the MERL-RAV repository. AFLW source images can
 be supplied from an already organized MERL-RAV directory, the Oxford VGG DVE
-recropped AFLW tarball, the LMDIS preprocessed AFLW tarball, or a user-provided
-AFLW image directory/archive.
+recropped AFLW tarball, or a user-provided AFLW image directory/archive.
+
+The LMDIS ``aflw_data.tar.gz`` package contains split text files and 5-point
+keypoint ``.mat`` files, not AFLW source images, so it is intentionally not used
+as an automatic image source.
 
 MERL-RAV label semantics:
 
@@ -23,7 +26,6 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import logging
-import os
 import re
 import typing as T
 from pathlib import Path
@@ -56,8 +58,6 @@ MERL_RAV_AFLW_REQUEST_FORM = "https://cloud.tugraz.at/index.php/apps/forms/s/R7n
 AFLW_DVE_URL = "http://www.robots.ox.ac.uk/~vgg/research/DVE/data/datasets/aflw-recrop.tar.gz"
 AFLW_DVE_SHA1 = "939fdce0e6262a14159832c71d4f84a9d516de5e"
 AFLW_DVE_ARCHIVE = "aflw-recrop.tar.gz"
-AFLW_LMDIS_URL = "http://files.ytzhang.net/lmdis-rep/release-v1/aflw/aflw_data.tar.gz"
-AFLW_LMDIS_ARCHIVE = "aflw_data.tar.gz"
 AFLW_DVE_PAPER = "Unsupervised learning of landmarks via vector exchange, ICCV 2019"
 
 MERL_RAV_SOURCE = DatasetSourceSpec(
@@ -69,8 +69,8 @@ MERL_RAV_SOURCE = DatasetSourceSpec(
     url=MERL_RAV_LABELS_URL,
     manual_hint=(
         "MERL-RAV labels are public and default to the MERL-RAV GitHub archive. "
-        "AFLW images default to the Oxford DVE recropped AFLW tarball, with LMDIS "
-        "aflw_data.tar.gz as fallback. Original AFLW remains approval-gated."
+        "AFLW images default to the Oxford DVE recropped AFLW tarball. "
+        "Original AFLW remains approval-gated."
     ),
 )
 
@@ -107,12 +107,12 @@ def _aflw_source_help(cache_dir: str | Path) -> str:
     return "\n".join(
         [
             f"AFLW image source not ready in {root}.",
-            "Default source candidates:",
+            "Default source candidate:",
             f"  Oxford DVE AFLW recrop: {AFLW_DVE_URL}",
             f"  SHA1: {AFLW_DVE_SHA1}",
-            f"  LMDIS AFLW data fallback: {AFLW_LMDIS_URL}",
-            f"Expected cache files: {root / AFLW_DVE_ARCHIVE} or {root / AFLW_LMDIS_ARCHIVE}",
+            f"Expected cache file: {root / AFLW_DVE_ARCHIVE}",
             "You can also pass --merl-rav-aflw-source-dir or --merl-rav-aflw-source-zip.",
+            "Do not use LMDIS aflw_data.tar.gz as an image source; it contains split text files and 5-point .mat metadata, not source images.",
             f"Original AFLW approval/request page: {MERL_RAV_AFLW_REQUEST_FORM}",
         ]
     )
@@ -124,6 +124,19 @@ def _has_images(path: Path) -> bool:
         return False
     return any(
         child.is_file() and child.suffix.lower() in IMAGE_EXTS for child in path.rglob("*")
+    )
+
+
+def _require_images(path: Path, *, label: str) -> Path:
+    """Return ``path`` when it contains images, otherwise raise a clear error."""
+    if _has_images(path):
+        return path
+    mat_files = sum(1 for child in path.rglob("*.mat") if child.is_file()) if path.is_dir() else 0
+    txt_files = sum(1 for child in path.rglob("*.txt") if child.is_file()) if path.is_dir() else 0
+    raise FileNotFoundError(
+        f"{label} does not contain AFLW source images: {path}. "
+        f"Found txt_files={txt_files}, mat_files={mat_files}. "
+        "For MERL-RAV, provide actual AFLW image files. LMDIS aflw_data.tar.gz is metadata/keypoints only and is not a usable image source."
     )
 
 
@@ -164,20 +177,18 @@ def _resolve_aflw_source(
         directory = Path(source_dir)
         if not directory.is_dir():
             raise FileNotFoundError(f"AFLW source image directory not found: {directory}")
-        if not _has_images(directory):
-            raise FileNotFoundError(f"AFLW source image directory contains no images: {directory}")
-        return directory
+        return _require_images(directory, label="AFLW source image directory")
     if source_zip is not None:
         archive = Path(source_zip)
         if not archive.is_file():
             raise FileNotFoundError(f"AFLW source image archive not found: {archive}")
-        extracted = _aflw_cache_root(cache_dir) / "extracted"
-        return extract_archive_to_cache(
+        extracted = extract_archive_to_cache(
             archive,
-            extracted,
+            _aflw_cache_root(cache_dir) / "extracted",
             force=force_download,
             label="AFLW source image archive",
         )
+        return _require_images(extracted, label="AFLW source image archive")
     if download_url:
         archive = download(
             download_url,
@@ -185,12 +196,13 @@ def _resolve_aflw_source(
             force=force_download,
             label="AFLW source image archive",
         )
-        return extract_archive_to_cache(
+        extracted = extract_archive_to_cache(
             archive,
             _aflw_cache_root(cache_dir) / "extracted",
             force=force_download,
             label="AFLW source image archive",
         )
+        return _require_images(extracted, label="AFLW source image archive")
 
     extracted = _aflw_cache_root(cache_dir) / "extracted"
     if not force_download and _has_images(extracted):
@@ -206,28 +218,14 @@ def _resolve_aflw_source(
         label="AFLW DVE recrop archive",
     )
     if dve_archive is not None:
-        return extract_archive_to_cache(
+        extracted = extract_archive_to_cache(
             dve_archive,
             extracted,
             force=force_download,
             expected_sha256=None,
             label="AFLW DVE recrop archive",
         )
-
-    lmdis_archive = _download_or_use_archive(
-        AFLW_LMDIS_URL,
-        _aflw_cache_root(cache_dir) / AFLW_LMDIS_ARCHIVE,
-        force_download=force_download,
-        no_download=no_download,
-        label="AFLW LMDIS archive",
-    )
-    if lmdis_archive is not None:
-        return extract_archive_to_cache(
-            lmdis_archive,
-            extracted,
-            force=force_download,
-            label="AFLW LMDIS archive",
-        )
+        return _require_images(extracted, label="AFLW DVE recrop archive")
 
     raise FileNotFoundError(_aflw_source_help(cache_dir))
 
@@ -401,7 +399,7 @@ def _sample_from_label(
         "aflw_image_source": "resolved_aflw_image_cache" if image_root else "organized_merl_rav",
         "aflw_dve_url": AFLW_DVE_URL,
         "aflw_dve_sha1": AFLW_DVE_SHA1,
-        "aflw_lmdis_url": AFLW_LMDIS_URL,
+        "aflw_dve_paper": AFLW_DVE_PAPER,
         "aflw_original_source_url": MERL_RAV_AFLW_URL,
         "aflw_request_form": MERL_RAV_AFLW_REQUEST_FORM,
     }
