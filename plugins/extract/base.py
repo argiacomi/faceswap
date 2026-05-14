@@ -81,6 +81,29 @@ class _TorchInfer:
         logger.debug("[%s] No backends available. Returning CPU device context", self._name)
         return torch.device("cpu")
 
+    @staticmethod
+    def _state_dict_from_checkpoint(checkpoint: T.Any) -> T.Any:
+        """Return a model state dict from common PyTorch checkpoint layouts."""
+        if (
+            isinstance(checkpoint, dict)
+            and "state_dict" in checkpoint
+            and isinstance(checkpoint["state_dict"], dict)
+        ):
+            checkpoint = checkpoint["state_dict"]
+
+        if not isinstance(checkpoint, dict):
+            return checkpoint
+
+        for prefix in ("module.", "model."):
+            if any(isinstance(key, str) and key.startswith(prefix) for key in checkpoint):
+                return {
+                    key[len(prefix) :]
+                    if isinstance(key, str) and key.startswith(prefix)
+                    else key: value
+                    for key, value in checkpoint.items()
+                }
+        return checkpoint
+
     def load_torch_model(
         self,
         model: torch.nn.Module,
@@ -108,6 +131,7 @@ class _TorchInfer:
             self._return_indices = return_indices
 
         weights = torch.load(weights_path, map_location=self.device)
+        weights = self._state_dict_from_checkpoint(weights)
         model.load_state_dict(weights)
         model.to(self.device, memory_format=torch.channels_last)  # type:ignore[call-overload]
         model.eval()
