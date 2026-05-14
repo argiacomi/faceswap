@@ -12,6 +12,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+from tqdm import tqdm
 
 from lib.landmarks.adapters import LandmarkAdapter, build_landmark_adapter
 from lib.landmarks.coordinates import roi_to_matrix
@@ -24,6 +25,11 @@ logger = logging.getLogger(__name__)
 
 def _split_models(value: str) -> tuple[str, ...]:
     return tuple(item.strip().lower() for item in value.split(",") if item.strip())
+
+
+def _show_progress() -> bool:
+    """Return whether tqdm progress bars should be shown."""
+    return logger.isEnabledFor(logging.INFO)
 
 
 def _parse_prediction_roots(values: T.Sequence[str]) -> dict[str, Path]:
@@ -453,11 +459,10 @@ def _run_model_predictions(
     samples = load_manifest(manifest_path)
     raw_entries = {_entry_id(entry): entry for entry in _load_manifest_entries(manifest_path)}
     cache = DiskPredictionCache(cache_dir)
-    loaded_adapters = (
-        adapters if adapters is not None else _build_model_adapters(models, device=device)
-    )
+    loaded_adapters = adapters if adapters is not None else _build_model_adapters(models, device=device)
     written = 0
     reused = 0
+    show_progress = _show_progress()
     for model in models:
         adapter = loaded_adapters[model]
         items, model_reused = _prepare_run_items(
@@ -473,36 +478,48 @@ def _run_model_predictions(
             device=device,
         )
         reused += model_reused
+        if model_reused:
+            logger.debug("Reused %d fresh cached %s predictions", model_reused, model)
         input_size = int(getattr(getattr(adapter, "plugin", None), "input_size", 256))
-        for start in range(0, len(items), batch_size):
-            batch_items = items[start : start + batch_size]
-            images = []
-            matrices = []
-            for item in batch_items:
-                frame = _load_image_bgr(item.sample.image)
-                images.append(_crop_square(frame, item.model_roi, input_size))
-                matrices.append(item.matrix)
-            batch = np.stack(images, axis=0)
-            batch_matrices = np.stack(matrices, axis=0).astype("float32", copy=False)
-            predictions = adapter.predict_batch(batch, matrices=batch_matrices)
-            if len(predictions) != len(batch_items):
-                raise ValueError(
-                    f"adapter '{model}' returned {len(predictions)} predictions for batch of {len(batch_items)}"  # noqa: E501
-                )
-            for item, prediction in zip(batch_items, predictions, strict=True):
-                canonical = prediction.canonical_68()
-                if canonical.coordinate_space != "frame":
+        progress = tqdm(
+            total=len(items),
+            desc=f"Cache predictions [{model}]",
+            unit="sample",
+            disable=not show_progress or not items,
+        )
+        try:
+            for start in range(0, len(items), batch_size):
+                batch_items = items[start : start + batch_size]
+                images = []
+                matrices = []
+                for item in batch_items:
+                    frame = _load_image_bgr(item.sample.image)
+                    images.append(_crop_square(frame, item.model_roi, input_size))
+                    matrices.append(item.matrix)
+                batch = np.stack(images, axis=0)
+                batch_matrices = np.stack(matrices, axis=0).astype("float32", copy=False)
+                predictions = adapter.predict_batch(batch, matrices=batch_matrices)
+                if len(predictions) != len(batch_items):
                     raise ValueError(
-                        f"adapter '{model}' returned coordinate space '{canonical.coordinate_space}', expected frame"  # noqa: E501
+                        f"adapter '{model}' returned {len(predictions)} predictions for batch of {len(batch_items)}"  # noqa: E501
                     )
-                cache.write(
-                    item.sample.sample_id,
-                    canonical,
-                    checkpoint=checkpoint,
-                    config=item.config,
-                    refresh=True,
-                )
-                written += 1
+                for item, prediction in zip(batch_items, predictions, strict=True):
+                    canonical = prediction.canonical_68()
+                    if canonical.coordinate_space != "frame":
+                        raise ValueError(
+                            f"adapter '{model}' returned coordinate space '{canonical.coordinate_space}', expected frame"  # noqa: E501
+                        )
+                    cache.write(
+                        item.sample.sample_id,
+                        canonical,
+                        checkpoint=checkpoint,
+                        config=item.config,
+                        refresh=True,
+                    )
+                    written += 1
+                progress.update(len(batch_items))
+        finally:
+            progress.close()
     return written, reused
 
 
@@ -515,9 +532,15 @@ def _import_manifest_predictions(args: argparse.Namespace) -> tuple[int, int]:
     cache = DiskPredictionCache(args.cache_dir)
     written = 0
     reused = 0
-    for sample in samples:
+    models = _split_models(args.models)
+    for sample in tqdm(
+        samples,
+        desc="Import predictions",
+        unit="sample",
+        disable=not _show_progress(),
+    ):
         entry = entries.get(sample.sample_id, {})
-        for model in _split_models(args.models):
+        for model in models:
             path = _prediction_path(
                 sample_id=sample.sample_id,
                 model=model,
@@ -558,8 +581,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--run-models",
         action="store_true",
-        help="Run selected model adapters against --manifest "
-        "instead of importing .npy predictions.",
+        help="Run selected model adapters against --manifest instead of importing .npy predictions.",
     )
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument(
@@ -570,8 +592,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--no-gt-roi",
         action="store_true",
-        help="Require face_bbox/bbox in the manifest instead of "
-        "deriving validation ROIs from GT landmarks.",
+        help="Require face_bbox/bbox in the manifest instead of deriving validation ROIs from GT landmarks.",
     )
     parser.add_argument(
         "--gt-roi-scale",
@@ -629,11 +650,7 @@ def main(argv: list[str] | None = None) -> int:
         checkpoint=_checkpoint_value(args),
         refresh=args.refresh,
     )
-    message = (
-        "Cached predictions: wrote=1 reused=0"
-        if changed
-        else "Cached predictions: wrote=0 reused=1"
-    )
+    message = "Cached predictions: wrote=1 reused=0" if changed else "Cached predictions: wrote=0 reused=1"
     print(message)
     return 0
 
