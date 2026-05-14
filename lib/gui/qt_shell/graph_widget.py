@@ -218,6 +218,7 @@ class TrainingGraphWidget(QWidget):
         painter.drawRect(rect)
         if not self._series:
             painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, self._status_text)
+            self._last_decimated_count = 0
             return
         minimum, maximum = self._value_range()
         if minimum == maximum:
@@ -227,6 +228,7 @@ class TrainingGraphWidget(QWidget):
         painter.drawText(4, rect.bottom(), f"{minimum:.4g}")
         painter.save()
         painter.setClipRect(rect)
+        self._last_decimated_count = 0
         for index, series in enumerate(self._series):
             pen = QPen(self.palette().highlight().color())
             pen.setWidth(2 + (index % 2))
@@ -242,8 +244,9 @@ class TrainingGraphWidget(QWidget):
         if not points:
             return QPainterPath()
         polygon = QPolygonF(points)
-        path = QPainterPath()
-        path.addPolygon(polygon)
+        path = QPainterPath(polygon.first())
+        for point in polygon[1:]:
+            path.lineTo(point)
         return path
 
     def _points_for_series(
