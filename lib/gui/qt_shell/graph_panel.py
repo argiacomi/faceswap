@@ -30,6 +30,8 @@ class GraphPanel(QWidget):
     """Runtime Graph panel for loaded Analysis session series."""
 
     _BARS = "▁▂▃▄▅▆▇█"
+    IMAGE_FILTER = "PNG files (*.png);;JPEG files (*.jpg *.jpeg);;Bitmap files (*.bmp);;All files (*)"
+    CSV_FILTER = "CSV files (*.csv);;All files (*)"
 
     def __init__(
         self,
@@ -46,9 +48,12 @@ class GraphPanel(QWidget):
         self._graph_text = QPlainTextEdit()
         self._open_button = QPushButton("Open")
         self._refresh_button = QPushButton("Refresh")
-        self._export_button = QPushButton("Export")
+        self._export_image_button = QPushButton("Export Image")
+        self._export_csv_button = QPushButton("Export CSV")
         self._zoom_in_button = QPushButton("Zoom In")
         self._zoom_out_button = QPushButton("Zoom Out")
+        self._zoom_y_in_button = QPushButton("Y Zoom In")
+        self._zoom_y_out_button = QPushButton("Y Zoom Out")
         self._reset_view_button = QPushButton("Reset")
         self._clear_button = QPushButton("Clear")
         self._build_ui()
@@ -118,15 +123,25 @@ class GraphPanel(QWidget):
         self._status_label.setText("Graph image saved" if saved else "No graph image to save")
         return saved
 
+    def save_graph_csv(self, filename: str | Path) -> int:
+        """Save the currently selected graph series to CSV."""
+        written = self._service.save_csv(filename, selected_keys=self._selected_loss_keys(self._service.snapshot))
+        self._status_label.setText("No graph data to save" if written == 0 else f"Graph CSV saved: {written} rows")
+        return written
+
     def clear_graph(self) -> None:
         """Clear graph source and rendered graph state."""
+        self.cleanup_graph()
+
+    def cleanup_graph(self, message: str = "No graph data loaded") -> None:
+        """Clear graph state for stop/failure/reload/close/project-change terminal paths."""
         self._service.clear()
         self._session_combo.clear()
         self._key_combo.clear()
         self._graph_widget.clear()
         self._graph_text.setPlainText("No graph data loaded")
         self._source_label.setText("No graph source configured")
-        self._status_label.setText("No graph data loaded")
+        self._status_label.setText(message)
         self._sync_actions()
 
     def _build_ui(self) -> None:
@@ -172,9 +187,12 @@ class GraphPanel(QWidget):
         for button in (
             self._open_button,
             self._refresh_button,
-            self._export_button,
+            self._export_image_button,
+            self._export_csv_button,
             self._zoom_in_button,
             self._zoom_out_button,
+            self._zoom_y_in_button,
+            self._zoom_y_out_button,
             self._reset_view_button,
             self._clear_button,
         ):
@@ -186,12 +204,13 @@ class GraphPanel(QWidget):
         """Connect panel signals."""
         self._open_button.clicked.connect(lambda _checked=False: self._open_source_dialog())
         self._refresh_button.clicked.connect(lambda _checked=False: self.refresh_graph())
-        self._export_button.clicked.connect(lambda _checked=False: self._export_graph_dialog())
+        self._export_image_button.clicked.connect(lambda _checked=False: self._export_graph_image_dialog())
+        self._export_csv_button.clicked.connect(lambda _checked=False: self._export_graph_csv_dialog())
         self._zoom_in_button.clicked.connect(lambda _checked=False: self._graph_widget.zoom_in())
         self._zoom_out_button.clicked.connect(lambda _checked=False: self._graph_widget.zoom_out())
-        self._reset_view_button.clicked.connect(
-            lambda _checked=False: self._graph_widget.reset_view()
-        )
+        self._zoom_y_in_button.clicked.connect(lambda _checked=False: self._graph_widget.zoom_y_in())
+        self._zoom_y_out_button.clicked.connect(lambda _checked=False: self._graph_widget.zoom_y_out())
+        self._reset_view_button.clicked.connect(lambda _checked=False: self._graph_widget.reset_view())
         self._clear_button.clicked.connect(lambda _checked=False: self.clear_graph())
         self._session_combo.currentIndexChanged.connect(self._session_changed)
         self._key_combo.currentIndexChanged.connect(self._loss_key_changed)
@@ -211,16 +230,28 @@ class GraphPanel(QWidget):
         if folder:
             self.load_source(folder)
 
-    def _export_graph_dialog(self) -> None:
+    def _export_graph_image_dialog(self) -> None:
         """Prompt for an image output path and save the rendered graph."""
-        filename, _ = QFileDialog.getSaveFileName(
+        filename, selected_filter = QFileDialog.getSaveFileName(
             self,
-            "Export Training Graph",
-            "training_graph.png",
-            "PNG files (*.png);;All files (*)",
+            "Export Training Graph Image",
+            self._default_export_name("png"),
+            self.IMAGE_FILTER,
         )
         if filename:
-            self.save_graph_image(self._with_suffix(filename, ".png"))
+            suffix = ".jpg" if selected_filter.startswith("JPEG") else ".bmp" if selected_filter.startswith("Bitmap") else ".png"
+            self.save_graph_image(self._with_suffix(filename, suffix))
+
+    def _export_graph_csv_dialog(self) -> None:
+        """Prompt for a CSV output path and save graph series data."""
+        filename, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Training Graph CSV",
+            self._default_export_name("csv"),
+            self.CSV_FILTER,
+        )
+        if filename:
+            self.save_graph_csv(self._with_suffix(filename, ".csv"))
 
     def _session_changed(self, index: int) -> None:
         """Refresh graph data when the selected session changes."""
@@ -316,11 +347,15 @@ class GraphPanel(QWidget):
         has_source = self._service.source is not None
         has_graph_data = not self._service.snapshot.is_empty
         active_graph = has_source or has_graph_data
+        has_rendered_series = bool(self._graph_widget.series)
         self._refresh_button.setEnabled(active_graph)
-        self._export_button.setEnabled(bool(self._graph_widget.series))
-        self._zoom_in_button.setEnabled(bool(self._graph_widget.series))
-        self._zoom_out_button.setEnabled(bool(self._graph_widget.series))
-        self._reset_view_button.setEnabled(bool(self._graph_widget.series))
+        self._export_image_button.setEnabled(has_rendered_series)
+        self._export_csv_button.setEnabled(has_graph_data)
+        self._zoom_in_button.setEnabled(has_rendered_series)
+        self._zoom_out_button.setEnabled(has_rendered_series)
+        self._zoom_y_in_button.setEnabled(has_rendered_series)
+        self._zoom_y_out_button.setEnabled(has_rendered_series)
+        self._reset_view_button.setEnabled(has_rendered_series)
         self._clear_button.setEnabled(active_graph)
         self._session_combo.setEnabled(active_graph and self._service.is_loaded)
         self._key_combo.setEnabled(has_graph_data)
@@ -331,6 +366,15 @@ class GraphPanel(QWidget):
         self._graph_widget.clear()
         self._graph_text.setPlainText("No graph data loaded")
         self._sync_actions()
+
+    def _default_export_name(self, suffix: str) -> str:
+        """Return a default export filename matching the loaded source/session."""
+        source = self._service.source
+        stem = "training_graph" if source is None else f"{source.model_name}_training_graph"
+        session = self._service.session_id
+        if session is not None:
+            stem = f"{stem}_session_{session}"
+        return f"{stem}.{suffix}"
 
     @staticmethod
     def _with_suffix(filename: str, suffix: str) -> str:
