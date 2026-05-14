@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import csv
 from pathlib import Path
 
 from PySide6.QtWidgets import QComboBox, QLabel, QPushButton
@@ -41,6 +42,24 @@ class _GraphServiceDouble:
         """Capture session id selection."""
         self.session_id = session_id
         return self.snapshot
+
+    def save_csv(self, filename, *, selected_keys=()):  # type:ignore[no-untyped-def]
+        """Save selected series as CSV."""
+        series = self.snapshot.series_for_keys(selected_keys)
+        if not series:
+            return 0
+        max_count = max(item.count for item in series)
+        with Path(filename).open("w", encoding="utf-8", newline="") as outfile:
+            writer = csv.DictWriter(outfile, fieldnames=("iteration", *(item.name for item in series)))
+            writer.writeheader()
+            for index in range(max_count):
+                writer.writerow(
+                    {
+                        "iteration": index + 1,
+                        **{item.name: item.values[index] for item in series if index < item.count},
+                    }
+                )
+        return max_count
 
     def clear(self) -> None:
         """Clear state."""
@@ -91,7 +110,10 @@ def test_graph_panel_renders_chart_and_populates_loss_keys(qtbot) -> None:  # ty
     ]
     assert _widget(panel).status_text == "Rendered 2 series, 3 points: metric_a, metric_b"
     assert _label(panel, "status").text() == "Rendered 2 series, 3 points: metric_a, metric_b"
-    assert _button(panel, "export").isEnabled() is True
+    assert _button(panel, "export-image").isEnabled() is True
+    assert _button(panel, "export-csv").isEnabled() is True
+    assert _button(panel, "y-zoom-in").isEnabled() is True
+    assert _button(panel, "y-zoom-out").isEnabled() is True
 
 
 def test_graph_panel_loss_key_selection_filters_chart(qtbot) -> None:  # type:ignore[no-untyped-def]
@@ -120,17 +142,33 @@ def test_graph_panel_save_image_uses_chart_widget(qtbot, tmp_path: Path) -> None
     assert _label(panel, "status").text() == "Graph image saved"
 
 
+def test_graph_panel_save_csv_uses_selected_loss_keys(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+    """CSV export should write the currently selected graph series only."""
+    panel = GraphPanel(service=_GraphServiceDouble())  # type:ignore[arg-type]
+    qtbot.addWidget(panel)
+    assert panel.refresh_graph() is True
+    _combo(panel, "key").setCurrentText("metric_b")
+    filename = tmp_path / "chart.csv"
+
+    written = panel.save_graph_csv(filename)
+
+    assert written == 3
+    assert filename.read_text(encoding="utf-8").splitlines()[0] == "iteration,metric_b"
+    assert _label(panel, "status").text() == "Graph CSV saved: 3 rows"
+
+
 def test_graph_panel_clear_resets_renderer_controls(qtbot) -> None:  # type:ignore[no-untyped-def]
-    """Clear should reset chart, key selector and export button."""
+    """Clear should reset chart, key selector and export buttons."""
     service = _GraphServiceDouble()
     panel = GraphPanel(service=service)  # type:ignore[arg-type]
     qtbot.addWidget(panel)
     assert panel.refresh_graph() is True
 
-    panel.clear_graph()
+    panel.cleanup_graph("Graph cleared after reload")
 
     assert service.clear_count == 1
     assert _combo(panel, "key").count() == 0
     assert _widget(panel).series == ()
-    assert _button(panel, "export").isEnabled() is False
-    assert _label(panel, "status").text() == "No graph data loaded"
+    assert _button(panel, "export-image").isEnabled() is False
+    assert _button(panel, "export-csv").isEnabled() is False
+    assert _label(panel, "status").text() == "Graph cleared after reload"
