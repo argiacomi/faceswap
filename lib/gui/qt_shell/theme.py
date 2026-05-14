@@ -8,13 +8,14 @@ import typing as T
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QIcon
 from PySide6.QtWidgets import QApplication
 
 from lib.serializer import get_serializer
-from lib.utils import get_module_objects
+from lib.utils import PROJECT_ROOT, get_module_objects
 
 _HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+_ICON_CACHE = Path(PROJECT_ROOT) / "lib" / "gui" / ".cache" / "icons"
 
 
 @dataclass(frozen=True)
@@ -48,6 +49,10 @@ class QtTheme:
         "button": "#42484a",
         "button_hover": "#4d5557",
         "button_disabled": "#303435",
+        "menu_background": "#f0f0f0",
+        "menu_text": "#000000",
+        "menu_hover": "#d9e8f0",
+        "dialog_background": "#333738",
         "success": "#83c97d",
         "warning": "#d8b866",
         "error": "#df7b7b",
@@ -56,6 +61,7 @@ class QtTheme:
         "critical": "#f06f61",
     }
     DEFAULT_ICONS: T.ClassVar[dict[str, str]] = {
+        "favicon": "favicon",
         "new": "new",
         "open": "load",
         "save": "save",
@@ -68,6 +74,7 @@ class QtTheme:
         "analysis": "context",
         "preview": "view",
         "graph": "graph",
+        "settings": "settings",
         "settings_extract": "settings_extract",
         "settings_train": "settings_train",
         "settings_convert": "settings_convert",
@@ -76,12 +83,12 @@ class QtTheme:
     @classmethod
     def default(cls) -> QtTheme:
         """Return the built-in default Qt shell theme."""
-        return cls(colors=dict(cls.DEFAULT_COLORS))
+        return cls(colors=dict(cls.DEFAULT_COLORS), icons=dict(cls.DEFAULT_ICONS))
 
     @classmethod
     def from_mapping(cls, payload: T.Mapping[str, T.Any]) -> QtTheme:
         """Build and validate a theme from serializer data."""
-        default = cls()
+        default = cls.default()
         colors = dict(cls.DEFAULT_COLORS)
         icons = dict(cls.DEFAULT_ICONS)
         colors.update(_legacy_theme_colors(payload))
@@ -117,6 +124,17 @@ class QtTheme:
         return self.icons.get(action, self.DEFAULT_ICONS.get(action, action))
 
 
+def icon_path(theme: QtTheme, action: str) -> Path:
+    """Return the legacy icon cache path for a themed action."""
+    return _ICON_CACHE / f"{theme.icon_name(action)}.png"
+
+
+def icon_for_action(theme: QtTheme, action: str) -> QIcon:
+    """Return a QIcon loaded from the legacy icon cache for a themed action."""
+    path = icon_path(theme, action)
+    return QIcon(str(path)) if path.is_file() else QIcon()
+
+
 def load_theme(filename: str | Path | None = None) -> QtTheme:
     """Load a theme from disk, or return the default theme when omitted."""
     if filename is None:
@@ -131,10 +149,12 @@ def render_qss(theme: QtTheme) -> str:
     """Render the base Qt shell stylesheet."""
     spacing = theme.spacing
     radius = theme.radius
+    half_spacing = max(2, spacing // 2)
+    tab_vpad = max(2, spacing // 3)
     return "\n".join(
         (
             _rule("QWidget", theme, "window", "text"),
-            _rule("QMainWindow, QMenuBar, QMenu", theme, "window", "text"),
+            _rule("QMainWindow", theme, "window", "text"),
             _rule("QToolBar, QStatusBar, QTabWidget::pane, QGroupBox", theme, "panel", "text"),
             _rule(
                 "QLineEdit, QComboBox, QTextEdit, QPlainTextEdit, QListWidget, QTableWidget",
@@ -144,42 +164,125 @@ def render_qss(theme: QtTheme) -> str:
             ),
             _rule("QPlainTextEdit#qt-shell-console", theme, "console_background", "console_text"),
             _rule("QPushButton", theme, "button", "text"),
+            _rule("QDialog, QMessageBox, QFileDialog", theme, "dialog_background", "text"),
             _rule("QTabBar::tab", theme, "panel_alt", "muted_text"),
             _rule("QTabBar::tab:selected", theme, "accent", "accent_text"),
-            f"QToolBar {{ spacing: {spacing}px; padding: {max(2, spacing // 2)}px; }}",
-            f"QToolButton {{ padding: {max(2, spacing // 2)}px; border-radius: {radius}px; }}",
+            _rule("QMenuBar, QMenu", theme, "menu_background", "menu_text"),
+            "QMenuBar { "
+            f"padding: 0 {half_spacing}px; "
+            f"border-bottom: 1px solid {theme.color('border')}; }}",
+            "QMenuBar::item { "
+            f"padding: {tab_vpad}px {spacing}px; "
+            f"background-color: {theme.color('menu_background')}; "
+            f"color: {theme.color('menu_text')}; }}",
+            "QMenuBar::item:selected, QMenuBar::item:pressed { "
+            f"background-color: {theme.color('menu_hover')}; "
+            f"color: {theme.color('menu_text')}; }}",
+            "QMenu { "
+            f"padding: {half_spacing}px 0; "
+            f"border: 1px solid {theme.color('border')}; }}",
+            "QMenu::item { "
+            f"padding: {half_spacing}px {spacing * 3}px {half_spacing}px {spacing * 2}px; "
+            f"background-color: transparent; }}",
+            "QMenu::item:selected { "
+            f"background-color: {theme.color('menu_hover')}; "
+            f"color: {theme.color('menu_text')}; }}",
+            "QMenu::separator { "
+            f"height: 1px; margin: {half_spacing}px {spacing}px; "
+            f"background-color: {theme.color('border')}; }}",
+            "QToolBar#qt-shell-toolbar { "
+            f"spacing: {half_spacing}px; padding: {half_spacing}px; "
+            f"border-bottom: 1px solid {theme.color('border')}; }}",
+            "QToolBar#qt-shell-toolbar QToolButton { "
+            f"min-width: {theme.icon_size + spacing}px; "
+            f"min-height: {theme.icon_size + spacing}px; "
+            f"padding: {half_spacing}px; border-radius: {radius}px; }}",
+            "QToolBar::separator { "
+            f"width: 1px; margin: {half_spacing}px; "
+            f"background-color: {theme.color('border')}; }}",
             "QToolButton:hover, QPushButton:hover { "
             f"background-color: {theme.color('button_hover')}; }}",
+            "QPushButton { "
+            f"padding: {half_spacing}px {spacing * 2}px; "
+            f"border: 1px solid {theme.color('border')}; "
+            f"border-radius: {radius}px; }}",
             "QPushButton:disabled { "
             f"background-color: {theme.color('button_disabled')}; "
             f"color: {theme.color('muted_text')}; }}",
+            "QDialog QPushButton, QMessageBox QPushButton, QFileDialog QPushButton { "
+            f"min-width: {max(72, theme.icon_size * 4)}px; "
+            f"padding: {half_spacing}px {spacing * 2}px; }}",
+            "QDialog QLabel#qt-shell-settings-header, QLabel#qt-shell-settings-header { "
+            f"font-size: {theme.font_size + 4}pt; font-weight: 700; }}",
+            "QLabel#qt-shell-settings-page-header { "
+            f"font-size: {theme.font_size + 2}pt; font-weight: 700; "
+            f"color: {theme.color('accent')}; }}",
+            "QTreeWidget#qt-shell-settings-tree { "
+            f"background-color: {theme.color('input_background')}; "
+            f"alternate-background-color: {theme.color('section')}; "
+            f"border: 1px solid {theme.color('border')}; }}",
+            "QTreeWidget#qt-shell-settings-tree::item { "
+            f"padding: {tab_vpad}px {half_spacing}px; }}",
+            "QTreeWidget#qt-shell-settings-tree::item:selected { "
+            f"background-color: {theme.color('accent')}; "
+            f"color: {theme.color('accent_text')}; }}",
             "QGroupBox#qt-shell-option-group, QWidget#qt-shell-option-group-master { "
             f"background-color: {theme.color('section')}; "
             f"border: 1px solid {theme.color('border')}; "
             f"border-radius: {radius}px; margin-top: {spacing}px; }}",
             "QLabel#qt-shell-option-group-label { "
             f"color: {theme.color('accent')}; font-weight: 600; "
-            f"padding-bottom: {spacing // 2}px; }}",
-            "QLabel#qt-shell-command-info { "
+            f"padding-bottom: {half_spacing}px; }}",
+            "QLabel#qt-shell-command-info, QLabel#qt-shell-settings-summary { "
             f"background-color: {theme.color('section')}; "
             f"border: 1px solid {theme.color('border')}; "
             f"border-radius: {radius}px; padding: {spacing}px; "
             f"color: {theme.color('muted_text')}; }}",
-            "QScrollArea#qt-shell-command-scroll, QScrollArea#qt-shell-preview-scroll { "
+            "QScrollArea#qt-shell-command-scroll, QScrollArea#qt-shell-preview-scroll, "
+            "QScrollArea#qt-shell-settings-scroll { "
             f"border: 1px solid {theme.color('border')}; "
             f"border-radius: {radius}px; }}",
+            "QLineEdit, QComboBox, QTextEdit, QPlainTextEdit { "
+            f"border: 1px solid {theme.color('border')}; "
+            f"border-radius: {radius}px; padding: {tab_vpad}px {half_spacing}px; }}",
             "QLineEdit:focus, QComboBox:focus, QTextEdit:focus, "
             "QPlainTextEdit:focus { "
             f"background-color: {theme.color('input_focus')}; "
             f"border: 1px solid {theme.color('accent')}; }}",
-            f"QTabWidget::pane {{ border-top: 1px solid {theme.color('border')}; }}",
-            f"QTabBar::tab {{ padding: {spacing}px {spacing * 2}px; margin-right: 2px; }}",
-            "QProgressBar { "
+            "QComboBox::drop-down { "
+            f"border-left: 1px solid {theme.color('border')}; "
+            f"width: {theme.icon_size + spacing}px; }}",
+            "QComboBox QAbstractItemView { "
+            f"background-color: {theme.color('menu_background')}; "
+            f"color: {theme.color('menu_text')}; "
+            f"selection-background-color: {theme.color('menu_hover')}; }}",
+            "QTabWidget#qt-shell-display-tabs::pane, QTabWidget::pane { "
+            f"border: 1px solid {theme.color('border')}; top: -1px; }}",
+            "QTabBar::tab { "
+            f"padding: {tab_vpad}px {spacing * 2}px; "
+            f"margin-right: 2px; border: 1px solid {theme.color('border')}; "
+            f"border-bottom: 0; }}",
+            "QTabBar::tab:hover:!selected { "
+            f"background-color: {theme.color('accent_hover')}; "
+            f"color: {theme.color('accent_text')}; }}",
+            "QStatusBar { "
+            f"padding: {tab_vpad}px {half_spacing}px; "
+            f"border-top: 1px solid {theme.color('border')}; }}",
+            "QStatusBar::item { border: 0; }",
+            "QProgressBar, QProgressBar#qt-shell-progress { "
+            f"background-color: {theme.color('input_background')}; "
             f"border: 1px solid {theme.color('border')}; "
-            f"border-radius: {radius}px; text-align: center; }}",
+            f"border-radius: {radius}px; text-align: center; "
+            f"min-width: {max(120, theme.icon_size * 6)}px; "
+            f"min-height: {theme.icon_size}px; }}",
             "QProgressBar::chunk { "
             f"background-color: {theme.color('accent')}; "
             f"border-radius: {max(0, radius - 1)}px; }}",
+            "QPlainTextEdit#qt-shell-console { "
+            f"padding: {half_spacing}px; "
+            f"border: 1px solid {theme.color('border')}; "
+            f"font-family: \"{theme.font_family}\"; "
+            f"font-size: {theme.font_size}pt; }}",
             f"QLabel[status='success'] {{ color: {theme.color('success')}; }}",
             f"QLabel[status='warning'] {{ color: {theme.color('warning')}; }}",
             f"QLabel[status='error'] {{ color: {theme.color('error')}; }}",
@@ -198,6 +301,10 @@ def apply_theme(app: QApplication, theme: QtTheme | None = None) -> QtTheme:
     font = QFont(selected.font_family, selected.font_size)
     if hasattr(app, "setFont"):
         app.setFont(font)
+    if hasattr(app, "setWindowIcon"):
+        icon = icon_for_action(selected, "favicon")
+        if not icon.isNull():
+            app.setWindowIcon(icon)
     app.setStyleSheet(render_qss(selected))
     return selected
 
@@ -248,6 +355,7 @@ def _legacy_theme_colors(payload: T.Mapping[str, T.Any]) -> dict[str, str]:
             "button": "button_background",
             "button_hover": "control_color",
             "button_disabled": "control_disabled",
+            "dialog_background": "panel_background",
         }
         translated.update(_section_colors(group, mapping))
     if isinstance(tabs, dict):
