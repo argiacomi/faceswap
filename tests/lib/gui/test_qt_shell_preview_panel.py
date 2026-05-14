@@ -68,6 +68,8 @@ def test_preview_panel_initial_state(qtbot) -> None:  # type:ignore[no-untyped-d
     assert _button(panel, "zoom-in").isEnabled() is False
     assert _button(panel, "zoom-out").isEnabled() is False
     assert _button(panel, "reset-view").isEnabled() is False
+    assert _button(panel, "train-update").isVisible() is False
+    assert _button(panel, "train-mask").isVisible() is False
 
 
 def test_preview_panel_configures_pending_output_path(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
@@ -183,6 +185,8 @@ def test_preview_panel_apply_context_uses_training_preview_cache(qtbot) -> None:
     assert panel.service.source is not None
     assert panel.service.source.name == "preview"
     assert _label(panel, "source").text().startswith("Training preview source:")
+    assert _button(panel, "train-update").isVisible() is True
+    assert _button(panel, "train-mask").isVisible() is True
 
 
 def test_preview_panel_training_preview_loads_only_gui_training_image(
@@ -198,11 +202,29 @@ def test_preview_panel_training_preview_loads_only_gui_training_image(
     panel.configure_training_preview(tmp_path)
 
     assert panel.service.mode == "train"
-    assert panel.service.images == (panel.service.images[0],)
+    assert len(panel.service.images) == 1
     assert panel.service.images[0].path == preview
     assert _list(panel).count() == 1
     assert _list(panel).item(0).text() == PreviewOutputService.TRAINING_PREVIEW
     assert _label(panel, "status").text() == "Loaded 1 training preview image"
+
+
+def test_preview_panel_training_buttons_create_tk_trigger_files(
+    qtbot,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # type:ignore[no-untyped-def]
+    """Train refresh/mask controls should mirror Tk PreviewTrain trigger files."""
+    monkeypatch.setattr("lib.gui.qt_shell.preview_panel.PATH_CACHE", str(tmp_path))
+    panel = _panel()
+    qtbot.addWidget(panel)
+    panel.configure_training_preview(tmp_path / "preview")
+
+    _button(panel, "train-update").click()
+    _button(panel, "train-mask").click()
+
+    assert (tmp_path / ".preview_trigger").is_file()
+    assert (tmp_path / ".preview_mask_toggle").is_file()
 
 
 def test_preview_panel_apply_context_ignores_missing_preview_path(qtbot) -> None:  # type:ignore[no-untyped-def]
