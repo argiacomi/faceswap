@@ -284,6 +284,7 @@ class AnalysisPanel(QWidget):
         self._render_rows(self._display_rows)
         self._update_summary_status()
         self._selection_changed()
+        self._sync_actions()
 
     def _render_rows(self, rows: tuple[AnalysisTableRow, ...]) -> None:
         """Render Analysis summary rows into the table."""
@@ -335,3 +336,5 @@ class AnalysisPanel(QWidget):
         self._refresh_button.setEnabled(loaded)
         self._save_button.setEnabled(has_rows and not training)
         self._clear_button.setEnabled((loaded or has_rows) and not training)
+        self._filter_combo.setEnabled(loaded or has_rows)
+        self._group_combo.setEnabled(loaded or has_rows)
