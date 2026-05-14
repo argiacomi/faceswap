@@ -12,6 +12,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from lib.landmarks.progress import progress_iter
+
 logger = logging.getLogger(__name__)
 
 
@@ -177,7 +179,8 @@ def apply_detector_bboxes(args: argparse.Namespace) -> dict[str, T.Any]:
     detector = _build_detector(args.detector)
     written = missing = 0
     records: list[dict[str, T.Any]] = []
-    for entry in entries:
+    show_progress = getattr(args, "log_level", "INFO") != "ERROR"
+    for entry in progress_iter(entries, label="Detector bboxes", enabled=show_progress):
         sid = _sample_id(entry)
         metadata = entry.setdefault("metadata", {})
         if not isinstance(metadata, dict):
@@ -203,7 +206,7 @@ def apply_detector_bboxes(args: argparse.Namespace) -> dict[str, T.Any]:
                 match_iou = 1.0
                 source = "gt_landmarks_detector_fallback"
             else:
-                logger.warning("No detector bbox for %s: %s", sid, err)
+                logger.debug("No detector bbox for %s: %s", sid, err)
                 records.append({"sample_id": sid, "status": "missing", "error": str(err)})
                 continue
         metadata["face_bbox"] = bbox
