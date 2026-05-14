@@ -105,6 +105,21 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "or builds .fs_cache/landmark_quality/cofw/cofw_68.json from the "
         "Caltech COFW color archive and the COFW-68 annotation benchmark.",
     )
+    parser.add_argument(
+        "--aflw-source-dir",
+        default=None,
+        help="Explicit AFLW image directory for MERL-RAV label matching.",
+    )
+    parser.add_argument(
+        "--aflw-source-zip",
+        default=None,
+        help="Explicit AFLW image archive for MERL-RAV label matching.",
+    )
+    parser.add_argument(
+        "--aflw-download-url",
+        default=None,
+        help="Override AFLW image archive URL for MERL-RAV label matching.",
+    )
     parser.add_argument("--image-root", default=None)
     parser.add_argument("--recursive", action="store_true")
     parser.add_argument(
@@ -138,6 +153,9 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 
 def _validate_args(args: argparse.Namespace) -> None:
     """Validate source-mode combinations before building a manifest."""
+    merl_aflw_args = (args.aflw_source_dir, args.aflw_source_zip, args.aflw_download_url)
+    if args.dataset != "merl-rav" and any(merl_aflw_args):
+        raise ValueError("--aflw-source-dir/--aflw-source-zip/--aflw-download-url are only valid with --dataset merl-rav")
     if args.audit_only:
         if any(
             (
@@ -146,6 +164,7 @@ def _validate_args(args: argparse.Namespace) -> None:
                 args.cofw_json,
                 args.source_dir,
                 args.source_zip,
+                *merl_aflw_args,
             )
         ):
             raise ValueError(
@@ -168,6 +187,9 @@ def _validate_args(args: argparse.Namespace) -> None:
             "Pass only one source mode: --wflw-annotations, "
             "--wflw-download-official, --cofw-json, --source-dir, or --source-zip"
         )
+    aflw_source_modes = [bool(value) for value in merl_aflw_args]
+    if sum(aflw_source_modes) > 1:
+        raise ValueError("Pass only one AFLW image source mode: --aflw-source-dir, --aflw-source-zip, or --aflw-download-url")
     if args.dataset == "wflw" and args.cofw_json:
         raise ValueError("--cofw-json is only valid with --dataset cofw")
     if args.dataset != "cofw" and args.cofw_json:
@@ -299,6 +321,9 @@ def main(argv: list[str] | None = None) -> int:
             source_zip=args.source_zip,
             cache_dir=args.cache_dir,
             download_url=args.download_url,
+            aflw_source_dir=args.aflw_source_dir,
+            aflw_source_zip=args.aflw_source_zip,
+            aflw_download_url=args.aflw_download_url,
             force_download=args.force_download,
             no_download=args.no_download,
             scenario=args.scenario,
