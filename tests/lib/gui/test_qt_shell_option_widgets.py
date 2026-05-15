@@ -274,9 +274,187 @@ def test_group_sections_render_labels_and_containers(qtbot) -> None:  # type:ign
         _option_spec("Debug", "--debug", bool, False, group="_master"),
     )
     qtbot.addWidget(panel)
-    group_labels = panel.renderer.findChildren(QLabel, "qt-shell-option-group-label")
+    # Group title is now the QGroupBox title itself (collapsible parity with Tk ToggledFrame)
     groups = panel.renderer.findChildren(QGroupBox, "qt-shell-option-group")
 
-    assert [label.text() for label in group_labels] == ["Data"]
+    assert [group.title() for group in groups] == ["Data"]
+    assert all(group.isCheckable() for group in groups)
     assert len(groups) == 1
     assert set(panel.renderer.rendered_switches) == {"-i", "-o", "--debug"}
+
+
+def test_required_option_label_renders_asterisk(qtbot) -> None:  # type:ignore[no-untyped-def]
+    """Required options should render a red-asterisk marker in their label."""
+    from PySide6.QtCore import Qt
+
+    panel = _command_panel(
+        _option_spec("Input Dir", "-i", is_required=True),
+        _option_spec("Optional", "--opt"),
+    )
+    qtbot.addWidget(panel)
+
+    labels = panel.renderer.findChildren(QLabel, "qt-shell-option-label-required")
+    plain_labels = panel.renderer.findChildren(QLabel, "qt-shell-option-label")
+
+    assert len(labels) == 1
+    assert "Input Dir" in labels[0].text()
+    assert "*" in labels[0].text()
+    assert labels[0].textFormat() == Qt.RichText
+    assert labels[0].property("required") is True
+    assert [lbl.text() for lbl in plain_labels] == ["Optional"]
+
+
+def test_required_flag_drives_validation(qtbot) -> None:  # type:ignore[no-untyped-def]
+    """The explicit is_required flag should trigger inline validation."""
+    panel = _command_panel(
+        _option_spec("Model Dir", "-m", is_required=True),
+        _option_spec("Trainer", "-t", default="original"),
+    )
+    qtbot.addWidget(panel)
+
+    assert panel.validation_errors() == ("Model Dir is required",)
+
+    panel.set_command("extract", {"-m": "/tmp/x", "-t": "original"})
+    assert panel.validation_errors() == ()
+
+
+def test_inline_hint_label_renders_under_control_with_tooltip(qtbot) -> None:  # type:ignore[no-untyped-def]
+    """Options with helptext should expose a visible hint label under the control."""
+    panel = _command_panel(
+        _option_spec("Detector", "-D", helptext="Choose a face detector. Defaults to s3fd."),
+        _option_spec("Quiet", "-q", bool, False),
+    )
+    qtbot.addWidget(panel)
+
+    hints = panel.renderer.findChildren(QLabel, "qt-shell-option-hint")
+    assert len(hints) == 1
+    assert "Choose a face detector" in hints[0].text()
+    assert hints[0].toolTip() == ("Choose a face detector. Defaults to s3fd.")
+    assert hints[0].property("status") == "info"
+
+
+def test_hint_label_truncates_long_helptext(qtbot) -> None:  # type:ignore[no-untyped-def]
+    """Multi-line / long helptext should be truncated to a single line in the hint label."""
+    long_help = "Line one " + "x" * 200 + "\nLine two should not appear"
+    panel = _command_panel(
+        _option_spec("Long", "--long", helptext=long_help),
+    )
+    qtbot.addWidget(panel)
+
+    hint = panel.renderer.findChildren(QLabel, "qt-shell-option-hint")[0]
+    assert "Line two" not in hint.text()
+    assert hint.text().endswith("...")
+    assert hint.toolTip() == long_help
+
+
+def test_file_filter_threaded_to_qfile_dialog(monkeypatch, qtbot) -> None:  # type:ignore[no-untyped-def]
+    """OptionSpec.file_filter must be passed to QFileDialog browsers."""
+    from PySide6.QtWidgets import QFileDialog
+
+    captured: dict[str, str] = {}
+
+    def fake_open(parent, title, dir_, file_filter):
+        captured["file"] = file_filter
+        return ("/tmp/picked.png", "")
+
+    def fake_save(parent, title, dir_, file_filter):
+        captured["save"] = file_filter
+        return ("/tmp/save.png", "")
+
+    def fake_files(parent, title, dir_, file_filter):
+        captured["files"] = file_filter
+        return (["/tmp/a.png", "/tmp/b.png"], "")
+
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", staticmethod(fake_open))
+    monkeypatch.setattr(QFileDialog, "getOpenFileNames", staticmethod(fake_files))
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", staticmethod(fake_save))
+
+    panel = _command_panel(
+        _option_spec(
+            "Input",
+            "-i",
+            helptext="Pick image",
+            browser_modes=("file", "files", "save"),
+            file_filter="Images (*.png *.jpg);;All files (*)",
+        ),
+    )
+    qtbot.addWidget(panel)
+
+    buttons = {b.objectName(): b for b in panel.renderer.findChildren(QPushButton)}
+    buttons["qt-shell-browser-file"].click()
+    buttons["qt-shell-browser-files"].click()
+    buttons["qt-shell-browser-save"].click()
+
+    assert captured["file"] == "Images (*.png *.jpg);;All files (*)"
+    assert captured["files"] == "Images (*.png *.jpg);;All files (*)"
+    assert captured["save"] == "Images (*.png *.jpg);;All files (*)"
+
+
+def test_group_section_collapses_when_unchecked(qtbot) -> None:  # type:ignore[no-untyped-def]
+    """Toggling the QGroupBox title should hide all fields in that group."""
+    panel = _command_panel(
+        _option_spec("Input", "-i", group="Data"),
+        _option_spec("Output", "-o", group="Data"),
+    )
+    qtbot.addWidget(panel)
+    group = panel.renderer.findChildren(QGroupBox, "qt-shell-option-group")[0]
+    fields = group.findChildren(QLineEdit)
+    assert fields and all(field.isVisibleTo(group) for field in fields)
+
+    group.setChecked(False)
+    assert all(not field.isVisibleTo(group) for field in fields)
+
+    group.setChecked(True)
+    assert all(field.isVisibleTo(group) for field in fields)
+
+
+def test_advanced_toggle_filters_advanced_options(qtbot) -> None:  # type:ignore[no-untyped-def]
+    """The 'Show advanced' toggle should hide is_advanced options when off."""
+    panel = _command_panel(
+        _option_spec("Basic", "-b"),
+        _option_spec("Verbose", "-v", is_advanced=True),
+    )
+    qtbot.addWidget(panel)
+
+    # Toggle is visible because an advanced option exists, but it starts off.
+    toggle = panel.findChild(QCheckBox, "qt-shell-command-advanced-toggle")
+    assert toggle is not None and not toggle.isHidden()
+    assert toggle.isChecked() is False
+    assert set(panel.renderer.rendered_switches) == {"-b"}
+
+    toggle.setChecked(True)
+    assert set(panel.renderer.rendered_switches) == {"-b", "-v"}
+
+    toggle.setChecked(False)
+    assert set(panel.renderer.rendered_switches) == {"-b"}
+
+
+def test_advanced_toggle_hidden_when_no_advanced_options(qtbot) -> None:  # type:ignore[no-untyped-def]
+    """The advanced toggle hides itself when the current command has no advanced options."""
+    panel = _command_panel(
+        _option_spec("Basic", "-b"),
+        _option_spec("Other", "-o"),
+    )
+    qtbot.addWidget(panel)
+    toggle = panel.findChild(QCheckBox, "qt-shell-command-advanced-toggle")
+    assert toggle is not None
+    assert toggle.isHidden() is True
+
+
+def test_inline_error_clears_when_required_field_filled(qtbot) -> None:  # type:ignore[no-untyped-def]
+    """Inline validation error label should hide once a required field is provided."""
+    panel = _command_panel(_option_spec("Model", "-m", is_required=True))
+    qtbot.addWidget(panel)
+
+    error_label = panel.findChild(QLabel, "qt-shell-command-errors")
+    assert error_label is not None
+    assert not error_label.isHidden()
+    assert "Model is required" in error_label.text()
+
+    widget = panel.renderer.widget_for_switch("-m")
+    assert isinstance(widget, QLineEdit)
+    widget.setText("/tmp/model")
+    widget.textEdited.emit("/tmp/model")
+
+    assert error_label.isHidden() is True
+    assert panel.validation_errors() == ()

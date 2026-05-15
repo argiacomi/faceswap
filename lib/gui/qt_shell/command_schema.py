@@ -26,6 +26,9 @@ class OptionSpec:
     slider_min: float | None = None
     slider_max: float | None = None
     slider_rounding: float | None = None
+    is_required: bool = False
+    is_advanced: bool = False
+    file_filter: str = ""
 
 
 @dataclass(frozen=True)

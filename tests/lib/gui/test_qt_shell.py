@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from PySide6.QtCore import QProcess
-from PySide6.QtWidgets import QCheckBox, QComboBox, QLabel, QLineEdit, QPushButton
+from PySide6.QtWidgets import QCheckBox, QComboBox, QGroupBox, QLabel, QLineEdit, QPushButton
 
 
 class _ProcessDouble:
@@ -232,14 +232,16 @@ def test_command_schema_renders_groups_tooltips_and_browse_buttons(qtbot) -> Non
     qtbot.addWidget(panel)
     renderer = panel.renderer
     input_widget = renderer.widget_for_switch("-i")
-    labels = {
+    {
         label.text().replace("<b>", "").replace("</b>", "")
         for label in renderer.findChildren(QLabel)
     }
 
     assert isinstance(input_widget, QLineEdit)
     assert input_widget.toolTip() == "Pick an input directory or file."
-    assert "Data" in labels
+    # "Data" is now the QGroupBox title (collapsible group parity)
+    groups = renderer.findChildren(QGroupBox, "qt-shell-option-group")
+    assert [group.title() for group in groups] == ["Data"]
     assert [button.text() for button in renderer.findChildren(QPushButton)] == [
         "Folder",
         "File",
