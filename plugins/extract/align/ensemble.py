@@ -25,7 +25,15 @@ from lib.landmarks.coordinates import (
     roi_to_matrix,
 )
 from lib.landmarks.ensemble.outliers import weighted_median
+from lib.landmarks.ensemble.promoted_setup import (
+    PromotedSetup,
+    PromotedSetupError,
+    ensure_compatible_adapters,
+    load_promoted_setup,
+    strategy_supported_by_runtime,
+)
 from lib.landmarks.ensemble.strategies import (
+    CANONICAL_STRATEGIES,
     canonical_strategy,
     strategy_outlier_method,
     strategy_requires_weights,
@@ -65,6 +73,9 @@ class Ensemble(ExtractPlugin):
         outlier_threshold: float | None = None,
         min_models: int | None = None,
         strategy: str | None = None,
+        setup_path: str | None = None,
+        setup_mode: str | None = None,
+        fallback_strategy: str | None = None,
     ) -> None:
         super().__init__(
             input_size=256,
@@ -78,10 +89,47 @@ class Ensemble(ExtractPlugin):
         self._crop_scale = cfg.crop_scale() if crop_scale is None else crop_scale
         raw_strategy = cfg.strategy() if strategy is None else strategy
         raw_reject_outliers = cfg.reject_outliers() if reject_outliers is None else reject_outliers
-        self._strategy = self._resolve_strategy(raw_strategy, raw_reject_outliers)
-        self._outlier_threshold = (
+        configured_strategy = self._resolve_strategy(raw_strategy, raw_reject_outliers)
+        configured_threshold = (
             cfg.outlier_threshold() if outlier_threshold is None else outlier_threshold
         )
+
+        raw_setup_path = cfg.setup_path() if setup_path is None else setup_path
+        # When the caller passes ``setup_path`` explicitly but omits
+        # ``setup_mode``, default to strict so misconfigured deployments fail
+        # fast. ``setup_mode=None`` with no explicit path falls through to the
+        # configured value (defaulting to ``off``).
+        if setup_mode is None:
+            raw_setup_mode = "strict" if setup_path is not None else cfg.setup_mode()
+        else:
+            raw_setup_mode = setup_mode
+        raw_fallback_strategy = (
+            cfg.fallback_strategy() if fallback_strategy is None else fallback_strategy
+        )
+        self._setup_path = str(raw_setup_path or "")
+        self._setup_mode = self._resolve_setup_mode(self._setup_path, raw_setup_mode)
+        self._fallback_strategy = self._resolve_fallback_strategy(
+            raw_fallback_strategy, configured_strategy
+        )
+        self._promoted: PromotedSetup | None = None
+        self._promoted_failure: str = ""
+        if self._setup_mode != "off":
+            self._promoted = self._load_promoted_setup(self._setup_path, self._setup_mode)
+
+        if self._promoted is not None:
+            self._strategy = self._promoted.strategy
+            self._outlier_threshold = (
+                self._promoted.outlier_threshold
+                if self._promoted.outlier_threshold is not None
+                else configured_threshold
+            )
+        elif self._setup_mode == "fallback":
+            # Promoted load failed; honor the configured fallback strategy.
+            self._strategy = self._fallback_strategy
+            self._outlier_threshold = configured_threshold
+        else:
+            self._strategy = configured_strategy
+            self._outlier_threshold = configured_threshold
         self._outlier_method = strategy_outlier_method(self._strategy)
         self._uses_threshold = strategy_uses_threshold(self._strategy)
         self._requires_weights = strategy_requires_weights(self._strategy)
@@ -89,6 +137,52 @@ class Ensemble(ExtractPlugin):
         self._last_matrices: np.ndarray | None = None
         self.last_debug_metadata: list[dict[str, T.Any]] = []
         self.model: list[LandmarkAdapter]
+
+    @staticmethod
+    def _resolve_setup_mode(setup_path: str, configured_mode: str | None) -> str:
+        """Resolve effective setup_mode.
+
+        - Empty ``setup_path`` always disables setup loading.
+        - Non-empty ``setup_path`` with an omitted / empty ``setup_mode`` defaults
+          to ``strict`` so misconfigured deployments fail fast.
+        - Any other explicit value is honored and validated against the
+          supported choices.
+        """
+        if not setup_path:
+            return "off"
+        mode = (configured_mode or "").strip() or "strict"
+        if mode not in {"off", "strict", "fallback"}:
+            raise ValueError(
+                f"unsupported setup_mode {mode!r}; expected one of off, strict, fallback"
+            )
+        return mode
+
+    @staticmethod
+    def _resolve_fallback_strategy(fallback: str | None, configured: str) -> str:
+        """Resolve which strategy to use when fallback mode triggers."""
+        value = (fallback or "").strip() or "plain_average"
+        if value == "adapter_config":
+            return configured
+        return canonical_strategy(value)
+
+    def _load_promoted_setup(self, path: str, mode: str) -> PromotedSetup | None:
+        """Load and validate the promoted setup; honor strict vs fallback semantics."""
+        try:
+            setup = load_promoted_setup(path)
+            strategy_supported_by_runtime(setup.strategy, CANONICAL_STRATEGIES)
+        except PromotedSetupError as err:
+            self._promoted_failure = str(err)
+            if mode == "strict":
+                raise
+            logger.warning(
+                "[Ensemble] promoted setup %r failed strict validation; falling back to "
+                "strategy %r: %s",
+                path,
+                self._fallback_strategy,
+                err,
+            )
+            return None
+        return setup
 
     @staticmethod
     def _resolve_strategy(strategy: str, reject_outliers: bool) -> str:
@@ -133,6 +227,11 @@ class Ensemble(ExtractPlugin):
                 adapter.load_model()  # type: ignore[attr-defined]
         if not loaded:
             raise ValueError("No enabled landmark ensemble adapters are available")
+        if self._promoted is not None:
+            ensure_compatible_adapters(
+                self._promoted,
+                [adapter.config.name for adapter in loaded],
+            )
         logger.info(
             "Loaded landmark ensemble adapters: %s",
             ", ".join(adapter.config.name for adapter in loaded),
@@ -239,6 +338,24 @@ class Ensemble(ExtractPlugin):
                 per_face[idx].append((adapter, prediction))
         return per_face, errors
 
+    def _weights_for_face(self, adapters: T.Sequence[LandmarkAdapter]) -> np.ndarray:
+        """Return the per-face weight vector or matrix for the active adapters.
+
+        For a promoted setup the per-landmark weight matrix is subset to the
+        successful adapters and renormalized so each landmark column still sums
+        to 1.0; otherwise the legacy scalar-per-adapter vector is used.
+        """
+        if self._promoted is not None and self._promoted.weights:
+            promoted_weights = self._promoted.weights
+            subset = np.array(
+                [promoted_weights[adapter.config.name] for adapter in adapters],
+                dtype="float32",
+            )
+            totals = subset.sum(axis=0)
+            safe = np.where(totals > 0, totals, 1.0)
+            return subset / safe[None, :]
+        return np.array([adapter.config.weight for adapter in adapters], dtype="float32")
+
     def _fuse_face(
         self,
         predictions: list[tuple[LandmarkAdapter, LandmarkPrediction]],
@@ -252,7 +369,7 @@ class Ensemble(ExtractPlugin):
             )
         adapters = [adapter for adapter, _prediction in predictions]
         items = [prediction for _adapter, prediction in predictions]
-        weights = np.array([adapter.config.weight for adapter in adapters], dtype="float32")
+        weights = self._weights_for_face(adapters)
         threshold = self._outlier_threshold if self._uses_threshold else None
 
         if not self._requires_weights:
@@ -295,6 +412,15 @@ class Ensemble(ExtractPlugin):
                 "strategy": self._strategy,
                 "outlier_method": self._outlier_method,
                 "outlier_threshold": threshold,
+                "setup_path": self._setup_path,
+                "setup_mode": self._setup_mode,
+                "promoted_candidate_id": (
+                    self._promoted.candidate_id if self._promoted is not None else ""
+                ),
+                "weight_source": (
+                    "promoted_setup" if self._promoted is not None else "adapter_config"
+                ),
+                "active_models": tuple(adapter.config.name for adapter in adapters),
             }
         )
         return fused.points

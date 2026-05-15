@@ -28,6 +28,7 @@ def _get_cli_gpus() -> list[str]:
         _GPUS = [] if GPUStats is None else GPUStats().cli_devices
     return _GPUS
 
+
 # LOCALES
 _LANG = gettext.translation("lib.cli.args", localedir="locales", fallback=True)
 _ = _LANG.gettext
@@ -206,9 +207,7 @@ class FaceSwapArgs:
             The list of global command line options for all Faceswap commands.
         """
         global_args: list[dict[str, T.Any]] = []
-        gpus = (
-            _get_cli_gpus() if FaceSwapArgs._should_include_gpu_cli_options() else []
-        )
+        gpus = _get_cli_gpus() if FaceSwapArgs._should_include_gpu_cli_options() else []
         if gpus:
             global_args.append(
                 {

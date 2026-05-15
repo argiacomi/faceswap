@@ -87,3 +87,46 @@ min_models = ConfigItem(
     rounding=1,
     min_max=(1, 3),
 )
+
+setup_path = ConfigItem(
+    datatype=str,
+    default="",
+    group="settings",
+    info=(
+        "Optional path to a promoted ``best_setup.json`` (#71). When set, the plugin "
+        "loads the setup and uses its strategy / outlier threshold / per-landmark "
+        "weights for fusion. Leave empty to keep the legacy config-driven behavior."
+    ),
+)
+
+setup_mode = ConfigItem(
+    datatype=str,
+    default="off",
+    group="settings",
+    info=(
+        "How to consume ``setup_path``. ``off`` ignores it. ``strict`` hard-fails on "
+        "any incompatible artifact. ``fallback`` logs a warning and falls back to the "
+        "configured ``strategy`` when the artifact is unusable. An empty ``setup_path`` "
+        "implies ``off`` regardless of this value."
+    ),
+    choices=["off", "strict", "fallback"],
+)
+
+fallback_strategy = ConfigItem(
+    datatype=str,
+    default="plain_average",
+    group="settings",
+    info=(
+        "Strategy used when ``setup_mode=fallback`` and the promoted setup fails to "
+        "load. Set to ``adapter_config`` to fall back to the ``strategy`` field above; "
+        "any other value names a canonical strategy directly."
+    ),
+    choices=[
+        "plain_average",
+        "static_weighted",
+        "static_weighted_hard_drop",
+        "static_weighted_downweight",
+        "weighted_median",
+        "adapter_config",
+    ],
+)
