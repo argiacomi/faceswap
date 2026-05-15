@@ -310,9 +310,8 @@ class OptionsFormRenderer(QWidget):
         """Build a slider linked to a compact numeric field."""
         widget = QWidget()
         widget.setMinimumWidth(0)
-        widget.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
         layout = QHBoxLayout(widget)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(0, 2, 0, 2)
         layout.setSpacing(8)
 
         slider = QSlider(Qt.Horizontal)
@@ -535,7 +534,7 @@ class OptionsFormRenderer(QWidget):
         if len(choices) == 2:
             return 2
         longest = max(len(choice) for choice in choices)
-        return 1 if longest > 12 else 2
+        return 1 if longest > 18 else 2
 
     @staticmethod
     def _apply_widget_policy(widget: QWidget) -> None:
