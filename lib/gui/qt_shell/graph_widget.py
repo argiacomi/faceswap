@@ -245,8 +245,8 @@ class TrainingGraphWidget(QWidget):
             return QPainterPath()
         polygon = QPolygonF(points)
         path = QPainterPath(polygon.first())
-        for point in polygon[1:]:
-            path.lineTo(point)
+        for index in range(1, polygon.count()):
+            path.lineTo(polygon.at(index))
         return path
 
     def _points_for_series(
