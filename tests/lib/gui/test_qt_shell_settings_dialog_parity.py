@@ -11,7 +11,7 @@ import pytest
 pytest.importorskip("PySide6.QtWidgets")
 
 from PySide6.QtCore import Qt  # noqa:E402
-from PySide6.QtWidgets import QPushButton, QTreeWidget  # noqa:E402
+from PySide6.QtWidgets import QLineEdit, QPushButton, QTreeWidget  # noqa:E402
 
 from lib.gui.qt_shell.settings_dialog import SettingsDialog  # noqa:E402
 
@@ -112,6 +112,13 @@ def _button(dialog: SettingsDialog, name: str) -> QPushButton:
     return button
 
 
+def _filter(dialog: SettingsDialog) -> QLineEdit:
+    """Return the settings navigation filter."""
+    widget = dialog.findChild(QLineEdit, "qt-shell-settings-filter")
+    assert widget is not None
+    return widget
+
+
 def test_settings_dialog_preserves_full_nested_section_route(qtbot) -> None:  # type:ignore[no-untyped-def]
     """Deep plugin identifiers should resolve to their full config section."""
     dialog = SettingsDialog(
@@ -146,3 +153,36 @@ def test_settings_dialog_footer_and_preset_buttons_have_tk_parity_icons(qtbot) -
 
     for name in ("save", "reset", "save-all", "reset-all", "save-preset", "load-preset"):
         assert not _button(dialog, name).icon().isNull()
+
+
+def test_settings_dialog_filter_keeps_matching_parent_path_visible(qtbot) -> None:  # type:ignore[no-untyped-def]
+    """Filtering should keep matched leaf nodes and their parent path scannable."""
+    dialog = SettingsDialog(config_provider=_config_provider)
+    qtbot.addWidget(dialog)
+    tree = _tree(dialog)
+    extract = _find_item(tree, "extract")
+    detect = _find_item(tree, "extract|detect")
+    s3fd = _find_item(tree, "extract|detect|face|s3fd")
+    convert = _find_item(tree, "convert")
+    assert extract is not None
+    assert detect is not None
+    assert s3fd is not None
+    assert convert is not None
+
+    _filter(dialog).setText("s3fd")
+
+    assert not extract.isHidden()
+    assert not detect.isHidden()
+    assert not s3fd.isHidden()
+    assert convert.isHidden()
+
+
+def test_settings_dialog_filter_reselects_visible_page_when_current_is_hidden(qtbot) -> None:  # type:ignore[no-untyped-def]
+    """Filtering away the selected item should move selection to a visible page."""
+    dialog = SettingsDialog(section="convert", config_provider=_config_provider)
+    qtbot.addWidget(dialog)
+
+    _filter(dialog).setText("s3fd")
+
+    assert dialog.selected_identifier == "extract|detect|face|s3fd"
+    assert dialog.displayed_key == "extract|detect|face|s3fd"

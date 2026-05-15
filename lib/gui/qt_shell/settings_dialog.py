@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -165,6 +166,7 @@ class SettingsDialog(QDialog):
         self._displayed_key: str | None = None
         self._header = QLabel("Settings")
         self._page_header = QLabel("Global")
+        self._filter = QLineEdit()
         self._tree = QTreeWidget()
         self._page_host = QWidget()
         self._page_layout = QVBoxLayout(self._page_host)
@@ -202,7 +204,7 @@ class SettingsDialog(QDialog):
         self._tree.setMinimumWidth(160)
         self._populate_tree()
         self._tree.currentItemChanged.connect(self._selection_changed)
-        splitter.addWidget(self._tree)
+        splitter.addWidget(self._navigation_area())
         splitter.addWidget(self._detail_area())
         splitter.setSizes([190, 410])
         layout.addWidget(splitter, 1)
@@ -224,6 +226,22 @@ class SettingsDialog(QDialog):
         line.setFrameShape(QFrame.HLine)
         line.setFrameShadow(QFrame.Sunken)
         layout.addWidget(line)
+        return widget
+
+    def _navigation_area(self) -> QWidget:
+        """Return the left-side navigation tree and filter."""
+        widget = QWidget()
+        widget.setObjectName("qt-shell-settings-navigation")
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+        self._filter.setObjectName("qt-shell-settings-filter")
+        self._filter.setPlaceholderText("Filter settings")
+        self._filter.setClearButtonEnabled(True)
+        self._filter.setToolTip("Filter settings sections by command, plugin or option path")
+        self._filter.textChanged.connect(self._apply_filter)
+        layout.addWidget(self._filter)
+        layout.addWidget(self._tree, 1)
         return widget
 
     def _detail_area(self) -> QWidget:
@@ -345,6 +363,62 @@ class SettingsDialog(QDialog):
         count = len(options)
         suffix = "option" if count == 1 else "options"
         return f"{label} ({count} {suffix})"
+
+    def _apply_filter(self, text: str) -> None:
+        """Filter navigation tree items while preserving matching parent paths."""
+        query = text.strip().lower()
+        for index in range(self._tree.topLevelItemCount()):
+            item = self._tree.topLevelItem(index)
+            self._filter_item(item, query)
+            if query and not item.isHidden():
+                item.setExpanded(True)
+        current = self._tree.currentItem()
+        if current is not None and current.isHidden():
+            replacement = self._first_visible_item()
+            if replacement is not None:
+                self._tree.setCurrentItem(replacement)
+
+    def _filter_item(self, item: QTreeWidgetItem, query: str) -> bool:
+        """Return whether a tree item or any child matches the filter query."""
+        child_matches = False
+        for index in range(item.childCount()):
+            child_matches = self._filter_item(item.child(index), query) or child_matches
+        identifier = item.data(0, Qt.UserRole)
+        searchable = " ".join(
+            (
+                item.text(0),
+                str(identifier or ""),
+                item.toolTip(0),
+            )
+        ).lower()
+        visible = not query or query in searchable or child_matches
+        item.setHidden(not visible)
+        return visible
+
+    def _first_visible_item(self) -> QTreeWidgetItem | None:
+        """Return the first visible settings tree item.
+
+        Prefers leaf matches over intermediate ancestors so a filter that pins a
+        deep section (eg. ``extract|detect|face|s3fd``) selects the matching
+        leaf rather than the first visible ancestor whose subtree contains it.
+        """
+
+        def walk(item: QTreeWidgetItem) -> QTreeWidgetItem | None:
+            if item.isHidden():
+                return None
+            for index in range(item.childCount()):
+                found = walk(item.child(index))
+                if found is not None:
+                    return found
+            if item.data(0, Qt.UserRole) in self._options:
+                return item
+            return None
+
+        for index in range(self._tree.topLevelItemCount()):
+            found = walk(self._tree.topLevelItem(index))
+            if found is not None:
+                return found
+        return None
 
     @staticmethod
     def _child(parent: QTreeWidgetItem, identifier: str) -> QTreeWidgetItem | None:
