@@ -123,9 +123,22 @@ class OptionsFormRenderer(QWidget):
         return tuple((group, tuple(grouped[group])) for group in group_order)
 
     def _add_group_section(self, group: str | None) -> QFormLayout:
-        """Add a visually separated section for one CLI option group."""
+        """Add a visually separated section for one CLI option group.
+
+        Titled groups become collapsible (Tk ``ToggledFrame`` parity): toggling the
+        section title hides every field belonging to that group without removing it
+        from the rendered form.
+        """
         has_title = bool(group and group != "_master")
-        section: QWidget = QGroupBox() if has_title else QWidget()
+        if has_title:
+            section = QGroupBox(str(group).title())
+            section.setCheckable(True)
+            section.setChecked(True)
+            section.toggled.connect(
+                lambda checked, sec=section: self._set_group_collapsed(sec, not checked)
+            )
+        else:
+            section = QWidget()
         section.setMinimumWidth(0)
         section.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         section.setObjectName(
@@ -136,16 +149,34 @@ class OptionsFormRenderer(QWidget):
         form.setHorizontalSpacing(12)
         form.setVerticalSpacing(6)
         form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
-        if has_title:
-            label = QLabel(str(group).title())
-            label.setObjectName("qt-shell-option-group-label")
-            form.addRow(label)
         self._layout.addWidget(section)
         return form
 
+    @staticmethod
+    def _set_group_collapsed(section: QGroupBox, collapsed: bool) -> None:
+        """Show or hide every field in ``section`` without dropping it from layout."""
+        form = section.layout()
+        if form is None:
+            return
+        for row in range(form.rowCount()):
+            for role in (QFormLayout.LabelRole, QFormLayout.FieldRole):
+                item = form.itemAt(row, role)
+                if item is None:
+                    continue
+                widget = item.widget()
+                if widget is not None:
+                    widget.setVisible(not collapsed)
+
     def _label_for(self, spec: OptionSpec) -> QLabel:
-        """Return a label with optional help tooltip."""
-        label = QLabel(spec.title)
+        """Return a label with optional help tooltip and required marker."""
+        if self._is_required(spec):
+            label = QLabel(f'{escape(spec.title)} <span style="color:#c0392b;">*</span>')
+            label.setTextFormat(Qt.RichText)
+            label.setObjectName("qt-shell-option-label-required")
+            label.setProperty("required", True)
+        else:
+            label = QLabel(spec.title)
+            label.setObjectName("qt-shell-option-label")
         label.setMinimumWidth(0)
         label.setWordWrap(True)
         label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
@@ -270,9 +301,18 @@ class OptionsFormRenderer(QWidget):
         return widget
 
     def _row_widget(self, spec: OptionSpec, widget: QWidget) -> QWidget:
-        """Return the row widget, wrapping path options with browse buttons."""
-        if not spec.browser_modes or not isinstance(widget, QLineEdit):
-            return widget
+        """Return the row widget, wrapping path options with browse buttons.
+
+        Adds a muted helptext hint label under the control when helptext is set,
+        matching the Tk parity that exposes guidance inline rather than only on hover.
+        """
+        control = widget
+        if spec.browser_modes and isinstance(widget, QLineEdit):
+            control = self._wrap_with_browsers(spec, widget)
+        return self._wrap_with_helptext_hint(spec, control)
+
+    def _wrap_with_browsers(self, spec: OptionSpec, widget: QLineEdit) -> QWidget:
+        """Wrap a line edit with browse buttons for the configured browser modes."""
         row = QWidget()
         row.setMinimumWidth(0)
         row.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
@@ -285,9 +325,38 @@ class OptionsFormRenderer(QWidget):
             button.setObjectName(f"qt-shell-browser-{mode}")
             button.setToolTip(spec.helptext or f"Browse for {spec.title}")
             button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-            button.clicked.connect(lambda _checked=False, m=mode, w=widget: self._browse(m, w))
+            button.clicked.connect(
+                lambda _checked=False, m=mode, w=widget, f=spec.file_filter: self._browse(m, w, f)
+            )
             layout.addWidget(button)
         return row
+
+    def _wrap_with_helptext_hint(self, spec: OptionSpec, control: QWidget) -> QWidget:
+        """Return ``control`` stacked above a muted helptext hint label.
+
+        If the option has no helptext the control is returned unchanged so the form
+        layout stays compact for unannotated options.
+        """
+        if not spec.helptext:
+            return control
+        hint_text = self._format_hint(spec.helptext)
+        if not hint_text:
+            return control
+        container = QWidget()
+        container.setMinimumWidth(0)
+        container.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+        layout.addWidget(control)
+        hint = QLabel(hint_text)
+        hint.setObjectName("qt-shell-option-hint")
+        hint.setProperty("status", "info")
+        hint.setWordWrap(True)
+        hint.setToolTip(spec.helptext)
+        hint.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        layout.addWidget(hint)
+        return container
 
     def _value_for(self, spec: OptionSpec) -> object:
         """Read and normalize an option widget value."""
@@ -339,17 +408,23 @@ class OptionsFormRenderer(QWidget):
             self._format_slider_value(spec, self._slider_to_value(spec, slider_value))
         )
 
-    def _browse(self, mode: str, widget: QLineEdit) -> None:
-        """Populate a line edit from a simple QFileDialog browser mode."""
+    def _browse(self, mode: str, widget: QLineEdit, file_filter: str = "") -> None:
+        """Populate a line edit from a simple QFileDialog browser mode.
+
+        ``file_filter`` is the standard Qt filter string (e.g.
+        ``"Images (*.png *.jpg);;All files (*)"``); ignored for folder mode.
+        """
         if mode == "folder":
             value = QFileDialog.getExistingDirectory(self, "Select Folder", widget.text())
         elif mode == "file":
-            value, _ = QFileDialog.getOpenFileName(self, "Select File", widget.text())
+            value, _ = QFileDialog.getOpenFileName(self, "Select File", widget.text(), file_filter)
         elif mode == "files":
-            values, _ = QFileDialog.getOpenFileNames(self, "Select Files", widget.text())
+            values, _ = QFileDialog.getOpenFileNames(
+                self, "Select Files", widget.text(), file_filter
+            )
             value = self._join_paths(values)
         elif mode == "save":
-            value, _ = QFileDialog.getSaveFileName(self, "Save File", widget.text())
+            value, _ = QFileDialog.getSaveFileName(self, "Save File", widget.text(), file_filter)
         else:
             value = ""
         if value:
@@ -390,7 +465,13 @@ class OptionsFormRenderer(QWidget):
 
     @staticmethod
     def _is_required(spec: OptionSpec) -> bool:
-        """Return whether option metadata indicates a required argument."""
+        """Return whether option metadata indicates a required argument.
+
+        Prefers the explicit ``is_required`` flag; falls back to helptext/title
+        sniffing for legacy specs that have not been migrated yet.
+        """
+        if spec.is_required:
+            return True
         return "[required]" in spec.helptext.lower() or "required" in spec.title.lower()
 
     @staticmethod
@@ -550,6 +631,16 @@ class OptionsFormRenderer(QWidget):
         return parts
 
     @staticmethod
+    def _format_hint(helptext: str) -> str:
+        """Return a single-line truncated helptext suitable for the inline hint."""
+        if not helptext:
+            return ""
+        first = helptext.strip().splitlines()[0].strip()
+        if len(first) <= 120:
+            return first
+        return first[:117].rstrip() + "..."
+
+    @staticmethod
     def _string_value(value: object) -> str:
         """Render a stored value as editable text."""
         if value is None or value is False:
@@ -579,6 +670,8 @@ class CommandPanel(QWidget):
         self._renderer = OptionsFormRenderer()
         self._generate_button = QPushButton("Generate")
         self._run_button = QPushButton("Run")
+        self._advanced_toggle = QCheckBox("Show advanced")
+        self._show_advanced = False
         self._syncing_tabs = False
         self._command_value_cache: dict[str, dict[str, object]] = {}
         self._active_cached_command: str | None = None
@@ -587,6 +680,7 @@ class CommandPanel(QWidget):
         self._tool_tabs.currentChanged.connect(self._set_tool_tab)
         self._command.currentTextChanged.connect(self._set_command_options)
         self._renderer.value_changed.connect(self._value_changed)
+        self._advanced_toggle.toggled.connect(self._toggle_advanced)
         self._set_primary_tab(self._primary_tabs.currentIndex())
 
     @property
@@ -642,6 +736,15 @@ class CommandPanel(QWidget):
         self._command_info.setWordWrap(True)
         self._command_info.setObjectName("qt-shell-command-info")
         layout.addWidget(self._command_info)
+
+        self._advanced_toggle.setObjectName("qt-shell-command-advanced-toggle")
+        self._advanced_toggle.setChecked(False)
+        self._advanced_toggle.setToolTip("Show options flagged as advanced for this command")
+        advanced_row = QHBoxLayout()
+        advanced_row.setContentsMargins(0, 0, 0, 0)
+        advanced_row.addWidget(self._advanced_toggle)
+        advanced_row.addStretch(1)
+        layout.addLayout(advanced_row)
 
         self._validation_label.setWordWrap(True)
         self._validation_label.setObjectName("qt-shell-command-errors")
@@ -723,7 +826,12 @@ class CommandPanel(QWidget):
         previous = self._active_cached_command
         if previous and previous != command and self._renderer.rendered_switches:
             self._command_value_cache[previous] = self._renderer.values()
-        self._renderer.set_options(self._schema.options(command))
+        options = self._schema.options(command)
+        has_advanced = any(spec.is_advanced for spec in options)
+        self._advanced_toggle.setVisible(has_advanced)
+        if not self._show_advanced:
+            options = tuple(spec for spec in options if not spec.is_advanced)
+        self._renderer.set_options(options)
         if command in self._command_value_cache:
             self._renderer.apply_values(self._command_value_cache[command])
         self._set_command_info(command)
@@ -744,6 +852,13 @@ class CommandPanel(QWidget):
             self._command_info.setText(f"<b>{escape(heading)}</b><br>{escape(detail)}")
         else:
             self._command_info.setText(f"<b>{escape(heading)}</b>")
+
+    def _toggle_advanced(self, checked: bool) -> None:
+        """Persist toggle state and re-render the current command's options."""
+        if self._show_advanced == checked:
+            return
+        self._show_advanced = checked
+        self._set_command_options(self._command.currentText())
 
     def _value_changed(self) -> None:
         """Forward renderer changes after refreshing inline validation."""
