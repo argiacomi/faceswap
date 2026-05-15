@@ -105,7 +105,9 @@ def _config_provider():
                 "global": _section("Extract global help"),
                 "detect.face": _section(
                     "Detect face help",
-                    detector=FakeOption(str, "cv2", "cv2", choices=["cv2", "s3fd"], gui_radio=True),
+                    detector=FakeOption(
+                        str, "cv2", "cv2", choices=["cv2", "s3fd"], gui_radio=True
+                    ),
                 ),
                 "detect.mask": _section(
                     "Detect mask help",

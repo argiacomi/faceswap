@@ -48,8 +48,10 @@ class SettingsSection:
     @property
     def identifier(self) -> str:
         """Return the Tk-compatible tree identifier."""
-        return self.category if self.section == "global" else "|".join(
-            (self.category, *self.section.split("."))
+        return (
+            self.category
+            if self.section == "global"
+            else "|".join((self.category, *self.section.split(".")))
         )
 
 
@@ -104,7 +106,9 @@ class _SettingsPage(QWidget):
 class _LinksPage(QWidget):
     """Navigation page for nodes that contain child sections only."""
 
-    def __init__(self, key: str, links: T.Iterable[str], callback: T.Callable[[str], None]) -> None:
+    def __init__(
+        self, key: str, links: T.Iterable[str], callback: T.Callable[[str], None]
+    ) -> None:
         super().__init__()
         self.setObjectName(f"qt-shell-settings-links-{key.replace('|', '-')}")
         layout = QVBoxLayout(self)
@@ -243,7 +247,10 @@ class SettingsDialog(QDialog):
         layout.setSpacing(6)
         self._page_header.setObjectName("qt-shell-settings-page-header")
         layout.addWidget(self._page_header, 1)
-        for text, callback in (("Load Preset", self._load_preset), ("Save Preset", self._save_preset)):
+        for text, callback in (
+            ("Load Preset", self._load_preset),
+            ("Save Preset", self._save_preset),
+        ):
             button = QPushButton(text)
             button.setObjectName(f"qt-shell-settings-{text.lower().replace(' ', '-')}")
             button.clicked.connect(lambda _checked=False, func=callback: func())
@@ -315,7 +322,9 @@ class SettingsDialog(QDialog):
                 return child
         return None
 
-    def _selection_changed(self, current: QTreeWidgetItem | None, _previous: QTreeWidgetItem | None) -> None:
+    def _selection_changed(
+        self, current: QTreeWidgetItem | None, _previous: QTreeWidgetItem | None
+    ) -> None:
         """Update the visible page."""
         if current is None:
             return
@@ -349,7 +358,11 @@ class SettingsDialog(QDialog):
             helptext = str(getattr(self._configs[category].sections[section], "helptext", ""))
             return _SettingsPage(key, helptext, self._options[key])
         prefix = f"{key}|"
-        links = [item.removeprefix(prefix).split("|")[0] for item in self._options if item.startswith(prefix)]
+        links = [
+            item.removeprefix(prefix).split("|")[0]
+            for item in self._options
+            if item.startswith(prefix)
+        ]
         return _LinksPage(key, links, self._link_callback)
 
     def _link_callback(self, identifier: str) -> None:
@@ -364,6 +377,7 @@ class SettingsDialog(QDialog):
 
     def _tree_item(self, identifier: str) -> QTreeWidgetItem | None:
         """Return a tree item by identifier."""
+
         def walk(item: QTreeWidgetItem) -> QTreeWidgetItem | None:
             if item.data(0, Qt.UserRole) == identifier:
                 return item
@@ -386,7 +400,9 @@ class SettingsDialog(QDialog):
             return
         wanted = wanted.replace(".", "|")
         if "|" not in wanted and wanted not in self._ordered_categories():
-            match = next((item.identifier for item in self._sections if item.section == wanted), None)
+            match = next(
+                (item.identifier for item in self._sections if item.section == wanted), None
+            )
             wanted = match or wanted
         item = self._tree_item(wanted)
         if item is None and self._tree.topLevelItemCount():
@@ -411,7 +427,10 @@ class SettingsDialog(QDialog):
             page = self._cache.get(key)
             if isinstance(page, _SettingsPage):
                 page.sync_from_state()
-        self._set_status("Reset page settings" if page_only else f"Reset {selected.split('|')[0]} settings", "success")
+        self._set_status(
+            "Reset page settings" if page_only else f"Reset {selected.split('|')[0]} settings",
+            "success",
+        )
 
     def save(self, page_only: bool = False) -> None:
         """Save current page or all options for the selected config."""
@@ -447,7 +466,9 @@ class SettingsDialog(QDialog):
                 new_value = self._coerce(option, states[option_name].value)
                 if self._equal(new_value, option.value):
                     continue
-                logger.debug("Updating '%s' from %s to %s", option_name, repr(option.value), repr(new_value))
+                logger.debug(
+                    "Updating '%s' from %s to %s", option_name, repr(option.value), repr(new_value)
+                )
                 option.set(new_value)
                 states[option_name].value = option.value
                 updated = True
@@ -458,7 +479,9 @@ class SettingsDialog(QDialog):
         if page_only:
             return (selected,) if selected in self._options else ()
         category = selected.split("|")[0]
-        return tuple(key for key in self._options if key == category or key.startswith(f"{category}|"))
+        return tuple(
+            key for key in self._options if key == category or key.startswith(f"{category}|")
+        )
 
     def _load_preset(self) -> None:
         """Load preset data into the current page."""
@@ -471,7 +494,11 @@ class SettingsDialog(QDialog):
             self._set_status("Selected file is not a valid Faceswap preset", "error")
             return
         if preset.get("__section") != self._full_preset_key:
-            logger.warning("Preset section '%s' does not match '%s'", preset.get("__section"), self._full_preset_key)
+            logger.warning(
+                "Preset section '%s' does not match '%s'",
+                preset.get("__section"),
+                self._full_preset_key,
+            )
             self._set_status("Preset section does not match the current page", "error")
             return
         for key, value in preset.items():
@@ -503,17 +530,24 @@ class SettingsDialog(QDialog):
         preset_path = self._preset_base_path / displayed.split("|")[0]
         if action == "save":
             filename, _ = QFileDialog.getSaveFileName(
-                self, "Save Preset...", str(preset_path / self._initial_preset_filename()), "JSON files (*.json);;All files (*)"
+                self,
+                "Save Preset...",
+                str(preset_path / self._initial_preset_filename()),
+                "JSON files (*.json);;All files (*)",
             )
         else:
-            filename, _ = QFileDialog.getOpenFileName(self, "Load Preset...", str(preset_path), "JSON files (*.json);;All files (*)")
+            filename, _ = QFileDialog.getOpenFileName(
+                self, "Load Preset...", str(preset_path), "JSON files (*.json);;All files (*)"
+            )
         return Path(filename) if filename else None
 
     @property
     def _full_preset_key(self) -> str:
         """Return the Tk-compatible preset section key."""
         assert self._displayed_key is not None
-        return self._displayed_key if "|" in self._displayed_key else f"{self._displayed_key}|global"
+        return (
+            self._displayed_key if "|" in self._displayed_key else f"{self._displayed_key}|global"
+        )
 
     def _initial_preset_filename(self) -> str:
         """Return a non-conflicting initial preset filename."""
@@ -530,8 +564,13 @@ class SettingsDialog(QDialog):
     def _handle_gui_rebuild(self) -> None:
         """Rebuild now or defer when a task is active."""
         if self._is_task_running():
-            logger.info("Can't redraw GUI whilst a task is running. GUI Settings will be applied at the next restart.")
-            self._set_status("Saved GUI settings. Rebuild deferred until restart because a task is running.", "warning")
+            logger.info(
+                "Can't redraw GUI whilst a task is running. GUI Settings will be applied at the next restart."
+            )
+            self._set_status(
+                "Saved GUI settings. Rebuild deferred until restart because a task is running.",
+                "warning",
+            )
             return
         self.gui_rebuild_requested.emit()
         if self._gui_rebuild_callback is not None:
@@ -551,7 +590,7 @@ class SettingsDialog(QDialog):
         if self._running_task_provider is not None:
             return self._running_task_provider()
         if self.parent() is not None and hasattr(self.parent(), "_running"):
-            return bool(getattr(self.parent(), "_running"))
+            return bool(self.parent()._running)
         try:
             return bool(get_config().tk_vars.running_task.get())
         except (AssertionError, AttributeError):
