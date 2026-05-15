@@ -17,8 +17,11 @@ import argparse
 import csv
 import json
 import sys
+import time
 import typing as T
 from pathlib import Path
+
+from tqdm import tqdm
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
@@ -34,6 +37,7 @@ from lib.landmarks.ensemble.promoted_setup import (
 from lib.landmarks.eval.candidate_search import (
     DEFAULT_OBJECTIVE,
     DEFAULT_REGRESSION_EPSILON_NME,
+    Candidate,
     CandidateResult,
     enumerate_candidates,
     evaluate_candidate,
@@ -42,7 +46,7 @@ from lib.landmarks.eval.candidate_search import (
     select_best_candidate,
 )
 from lib.landmarks.eval.prediction_cache import DiskPredictionCache
-from lib.landmarks.eval.splits import load_split_file, split_assignment_hash
+from lib.landmarks.eval.splits import SplitAssignment, load_split_file, split_assignment_hash
 
 
 def _parse_csv(value: str) -> tuple[str, ...]:
@@ -51,6 +55,98 @@ def _parse_csv(value: str) -> tuple[str, ...]:
 
 def _parse_csv_floats(value: str) -> tuple[float, ...]:
     return tuple(float(item.strip()) for item in value.split(",") if item.strip())
+
+
+def _format_duration(seconds: float) -> str:
+    """Return a compact human-readable duration."""
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    minutes, remainder = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{int(minutes)}m {remainder:.0f}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{int(hours)}h {int(minutes)}m {remainder:.0f}s"
+
+
+def _progress(message: str) -> None:
+    """Print a human-visible progress message."""
+    print(f"[{time.strftime('%H:%M:%S')}] {message}", file=sys.stderr, flush=True)
+
+
+def _stage(name: str, fn: T.Callable[[], T.Any]) -> T.Any:
+    """Run one visible CLI stage with pipeline-style timing output."""
+    started = time.time()
+    _progress(f"START {name}")
+    try:
+        result = fn()
+    except Exception as err:
+        duration = round(time.time() - started, 3)
+        _progress(f"FAIL  {name} after {_format_duration(duration)}: {type(err).__name__}: {err}")
+        raise
+    duration = round(time.time() - started, 3)
+    _progress(f"OK    {name} in {_format_duration(duration)}")
+    return result
+
+
+def _show_progress(args: argparse.Namespace) -> bool:
+    """Return whether tqdm progress bars should be shown."""
+    return not args.no_progress and sys.stderr.isatty()
+
+
+def _candidate_progress(
+    candidates: T.Sequence[Candidate], *, enabled: bool
+) -> T.Iterable[Candidate]:
+    """Wrap candidates in a tqdm bar when interactive progress is enabled."""
+    return tqdm(
+        candidates,
+        total=len(candidates),
+        desc="Evaluate candidates",
+        unit="candidate",
+        disable=not enabled,
+    )
+
+
+def _load_inputs(args: argparse.Namespace) -> tuple[SplitAssignment, str, DiskPredictionCache]:
+    """Load split metadata and prediction cache handles."""
+    assignment = load_split_file(args.splits)
+    sah = split_assignment_hash(assignment)
+    cache = DiskPredictionCache(args.cache_dir)
+    return assignment, sah, cache
+
+
+def _load_samples(
+    args: argparse.Namespace, assignment: SplitAssignment
+) -> tuple[list[T.Any], list[T.Any], list[T.Any]]:
+    """Load fit/select/report sample lists from the manifest and split file."""
+    fit_samples = load_split_samples(args.manifest, assignment, "fit")
+    select_samples = load_split_samples(args.manifest, assignment, "select")
+    report_samples = load_split_samples(args.manifest, assignment, "report")
+    _progress(
+        "Loaded samples: "
+        f"fit={len(fit_samples)}, select={len(select_samples)}, report={len(report_samples)}"
+    )
+    return fit_samples, select_samples, report_samples
+
+
+def _enumerate_search_candidates(args: argparse.Namespace) -> list[Candidate]:
+    """Enumerate candidate setups and print a compact search-space summary."""
+    candidates = enumerate_candidates(
+        models=_parse_csv(args.models),
+        model_subset_presets=_parse_csv(args.model_subsets),
+        weight_generators=_parse_csv(args.weight_generators),
+        strategies=_parse_csv(args.strategies),
+        outlier_thresholds=_parse_csv_floats(args.outlier_thresholds),
+        bbox_source=args.bbox_source,
+        crop_scale=args.crop_scale,
+    )
+    if not candidates:
+        raise SystemExit("no candidates were enumerated from the requested dimensions")
+    _progress(
+        f"Enumerated {len(candidates)} candidates "
+        f"from models={args.models}, subsets={args.model_subsets}, "
+        f"generators={args.weight_generators}, strategies={args.strategies}"
+    )
+    return candidates
 
 
 def _write_candidate_results(
@@ -163,91 +259,17 @@ def _write_promotion_report(
     return path
 
 
-def main(argv: list[str] | None = None) -> int:
-    """CLI entrypoint."""
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--manifest", required=True)
-    parser.add_argument("--cache-dir", required=True)
-    parser.add_argument("--splits", required=True, help="Path to splits.json (#67).")
-    parser.add_argument("--models", default="hrnet,spiga,orformer")
-    parser.add_argument(
-        "--model-subsets",
-        default="all",
-        help="Comma-separated subset presets: 'all', 'pairs', and/or 'triples'.",
-    )
-    parser.add_argument(
-        "--weight-generators",
-        default="equal,inverse_mean_error,regularized_inverse_error",
-    )
-    parser.add_argument(
-        "--strategies",
-        default="static_weighted,static_weighted_downweight,weighted_median",
-    )
-    parser.add_argument("--outlier-thresholds", default="2.5,3.5,4.5")
-    parser.add_argument("--objective", default=DEFAULT_OBJECTIVE)
-    parser.add_argument(
-        "--regression-epsilon-nme",
-        type=float,
-        default=DEFAULT_REGRESSION_EPSILON_NME,
-    )
-    parser.add_argument("--bbox-source", default="manifest")
-    parser.add_argument("--crop-scale", type=float, default=1.6)
-    parser.add_argument("--failure-threshold", type=float, default=0.08)
-    parser.add_argument("--seed", type=int, default=1337)
-    parser.add_argument("--output-dir", required=True)
-    args = parser.parse_args(argv)
-
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    assignment = load_split_file(args.splits)
-    sah = split_assignment_hash(assignment)
-    cache = DiskPredictionCache(args.cache_dir)
-
-    fit_samples = load_split_samples(args.manifest, assignment, "fit")
-    select_samples = load_split_samples(args.manifest, assignment, "select")
-    report_samples = load_split_samples(args.manifest, assignment, "report")
-
-    candidates = enumerate_candidates(
-        models=_parse_csv(args.models),
-        model_subset_presets=_parse_csv(args.model_subsets),
-        weight_generators=_parse_csv(args.weight_generators),
-        strategies=_parse_csv(args.strategies),
-        outlier_thresholds=_parse_csv_floats(args.outlier_thresholds),
-        bbox_source=args.bbox_source,
-        crop_scale=args.crop_scale,
-    )
-    if not candidates:
-        raise SystemExit("no candidates were enumerated from the requested dimensions")
-
-    results = run_candidate_search(
-        candidates,
-        fit_samples=fit_samples,
-        select_samples=select_samples,
-        cache=cache,
-        split_assignment_hash=sah,
-        objective=args.objective,
-        regression_epsilon_nme=args.regression_epsilon_nme,
-        failure_threshold=args.failure_threshold,
-    )
-
-    csv_path, json_path = _write_candidate_results(
-        output_dir,
-        results,
-        objective=args.objective,
-        regression_epsilon_nme=args.regression_epsilon_nme,
-    )
-
-    winner = select_best_candidate(results)
-    _fit_result, report_metrics = evaluate_candidate(
-        winner.candidate,
-        fit_samples=fit_samples,
-        select_samples=report_samples,
-        cache=cache,
-        failure_threshold=args.failure_threshold,
-        regression_epsilon_nme=args.regression_epsilon_nme,
-    )
-
+def _write_promoted_artifacts(
+    output_dir: Path,
+    *,
+    winner: CandidateResult,
+    json_path: Path,
+    report_metrics: T.Any,
+    fit_samples: T.Sequence[T.Any],
+    sah: str,
+    args: argparse.Namespace,
+) -> tuple[Path, Path, Path]:
+    """Write best setup, best weights, and the human-readable promotion report."""
     weights_path = output_dir / WEIGHTS_FILENAME
     setup_path = output_dir / SETUP_FILENAME
     write_best_weights(weights_path, winner.weights, models=winner.candidate.models)
@@ -282,14 +304,114 @@ def main(argv: list[str] | None = None) -> int:
         evaluation_log_path=str(json_path.name),
         weights_path=WEIGHTS_FILENAME,
     )
-
-    _write_promotion_report(
+    report_path = _write_promotion_report(
         output_dir,
         winner=winner,
-        results=results,
+        results=[winner],
         objective=args.objective,
         regression_epsilon_nme=args.regression_epsilon_nme,
         report_metrics=report_metrics.to_payload(),
+    )
+    return setup_path, weights_path, report_path
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI entrypoint."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--manifest", required=True)
+    parser.add_argument("--cache-dir", required=True)
+    parser.add_argument("--splits", required=True, help="Path to splits.json (#67).")
+    parser.add_argument("--models", default="hrnet,spiga,orformer")
+    parser.add_argument(
+        "--model-subsets",
+        default="all",
+        help="Comma-separated subset presets: 'all', 'pairs', and/or 'triples'.",
+    )
+    parser.add_argument(
+        "--weight-generators",
+        default="equal,inverse_mean_error,regularized_inverse_error",
+    )
+    parser.add_argument(
+        "--strategies",
+        default="static_weighted,static_weighted_downweight,weighted_median",
+    )
+    parser.add_argument("--outlier-thresholds", default="2.5,3.5,4.5")
+    parser.add_argument("--objective", default=DEFAULT_OBJECTIVE)
+    parser.add_argument(
+        "--regression-epsilon-nme",
+        type=float,
+        default=DEFAULT_REGRESSION_EPSILON_NME,
+    )
+    parser.add_argument("--bbox-source", default="manifest")
+    parser.add_argument("--crop-scale", type=float, default=1.6)
+    parser.add_argument("--failure-threshold", type=float, default=0.08)
+    parser.add_argument("--seed", type=int, default=1337)
+    parser.add_argument("--output-dir", required=True)
+    parser.add_argument(
+        "--no-progress",
+        action="store_true",
+        help="Disable tqdm progress bars while keeping stage timing output.",
+    )
+    args = parser.parse_args(argv)
+
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    assignment, sah, cache = _stage("load_splits", lambda: _load_inputs(args))
+    fit_samples, select_samples, report_samples = _stage(
+        "load_samples", lambda: _load_samples(args, assignment)
+    )
+    candidates = _stage("enumerate_candidates", lambda: _enumerate_search_candidates(args))
+
+    results = _stage(
+        "candidate_search",
+        lambda: run_candidate_search(
+            candidates,
+            fit_samples=fit_samples,
+            select_samples=select_samples,
+            cache=cache,
+            split_assignment_hash=sah,
+            objective=args.objective,
+            regression_epsilon_nme=args.regression_epsilon_nme,
+            failure_threshold=args.failure_threshold,
+            progress=lambda values: _candidate_progress(values, enabled=_show_progress(args)),
+        ),
+    )
+
+    csv_path, json_path = _stage(
+        "write_candidate_results",
+        lambda: _write_candidate_results(
+            output_dir,
+            results,
+            objective=args.objective,
+            regression_epsilon_nme=args.regression_epsilon_nme,
+        ),
+    )
+
+    winner = select_best_candidate(results)
+    _fit_result, report_metrics = _stage(
+        "report_evaluate_winner",
+        lambda: evaluate_candidate(
+            winner.candidate,
+            fit_samples=fit_samples,
+            select_samples=report_samples,
+            cache=cache,
+            failure_threshold=args.failure_threshold,
+            regression_epsilon_nme=args.regression_epsilon_nme,
+        ),
+    )
+
+    setup_path, weights_path, _report_path = _stage(
+        "write_promoted_artifacts",
+        lambda: _write_promoted_artifacts(
+            output_dir,
+            winner=winner,
+            json_path=json_path,
+            report_metrics=report_metrics,
+            fit_samples=fit_samples,
+            sah=sah,
+            args=args,
+        ),
     )
 
     print(
