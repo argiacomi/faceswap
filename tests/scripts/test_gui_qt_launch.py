@@ -87,16 +87,23 @@ def test_qt_gui_applies_default_theme(monkeypatch) -> None:  # type:ignore[no-un
 
 
 def test_qt_gui_normal_launch_shows_window_and_runs_owned_event_loop(monkeypatch) -> None:  # type:ignore[no-untyped-def]
-    """Normal launch should show the window and enter exec when this process owns QApplication."""
+    """Normal launch should show the window, install signal handlers, and enter exec."""
     _FakeApp.instance_value = None
     monkeypatch.setattr(gui_qt, "QApplication", _FakeApp)
     monkeypatch.setattr(gui_qt, "MainWindow", _FakeWindow)
+    installed: list[tuple[object, object]] = []
+    monkeypatch.setattr(
+        gui_qt,
+        "install_signal_handlers",
+        lambda app, window: installed.append((app, window)),
+    )
 
     process = gui_qt.Gui(Namespace(no_gui_exec=False))
     process.process()
 
     assert process.root.show_count == 1
     assert process.app.exec_count == 1
+    assert installed == [(process.app, process.root)]
 
 
 def test_qt_gui_reuses_existing_qapplication_without_exec(monkeypatch) -> None:  # type:ignore[no-untyped-def]
@@ -105,6 +112,12 @@ def test_qt_gui_reuses_existing_qapplication_without_exec(monkeypatch) -> None: 
     _FakeApp.instance_value = existing_app
     monkeypatch.setattr(gui_qt, "QApplication", _FakeApp)
     monkeypatch.setattr(gui_qt, "MainWindow", _FakeWindow)
+    installed: list[tuple[object, object]] = []
+    monkeypatch.setattr(
+        gui_qt,
+        "install_signal_handlers",
+        lambda app, window: installed.append((app, window)),
+    )
 
     process = gui_qt.Gui(Namespace(no_gui_exec=False))
     process.process()
@@ -112,4 +125,29 @@ def test_qt_gui_reuses_existing_qapplication_without_exec(monkeypatch) -> None: 
     assert process.app is existing_app
     assert process.root.show_count == 1
     assert existing_app.exec_count == 0
+    # When the wrapper doesn't own the QApplication, it should not register
+    # signal handlers (the outer host owns SIGINT routing).
+    assert installed == []
     _FakeApp.instance_value = None
+
+
+def test_qt_gui_handles_keyboard_interrupt_via_helper(monkeypatch) -> None:  # type:ignore[no-untyped-def]
+    """KeyboardInterrupt raised during exec should call interrupt_window and sys.exit(130)."""
+    _FakeApp.instance_value = None
+    monkeypatch.setattr(gui_qt, "QApplication", _FakeApp)
+    monkeypatch.setattr(gui_qt, "MainWindow", _FakeWindow)
+    monkeypatch.setattr(gui_qt, "install_signal_handlers", lambda app, window: None)
+    interrupted: list[object] = []
+    monkeypatch.setattr(gui_qt, "interrupt_window", interrupted.append)
+
+    def raise_interrupt(_self) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(_FakeApp, "exec", raise_interrupt)
+
+    process = gui_qt.Gui(Namespace(no_gui_exec=False))
+    with pytest.raises(SystemExit) as excinfo:
+        process.process()
+
+    assert excinfo.value.code == gui_qt.INTERRUPT_EXIT_CODE
+    assert interrupted == [process.root]

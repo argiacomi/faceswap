@@ -8,6 +8,11 @@ import sys
 
 from PySide6.QtWidgets import QApplication
 
+from lib.gui.qt_shell.main import (
+    INTERRUPT_EXIT_CODE,
+    install_signal_handlers,
+    interrupt_window,
+)
 from lib.gui.qt_shell.main_window import MainWindow
 from lib.gui.qt_shell.theme import apply_theme
 from lib.utils import get_module_objects
@@ -35,8 +40,14 @@ class Gui:
         if self._no_exec:
             return
         self.root.show()
-        if self._owns_app:
+        if not self._owns_app:
+            return
+        install_signal_handlers(self.app, self.root)
+        try:
             self.app.exec()
+        except KeyboardInterrupt:
+            interrupt_window(self.root)
+            sys.exit(INTERRUPT_EXIT_CODE)
 
     @staticmethod
     def _resolve_no_exec(arguments) -> bool:  # type:ignore[no-untyped-def]

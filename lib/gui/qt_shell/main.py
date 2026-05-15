@@ -12,29 +12,50 @@ from PySide6.QtWidgets import QApplication
 from lib.gui.qt_shell.main_window import MainWindow
 from lib.gui.qt_shell.theme import apply_theme
 
+INTERRUPT_EXIT_CODE = 130
+
 
 def main(argv: list[str] | None = None) -> int:
     """Run the Qt shell prototype."""
     args = sys.argv if argv is None else argv
     app = QApplication(args)
     theme = apply_theme(app)
-    _install_signal_handlers(app)
     window = MainWindow(theme=theme)
+    install_signal_handlers(app, window)
     window.resize(1280, 760)
     window.show()
-    return app.exec()
+    try:
+        return app.exec()
+    except KeyboardInterrupt:
+        interrupt_window(window)
+        return INTERRUPT_EXIT_CODE
 
 
-def _install_signal_handlers(app: QApplication) -> None:
-    """Let Ctrl-C terminate the Qt event loop immediately."""
+def install_signal_handlers(app: QApplication, window: MainWindow) -> None:
+    """Install SIGINT/SIGTERM handlers that cleanly stop the Qt event loop."""
 
     def exit_from_signal(_signum: int, _frame: object) -> None:
-        app.exit(130)
+        interrupt_window(window)
+        app.exit(INTERRUPT_EXIT_CODE)
 
     signal.signal(signal.SIGINT, exit_from_signal)
     if hasattr(signal, "SIGTERM"):
         signal.signal(signal.SIGTERM, exit_from_signal)
 
+    # Qt's C++ event loop blocks Python signal delivery; a no-op timer pumps the
+    # interpreter often enough for SIGINT to run our handler.
     timer = QTimer(app)
+    timer.setObjectName("qt-shell-signal-pump")
     timer.timeout.connect(lambda: None)
-    timer.start(100)
+    timer.start(50)
+    app.setProperty("qt_shell_signal_timer", timer)
+
+
+def interrupt_window(window: MainWindow) -> None:
+    """Clean up active Qt shell runtime state before an interrupt exit."""
+    try:
+        window.statusBar().showMessage("Interrupted. Shutting down Qt shell.")
+        window._stop_preview_live_refresh()  # pylint:disable=protected-access
+        window._runner.stop()  # pylint:disable=protected-access
+    except RuntimeError:
+        return
