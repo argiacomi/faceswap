@@ -263,6 +263,7 @@ def _write_promoted_artifacts(
     output_dir: Path,
     *,
     winner: CandidateResult,
+    results: T.Sequence[CandidateResult],
     json_path: Path,
     report_metrics: T.Any,
     fit_samples: T.Sequence[T.Any],
@@ -307,7 +308,7 @@ def _write_promoted_artifacts(
     report_path = _write_promotion_report(
         output_dir,
         winner=winner,
-        results=[winner],
+        results=results,
         objective=args.objective,
         regression_epsilon_nme=args.regression_epsilon_nme,
         report_metrics=report_metrics.to_payload(),
@@ -406,6 +407,7 @@ def main(argv: list[str] | None = None) -> int:
         lambda: _write_promoted_artifacts(
             output_dir,
             winner=winner,
+            results=results,
             json_path=json_path,
             report_metrics=report_metrics,
             fit_samples=fit_samples,
