@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import shlex
+import textwrap
 import typing as T
 from html import escape
 
@@ -24,7 +25,6 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSlider,
-    QStyle,
     QTabBar,
     QToolButton,
     QVBoxLayout,
@@ -226,7 +226,7 @@ class OptionsFormRenderer(QWidget):
         label.setWordWrap(True)
         label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         if spec.helptext:
-            label.setToolTip(spec.helptext)
+            label.setToolTip(self._tooltip_text(spec.helptext))
         return label
 
     def _build_widget(self, spec: OptionSpec) -> QWidget:
@@ -253,7 +253,7 @@ class OptionsFormRenderer(QWidget):
             widget = QLineEdit(self._string_value(spec.default))
         self._apply_widget_policy(widget)
         if spec.helptext:
-            widget.setToolTip(spec.helptext)
+            widget.setToolTip(self._tooltip_text(spec.helptext))
         self._connect_value_signal(widget, spec)
         return widget
 
@@ -276,7 +276,7 @@ class OptionsFormRenderer(QWidget):
             button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             button.setChecked(choice == default)
             if spec.helptext:
-                button.setToolTip(spec.helptext)
+                button.setToolTip(self._tooltip_text(spec.helptext))
             group.addButton(button)
             layout.addWidget(button, index // columns, index % columns)
         for column in range(columns):
@@ -301,7 +301,7 @@ class OptionsFormRenderer(QWidget):
             checkbox.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             checkbox.setChecked(choice in selected)
             if spec.helptext:
-                checkbox.setToolTip(spec.helptext)
+                checkbox.setToolTip(self._tooltip_text(spec.helptext))
             layout.addWidget(checkbox, index // columns, index % columns)
         for column in range(columns):
             layout.setColumnStretch(column, 1)
@@ -312,7 +312,7 @@ class OptionsFormRenderer(QWidget):
         widget = QWidget()
         widget.setMinimumWidth(0)
         layout = QHBoxLayout(widget)
-        layout.setContentsMargins(0, 4, 0, 4)
+        layout.setContentsMargins(0, 2, 0, 2)
         layout.setSpacing(8)
 
         slider = QSlider(Qt.Horizontal)
@@ -322,14 +322,6 @@ class OptionsFormRenderer(QWidget):
         line_edit.setObjectName("qt-shell-option-slider-value")
         slider.setMinimumWidth(0)
         slider.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        slider_height = max(
-            slider.sizeHint().height(),
-            slider.minimumSizeHint().height(),
-            slider.style().pixelMetric(QStyle.PM_SliderThickness, None, slider),
-            slider.style().pixelMetric(QStyle.PM_SliderLength, None, slider),
-        )
-        slider.setMinimumHeight(slider_height + 8)
-        widget.setMinimumHeight(max(slider.minimumHeight(), line_edit.sizeHint().height()) + 8)
         slider.setRange(
             self._value_to_slider(spec, spec.slider_min),
             self._value_to_slider(spec, spec.slider_max),
@@ -347,8 +339,8 @@ class OptionsFormRenderer(QWidget):
 
         slider.valueChanged.connect(sync_line)
         line_edit.editingFinished.connect(sync_slider)
-        layout.addWidget(slider, 1, Qt.AlignVCenter)
-        layout.addWidget(line_edit, 0, Qt.AlignVCenter)
+        layout.addWidget(slider, 1)
+        layout.addWidget(line_edit)
         self._set_slider_value(spec, widget, spec.default)
         return widget
 
@@ -375,7 +367,7 @@ class OptionsFormRenderer(QWidget):
         for mode in spec.browser_modes:
             button = QPushButton(self._browser_label(mode))
             button.setObjectName(f"qt-shell-browser-{mode}")
-            button.setToolTip(spec.helptext or f"Browse for {spec.title}")
+            button.setToolTip(self._tooltip_text(spec.helptext or f"Browse for {spec.title}"))
             button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
             button.clicked.connect(
                 lambda _checked=False, m=mode, w=widget, f=spec.file_filter: self._browse(m, w, f)
@@ -536,9 +528,29 @@ class OptionsFormRenderer(QWidget):
         }.get(mode, "Browse")
 
     @staticmethod
+    def _tooltip_text(text: str, width: int = 88) -> str:
+        """Return tooltip text wrapped to a readable line length."""
+        return "\n".join(
+            textwrap.fill(
+                line,
+                width=width,
+                break_long_words=False,
+                break_on_hyphens=False,
+            )
+            if line.strip()
+            else ""
+            for line in str(text).splitlines()
+        )
+
+    @staticmethod
     def _choice_columns(choices: tuple[str, ...]) -> int:
-        """Return the row-major column count for choice option groups."""
-        return 1 if len(choices) <= 1 else min(3, len(choices))
+        """Return a column count that avoids forcing horizontal scroll."""
+        if len(choices) <= 1:
+            return 1
+        if len(choices) == 2:
+            return 2
+        longest = max(len(choice) for choice in choices)
+        return 1 if longest > 18 else 2
 
     @staticmethod
     def _apply_widget_policy(widget: QWidget) -> None:
