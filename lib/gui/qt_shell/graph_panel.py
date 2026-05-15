@@ -30,7 +30,9 @@ class GraphPanel(QWidget):
     """Runtime Graph panel for loaded Analysis session series."""
 
     _BARS = "▁▂▃▄▅▆▇█"
-    IMAGE_FILTER = "PNG files (*.png);;JPEG files (*.jpg *.jpeg);;Bitmap files (*.bmp);;All files (*)"
+    IMAGE_FILTER = (
+        "PNG files (*.png);;JPEG files (*.jpg *.jpeg);;Bitmap files (*.bmp);;All files (*)"
+    )
     CSV_FILTER = "CSV files (*.csv);;All files (*)"
 
     def __init__(
@@ -125,8 +127,12 @@ class GraphPanel(QWidget):
 
     def save_graph_csv(self, filename: str | Path) -> int:
         """Save the currently selected graph series to CSV."""
-        written = self._service.save_csv(filename, selected_keys=self._selected_loss_keys(self._service.snapshot))
-        self._status_label.setText("No graph data to save" if written == 0 else f"Graph CSV saved: {written} rows")
+        written = self._service.save_csv(
+            filename, selected_keys=self._selected_loss_keys(self._service.snapshot)
+        )
+        self._status_label.setText(
+            "No graph data to save" if written == 0 else f"Graph CSV saved: {written} rows"
+        )
         return written
 
     def clear_graph(self) -> None:
@@ -204,13 +210,23 @@ class GraphPanel(QWidget):
         """Connect panel signals."""
         self._open_button.clicked.connect(lambda _checked=False: self._open_source_dialog())
         self._refresh_button.clicked.connect(lambda _checked=False: self.refresh_graph())
-        self._export_image_button.clicked.connect(lambda _checked=False: self._export_graph_image_dialog())
-        self._export_csv_button.clicked.connect(lambda _checked=False: self._export_graph_csv_dialog())
+        self._export_image_button.clicked.connect(
+            lambda _checked=False: self._export_graph_image_dialog()
+        )
+        self._export_csv_button.clicked.connect(
+            lambda _checked=False: self._export_graph_csv_dialog()
+        )
         self._zoom_in_button.clicked.connect(lambda _checked=False: self._graph_widget.zoom_in())
         self._zoom_out_button.clicked.connect(lambda _checked=False: self._graph_widget.zoom_out())
-        self._zoom_y_in_button.clicked.connect(lambda _checked=False: self._graph_widget.zoom_y_in())
-        self._zoom_y_out_button.clicked.connect(lambda _checked=False: self._graph_widget.zoom_y_out())
-        self._reset_view_button.clicked.connect(lambda _checked=False: self._graph_widget.reset_view())
+        self._zoom_y_in_button.clicked.connect(
+            lambda _checked=False: self._graph_widget.zoom_y_in()
+        )
+        self._zoom_y_out_button.clicked.connect(
+            lambda _checked=False: self._graph_widget.zoom_y_out()
+        )
+        self._reset_view_button.clicked.connect(
+            lambda _checked=False: self._graph_widget.reset_view()
+        )
         self._clear_button.clicked.connect(lambda _checked=False: self.clear_graph())
         self._session_combo.currentIndexChanged.connect(self._session_changed)
         self._key_combo.currentIndexChanged.connect(self._loss_key_changed)
@@ -239,7 +255,13 @@ class GraphPanel(QWidget):
             self.IMAGE_FILTER,
         )
         if filename:
-            suffix = ".jpg" if selected_filter.startswith("JPEG") else ".bmp" if selected_filter.startswith("Bitmap") else ".png"
+            suffix = (
+                ".jpg"
+                if selected_filter.startswith("JPEG")
+                else ".bmp"
+                if selected_filter.startswith("Bitmap")
+                else ".png"
+            )
             self.save_graph_image(self._with_suffix(filename, suffix))
 
     def _export_graph_csv_dialog(self) -> None:

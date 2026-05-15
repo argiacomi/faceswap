@@ -50,7 +50,9 @@ class _GraphServiceDouble:
             return 0
         max_count = max(item.count for item in series)
         with Path(filename).open("w", encoding="utf-8", newline="") as outfile:
-            writer = csv.DictWriter(outfile, fieldnames=("iteration", *(item.name for item in series)))
+            writer = csv.DictWriter(
+                outfile, fieldnames=("iteration", *(item.name for item in series))
+            )
             writer.writeheader()
             for index in range(max_count):
                 writer.writerow(

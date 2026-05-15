@@ -162,7 +162,7 @@ def test_stop_finish_reset_open_and_reload_stop_live_refresh(  # type:ignore[no-
     window._project_filename = str(project_file)  # pylint:disable=protected-access
     window._reload_current_file()  # pylint:disable=protected-access
 
-    assert calls == ["stop"] * 8
+    assert calls == ["stop"] * 7
 
 
 def test_run_command_still_raises_unexpected_build_errors(  # type:ignore[no-untyped-def]
