@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSlider,
+    QStyle,
     QTabBar,
     QToolButton,
     QVBoxLayout,
@@ -312,7 +313,7 @@ class OptionsFormRenderer(QWidget):
         widget = QWidget()
         widget.setMinimumWidth(0)
         layout = QHBoxLayout(widget)
-        layout.setContentsMargins(0, 2, 0, 2)
+        layout.setContentsMargins(0, 4, 0, 4)
         layout.setSpacing(8)
 
         slider = QSlider(Qt.Horizontal)
@@ -322,6 +323,14 @@ class OptionsFormRenderer(QWidget):
         line_edit.setObjectName("qt-shell-option-slider-value")
         slider.setMinimumWidth(0)
         slider.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        slider_height = max(
+            slider.sizeHint().height(),
+            slider.minimumSizeHint().height(),
+            slider.style().pixelMetric(QStyle.PM_SliderThickness, None, slider),
+            slider.style().pixelMetric(QStyle.PM_SliderLength, None, slider),
+        )
+        slider.setMinimumHeight(slider_height + 8)
+        widget.setMinimumHeight(max(slider.minimumHeight(), line_edit.sizeHint().height()) + 8)
         slider.setRange(
             self._value_to_slider(spec, spec.slider_min),
             self._value_to_slider(spec, spec.slider_max),
@@ -339,8 +348,8 @@ class OptionsFormRenderer(QWidget):
 
         slider.valueChanged.connect(sync_line)
         line_edit.editingFinished.connect(sync_slider)
-        layout.addWidget(slider, 1)
-        layout.addWidget(line_edit)
+        layout.addWidget(slider, 1, Qt.AlignVCenter)
+        layout.addWidget(line_edit, 0, Qt.AlignVCenter)
         self._set_slider_value(spec, widget, spec.default)
         return widget
 
@@ -544,13 +553,8 @@ class OptionsFormRenderer(QWidget):
 
     @staticmethod
     def _choice_columns(choices: tuple[str, ...]) -> int:
-        """Return a column count that avoids forcing horizontal scroll."""
-        if len(choices) <= 1:
-            return 1
-        if len(choices) == 2:
-            return 2
-        longest = max(len(choice) for choice in choices)
-        return 1 if longest > 18 else 2
+        """Return the row-major column count for choice option groups."""
+        return 1 if len(choices) <= 1 else min(3, len(choices))
 
     @staticmethod
     def _apply_widget_policy(widget: QWidget) -> None:
