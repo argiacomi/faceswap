@@ -283,6 +283,76 @@ def test_group_sections_render_labels_and_containers(qtbot) -> None:  # type:ign
     assert set(panel.renderer.rendered_switches) == {"-i", "-o", "--debug"}
 
 
+def test_choice_clusters_render_as_titled_groupboxes(qtbot) -> None:  # type:ignore[no-untyped-def]
+    """Radio and multi-select clusters should render inside titled QGroupBoxes.
+
+    Tk renders each detector/aligner/mask plugin cluster inside a bordered
+    LabelFrame with the option name as the frame title. The Qt panel mirrors
+    that with a ``qt-shell-option-cluster`` QGroupBox spanning the form row,
+    so a wide choice grid no longer clips its left-hand label column.
+    """
+    from PySide6.QtWidgets import QGroupBox
+
+    panel = _command_panel(
+        _option_spec(
+            "Detector",
+            "--detector",
+            str,
+            "cv2-dnn",
+            ("cv2-dnn", "mtcnn", "retinaface"),
+            is_radio=True,
+        ),
+        _option_spec(
+            "Color Adjust",
+            "--color",
+            str,
+            ("avg-color",),
+            ("avg-color", "manual-balance", "match-hist"),
+            is_multi_option=True,
+        ),
+        _option_spec("Input", "-i"),
+    )
+    qtbot.addWidget(panel)
+
+    clusters = panel.renderer.findChildren(QGroupBox, "qt-shell-option-cluster")
+    titles = {cluster.title() for cluster in clusters}
+
+    assert titles == {"Detector", "Color Adjust"}
+    assert len(clusters) == 2
+
+
+def test_plain_bool_options_pack_into_horizontal_cluster(qtbot) -> None:  # type:ignore[no-untyped-def]
+    """Plain boolean options should be collected into a horizontal grid (Tk parity).
+
+    Tk renders boolean controls in a shared ``checkbuttons_frame`` so options like
+    ``Compile`` / ``Skip Existing`` / ``Skip Existing Faces`` lay out left-to-right
+    on one row rather than stacking vertically as separate labeled rows.
+    """
+    from PySide6.QtWidgets import QGridLayout
+
+    panel = _command_panel(
+        _option_spec("Compile", "--compile", bool, False),
+        _option_spec("Skip Existing", "--skip-existing", bool, False),
+        _option_spec("Skip Existing Faces", "--skip-existing-faces", bool, False),
+    )
+    qtbot.addWidget(panel)
+
+    bool_cluster = panel.renderer.findChild(QWidget, "qt-shell-option-bool-cluster")
+    assert bool_cluster is not None, "Plain bools should be grouped in a bool cluster"
+    assert isinstance(bool_cluster.layout(), QGridLayout)
+
+    checkboxes = bool_cluster.findChildren(QCheckBox)
+    assert [box.text() for box in checkboxes] == [
+        "Compile",
+        "Skip Existing",
+        "Skip Existing Faces",
+    ]
+    # All three should share the same row in the grid for horizontal layout
+    grid = bool_cluster.layout()
+    rows = {grid.getItemPosition(grid.indexOf(box))[0] for box in checkboxes}
+    assert rows == {0}, f"Expected all checkboxes on row 0, got rows: {rows}"
+
+
 def test_required_option_label_renders_asterisk(qtbot) -> None:  # type:ignore[no-untyped-def]
     """Required options should render a red-asterisk marker in their label."""
     from PySide6.QtCore import Qt

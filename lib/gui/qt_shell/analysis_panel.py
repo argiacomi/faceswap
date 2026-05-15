@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from lib.gui.qt_shell.theme import QtTheme, icon_for_action
 from lib.gui.services.analysis_session_service import (
     AnalysisSessionError,
     AnalysisSessionService,
@@ -232,13 +233,24 @@ class AnalysisPanel(QWidget):
         self._status_label.setObjectName("qt-shell-analysis-status")
         footer.addWidget(self._status_label)
         footer.addStretch(1)
-        for button in (
-            self._open_button,
-            self._refresh_button,
-            self._save_button,
-            self._clear_button,
-        ):
+        theme = QtTheme.default()
+        button_icons = {
+            self._open_button: ("open", "Open Analysis session..."),
+            self._refresh_button: ("reload", "Refresh session data"),
+            self._save_button: ("save", "Save summary as CSV..."),
+            self._clear_button: ("clear", "Clear current Analysis session"),
+        }
+        for button, (icon_key, tooltip) in button_icons.items():
             button.setObjectName(f"qt-shell-analysis-{button.text().lower()}")
+            button.setProperty("qt-shell-role", "analysis-action")
+            icon = icon_for_action(theme, icon_key)
+            if not icon.isNull():
+                button.setIcon(icon)
+                button.setIconSize(QSize(16, 16))
+                button.setText("")
+                button.setFixedSize(QSize(28, 28))
+                button.setFlat(True)
+            button.setToolTip(tooltip)
             footer.addWidget(button)
         layout.addLayout(footer)
 

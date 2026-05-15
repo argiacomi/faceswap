@@ -176,6 +176,10 @@ class QtTheme:
         "settings_extract": "settings_extract",
         "settings_train": "settings_train",
         "settings_convert": "settings_convert",
+        "browser_folder": "folder",
+        "browser_file": "load2",
+        "browser_files": "multi_load",
+        "browser_save": "save_as",
     }
 
     @classmethod
@@ -322,10 +326,25 @@ def render_qss(theme: QtTheme) -> str:
             "QTreeWidget#qt-shell-settings-tree::item:selected { "
             f"background-color: {theme.color('accent')}; "
             f"color: {theme.color('accent_text')}; }}",
-            "QGroupBox#qt-shell-option-group, QWidget#qt-shell-option-group-master { "
+            "QWidget#qt-shell-option-group-master { "
             f"background-color: {theme.color('section')}; "
             f"border: 1px solid {theme.color('border')}; "
             f"border-radius: {radius}px; margin-top: {spacing}px; }}",
+            "QWidget#qt-shell-option-group-content { "
+            f"background-color: {theme.color('section')}; "
+            f"border: 1px solid {theme.color('accent')}; "
+            f"border-radius: {radius}px; "
+            f"margin: 0 {half_spacing}px {half_spacing}px {half_spacing}px; "
+            f"padding: {half_spacing}px; }}",
+            "QGroupBox#qt-shell-option-cluster { "
+            f"background-color: transparent; "
+            f"border: 0; "
+            f"margin-top: {spacing}px; padding-top: {spacing}px; }}",
+            "QGroupBox#qt-shell-option-cluster::title { "
+            f"subcontrol-origin: margin; subcontrol-position: top left; "
+            f"left: 0; padding: 0 {half_spacing}px 0 0; "
+            f"color: {theme.color('text')}; font-weight: 600; "
+            f"background-color: transparent; }}",
             "QLabel#qt-shell-option-group-label { "
             f"color: {theme.color('accent')}; font-weight: 600; "
             f"padding-bottom: {half_spacing}px; }}",
