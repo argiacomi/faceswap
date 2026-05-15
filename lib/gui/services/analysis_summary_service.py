@@ -43,8 +43,7 @@ class AnalysisSummaryMetrics:
     @property
     def average_rate(self) -> float:
         """Return average parsed examples-per-second for rows with numeric rate values."""
-        rates = [_to_float(row.rate) for row in self.rows]
-        rates = [rate for rate in rates if rate is not None]
+        rates = [rate for rate in (_to_float(row.rate) for row in self.rows) if rate is not None]
         return 0.0 if not rates else sum(rates) / len(rates)
 
     @property
