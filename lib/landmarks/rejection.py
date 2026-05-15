@@ -160,20 +160,26 @@ def reject_outliers(
 
 
 def weighted_median(stack: np.ndarray, weights: np.ndarray) -> np.ndarray:
-    """Return weighted median landmarks per coordinate."""
+    """Return weighted median landmarks per coordinate.
+
+    Vectorized across landmarks and coordinates: a single argsort over the
+    models axis, weights reordered with the same permutation, and a per-
+    column ``argmax(cumulative >= 0.5)`` to pick the median. ``_normalize_weights``
+    guarantees the last cumulative value is ``1.0`` per landmark, so the
+    boolean column is never all-False.
+    """
     points = np.asarray(stack, dtype="float32")
     weight_matrix = _normalize_weights(
         weights, model_count=points.shape[0], landmark_count=points.shape[1]
-    )
-    output = np.empty(points.shape[1:], dtype="float32")
-    for landmark_idx in range(points.shape[1]):
-        landmark_weights = weight_matrix[:, landmark_idx]
-        for coord_idx in range(2):
-            values = points[:, landmark_idx, coord_idx]
-            order = np.argsort(values)
-            cumulative = np.cumsum(landmark_weights[order])
-            output[landmark_idx, coord_idx] = values[order[np.searchsorted(cumulative, 0.5)]]
-    return output
+    )  # (M, L)
+    order = np.argsort(points, axis=0)  # (M, L, 2)
+    sorted_values = np.take_along_axis(points, order, axis=0)
+    weights_broadcast = np.broadcast_to(weight_matrix[..., None], points.shape)
+    sorted_weights = np.take_along_axis(weights_broadcast, order, axis=0)
+    cumulative = np.cumsum(sorted_weights, axis=0)
+    median_idx = np.argmax(cumulative >= 0.5, axis=0)  # (L, 2)
+    selected = np.take_along_axis(sorted_values, median_idx[None, :, :], axis=0)
+    return selected[0].astype("float32", copy=False)
 
 
 def reject_landmark_outliers(
