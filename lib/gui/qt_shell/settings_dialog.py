@@ -309,6 +309,7 @@ class SettingsDialog(QDialog):
         for category in self._ordered_categories():
             item = QTreeWidgetItem([category.replace("_", " ").title()])
             item.setData(0, Qt.UserRole, category)
+            item.setToolTip(0, self._tree_tooltip(category))
             self._tree.addTopLevelItem(item)
             roots[category] = item
         for category in self._ordered_categories():
@@ -331,8 +332,19 @@ class SettingsDialog(QDialog):
             if child is None:
                 child = QTreeWidgetItem([part.replace("_", " ").title()])
                 child.setData(0, Qt.UserRole, identifier)
+                child.setToolTip(0, self._tree_tooltip(identifier))
                 current.addChild(child)
             current = child
+
+    def _tree_tooltip(self, identifier: str) -> str:
+        """Return a compact tooltip for a settings tree item."""
+        label = identifier.replace("|", " / ").replace("_", " ").title()
+        options = self._options.get(identifier)
+        if options is None:
+            return label
+        count = len(options)
+        suffix = "option" if count == 1 else "options"
+        return f"{label} ({count} {suffix})"
 
     @staticmethod
     def _child(parent: QTreeWidgetItem, identifier: str) -> QTreeWidgetItem | None:
@@ -529,8 +541,13 @@ class SettingsDialog(QDialog):
         filename = self._preset_filename("load")
         if filename is None:
             return
-        preset = self._serializer.load(str(filename))
-        if preset.get("__filetype") != "faceswap_preset":
+        try:
+            preset = self._serializer.load(str(filename))
+        except (OSError, TypeError, ValueError) as err:
+            logger.warning("Could not load preset file '%s': %s", filename, err)
+            self._set_status("Could not load the selected preset file", "error")
+            return
+        if not isinstance(preset, dict) or preset.get("__filetype") != "faceswap_preset":
             logger.warning("'%s' is not a valid plugin preset file", filename)
             self._set_status("Selected file is not a valid Faceswap preset", "error")
             return
@@ -542,9 +559,10 @@ class SettingsDialog(QDialog):
             )
             self._set_status("Preset section does not match the current page", "error")
             return
+        page_options = self._options[self._displayed_key or ""]
         for key, value in preset.items():
-            if not key.startswith("__") and key in self._options[self._displayed_key or ""]:
-                self._options[self._displayed_key or ""][key].value = value
+            if not key.startswith("__") and key in page_options:
+                page_options[key].value = value
         if isinstance(self._displayed_page, _SettingsPage):
             self._displayed_page.sync_from_state()
         self._set_status(f"Preset loaded from: '{filename.name}'", "success")
@@ -558,8 +576,13 @@ class SettingsDialog(QDialog):
         page_options = self._options[self._displayed_key or ""]
         preset = {key: state.value for key, state in page_options.items()}
         preset.update({"__filetype": "faceswap_preset", "__section": self._full_preset_key})
-        filename.parent.mkdir(parents=True, exist_ok=True)
-        self._serializer.save(str(filename), preset)
+        try:
+            filename.parent.mkdir(parents=True, exist_ok=True)
+            self._serializer.save(str(filename), preset)
+        except (OSError, TypeError, ValueError) as err:
+            logger.warning("Could not save preset file '%s': %s", filename, err)
+            self._set_status("Could not save preset", "error")
+            return
         self._set_status(f"Preset '{self._full_preset_key}' saved", "success")
 
     def _preset_filename(self, action: T.Literal["load", "save"]) -> Path | None:
