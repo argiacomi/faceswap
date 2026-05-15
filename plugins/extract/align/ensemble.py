@@ -24,8 +24,20 @@ from lib.landmarks.coordinates import (
     frame_to_normalized_crop,
     roi_to_matrix,
 )
-from lib.landmarks.fusion import plain_average, weighted_average
-from lib.landmarks.schema import LandmarkPrediction
+from lib.landmarks.ensemble.outliers import weighted_median
+from lib.landmarks.ensemble.strategies import (
+    canonical_strategy,
+    strategy_outlier_method,
+    strategy_requires_weights,
+    strategy_uses_threshold,
+)
+from lib.landmarks.fusion import (
+    FusionResult,
+    normalize_weight_matrix,
+    plain_average,
+    static_weighted,
+)
+from lib.landmarks.schema import CANONICAL_SCHEMA, LandmarkPrediction
 from lib.utils import get_module_objects
 from plugins.extract.base import ExtractPlugin
 
@@ -64,17 +76,45 @@ class Ensemble(ExtractPlugin):
         self.realign_centering = "legacy"
         self._injected_adapters = list(adapters) if adapters is not None else None
         self._crop_scale = cfg.crop_scale() if crop_scale is None else crop_scale
-        self._reject_outliers = (
-            cfg.reject_outliers() if reject_outliers is None else reject_outliers
-        )
+        raw_strategy = cfg.strategy() if strategy is None else strategy
+        raw_reject_outliers = cfg.reject_outliers() if reject_outliers is None else reject_outliers
+        self._strategy = self._resolve_strategy(raw_strategy, raw_reject_outliers)
         self._outlier_threshold = (
             cfg.outlier_threshold() if outlier_threshold is None else outlier_threshold
         )
+        self._outlier_method = strategy_outlier_method(self._strategy)
+        self._uses_threshold = strategy_uses_threshold(self._strategy)
+        self._requires_weights = strategy_requires_weights(self._strategy)
         self._min_models = cfg.min_models() if min_models is None else min_models
-        self._strategy = cfg.strategy() if strategy is None else strategy
         self._last_matrices: np.ndarray | None = None
         self.last_debug_metadata: list[dict[str, T.Any]] = []
         self.model: list[LandmarkAdapter]
+
+    @staticmethod
+    def _resolve_strategy(strategy: str, reject_outliers: bool) -> str:
+        """Resolve a configured strategy + legacy ``reject_outliers`` flag.
+
+        ``reject_outliers`` is retained only as a compatibility flag for the
+        ``static_weighted`` strategy. When both are set, the run is promoted to
+        ``static_weighted_hard_drop`` and a deprecation note is logged. Every
+        other strategy ignores ``reject_outliers``.
+        """
+        canonical = canonical_strategy(strategy)
+        if not reject_outliers:
+            return canonical
+        if canonical == "static_weighted":
+            logger.info(
+                "[Ensemble] 'reject_outliers=True' with 'static_weighted' is deprecated; "
+                "treating run as 'static_weighted_hard_drop'. Set 'strategy=static_weighted_hard_drop' "
+                "directly to silence this notice."
+            )
+            return "static_weighted_hard_drop"
+        logger.info(
+            "[Ensemble] 'reject_outliers=True' is ignored; strategy %r already governs "
+            "outlier behavior.",
+            canonical,
+        )
+        return canonical
 
     def load_model(self) -> list[LandmarkAdapter]:
         """Load configured adapters.
@@ -213,17 +253,34 @@ class Ensemble(ExtractPlugin):
         adapters = [adapter for adapter, _prediction in predictions]
         items = [prediction for _adapter, prediction in predictions]
         weights = np.array([adapter.config.weight for adapter in adapters], dtype="float32")
-        if self._strategy == "plain_average":
+        threshold = self._outlier_threshold if self._uses_threshold else None
+
+        if not self._requires_weights:
             fused = plain_average(
                 items,
-                reject_outliers=self._reject_outliers,
+                outlier_method=self._outlier_method,
                 outlier_threshold=self._outlier_threshold,
             )
+        elif self._strategy == "weighted_median":
+            stack = np.stack([item.canonical_68().points for item in items], axis=0)
+            normalized = normalize_weight_matrix(
+                weights,
+                model_count=len(items),
+                landmark_count=stack.shape[1],
+            )
+            fused = FusionResult(
+                points=weighted_median(stack, normalized),
+                schema=CANONICAL_SCHEMA,
+                strategy="weighted_median",
+                weights=normalized,
+                sources=tuple(adapter.config.name for adapter in adapters),
+                kept_indices=tuple(range(len(items))),
+            )
         else:
-            fused = weighted_average(
+            fused = static_weighted(
                 items,
                 weights=weights,
-                reject_outliers=self._reject_outliers,
+                outlier_method=self._outlier_method,
                 outlier_threshold=self._outlier_threshold,
             )
 
@@ -235,7 +292,9 @@ class Ensemble(ExtractPlugin):
                 "rejected_indices": fused.rejected_indices,
                 "rejected_landmarks": fused.rejected_landmarks,
                 "adapter_errors": tuple(errors),
-                "strategy": fused.strategy,
+                "strategy": self._strategy,
+                "outlier_method": self._outlier_method,
+                "outlier_threshold": threshold,
             }
         )
         return fused.points

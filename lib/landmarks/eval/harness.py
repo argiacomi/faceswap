@@ -11,6 +11,11 @@ from pathlib import Path
 
 import numpy as np
 
+from lib.landmarks.ensemble.strategies import (
+    canonical_strategy,
+    strategy_outlier_method,
+    strategy_requires_weights,
+)
 from lib.landmarks.ensemble.weights import load_weights, weights_matrix_for_models
 from lib.landmarks.eval.metrics import (
     evaluate_prediction,
@@ -165,43 +170,41 @@ def _fuse_variant(
     *,
     outlier_threshold: float,
 ) -> tuple[FusionResult, int]:
-    """Fuse one ensemble variant and return its rejected landmark count."""
-    if variant == "plain_average":
-        return plain_average(predictions, outlier_method="none"), 0
+    """Fuse one ensemble variant and return its rejected landmark count.
+
+    ``variant`` accepts any canonical strategy name and the legacy aliases
+    handled by :mod:`lib.landmarks.ensemble.strategies`.
+    """
+    canonical = canonical_strategy(variant)
+    method = strategy_outlier_method(canonical)
+    if not strategy_requires_weights(canonical):
+        fused = plain_average(predictions, outlier_method=method)
+        return _retag(fused, variant), fused.rejected_landmarks
 
     matrix = weights_matrix_for_models(weights, tuple(model_names))
-    if variant == "static_weighted":
-        return static_weighted(predictions, matrix, outlier_method="none"), 0
+    fused = static_weighted(
+        predictions,
+        matrix,
+        outlier_threshold=outlier_threshold,
+        outlier_method=method,
+    )
+    return _retag(fused, variant), fused.rejected_landmarks
 
-    variant_methods = {
-        "static_weighted_none": "none",
-        "static_weighted_outliers": "hard_drop",
-        "static_weighted_hard_drop": "hard_drop",
-        "static_weighted_downweight": "downweight",
-        "weighted_median": "weighted_median",
-    }
-    if variant in variant_methods:
-        fused = static_weighted(
-            predictions,
-            matrix,
-            outlier_threshold=outlier_threshold,
-            outlier_method=variant_methods[variant],
-        )
-        return (
-            FusionResult(
-                points=fused.points,
-                schema=CANONICAL_SCHEMA,
-                strategy=variant,
-                weights=fused.weights,
-                sources=fused.sources,
-                kept_indices=fused.kept_indices,
-                rejected_indices=fused.rejected_indices,
-                rejected_landmarks=fused.rejected_landmarks,
-            ),
-            fused.rejected_landmarks,
-        )
 
-    raise ValueError(f"Unknown ensemble variant '{variant}'")
+def _retag(fused: FusionResult, variant: str) -> FusionResult:
+    """Return a copy of ``fused`` with ``strategy`` set to the requested variant name."""
+    if fused.strategy == variant:
+        return fused
+    return FusionResult(
+        points=fused.points,
+        schema=CANONICAL_SCHEMA,
+        strategy=variant,
+        weights=fused.weights,
+        sources=fused.sources,
+        kept_indices=fused.kept_indices,
+        rejected_indices=fused.rejected_indices,
+        rejected_landmarks=fused.rejected_landmarks,
+    )
 
 
 def run_quality_harness(

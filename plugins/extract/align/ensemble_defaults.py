@@ -40,22 +40,41 @@ strategy = ConfigItem(
     datatype=str,
     default="static_weighted",
     group="settings",
-    info="Fusion strategy for combining adapter predictions.",
-    choices=["plain_average", "static_weighted"],
+    info=(
+        "Fusion strategy for combining adapter predictions. Threshold-aware strategies "
+        "(``static_weighted_hard_drop``, ``static_weighted_downweight``) consume "
+        "``outlier_threshold``; other strategies ignore it."
+    ),
+    choices=[
+        "plain_average",
+        "static_weighted",
+        "static_weighted_hard_drop",
+        "static_weighted_downweight",
+        "weighted_median",
+    ],
 )
 
 reject_outliers = ConfigItem(
     datatype=bool,
     default=True,
     group="settings",
-    info="Reject adapter predictions that are far from the ensemble median before fusion.",
+    info=(
+        "Deprecated compatibility flag retained so existing configs keep their "
+        "historical hard-drop behavior. When ``strategy=static_weighted`` and this is "
+        "true, the plugin translates the run to ``static_weighted_hard_drop`` and logs "
+        "a deprecation notice. Ignored for every other strategy. New configs should "
+        "set ``strategy`` explicitly and leave this disabled."
+    ),
 )
 
 outlier_threshold = ConfigItem(
     datatype=float,
     default=3.5,
     group="settings",
-    info="Robust z-score threshold used when outlier rejection is enabled.",
+    info=(
+        "Robust z-score threshold used by threshold-aware strategies. Ignored when the "
+        "selected strategy does not consume a threshold."
+    ),
     rounding=2,
     min_max=(0.5, 20.0),
 )
