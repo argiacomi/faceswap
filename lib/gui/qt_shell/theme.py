@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import typing as T
 from dataclasses import dataclass, field
@@ -14,11 +15,13 @@ from PySide6.QtWidgets import QApplication
 from lib.serializer import get_serializer
 from lib.utils import PROJECT_ROOT, get_module_objects
 
+logger = logging.getLogger(__name__)
+
 _HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 _ICON_CACHE = Path(PROJECT_ROOT) / "lib" / "gui" / ".cache" / "icons"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class QtTheme:
     """Serializable visual theme settings for the Qt shell."""
 
@@ -46,6 +49,7 @@ class QtTheme:
         "console_text": "#dfe7e9",
         "input_background": "#222627",
         "input_focus": "#293538",
+        "input_text": "#f2f2f2",
         "button": "#42484a",
         "button_hover": "#4d5557",
         "button_disabled": "#303435",
@@ -53,12 +57,106 @@ class QtTheme:
         "menu_text": "#000000",
         "menu_hover": "#d9e8f0",
         "dialog_background": "#333738",
+        "info_background": "#2f3334",
+        "info_text": "#f2f2f2",
+        "info_border": "#565f61",
+        "scrollbar_border": "#565f61",
+        "scrollbar_trough": "#2a2d2e",
+        "settings_panel": "#333738",
+        "settings_accent": "#66b2d8",
+        "settings_border": "#565f61",
+        "settings_control": "#b8c0c2",
+        "settings_control_active": "#7dc4e4",
+        "settings_control_disabled": "#303435",
+        "settings_scrollbar_border": "#565f61",
+        "settings_scrollbar_trough": "#2a2d2e",
+        "settings_tree_select": "#66b2d8",
+        "settings_tree_unselected": "#222627",
+        "settings_tree_subheader": "#3c4142",
+        "settings_link": "#f2f2f2",
+        "tab_border": "#565f61",
+        "tab_background": "#3c4142",
+        "tab_selected": "#66b2d8",
+        "tab_hover": "#7dc4e4",
+        "console_border": "#565f61",
+        "stdout": "#dfe7e9",
+        "stderr": "#df7b7b",
+        "console_scrollbar_border": "#565f61",
+        "console_scrollbar_trough": "#2a2d2e",
+        "console_scrollbar_background_normal": "#42484a",
+        "console_scrollbar_background_disabled": "#303435",
+        "console_scrollbar_background_active": "#4d5557",
+        "console_scrollbar_foreground_normal": "#dfe7e9",
+        "console_scrollbar_foreground_disabled": "#b8c0c2",
+        "console_scrollbar_foreground_active": "#dfe7e9",
+        "console_scrollbar_border_normal": "#565f61",
+        "console_scrollbar_border_disabled": "#303435",
+        "console_scrollbar_border_active": "#66b2d8",
+        "tooltip_background": "#ffffea",
+        "tooltip_border": "#ffffea",
+        "tooltip_text": "#000000",
         "success": "#83c97d",
         "warning": "#d8b866",
         "error": "#df7b7b",
         "info": "#7fb9e3",
         "verbose": "#9fca8b",
         "critical": "#f06f61",
+        "group_panel_panel_background": "#333738",
+        "group_panel_info_color": "#2f3334",
+        "group_panel_info_font": "#f2f2f2",
+        "group_panel_info_border": "#565f61",
+        "group_panel_header_color": "#66b2d8",
+        "group_panel_header_font": "#11191c",
+        "group_panel_group_background": "#2f3334",
+        "group_panel_group_border": "#565f61",
+        "group_panel_group_font": "#f2f2f2",
+        "group_panel_control_color": "#b8c0c2",
+        "group_panel_control_active": "#7dc4e4",
+        "group_panel_control_disabled": "#303435",
+        "group_panel_input_color": "#222627",
+        "group_panel_input_font": "#f2f2f2",
+        "group_panel_button_background": "#42484a",
+        "group_panel_scrollbar_border": "#565f61",
+        "group_panel_scrollbar_trough": "#2a2d2e",
+        "group_settings_panel_background": "#333738",
+        "group_settings_header_color": "#66b2d8",
+        "group_settings_group_border": "#565f61",
+        "group_settings_control_color": "#b8c0c2",
+        "group_settings_control_active": "#7dc4e4",
+        "group_settings_control_disabled": "#303435",
+        "group_settings_scrollbar_border": "#565f61",
+        "group_settings_scrollbar_trough": "#2a2d2e",
+        "group_settings_tree_select": "#66b2d8",
+        "group_settings_tree_unselected": "#222627",
+        "group_settings_tree_subheader": "#3c4142",
+        "group_settings_link_color": "#f2f2f2",
+        "command_tabs_frame_border": "#565f61",
+        "command_tabs_tab_color": "#3c4142",
+        "command_tabs_tab_selected": "#66b2d8",
+        "command_tabs_tab_hover": "#7dc4e4",
+        "console_background_color": "#171a1b",
+        "console_border_color": "#565f61",
+        "console_stdout_color": "#dfe7e9",
+        "console_stderr_color": "#df7b7b",
+        "console_info_color": "#7fb9e3",
+        "console_verbose_color": "#9fca8b",
+        "console_warning_color": "#d8b866",
+        "console_critical_color": "#f06f61",
+        "console_error_color": "#df7b7b",
+        "console_scrollbar_border_key": "#565f61",
+        "console_scrollbar_trough_key": "#2a2d2e",
+        "console_scrollbar_background_normal_key": "#42484a",
+        "console_scrollbar_background_disabled_key": "#303435",
+        "console_scrollbar_background_active_key": "#4d5557",
+        "console_scrollbar_foreground_normal_key": "#dfe7e9",
+        "console_scrollbar_foreground_disabled_key": "#b8c0c2",
+        "console_scrollbar_foreground_active_key": "#dfe7e9",
+        "console_scrollbar_border_normal_key": "#565f61",
+        "console_scrollbar_border_disabled_key": "#303435",
+        "console_scrollbar_border_active_key": "#66b2d8",
+        "tooltip_background_color": "#ffffea",
+        "tooltip_border_color": "#ffffea",
+        "tooltip_font_color": "#000000",
     }
     DEFAULT_ICONS: T.ClassVar[dict[str, str]] = {
         "favicon": "favicon",
@@ -139,7 +237,7 @@ def load_theme(filename: str | Path | None = None) -> QtTheme:
     """Load a theme from disk, or return the default theme when omitted."""
     if filename is None:
         return QtTheme.default()
-    payload = get_serializer("json").load(str(filename))
+    payload = get_serializer("json").load(str(Path(filename)))
     if not isinstance(payload, dict):
         raise ValueError("Qt theme file must contain a mapping")
     return QtTheme.from_mapping(payload)
@@ -178,9 +276,7 @@ def render_qss(theme: QtTheme) -> str:
             "QMenuBar::item:selected, QMenuBar::item:pressed { "
             f"background-color: {theme.color('menu_hover')}; "
             f"color: {theme.color('menu_text')}; }}",
-            "QMenu { "
-            f"padding: {half_spacing}px 0; "
-            f"border: 1px solid {theme.color('border')}; }}",
+            f"QMenu {{ padding: {half_spacing}px 0; border: 1px solid {theme.color('border')}; }}",
             "QMenu::item { "
             f"padding: {half_spacing}px {spacing * 3}px {half_spacing}px {spacing * 2}px; "
             f"background-color: transparent; }}",
@@ -281,7 +377,7 @@ def render_qss(theme: QtTheme) -> str:
             "QPlainTextEdit#qt-shell-console { "
             f"padding: {half_spacing}px; "
             f"border: 1px solid {theme.color('border')}; "
-            f"font-family: \"{theme.font_family}\"; "
+            f'font-family: "{theme.font_family}"; '
             f"font-size: {theme.font_size}pt; }}",
             f"QLabel[status='success'] {{ color: {theme.color('success')}; }}",
             f"QLabel[status='warning'] {{ color: {theme.color('warning')}; }}",
@@ -332,70 +428,145 @@ def _valid_colors(raw_colors: T.Mapping[object, object]) -> dict[str, str]:
     }
 
 
+_LEGACY_COLOR_TOKENS: dict[str, dict[str, tuple[str, ...]]] = {
+    "group_panel": {
+        "panel_background": (
+            "group_panel_panel_background",
+            "window",
+            "panel",
+            "dialog_background",
+        ),
+        "info_color": ("group_panel_info_color", "info_background"),
+        "info_font": ("group_panel_info_font", "info_text"),
+        "info_border": ("group_panel_info_border", "info_border"),
+        "header_color": ("group_panel_header_color", "accent"),
+        "header_font": ("group_panel_header_font", "accent_text"),
+        "group_background": ("group_panel_group_background", "panel_alt", "section", "input_focus"),
+        "group_border": ("group_panel_group_border", "border"),
+        "group_font": ("group_panel_group_font", "text"),
+        "control_color": ("group_panel_control_color", "muted_text", "button_hover"),
+        "control_active": ("group_panel_control_active", "accent_hover"),
+        "control_disabled": ("group_panel_control_disabled", "button_disabled"),
+        "input_color": ("group_panel_input_color", "input_background"),
+        "input_font": ("group_panel_input_font", "input_text"),
+        "button_background": ("group_panel_button_background", "button"),
+        "scrollbar_border": ("group_panel_scrollbar_border", "scrollbar_border"),
+        "scrollbar_trough": ("group_panel_scrollbar_trough", "scrollbar_trough"),
+    },
+    "group_settings": {
+        "panel_background": ("group_settings_panel_background", "settings_panel"),
+        "header_color": ("group_settings_header_color", "settings_accent"),
+        "group_border": ("group_settings_group_border", "settings_border"),
+        "control_color": ("group_settings_control_color", "settings_control"),
+        "control_active": ("group_settings_control_active", "settings_control_active"),
+        "control_disabled": ("group_settings_control_disabled", "settings_control_disabled"),
+        "scrollbar_border": ("group_settings_scrollbar_border", "settings_scrollbar_border"),
+        "scrollbar_trough": ("group_settings_scrollbar_trough", "settings_scrollbar_trough"),
+        "tree_select": ("group_settings_tree_select", "settings_tree_select"),
+        "tree_unselected": ("group_settings_tree_unselected", "settings_tree_unselected"),
+        "tree_subheader": ("group_settings_tree_subheader", "settings_tree_subheader"),
+        "link_color": ("group_settings_link_color", "settings_link"),
+    },
+    "command_tabs": {
+        "frame_border": ("command_tabs_frame_border", "tab_border", "border"),
+        "tab_color": ("command_tabs_tab_color", "tab_background", "panel_alt"),
+        "tab_selected": ("command_tabs_tab_selected", "tab_selected", "accent"),
+        "tab_hover": ("command_tabs_tab_hover", "tab_hover", "accent_hover"),
+    },
+    "console": {
+        "background_color": ("console_background_color", "console_background"),
+        "border_color": ("console_border_color", "console_border"),
+        "stdout_color": ("console_stdout_color", "console_text", "stdout"),
+        "stderr_color": ("console_stderr_color", "stderr"),
+        "info_color": ("console_info_color", "info"),
+        "verbose_color": ("console_verbose_color", "verbose"),
+        "warning_color": ("console_warning_color", "warning"),
+        "critical_color": ("console_critical_color", "critical"),
+        "error_color": ("console_error_color", "error"),
+        "scrollbar_border": ("console_scrollbar_border_key", "console_scrollbar_border"),
+        "scrollbar_trough": ("console_scrollbar_trough_key", "console_scrollbar_trough"),
+        "scrollbar_background_normal": (
+            "console_scrollbar_background_normal_key",
+            "console_scrollbar_background_normal",
+        ),
+        "scrollbar_background_disabled": (
+            "console_scrollbar_background_disabled_key",
+            "console_scrollbar_background_disabled",
+        ),
+        "scrollbar_background_active": (
+            "console_scrollbar_background_active_key",
+            "console_scrollbar_background_active",
+        ),
+        "scrollbar_foreground_normal": (
+            "console_scrollbar_foreground_normal_key",
+            "console_scrollbar_foreground_normal",
+        ),
+        "scrollbar_foreground_disabled": (
+            "console_scrollbar_foreground_disabled_key",
+            "console_scrollbar_foreground_disabled",
+        ),
+        "scrollbar_foreground_active": (
+            "console_scrollbar_foreground_active_key",
+            "console_scrollbar_foreground_active",
+        ),
+        "scrollbar_border_normal": (
+            "console_scrollbar_border_normal_key",
+            "console_scrollbar_border_normal",
+        ),
+        "scrollbar_border_disabled": (
+            "console_scrollbar_border_disabled_key",
+            "console_scrollbar_border_disabled",
+        ),
+        "scrollbar_border_active": (
+            "console_scrollbar_border_active_key",
+            "console_scrollbar_border_active",
+        ),
+    },
+    "tooltip": {
+        "background_color": ("tooltip_background_color", "tooltip_background"),
+        "border_color": ("tooltip_border_color", "tooltip_border"),
+        "font_color": ("tooltip_font_color", "tooltip_text"),
+    },
+}
+
+_METADATA_KEYS = {"info"}
+
+
 def _legacy_theme_colors(payload: T.Mapping[str, T.Any]) -> dict[str, str]:
     """Translate legacy Tk theme sections into Qt theme tokens when present."""
-    group = payload.get("group_panel")
-    tabs = payload.get("command_tabs")
-    console = payload.get("console")
     translated: dict[str, str] = {}
-    if isinstance(group, dict):
-        mapping = {
-            "window": "panel_background",
-            "panel": "panel_background",
-            "panel_alt": "group_background",
-            "section": "group_background",
-            "text": "group_font",
-            "muted_text": "control_color",
-            "border": "group_border",
-            "accent": "header_color",
-            "accent_hover": "control_active",
-            "accent_text": "header_font",
-            "input_background": "input_color",
-            "input_focus": "group_background",
-            "button": "button_background",
-            "button_hover": "control_color",
-            "button_disabled": "control_disabled",
-            "dialog_background": "panel_background",
-        }
-        translated.update(_section_colors(group, mapping))
-    if isinstance(tabs, dict):
-        translated.update(
-            _section_colors(
-                tabs,
-                {
-                    "border": "frame_border",
-                    "panel_alt": "tab_color",
-                    "accent": "tab_selected",
-                    "accent_hover": "tab_hover",
-                },
-            )
-        )
-    if isinstance(console, dict):
-        translated.update(
-            _section_colors(
-                console,
-                {
-                    "console_background": "background_color",
-                    "console_text": "stdout_color",
-                    "info": "info_color",
-                    "verbose": "verbose_color",
-                    "warning": "warning_color",
-                    "critical": "critical_color",
-                    "error": "error_color",
-                },
-            )
-        )
+    for section_name, mapping in _LEGACY_COLOR_TOKENS.items():
+        section = payload.get(section_name)
+        if not isinstance(section, dict):
+            continue
+        translated.update(_section_colors(section, mapping))
+        _log_unknown_legacy_keys(section_name, section, mapping)
     return translated
 
 
-def _section_colors(section: T.Mapping[object, object], mapping: dict[str, str]) -> dict[str, str]:
+def _section_colors(
+    section: T.Mapping[object, object],
+    mapping: dict[str, tuple[str, ...]],
+) -> dict[str, str]:
     """Return valid theme token colors from one legacy section mapping."""
     colors: dict[str, str] = {}
-    for token, legacy_key in mapping.items():
+    for legacy_key, tokens in mapping.items():
         value = section.get(legacy_key)
         if isinstance(value, str) and _HEX_COLOR_RE.match(value):
-            colors[token] = value
+            colors.update({token: value for token in tokens})
     return colors
+
+
+def _log_unknown_legacy_keys(
+    section_name: str,
+    section: T.Mapping[object, object],
+    mapping: dict[str, tuple[str, ...]],
+) -> None:
+    """Log unsupported legacy JSON keys without rejecting permissive theme files."""
+    for key in section:
+        if not isinstance(key, str) or key in mapping or key in _METADATA_KEYS:
+            continue
+        logger.debug("Ignoring unknown legacy theme key: %s.%s", section_name, key)
 
 
 def _positive_int(value: object, default: int) -> int:
