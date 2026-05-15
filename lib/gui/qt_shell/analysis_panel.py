@@ -308,7 +308,11 @@ class AnalysisPanel(QWidget):
     def _selection_changed(self) -> None:
         """Update selected-session detail from the current table selection."""
         row_index = self._table.currentRow()
-        row = None if row_index < 0 or row_index >= len(self._display_rows) else self._display_rows[row_index]
+        row = (
+            None
+            if row_index < 0 or row_index >= len(self._display_rows)
+            else self._display_rows[row_index]
+        )
         self._selection_label.setText(self._summary_service.row_detail(row))
 
     def _update_summary_status(self) -> None:

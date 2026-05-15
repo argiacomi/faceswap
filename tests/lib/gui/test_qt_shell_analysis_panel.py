@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtWidgets import QLabel, QPushButton, QComboBox, QTableWidget
+from PySide6.QtWidgets import QComboBox, QLabel, QPushButton, QTableWidget
 
 from lib.gui.services.command_context import CommandExecutionContext
 
@@ -120,7 +120,9 @@ def test_analysis_panel_initial_state(qtbot) -> None:  # type:ignore[no-untyped-
     ]
     assert _label(panel, "source").text() == "No session source loaded"
     assert _label(panel, "status").text() == "No session data loaded"
-    assert _label(panel, "detail").text() == "Rows: 0 | Graphs: 0 | Iterations: 0 | Avg EGs/sec: 0.00"
+    assert (
+        _label(panel, "detail").text() == "Rows: 0 | Graphs: 0 | Iterations: 0 | Avg EGs/sec: 0.00"
+    )
     assert _label(panel, "selection").text() == "No session selected"
     assert _button(panel, "open").isEnabled() is True
     assert _button(panel, "refresh").isEnabled() is False
@@ -156,7 +158,10 @@ def test_analysis_panel_loads_session_rows(qtbot, tmp_path: Path) -> None:  # ty
     assert table.item(1, 1).data(0x0100) == "total"
     assert _label(panel, "source").text() == f"my_model  |  {tmp_path}"
     assert _label(panel, "status").text() == "Loaded session: 2 rows, 1 graph, 200 iterations"
-    assert _label(panel, "detail").text() == "Rows: 2 | Graphs: 1 | Iterations: 200 | Avg EGs/sec: 53.30"
+    assert (
+        _label(panel, "detail").text()
+        == "Rows: 2 | Graphs: 1 | Iterations: 200 | Avg EGs/sec: 53.30"
+    )
     assert _button(panel, "refresh").isEnabled() is True
     assert _button(panel, "save").isEnabled() is True
     assert _button(panel, "clear").isEnabled() is True
@@ -201,7 +206,10 @@ def test_analysis_panel_filters_groups_and_selects_session_rows(qtbot, tmp_path:
 
     assert table.rowCount() == 2
     assert [table.item(row, 1).text() for row in range(table.rowCount())] == ["1", "Total"]
-    assert _label(panel, "detail").text() == "Rows: 2 | Graphs: 2 | Iterations: 200 | Avg EGs/sec: 50.00"
+    assert (
+        _label(panel, "detail").text()
+        == "Rows: 2 | Graphs: 2 | Iterations: 200 | Avg EGs/sec: 50.00"
+    )
 
     _combo(panel, "filter").setCurrentText("All sessions")
     _combo(panel, "group").setCurrentText("Total vs sessions")
@@ -210,7 +218,10 @@ def test_analysis_panel_filters_groups_and_selects_session_rows(qtbot, tmp_path:
 
     table.setCurrentCell(1, 1)
 
-    assert _label(panel, "selection").text() == "Selected session 1: 100 iterations, batch 16, graph available"
+    assert (
+        _label(panel, "selection").text()
+        == "Selected session 1: 100 iterations, batch 16, graph available"
+    )
 
 
 def test_analysis_panel_loads_from_model_context(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
@@ -264,7 +275,9 @@ def test_analysis_panel_clear_resets_table_and_service(qtbot, tmp_path: Path) ->
     assert panel.displayed_rows == ()
     assert _label(panel, "source").text() == "No session source loaded"
     assert _label(panel, "status").text() == "No session data loaded"
-    assert _label(panel, "detail").text() == "Rows: 0 | Graphs: 0 | Iterations: 0 | Avg EGs/sec: 0.00"
+    assert (
+        _label(panel, "detail").text() == "Rows: 0 | Graphs: 0 | Iterations: 0 | Avg EGs/sec: 0.00"
+    )
     assert _label(panel, "selection").text() == "No session selected"
     assert _button(panel, "refresh").isEnabled() is False
     assert _button(panel, "save").isEnabled() is False
