@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Collects and returns Information on available Apple Silicon SoCs in Apple Macs."""
 
-import os
 import typing as T
 
 import psutil
@@ -65,13 +64,6 @@ class AppleSiliconStats(_GPUStats):
             return
 
         self._log("debug", "Performing first time Apple SoC setup.")
-
-        os.environ["DISPLAY"] = ":0"
-
-        try:
-            os.system("open -a XQuartz")
-        except Exception as err:  # pylint:disable=broad-except
-            self._log("debug", f"Swallowing error opening XQuartz: {str(err)}")
 
         self._test_torch()
 
