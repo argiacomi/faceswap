@@ -53,6 +53,7 @@ from lib.landmarks.schema import CANONICAL_SCHEMA
 DEFAULT_OBJECTIVE: str = "extract_alignment_v1"
 DEFAULT_REGRESSION_EPSILON_NME: float = 0.001
 SUBSET_PRESETS: tuple[str, ...] = ("all", "pairs", "triples")
+CandidateProgress = T.Callable[[T.Sequence["Candidate"]], T.Iterable["Candidate"]]
 
 
 @dataclass(frozen=True)
@@ -509,10 +510,17 @@ def run_candidate_search(
     objective: str = DEFAULT_OBJECTIVE,
     regression_epsilon_nme: float = DEFAULT_REGRESSION_EPSILON_NME,
     failure_threshold: float = 0.08,
+    progress: CandidateProgress | None = None,
 ) -> list[CandidateResult]:
-    """Evaluate every candidate and return CandidateResults sorted by score."""
+    """Evaluate every candidate and return CandidateResults sorted by score.
+
+    ``progress`` optionally wraps the candidate sequence for user-facing tools
+    such as CLIs that want a tqdm bar without making this library depend on
+    tqdm directly.
+    """
     results: list[CandidateResult] = []
-    for candidate in candidates:
+    iterator = progress(candidates) if progress is not None else candidates
+    for candidate in iterator:
         fit_result, metrics = evaluate_candidate(
             candidate,
             fit_samples=fit_samples,
@@ -563,6 +571,7 @@ def load_split_samples(
 __all__ = [
     "Candidate",
     "CandidateMetrics",
+    "CandidateProgress",
     "CandidateResult",
     "DEFAULT_OBJECTIVE",
     "DEFAULT_REGRESSION_EPSILON_NME",
