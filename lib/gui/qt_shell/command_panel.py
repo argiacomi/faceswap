@@ -16,7 +16,6 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QGridLayout,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -26,6 +25,7 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QSlider,
     QTabBar,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -33,6 +33,71 @@ from PySide6.QtWidgets import (
 from lib.gui.qt_shell.command_schema import CommandSchema, OptionSpec
 
 IS_WINDOWS = os.name == "nt"
+
+
+class OptionGroupDrawer(QWidget):
+    """Collapsible drawer for an option group (Tk ``ToggledFrame`` parity).
+
+    Uses a disclosure-arrow QToolButton header rather than a checkbox so the
+    affordance reads as expand/collapse rather than enable/disable.
+    """
+
+    def __init__(self, title: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("qt-shell-option-group")
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        self._toggle = QToolButton()
+        self._toggle.setText(title)
+        self._toggle.setObjectName("qt-shell-option-group-toggle")
+        self._toggle.setCheckable(True)
+        self._toggle.setChecked(True)
+        self._toggle.setArrowType(Qt.DownArrow)
+        self._toggle.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self._toggle.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self._toggle.toggled.connect(self._on_toggled)
+        outer.addWidget(self._toggle)
+
+        self._content = QWidget()
+        self._content.setObjectName("qt-shell-option-group-content")
+        self._content.setMinimumWidth(0)
+        self._content.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self._form = QFormLayout(self._content)
+        self._form.setContentsMargins(10, 4, 10, 10)
+        self._form.setHorizontalSpacing(12)
+        self._form.setVerticalSpacing(6)
+        self._form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        outer.addWidget(self._content)
+
+    @property
+    def form(self) -> QFormLayout:
+        """Return the inner QFormLayout where option rows live."""
+        return self._form
+
+    def title(self) -> str:
+        """Return the drawer title (mirrors QGroupBox.title())."""
+        return self._toggle.text()
+
+    def isCheckable(self) -> bool:  # noqa: N802 - Qt-style camelCase for test parity
+        """Drawers are always collapsible; kept for test-shape compatibility."""
+        return True
+
+    def isChecked(self) -> bool:  # noqa: N802
+        """Return whether the drawer is currently expanded."""
+        return self._toggle.isChecked()
+
+    def setChecked(self, expanded: bool) -> None:  # noqa: N802
+        """Expand (``True``) or collapse (``False``) the drawer."""
+        self._toggle.setChecked(expanded)
+
+    def _on_toggled(self, expanded: bool) -> None:
+        """Update arrow direction and hide content when collapsed."""
+        self._toggle.setArrowType(Qt.DownArrow if expanded else Qt.RightArrow)
+        self._content.setVisible(expanded)
 
 
 class OptionsFormRenderer(QWidget):
@@ -125,25 +190,19 @@ class OptionsFormRenderer(QWidget):
     def _add_group_section(self, group: str | None) -> QFormLayout:
         """Add a visually separated section for one CLI option group.
 
-        Titled groups become collapsible (Tk ``ToggledFrame`` parity): toggling the
-        section title hides every field belonging to that group without removing it
-        from the rendered form.
+        Titled groups render as an :class:`OptionGroupDrawer` (disclosure-arrow
+        toggle, Tk ``ToggledFrame`` parity). Untitled / ``_master`` groups remain
+        a plain widget so they bleed into the surrounding layout.
         """
         has_title = bool(group and group != "_master")
         if has_title:
-            section = QGroupBox(str(group).title())
-            section.setCheckable(True)
-            section.setChecked(True)
-            section.toggled.connect(
-                lambda checked, sec=section: self._set_group_collapsed(sec, not checked)
-            )
-        else:
-            section = QWidget()
+            drawer = OptionGroupDrawer(str(group).title())
+            self._layout.addWidget(drawer)
+            return drawer.form
+        section = QWidget()
         section.setMinimumWidth(0)
         section.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-        section.setObjectName(
-            "qt-shell-option-group" if has_title else "qt-shell-option-group-master"
-        )
+        section.setObjectName("qt-shell-option-group-master")
         form = QFormLayout(section)
         form.setContentsMargins(10, 8, 10, 10)
         form.setHorizontalSpacing(12)
@@ -151,21 +210,6 @@ class OptionsFormRenderer(QWidget):
         form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
         self._layout.addWidget(section)
         return form
-
-    @staticmethod
-    def _set_group_collapsed(section: QGroupBox, collapsed: bool) -> None:
-        """Show or hide every field in ``section`` without dropping it from layout."""
-        form = section.layout()
-        if form is None:
-            return
-        for row in range(form.rowCount()):
-            for role in (QFormLayout.LabelRole, QFormLayout.FieldRole):
-                item = form.itemAt(row, role)
-                if item is None:
-                    continue
-                widget = item.widget()
-                if widget is not None:
-                    widget.setVisible(not collapsed)
 
     def _label_for(self, spec: OptionSpec) -> QLabel:
         """Return a label with optional help tooltip and required marker."""
@@ -303,13 +347,13 @@ class OptionsFormRenderer(QWidget):
     def _row_widget(self, spec: OptionSpec, widget: QWidget) -> QWidget:
         """Return the row widget, wrapping path options with browse buttons.
 
-        Adds a muted helptext hint label under the control when helptext is set,
-        matching the Tk parity that exposes guidance inline rather than only on hover.
+        Helptext lives on the tooltip only; we deliberately do not duplicate it as
+        an inline label because option helptext can run several sentences long and
+        bloats the panel vertically when stacked under every field.
         """
-        control = widget
         if spec.browser_modes and isinstance(widget, QLineEdit):
-            control = self._wrap_with_browsers(spec, widget)
-        return self._wrap_with_helptext_hint(spec, control)
+            return self._wrap_with_browsers(spec, widget)
+        return widget
 
     def _wrap_with_browsers(self, spec: OptionSpec, widget: QLineEdit) -> QWidget:
         """Wrap a line edit with browse buttons for the configured browser modes."""
@@ -330,33 +374,6 @@ class OptionsFormRenderer(QWidget):
             )
             layout.addWidget(button)
         return row
-
-    def _wrap_with_helptext_hint(self, spec: OptionSpec, control: QWidget) -> QWidget:
-        """Return ``control`` stacked above a muted helptext hint label.
-
-        If the option has no helptext the control is returned unchanged so the form
-        layout stays compact for unannotated options.
-        """
-        if not spec.helptext:
-            return control
-        hint_text = self._format_hint(spec.helptext)
-        if not hint_text:
-            return control
-        container = QWidget()
-        container.setMinimumWidth(0)
-        container.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-        layout = QVBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(2)
-        layout.addWidget(control)
-        hint = QLabel(hint_text)
-        hint.setObjectName("qt-shell-option-hint")
-        hint.setProperty("status", "info")
-        hint.setWordWrap(True)
-        hint.setToolTip(spec.helptext)
-        hint.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-        layout.addWidget(hint)
-        return container
 
     def _value_for(self, spec: OptionSpec) -> object:
         """Read and normalize an option widget value."""
@@ -629,16 +646,6 @@ class OptionsFormRenderer(QWidget):
                 for part in parts
             ]
         return parts
-
-    @staticmethod
-    def _format_hint(helptext: str) -> str:
-        """Return a single-line truncated helptext suitable for the inline hint."""
-        if not helptext:
-            return ""
-        first = helptext.strip().splitlines()[0].strip()
-        if len(first) <= 120:
-            return first
-        return first[:117].rstrip() + "..."
 
     @staticmethod
     def _string_value(value: object) -> str:
