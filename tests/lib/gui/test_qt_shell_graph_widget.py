@@ -24,6 +24,15 @@ def _snapshot() -> TrainingGraphSnapshot:
     )
 
 
+def _long_snapshot(count: int = 100_000) -> TrainingGraphSnapshot:
+    """Return a large graph snapshot for long-history renderer checks."""
+    return TrainingGraphSnapshot(
+        source=None,
+        session_id=None,
+        series=(TrainingGraphSeries("loss", tuple(float(index % 100) for index in range(count))),),
+    )
+
+
 def test_graph_widget_renders_all_series_by_default(qtbot) -> None:  # type:ignore[no-untyped-def]
     """Graph widget should render every series when no selection is provided."""
     widget = TrainingGraphWidget()
@@ -63,33 +72,73 @@ def test_graph_widget_clear_resets_state(qtbot) -> None:  # type:ignore[no-untyp
     qtbot.addWidget(widget)
     widget.set_snapshot(_snapshot())
     widget.zoom_in()
+    widget.zoom_y_in()
 
     widget.clear()
 
     assert widget.series == ()
     assert widget.selected_keys == ()
     assert widget.status_text == "No graph data loaded"
-    assert widget.zoom == 1.0
-    assert widget.pan == 0.0
+    assert widget.viewport == (1.0, 1.0, 0.0, 0.0)
 
 
 def test_graph_widget_zoom_and_reset_view(qtbot) -> None:  # type:ignore[no-untyped-def]
-    """Graph widget should expose bounded zoom controls."""
+    """Graph widget should expose bounded x/y zoom controls."""
     widget = TrainingGraphWidget()
     qtbot.addWidget(widget)
     widget.set_snapshot(_snapshot())
 
     widget.zoom_in()
+    widget.zoom_y_in()
+
     assert widget.zoom > 1.0
+    assert widget.y_zoom > 1.0
 
     widget.zoom_out()
+    widget.zoom_y_out()
+
     assert widget.zoom == 1.0
+    assert widget.y_zoom == 1.0
 
     widget.zoom_in()
+    widget.zoom_y_in()
     widget.reset_view()
 
-    assert widget.zoom == 1.0
-    assert widget.pan == 0.0
+    assert widget.viewport == (1.0, 1.0, 0.0, 0.0)
+
+
+def test_graph_widget_decimates_long_history_for_fast_paint(qtbot) -> None:  # type:ignore[no-untyped-def]
+    """Long histories should be capped to a viewport-sized point budget."""
+    widget = TrainingGraphWidget()
+    qtbot.addWidget(widget)
+    widget.resize(320, 240)
+    widget.set_snapshot(_long_snapshot())
+    rect = widget.rect().adjusted(44, 16, -16, -28)
+
+    points = widget._points_for_series(  # pylint:disable=protected-access
+        widget.series[0],
+        0.0,
+        99.0,
+        rect,
+    )
+
+    assert len(points) <= rect.width() * widget.MAX_POINTS_PER_PIXEL
+    assert widget.last_decimated_count == len(points)
+
+
+def test_graph_widget_visible_values_respect_x_zoom_and_pan(qtbot) -> None:  # type:ignore[no-untyped-def]
+    """Zoom/pan should expose a bounded subsection of the graph history."""
+    widget = TrainingGraphWidget()
+    qtbot.addWidget(widget)
+    widget.set_snapshot(_long_snapshot(100))
+
+    widget.zoom_in()
+    widget._set_pan(1.0)  # pylint:disable=protected-access
+
+    visible = widget._visible_values(widget.series[0].values)  # pylint:disable=protected-access
+
+    assert 2 <= len(visible) < 100
+    assert visible[-1] == 99.0
 
 
 def test_graph_widget_saves_image_when_data_loaded(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
@@ -99,6 +148,18 @@ def test_graph_widget_saves_image_when_data_loaded(qtbot, tmp_path: Path) -> Non
     widget.resize(320, 240)
     widget.set_snapshot(_snapshot())
     filename = tmp_path / "chart.png"
+
+    assert widget.save_image(filename) is True
+    assert filename.exists()
+
+
+def test_graph_widget_saves_jpeg_when_requested(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+    """Image export should infer common formats from filename suffixes."""
+    widget = TrainingGraphWidget()
+    qtbot.addWidget(widget)
+    widget.resize(320, 240)
+    widget.set_snapshot(_snapshot())
+    filename = tmp_path / "chart.jpg"
 
     assert widget.save_image(filename) is True
     assert filename.exists()
