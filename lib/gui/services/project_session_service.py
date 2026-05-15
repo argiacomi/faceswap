@@ -15,8 +15,6 @@ PROJECT_KIND = "project"
 TASK_KIND = "task"
 PROJECT_EXTENSION = ".fsw"
 TASK_EXTENSION = ".fst"
-UNTITLED_PROJECT_TITLE = "<untitled project>"
-WINDOW_TITLE_PREFIX = "Faceswap.py"
 
 
 @dataclass(frozen=True)
@@ -58,10 +56,10 @@ class ProjectSessionService:
 
     @staticmethod
     def title(filename: str | None, *, modified: bool) -> str:
-        """Return a Tk-compatible window title for current filename and dirty state."""
-        basename = Path(filename).name if filename else UNTITLED_PROJECT_TITLE
+        """Return a window title for current filename and dirty state."""
+        basename = Path(filename).name if filename else "Untitled"
         dirty = "*" if modified else ""
-        return f"{WINDOW_TITLE_PREFIX} - {basename}{dirty}"
+        return f"Faceswap Qt Shell Prototype - {basename}{dirty}"
 
     @staticmethod
     def snapshot_project(
