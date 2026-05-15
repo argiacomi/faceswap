@@ -50,6 +50,9 @@
 !tests/**/*.py
 !tests/**/*.mp4
 !tests/**/*.jpg
+!tests/lib/gui/data/*.fsw
+!tests/lib/gui/data/*.fst
+!tests/lib/gui/data/*.json
 
 # Core files
 !.fs_cache
