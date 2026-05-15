@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import json
 import typing as T
@@ -12,6 +14,8 @@ from pathlib import Path
 import numpy as np
 
 from lib.landmarks.schema import LandmarkPrediction, normalize_landmarks
+
+_SAMPLE_DIR_PREFIX = "sample-"
 
 
 @dataclass(frozen=True)
@@ -25,6 +29,24 @@ class PredictionCacheMetadata:
     config_hash: str
     source_landmark_count: int
     prediction_hash: str
+
+
+def _encode_sample_id(sample_id: str) -> str:
+    """Return a filesystem-safe, reversible cache directory name."""
+    token = base64.urlsafe_b64encode(sample_id.encode("utf-8")).decode("ascii")
+    return _SAMPLE_DIR_PREFIX + token.rstrip("=")
+
+
+def _decode_sample_dir_name(name: str) -> str:
+    """Return the sample id for an encoded cache directory name."""
+    if not name.startswith(_SAMPLE_DIR_PREFIX):
+        return name
+    token = name[len(_SAMPLE_DIR_PREFIX) :]
+    token += "=" * (-len(token) % 4)
+    try:
+        return base64.urlsafe_b64decode(token.encode("ascii")).decode("utf-8")
+    except (binascii.Error, UnicodeDecodeError):
+        return name
 
 
 def config_hash(config: T.Mapping[str, T.Any] | str) -> str:
@@ -44,22 +66,36 @@ def prediction_hash(points: np.ndarray) -> str:
 
 
 class DiskPredictionCache:
-    """Store predictions as ``sample_id/model.npy`` with ``metadata.json``."""
+    """Store predictions in filesystem-safe sample directories."""
 
     def __init__(self, root: str | Path = "outputs/landmark_predictions") -> None:
         self.root = Path(root)
 
     def sample_dir(self, sample_id: str) -> Path:
         """Return the directory for a sample."""
+        return self.root / _encode_sample_id(sample_id)
+
+    def _legacy_sample_dir(self, sample_id: str) -> Path:
+        """Return the pre-encoding directory for a sample."""
         return self.root / sample_id
+
+    def _existing_sample_dir(self, sample_id: str) -> Path:
+        """Return an existing sample directory, preferring encoded cache paths."""
+        sample_dir = self.sample_dir(sample_id)
+        if sample_dir.exists():
+            return sample_dir
+        legacy_sample_dir = self._legacy_sample_dir(sample_id)
+        if legacy_sample_dir.exists():
+            return legacy_sample_dir
+        return sample_dir
 
     def prediction_path(self, sample_id: str, model_name: str) -> Path:
         """Return the prediction array path."""
-        return self.sample_dir(sample_id) / f"{model_name}.npy"
+        return self._existing_sample_dir(sample_id) / f"{model_name}.npy"
 
     def metadata_path(self, sample_id: str) -> Path:
         """Return the metadata path for a sample."""
-        return self.sample_dir(sample_id) / "metadata.json"
+        return self._existing_sample_dir(sample_id) / "metadata.json"
 
     def load_metadata(self, sample_id: str) -> dict[str, dict[str, T.Any]]:
         """Load metadata for a sample."""
@@ -113,7 +149,7 @@ class DiskPredictionCache:
         refresh: bool = False,
     ) -> Path:
         """Write one prediction and update sample metadata."""
-        sample_dir = self.sample_dir(sample_id)
+        sample_dir = self._existing_sample_dir(sample_id)
         sample_dir.mkdir(parents=True, exist_ok=True)
         model_name = prediction.model_name
         path = self.prediction_path(sample_id, model_name)
@@ -166,5 +202,11 @@ class DiskPredictionCache:
         if not self.root.is_dir():
             return ()
         return tuple(
-            sorted(path.name for path in self.root.iterdir() if (path / "metadata.json").is_file())
+            sorted(
+                {
+                    _decode_sample_dir_name(path.name)
+                    for path in self.root.iterdir()
+                    if (path / "metadata.json").is_file()
+                }
+            )
         )
