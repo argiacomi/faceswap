@@ -75,6 +75,11 @@ class AnalysisTableRow:
             self.rate,
         )
 
+    @property
+    def is_total(self) -> bool:
+        """Return whether this row is the aggregate total row."""
+        return str(self.session).lower() == "total"
+
     @classmethod
     def from_summary(cls, summary: T.Mapping[str, T.Any]) -> AnalysisTableRow:
         """Create a table row from a legacy Analysis summary dictionary."""
@@ -157,6 +162,30 @@ class AnalysisSessionService:
             Whether the loaded session is the currently running training session.
         """
         source = self.resolve_source(state_file_or_folder)
+        return self.load_source(source, is_training=is_training)
+
+    def load_model(
+        self,
+        model_folder: str | Path,
+        model_name: str | None = None,
+        *,
+        is_training: bool = False,
+    ) -> tuple[AnalysisTableRow, ...]:
+        """Load Analysis data from a model folder and optional model name.
+
+        This mirrors Tk's analysis-folder callback while also allowing a training command context
+        to attach directly to its active ``model_folder``/``model_name`` pair.
+        """
+        source = self.resolve_model_source(model_folder, model_name)
+        return self.load_source(source, is_training=is_training)
+
+    def load_source(
+        self,
+        source: AnalysisSessionSource,
+        *,
+        is_training: bool = False,
+    ) -> tuple[AnalysisTableRow, ...]:
+        """Load Analysis rows from an already resolved source."""
         self.clear_session()
         session = self._session_or_default(import_default=True)
         assert session is not None
@@ -194,6 +223,22 @@ class AnalysisSessionService:
         session = self._session_or_default(import_default=False)
         if session is not None and session.is_loaded:
             session.clear()
+
+    def resolve_model_source(
+        self,
+        model_folder: str | Path,
+        model_name: str | None = None,
+    ) -> AnalysisSessionSource:
+        """Resolve a model state file from a model folder/name pair."""
+        folder = Path(model_folder)
+        if not folder.is_dir():
+            raise AnalysisSessionError(f"Analysis model folder does not exist: {folder}")
+        if model_name:
+            state_file = folder / f"{model_name}{self.STATE_SUFFIX}"
+            if not state_file.is_file():
+                raise AnalysisSessionError(f"Analysis source does not exist: {state_file}")
+            return self.resolve_source(state_file)
+        return self.resolve_source(folder)
 
     def resolve_source(self, state_file_or_folder: str | Path) -> AnalysisSessionSource:
         """Resolve a model state file from a file path or folder."""

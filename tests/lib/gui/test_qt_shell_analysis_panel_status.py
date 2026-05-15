@@ -58,7 +58,7 @@ def _label(panel: AnalysisPanel, name: str):  # type:ignore[no-untyped-def]
 
 
 def test_analysis_panel_uses_summary_metrics_status(qtbot) -> None:  # type:ignore[no-untyped-def]
-    """Loading rows should show graph and iteration summary metrics."""
+    """Loading rows should show graph, iteration and detail summary metrics."""
     service = _AnalysisServiceDouble()
     panel = AnalysisPanel(service=service)  # type:ignore[arg-type]
     qtbot.addWidget(panel)
@@ -66,6 +66,11 @@ def test_analysis_panel_uses_summary_metrics_status(qtbot) -> None:  # type:igno
     assert panel.load_session("ignored") is True
 
     assert _label(panel, "status").text() == "Loaded session: 2 rows, 1 graph, 1000 iterations"
+    assert (
+        _label(panel, "detail").text()
+        == "Rows: 2 | Graphs: 1 | Iterations: 1000 | Avg EGs/sec: 6.25"
+    )
+    assert _label(panel, "selection").text() == "No session selected"
 
 
 def test_analysis_panel_training_status(qtbot) -> None:  # type:ignore[no-untyped-def]
@@ -78,6 +83,7 @@ def test_analysis_panel_training_status(qtbot) -> None:  # type:ignore[no-untype
     assert panel.load_session("ignored") is True
 
     assert _label(panel, "status").text() == "Training session: 2 rows, 1 graph, 1000 iterations"
+    assert _label(panel, "source").text() == "Training: model  |  /models"
 
 
 def test_analysis_panel_loaded_empty_status(qtbot) -> None:  # type:ignore[no-untyped-def]
@@ -91,6 +97,9 @@ def test_analysis_panel_loaded_empty_status(qtbot) -> None:  # type:ignore[no-un
     assert panel.refresh_session() is True
 
     assert _label(panel, "status").text() == "Session loaded with no summary rows"
+    assert (
+        _label(panel, "detail").text() == "Rows: 0 | Graphs: 0 | Iterations: 0 | Avg EGs/sec: 0.00"
+    )
 
 
 def test_analysis_panel_clear_resets_summary_status(qtbot) -> None:  # type:ignore[no-untyped-def]
@@ -103,4 +112,8 @@ def test_analysis_panel_clear_resets_summary_status(qtbot) -> None:  # type:igno
     panel.clear_session()
 
     assert _label(panel, "status").text() == "No session data loaded"
+    assert (
+        _label(panel, "detail").text() == "Rows: 0 | Graphs: 0 | Iterations: 0 | Avg EGs/sec: 0.00"
+    )
+    assert _label(panel, "selection").text() == "No session selected"
     assert service.clear_count == 1
