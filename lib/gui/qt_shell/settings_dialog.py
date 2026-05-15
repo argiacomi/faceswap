@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 from lib.config import get_configs
 from lib.gui.qt_shell.command_panel import OptionsFormRenderer
 from lib.gui.qt_shell.command_schema import OptionSpec
+from lib.gui.qt_shell.theme import QtTheme, icon_for_action
 from lib.gui.utils import PATH_CACHE, get_config
 from lib.serializer import get_serializer
 from lib.utils import get_module_objects
@@ -142,6 +143,7 @@ class SettingsDialog(QDialog):
         serializer: T.Any | None = None,
         running_task_provider: T.Callable[[], bool] | None = None,
         gui_rebuild_callback: T.Callable[[], None] | None = None,
+        theme: QtTheme | None = None,
     ) -> None:
         super().__init__(parent)
         self.setObjectName("qt-shell-settings-dialog")
@@ -153,9 +155,12 @@ class SettingsDialog(QDialog):
         self._serializer = serializer or get_serializer("json")
         self._running_task_provider = running_task_provider
         self._gui_rebuild_callback = gui_rebuild_callback
+        self._theme = theme or QtTheme.default()
         self._sections = self._load_sections()
         self._options = self._load_options()
         self._cache: dict[str, QWidget] = {}
+        self._page_action_buttons: dict[str, QPushButton] = {}
+        self._footer_buttons: dict[str, QPushButton] = {}
         self._displayed_page: QWidget | None = None
         self._displayed_key: str | None = None
         self._header = QLabel("Settings")
@@ -247,13 +252,16 @@ class SettingsDialog(QDialog):
         layout.setSpacing(6)
         self._page_header.setObjectName("qt-shell-settings-page-header")
         layout.addWidget(self._page_header, 1)
-        for text, callback in (
-            ("Load Preset", self._load_preset),
-            ("Save Preset", self._save_preset),
+        for text, icon_name, callback in (
+            ("Load Preset", "open", self._load_preset),
+            ("Save Preset", "save", self._save_preset),
         ):
             button = QPushButton(text)
             button.setObjectName(f"qt-shell-settings-{text.lower().replace(' ', '-')}")
+            button.setIcon(icon_for_action(self._theme, icon_name))
+            button.setToolTip(f"{text} for the selected settings page")
             button.clicked.connect(lambda _checked=False, func=callback: func())
+            self._page_action_buttons[text] = button
             layout.addWidget(button)
         return widget
 
@@ -261,24 +269,37 @@ class SettingsDialog(QDialog):
         """Return footer action buttons."""
         layout = QHBoxLayout()
         buttons = {
-            "Save All": lambda: self.save(page_only=False),
-            "Reset All": lambda: self.reset(page_only=False),
-            "Cancel": self.close,
-            "Save": lambda: self.save(page_only=True),
-            "Reset": lambda: self.reset(page_only=True),
+            "Save All": (
+                "save",
+                "Save all settings in the selected top-level category",
+                lambda: self.save(page_only=False),
+            ),
+            "Reset All": (
+                "clear",
+                "Reset all settings in the selected top-level category",
+                lambda: self.reset(page_only=False),
+            ),
+            "Cancel": ("clear", "Close without saving additional changes", self.close),
+            "Save": ("save", "Save the selected settings page", lambda: self.save(page_only=True)),
+            "Reset": (
+                "reload",
+                "Reset the selected settings page",
+                lambda: self.reset(page_only=True),
+            ),
         }
-        created: dict[str, QPushButton] = {}
-        for text, callback in buttons.items():
+        for text, (icon_name, tooltip, callback) in buttons.items():
             button = QPushButton(text)
             button.setObjectName(f"qt-shell-settings-{text.lower().replace(' ', '-')}")
+            button.setIcon(icon_for_action(self._theme, icon_name))
+            button.setToolTip(tooltip)
             button.clicked.connect(lambda _checked=False, func=callback: func())
-            created[text] = button
-        layout.addWidget(created["Save All"])
-        layout.addWidget(created["Reset All"])
+            self._footer_buttons[text] = button
+        layout.addWidget(self._footer_buttons["Save All"])
+        layout.addWidget(self._footer_buttons["Reset All"])
         layout.addStretch(1)
-        layout.addWidget(created["Cancel"])
-        layout.addWidget(created["Save"])
-        layout.addWidget(created["Reset"])
+        layout.addWidget(self._footer_buttons["Cancel"])
+        layout.addWidget(self._footer_buttons["Save"])
+        layout.addWidget(self._footer_buttons["Reset"])
         return layout
 
     def _populate_tree(self) -> None:
@@ -288,6 +309,7 @@ class SettingsDialog(QDialog):
         for category in self._ordered_categories():
             item = QTreeWidgetItem([category.replace("_", " ").title()])
             item.setData(0, Qt.UserRole, category)
+            item.setToolTip(0, self._tree_tooltip(category))
             self._tree.addTopLevelItem(item)
             roots[category] = item
         for category in self._ordered_categories():
@@ -310,8 +332,19 @@ class SettingsDialog(QDialog):
             if child is None:
                 child = QTreeWidgetItem([part.replace("_", " ").title()])
                 child.setData(0, Qt.UserRole, identifier)
+                child.setToolTip(0, self._tree_tooltip(identifier))
                 current.addChild(child)
             current = child
+
+    def _tree_tooltip(self, identifier: str) -> str:
+        """Return a compact tooltip for a settings tree item."""
+        label = identifier.replace("|", " / ").replace("_", " ").title()
+        options = self._options.get(identifier)
+        if options is None:
+            return label
+        count = len(options)
+        suffix = "option" if count == 1 else "options"
+        return f"{label} ({count} {suffix})"
 
     @staticmethod
     def _child(parent: QTreeWidgetItem, identifier: str) -> QTreeWidgetItem | None:
@@ -350,6 +383,7 @@ class SettingsDialog(QDialog):
             self._displayed_page.sync_from_state()
         self._page_layout.addWidget(self._displayed_page)
         self._displayed_page.show()
+        self._refresh_action_state()
 
     def _create_page(self, key: str) -> QWidget:
         """Create a direct option page or a links page."""
@@ -364,6 +398,25 @@ class SettingsDialog(QDialog):
             if item.startswith(prefix)
         ]
         return _LinksPage(key, links, self._link_callback)
+
+    def _refresh_action_state(self) -> None:
+        """Enable actions only when they apply to the visible selection."""
+        selected = self.selected_identifier
+        displayed = self._displayed_key
+        page_has_options = bool(displayed and self._options.get(displayed))
+        category_has_options = False
+        if selected is not None:
+            category_has_options = any(
+                bool(self._options.get(key)) for key in self._target_keys(selected, False)
+            )
+        for button in self._page_action_buttons.values():
+            button.setEnabled(page_has_options)
+        for text in ("Save", "Reset"):
+            if text in self._footer_buttons:
+                self._footer_buttons[text].setEnabled(page_has_options)
+        for text in ("Save All", "Reset All"):
+            if text in self._footer_buttons:
+                self._footer_buttons[text].setEnabled(category_has_options)
 
     def _link_callback(self, identifier: str) -> None:
         """Select a tree node from a links page."""
@@ -488,8 +541,13 @@ class SettingsDialog(QDialog):
         filename = self._preset_filename("load")
         if filename is None:
             return
-        preset = self._serializer.load(str(filename))
-        if preset.get("__filetype") != "faceswap_preset":
+        try:
+            preset = self._serializer.load(str(filename))
+        except (OSError, TypeError, ValueError) as err:
+            logger.warning("Could not load preset file '%s': %s", filename, err)
+            self._set_status("Could not load the selected preset file", "error")
+            return
+        if not isinstance(preset, dict) or preset.get("__filetype") != "faceswap_preset":
             logger.warning("'%s' is not a valid plugin preset file", filename)
             self._set_status("Selected file is not a valid Faceswap preset", "error")
             return
@@ -501,9 +559,10 @@ class SettingsDialog(QDialog):
             )
             self._set_status("Preset section does not match the current page", "error")
             return
+        page_options = self._options[self._displayed_key or ""]
         for key, value in preset.items():
-            if not key.startswith("__") and key in self._options[self._displayed_key or ""]:
-                self._options[self._displayed_key or ""][key].value = value
+            if not key.startswith("__") and key in page_options:
+                page_options[key].value = value
         if isinstance(self._displayed_page, _SettingsPage):
             self._displayed_page.sync_from_state()
         self._set_status(f"Preset loaded from: '{filename.name}'", "success")
@@ -517,14 +576,22 @@ class SettingsDialog(QDialog):
         page_options = self._options[self._displayed_key or ""]
         preset = {key: state.value for key, state in page_options.items()}
         preset.update({"__filetype": "faceswap_preset", "__section": self._full_preset_key})
-        filename.parent.mkdir(parents=True, exist_ok=True)
-        self._serializer.save(str(filename), preset)
+        try:
+            filename.parent.mkdir(parents=True, exist_ok=True)
+            self._serializer.save(str(filename), preset)
+        except (OSError, TypeError, ValueError) as err:
+            logger.warning("Could not save preset file '%s': %s", filename, err)
+            self._set_status("Could not save preset", "error")
+            return
         self._set_status(f"Preset '{self._full_preset_key}' saved", "success")
 
     def _preset_filename(self, action: T.Literal["load", "save"]) -> Path | None:
         """Prompt for a preset filename."""
         displayed = self._displayed_key
         if displayed is None or displayed not in self._options:
+            self._set_status(f"No settings to {action} for the current page", "info")
+            return None
+        if not self._options[displayed]:
             self._set_status(f"No settings to {action} for the current page", "info")
             return None
         preset_path = self._preset_base_path / displayed.split("|")[0]
@@ -565,7 +632,8 @@ class SettingsDialog(QDialog):
         """Rebuild now or defer when a task is active."""
         if self._is_task_running():
             logger.info(
-                "Can't redraw GUI whilst a task is running. GUI Settings will be applied at the next restart."
+                "Can't redraw GUI whilst a task is running. "
+                "GUI Settings will be applied at the next restart."
             )
             self._set_status(
                 "Saved GUI settings. Rebuild deferred until restart because a task is running.",
@@ -663,7 +731,7 @@ class SettingsDialog(QDialog):
     def _key(category: str, section_name: str) -> str:
         """Return display key for a config section."""
         parts = section_name.split(".")
-        return category if parts[-1] == "global" else "|".join((category, parts[0], parts[-1]))
+        return category if parts == ["global"] else "|".join((category, *parts))
 
     @staticmethod
     def _section_for_key(key: str) -> tuple[str, str]:
