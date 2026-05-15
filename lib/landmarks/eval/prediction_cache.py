@@ -16,6 +16,17 @@ import numpy as np
 from lib.landmarks.schema import LandmarkPrediction, normalize_landmarks
 
 _SAMPLE_DIR_PREFIX = "sample-"
+_WINDOWS_UNSAFE_CHARS = set('<>:"/\\|?*')
+_WINDOWS_RESERVED_NAMES = frozenset(
+    {
+        "CON",
+        "PRN",
+        "AUX",
+        "NUL",
+        *(f"COM{idx}" for idx in range(1, 10)),
+        *(f"LPT{idx}" for idx in range(1, 10)),
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -31,8 +42,24 @@ class PredictionCacheMetadata:
     prediction_hash: str
 
 
+def _is_safe_sample_dir_name(sample_id: str) -> bool:
+    """Return whether a sample ID can be used directly as one path segment."""
+    if not sample_id or sample_id in {".", ".."}:
+        return False
+    if sample_id.startswith(_SAMPLE_DIR_PREFIX):
+        return False
+    if sample_id[-1] in {" ", "."}:
+        return False
+    if any(ord(char) < 32 or char in _WINDOWS_UNSAFE_CHARS for char in sample_id):
+        return False
+    stem = sample_id.split(".", 1)[0].upper()
+    return stem not in _WINDOWS_RESERVED_NAMES
+
+
 def _encode_sample_id(sample_id: str) -> str:
     """Return a filesystem-safe, reversible cache directory name."""
+    if _is_safe_sample_dir_name(sample_id):
+        return sample_id
     token = base64.urlsafe_b64encode(sample_id.encode("utf-8")).decode("ascii")
     return _SAMPLE_DIR_PREFIX + token.rstrip("=")
 
