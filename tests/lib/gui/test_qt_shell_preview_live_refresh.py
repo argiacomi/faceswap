@@ -8,6 +8,7 @@ from pathlib import Path
 from PySide6.QtWidgets import QLabel
 
 from lib.gui.qt_shell.preview_panel import PreviewPanel
+from lib.gui.services.preview_output_service import PreviewOutputService
 
 
 def _touch_image(folder: Path, filename: str) -> Path:
@@ -51,6 +52,23 @@ def test_preview_live_refresh_status_marks_live_mode(qtbot, tmp_path: Path) -> N
     assert panel.refresh_preview() is True
 
     assert _status(panel).text() == "Loaded 1 preview image (live)"
+
+
+def test_training_preview_live_refresh_status_marks_live_mode(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+    """Train preview polling should use Tk's fixed training preview cache image."""
+    _touch_image(tmp_path, PreviewOutputService.TRAINING_PREVIEW)
+    _touch_image(tmp_path, "ignored.png")
+    panel = PreviewPanel()
+    qtbot.addWidget(panel)
+
+    panel.configure_training_preview(tmp_path)
+    panel.start_live_refresh()
+    assert panel.refresh_preview() is True
+
+    assert panel.service.mode == "train"
+    assert len(panel.service.images) == 1
+    assert panel.service.images[0].path.name == PreviewOutputService.TRAINING_PREVIEW
+    assert _status(panel).text() == "Loaded 1 training preview image (live)"
 
 
 def test_preview_refresh_preserves_selected_image(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
@@ -97,7 +115,24 @@ def test_clear_preview_stops_live_refresh(qtbot, tmp_path: Path) -> None:  # typ
     panel.clear_preview()
 
     assert panel.is_live_refreshing is False
+    assert panel.service.source is None
     assert _status(panel).text() == "No preview images loaded"
+
+
+def test_cleanup_preview_stops_timer_and_clears_ui_and_service(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+    """Terminal preview cleanup should clear timer, service state and UI state together."""
+    panel = PreviewPanel()
+    qtbot.addWidget(panel)
+    panel.configure_training_preview(tmp_path)
+    panel.start_live_refresh()
+    assert panel.is_live_refreshing is True
+
+    panel.cleanup_preview(message="Preview stopped")
+
+    assert panel.is_live_refreshing is False
+    assert panel.service.source is None
+    assert panel.service.images == ()
+    assert _status(panel).text() == "Preview stopped"
 
 
 def test_main_window_starts_and_stops_preview_polling_for_extract(  # type:ignore[no-untyped-def]

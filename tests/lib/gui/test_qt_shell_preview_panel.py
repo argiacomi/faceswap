@@ -5,14 +5,24 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from PySide6.QtGui import QImage
 from PySide6.QtWidgets import QLabel, QListWidget, QPushButton, QTabWidget
 
 from lib.gui.services.command_context import CommandExecutionContext
+from lib.gui.services.preview_output_service import PreviewOutputService
 
 
 def _touch(path: Path) -> Path:
     """Create an empty preview file and return it."""
     path.write_bytes(b"")
+    return path
+
+
+def _image(path: Path) -> Path:
+    """Create a small valid preview image and return it."""
+    image = QImage(24, 16, QImage.Format.Format_RGB32)
+    image.fill(0x123456)
+    assert image.save(str(path))
     return path
 
 
@@ -55,6 +65,11 @@ def test_preview_panel_initial_state(qtbot) -> None:  # type:ignore[no-untyped-d
     assert _button(panel, "open").isEnabled() is True
     assert _button(panel, "refresh").isEnabled() is False
     assert _button(panel, "clear").isEnabled() is False
+    assert _button(panel, "zoom-in").isEnabled() is False
+    assert _button(panel, "zoom-out").isEnabled() is False
+    assert _button(panel, "reset-view").isEnabled() is False
+    assert _button(panel, "train-update").isHidden() is True
+    assert _button(panel, "train-mask").isHidden() is True
 
 
 def test_preview_panel_configures_pending_output_path(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
@@ -130,7 +145,86 @@ def test_preview_panel_apply_context_uses_preview_output_path(qtbot, tmp_path: P
 
     assert applied is True
     assert panel.service.source == tmp_path
+    assert panel.service.mode == "output"
     assert _label(panel, "source").text() == f"Preview source: {tmp_path}"
+
+
+def test_preview_panel_apply_context_uses_batch_mode(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+    """Batch contexts should expose the newest child folder and full image list."""
+    old_batch = tmp_path / "old"
+    new_batch = tmp_path / "new"
+    old_batch.mkdir()
+    new_batch.mkdir()
+    _touch(old_batch / "old.png")
+    first = _touch(new_batch / "a.png")
+    second = _touch(new_batch / "b.png")
+    panel = _panel()
+    qtbot.addWidget(panel)
+    context = CommandExecutionContext(preview_output_path=str(tmp_path), batch_mode=True)
+
+    applied = panel.apply_context(context)
+
+    assert applied is True
+    assert panel.service.mode == "batch"
+    assert panel.service.resolved_source == new_batch
+    assert [panel.service.images[index].path for index in range(2)] == [first, second]
+    assert _list(panel).count() == 2
+    assert "current batch" in _label(panel, "source").text()
+
+
+def test_preview_panel_apply_context_uses_training_preview_cache(qtbot) -> None:  # type:ignore[no-untyped-def]
+    """Train contexts should configure Tk-compatible training preview discovery."""
+    panel = _panel()
+    qtbot.addWidget(panel)
+    context = CommandExecutionContext(model_name="original", model_folder="/models")
+
+    applied = panel.apply_context(context)
+
+    assert applied is True
+    assert panel.service.mode == "train"
+    assert panel.service.source is not None
+    assert panel.service.source.name == "preview"
+    assert _label(panel, "source").text().startswith("Training preview source:")
+    assert _button(panel, "train-update").isHidden() is False
+    assert _button(panel, "train-mask").isHidden() is False
+
+
+def test_preview_panel_training_preview_loads_only_gui_training_image(
+    qtbot,
+    tmp_path: Path,
+) -> None:  # type:ignore[no-untyped-def]
+    """Train preview should mirror Tk PreviewTrain's fixed cache filename behavior."""
+    _touch(tmp_path / "ignored.png")
+    preview = _image(tmp_path / PreviewOutputService.TRAINING_PREVIEW)
+    panel = _panel()
+    qtbot.addWidget(panel)
+
+    panel.configure_training_preview(tmp_path)
+
+    assert panel.service.mode == "train"
+    assert len(panel.service.images) == 1
+    assert panel.service.images[0].path == preview
+    assert _list(panel).count() == 1
+    assert _list(panel).item(0).text() == PreviewOutputService.TRAINING_PREVIEW
+    assert _label(panel, "status").text() == "Loaded 1 training preview image"
+
+
+def test_preview_panel_training_buttons_create_tk_trigger_files(
+    qtbot,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # type:ignore[no-untyped-def]
+    """Train refresh/mask controls should mirror Tk PreviewTrain trigger files."""
+    monkeypatch.setattr("lib.gui.qt_shell.preview_panel.PATH_CACHE", str(tmp_path))
+    panel = _panel()
+    qtbot.addWidget(panel)
+    panel.configure_training_preview(tmp_path / "preview")
+
+    _button(panel, "train-update").click()
+    _button(panel, "train-mask").click()
+
+    assert (tmp_path / ".preview_trigger").is_file()
+    assert (tmp_path / ".preview_mask_toggle").is_file()
 
 
 def test_preview_panel_apply_context_ignores_missing_preview_path(qtbot) -> None:  # type:ignore[no-untyped-def]
@@ -159,6 +253,42 @@ def test_preview_panel_clear_resets_state(qtbot, tmp_path: Path) -> None:  # typ
     assert _label(panel, "status").text() == "No preview images loaded"
     assert _button(panel, "refresh").isEnabled() is False
     assert _button(panel, "clear").isEnabled() is False
+
+
+def test_preview_panel_cleanup_stops_timer_and_clears_service_first(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+    """Terminal cleanup should stop polling, clear service state, then reset UI."""
+    panel = _panel()
+    qtbot.addWidget(panel)
+    panel.configure_output(tmp_path)
+    panel.start_live_refresh(interval_ms=10)
+    assert panel.is_live_refreshing is True
+
+    panel.cleanup_preview(message="Preview cleared after stop")
+
+    assert panel.is_live_refreshing is False
+    assert panel.service.source is None
+    assert panel.service.images == ()
+    assert _list(panel).count() == 0
+    assert _label(panel, "source").text() == "No preview source configured"
+    assert _label(panel, "status").text() == "Preview cleared after stop"
+
+
+def test_preview_panel_zoom_buttons_update_view(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+    """Preview image should support basic zoom reset controls."""
+    panel = _panel()
+    qtbot.addWidget(panel)
+    assert panel.load_output(_image(tmp_path / "preview.png")) is True
+
+    _button(panel, "zoom-in").click()
+
+    assert panel.zoom > 1.0
+    assert _button(panel, "zoom-out").isEnabled() is True
+    assert _button(panel, "reset-view").isEnabled() is True
+
+    _button(panel, "reset-view").click()
+
+    assert panel.zoom == 1.0
+    assert panel.pan == (0.0, 0.0)
 
 
 def test_main_window_uses_real_preview_panel(qtbot, monkeypatch, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
