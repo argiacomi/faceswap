@@ -68,8 +68,8 @@ def test_preview_panel_initial_state(qtbot) -> None:  # type:ignore[no-untyped-d
     assert _button(panel, "zoom-in").isEnabled() is False
     assert _button(panel, "zoom-out").isEnabled() is False
     assert _button(panel, "reset-view").isEnabled() is False
-    assert _button(panel, "train-update").isVisible() is False
-    assert _button(panel, "train-mask").isVisible() is False
+    assert _button(panel, "train-update").isHidden() is True
+    assert _button(panel, "train-mask").isHidden() is True
 
 
 def test_preview_panel_configures_pending_output_path(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
@@ -185,8 +185,8 @@ def test_preview_panel_apply_context_uses_training_preview_cache(qtbot) -> None:
     assert panel.service.source is not None
     assert panel.service.source.name == "preview"
     assert _label(panel, "source").text().startswith("Training preview source:")
-    assert _button(panel, "train-update").isVisible() is True
-    assert _button(panel, "train-mask").isVisible() is True
+    assert _button(panel, "train-update").isHidden() is False
+    assert _button(panel, "train-mask").isHidden() is False
 
 
 def test_preview_panel_training_preview_loads_only_gui_training_image(
