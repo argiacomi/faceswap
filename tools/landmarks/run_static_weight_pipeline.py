@@ -46,6 +46,11 @@ class PipelinePaths:
     debug: Path = field(init=False)
     summary: Path = field(init=False)
     detector_bbox_report: Path = field(init=False)
+    splits: Path = field(init=False)
+    splits_file: Path = field(init=False)
+    fit_manifest: Path = field(init=False)
+    select_manifest: Path = field(init=False)
+    report_manifest: Path = field(init=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "dataset", self.root / "dataset")
@@ -67,6 +72,13 @@ class PipelinePaths:
             "detector_bbox_report",
             self.root / "dataset" / "detector_bboxes.json",
         )
+        # The filtered manifests must live next to the source manifest so that
+        # their relative ``image``/``landmarks`` paths still resolve.
+        object.__setattr__(self, "splits", self.root / "splits")
+        object.__setattr__(self, "splits_file", self.root / "splits" / "splits.json")
+        object.__setattr__(self, "fit_manifest", self.root / "dataset" / "fit_manifest.json")
+        object.__setattr__(self, "select_manifest", self.root / "dataset" / "select_manifest.json")
+        object.__setattr__(self, "report_manifest", self.root / "dataset" / "report_manifest.json")
 
 
 def _parse_csv(value: str) -> tuple[str, ...]:
@@ -393,12 +405,98 @@ def _cache_predictions(args: argparse.Namespace, paths: PipelinePaths) -> None:
     cache_predictions_main(argv)
 
 
+def _create_splits(args: argparse.Namespace, paths: PipelinePaths) -> dict[str, T.Any]:
+    """Compute or load the fit/select/report split and write per-split manifests."""
+    from lib.landmarks.eval.splits import (
+        SplitRatios,
+        load_split_file,
+        save_split_file,
+        scenario_bucket,
+        split_assignment_hash,
+        split_manifest_samples,
+        split_summary_counts,
+        write_split_manifest,
+    )
+
+    base_manifest = json.loads(paths.manifest.read_text(encoding="utf-8"))
+    samples = base_manifest.get("samples", base_manifest.get("scenarios", []))
+    if not samples:
+        raise ValueError(f"manifest at {paths.manifest} contains no samples")
+    ratios = SplitRatios(args.fit_ratio, args.select_ratio, args.report_ratio)
+
+    diagnostics: list[T.Any] = []
+    if args.split_mode == "file":
+        if not args.split_file:
+            raise ValueError("--split-mode=file requires --split-file")
+        assignment = load_split_file(args.split_file)
+        # Verify every referenced ID exists in the manifest.
+        manifest_ids = {
+            str(sample.get("sample_id") or sample.get("id") or sample.get("name"))
+            for sample in samples
+        }
+        referenced = set(assignment.fit) | set(assignment.select) | set(assignment.report)
+        missing = sorted(referenced - manifest_ids)
+        if missing:
+            raise ValueError(f"--split-file references samples not in the manifest: {missing}")
+    else:
+        assignment, diagnostics = split_manifest_samples(
+            samples, mode=args.split_mode, ratios=ratios, seed=args.split_seed
+        )
+
+    splits_path = Path(args.split_output) if args.split_output else paths.splits_file
+    splits_path.parent.mkdir(parents=True, exist_ok=True)
+    save_split_file(
+        splits_path,
+        assignment,
+        mode=args.split_mode,
+        ratios=ratios,
+        seed=args.split_seed,
+        diagnostics=diagnostics,
+    )
+
+    write_split_manifest(paths.fit_manifest, base_manifest, assignment.fit)
+    if assignment.select:
+        write_split_manifest(paths.select_manifest, base_manifest, assignment.select)
+    if assignment.report:
+        write_split_manifest(paths.report_manifest, base_manifest, assignment.report)
+
+    counts = split_summary_counts(assignment, samples)
+    return {
+        "mode": args.split_mode,
+        "ratios": ratios.as_dict(),
+        "seed": int(args.split_seed),
+        "assignment_hash": split_assignment_hash(assignment),
+        "splits_file": str(splits_path),
+        "fit_manifest": str(paths.fit_manifest),
+        "select_manifest": str(paths.select_manifest) if assignment.select else "",
+        "report_manifest": str(paths.report_manifest) if assignment.report else "",
+        "counts": counts,
+        "diagnostics": [diagnostic.to_payload() for diagnostic in diagnostics],
+        "scenario_buckets": sorted({scenario_bucket(sample) for sample in samples}),
+    }
+
+
+def _fit_manifest_path(args: argparse.Namespace, paths: PipelinePaths) -> Path:
+    """Return the manifest path that weight derivation should consume.
+
+    When splits are disabled the pipeline falls back to the full manifest.
+    """
+    if args.split_mode == "none":
+        return paths.manifest
+    if not paths.fit_manifest.is_file():
+        raise FileNotFoundError(
+            f"fit-split manifest not found at {paths.fit_manifest}; the create_splits "
+            "stage must run before compute_static_weights"
+        )
+    return paths.fit_manifest
+
+
 def _compute_weights(args: argparse.Namespace, paths: PipelinePaths) -> None:
     from lib.landmarks.ensemble.weights import save_weights
     from tools.landmarks.compute_static_weights import compute_static_weights
 
     weights, mean_errors = compute_static_weights(
-        paths.manifest, paths.cache, _parse_csv(args.models)
+        _fit_manifest_path(args, paths), paths.cache, _parse_csv(args.models)
     )
     save_weights(paths.weight_file, weights)
     dominant = {}
@@ -677,6 +775,8 @@ def _dry_run(args: argparse.Namespace, paths: PipelinePaths, summary: dict[str, 
     )
     if not args.skip_baseline:
         planned.append("baseline_harness")
+    if args.split_mode != "none":
+        planned.append(f"create_splits:{args.split_mode}")
     planned.extend(["compute_static_weights", "weighted_harness"])
     if not args.skip_failure_viewer:
         planned.append("failure_viewer")
@@ -754,6 +854,38 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--weighted-variants", default="static_weighted,static_weighted_outliers,weighted_median"
     )
+    parser.add_argument(
+        "--split-mode",
+        choices=("scenario-stratified", "random", "file", "none"),
+        default="scenario-stratified",
+        help=(
+            "How to derive the fit/select/report splits. 'scenario-stratified' is the "
+            "default and preserves dataset:condition bucket coverage; 'random' splits "
+            "the manifest as a single pool; 'file' loads a precomputed splits.json; "
+            "'none' disables splits and weights are fit on the full manifest."
+        ),
+    )
+    parser.add_argument("--fit-ratio", type=float, default=0.6)
+    parser.add_argument("--select-ratio", type=float, default=0.2)
+    parser.add_argument("--report-ratio", type=float, default=0.2)
+    parser.add_argument("--split-seed", type=int, default=1337)
+    split_group = parser.add_mutually_exclusive_group()
+    split_group.add_argument(
+        "--split-file",
+        default="",
+        help=(
+            "Path to an existing splits.json to consume. Required when "
+            "--split-mode=file. Mutually exclusive with --split-output."
+        ),
+    )
+    split_group.add_argument(
+        "--split-output",
+        default="",
+        help=(
+            "Path to write the generated splits.json. Defaults to "
+            "<output-root>/splits/splits.json. Mutually exclusive with --split-file."
+        ),
+    )
     parser.add_argument("--samples-per-scenario", type=int, default=None)
     parser.add_argument("--scenarios", default="")
     parser.add_argument("--allow-overlap", action="store_true")
@@ -807,6 +939,33 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _validate_split_args(args: argparse.Namespace) -> None:
+    """Reject incompatible split-mode / split-file / split-output combinations."""
+    if args.split_mode == "none":
+        if args.split_file:
+            raise SystemExit("--split-file is not allowed when --split-mode=none")
+        if args.split_output:
+            raise SystemExit("--split-output is not allowed when --split-mode=none")
+        return
+    if args.split_mode == "file":
+        if not args.split_file:
+            raise SystemExit("--split-mode=file requires --split-file")
+        return
+    # scenario-stratified or random
+    if args.split_file:
+        raise SystemExit(
+            "--split-file is only valid with --split-mode=file; got "
+            f"--split-mode={args.split_mode}"
+        )
+    ratios = (args.fit_ratio, args.select_ratio, args.report_ratio)
+    if any(value <= 0 for value in ratios):
+        raise SystemExit("--fit-ratio, --select-ratio, and --report-ratio must all be > 0")
+    if not 0.99 < sum(ratios) < 1.01:
+        raise SystemExit(
+            f"--fit-ratio + --select-ratio + --report-ratio must sum to 1.0, got {sum(ratios):.3f}"
+        )
+
+
 def _log_pipeline_failure(args: argparse.Namespace, err: Exception) -> None:
     if args.log_level == "DEBUG":
         logger.exception("Pipeline failed")
@@ -829,6 +988,7 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("--gt-roi-scale must be greater than zero")
     if args.detector_min_iou < 0.0 or args.detector_min_iou > 1.0:
         raise SystemExit("--detector-min-iou must be between 0 and 1")
+    _validate_split_args(args)
     if args.dry_run:
         return _dry_run(args, paths, summary)
 
@@ -865,6 +1025,9 @@ def main(argv: list[str] | None = None) -> int:
             )
         else:
             _progress("Skipping baseline harness")
+        if args.split_mode != "none":
+            split_summary = _stage(summary, "create_splits", lambda: _create_splits(args, paths))
+            summary["splits"] = split_summary
         _stage(summary, "compute_static_weights", lambda: _compute_weights(args, paths))
         weighted = _stage(
             summary, "weighted_harness", lambda: _run_harness(args, paths, weighted=True)
