@@ -169,7 +169,7 @@ def test_theme_from_mapping_translates_legacy_faceswap_theme() -> None:
     assert theme.color("warning") == "#303030"
 
 
-def test_legacy_icon_cache_paths_are_resolved() -> None:
+def test_legacy_icon_cache_paths_are_resolved(qtbot) -> None:  # type:ignore[no-untyped-def] # noqa: ARG001
     """Qt should reuse the same icon cache as the Tk taskbar and favicon."""
     theme = QtTheme.default()
 
