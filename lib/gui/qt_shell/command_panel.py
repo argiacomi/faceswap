@@ -9,7 +9,7 @@ import textwrap
 import typing as T
 from html import escape
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QGridLayout,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -33,8 +34,24 @@ from PySide6.QtWidgets import (
 )
 
 from lib.gui.qt_shell.command_schema import CommandSchema, OptionSpec
+from lib.gui.qt_shell.theme import QtTheme, icon_for_action
 
 IS_WINDOWS = os.name == "nt"
+
+
+def _wrap_tooltip(text: str, width: int = 88) -> str:
+    """Return tooltip text wrapped to a readable line length."""
+    return "\n".join(
+        textwrap.fill(
+            line,
+            width=width,
+            break_long_words=False,
+            break_on_hyphens=False,
+        )
+        if line.strip()
+        else ""
+        for line in str(text).splitlines()
+    )
 
 
 class OptionGroupDrawer(QWidget):
@@ -131,11 +148,43 @@ class OptionsFormRenderer(QWidget):
         self._specs = specs
         for group, group_specs in self._grouped_specs(specs):
             form = self._add_group_section(group)
+            bool_pairs: list[tuple[OptionSpec, QCheckBox]] = []
             for spec in group_specs:
                 widget = self._build_widget(spec)
                 self._widgets[spec.switch] = widget
-                form.addRow(self._label_for(spec), self._row_widget(spec, widget))
+                if self._is_plain_bool(spec, widget):
+                    bool_pairs.append((spec, T.cast(QCheckBox, widget)))
+                elif self._is_choice_cluster(spec):
+                    form.addRow(self._titled_cluster(spec, widget))
+                else:
+                    form.addRow(self._label_for(spec), self._row_widget(spec, widget))
+            if bool_pairs:
+                form.addRow(self._build_bool_cluster(bool_pairs))
         self._layout.addStretch(1)
+
+    @staticmethod
+    def _is_plain_bool(spec: OptionSpec, widget: QWidget) -> bool:
+        """Return true when an option renders as a simple labeled checkbox row."""
+        return spec.value_type is bool and isinstance(widget, QCheckBox)
+
+    def _build_bool_cluster(self, bool_pairs: list[tuple[OptionSpec, QCheckBox]]) -> QWidget:
+        """Pack plain bool options into a horizontal grid (Tk ``checkbuttons_frame`` parity)."""
+        container = QWidget()
+        container.setObjectName("qt-shell-option-bool-cluster")
+        container.setMinimumWidth(0)
+        container.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        grid = QGridLayout(container)
+        grid.setContentsMargins(0, 4, 0, 4)
+        grid.setHorizontalSpacing(16)
+        grid.setVerticalSpacing(4)
+        columns = max(1, min(3, len(bool_pairs)))
+        for index, (spec, checkbox) in enumerate(bool_pairs):
+            checkbox.setText(spec.title)
+            checkbox.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            grid.addWidget(checkbox, index // columns, index % columns)
+        for column in range(columns):
+            grid.setColumnStretch(column, 1)
+        return container
 
     def values(self) -> dict[str, object]:
         """Return command values keyed by CLI switch."""
@@ -371,13 +420,24 @@ class OptionsFormRenderer(QWidget):
         row.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
         layout = QHBoxLayout(row)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6)
+        layout.setSpacing(2)
         layout.addWidget(widget, 1)
+        theme = QtTheme.default()
         for mode in spec.browser_modes:
-            button = QPushButton(self._browser_label(mode))
+            button = QPushButton()
             button.setObjectName(f"qt-shell-browser-{mode}")
-            button.setToolTip(self._tooltip_text(spec.helptext or f"Browse for {spec.title}"))
+            button.setProperty("qt-shell-role", "browser")
+            icon = icon_for_action(theme, f"browser_{mode}")
+            if not icon.isNull():
+                button.setIcon(icon)
+                button.setIconSize(QSize(16, 16))
+            else:
+                button.setText(self._browser_label(mode))
+            tooltip = spec.helptext or self._browser_tooltip(mode, spec.title)
+            button.setToolTip(self._tooltip_text(tooltip))
             button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+            button.setFixedSize(QSize(24, 24))
+            button.setFlat(True)
             button.clicked.connect(
                 lambda _checked=False, m=mode, w=widget, f=spec.file_filter: self._browse(m, w, f)
             )
@@ -519,6 +579,24 @@ class OptionsFormRenderer(QWidget):
         """Return true when metadata clearly asks for a multi-select widget."""
         return spec.is_multi_option and bool(spec.choices)
 
+    @classmethod
+    def _is_choice_cluster(cls, spec: OptionSpec) -> bool:
+        """Return true for radio/multi-select clusters that render as titled groups."""
+        return cls._is_radio_group(spec) or cls._is_multi_select(spec)
+
+    def _titled_cluster(self, spec: OptionSpec, widget: QWidget) -> QGroupBox:
+        """Wrap a choice-cluster widget in a titled QGroupBox for Tk parity."""
+        box = QGroupBox(spec.title)
+        box.setObjectName("qt-shell-option-cluster")
+        box.setProperty("qt-shell-role", "option-cluster")
+        if spec.helptext:
+            box.setToolTip(self._tooltip_text(spec.helptext))
+        inner = QVBoxLayout(box)
+        inner.setContentsMargins(10, 8, 10, 8)
+        inner.setSpacing(4)
+        inner.addWidget(widget)
+        return box
+
     @staticmethod
     def _is_slider(spec: OptionSpec) -> bool:
         """Return true when metadata clearly asks for a slider."""
@@ -537,19 +615,16 @@ class OptionsFormRenderer(QWidget):
         }.get(mode, "Browse")
 
     @staticmethod
-    def _tooltip_text(text: str, width: int = 88) -> str:
-        """Return tooltip text wrapped to a readable line length."""
-        return "\n".join(
-            textwrap.fill(
-                line,
-                width=width,
-                break_long_words=False,
-                break_on_hyphens=False,
-            )
-            if line.strip()
-            else ""
-            for line in str(text).splitlines()
-        )
+    def _browser_tooltip(mode: str, title: str) -> str:
+        """Return the default Tk-parity tooltip for a browser mode."""
+        return {
+            "folder": "Select a folder...",
+            "file": "Select a file...",
+            "files": "Select one or more files...",
+            "save": "Select a save location...",
+        }.get(mode, f"Browse for {title}")
+
+    _tooltip_text = staticmethod(_wrap_tooltip)
 
     @staticmethod
     def _choice_columns(choices: tuple[str, ...]) -> int:
@@ -696,6 +771,17 @@ class CommandPanel(QWidget):
         self._renderer = OptionsFormRenderer()
         self._generate_button = QPushButton("Generate")
         self._run_button = QPushButton("Run")
+        self._generate_button.setObjectName("qt-shell-command-generate")
+        self._run_button.setObjectName("qt-shell-command-run")
+        _command_theme = QtTheme.default()
+        _gen_icon = icon_for_action(_command_theme, "generate")
+        if not _gen_icon.isNull():
+            self._generate_button.setIcon(_gen_icon)
+            self._generate_button.setIconSize(QSize(16, 16))
+        _run_icon = icon_for_action(_command_theme, "run")
+        if not _run_icon.isNull():
+            self._run_button.setIcon(_run_icon)
+            self._run_button.setIconSize(QSize(16, 16))
         self._advanced_toggle = QCheckBox("Show advanced")
         self._show_advanced = False
         self._syncing_tabs = False
@@ -759,9 +845,11 @@ class CommandPanel(QWidget):
         layout.addWidget(self._primary_tabs)
         layout.addWidget(self._tool_tabs)
 
+        # The CLI ``description`` is surfaced through tab tooltips on Tk and is
+        # intentionally suppressed in-panel here to keep the form density Tk-parity.
         self._command_info.setWordWrap(True)
         self._command_info.setObjectName("qt-shell-command-info")
-        layout.addWidget(self._command_info)
+        self._command_info.setVisible(False)
 
         self._advanced_toggle.setObjectName("qt-shell-command-advanced-toggle")
         self._advanced_toggle.setChecked(False)
@@ -802,11 +890,17 @@ class CommandPanel(QWidget):
         self._tool_tabs.setUsesScrollButtons(True)
 
         for command in self._schema.commands("faceswap"):
-            self._primary_tabs.addTab(command.title())
+            index = self._primary_tabs.addTab(command.title())
+            tooltip = _wrap_tooltip(self._schema.command_info(command))
+            if tooltip:
+                self._primary_tabs.setTabToolTip(index, tooltip)
         if "tools" in self._schema.categories:
             self._primary_tabs.addTab("Tools")
             for command in self._schema.commands("tools"):
-                self._tool_tabs.addTab(command.title())
+                tool_index = self._tool_tabs.addTab(command.title())
+                tooltip = _wrap_tooltip(self._schema.command_info(command))
+                if tooltip:
+                    self._tool_tabs.setTabToolTip(tool_index, tooltip)
 
         self._category.addItems(self._schema.categories)
         self._tool_tabs.setVisible(False)

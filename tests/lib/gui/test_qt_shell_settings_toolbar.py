@@ -128,3 +128,33 @@ def test_toolbar_settings_actions_route_to_dialog(
     assert len(created) == 1
     assert created[0].section == name
     assert created[0].show_count == 1
+
+
+def test_toolbar_project_group_matches_tk_parity(qtbot, monkeypatch, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+    """The project-group portion of the toolbar must match Tk's button set."""
+    window = _main_window(qtbot, monkeypatch, tmp_path)
+    toolbar = _toolbar(window)
+    names = [action.objectName() for action in toolbar.actions() if action.objectName()]
+
+    project_group = [
+        "qt-shell-toolbar-new",
+        "qt-shell-toolbar-open",
+        "qt-shell-toolbar-save",
+        "qt-shell-toolbar-save-as",
+        "qt-shell-toolbar-reload",
+    ]
+    for index, expected in enumerate(project_group):
+        assert names[index] == expected, (
+            f"Toolbar position {index} should be {expected!r}, got {names[index]!r}"
+        )
+
+
+def test_toolbar_actions_carry_icons(qtbot, monkeypatch, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+    """Every toolbar action should expose a non-null icon for visual Tk parity."""
+    window = _main_window(qtbot, monkeypatch, tmp_path)
+    toolbar = _toolbar(window)
+
+    actions_with_object_names = [a for a in toolbar.actions() if a.objectName()]
+    assert actions_with_object_names, "Toolbar should expose object-named actions"
+    missing = [a.objectName() for a in actions_with_object_names if a.icon().isNull()]
+    assert not missing, f"Toolbar actions missing icons: {missing}"

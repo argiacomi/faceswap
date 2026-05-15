@@ -242,10 +242,14 @@ def test_command_schema_renders_groups_tooltips_and_browse_buttons(qtbot) -> Non
     # Titled groups render as OptionGroupDrawer (disclosure-arrow toggle)
     groups = renderer.findChildren(QWidget, "qt-shell-option-group")
     assert [group.title() for group in groups] == ["Data"]
-    assert [button.text() for button in renderer.findChildren(QPushButton)] == [
-        "Folder",
-        "File",
+    browse_buttons = renderer.findChildren(QPushButton)
+    assert [button.objectName() for button in browse_buttons] == [
+        "qt-shell-browser-folder",
+        "qt-shell-browser-file",
     ]
+    # Icon-only buttons drop their text label for visual Tk parity
+    assert all(not button.text() for button in browse_buttons)
+    assert all(not button.icon().isNull() for button in browse_buttons)
 
 
 def test_command_schema_renders_widgets(qtbot) -> None:  # type:ignore[no-untyped-def]
