@@ -127,7 +127,7 @@ class PreviewOutputService:
         if self._mode != "batch" or not source.is_dir():
             return source
         folders = [path for path in source.iterdir() if path.is_dir()]
-        folders.sort(key=lambda path: path.stat().st_mtime)
+        folders.sort(key=lambda path: (path.stat().st_mtime_ns, path.name))
         return folders[-1] if folders else source
 
     def _find_training_images(self, source: Path) -> tuple[PreviewOutputImage, ...]:
