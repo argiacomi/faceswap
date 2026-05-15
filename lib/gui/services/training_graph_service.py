@@ -92,7 +92,9 @@ class TrainingGraphSnapshot:
         """Return whether there are no points to plot."""
         return self.point_count == 0
 
-    def series_for_keys(self, selected_keys: tuple[str, ...] = ()) -> tuple[TrainingGraphSeries, ...]:
+    def series_for_keys(
+        self, selected_keys: tuple[str, ...] = ()
+    ) -> tuple[TrainingGraphSeries, ...]:
         """Return selected series or all series when no keys are supplied."""
         if not selected_keys:
             return self.series

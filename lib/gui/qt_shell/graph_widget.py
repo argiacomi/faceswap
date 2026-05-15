@@ -238,7 +238,9 @@ class TrainingGraphWidget(QWidget):
         painter.setPen(self.palette().text().color())
         painter.drawText(rect.left(), self.height() - 8, self._legend())
 
-    def _path_for_series(self, series: TrainingGraphSeries, minimum: float, maximum: float, rect) -> QPainterPath:
+    def _path_for_series(
+        self, series: TrainingGraphSeries, minimum: float, maximum: float, rect
+    ) -> QPainterPath:
         """Return a batched painter path for a series in widget coordinates."""
         points = self._points_for_series(series, minimum, maximum, rect)
         if not points:
@@ -257,7 +259,10 @@ class TrainingGraphWidget(QWidget):
         rect,
     ) -> list[QPointF]:
         """Return painted points for a series in widget coordinates."""
-        values = self._decimated_values(self._visible_values(series.values), max(2, int(rect.width()) * self.MAX_POINTS_PER_PIXEL))
+        values = self._decimated_values(
+            self._visible_values(series.values),
+            max(2, int(rect.width()) * self.MAX_POINTS_PER_PIXEL),
+        )
         self._last_decimated_count = max(self._last_decimated_count, len(values))
         if not values:
             return []

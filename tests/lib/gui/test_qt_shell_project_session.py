@@ -84,7 +84,9 @@ def test_real_shaped_project_and_task_fixtures_deserialize(tmp_path: Path) -> No
 
     store = ProjectStore(get_serializer("json"))
     project_path = _write_fixture(tmp_path, "tk_generated_project_v2.fsw", TK_GENERATED_PROJECT_V2)
-    task_path = _write_fixture(tmp_path, "tk_generated_extract_task_v2.fst", TK_GENERATED_EXTRACT_TASK_V2)
+    task_path = _write_fixture(
+        tmp_path, "tk_generated_extract_task_v2.fst", TK_GENERATED_EXTRACT_TASK_V2
+    )
 
     project = store.load(str(project_path))
     task = store.load(str(task_path))
@@ -119,7 +121,9 @@ def test_real_shaped_task_round_trip_equivalence(tmp_path: Path) -> None:
     from lib.serializer import get_serializer
 
     store = ProjectStore(get_serializer("json"))
-    source = _write_fixture(tmp_path, "tk_generated_extract_task_v2.fst", TK_GENERATED_EXTRACT_TASK_V2)
+    source = _write_fixture(
+        tmp_path, "tk_generated_extract_task_v2.fst", TK_GENERATED_EXTRACT_TASK_V2
+    )
     first = store.load(str(source))
     round_trip = tmp_path / "round_trip.fst"
 
@@ -157,7 +161,9 @@ def test_real_shaped_task_reload_applies_command_panel_state(
 ) -> None:
     """After loading a task fixture, command-panel state should match task content."""
     window = _main_window(qtbot, monkeypatch, tmp_path)
-    task_path = _write_fixture(tmp_path, "tk_generated_extract_task_v2.fst", TK_GENERATED_EXTRACT_TASK_V2)
+    task_path = _write_fixture(
+        tmp_path, "tk_generated_extract_task_v2.fst", TK_GENERATED_EXTRACT_TASK_V2
+    )
 
     loaded = window._open_session_file(str(task_path), TASK_KIND)  # pylint:disable=protected-access
     _, command, values = window._command_panel.command_spec()  # pylint:disable=protected-access
@@ -197,7 +203,9 @@ def test_tk_recent_files_fixture_parses_with_store(tmp_path: Path) -> None:
     from lib.serializer import get_serializer
 
     project_path = _write_fixture(tmp_path, "tk_generated_project_v2.fsw", TK_GENERATED_PROJECT_V2)
-    task_path = _write_fixture(tmp_path, "tk_generated_extract_task_v2.fst", TK_GENERATED_EXTRACT_TASK_V2)
+    task_path = _write_fixture(
+        tmp_path, "tk_generated_extract_task_v2.fst", TK_GENERATED_EXTRACT_TASK_V2
+    )
     recent_path = tmp_path / "tk_recent_files.json"
     recent_path.write_text(
         json.dumps([[str(project_path), PROJECT_KIND], [str(task_path), TASK_KIND]], indent=2),

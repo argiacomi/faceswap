@@ -405,7 +405,9 @@ class PreviewPanel(QWidget):
         self._update_train_button.clicked.connect(
             lambda _checked=False: self.trigger_training_preview_update()
         )
-        self._mask_button.clicked.connect(lambda _checked=False: self.trigger_training_mask_toggle())
+        self._mask_button.clicked.connect(
+            lambda _checked=False: self.trigger_training_mask_toggle()
+        )
         self._image_list.currentItemChanged.connect(self._current_image_changed)
         self._refresh_timer.timeout.connect(lambda: self.refresh_preview())
 
@@ -512,7 +514,9 @@ class PreviewPanel(QWidget):
         self._clear_button.setEnabled(has_source or self._image_list.count() > 0)
         self._zoom_in_button.setEnabled(has_image)
         self._zoom_out_button.setEnabled(has_image and self.zoom > 1.0)
-        self._reset_view_button.setEnabled(has_image and (self.zoom > 1.0 or self.pan != (0.0, 0.0)))
+        self._reset_view_button.setEnabled(
+            has_image and (self.zoom > 1.0 or self.pan != (0.0, 0.0))
+        )
         self._update_train_button.setVisible(is_train)
         self._mask_button.setVisible(is_train)
         self._update_train_button.setEnabled(is_train and has_source)

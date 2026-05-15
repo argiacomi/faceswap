@@ -97,7 +97,11 @@ class PreviewOutputService:
             return ()
         source = self._refresh_source(self._source)
         self._resolved_source = source
-        self._images = self._find_training_images(source) if self._mode == "train" else self._find_images(source)
+        self._images = (
+            self._find_training_images(source)
+            if self._mode == "train"
+            else self._find_images(source)
+        )
         return self._images
 
     def clear(self) -> None:
