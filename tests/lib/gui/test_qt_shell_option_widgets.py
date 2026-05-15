@@ -5,12 +5,12 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import (
     QCheckBox,
-    QGroupBox,
     QLabel,
     QLineEdit,
     QPushButton,
     QRadioButton,
     QSlider,
+    QWidget,
 )
 
 from lib.gui.services.command_builder import CommandBuilder
@@ -274,8 +274,8 @@ def test_group_sections_render_labels_and_containers(qtbot) -> None:  # type:ign
         _option_spec("Debug", "--debug", bool, False, group="_master"),
     )
     qtbot.addWidget(panel)
-    # Group title is now the QGroupBox title itself (collapsible parity with Tk ToggledFrame)
-    groups = panel.renderer.findChildren(QGroupBox, "qt-shell-option-group")
+    # Titled groups render as OptionGroupDrawer (disclosure-arrow toggle)
+    groups = panel.renderer.findChildren(QWidget, "qt-shell-option-group")
 
     assert [group.title() for group in groups] == ["Data"]
     assert all(group.isCheckable() for group in groups)
@@ -316,35 +316,6 @@ def test_required_flag_drives_validation(qtbot) -> None:  # type:ignore[no-untyp
 
     panel.set_command("extract", {"-m": "/tmp/x", "-t": "original"})
     assert panel.validation_errors() == ()
-
-
-def test_inline_hint_label_renders_under_control_with_tooltip(qtbot) -> None:  # type:ignore[no-untyped-def]
-    """Options with helptext should expose a visible hint label under the control."""
-    panel = _command_panel(
-        _option_spec("Detector", "-D", helptext="Choose a face detector. Defaults to s3fd."),
-        _option_spec("Quiet", "-q", bool, False),
-    )
-    qtbot.addWidget(panel)
-
-    hints = panel.renderer.findChildren(QLabel, "qt-shell-option-hint")
-    assert len(hints) == 1
-    assert "Choose a face detector" in hints[0].text()
-    assert hints[0].toolTip() == ("Choose a face detector. Defaults to s3fd.")
-    assert hints[0].property("status") == "info"
-
-
-def test_hint_label_truncates_long_helptext(qtbot) -> None:  # type:ignore[no-untyped-def]
-    """Multi-line / long helptext should be truncated to a single line in the hint label."""
-    long_help = "Line one " + "x" * 200 + "\nLine two should not appear"
-    panel = _command_panel(
-        _option_spec("Long", "--long", helptext=long_help),
-    )
-    qtbot.addWidget(panel)
-
-    hint = panel.renderer.findChildren(QLabel, "qt-shell-option-hint")[0]
-    assert "Line two" not in hint.text()
-    assert hint.text().endswith("...")
-    assert hint.toolTip() == long_help
 
 
 def test_file_filter_threaded_to_qfile_dialog(monkeypatch, qtbot) -> None:  # type:ignore[no-untyped-def]
@@ -391,13 +362,13 @@ def test_file_filter_threaded_to_qfile_dialog(monkeypatch, qtbot) -> None:  # ty
 
 
 def test_group_section_collapses_when_unchecked(qtbot) -> None:  # type:ignore[no-untyped-def]
-    """Toggling the QGroupBox title should hide all fields in that group."""
+    """Toggling the drawer should hide all fields in that group."""
     panel = _command_panel(
         _option_spec("Input", "-i", group="Data"),
         _option_spec("Output", "-o", group="Data"),
     )
     qtbot.addWidget(panel)
-    group = panel.renderer.findChildren(QGroupBox, "qt-shell-option-group")[0]
+    group = panel.renderer.findChildren(QWidget, "qt-shell-option-group")[0]
     fields = group.findChildren(QLineEdit)
     assert fields and all(field.isVisibleTo(group) for field in fields)
 
@@ -458,3 +429,59 @@ def test_inline_error_clears_when_required_field_filled(qtbot) -> None:  # type:
 
     assert error_label.isHidden() is True
     assert panel.validation_errors() == ()
+
+
+def test_group_drawer_uses_disclosure_arrow_not_checkbox(qtbot) -> None:  # type:ignore[no-untyped-def]
+    """Group drawers must use a QToolButton with arrow indicator, not a QCheckBox.
+
+    Regression for an earlier iteration where QGroupBox.setCheckable rendered a
+    native checkbox next to (and on macOS overlapping) the group title.
+    """
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QToolButton
+
+    from lib.gui.qt_shell.command_panel import OptionGroupDrawer
+
+    panel = _command_panel(
+        _option_spec("Input", "-i", group="Data"),
+    )
+    qtbot.addWidget(panel)
+
+    drawers = panel.renderer.findChildren(OptionGroupDrawer, "qt-shell-option-group")
+    assert len(drawers) == 1
+    drawer = drawers[0]
+
+    toggle = drawer.findChild(QToolButton, "qt-shell-option-group-toggle")
+    assert toggle is not None, "drawer header must be a QToolButton"
+    assert toggle.text() == "Data"
+    assert toggle.isCheckable() is True
+    assert toggle.isChecked() is True
+    assert toggle.arrowType() == Qt.DownArrow
+
+    drawer.setChecked(False)
+    assert toggle.arrowType() == Qt.RightArrow
+
+    drawer.setChecked(True)
+    assert toggle.arrowType() == Qt.DownArrow
+
+
+def test_helptext_remains_tooltip_only_no_inline_hint(qtbot) -> None:  # type:ignore[no-untyped-def]
+    """Helptext is exposed via tooltips; no inline hint label is rendered.
+
+    Regression for an earlier iteration where every option grew a multi-line
+    helptext label under the control, bloating the panel vertically.
+    """
+    panel = _command_panel(
+        _option_spec(
+            "Detector",
+            "-D",
+            helptext="Choose a face detector. Some have configurable settings.",
+        ),
+    )
+    qtbot.addWidget(panel)
+
+    hint_labels = panel.renderer.findChildren(QLabel, "qt-shell-option-hint")
+    assert hint_labels == []
+
+    widget = panel.renderer.widget_for_switch("-D")
+    assert widget.toolTip() == "Choose a face detector. Some have configurable settings."
