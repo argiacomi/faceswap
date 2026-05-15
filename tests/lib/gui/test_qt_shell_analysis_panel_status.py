@@ -83,7 +83,7 @@ def test_analysis_panel_training_status(qtbot) -> None:  # type:ignore[no-untype
     assert panel.load_session("ignored") is True
 
     assert _label(panel, "status").text() == "Training session: 2 rows, 1 graph, 1000 iterations"
-    assert _label(panel, "source").text() == "Training: model  |  /models"
+    assert _label(panel, "source").text() == f"Training: model  |  {service.source.model_dir}"
 
 
 def test_analysis_panel_loaded_empty_status(qtbot) -> None:  # type:ignore[no-untyped-def]
