@@ -40,6 +40,7 @@ from lib.landmarks.ensemble.strategies import (
     strategy_uses_threshold,
 )
 from lib.landmarks.eval.geometry_signals import (
+    AlignmentSummary,
     alignment_summary,
     cloud_collapse,
     eye_mouth_flip,
@@ -135,12 +136,17 @@ def _evaluate_validity(
     reference_extent: float,
     landmark_count: int,
     outside_bbox_fraction_floor: float = 0.35,
-) -> tuple[bool, tuple[str, ...]]:
-    """Return ``(is_valid, geometry_flags)`` for a candidate.
+) -> tuple[bool, tuple[str, ...], AlignmentSummary | None]:
+    """Return ``(is_valid, geometry_flags, summary)`` for a candidate.
 
     Invalid candidates trip cloud-collapse against the reference extent (the
     largest candidate cloud), eye-mouth flip in normalized space, or have an
     unusually large fraction of landmarks outside the (inflated) face bbox.
+
+    The returned ``summary`` is the per-candidate :func:`alignment_summary`
+    when it was computed (i.e. when the cloud was *not* collapsed) and
+    ``None`` otherwise. Callers reuse it for downstream signals so we never
+    build :class:`AlignedFace` twice per candidate.
     """
     flags: list[str] = []
     candidate_extent = _bbox_diagonal(candidate.landmarks)
@@ -158,7 +164,7 @@ def _evaluate_validity(
     # estimate scale from zero-variance points and emits a divide-by-zero
     # RuntimeWarning before the resolver rejects the candidate anyway.
     if "cloud_collapse" in flags:
-        return (False, tuple(flags))
+        return (False, tuple(flags), None)
 
     summary = alignment_summary(candidate.landmarks)
     if eye_mouth_flip(summary):
@@ -167,7 +173,7 @@ def _evaluate_validity(
         outside = points_outside_bbox(candidate.landmarks, bbox=bbox)
         if outside / landmark_count > outside_bbox_fraction_floor:
             flags.append("points_outside_bbox")
-    return (not flags, tuple(flags))
+    return (not flags, tuple(flags), summary)
 
 
 def _bbox_diagonal(points: np.ndarray) -> float:
@@ -193,17 +199,22 @@ def _detect_unusual_bbox(
 
 
 def _detect_roi_ratio_outlier(
-    candidate: CandidateInput,
+    summary: T.Any,
     bbox: T.Sequence[float] | None,
     config: AlignmentResolverConfig,
 ) -> bool:
-    """Return True when the candidate's ROI is dramatically smaller/larger than the bbox."""
-    if bbox is None:
+    """Return True when the candidate's ROI is dramatically smaller/larger than the bbox.
+
+    ``summary`` is the candidate's precomputed :func:`alignment_summary` (or
+    ``None`` for a collapsed candidate that has no usable ROI). Reusing the
+    precomputed summary avoids rebuilding :class:`AlignedFace` here — the
+    resolver's main hot-path cost driver.
+    """
+    if bbox is None or summary is None:
         return False
     bbox_diag = _bbox_diagonal(np.array([[bbox[0], bbox[1]], [bbox[2], bbox[3]]], dtype="float64"))
     if bbox_diag <= 0:
         return False
-    summary = alignment_summary(candidate.landmarks)
     roi_diag = _bbox_diagonal(summary.roi)
     if roi_diag <= 0:
         return False
@@ -287,17 +298,21 @@ def resolve_alignment_geometry(
     flags: list[str] = []
     rejected: list[str] = []
 
-    # Per-candidate validity check.
+    # Per-candidate validity check. Reuse the per-candidate alignment_summary
+    # for the downstream ROI-ratio check so each candidate hits AlignedFace
+    # (Umeyama + solvePnP) at most once per resolve call.
     valid_indices: list[int] = []
     per_candidate_flags: dict[str, tuple[str, ...]] = {}
+    summaries: dict[int, AlignmentSummary | None] = {}
     for idx, candidate in enumerate(candidates):
-        is_valid, candidate_flags = _evaluate_validity(
+        is_valid, candidate_flags, summary = _evaluate_validity(
             candidate,
             detector_bbox,
             reference_extent=reference_extent,
             landmark_count=landmark_count,
         )
         per_candidate_flags[candidate.model] = candidate_flags
+        summaries[idx] = summary
         if is_valid:
             valid_indices.append(idx)
         else:
@@ -321,8 +336,7 @@ def resolve_alignment_geometry(
     if _detect_unusual_bbox(detector_bbox, config):
         risk_signals.append("unusual_bbox_aspect")
     if detector_bbox is not None and any(
-        _detect_roi_ratio_outlier(candidate, detector_bbox, config)
-        for candidate in active_candidates
+        _detect_roi_ratio_outlier(summaries[idx], detector_bbox, config) for idx in valid_indices
     ):
         risk_signals.append("roi_ratio_outlier")
     if len(active_candidates) < len(candidates):
