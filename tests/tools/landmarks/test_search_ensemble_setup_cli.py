@@ -403,36 +403,44 @@ def test_search_geometry_objective_reranks_by_geometry_score(tmp_path: Path) -> 
     assert setup["candidate_id"] == payload["candidates"][0]["candidate_id"]
 
 
-def test_search_geometry_objective_without_geometry_metrics_fails_loudly(
+def test_search_geometry_objective_auto_enables_geometry_metrics(
     tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Selecting the geometry objective without enabling metrics must hard-fail."""
+    """Selecting the geometry objective auto-enables geometry evaluation."""
     fixture = _build_fixture(tmp_path)
     output_dir = tmp_path / "search"
 
-    with pytest.raises(SystemExit, match="alignment_geometry_v1"):
-        search_main(
-            [
-                "--manifest",
-                str(fixture["manifest"]),
-                "--cache-dir",
-                str(fixture["cache"]),
-                "--splits",
-                str(fixture["splits"]),
-                "--models",
-                "hrnet,spiga,orformer",
-                "--model-subsets",
-                "all",
-                "--weight-generators",
-                "inverse_mean_error",
-                "--strategies",
-                "static_weighted",
-                "--output-dir",
-                str(output_dir),
-                "--objective",
-                "alignment_geometry_v1",
-            ]
-        )
+    rc = search_main(
+        [
+            "--manifest",
+            str(fixture["manifest"]),
+            "--cache-dir",
+            str(fixture["cache"]),
+            "--splits",
+            str(fixture["splits"]),
+            "--models",
+            "hrnet,spiga,orformer",
+            "--model-subsets",
+            "all",
+            "--weight-generators",
+            "inverse_mean_error",
+            "--strategies",
+            "static_weighted",
+            "--output-dir",
+            str(output_dir),
+            "--objective",
+            "alignment_geometry_v1",
+        ]
+    )
+
+    assert rc == 0
+    assert (output_dir / "best_setup.json").is_file()
+    assert (output_dir / "candidate_results.json").is_file()
+    captured = capsys.readouterr()
+    assert "START geometry_evaluate_candidates" in captured.err
+    assert "Re-ranking" in captured.err
+    assert "alignment_geometry_v1" in captured.err
 
 
 def test_search_geometry_objective_allows_nme_fallback_when_opted_in(
