@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+import tools.landmarks.search_ensemble_setup as search_cli
 from lib.landmarks.ensemble.weights import LANDMARK_COUNT
 from lib.landmarks.eval.prediction_cache import DiskPredictionCache
 from lib.landmarks.eval.splits import (
@@ -17,7 +18,6 @@ from lib.landmarks.eval.splits import (
     split_manifest_samples,
 )
 from lib.landmarks.schema import LandmarkPrediction
-import tools.landmarks.search_ensemble_setup as search_cli
 from tools.landmarks.search_ensemble_setup import main as search_main
 
 

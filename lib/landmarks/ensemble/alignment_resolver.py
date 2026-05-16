@@ -144,11 +144,13 @@ def _evaluate_validity(
     """
     flags: list[str] = []
     candidate_extent = _bbox_diagonal(candidate.landmarks)
-    if candidate_extent <= 1e-6:
-        flags.append("cloud_collapse")
-    elif reference_extent > 0 and cloud_collapse(
-        candidate.landmarks,
-        truth_extent=reference_extent,
+    if (
+        candidate_extent <= 1e-6
+        or reference_extent > 0
+        and cloud_collapse(
+            candidate.landmarks,
+            truth_extent=reference_extent,
+        )
     ):
         flags.append("cloud_collapse")
 
