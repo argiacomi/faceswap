@@ -86,10 +86,40 @@ def test_bad_alignment_flags_aligned_crop_misses_visible_face() -> None:
 
 
 def test_landmarks_inside_polygon_handles_a_simple_square() -> None:
-    """Point-in-polygon counts work for a canonical CCW square."""
+    """Convex polygon counts work for a canonical CCW square."""
     polygon = np.array([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]])
     landmarks = np.array([[0.5, 0.5], [-1.0, 0.5], [0.5, 1.5], [0.9, 0.9]], dtype="float32")
     assert landmarks_inside_polygon(landmarks, polygon) == 2
+
+
+def test_landmarks_inside_polygon_handles_clockwise_square_and_edges() -> None:
+    """Clockwise convex polygons and edge points are treated as inside."""
+    polygon = np.array([[0.0, 0.0], [0.0, 2.0], [2.0, 2.0], [2.0, 0.0]])
+    landmarks = np.array(
+        [
+            [1.0, 1.0],
+            [0.0, 1.0],
+            [2.0, 2.0],
+            [2.1, 1.0],
+        ],
+        dtype="float32",
+    )
+    assert landmarks_inside_polygon(landmarks, polygon) == 3
+
+
+def test_landmarks_inside_polygon_handles_rotated_convex_quad() -> None:
+    """The vectorized convex sign test works for rotated ROI-like quads."""
+    polygon = np.array([[0.0, 1.0], [1.0, 0.0], [2.0, 1.0], [1.0, 2.0]])
+    landmarks = np.array(
+        [
+            [1.0, 1.0],
+            [0.5, 1.0],
+            [1.5, 1.0],
+            [1.0, 2.2],
+        ],
+        dtype="float32",
+    )
+    assert landmarks_inside_polygon(landmarks, polygon) == 3
 
 
 def test_landmarks_outside_bbox_counts_violations() -> None:
