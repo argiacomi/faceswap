@@ -297,27 +297,37 @@ def _candidate_geometry_aggregate(
     cache: DiskPredictionCache,
     aligned_size: int,
     region_failure_threshold: float,
+    truth_summaries: dict[str, T.Any] | None = None,
+    truth_landmarks: dict[str, T.Any] | None = None,
 ) -> GeometryAggregate:
     """Compute the report-split GeometryAggregate for one CandidateResult.
 
     Cache-only: reuses cached predictions and fuses with the candidate's
     strategy + weights. The GT side runs Faceswap's own ``AlignedFace`` so the
     measurements are exactly what extract would see at runtime.
+
+    Callers that evaluate many candidates against the same report split can
+    pass ``truth_summaries`` / ``truth_landmarks`` keyed by ``sample_id`` to
+    avoid re-reading the GT npy and re-running ``AlignedFace`` once per
+    candidate. Absent caches fall back to per-call IO.
     """
     import numpy as np
 
+    truth_summaries = truth_summaries or {}
+    truth_landmarks_cache = truth_landmarks or {}
     per_sample: list[T.Any] = []
     for sample in samples:
         bbox = sample.face_bbox
-        if bbox is None:
+        truth = truth_landmarks_cache.get(sample.sample_id)
+        if truth is None:
             try:
                 truth = np.load(sample.landmarks).astype("float32")
             except OSError:
                 continue
+        if bbox is None:
             left, top = np.min(truth, axis=0)
             right, bottom = np.max(truth, axis=0)
             bbox = (float(left), float(top), float(right), float(bottom))
-        truth = np.load(sample.landmarks).astype("float32")
         cached_points = [
             cache.read(sample.sample_id, model).landmarks for model in result.candidate.models
         ]
@@ -333,6 +343,7 @@ def _candidate_geometry_aggregate(
                 visibility=sample.visibility,
                 aligned_size=aligned_size,
                 region_failure_threshold=region_failure_threshold,
+                truth_summary=truth_summaries.get(sample.sample_id),
             )
         )
     return aggregate_geometry_samples(result.candidate_id, per_sample)
@@ -820,6 +831,26 @@ def main(argv: list[str] | None = None) -> int:
     if _gates_need_geometry(gate_config, args):
 
         def _geometry_eval() -> None:
+            # Precompute the GT-side AlignedFace summary + raw landmarks for
+            # every report-split sample so every candidate evaluated below
+            # reuses them. Without this we re-read the GT npy and rebuild
+            # AlignedFace once per (sample, candidate) pair.
+            import numpy as np
+
+            from lib.landmarks.eval.geometry_signals import alignment_summary
+
+            truth_landmarks_cache: dict[str, T.Any] = {}
+            truth_summaries: dict[str, T.Any] = {}
+            for sample in report_samples:
+                try:
+                    truth = np.load(sample.landmarks).astype("float32")
+                except OSError:
+                    continue
+                truth_landmarks_cache[sample.sample_id] = truth
+                truth_summaries[sample.sample_id] = alignment_summary(
+                    truth, size=args.geometry_aligned_size
+                )
+
             interim: dict[str, GeometryAggregate] = {}
             for result in results:
                 aggregate = _candidate_geometry_aggregate(
@@ -828,6 +859,8 @@ def main(argv: list[str] | None = None) -> int:
                     cache=cache,
                     aligned_size=args.geometry_aligned_size,
                     region_failure_threshold=args.geometry_region_failure_threshold,
+                    truth_summaries=truth_summaries,
+                    truth_landmarks=truth_landmarks_cache,
                 )
                 interim[result.candidate_id] = aggregate
                 geometry_aggregates[result.candidate_id] = aggregate

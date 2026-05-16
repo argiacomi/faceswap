@@ -45,6 +45,7 @@ from lib.landmarks.eval.geometry_metrics import (
     aggregate_geometry_samples,
     evaluate_geometry_sample,
 )
+from lib.landmarks.eval.geometry_signals import alignment_summary
 from lib.landmarks.eval.harness import LandmarkSample, load_manifest
 from lib.landmarks.eval.prediction_cache import DiskPredictionCache
 from lib.landmarks.fusion import (
@@ -149,6 +150,10 @@ def evaluate_manifest(
             skipped.append(sample.sample_id)
             continue
         truth = _truth_landmarks(sample)
+        # Build the GT-side AlignedFace summary once per sample; every
+        # candidate evaluated below reuses it instead of re-running Umeyama
+        # + solvePnP on the same GT cloud.
+        truth_summary = alignment_summary(truth, size=aligned_size)
         predictions = {name: cache.read(sample.sample_id, name) for name in models}
         prediction_items = [predictions[name] for name in models]
 
@@ -163,6 +168,7 @@ def evaluate_manifest(
                 visibility=sample.visibility,
                 aligned_size=aligned_size,
                 region_failure_threshold=region_failure_threshold,
+                truth_summary=truth_summary,
             )
             per_label_samples.setdefault(model_name, []).append(metrics)
             rows.append(_csv_row(metrics, model=model_name, variant="single"))
@@ -185,6 +191,7 @@ def evaluate_manifest(
                 visibility=sample.visibility,
                 aligned_size=aligned_size,
                 region_failure_threshold=region_failure_threshold,
+                truth_summary=truth_summary,
             )
             per_label_samples.setdefault(variant, []).append(metrics)
             rows.append(_csv_row(metrics, model="ensemble", variant=variant))

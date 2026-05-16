@@ -42,6 +42,7 @@ from lib.landmarks.ensemble.strategies import (
 )
 from lib.landmarks.ensemble.weights import load_weights, weights_matrix_for_models
 from lib.landmarks.eval.geometry_metrics import evaluate_geometry_sample
+from lib.landmarks.eval.geometry_signals import alignment_summary
 from lib.landmarks.eval.harness import LandmarkSample, load_manifest
 from lib.landmarks.eval.metrics import evaluate_prediction
 from lib.landmarks.eval.prediction_cache import DiskPredictionCache
@@ -133,6 +134,10 @@ def build_candidate_records(
             logger.warning("[signals] skipping %s: no usable bbox", sample.sample_id)
             continue
         truth = np.load(sample.landmarks).astype("float32")
+        # Build the GT-side AlignedFace summary once per sample so every
+        # downstream candidate (single models + ensemble variants) skips
+        # the redundant Umeyama + solvePnP pass on the same GT cloud.
+        truth_summary = alignment_summary(truth, size=aligned_size)
         predictions = {name: cache.read(sample.sample_id, name) for name in models}
         prediction_items = [predictions[name] for name in models]
         hard_slice = sample.condition  # build_hard_alignment_validation copies this
@@ -147,6 +152,7 @@ def build_candidate_records(
                 visibility=sample.visibility,
                 aligned_size=aligned_size,
                 region_failure_threshold=region_failure_threshold,
+                truth_summary=truth_summary,
             )
             nme = float(
                 evaluate_prediction(
@@ -182,6 +188,7 @@ def build_candidate_records(
                 visibility=sample.visibility,
                 aligned_size=aligned_size,
                 region_failure_threshold=region_failure_threshold,
+                truth_summary=truth_summary,
             )
             nme = float(evaluate_prediction(fused, truth, normalizer=sample.normalizer)["nme"])
             records.append(

@@ -250,6 +250,7 @@ def evaluate_geometry_sample(
     region_failure_threshold: float = 0.05,
     bbox_source: str = "manifest",
     landmark_coverage_floor: float = DEFAULT_LANDMARK_COVERAGE_FLOOR,
+    truth_summary: AlignmentSummary | None = None,
 ) -> GeometrySampleMetrics:
     """Return the GT-vs-prediction geometry deltas for one sample.
 
@@ -257,10 +258,16 @@ def evaluate_geometry_sample(
     error above which a region is flagged as failed. The default ``0.05`` is
     5% of the aligned-face side length — large enough that small wobble does
     not trip the gate, small enough that a misaligned eye/mouth region does.
+
+    ``truth_summary`` lets callers that evaluate many candidates against the
+    same GT (candidate search, signal validation, geometry CLI) precompute
+    the GT-side :func:`alignment_summary` once and reuse it across calls,
+    avoiding redundant ``AlignedFace`` (Umeyama + solvePnP) builds.
     """
     bbox = _normalize_bbox(bbox)
     pred_summary = alignment_summary(predicted, size=aligned_size)
-    truth_summary = alignment_summary(truth, size=aligned_size)
+    if truth_summary is None:
+        truth_summary = alignment_summary(truth, size=aligned_size)
     normalizer = _bbox_diagonal(truth)
     if normalizer <= 0:
         normalizer = max(aligned_size, 1.0)
