@@ -55,7 +55,7 @@ from lib.landmarks.fusion import (
 )
 from lib.landmarks.metrics import per_landmark_error
 from lib.landmarks.rejection import weighted_median as weighted_median_fusion
-from lib.landmarks.schema import CANONICAL_SCHEMA
+from lib.landmarks.schema import CANONICAL_SCHEMA, LandmarkPrediction
 
 DEFAULT_OBJECTIVE: str = "extract_alignment_v1"
 DEFAULT_REGRESSION_EPSILON_NME: float = 0.001
@@ -159,6 +159,115 @@ class CandidateResult:
             ),
             "is_single_model_baseline": bool(self.is_single_model_baseline),
         }
+
+
+@dataclass(frozen=True)
+class _SearchSampleData:
+    """In-memory fit/select data for one sample.
+
+    Candidate search evaluates many candidates against the same split data. Loading
+    truth arrays, metadata JSON, and prediction npy files inside every candidate
+    loop is slow and mostly idle. This object stores the reusable per-sample data
+    once for the duration of a search.
+    """
+
+    sample: LandmarkSample
+    truth: np.ndarray
+    predictions: dict[str, LandmarkPrediction]
+    single_nme: dict[str, float] = field(default_factory=dict)
+    single_failure: dict[str, bool] = field(default_factory=dict)
+    bucket: str = ""
+
+
+class _CandidateSearchContext:
+    """Cached fit/select data and reusable fit artifacts for one search run."""
+
+    def __init__(
+        self,
+        *,
+        fit_samples: T.Sequence[LandmarkSample],
+        select_samples: T.Sequence[LandmarkSample],
+        cache: DiskPredictionCache,
+        models: T.Sequence[str],
+        failure_threshold: float,
+    ) -> None:
+        self.cache = cache
+        self.models = tuple(dict.fromkeys(models))
+        self.failure_threshold = float(failure_threshold)
+        self.fit_data = self._load_samples(fit_samples, include_single_metrics=False)
+        self.select_data = self._load_samples(select_samples, include_single_metrics=True)
+        self._error_tables: dict[tuple[str, ...], ErrorTable] = {}
+        self._fit_results: dict[
+            tuple[tuple[str, ...], str, tuple[tuple[str, float], ...]], WeightFitResult
+        ] = {}
+
+    def _load_samples(
+        self,
+        samples: T.Sequence[LandmarkSample],
+        *,
+        include_single_metrics: bool,
+    ) -> list[_SearchSampleData]:
+        rows: list[_SearchSampleData] = []
+        for sample in samples:
+            truth = np.load(sample.landmarks).astype("float32")
+            predictions = {model: self.cache.read(sample.sample_id, model) for model in self.models}
+            single_nme: dict[str, float] = {}
+            single_failure: dict[str, bool] = {}
+            if include_single_metrics:
+                for model, prediction in predictions.items():
+                    metrics = evaluate_prediction(
+                        prediction.landmarks,
+                        truth,
+                        normalizer=sample.normalizer,
+                        failure_threshold=self.failure_threshold,
+                    )
+                    single_nme[model] = float(metrics["nme"])
+                    single_failure[model] = bool(metrics["failure"])
+            rows.append(
+                _SearchSampleData(
+                    sample=sample,
+                    truth=truth,
+                    predictions=predictions,
+                    single_nme=single_nme,
+                    single_failure=single_failure,
+                    bucket=scenario_bucket({"dataset": sample.dataset, "condition": sample.condition}),
+                )
+            )
+        return rows
+
+    def error_table_for(self, models: T.Sequence[str]) -> ErrorTable:
+        """Return the fit-split error table for ``models``, building it once."""
+        model_tuple = tuple(models)
+        table = self._error_tables.get(model_tuple)
+        if table is not None:
+            return table
+        if not self.fit_data:
+            raise ValueError("fit-split samples must be non-empty")
+        errors: dict[str, list[np.ndarray]] = {model: [] for model in model_tuple}
+        for row in self.fit_data:
+            for model in model_tuple:
+                prediction = row.predictions[model]
+                errors[model].append(per_landmark_error(prediction.landmarks, row.truth))
+        table = ErrorTable.from_samples(errors)
+        self._error_tables[model_tuple] = table
+        return table
+
+    def fit_weights(self, candidate: Candidate) -> WeightFitResult:
+        """Fit/cache static weights for the candidate's model subset + generator."""
+        key = (
+            tuple(candidate.models),
+            candidate.weight_generator,
+            candidate.weight_generator_params,
+        )
+        fit_result = self._fit_results.get(key)
+        if fit_result is not None:
+            return fit_result
+        table = self.error_table_for(candidate.models)
+        generator_cls = type(get_generator(candidate.weight_generator))
+        generator = generator_cls(**candidate.generator_params_dict())
+        fit_result = generator.fit(table, models=candidate.models)
+        self._fit_results[key] = fit_result
+        return fit_result
 
 
 def _json_ready(value: T.Any) -> T.Any:
@@ -389,8 +498,6 @@ def _fuse_candidate(
     weight_matrix: np.ndarray,
 ) -> FusionResult:
     """Fuse one face's cached predictions using a candidate's strategy + weights."""
-    from lib.landmarks.schema import LandmarkPrediction
-
     predictions = [
         LandmarkPrediction(points.astype("float32"), source=model)
         for points, model in zip(cached_predictions, candidate.models, strict=True)
@@ -429,13 +536,24 @@ def evaluate_candidate(
     cache: DiskPredictionCache,
     failure_threshold: float = 0.08,
     regression_epsilon_nme: float = DEFAULT_REGRESSION_EPSILON_NME,
+    context: _CandidateSearchContext | None = None,
 ) -> tuple[WeightFitResult, CandidateMetrics]:
     """Fit weights on ``fit_samples`` and evaluate the candidate on ``select_samples``.
 
     Returns the fit result alongside metrics that include sample-level and
     bucket-level regression rate against the best single model in the subset.
+    When ``context`` is supplied, truth arrays, predictions, single-model metrics,
+    error tables, and fitted weights are reused across candidates.
     """
-    fit_result = _fit_weights(candidate, fit_samples, cache)
+    if context is None:
+        context = _CandidateSearchContext(
+            fit_samples=fit_samples,
+            select_samples=select_samples,
+            cache=cache,
+            models=candidate.models,
+            failure_threshold=failure_threshold,
+        )
+    fit_result = context.fit_weights(candidate)
     weight_matrix = weights_matrix_for_models(fit_result.weights, candidate.models)
 
     nmes: list[float] = []
@@ -446,20 +564,10 @@ def evaluate_candidate(
     single_total_nme: dict[str, float] = {model: 0.0 for model in candidate.models}
     single_counts: dict[str, int] = {model: 0 for model in candidate.models}
 
-    for sample in select_samples:
-        truth = np.load(sample.landmarks).astype("float32")
-        cached_points = [
-            cache.read(sample.sample_id, model).landmarks for model in candidate.models
-        ]
-        single_nmes: dict[str, float] = {}
-        for model, points in zip(candidate.models, cached_points, strict=True):
-            metrics = evaluate_prediction(
-                points,
-                truth,
-                normalizer=sample.normalizer,
-                failure_threshold=failure_threshold,
-            )
-            single_nmes[model] = float(metrics["nme"])
+    for row in context.select_data:
+        cached_points = [row.predictions[model].landmarks for model in candidate.models]
+        single_nmes = {model: row.single_nme[model] for model in candidate.models}
+        for model in candidate.models:
             single_total_nme[model] += single_nmes[model]
             single_counts[model] += 1
         best_single_nme = min(single_nmes.values())
@@ -467,8 +575,8 @@ def evaluate_candidate(
         fused = _fuse_candidate(candidate, cached_points, weight_matrix=weight_matrix)
         fused_metrics = evaluate_prediction(
             fused.points,
-            truth,
-            normalizer=sample.normalizer,
+            row.truth,
+            normalizer=row.sample.normalizer,
             failure_threshold=failure_threshold,
         )
         ensemble_nme = float(fused_metrics["nme"])
@@ -476,9 +584,8 @@ def evaluate_candidate(
         failures.append(bool(fused_metrics["failure"]))
         regressed = ensemble_nme > best_single_nme + regression_epsilon_nme
         regressions.append(regressed)
-        bucket = scenario_bucket({"dataset": sample.dataset, "condition": sample.condition})
-        per_bucket_nmes.setdefault(bucket, []).append(ensemble_nme)
-        per_bucket_regressions.setdefault(bucket, []).append(regressed)
+        per_bucket_nmes.setdefault(row.bucket, []).append(ensemble_nme)
+        per_bucket_regressions.setdefault(row.bucket, []).append(regressed)
 
     overall_nme = float(np.mean(nmes)) if nmes else 0.0
     failure_rate = float(np.mean(failures)) if failures else 0.0
@@ -576,9 +683,21 @@ def run_candidate_search(
 
     ``progress`` optionally wraps the candidate sequence for user-facing tools
     such as CLIs that want a tqdm bar without making this library depend on
-    tqdm directly.
+    tqdm directly. The runner preloads the fit/select truth arrays and cached
+    predictions once, then reuses per-subset error tables and fitted weights
+    across all strategies/thresholds that share the same subset + generator.
     """
     results: list[CandidateResult] = []
+    all_models = tuple(
+        dict.fromkeys(model for candidate in candidates for model in candidate.models)
+    )
+    context = _CandidateSearchContext(
+        fit_samples=fit_samples,
+        select_samples=select_samples,
+        cache=cache,
+        models=all_models,
+        failure_threshold=failure_threshold,
+    )
     iterator = progress(candidates) if progress is not None else candidates
     for candidate in iterator:
         fit_result, metrics = evaluate_candidate(
@@ -588,6 +707,7 @@ def run_candidate_search(
             cache=cache,
             failure_threshold=failure_threshold,
             regression_epsilon_nme=regression_epsilon_nme,
+            context=context,
         )
         whash = weights_hash(fit_result.weights)
         cid = candidate_id(
