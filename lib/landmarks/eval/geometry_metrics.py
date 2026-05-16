@@ -76,6 +76,29 @@ def _region_indices(region: str) -> tuple[int, ...]:
     return tuple(indices)
 
 
+def _normalize_bbox(
+    bbox: T.Sequence[float] | None,
+) -> tuple[float, float, float, float] | None:
+    """Return bbox as ``(left, top, right, bottom)`` when possible.
+
+    Most geometry code expects positive-width ltrb boxes, but COFW-68 benchmark
+    exports use ``(x, y, width, height)``. Normalize likely xywh values here so
+    geometry evaluation can consume mixed-source manifests without requiring a
+    one-off manifest patch.
+    """
+    if bbox is None:
+        return None
+    try:
+        left, top, right, bottom = (float(value) for value in bbox[:4])
+    except (TypeError, ValueError):
+        return None
+    if right > left and bottom > top:
+        return (left, top, right, bottom)
+    if right > 0 and bottom > 0:
+        return (left, top, left + right, top + bottom)
+    return None
+
+
 def aligned_face_size_from_summary(summary: AlignmentSummary) -> float:
     """Return the side length of the aligned-face coordinate system."""
     points = summary.aligned_landmarks
@@ -235,6 +258,7 @@ def evaluate_geometry_sample(
     5% of the aligned-face side length — large enough that small wobble does
     not trip the gate, small enough that a misaligned eye/mouth region does.
     """
+    bbox = _normalize_bbox(bbox)
     pred_summary = alignment_summary(predicted, size=aligned_size)
     truth_summary = alignment_summary(truth, size=aligned_size)
     normalizer = _bbox_diagonal(truth)
