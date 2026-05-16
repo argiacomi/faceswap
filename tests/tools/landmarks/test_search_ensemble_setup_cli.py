@@ -386,6 +386,7 @@ def test_search_geometry_objective_reranks_by_geometry_score(
         region_failure_threshold: float,
         truth_summaries: object | None = None,
         truth_landmarks: object | None = None,
+        geometry_context: object | None = None,
     ) -> search_cli.GeometryAggregate:
         del (
             samples,
@@ -394,6 +395,7 @@ def test_search_geometry_objective_reranks_by_geometry_score(
             region_failure_threshold,
             truth_summaries,
             truth_landmarks,
+            geometry_context,
         )
         candidate_id = result.candidate_id  # type: ignore[attr-defined]
         pre_rank_order.append(candidate_id)
