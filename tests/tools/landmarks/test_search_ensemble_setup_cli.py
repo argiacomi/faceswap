@@ -359,3 +359,171 @@ def test_search_with_geometry_gate_promotes_when_thresholds_met(tmp_path: Path) 
     assert (output_dir / "best_setup.json").is_file()
     setup = json.loads((output_dir / "best_setup.json").read_text(encoding="utf-8"))
     assert setup["candidate_id"].startswith("sha256:")
+
+
+# ---------------------------------------------------------------------------
+# Follow-up fixes (alignment_geometry_v1 ranking, bbox plumbing, no_promotion
+# gate config)
+# ---------------------------------------------------------------------------
+
+
+def test_search_geometry_objective_reranks_by_geometry_score(tmp_path: Path) -> None:
+    """``--objective alignment_geometry_v1`` ranks results by geometry score."""
+    fixture = _build_fixture(tmp_path)
+    output_dir = tmp_path / "search"
+
+    rc = search_main(
+        [
+            "--manifest",
+            str(fixture["manifest"]),
+            "--cache-dir",
+            str(fixture["cache"]),
+            "--splits",
+            str(fixture["splits"]),
+            "--models",
+            "hrnet,spiga,orformer",
+            "--model-subsets",
+            "all",
+            "--weight-generators",
+            "inverse_mean_error",
+            "--strategies",
+            "static_weighted",
+            "--output-dir",
+            str(output_dir),
+            "--objective",
+            "alignment_geometry_v1",
+            "--include-geometry-metrics",
+        ]
+    )
+    assert rc == 0
+    payload = json.loads((output_dir / "candidate_results.json").read_text(encoding="utf-8"))
+    # The chosen winner in best_setup.json should match the first row in the
+    # geometry-ordered candidate log (rank 1).
+    setup = json.loads((output_dir / "best_setup.json").read_text(encoding="utf-8"))
+    assert setup["candidate_id"] == payload["candidates"][0]["candidate_id"]
+
+
+def test_search_geometry_objective_without_geometry_metrics_fails_loudly(
+    tmp_path: Path,
+) -> None:
+    """Selecting the geometry objective without enabling metrics must hard-fail."""
+    fixture = _build_fixture(tmp_path)
+    output_dir = tmp_path / "search"
+
+    with pytest.raises(SystemExit, match="alignment_geometry_v1"):
+        search_main(
+            [
+                "--manifest",
+                str(fixture["manifest"]),
+                "--cache-dir",
+                str(fixture["cache"]),
+                "--splits",
+                str(fixture["splits"]),
+                "--models",
+                "hrnet,spiga,orformer",
+                "--model-subsets",
+                "all",
+                "--weight-generators",
+                "inverse_mean_error",
+                "--strategies",
+                "static_weighted",
+                "--output-dir",
+                str(output_dir),
+                "--objective",
+                "alignment_geometry_v1",
+            ]
+        )
+
+
+def test_search_geometry_objective_allows_nme_fallback_when_opted_in(
+    tmp_path: Path,
+) -> None:
+    """``--allow-nme-only-promotion`` lets the geometry objective fall back to NME."""
+    fixture = _build_fixture(tmp_path)
+    output_dir = tmp_path / "search"
+
+    rc = search_main(
+        [
+            "--manifest",
+            str(fixture["manifest"]),
+            "--cache-dir",
+            str(fixture["cache"]),
+            "--splits",
+            str(fixture["splits"]),
+            "--models",
+            "hrnet,spiga,orformer",
+            "--model-subsets",
+            "all",
+            "--weight-generators",
+            "inverse_mean_error",
+            "--strategies",
+            "static_weighted",
+            "--output-dir",
+            str(output_dir),
+            "--objective",
+            "alignment_geometry_v1",
+            "--allow-nme-only-promotion",
+        ]
+    )
+    assert rc == 0
+    assert (output_dir / "best_setup.json").is_file()
+
+
+def test_no_promotion_payload_includes_geometry_gate_fields(tmp_path: Path) -> None:
+    """``no_promotion.json`` reproduces every configured geometry gate."""
+    fixture = _build_fixture(tmp_path)
+    output_dir = tmp_path / "search"
+
+    rc = search_main(
+        [
+            "--manifest",
+            str(fixture["manifest"]),
+            "--cache-dir",
+            str(fixture["cache"]),
+            "--splits",
+            str(fixture["splits"]),
+            "--models",
+            "hrnet,spiga,orformer",
+            "--model-subsets",
+            "all",
+            "--weight-generators",
+            "inverse_mean_error",
+            "--strategies",
+            "static_weighted",
+            "--output-dir",
+            str(output_dir),
+            "--include-single-model-baselines",
+            "--allow-single-model-baselines",
+            "--include-geometry-metrics",
+            "--require-geometry-improvement",
+            "--max-catastrophic-geometry-failure-rate",
+            "-1.0",
+            "--max-p95-transform-error",
+            "0.0",
+            "--max-p95-crop-center-error",
+            "0.0",
+            "--max-p95-roll-error",
+            "0.0",
+            "--min-hull-iou",
+            "2.0",
+            "--max-hard-slice-regression-rate",
+            "0.0",
+        ]
+    )
+    assert rc == 1
+    no_promo = json.loads((output_dir / "no_promotion.json").read_text(encoding="utf-8"))
+    gate_config = no_promo["gate_config"]
+    for field in (
+        "require_geometry_improvement",
+        "max_catastrophic_geometry_failure_rate",
+        "max_p95_transform_error",
+        "max_p95_crop_center_error",
+        "max_p95_roll_error",
+        "min_hull_iou",
+        "max_hard_slice_regression_rate",
+        "allow_nme_only_promotion",
+    ):
+        assert field in gate_config, f"missing geometry gate field {field!r}"
+    assert gate_config["require_geometry_improvement"] is True
+    assert gate_config["max_catastrophic_geometry_failure_rate"] == -1.0
+    assert gate_config["min_hull_iou"] == 2.0

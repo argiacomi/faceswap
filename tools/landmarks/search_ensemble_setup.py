@@ -638,6 +638,14 @@ def _write_no_promotion(
         "require_effective_ensemble": args.require_effective_ensemble,
         "effective_models_floor": args.effective_models_floor,
         "allow_single_model_baselines": args.allow_single_model_baselines,
+        "require_geometry_improvement": args.require_geometry_improvement,
+        "max_catastrophic_geometry_failure_rate": args.max_catastrophic_geometry_failure_rate,
+        "max_p95_transform_error": args.max_p95_transform_error,
+        "max_p95_crop_center_error": args.max_p95_crop_center_error,
+        "max_p95_roll_error": args.max_p95_roll_error,
+        "min_hull_iou": args.min_hull_iou,
+        "max_hard_slice_regression_rate": args.max_hard_slice_regression_rate,
+        "allow_nme_only_promotion": args.allow_nme_only_promotion,
     }
     path = output_dir / "no_promotion.json"
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -806,16 +814,6 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
 
-    csv_path, json_path = _stage(
-        "write_candidate_results",
-        lambda: _write_candidate_results(
-            output_dir,
-            results,
-            objective=args.objective,
-            regression_epsilon_nme=args.regression_epsilon_nme,
-        ),
-    )
-
     gate_config = _gate_config_from_args(args)
     geometry_scores: dict[str, GeometryScore] = {}
     geometry_aggregates: dict[str, GeometryAggregate] = {}
@@ -874,6 +872,47 @@ def main(argv: list[str] | None = None) -> int:
                 )
 
         _stage("profile_evaluate_candidates", _profile_eval)
+
+    # When the operator explicitly asks for alignment_geometry_v1 the
+    # ranking must come from geometry scores, not the NME-shaped objective
+    # that run_candidate_search returns sorted by. Re-rank before writing
+    # the candidate log so the CSV / JSON / promotion path all see the
+    # geometry-driven order.
+    if args.objective == GEOMETRY_OBJECTIVE:
+        if geometry_scores:
+            _progress(
+                f"Re-ranking {len(results)} candidates by alignment_geometry_v1 "
+                "score before promotion"
+            )
+            results = sorted(
+                results,
+                key=lambda r: (
+                    geometry_scores[r.candidate_id].overall_score,
+                    r.metrics.overall_nme,
+                ),
+            )
+        elif not args.allow_nme_only_promotion:
+            raise SystemExit(
+                "--objective alignment_geometry_v1 selected but geometry metrics were not "
+                "computed. Pass --include-geometry-metrics (or any geometry gate) to enable "
+                "geometry-based ranking, or set --allow-nme-only-promotion explicitly to "
+                "keep the legacy NME ranking."
+            )
+        else:
+            _progress(
+                "alignment_geometry_v1 objective set but --allow-nme-only-promotion is on; "
+                "falling back to NME ranking."
+            )
+
+    csv_path, json_path = _stage(
+        "write_candidate_results",
+        lambda: _write_candidate_results(
+            output_dir,
+            results,
+            objective=args.objective,
+            regression_epsilon_nme=args.regression_epsilon_nme,
+        ),
+    )
 
     gate_application: GateApplication | None = None
     if gate_config.is_active():

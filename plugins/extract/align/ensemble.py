@@ -159,6 +159,7 @@ class Ensemble(ExtractPlugin):
             else resolver_high_disagreement_px
         )
         self._last_matrices: np.ndarray | None = None
+        self._last_detector_bboxes: np.ndarray | None = None
         self.last_debug_metadata: list[dict[str, T.Any]] = []
         self.model: list[LandmarkAdapter]
 
@@ -317,6 +318,9 @@ class Ensemble(ExtractPlugin):
         retval[:, 2] = ctr_x + half
         retval[:, 3] = ctr_y + half
         self._last_matrices = roi_to_matrix(retval)
+        # Cache the raw detector bboxes per face so the geometry resolver can
+        # consume bbox-aspect / ROI-ratio / outside-bbox signals at runtime.
+        self._last_detector_bboxes = batch.astype("float32", copy=True)
         return retval
 
     def _active_adapters(self) -> list[LandmarkAdapter]:
@@ -387,6 +391,7 @@ class Ensemble(ExtractPlugin):
         items: list[LandmarkPrediction],
         errors: list[str],
         threshold: float | None,
+        detector_bbox: tuple[float, float, float, float] | None = None,
     ) -> np.ndarray | None:
         """Route this face through the geometry-risk resolver (#78).
 
@@ -419,7 +424,7 @@ class Ensemble(ExtractPlugin):
             result = resolve_alignment_geometry(
                 candidates,
                 config=resolver_config,
-                detector_bbox=None,
+                detector_bbox=detector_bbox,
                 image_shape=None,
             )
         except AlignmentResolverError as err:
@@ -455,6 +460,7 @@ class Ensemble(ExtractPlugin):
                     "geometry_flags": list(result.geometry_flags),
                     "rejected_models": list(result.rejected_models),
                     "max_disagreement_px": result.debug_metadata.get("max_disagreement_px", 0.0),
+                    "detector_bbox": list(detector_bbox) if detector_bbox is not None else None,
                 },
             }
         )
@@ -464,8 +470,17 @@ class Ensemble(ExtractPlugin):
         self,
         predictions: list[tuple[LandmarkAdapter, LandmarkPrediction]],
         errors: list[str],
+        *,
+        detector_bbox: tuple[float, float, float, float] | None = None,
     ) -> np.ndarray:
-        """Fuse one face's adapter predictions and return frame-space points."""
+        """Fuse one face's adapter predictions and return frame-space points.
+
+        ``detector_bbox`` is the per-face source-frame detection box that
+        ``pre_process`` saw (left/top/right/bottom). When supplied, the
+        geometry resolver uses it for bbox-aspect, ROI-ratio, and
+        landmarks-outside-bbox signals; otherwise those signals stay inactive
+        (e.g. for warmup calls that bypass ``pre_process``).
+        """
         if len(predictions) < self._min_models:
             raise ValueError(
                 "Not enough successful landmark adapters for ensemble face: "
@@ -478,7 +493,11 @@ class Ensemble(ExtractPlugin):
 
         if self._use_resolver:
             resolver_points = self._resolve_via_geometry(
-                adapters=adapters, items=items, errors=errors, threshold=threshold
+                adapters=adapters,
+                items=items,
+                errors=errors,
+                threshold=threshold,
+                detector_bbox=detector_bbox,
             )
             if resolver_points is not None:
                 return resolver_points
@@ -556,7 +575,7 @@ class Ensemble(ExtractPlugin):
         )
         per_face, errors = self._collect_predictions(image[None], matrices)
         self.last_debug_metadata = []
-        return self._fuse_face(per_face[0], errors)
+        return self._fuse_face(per_face[0], errors, detector_bbox=None)
 
     def process(self, batch: np.ndarray) -> np.ndarray:
         """Run adapter predictions, fuse in frame space and return normalized landmarks."""
@@ -566,10 +585,19 @@ class Ensemble(ExtractPlugin):
         output = np.empty((batch.shape[0], 68, 2), dtype="float32")
         for idx, predictions in enumerate(per_face):
             output[idx] = frame_to_normalized_crop(
-                self._fuse_face(predictions, errors),
+                self._fuse_face(predictions, errors, detector_bbox=self._bbox_for_face(idx)),
                 matrices[idx],
             )
         return output
+
+    def _bbox_for_face(self, face_index: int) -> tuple[float, float, float, float] | None:
+        """Return the cached detector bbox for one face index, or ``None`` if unavailable."""
+        if self._last_detector_bboxes is None:
+            return None
+        if face_index >= self._last_detector_bboxes.shape[0]:
+            return None
+        bbox = self._last_detector_bboxes[face_index]
+        return (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3]))
 
 
 __all__ = get_module_objects(__name__)
