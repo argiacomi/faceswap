@@ -384,8 +384,17 @@ def test_search_geometry_objective_reranks_by_geometry_score(
         cache: object,
         aligned_size: int,
         region_failure_threshold: float,
+        truth_summaries: object | None = None,
+        truth_landmarks: object | None = None,
     ) -> search_cli.GeometryAggregate:
-        del samples, cache, aligned_size, region_failure_threshold
+        del (
+            samples,
+            cache,
+            aligned_size,
+            region_failure_threshold,
+            truth_summaries,
+            truth_landmarks,
+        )
         candidate_id = result.candidate_id  # type: ignore[attr-defined]
         pre_rank_order.append(candidate_id)
         # Force the pre-rank last candidate to become best by geometry. This
