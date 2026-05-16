@@ -37,6 +37,32 @@ class LandmarkSample:
     dataset: str = ""
     condition: str = ""
     normalizer: float | None = None
+    face_bbox: tuple[float, float, float, float] | None = None
+    visibility: tuple[bool, ...] | None = None
+
+
+def _coerce_bbox(value: T.Any) -> tuple[float, float, float, float] | None:
+    """Coerce a face_bbox entry into a 4-tuple of floats, or None when unusable."""
+    if value is None:
+        return None
+    try:
+        left, top, right, bottom = (float(item) for item in value)
+    except (TypeError, ValueError):
+        return None
+    return (left, top, right, bottom)
+
+
+def _coerce_visibility(value: T.Any) -> tuple[bool, ...] | None:
+    """Coerce a visibility entry to a 68-bool tuple, or None when unusable."""
+    if value is None:
+        return None
+    try:
+        flags = tuple(bool(item) for item in value)
+    except TypeError:
+        return None
+    if not flags:
+        return None
+    return flags
 
 
 def load_manifest(path: str | Path) -> list[LandmarkSample]:
@@ -49,6 +75,9 @@ def load_manifest(path: str | Path) -> list[LandmarkSample]:
         landmarks = str(entry.get("landmarks") or entry.get("ground_truth") or "")
         if not landmarks:
             raise ValueError(f"manifest entry {entry!r} missing landmarks path")
+        metadata = entry.get("metadata", {}) if isinstance(entry.get("metadata"), dict) else {}
+        face_bbox = _coerce_bbox(entry.get("face_bbox", metadata.get("face_bbox")))
+        visibility = _coerce_visibility(entry.get("visibility", metadata.get("visibility")))
         samples.append(
             LandmarkSample(
                 sample_id=str(entry.get("sample_id") or entry.get("id") or entry.get("name")),
@@ -57,6 +86,8 @@ def load_manifest(path: str | Path) -> list[LandmarkSample]:
                 dataset=str(entry.get("dataset", "")),
                 condition=str(entry.get("condition", entry.get("scenario", ""))),
                 normalizer=entry.get("normalizer"),
+                face_bbox=face_bbox,
+                visibility=visibility,
             )
         )
     return samples

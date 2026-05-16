@@ -344,3 +344,70 @@ def test_enumerate_candidates_validates_generator_names() -> None:
 def test_generator_registry_lists_at_least_three_options() -> None:
     """The default search space contract relies on a non-trivial generator registry."""
     assert {"equal", "inverse_mean_error", "regularized_inverse_error"}.issubset(GENERATOR_NAMES)
+
+
+def test_single_model_baselines_can_be_appended_via_enumerate(tmp_path: Path) -> None:
+    """``include_single_model_baselines=True`` appends one plain_average per model."""
+    candidates = enumerate_candidates(
+        models=MODELS,
+        model_subset_presets=("all",),
+        weight_generators=("inverse_mean_error",),
+        strategies=("static_weighted",),
+        outlier_thresholds=(),
+        include_single_model_baselines=True,
+    )
+
+    baselines = [
+        c
+        for c in candidates
+        if len(c.models) == 1 and c.strategy == "plain_average"
+    ]
+    assert {b.models[0] for b in baselines} == set(MODELS)
+    # No duplicates when a baseline already exists in the regular enumeration.
+    again = enumerate_candidates(
+        models=MODELS,
+        model_subset_presets=("all",),
+        weight_generators=("inverse_mean_error",),
+        strategies=("plain_average",),
+        outlier_thresholds=(),
+        include_single_model_baselines=True,
+    )
+    seen = {(tuple(sorted(c.models)), c.strategy) for c in again}
+    assert len(again) == len(seen)
+
+
+def test_run_candidate_search_attaches_effective_ensemble_diagnostics(tmp_path: Path) -> None:
+    """Search results carry effective-ensemble diagnostics for every candidate."""
+    manifest, cache_dir, ids = _write_manifest_and_cache(
+        tmp_path,
+        samples_per_bucket={"fixture:clean": 9, "fixture:occluded": 9},
+        model_noises={"hrnet": 0.5, "spiga": 1.0, "orformer": 2.5},
+    )
+    assignment = _equal_split(ids)
+    cache = DiskPredictionCache(cache_dir)
+    fit = load_split_samples(manifest, assignment, "fit")
+    select = load_split_samples(manifest, assignment, "select")
+
+    candidates = enumerate_candidates(
+        models=MODELS,
+        model_subset_presets=("all",),
+        weight_generators=("equal", "inverse_mean_error"),
+        strategies=("static_weighted",),
+        outlier_thresholds=(),
+        include_single_model_baselines=True,
+    )
+    results = run_candidate_search(
+        candidates,
+        fit_samples=fit,
+        select_samples=select,
+        cache=cache,
+        split_assignment_hash="sha256:test",
+    )
+
+    for result in results:
+        assert result.effective_ensemble is not None
+    # Single-model baselines must self-identify and self-flag as collapsed.
+    baselines = [result for result in results if result.is_single_model_baseline]
+    assert {result.candidate.models[0] for result in baselines} == set(MODELS)
+    for baseline in baselines:
+        assert baseline.effective_ensemble.collapsed is True

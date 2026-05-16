@@ -34,6 +34,12 @@ from lib.landmarks.ensemble.promoted_setup import (
     write_best_setup,
     write_best_weights,
 )
+from lib.landmarks.ensemble.strategies import (
+    strategy_outlier_method,
+    strategy_requires_weights,
+    strategy_uses_threshold,
+)
+from lib.landmarks.ensemble.weights import weights_matrix_for_models
 from lib.landmarks.eval.candidate_search import (
     DEFAULT_OBJECTIVE,
     DEFAULT_REGRESSION_EPSILON_NME,
@@ -43,10 +49,40 @@ from lib.landmarks.eval.candidate_search import (
     evaluate_candidate,
     load_split_samples,
     run_candidate_search,
-    select_best_candidate,
+)
+from lib.landmarks.eval.geometry_metrics import (
+    GEOMETRY_OBJECTIVE,
+    GeometryAggregate,
+    aggregate_geometry_samples,
+    evaluate_geometry_sample,
 )
 from lib.landmarks.eval.prediction_cache import DiskPredictionCache
+from lib.landmarks.eval.profile_metrics import (
+    DEFAULT_NORMALIZER,
+    DEFAULT_PCK_THRESHOLDS,
+    DEFAULT_PRIORITY_FAILURE_REGIONS,
+    DEFAULT_REGION_FAILURE_THRESHOLD,
+    NORMALIZERS,
+    ProfileAggregate,
+    aggregate_profile_samples,
+    evaluate_profile_sample,
+)
+from lib.landmarks.eval.promotion_gates import (
+    DEFAULT_REPORT_IMPROVEMENT_TOLERANCE,
+    GateApplication,
+    GateConfig,
+    GeometryScore,
+    ProfileScore,
+    apply_gates,
+    no_promotion_payload,
+)
 from lib.landmarks.eval.splits import SplitAssignment, load_split_file, split_assignment_hash
+from lib.landmarks.fusion import (
+    normalize_weight_matrix,
+    plain_average,
+    static_weighted,
+)
+from lib.landmarks.rejection import weighted_median
 
 
 def _parse_csv(value: str) -> tuple[str, ...]:
@@ -128,8 +164,215 @@ def _load_samples(
     return fit_samples, select_samples, report_samples
 
 
+def _fuse_for_profile(
+    candidate: Candidate,
+    cached_points: T.Sequence[T.Any],
+    *,
+    weights: dict[str, list[float]],
+) -> T.Any:
+    """Fuse one face's cached predictions using a candidate's strategy + weights."""
+    import numpy as np
+
+    from lib.landmarks.schema import LandmarkPrediction
+
+    predictions = [
+        LandmarkPrediction(np.asarray(points, dtype="float32"), source=model)
+        for points, model in zip(cached_points, candidate.models, strict=True)
+    ]
+    method = strategy_outlier_method(candidate.strategy)
+    threshold = candidate.outlier_threshold if strategy_uses_threshold(candidate.strategy) else 3.5
+
+    if not strategy_requires_weights(candidate.strategy):
+        return plain_average(
+            predictions, outlier_method=method, outlier_threshold=threshold
+        ).points
+    matrix = weights_matrix_for_models(weights, candidate.models)
+    if candidate.strategy == "weighted_median":
+        stack = np.stack([prediction.canonical_68().points for prediction in predictions], axis=0)
+        normalized = normalize_weight_matrix(
+            matrix, model_count=stack.shape[0], landmark_count=stack.shape[1]
+        )
+        return weighted_median(stack, normalized)
+    return static_weighted(
+        predictions,
+        matrix,
+        outlier_method=method,
+        outlier_threshold=threshold,
+    ).points
+
+
+def _candidate_profile_aggregate(
+    result: CandidateResult,
+    *,
+    samples: T.Sequence[T.Any],
+    cache: DiskPredictionCache,
+    normalizer: str,
+    region_failure_threshold: float,
+    pck_thresholds: T.Sequence[float],
+    priority_failure_regions: T.Sequence[str],
+) -> ProfileAggregate:
+    """Compute the report-split ProfileAggregate for one CandidateResult.
+
+    Cache-only: reuses the same DiskPredictionCache and never invokes adapters.
+    Skips samples without a usable face bbox (those samples are also skipped
+    by the AFLW CLI tool, so the behavior matches end-to-end).
+    """
+    import numpy as np
+
+    per_sample: list[T.Any] = []
+    for sample in samples:
+        bbox = sample.face_bbox
+        if bbox is None:
+            try:
+                truth = np.load(sample.landmarks).astype("float32")
+            except OSError:
+                continue
+            left, top = np.min(truth, axis=0)
+            right, bottom = np.max(truth, axis=0)
+            bbox = (float(left), float(top), float(right), float(bottom))
+        truth = np.load(sample.landmarks).astype("float32")
+        cached_points = [
+            cache.read(sample.sample_id, model).landmarks for model in result.candidate.models
+        ]
+        fused = _fuse_for_profile(result.candidate, cached_points, weights=result.weights)
+        per_sample.append(
+            evaluate_profile_sample(
+                fused,
+                truth,
+                sample_id=sample.sample_id,
+                face_bbox=bbox,
+                visibility=sample.visibility,
+                normalizer_method=normalizer,
+                region_failure_threshold=region_failure_threshold,
+                priority_failure_regions=priority_failure_regions,
+                pck_thresholds=pck_thresholds,
+            )
+        )
+    return aggregate_profile_samples(
+        result.candidate_id,
+        per_sample,
+        priority_failure_regions=priority_failure_regions,
+        pck_thresholds=pck_thresholds,
+    )
+
+
+def _gate_config_from_args(args: argparse.Namespace) -> GateConfig:
+    """Translate CLI flags into a :class:`GateConfig`."""
+    return GateConfig(
+        require_report_improvement=args.require_report_improvement,
+        report_improvement_tolerance=args.report_improvement_tolerance,
+        max_overall_regression_nme=args.max_overall_regression_nme,
+        max_bucket_regression_rate=args.max_bucket_regression_rate,
+        require_profile_improvement=args.require_profile_improvement,
+        max_profile_region_failure_rate=args.max_profile_region_failure_rate,
+        require_effective_ensemble=args.require_effective_ensemble,
+        effective_models_floor=args.effective_models_floor,
+        allow_single_model_baselines=args.allow_single_model_baselines,
+        require_geometry_improvement=args.require_geometry_improvement,
+        max_catastrophic_geometry_failure_rate=args.max_catastrophic_geometry_failure_rate,
+        max_p95_transform_error=args.max_p95_transform_error,
+        max_p95_crop_center_error=args.max_p95_crop_center_error,
+        max_p95_roll_error=args.max_p95_roll_error,
+        min_hull_iou=args.min_hull_iou,
+        max_hard_slice_regression_rate=args.max_hard_slice_regression_rate,
+        allow_nme_only_promotion=args.allow_nme_only_promotion,
+    )
+
+
+def _gates_need_profile(config: GateConfig) -> bool:
+    return bool(
+        config.require_profile_improvement or config.max_profile_region_failure_rate is not None
+    )
+
+
+def _gates_need_geometry(config: GateConfig, args: argparse.Namespace) -> bool:
+    """Return True when we should pre-compute geometry metrics for every candidate."""
+    return bool(config.requires_geometry() or args.include_geometry_metrics)
+
+
+def _candidate_geometry_aggregate(
+    result: CandidateResult,
+    *,
+    samples: T.Sequence[T.Any],
+    cache: DiskPredictionCache,
+    aligned_size: int,
+    region_failure_threshold: float,
+) -> GeometryAggregate:
+    """Compute the report-split GeometryAggregate for one CandidateResult.
+
+    Cache-only: reuses cached predictions and fuses with the candidate's
+    strategy + weights. The GT side runs Faceswap's own ``AlignedFace`` so the
+    measurements are exactly what extract would see at runtime.
+    """
+    import numpy as np
+
+    per_sample: list[T.Any] = []
+    for sample in samples:
+        bbox = sample.face_bbox
+        if bbox is None:
+            try:
+                truth = np.load(sample.landmarks).astype("float32")
+            except OSError:
+                continue
+            left, top = np.min(truth, axis=0)
+            right, bottom = np.max(truth, axis=0)
+            bbox = (float(left), float(top), float(right), float(bottom))
+        truth = np.load(sample.landmarks).astype("float32")
+        cached_points = [
+            cache.read(sample.sample_id, model).landmarks for model in result.candidate.models
+        ]
+        fused = _fuse_for_profile(result.candidate, cached_points, weights=result.weights)
+        per_sample.append(
+            evaluate_geometry_sample(
+                fused,
+                truth,
+                sample_id=sample.sample_id,
+                dataset=sample.dataset,
+                condition=sample.condition,
+                bbox=bbox,
+                visibility=sample.visibility,
+                aligned_size=aligned_size,
+                region_failure_threshold=region_failure_threshold,
+            )
+        )
+    return aggregate_geometry_samples(result.candidate_id, per_sample)
+
+
+def _geometry_score_from_aggregate(
+    aggregate: GeometryAggregate, baseline_score: float | None
+) -> GeometryScore:
+    """Pack a GeometryAggregate into the per-candidate score the gates consume."""
+    if aggregate.per_bucket:
+        bucket_scores = [
+            float(values.get("overall_score", 0.0)) for values in aggregate.per_bucket.values()
+        ]
+        max_bucket = max(bucket_scores) if bucket_scores else 0.0
+    else:
+        max_bucket = 0.0
+    max_bucket_regression = (
+        max(0.0, max_bucket - baseline_score) if baseline_score is not None else 0.0
+    )
+    return GeometryScore(
+        overall_score=aggregate.overall_score,
+        catastrophic_failure_rate=aggregate.catastrophic_failure_rate,
+        p95_translation_normalized=aggregate.p95_translation_normalized,
+        p95_roi_center_normalized=aggregate.p95_roi_center_normalized,
+        p95_roll_degrees=aggregate.p95_roll_degrees_delta,
+        mean_hull_iou=aggregate.mean_hull_iou,
+        p05_hull_iou=aggregate.p05_hull_iou,
+        max_bucket_regression_score=max_bucket_regression,
+    )
+
+
 def _enumerate_search_candidates(args: argparse.Namespace) -> list[Candidate]:
     """Enumerate candidate setups and print a compact search-space summary."""
+    include_baselines = (
+        args.include_single_model_baselines
+        or args.require_effective_ensemble
+        or args.require_report_improvement
+        or args.max_overall_regression_nme is not None
+        or args.require_profile_improvement
+    )
     candidates = enumerate_candidates(
         models=_parse_csv(args.models),
         model_subset_presets=_parse_csv(args.model_subsets),
@@ -138,6 +381,7 @@ def _enumerate_search_candidates(args: argparse.Namespace) -> list[Candidate]:
         outlier_thresholds=_parse_csv_floats(args.outlier_thresholds),
         bbox_source=args.bbox_source,
         crop_scale=args.crop_scale,
+        include_single_model_baselines=include_baselines,
     )
     if not candidates:
         raise SystemExit("no candidates were enumerated from the requested dimensions")
@@ -224,6 +468,8 @@ def _write_promotion_report(
     objective: str,
     regression_epsilon_nme: float,
     report_metrics: T.Mapping[str, T.Any],
+    gate_application: GateApplication | None = None,
+    profile_aggregate: ProfileAggregate | None = None,
 ) -> Path:
     """Write a short human-readable Markdown summary of the promotion decision."""
     path = output_dir / PROMOTION_REPORT_FILENAME
@@ -255,6 +501,57 @@ def _write_promotion_report(
         f"- report_bucket_regression_rate: "
         f"`{report_metrics.get('bucket_regression_rate_vs_best_single', 0.0):.6f}`",
     ]
+    diagnostics = winner.effective_ensemble
+    if diagnostics is not None:
+        lines.extend(
+            [
+                "",
+                "## Effective ensemble diagnostics",
+                "",
+                f"- mean_effective_models: `{diagnostics.mean_effective_models:.3f}` "
+                f"(floor `{diagnostics.effective_models_floor:.3f}`)",
+                f"- collapsed: `{diagnostics.collapsed}`",
+                f"- weighted_median_collapsed: `{diagnostics.weighted_median_collapsed}`",
+                "- landmark share by model: "
+                + ", ".join(
+                    f"{model}={share:.2f}"
+                    for model, share in sorted(
+                        diagnostics.landmark_share_by_model.items(),
+                        key=lambda item: item[1],
+                        reverse=True,
+                    )
+                ),
+            ]
+        )
+        if winner.is_single_model_baseline:
+            lines.append(
+                "- note: this winner is a single-model baseline; promotion of "
+                "single-model setups was explicitly allowed."
+            )
+    if gate_application is not None:
+        lines.extend(
+            [
+                "",
+                "## Promotion gates",
+                "",
+                f"- gates_passed: `{gate_application.passed_count}`",
+                f"- gates_failed: `{gate_application.failed_count}`",
+            ]
+        )
+        if gate_application.promoted_outcome is not None:
+            lines.append("- selected candidate cleared every active gate.")
+        if profile_aggregate is not None:
+            lines.extend(
+                [
+                    "",
+                    "## Profile metrics (held-out report split)",
+                    "",
+                    f"- profile_overall_score: `{profile_aggregate.overall_score:.6f}`",
+                    f"- profile_region_failure_rate: "
+                    f"`{profile_aggregate.region_failure_rate:.6f}`",
+                    f"- profile_p90_visible_error: `{profile_aggregate.p90_visible_error:.6f}`",
+                ]
+            )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path
 
@@ -269,6 +566,8 @@ def _write_promoted_artifacts(
     fit_samples: T.Sequence[T.Any],
     sah: str,
     args: argparse.Namespace,
+    gate_application: GateApplication | None = None,
+    profile_aggregate: ProfileAggregate | None = None,
 ) -> tuple[Path, Path, Path]:
     """Write best setup, best weights, and the human-readable promotion report."""
     weights_path = output_dir / WEIGHTS_FILENAME
@@ -312,8 +611,37 @@ def _write_promoted_artifacts(
         objective=args.objective,
         regression_epsilon_nme=args.regression_epsilon_nme,
         report_metrics=report_metrics.to_payload(),
+        gate_application=gate_application,
+        profile_aggregate=profile_aggregate,
     )
     return setup_path, weights_path, report_path
+
+
+def _write_no_promotion(
+    output_dir: Path,
+    application: GateApplication,
+    *,
+    args: argparse.Namespace,
+    results: T.Sequence[CandidateResult],
+) -> Path:
+    """Write ``no_promotion.json`` when no candidate satisfies the configured gates."""
+    payload = no_promotion_payload(application)
+    payload["objective"] = args.objective
+    payload["evaluated_candidates"] = len(results)
+    payload["gate_config"] = {
+        "require_report_improvement": args.require_report_improvement,
+        "report_improvement_tolerance": args.report_improvement_tolerance,
+        "max_overall_regression_nme": args.max_overall_regression_nme,
+        "max_bucket_regression_rate": args.max_bucket_regression_rate,
+        "require_profile_improvement": args.require_profile_improvement,
+        "max_profile_region_failure_rate": args.max_profile_region_failure_rate,
+        "require_effective_ensemble": args.require_effective_ensemble,
+        "effective_models_floor": args.effective_models_floor,
+        "allow_single_model_baselines": args.allow_single_model_baselines,
+    }
+    path = output_dir / "no_promotion.json"
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return path
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -353,7 +681,106 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Disable tqdm progress bars while keeping stage timing output.",
     )
+    parser.add_argument(
+        "--include-single-model-baselines",
+        action="store_true",
+        help=(
+            "Add one plain_average candidate per model so promotion can compare the "
+            "ensemble against the obvious single-model alternative. Auto-enabled when "
+            "any gate that needs a baseline is configured."
+        ),
+    )
+    parser.add_argument(
+        "--allow-single-model-baselines",
+        action="store_true",
+        help="Allow a single-model baseline candidate to be promoted (off by default).",
+    )
+    parser.add_argument("--require-report-improvement", action="store_true")
+    parser.add_argument(
+        "--report-improvement-tolerance",
+        type=float,
+        default=DEFAULT_REPORT_IMPROVEMENT_TOLERANCE,
+        help="Tolerance (in NME units) when comparing candidate report NME to baseline.",
+    )
+    parser.add_argument("--max-overall-regression-nme", type=float, default=None)
+    parser.add_argument("--max-bucket-regression-rate", type=float, default=None)
+    parser.add_argument("--require-profile-improvement", action="store_true")
+    parser.add_argument("--max-profile-region-failure-rate", type=float, default=None)
+    parser.add_argument("--require-effective-ensemble", action="store_true")
+    parser.add_argument("--effective-models-floor", type=float, default=1.5)
+    parser.add_argument(
+        "--profile-normalizer",
+        choices=NORMALIZERS,
+        default=DEFAULT_NORMALIZER,
+    )
+    parser.add_argument(
+        "--profile-region-failure-threshold",
+        type=float,
+        default=DEFAULT_REGION_FAILURE_THRESHOLD,
+    )
+    parser.add_argument(
+        "--profile-pck-thresholds",
+        default=",".join(f"{t:.2f}" for t in DEFAULT_PCK_THRESHOLDS),
+    )
+    parser.add_argument(
+        "--profile-priority-regions",
+        default=",".join(DEFAULT_PRIORITY_FAILURE_REGIONS),
+    )
+    parser.add_argument(
+        "--include-geometry-metrics",
+        action="store_true",
+        help=(
+            "Compute GT-derived alignment-geometry metrics (#76) for every candidate on the "
+            "report split. Auto-enabled when any geometry gate is configured."
+        ),
+    )
+    parser.add_argument(
+        "--geometry-aligned-size",
+        type=int,
+        default=512,
+        help="Pixel size used when running AlignedFace for geometry evaluation.",
+    )
+    parser.add_argument(
+        "--geometry-region-failure-threshold",
+        type=float,
+        default=0.05,
+    )
+    parser.add_argument("--require-geometry-improvement", action="store_true")
+    parser.add_argument("--max-catastrophic-geometry-failure-rate", type=float, default=None)
+    parser.add_argument("--max-p95-transform-error", type=float, default=None)
+    parser.add_argument("--max-p95-crop-center-error", type=float, default=None)
+    parser.add_argument("--max-p95-roll-error", type=float, default=None)
+    parser.add_argument("--min-hull-iou", type=float, default=None)
+    parser.add_argument("--max-hard-slice-regression-rate", type=float, default=None)
+    parser.add_argument(
+        "--allow-nme-only-promotion",
+        action="store_true",
+        help=(
+            "Allow promotion based on NME-shaped objectives when geometry metrics are absent. "
+            "Off by default once any geometry gate is configured."
+        ),
+    )
     args = parser.parse_args(argv)
+    # Resolve dependent defaults: any geometry gate implies geometry computation
+    # and disables the NME-only promotion escape unless the user explicitly opts in.
+    if (
+        any(
+            getattr(args, name, None) is not None
+            for name in (
+                "max_catastrophic_geometry_failure_rate",
+                "max_p95_transform_error",
+                "max_p95_crop_center_error",
+                "max_p95_roll_error",
+                "min_hull_iou",
+                "max_hard_slice_regression_rate",
+            )
+        )
+        or args.require_geometry_improvement
+    ):
+        args.include_geometry_metrics = True
+    if args.objective == GEOMETRY_OBJECTIVE and not args.allow_nme_only_promotion:
+        # Geometry objective implies geometry-side enforcement.
+        args.include_geometry_metrics = True
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -389,7 +816,94 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
 
-    winner = select_best_candidate(results)
+    gate_config = _gate_config_from_args(args)
+    geometry_scores: dict[str, GeometryScore] = {}
+    geometry_aggregates: dict[str, GeometryAggregate] = {}
+    if _gates_need_geometry(gate_config, args):
+
+        def _geometry_eval() -> None:
+            interim: dict[str, GeometryAggregate] = {}
+            for result in results:
+                aggregate = _candidate_geometry_aggregate(
+                    result,
+                    samples=report_samples,
+                    cache=cache,
+                    aligned_size=args.geometry_aligned_size,
+                    region_failure_threshold=args.geometry_region_failure_threshold,
+                )
+                interim[result.candidate_id] = aggregate
+                geometry_aggregates[result.candidate_id] = aggregate
+            # Resolve baseline (best single model) to populate hard-slice regression scores.
+            baseline_score: float | None = None
+            for result in results:
+                if not result.is_single_model_baseline:
+                    continue
+                aggregate = interim[result.candidate_id]
+                if baseline_score is None or aggregate.overall_score < baseline_score:
+                    baseline_score = aggregate.overall_score
+            for candidate_id, aggregate in interim.items():
+                geometry_scores[candidate_id] = _geometry_score_from_aggregate(
+                    aggregate, baseline_score
+                )
+
+        _stage("geometry_evaluate_candidates", _geometry_eval)
+
+    profile_scores: dict[str, ProfileScore] = {}
+    profile_aggregates: dict[str, ProfileAggregate] = {}
+    if _gates_need_profile(gate_config):
+        pck_thresholds = _parse_csv_floats(args.profile_pck_thresholds) or DEFAULT_PCK_THRESHOLDS
+        priority_regions = (
+            _parse_csv(args.profile_priority_regions) or DEFAULT_PRIORITY_FAILURE_REGIONS
+        )
+
+        def _profile_eval() -> None:
+            for result in results:
+                aggregate = _candidate_profile_aggregate(
+                    result,
+                    samples=report_samples,
+                    cache=cache,
+                    normalizer=args.profile_normalizer,
+                    region_failure_threshold=args.profile_region_failure_threshold,
+                    pck_thresholds=pck_thresholds,
+                    priority_failure_regions=priority_regions,
+                )
+                profile_aggregates[result.candidate_id] = aggregate
+                profile_scores[result.candidate_id] = ProfileScore(
+                    overall_score=aggregate.overall_score,
+                    region_failure_rate=aggregate.region_failure_rate,
+                )
+
+        _stage("profile_evaluate_candidates", _profile_eval)
+
+    gate_application: GateApplication | None = None
+    if gate_config.is_active():
+        gate_application = _stage(
+            "apply_promotion_gates",
+            lambda: apply_gates(
+                results,
+                gate_config,
+                profile_scores=profile_scores or None,
+                geometry_scores=geometry_scores or None,
+            ),
+        )
+        winner = gate_application.promoted
+        if winner is None:
+            no_promotion_path = _stage(
+                "write_no_promotion",
+                lambda: _write_no_promotion(
+                    output_dir,
+                    gate_application,
+                    args=args,
+                    results=results,
+                ),
+            )
+            print(f"No candidate passed the configured promotion gates; see {no_promotion_path}")
+            return 1
+    else:
+        winner = results[0] if results else None
+        if winner is None:
+            raise SystemExit("no candidates were evaluated")
+
     _fit_result, report_metrics = _stage(
         "report_evaluate_winner",
         lambda: evaluate_candidate(
@@ -402,6 +916,9 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
 
+    promoted_profile_aggregate = (
+        profile_aggregates.get(winner.candidate_id) if profile_aggregates else None
+    )
     setup_path, weights_path, _report_path = _stage(
         "write_promoted_artifacts",
         lambda: _write_promoted_artifacts(
@@ -413,6 +930,8 @@ def main(argv: list[str] | None = None) -> int:
             fit_samples=fit_samples,
             sah=sah,
             args=args,
+            gate_application=gate_application,
+            profile_aggregate=promoted_profile_aggregate,
         ),
     )
 

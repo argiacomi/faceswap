@@ -281,3 +281,81 @@ def test_search_selects_lowest_score_winner(tmp_path: Path) -> None:
     assert payload["candidates"][0]["score"] == min(scores)
     setup = json.loads((output_dir / "best_setup.json").read_text(encoding="utf-8"))
     assert setup["candidate_id"] == payload["candidates"][0]["candidate_id"]
+
+
+def test_search_with_geometry_gate_writes_no_promotion(tmp_path: Path) -> None:
+    """A geometry-improvement gate that no candidate meets writes ``no_promotion.json``."""
+    fixture = _build_fixture(tmp_path)
+    output_dir = tmp_path / "search"
+
+    exit_code = search_main(
+        [
+            "--manifest",
+            str(fixture["manifest"]),
+            "--cache-dir",
+            str(fixture["cache"]),
+            "--splits",
+            str(fixture["splits"]),
+            "--models",
+            "hrnet,spiga,orformer",
+            "--model-subsets",
+            "all",
+            "--weight-generators",
+            "inverse_mean_error",
+            "--strategies",
+            "static_weighted",
+            "--output-dir",
+            str(output_dir),
+            "--include-single-model-baselines",
+            "--allow-single-model-baselines",
+            "--include-geometry-metrics",
+            "--require-geometry-improvement",
+            # Force an impossible bar so no ensemble beats the baseline.
+            "--max-catastrophic-geometry-failure-rate",
+            "-1.0",
+        ]
+    )
+
+    assert exit_code == 1
+    no_promo = json.loads((output_dir / "no_promotion.json").read_text(encoding="utf-8"))
+    assert no_promo["status"] == "no_promotion"
+    assert no_promo["top_failing_candidates"]
+    assert not (output_dir / "best_setup.json").exists()
+
+
+def test_search_with_geometry_gate_promotes_when_thresholds_met(tmp_path: Path) -> None:
+    """A relaxed geometry gate still finds a passing candidate and writes the setup."""
+    fixture = _build_fixture(tmp_path)
+    output_dir = tmp_path / "search"
+
+    exit_code = search_main(
+        [
+            "--manifest",
+            str(fixture["manifest"]),
+            "--cache-dir",
+            str(fixture["cache"]),
+            "--splits",
+            str(fixture["splits"]),
+            "--models",
+            "hrnet,spiga,orformer",
+            "--model-subsets",
+            "all",
+            "--weight-generators",
+            "inverse_mean_error",
+            "--strategies",
+            "static_weighted",
+            "--output-dir",
+            str(output_dir),
+            "--include-single-model-baselines",
+            "--allow-single-model-baselines",
+            "--max-catastrophic-geometry-failure-rate",
+            "1.0",
+            "--min-hull-iou",
+            "0.0",
+        ]
+    )
+
+    assert exit_code == 0
+    assert (output_dir / "best_setup.json").is_file()
+    setup = json.loads((output_dir / "best_setup.json").read_text(encoding="utf-8"))
+    assert setup["candidate_id"].startswith("sha256:")

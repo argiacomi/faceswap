@@ -36,6 +36,11 @@ from lib.landmarks.ensemble.weight_generators import (
     get_generator,
 )
 from lib.landmarks.ensemble.weights import weights_matrix_for_models
+from lib.landmarks.eval.effective_ensemble import (
+    DEFAULT_EFFECTIVE_MODELS_FLOOR,
+    EffectiveEnsembleDiagnostics,
+    diagnose as diagnose_effective_ensemble,
+)
 from lib.landmarks.eval.harness import LandmarkSample, load_manifest
 from lib.landmarks.eval.metrics import evaluate_prediction
 from lib.landmarks.eval.prediction_cache import DiskPredictionCache
@@ -124,6 +129,8 @@ class CandidateResult:
     regression_epsilon_nme: float
     metrics: CandidateMetrics
     fit_diagnostics: dict[str, T.Any] = field(default_factory=dict)
+    effective_ensemble: EffectiveEnsembleDiagnostics | None = None
+    is_single_model_baseline: bool = False
 
     def to_payload(self) -> dict[str, T.Any]:
         return {
@@ -143,6 +150,12 @@ class CandidateResult:
             "score": float(self.score),
             "metrics": self.metrics.to_payload(),
             "fit_diagnostics": _json_ready(self.fit_diagnostics),
+            "effective_ensemble": (
+                self.effective_ensemble.to_payload()
+                if self.effective_ensemble is not None
+                else None
+            ),
+            "is_single_model_baseline": bool(self.is_single_model_baseline),
         }
 
 
@@ -235,6 +248,32 @@ def expand_model_subsets(
     return tuple(ordered)
 
 
+def single_model_baseline_candidates(
+    models: T.Sequence[str],
+    *,
+    bbox_source: str = "manifest",
+    crop_scale: float = 1.6,
+) -> list[Candidate]:
+    """Return one ``plain_average`` Candidate per model so each runs as a baseline.
+
+    Single-model ``plain_average`` reduces to that model's cached prediction at
+    fusion time, so these candidates score the model as-is. They are tagged
+    via ``is_single_model_baseline`` on :class:`CandidateResult` so the
+    promotion report can compare ensembles against the obvious alternative.
+    """
+    return [
+        Candidate(
+            models=(model,),
+            weight_generator="equal",
+            strategy="plain_average",
+            outlier_threshold=None,
+            bbox_source=bbox_source,
+            crop_scale=crop_scale,
+        )
+        for model in models
+    ]
+
+
 def enumerate_candidates(
     *,
     models: T.Sequence[str],
@@ -244,6 +283,7 @@ def enumerate_candidates(
     outlier_thresholds: T.Sequence[float],
     bbox_source: str = "manifest",
     crop_scale: float = 1.6,
+    include_single_model_baselines: bool = False,
 ) -> list[Candidate]:
     """Cartesian product of search dimensions, honoring strategy-scoped threshold rules.
 
@@ -290,6 +330,24 @@ def enumerate_candidates(
                     crop_scale=crop_scale,
                 )
             )
+    if include_single_model_baselines:
+        existing = {
+            (tuple(sorted(c.models)), c.strategy, c.weight_generator, c.outlier_threshold)
+            for c in candidates
+        }
+        for baseline in single_model_baseline_candidates(
+            models, bbox_source=bbox_source, crop_scale=crop_scale
+        ):
+            key = (
+                tuple(sorted(baseline.models)),
+                baseline.strategy,
+                baseline.weight_generator,
+                baseline.outlier_threshold,
+            )
+            if key in existing:
+                continue
+            existing.add(key)
+            candidates.append(baseline)
     return candidates
 
 
@@ -537,6 +595,17 @@ def run_candidate_search(
             objective=objective,
         )
         score = score_v1(metrics) if objective == DEFAULT_OBJECTIVE else score_v1(metrics)
+        try:
+            diagnostics = diagnose_effective_ensemble(
+                fit_result.weights,
+                strategy=candidate.strategy,
+                models=candidate.models,
+            )
+        except ValueError:
+            diagnostics = None
+        is_single_baseline = (
+            len(candidate.models) == 1 and candidate.strategy == "plain_average"
+        )
         results.append(
             CandidateResult(
                 candidate=candidate,
@@ -548,6 +617,8 @@ def run_candidate_search(
                 regression_epsilon_nme=regression_epsilon_nme,
                 metrics=metrics,
                 fit_diagnostics=dict(fit_result.diagnostics),
+                effective_ensemble=diagnostics,
+                is_single_model_baseline=is_single_baseline,
             )
         )
     return sorted(results, key=lambda result: (result.score, result.metrics.overall_nme))
@@ -573,13 +644,16 @@ __all__ = [
     "CandidateMetrics",
     "CandidateProgress",
     "CandidateResult",
+    "DEFAULT_EFFECTIVE_MODELS_FLOOR",
     "DEFAULT_OBJECTIVE",
     "DEFAULT_REGRESSION_EPSILON_NME",
+    "EffectiveEnsembleDiagnostics",
     "SUBSET_PRESETS",
     "candidate_id",
     "enumerate_candidates",
     "evaluate_candidate",
     "expand_model_subsets",
+    "single_model_baseline_candidates",
     "load_split_samples",
     "run_candidate_search",
     "score_v1",
