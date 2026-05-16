@@ -146,8 +146,16 @@ def reject_outliers(
 
     empty_columns = np.where(adjusted.sum(axis=0) <= 0)[0]
     for landmark_idx in empty_columns:
-        closest_model = int(np.argmin(distances[:, landmark_idx]))
-        adjusted[closest_model, landmark_idx] = base[closest_model, landmark_idx]
+        base_column = np.asarray(base[:, landmark_idx], dtype="float32")
+        eligible = np.where(base_column > 0)[0]
+        if eligible.size:
+            closest_model = int(
+                eligible[np.argmin(distances[eligible, landmark_idx])]
+            )
+            adjusted[closest_model, landmark_idx] = float(base_column[closest_model])
+        else:
+            closest_model = int(np.argmin(distances[:, landmark_idx]))
+            adjusted[closest_model, landmark_idx] = 1.0
         rejected = [
             item
             for item in rejected
