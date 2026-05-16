@@ -13,6 +13,7 @@ from lib.landmarks.eval.geometry_metrics import (
     evaluate_geometry_sample,
     score_alignment_geometry_v1,
 )
+from lib.landmarks.eval.geometry_signals import alignment_summary
 
 
 def _truth_face() -> np.ndarray:
@@ -82,6 +83,35 @@ def test_per_region_error_is_zero_for_identical_landmarks() -> None:
     metrics = evaluate_geometry_sample(truth, truth, sample_id="identical", bbox=_bbox())
     for value in metrics.per_region_error.values():
         assert value == pytest.approx(0.0, abs=1e-3)
+
+
+def test_cached_truth_summary_matches_uncached_geometry_metrics() -> None:
+    """Precomputing the GT-side summary must not change geometry outputs."""
+    truth = _truth_face()
+    predicted = truth + np.array([3.0, -2.0], dtype="float32")
+    cached_summary = alignment_summary(truth)
+
+    uncached = evaluate_geometry_sample(
+        predicted,
+        truth,
+        sample_id="uncached",
+        dataset="ds",
+        condition="clean",
+        bbox=_bbox(),
+    ).to_payload()
+    cached = evaluate_geometry_sample(
+        predicted,
+        truth,
+        sample_id="cached",
+        dataset="ds",
+        condition="clean",
+        bbox=_bbox(),
+        truth_summary=cached_summary,
+    ).to_payload()
+
+    uncached.pop("sample_id")
+    cached.pop("sample_id")
+    assert cached == uncached
 
 
 def test_catastrophic_flag_trips_for_outside_bbox_outlier() -> None:
