@@ -17,6 +17,7 @@ from lib.landmarks.eval.splits import (
     split_manifest_samples,
 )
 from lib.landmarks.schema import LandmarkPrediction
+import tools.landmarks.search_ensemble_setup as search_cli
 from tools.landmarks.search_ensemble_setup import main as search_main
 
 
@@ -367,10 +368,55 @@ def test_search_with_geometry_gate_promotes_when_thresholds_met(tmp_path: Path) 
 # ---------------------------------------------------------------------------
 
 
-def test_search_geometry_objective_reranks_by_geometry_score(tmp_path: Path) -> None:
-    """``--objective alignment_geometry_v1`` ranks results by geometry score."""
+def test_search_geometry_objective_reranks_by_geometry_score(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``alignment_geometry_v1`` reorders multiple candidates by geometry score."""
     fixture = _build_fixture(tmp_path)
     output_dir = tmp_path / "search"
+    pre_rank_order: list[str] = []
+
+    def fake_geometry_aggregate(
+        result: object,
+        *,
+        samples: object,
+        cache: object,
+        aligned_size: int,
+        region_failure_threshold: float,
+    ) -> search_cli.GeometryAggregate:
+        del samples, cache, aligned_size, region_failure_threshold
+        candidate_id = result.candidate_id  # type: ignore[attr-defined]
+        pre_rank_order.append(candidate_id)
+        # Force the pre-rank last candidate to become best by geometry. This
+        # proves the geometry objective is not simply preserving NME order.
+        score = float(100 - len(pre_rank_order))
+        return search_cli.GeometryAggregate(
+            label=candidate_id,
+            sample_count=1,
+            overall_score=score,
+            catastrophic_failure_rate=0.0,
+            mean_scale_delta=0.0,
+            mean_relative_scale_delta=0.0,
+            mean_rotation_degrees_delta=0.0,
+            mean_translation_normalized=score,
+            p95_translation_normalized=score,
+            p95_rotation_degrees_delta=0.0,
+            p95_relative_scale_delta=0.0,
+            p95_roll_degrees_delta=0.0,
+            mean_roi_iou=1.0,
+            p05_roi_iou=1.0,
+            mean_roi_center_normalized=0.0,
+            p95_roi_center_normalized=0.0,
+            mean_hull_iou=1.0,
+            p05_hull_iou=1.0,
+            mean_pitch_delta_degrees=0.0,
+            mean_yaw_delta_degrees=0.0,
+            mean_roll_delta_degrees=0.0,
+            mean_average_distance_delta=0.0,
+        )
+
+    monkeypatch.setattr(search_cli, "_candidate_geometry_aggregate", fake_geometry_aggregate)
 
     rc = search_main(
         [
@@ -385,22 +431,28 @@ def test_search_geometry_objective_reranks_by_geometry_score(tmp_path: Path) -> 
             "--model-subsets",
             "all",
             "--weight-generators",
-            "inverse_mean_error",
+            "equal,inverse_mean_error",
             "--strategies",
-            "static_weighted",
+            "static_weighted,static_weighted_downweight",
+            "--outlier-thresholds",
+            "3.5",
             "--output-dir",
             str(output_dir),
             "--objective",
             "alignment_geometry_v1",
             "--include-geometry-metrics",
+            "--no-progress",
         ]
     )
     assert rc == 0
+    assert len(pre_rank_order) >= 2
     payload = json.loads((output_dir / "candidate_results.json").read_text(encoding="utf-8"))
-    # The chosen winner in best_setup.json should match the first row in the
-    # geometry-ordered candidate log (rank 1).
+    ranked_ids = [candidate["candidate_id"] for candidate in payload["candidates"]]
+    assert ranked_ids != pre_rank_order
+    assert ranked_ids[0] == pre_rank_order[-1]
+    assert ranked_ids[-1] == pre_rank_order[0]
     setup = json.loads((output_dir / "best_setup.json").read_text(encoding="utf-8"))
-    assert setup["candidate_id"] == payload["candidates"][0]["candidate_id"]
+    assert setup["candidate_id"] == ranked_ids[0]
 
 
 def test_search_geometry_objective_auto_enables_geometry_metrics(
