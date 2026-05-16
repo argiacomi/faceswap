@@ -274,11 +274,17 @@ Candidate search should report:
 
 Promotion should state whether the selected setup is a meaningful ensemble. If it is not, we should either promote the single model directly or reject the ensemble candidate when `--require-effective-ensemble` is enabled.
 
-### Phase 7: Add adaptive alignment geometry resolver
+### Phase 7: Add geometry-risk alignment resolver
 
-Ticket: [#78 Add adaptive alignment geometry resolver for extract alignment](https://github.com/argiacomi/faceswap/issues/78)
+Ticket: [#78 Add geometry-risk alignment resolver for extract alignment](https://github.com/argiacomi/faceswap/issues/78)
 
 This is the likely runtime endgame, but it should not happen first. Runtime adaptation should use only signals proven by Phase 3.
+
+The resolver should not depend on a binary frontal/profile classifier. The V1 production question is:
+
+```text
+is the general alignment path low-risk for this face, or do the candidate outputs show geometry risk that needs hard-case handling or fallback?
+```
 
 The resolver should expose:
 
@@ -294,21 +300,48 @@ visible_mask_landmarks
 canonical_landmarks
 geometry_confidence
 geometry_flags
+risk_score
+risk_route
 chosen_strategy
 rejected_models
 debug_metadata
 ```
 
+V1 routing should be based on validated geometry risk:
+
+```text
+low risk -> general setup / best single
+high geometry risk -> hard-case setup
+invalid geometry -> reject candidate or safe fallback
+high disagreement -> region-wise resolver or safer fallback
+```
+
+Candidate risk signals should come from #80, not guesses. Candidate signals include:
+
+- inter-model landmark disagreement
+- candidate transform disagreement
+- crop center / scale / roll disagreement
+- points outside expanded detector bbox
+- eye-mouth geometry validity
+- relative eye-mouth position
+- hull collapse / flip / extreme skew
+- detector bbox aspect ratio
+- detector confidence / bbox size where available
+- model confidence where available
+- optional yaw or pose proxy as one feature, not the primary route
+
 Initial behavior:
 
 1. Run candidate landmark models.
-2. Compute validated geometry sanity checks.
-3. Reject obviously bad candidates.
-4. Select or fuse by semantic region where supported.
-5. Prefer stable interior anchors for crop, scale, and rotation.
-6. Downweight or isolate jaw/silhouette under profile/occlusion when it harms geometry.
-7. Enforce detector-bbox sanity constraints.
-8. Fall back to static weights or best single when confidence is low.
+2. Compute validated geometry-risk signals.
+3. Reject obviously invalid geometry candidates.
+4. Route low-risk faces to the general setup or best single.
+5. Route high-risk faces to the hard-case setup or hard-case fusion strategy.
+6. Select or fuse by semantic region only where supported by validation.
+7. Prefer stable interior anchors for crop, scale, and rotation.
+8. Downweight or isolate jaw/silhouette under high-risk geometry when it harms alignment.
+9. Enforce detector-bbox sanity constraints.
+10. Fall back to static weights or best single when confidence is low.
 
 This should land behind a config flag so it can be compared against the current aligner, static weighted ensemble, and promoted setups.
 
@@ -321,7 +354,7 @@ This should land behind a config flag so it can be compared against the current 
 #81 Crop / ROI validation
 #77 GT-geometry-first promotion gates
 #79 Effective-ensemble diagnostics
-#78 Adaptive geometry resolver
+#78 Geometry-risk alignment resolver
 ```
 
 This order avoids building runtime logic before we know which signals identify better GT-derived extract geometry.
@@ -358,6 +391,7 @@ Does this produce the same stable, usable aligned face geometry that the GT land
 - Do not require real Faceswap failure collection for v1.
 - Do not remove NME reports; demote them to diagnostics.
 - Do not assume AFLW/profile cases are noise; they are target hard cases.
+- Do not build V1 runtime routing around a brittle binary frontal/profile classifier.
 
 ## Expected outcome
 
@@ -367,7 +401,7 @@ By the end of this roadmap, the extract pipeline should be able to:
 2. identify why hard-case extraction geometry fails
 3. prove which geometry signals identify candidates closest to GT-derived aligned geometry
 4. reject benchmark-good but geometry-bad promotions
-5. promote or route aligner setups based on extract usefulness
+5. promote or route aligner setups based on validated geometry risk
 6. reduce hard-case catastrophic alignment failures without hurting normal cases
 
 That is the path from model comparison to product-quality optimization.
