@@ -129,15 +129,11 @@ def test_evaluate_profile_sample_rejects_visibility_length_mismatch() -> None:
 def test_aggregate_profile_samples_weighted_and_failure_rate() -> None:
     """Aggregation averages region errors and reports priority-region failure rate."""
     truth = _truth_points()
-    good = evaluate_profile_sample(
-        truth.copy(), truth, sample_id="good", face_bbox=_bbox()
-    )
+    good = evaluate_profile_sample(truth.copy(), truth, sample_id="good", face_bbox=_bbox())
     bad_predicted = truth.copy()
     bad_predicted[REGION_INDICES["visible_jaw"], :] += 50.0
     bad_predicted[REGION_INDICES["nose"], :] += 60.0
-    bad = evaluate_profile_sample(
-        bad_predicted, truth, sample_id="bad", face_bbox=_bbox()
-    )
+    bad = evaluate_profile_sample(bad_predicted, truth, sample_id="bad", face_bbox=_bbox())
 
     aggregate = aggregate_profile_samples("hrnet", [good, bad])
 

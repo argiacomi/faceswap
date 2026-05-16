@@ -39,6 +39,8 @@ from lib.landmarks.ensemble.weights import weights_matrix_for_models
 from lib.landmarks.eval.effective_ensemble import (
     DEFAULT_EFFECTIVE_MODELS_FLOOR,
     EffectiveEnsembleDiagnostics,
+)
+from lib.landmarks.eval.effective_ensemble import (
     diagnose as diagnose_effective_ensemble,
 )
 from lib.landmarks.eval.harness import LandmarkSample, load_manifest
@@ -603,9 +605,7 @@ def run_candidate_search(
             )
         except ValueError:
             diagnostics = None
-        is_single_baseline = (
-            len(candidate.models) == 1 and candidate.strategy == "plain_average"
-        )
+        is_single_baseline = len(candidate.models) == 1 and candidate.strategy == "plain_average"
         results.append(
             CandidateResult(
                 candidate=candidate,

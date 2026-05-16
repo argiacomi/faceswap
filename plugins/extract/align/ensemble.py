@@ -24,6 +24,12 @@ from lib.landmarks.coordinates import (
     frame_to_normalized_crop,
     roi_to_matrix,
 )
+from lib.landmarks.ensemble.alignment_resolver import (
+    AlignmentResolverConfig,
+    AlignmentResolverError,
+    CandidateInput,
+    resolve_alignment_geometry,
+)
 from lib.landmarks.ensemble.outliers import weighted_median
 from lib.landmarks.ensemble.promoted_setup import (
     PromotedSetup,
@@ -76,6 +82,9 @@ class Ensemble(ExtractPlugin):
         setup_path: str | None = None,
         setup_mode: str | None = None,
         fallback_strategy: str | None = None,
+        use_alignment_resolver: bool | None = None,
+        resolver_hard_case_strategy: str | None = None,
+        resolver_high_disagreement_px: float | None = None,
     ) -> None:
         super().__init__(
             input_size=256,
@@ -134,6 +143,21 @@ class Ensemble(ExtractPlugin):
         self._uses_threshold = strategy_uses_threshold(self._strategy)
         self._requires_weights = strategy_requires_weights(self._strategy)
         self._min_models = cfg.min_models() if min_models is None else min_models
+        self._use_resolver = bool(
+            cfg.use_alignment_resolver()
+            if use_alignment_resolver is None
+            else use_alignment_resolver
+        )
+        self._resolver_hard_case = (
+            cfg.resolver_hard_case_strategy()
+            if resolver_hard_case_strategy is None
+            else resolver_hard_case_strategy
+        )
+        self._resolver_disagreement_px = float(
+            cfg.resolver_high_disagreement_px()
+            if resolver_high_disagreement_px is None
+            else resolver_high_disagreement_px
+        )
         self._last_matrices: np.ndarray | None = None
         self.last_debug_metadata: list[dict[str, T.Any]] = []
         self.model: list[LandmarkAdapter]
@@ -356,6 +380,86 @@ class Ensemble(ExtractPlugin):
             return subset / safe[None, :]
         return np.array([adapter.config.weight for adapter in adapters], dtype="float32")
 
+    def _resolve_via_geometry(
+        self,
+        *,
+        adapters: list[LandmarkAdapter],
+        items: list[LandmarkPrediction],
+        errors: list[str],
+        threshold: float | None,
+    ) -> np.ndarray | None:
+        """Route this face through the geometry-risk resolver (#78).
+
+        Returns the fused points when the resolver makes a decision, or
+        ``None`` to fall through to the regular dispatch path (e.g. when the
+        resolver hard-fails and we want the existing fallback semantics).
+        """
+        weights_map: dict[str, list[float]] | None = None
+        if self._promoted is not None and self._promoted.weights:
+            weights_map = {model: list(values) for model, values in self._promoted.weights.items()}
+        candidates = [
+            CandidateInput(
+                model=adapter.config.name,
+                landmarks=prediction.canonical_68().points,
+            )
+            for adapter, prediction in zip(adapters, items, strict=True)
+        ]
+        resolver_config = AlignmentResolverConfig(
+            general_strategy=self._strategy,
+            hard_case_strategy=canonical_strategy(self._resolver_hard_case),
+            fallback_strategy=canonical_strategy(self._fallback_strategy)
+            if self._fallback_strategy
+            else "plain_average",
+            outlier_threshold=self._outlier_threshold,
+            weights=weights_map,
+            high_disagreement_px=self._resolver_disagreement_px,
+            min_models_after_rejection=self._min_models,
+        )
+        try:
+            result = resolve_alignment_geometry(
+                candidates,
+                config=resolver_config,
+                detector_bbox=None,
+                image_shape=None,
+            )
+        except AlignmentResolverError as err:
+            logger.warning("[Ensemble] geometry resolver hard-failed: %s", err)
+            return None
+
+        self.last_debug_metadata.append(
+            {
+                "sources": tuple(adapter.config.name for adapter in adapters),
+                "weights": [],  # resolver does not surface a weight matrix
+                "kept_indices": tuple(range(len(result.active_models))),
+                "rejected_indices": tuple(
+                    idx
+                    for idx, adapter in enumerate(adapters)
+                    if adapter.config.name in result.rejected_models
+                ),
+                "rejected_landmarks": 0,
+                "adapter_errors": tuple(errors),
+                "strategy": result.chosen_strategy,
+                "outlier_method": strategy_outlier_method(result.chosen_strategy),
+                "outlier_threshold": threshold,
+                "setup_path": self._setup_path,
+                "setup_mode": self._setup_mode,
+                "promoted_candidate_id": (
+                    self._promoted.candidate_id if self._promoted is not None else ""
+                ),
+                "weight_source": "geometry_resolver",
+                "active_models": result.active_models,
+                "resolver": {
+                    "risk_route": result.risk_route,
+                    "risk_score": result.risk_score,
+                    "geometry_confidence": result.geometry_confidence,
+                    "geometry_flags": list(result.geometry_flags),
+                    "rejected_models": list(result.rejected_models),
+                    "max_disagreement_px": result.debug_metadata.get("max_disagreement_px", 0.0),
+                },
+            }
+        )
+        return result.alignment_landmarks.astype("float32", copy=False)
+
     def _fuse_face(
         self,
         predictions: list[tuple[LandmarkAdapter, LandmarkPrediction]],
@@ -371,6 +475,13 @@ class Ensemble(ExtractPlugin):
         items = [prediction for _adapter, prediction in predictions]
         weights = self._weights_for_face(adapters)
         threshold = self._outlier_threshold if self._uses_threshold else None
+
+        if self._use_resolver:
+            resolver_points = self._resolve_via_geometry(
+                adapters=adapters, items=items, errors=errors, threshold=threshold
+            )
+            if resolver_points is not None:
+                return resolver_points
 
         if not self._requires_weights:
             fused = plain_average(

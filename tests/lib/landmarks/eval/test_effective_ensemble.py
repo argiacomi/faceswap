@@ -106,7 +106,7 @@ def test_effective_models_floor_is_tunable() -> None:
     strict = diagnose(weights, strategy="static_weighted", effective_models_floor=2.0)
 
     assert permissive.collapsed is False  # 1.72 >= 1.5 → effective ensemble
-    assert strict.collapsed is True       # 1.72 < 2.0  → too narrow for "real" ensemble
+    assert strict.collapsed is True  # 1.72 < 2.0  → too narrow for "real" ensemble
     assert permissive.effective_models_floor == pytest.approx(1.5)
     assert strict.effective_models_floor == pytest.approx(2.0)
 

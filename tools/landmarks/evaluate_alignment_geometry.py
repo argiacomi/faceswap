@@ -252,6 +252,24 @@ def _csv_row(metrics: GeometrySampleMetrics, *, model: str, variant: str) -> dic
     for region, value in metrics.per_region_error.items():
         row[f"region_error_{region}"] = value
         row[f"region_failure_{region}"] = metrics.per_region_failure.get(region, False)
+    if metrics.roi_diagnostics is not None:
+        roi = metrics.roi_diagnostics
+        row.update(
+            {
+                "bbox_source": roi.bbox_source,
+                "bbox_aspect_ratio": roi.bbox_aspect_ratio,
+                "bbox_diagonal": roi.bbox_diagonal,
+                "aligned_roi_aspect_ratio": roi.aligned_roi_aspect_ratio,
+                "aligned_crop_visible_hull_iou": roi.aligned_crop_visible_hull_iou,
+                "landmarks_inside_aligned_crop_fraction": (
+                    roi.landmarks_inside_aligned_crop_fraction
+                ),
+                "landmarks_outside_detector_bbox_fraction": (
+                    roi.landmarks_outside_detector_bbox_fraction
+                ),
+                "aligned_crop_misses_visible_face": roi.aligned_crop_misses_visible_face,
+            }
+        )
     return row
 
 

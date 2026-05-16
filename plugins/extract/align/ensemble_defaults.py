@@ -112,6 +112,46 @@ setup_mode = ConfigItem(
     choices=["off", "strict", "fallback"],
 )
 
+use_alignment_resolver = ConfigItem(
+    datatype=bool,
+    default=False,
+    group="settings",
+    info=(
+        "Enable the geometry-risk alignment resolver (#78). When on, per-face fusion "
+        "is routed through ``lib.landmarks.ensemble.alignment_resolver`` which uses "
+        "candidate disagreement, bbox-aspect, and validity flags to pick between the "
+        "general strategy, a hard-case strategy, or a fallback. Default is off; this "
+        "flag should stay off until the geometry signals it consumes are validated "
+        "on held-out hard-case data (#80)."
+    ),
+)
+
+resolver_hard_case_strategy = ConfigItem(
+    datatype=str,
+    default="static_weighted_downweight",
+    group="settings",
+    info=(
+        "Strategy the resolver swaps in when a face is classified high-risk. "
+        "Ignored when ``use_alignment_resolver`` is off."
+    ),
+    choices=[
+        "plain_average",
+        "static_weighted",
+        "static_weighted_hard_drop",
+        "static_weighted_downweight",
+        "weighted_median",
+    ],
+)
+
+resolver_high_disagreement_px = ConfigItem(
+    datatype=float,
+    default=12.0,
+    group="settings",
+    info="Inter-model disagreement (px) above which the resolver routes to the hard-case path.",
+    rounding=1,
+    min_max=(1.0, 100.0),
+)
+
 fallback_strategy = ConfigItem(
     datatype=str,
     default="plain_average",

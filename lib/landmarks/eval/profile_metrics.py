@@ -126,9 +126,7 @@ def normalizer_from_bbox(
     if face_bbox is None:
         raise ValueError("face_bbox is required to compute a profile normalizer")
     if method not in NORMALIZERS:
-        raise ValueError(
-            f"unsupported normalizer {method!r}; supported: {', '.join(NORMALIZERS)}"
-        )
+        raise ValueError(f"unsupported normalizer {method!r}; supported: {', '.join(NORMALIZERS)}")
     left, top, right, bottom = (float(value) for value in face_bbox)
     width = max(0.0, right - left)
     height = max(0.0, bottom - top)
@@ -217,9 +215,7 @@ def evaluate_profile_sample(
         if priority_failure_regions
         else 0.0
     )
-    overall_score = float(
-        weighted_region_score + 0.5 * sample_failure_rate + 0.25 * p90
-    )
+    overall_score = float(weighted_region_score + 0.5 * sample_failure_rate + 0.25 * p90)
 
     return ProfileSampleMetrics(
         sample_id=sample_id,
@@ -277,7 +273,9 @@ def aggregate_profile_samples(
         weighted_scores.append(sample.weighted_region_score)
         priority_failures.append(
             float(
-                np.mean([sample.region_failures.get(name, False) for name in priority_failure_regions])
+                np.mean(
+                    [sample.region_failures.get(name, False) for name in priority_failure_regions]
+                )
             )
             if priority_failure_regions
             else 0.0
@@ -300,9 +298,7 @@ def aggregate_profile_samples(
     )
     weighted_region_score = float(np.mean(weighted_scores)) if weighted_scores else 0.0
     region_failure_rate = float(np.mean(priority_failures)) if priority_failures else 0.0
-    overall_score = float(
-        weighted_region_score + 0.5 * region_failure_rate + 0.25 * p90
-    )
+    overall_score = float(weighted_region_score + 0.5 * region_failure_rate + 0.25 * p90)
 
     return ProfileAggregate(
         label=label,

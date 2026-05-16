@@ -79,10 +79,14 @@ def test_evaluate_aflw_profile_writes_expected_outputs(tmp_path: Path) -> None:
 
     exit_code = _run(
         [
-            "--manifest", str(fixture["manifest"]),
-            "--cache-dir", str(fixture["cache"]),
-            "--models", ",".join(models),
-            "--output-dir", str(output_dir),
+            "--manifest",
+            str(fixture["manifest"]),
+            "--cache-dir",
+            str(fixture["cache"]),
+            "--models",
+            ",".join(models),
+            "--output-dir",
+            str(output_dir),
         ]
     )
 
@@ -101,14 +105,21 @@ def test_evaluate_aflw_profile_payload_contains_required_blocks(tmp_path: Path) 
     fixture = _build_fixture(tmp_path, models)
     output_dir = tmp_path / "out"
 
-    assert _run(
-        [
-            "--manifest", str(fixture["manifest"]),
-            "--cache-dir", str(fixture["cache"]),
-            "--models", ",".join(models),
-            "--output-dir", str(output_dir),
-        ]
-    ) == 0
+    assert (
+        _run(
+            [
+                "--manifest",
+                str(fixture["manifest"]),
+                "--cache-dir",
+                str(fixture["cache"]),
+                "--models",
+                ",".join(models),
+                "--output-dir",
+                str(output_dir),
+            ]
+        )
+        == 0
+    )
 
     payload = json.loads((output_dir / "aflw_profile_metrics.json").read_text(encoding="utf-8"))
     assert payload["objective"] == "profile_alignment_v1"
@@ -134,16 +145,25 @@ def test_evaluate_aflw_profile_includes_ensemble_variants(tmp_path: Path) -> Non
     )
     output_dir = tmp_path / "out"
 
-    assert _run(
-        [
-            "--manifest", str(fixture["manifest"]),
-            "--cache-dir", str(fixture["cache"]),
-            "--models", ",".join(models),
-            "--variants", "plain_average,static_weighted",
-            "--weights", str(weights_path),
-            "--output-dir", str(output_dir),
-        ]
-    ) == 0
+    assert (
+        _run(
+            [
+                "--manifest",
+                str(fixture["manifest"]),
+                "--cache-dir",
+                str(fixture["cache"]),
+                "--models",
+                ",".join(models),
+                "--variants",
+                "plain_average,static_weighted",
+                "--weights",
+                str(weights_path),
+                "--output-dir",
+                str(output_dir),
+            ]
+        )
+        == 0
+    )
 
     payload = json.loads((output_dir / "aflw_profile_metrics.json").read_text(encoding="utf-8"))
     assert "plain_average" in payload["aggregates"]
@@ -156,14 +176,21 @@ def test_evaluate_aflw_profile_rows_csv_has_region_and_pck_columns(tmp_path: Pat
     fixture = _build_fixture(tmp_path, models)
     output_dir = tmp_path / "out"
 
-    assert _run(
-        [
-            "--manifest", str(fixture["manifest"]),
-            "--cache-dir", str(fixture["cache"]),
-            "--models", ",".join(models),
-            "--output-dir", str(output_dir),
-        ]
-    ) == 0
+    assert (
+        _run(
+            [
+                "--manifest",
+                str(fixture["manifest"]),
+                "--cache-dir",
+                str(fixture["cache"]),
+                "--models",
+                ",".join(models),
+                "--output-dir",
+                str(output_dir),
+            ]
+        )
+        == 0
+    )
 
     csv_text = (output_dir / "aflw_profile_metrics.csv").read_text(encoding="utf-8")
     header = csv_text.splitlines()[0].split(",")
@@ -183,14 +210,21 @@ def test_evaluate_aflw_profile_skips_samples_without_bbox(tmp_path: Path) -> Non
     fixture["manifest"].write_text(json.dumps(manifest), encoding="utf-8")
     output_dir = tmp_path / "out"
 
-    assert _run(
-        [
-            "--manifest", str(fixture["manifest"]),
-            "--cache-dir", str(fixture["cache"]),
-            "--models", ",".join(models),
-            "--output-dir", str(output_dir),
-        ]
-    ) == 0
+    assert (
+        _run(
+            [
+                "--manifest",
+                str(fixture["manifest"]),
+                "--cache-dir",
+                str(fixture["cache"]),
+                "--models",
+                ",".join(models),
+                "--output-dir",
+                str(output_dir),
+            ]
+        )
+        == 0
+    )
 
     payload = json.loads((output_dir / "aflw_profile_metrics.json").read_text(encoding="utf-8"))
     assert payload["aggregates"]["hrnet"]["sample_count"] == 6
@@ -203,15 +237,23 @@ def test_evaluate_aflw_profile_normalizer_choice(tmp_path: Path) -> None:
     fixture = _build_fixture(tmp_path, models)
     output_dir = tmp_path / "out"
 
-    assert _run(
-        [
-            "--manifest", str(fixture["manifest"]),
-            "--cache-dir", str(fixture["cache"]),
-            "--models", ",".join(models),
-            "--normalizer", "bbox_sqrt_area",
-            "--output-dir", str(output_dir),
-        ]
-    ) == 0
+    assert (
+        _run(
+            [
+                "--manifest",
+                str(fixture["manifest"]),
+                "--cache-dir",
+                str(fixture["cache"]),
+                "--models",
+                ",".join(models),
+                "--normalizer",
+                "bbox_sqrt_area",
+                "--output-dir",
+                str(output_dir),
+            ]
+        )
+        == 0
+    )
 
     payload = json.loads((output_dir / "aflw_profile_metrics.json").read_text(encoding="utf-8"))
     assert payload["normalizer_method"] == "bbox_sqrt_area"
@@ -225,9 +267,13 @@ def test_evaluate_aflw_profile_rejects_missing_cached_prediction(tmp_path: Path)
     with pytest.raises(FileNotFoundError, match="cached predictions"):
         _run(
             [
-                "--manifest", str(fixture["manifest"]),
-                "--cache-dir", str(fixture["cache"]),
-                "--models", "hrnet,spiga,orformer",
-                "--output-dir", str(output_dir),
+                "--manifest",
+                str(fixture["manifest"]),
+                "--cache-dir",
+                str(fixture["cache"]),
+                "--models",
+                "hrnet,spiga,orformer",
+                "--output-dir",
+                str(output_dir),
             ]
         )

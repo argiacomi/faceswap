@@ -58,13 +58,12 @@ from lib.landmarks.eval.profile_metrics import (
     evaluate_profile_sample,
 )
 from lib.landmarks.fusion import (
-    FusionResult,
     normalize_weight_matrix,
     plain_average,
     static_weighted,
 )
 from lib.landmarks.rejection import weighted_median
-from lib.landmarks.schema import CANONICAL_SCHEMA, LandmarkPrediction
+from lib.landmarks.schema import LandmarkPrediction
 
 logger = logging.getLogger(__name__)
 
@@ -91,15 +90,15 @@ def _fuse_variant(
     threshold = outlier_threshold if strategy_uses_threshold(canonical) else 3.5
 
     if not strategy_requires_weights(canonical):
-        return plain_average(predictions, outlier_method=method, outlier_threshold=threshold).points
+        return plain_average(
+            predictions, outlier_method=method, outlier_threshold=threshold
+        ).points
 
     if weights is None:
         raise ValueError(f"variant {variant!r} requires a static weights file")
     matrix = weights_matrix_for_models(weights, tuple(models))
     if canonical == "weighted_median":
-        stack = np.stack(
-            [prediction.canonical_68().points for prediction in predictions], axis=0
-        )
+        stack = np.stack([prediction.canonical_68().points for prediction in predictions], axis=0)
         normalized = normalize_weight_matrix(
             matrix, model_count=stack.shape[0], landmark_count=stack.shape[1]
         )
@@ -253,11 +252,7 @@ def evaluate_manifest(
     }
 
     best_single = min(
-        (
-            agg
-            for label, agg in aggregates.items()
-            if label in models
-        ),
+        (agg for label, agg in aggregates.items() if label in models),
         key=lambda agg: agg.overall_score,
         default=None,
     )
@@ -265,9 +260,7 @@ def evaluate_manifest(
     if best_single is not None:
         baseline = best_single.overall_score
         for label, agg in aggregates.items():
-            regression_rate_vs_best_single[label] = float(
-                max(agg.overall_score - baseline, 0.0)
-            )
+            regression_rate_vs_best_single[label] = float(max(agg.overall_score - baseline, 0.0))
 
     return {
         "objective": PROFILE_OBJECTIVE,
@@ -335,10 +328,7 @@ def _write_outputs(output_dir: Path, payload: dict[str, T.Any]) -> None:
 
     json_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     rows = payload["rows"]
-    if rows:
-        fieldnames = sorted({key for row in rows for key in row})
-    else:
-        fieldnames = []
+    fieldnames = sorted({key for row in rows for key in row}) if rows else []
     with csv_path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
@@ -420,10 +410,7 @@ def main(argv: list[str] | None = None) -> int:
         priority_failure_regions=_parse_csv(args.priority_failure_regions),
     )
     _write_outputs(Path(args.output_dir), payload)
-    print(
-        f"Wrote profile metrics for {len(payload['aggregates'])} labels "
-        f"to {args.output_dir}"
-    )
+    print(f"Wrote profile metrics for {len(payload['aggregates'])} labels to {args.output_dir}")
     if payload["best_single_label"]:
         print(
             f"  best single: {payload['best_single_label']} "

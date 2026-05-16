@@ -357,11 +357,7 @@ def test_single_model_baselines_can_be_appended_via_enumerate(tmp_path: Path) ->
         include_single_model_baselines=True,
     )
 
-    baselines = [
-        c
-        for c in candidates
-        if len(c.models) == 1 and c.strategy == "plain_average"
-    ]
+    baselines = [c for c in candidates if len(c.models) == 1 and c.strategy == "plain_average"]
     assert {b.models[0] for b in baselines} == set(MODELS)
     # No duplicates when a baseline already exists in the regular enumeration.
     again = enumerate_candidates(

@@ -15,9 +15,7 @@ def test_cache_encodes_windows_unsafe_sample_ids(tmp_path: Path) -> None:
     """Sample IDs with reserved Windows characters are safe cache directories."""
     cache = DiskPredictionCache(tmp_path)
     sample_id = "fixture:clean-000"
-    prediction = LandmarkPrediction(
-        np.zeros((68, 2), dtype="float32"), model_name="hrnet"
-    )
+    prediction = LandmarkPrediction(np.zeros((68, 2), dtype="float32"), model_name="hrnet")
 
     path = cache.write(sample_id, prediction)
 

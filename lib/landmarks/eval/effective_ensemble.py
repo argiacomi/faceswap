@@ -84,9 +84,7 @@ def diagnose(
     if not weights:
         raise ValueError("weights cannot be empty")
     if effective_models_floor <= 1.0:
-        raise ValueError(
-            f"effective_models_floor must be > 1.0, got {effective_models_floor!r}"
-        )
+        raise ValueError(f"effective_models_floor must be > 1.0, got {effective_models_floor!r}")
     chosen = tuple(models) if models is not None else tuple(weights)
     missing = [model for model in chosen if model not in weights]
     if missing:

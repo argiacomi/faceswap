@@ -47,6 +47,11 @@ from lib.landmarks.eval.geometry_signals import (
     roi_delta,
     visible_hull_iou,
 )
+from lib.landmarks.eval.roi_diagnostics import (
+    DEFAULT_LANDMARK_COVERAGE_FLOOR,
+    RoiDiagnostics,
+    evaluate_roi_diagnostics,
+)
 
 GEOMETRY_OBJECTIVE: str = "alignment_geometry_v1"
 DEFAULT_FAILURE_THRESHOLD: float = 0.5  # 1 - roi_iou ≥ this counts as a soft failure
@@ -100,6 +105,7 @@ class GeometrySampleMetrics:
     per_region_failure: dict[str, bool]
     catastrophic_flags: CatastrophicFlags
     points_outside_bbox: int
+    roi_diagnostics: RoiDiagnostics | None
     overall_score: float
 
     def to_payload(self) -> dict[str, T.Any]:
@@ -129,6 +135,9 @@ class GeometrySampleMetrics:
             "cloud_collapse": bool(self.catastrophic_flags.cloud_collapse),
             "eye_mouth_flip": bool(self.catastrophic_flags.eye_mouth_flip),
             "catastrophic": bool(self.catastrophic_flags.any),
+            "roi_diagnostics": (
+                self.roi_diagnostics.to_payload() if self.roi_diagnostics is not None else None
+            ),
             "overall_score": float(self.overall_score),
         }
 
@@ -162,6 +171,10 @@ class GeometryAggregate:
     per_region_error: dict[str, float] = field(default_factory=dict)
     per_region_failure_rate: dict[str, float] = field(default_factory=dict)
     per_bucket: dict[str, dict[str, float]] = field(default_factory=dict)
+    mean_aligned_crop_visible_hull_iou: float = 0.0
+    mean_landmarks_inside_aligned_crop_fraction: float = 0.0
+    aligned_crop_miss_rate: float = 0.0
+    mean_bbox_aspect_ratio: float = 0.0
 
     def to_payload(self) -> dict[str, T.Any]:
         return {
@@ -190,6 +203,12 @@ class GeometryAggregate:
             "per_region_error": dict(self.per_region_error),
             "per_region_failure_rate": dict(self.per_region_failure_rate),
             "per_bucket": {bucket: dict(values) for bucket, values in self.per_bucket.items()},
+            "mean_aligned_crop_visible_hull_iou": float(self.mean_aligned_crop_visible_hull_iou),
+            "mean_landmarks_inside_aligned_crop_fraction": float(
+                self.mean_landmarks_inside_aligned_crop_fraction
+            ),
+            "aligned_crop_miss_rate": float(self.aligned_crop_miss_rate),
+            "mean_bbox_aspect_ratio": float(self.mean_bbox_aspect_ratio),
         }
 
 
@@ -206,6 +225,8 @@ def evaluate_geometry_sample(
     bbox_inflation: float = DEFAULT_BBOX_INFLATION,
     collapse_ratio: float = DEFAULT_COLLAPSE_RATIO,
     region_failure_threshold: float = 0.05,
+    bbox_source: str = "manifest",
+    landmark_coverage_floor: float = DEFAULT_LANDMARK_COVERAGE_FLOOR,
 ) -> GeometrySampleMetrics:
     """Return the GT-vs-prediction geometry deltas for one sample.
 
@@ -236,6 +257,17 @@ def evaluate_geometry_sample(
     )
     outside = (
         0 if bbox is None else _points_outside(predicted, bbox=bbox, inflation=bbox_inflation)
+    )
+    roi_diag = (
+        None
+        if bbox is None
+        else evaluate_roi_diagnostics(
+            predicted_summary=pred_summary,
+            truth_landmarks=np.asarray(truth, dtype="float64"),
+            bbox=bbox,
+            bbox_source=bbox_source,
+            coverage_floor=landmark_coverage_floor,
+        )
     )
 
     aligned_face_size = aligned_face_size_from_summary(truth_summary)
@@ -275,6 +307,7 @@ def evaluate_geometry_sample(
         per_region_failure=per_region_failure,
         catastrophic_flags=cat_flags,
         points_outside_bbox=outside,
+        roi_diagnostics=roi_diag,
         overall_score=overall,
     )
 
@@ -381,6 +414,29 @@ def aggregate_geometry_samples(
             "mean_roi_iou": float(bucket_roi.mean()),
         }
 
+    roi_with_diag = [s for s in samples if s.roi_diagnostics is not None]
+    if roi_with_diag:
+        hull_coverage = np.array(
+            [s.roi_diagnostics.aligned_crop_visible_hull_iou for s in roi_with_diag]
+        )
+        coverage = np.array(
+            [s.roi_diagnostics.landmarks_inside_aligned_crop_fraction for s in roi_with_diag]
+        )
+        miss_flags = np.array(
+            [s.roi_diagnostics.aligned_crop_misses_visible_face for s in roi_with_diag],
+            dtype=bool,
+        )
+        aspect_ratios = np.array([s.roi_diagnostics.bbox_aspect_ratio for s in roi_with_diag])
+        mean_aligned_crop_visible_hull_iou = float(hull_coverage.mean())
+        mean_landmarks_inside_aligned_crop_fraction = float(coverage.mean())
+        aligned_crop_miss_rate = float(miss_flags.mean())
+        mean_bbox_aspect_ratio = float(aspect_ratios.mean())
+    else:
+        mean_aligned_crop_visible_hull_iou = 0.0
+        mean_landmarks_inside_aligned_crop_fraction = 0.0
+        aligned_crop_miss_rate = 0.0
+        mean_bbox_aspect_ratio = 0.0
+
     return GeometryAggregate(
         label=label,
         sample_count=len(samples),
@@ -411,6 +467,10 @@ def aggregate_geometry_samples(
             region: float(np.mean(values)) for region, values in per_region_failures.items()
         },
         per_bucket=per_bucket_payload,
+        mean_aligned_crop_visible_hull_iou=mean_aligned_crop_visible_hull_iou,
+        mean_landmarks_inside_aligned_crop_fraction=mean_landmarks_inside_aligned_crop_fraction,
+        aligned_crop_miss_rate=aligned_crop_miss_rate,
+        mean_bbox_aspect_ratio=mean_bbox_aspect_ratio,
     )
 
 
