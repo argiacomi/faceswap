@@ -142,10 +142,23 @@ def _evaluate_validity(
     largest candidate cloud), eye-mouth flip in normalized space, or have an
     unusually large fraction of landmarks outside the (inflated) face bbox.
     """
-    summary = alignment_summary(candidate.landmarks)
     flags: list[str] = []
-    if reference_extent > 0 and cloud_collapse(candidate.landmarks, truth_extent=reference_extent):
+    candidate_extent = _bbox_diagonal(candidate.landmarks)
+    if candidate_extent <= 1e-6:
         flags.append("cloud_collapse")
+    elif reference_extent > 0 and cloud_collapse(
+        candidate.landmarks,
+        truth_extent=reference_extent,
+    ):
+        flags.append("cloud_collapse")
+
+    # Avoid running AlignedFace on a collapsed landmark cloud. Umeyama cannot
+    # estimate scale from zero-variance points and emits a divide-by-zero
+    # RuntimeWarning before the resolver rejects the candidate anyway.
+    if "cloud_collapse" in flags:
+        return (False, tuple(flags))
+
+    summary = alignment_summary(candidate.landmarks)
     if eye_mouth_flip(summary):
         flags.append("eye_mouth_flip")
     if bbox is not None and landmark_count > 0:
