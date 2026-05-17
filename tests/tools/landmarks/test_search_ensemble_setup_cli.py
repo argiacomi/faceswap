@@ -380,23 +380,11 @@ def test_search_geometry_objective_reranks_by_geometry_score(
     def fake_geometry_aggregate(
         result: object,
         *,
-        samples: object,
-        cache: object,
+        context: object,
         aligned_size: int,
         region_failure_threshold: float,
-        truth_summaries: object | None = None,
-        truth_landmarks: object | None = None,
-        geometry_context: object | None = None,
     ) -> search_cli.GeometryAggregate:
-        del (
-            samples,
-            cache,
-            aligned_size,
-            region_failure_threshold,
-            truth_summaries,
-            truth_landmarks,
-            geometry_context,
-        )
+        del context, aligned_size, region_failure_threshold
         candidate_id = result.candidate_id  # type: ignore[attr-defined]
         pre_rank_order.append(candidate_id)
         # Force the pre-rank last candidate to become best by geometry. This
@@ -427,7 +415,7 @@ def test_search_geometry_objective_reranks_by_geometry_score(
             mean_average_distance_delta=0.0,
         )
 
-    monkeypatch.setattr(search_cli, "_candidate_geometry_aggregate", fake_geometry_aggregate)
+    monkeypatch.setattr(search_cli, "_evaluate_candidate_geometry", fake_geometry_aggregate)
 
     rc = search_main(
         [

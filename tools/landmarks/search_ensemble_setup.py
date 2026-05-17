@@ -24,12 +24,6 @@ from lib.landmarks.ensemble.promoted_setup import (
     write_best_setup,
     write_best_weights,
 )
-from lib.landmarks.ensemble.strategies import (
-    strategy_outlier_method,
-    strategy_requires_weights,
-    strategy_uses_threshold,
-)
-from lib.landmarks.ensemble.weights import weights_matrix_for_models
 from lib.landmarks.eval.candidate_search import (
     DEFAULT_OBJECTIVE,
     DEFAULT_REGRESSION_EPSILON_NME,
@@ -43,8 +37,6 @@ from lib.landmarks.eval.candidate_search import (
 from lib.landmarks.eval.geometry_metrics import (
     GEOMETRY_OBJECTIVE,
     GeometryAggregate,
-    aggregate_geometry_samples,
-    evaluate_geometry_sample,
 )
 from lib.landmarks.eval.prediction_cache import DiskPredictionCache
 from lib.landmarks.eval.profile_metrics import (
@@ -67,8 +59,6 @@ from lib.landmarks.eval.promotion_gates import (
     no_promotion_payload,
 )
 from lib.landmarks.eval.splits import SplitAssignment, load_split_file, split_assignment_hash
-from lib.landmarks.fusion import normalize_weight_matrix, plain_average, static_weighted
-from lib.landmarks.rejection import weighted_median
 
 
 def _parse_csv(value: str) -> tuple[str, ...]:
@@ -154,36 +144,10 @@ def _load_samples(
     return fit_samples, select_samples, report_samples
 
 
-def _fuse_for_profile(
-    candidate: Candidate,
-    cached_points: T.Sequence[T.Any],
-    *,
-    weights: dict[str, list[float]],
-) -> T.Any:
-    import numpy as np
-
-    from lib.landmarks.schema import LandmarkPrediction
-
-    predictions = [
-        LandmarkPrediction(np.asarray(points, dtype="float32"), source=model)
-        for points, model in zip(cached_points, candidate.models, strict=True)
-    ]
-    method = strategy_outlier_method(candidate.strategy)
-    threshold = candidate.outlier_threshold if strategy_uses_threshold(candidate.strategy) else 3.5
-    if not strategy_requires_weights(candidate.strategy):
-        return plain_average(
-            predictions, outlier_method=method, outlier_threshold=threshold
-        ).points
-    matrix = weights_matrix_for_models(weights, candidate.models)
-    if candidate.strategy == "weighted_median":
-        stack = np.stack([prediction.canonical_68().points for prediction in predictions], axis=0)
-        normalized = normalize_weight_matrix(
-            matrix, model_count=stack.shape[0], landmark_count=stack.shape[1]
-        )
-        return weighted_median(stack, normalized)
-    return static_weighted(
-        predictions, matrix, outlier_method=method, outlier_threshold=threshold
-    ).points
+# The candidate-aware fusion helper now lives in lib.landmarks.search.
+# Re-exported here so the profile-aggregate path keeps the legacy name; new
+# code should import from :mod:`lib.landmarks.search.geometry_candidate_eval`.
+from lib.landmarks.search.geometry_candidate_eval import fuse_candidate as _fuse_for_profile
 
 
 def _candidate_profile_aggregate(
@@ -270,131 +234,19 @@ def _candidate_models(results: T.Sequence[CandidateResult]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(model for result in results for model in result.candidate.models))
 
 
-def _build_geometry_context(
-    *,
-    samples: T.Sequence[T.Any],
-    cache: DiskPredictionCache,
-    models: T.Sequence[str],
-    aligned_size: int,
-) -> list[dict[str, T.Any]]:
-    """Preload select-split truth, summaries, bboxes, and predictions once."""
-    import numpy as np
-
-    from lib.landmarks.eval.geometry_signals import alignment_summary
-
-    rows: list[dict[str, T.Any]] = []
-    for sample in samples:
-        try:
-            truth = np.load(sample.landmarks).astype("float32")
-        except OSError:
-            continue
-        bbox = sample.face_bbox
-        if bbox is None:
-            left, top = np.min(truth, axis=0)
-            right, bottom = np.max(truth, axis=0)
-            bbox = (float(left), float(top), float(right), float(bottom))
-        rows.append(
-            {
-                "sample": sample,
-                "truth": truth,
-                "truth_summary": alignment_summary(truth, size=aligned_size),
-                "bbox": bbox,
-                "predictions": {
-                    model: cache.read(sample.sample_id, model).landmarks for model in models
-                },
-            }
-        )
-    return rows
-
-
-def _candidate_geometry_aggregate(
-    result: CandidateResult,
-    *,
-    samples: T.Sequence[T.Any],
-    cache: DiskPredictionCache,
-    aligned_size: int,
-    region_failure_threshold: float,
-    truth_summaries: dict[str, T.Any] | None = None,
-    truth_landmarks: dict[str, T.Any] | None = None,
-    geometry_context: T.Sequence[dict[str, T.Any]] | None = None,
-) -> GeometryAggregate:
-    import numpy as np
-
-    per_sample: list[T.Any] = []
-    if geometry_context is not None:
-        for row in geometry_context:
-            sample = row["sample"]
-            cached_points = [row["predictions"][model] for model in result.candidate.models]
-            fused = _fuse_for_profile(result.candidate, cached_points, weights=result.weights)
-            per_sample.append(
-                evaluate_geometry_sample(
-                    fused,
-                    row["truth"],
-                    sample_id=sample.sample_id,
-                    dataset=sample.dataset,
-                    condition=sample.condition,
-                    bbox=row["bbox"],
-                    visibility=sample.visibility,
-                    aligned_size=aligned_size,
-                    region_failure_threshold=region_failure_threshold,
-                    truth_summary=row["truth_summary"],
-                )
-            )
-        return aggregate_geometry_samples(result.candidate_id, per_sample)
-
-    truth_summaries = truth_summaries or {}
-    truth_landmarks_cache = truth_landmarks or {}
-    for sample in samples:
-        truth = truth_landmarks_cache.get(sample.sample_id)
-        if truth is None:
-            try:
-                truth = np.load(sample.landmarks).astype("float32")
-            except OSError:
-                continue
-        bbox = sample.face_bbox
-        if bbox is None:
-            left, top = np.min(truth, axis=0)
-            right, bottom = np.max(truth, axis=0)
-            bbox = (float(left), float(top), float(right), float(bottom))
-        cached_points = [
-            cache.read(sample.sample_id, m).landmarks for m in result.candidate.models
-        ]
-        fused = _fuse_for_profile(result.candidate, cached_points, weights=result.weights)
-        per_sample.append(
-            evaluate_geometry_sample(
-                fused,
-                truth,
-                sample_id=sample.sample_id,
-                dataset=sample.dataset,
-                condition=sample.condition,
-                bbox=bbox,
-                visibility=sample.visibility,
-                aligned_size=aligned_size,
-                region_failure_threshold=region_failure_threshold,
-                truth_summary=truth_summaries.get(sample.sample_id),
-            )
-        )
-    return aggregate_geometry_samples(result.candidate_id, per_sample)
-
-
-def _geometry_score_from_aggregate(
-    aggregate: GeometryAggregate, baseline_score: float | None
-) -> GeometryScore:
-    max_bucket = 0.0
-    if aggregate.per_bucket:
-        max_bucket = max(float(v.get("overall_score", 0.0)) for v in aggregate.per_bucket.values())
-    return GeometryScore(
-        overall_score=aggregate.overall_score,
-        catastrophic_failure_rate=aggregate.catastrophic_failure_rate,
-        p95_translation_normalized=aggregate.p95_translation_normalized,
-        p95_roi_center_normalized=aggregate.p95_roi_center_normalized,
-        p95_roll_degrees=aggregate.p95_roll_degrees_delta,
-        mean_hull_iou=aggregate.mean_hull_iou,
-        p05_hull_iou=aggregate.p05_hull_iou,
-        max_bucket_regression_score=(
-            max(0.0, max_bucket - baseline_score) if baseline_score is not None else 0.0
-        ),
-    )
+# Geometry candidate-evaluation primitives live in lib.landmarks.search now.
+# These names are re-exported under the legacy ``_`` prefix so the rest of
+# the CLI doesn't need updating; new call sites should import directly from
+# :mod:`lib.landmarks.search.geometry_candidate_eval`.
+from lib.landmarks.search.geometry_candidate_eval import (
+    build_geometry_context as _build_geometry_context,
+)
+from lib.landmarks.search.geometry_candidate_eval import (
+    evaluate_candidate_geometry as _evaluate_candidate_geometry,
+)
+from lib.landmarks.search.geometry_candidate_eval import (
+    geometry_score_from_aggregate as _geometry_score_from_aggregate,
+)
 
 
 def _enumerate_search_candidates(args: argparse.Namespace) -> list[Candidate]:
@@ -784,20 +636,18 @@ def main(argv: list[str] | None = None) -> int:
 
         def _geometry_eval() -> None:
             context = _build_geometry_context(
-                samples=select_samples,
+                select_samples,
                 cache=cache,
                 models=_candidate_models(results),
                 aligned_size=args.geometry_aligned_size,
             )
             interim: dict[str, GeometryAggregate] = {}
             for result in _geometry_candidate_progress(results, enabled=_show_progress(args)):
-                aggregate = _candidate_geometry_aggregate(
+                aggregate = _evaluate_candidate_geometry(
                     result,
-                    samples=select_samples,
-                    cache=cache,
+                    context=context,
                     aligned_size=args.geometry_aligned_size,
                     region_failure_threshold=args.geometry_region_failure_threshold,
-                    geometry_context=context,
                 )
                 interim[result.candidate_id] = aggregate
             baseline_score = None
@@ -809,7 +659,7 @@ def main(argv: list[str] | None = None) -> int:
                     )
             for candidate_id, aggregate in interim.items():
                 geometry_scores[candidate_id] = _geometry_score_from_aggregate(
-                    aggregate, baseline_score
+                    aggregate, baseline_score=baseline_score
                 )
 
         _stage("geometry_evaluate_candidates", _geometry_eval)
