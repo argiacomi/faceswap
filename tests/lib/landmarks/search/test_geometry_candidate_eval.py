@@ -116,7 +116,11 @@ def test_build_geometry_context_includes_truth_summary_per_sample(tmp_path: Path
         assert row.bbox == (40.0, 60.0, 160.0, 150.0)
         assert set(row.predictions) == {"hrnet", "spiga"}
         # AlignedFace summary is precomputed (vs being None / lazy).
-        assert row.truth_summary.aligned_landmarks.shape == (68, 2)
+        # Default build sweeps just the canonical 1.0 crop scale; per-crop-scale
+        # summaries are precomputed so the geometry evaluator can pick the right one.
+        summaries = row.truth_summary_by_crop_scale
+        assert summaries
+        assert next(iter(summaries.values())).aligned_landmarks.shape == (68, 2)
 
 
 def test_build_geometry_context_skips_missing_truth(tmp_path: Path) -> None:
@@ -154,6 +158,86 @@ def test_fuse_candidate_returns_canonical_68_landmarks(tmp_path: Path) -> None:
     result = _candidate_result(models=("hrnet", "spiga"))
     fused = fuse_candidate(result.candidate, [truth, truth + 0.5], weights=result.weights)
     assert fused.shape == (68, 2)
+
+
+def test_build_geometry_context_caches_truth_summary_per_crop_scale(tmp_path: Path) -> None:
+    """One truth ``AlignmentSummary`` is precached per requested crop scale.
+
+    The crop_scale sweep would otherwise rebuild GT AlignedFace on every
+    (sample, candidate) pair; caching per crop scale is what keeps the
+    fanout cheap.
+    """
+    fixture = _build_fixture(tmp_path)
+    samples = load_manifest(fixture["manifest"])
+    cache = DiskPredictionCache(fixture["cache"])
+
+    rows = build_geometry_context(
+        samples,
+        cache=cache,
+        models=("hrnet", "spiga"),
+        aligned_size=128,
+        crop_scales=(1.0, 1.4, 1.8),
+    )
+
+    assert rows
+    for row in rows:
+        assert set(row.truth_summary_by_crop_scale) == {1.0, 1.4, 1.8}
+
+
+def test_evaluate_candidate_geometry_shifts_with_crop_scale(tmp_path: Path) -> None:
+    """Geometry aggregates differ when the candidate's crop scale changes.
+
+    With landmark predictions held fixed (cached), varying ``crop_scale``
+    shifts the AlignedFace ROI which feeds ``roi_delta.iou``, the per-region
+    aligned-space error normalization, and the ROI diagnostics. This is the
+    selection signal the crop_scale fanout relies on.
+    """
+    fixture = _build_fixture(tmp_path)
+    samples = load_manifest(fixture["manifest"])
+    cache = DiskPredictionCache(fixture["cache"])
+    context = build_geometry_context(
+        samples,
+        cache=cache,
+        models=("hrnet", "spiga"),
+        aligned_size=128,
+        crop_scales=(1.0, 1.6),
+    )
+
+    def _with_scale(scale: float) -> GeometryAggregate:
+        result = _candidate_result(models=("hrnet", "spiga"))
+        # ``Candidate`` is frozen; build a sibling with the chosen crop scale.
+        candidate = Candidate(
+            models=result.candidate.models,
+            weight_generator=result.candidate.weight_generator,
+            strategy=result.candidate.strategy,
+            outlier_threshold=result.candidate.outlier_threshold,
+            bbox_source=result.candidate.bbox_source,
+            crop_scale=scale,
+        )
+        scaled_result = CandidateResult(
+            candidate=candidate,
+            candidate_id=f"sha256:scaled-{scale}",
+            weights=result.weights,
+            weights_hash=result.weights_hash,
+            score=result.score,
+            objective=result.objective,
+            regression_epsilon_nme=result.regression_epsilon_nme,
+            metrics=result.metrics,
+            fit_diagnostics=result.fit_diagnostics,
+            effective_ensemble=result.effective_ensemble,
+            is_single_model_baseline=result.is_single_model_baseline,
+        )
+        return evaluate_candidate_geometry(
+            scaled_result, context=context, aligned_size=128, region_failure_threshold=0.05
+        )
+
+    tight = _with_scale(1.0)
+    wide = _with_scale(1.6)
+    # Either the ROI IoU or the aligned-space per-region error shifts when the
+    # crop scale changes (the two are coupled through AlignedFace's padding).
+    # We don't pin the direction — the point is that crop_scale is no longer a
+    # no-op in the scoring path.
+    assert tight.mean_roi_iou != wide.mean_roi_iou or tight.overall_score != wide.overall_score
 
 
 def test_evaluate_candidate_geometry_aggregates_across_context(tmp_path: Path) -> None:

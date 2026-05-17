@@ -243,6 +243,7 @@ def evaluate_geometry_sample(
     bbox_source: str = "manifest",
     landmark_coverage_floor: float = DEFAULT_LANDMARK_COVERAGE_FLOOR,
     truth_summary: AlignmentSummary | None = None,
+    crop_scale: float = 1.0,
 ) -> GeometrySampleMetrics:
     """Return the GT-vs-prediction geometry deltas for one sample.
 
@@ -254,12 +255,25 @@ def evaluate_geometry_sample(
     ``truth_summary`` lets callers that evaluate many candidates against the
     same GT (candidate search, signal validation, geometry CLI) precompute
     the GT-side :func:`alignment_summary` once and reuse it across calls,
-    avoiding redundant ``AlignedFace`` (Umeyama + solvePnP) builds.
+    avoiding redundant ``AlignedFace`` (Umeyama + solvePnP) builds. When a
+    precomputed summary is supplied it must have been built at the same
+    ``crop_scale`` passed here, otherwise the pred/truth coordinate frames
+    diverge and the per-region / ROI deltas become meaningless.
+
+    ``crop_scale`` is forwarded to :class:`AlignedFace` as the coverage
+    ratio for **both** the predicted and truth summaries. The
+    landmark-comparison deltas (matrix, per-region, hull IoU between raw
+    landmarks) stay invariant under this knob, while the crop-coverage
+    signals (``aligned_crop_visible_hull_iou``,
+    ``landmarks_inside_aligned_crop_fraction``,
+    ``aligned_crop_misses_visible_face``, and ``roi_delta.iou`` vs a
+    canonical reference) shift, so a sweep over ``crop_scale`` produces
+    real selection signal for the extract-time crop width.
     """
     bbox = _normalize_bbox(bbox)
-    pred_summary = alignment_summary(predicted, size=aligned_size)
+    pred_summary = alignment_summary(predicted, size=aligned_size, coverage_ratio=crop_scale)
     if truth_summary is None:
-        truth_summary = alignment_summary(truth, size=aligned_size)
+        truth_summary = alignment_summary(truth, size=aligned_size, coverage_ratio=crop_scale)
     normalizer = _bbox_diagonal(truth)
     if normalizer <= 0:
         normalizer = max(aligned_size, 1.0)

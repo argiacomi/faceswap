@@ -69,7 +69,10 @@ class AlignmentSummary:
 
 
 def alignment_summary(
-    landmarks: np.ndarray, *, size: int = DEFAULT_ALIGNED_SIZE
+    landmarks: np.ndarray,
+    *,
+    size: int = DEFAULT_ALIGNED_SIZE,
+    coverage_ratio: float = 1.0,
 ) -> AlignmentSummary:
     """Run Faceswap's alignment over ``landmarks`` and return the geometry summary.
 
@@ -78,10 +81,21 @@ def alignment_summary(
     canonical scalar diagnostics. The aligned landmarks let downstream metrics
     compare prediction vs GT in aligned-face space, which is exactly the
     coordinate frame Faceswap's crop/mask/swap-placement consumes.
+
+    ``coverage_ratio`` is forwarded to :class:`AlignedFace` so callers that
+    tune the runtime crop scale (``plugins/extract/align/ensemble.py`` uses
+    the same value to inflate the detection bbox) can score predictions in
+    the same coordinate frame the extract pipeline will actually deploy.
     """
     if landmarks.shape != (68, 2):
         raise ValueError(f"expected (68, 2) landmarks, got {landmarks.shape!r}")
-    aligned = AlignedFace(landmarks.astype("float32"), image=None, centering="face", size=size)
+    aligned = AlignedFace(
+        landmarks.astype("float32"),
+        image=None,
+        centering="face",
+        size=size,
+        coverage_ratio=coverage_ratio,
+    )
     matrix = aligned.matrix.astype("float64")
     roi = aligned.original_roi.astype("float64")
     pose = aligned.pose

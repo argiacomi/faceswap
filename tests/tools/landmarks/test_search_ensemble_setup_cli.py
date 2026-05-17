@@ -324,6 +324,52 @@ def test_search_with_geometry_gate_writes_no_promotion(tmp_path: Path) -> None:
     assert not (output_dir / "best_setup.json").exists()
 
 
+def test_search_fans_out_candidates_across_crop_scales(tmp_path: Path) -> None:
+    """``--crop-scale 1.4,1.8`` enumerates one candidate per scale.
+
+    The fanout proves crop_scale is now a real search dimension: each scale
+    produces distinct candidate_ids (the hash includes ``crop_scale``) and
+    the recorded ``crop_scale`` column reflects the chosen value rather than
+    a single CLI-default constant.
+    """
+    fixture = _build_fixture(tmp_path)
+    output_dir = tmp_path / "search"
+    exit_code = search_main(
+        [
+            "--manifest",
+            str(fixture["manifest"]),
+            "--cache-dir",
+            str(fixture["cache"]),
+            "--splits",
+            str(fixture["splits"]),
+            "--models",
+            "hrnet,spiga,orformer",
+            "--model-subsets",
+            "all",
+            "--weight-generators",
+            "inverse_mean_error",
+            "--strategies",
+            "static_weighted",
+            "--crop-scale",
+            "1.4,1.8",
+            "--output-dir",
+            str(output_dir),
+        ]
+    )
+    assert exit_code == 0
+
+    payload = json.loads((output_dir / "candidate_results.json").read_text(encoding="utf-8"))
+    crop_scales = sorted({float(c["crop_scale"]) for c in payload["candidates"]})
+    assert crop_scales == [1.4, 1.8]
+
+    csv_lines = (output_dir / "candidate_results.csv").read_text(encoding="utf-8").splitlines()
+    header = csv_lines[0].split(",")
+    assert "crop_scale" in header
+    crop_scale_col = header.index("crop_scale")
+    csv_scales = sorted({float(line.split(",")[crop_scale_col]) for line in csv_lines[1:]})
+    assert csv_scales == [1.4, 1.8]
+
+
 def test_search_persists_per_candidate_geometry_payload(tmp_path: Path) -> None:
     """``candidate_results.{csv,json}`` carry per-bucket geometry diagnostics.
 

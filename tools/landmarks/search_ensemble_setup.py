@@ -258,6 +258,9 @@ def _enumerate_search_candidates(args: argparse.Namespace) -> list[Candidate]:
         or args.max_overall_regression_nme is not None
         or args.require_profile_improvement
     )
+    crop_scales = _parse_csv_floats(args.crop_scale)
+    if not crop_scales:
+        raise SystemExit("--crop-scale must contain at least one positive value")
     candidates = enumerate_candidates(
         models=_parse_csv(args.models),
         model_subset_presets=_parse_csv(args.model_subsets),
@@ -265,7 +268,7 @@ def _enumerate_search_candidates(args: argparse.Namespace) -> list[Candidate]:
         strategies=_parse_csv(args.strategies),
         outlier_thresholds=_parse_csv_floats(args.outlier_thresholds),
         bbox_source=args.bbox_source,
-        crop_scale=args.crop_scale,
+        crop_scales=crop_scales,
         include_single_model_baselines=include_baselines,
     )
     if not candidates:
@@ -273,7 +276,7 @@ def _enumerate_search_candidates(args: argparse.Namespace) -> list[Candidate]:
     _progress(
         f"Enumerated {len(candidates)} candidates from models={args.models}, "
         f"subsets={args.model_subsets}, generators={args.weight_generators}, "
-        f"strategies={args.strategies}"
+        f"strategies={args.strategies}, crop_scales={','.join(f'{s:g}' for s in crop_scales)}"
     )
     return candidates
 
@@ -362,6 +365,7 @@ def _write_candidate_results(
         "weight_generator",
         "strategy",
         "outlier_threshold",
+        "crop_scale",
         "overall_nme",
         "failure_rate",
         "auc",
@@ -398,6 +402,7 @@ def _write_candidate_results(
             "outlier_threshold": ""
             if result.candidate.outlier_threshold is None
             else result.candidate.outlier_threshold,
+            "crop_scale": result.candidate.crop_scale,
             "overall_nme": result.metrics.overall_nme,
             "failure_rate": result.metrics.failure_rate,
             "auc": result.metrics.auc,
@@ -656,7 +661,17 @@ def main(argv: list[str] | None = None) -> int:
         "--regression-epsilon-nme", type=float, default=DEFAULT_REGRESSION_EPSILON_NME
     )
     parser.add_argument("--bbox-source", default="manifest")
-    parser.add_argument("--crop-scale", type=float, default=1.6)
+    parser.add_argument(
+        "--crop-scale",
+        default="1.6",
+        help=(
+            "Crop scale(s) to evaluate. Accepts a single value (e.g. ``1.6``) "
+            "or a comma-separated list (e.g. ``1.4,1.6,1.8``); the search "
+            "fans out one candidate per crop scale and the GT-derived "
+            "geometry path consumes the value as the AlignedFace coverage "
+            "ratio so crop-coverage signals shift with the choice."
+        ),
+    )
     parser.add_argument("--failure-threshold", type=float, default=0.08)
     parser.add_argument("--seed", type=int, default=1337)
     parser.add_argument("--output-dir", required=True)
@@ -750,6 +765,9 @@ def main(argv: list[str] | None = None) -> int:
                 cache=cache,
                 models=_candidate_models(results),
                 aligned_size=args.geometry_aligned_size,
+                crop_scales=tuple(
+                    dict.fromkeys(float(result.candidate.crop_scale) for result in results)
+                ),
             )
             for result in _geometry_candidate_progress(results, enabled=_show_progress(args)):
                 aggregate = _evaluate_candidate_geometry(

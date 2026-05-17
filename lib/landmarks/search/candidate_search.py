@@ -397,7 +397,8 @@ def enumerate_candidates(
     strategies: T.Sequence[str],
     outlier_thresholds: T.Sequence[float],
     bbox_source: str = "manifest",
-    crop_scale: float = 1.6,
+    crop_scale: float | None = None,
+    crop_scales: T.Sequence[float] | None = None,
     include_single_model_baselines: bool = False,
 ) -> list[Candidate]:
     """Cartesian product of search dimensions, honoring strategy-scoped threshold rules.
@@ -405,6 +406,13 @@ def enumerate_candidates(
     For strategies that do not consume a threshold the threshold dimension is
     skipped (one candidate per strategy/subset/generator). For strategies that
     do consume a threshold a candidate is emitted per supplied threshold.
+
+    ``crop_scales`` controls the crop_scale fanout: the runtime extract crop
+    scale stamped into ``best_setup.json`` is now a real search dimension
+    (the GT-derived geometry path consumes it as the AlignedFace coverage
+    ratio, so crop-coverage signals shift with the candidate's crop scale).
+    Pass a single-element sequence for back-compat. ``crop_scale`` (scalar)
+    is honored only when ``crop_scales`` is omitted.
     """
     subsets = expand_model_subsets(models, model_subset_presets)
     if not subsets:
@@ -413,10 +421,15 @@ def enumerate_candidates(
         raise ValueError("at least one weight generator is required")
     if not strategies:
         raise ValueError("at least one strategy is required")
+    if crop_scales is None:
+        crop_scales = (1.6 if crop_scale is None else float(crop_scale),)
+    if not crop_scales:
+        raise ValueError("at least one crop_scale is required")
+    crop_scale_values = tuple(float(value) for value in crop_scales)
     canonical_list = [canonical_strategy(name) for name in strategies]
     candidates: list[Candidate] = []
-    for subset, generator, strategy in itertools.product(
-        subsets, weight_generators, canonical_list
+    for subset, generator, strategy, scale in itertools.product(
+        subsets, weight_generators, canonical_list, crop_scale_values
     ):
         if strategy_uses_threshold(strategy):
             if not outlier_thresholds:
@@ -431,7 +444,7 @@ def enumerate_candidates(
                         strategy=strategy,
                         outlier_threshold=float(threshold),
                         bbox_source=bbox_source,
-                        crop_scale=crop_scale,
+                        crop_scale=scale,
                     )
                 )
         else:
@@ -442,27 +455,35 @@ def enumerate_candidates(
                     strategy=strategy,
                     outlier_threshold=None,
                     bbox_source=bbox_source,
-                    crop_scale=crop_scale,
+                    crop_scale=scale,
                 )
             )
     if include_single_model_baselines:
         existing = {
-            (tuple(sorted(c.models)), c.strategy, c.weight_generator, c.outlier_threshold)
+            (
+                tuple(sorted(c.models)),
+                c.strategy,
+                c.weight_generator,
+                c.outlier_threshold,
+                c.crop_scale,
+            )
             for c in candidates
         }
-        for baseline in single_model_baseline_candidates(
-            models, bbox_source=bbox_source, crop_scale=crop_scale
-        ):
-            key = (
-                tuple(sorted(baseline.models)),
-                baseline.strategy,
-                baseline.weight_generator,
-                baseline.outlier_threshold,
-            )
-            if key in existing:
-                continue
-            existing.add(key)
-            candidates.append(baseline)
+        for scale in crop_scale_values:
+            for baseline in single_model_baseline_candidates(
+                models, bbox_source=bbox_source, crop_scale=scale
+            ):
+                key = (
+                    tuple(sorted(baseline.models)),
+                    baseline.strategy,
+                    baseline.weight_generator,
+                    baseline.outlier_threshold,
+                    baseline.crop_scale,
+                )
+                if key in existing:
+                    continue
+                existing.add(key)
+                candidates.append(baseline)
     return candidates
 
 
