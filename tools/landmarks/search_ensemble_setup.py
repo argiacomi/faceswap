@@ -171,7 +171,9 @@ def _fuse_for_profile(
     method = strategy_outlier_method(candidate.strategy)
     threshold = candidate.outlier_threshold if strategy_uses_threshold(candidate.strategy) else 3.5
     if not strategy_requires_weights(candidate.strategy):
-        return plain_average(predictions, outlier_method=method, outlier_threshold=threshold).points
+        return plain_average(
+            predictions, outlier_method=method, outlier_threshold=threshold
+        ).points
     matrix = weights_matrix_for_models(weights, candidate.models)
     if candidate.strategy == "weighted_median":
         stack = np.stack([prediction.canonical_68().points for prediction in predictions], axis=0)
@@ -179,7 +181,9 @@ def _fuse_for_profile(
             matrix, model_count=stack.shape[0], landmark_count=stack.shape[1]
         )
         return weighted_median(stack, normalized)
-    return static_weighted(predictions, matrix, outlier_method=method, outlier_threshold=threshold).points
+    return static_weighted(
+        predictions, matrix, outlier_method=method, outlier_threshold=threshold
+    ).points
 
 
 def _candidate_profile_aggregate(
@@ -205,7 +209,9 @@ def _candidate_profile_aggregate(
             left, top = np.min(truth, axis=0)
             right, bottom = np.max(truth, axis=0)
             bbox = (float(left), float(top), float(right), float(bottom))
-        cached_points = [cache.read(sample.sample_id, m).landmarks for m in result.candidate.models]
+        cached_points = [
+            cache.read(sample.sample_id, m).landmarks for m in result.candidate.models
+        ]
         fused = _fuse_for_profile(result.candidate, cached_points, weights=result.weights)
         per_sample.append(
             evaluate_profile_sample(
@@ -251,7 +257,9 @@ def _gate_config_from_args(args: argparse.Namespace) -> GateConfig:
 
 
 def _gates_need_profile(config: GateConfig) -> bool:
-    return bool(config.require_profile_improvement or config.max_profile_region_failure_rate is not None)
+    return bool(
+        config.require_profile_improvement or config.max_profile_region_failure_rate is not None
+    )
 
 
 def _gates_need_geometry(config: GateConfig, args: argparse.Namespace) -> bool:
@@ -348,7 +356,9 @@ def _candidate_geometry_aggregate(
             left, top = np.min(truth, axis=0)
             right, bottom = np.max(truth, axis=0)
             bbox = (float(left), float(top), float(right), float(bottom))
-        cached_points = [cache.read(sample.sample_id, m).landmarks for m in result.candidate.models]
+        cached_points = [
+            cache.read(sample.sample_id, m).landmarks for m in result.candidate.models
+        ]
         fused = _fuse_for_profile(result.candidate, cached_points, weights=result.weights)
         per_sample.append(
             evaluate_geometry_sample(
@@ -367,7 +377,9 @@ def _candidate_geometry_aggregate(
     return aggregate_geometry_samples(result.candidate_id, per_sample)
 
 
-def _geometry_score_from_aggregate(aggregate: GeometryAggregate, baseline_score: float | None) -> GeometryScore:
+def _geometry_score_from_aggregate(
+    aggregate: GeometryAggregate, baseline_score: float | None
+) -> GeometryScore:
     max_bucket = 0.0
     if aggregate.per_bucket:
         max_bucket = max(float(v.get("overall_score", 0.0)) for v in aggregate.per_bucket.values())
@@ -450,7 +462,9 @@ def _write_candidate_results(
                 "models": "|".join(result.candidate.models),
                 "weight_generator": result.candidate.weight_generator,
                 "strategy": result.candidate.strategy,
-                "outlier_threshold": "" if result.candidate.outlier_threshold is None else result.candidate.outlier_threshold,
+                "outlier_threshold": ""
+                if result.candidate.outlier_threshold is None
+                else result.candidate.outlier_threshold,
                 "overall_nme": result.metrics.overall_nme,
                 "failure_rate": result.metrics.failure_rate,
                 "auc": result.metrics.auc,
@@ -533,15 +547,27 @@ def _write_promotion_report(
                 + ", ".join(
                     f"{model}={share:.2f}"
                     for model, share in sorted(
-                        diag.landmark_share_by_model.items(), key=lambda item: item[1], reverse=True
+                        diag.landmark_share_by_model.items(),
+                        key=lambda item: item[1],
+                        reverse=True,
                     )
                 ),
             ]
         )
         if winner.is_single_model_baseline:
-            lines.append("- note: this winner is a single-model baseline; promotion of single-model setups was explicitly allowed.")
+            lines.append(
+                "- note: this winner is a single-model baseline; promotion of single-model setups was explicitly allowed."
+            )
     if gate_application is not None:
-        lines.extend(["", "## Promotion gates", "", f"- gates_passed: `{gate_application.passed_count}`", f"- gates_failed: `{gate_application.failed_count}`"])
+        lines.extend(
+            [
+                "",
+                "## Promotion gates",
+                "",
+                f"- gates_passed: `{gate_application.passed_count}`",
+                f"- gates_failed: `{gate_application.failed_count}`",
+            ]
+        )
         if gate_application.promoted_outcome is not None:
             lines.append("- selected candidate cleared every active gate.")
         if profile_aggregate is not None:
@@ -595,7 +621,10 @@ def _write_promoted_artifacts(
             "sample_count": len(fit_samples),
             "datasets": sorted({sample.dataset for sample in fit_samples if sample.dataset}),
             "scenario_buckets": sorted(
-                {f"{sample.dataset or 'unspecified'}:{sample.condition or 'unspecified'}" for sample in fit_samples}
+                {
+                    f"{sample.dataset or 'unspecified'}:{sample.condition or 'unspecified'}"
+                    for sample in fit_samples
+                }
             ),
         },
         selection_metrics=winner.metrics.to_payload(),
@@ -616,7 +645,13 @@ def _write_promoted_artifacts(
     return setup_path, weights_path, report_path
 
 
-def _write_no_promotion(output_dir: Path, application: GateApplication, *, args: argparse.Namespace, results: T.Sequence[CandidateResult]) -> Path:
+def _write_no_promotion(
+    output_dir: Path,
+    application: GateApplication,
+    *,
+    args: argparse.Namespace,
+    results: T.Sequence[CandidateResult],
+) -> Path:
     payload = no_promotion_payload(application)
     payload["objective"] = args.objective
     payload["evaluated_candidates"] = len(results)
@@ -651,11 +686,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--splits", required=True)
     parser.add_argument("--models", default="hrnet,spiga,orformer")
     parser.add_argument("--model-subsets", default="all")
-    parser.add_argument("--weight-generators", default="equal,inverse_mean_error,regularized_inverse_error")
-    parser.add_argument("--strategies", default="static_weighted,static_weighted_downweight,weighted_median")
+    parser.add_argument(
+        "--weight-generators", default="equal,inverse_mean_error,regularized_inverse_error"
+    )
+    parser.add_argument(
+        "--strategies", default="static_weighted,static_weighted_downweight,weighted_median"
+    )
     parser.add_argument("--outlier-thresholds", default="2.5,3.5,4.5")
     parser.add_argument("--objective", default=DEFAULT_OBJECTIVE)
-    parser.add_argument("--regression-epsilon-nme", type=float, default=DEFAULT_REGRESSION_EPSILON_NME)
+    parser.add_argument(
+        "--regression-epsilon-nme", type=float, default=DEFAULT_REGRESSION_EPSILON_NME
+    )
     parser.add_argument("--bbox-source", default="manifest")
     parser.add_argument("--crop-scale", type=float, default=1.6)
     parser.add_argument("--failure-threshold", type=float, default=0.08)
@@ -665,7 +706,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--include-single-model-baselines", action="store_true")
     parser.add_argument("--allow-single-model-baselines", action="store_true")
     parser.add_argument("--require-report-improvement", action="store_true")
-    parser.add_argument("--report-improvement-tolerance", type=float, default=DEFAULT_REPORT_IMPROVEMENT_TOLERANCE)
+    parser.add_argument(
+        "--report-improvement-tolerance", type=float, default=DEFAULT_REPORT_IMPROVEMENT_TOLERANCE
+    )
     parser.add_argument("--max-overall-regression-nme", type=float, default=None)
     parser.add_argument("--max-bucket-regression-rate", type=float, default=None)
     parser.add_argument("--require-profile-improvement", action="store_true")
@@ -673,9 +716,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--require-effective-ensemble", action="store_true")
     parser.add_argument("--effective-models-floor", type=float, default=1.5)
     parser.add_argument("--profile-normalizer", choices=NORMALIZERS, default=DEFAULT_NORMALIZER)
-    parser.add_argument("--profile-region-failure-threshold", type=float, default=DEFAULT_REGION_FAILURE_THRESHOLD)
-    parser.add_argument("--profile-pck-thresholds", default=",".join(f"{t:.2f}" for t in DEFAULT_PCK_THRESHOLDS))
-    parser.add_argument("--profile-priority-regions", default=",".join(DEFAULT_PRIORITY_FAILURE_REGIONS))
+    parser.add_argument(
+        "--profile-region-failure-threshold", type=float, default=DEFAULT_REGION_FAILURE_THRESHOLD
+    )
+    parser.add_argument(
+        "--profile-pck-thresholds", default=",".join(f"{t:.2f}" for t in DEFAULT_PCK_THRESHOLDS)
+    )
+    parser.add_argument(
+        "--profile-priority-regions", default=",".join(DEFAULT_PRIORITY_FAILURE_REGIONS)
+    )
     parser.add_argument("--include-geometry-metrics", action="store_true")
     parser.add_argument("--geometry-aligned-size", type=int, default=512)
     parser.add_argument("--geometry-region-failure-threshold", type=float, default=0.05)
@@ -710,7 +759,9 @@ def main(argv: list[str] | None = None) -> int:
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     assignment, sah, cache = _stage("load_splits", lambda: _load_inputs(args))
-    fit_samples, select_samples, report_samples = _stage("load_samples", lambda: _load_samples(args, assignment))
+    fit_samples, select_samples, report_samples = _stage(
+        "load_samples", lambda: _load_samples(args, assignment)
+    )
     candidates = _stage("enumerate_candidates", lambda: _enumerate_search_candidates(args))
     results = _stage(
         "candidate_search",
@@ -753,9 +804,13 @@ def main(argv: list[str] | None = None) -> int:
             for result in results:
                 if result.is_single_model_baseline:
                     score = interim[result.candidate_id].overall_score
-                    baseline_score = score if baseline_score is None else min(baseline_score, score)
+                    baseline_score = (
+                        score if baseline_score is None else min(baseline_score, score)
+                    )
             for candidate_id, aggregate in interim.items():
-                geometry_scores[candidate_id] = _geometry_score_from_aggregate(aggregate, baseline_score)
+                geometry_scores[candidate_id] = _geometry_score_from_aggregate(
+                    aggregate, baseline_score
+                )
 
         _stage("geometry_evaluate_candidates", _geometry_eval)
 
@@ -763,7 +818,9 @@ def main(argv: list[str] | None = None) -> int:
     profile_aggregates: dict[str, ProfileAggregate] = {}
     if _gates_need_profile(gate_config):
         pck_thresholds = _parse_csv_floats(args.profile_pck_thresholds) or DEFAULT_PCK_THRESHOLDS
-        priority_regions = _parse_csv(args.profile_priority_regions) or DEFAULT_PRIORITY_FAILURE_REGIONS
+        priority_regions = (
+            _parse_csv(args.profile_priority_regions) or DEFAULT_PRIORITY_FAILURE_REGIONS
+        )
 
         def _profile_eval() -> None:
             for result in results:
@@ -786,20 +843,53 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.objective == GEOMETRY_OBJECTIVE:
         if geometry_scores:
-            _progress(f"Re-ranking {len(results)} candidates by alignment_geometry_v1 score before promotion")
-            results = sorted(results, key=lambda r: (geometry_scores[r.candidate_id].overall_score, r.metrics.overall_nme))
+            _progress(
+                f"Re-ranking {len(results)} candidates by alignment_geometry_v1 score before promotion"
+            )
+            results = sorted(
+                results,
+                key=lambda r: (
+                    geometry_scores[r.candidate_id].overall_score,
+                    r.metrics.overall_nme,
+                ),
+            )
         elif not args.allow_nme_only_promotion:
-            raise SystemExit("--objective alignment_geometry_v1 selected but geometry metrics were not computed.")
+            raise SystemExit(
+                "--objective alignment_geometry_v1 selected but geometry metrics were not computed."
+            )
         else:
-            _progress("alignment_geometry_v1 objective set but --allow-nme-only-promotion is on; falling back to NME ranking.")
+            _progress(
+                "alignment_geometry_v1 objective set but --allow-nme-only-promotion is on; falling back to NME ranking."
+            )
 
-    csv_path, json_path = _stage("write_candidate_results", lambda: _write_candidate_results(output_dir, results, objective=args.objective, regression_epsilon_nme=args.regression_epsilon_nme))
+    csv_path, json_path = _stage(
+        "write_candidate_results",
+        lambda: _write_candidate_results(
+            output_dir,
+            results,
+            objective=args.objective,
+            regression_epsilon_nme=args.regression_epsilon_nme,
+        ),
+    )
 
     if gate_config.is_active():
-        gate_application = _stage("apply_promotion_gates", lambda: apply_gates(results, gate_config, profile_scores=profile_scores or None, geometry_scores=geometry_scores or None))
+        gate_application = _stage(
+            "apply_promotion_gates",
+            lambda: apply_gates(
+                results,
+                gate_config,
+                profile_scores=profile_scores or None,
+                geometry_scores=geometry_scores or None,
+            ),
+        )
         winner = gate_application.promoted
         if winner is None:
-            no_promotion_path = _stage("write_no_promotion", lambda: _write_no_promotion(output_dir, gate_application, args=args, results=results))
+            no_promotion_path = _stage(
+                "write_no_promotion",
+                lambda: _write_no_promotion(
+                    output_dir, gate_application, args=args, results=results
+                ),
+            )
             print(f"No candidate passed the configured promotion gates; see {no_promotion_path}")
             return 1
     else:
@@ -819,7 +909,9 @@ def main(argv: list[str] | None = None) -> int:
             regression_epsilon_nme=args.regression_epsilon_nme,
         ),
     )
-    promoted_profile_aggregate = profile_aggregates.get(winner.candidate_id) if profile_aggregates else None
+    promoted_profile_aggregate = (
+        profile_aggregates.get(winner.candidate_id) if profile_aggregates else None
+    )
     setup_path, weights_path, _report_path = _stage(
         "write_promoted_artifacts",
         lambda: _write_promoted_artifacts(
@@ -835,7 +927,9 @@ def main(argv: list[str] | None = None) -> int:
             profile_aggregate=promoted_profile_aggregate,
         ),
     )
-    print(f"Promoted candidate {winner.candidate_id} (strategy={winner.candidate.strategy}, score={winner.score:.6f})")
+    print(
+        f"Promoted candidate {winner.candidate_id} (strategy={winner.candidate.strategy}, score={winner.score:.6f})"
+    )
     print(f"  setup:   {setup_path}")
     print(f"  weights: {weights_path}")
     print(f"  csv:     {csv_path}")
