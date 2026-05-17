@@ -39,14 +39,20 @@ class GateConfig:
     max_profile_region_failure_rate: float | None = None
     require_effective_ensemble: bool = False
     effective_models_floor: float = DEFAULT_EFFECTIVE_MODELS_FLOOR
+    # Baselines may be included for comparison without being promotable. Keep
+    # this legacy flag for artifact/config visibility; promotion is controlled
+    # by ``allow_single_model_promotion`` below.
     allow_single_model_baselines: bool = False
+    allow_single_model_promotion: bool = False
     # Geometry-first gates (alignment-geometry roadmap, Phase 5 / #77).
     require_geometry_improvement: bool = False
     max_catastrophic_geometry_failure_rate: float | None = None
+    max_per_bucket_catastrophic_geometry_failure_rate: float | None = None
     max_p95_transform_error: float | None = None
     max_p95_crop_center_error: float | None = None
     max_p95_roll_error: float | None = None
     min_hull_iou: float | None = None
+    min_per_bucket_p05_hull_iou: float | None = None
     max_hard_slice_regression_rate: float | None = None
     allow_nme_only_promotion: bool = True
 
@@ -62,10 +68,12 @@ class GateConfig:
                 self.require_effective_ensemble,
                 self.require_geometry_improvement,
                 self.max_catastrophic_geometry_failure_rate is not None,
+                self.max_per_bucket_catastrophic_geometry_failure_rate is not None,
                 self.max_p95_transform_error is not None,
                 self.max_p95_crop_center_error is not None,
                 self.max_p95_roll_error is not None,
                 self.min_hull_iou is not None,
+                self.min_per_bucket_p05_hull_iou is not None,
                 self.max_hard_slice_regression_rate is not None,
             )
         )
@@ -76,10 +84,12 @@ class GateConfig:
             (
                 self.require_geometry_improvement,
                 self.max_catastrophic_geometry_failure_rate is not None,
+                self.max_per_bucket_catastrophic_geometry_failure_rate is not None,
                 self.max_p95_transform_error is not None,
                 self.max_p95_crop_center_error is not None,
                 self.max_p95_roll_error is not None,
                 self.min_hull_iou is not None,
+                self.min_per_bucket_p05_hull_iou is not None,
                 self.max_hard_slice_regression_rate is not None,
             )
         )
@@ -133,10 +143,14 @@ class GateOutcome:
     profile_region_failure_rate: float | None = None
     geometry_score: float | None = None
     catastrophic_geometry_failure_rate: float | None = None
+    max_per_bucket_catastrophic_geometry_failure_rate: float | None = None
+    worst_catastrophic_geometry_bucket: str = ""
     p95_transform_error: float | None = None
     p95_crop_center_error: float | None = None
     p95_roll_error: float | None = None
     mean_hull_iou: float | None = None
+    min_per_bucket_p05_hull_iou: float | None = None
+    worst_hull_iou_bucket: str = ""
     max_bucket_regression_score: float | None = None
 
     def to_payload(self) -> dict[str, T.Any]:
@@ -163,6 +177,12 @@ class GateOutcome:
                 if self.catastrophic_geometry_failure_rate is not None
                 else None
             ),
+            "max_per_bucket_catastrophic_geometry_failure_rate": (
+                float(self.max_per_bucket_catastrophic_geometry_failure_rate)
+                if self.max_per_bucket_catastrophic_geometry_failure_rate is not None
+                else None
+            ),
+            "worst_catastrophic_geometry_bucket": self.worst_catastrophic_geometry_bucket,
             "p95_transform_error": (
                 float(self.p95_transform_error) if self.p95_transform_error is not None else None
             ),
@@ -177,6 +197,12 @@ class GateOutcome:
             "mean_hull_iou": (
                 float(self.mean_hull_iou) if self.mean_hull_iou is not None else None
             ),
+            "min_per_bucket_p05_hull_iou": (
+                float(self.min_per_bucket_p05_hull_iou)
+                if self.min_per_bucket_p05_hull_iou is not None
+                else None
+            ),
+            "worst_hull_iou_bucket": self.worst_hull_iou_bucket,
             "max_bucket_regression_score": (
                 float(self.max_bucket_regression_score)
                 if self.max_bucket_regression_score is not None
@@ -233,6 +259,28 @@ def _best_baseline_nme(
     return float(winner.metrics.overall_nme), winner.candidate.models[0]
 
 
+def _bucket_extremes(
+    geometry: GeometryScore | None,
+) -> tuple[float | None, str, float | None, str]:
+    """Return max bucket catastrophic rate and min bucket p05 hull IoU."""
+    if geometry is None or not geometry.per_bucket:
+        return None, "", None, ""
+    max_catastrophic: float | None = None
+    max_catastrophic_bucket = ""
+    min_hull: float | None = None
+    min_hull_bucket = ""
+    for bucket, values in geometry.per_bucket.items():
+        catastrophic = float(values.get("catastrophic_failure_rate", 0.0))
+        hull = float(values.get("p05_hull_iou", 1.0))
+        if max_catastrophic is None or catastrophic > max_catastrophic:
+            max_catastrophic = catastrophic
+            max_catastrophic_bucket = bucket
+        if min_hull is None or hull < min_hull:
+            min_hull = hull
+            min_hull_bucket = bucket
+    return max_catastrophic, max_catastrophic_bucket, min_hull, min_hull_bucket
+
+
 def apply_gates(
     results: T.Sequence[CandidateResult],
     config: GateConfig,
@@ -246,9 +294,10 @@ def apply_gates(
     for the profile and GT-derived-geometry gate families respectively. Absent
     keys disable the matching gates for that candidate even if those gates are
     configured. The first candidate that passes every active gate is selected
-    as the promoted setup. When ``config.allow_single_model_baselines`` is
-    false (the default), single-model baseline candidates are skipped during
-    promotion selection — they are still scored in the outcomes for reporting.
+    as the promoted setup. Single-model baseline candidates are always valid as
+    comparison baselines, but they are not promotable unless
+    ``config.allow_single_model_promotion`` is set, and even then they must beat
+    the best global single-model baseline on report and geometry.
     """
     baseline_nme, baseline_model_name = _best_baseline_nme(results)
     baseline_candidate_id = (
@@ -281,6 +330,12 @@ def apply_gates(
         profile_score = profile.overall_score if profile else None
         profile_failure = profile.region_failure_rate if profile else None
         geometry = geometry_scores.get(result.candidate_id) if geometry_scores else None
+        (
+            per_bucket_catastrophic,
+            per_bucket_catastrophic_bucket,
+            per_bucket_p05_hull,
+            per_bucket_hull_bucket,
+        ) = _bucket_extremes(geometry)
         failed_gates: list[str] = []
         failure_reasons: list[str] = []
 
@@ -381,6 +436,18 @@ def apply_gates(
                     f"{config.max_catastrophic_geometry_failure_rate:.6f}"
                 )
             if (
+                config.max_per_bucket_catastrophic_geometry_failure_rate is not None
+                and per_bucket_catastrophic is not None
+                and per_bucket_catastrophic
+                > config.max_per_bucket_catastrophic_geometry_failure_rate
+            ):
+                failed_gates.append("max_per_bucket_catastrophic_geometry_failure_rate")
+                failure_reasons.append(
+                    f"bucket {per_bucket_catastrophic_bucket!r} catastrophic geometry "
+                    f"failure rate {per_bucket_catastrophic:.6f} exceeds "
+                    f"{config.max_per_bucket_catastrophic_geometry_failure_rate:.6f}"
+                )
+            if (
                 config.max_p95_transform_error is not None
                 and geometry.p95_translation_normalized > config.max_p95_transform_error
             ):
@@ -414,6 +481,17 @@ def apply_gates(
                     f"{config.min_hull_iou:.6f}"
                 )
             if (
+                config.min_per_bucket_p05_hull_iou is not None
+                and per_bucket_p05_hull is not None
+                and per_bucket_p05_hull < config.min_per_bucket_p05_hull_iou
+            ):
+                failed_gates.append("min_per_bucket_p05_hull_iou")
+                failure_reasons.append(
+                    f"bucket {per_bucket_hull_bucket!r} P05 hull IoU "
+                    f"{per_bucket_p05_hull:.6f} below floor "
+                    f"{config.min_per_bucket_p05_hull_iou:.6f}"
+                )
+            if (
                 config.max_hard_slice_regression_rate is not None
                 and geometry.max_bucket_regression_score > config.max_hard_slice_regression_rate
             ):
@@ -423,6 +501,29 @@ def apply_gates(
                     f"{geometry.max_bucket_regression_score:.6f} exceeds "
                     f"{config.max_hard_slice_regression_rate:.6f}"
                 )
+
+        if result.is_single_model_baseline:
+            if not config.allow_single_model_promotion:
+                failed_gates.append("single_model_promotion_not_allowed")
+                failure_reasons.append(
+                    "single-model baselines are enabled for comparison but are not "
+                    "allowed as promoted outputs; keep the best single-model baseline"
+                )
+            else:
+                if baseline_nme is not None and report_nme >= baseline_nme:
+                    failed_gates.append("single_model_does_not_beat_best_baseline_report")
+                    failure_reasons.append(
+                        f"single-model report NME {report_nme:.6f} does not beat "
+                        f"best single-model baseline {baseline_nme:.6f}"
+                    )
+                if geometry is not None and baseline_geometry_score is not None:
+                    if geometry.overall_score >= baseline_geometry_score:
+                        failed_gates.append("single_model_does_not_beat_best_baseline_geometry")
+                        failure_reasons.append(
+                            f"single-model geometry score {geometry.overall_score:.6f} "
+                            f"does not beat best single-model baseline "
+                            f"{baseline_geometry_score:.6f}"
+                        )
 
         passed = not failed_gates
         outcome = GateOutcome(
@@ -438,6 +539,8 @@ def apply_gates(
             catastrophic_geometry_failure_rate=(
                 geometry.catastrophic_failure_rate if geometry is not None else None
             ),
+            max_per_bucket_catastrophic_geometry_failure_rate=per_bucket_catastrophic,
+            worst_catastrophic_geometry_bucket=per_bucket_catastrophic_bucket,
             p95_transform_error=(
                 geometry.p95_translation_normalized if geometry is not None else None
             ),
@@ -446,6 +549,8 @@ def apply_gates(
             ),
             p95_roll_error=(geometry.p95_roll_degrees if geometry is not None else None),
             mean_hull_iou=(geometry.mean_hull_iou if geometry is not None else None),
+            min_per_bucket_p05_hull_iou=per_bucket_p05_hull,
+            worst_hull_iou_bucket=per_bucket_hull_bucket,
             max_bucket_regression_score=(
                 geometry.max_bucket_regression_score if geometry is not None else None
             ),
@@ -455,7 +560,7 @@ def apply_gates(
         if (
             promoted is None
             and passed
-            and (config.allow_single_model_baselines or not result.is_single_model_baseline)
+            and (not result.is_single_model_baseline or config.allow_single_model_promotion)
         ):
             promoted = result
             promoted_outcome = outcome
@@ -498,9 +603,18 @@ def no_promotion_payload(
     operators can act on the regression instead of blindly promoting.
     """
     failing = [outcome for outcome in application.outcomes if not outcome.passed][:top_n]
+    baseline_blocked = any(
+        "single_model_promotion_not_allowed" in outcome.failed_gates
+        for outcome in application.outcomes
+    )
     return {
         "status": "no_promotion",
-        "reason": "no candidate passed all configured promotion gates",
+        "reason": (
+            "no ensemble candidate passed all configured promotion gates; keep "
+            "the current best single-model baseline"
+            if baseline_blocked
+            else "no candidate passed all configured promotion gates"
+        ),
         "baseline_report_nme": application.baseline_report_nme,
         "baseline_profile_score": application.baseline_profile_score,
         "baseline_profile_region_failure_rate": application.baseline_profile_region_failure_rate,
