@@ -34,13 +34,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from lib.landmarks.ensemble.strategies import (
-    canonical_strategy,
-    strategy_outlier_method,
-    strategy_requires_weights,
-    strategy_uses_threshold,
-)
-from lib.landmarks.ensemble.weights import load_weights, weights_matrix_for_models
+from lib.landmarks.ensemble.weights import load_weights
 from lib.landmarks.eval.geometry_metrics import evaluate_geometry_sample
 from lib.landmarks.eval.geometry_signals import alignment_summary
 from lib.landmarks.eval.harness import LandmarkSample, load_manifest
@@ -53,12 +47,6 @@ from lib.landmarks.eval.signal_validation import (
     evaluate_signals,
     tag_oracle,
 )
-from lib.landmarks.fusion import (
-    normalize_weight_matrix,
-    plain_average,
-    static_weighted,
-)
-from lib.landmarks.rejection import weighted_median
 from lib.landmarks.schema import LandmarkPrediction
 
 logger = logging.getLogger(__name__)
@@ -75,6 +63,10 @@ def _bbox_for_sample(sample: LandmarkSample) -> tuple[float, float, float, float
     return bbox_for_sample(sample, allow_truth_fallback=True)
 
 
+# Canonical fusion helper now lives in lib.landmarks.search.fusion_variants.
+from lib.landmarks.search.fusion_variants import fuse_variant as _fuse_variant_impl
+
+
 def _fuse_variant(
     variant: str,
     predictions: T.Sequence[LandmarkPrediction],
@@ -83,28 +75,14 @@ def _fuse_variant(
     *,
     outlier_threshold: float,
 ) -> np.ndarray:
-    canonical = canonical_strategy(variant)
-    method = strategy_outlier_method(canonical)
-    threshold = outlier_threshold if strategy_uses_threshold(canonical) else 3.5
-    if not strategy_requires_weights(canonical):
-        return plain_average(
-            predictions, outlier_method=method, outlier_threshold=threshold
-        ).points
-    if weights is None:
-        raise ValueError(f"variant {variant!r} requires a static weights file")
-    matrix = weights_matrix_for_models(weights, tuple(models))
-    if canonical == "weighted_median":
-        stack = np.stack([prediction.canonical_68().points for prediction in predictions], axis=0)
-        normalized = normalize_weight_matrix(
-            matrix, model_count=stack.shape[0], landmark_count=stack.shape[1]
-        )
-        return weighted_median(stack, normalized)
-    return static_weighted(
+    """Compatibility shim delegating to :func:`lib.landmarks.search.fusion_variants.fuse_variant`."""
+    return _fuse_variant_impl(
+        variant,
         predictions,
-        matrix,
-        outlier_method=method,
-        outlier_threshold=threshold,
-    ).points
+        models=models,
+        weights=weights,
+        outlier_threshold=outlier_threshold,
+    )
 
 
 def build_candidate_records(

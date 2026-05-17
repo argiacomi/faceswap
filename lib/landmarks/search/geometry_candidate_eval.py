@@ -30,13 +30,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from lib.landmarks.ensemble.strategies import (
-    strategy_outlier_method,
-    strategy_requires_weights,
-    strategy_uses_threshold,
-)
-from lib.landmarks.ensemble.weights import weights_matrix_for_models
-from lib.landmarks.eval.candidate_search import Candidate, CandidateResult
+from lib.landmarks.eval.candidate_search import CandidateResult
 from lib.landmarks.eval.geometry_metrics import (
     GeometryAggregate,
     aggregate_geometry_samples,
@@ -45,10 +39,8 @@ from lib.landmarks.eval.geometry_metrics import (
 from lib.landmarks.eval.geometry_signals import AlignmentSummary, alignment_summary
 from lib.landmarks.eval.prediction_cache import DiskPredictionCache
 from lib.landmarks.eval.promotion_gates import GeometryScore
-from lib.landmarks.fusion import normalize_weight_matrix, plain_average, static_weighted
 from lib.landmarks.manifest import LandmarkSample, bbox_for_sample
-from lib.landmarks.rejection import weighted_median
-from lib.landmarks.schema import LandmarkPrediction
+from lib.landmarks.search.fusion_variants import fuse_candidate
 
 
 @dataclass(frozen=True)
@@ -100,38 +92,8 @@ def build_geometry_context(
     return rows
 
 
-def fuse_candidate(
-    candidate: Candidate,
-    cached_points: T.Sequence[np.ndarray],
-    *,
-    weights: dict[str, list[float]],
-) -> np.ndarray:
-    """Fuse one candidate's cached per-model predictions to a (68, 2) array.
-
-    Ticket 3 will consolidate this with the legacy ``_fuse_variant``
-    helpers in the CLI tools and the harness; for now it lives here so the
-    search subsystem has a single canonical fusion shim.
-    """
-    predictions = [
-        LandmarkPrediction(np.asarray(points, dtype="float32"), source=model)
-        for points, model in zip(cached_points, candidate.models, strict=True)
-    ]
-    method = strategy_outlier_method(candidate.strategy)
-    threshold = candidate.outlier_threshold if strategy_uses_threshold(candidate.strategy) else 3.5
-    if not strategy_requires_weights(candidate.strategy):
-        return plain_average(
-            predictions, outlier_method=method, outlier_threshold=threshold
-        ).points
-    matrix = weights_matrix_for_models(weights, candidate.models)
-    if candidate.strategy == "weighted_median":
-        stack = np.stack([prediction.canonical_68().points for prediction in predictions], axis=0)
-        normalized = normalize_weight_matrix(
-            matrix, model_count=stack.shape[0], landmark_count=stack.shape[1]
-        )
-        return weighted_median(stack, normalized)
-    return static_weighted(
-        predictions, matrix, outlier_method=method, outlier_threshold=threshold
-    ).points
+# ``fuse_candidate`` lives in lib.landmarks.search.fusion_variants now; the
+# import above gives this module a backwards-compatible alias.
 
 
 def evaluate_candidate_geometry(

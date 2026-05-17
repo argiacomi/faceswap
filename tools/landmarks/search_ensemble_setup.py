@@ -144,10 +144,11 @@ def _load_samples(
     return fit_samples, select_samples, report_samples
 
 
-# The candidate-aware fusion helper now lives in lib.landmarks.search.
-# Re-exported here so the profile-aggregate path keeps the legacy name; new
-# code should import from :mod:`lib.landmarks.search.geometry_candidate_eval`.
-from lib.landmarks.search.geometry_candidate_eval import fuse_candidate as _fuse_for_profile
+# The candidate-aware fusion helper now lives in
+# lib.landmarks.search.fusion_variants. Re-exported here so the profile-
+# aggregate path below keeps the legacy name; new code should import from
+# :mod:`lib.landmarks.search.fusion_variants` directly.
+from lib.landmarks.search.fusion_variants import fuse_candidate as _fuse_for_profile
 
 
 def _candidate_profile_aggregate(
