@@ -199,6 +199,10 @@ def _gate_config_from_args(args: argparse.Namespace) -> GateConfig:
         require_report_improvement=args.require_report_improvement,
         report_improvement_tolerance=args.report_improvement_tolerance,
         max_overall_regression_nme=args.max_overall_regression_nme,
+        max_mean_nme_regression=args.max_mean_nme_regression,
+        max_p95_nme_regression=args.max_p95_nme_regression,
+        max_bucket_mean_nme_regression=args.max_bucket_mean_nme_regression,
+        max_bucket_p95_nme_regression=args.max_bucket_p95_nme_regression,
         max_bucket_regression_rate=args.max_bucket_regression_rate,
         require_profile_improvement=args.require_profile_improvement,
         max_profile_region_failure_rate=args.max_profile_region_failure_rate,
@@ -253,6 +257,12 @@ def _enumerate_search_candidates(args: argparse.Namespace) -> list[Candidate]:
         or args.require_effective_ensemble
         or args.require_report_improvement
         or args.max_overall_regression_nme is not None
+        # Magnitude-aware NME gates compare against the best-single
+        # baseline, so they only make sense when baselines are enumerated.
+        or args.max_mean_nme_regression is not None
+        or args.max_p95_nme_regression is not None
+        or args.max_bucket_mean_nme_regression is not None
+        or args.max_bucket_p95_nme_regression is not None
         or args.require_profile_improvement
         or args.include_geometry_metrics
         or args.objective == GEOMETRY_OBJECTIVE
@@ -527,6 +537,10 @@ def _write_no_promotion(
         "require_report_improvement": args.require_report_improvement,
         "report_improvement_tolerance": args.report_improvement_tolerance,
         "max_overall_regression_nme": args.max_overall_regression_nme,
+        "max_mean_nme_regression": args.max_mean_nme_regression,
+        "max_p95_nme_regression": args.max_p95_nme_regression,
+        "max_bucket_mean_nme_regression": args.max_bucket_mean_nme_regression,
+        "max_bucket_p95_nme_regression": args.max_bucket_p95_nme_regression,
         "max_bucket_regression_rate": args.max_bucket_regression_rate,
         "require_profile_improvement": args.require_profile_improvement,
         "max_profile_region_failure_rate": args.max_profile_region_failure_rate,
@@ -610,7 +624,51 @@ def main(argv: list[str] | None = None) -> int:
         "--report-improvement-tolerance", type=float, default=DEFAULT_REPORT_IMPROVEMENT_TOLERANCE
     )
     parser.add_argument("--max-overall-regression-nme", type=float, default=None)
-    parser.add_argument("--max-bucket-regression-rate", type=float, default=None)
+    # Magnitude-aware NME-regression gates (recommended).
+    parser.add_argument(
+        "--max-mean-nme-regression",
+        type=float,
+        default=None,
+        help=(
+            "Cap how much the ensemble's overall mean NME may exceed the "
+            "best-single baseline on the select split. Magnitude-aware "
+            "alternative to --max-bucket-regression-rate."
+        ),
+    )
+    parser.add_argument(
+        "--max-p95-nme-regression",
+        type=float,
+        default=None,
+        help="Cap how much the ensemble's overall p95 NME may exceed the best-single baseline.",
+    )
+    parser.add_argument(
+        "--max-bucket-mean-nme-regression",
+        type=float,
+        default=None,
+        help=(
+            "Cap the worst per-bucket mean NME regression. Tighter than "
+            "--max-bucket-regression-rate because it bounds the *size* of "
+            "the worst worsened slice, not the count of regressed samples."
+        ),
+    )
+    parser.add_argument(
+        "--max-bucket-p95-nme-regression",
+        type=float,
+        default=None,
+        help="Cap the worst per-bucket p95 NME regression (tail-aware companion).",
+    )
+    # Demoted to diagnostic / opt-in strict-mode (see GateConfig docstring).
+    parser.add_argument(
+        "--max-bucket-regression-rate",
+        type=float,
+        default=None,
+        help=(
+            "[diagnostic] Cap the fraction of samples in any bucket that "
+            "regress past --regression-epsilon-nme. Counts only; prefer "
+            "the magnitude-aware --max-bucket-{mean,p95}-nme-regression "
+            "gates for the recommended promotion flow."
+        ),
+    )
     parser.add_argument("--require-profile-improvement", action="store_true")
     parser.add_argument("--max-profile-region-failure-rate", type=float, default=None)
     parser.add_argument("--require-effective-ensemble", action="store_true")

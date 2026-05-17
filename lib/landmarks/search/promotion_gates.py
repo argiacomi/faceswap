@@ -18,7 +18,31 @@ class GateConfig:
 
     require_report_improvement: bool = False
     report_improvement_tolerance: float = DEFAULT_REPORT_IMPROVEMENT_TOLERANCE
+    # Overall NME guard (kept): caps how much the ensemble's overall NME
+    # may exceed the best-single baseline by *report-tolerance margin*.
     max_overall_regression_nme: float | None = None
+    # Magnitude-aware NME-regression gates (recommended). Each caps how
+    # much the ensemble's NME may exceed the best-single baseline:
+    #   * ``max_mean_nme_regression``         — overall mean
+    #   * ``max_p95_nme_regression``          — overall p95 (tail-aware)
+    #   * ``max_bucket_mean_nme_regression``  — worst-bucket mean
+    #   * ``max_bucket_p95_nme_regression``   — worst-bucket p95
+    # These compare against ``CandidateMetrics.best_single_overall_*`` /
+    # the per-bucket ``best_single_*_nme`` baselines that
+    # :func:`evaluate_candidate` records on the select split.
+    max_mean_nme_regression: float | None = None
+    max_p95_nme_regression: float | None = None
+    max_bucket_mean_nme_regression: float | None = None
+    max_bucket_p95_nme_regression: float | None = None
+    # Demoted to *diagnostic / opt-in strict mode*:
+    # ``max_bucket_regression_rate`` counts the fraction of samples in a
+    # bucket that regressed past ``regression_epsilon_nme``. The count
+    # alone hides *how much* each sample worsened — a slice can drift
+    # severely on a few samples and still pass a generous rate threshold,
+    # or trip a strict rate threshold while each individual sample
+    # worsened only marginally. Prefer the magnitude gates above for the
+    # recommended promotion flow; reach for this when you specifically
+    # want to forbid *any* sample from regressing more than ε.
     max_bucket_regression_rate: float | None = None
     require_profile_improvement: bool = False
     max_profile_region_failure_rate: float | None = None
@@ -43,6 +67,10 @@ class GateConfig:
             (
                 self.require_report_improvement,
                 self.max_overall_regression_nme is not None,
+                self.max_mean_nme_regression is not None,
+                self.max_p95_nme_regression is not None,
+                self.max_bucket_mean_nme_regression is not None,
+                self.max_bucket_p95_nme_regression is not None,
                 self.max_bucket_regression_rate is not None,
                 self.require_profile_improvement,
                 self.max_profile_region_failure_rate is not None,
@@ -282,6 +310,46 @@ def apply_gates(
                     f"report NME regression {delta:.6f} exceeds "
                     f"max_overall_regression_nme {config.max_overall_regression_nme:.6f}"
                 )
+        # Magnitude-aware NME-regression gates (recommended). Each is
+        # measured against the best-single baseline recorded by
+        # :func:`evaluate_candidate` on the select split, so a regression
+        # of zero is the strictest pass condition.
+        if config.max_mean_nme_regression is not None:
+            mean_regression = float(result.metrics.max_mean_nme_regression)
+            if mean_regression > config.max_mean_nme_regression:
+                failed_gates.append("max_mean_nme_regression")
+                failure_reasons.append(
+                    f"overall mean NME regression {mean_regression:.6f} exceeds "
+                    f"max_mean_nme_regression {config.max_mean_nme_regression:.6f}"
+                )
+        if config.max_p95_nme_regression is not None:
+            p95_regression = float(result.metrics.max_p95_nme_regression)
+            if p95_regression > config.max_p95_nme_regression:
+                failed_gates.append("max_p95_nme_regression")
+                failure_reasons.append(
+                    f"overall p95 NME regression {p95_regression:.6f} exceeds "
+                    f"max_p95_nme_regression {config.max_p95_nme_regression:.6f}"
+                )
+        if config.max_bucket_mean_nme_regression is not None:
+            bucket_mean_regression = float(result.metrics.max_bucket_mean_nme_regression)
+            if bucket_mean_regression > config.max_bucket_mean_nme_regression:
+                failed_gates.append("max_bucket_mean_nme_regression")
+                failure_reasons.append(
+                    f"worst-bucket mean NME regression {bucket_mean_regression:.6f} exceeds "
+                    f"max_bucket_mean_nme_regression {config.max_bucket_mean_nme_regression:.6f}"
+                )
+        if config.max_bucket_p95_nme_regression is not None:
+            bucket_p95_regression = float(result.metrics.max_bucket_p95_nme_regression)
+            if bucket_p95_regression > config.max_bucket_p95_nme_regression:
+                failed_gates.append("max_bucket_p95_nme_regression")
+                failure_reasons.append(
+                    f"worst-bucket p95 NME regression {bucket_p95_regression:.6f} exceeds "
+                    f"max_bucket_p95_nme_regression {config.max_bucket_p95_nme_regression:.6f}"
+                )
+        # Diagnostic / opt-in strict-mode gate. Kept for backwards
+        # compatibility; the recommended flow uses the magnitude-aware
+        # gates above. See the ``max_bucket_regression_rate`` field on
+        # :class:`GateConfig` for the rationale.
         if config.max_bucket_regression_rate is not None:
             bucket_rate = float(result.metrics.bucket_regression_rate_vs_best_single)
             if bucket_rate > config.max_bucket_regression_rate:

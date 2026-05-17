@@ -144,3 +144,131 @@ def test_single_model_promotion_must_beat_best_single_baseline() -> None:
     assert outcome.passed is False
     assert "single_model_does_not_beat_best_baseline_report" in outcome.failed_gates
     assert "single_model_does_not_beat_best_baseline_geometry" in outcome.failed_gates
+
+
+# ---------------------------------------------------------------------------
+# Magnitude-aware NME-regression gates (recommended promotion flow).
+# ---------------------------------------------------------------------------
+
+
+def _magnitude_metrics(
+    *,
+    mean_regression: float = 0.0,
+    p95_regression: float = 0.0,
+    bucket_mean_regression: float = 0.0,
+    bucket_p95_regression: float = 0.0,
+    bucket_rate: float = 0.0,
+) -> CandidateMetrics:
+    """Build a :class:`CandidateMetrics` with magnitude-regression fields set.
+
+    The magnitude gates only read these fields, so we don't need a full
+    select-split simulation to test the gate decisions.
+    """
+    return CandidateMetrics(
+        sample_count=10,
+        overall_nme=0.05,
+        failure_rate=0.0,
+        auc=0.0,
+        regression_rate_vs_best_single=0.0,
+        bucket_regression_rate_vs_best_single=bucket_rate,
+        best_single_model="hrnet",
+        max_mean_nme_regression=mean_regression,
+        max_p95_nme_regression=p95_regression,
+        max_bucket_mean_nme_regression=bucket_mean_regression,
+        max_bucket_p95_nme_regression=bucket_p95_regression,
+    )
+
+
+def _result_with_metrics(metrics: CandidateMetrics, *, single: bool = False) -> CandidateResult:
+    candidate = Candidate(
+        models=("hrnet", "orformer"),
+        weight_generator="equal",
+        strategy="static_weighted",
+    )
+    return CandidateResult(
+        candidate=candidate,
+        candidate_id="candidate-mag",
+        weights={"hrnet": [0.5] * 68, "orformer": [0.5] * 68},
+        weights_hash="sha256:mag",
+        score=metrics.overall_nme,
+        objective="alignment_geometry_v1",
+        regression_epsilon_nme=0.001,
+        metrics=metrics,
+        is_single_model_baseline=single,
+    )
+
+
+def test_max_mean_nme_regression_fails_when_ensemble_worsens_overall_mean() -> None:
+    """Overall mean NME exceeding the best-single baseline by > threshold fails."""
+    baseline = _result("baseline", single=True, nme=0.05)
+    candidate = _result_with_metrics(_magnitude_metrics(mean_regression=0.02))
+    application = apply_gates(
+        [candidate, baseline],
+        GateConfig(max_mean_nme_regression=0.01),
+    )
+    outcome = next(o for o in application.outcomes if o.candidate_id == "candidate-mag")
+    assert outcome.passed is False
+    assert "max_mean_nme_regression" in outcome.failed_gates
+
+
+def test_max_p95_nme_regression_fails_on_tail_worsening() -> None:
+    """A worsened p95 NME trips the tail-aware gate even when the mean is fine."""
+    baseline = _result("baseline", single=True, nme=0.05)
+    candidate = _result_with_metrics(
+        _magnitude_metrics(mean_regression=0.0, p95_regression=0.03)
+    )
+    application = apply_gates(
+        [candidate, baseline],
+        GateConfig(max_mean_nme_regression=0.01, max_p95_nme_regression=0.02),
+    )
+    outcome = next(o for o in application.outcomes if o.candidate_id == "candidate-mag")
+    assert outcome.passed is False
+    assert "max_p95_nme_regression" in outcome.failed_gates
+    assert "max_mean_nme_regression" not in outcome.failed_gates
+
+
+def test_max_bucket_mean_nme_regression_flags_worst_slice() -> None:
+    """A bucket whose mean NME worsens past the limit fails the gate."""
+    baseline = _result("baseline", single=True, nme=0.05)
+    candidate = _result_with_metrics(
+        _magnitude_metrics(bucket_mean_regression=0.04, bucket_p95_regression=0.01)
+    )
+    application = apply_gates(
+        [candidate, baseline],
+        GateConfig(max_bucket_mean_nme_regression=0.02),
+    )
+    outcome = next(o for o in application.outcomes if o.candidate_id == "candidate-mag")
+    assert outcome.passed is False
+    assert "max_bucket_mean_nme_regression" in outcome.failed_gates
+
+
+def test_max_bucket_p95_nme_regression_tail_companion() -> None:
+    """The bucket-p95 gate fires independently of the bucket-mean gate."""
+    baseline = _result("baseline", single=True, nme=0.05)
+    candidate = _result_with_metrics(
+        _magnitude_metrics(bucket_mean_regression=0.005, bucket_p95_regression=0.05)
+    )
+    application = apply_gates(
+        [candidate, baseline],
+        GateConfig(
+            max_bucket_mean_nme_regression=0.02,
+            max_bucket_p95_nme_regression=0.02,
+        ),
+    )
+    outcome = next(o for o in application.outcomes if o.candidate_id == "candidate-mag")
+    assert outcome.passed is False
+    assert "max_bucket_p95_nme_regression" in outcome.failed_gates
+    assert "max_bucket_mean_nme_regression" not in outcome.failed_gates
+
+
+def test_max_bucket_regression_rate_still_available_as_diagnostic() -> None:
+    """The demoted rate gate still works when explicitly opted into."""
+    baseline = _result("baseline", single=True, nme=0.05)
+    candidate = _result_with_metrics(_magnitude_metrics(bucket_rate=0.5))
+    application = apply_gates(
+        [candidate, baseline],
+        GateConfig(max_bucket_regression_rate=0.1),
+    )
+    outcome = next(o for o in application.outcomes if o.candidate_id == "candidate-mag")
+    assert outcome.passed is False
+    assert "max_bucket_regression_rate" in outcome.failed_gates

@@ -78,17 +78,47 @@ class CandidateMetrics:
     bucket_regression_rate_vs_best_single: float
     per_bucket: dict[str, dict[str, float]] = field(default_factory=dict)
     best_single_model: str = ""
+    # P95 of the ensemble NME across the select split — fed to the overall
+    # magnitude gates so tail behavior, not just the mean, can block a
+    # promotion.
+    overall_p95_nme: float = 0.0
+    # Best-single overall baselines (lowest mean / p95 any member model
+    # would have produced alone). The ``max_*_nme_regression`` fields below
+    # are computed against these so a candidate isn't penalized for
+    # absolute NME, only for *worsening* the slice vs the best alternative.
+    best_single_overall_mean_nme: float = 0.0
+    best_single_overall_p95_nme: float = 0.0
+    # Magnitude-aware overall NME regressions (recommended gate inputs).
+    # ``max_mean_nme_regression`` caps how much the ensemble's mean NME
+    # may exceed the best-single baseline overall; ``max_p95_nme_regression``
+    # does the same for the p95.
+    max_mean_nme_regression: float = 0.0
+    max_p95_nme_regression: float = 0.0
+    # Magnitude-aware bucket regressions: max across buckets of (ensemble
+    # mean/p95 NME minus the per-bucket best-single NME). Surfaces the
+    # *size* of the worst worsened slice; the gate framework prefers these
+    # over the count-only ``bucket_regression_rate_vs_best_single`` term
+    # (kept as a diagnostic, no longer the recommended gate).
+    max_bucket_mean_nme_regression: float = 0.0
+    max_bucket_p95_nme_regression: float = 0.0
 
     def to_payload(self) -> dict[str, T.Any]:
         return {
             "sample_count": int(self.sample_count),
             "overall_nme": float(self.overall_nme),
+            "overall_p95_nme": float(self.overall_p95_nme),
             "failure_rate": float(self.failure_rate),
             "auc": float(self.auc),
             "regression_rate_vs_best_single": float(self.regression_rate_vs_best_single),
             "bucket_regression_rate_vs_best_single": float(
                 self.bucket_regression_rate_vs_best_single
             ),
+            "best_single_overall_mean_nme": float(self.best_single_overall_mean_nme),
+            "best_single_overall_p95_nme": float(self.best_single_overall_p95_nme),
+            "max_mean_nme_regression": float(self.max_mean_nme_regression),
+            "max_p95_nme_regression": float(self.max_p95_nme_regression),
+            "max_bucket_mean_nme_regression": float(self.max_bucket_mean_nme_regression),
+            "max_bucket_p95_nme_regression": float(self.max_bucket_p95_nme_regression),
             "per_bucket": {bucket: dict(metrics) for bucket, metrics in self.per_bucket.items()},
             "best_single_model": self.best_single_model,
         }
@@ -361,6 +391,15 @@ def evaluate_candidate(
     regressions: list[bool] = []
     per_bucket_nmes: dict[str, list[float]] = {}
     per_bucket_regressions: dict[str, list[bool]] = {}
+    # Per-bucket per-model NMEs let the post-loop aggregate compute a
+    # best-single baseline (min mean / min p95 across the candidate's
+    # models per bucket) so the gate framework can flag a worsened slice
+    # in NME-magnitude terms instead of regression-rate terms alone.
+    per_bucket_single_nmes: dict[str, dict[str, list[float]]] = {}
+    # Overall (cross-bucket) per-model NME arrays so we can build the
+    # global best-single baselines used by the magnitude-aware overall
+    # NME gates (``max_mean_nme_regression`` / ``max_p95_nme_regression``).
+    single_nme_arrays: dict[str, list[float]] = {model: [] for model in candidate.models}
     single_total_nme: dict[str, float] = {model: 0.0 for model in candidate.models}
     single_counts: dict[str, int] = {model: 0 for model in candidate.models}
 
@@ -370,6 +409,10 @@ def evaluate_candidate(
         for model in candidate.models:
             single_total_nme[model] += single_nmes[model]
             single_counts[model] += 1
+            single_nme_arrays[model].append(float(single_nmes[model]))
+            per_bucket_single_nmes.setdefault(row.bucket, {}).setdefault(model, []).append(
+                float(single_nmes[model])
+            )
         best_single_nme = min(single_nmes.values())
 
         fused = _fuse_candidate(candidate, cached_points, weight_matrix=weight_matrix)
@@ -388,21 +431,73 @@ def evaluate_candidate(
         per_bucket_regressions.setdefault(row.bucket, []).append(regressed)
 
     overall_nme = float(np.mean(nmes)) if nmes else 0.0
+    overall_p95_nme = float(np.percentile(nmes, 95)) if nmes else 0.0
     failure_rate = float(np.mean(failures)) if failures else 0.0
     auc = _auc_from_nmes(nmes, threshold=failure_threshold)
     sample_regression = float(np.mean(regressions)) if regressions else 0.0
+    # Overall best-single baselines (lowest mean / p95 NME any member model
+    # would have produced alone, across the full select split). Feed the
+    # magnitude-aware NME-regression gates so a tiny per-bucket count can't
+    # mask an overall worsening, and vice versa.
+    best_single_overall_mean = 0.0
+    best_single_overall_p95 = 0.0
+    if any(values for values in single_nme_arrays.values()):
+        per_model_overall_means: dict[str, float] = {}
+        per_model_overall_p95: dict[str, float] = {}
+        for model, values in single_nme_arrays.items():
+            if not values:
+                continue
+            arr = np.asarray(values, dtype="float32")
+            per_model_overall_means[model] = float(arr.mean())
+            per_model_overall_p95[model] = float(np.percentile(arr, 95))
+        if per_model_overall_means:
+            best_single_overall_mean = min(per_model_overall_means.values())
+        if per_model_overall_p95:
+            best_single_overall_p95 = min(per_model_overall_p95.values())
+    max_mean_nme_regression = max(0.0, overall_nme - best_single_overall_mean)
+    max_p95_nme_regression = max(0.0, overall_p95_nme - best_single_overall_p95)
     bucket_regression = (
         float(np.mean([float(np.mean(values)) for values in per_bucket_regressions.values()]))
         if per_bucket_regressions
         else 0.0
     )
     per_bucket: dict[str, dict[str, float]] = {}
+    max_bucket_mean_nme_regression = 0.0
+    max_bucket_p95_nme_regression = 0.0
     for bucket, values in per_bucket_nmes.items():
+        values_array = np.asarray(values, dtype="float32")
+        bucket_mean = float(values_array.mean())
+        bucket_p95 = float(np.percentile(values_array, 95)) if values_array.size else 0.0
+        # Best-single baseline per bucket: the candidate's model with the
+        # lowest mean (or p95) NME on this bucket, so the regression term
+        # is "ensemble worsened the slice's NME magnitude beyond what any
+        # member model would have produced alone."
+        best_single_mean = 0.0
+        best_single_p95 = 0.0
+        single_means: dict[str, float] = {}
+        single_p95s: dict[str, float] = {}
+        per_model = per_bucket_single_nmes.get(bucket, {})
+        if per_model:
+            for model, model_values in per_model.items():
+                arr = np.asarray(model_values, dtype="float32")
+                single_means[model] = float(arr.mean()) if arr.size else 0.0
+                single_p95s[model] = float(np.percentile(arr, 95)) if arr.size else 0.0
+            best_single_mean = min(single_means.values())
+            best_single_p95 = min(single_p95s.values())
         per_bucket[bucket] = {
-            "nme": float(np.mean(values)),
+            "nme": bucket_mean,
+            "p95_nme": bucket_p95,
             "regression_rate": float(np.mean(per_bucket_regressions[bucket])),
             "count": float(len(values)),
+            "best_single_mean_nme": best_single_mean,
+            "best_single_p95_nme": best_single_p95,
         }
+        max_bucket_mean_nme_regression = max(
+            max_bucket_mean_nme_regression, bucket_mean - best_single_mean
+        )
+        max_bucket_p95_nme_regression = max(
+            max_bucket_p95_nme_regression, bucket_p95 - best_single_p95
+        )
 
     if single_counts:
         mean_single = {
@@ -417,12 +512,19 @@ def evaluate_candidate(
     metrics = CandidateMetrics(
         sample_count=len(select_samples),
         overall_nme=overall_nme,
+        overall_p95_nme=overall_p95_nme,
         failure_rate=failure_rate,
         auc=auc,
         regression_rate_vs_best_single=sample_regression,
         bucket_regression_rate_vs_best_single=bucket_regression,
         per_bucket=per_bucket,
         best_single_model=best_single_model,
+        best_single_overall_mean_nme=best_single_overall_mean,
+        best_single_overall_p95_nme=best_single_overall_p95,
+        max_mean_nme_regression=max_mean_nme_regression,
+        max_p95_nme_regression=max_p95_nme_regression,
+        max_bucket_mean_nme_regression=max_bucket_mean_nme_regression,
+        max_bucket_p95_nme_regression=max_bucket_p95_nme_regression,
     )
     return fit_result, metrics
 
