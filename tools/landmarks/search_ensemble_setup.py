@@ -415,9 +415,7 @@ def _write_candidate_results(
                     "geometry_max_bucket_regression_score": geom["max_bucket_regression_score"],
                     "geometry_worst_bucket": geom["worst_bucket"],
                     "geometry_worst_bucket_score": geom["worst_bucket_score"],
-                    "geometry_worst_bucket_baseline_score": geom[
-                        "worst_bucket_baseline_score"
-                    ],
+                    "geometry_worst_bucket_baseline_score": geom["worst_bucket_baseline_score"],
                 }
             )
         rows.append(row)

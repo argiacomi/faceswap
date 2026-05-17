@@ -60,7 +60,8 @@ def _geometry(
         p95_roll_degrees=0.0,
         mean_hull_iou=0.95,
         p05_hull_iou=0.90,
-        per_bucket=per_bucket or {
+        per_bucket=per_bucket
+        or {
             "fixture:clean": {
                 "catastrophic_failure_rate": 0.0,
                 "p05_hull_iou": 0.90,
