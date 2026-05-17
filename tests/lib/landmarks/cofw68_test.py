@@ -62,7 +62,13 @@ def test_build_cofw68_json_from_color_mat_and_annotation_mats(tmp_path: Path) ->
     assert [sample["sample_id"] for sample in samples] == ["cofw68/0001", "cofw68/0002"]
     assert Path(samples[0]["image"]).is_file()
     assert np.asarray(samples[0]["landmarks"], dtype="float32").shape == (68, 2)
-    assert samples[0]["metadata"]["face_bbox"] == [1.0, 2.0, 11.0, 12.0]
+    assert samples[0]["face_bbox"] == [1.0, 2.0, 12.0, 14.0]
+    assert samples[0]["metadata"]["face_bbox"] == [1.0, 2.0, 12.0, 14.0]
+    assert samples[0]["metadata"]["face_bbox_raw"] == [1.0, 2.0, 11.0, 12.0]
+    assert samples[0]["metadata"]["face_bbox_format"] == "ltrb"
+    assert samples[0]["metadata"]["face_bbox_raw_format"] == "xywh"
     assert samples[0]["metadata"]["face_bbox_source"] == "cofw68_benchmark"
+    assert samples[0]["visibility"] == [True] * 68
     assert samples[1]["conditions"] == {"occlusion": True}
     assert samples[1]["metadata"]["occlusion"] == [1] * 68
+    assert samples[1]["visibility"] == [False] * 68
