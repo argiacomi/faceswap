@@ -156,7 +156,12 @@ def _cofw_bbox_xywh_to_ltrb(bbox: T.Sequence[float]) -> list[float]:
 
 
 def _cofw68_json_current(path: Path) -> bool:
-    """Return whether an existing COFW-68 JSON has normalized bbox metadata."""
+    """Return whether an existing COFW-68 JSON is still usable.
+
+    Small cached fixtures may omit benchmark bbox metadata entirely; those are
+    current. Only entries that declare the COFW benchmark bbox source must carry
+    the post-fix ltrb format marker.
+    """
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -164,31 +169,24 @@ def _cofw68_json_current(path: Path) -> bool:
     samples = payload.get("samples", payload) if isinstance(payload, dict) else payload
     if not isinstance(samples, list):
         return False
-    saw_benchmark_bbox = False
     for sample in samples:
         if not isinstance(sample, dict):
-            continue
+            return False
         metadata = sample.get("metadata") if isinstance(sample.get("metadata"), dict) else {}
         if metadata.get("face_bbox_source") != "cofw68_benchmark":
             continue
-        saw_benchmark_bbox = True
         if metadata.get("face_bbox_format") != "ltrb":
             return False
         bbox = metadata.get("face_bbox")
-        if not isinstance(bbox, list | tuple) or len(bbox) < 4:
+        if not isinstance(bbox, (list, tuple)) or len(bbox) < 4:
             return False
         left, top, right, bottom = (float(value) for value in bbox[:4])
         if right <= left or bottom <= top:
             return False
-    return saw_benchmark_bbox
+    return True
 
 
 def _load_bboxes(annotation_root: Path, count: int) -> list[list[float] | None]:
-    """Load optional COFW-68 benchmark bboxes.
-
-    Returned rows are raw upstream xywh values. Conversion to ltrb happens when
-    materializing per-sample metadata so the raw source value can be preserved.
-    """
     """Load optional COFW-68 benchmark bboxes.
 
     Returned rows are raw upstream xywh values. Conversion to ltrb happens when
@@ -262,14 +260,7 @@ def build_cofw68_json_from_sources(
             metadata["face_bbox_raw"] = raw_bbox
             metadata["face_bbox_format"] = "ltrb"
             metadata["face_bbox_raw_format"] = "xywh"
-            raw_bbox = [float(value) for value in bboxes[index - 1][:4]]
-            bbox = _cofw_bbox_xywh_to_ltrb(raw_bbox)
-            metadata["face_bbox"] = bbox
-            metadata["face_bbox_raw"] = raw_bbox
-            metadata["face_bbox_format"] = "ltrb"
-            metadata["face_bbox_raw_format"] = "xywh"
             metadata["face_bbox_source"] = "cofw68_benchmark"
-            entry["face_bbox"] = bbox
             entry["face_bbox"] = bbox
         samples.append(entry)
     output_json.parent.mkdir(parents=True, exist_ok=True)
@@ -299,8 +290,6 @@ def resolve_cofw68_json(
         )
     if no_download:
         raise FileNotFoundError(
-            f"COFW-68 JSON export not found or stale in {cache_root}. Download disabled by --no-download. "
-            "Provide --cofw-json or rebuild .fs_cache/landmark_quality/cofw/cofw_68.json with normalized bboxes."
             f"COFW-68 JSON export not found or stale in {cache_root}. Download disabled by --no-download. "
             "Provide --cofw-json or rebuild .fs_cache/landmark_quality/cofw/cofw_68.json with normalized bboxes."
         )
