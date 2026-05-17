@@ -126,6 +126,18 @@ def _points_and_occlusion(annotation_mat: Path) -> tuple[np.ndarray, list[int]]:
     return points, [int(value) for value in occ.tolist()]
 
 
+def _visibility_from_occlusion(occlusion: T.Sequence[int]) -> list[bool]:
+    """Return COFW visibility flags from COFW occlusion flags.
+
+    COFW-68 ``Occ`` uses truthy values for occluded landmarks. Faceswap's
+    manifest/evaluation path expects visibility semantics instead, so invert
+    the flags before writing the materialized JSON. This lets geometry metrics
+    evaluate visible hulls rather than treating occluded COFW points as visible
+    mask geometry.
+    """
+    return [not bool(value) for value in occlusion]
+
+
 def _load_bboxes(annotation_root: Path, count: int) -> list[list[float] | None]:
     """Load optional COFW-68 benchmark bboxes."""
     matches = sorted(annotation_root.rglob("cofw68_test_bboxes.mat"))
@@ -177,20 +189,22 @@ def build_cofw68_json_from_sources(
             "source_dataset": "cofw_68",
             "annotation_file": annotation.name,
         }
+        entry: dict[str, T.Any] = {
+            "sample_id": f"cofw68/{index:04d}",
+            "image": str(image_path.resolve()),
+            "landmarks": points.astype("float32").tolist(),
+            "conditions": {"occlusion": bool(occlusion and any(occlusion))},
+            "metadata": metadata,
+        }
         if occlusion:
+            visibility = _visibility_from_occlusion(occlusion)
             metadata["occlusion"] = occlusion
+            metadata["visibility"] = visibility
+            entry["visibility"] = visibility
         if bboxes[index - 1] is not None:
             metadata["face_bbox"] = bboxes[index - 1]
             metadata["face_bbox_source"] = "cofw68_benchmark"
-        samples.append(
-            {
-                "sample_id": f"cofw68/{index:04d}",
-                "image": str(image_path.resolve()),
-                "landmarks": points.astype("float32").tolist(),
-                "conditions": {"occlusion": bool(occlusion and any(occlusion))},
-                "metadata": metadata,
-            }
-        )
+        samples.append(entry)
     output_json.parent.mkdir(parents=True, exist_ok=True)
     output_json.write_text(
         json.dumps({"dataset": "cofw_68", "samples": samples}, indent=2, sort_keys=True) + "\n",
