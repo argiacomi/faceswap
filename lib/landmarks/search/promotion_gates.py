@@ -1,20 +1,5 @@
 #!/usr/bin/env python3
-"""Promotion gates for the ensemble candidate search (#77).
-
-The gate framework protects extract-alignment quality by only promoting
-candidates that match or beat a reference single-model baseline on the
-metrics that actually matter for Faceswap output:
-
-* general report NME and bucket-level regression rate (classical)
-* profile alignment score and profile region failure rate (from #76)
-* effective-ensemble status (from #79) — refuse promotion of collapsed
-  ensembles unless explicitly allowed
-
-Gate logic is intentionally hardware-cheap: it only consumes data the
-candidate search already produced (report metrics, profile metrics computed
-from the same cached predictions, effective-ensemble diagnostics). No
-adapter re-runs.
-"""
+"""Promotion gates for the ensemble candidate search."""
 
 from __future__ import annotations
 
@@ -39,12 +24,8 @@ class GateConfig:
     max_profile_region_failure_rate: float | None = None
     require_effective_ensemble: bool = False
     effective_models_floor: float = DEFAULT_EFFECTIVE_MODELS_FLOOR
-    # Baselines may be included for comparison without being promotable. Keep
-    # this legacy flag for artifact/config visibility; promotion is controlled
-    # by ``allow_single_model_promotion`` below.
     allow_single_model_baselines: bool = False
     allow_single_model_promotion: bool = False
-    # Geometry-first gates (alignment-geometry roadmap, Phase 5 / #77).
     require_geometry_improvement: bool = False
     max_catastrophic_geometry_failure_rate: float | None = None
     max_per_bucket_catastrophic_geometry_failure_rate: float | None = None
@@ -105,15 +86,7 @@ class ProfileScore:
 
 @dataclass(frozen=True)
 class GeometryScore:
-    """GT-derived geometry per-candidate inputs to the gate framework.
-
-    The bucket-level fields (``worst_bucket``, ``worst_bucket_score``,
-    ``worst_bucket_baseline_score``, ``per_bucket``) are populated by
-    :func:`lib.landmarks.search.geometry_search.geometry_score_from_aggregate`
-    so downstream artifacts (candidate_results.json, no_promotion.json)
-    can persist the slice that drives ``max_bucket_regression_score``
-    without recomputing anything.
-    """
+    """GT-derived geometry per-candidate inputs to the gate framework."""
 
     overall_score: float
     catastrophic_failure_rate: float
@@ -134,7 +107,7 @@ class GateOutcome:
     """Per-candidate gate decision."""
 
     candidate_id: str
-    rank: int  # 1-indexed position in the score-sorted result list
+    rank: int
     passed: bool
     failed_gates: tuple[str, ...] = ()
     failure_reasons: tuple[str, ...] = ()
@@ -161,53 +134,21 @@ class GateOutcome:
             "failed_gates": list(self.failed_gates),
             "failure_reasons": list(self.failure_reasons),
             "report_nme": float(self.report_nme),
-            "profile_score": (
-                float(self.profile_score) if self.profile_score is not None else None
-            ),
-            "profile_region_failure_rate": (
-                float(self.profile_region_failure_rate)
-                if self.profile_region_failure_rate is not None
-                else None
-            ),
-            "geometry_score": (
-                float(self.geometry_score) if self.geometry_score is not None else None
-            ),
-            "catastrophic_geometry_failure_rate": (
-                float(self.catastrophic_geometry_failure_rate)
-                if self.catastrophic_geometry_failure_rate is not None
-                else None
-            ),
+            "profile_score": self.profile_score,
+            "profile_region_failure_rate": self.profile_region_failure_rate,
+            "geometry_score": self.geometry_score,
+            "catastrophic_geometry_failure_rate": self.catastrophic_geometry_failure_rate,
             "max_per_bucket_catastrophic_geometry_failure_rate": (
-                float(self.max_per_bucket_catastrophic_geometry_failure_rate)
-                if self.max_per_bucket_catastrophic_geometry_failure_rate is not None
-                else None
+                self.max_per_bucket_catastrophic_geometry_failure_rate
             ),
             "worst_catastrophic_geometry_bucket": self.worst_catastrophic_geometry_bucket,
-            "p95_transform_error": (
-                float(self.p95_transform_error) if self.p95_transform_error is not None else None
-            ),
-            "p95_crop_center_error": (
-                float(self.p95_crop_center_error)
-                if self.p95_crop_center_error is not None
-                else None
-            ),
-            "p95_roll_error": (
-                float(self.p95_roll_error) if self.p95_roll_error is not None else None
-            ),
-            "mean_hull_iou": (
-                float(self.mean_hull_iou) if self.mean_hull_iou is not None else None
-            ),
-            "min_per_bucket_p05_hull_iou": (
-                float(self.min_per_bucket_p05_hull_iou)
-                if self.min_per_bucket_p05_hull_iou is not None
-                else None
-            ),
+            "p95_transform_error": self.p95_transform_error,
+            "p95_crop_center_error": self.p95_crop_center_error,
+            "p95_roll_error": self.p95_roll_error,
+            "mean_hull_iou": self.mean_hull_iou,
+            "min_per_bucket_p05_hull_iou": self.min_per_bucket_p05_hull_iou,
             "worst_hull_iou_bucket": self.worst_hull_iou_bucket,
-            "max_bucket_regression_score": (
-                float(self.max_bucket_regression_score)
-                if self.max_bucket_regression_score is not None
-                else None
-            ),
+            "max_bucket_regression_score": self.max_bucket_regression_score,
         }
 
 
@@ -248,10 +189,7 @@ class GateApplication:
         }
 
 
-def _best_baseline_nme(
-    results: T.Sequence[CandidateResult],
-) -> tuple[float | None, str]:
-    """Return the lowest single-model-baseline report NME among ``results``."""
+def _best_baseline_nme(results: T.Sequence[CandidateResult]) -> tuple[float | None, str]:
     baselines = [result for result in results if result.is_single_model_baseline]
     if not baselines:
         return None, ""
@@ -262,7 +200,6 @@ def _best_baseline_nme(
 def _bucket_extremes(
     geometry: GeometryScore | None,
 ) -> tuple[float | None, str, float | None, str]:
-    """Return max bucket catastrophic rate and min bucket p05 hull IoU."""
     if geometry is None or not geometry.per_bucket:
         return None, "", None, ""
     max_catastrophic: float | None = None
@@ -288,17 +225,7 @@ def apply_gates(
     profile_scores: T.Mapping[str, ProfileScore] | None = None,
     geometry_scores: T.Mapping[str, GeometryScore] | None = None,
 ) -> GateApplication:
-    """Evaluate ``config`` against every candidate, in original score order.
-
-    ``profile_scores`` / ``geometry_scores`` are candidate-id → score lookups
-    for the profile and GT-derived-geometry gate families respectively. Absent
-    keys disable the matching gates for that candidate even if those gates are
-    configured. The first candidate that passes every active gate is selected
-    as the promoted setup. Single-model baseline candidates are always valid as
-    comparison baselines, but they are not promotable unless
-    ``config.allow_single_model_promotion`` is set, and even then they must beat
-    the best global single-model baseline on report and geometry.
-    """
+    """Evaluate ``config`` against every candidate, in original score order."""
     baseline_nme, baseline_model_name = _best_baseline_nme(results)
     baseline_candidate_id = (
         baseline_model_candidate_id(results, baseline_model_name) if baseline_model_name else ""
@@ -387,8 +314,7 @@ def apply_gates(
                 failed_gates.append("max_profile_region_failure_rate")
                 failure_reasons.append(
                     f"profile region failure rate {profile_failure:.6f} exceeds "
-                    f"max_profile_region_failure_rate "
-                    f"{config.max_profile_region_failure_rate:.6f}"
+                    f"max_profile_region_failure_rate {config.max_profile_region_failure_rate:.6f}"
                 )
         if config.require_effective_ensemble:
             diagnostics = result.effective_ensemble
@@ -406,12 +332,17 @@ def apply_gates(
                         f"dominant={diagnostics.collapsed_dominant_model or 'n/a'}"
                     )
 
-        # Geometry-first gates (alignment-geometry roadmap, Phase 5).
         if config.requires_geometry() and geometry is None:
             failed_gates.append("geometry_metrics_unavailable")
             failure_reasons.append(
                 "geometry-side gate(s) configured but geometry metrics are missing "
                 "for this candidate; pass --include-geometry-metrics or supply scores"
+            )
+        if config.require_geometry_improvement and baseline_geometry_score is None:
+            failed_gates.append("geometry_baseline_unavailable")
+            failure_reasons.append(
+                "geometry improvement gate requires at least one single-model baseline "
+                "with geometry metrics"
             )
         if geometry is not None:
             if (
@@ -521,8 +452,7 @@ def apply_gates(
                         failed_gates.append("single_model_does_not_beat_best_baseline_geometry")
                         failure_reasons.append(
                             f"single-model geometry score {geometry.overall_score:.6f} "
-                            f"does not beat best single-model baseline "
-                            f"{baseline_geometry_score:.6f}"
+                            f"does not beat best single-model baseline {baseline_geometry_score:.6f}"
                         )
 
         passed = not failed_gates
@@ -578,10 +508,7 @@ def apply_gates(
     )
 
 
-def baseline_model_candidate_id(
-    results: T.Sequence[CandidateResult],
-    model_name: str,
-) -> str:
+def baseline_model_candidate_id(results: T.Sequence[CandidateResult], model_name: str) -> str:
     """Return the candidate_id of the single-model baseline for ``model_name``."""
     if not model_name:
         return ""
@@ -591,17 +518,8 @@ def baseline_model_candidate_id(
     return ""
 
 
-def no_promotion_payload(
-    application: GateApplication,
-    *,
-    top_n: int = 5,
-) -> dict[str, T.Any]:
-    """Build the payload written when no candidate passes the gates.
-
-    The payload includes the top ``top_n`` failing candidates by score (the
-    leading edge of the search space) plus their per-gate failure reasons so
-    operators can act on the regression instead of blindly promoting.
-    """
+def no_promotion_payload(application: GateApplication, *, top_n: int = 5) -> dict[str, T.Any]:
+    """Build the payload written when no candidate passes the gates."""
     failing = [outcome for outcome in application.outcomes if not outcome.passed][:top_n]
     baseline_blocked = any(
         "single_model_promotion_not_allowed" in outcome.failed_gates
