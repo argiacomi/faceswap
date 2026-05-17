@@ -32,23 +32,9 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from lib.landmarks.cache.prediction_cache import DiskPredictionCache
-from lib.landmarks.core.fusion import (
-    normalize_weight_matrix,
-    plain_average,
-    static_weighted,
-)
-from lib.landmarks.core.rejection import weighted_median
-from lib.landmarks.core.schema import LandmarkPrediction
-from lib.landmarks.ensemble.strategies import (
-    canonical_strategy,
-    strategy_outlier_method,
-    strategy_requires_weights,
-    strategy_uses_threshold,
-)
-from lib.landmarks.ensemble.weights import (
-    load_weights,
-    weights_matrix_for_models,
-)
+from lib.landmarks.core.fusion_variants import fuse_variant as _fuse_variant
+from lib.landmarks.datasets.manifest_io import bbox_for_sample as _bbox
+from lib.landmarks.ensemble.weights import load_weights
 from lib.landmarks.evaluation.harness import LandmarkSample, load_manifest
 from lib.landmarks.evaluation.profile_metrics import (
     DEFAULT_NORMALIZER,
@@ -76,56 +62,14 @@ def _parse_pck_thresholds(value: str) -> tuple[float, ...]:
     return tuple(float(item.strip()) for item in value.split(",") if item.strip())
 
 
-def _fuse_variant(
-    variant: str,
-    predictions: T.Sequence[LandmarkPrediction],
-    models: T.Sequence[str],
-    weights: T.Mapping[str, T.Sequence[float]] | None,
-    *,
-    outlier_threshold: float,
-) -> np.ndarray:
-    """Return fused 68×2 points for one variant of cached predictions."""
-    canonical = canonical_strategy(variant)
-    method = strategy_outlier_method(canonical)
-    threshold = outlier_threshold if strategy_uses_threshold(canonical) else 3.5
-
-    if not strategy_requires_weights(canonical):
-        return plain_average(
-            predictions, outlier_method=method, outlier_threshold=threshold
-        ).points
-
-    if weights is None:
-        raise ValueError(f"variant {variant!r} requires a static weights file")
-    matrix = weights_matrix_for_models(weights, tuple(models))
-    if canonical == "weighted_median":
-        stack = np.stack([prediction.canonical_68().points for prediction in predictions], axis=0)
-        normalized = normalize_weight_matrix(
-            matrix, model_count=stack.shape[0], landmark_count=stack.shape[1]
-        )
-        return weighted_median(stack, normalized)
-    return static_weighted(
-        predictions,
-        matrix,
-        outlier_method=method,
-        outlier_threshold=threshold,
-    ).points
+# Fusion + bbox helpers are imported above. Both used to be inlined here;
+# the canonical implementations live in :mod:`lib.landmarks.core.fusion_variants`
+# and :mod:`lib.landmarks.datasets.manifest_io` so every CLI under
+# ``tools/landmarks/`` consumes the same code path.
 
 
 def _load_truth(sample: LandmarkSample) -> np.ndarray:
     return np.load(sample.landmarks).astype("float32")
-
-
-def _bbox(sample: LandmarkSample) -> tuple[float, float, float, float] | None:
-    """Return the sample bbox, defaulting to landmark extrema when missing."""
-    if sample.face_bbox is not None:
-        return sample.face_bbox
-    try:
-        truth = _load_truth(sample)
-    except Exception:
-        return None
-    left, top = np.min(truth, axis=0)
-    right, bottom = np.max(truth, axis=0)
-    return (float(left), float(top), float(right), float(bottom))
 
 
 def _evaluate_label(
@@ -221,8 +165,8 @@ def evaluate_manifest(
             fused_points = _fuse_variant(
                 variant,
                 prediction_items,
-                models,
-                weights,
+                models=models,
+                weights=weights,
                 outlier_threshold=outlier_threshold,
             )
             metrics = _evaluate_label(

@@ -32,7 +32,8 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from lib.landmarks.cache.prediction_cache import DiskPredictionCache
-from lib.landmarks.core.schema import LandmarkPrediction
+from lib.landmarks.core.fusion_variants import fuse_variant as _fuse_variant
+from lib.landmarks.datasets.manifest_io import bbox_for_sample as _bbox_for_sample
 from lib.landmarks.ensemble.weights import load_weights
 from lib.landmarks.evaluation.geometry_metrics import (
     GEOMETRY_OBJECTIVE,
@@ -49,39 +50,6 @@ logger = logging.getLogger(__name__)
 
 def _parse_csv(value: str) -> tuple[str, ...]:
     return tuple(item.strip() for item in value.split(",") if item.strip())
-
-
-# Canonical fusion helper now lives in lib.landmarks.core.fusion_variants.
-from lib.landmarks.core.fusion_variants import fuse_variant as _fuse_variant_impl
-
-
-def _fuse_variant(
-    variant: str,
-    predictions: T.Sequence[LandmarkPrediction],
-    models: T.Sequence[str],
-    weights: T.Mapping[str, T.Sequence[float]] | None,
-    *,
-    outlier_threshold: float,
-) -> np.ndarray:
-    """Return fused 68×2 points for a variant of cached predictions.
-
-    Thin compatibility shim — the canonical implementation lives in
-    :mod:`lib.landmarks.core.fusion_variants`.
-    """
-    return _fuse_variant_impl(
-        variant,
-        predictions,
-        models=models,
-        weights=weights,
-        outlier_threshold=outlier_threshold,
-    )
-
-
-def _bbox_for_sample(sample: LandmarkSample) -> tuple[float, float, float, float] | None:
-    """Resolve a usable bbox via the canonical manifest helper."""
-    from lib.landmarks.datasets.manifest_io import bbox_for_sample
-
-    return bbox_for_sample(sample, allow_truth_fallback=True)
 
 
 def _truth_landmarks(sample: LandmarkSample) -> np.ndarray:
@@ -151,8 +119,8 @@ def evaluate_manifest(
             fused = _fuse_variant(
                 variant,
                 prediction_items,
-                models,
-                weights,
+                models=models,
+                weights=weights,
                 outlier_threshold=outlier_threshold,
             )
             metrics = evaluate_geometry_sample(
