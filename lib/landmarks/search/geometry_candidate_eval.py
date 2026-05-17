@@ -30,7 +30,6 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from lib.landmarks.eval.candidate_search import CandidateResult
 from lib.landmarks.eval.geometry_metrics import (
     GeometryAggregate,
     aggregate_geometry_samples,
@@ -38,9 +37,10 @@ from lib.landmarks.eval.geometry_metrics import (
 )
 from lib.landmarks.eval.geometry_signals import AlignmentSummary, alignment_summary
 from lib.landmarks.eval.prediction_cache import DiskPredictionCache
-from lib.landmarks.eval.promotion_gates import GeometryScore
 from lib.landmarks.manifest import LandmarkSample, bbox_for_sample
+from lib.landmarks.search.candidate_search import CandidateResult
 from lib.landmarks.search.fusion_variants import fuse_candidate
+from lib.landmarks.search.promotion_gates import GeometryScore
 
 
 @dataclass(frozen=True)

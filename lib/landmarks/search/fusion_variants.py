@@ -32,10 +32,10 @@ from lib.landmarks.ensemble.strategies import (
     strategy_uses_threshold,
 )
 from lib.landmarks.ensemble.weights import weights_matrix_for_models
-from lib.landmarks.eval.candidate_search import Candidate
 from lib.landmarks.fusion import normalize_weight_matrix, plain_average, static_weighted
 from lib.landmarks.rejection import weighted_median
 from lib.landmarks.schema import LandmarkPrediction
+from lib.landmarks.search.candidate_search import Candidate
 
 #: Default outlier threshold used when a strategy needs one but the caller
 #: hasn't supplied a value. Matches the legacy Faceswap default.
