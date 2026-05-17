@@ -8,14 +8,14 @@ import typing as T
 import numpy as np
 
 from lib.landmarks.adapters import LandmarkAdapter
+from lib.landmarks.core.fusion import normalize_weight_matrix, plain_average, static_weighted
+from lib.landmarks.core.schema import LandmarkPrediction
 from lib.landmarks.ensemble.outliers import weighted_median
 from lib.landmarks.ensemble.strategies import (
     canonical_strategy,
     strategy_outlier_method,
     strategy_requires_weights,
 )
-from lib.landmarks.fusion import normalize_weight_matrix, plain_average, static_weighted
-from lib.landmarks.schema import LandmarkPrediction
 
 
 def predict_landmarks_68(

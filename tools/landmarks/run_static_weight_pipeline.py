@@ -347,7 +347,7 @@ def _apply_detector_bboxes(args: argparse.Namespace, paths: PipelinePaths) -> di
 
 
 def _require_manifest_samples(manifest_path: Path) -> None:
-    from lib.landmarks.eval.harness import load_manifest
+    from lib.landmarks.evaluation.harness import load_manifest
 
     sample_count = sum(1 for _sample in load_manifest(manifest_path))
     if sample_count:
@@ -407,7 +407,7 @@ def _cache_predictions(args: argparse.Namespace, paths: PipelinePaths) -> None:
 
 def _create_splits(args: argparse.Namespace, paths: PipelinePaths) -> dict[str, T.Any]:
     """Compute or load the fit/select/report split and write per-split manifests."""
-    from lib.landmarks.eval.splits import (
+    from lib.landmarks.evaluation.splits import (
         SplitRatios,
         load_split_file,
         save_split_file,
@@ -528,7 +528,7 @@ def _compute_weights(args: argparse.Namespace, paths: PipelinePaths) -> None:
 def _run_harness(
     args: argparse.Namespace, paths: PipelinePaths, *, weighted: bool
 ) -> dict[str, T.Any]:
-    from lib.landmarks.eval.harness import run_quality_harness
+    from lib.landmarks.evaluation.harness import run_quality_harness
 
     return run_quality_harness(
         paths.manifest,
@@ -571,7 +571,7 @@ def _dataset_counts(manifest_path: Path) -> dict[str, int]:
     counts: dict[str, int] = {}
     if not manifest_path.is_file():
         return counts
-    from lib.landmarks.eval.harness import load_manifest
+    from lib.landmarks.evaluation.harness import load_manifest
 
     for sample in load_manifest(manifest_path):
         key = sample.dataset or "unspecified"
@@ -585,8 +585,8 @@ def _cache_counts(
 ) -> dict[str, T.Any]:
     if not manifest_path.is_file():
         return {"samples": 0, "predictions": 0, "models": {}}
-    from lib.landmarks.eval.harness import load_manifest
-    from lib.landmarks.eval.prediction_cache import DiskPredictionCache
+    from lib.landmarks.cache.prediction_cache import DiskPredictionCache
+    from lib.landmarks.evaluation.harness import load_manifest
 
     cache = DiskPredictionCache(cache_dir)
     model_counts = {model: 0 for model in models}

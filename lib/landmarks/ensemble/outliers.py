@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from lib.landmarks.rejection import (
+from lib.landmarks.core.rejection import (
     PerLandmarkOutlierResult,
     pairwise_disagreement,
     reject_outliers,

@@ -19,16 +19,16 @@ from lib.landmarks.adapters import (
     LandmarkAdapterConfig,
     StaticLandmarkAdapter,
 )
+from lib.landmarks.core.fusion import (
+    normalize_weight_matrix,
+    plain_average,
+    static_weighted,
+)
 from lib.landmarks.ensemble.outliers import weighted_median
 from lib.landmarks.ensemble.strategies import (
     CANONICAL_STRATEGIES,
     canonical_strategy,
     strategy_outlier_method,
-)
-from lib.landmarks.fusion import (
-    normalize_weight_matrix,
-    plain_average,
-    static_weighted,
 )
 from plugins.extract.align.ensemble import Ensemble
 

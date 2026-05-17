@@ -10,6 +10,8 @@ from pathlib import Path
 
 import numpy as np
 
+from lib.landmarks.cache.prediction_cache import DiskPredictionCache
+from lib.landmarks.core.metrics import per_landmark_error
 from lib.landmarks.ensemble.weight_generators import (
     GENERATOR_NAMES,
     ErrorTable,
@@ -20,9 +22,7 @@ from lib.landmarks.ensemble.weights import (
     MODEL_NAMES,
     normalize_static_weights,
 )
-from lib.landmarks.eval.harness import load_manifest
-from lib.landmarks.eval.prediction_cache import DiskPredictionCache
-from lib.landmarks.metrics import per_landmark_error
+from lib.landmarks.evaluation.harness import load_manifest
 
 DEFAULT_OUTPUT = "configs/ensemble/static_landmark_weights.json"
 DEFAULT_GENERATOR = "inverse_mean_error"

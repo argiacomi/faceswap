@@ -15,10 +15,10 @@ import numpy as np
 from tqdm import tqdm
 
 from lib.landmarks.adapters import LandmarkAdapter, build_landmark_adapter
+from lib.landmarks.cache.prediction_cache import DiskPredictionCache, config_hash
 from lib.landmarks.coordinates import roi_to_matrix
-from lib.landmarks.eval.harness import LandmarkSample, load_manifest
-from lib.landmarks.eval.prediction_cache import DiskPredictionCache, config_hash
-from lib.landmarks.schema import LandmarkPrediction, normalize_landmarks
+from lib.landmarks.core.schema import LandmarkPrediction, normalize_landmarks
+from lib.landmarks.evaluation.harness import LandmarkSample, load_manifest
 
 logger = logging.getLogger(__name__)
 
@@ -140,13 +140,13 @@ def _checkpoint_value(args: argparse.Namespace) -> str:
 def _bbox_values(raw: T.Any) -> tuple[float, float, float, float] | None:
     """Normalize common bbox payloads to ``left, top, right, bottom``.
 
-    Thin wrapper over :func:`lib.landmarks.manifest.coerce_bbox` kept under
+    Thin wrapper over :func:`lib.landmarks.datasets.manifest_io.coerce_bbox` kept under
     the legacy name so the cache-build code below stays unchanged. The
     canonical coercer handles dicts (ltrb/xywh keys) plus 4+ length
     sequences, including the xywh-fallback case the cache previously
     open-coded.
     """
-    from lib.landmarks.manifest import coerce_bbox
+    from lib.landmarks.datasets.manifest_io import coerce_bbox
 
     return coerce_bbox(raw)
 

@@ -6,7 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 
-from lib.landmarks.eval.harness import run_quality_harness
+from lib.landmarks.evaluation.harness import run_quality_harness
 
 
 def main(argv: list[str] | None = None) -> int:

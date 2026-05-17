@@ -5,7 +5,7 @@ import numpy as np
 
 from lib.landmarks.adapters import LandmarkAdapterConfig, StaticLandmarkAdapter
 from lib.landmarks.coordinates import roi_to_matrix
-from lib.landmarks.schema import LandmarkPrediction
+from lib.landmarks.core.schema import LandmarkPrediction
 
 
 def _points(value: float = 0.5) -> np.ndarray:

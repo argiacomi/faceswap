@@ -14,13 +14,13 @@ import typing as T
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from lib.landmarks.core.schema import CANONICAL_SCHEMA
 from lib.landmarks.ensemble.strategies import (
     CANONICAL_STRATEGIES,
     canonical_strategy,
     validate_threshold,
 )
 from lib.landmarks.ensemble.weights import LANDMARK_COUNT, normalize_static_weights
-from lib.landmarks.schema import CANONICAL_SCHEMA
 
 ARTIFACT_SCHEMA_VERSION: int = 1
 WEIGHTS_FILENAME: str = "best_weights.json"

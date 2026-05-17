@@ -30,6 +30,13 @@ from lib.landmarks.coordinates import (
     frame_to_normalized_crop,
     roi_to_matrix,
 )
+from lib.landmarks.core.fusion import (
+    FusionResult,
+    normalize_weight_matrix,
+    plain_average,
+    static_weighted,
+)
+from lib.landmarks.core.schema import CANONICAL_SCHEMA, LandmarkPrediction
 from lib.landmarks.ensemble.outliers import weighted_median
 from lib.landmarks.ensemble.promoted_setup import (
     PromotedSetup,
@@ -45,13 +52,6 @@ from lib.landmarks.ensemble.strategies import (
     strategy_requires_weights,
     strategy_uses_threshold,
 )
-from lib.landmarks.fusion import (
-    FusionResult,
-    normalize_weight_matrix,
-    plain_average,
-    static_weighted,
-)
-from lib.landmarks.schema import CANONICAL_SCHEMA, LandmarkPrediction
 from lib.utils import get_module_objects
 from plugins.extract.base import ExtractPlugin
 

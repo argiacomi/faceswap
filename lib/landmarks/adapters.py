@@ -13,7 +13,7 @@ from types import MappingProxyType
 import numpy as np
 
 from lib.landmarks.coordinates import CoordinateSpace, normalized_crop_to_frame
-from lib.landmarks.schema import (
+from lib.landmarks.core.schema import (
     CANONICAL_SCHEMA,
     LandmarkPrediction,
     canonicalize_schema,

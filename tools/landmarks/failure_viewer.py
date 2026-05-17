@@ -16,10 +16,10 @@ if str(_REPO_ROOT) not in sys.path:
 
 import numpy as np
 
+from lib.landmarks.cache.prediction_cache import DiskPredictionCache
 from lib.landmarks.ensemble.weights import load_weights
-from lib.landmarks.eval.harness import _fuse_variant, load_manifest
-from lib.landmarks.eval.prediction_cache import DiskPredictionCache
-from lib.landmarks.eval.visualize import (
+from lib.landmarks.evaluation.harness import _fuse_variant, load_manifest
+from lib.landmarks.evaluation.visualize import (
     write_contact_sheet,
     write_debug_records,
     write_overlay,

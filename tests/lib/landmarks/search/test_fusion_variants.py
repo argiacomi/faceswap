@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Tests for :mod:`lib.landmarks.search.fusion_variants` (Ticket 3)."""
+"""Tests for :mod:`lib.landmarks.core.fusion_variants` (Ticket 3)."""
 
 from __future__ import annotations
 
 import numpy as np
 import pytest
 
-from lib.landmarks.eval.candidate_search import Candidate
-from lib.landmarks.schema import LandmarkPrediction
-from lib.landmarks.search.fusion_variants import fuse_candidate, fuse_variant
+from lib.landmarks.core.fusion_variants import fuse_candidate, fuse_variant
+from lib.landmarks.core.schema import LandmarkPrediction
+from lib.landmarks.search.candidate_search import Candidate
 
 
 def _truth_face() -> np.ndarray:

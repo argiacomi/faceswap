@@ -9,10 +9,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from lib.landmarks.cache.prediction_cache import DiskPredictionCache
+from lib.landmarks.core.schema import LandmarkPrediction
 from lib.landmarks.ensemble.weight_generators import GENERATOR_NAMES
 from lib.landmarks.ensemble.weights import LANDMARK_COUNT, MODEL_NAMES, load_weights
-from lib.landmarks.eval.prediction_cache import DiskPredictionCache
-from lib.landmarks.schema import LandmarkPrediction
 from tools.landmarks.compute_static_weights import (
     DEFAULT_GENERATOR,
     fit_static_weights,

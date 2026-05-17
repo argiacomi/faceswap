@@ -4,14 +4,14 @@
 import numpy as np
 import pytest
 
-from lib.landmarks.cache import PredictionCache, cache_key_for_array
-from lib.landmarks.metrics import (
+from lib.landmarks.cache.runtime_cache import PredictionCache, cache_key_for_array
+from lib.landmarks.core.metrics import (
     auc,
     failure_rate,
     mean_point_error,
     normalized_mean_error,
 )
-from lib.landmarks.schema import LandmarkPrediction
+from lib.landmarks.core.schema import LandmarkPrediction
 
 
 def _face_points(offset: float = 0.0) -> np.ndarray:

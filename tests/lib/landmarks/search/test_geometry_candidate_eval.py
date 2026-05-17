@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for :mod:`lib.landmarks.search.geometry_candidate_eval` (Ticket 2)."""
+"""Tests for :mod:`lib.landmarks.search.geometry_search` (Ticket 2)."""
 
 from __future__ import annotations
 
@@ -9,12 +9,12 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from lib.landmarks.eval.candidate_search import Candidate, CandidateResult
-from lib.landmarks.eval.geometry_metrics import GeometryAggregate
-from lib.landmarks.eval.prediction_cache import DiskPredictionCache
-from lib.landmarks.manifest import load_manifest
-from lib.landmarks.schema import LandmarkPrediction
-from lib.landmarks.search.geometry_candidate_eval import (
+from lib.landmarks.cache.prediction_cache import DiskPredictionCache
+from lib.landmarks.core.schema import LandmarkPrediction
+from lib.landmarks.datasets.manifest_io import load_manifest
+from lib.landmarks.evaluation.geometry_metrics import GeometryAggregate
+from lib.landmarks.search.candidate_search import Candidate, CandidateResult
+from lib.landmarks.search.geometry_search import (
     GeometryContextRow,
     build_geometry_context,
     evaluate_candidate_geometry,
@@ -129,7 +129,7 @@ def test_build_geometry_context_skips_missing_truth(tmp_path: Path) -> None:
     samples = load_manifest(fixture["manifest"])
     # Synthesize a fourth sample that points at a non-existent landmarks file
     # so the context builder skips it without breaking the existing fixture.
-    from lib.landmarks.manifest import LandmarkSample
+    from lib.landmarks.datasets.manifest_io import LandmarkSample
 
     missing = LandmarkSample(
         sample_id="missing-gt",

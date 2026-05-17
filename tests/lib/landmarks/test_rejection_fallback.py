@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from lib.landmarks.rejection import reject_outliers
+from lib.landmarks.core.rejection import reject_outliers
 
 
 def test_hard_drop_fallback_restores_positive_weight_when_best_base_weight_is_zero() -> None:

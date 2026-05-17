@@ -5,9 +5,9 @@ from __future__ import annotations
 
 import argparse
 
-from lib.landmarks.eval.harness import load_manifest
-from lib.landmarks.eval.prediction_cache import DiskPredictionCache
-from lib.landmarks.eval.visualize import write_debug_records, write_overlay
+from lib.landmarks.cache.prediction_cache import DiskPredictionCache
+from lib.landmarks.evaluation.harness import load_manifest
+from lib.landmarks.evaluation.visualize import write_debug_records, write_overlay
 
 
 def main(argv: list[str] | None = None) -> int:

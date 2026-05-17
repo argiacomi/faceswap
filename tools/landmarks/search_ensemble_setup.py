@@ -17,29 +17,18 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from lib.landmarks.cache.prediction_cache import DiskPredictionCache
 from lib.landmarks.ensemble.promoted_setup import (
-    PROMOTION_REPORT_FILENAME,
     SETUP_FILENAME,
     WEIGHTS_FILENAME,
     write_best_setup,
     write_best_weights,
 )
-from lib.landmarks.eval.candidate_search import (
-    DEFAULT_OBJECTIVE,
-    DEFAULT_REGRESSION_EPSILON_NME,
-    Candidate,
-    CandidateResult,
-    enumerate_candidates,
-    evaluate_candidate,
-    load_split_samples,
-    run_candidate_search,
-)
-from lib.landmarks.eval.geometry_metrics import (
+from lib.landmarks.evaluation.geometry_metrics import (
     GEOMETRY_OBJECTIVE,
     GeometryAggregate,
 )
-from lib.landmarks.eval.prediction_cache import DiskPredictionCache
-from lib.landmarks.eval.profile_metrics import (
+from lib.landmarks.evaluation.profile_metrics import (
     DEFAULT_NORMALIZER,
     DEFAULT_PCK_THRESHOLDS,
     DEFAULT_PRIORITY_FAILURE_REGIONS,
@@ -49,7 +38,18 @@ from lib.landmarks.eval.profile_metrics import (
     aggregate_profile_samples,
     evaluate_profile_sample,
 )
-from lib.landmarks.eval.promotion_gates import (
+from lib.landmarks.evaluation.splits import SplitAssignment, load_split_file, split_assignment_hash
+from lib.landmarks.search.candidate_search import (
+    DEFAULT_OBJECTIVE,
+    DEFAULT_REGRESSION_EPSILON_NME,
+    Candidate,
+    CandidateResult,
+    enumerate_candidates,
+    evaluate_candidate,
+    load_split_samples,
+    run_candidate_search,
+)
+from lib.landmarks.search.promotion_gates import (
     DEFAULT_REPORT_IMPROVEMENT_TOLERANCE,
     GateApplication,
     GateConfig,
@@ -58,7 +58,6 @@ from lib.landmarks.eval.promotion_gates import (
     apply_gates,
     no_promotion_payload,
 )
-from lib.landmarks.eval.splits import SplitAssignment, load_split_file, split_assignment_hash
 
 
 def _parse_csv(value: str) -> tuple[str, ...]:
@@ -145,10 +144,10 @@ def _load_samples(
 
 
 # The candidate-aware fusion helper now lives in
-# lib.landmarks.search.fusion_variants. Re-exported here so the profile-
+# lib.landmarks.core.fusion_variants. Re-exported here so the profile-
 # aggregate path below keeps the legacy name; new code should import from
-# :mod:`lib.landmarks.search.fusion_variants` directly.
-from lib.landmarks.search.fusion_variants import fuse_candidate as _fuse_for_profile
+# :mod:`lib.landmarks.core.fusion_variants` directly.
+from lib.landmarks.core.fusion_variants import fuse_candidate as _fuse_for_profile
 
 
 def _candidate_profile_aggregate(
@@ -238,14 +237,14 @@ def _candidate_models(results: T.Sequence[CandidateResult]) -> tuple[str, ...]:
 # Geometry candidate-evaluation primitives live in lib.landmarks.search now.
 # These names are re-exported under the legacy ``_`` prefix so the rest of
 # the CLI doesn't need updating; new call sites should import directly from
-# :mod:`lib.landmarks.search.geometry_candidate_eval`.
-from lib.landmarks.search.geometry_candidate_eval import (
+# :mod:`lib.landmarks.search.geometry_search`.
+from lib.landmarks.search.geometry_search import (
     build_geometry_context as _build_geometry_context,
 )
-from lib.landmarks.search.geometry_candidate_eval import (
+from lib.landmarks.search.geometry_search import (
     evaluate_candidate_geometry as _evaluate_candidate_geometry,
 )
-from lib.landmarks.search.geometry_candidate_eval import (
+from lib.landmarks.search.geometry_search import (
     geometry_score_from_aggregate as _geometry_score_from_aggregate,
 )
 
@@ -446,95 +445,14 @@ def _write_candidate_results(
     return csv_path, json_path
 
 
-def _write_promotion_report(
-    output_dir: Path,
-    *,
-    winner: CandidateResult,
-    results: T.Sequence[CandidateResult],
-    objective: str,
-    regression_epsilon_nme: float,
-    report_metrics: T.Mapping[str, T.Any],
-    gate_application: GateApplication | None = None,
-    profile_aggregate: ProfileAggregate | None = None,
-) -> Path:
-    path = output_dir / PROMOTION_REPORT_FILENAME
-    lines = [
-        "# Promotion Report",
-        "",
-        f"- objective: `{objective}`",
-        f"- regression_epsilon_nme: `{regression_epsilon_nme}`",
-        f"- evaluated_candidates: `{len(results)}`",
-        "",
-        "## Winner",
-        "",
-        f"- candidate_id: `{winner.candidate_id}`",
-        f"- models: `{', '.join(winner.candidate.models)}`",
-        f"- weight_generator: `{winner.candidate.weight_generator}`",
-        f"- strategy: `{winner.candidate.strategy}`",
-        f"- outlier_threshold: `{winner.candidate.outlier_threshold}`",
-        f"- selection_score: `{winner.score:.6f}`",
-        f"- selection_nme: `{winner.metrics.overall_nme:.6f}`",
-        f"- selection_failure_rate: `{winner.metrics.failure_rate:.6f}`",
-        f"- selection_regression_rate: `{winner.metrics.regression_rate_vs_best_single:.6f}`",
-        f"- bucket_regression_rate: `{winner.metrics.bucket_regression_rate_vs_best_single:.6f}`",
-        "",
-        "## Held-out report metrics",
-        "",
-        f"- report_nme: `{report_metrics.get('overall_nme', 0.0):.6f}`",
-        f"- report_failure_rate: `{report_metrics.get('failure_rate', 0.0):.6f}`",
-        f"- report_regression_rate: `{report_metrics.get('regression_rate_vs_best_single', 0.0):.6f}`",
-        f"- report_bucket_regression_rate: `{report_metrics.get('bucket_regression_rate_vs_best_single', 0.0):.6f}`",
-    ]
-    if winner.effective_ensemble is not None:
-        diag = winner.effective_ensemble
-        lines.extend(
-            [
-                "",
-                "## Effective ensemble diagnostics",
-                "",
-                f"- mean_effective_models: `{diag.mean_effective_models:.3f}` (floor `{diag.effective_models_floor:.3f}`)",
-                f"- collapsed: `{diag.collapsed}`",
-                f"- weighted_median_collapsed: `{diag.weighted_median_collapsed}`",
-                "- landmark share by model: "
-                + ", ".join(
-                    f"{model}={share:.2f}"
-                    for model, share in sorted(
-                        diag.landmark_share_by_model.items(),
-                        key=lambda item: item[1],
-                        reverse=True,
-                    )
-                ),
-            ]
-        )
-        if winner.is_single_model_baseline:
-            lines.append(
-                "- note: this winner is a single-model baseline; promotion of single-model setups was explicitly allowed."
-            )
-    if gate_application is not None:
-        lines.extend(
-            [
-                "",
-                "## Promotion gates",
-                "",
-                f"- gates_passed: `{gate_application.passed_count}`",
-                f"- gates_failed: `{gate_application.failed_count}`",
-            ]
-        )
-        if gate_application.promoted_outcome is not None:
-            lines.append("- selected candidate cleared every active gate.")
-        if profile_aggregate is not None:
-            lines.extend(
-                [
-                    "",
-                    "## Profile metrics (held-out report split)",
-                    "",
-                    f"- profile_overall_score: `{profile_aggregate.overall_score:.6f}`",
-                    f"- profile_region_failure_rate: `{profile_aggregate.region_failure_rate:.6f}`",
-                    f"- profile_p90_visible_error: `{profile_aggregate.p90_visible_error:.6f}`",
-                ]
-            )
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return path
+# The Markdown promotion report writer lives in
+# :mod:`lib.landmarks.search.promotion_reports` so other surfaces
+# (experiment runners, dry-run validators) can render the same format
+# without depending on this CLI. The local name keeps existing call
+# sites unchanged.
+from lib.landmarks.search.promotion_reports import (
+    write_promotion_report as _write_promotion_report,  # noqa: F401
+)
 
 
 def _write_promoted_artifacts(

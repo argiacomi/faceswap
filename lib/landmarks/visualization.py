@@ -7,7 +7,7 @@ import typing as T
 
 import numpy as np
 
-from lib.landmarks.schema import LandmarkPrediction, to_canonical_68
+from lib.landmarks.core.schema import LandmarkPrediction, to_canonical_68
 
 Color = tuple[int, int, int]
 

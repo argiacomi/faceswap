@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for :mod:`lib.landmarks.manifest` (Ticket 1).
+"""Tests for :mod:`lib.landmarks.datasets.manifest_io` (Ticket 1).
 
 Three legacy bbox normalizers (in ``eval.harness``, ``eval.geometry_metrics``,
 and ``tools.landmarks.cache_predictions``) used to drift on the COFW-68 xywh
@@ -15,7 +15,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from lib.landmarks.manifest import (
+from lib.landmarks.datasets.manifest_io import (
     LandmarkSample,
     bbox_for_sample,
     bbox_from_truth_fallback,

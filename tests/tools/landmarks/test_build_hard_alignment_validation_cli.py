@@ -9,9 +9,9 @@ from pathlib import Path
 
 import numpy as np
 
+from lib.landmarks.cache.prediction_cache import DiskPredictionCache
+from lib.landmarks.core.schema import LandmarkPrediction
 from lib.landmarks.ensemble.weights import LANDMARK_COUNT
-from lib.landmarks.eval.prediction_cache import DiskPredictionCache
-from lib.landmarks.schema import LandmarkPrediction
 from tools.landmarks.build_hard_alignment_validation import main as build_main
 
 

@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from lib.landmarks.core.schema import CANONICAL_SCHEMA
 from lib.landmarks.ensemble.promoted_setup import (
     ARTIFACT_SCHEMA_VERSION,
     SETUP_FILENAME,
@@ -22,7 +23,6 @@ from lib.landmarks.ensemble.promoted_setup import (
     write_best_weights,
 )
 from lib.landmarks.ensemble.weights import LANDMARK_COUNT
-from lib.landmarks.schema import CANONICAL_SCHEMA
 
 
 def _equal_weights() -> dict[str, list[float]]:

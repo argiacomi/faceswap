@@ -12,6 +12,7 @@ from pathlib import Path
 
 import numpy as np
 
+from lib.landmarks.core.schema import normalize_landmarks
 from lib.landmarks.datasets.sources import (
     DEFAULT_CACHE_DIR,
     DatasetSourceSpec,
@@ -19,7 +20,6 @@ from lib.landmarks.datasets.sources import (
     is_archive,
     resolve_dataset_source,
 )
-from lib.landmarks.schema import normalize_landmarks
 
 logger = logging.getLogger(__name__)
 SUPPORTED_DATASETS = ("wflw", "cofw", "merl-rav", "aflw2000-3d", "directory")

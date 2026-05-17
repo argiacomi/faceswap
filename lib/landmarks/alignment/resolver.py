@@ -33,28 +33,28 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from lib.landmarks.core.fusion import (
+    FusionResult,
+    normalize_weight_matrix,
+    plain_average,
+    static_weighted,
+)
+from lib.landmarks.core.rejection import weighted_median
+from lib.landmarks.core.schema import CANONICAL_SCHEMA, LandmarkPrediction
 from lib.landmarks.ensemble.strategies import (
     canonical_strategy,
     strategy_outlier_method,
     strategy_requires_weights,
     strategy_uses_threshold,
 )
-from lib.landmarks.eval.geometry_signals import (
+from lib.landmarks.evaluation.geometry_signals import (
     AlignmentSummary,
     alignment_summary,
     cloud_collapse,
     eye_mouth_flip,
     points_outside_bbox,
 )
-from lib.landmarks.eval.roi_diagnostics import DEFAULT_LANDMARK_COVERAGE_FLOOR
-from lib.landmarks.fusion import (
-    FusionResult,
-    normalize_weight_matrix,
-    plain_average,
-    static_weighted,
-)
-from lib.landmarks.rejection import weighted_median
-from lib.landmarks.schema import CANONICAL_SCHEMA, LandmarkPrediction
+from lib.landmarks.evaluation.roi_diagnostics import DEFAULT_LANDMARK_COVERAGE_FLOOR
 
 #: Inter-model disagreement (mean pairwise per-landmark distance, in pixels)
 #: above which the resolver routes to the hard-case path.

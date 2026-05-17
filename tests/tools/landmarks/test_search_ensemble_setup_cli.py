@@ -10,14 +10,14 @@ import numpy as np
 import pytest
 
 import tools.landmarks.search_ensemble_setup as search_cli
+from lib.landmarks.cache.prediction_cache import DiskPredictionCache
+from lib.landmarks.core.schema import LandmarkPrediction
 from lib.landmarks.ensemble.weights import LANDMARK_COUNT
-from lib.landmarks.eval.prediction_cache import DiskPredictionCache
-from lib.landmarks.eval.splits import (
+from lib.landmarks.evaluation.splits import (
     SplitRatios,
     save_split_file,
     split_manifest_samples,
 )
-from lib.landmarks.schema import LandmarkPrediction
 from tools.landmarks.search_ensemble_setup import main as search_main
 
 

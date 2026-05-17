@@ -13,7 +13,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from lib.landmarks.rejection import _normalize_weights, weighted_median
+from lib.landmarks.core.rejection import _normalize_weights, weighted_median
 
 
 def _weighted_median_loop_reference(points: np.ndarray, weights: np.ndarray) -> np.ndarray:

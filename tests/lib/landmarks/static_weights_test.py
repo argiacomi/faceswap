@@ -9,6 +9,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from lib.landmarks.cache.prediction_cache import DiskPredictionCache
+from lib.landmarks.core.schema import LandmarkPrediction
 from lib.landmarks.ensemble.weights import (
     LANDMARK_COUNT,
     MODEL_NAMES,
@@ -17,8 +19,6 @@ from lib.landmarks.ensemble.weights import (
     save_weights,
     weights_from_errors,
 )
-from lib.landmarks.eval.prediction_cache import DiskPredictionCache
-from lib.landmarks.schema import LandmarkPrediction
 from tools.landmarks.compute_static_weights import (
     DEFAULT_OUTPUT,
     compute_static_weights,

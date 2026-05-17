@@ -34,20 +34,20 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from lib.landmarks.cache.prediction_cache import DiskPredictionCache
+from lib.landmarks.core.schema import LandmarkPrediction
 from lib.landmarks.ensemble.weights import load_weights
-from lib.landmarks.eval.geometry_metrics import evaluate_geometry_sample
-from lib.landmarks.eval.geometry_signals import alignment_summary
-from lib.landmarks.eval.harness import LandmarkSample, load_manifest
-from lib.landmarks.eval.metrics import evaluate_prediction
-from lib.landmarks.eval.prediction_cache import DiskPredictionCache
-from lib.landmarks.eval.signal_validation import (
+from lib.landmarks.evaluation.geometry_metrics import evaluate_geometry_sample
+from lib.landmarks.evaluation.geometry_signals import alignment_summary
+from lib.landmarks.evaluation.harness import LandmarkSample, load_manifest
+from lib.landmarks.evaluation.nme_metrics import evaluate_prediction
+from lib.landmarks.evaluation.signal_validation import (
     CandidateRecord,
     candidate_record_from_geometry,
     evaluate_selectors,
     evaluate_signals,
     tag_oracle,
 )
-from lib.landmarks.schema import LandmarkPrediction
 
 logger = logging.getLogger(__name__)
 
@@ -58,13 +58,13 @@ def _parse_csv(value: str) -> tuple[str, ...]:
 
 def _bbox_for_sample(sample: LandmarkSample) -> tuple[float, float, float, float] | None:
     """Resolve a usable bbox via the canonical manifest helper."""
-    from lib.landmarks.manifest import bbox_for_sample
+    from lib.landmarks.datasets.manifest_io import bbox_for_sample
 
     return bbox_for_sample(sample, allow_truth_fallback=True)
 
 
-# Canonical fusion helper now lives in lib.landmarks.search.fusion_variants.
-from lib.landmarks.search.fusion_variants import fuse_variant as _fuse_variant_impl
+# Canonical fusion helper now lives in lib.landmarks.core.fusion_variants.
+from lib.landmarks.core.fusion_variants import fuse_variant as _fuse_variant_impl
 
 
 def _fuse_variant(
@@ -75,7 +75,7 @@ def _fuse_variant(
     *,
     outlier_threshold: float,
 ) -> np.ndarray:
-    """Compatibility shim delegating to :func:`lib.landmarks.search.fusion_variants.fuse_variant`."""
+    """Compatibility shim delegating to :func:`lib.landmarks.core.fusion_variants.fuse_variant`."""
     return _fuse_variant_impl(
         variant,
         predictions,

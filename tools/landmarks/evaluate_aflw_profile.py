@@ -31,6 +31,14 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from lib.landmarks.cache.prediction_cache import DiskPredictionCache
+from lib.landmarks.core.fusion import (
+    normalize_weight_matrix,
+    plain_average,
+    static_weighted,
+)
+from lib.landmarks.core.rejection import weighted_median
+from lib.landmarks.core.schema import LandmarkPrediction
 from lib.landmarks.ensemble.strategies import (
     canonical_strategy,
     strategy_outlier_method,
@@ -41,9 +49,8 @@ from lib.landmarks.ensemble.weights import (
     load_weights,
     weights_matrix_for_models,
 )
-from lib.landmarks.eval.harness import LandmarkSample, load_manifest
-from lib.landmarks.eval.prediction_cache import DiskPredictionCache
-from lib.landmarks.eval.profile_metrics import (
+from lib.landmarks.evaluation.harness import LandmarkSample, load_manifest
+from lib.landmarks.evaluation.profile_metrics import (
     DEFAULT_NORMALIZER,
     DEFAULT_PCK_THRESHOLDS,
     DEFAULT_PRIORITY_FAILURE_REGIONS,
@@ -57,13 +64,6 @@ from lib.landmarks.eval.profile_metrics import (
     aggregate_profile_samples,
     evaluate_profile_sample,
 )
-from lib.landmarks.fusion import (
-    normalize_weight_matrix,
-    plain_average,
-    static_weighted,
-)
-from lib.landmarks.rejection import weighted_median
-from lib.landmarks.schema import LandmarkPrediction
 
 logger = logging.getLogger(__name__)
 

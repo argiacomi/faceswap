@@ -21,7 +21,7 @@ from __future__ import annotations
 import typing as T
 from dataclasses import dataclass
 
-from lib.landmarks.eval.effective_ensemble import DEFAULT_EFFECTIVE_MODELS_FLOOR
+from lib.landmarks.evaluation.effective_ensemble import DEFAULT_EFFECTIVE_MODELS_FLOOR
 from lib.landmarks.search.candidate_search import CandidateResult
 
 DEFAULT_REPORT_IMPROVEMENT_TOLERANCE: float = 0.001
@@ -99,7 +99,7 @@ class GeometryScore:
 
     The bucket-level fields (``worst_bucket``, ``worst_bucket_score``,
     ``worst_bucket_baseline_score``, ``per_bucket``) are populated by
-    :func:`lib.landmarks.search.geometry_candidate_eval.geometry_score_from_aggregate`
+    :func:`lib.landmarks.search.geometry_search.geometry_score_from_aggregate`
     so downstream artifacts (candidate_results.json, no_promotion.json)
     can persist the slice that drives ``max_bucket_regression_score``
     without recomputing anything.

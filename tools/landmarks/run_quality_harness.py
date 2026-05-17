@@ -11,7 +11,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from lib.landmarks.eval.harness import run_quality_harness
+from lib.landmarks.evaluation.harness import run_quality_harness
 
 
 def main(argv: list[str] | None = None) -> int:
