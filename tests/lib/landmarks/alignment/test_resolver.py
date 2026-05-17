@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Tests for :mod:`lib.landmarks.ensemble.alignment_resolver` (#78)."""
+"""Tests for :mod:`lib.landmarks.alignment.resolver` (#78)."""
 
 from __future__ import annotations
 
 import numpy as np
 import pytest
 
-from lib.landmarks.ensemble.alignment_resolver import (
+from lib.landmarks.alignment.resolver import (
     AlignmentResolverConfig,
     AlignmentResolverError,
     CandidateInput,

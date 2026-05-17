@@ -20,15 +20,15 @@ from lib.landmarks.adapters import (
     LandmarkAdapter,
     LandmarkAdapterConfig,
 )
-from lib.landmarks.coordinates import (
-    frame_to_normalized_crop,
-    roi_to_matrix,
-)
-from lib.landmarks.ensemble.alignment_resolver import (
+from lib.landmarks.alignment.resolver import (
     AlignmentResolverConfig,
     AlignmentResolverError,
     CandidateInput,
     resolve_alignment_geometry,
+)
+from lib.landmarks.coordinates import (
+    frame_to_normalized_crop,
+    roi_to_matrix,
 )
 from lib.landmarks.ensemble.outliers import weighted_median
 from lib.landmarks.ensemble.promoted_setup import (
