@@ -143,10 +143,6 @@ def _load_samples(
     return fit_samples, select_samples, report_samples
 
 
-# The candidate-aware fusion helper now lives in
-# lib.landmarks.core.fusion_variants. Re-exported here so the profile-
-# aggregate path below keeps the legacy name; new code should import from
-# :mod:`lib.landmarks.core.fusion_variants` directly.
 from lib.landmarks.core.fusion_variants import fuse_candidate as _fuse_for_profile
 
 
@@ -209,12 +205,17 @@ def _gate_config_from_args(args: argparse.Namespace) -> GateConfig:
         require_effective_ensemble=args.require_effective_ensemble,
         effective_models_floor=args.effective_models_floor,
         allow_single_model_baselines=args.allow_single_model_baselines,
+        allow_single_model_promotion=args.allow_single_model_promotion,
         require_geometry_improvement=args.require_geometry_improvement,
         max_catastrophic_geometry_failure_rate=args.max_catastrophic_geometry_failure_rate,
+        max_per_bucket_catastrophic_geometry_failure_rate=(
+            args.max_per_bucket_catastrophic_geometry_failure_rate
+        ),
         max_p95_transform_error=args.max_p95_transform_error,
         max_p95_crop_center_error=args.max_p95_crop_center_error,
         max_p95_roll_error=args.max_p95_roll_error,
         min_hull_iou=args.min_hull_iou,
+        min_per_bucket_p05_hull_iou=args.min_per_bucket_p05_hull_iou,
         max_hard_slice_regression_rate=args.max_hard_slice_regression_rate,
         allow_nme_only_promotion=args.allow_nme_only_promotion,
     )
@@ -234,10 +235,6 @@ def _candidate_models(results: T.Sequence[CandidateResult]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(model for result in results for model in result.candidate.models))
 
 
-# Geometry candidate-evaluation primitives live in lib.landmarks.search now.
-# These names are re-exported under the legacy ``_`` prefix so the rest of
-# the CLI doesn't need updating; new call sites should import directly from
-# :mod:`lib.landmarks.search.geometry_search`.
 from lib.landmarks.search.geometry_search import (
     build_geometry_context as _build_geometry_context,
 )
@@ -252,6 +249,7 @@ from lib.landmarks.search.geometry_search import (
 def _enumerate_search_candidates(args: argparse.Namespace) -> list[Candidate]:
     include_baselines = (
         args.include_single_model_baselines
+        or args.allow_single_model_promotion
         or args.require_effective_ensemble
         or args.require_report_improvement
         or args.max_overall_regression_nme is not None
@@ -287,14 +285,6 @@ def _geometry_per_candidate_payload(
     baseline_per_bucket: T.Mapping[str, float] | None,
     global_baseline_score: float | None,
 ) -> dict[str, dict[str, T.Any]]:
-    """Build the per-candidate geometry section persisted in candidate_results.json.
-
-    Surfaces every per-bucket diagnostic the search produced (overall score,
-    catastrophic rate, hull IoU mean/p05, crop-center P95, transform P95)
-    alongside the worst-bucket regression summary so downstream consumers
-    don't have to recompute anything to understand *which* slice drove a
-    candidate's ``max_bucket_regression_score``.
-    """
     payload: dict[str, dict[str, T.Any]] = {}
     for candidate_id, aggregate in geometry_aggregates.items():
         score = geometry_scores.get(candidate_id)
@@ -423,7 +413,9 @@ def _write_candidate_results(
                     "geometry_max_bucket_regression_score": geom["max_bucket_regression_score"],
                     "geometry_worst_bucket": geom["worst_bucket"],
                     "geometry_worst_bucket_score": geom["worst_bucket_score"],
-                    "geometry_worst_bucket_baseline_score": geom["worst_bucket_baseline_score"],
+                    "geometry_worst_bucket_baseline_score": geom[
+                        "worst_bucket_baseline_score"
+                    ],
                 }
             )
         rows.append(row)
@@ -445,11 +437,6 @@ def _write_candidate_results(
     return csv_path, json_path
 
 
-# The Markdown promotion report writer lives in
-# :mod:`lib.landmarks.search.promotion_reports` so other surfaces
-# (experiment runners, dry-run validators) can render the same format
-# without depending on this CLI. The local name keeps existing call
-# sites unchanged.
 from lib.landmarks.search.promotion_reports import (
     write_promotion_report as _write_promotion_report,  # noqa: F401
 )
@@ -546,12 +533,17 @@ def _write_no_promotion(
         "require_effective_ensemble": args.require_effective_ensemble,
         "effective_models_floor": args.effective_models_floor,
         "allow_single_model_baselines": args.allow_single_model_baselines,
+        "allow_single_model_promotion": args.allow_single_model_promotion,
         "require_geometry_improvement": args.require_geometry_improvement,
         "max_catastrophic_geometry_failure_rate": args.max_catastrophic_geometry_failure_rate,
+        "max_per_bucket_catastrophic_geometry_failure_rate": (
+            args.max_per_bucket_catastrophic_geometry_failure_rate
+        ),
         "max_p95_transform_error": args.max_p95_transform_error,
         "max_p95_crop_center_error": args.max_p95_crop_center_error,
         "max_p95_roll_error": args.max_p95_roll_error,
         "min_hull_iou": args.min_hull_iou,
+        "min_per_bucket_p05_hull_iou": args.min_per_bucket_p05_hull_iou,
         "max_hard_slice_regression_rate": args.max_hard_slice_regression_rate,
         "allow_nme_only_promotion": args.allow_nme_only_promotion,
     }
@@ -595,7 +587,24 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--no-progress", action="store_true")
     parser.add_argument("--include-single-model-baselines", action="store_true")
-    parser.add_argument("--allow-single-model-baselines", action="store_true")
+    parser.add_argument(
+        "--allow-single-model-baselines",
+        action="store_true",
+        help=(
+            "Deprecated alias for comparison-only single-model baselines. "
+            "Single-model outputs are not promotable unless "
+            "--allow-single-model-promotion is set."
+        ),
+    )
+    parser.add_argument(
+        "--allow-single-model-promotion",
+        action="store_true",
+        help=(
+            "Allow a single-model baseline to be written as best_setup.json. "
+            "Without this, baselines are used only for comparison and a baseline "
+            "winner is reported as no promotion."
+        ),
+    )
     parser.add_argument("--require-report-improvement", action="store_true")
     parser.add_argument(
         "--report-improvement-tolerance", type=float, default=DEFAULT_REPORT_IMPROVEMENT_TOLERANCE
@@ -621,23 +630,36 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--geometry-region-failure-threshold", type=float, default=0.05)
     parser.add_argument("--require-geometry-improvement", action="store_true")
     parser.add_argument("--max-catastrophic-geometry-failure-rate", type=float, default=None)
+    parser.add_argument(
+        "--max-per-bucket-catastrophic-geometry-failure-rate",
+        type=float,
+        default=None,
+    )
     parser.add_argument("--max-p95-transform-error", type=float, default=None)
     parser.add_argument("--max-p95-crop-center-error", type=float, default=None)
     parser.add_argument("--max-p95-roll-error", type=float, default=None)
     parser.add_argument("--min-hull-iou", type=float, default=None)
+    parser.add_argument("--min-per-bucket-p05-hull-iou", type=float, default=None)
     parser.add_argument("--max-hard-slice-regression-rate", type=float, default=None)
     parser.add_argument("--allow-nme-only-promotion", action="store_true")
     args = parser.parse_args(argv)
+
+    if args.allow_single_model_promotion:
+        args.include_single_model_baselines = True
+    if args.allow_single_model_baselines:
+        args.include_single_model_baselines = True
 
     if (
         any(
             getattr(args, name, None) is not None
             for name in (
                 "max_catastrophic_geometry_failure_rate",
+                "max_per_bucket_catastrophic_geometry_failure_rate",
                 "max_p95_transform_error",
                 "max_p95_crop_center_error",
                 "max_p95_roll_error",
                 "min_hull_iou",
+                "min_per_bucket_p05_hull_iou",
                 "max_hard_slice_regression_rate",
             )
         )
