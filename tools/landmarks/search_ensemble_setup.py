@@ -9,8 +9,10 @@ import json
 import sys
 import time
 import typing as T
+from dataclasses import dataclass
 from pathlib import Path
 
+import numpy as np
 from tqdm import tqdm
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -146,40 +148,79 @@ def _load_samples(
 from lib.landmarks.core.fusion_variants import fuse_candidate as _fuse_for_profile
 
 
+@dataclass(frozen=True)
+class _ProfileContextRow:
+    """Per-sample bundle reused across every candidate in the profile stage.
+
+    Avoids re-reading the GT NPY and the per-model cached predictions on
+    every (sample, candidate) pair the way the previous inline loop did.
+    Mirrors the geometry-context pattern in
+    :func:`lib.landmarks.alignment.geometry_context.build_geometry_context`.
+    """
+
+    sample: T.Any
+    truth: np.ndarray
+    bbox: tuple[float, float, float, float]
+    predictions: dict[str, np.ndarray]
+
+
+def _build_profile_context(
+    samples: T.Sequence[T.Any],
+    *,
+    cache: DiskPredictionCache,
+    models: T.Sequence[str],
+) -> list[_ProfileContextRow]:
+    """Preload truth landmarks, bbox, and per-model cached predictions once.
+
+    ``models`` should be the union of every candidate's model subset (the
+    profile evaluator looks each one up by name). Samples whose truth file
+    is unreadable are skipped silently to match the previous inline-loop
+    behavior.
+    """
+    rows: list[_ProfileContextRow] = []
+    for sample in samples:
+        try:
+            truth = np.load(sample.landmarks).astype("float32")
+        except OSError:
+            continue
+        bbox = sample.face_bbox
+        if bbox is None:
+            left, top = np.min(truth, axis=0)
+            right, bottom = np.max(truth, axis=0)
+            bbox = (float(left), float(top), float(right), float(bottom))
+        rows.append(
+            _ProfileContextRow(
+                sample=sample,
+                truth=truth,
+                bbox=bbox,
+                predictions={
+                    model: cache.read(sample.sample_id, model).landmarks for model in models
+                },
+            )
+        )
+    return rows
+
+
 def _candidate_profile_aggregate(
     result: CandidateResult,
     *,
-    samples: T.Sequence[T.Any],
-    cache: DiskPredictionCache,
+    context: T.Sequence[_ProfileContextRow],
     normalizer: str,
     region_failure_threshold: float,
     pck_thresholds: T.Sequence[float],
     priority_failure_regions: T.Sequence[str],
 ) -> ProfileAggregate:
-    import numpy as np
-
     per_sample: list[T.Any] = []
-    for sample in samples:
-        bbox = sample.face_bbox
-        try:
-            truth = np.load(sample.landmarks).astype("float32")
-        except OSError:
-            continue
-        if bbox is None:
-            left, top = np.min(truth, axis=0)
-            right, bottom = np.max(truth, axis=0)
-            bbox = (float(left), float(top), float(right), float(bottom))
-        cached_points = [
-            cache.read(sample.sample_id, m).landmarks for m in result.candidate.models
-        ]
+    for row in context:
+        cached_points = [row.predictions[m] for m in result.candidate.models]
         fused = _fuse_for_profile(result.candidate, cached_points, weights=result.weights)
         per_sample.append(
             evaluate_profile_sample(
                 fused,
-                truth,
-                sample_id=sample.sample_id,
-                face_bbox=bbox,
-                visibility=sample.visibility,
+                row.truth,
+                sample_id=row.sample.sample_id,
+                face_bbox=row.bbox,
+                visibility=row.sample.visibility,
                 normalizer_method=normalizer,
                 region_failure_threshold=region_failure_threshold,
                 priority_failure_regions=priority_failure_regions,
@@ -815,11 +856,19 @@ def main(argv: list[str] | None = None) -> int:
         )
 
         def _profile_eval() -> None:
+            # Preload truth + bbox + per-model predictions once per sample,
+            # then iterate candidates against the cached context. Avoids the
+            # previous O(N_candidates × N_samples) file-read fan-out — the
+            # NPY + prediction-cache reads are now O(N_samples) per stage.
+            context = _build_profile_context(
+                report_samples,
+                cache=cache,
+                models=_candidate_models(results),
+            )
             for result in results:
                 aggregate = _candidate_profile_aggregate(
                     result,
-                    samples=report_samples,
-                    cache=cache,
+                    context=context,
                     normalizer=args.profile_normalizer,
                     region_failure_threshold=args.profile_region_failure_threshold,
                     pck_thresholds=pck_thresholds,

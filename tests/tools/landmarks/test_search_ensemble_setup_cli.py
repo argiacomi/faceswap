@@ -716,3 +716,46 @@ def test_no_promotion_payload_includes_geometry_gate_fields(tmp_path: Path) -> N
     assert gate_config["require_geometry_improvement"] is True
     assert gate_config["max_catastrophic_geometry_failure_rate"] == -1.0
     assert gate_config["min_hull_iou"] == 2.0
+
+
+def test_search_profile_gate_runs_with_cached_context(tmp_path: Path) -> None:
+    """Profile gate path completes end-to-end after the context-cache refactor.
+
+    Locks the new ``_build_profile_context`` shape: the per-candidate
+    aggregate now reads truth/cache through the pre-built context, so any
+    bug in the context wiring would surface as a crash or wrong-shape
+    aggregate when the profile-eval stage runs.
+    """
+    fixture = _build_fixture(tmp_path)
+    output_dir = tmp_path / "search"
+    exit_code = search_main(
+        [
+            "--manifest",
+            str(fixture["manifest"]),
+            "--cache-dir",
+            str(fixture["cache"]),
+            "--splits",
+            str(fixture["splits"]),
+            "--models",
+            "hrnet,spiga,orformer",
+            "--model-subsets",
+            "all",
+            "--weight-generators",
+            "inverse_mean_error",
+            "--strategies",
+            "static_weighted",
+            "--output-dir",
+            str(output_dir),
+            "--include-single-model-baselines",
+            "--allow-single-model-baselines",
+            # Activate the profile gate so _profile_eval (and the cached
+            # context underneath it) actually runs in this test.
+            "--require-profile-improvement",
+        ]
+    )
+    # The fixture predictions may or may not beat the baseline profile
+    # score; what we lock here is that the cached-context path completes
+    # without error and emits a candidate_results.json. Either gate
+    # outcome (promote / no_promotion) proves the wiring is intact.
+    assert exit_code in (0, 1)
+    assert (output_dir / "candidate_results.json").is_file()
