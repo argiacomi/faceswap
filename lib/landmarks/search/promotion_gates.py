@@ -447,8 +447,11 @@ def apply_gates(
                         f"single-model report NME {report_nme:.6f} does not beat "
                         f"best single-model baseline {baseline_nme:.6f}"
                     )
-                if geometry is not None and baseline_geometry_score is not None:
-                    if geometry.overall_score >= baseline_geometry_score:
+                if (
+                    geometry is not None
+                    and baseline_geometry_score is not None
+                    and geometry.overall_score >= baseline_geometry_score
+                ):
                         failed_gates.append("single_model_does_not_beat_best_baseline_geometry")
                         failure_reasons.append(
                             f"single-model geometry score {geometry.overall_score:.6f} "
@@ -536,6 +539,9 @@ def no_promotion_payload(application: GateApplication, *, top_n: int = 5) -> dic
         "baseline_report_nme": application.baseline_report_nme,
         "baseline_profile_score": application.baseline_profile_score,
         "baseline_profile_region_failure_rate": application.baseline_profile_region_failure_rate,
+        "baseline_geometry_score": application.baseline_geometry_score,
+        "baseline_geometry_catastrophic_rate": application.baseline_geometry_catastrophic_rate,
+        "baseline_geometry_hull_iou": application.baseline_geometry_hull_iou,
         "top_failing_candidates": [outcome.to_payload() for outcome in failing],
         "passed_count": application.passed_count,
         "failed_count": application.failed_count,
