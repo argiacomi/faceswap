@@ -103,6 +103,9 @@ class CandidateMetrics:
     max_bucket_p95_nme_regression: float = 0.0
 
     def to_payload(self) -> dict[str, T.Any]:
+        # Keep the explicit ``max_*`` field names used by the gate framework,
+        # and expose concise aliases for report/JQ consumers that read the
+        # metrics payload directly.
         return {
             "sample_count": int(self.sample_count),
             "overall_nme": float(self.overall_nme),
@@ -115,8 +118,12 @@ class CandidateMetrics:
             ),
             "best_single_overall_mean_nme": float(self.best_single_overall_mean_nme),
             "best_single_overall_p95_nme": float(self.best_single_overall_p95_nme),
+            "best_single_overall_nme": float(self.best_single_overall_mean_nme),
+            "best_single_overall_p95_nme": float(self.best_single_overall_p95_nme),
             "max_mean_nme_regression": float(self.max_mean_nme_regression),
             "max_p95_nme_regression": float(self.max_p95_nme_regression),
+            "mean_nme_regression": float(self.max_mean_nme_regression),
+            "p95_nme_regression": float(self.max_p95_nme_regression),
             "max_bucket_mean_nme_regression": float(self.max_bucket_mean_nme_regression),
             "max_bucket_p95_nme_regression": float(self.max_bucket_p95_nme_regression),
             "per_bucket": {bucket: dict(metrics) for bucket, metrics in self.per_bucket.items()},
