@@ -452,11 +452,11 @@ def apply_gates(
                     and baseline_geometry_score is not None
                     and geometry.overall_score >= baseline_geometry_score
                 ):
-                        failed_gates.append("single_model_does_not_beat_best_baseline_geometry")
-                        failure_reasons.append(
-                            f"single-model geometry score {geometry.overall_score:.6f} "
-                            f"does not beat best single-model baseline {baseline_geometry_score:.6f}"
-                        )
+                    failed_gates.append("single_model_does_not_beat_best_baseline_geometry")
+                    failure_reasons.append(
+                        f"single-model geometry score {geometry.overall_score:.6f} "
+                        f"does not beat best single-model baseline {baseline_geometry_score:.6f}"
+                    )
 
         passed = not failed_gates
         outcome = GateOutcome(
