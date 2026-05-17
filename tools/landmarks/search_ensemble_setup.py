@@ -254,6 +254,8 @@ def _enumerate_search_candidates(args: argparse.Namespace) -> list[Candidate]:
         or args.require_report_improvement
         or args.max_overall_regression_nme is not None
         or args.require_profile_improvement
+        or args.include_geometry_metrics
+        or args.objective == GEOMETRY_OBJECTIVE
     )
     crop_scales = _parse_csv_floats(args.crop_scale)
     if not crop_scales:
@@ -668,6 +670,8 @@ def main(argv: list[str] | None = None) -> int:
         args.include_geometry_metrics = True
     if args.objective == GEOMETRY_OBJECTIVE and not args.allow_nme_only_promotion:
         args.include_geometry_metrics = True
+    if args.include_geometry_metrics or args.objective == GEOMETRY_OBJECTIVE:
+        args.include_single_model_baselines = True
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -709,6 +713,10 @@ def main(argv: list[str] | None = None) -> int:
                     dict.fromkeys(float(result.candidate.crop_scale) for result in results)
                 ),
             )
+            if not context:
+                raise ValueError(
+                    "geometry_evaluate_candidates built zero context rows; check manifest truth files, face bboxes, and prediction cache"
+                )
             for result in _geometry_candidate_progress(results, enabled=_show_progress(args)):
                 aggregate = _evaluate_candidate_geometry(
                     result,
