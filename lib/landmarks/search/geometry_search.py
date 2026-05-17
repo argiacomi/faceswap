@@ -53,6 +53,11 @@ def evaluate_candidate_geometry(
     back to building a fresh summary if the search asks for a crop scale
     that wasn't precached (unit tests, ad-hoc calls).
     """
+    if not context:
+        raise ValueError(
+            "geometry candidate evaluation requires at least one context row; "
+            "check the manifest, truth landmarks, bboxes, and prediction cache"
+        )
     crop_scale = float(result.candidate.crop_scale)
     key = crop_scale_key(crop_scale)
     per_sample: list[T.Any] = []
@@ -100,6 +105,10 @@ def geometry_score_from_aggregate(
     rather than the global minimum. When omitted, ``baseline_score`` is used
     as the reference for every bucket.
     """
+    if aggregate.sample_count <= 0:
+        raise ValueError(
+            f"geometry aggregate {aggregate.label!r} has zero samples; refusing to score"
+        )
     worst_bucket = ""
     worst_bucket_score = 0.0
     worst_bucket_baseline = 0.0
