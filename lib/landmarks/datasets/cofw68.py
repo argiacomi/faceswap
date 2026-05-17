@@ -156,7 +156,12 @@ def _cofw_bbox_xywh_to_ltrb(bbox: T.Sequence[float]) -> list[float]:
 
 
 def _cofw68_json_current(path: Path) -> bool:
-    """Return whether an existing COFW-68 JSON has normalized bbox metadata."""
+    """Return whether an existing COFW-68 JSON has normalized bbox metadata.
+
+    Small cached fixtures may omit benchmark bbox metadata entirely; those are
+    still current. Only entries that declare the COFW benchmark bbox source are
+    checked for the post-fix ltrb format marker.
+    """
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -164,23 +169,21 @@ def _cofw68_json_current(path: Path) -> bool:
     samples = payload.get("samples", payload) if isinstance(payload, dict) else payload
     if not isinstance(samples, list):
         return False
-    saw_benchmark_bbox = False
     for sample in samples:
         if not isinstance(sample, dict):
-            continue
+            return False
         metadata = sample.get("metadata") if isinstance(sample.get("metadata"), dict) else {}
         if metadata.get("face_bbox_source") != "cofw68_benchmark":
             continue
-        saw_benchmark_bbox = True
         if metadata.get("face_bbox_format") != "ltrb":
             return False
         bbox = metadata.get("face_bbox")
-        if not isinstance(bbox, list | tuple) or len(bbox) < 4:
+        if not isinstance(bbox, (list, tuple)) or len(bbox) < 4:
             return False
         left, top, right, bottom = (float(value) for value in bbox[:4])
         if right <= left or bottom <= top:
             return False
-    return saw_benchmark_bbox
+    return True
 
 
 def _load_bboxes(annotation_root: Path, count: int) -> list[list[float] | None]:
