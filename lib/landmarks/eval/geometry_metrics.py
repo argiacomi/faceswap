@@ -81,22 +81,14 @@ def _normalize_bbox(
 ) -> tuple[float, float, float, float] | None:
     """Return bbox as ``(left, top, right, bottom)`` when possible.
 
-    Most geometry code expects positive-width ltrb boxes, but COFW-68 benchmark
-    exports use ``(x, y, width, height)``. Normalize likely xywh values here so
-    geometry evaluation can consume mixed-source manifests without requiring a
-    one-off manifest patch.
+    Thin wrapper over :func:`lib.landmarks.manifest.coerce_bbox` — the
+    canonical xywh / ltrb coercion lives in :mod:`lib.landmarks.manifest`
+    so every layer of the pipeline normalizes the same way (the COFW-68
+    xywh shape used to silently drift between layers).
     """
-    if bbox is None:
-        return None
-    try:
-        left, top, right, bottom = (float(value) for value in bbox[:4])
-    except (TypeError, ValueError):
-        return None
-    if right > left and bottom > top:
-        return (left, top, right, bottom)
-    if right > 0 and bottom > 0:
-        return (left, top, left + right, top + bottom)
-    return None
+    from lib.landmarks.manifest import coerce_bbox
+
+    return coerce_bbox(bbox)
 
 
 def aligned_face_size_from_summary(summary: AlignmentSummary) -> float:

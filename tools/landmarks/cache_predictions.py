@@ -138,23 +138,17 @@ def _checkpoint_value(args: argparse.Namespace) -> str:
 
 
 def _bbox_values(raw: T.Any) -> tuple[float, float, float, float] | None:
-    """Normalize common bbox payloads to ``left, top, right, bottom``."""
-    if raw is None:
-        return None
-    if isinstance(raw, dict):
-        if all(key in raw for key in ("left", "top", "right", "bottom")):
-            return tuple(float(raw[key]) for key in ("left", "top", "right", "bottom"))  # type: ignore[return-value]
-        if all(key in raw for key in ("x", "y", "w", "h")):
-            left = float(raw["x"])
-            top = float(raw["y"])
-            return left, top, left + float(raw["w"]), top + float(raw["h"])
-    values = np.asarray(raw, dtype="float32").reshape(-1)
-    if values.size < 4:
-        return None
-    left, top, third, fourth = (float(value) for value in values[:4])
-    if third <= left or fourth <= top:
-        return left, top, left + max(third, 1.0), top + max(fourth, 1.0)
-    return left, top, third, fourth
+    """Normalize common bbox payloads to ``left, top, right, bottom``.
+
+    Thin wrapper over :func:`lib.landmarks.manifest.coerce_bbox` kept under
+    the legacy name so the cache-build code below stays unchanged. The
+    canonical coercer handles dicts (ltrb/xywh keys) plus 4+ length
+    sequences, including the xywh-fallback case the cache previously
+    open-coded.
+    """
+    from lib.landmarks.manifest import coerce_bbox
+
+    return coerce_bbox(raw)
 
 
 def _entry_face_bbox(entry: dict[str, T.Any]) -> tuple[float, float, float, float] | None:

@@ -99,15 +99,10 @@ def _fuse_variant(
 
 
 def _bbox_for_sample(sample: LandmarkSample) -> tuple[float, float, float, float] | None:
-    if sample.face_bbox is not None:
-        return sample.face_bbox
-    try:
-        truth = np.load(sample.landmarks).astype("float32")
-    except OSError:
-        return None
-    left, top = np.min(truth, axis=0)
-    right, bottom = np.max(truth, axis=0)
-    return (float(left), float(top), float(right), float(bottom))
+    """Resolve a usable bbox via the canonical manifest helper."""
+    from lib.landmarks.manifest import bbox_for_sample
+
+    return bbox_for_sample(sample, allow_truth_fallback=True)
 
 
 def _truth_landmarks(sample: LandmarkSample) -> np.ndarray:
