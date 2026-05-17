@@ -277,3 +277,83 @@ def test_geometry_score_from_aggregate_zero_clamp_when_no_regression() -> None:
     # Every bucket is at or below baseline → no regression.
     score = geometry_score_from_aggregate(aggregate, baseline_score=0.10)
     assert score.max_bucket_regression_score == pytest.approx(0.0)
+
+
+def _aggregate_with_buckets(per_bucket: dict[str, dict[str, float]]) -> GeometryAggregate:
+    return GeometryAggregate(
+        label="ensemble",
+        sample_count=1,
+        overall_score=0.2,
+        catastrophic_failure_rate=0.0,
+        mean_scale_delta=0.0,
+        mean_relative_scale_delta=0.0,
+        mean_rotation_degrees_delta=0.0,
+        mean_translation_normalized=0.0,
+        p95_translation_normalized=0.0,
+        p95_rotation_degrees_delta=0.0,
+        p95_relative_scale_delta=0.0,
+        p95_roll_degrees_delta=0.0,
+        mean_roi_iou=1.0,
+        p05_roi_iou=1.0,
+        mean_roi_center_normalized=0.0,
+        p95_roi_center_normalized=0.0,
+        mean_hull_iou=1.0,
+        p05_hull_iou=1.0,
+        mean_pitch_delta_degrees=0.0,
+        mean_yaw_delta_degrees=0.0,
+        mean_roll_delta_degrees=0.0,
+        mean_average_distance_delta=0.0,
+        per_region_error={},
+        per_region_failure_rate={},
+        per_bucket=per_bucket,
+    )
+
+
+def test_geometry_score_from_aggregate_records_worst_bucket_identity() -> None:
+    """``worst_bucket`` is the bucket driving ``max_bucket_regression_score``."""
+    aggregate = _aggregate_with_buckets(
+        {
+            "ds:clean": {"overall_score": 0.05},
+            "ds:profile": {"overall_score": 0.25},
+        }
+    )
+    score = geometry_score_from_aggregate(aggregate, baseline_score=0.10)
+    assert score.worst_bucket == "ds:profile"
+    assert score.worst_bucket_score == pytest.approx(0.25)
+    assert score.worst_bucket_baseline_score == pytest.approx(0.10)
+    assert score.max_bucket_regression_score == pytest.approx(0.15)
+
+
+def test_geometry_score_from_aggregate_per_bucket_baseline_overrides_scalar() -> None:
+    """When per-bucket baselines are supplied, each bucket uses its own reference."""
+    aggregate = _aggregate_with_buckets(
+        {
+            "ds:clean": {"overall_score": 0.20},
+            "ds:profile": {"overall_score": 0.40},
+        }
+    )
+    # Scalar baseline alone would flag ``ds:profile`` as worst by 0.30 over 0.10;
+    # the per-bucket baseline lifts the profile reference to 0.38 (worst single
+    # model on profile faces was already 0.38), so the clean bucket — which
+    # regressed by 0.20 vs its 0.0 baseline — becomes the worst slice.
+    score = geometry_score_from_aggregate(
+        aggregate,
+        baseline_score=0.10,
+        baseline_per_bucket={"ds:clean": 0.0, "ds:profile": 0.38},
+    )
+    assert score.worst_bucket == "ds:clean"
+    assert score.worst_bucket_score == pytest.approx(0.20)
+    assert score.worst_bucket_baseline_score == pytest.approx(0.0)
+    assert score.max_bucket_regression_score == pytest.approx(0.20)
+
+
+def test_geometry_score_from_aggregate_exposes_per_bucket_map() -> None:
+    """The score carries a defensive copy of the per-bucket payload for persistence."""
+    per_bucket = {"ds:clean": {"overall_score": 0.05, "p95_translation_normalized": 0.02}}
+    aggregate = _aggregate_with_buckets(per_bucket)
+    score = geometry_score_from_aggregate(aggregate, baseline_score=0.10)
+    assert score.per_bucket is not None
+    assert score.per_bucket["ds:clean"]["p95_translation_normalized"] == pytest.approx(0.02)
+    # Defensive copy: mutating the source should not affect the score payload.
+    per_bucket["ds:clean"]["overall_score"] = 99.0
+    assert score.per_bucket["ds:clean"]["overall_score"] == pytest.approx(0.05)

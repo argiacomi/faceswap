@@ -324,6 +324,90 @@ def test_search_with_geometry_gate_writes_no_promotion(tmp_path: Path) -> None:
     assert not (output_dir / "best_setup.json").exists()
 
 
+def test_search_persists_per_candidate_geometry_payload(tmp_path: Path) -> None:
+    """``candidate_results.{csv,json}`` carry per-bucket geometry diagnostics.
+
+    Once any geometry gate fires, the search builds per-candidate geometry
+    aggregates and the worst-bucket regression summary; persisting both so
+    downstream consumers don't have to recompute them is the contract this
+    test locks in.
+    """
+    fixture = _build_fixture(tmp_path)
+    output_dir = tmp_path / "search"
+    exit_code = search_main(
+        [
+            "--manifest",
+            str(fixture["manifest"]),
+            "--cache-dir",
+            str(fixture["cache"]),
+            "--splits",
+            str(fixture["splits"]),
+            "--models",
+            "hrnet,spiga,orformer",
+            "--model-subsets",
+            "all",
+            "--weight-generators",
+            "inverse_mean_error",
+            "--strategies",
+            "static_weighted",
+            "--output-dir",
+            str(output_dir),
+            "--include-single-model-baselines",
+            "--allow-single-model-baselines",
+            "--max-catastrophic-geometry-failure-rate",
+            "1.0",
+            "--min-hull-iou",
+            "0.0",
+        ]
+    )
+    assert exit_code == 0
+
+    payload = json.loads((output_dir / "candidate_results.json").read_text(encoding="utf-8"))
+    assert "geometry_per_candidate" in payload
+    geom = payload["geometry_per_candidate"]
+    assert "__baseline__" in geom
+    # Drop the baseline metadata key; every remaining entry is a candidate.
+    candidate_ids = [key for key in geom if key != "__baseline__"]
+    assert candidate_ids
+    sample = geom[candidate_ids[0]]
+    required_fields = {
+        "overall_score",
+        "catastrophic_failure_rate",
+        "p95_translation_normalized",
+        "p95_roi_center_normalized",
+        "mean_hull_iou",
+        "p05_hull_iou",
+        "max_bucket_regression_score",
+        "worst_bucket",
+        "worst_bucket_score",
+        "worst_bucket_baseline_score",
+        "per_bucket",
+    }
+    assert required_fields.issubset(sample), sorted(required_fields - set(sample))
+    assert sample["per_bucket"]
+    bucket_payload = next(iter(sample["per_bucket"].values()))
+    required_bucket_fields = {
+        "overall_score",
+        "catastrophic_failure_rate",
+        "p95_translation_normalized",
+        "p95_roi_center_normalized",
+        "mean_hull_iou",
+        "p05_hull_iou",
+    }
+    assert required_bucket_fields.issubset(bucket_payload), sorted(
+        required_bucket_fields - set(bucket_payload)
+    )
+
+    csv_text = (output_dir / "candidate_results.csv").read_text(encoding="utf-8")
+    header = csv_text.splitlines()[0].split(",")
+    for column in (
+        "geometry_overall_score",
+        "geometry_max_bucket_regression_score",
+        "geometry_worst_bucket",
+    ):
+        assert column in header, header
+
+
 def test_search_with_geometry_gate_promotes_when_thresholds_met(tmp_path: Path) -> None:
     """A relaxed geometry gate still finds a passing candidate and writes the setup."""
     fixture = _build_fixture(tmp_path)

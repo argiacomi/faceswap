@@ -278,15 +278,81 @@ def _enumerate_search_candidates(args: argparse.Namespace) -> list[Candidate]:
     return candidates
 
 
+def _geometry_per_candidate_payload(
+    *,
+    geometry_aggregates: T.Mapping[str, GeometryAggregate],
+    geometry_scores: T.Mapping[str, GeometryScore],
+    baseline_per_bucket: T.Mapping[str, float] | None,
+    global_baseline_score: float | None,
+) -> dict[str, dict[str, T.Any]]:
+    """Build the per-candidate geometry section persisted in candidate_results.json.
+
+    Surfaces every per-bucket diagnostic the search produced (overall score,
+    catastrophic rate, hull IoU mean/p05, crop-center P95, transform P95)
+    alongside the worst-bucket regression summary so downstream consumers
+    don't have to recompute anything to understand *which* slice drove a
+    candidate's ``max_bucket_regression_score``.
+    """
+    payload: dict[str, dict[str, T.Any]] = {}
+    for candidate_id, aggregate in geometry_aggregates.items():
+        score = geometry_scores.get(candidate_id)
+        payload[candidate_id] = {
+            "overall_score": aggregate.overall_score,
+            "catastrophic_failure_rate": aggregate.catastrophic_failure_rate,
+            "p95_translation_normalized": aggregate.p95_translation_normalized,
+            "p95_roi_center_normalized": aggregate.p95_roi_center_normalized,
+            "p95_roll_degrees_delta": aggregate.p95_roll_degrees_delta,
+            "mean_hull_iou": aggregate.mean_hull_iou,
+            "p05_hull_iou": aggregate.p05_hull_iou,
+            "max_bucket_regression_score": (
+                float(score.max_bucket_regression_score) if score is not None else 0.0
+            ),
+            "worst_bucket": score.worst_bucket if score is not None else "",
+            "worst_bucket_score": (float(score.worst_bucket_score) if score is not None else 0.0),
+            "worst_bucket_baseline_score": (
+                float(score.worst_bucket_baseline_score) if score is not None else 0.0
+            ),
+            "per_bucket": {
+                bucket: dict(values) for bucket, values in aggregate.per_bucket.items()
+            },
+        }
+    if payload:
+        payload["__baseline__"] = {
+            "global_baseline_score": (
+                float(global_baseline_score) if global_baseline_score is not None else None
+            ),
+            "per_bucket_baseline_score": (
+                {bucket: float(value) for bucket, value in baseline_per_bucket.items()}
+                if baseline_per_bucket is not None
+                else None
+            ),
+        }
+    return payload
+
+
 def _write_candidate_results(
     output_dir: Path,
     results: T.Sequence[CandidateResult],
     *,
     objective: str,
     regression_epsilon_nme: float,
+    geometry_aggregates: T.Mapping[str, GeometryAggregate] | None = None,
+    geometry_scores: T.Mapping[str, GeometryScore] | None = None,
+    baseline_per_bucket: T.Mapping[str, float] | None = None,
+    global_baseline_score: float | None = None,
 ) -> tuple[Path, Path]:
     csv_path = output_dir / "candidate_results.csv"
     json_path = output_dir / "candidate_results.json"
+    geometry_payload = (
+        _geometry_per_candidate_payload(
+            geometry_aggregates=geometry_aggregates,
+            geometry_scores=geometry_scores or {},
+            baseline_per_bucket=baseline_per_bucket,
+            global_baseline_score=global_baseline_score,
+        )
+        if geometry_aggregates
+        else {}
+    )
     fieldnames = [
         "rank",
         "candidate_id",
@@ -304,44 +370,72 @@ def _write_candidate_results(
         "best_single_model",
         "weights_hash",
     ]
+    if geometry_payload:
+        fieldnames.extend(
+            [
+                "geometry_overall_score",
+                "geometry_catastrophic_failure_rate",
+                "geometry_p95_translation_normalized",
+                "geometry_p95_roi_center_normalized",
+                "geometry_mean_hull_iou",
+                "geometry_p05_hull_iou",
+                "geometry_max_bucket_regression_score",
+                "geometry_worst_bucket",
+                "geometry_worst_bucket_score",
+                "geometry_worst_bucket_baseline_score",
+            ]
+        )
     rows = []
     for rank, result in enumerate(results, start=1):
-        rows.append(
-            {
-                "rank": rank,
-                "candidate_id": result.candidate_id,
-                "score": result.score,
-                "objective": result.objective,
-                "models": "|".join(result.candidate.models),
-                "weight_generator": result.candidate.weight_generator,
-                "strategy": result.candidate.strategy,
-                "outlier_threshold": ""
-                if result.candidate.outlier_threshold is None
-                else result.candidate.outlier_threshold,
-                "overall_nme": result.metrics.overall_nme,
-                "failure_rate": result.metrics.failure_rate,
-                "auc": result.metrics.auc,
-                "regression_rate_vs_best_single": result.metrics.regression_rate_vs_best_single,
-                "bucket_regression_rate_vs_best_single": result.metrics.bucket_regression_rate_vs_best_single,
-                "best_single_model": result.metrics.best_single_model,
-                "weights_hash": result.weights_hash,
-            }
-        )
+        row = {
+            "rank": rank,
+            "candidate_id": result.candidate_id,
+            "score": result.score,
+            "objective": result.objective,
+            "models": "|".join(result.candidate.models),
+            "weight_generator": result.candidate.weight_generator,
+            "strategy": result.candidate.strategy,
+            "outlier_threshold": ""
+            if result.candidate.outlier_threshold is None
+            else result.candidate.outlier_threshold,
+            "overall_nme": result.metrics.overall_nme,
+            "failure_rate": result.metrics.failure_rate,
+            "auc": result.metrics.auc,
+            "regression_rate_vs_best_single": result.metrics.regression_rate_vs_best_single,
+            "bucket_regression_rate_vs_best_single": result.metrics.bucket_regression_rate_vs_best_single,
+            "best_single_model": result.metrics.best_single_model,
+            "weights_hash": result.weights_hash,
+        }
+        geom = geometry_payload.get(result.candidate_id) if geometry_payload else None
+        if geom is not None:
+            row.update(
+                {
+                    "geometry_overall_score": geom["overall_score"],
+                    "geometry_catastrophic_failure_rate": geom["catastrophic_failure_rate"],
+                    "geometry_p95_translation_normalized": geom["p95_translation_normalized"],
+                    "geometry_p95_roi_center_normalized": geom["p95_roi_center_normalized"],
+                    "geometry_mean_hull_iou": geom["mean_hull_iou"],
+                    "geometry_p05_hull_iou": geom["p05_hull_iou"],
+                    "geometry_max_bucket_regression_score": geom["max_bucket_regression_score"],
+                    "geometry_worst_bucket": geom["worst_bucket"],
+                    "geometry_worst_bucket_score": geom["worst_bucket_score"],
+                    "geometry_worst_bucket_baseline_score": geom["worst_bucket_baseline_score"],
+                }
+            )
+        rows.append(row)
     with csv_path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
+    json_doc: dict[str, T.Any] = {
+        "objective": objective,
+        "regression_epsilon_nme": regression_epsilon_nme,
+        "candidates": [result.to_payload() for result in results],
+    }
+    if geometry_payload:
+        json_doc["geometry_per_candidate"] = geometry_payload
     json_path.write_text(
-        json.dumps(
-            {
-                "objective": objective,
-                "regression_epsilon_nme": regression_epsilon_nme,
-                "candidates": [result.to_payload() for result in results],
-            },
-            indent=2,
-            sort_keys=True,
-        )
-        + "\n",
+        json.dumps(json_doc, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
     return csv_path, json_path
@@ -504,10 +598,21 @@ def _write_no_promotion(
     *,
     args: argparse.Namespace,
     results: T.Sequence[CandidateResult],
+    geometry_aggregates: T.Mapping[str, GeometryAggregate] | None = None,
+    geometry_scores: T.Mapping[str, GeometryScore] | None = None,
+    baseline_per_bucket: T.Mapping[str, float] | None = None,
+    global_baseline_score: float | None = None,
 ) -> Path:
     payload = no_promotion_payload(application)
     payload["objective"] = args.objective
     payload["evaluated_candidates"] = len(results)
+    if geometry_aggregates:
+        payload["geometry_per_candidate"] = _geometry_per_candidate_payload(
+            geometry_aggregates=geometry_aggregates,
+            geometry_scores=geometry_scores or {},
+            baseline_per_bucket=baseline_per_bucket,
+            global_baseline_score=global_baseline_score,
+        )
     payload["gate_config"] = {
         "require_report_improvement": args.require_report_improvement,
         "report_improvement_tolerance": args.report_improvement_tolerance,
@@ -633,16 +738,19 @@ def main(argv: list[str] | None = None) -> int:
 
     gate_config = _gate_config_from_args(args)
     geometry_scores: dict[str, GeometryScore] = {}
+    geometry_aggregates: dict[str, GeometryAggregate] = {}
+    geometry_baseline_per_bucket: dict[str, float] = {}
+    geometry_global_baseline_score: float | None = None
     if _gates_need_geometry(gate_config, args):
 
         def _geometry_eval() -> None:
+            nonlocal geometry_global_baseline_score
             context = _build_geometry_context(
                 select_samples,
                 cache=cache,
                 models=_candidate_models(results),
                 aligned_size=args.geometry_aligned_size,
             )
-            interim: dict[str, GeometryAggregate] = {}
             for result in _geometry_candidate_progress(results, enabled=_show_progress(args)):
                 aggregate = _evaluate_candidate_geometry(
                     result,
@@ -650,17 +758,28 @@ def main(argv: list[str] | None = None) -> int:
                     aligned_size=args.geometry_aligned_size,
                     region_failure_threshold=args.geometry_region_failure_threshold,
                 )
-                interim[result.candidate_id] = aggregate
-            baseline_score = None
+                geometry_aggregates[result.candidate_id] = aggregate
+            baseline_score: float | None = None
             for result in results:
-                if result.is_single_model_baseline:
-                    score = interim[result.candidate_id].overall_score
-                    baseline_score = (
-                        score if baseline_score is None else min(baseline_score, score)
-                    )
-            for candidate_id, aggregate in interim.items():
+                if not result.is_single_model_baseline:
+                    continue
+                aggregate = geometry_aggregates[result.candidate_id]
+                baseline_score = (
+                    aggregate.overall_score
+                    if baseline_score is None
+                    else min(baseline_score, aggregate.overall_score)
+                )
+                for bucket, values in aggregate.per_bucket.items():
+                    bucket_score = float(values.get("overall_score", 0.0))
+                    current = geometry_baseline_per_bucket.get(bucket)
+                    if current is None or bucket_score < current:
+                        geometry_baseline_per_bucket[bucket] = bucket_score
+            geometry_global_baseline_score = baseline_score
+            for candidate_id, aggregate in geometry_aggregates.items():
                 geometry_scores[candidate_id] = _geometry_score_from_aggregate(
-                    aggregate, baseline_score=baseline_score
+                    aggregate,
+                    baseline_score=baseline_score,
+                    baseline_per_bucket=geometry_baseline_per_bucket or None,
                 )
 
         _stage("geometry_evaluate_candidates", _geometry_eval)
@@ -720,6 +839,10 @@ def main(argv: list[str] | None = None) -> int:
             results,
             objective=args.objective,
             regression_epsilon_nme=args.regression_epsilon_nme,
+            geometry_aggregates=geometry_aggregates or None,
+            geometry_scores=geometry_scores or None,
+            baseline_per_bucket=geometry_baseline_per_bucket or None,
+            global_baseline_score=geometry_global_baseline_score,
         ),
     )
 
@@ -738,7 +861,14 @@ def main(argv: list[str] | None = None) -> int:
             no_promotion_path = _stage(
                 "write_no_promotion",
                 lambda: _write_no_promotion(
-                    output_dir, gate_application, args=args, results=results
+                    output_dir,
+                    gate_application,
+                    args=args,
+                    results=results,
+                    geometry_aggregates=geometry_aggregates or None,
+                    geometry_scores=geometry_scores or None,
+                    baseline_per_bucket=geometry_baseline_per_bucket or None,
+                    global_baseline_score=geometry_global_baseline_score,
                 ),
             )
             print(f"No candidate passed the configured promotion gates; see {no_promotion_path}")

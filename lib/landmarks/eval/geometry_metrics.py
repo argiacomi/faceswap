@@ -427,6 +427,10 @@ def aggregate_geometry_samples(
         )
         bucket_rotation = np.array([s.matrix_delta.rotation_degrees_delta for s in bucket_samples])
         bucket_roi = np.array([s.roi_delta.iou for s in bucket_samples])
+        bucket_roi_center = np.array(
+            [s.roi_delta.center_normalized_distance for s in bucket_samples]
+        )
+        bucket_hull = np.array([s.hull_iou for s in bucket_samples])
         per_bucket_payload[bucket] = {
             "sample_count": float(len(bucket_samples)),
             "overall_score": float(bucket_overall.mean()),
@@ -435,6 +439,10 @@ def aggregate_geometry_samples(
             "p95_translation_normalized": float(np.percentile(bucket_translation, 95)),
             "mean_rotation_degrees_delta": float(bucket_rotation.mean()),
             "mean_roi_iou": float(bucket_roi.mean()),
+            "mean_roi_center_normalized": float(bucket_roi_center.mean()),
+            "p95_roi_center_normalized": float(np.percentile(bucket_roi_center, 95)),
+            "mean_hull_iou": float(bucket_hull.mean()),
+            "p05_hull_iou": float(np.percentile(bucket_hull, 5)),
         }
 
     roi_with_diag = [s for s in samples if s.roi_diagnostics is not None]

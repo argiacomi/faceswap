@@ -95,7 +95,15 @@ class ProfileScore:
 
 @dataclass(frozen=True)
 class GeometryScore:
-    """GT-derived geometry per-candidate inputs to the gate framework."""
+    """GT-derived geometry per-candidate inputs to the gate framework.
+
+    The bucket-level fields (``worst_bucket``, ``worst_bucket_score``,
+    ``worst_bucket_baseline_score``, ``per_bucket``) are populated by
+    :func:`lib.landmarks.search.geometry_candidate_eval.geometry_score_from_aggregate`
+    so downstream artifacts (candidate_results.json, no_promotion.json)
+    can persist the slice that drives ``max_bucket_regression_score``
+    without recomputing anything.
+    """
 
     overall_score: float
     catastrophic_failure_rate: float
@@ -105,6 +113,10 @@ class GeometryScore:
     mean_hull_iou: float
     p05_hull_iou: float
     max_bucket_regression_score: float = 0.0
+    worst_bucket: str = ""
+    worst_bucket_score: float = 0.0
+    worst_bucket_baseline_score: float = 0.0
+    per_bucket: T.Mapping[str, T.Mapping[str, float]] | None = None
 
 
 @dataclass(frozen=True)

@@ -134,22 +134,39 @@ def geometry_score_from_aggregate(
     aggregate: GeometryAggregate,
     *,
     baseline_score: float | None,
+    baseline_per_bucket: T.Mapping[str, float] | None = None,
 ) -> GeometryScore:
     """Pack a :class:`GeometryAggregate` into the gate framework's score shape.
 
     ``baseline_score`` is the lowest single-model overall_score across the
     same context; bucket scores above it become the
     ``max_bucket_regression_score`` the hard-slice gate consumes.
+
+    ``baseline_per_bucket`` lets the caller supply per-bucket baseline scores
+    (e.g., the best single-model score per scenario bucket) so the worst-
+    bucket regression is reported against the bucket-specific reference
+    rather than the global minimum. When omitted, ``baseline_score`` is used
+    as the reference for every bucket.
     """
-    if aggregate.per_bucket:
-        max_bucket = max(
-            float(values.get("overall_score", 0.0)) for values in aggregate.per_bucket.values()
-        )
-    else:
-        max_bucket = 0.0
-    max_bucket_regression = (
-        max(0.0, max_bucket - baseline_score) if baseline_score is not None else 0.0
-    )
+    worst_bucket = ""
+    worst_bucket_score = 0.0
+    worst_bucket_baseline = 0.0
+    max_bucket_regression = 0.0
+    if aggregate.per_bucket and baseline_score is not None:
+        for bucket, values in aggregate.per_bucket.items():
+            bucket_score = float(values.get("overall_score", 0.0))
+            bucket_baseline = (
+                float(baseline_per_bucket.get(bucket, baseline_score))
+                if baseline_per_bucket is not None
+                else baseline_score
+            )
+            regression = max(0.0, bucket_score - bucket_baseline)
+            if regression > max_bucket_regression or worst_bucket == "":
+                worst_bucket = bucket
+                worst_bucket_score = bucket_score
+                worst_bucket_baseline = bucket_baseline
+                if regression > max_bucket_regression:
+                    max_bucket_regression = regression
     return GeometryScore(
         overall_score=aggregate.overall_score,
         catastrophic_failure_rate=aggregate.catastrophic_failure_rate,
@@ -159,6 +176,12 @@ def geometry_score_from_aggregate(
         mean_hull_iou=aggregate.mean_hull_iou,
         p05_hull_iou=aggregate.p05_hull_iou,
         max_bucket_regression_score=max_bucket_regression,
+        worst_bucket=worst_bucket,
+        worst_bucket_score=worst_bucket_score,
+        worst_bucket_baseline_score=worst_bucket_baseline,
+        per_bucket={bucket: dict(values) for bucket, values in aggregate.per_bucket.items()}
+        if aggregate.per_bucket
+        else None,
     )
 
 
