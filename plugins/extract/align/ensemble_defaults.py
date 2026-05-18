@@ -178,24 +178,7 @@ secondary_hard_case_strategy = ConfigItem(
     ],
 )
 
-resolver_hard_case_strategy = ConfigItem(
-    datatype=str,
-    default="static_weighted_downweight",
-    group="landmark_ensemble",
-    info=(
-        "Backward-compatible alias for ``hard_case_strategy``. New configs should use "
-        "``hard_case_strategy``."
-    ),
-    choices=[
-        "plain_average",
-        "static_weighted",
-        "static_weighted_hard_drop",
-        "static_weighted_downweight",
-        "weighted_median",
-    ],
-)
-
-resolver_high_disagreement_px = ConfigItem(
+hard_disagreement_px = ConfigItem(
     datatype=float,
     default=12.0,
     group="landmark_ensemble",
