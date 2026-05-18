@@ -785,6 +785,7 @@ class SettingsDialog(QDialog):
         min_max = getattr(option, "min_max", None)
         rounding = getattr(option, "rounding", -1)
         is_slider = datatype in (int, float) and min_max is not None and rounding > 0
+        browser_modes, file_filter = SettingsDialog._browser_spec(name, option)
         return OptionSpec(
             title=name.replace("_", " ").title(),
             switch=name,
@@ -799,7 +800,19 @@ class SettingsDialog(QDialog):
             slider_min=min_max[0] if is_slider else None,
             slider_max=min_max[1] if is_slider else None,
             slider_rounding=rounding if is_slider else None,
+            browser_modes=browser_modes,
+            file_filter=file_filter,
         )
+
+    @staticmethod
+    def _browser_spec(name: str, option: T.Any) -> tuple[tuple[str, ...], str]:
+        """Return Qt browser metadata for config options that should browse files."""
+        if getattr(option, "group", None) == "landmark_ensemble" and name in {
+            "setup_path",
+            "weights_path",
+        }:
+            return (("file",), "JSON files (*.json);;All files (*)")
+        return ((), "")
 
     @staticmethod
     def _key(category: str, section_name: str) -> str:
