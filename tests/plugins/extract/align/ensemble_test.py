@@ -85,6 +85,14 @@ def test_ensemble_plain_average_smoke_without_preprocess() -> None:
     assert len(plugin.last_debug_metadata) == 2
 
 
+def test_ensemble_rejects_channels_first_warmup_probe() -> None:
+    """Channel-order warmup probes fail before invoking every wrapped adapter."""
+    plugin = Ensemble(adapters=[], reject_outliers=False, strategy="plain_average")
+
+    with pytest.raises(ValueError, match="channels-last"):
+        plugin.process(np.zeros((1, 3, 256, 256), dtype="float32"))
+
+
 def test_ensemble_predict_landmarks_68_returns_frame_space_points() -> None:
     """The public ensemble API returns fused canonical frame pixels."""
     adapters = [

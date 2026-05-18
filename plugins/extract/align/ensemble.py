@@ -167,14 +167,10 @@ class Ensemble(ExtractPlugin):
             else use_alignment_resolver
         )
         self._resolver_hard_case = (
-            cfg.hard_case_strategy()
-            if hard_case_strategy is None
-            else hard_case_strategy
+            cfg.hard_case_strategy() if hard_case_strategy is None else hard_case_strategy
         )
         self._resolver_disagreement_px = float(
-            cfg.hard_disagreement_px()
-            if hard_disagreement_px is None
-            else hard_disagreement_px
+            cfg.hard_disagreement_px() if hard_disagreement_px is None else hard_disagreement_px
         )
         self._last_matrices: np.ndarray | None = None
         self._last_detector_bboxes: np.ndarray | None = None
@@ -248,9 +244,6 @@ class Ensemble(ExtractPlugin):
             else self._build_configured_adapters()
         )
         loaded = [adapter for adapter in adapters if adapter.config.enabled]
-        for adapter in loaded:
-            if hasattr(adapter, "load_model"):
-                adapter.load_model()  # type: ignore[attr-defined]
         if not loaded:
             raise ValueError("No enabled landmark ensemble adapters are available")
         if self._promoted is not None:
@@ -258,11 +251,32 @@ class Ensemble(ExtractPlugin):
                 self._promoted,
                 [adapter.config.name for adapter in loaded],
             )
+            loaded = self._filter_promoted_adapters(loaded)
+        for adapter in loaded:
+            if hasattr(adapter, "load_model"):
+                adapter.load_model()  # type: ignore[attr-defined]
         logger.info(
             "Loaded landmark ensemble adapters: %s",
             ", ".join(adapter.config.name for adapter in loaded),
         )
         return loaded
+
+    def _filter_promoted_adapters(
+        self, adapters: T.Sequence[LandmarkAdapter]
+    ) -> list[LandmarkAdapter]:
+        """Return adapters in promoted setup order, excluding non-promoted extras."""
+        if self._promoted is None:
+            return list(adapters)
+        by_name = {adapter.config.name: adapter for adapter in adapters}
+        selected = [by_name[model] for model in self._promoted.models]
+        skipped = sorted(set(by_name).difference(self._promoted.models))
+        if skipped:
+            logger.info(
+                "[Ensemble] Promoted setup uses adapters %s; skipping configured extras: %s",
+                ", ".join(self._promoted.models),
+                ", ".join(skipped),
+            )
+        return selected
 
     def _build_configured_adapters(self) -> list[LandmarkAdapter]:
         """Create adapters for configured aligner plugins that are importable."""
@@ -665,6 +679,10 @@ class Ensemble(ExtractPlugin):
 
     def process(self, batch: np.ndarray) -> np.ndarray:
         """Run adapter predictions, fuse in frame space and return normalized landmarks."""
+        if batch.ndim == 4 and batch.shape[1] in (1, 3, 4) and batch.shape[-1] not in (1, 3, 4):
+            raise ValueError(
+                f"Ensemble aligner expects channels-last images, got shape {batch.shape}"
+            )
         matrices = self._matrices_for_batch(batch.shape[0])
         per_face, errors = self._collect_predictions(batch, matrices)
         self.last_debug_metadata = []
