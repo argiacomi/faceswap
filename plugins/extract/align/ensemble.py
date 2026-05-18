@@ -85,6 +85,12 @@ class Ensemble(ExtractPlugin):
         use_alignment_resolver: bool | None = None,
         resolver_hard_case_strategy: str | None = None,
         resolver_high_disagreement_px: float | None = None,
+        resolver_policy: str | None = None,
+        secondary_hard_case_strategy: str | None = None,
+        fallback_model: str | None = None,
+        strict: bool | None = None,
+        roll_veto_degrees: float | None = None,
+        hard_roll_degrees: float | None = None,
     ) -> None:
         super().__init__(
             input_size=256,
@@ -104,10 +110,6 @@ class Ensemble(ExtractPlugin):
         )
 
         raw_setup_path = cfg.setup_path() if setup_path is None else setup_path
-        # When the caller passes ``setup_path`` explicitly but omits
-        # ``setup_mode``, default to strict so misconfigured deployments fail
-        # fast. ``setup_mode=None`` with no explicit path falls through to the
-        # configured value (defaulting to ``off``).
         if setup_mode is None:
             raw_setup_mode = "strict" if setup_path is not None else cfg.setup_mode()
         else:
@@ -116,9 +118,24 @@ class Ensemble(ExtractPlugin):
             cfg.fallback_strategy() if fallback_strategy is None else fallback_strategy
         )
         self._setup_path = str(raw_setup_path or "")
+        self._weights_path = str(cfg.weights_path() or "")
         self._setup_mode = self._resolve_setup_mode(self._setup_path, raw_setup_mode)
         self._fallback_strategy = self._resolve_fallback_strategy(
             raw_fallback_strategy, configured_strategy
+        )
+        self._resolver_policy = cfg.resolver_policy() if resolver_policy is None else resolver_policy
+        self._secondary_hard_case = (
+            cfg.secondary_hard_case_strategy()
+            if secondary_hard_case_strategy is None
+            else secondary_hard_case_strategy
+        )
+        self._fallback_model = cfg.fallback_model() if fallback_model is None else fallback_model
+        self._strict = bool(cfg.strict() if strict is None else strict)
+        self._roll_veto_degrees = float(
+            cfg.roll_veto_degrees() if roll_veto_degrees is None else roll_veto_degrees
+        )
+        self._hard_roll_degrees = float(
+            cfg.hard_roll_degrees() if hard_roll_degrees is None else hard_roll_degrees
         )
         self._promoted: PromotedSetup | None = None
         self._promoted_failure: str = ""
@@ -133,7 +150,6 @@ class Ensemble(ExtractPlugin):
                 else configured_threshold
             )
         elif self._setup_mode == "fallback":
-            # Promoted load failed; honor the configured fallback strategy.
             self._strategy = self._fallback_strategy
             self._outlier_threshold = configured_threshold
         else:
@@ -149,7 +165,7 @@ class Ensemble(ExtractPlugin):
             else use_alignment_resolver
         )
         self._resolver_hard_case = (
-            cfg.resolver_hard_case_strategy()
+            cfg.hard_case_strategy()
             if resolver_hard_case_strategy is None
             else resolver_hard_case_strategy
         )
@@ -165,14 +181,7 @@ class Ensemble(ExtractPlugin):
 
     @staticmethod
     def _resolve_setup_mode(setup_path: str, configured_mode: str | None) -> str:
-        """Resolve effective setup_mode.
-
-        - Empty ``setup_path`` always disables setup loading.
-        - Non-empty ``setup_path`` with an omitted / empty ``setup_mode`` defaults
-          to ``strict`` so misconfigured deployments fail fast.
-        - Any other explicit value is honored and validated against the
-          supported choices.
-        """
+        """Resolve effective setup_mode."""
         if not setup_path:
             return "off"
         mode = (configured_mode or "").strip() or "strict"
@@ -211,13 +220,7 @@ class Ensemble(ExtractPlugin):
 
     @staticmethod
     def _resolve_strategy(strategy: str, reject_outliers: bool) -> str:
-        """Resolve a configured strategy + legacy ``reject_outliers`` flag.
-
-        ``reject_outliers`` is retained only as a compatibility flag for the
-        ``static_weighted`` strategy. When both are set, the run is promoted to
-        ``static_weighted_hard_drop`` and a deprecation note is logged. Every
-        other strategy ignores ``reject_outliers``.
-        """
+        """Resolve a configured strategy + legacy ``reject_outliers`` flag."""
         canonical = canonical_strategy(strategy)
         if not reject_outliers:
             return canonical
@@ -236,11 +239,7 @@ class Ensemble(ExtractPlugin):
         return canonical
 
     def load_model(self) -> list[LandmarkAdapter]:
-        """Load configured adapters.
-
-        Injected adapters are returned as-is for tests. Real adapters are only
-        imported when their plugin modules exist in the local tree.
-        """
+        """Load configured adapters."""
         adapters = (
             list(self._injected_adapters)
             if self._injected_adapters is not None
@@ -318,8 +317,6 @@ class Ensemble(ExtractPlugin):
         retval[:, 2] = ctr_x + half
         retval[:, 3] = ctr_y + half
         self._last_matrices = roi_to_matrix(retval)
-        # Cache the raw detector bboxes per face so the geometry resolver can
-        # consume bbox-aspect / ROI-ratio / outside-bbox signals at runtime.
         self._last_detector_bboxes = batch.astype("float32", copy=True)
         return retval
 
@@ -367,12 +364,7 @@ class Ensemble(ExtractPlugin):
         return per_face, errors
 
     def _weights_for_face(self, adapters: T.Sequence[LandmarkAdapter]) -> np.ndarray:
-        """Return the per-face weight vector or matrix for the active adapters.
-
-        For a promoted setup the per-landmark weight matrix is subset to the
-        successful adapters and renormalized so each landmark column still sums
-        to 1.0; otherwise the legacy scalar-per-adapter vector is used.
-        """
+        """Return the per-face weight vector or matrix for the active adapters."""
         if self._promoted is not None and self._promoted.weights:
             promoted_weights = self._promoted.weights
             subset = np.array(
@@ -384,6 +376,86 @@ class Ensemble(ExtractPlugin):
             return subset / safe[None, :]
         return np.array([adapter.config.weight for adapter in adapters], dtype="float32")
 
+    @staticmethod
+    def _roll_estimate(points: np.ndarray) -> float | None:
+        """Return an approximate in-plane roll from eye centers, in degrees."""
+        if points.shape[0] < 48:
+            return None
+        left_eye = points[36:42].mean(axis=0)
+        right_eye = points[42:48].mean(axis=0)
+        vector = right_eye - left_eye
+        if float(np.linalg.norm(vector)) <= 1e-6:
+            return None
+        return float(np.degrees(np.arctan2(float(vector[1]), float(vector[0]))))
+
+    @staticmethod
+    def _consensus_distances(items: T.Sequence[LandmarkPrediction]) -> dict[str, float]:
+        """Return simple prediction-only consensus distances for debug output."""
+        if not items:
+            return {"mean_landmark_distance_px": 0.0, "max_landmark_distance_px": 0.0}
+        stack = np.stack([item.canonical_68().points for item in items], axis=0)
+        consensus = np.median(stack, axis=0)
+        per_model = np.mean(np.linalg.norm(stack - consensus[None], axis=2), axis=1)
+        return {
+            "mean_landmark_distance_px": float(per_model.mean()),
+            "max_landmark_distance_px": float(per_model.max()),
+        }
+
+    @staticmethod
+    def _prediction_availability(
+        adapters: T.Sequence[LandmarkAdapter], errors: T.Sequence[str]
+    ) -> dict[str, bool]:
+        """Return model availability flags for runtime debug metadata."""
+        available = {adapter.config.name: True for adapter in adapters}
+        for message in errors:
+            model = message.split(":", maxsplit=1)[0].strip()
+            if model:
+                available.setdefault(model, False)
+        return dict(sorted(available.items()))
+
+    def _base_runtime_debug(
+        self,
+        *,
+        selected_candidate: str,
+        fallback_used: bool,
+        veto_reasons: T.Sequence[str],
+        points: np.ndarray,
+        items: T.Sequence[LandmarkPrediction],
+        adapters: T.Sequence[LandmarkAdapter],
+        errors: T.Sequence[str],
+        geometry_valid: bool,
+        detector_bbox: tuple[float, float, float, float] | None,
+    ) -> dict[str, T.Any]:
+        """Build the stable per-face runtime resolver debug envelope."""
+        return {
+            "selected_candidate": selected_candidate,
+            "fallback_used": bool(fallback_used),
+            "veto_reasons": list(veto_reasons),
+            "roll_estimate": self._roll_estimate(points),
+            "consensus_distances": self._consensus_distances(items),
+            "geometry_valid": bool(geometry_valid),
+            "model_predictions_available": self._prediction_availability(adapters, errors),
+            "detector_bbox": list(detector_bbox) if detector_bbox is not None else None,
+            "resolver_policy": self._resolver_policy,
+            "hard_case_strategy": self._resolver_hard_case,
+            "secondary_hard_case_strategy": self._secondary_hard_case,
+            "fallback_model": self._fallback_model,
+            "strict": self._strict,
+            "roll_veto_degrees": self._roll_veto_degrees,
+            "hard_roll_degrees": self._hard_roll_degrees,
+            "setup_path": self._setup_path,
+            "weights_path": self._weights_path,
+            "setup_mode": self._setup_mode,
+            "promoted_candidate_id": (
+                self._promoted.candidate_id if self._promoted is not None else ""
+            ),
+        }
+
+    def _append_debug_metadata(self, metadata: dict[str, T.Any]) -> None:
+        """Store and log per-face resolver metadata."""
+        self.last_debug_metadata.append(metadata)
+        logger.debug("[Ensemble] runtime resolver metadata: %s", metadata)
+
     def _resolve_via_geometry(
         self,
         *,
@@ -393,12 +465,7 @@ class Ensemble(ExtractPlugin):
         threshold: float | None,
         detector_bbox: tuple[float, float, float, float] | None = None,
     ) -> np.ndarray | None:
-        """Route this face through the geometry-risk resolver (#78).
-
-        Returns the fused points when the resolver makes a decision, or
-        ``None`` to fall through to the regular dispatch path (e.g. when the
-        resolver hard-fails and we want the existing fallback semantics).
-        """
+        """Route this face through the geometry-risk resolver (#78)."""
         weights_map: dict[str, list[float]] | None = None
         if self._promoted is not None and self._promoted.weights:
             weights_map = {model: list(values) for model, values in self._promoted.weights.items()}
@@ -431,10 +498,29 @@ class Ensemble(ExtractPlugin):
             logger.warning("[Ensemble] geometry resolver hard-failed: %s", err)
             return None
 
-        self.last_debug_metadata.append(
+        selected_candidate = (
+            result.active_models[0] if len(result.active_models) == 1 else result.chosen_strategy
+        )
+        veto_reasons = list(result.geometry_flags)
+        veto_reasons.extend(f"rejected_model:{model}" for model in result.rejected_models)
+        fallback_used = bool(result.debug_metadata.get("fallback_used", False)) or (
+            result.chosen_strategy == resolver_config.fallback_strategy
+        )
+        metadata = self._base_runtime_debug(
+            selected_candidate=selected_candidate,
+            fallback_used=fallback_used,
+            veto_reasons=veto_reasons,
+            points=result.alignment_landmarks,
+            items=items,
+            adapters=adapters,
+            errors=errors,
+            geometry_valid=not bool(result.geometry_flags),
+            detector_bbox=detector_bbox,
+        )
+        metadata.update(
             {
                 "sources": tuple(adapter.config.name for adapter in adapters),
-                "weights": [],  # resolver does not surface a weight matrix
+                "weights": [],
                 "kept_indices": tuple(range(len(result.active_models))),
                 "rejected_indices": tuple(
                     idx
@@ -446,11 +532,6 @@ class Ensemble(ExtractPlugin):
                 "strategy": result.chosen_strategy,
                 "outlier_method": strategy_outlier_method(result.chosen_strategy),
                 "outlier_threshold": threshold,
-                "setup_path": self._setup_path,
-                "setup_mode": self._setup_mode,
-                "promoted_candidate_id": (
-                    self._promoted.candidate_id if self._promoted is not None else ""
-                ),
                 "weight_source": "geometry_resolver",
                 "active_models": result.active_models,
                 "resolver": {
@@ -464,6 +545,10 @@ class Ensemble(ExtractPlugin):
                 },
             }
         )
+        metadata["consensus_distances"]["max_disagreement_px"] = result.debug_metadata.get(
+            "max_disagreement_px", 0.0
+        )
+        self._append_debug_metadata(metadata)
         return result.alignment_landmarks.astype("float32", copy=False)
 
     def _fuse_face(
@@ -473,14 +558,7 @@ class Ensemble(ExtractPlugin):
         *,
         detector_bbox: tuple[float, float, float, float] | None = None,
     ) -> np.ndarray:
-        """Fuse one face's adapter predictions and return frame-space points.
-
-        ``detector_bbox`` is the per-face source-frame detection box that
-        ``pre_process`` saw (left/top/right/bottom). When supplied, the
-        geometry resolver uses it for bbox-aspect, ROI-ratio, and
-        landmarks-outside-bbox signals; otherwise those signals stay inactive
-        (e.g. for warmup calls that bypass ``pre_process``).
-        """
+        """Fuse one face's adapter predictions and return frame-space points."""
         if len(predictions) < self._min_models:
             raise ValueError(
                 "Not enough successful landmark adapters for ensemble face: "
@@ -531,7 +609,23 @@ class Ensemble(ExtractPlugin):
                 outlier_threshold=self._outlier_threshold,
             )
 
-        self.last_debug_metadata.append(
+        veto_reasons: list[str] = []
+        if fused.rejected_indices:
+            veto_reasons.append("outlier_rejected")
+        veto_reasons.extend(f"adapter_error:{error}" for error in errors)
+        selected_candidate = adapters[0].config.name if len(adapters) == 1 else self._strategy
+        metadata = self._base_runtime_debug(
+            selected_candidate=selected_candidate,
+            fallback_used=self._setup_mode == "fallback" and self._promoted is None,
+            veto_reasons=veto_reasons,
+            points=fused.points,
+            items=items,
+            adapters=adapters,
+            errors=errors,
+            geometry_valid=not bool(fused.rejected_indices),
+            detector_bbox=detector_bbox,
+        )
+        metadata.update(
             {
                 "sources": fused.sources,
                 "weights": fused.weights.tolist(),
@@ -542,17 +636,13 @@ class Ensemble(ExtractPlugin):
                 "strategy": self._strategy,
                 "outlier_method": self._outlier_method,
                 "outlier_threshold": threshold,
-                "setup_path": self._setup_path,
-                "setup_mode": self._setup_mode,
-                "promoted_candidate_id": (
-                    self._promoted.candidate_id if self._promoted is not None else ""
-                ),
                 "weight_source": (
                     "promoted_setup" if self._promoted is not None else "adapter_config"
                 ),
                 "active_models": tuple(adapter.config.name for adapter in adapters),
             }
         )
+        self._append_debug_metadata(metadata)
         return fused.points
 
     def predict_landmarks_68(
@@ -561,13 +651,7 @@ class Ensemble(ExtractPlugin):
         *,
         matrix: np.ndarray | None = None,
     ) -> np.ndarray:
-        """Return fused canonical ``(68, 2)`` landmarks in original-frame pixels.
-
-        The input image is a prepared ensemble crop. ``matrix`` maps normalized
-        crop coordinates for that crop into the original frame. If omitted, an
-        identity matrix is used, matching warmup/test calls that already operate
-        in frame space.
-        """
+        """Return fused canonical ``(68, 2)`` landmarks in original-frame pixels."""
         matrices = (
             np.eye(3, dtype="float32")[None]
             if matrix is None
