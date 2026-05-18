@@ -34,7 +34,7 @@ def test_format_run_report_summarizes_key_results() -> None:
                 "static_weighted_downweight": -0.004,
             },
             "ensemble_improved_over_best_single": True,
-            "threshold_failed": False,
+            "any_sample_failed": False,
             "generated_weight_path": "outputs/run/weights/static_landmark_weights.json",
         },
         exit_code=0,
@@ -67,3 +67,22 @@ def test_format_run_report_surfaces_failure() -> None:
     assert "Pipeline FAILED" in report
     assert "Failure: ValueError: bad source" in report
     assert "BBox source: faceswap-detector" in report
+
+
+def test_format_run_report_demotes_any_sample_failed_to_diagnostic() -> None:
+    """``any_sample_failed`` renders as a diagnostic, not a threshold/gate failure."""
+    report = _format_run_report(
+        {
+            "output_root": "outputs/run",
+            "dataset_counts": {},
+            "cache_counts": {},
+            "bbox_source": "manifest",
+            "any_sample_failed": True,
+        },
+        exit_code=0,
+    )
+
+    assert "Pipeline COMPLETE" in report
+    assert "Diagnostic: at least one sample crossed" in report
+    assert "Threshold:" not in report
+    assert "failed at least one configured failure threshold" not in report

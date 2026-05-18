@@ -205,7 +205,7 @@ def run_quality_harness(
     condition_errors: dict[str, dict[str, list[float]]] = {}
     scenario_bucket_errors: dict[str, dict[str, list[float]]] = {}
     region_errors: dict[str, dict[str, list[float]]] = {}
-    threshold_failed = False
+    any_sample_failed = False
 
     for sample in samples:
         truth = _load_truth(sample)
@@ -227,8 +227,9 @@ def run_quality_harness(
                 truth,
                 normalizer=sample.normalizer,
                 failure_threshold=failure_threshold,
+                visibility=sample.visibility,
             )
-            threshold_failed = threshold_failed or bool(metrics["failure"])
+            any_sample_failed = any_sample_failed or bool(metrics["failure"])
             grouped_errors.setdefault(name, []).append(float(metrics["nme"]))
             rows.append(
                 {
@@ -287,8 +288,9 @@ def run_quality_harness(
                     truth,
                     normalizer=sample.normalizer,
                     failure_threshold=failure_threshold,
+                    visibility=sample.visibility,
                 )
-                threshold_failed = threshold_failed or bool(metrics["failure"])
+                any_sample_failed = any_sample_failed or bool(metrics["failure"])
                 grouped_errors.setdefault(variant, []).append(float(metrics["nme"]))
                 rows.append(
                     {
@@ -368,7 +370,7 @@ def run_quality_harness(
             for region, labels in sorted(region_errors.items())
         },
         "rows": rows,
-        "threshold_failed": threshold_failed,
+        "any_sample_failed": any_sample_failed,
     }
     best_summary = _best_variant_summary(
         grouped_errors,
@@ -376,7 +378,7 @@ def run_quality_harness(
         failure_threshold=failure_threshold,
         conditions=summary["conditions"],
         scenario_buckets=scenario_buckets,
-        threshold_failed=threshold_failed,
+        any_sample_failed=any_sample_failed,
         overall_metrics=scenario_weighted_overall,
     )
     summary["best_variant"] = best_summary
@@ -479,7 +481,7 @@ def _best_variant_summary(
     failure_threshold: float,
     conditions: dict[str, dict[str, dict[str, float]]],
     scenario_buckets: dict[str, dict[str, dict[str, float]]],
-    threshold_failed: bool,
+    any_sample_failed: bool,
     overall_metrics: dict[str, dict[str, T.Any]] | None = None,
 ) -> dict[str, T.Any]:
     """Return the best aggregate model/variant summary."""
@@ -522,7 +524,7 @@ def _best_variant_summary(
             "worst_scenario_buckets": [],
             "worst_best_single_scenario_buckets": [],
             "worst_best_variant_scenario_buckets": [],
-            "threshold_failed": threshold_failed,
+            "any_sample_failed": any_sample_failed,
             "overall_nme_aggregation": "equal_weighted_dataset_condition_scenario_buckets",
         }
     label, metrics = min(summaries.items(), key=lambda item: item[1]["nme"])
@@ -543,7 +545,7 @@ def _best_variant_summary(
         "worst_best_variant_scenario_buckets": _worst_scenario_buckets(
             scenario_buckets, best_variant_label
         ),
-        "threshold_failed": threshold_failed,
+        "any_sample_failed": any_sample_failed,
         "overall_nme_aggregation": "equal_weighted_dataset_condition_scenario_buckets",
     }
 

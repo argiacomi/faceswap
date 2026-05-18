@@ -243,8 +243,10 @@ def test_cache_predictions_cli_batches_manifest_roots(tmp_path: Path) -> None:
     np.testing.assert_array_equal(cached.landmarks, _points(0.25))
 
 
-def test_quality_harness_cli_fails_on_threshold(tmp_path: Path) -> None:
-    """Harness CLI exits non-zero when any sample exceeds the failure threshold."""
+def test_quality_harness_cli_any_sample_failed_is_diagnostic(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Per-sample failure threshold no longer fails the CLI; it's surfaced as a diagnostic."""
     source = tmp_path / "source"
     source.mkdir()
     cv2.imwrite(str(source / "sample.png"), np.zeros((8, 8, 3), dtype="uint8"))
@@ -268,6 +270,42 @@ def test_quality_harness_cli_fails_on_threshold(tmp_path: Path) -> None:
             "hrnet",
             "--failure-threshold",
             "0.01",
+        ]
+    )
+
+    assert result == 0
+    captured = capsys.readouterr()
+    assert "Diagnostic: at least one sample exceeded" in captured.out
+    assert "Landmark quality thresholds failed" not in captured.out
+
+
+def test_quality_harness_cli_fails_on_aggregate_failure_rate(tmp_path: Path) -> None:
+    """Aggregate ``--max-failure-rate`` remains an authoritative CLI gate."""
+    source = tmp_path / "source"
+    source.mkdir()
+    cv2.imwrite(str(source / "sample.png"), np.zeros((8, 8, 3), dtype="uint8"))
+    np.save(str(source / "sample.npy"), _points())
+    manifest = build_manifest(source, tmp_path / "dataset", dataset="wflw")
+    DiskPredictionCache(tmp_path / "cache").write(
+        "sample",
+        LandmarkPrediction(_points(10.0), model_name="hrnet"),
+        config="hrnet",
+    )
+
+    result = run_quality_harness_main(
+        [
+            "--manifest",
+            str(manifest),
+            "--cache-dir",
+            str(tmp_path / "cache"),
+            "--output-dir",
+            str(tmp_path / "metrics"),
+            "--models",
+            "hrnet",
+            "--failure-threshold",
+            "0.01",
+            "--max-failure-rate",
+            "0.0",
         ]
     )
 

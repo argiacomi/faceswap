@@ -67,7 +67,7 @@ def test_best_variant_summary_exposes_scenario_bucket_diagnostics() -> None:
         failure_threshold=0.08,
         conditions={},
         scenario_buckets=scenario_buckets,
-        threshold_failed=True,
+        any_sample_failed=True,
         overall_metrics=overall_metrics,
     )
 

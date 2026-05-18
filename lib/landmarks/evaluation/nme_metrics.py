@@ -45,12 +45,24 @@ def evaluate_prediction(
     *,
     normalizer: float | None = None,
     failure_threshold: float = 0.08,
+    visibility: T.Sequence[bool] | np.ndarray | None = None,
 ) -> dict[str, T.Any]:
-    """Return core scalar and per-landmark metrics for one prediction."""
+    """Return core scalar and per-landmark metrics for one prediction.
+
+    ``visibility`` (when supplied) restricts the aggregate NME to visible
+    landmarks. The returned ``per_landmark_error`` array stays the full
+    per-point error so downstream diagnostics can still inspect occluded
+    points; only the scalar NME / failure flag respect the mask.
+    """
     pred = normalize_landmarks(predicted)
     truth = normalize_landmarks(target)
     point_errors = per_landmark_error(pred, truth)
-    nme = normalized_mean_error(pred, truth, normalizer=normalizer)
+    visibility_array = (
+        np.asarray(visibility, dtype=bool) if visibility is not None else None
+    )
+    nme = normalized_mean_error(
+        pred, truth, normalizer=normalizer, visibility=visibility_array
+    )
     return {
         "nme": nme,
         "failure": bool(nme > failure_threshold),

@@ -153,7 +153,7 @@ def _initial_summary(args: argparse.Namespace, paths: PipelinePaths) -> dict[str
         "weighted_best_variant": "",
         "weighted_best_variant_metrics": {},
         "ensemble_deltas_vs_best_single": {},
-        "threshold_failed": False,
+        "any_sample_failed": False,
         "ensemble_improved_over_best_single": None,
         "bbox_source": args.bbox_source,
     }
@@ -646,13 +646,13 @@ def _update_summary_outputs(
         summary["ensemble_deltas_vs_best_single"] = weighted_best.get(
             "ensemble_deltas_vs_best_single", {}
         )
-        summary["threshold_failed"] = bool(weighted_best.get("threshold_failed"))
+        summary["any_sample_failed"] = bool(weighted_best.get("any_sample_failed"))
         deltas = summary["ensemble_deltas_vs_best_single"]
         summary["ensemble_improved_over_best_single"] = (
             any(float(delta) < 0 for delta in deltas.values()) if deltas else None
         )
     elif baseline_best:
-        summary["threshold_failed"] = bool(baseline_best.get("threshold_failed"))
+        summary["any_sample_failed"] = bool(baseline_best.get("any_sample_failed"))
 
 
 def _metric_percent(metrics: T.Mapping[str, T.Any], key: str) -> str:
@@ -748,8 +748,11 @@ def _format_run_report(summary: dict[str, T.Any], *, exit_code: int) -> str:
             if improved
             else "Finding: ensemble did not beat best single"
         )
-    if summary.get("threshold_failed"):
-        lines.append("Threshold: failed at least one configured failure threshold")
+    if summary.get("any_sample_failed"):
+        lines.append(
+            "Diagnostic: at least one sample crossed the per-sample NME failure threshold "
+            "(see weighted_metrics/per_scenario_bucket_error.csv for the bucket breakdown)"
+        )
     if summary.get("generated_weight_path"):
         lines.append(f"Weights: {summary['generated_weight_path']}")
     lines.append(

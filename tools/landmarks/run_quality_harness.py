@@ -41,9 +41,13 @@ def main(argv: list[str] | None = None) -> int:
         outlier_threshold=args.outlier_threshold,
     )
     print(f"Wrote landmark metrics to: {args.output_dir}")
+    if result.get("any_sample_failed"):
+        print(
+            "Diagnostic: at least one sample exceeded the per-sample NME failure "
+            f"threshold ({args.failure_threshold:.6f}). This is informational; use "
+            "--max-failure-rate / --max-nme for aggregate gating."
+        )
     failures = []
-    if result.get("threshold_failed"):
-        failures.append(f"sample failure threshold exceeded ({args.failure_threshold:.6f})")
     for label, metrics in sorted(result.get("overall", {}).items()):
         if args.max_nme is not None and metrics.get("nme", 0.0) > args.max_nme:
             failures.append(f"{label} nme={metrics['nme']:.6f} > {args.max_nme:.6f}")
