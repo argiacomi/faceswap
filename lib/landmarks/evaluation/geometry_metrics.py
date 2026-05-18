@@ -243,6 +243,8 @@ def evaluate_geometry_sample(
     bbox_source: str = "manifest",
     landmark_coverage_floor: float = DEFAULT_LANDMARK_COVERAGE_FLOOR,
     truth_summary: AlignmentSummary | None = None,
+    truth_visible_hull: np.ndarray | None = None,
+    truth_landmarks_hull: np.ndarray | None = None,
     crop_scale: float = 1.0,
 ) -> GeometrySampleMetrics:
     """Return the GT-vs-prediction geometry deltas for one sample.
@@ -283,7 +285,9 @@ def evaluate_geometry_sample(
     roi = roi_delta(pred_summary, truth_summary, normalizer=normalizer)
     poses = pose_delta(pred_summary, truth_summary)
     avg_dist_delta = average_distance_delta(pred_summary, truth_summary)
-    hull_iou = visible_hull_iou(predicted, truth, visibility=visibility)
+    hull_iou = visible_hull_iou(
+        predicted, truth, visibility=visibility, truth_hull=truth_visible_hull
+    )
     cat_flags = evaluate_catastrophic_flags(
         predicted,
         truth,
@@ -304,6 +308,7 @@ def evaluate_geometry_sample(
             bbox=bbox,
             bbox_source=bbox_source,
             coverage_floor=landmark_coverage_floor,
+            truth_hull=truth_landmarks_hull,
         )
     )
 

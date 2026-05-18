@@ -133,12 +133,17 @@ def evaluate_roi_diagnostics(
     bbox: T.Sequence[float],
     bbox_source: str = "manifest",
     coverage_floor: float = DEFAULT_LANDMARK_COVERAGE_FLOOR,
+    truth_hull: np.ndarray | None = None,
 ) -> RoiDiagnostics:
     """Compute ROI diagnostics for one prediction vs the GT landmark set.
 
     ``predicted_summary`` is the ``AlignmentSummary`` already computed for the
     candidate; we reuse its ``roi`` directly to avoid running ``AlignedFace``
     twice.
+
+    ``truth_hull`` lets the geometry search loop supply the precomputed
+    convex hull of the GT landmarks (candidate-invariant) so we don't
+    rebuild it for every candidate scored against the same sample.
     """
     width, height, diagonal = _bbox_dimensions(bbox)
     if width <= 0 or height <= 0:
@@ -149,7 +154,8 @@ def evaluate_roi_diagnostics(
     roi_width, roi_height = _polygon_dimensions(roi_corners)
     roi_aspect = roi_width / roi_height if roi_height > 0 else 0.0
 
-    truth_hull = _convex_hull_points(truth_landmarks)
+    if truth_hull is None:
+        truth_hull = _convex_hull_points(truth_landmarks)
     hull_iou = 0.0 if truth_hull is None else polygon_iou(roi_corners, truth_hull)
 
     inside_count = landmarks_inside_polygon(truth_landmarks, roi_corners)

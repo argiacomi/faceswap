@@ -19,7 +19,11 @@ import numpy as np
 
 from lib.landmarks.cache.prediction_cache import DiskPredictionCache
 from lib.landmarks.datasets.manifest_io import LandmarkSample, bbox_for_sample
-from lib.landmarks.evaluation.geometry_signals import AlignmentSummary, alignment_summary
+from lib.landmarks.evaluation.geometry_signals import (
+    AlignmentSummary,
+    alignment_summary,
+    visible_hull,
+)
 
 
 def crop_scale_key(value: float) -> float:
@@ -49,6 +53,14 @@ class GeometryContextRow:
     truth_summary_by_crop_scale: dict[float, AlignmentSummary]
     bbox: tuple[float, float, float, float]
     predictions: dict[str, np.ndarray]
+    # Precomputed truth-side convex hulls reused by every candidate scored
+    # against this row. ``truth_landmarks_hull`` is the full-landmark hull
+    # consumed by ROI diagnostics (``aligned_crop_visible_hull_iou``);
+    # ``truth_visible_hull`` honors the sample's visibility mask and is
+    # consumed by :func:`visible_hull_iou`. Both are ``None`` when the
+    # GT cloud has fewer than three usable points.
+    truth_landmarks_hull: np.ndarray | None
+    truth_visible_hull: np.ndarray | None
 
 
 def build_geometry_context(
@@ -84,6 +96,12 @@ def build_geometry_context(
         bbox = bbox_for_sample(sample, allow_truth_fallback=True)
         if bbox is None:
             continue
+        truth_landmarks_hull = visible_hull(truth)
+        truth_visible_hull = (
+            truth_landmarks_hull
+            if sample.visibility is None
+            else visible_hull(truth, visibility=sample.visibility)
+        )
         rows.append(
             GeometryContextRow(
                 sample=sample,
@@ -96,6 +114,8 @@ def build_geometry_context(
                 predictions={
                     model: cache.read(sample.sample_id, model).landmarks for model in models
                 },
+                truth_landmarks_hull=truth_landmarks_hull,
+                truth_visible_hull=truth_visible_hull,
             )
         )
     return rows

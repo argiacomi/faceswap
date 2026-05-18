@@ -214,9 +214,7 @@ def test_max_mean_nme_regression_fails_when_ensemble_worsens_overall_mean() -> N
 def test_max_p95_nme_regression_fails_on_tail_worsening() -> None:
     """A worsened p95 NME trips the tail-aware gate even when the mean is fine."""
     baseline = _result("baseline", single=True, nme=0.05)
-    candidate = _result_with_metrics(
-        _magnitude_metrics(mean_regression=0.0, p95_regression=0.03)
-    )
+    candidate = _result_with_metrics(_magnitude_metrics(mean_regression=0.0, p95_regression=0.03))
     application = apply_gates(
         [candidate, baseline],
         GateConfig(max_mean_nme_regression=0.01, max_p95_nme_regression=0.02),

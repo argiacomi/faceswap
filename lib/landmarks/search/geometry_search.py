@@ -81,6 +81,8 @@ def evaluate_candidate_geometry(
                 aligned_size=aligned_size,
                 region_failure_threshold=region_failure_threshold,
                 truth_summary=truth_summary,
+                truth_visible_hull=row.truth_visible_hull,
+                truth_landmarks_hull=row.truth_landmarks_hull,
                 crop_scale=crop_scale,
             )
         )

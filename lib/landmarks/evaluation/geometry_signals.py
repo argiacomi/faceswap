@@ -259,25 +259,45 @@ def _convex_hull_points(points: np.ndarray) -> np.ndarray | None:
     return points[hull.vertices].astype("float64")
 
 
-def _polygon_area(polygon: np.ndarray) -> float:
-    if polygon.shape[0] < 3:
+def _polygon_signed_area2(polygon: np.ndarray) -> float:
+    """Return the signed shoelace ``2A`` of a polygon (no ``np.roll``).
+
+    ``np.roll`` allocates a fresh array on every call and dominates the
+    profile when this helper runs inside a per-(candidate, sample) loop.
+    The equivalent shoelace sum splits cleanly into the contiguous part
+    ``i, i+1`` plus the wrap-around term ``n-1, 0``, so we avoid the
+    allocation entirely.
+    """
+    n = polygon.shape[0]
+    if n < 3:
         return 0.0
     x = polygon[:, 0]
     y = polygon[:, 1]
-    return float(0.5 * abs(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1))))
+    head = float(np.dot(x[:-1], y[1:]) - np.dot(y[:-1], x[1:]))
+    wrap = float(x[-1] * y[0] - y[-1] * x[0])
+    return head + wrap
+
+
+def _polygon_area(polygon: np.ndarray) -> float:
+    return 0.5 * abs(_polygon_signed_area2(polygon))
 
 
 def _ensure_ccw(polygon: np.ndarray) -> np.ndarray:
     if polygon.shape[0] < 3:
         return polygon
-    x = polygon[:, 0]
-    y = polygon[:, 1]
-    signed = float(0.5 * (np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1))))
-    return polygon[::-1] if signed < 0 else polygon
+    return polygon[::-1] if _polygon_signed_area2(polygon) < 0 else polygon
 
 
 def _sutherland_hodgman(subject: np.ndarray, clip: np.ndarray) -> np.ndarray:
-    """Clip ``subject`` against the convex polygon ``clip`` (both CCW)."""
+    """Clip ``subject`` against the convex polygon ``clip`` (both CCW).
+
+    Plain Python loop with closures. A vectorized variant was tried but
+    regressed on the typical hull-IoU polygon size (~4-12 vertices)
+    because per-edge ``np.empty`` / ``np.where`` allocations dominate.
+    The big-O winning move on this hot path is upstream: the geometry
+    search precomputes the truth hull once per sample so this clipper
+    runs against a stable input rather than rebuilding it per candidate.
+    """
     output: list[T.Sequence[float]] = subject.tolist()
     for i in range(clip.shape[0]):
         if not output:
@@ -330,11 +350,24 @@ def polygon_iou(predicted: np.ndarray, truth: np.ndarray) -> float:
     return float(max(0.0, min(1.0, inter_area / union)))
 
 
+def visible_hull(
+    points: np.ndarray, *, visibility: T.Sequence[bool] | None = None
+) -> np.ndarray | None:
+    """Return the convex hull of the visible-filtered landmark points.
+
+    Public helper so callers iterating many candidates against the same
+    ground truth (the geometry search stage) can precompute the truth
+    hull once per sample and reuse it via :func:`visible_hull_iou`.
+    """
+    return _convex_hull_points(_select_visible(points, visibility))
+
+
 def visible_hull_iou(
     predicted: np.ndarray,
     truth: np.ndarray,
     *,
     visibility: T.Sequence[bool] | None = None,
+    truth_hull: np.ndarray | None = None,
 ) -> float:
     """Return the IoU between the convex hulls of the (visible) landmark points.
 
@@ -342,11 +375,15 @@ def visible_hull_iou(
     to both hulls. The truth hull is computed with the same visibility mask so
     we are comparing the model's visible-face geometry against the dataset's
     visible-face geometry.
+
+    ``truth_hull`` lets callers that score many candidates against the same
+    GT (the geometry search loop) supply a precomputed hull and skip the
+    rebuild on every (candidate, sample) pair. Must already match the
+    ``visibility`` mask the caller will use.
     """
-    pred_points = _select_visible(predicted, visibility)
-    truth_points = _select_visible(truth, visibility)
-    pred_hull = _convex_hull_points(pred_points)
-    truth_hull = _convex_hull_points(truth_points)
+    pred_hull = _convex_hull_points(_select_visible(predicted, visibility))
+    if truth_hull is None:
+        truth_hull = visible_hull(truth, visibility=visibility)
     if pred_hull is None or truth_hull is None:
         return 0.0
     return polygon_iou(pred_hull, truth_hull)

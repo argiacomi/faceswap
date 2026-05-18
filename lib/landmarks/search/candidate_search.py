@@ -119,7 +119,6 @@ class CandidateMetrics:
             "best_single_overall_mean_nme": float(self.best_single_overall_mean_nme),
             "best_single_overall_p95_nme": float(self.best_single_overall_p95_nme),
             "best_single_overall_nme": float(self.best_single_overall_mean_nme),
-            "best_single_overall_p95_nme": float(self.best_single_overall_p95_nme),
             "max_mean_nme_regression": float(self.max_mean_nme_regression),
             "max_p95_nme_regression": float(self.max_p95_nme_regression),
             "mean_nme_regression": float(self.max_mean_nme_regression),
