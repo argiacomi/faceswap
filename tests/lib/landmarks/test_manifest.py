@@ -146,6 +146,65 @@ def test_load_manifest_resolves_relative_paths_and_metadata(tmp_path: Path) -> N
     assert by_id["top-level-bbox"].landmarks == str((dataset / "truth.npy").resolve())
 
 
+def test_load_manifest_reads_normalizer_from_metadata_fallback(tmp_path: Path) -> None:
+    """``load_manifest`` reads ``normalizer`` from metadata when top-level is absent.
+
+    Mirrors the bbox/visibility fallback pattern: AFLW2000-3D ingests can
+    emit the profile-safe normalizer purely under ``metadata.normalizer``
+    (the canonical location for derived diagnostic fields), and the
+    harness must still consume it as the per-sample NME denominator.
+    """
+    dataset = tmp_path / "dataset"
+    dataset.mkdir()
+    truth = np.array([[0.0, 0.0], [10.0, 10.0]], dtype="float32")
+    np.save(str(dataset / "truth.npy"), truth)
+    samples = [
+        {
+            "sample_id": "top-level-only",
+            "image": "image.png",
+            "landmarks": "truth.npy",
+            "dataset": "fixture",
+            "condition": "clean",
+            "normalizer": 123.5,
+        },
+        {
+            "sample_id": "metadata-only",
+            "image": "image.png",
+            "landmarks": "truth.npy",
+            "dataset": "fixture",
+            "condition": "clean",
+            "metadata": {"normalizer": 88.0, "normalizer_source": "fixture_bbox_sqrt"},
+        },
+        {
+            "sample_id": "top-level-overrides-metadata",
+            "image": "image.png",
+            "landmarks": "truth.npy",
+            "dataset": "fixture",
+            "condition": "clean",
+            "normalizer": 50.0,
+            "metadata": {"normalizer": 999.0},
+        },
+        {
+            "sample_id": "neither",
+            "image": "image.png",
+            "landmarks": "truth.npy",
+            "dataset": "fixture",
+            "condition": "clean",
+        },
+    ]
+    manifest_path = dataset / "manifest.json"
+    manifest_path.write_text(json.dumps({"samples": samples}), encoding="utf-8")
+
+    by_id = {s.sample_id: s for s in load_manifest(manifest_path)}
+
+    assert by_id["top-level-only"].normalizer == 123.5
+    assert by_id["metadata-only"].normalizer == 88.0
+    # Top-level wins when both are set — keeps the explicit entry field
+    # authoritative if a future builder ever writes both.
+    assert by_id["top-level-overrides-metadata"].normalizer == 50.0
+    assert by_id["neither"].normalizer is None
+
+
 def test_load_manifest_rejects_missing_landmarks(tmp_path: Path) -> None:
     """Manifest entries without a landmarks path fail fast (hard contract)."""
     manifest_path = tmp_path / "manifest.json"

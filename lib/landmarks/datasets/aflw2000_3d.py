@@ -119,7 +119,7 @@ def _pt3d_z_coordinates(payload: dict[str, T.Any]) -> np.ndarray | None:
 # Z-buffer self-occlusion parameters. A landmark is flagged as occluded
 # when another landmark projects within ``neighborhood_ratio * extent``
 # of its XY position AND sits at least ``depth_margin_ratio * extent``
-# closer to the camera in AFLW2000-3D's pt3d_68 frame (smaller z).
+# closer to the camera in AFLW2000-3D's pt3d_68 frame (larger z).
 # Calibrated against the AFLW2000-3D 60-90° yaw bin so that the full
 # far-side jaw/cheek/ear arc gets hidden instead of leaving 1-8 stray
 # back-side landmarks visible (the failure mode of the previous depth-
@@ -134,6 +134,30 @@ DEFAULT_ZBUFFER_DEPTH_MARGIN_RATIO: float = 0.10
 # 60°+ profiles drop to <0.30 (>=85% of samples). 0.30 cleanly separates
 # the two regimes.
 DEFAULT_INTEROCULAR_COLLAPSE_RATIO: float = 0.30
+
+DEFAULT_OCCLUSION_HIDDEN_LANDMARK_THRESHOLD: int = 16
+DEFAULT_OCCLUSION_HIDDEN_FRACTION_THRESHOLD: float = 0.25
+
+
+def _zbuffer_occlusion_label(
+    visibility: list[bool] | None,
+    *,
+    hidden_threshold: int = DEFAULT_OCCLUSION_HIDDEN_LANDMARK_THRESHOLD,
+    hidden_fraction_threshold: float = DEFAULT_OCCLUSION_HIDDEN_FRACTION_THRESHOLD,
+) -> tuple[str, ...]:
+    """Return AFLW condition labels from z-buffer visibility severity.
+
+    This intentionally does not label every sample with one hidden point as
+    occlusion. It only labels samples where z-buffer self-occlusion is large
+    enough to be a meaningful scenario bucket.
+    """
+    if visibility is None:
+        return ()
+    hidden_count = sum(1 for value in visibility if not value)
+    hidden_fraction = hidden_count / len(visibility) if visibility else 0.0
+    if hidden_count >= hidden_threshold or hidden_fraction >= hidden_fraction_threshold:
+        return ("occlusion",)
+    return ()
 
 
 def _visibility_from_zbuffer(
@@ -188,7 +212,7 @@ def _profile_safe_normalizer(points_xy: np.ndarray) -> float | None:
     project onto nearly the same pixel and that distance approaches
     zero, inflating NME by an order of magnitude or more. When the
     inter-ocular distance drops below ``DEFAULT_INTEROCULAR_COLLAPSE_RATIO``
-    of the GT bounding-box diagonal we fall back to the published
+    of sqrt(bbox_w * bbox_h) we fall back to the published
     AFLW2000-3D normalizer ``sqrt(bbox_w * bbox_h)`` (Zhu et al., 3DDFA),
     which stays bounded across the full yaw range.
     """
@@ -272,13 +296,16 @@ def _build_from_root(
     """Build a manifest from an extracted AFLW2000-3D root."""
     scenario_groups = _explicit_scenario_groups(scenarios)
     samples: list[dict[str, T.Any]] = []
+
     for annotation in sorted(root.rglob("*.mat")):
         image = _matching_image(annotation)
         if image is None:
             logger.debug("Skipping AFLW2000-3D annotation without matching image: %s", annotation)
             continue
+
         payload = _load_mat(annotation)
         points, landmark_source_key = _points_68(payload, source=annotation)
+
         metadata = _metadata(
             payload,
             annotation,
@@ -288,19 +315,60 @@ def _build_from_root(
         )
         metadata["face_bbox"] = _landmark_bbox(points)
         metadata["face_bbox_source"] = f"aflw2000_3d_{landmark_source_key}_xy_extrema"
+
         visibility: list[bool] | None = None
         if landmark_source_key == "pt3d_68":
             z_values = _pt3d_z_coordinates(payload)
             if z_values is not None:
                 visibility = _visibility_from_zbuffer(points, z_values)
+
         if visibility is not None:
+            hidden_count = sum(1 for value in visibility if not value)
+            hidden_fraction = hidden_count / len(visibility)
+
             metadata["visibility"] = visibility
             metadata["visibility_source"] = "aflw2000_3d_pt3d_68_zbuffer"
+            metadata["self_occlusion_landmark_count"] = hidden_count
+            metadata["self_occlusion_landmark_fraction"] = hidden_fraction
+            metadata["zbuffer_occlusion_label_hidden_threshold"] = (
+                DEFAULT_OCCLUSION_HIDDEN_LANDMARK_THRESHOLD
+            )
+            metadata["zbuffer_occlusion_label_fraction_threshold"] = (
+                DEFAULT_OCCLUSION_HIDDEN_FRACTION_THRESHOLD
+            )
+
         normalizer = _profile_safe_normalizer(points)
         if normalizer is not None:
             metadata["normalizer"] = normalizer
             metadata["normalizer_source"] = "aflw2000_3d_bbox_sqrt_wh"
-        condition_labels = _condition_labels_from_metadata({}, metadata, default=scenario)
+
+        condition_metadata = {
+            key: value
+            for key, value in metadata.items()
+            if key
+            not in {
+                "visibility",
+                "visible",
+                "visibility_source",
+                "normalizer",
+                "normalizer_source",
+                "self_occlusion_landmark_count",
+                "self_occlusion_landmark_fraction",
+                "zbuffer_occlusion_label_hidden_threshold",
+                "zbuffer_occlusion_label_fraction_threshold",
+            }
+        }
+
+        condition_labels = _condition_labels_from_metadata(
+            {},
+            condition_metadata,
+            default=scenario,
+        )
+
+        zbuffer_labels = _zbuffer_occlusion_label(visibility)
+        if zbuffer_labels:
+            condition_labels = tuple(dict.fromkeys((*zbuffer_labels, *condition_labels)))
+
         sample_id = annotation.relative_to(root).with_suffix("").as_posix()
         entry: dict[str, T.Any] = {
             "sample_id": sample_id,
@@ -313,13 +381,17 @@ def _build_from_root(
             "metadata": metadata,
             "points": normalize_landmarks(points, source_schema="2d_68"),
         }
+
         if visibility is not None:
             entry["visibility"] = visibility
         if normalizer is not None:
             entry["normalizer"] = normalizer
+
         samples.append(entry)
+
     if not samples:
         raise FileNotFoundError(f"No AFLW2000-3D .mat/image pairs found under {root}")
+
     return _write_manifest_and_audit(
         _filter_samples(samples, scenario_groups, samples_per_scenario),
         Path(output_dir),

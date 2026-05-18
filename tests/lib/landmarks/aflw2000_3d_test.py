@@ -10,9 +10,12 @@ import numpy as np
 import pytest
 
 from lib.landmarks.datasets.aflw2000_3d import (
+    DEFAULT_OCCLUSION_HIDDEN_FRACTION_THRESHOLD,
+    DEFAULT_OCCLUSION_HIDDEN_LANDMARK_THRESHOLD,
     _profile_safe_normalizer,
     _pt3d_z_coordinates,
     _visibility_from_zbuffer,
+    _zbuffer_occlusion_label,
     build_aflw2000_3d_manifest,
 )
 
@@ -233,6 +236,11 @@ def test_build_aflw2000_3d_manifest_records_visibility_for_profile_pose(tmp_path
     occluded = sum(1 for v in visibility if not v)
     assert occluded == 8
     assert sample["metadata"]["visibility_source"] == "aflw2000_3d_pt3d_68_zbuffer"
+    # Hidden count of 8 is below the 16-landmark threshold (and the
+    # 0.25 fraction floor) so the sample stays in the default bucket
+    # rather than getting auto-routed into "occlusion".
+    assert sample["condition"] == "default"
+    assert "occlusion" not in sample["conditions"]
 
 
 def test_build_aflw2000_3d_manifest_records_profile_safe_normalizer(tmp_path: Path) -> None:
@@ -275,3 +283,104 @@ def test_build_aflw2000_3d_manifest_omits_visibility_for_frontal_pose(tmp_path: 
     assert "visibility" not in sample
     assert "visibility" not in sample["metadata"]
     assert "visibility_source" not in sample["metadata"]
+
+
+def _heavily_occluded_pt3d_68(hidden_count: int) -> np.ndarray:
+    """Return a 3x68 array where ``hidden_count`` back-of-face landmarks
+    are stacked behind a small front cluster.
+
+    Same construction as ``_profile_pt3d_68`` but with a parameterised
+    back-cluster size so tests can vary the hidden-landmark count to
+    bracket the z-buffer occlusion threshold.
+    """
+    assert 1 <= hidden_count <= 60
+    xy = np.zeros((68, 2), dtype="float32")
+    front_size = 4
+    cluster_a = front_size + hidden_count
+    xy[:front_size] = [10.0, 10.0]
+    xy[front_size:cluster_a] = [10.0, 10.0]
+    xy[cluster_a:] = [90.0, 90.0]
+    z = np.zeros((68,), dtype="float32")
+    z[:front_size] = 60.0
+    return np.concatenate((xy.T, z[None, :]), axis=0)
+
+
+def test_zbuffer_occlusion_label_returns_empty_for_none_visibility() -> None:
+    """A sample with no visibility info stays unlabeled by the threshold gate."""
+    assert _zbuffer_occlusion_label(None) == ()
+
+
+def test_zbuffer_occlusion_label_skips_label_below_thresholds() -> None:
+    """Hidden count <16 and fraction <0.25 leaves the sample in the default bucket."""
+    visibility = [True] * 68
+    for idx in range(15):
+        visibility[idx] = False  # 15 hidden, fraction ≈ 0.22 — both below threshold
+    assert _zbuffer_occlusion_label(visibility) == ()
+
+
+def test_zbuffer_occlusion_label_labels_when_count_threshold_met() -> None:
+    """Hidden count reaching the landmark threshold (16) triggers an ``occlusion`` label."""
+    visibility = [True] * 68
+    for idx in range(DEFAULT_OCCLUSION_HIDDEN_LANDMARK_THRESHOLD):
+        visibility[idx] = False
+    assert _zbuffer_occlusion_label(visibility) == ("occlusion",)
+
+
+def test_zbuffer_occlusion_label_labels_when_only_fraction_threshold_met() -> None:
+    """With a high count threshold, the fraction floor still routes severe occlusion."""
+    visibility = [True] * 68
+    # 18 hidden of 68 ≈ 0.265 → above 0.25 fraction floor but below a raised count threshold.
+    for idx in range(18):
+        visibility[idx] = False
+    assert (
+        _zbuffer_occlusion_label(
+            visibility,
+            hidden_threshold=99,
+            hidden_fraction_threshold=DEFAULT_OCCLUSION_HIDDEN_FRACTION_THRESHOLD,
+        )
+        == ("occlusion",)
+    )
+
+
+def test_build_aflw2000_3d_manifest_labels_occlusion_when_threshold_met(tmp_path: Path) -> None:
+    """An AFLW sample whose hidden count clears the threshold gets routed into ``occlusion``."""
+    scipy_io = pytest.importorskip("scipy.io")
+    root = tmp_path / "aflw2000"
+    root.mkdir()
+    _write_png(root / "face.jpg")
+    # 20 hidden landmarks → above the 16-count threshold AND above the
+    # 0.25 fraction floor.
+    scipy_io.savemat(str(root / "face.mat"), {"pt3d_68": _heavily_occluded_pt3d_68(20)})
+
+    manifest = build_aflw2000_3d_manifest(root / "out", source_dir=root)
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    sample = payload["samples"][0]
+
+    visibility = sample["metadata"]["visibility"]
+    hidden = sum(1 for v in visibility if not v)
+    assert hidden == 20
+    assert sample["condition"] == "occlusion"
+    assert "occlusion" in sample["conditions"]
+    # Diagnostic metadata is preserved alongside the routing label.
+    assert sample["metadata"]["self_occlusion_landmark_count"] == 20
+    assert sample["metadata"]["zbuffer_occlusion_label_hidden_threshold"] == (
+        DEFAULT_OCCLUSION_HIDDEN_LANDMARK_THRESHOLD
+    )
+
+
+def test_build_aflw2000_3d_manifest_stays_default_when_threshold_not_met(tmp_path: Path) -> None:
+    """A sample with 15 hidden landmarks stays in the default bucket (15 < 16, 0.22 < 0.25)."""
+    scipy_io = pytest.importorskip("scipy.io")
+    root = tmp_path / "aflw2000"
+    root.mkdir()
+    _write_png(root / "face.jpg")
+    scipy_io.savemat(str(root / "face.mat"), {"pt3d_68": _heavily_occluded_pt3d_68(15)})
+
+    manifest = build_aflw2000_3d_manifest(root / "out", source_dir=root)
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    sample = payload["samples"][0]
+
+    visibility = sample["metadata"]["visibility"]
+    assert sum(1 for v in visibility if not v) == 15
+    assert sample["condition"] == "default"
+    assert "occlusion" not in sample["conditions"]
