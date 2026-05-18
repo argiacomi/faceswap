@@ -814,7 +814,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--prediction-root", action="append", default=[])
     parser.add_argument("--checkpoint-tag", default="validation")
     parser.add_argument("--refresh-predictions", action="store_true")
-    parser.add_argument("--batch-size", type=int, default=8)
+    parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--device", default="auto")
     parser.add_argument(
         "--bbox-source",

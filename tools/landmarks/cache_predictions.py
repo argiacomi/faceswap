@@ -584,7 +584,7 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Run selected model adapters against --manifest instead of importing .npy predictions.",
     )
-    parser.add_argument("--batch-size", type=int, default=1)
+    parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument(
         "--device",
         default="auto",
