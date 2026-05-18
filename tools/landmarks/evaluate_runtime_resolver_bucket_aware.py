@@ -72,8 +72,8 @@ BUCKET_PRIORITIES: dict[str, tuple[str, ...]] = {
         "orformer",
     ),
     "rolled_large_yaw_left": (
-        "spiga",
         "hrnet",
+        "spiga",
         "static_weighted_downweight",
         "orformer",
     ),
