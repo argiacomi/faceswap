@@ -18,7 +18,9 @@ from lib.landmarks.evaluation.hard_slices import (
 )
 
 
-def _sample(*, yaw: float | None, roll: float | None, sample_id: str = "sample") -> dict[str, T.Any]:
+def _sample(
+    *, yaw: float | None, roll: float | None, sample_id: str = "sample"
+) -> dict[str, T.Any]:
     metadata: dict[str, T.Any] = {}
     if yaw is not None and roll is not None:
         metadata["Pose_Para"] = [0.0, math.radians(yaw), math.radians(roll), 0.0, 0.0, 0.0, 1.0]

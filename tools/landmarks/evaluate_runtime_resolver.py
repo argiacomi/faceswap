@@ -124,9 +124,7 @@ def _single_model_predictions(
     available = set(cache.available_models(sample.sample_id))
     missing = [name for name in model_names if name not in available]
     if missing:
-        raise FileNotFoundError(
-            f"sample {sample.sample_id!r} missing cached models: {missing}"
-        )
+        raise FileNotFoundError(f"sample {sample.sample_id!r} missing cached models: {missing}")
     return {name: cache.read(sample.sample_id, name) for name in model_names}
 
 
@@ -171,9 +169,7 @@ def _build_candidates(
             )
         )
     if fusion_names and not fusion_models:
-        raise ValueError(
-            "fusion variants requested but --weights resolved to an empty model set"
-        )
+        raise ValueError("fusion variants requested but --weights resolved to an empty model set")
     for variant in fusion_names:
         fused = fuse_variant(
             variant,
@@ -296,7 +292,7 @@ def resolve_roll_aware_veto(
     consensus = _circular_median(valid_rolls)
     survivors: list[tuple[CandidateRecord, float]] = []
     vetoed: list[str] = []
-    for candidate, roll in zip(candidates, rolls):
+    for candidate, roll in zip(candidates, rolls, strict=False):
         if roll is None:
             vetoed.append(candidate.name)
             continue
@@ -314,7 +310,7 @@ def resolve_roll_aware_veto(
         diagnostics["fallback_reason"] = "all_candidates_vetoed"
         deltas = [
             (candidate, abs(_signed_degree_delta(roll, consensus)))
-            for candidate, roll in zip(candidates, rolls)
+            for candidate, roll in zip(candidates, rolls, strict=False)
             if roll is not None
         ]
         chosen = min(deltas, key=lambda item: item[1])[0]
@@ -350,9 +346,7 @@ def apply_policy(
 ) -> PolicyDecision:
     """Dispatch to the named policy with a clear error for unknown names."""
     if name not in POLICY_REGISTRY:
-        raise ValueError(
-            f"unknown resolver policy {name!r}; available: {sorted(POLICY_REGISTRY)}"
-        )
+        raise ValueError(f"unknown resolver policy {name!r}; available: {sorted(POLICY_REGISTRY)}")
     return POLICY_REGISTRY[name](candidates, metrics)
 
 
@@ -594,9 +588,7 @@ def write_failures_csv(
             )
 
 
-def select_worst_samples(
-    reports: T.Sequence[SampleReport], *, count: int
-) -> list[SampleReport]:
+def select_worst_samples(reports: T.Sequence[SampleReport], *, count: int) -> list[SampleReport]:
     """Return the ``count`` samples with the largest gap between chosen and oracle NME."""
     ranked = sorted(
         reports,
@@ -620,9 +612,7 @@ def write_worst_samples_json(worst: T.Sequence[SampleReport], path: Path) -> Non
                 "gap_vs_oracle": r.metrics[r.decision.chosen].nme - r.metrics[r.oracle].nme,
                 "consensus_roll_deg": r.decision.consensus_roll_deg,
                 "vetoed": list(r.decision.vetoed),
-                "rolls": {
-                    name: metric.roll_degrees for name, metric in r.metrics.items()
-                },
+                "rolls": {name: metric.roll_degrees for name, metric in r.metrics.items()},
             }
             for r in worst
         ]
@@ -722,9 +712,7 @@ def build_parser() -> argparse.ArgumentParser:
         )
     )
     parser.add_argument("--manifest", required=True, help="Manifest JSON path")
-    parser.add_argument(
-        "--cache-dir", required=True, help="Prediction cache root directory"
-    )
+    parser.add_argument("--cache-dir", required=True, help="Prediction cache root directory")
     parser.add_argument(
         "--weights",
         required=True,

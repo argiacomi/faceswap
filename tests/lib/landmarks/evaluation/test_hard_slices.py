@@ -30,9 +30,7 @@ def _sample(
     }
     sample.update(extras)
     if yaw_radians is not None:
-        sample["metadata"] = {
-            "Pose_Para": [0.0, yaw_radians, roll_radians, 0.0, 0.0, 0.0, 1.0]
-        }
+        sample["metadata"] = {"Pose_Para": [0.0, yaw_radians, roll_radians, 0.0, 0.0, 0.0, 1.0]}
     return sample
 
 
@@ -103,7 +101,9 @@ def test_slice_manifest_samples_keeps_only_hard_buckets_by_default() -> None:
         _sample(sample_id="profile_l", yaw_radians=math.radians(-35.0)),
         _sample(sample_id="profile_r", yaw_radians=math.radians(35.0)),
         _sample(sample_id="large_yaw", yaw_radians=math.radians(70.0)),
-        _sample(sample_id="rolled", yaw_radians=math.radians(5.0), roll_radians=math.radians(35.0)),
+        _sample(
+            sample_id="rolled", yaw_radians=math.radians(5.0), roll_radians=math.radians(35.0)
+        ),
         _sample(sample_id="unknown"),  # no pose
     ]
     sliced, counts = slice_manifest_samples(samples)

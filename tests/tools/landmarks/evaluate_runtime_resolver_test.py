@@ -20,11 +20,18 @@ from tools.landmarks.evaluate_runtime_resolver import (
 
 
 def _candidate(name: str) -> CandidateRecord:
-    return CandidateRecord(name=name, landmarks=np.zeros((68, 2), dtype="float32"), is_fusion=False, contributing_models=(name,))
+    return CandidateRecord(
+        name=name,
+        landmarks=np.zeros((68, 2), dtype="float32"),
+        is_fusion=False,
+        contributing_models=(name,),
+    )
 
 
 def _metric(nme: float, *, roll: float | None) -> CandidateMetrics:
-    return CandidateMetrics(nme=nme, failure=nme > 0.08, roll_degrees=roll, yaw_degrees=None, pitch_degrees=None)
+    return CandidateMetrics(
+        nme=nme, failure=nme > 0.08, roll_degrees=roll, yaw_degrees=None, pitch_degrees=None
+    )
 
 
 def test_roll_aware_veto_vetoes_roll_outlier_and_picks_consensus_survivor() -> None:

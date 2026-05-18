@@ -7,7 +7,13 @@ This is a thin wrapper around ``evaluate_runtime_resolver.py``. It adds the
 
 from __future__ import annotations
 
+import sys
 import typing as T
+from pathlib import Path
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 from tools.landmarks import evaluate_runtime_resolver as base
 
@@ -25,13 +31,51 @@ BUCKET_PRIORITIES: dict[str, tuple[str, ...]] = {
     "large_roll": ("orformer", "static_weighted_downweight", "static_weighted", "spiga", "hrnet"),
     "extreme_roll": ("hrnet", "orformer", "static_weighted_downweight", "spiga"),
     "rolled_large_yaw_left": ("hrnet", "static_weighted_downweight", "orformer", "spiga"),
-    "rolled_large_yaw_right": ("spiga", "orformer", "static_weighted_downweight", "weighted_median"),
+    "rolled_large_yaw_right": (
+        "spiga",
+        "orformer",
+        "static_weighted_downweight",
+        "weighted_median",
+    ),
     "rolled_profile_left": ("hrnet", "static_weighted_downweight", "orformer", "spiga"),
-    "rolled_profile_right": ("static_weighted_hard_drop", "orformer", "static_weighted_downweight", "spiga"),
-    "large_yaw_left": ("static_weighted_downweight", "static_weighted_hard_drop", "static_weighted", "orformer", "spiga", "hrnet"),
-    "large_yaw_right": ("static_weighted_downweight", "static_weighted_hard_drop", "static_weighted", "orformer", "spiga", "hrnet"),
-    "profile_left": ("static_weighted_downweight", "static_weighted_hard_drop", "static_weighted", "orformer", "spiga", "hrnet"),
-    "profile_right": ("static_weighted_downweight", "static_weighted_hard_drop", "static_weighted", "orformer", "spiga", "hrnet"),
+    "rolled_profile_right": (
+        "static_weighted_hard_drop",
+        "orformer",
+        "static_weighted_downweight",
+        "spiga",
+    ),
+    "large_yaw_left": (
+        "static_weighted_downweight",
+        "static_weighted_hard_drop",
+        "static_weighted",
+        "orformer",
+        "spiga",
+        "hrnet",
+    ),
+    "large_yaw_right": (
+        "static_weighted_downweight",
+        "static_weighted_hard_drop",
+        "static_weighted",
+        "orformer",
+        "spiga",
+        "hrnet",
+    ),
+    "profile_left": (
+        "static_weighted_downweight",
+        "static_weighted_hard_drop",
+        "static_weighted",
+        "orformer",
+        "spiga",
+        "hrnet",
+    ),
+    "profile_right": (
+        "static_weighted_downweight",
+        "static_weighted_hard_drop",
+        "static_weighted",
+        "orformer",
+        "spiga",
+        "hrnet",
+    ),
 }
 
 _ORIGINAL_EVALUATE_SAMPLE = base.evaluate_sample
