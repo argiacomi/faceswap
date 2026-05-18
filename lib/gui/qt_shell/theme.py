@@ -365,12 +365,30 @@ def render_qss(theme: QtTheme) -> str:
             f"background-color: {theme.color('input_focus')}; "
             f"border: 1px solid {theme.color('accent')}; }}",
             "QComboBox::drop-down { "
+            f"background-color: {theme.color('button')}; "
             f"border-left: 1px solid {theme.color('border')}; "
             f"width: {theme.icon_size + spacing}px; }}",
+            "QComboBox::down-arrow { "
+            "image: none; "
+            "width: 0; height: 0; "
+            "border-left: 5px solid transparent; "
+            "border-right: 5px solid transparent; "
+            f"border-top: 6px solid {theme.color('input_text')}; "
+            f"margin-right: {half_spacing}px; }}",
             "QComboBox QAbstractItemView { "
             f"background-color: {theme.color('menu_background')}; "
             f"color: {theme.color('menu_text')}; "
-            f"selection-background-color: {theme.color('menu_hover')}; }}",
+            f"selection-background-color: {theme.color('menu_hover')}; "
+            f"selection-color: {theme.color('menu_text')}; }}",
+            "QComboBox QAbstractItemView::item { "
+            f"background-color: {theme.color('menu_background')}; "
+            f"color: {theme.color('menu_text')}; "
+            f"padding: {tab_vpad}px {spacing}px; }}",
+            "QComboBox QAbstractItemView::item:selected, "
+            "QComboBox QAbstractItemView::item:hover, "
+            "QComboBox QAbstractItemView::item:selected:!active { "
+            f"background-color: {theme.color('menu_hover')}; "
+            f"color: {theme.color('menu_text')}; }}",
             "QTabWidget#qt-shell-display-tabs::pane, QTabWidget::pane { "
             f"border: 1px solid {theme.color('border')}; top: -1px; }}",
             "QTabBar::tab { "
