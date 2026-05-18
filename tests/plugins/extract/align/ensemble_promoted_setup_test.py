@@ -141,6 +141,26 @@ def test_strict_mode_fails_when_promoted_model_missing(tmp_path: Path) -> None:
         plugin.model = plugin.load_model()
 
 
+def test_strict_mode_filters_adapters_not_in_promoted_setup(tmp_path: Path) -> None:
+    """Configured extras are skipped so promoted weights match runtime adapters."""
+    setup_path, _ = _write_promoted_pair(tmp_path, models=("spiga", "orformer"))
+    adapters = _three_static_adapters((0.1, 0.2, 0.4))
+    plugin = Ensemble(
+        adapters=adapters,
+        crop_scale=1.0,
+        setup_path=str(setup_path),
+        setup_mode="strict",
+    )
+
+    plugin.model = plugin.load_model()
+    result = plugin.predict_landmarks_68(np.zeros((256, 256, 3), dtype="float32"))
+
+    assert [adapter.config.name for adapter in plugin.model] == ["spiga", "orformer"]
+    np.testing.assert_allclose(result, _points(0.3), rtol=1e-6, atol=1e-6)
+    assert plugin.last_debug_metadata[0]["active_models"] == ("spiga", "orformer")
+    assert np.array(plugin.last_debug_metadata[0]["weights"]).shape == (2, 68)
+
+
 def test_strict_mode_fails_on_forbidden_outlier_method(tmp_path: Path) -> None:
     """A stray ``outlier_method`` field hard-fails strict loading."""
     setup_path, _ = _write_promoted_pair(tmp_path)
