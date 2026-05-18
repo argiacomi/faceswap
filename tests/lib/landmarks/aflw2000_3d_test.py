@@ -10,8 +10,9 @@ import numpy as np
 import pytest
 
 from lib.landmarks.datasets.aflw2000_3d import (
+    _profile_safe_normalizer,
     _pt3d_z_coordinates,
-    _visibility_from_depth,
+    _visibility_from_zbuffer,
     build_aflw2000_3d_manifest,
 )
 
@@ -111,21 +112,25 @@ def _frontal_pt3d_68() -> np.ndarray:
     return np.concatenate((xy, z), axis=0)
 
 
-def _profile_pt3d_68(yawed_right: bool = True) -> np.ndarray:
-    """Return a 3x68 array where one side's jawline sits well behind the
-    central face plane (simulates a profile pose).
+def _profile_pt3d_68() -> np.ndarray:
+    """Return a 3x68 array where back-of-face landmarks share XY positions
+    with front-of-face landmarks but sit farther from the camera in Z.
 
-    Central landmarks (eye corners, nose, mouth corners) stay near z=0.
-    Half the jawline gets pushed back along z by a large delta so the
-    depth-based occlusion heuristic flags it.
+    Setup: two clusters far enough apart that 0.08 * face_extent never
+    bridges them. Cluster A at (10, 10) contains a front layer (indices
+    0..7 at z=60, "closer to camera") and a back layer (indices 8..15
+    at z=0). Cluster B at (90, 90) holds the remaining 52 landmarks at
+    z=0; their large XY separation from cluster A keeps them out of
+    each other's neighborhood. The z-buffer test should hide exactly
+    indices 8..15.
     """
-    xy = _points_68_2d()
+    xy = np.zeros((68, 2), dtype="float32")
+    xy[0:8] = [10.0, 10.0]  # front layer of cluster A
+    xy[8:16] = [10.0, 10.0]  # back layer of cluster A (XY-coincident with front)
+    xy[16:] = [90.0, 90.0]  # cluster B (isolated from cluster A)
     z = np.zeros((68,), dtype="float32")
-    # XY face extent ≈ sqrt(67^2 + 67^2) ≈ 94.75 in this fixture; 60 is
-    # comfortably above the 0.3 * extent = 28.4 threshold.
-    far_side = slice(0, 8) if yawed_right else slice(9, 17)
-    z[far_side] = 60.0
-    return np.concatenate((xy, z[None, :]), axis=0)
+    z[0:8] = 60.0  # extent ≈ 113 → 60 > depth_margin (0.10 * 113 ≈ 11)
+    return np.concatenate((xy.T, z[None, :]), axis=0)
 
 
 def test_pt3d_z_coordinates_extracts_depth_column_for_3x68() -> None:
@@ -143,36 +148,67 @@ def test_pt3d_z_coordinates_returns_none_when_pt3d_missing() -> None:
     assert _pt3d_z_coordinates({"pt2d": _points_68_2d()}) is None
 
 
-def test_visibility_from_depth_returns_none_for_frontal_uniform_depth() -> None:
-    """A face with near-uniform depth has nothing to mask out."""
+def test_visibility_from_zbuffer_returns_none_for_uniform_depth() -> None:
+    """A face with uniform depth has no front-of-back relationships to flag."""
     xy = _points_68_2d().T  # (68, 2)
     z = np.full((68,), 50.0, dtype="float32")
-    assert _visibility_from_depth(xy, z) is None
+    assert _visibility_from_zbuffer(xy, z) is None
 
 
-def test_visibility_from_depth_flags_far_side_jawline_on_profile() -> None:
-    """Profile poses produce a 68-bool mask with the far jawline marked invisible."""
-    pt3d = _profile_pt3d_68(yawed_right=True)
+def test_visibility_from_zbuffer_hides_landmarks_behind_xy_neighbors() -> None:
+    """Landmarks whose XY-neighbors sit in front in Z get flagged invisible."""
+    pt3d = _profile_pt3d_68()
     xy = pt3d[:2].T
     z = pt3d[2]
-    visibility = _visibility_from_depth(xy, z)
+    visibility = _visibility_from_zbuffer(xy, z)
     assert visibility is not None
     assert len(visibility) == 68
-    # The right-jawline (indices 0..7) was pushed back → flagged invisible.
-    assert all(not value for value in visibility[0:8])
-    # Everything else stays visible.
-    assert all(value for value in visibility[8:])
+    # Indices 8..15 (back cluster) are stacked on top of 0..7 in XY but
+    # sit further in Z → they should be the occluded set.
+    assert visibility[0:8] == [True] * 8
+    assert visibility[8:16] == [False] * 8
+    assert all(visibility[16:])
 
 
-def test_visibility_from_depth_returns_none_when_xy_extent_collapses() -> None:
+def test_visibility_from_zbuffer_returns_none_when_xy_extent_collapses() -> None:
     """Degenerate input (no XY extent) returns ``None`` rather than dividing by zero."""
     xy = np.zeros((68, 2), dtype="float32")
     z = np.linspace(0, 60, 68, dtype="float32")
-    assert _visibility_from_depth(xy, z) is None
+    assert _visibility_from_zbuffer(xy, z) is None
+
+
+def test_profile_safe_normalizer_returns_none_for_frontal_faces() -> None:
+    """When the eye corners are well separated, defer to the harness default."""
+    xy = _points_68_2d().T.copy()
+    # Inter-ocular ≈ 0.62 * sqrt(bbox_w * bbox_h) for a real frontal face;
+    # set eye corners 36/45 explicitly so the ratio is comfortably above 0.30.
+    xy[36] = [20.0, 50.0]
+    xy[45] = [80.0, 50.0]
+    assert _profile_safe_normalizer(xy) is None
+
+
+def test_profile_safe_normalizer_returns_bbox_sqrt_when_eyes_collapse() -> None:
+    """Extreme yaw — eye corners almost on top of each other — switches to sqrt(wh)."""
+    xy = _points_68_2d().T.copy()
+    # Inter-ocular ≈ 1 pixel on a ~100x100 face → ratio ≪ 0.30.
+    xy[36] = [49.0, 50.0]
+    xy[45] = [50.0, 50.0]
+    bbox_w = float(xy[:, 0].max() - xy[:, 0].min())
+    bbox_h = float(xy[:, 1].max() - xy[:, 1].min())
+    expected = (bbox_w * bbox_h) ** 0.5
+    result = _profile_safe_normalizer(xy)
+    assert result is not None
+    np.testing.assert_allclose(result, expected, rtol=1e-5)
+
+
+def test_profile_safe_normalizer_handles_degenerate_bbox() -> None:
+    """A collapsed bbox (zero area) returns None instead of crashing."""
+    xy = np.zeros((68, 2), dtype="float32")
+    assert _profile_safe_normalizer(xy) is None
 
 
 def test_build_aflw2000_3d_manifest_records_visibility_for_profile_pose(tmp_path: Path) -> None:
-    """A pt3d_68 with one-sided depth produces a visibility entry on the sample."""
+    """A pt3d_68 with self-occlusion produces visibility on the sample."""
     scipy_io = pytest.importorskip("scipy.io")
     root = tmp_path / "aflw2000"
     root.mkdir()
@@ -180,7 +216,7 @@ def test_build_aflw2000_3d_manifest_records_visibility_for_profile_pose(tmp_path
     scipy_io.savemat(
         str(root / "face.mat"),
         {
-            "pt3d_68": _profile_pt3d_68(yawed_right=True),
+            "pt3d_68": _profile_pt3d_68(),
             "Pose_Para": np.asarray([[0, 1.0, 0]], dtype="float32"),
         },
     )
@@ -192,8 +228,33 @@ def test_build_aflw2000_3d_manifest_records_visibility_for_profile_pose(tmp_path
     visibility = sample.get("visibility") or sample["metadata"].get("visibility")
     assert visibility is not None
     assert len(visibility) == 68
-    assert sum(1 for v in visibility if not v) == 8
-    assert sample["metadata"]["visibility_source"] == "aflw2000_3d_pt3d_68_depth"
+    # Eight back-of-face landmarks were stacked on top of the front
+    # cluster and pushed deeper in Z; the z-buffer test should hide them.
+    occluded = sum(1 for v in visibility if not v)
+    assert occluded == 8
+    assert sample["metadata"]["visibility_source"] == "aflw2000_3d_pt3d_68_zbuffer"
+
+
+def test_build_aflw2000_3d_manifest_records_profile_safe_normalizer(tmp_path: Path) -> None:
+    """When eye corners collapse, the entry carries an explicit bbox-sqrt normalizer."""
+    scipy_io = pytest.importorskip("scipy.io")
+    root = tmp_path / "aflw2000"
+    root.mkdir()
+    _write_png(root / "face.jpg")
+    # Force inter-ocular ≪ 0.30 * sqrt(w*h) by colocating eye corners.
+    xy = _points_68_2d().T.copy()
+    xy[36] = [49.0, 50.0]
+    xy[45] = [50.0, 50.0]
+    pt3d = np.concatenate((xy.T, np.full((1, 68), 25.0, dtype="float32")), axis=0)
+    scipy_io.savemat(str(root / "face.mat"), {"pt3d_68": pt3d})
+
+    manifest = build_aflw2000_3d_manifest(root / "out", source_dir=root)
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    sample = payload["samples"][0]
+
+    assert "normalizer" in sample
+    assert sample["normalizer"] > 0
+    assert sample["metadata"]["normalizer_source"] == "aflw2000_3d_bbox_sqrt_wh"
 
 
 def test_build_aflw2000_3d_manifest_omits_visibility_for_frontal_pose(tmp_path: Path) -> None:

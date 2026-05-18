@@ -152,7 +152,7 @@ def load_manifest(path: str | Path) -> list[LandmarkSample]:
                 landmarks=str((base / landmarks).resolve()),
                 dataset=str(entry.get("dataset", "")),
                 condition=str(entry.get("condition", entry.get("scenario", ""))),
-                normalizer=entry.get("normalizer"),
+                normalizer=entry.get("normalizer", metadata.get("normalizer")),
                 face_bbox=bbox,
                 visibility=visibility,
             )

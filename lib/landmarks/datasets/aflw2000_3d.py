@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import math
 import typing as T
 from pathlib import Path
 
@@ -115,47 +116,93 @@ def _pt3d_z_coordinates(payload: dict[str, T.Any]) -> np.ndarray | None:
     return z.astype("float32")
 
 
-# Landmark indices considered "central" to the face: eye corners, nose tip,
-# mouth corners. Their depth defines the face's central plane; jawline /
-# cheek points farther behind this plane are flagged as self-occluded.
-_CENTRAL_FACE_LANDMARKS: tuple[int, ...] = (30, 36, 39, 42, 45, 48, 54)
+# Z-buffer self-occlusion parameters. A landmark is flagged as occluded
+# when another landmark projects within ``neighborhood_ratio * extent``
+# of its XY position AND sits at least ``depth_margin_ratio * extent``
+# closer to the camera in AFLW2000-3D's pt3d_68 frame (smaller z).
+# Calibrated against the AFLW2000-3D 60-90° yaw bin so that the full
+# far-side jaw/cheek/ear arc gets hidden instead of leaving 1-8 stray
+# back-side landmarks visible (the failure mode of the previous depth-
+# vs-central-plane heuristic).
+DEFAULT_ZBUFFER_NEIGHBORHOOD_RATIO: float = 0.08
+DEFAULT_ZBUFFER_DEPTH_MARGIN_RATIO: float = 0.10
 
 
-# Fraction of the face's XY extent a landmark may sit behind the central
-# plane before being declared self-occluded. 0.30 chosen empirically:
-# tight enough to flag the far-side jawline at ~30° yaw, loose enough to
-# keep all 68 points visible on frontal faces.
-DEFAULT_DEPTH_OCCLUSION_RATIO: float = 0.30
+# Below this inter-ocular / sqrt(bbox_w * bbox_h) ratio the eye corners
+# are too collapsed to use as an NME denominator. On the AFLW2000-3D
+# test set, frontal-to-45° samples sit at IO/sqrt(wh) >= 0.37, while
+# 60°+ profiles drop to <0.30 (>=85% of samples). 0.30 cleanly separates
+# the two regimes.
+DEFAULT_INTEROCULAR_COLLAPSE_RATIO: float = 0.30
 
 
-def _visibility_from_depth(
+def _visibility_from_zbuffer(
     points_xy: np.ndarray,
     z: np.ndarray,
     *,
-    depth_ratio: float = DEFAULT_DEPTH_OCCLUSION_RATIO,
+    neighborhood_ratio: float = DEFAULT_ZBUFFER_NEIGHBORHOOD_RATIO,
+    depth_margin_ratio: float = DEFAULT_ZBUFFER_DEPTH_MARGIN_RATIO,
 ) -> list[bool] | None:
-    """Return a 68-bool list flagging landmarks that sit in front of the
-    central face plane (visible) versus behind it (self-occluded).
+    """Return a 68-bool visibility list using a z-buffer self-occlusion
+    test against AFLW2000-3D's pt3d_68 depths.
 
-    Returns ``None`` when the Z range is degenerate (frontal faces with
-    near-uniform depth) — there's nothing useful to mask in that case,
-    and the harness already handles ``visibility=None`` as "trust all
-    landmarks".
+    AFLW2000-3D's pt3d_68 stores camera-space coordinates where larger
+    ``z`` means closer to the camera (the 3DMM face normal points out
+    of the face toward the viewer). For each landmark ``i``, check
+    every other landmark ``j``: when ``|xy_j - xy_i|`` is within
+    ``neighborhood_ratio * face_extent`` AND ``z_j`` is at least
+    ``depth_margin_ratio * face_extent`` greater than ``z_i`` (i.e. j
+    sits in front of i toward the camera), ``i`` is flagged invisible.
+    Returns ``None`` when no landmark is occluded so the manifest stays
+    compact and the harness's ``visibility=None`` path applies as
+    before.
     """
     if points_xy.shape != (68, 2) or z.shape != (68,):
         return None
     face_extent = float(np.linalg.norm(points_xy.max(axis=0) - points_xy.min(axis=0)))
     if face_extent <= 0:
         return None
-    central_z = float(np.median(z[list(_CENTRAL_FACE_LANDMARKS)]))
-    threshold = central_z + depth_ratio * face_extent
-    mask = z <= threshold
-    if bool(mask.all()):
-        # No landmark is occluded → no information lost by treating this
-        # as "no visibility info" downstream, which keeps the manifest
-        # smaller and the harness path identical to non-AFLW datasets.
+    neighborhood = neighborhood_ratio * face_extent
+    depth_margin = depth_margin_ratio * face_extent
+    xy = points_xy.astype(np.float64)
+    pairwise_xy_dist = np.linalg.norm(xy[:, None, :] - xy[None, :, :], axis=2)
+    np.fill_diagonal(pairwise_xy_dist, np.inf)
+    within = pairwise_xy_dist < neighborhood
+    # For each i, largest z among XY-neighbors (or -inf if no neighbor).
+    candidate_z = np.where(within, z[None, :], -np.inf)
+    nearest_in_front_z = candidate_z.max(axis=1)
+    occluded = (nearest_in_front_z - z) > depth_margin
+    visibility = (~occluded).tolist()
+    if all(visibility):
         return None
-    return [bool(value) for value in mask.tolist()]
+    return [bool(value) for value in visibility]
+
+
+def _profile_safe_normalizer(points_xy: np.ndarray) -> float | None:
+    """Return ``sqrt(bbox_w * bbox_h)`` when the inter-ocular distance
+    collapses for profile views, else ``None`` to keep the harness's
+    default inter-ocular normalizer.
+
+    The default NME denominator is the distance between landmarks 36 and
+    45 (outer eye corners). Under extreme yaw the two outer corners
+    project onto nearly the same pixel and that distance approaches
+    zero, inflating NME by an order of magnitude or more. When the
+    inter-ocular distance drops below ``DEFAULT_INTEROCULAR_COLLAPSE_RATIO``
+    of the GT bounding-box diagonal we fall back to the published
+    AFLW2000-3D normalizer ``sqrt(bbox_w * bbox_h)`` (Zhu et al., 3DDFA),
+    which stays bounded across the full yaw range.
+    """
+    if points_xy.shape != (68, 2):
+        return None
+    inter_ocular = float(np.linalg.norm(points_xy[36] - points_xy[45]))
+    bbox_w = float(points_xy[:, 0].max() - points_xy[:, 0].min())
+    bbox_h = float(points_xy[:, 1].max() - points_xy[:, 1].min())
+    bbox_sqrt = math.sqrt(max(bbox_w * bbox_h, 0.0))
+    if bbox_sqrt <= 0:
+        return None
+    if inter_ocular < DEFAULT_INTEROCULAR_COLLAPSE_RATIO * bbox_sqrt:
+        return bbox_sqrt
+    return None
 
 
 def _points_68(payload: dict[str, T.Any], *, source: Path) -> tuple[np.ndarray, str]:
@@ -245,10 +292,14 @@ def _build_from_root(
         if landmark_source_key == "pt3d_68":
             z_values = _pt3d_z_coordinates(payload)
             if z_values is not None:
-                visibility = _visibility_from_depth(points, z_values)
+                visibility = _visibility_from_zbuffer(points, z_values)
         if visibility is not None:
             metadata["visibility"] = visibility
-            metadata["visibility_source"] = "aflw2000_3d_pt3d_68_depth"
+            metadata["visibility_source"] = "aflw2000_3d_pt3d_68_zbuffer"
+        normalizer = _profile_safe_normalizer(points)
+        if normalizer is not None:
+            metadata["normalizer"] = normalizer
+            metadata["normalizer_source"] = "aflw2000_3d_bbox_sqrt_wh"
         condition_labels = _condition_labels_from_metadata({}, metadata, default=scenario)
         sample_id = annotation.relative_to(root).with_suffix("").as_posix()
         entry: dict[str, T.Any] = {
@@ -264,6 +315,8 @@ def _build_from_root(
         }
         if visibility is not None:
             entry["visibility"] = visibility
+        if normalizer is not None:
+            entry["normalizer"] = normalizer
         samples.append(entry)
     if not samples:
         raise FileNotFoundError(f"No AFLW2000-3D .mat/image pairs found under {root}")

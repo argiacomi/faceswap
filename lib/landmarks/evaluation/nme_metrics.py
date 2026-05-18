@@ -57,12 +57,8 @@ def evaluate_prediction(
     pred = normalize_landmarks(predicted)
     truth = normalize_landmarks(target)
     point_errors = per_landmark_error(pred, truth)
-    visibility_array = (
-        np.asarray(visibility, dtype=bool) if visibility is not None else None
-    )
-    nme = normalized_mean_error(
-        pred, truth, normalizer=normalizer, visibility=visibility_array
-    )
+    visibility_array = np.asarray(visibility, dtype=bool) if visibility is not None else None
+    nme = normalized_mean_error(pred, truth, normalizer=normalizer, visibility=visibility_array)
     return {
         "nme": nme,
         "failure": bool(nme > failure_threshold),
