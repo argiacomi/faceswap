@@ -32,6 +32,7 @@ BUCKET_PRIORITIES: dict[str, tuple[str, ...]] = {
     "extreme_roll": ("hrnet", "orformer", "static_weighted_downweight", "spiga"),
     "rolled_large_yaw_left": ("hrnet", "static_weighted_downweight", "orformer", "spiga"),
     "rolled_large_yaw_right": (
+        "hrnet",
         "spiga",
         "orformer",
         "static_weighted_downweight",
@@ -43,6 +44,7 @@ BUCKET_PRIORITIES: dict[str, tuple[str, ...]] = {
         "orformer",
         "static_weighted_downweight",
         "spiga",
+        "hrnet",
     ),
     "large_yaw_left": (
         "static_weighted_downweight",
@@ -97,16 +99,26 @@ def _available_by_priority(priority: T.Sequence[str], available: T.AbstractSet[s
 
 
 def _roll_vetoes(
+    candidates: T.Sequence[base.CandidateRecord],
     metrics: T.Mapping[str, base.CandidateMetrics],
     *,
     threshold_deg: float = base.DEFAULT_ROLL_VETO_THRESHOLD_DEG,
 ) -> tuple[set[str], float | None]:
+    """Return fusion candidates whose roll disagrees with cohort consensus.
+
+    Single-model predictions are intentionally not roll-vetoed. The current
+    validation showed that roll consensus can reject the oracle single model on
+    rolled/profile faces, while fusion candidates are the main source of
+    avoidable geometry catastrophics.
+    """
     rolls = [metric.roll_degrees for metric in metrics.values() if metric.roll_degrees is not None]
     if not rolls:
-        return set(metrics), None
+        return set(), None
     consensus = base._circular_median(rolls)
+    fusion_names = {candidate.name for candidate in candidates if candidate.is_fusion}
     vetoed: set[str] = set()
-    for name, metric in metrics.items():
+    for name in fusion_names:
+        metric = metrics[name]
         if metric.roll_degrees is None:
             vetoed.add(name)
             continue
@@ -120,14 +132,15 @@ def resolve_bucket_aware_veto(
     candidates: T.Sequence[base.CandidateRecord],
     metrics: T.Mapping[str, base.CandidateMetrics],
 ) -> base.PolicyDecision:
-    """Choose by bucket priority, after vetoing roll-consensus outliers."""
+    """Choose by bucket priority, after vetoing fusion roll outliers."""
     available = {candidate.name for candidate in candidates}
     priority = _priority_for_bucket(condition)
-    vetoed, consensus = _roll_vetoes(metrics)
+    vetoed, consensus = _roll_vetoes(candidates, metrics)
     survivors = available - vetoed
     diagnostics: dict[str, T.Any] = {
         "bucket_priority": list(priority),
         "bucket_priority_applied": condition in BUCKET_PRIORITIES,
+        "roll_veto_scope": "fusion_only",
         "roll_veto_threshold_deg": base.DEFAULT_ROLL_VETO_THRESHOLD_DEG,
         "rolls": {name: metric.roll_degrees for name, metric in metrics.items()},
     }
@@ -185,6 +198,7 @@ def evaluate_sample(
     }
     decision = resolve_bucket_aware_veto(sample.condition, candidates, metrics)
     oracle = min(metrics.items(), key=lambda item: item[1].nme)[0]
+    decision.diagnostics["oracle_vetoed"] = oracle in decision.vetoed
     return base.SampleReport(
         sample_id=sample.sample_id,
         dataset=sample.dataset,
