@@ -29,6 +29,7 @@ import argparse
 import csv
 import json
 import logging
+import math
 import typing as T
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -38,7 +39,7 @@ import numpy as np
 from lib.landmarks.cache.prediction_cache import DiskPredictionCache
 from lib.landmarks.core.fusion_variants import fuse_variant
 from lib.landmarks.core.schema import LandmarkPrediction, normalize_landmarks
-from lib.landmarks.datasets.manifest_io import LandmarkSample, load_manifest
+from lib.landmarks.datasets.manifest_io import LandmarkSample, bbox_from_truth_fallback, load_manifest
 from lib.landmarks.ensemble.strategies import canonical_strategy
 from lib.landmarks.ensemble.weights import load_weights
 from lib.landmarks.evaluation.geometry_signals import AlignmentSummary, alignment_summary
@@ -47,19 +48,25 @@ from lib.landmarks.evaluation.nme_metrics import evaluate_prediction
 logger = logging.getLogger("evaluate_runtime_resolver")
 
 #: Roll deviation (in degrees) above which a candidate is vetoed for the
-#: ``roll_aware_veto`` policy. 15° was chosen as ≈ the boundary where
-#: AlignedFace's solvePnP roll estimate transitions from "tight agreement
-#: with cohort" to "candidate clearly disagrees" on the hard-alignment
-#: slice — see signal validation AUC ≈ 0.65 for the raw roll signal.
+#: ``roll_aware_veto`` policy.
 DEFAULT_ROLL_VETO_THRESHOLD_DEG: float = 15.0
 
-#: NME above which a sample is counted as a resolver failure. Matches the
-#: standard 300W / WFLW convention used elsewhere in the harness.
+#: NME above which a sample is counted as a resolver failure.
 DEFAULT_FAILURE_THRESHOLD: float = 0.08
 
-#: Number of worst samples (largest gap vs oracle) surfaced in
-#: ``resolver_worst_samples.json`` and rendered as overlays.
+#: Number of worst samples surfaced in ``resolver_worst_samples.json`` and overlays.
 DEFAULT_WORST_COUNT: int = 20
+
+# Prediction-only geometry veto thresholds. These are intentionally broad:
+# they should catch malformed landmark clouds / flipped face geometry without
+# becoming another noisy oracle selector.
+DEFAULT_MIN_CLOUD_AREA_RATIO: float = 0.08
+DEFAULT_MAX_CLOUD_AREA_RATIO: float = 3.00
+DEFAULT_MIN_HULL_AREA_RATIO: float = 0.035
+DEFAULT_MAX_HULL_AREA_RATIO: float = 2.25
+DEFAULT_MAX_POINTS_OUTSIDE_EXPANDED_BBOX_FRACTION: float = 0.35
+DEFAULT_MAX_ROI_CENTER_CONSENSUS_DISTANCE: float = 0.22
+DEFAULT_MAX_LANDMARK_CONSENSUS_DISTANCE: float = 0.16
 
 
 @dataclass(frozen=True)
@@ -74,13 +81,20 @@ class CandidateRecord:
 
 @dataclass
 class CandidateMetrics:
-    """NME-side metrics for one candidate against a sample's GT."""
+    """NME-side metrics plus prediction-only geometry diagnostics."""
 
     nme: float
     failure: bool
     roll_degrees: float | None
     yaw_degrees: float | None
     pitch_degrees: float | None
+    cloud_area_ratio: float | None = None
+    hull_area_ratio: float | None = None
+    points_outside_expanded_bbox_fraction: float | None = None
+    eye_mouth_order_valid_after_deroll: bool | None = None
+    roi_center_consensus_distance: float | None = None
+    landmark_consensus_distance: float | None = None
+    geometry_veto_reasons: tuple[str, ...] = ()
 
 
 @dataclass
@@ -136,12 +150,7 @@ def _build_candidates(
     *,
     outlier_threshold: float,
 ) -> list[CandidateRecord]:
-    """Build the candidate list (single + fused) for one sample.
-
-    Fusion variants are built from the model set that is present in both
-    the cache and the weights file — anything else can't be fused and we
-    raise rather than silently degrading the resolver evaluation.
-    """
+    """Build the candidate list (single + fused) for one sample."""
     single_names = []
     fusion_names = []
     for name in requested:
@@ -151,7 +160,6 @@ def _build_candidates(
         except (KeyError, ValueError):
             single_names.append(name)
 
-    # Determine the models we need from the cache:
     fusion_models = tuple(weights or ())
     needed = tuple(sorted(set(single_names) | set(fusion_models)))
     if not needed:
@@ -190,22 +198,188 @@ def _build_candidates(
 
 
 # --------------------------------------------------------------------------- #
-# Per-candidate evaluation
+# Geometry helpers
 # --------------------------------------------------------------------------- #
 
 
 def _safe_alignment_summary(landmarks: np.ndarray) -> AlignmentSummary | None:
-    """Run :func:`alignment_summary` and swallow recoverable failures.
-
-    AlignedFace can raise on degenerate clouds (cloud collapse, NaN, etc.);
-    those candidates simply lose their pose diagnostics for the resolver
-    and downstream policies treat ``None`` as "no signal".
-    """
+    """Run :func:`alignment_summary` and swallow recoverable failures."""
     try:
         return alignment_summary(normalize_landmarks(landmarks))
     except Exception as err:  # noqa: BLE001 — defensive at the boundary
         logger.debug("alignment_summary failed: %s", err)
         return None
+
+
+def _landmark_bbox(points: np.ndarray) -> tuple[float, float, float, float] | None:
+    arr = np.asarray(points, dtype="float64")
+    if arr.ndim != 2 or arr.shape[1] < 2 or arr.size == 0 or not np.all(np.isfinite(arr[:, :2])):
+        return None
+    left, top = np.min(arr[:, :2], axis=0)
+    right, bottom = np.max(arr[:, :2], axis=0)
+    if right <= left or bottom <= top:
+        return None
+    return (float(left), float(top), float(right), float(bottom))
+
+
+def _bbox_area(bbox: tuple[float, float, float, float] | None) -> float | None:
+    if bbox is None:
+        return None
+    left, top, right, bottom = bbox
+    width = right - left
+    height = bottom - top
+    if width <= 0 or height <= 0:
+        return None
+    return float(width * height)
+
+
+def _bbox_center(bbox: tuple[float, float, float, float] | None) -> tuple[float, float] | None:
+    if bbox is None:
+        return None
+    left, top, right, bottom = bbox
+    if right <= left or bottom <= top:
+        return None
+    return ((left + right) / 2.0, (top + bottom) / 2.0)
+
+
+def _bbox_diag(bbox: tuple[float, float, float, float] | None) -> float | None:
+    if bbox is None:
+        return None
+    left, top, right, bottom = bbox
+    diag = math.hypot(right - left, bottom - top)
+    return float(diag) if diag > 0 else None
+
+
+def _expanded_bbox(
+    bbox: tuple[float, float, float, float] | None,
+    *,
+    margin_ratio: float = 0.25,
+) -> tuple[float, float, float, float] | None:
+    if bbox is None:
+        return None
+    left, top, right, bottom = bbox
+    width = right - left
+    height = bottom - top
+    if width <= 0 or height <= 0:
+        return None
+    margin_x = margin_ratio * width
+    margin_y = margin_ratio * height
+    return (left - margin_x, top - margin_y, right + margin_x, bottom + margin_y)
+
+
+def _points_outside_bbox_fraction(points: np.ndarray, bbox: tuple[float, float, float, float] | None) -> float | None:
+    if bbox is None:
+        return None
+    arr = np.asarray(points, dtype="float64")
+    if arr.ndim != 2 or arr.shape[1] < 2 or arr.size == 0:
+        return None
+    left, top, right, bottom = bbox
+    outside = (
+        (arr[:, 0] < left)
+        | (arr[:, 0] > right)
+        | (arr[:, 1] < top)
+        | (arr[:, 1] > bottom)
+    )
+    return float(np.mean(outside))
+
+
+def _convex_hull(points: np.ndarray) -> list[tuple[float, float]]:
+    unique = sorted({(float(x), float(y)) for x, y in np.asarray(points, dtype="float64")[:, :2]})
+    if len(unique) <= 1:
+        return unique
+
+    def cross(o: tuple[float, float], a: tuple[float, float], b: tuple[float, float]) -> float:
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+    lower: list[tuple[float, float]] = []
+    for point in unique:
+        while len(lower) >= 2 and cross(lower[-2], lower[-1], point) <= 0:
+            lower.pop()
+        lower.append(point)
+    upper: list[tuple[float, float]] = []
+    for point in reversed(unique):
+        while len(upper) >= 2 and cross(upper[-2], upper[-1], point) <= 0:
+            upper.pop()
+        upper.append(point)
+    return lower[:-1] + upper[:-1]
+
+
+def _polygon_area(points: T.Sequence[tuple[float, float]]) -> float | None:
+    if len(points) < 3:
+        return None
+    arr = np.asarray(points, dtype="float64")
+    x = arr[:, 0]
+    y = arr[:, 1]
+    return float(abs(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1))) / 2.0)
+
+
+def _convex_hull_area(points: np.ndarray) -> float | None:
+    try:
+        return _polygon_area(_convex_hull(points))
+    except (TypeError, ValueError, IndexError):
+        return None
+
+
+def _eye_mouth_order_valid_after_deroll(points: np.ndarray) -> bool | None:
+    arr = np.asarray(points, dtype="float64")
+    if arr.shape[0] < 68 or arr.shape[1] < 2 or not np.all(np.isfinite(arr[:, :2])):
+        return None
+    left_eye = arr[36:42, :2].mean(axis=0)
+    right_eye = arr[42:48, :2].mean(axis=0)
+    mouth = arr[48:68, :2].mean(axis=0)
+    eye_mid = (left_eye + right_eye) / 2.0
+    eye_vector = right_eye - left_eye
+    if float(np.linalg.norm(eye_vector)) <= 1e-6:
+        return None
+    angle = math.atan2(float(eye_vector[1]), float(eye_vector[0]))
+    cos_a = math.cos(-angle)
+    sin_a = math.sin(-angle)
+    rotation = np.asarray([[cos_a, -sin_a], [sin_a, cos_a]], dtype="float64")
+    derolled_eye = (eye_mid - eye_mid) @ rotation.T
+    derolled_mouth = (mouth - eye_mid) @ rotation.T
+    # Image coordinates have y increasing downward, so the mouth should remain
+    # below the eye midpoint after de-rolling.
+    return bool(derolled_mouth[1] > derolled_eye[1])
+
+
+def _geometry_veto_reasons(metric: CandidateMetrics) -> tuple[str, ...]:
+    reasons: list[str] = []
+    if metric.cloud_area_ratio is None:
+        reasons.append("missing_cloud_area_ratio")
+    elif metric.cloud_area_ratio < DEFAULT_MIN_CLOUD_AREA_RATIO:
+        reasons.append("cloud_area_too_small")
+    elif metric.cloud_area_ratio > DEFAULT_MAX_CLOUD_AREA_RATIO:
+        reasons.append("cloud_area_too_large")
+
+    if metric.hull_area_ratio is None:
+        reasons.append("missing_hull_area_ratio")
+    elif metric.hull_area_ratio < DEFAULT_MIN_HULL_AREA_RATIO:
+        reasons.append("hull_area_too_small")
+    elif metric.hull_area_ratio > DEFAULT_MAX_HULL_AREA_RATIO:
+        reasons.append("hull_area_too_large")
+
+    if (
+        metric.points_outside_expanded_bbox_fraction is not None
+        and metric.points_outside_expanded_bbox_fraction
+        > DEFAULT_MAX_POINTS_OUTSIDE_EXPANDED_BBOX_FRACTION
+    ):
+        reasons.append("too_many_points_outside_expanded_bbox")
+
+    if metric.eye_mouth_order_valid_after_deroll is False:
+        reasons.append("eye_mouth_order_invalid_after_deroll")
+
+    if (
+        metric.roi_center_consensus_distance is not None
+        and metric.roi_center_consensus_distance > DEFAULT_MAX_ROI_CENTER_CONSENSUS_DISTANCE
+    ):
+        reasons.append("roi_center_consensus_distance_high")
+
+    if (
+        metric.landmark_consensus_distance is not None
+        and metric.landmark_consensus_distance > DEFAULT_MAX_LANDMARK_CONSENSUS_DISTANCE
+    ):
+        reasons.append("landmark_consensus_distance_high")
+    return tuple(reasons)
 
 
 def _evaluate_candidate(
@@ -215,8 +389,9 @@ def _evaluate_candidate(
     normalizer: float | None,
     visibility: T.Sequence[bool] | None,
     failure_threshold: float,
+    face_bbox: tuple[float, float, float, float] | None = None,
 ) -> CandidateMetrics:
-    """Compute per-candidate NME (visibility-aware) and pose diagnostics."""
+    """Compute per-candidate NME, pose, and standalone geometry diagnostics."""
     metrics = evaluate_prediction(
         landmarks,
         truth,
@@ -225,13 +400,63 @@ def _evaluate_candidate(
         visibility=visibility,
     )
     summary = _safe_alignment_summary(landmarks)
+    reference_bbox = face_bbox or bbox_from_truth_fallback(truth)
+    reference_area = _bbox_area(reference_bbox)
+    candidate_bbox = _landmark_bbox(landmarks)
+    candidate_area = _bbox_area(candidate_bbox)
+    hull_area = _convex_hull_area(landmarks)
+    expanded_reference = _expanded_bbox(reference_bbox)
     return CandidateMetrics(
         nme=float(metrics["nme"]),
         failure=bool(metrics["failure"]),
         roll_degrees=None if summary is None else float(summary.roll),
         yaw_degrees=None if summary is None else float(summary.yaw),
         pitch_degrees=None if summary is None else float(summary.pitch),
+        cloud_area_ratio=(
+            None if reference_area is None or candidate_area is None else candidate_area / reference_area
+        ),
+        hull_area_ratio=(
+            None if reference_area is None or hull_area is None else hull_area / reference_area
+        ),
+        points_outside_expanded_bbox_fraction=_points_outside_bbox_fraction(
+            landmarks, expanded_reference
+        ),
+        eye_mouth_order_valid_after_deroll=_eye_mouth_order_valid_after_deroll(landmarks),
     )
+
+
+def _populate_consensus_geometry(
+    candidates: T.Sequence[CandidateRecord],
+    metrics: T.MutableMapping[str, CandidateMetrics],
+    *,
+    reference_bbox: tuple[float, float, float, float] | None,
+) -> None:
+    if not candidates:
+        return
+    diag = _bbox_diag(reference_bbox)
+    if diag is None:
+        return
+    stack = np.stack([candidate.landmarks.astype("float64") for candidate in candidates], axis=0)
+    consensus_points = np.median(stack, axis=0)
+    consensus_bbox = _landmark_bbox(consensus_points)
+    consensus_center = _bbox_center(consensus_bbox)
+    for candidate in candidates:
+        metric = metrics[candidate.name]
+        candidate_bbox = _landmark_bbox(candidate.landmarks)
+        candidate_center = _bbox_center(candidate_bbox)
+        if consensus_center is not None and candidate_center is not None:
+            metric.roi_center_consensus_distance = float(
+                math.hypot(
+                    candidate_center[0] - consensus_center[0],
+                    candidate_center[1] - consensus_center[1],
+                )
+                / diag
+            )
+        metric.landmark_consensus_distance = float(
+            np.mean(np.linalg.norm(candidate.landmarks.astype("float64") - consensus_points, axis=1))
+            / diag
+        )
+        metric.geometry_veto_reasons = _geometry_veto_reasons(metric)
 
 
 # --------------------------------------------------------------------------- #
@@ -240,13 +465,7 @@ def _evaluate_candidate(
 
 
 def _circular_median(values: T.Sequence[float]) -> float:
-    """Median of angle values in degrees, wrapping at ±180°.
-
-    Roll values from solvePnP can straddle 180°. Taking a plain median on
-    raw degrees would average ``+179`` and ``-179`` to ``0`` when the
-    consensus is actually ``±180``. We wrap into the [-180, 180] range
-    around the per-sample mean direction first.
-    """
+    """Median of angle values in degrees, wrapping at ±180°."""
     radians = np.deg2rad(np.asarray(list(values), dtype="float64"))
     mean_cos = float(np.mean(np.cos(radians)))
     mean_sin = float(np.mean(np.sin(radians)))
@@ -261,19 +480,7 @@ def resolve_roll_aware_veto(
     *,
     veto_threshold_deg: float = DEFAULT_ROLL_VETO_THRESHOLD_DEG,
 ) -> PolicyDecision:
-    """Veto candidates whose roll diverges from the cohort consensus.
-
-    Computes the circular median of per-candidate roll estimates, vetoes
-    any candidate whose ``|roll - consensus|`` exceeds
-    ``veto_threshold_deg``, then picks the survivor whose roll sits
-    closest to the consensus. Candidates that failed to produce a
-    pose estimate (degenerate cloud → ``alignment_summary`` raised) are
-    treated as vetoed.
-
-    If every candidate is vetoed, the policy falls back to the candidate
-    with the smallest absolute roll deviation from the consensus so the
-    caller always gets a concrete winner.
-    """
+    """Veto candidates whose roll diverges from the cohort consensus."""
     if not candidates:
         raise ValueError("roll_aware_veto requires at least one candidate")
     rolls = [metrics[c.name].roll_degrees for c in candidates]
@@ -306,7 +513,6 @@ def resolve_roll_aware_veto(
         "veto_threshold_deg": veto_threshold_deg,
     }
     if not survivors:
-        # All vetoed: pick the candidate closest to the consensus.
         diagnostics["fallback_reason"] = "all_candidates_vetoed"
         deltas = [
             (candidate, abs(_signed_degree_delta(roll, consensus)))
@@ -315,7 +521,6 @@ def resolve_roll_aware_veto(
         ]
         chosen = min(deltas, key=lambda item: item[1])[0]
     else:
-        # Pick the survivor whose roll is closest to the consensus.
         chosen = min(survivors, key=lambda item: item[1])[0]
     return PolicyDecision(
         policy="roll_aware_veto",
@@ -378,6 +583,7 @@ def evaluate_sample(
         weights,
         outlier_threshold=outlier_threshold,
     )
+    reference_bbox = sample.face_bbox or bbox_from_truth_fallback(truth)
     metrics: dict[str, CandidateMetrics] = {}
     for candidate in candidates:
         metrics[candidate.name] = _evaluate_candidate(
@@ -386,7 +592,9 @@ def evaluate_sample(
             normalizer=sample.normalizer,
             visibility=sample.visibility,
             failure_threshold=failure_threshold,
+            face_bbox=reference_bbox,
         )
+    _populate_consensus_geometry(candidates, metrics, reference_bbox=reference_bbox)
     decision = apply_policy(policy, candidates, metrics)
     oracle = min(metrics.items(), key=lambda item: item[1].nme)[0]
     return SampleReport(
@@ -434,6 +642,7 @@ def aggregate_reports(
     candidate_names = reports[0].candidates
     per_candidate_nme: dict[str, list[float]] = {name: [] for name in candidate_names}
     per_candidate_failures: dict[str, int] = {name: 0 for name in candidate_names}
+    geometry_veto_counts: dict[str, int] = {name: 0 for name in candidate_names}
     chosen_nme: list[float] = []
     oracle_nme: list[float] = []
     gap_vs_oracle: list[float] = []
@@ -448,6 +657,8 @@ def aggregate_reports(
             per_candidate_nme[name].append(metric.nme)
             if metric.failure:
                 per_candidate_failures[name] += 1
+            if metric.geometry_veto_reasons:
+                geometry_veto_counts[name] += 1
         chosen_metric = report.metrics[report.decision.chosen]
         chosen_nme.append(chosen_metric.nme)
         oracle_nme.append(report.metrics[report.oracle].nme)
@@ -466,7 +677,7 @@ def aggregate_reports(
             fallback_counts[fallback_reason] = fallback_counts.get(fallback_reason, 0) + 1
 
     sample_count = len(reports)
-    aggregate: dict[str, T.Any] = {
+    return {
         "policy": policy,
         "failure_threshold": failure_threshold,
         "sample_count": sample_count,
@@ -480,23 +691,33 @@ def aggregate_reports(
             "pick_counts": chosen_pick_counts,
             "fallback_counts": fallback_counts,
         },
-        "oracle": {
-            "nme": _summarise_nme(oracle_nme),
-        },
+        "oracle": {"nme": _summarise_nme(oracle_nme)},
         "per_candidate": {
             name: {
                 "nme": _summarise_nme(per_candidate_nme[name]),
                 "failure_rate": per_candidate_failures[name] / sample_count,
                 "veto_count": veto_counts.get(name, 0),
+                "geometry_veto_count": geometry_veto_counts.get(name, 0),
             }
             for name in candidate_names
         },
     }
-    return aggregate
+
+
+def _candidate_diagnostic_fields(name: str) -> list[str]:
+    return [
+        f"{name}_cloud_area_ratio",
+        f"{name}_hull_area_ratio",
+        f"{name}_points_outside_expanded_bbox_fraction",
+        f"{name}_eye_mouth_order_valid_after_deroll",
+        f"{name}_roi_center_consensus_distance",
+        f"{name}_landmark_consensus_distance",
+        f"{name}_geometry_veto_reasons",
+    ]
 
 
 def write_csv_report(reports: T.Sequence[SampleReport], path: Path) -> None:
-    """Write the flat per-sample CSV with all candidate NMEs."""
+    """Write the flat per-sample CSV with all candidate NMEs and diagnostics."""
     if not reports:
         path.write_text("", encoding="utf-8")
         return
@@ -517,6 +738,7 @@ def write_csv_report(reports: T.Sequence[SampleReport], path: Path) -> None:
     ]
     for name in candidate_names:
         fieldnames.extend([f"{name}_nme", f"{name}_failure", f"{name}_roll_deg"])
+        fieldnames.extend(_candidate_diagnostic_fields(name))
     with path.open("w", newline="", encoding="utf-8") as outfile:
         writer = csv.DictWriter(outfile, fieldnames=fieldnames)
         writer.writeheader()
@@ -542,15 +764,22 @@ def write_csv_report(reports: T.Sequence[SampleReport], path: Path) -> None:
                 metric = report.metrics[name]
                 row[f"{name}_nme"] = metric.nme
                 row[f"{name}_failure"] = int(metric.failure)
-                row[f"{name}_roll_deg"] = (
-                    "" if metric.roll_degrees is None else metric.roll_degrees
+                row[f"{name}_roll_deg"] = "" if metric.roll_degrees is None else metric.roll_degrees
+                row[f"{name}_cloud_area_ratio"] = metric.cloud_area_ratio
+                row[f"{name}_hull_area_ratio"] = metric.hull_area_ratio
+                row[f"{name}_points_outside_expanded_bbox_fraction"] = (
+                    metric.points_outside_expanded_bbox_fraction
                 )
+                row[f"{name}_eye_mouth_order_valid_after_deroll"] = (
+                    "" if metric.eye_mouth_order_valid_after_deroll is None else int(metric.eye_mouth_order_valid_after_deroll)
+                )
+                row[f"{name}_roi_center_consensus_distance"] = metric.roi_center_consensus_distance
+                row[f"{name}_landmark_consensus_distance"] = metric.landmark_consensus_distance
+                row[f"{name}_geometry_veto_reasons"] = "|".join(metric.geometry_veto_reasons)
             writer.writerow(row)
 
 
-def write_failures_csv(
-    reports: T.Sequence[SampleReport], path: Path, *, failure_threshold: float
-) -> None:
+def write_failures_csv(reports: T.Sequence[SampleReport], path: Path, *, failure_threshold: float) -> None:
     """Write only rows where the resolver's chosen candidate failed."""
     fieldnames = [
         "sample_id",
@@ -563,6 +792,7 @@ def write_failures_csv(
         "gap_vs_oracle",
         "consensus_roll_deg",
         "vetoed",
+        "chosen_geometry_veto_reasons",
     ]
     with path.open("w", newline="", encoding="utf-8") as outfile:
         writer = csv.DictWriter(outfile, fieldnames=fieldnames)
@@ -584,18 +814,31 @@ def write_failures_csv(
                     "gap_vs_oracle": chosen_metric.nme - oracle_metric.nme,
                     "consensus_roll_deg": report.decision.consensus_roll_deg,
                     "vetoed": "|".join(report.decision.vetoed),
+                    "chosen_geometry_veto_reasons": "|".join(chosen_metric.geometry_veto_reasons),
                 }
             )
 
 
 def select_worst_samples(reports: T.Sequence[SampleReport], *, count: int) -> list[SampleReport]:
-    """Return the ``count`` samples with the largest gap between chosen and oracle NME."""
+    """Return the samples with the largest gap between chosen and oracle NME."""
     ranked = sorted(
         reports,
         key=lambda r: r.metrics[r.decision.chosen].nme - r.metrics[r.oracle].nme,
         reverse=True,
     )
     return ranked[:count]
+
+
+def _metric_diagnostics(metric: CandidateMetrics) -> dict[str, T.Any]:
+    return {
+        "cloud_area_ratio": metric.cloud_area_ratio,
+        "hull_area_ratio": metric.hull_area_ratio,
+        "points_outside_expanded_bbox_fraction": metric.points_outside_expanded_bbox_fraction,
+        "eye_mouth_order_valid_after_deroll": metric.eye_mouth_order_valid_after_deroll,
+        "roi_center_consensus_distance": metric.roi_center_consensus_distance,
+        "landmark_consensus_distance": metric.landmark_consensus_distance,
+        "geometry_veto_reasons": list(metric.geometry_veto_reasons),
+    }
 
 
 def write_worst_samples_json(worst: T.Sequence[SampleReport], path: Path) -> None:
@@ -613,6 +856,7 @@ def write_worst_samples_json(worst: T.Sequence[SampleReport], path: Path) -> Non
                 "consensus_roll_deg": r.decision.consensus_roll_deg,
                 "vetoed": list(r.decision.vetoed),
                 "rolls": {name: metric.roll_degrees for name, metric in r.metrics.items()},
+                "diagnostics": {name: _metric_diagnostics(metric) for name, metric in r.metrics.items()},
             }
             for r in worst
         ]
@@ -621,14 +865,10 @@ def write_worst_samples_json(worst: T.Sequence[SampleReport], path: Path) -> Non
 
 
 def render_overlay(report: SampleReport, output_path: Path) -> bool:
-    """Render a GT / chosen / oracle landmark overlay onto the source image.
-
-    Returns ``True`` when the overlay was written, ``False`` if the source
-    image could not be loaded (e.g. missing or corrupted).
-    """
+    """Render a GT / chosen / oracle landmark overlay onto the source image."""
     try:
-        import cv2  # local import keeps the module importable in cv2-less envs
-    except ImportError:  # pragma: no cover - cv2 is a project-wide dependency
+        import cv2
+    except ImportError:  # pragma: no cover
         logger.warning("cv2 unavailable; skipping overlay rendering")
         return False
     image = cv2.imread(report.image_path, cv2.IMREAD_COLOR)
@@ -657,16 +897,7 @@ def render_overlay(report: SampleReport, output_path: Path) -> bool:
         f"chosen={report.decision.chosen} nme={chosen_nme:.4f}  "
         f"oracle={report.oracle} nme={oracle_nme:.4f}"
     )
-    cv2.putText(
-        canvas,
-        legend,
-        (10, 24),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.5,
-        (0, 255, 255),
-        1,
-        cv2.LINE_AA,
-    )
+    cv2.putText(canvas, legend, (10, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1, cv2.LINE_AA)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     return bool(cv2.imwrite(str(output_path), canvas))
 
@@ -678,11 +909,7 @@ def render_overlays(
     failure_threshold: float,
     worst_count: int,
 ) -> dict[str, int]:
-    """Render overlays for failures + the top-N worst gaps.
-
-    Returns a small counter dict so the CLI can print how many overlays
-    actually landed on disk.
-    """
+    """Render overlays for failures + the top-N worst gaps."""
     targets: dict[str, SampleReport] = {}
     for report in reports:
         if report.metrics[report.decision.chosen].nme > failure_threshold:
@@ -706,62 +933,26 @@ def render_overlays(
 def build_parser() -> argparse.ArgumentParser:
     """Construct the CLI parser."""
     parser = argparse.ArgumentParser(
-        description=(
-            "Evaluate a runtime resolver policy against cached candidate "
-            "predictions for a manifest of samples."
-        )
+        description="Evaluate a runtime resolver policy against cached candidate predictions."
     )
     parser.add_argument("--manifest", required=True, help="Manifest JSON path")
     parser.add_argument("--cache-dir", required=True, help="Prediction cache root directory")
-    parser.add_argument(
-        "--weights",
-        required=True,
-        help="Static weights JSON for fusion variants",
-    )
-    parser.add_argument(
-        "--candidates",
-        required=True,
-        help=(
-            "Comma-separated candidate names. Single-model names "
-            "(e.g. spiga, orformer) are read from the cache; fusion "
-            "variants (e.g. static_weighted, static_weighted_downweight) "
-            "are fused on the fly using --weights."
-        ),
-    )
+    parser.add_argument("--weights", required=True, help="Static weights JSON for fusion variants")
+    parser.add_argument("--candidates", required=True, help="Comma-separated candidate names")
     parser.add_argument(
         "--policy",
         default="roll_aware_veto",
         choices=sorted(POLICY_REGISTRY),
         help="Resolver policy to evaluate.",
     )
-    parser.add_argument(
-        "--output-dir",
-        required=True,
-        help="Directory where reports + overlays are written.",
-    )
-    parser.add_argument(
-        "--outlier-threshold",
-        type=float,
-        default=3.5,
-        help="Outlier-rejection threshold for outlier-aware fusion strategies.",
-    )
-    parser.add_argument(
-        "--failure-threshold",
-        type=float,
-        default=DEFAULT_FAILURE_THRESHOLD,
-        help="Per-sample NME above which the chosen candidate counts as a failure.",
-    )
-    parser.add_argument(
-        "--worst-count",
-        type=int,
-        default=DEFAULT_WORST_COUNT,
-        help="Number of worst-gap samples to surface in worst.json + overlays.",
-    )
+    parser.add_argument("--output-dir", required=True, help="Directory where reports + overlays are written.")
+    parser.add_argument("--outlier-threshold", type=float, default=3.5)
+    parser.add_argument("--failure-threshold", type=float, default=DEFAULT_FAILURE_THRESHOLD)
+    parser.add_argument("--worst-count", type=int, default=DEFAULT_WORST_COUNT)
     parser.add_argument(
         "--log-level",
         default="INFO",
         choices=("DEBUG", "INFO", "WARNING", "ERROR"),
-        help="Python logging level.",
     )
     return parser
 
@@ -798,18 +989,12 @@ def main(argv: T.Sequence[str] | None = None) -> int:
             logger.warning("skipping sample %s: %s", sample.sample_id, err)
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    aggregate = aggregate_reports(
-        reports, policy=args.policy, failure_threshold=args.failure_threshold
-    )
+    aggregate = aggregate_reports(reports, policy=args.policy, failure_threshold=args.failure_threshold)
     (output_dir / "resolver_policy_report.json").write_text(
         json.dumps(aggregate, indent=2) + "\n", encoding="utf-8"
     )
     write_csv_report(reports, output_dir / "resolver_policy_report.csv")
-    write_failures_csv(
-        reports,
-        output_dir / "resolver_failures.csv",
-        failure_threshold=args.failure_threshold,
-    )
+    write_failures_csv(reports, output_dir / "resolver_failures.csv", failure_threshold=args.failure_threshold)
     write_worst_samples_json(
         select_worst_samples(reports, count=args.worst_count),
         output_dir / "resolver_worst_samples.json",
