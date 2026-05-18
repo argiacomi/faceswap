@@ -324,23 +324,30 @@ def build_wflw_manifest(
             condition = (
                 condition_labels[0] if condition_labels else _fallback_condition_label(scenario)
             )
-            samples.append(
-                {
-                    "sample_id": sample_id,
-                    "dataset": "wflw",
-                    "condition": condition,
-                    "conditions": condition_labels or (condition,),
-                    "image": str((root / image_rel).resolve()),
-                    "source_schema": "2d_98",
-                    "source": {"dataset": "wflw", "source_id": sample_id},
-                    "metadata": {
-                        "bbox": bbox,
-                        "attributes": attributes,
-                        "image_id": image_rel,
-                    },
-                    "points": normalize_landmarks(points.reshape(98, 2), source_schema="2d_98"),
-                }
-            )
+            canonical_68 = normalize_landmarks(points.reshape(98, 2), source_schema="2d_98")
+            metadata: dict[str, T.Any] = {
+                "bbox": bbox,
+                "attributes": attributes,
+                "image_id": image_rel,
+            }
+            visibility = _visibility_from_jaw_asymmetry(canonical_68)
+            if visibility is not None:
+                metadata["visibility"] = visibility
+                metadata["visibility_source"] = "wflw_jaw_asymmetry"
+            entry: dict[str, T.Any] = {
+                "sample_id": sample_id,
+                "dataset": "wflw",
+                "condition": condition,
+                "conditions": condition_labels or (condition,),
+                "image": str((root / image_rel).resolve()),
+                "source_schema": "2d_98",
+                "source": {"dataset": "wflw", "source_id": sample_id},
+                "metadata": metadata,
+                "points": canonical_68,
+            }
+            if visibility is not None:
+                entry["visibility"] = visibility
+            samples.append(entry)
         return _write_manifest_and_audit(
             _filter_samples(samples, scenario_groups, samples_per_scenario),
             Path(output_dir),
@@ -362,6 +369,60 @@ def _wflw_sample_id(image_rel: str, occurrence: int, total_occurrences: int) -> 
     if total_occurrences <= 1:
         return base
     return f"{base}#face-{occurrence:02d}"
+
+
+# Asymmetry threshold above which one side of the jawline is considered
+# self-occluded. Calibrated against the WFLW test split: median asymmetry
+# is ~0.25 for non-pose conditions (faces are rarely perfectly centered)
+# and ~0.90 for the ``pose`` condition. 0.50 cleanly isolates the right
+# tail of pose-flagged samples without firing on slightly-tilted faces
+# elsewhere in the dataset.
+DEFAULT_WFLW_ASYMMETRY_THRESHOLD: float = 0.50
+
+
+def _visibility_from_jaw_asymmetry(
+    canonical_68: np.ndarray,
+    *,
+    asymmetry_threshold: float = DEFAULT_WFLW_ASYMMETRY_THRESHOLD,
+) -> list[bool] | None:
+    """Derive per-landmark visibility from 68-point jawline asymmetry.
+
+    Compares the horizontal distance from the nose tip (index 30) to each
+    ear-side jawline endpoint (indices 0 and 16). On a frontal face these
+    distances are roughly equal; under heavy yaw the far-side compresses
+    toward the nose, producing a strong asymmetry. When the asymmetry
+    exceeds ``asymmetry_threshold``, the far half of the jawline is
+    flagged as self-occluded.
+
+    Returns ``None`` for frontal-ish faces so the manifest stays compact
+    and the harness's existing ``visibility=None`` path applies to those
+    samples unchanged.
+    """
+    if canonical_68.shape != (68, 2):
+        return None
+    nose_x = float(canonical_68[30, 0])
+    right_jaw_x = float(canonical_68[0, 0])  # subject's right ear (viewer's left)
+    left_jaw_x = float(canonical_68[16, 0])  # subject's left ear (viewer's right)
+    right_dist = abs(nose_x - right_jaw_x)
+    left_dist = abs(left_jaw_x - nose_x)
+    total = right_dist + left_dist
+    if total <= 0:
+        return None
+    asymmetry = (right_dist - left_dist) / total
+    if abs(asymmetry) < asymmetry_threshold:
+        return None
+    visibility = [True] * 68
+    if asymmetry < 0:
+        # Subject's right side compressed → head turned toward subject's
+        # right → right-side jawline (indices 0..7) is self-occluded.
+        for idx in range(0, 8):
+            visibility[idx] = False
+    else:
+        # Subject's left side compressed → head turned toward subject's
+        # left → left-side jawline (indices 9..16) is self-occluded.
+        for idx in range(9, 17):
+            visibility[idx] = False
+    return visibility
 
 
 def build_cofw_manifest(

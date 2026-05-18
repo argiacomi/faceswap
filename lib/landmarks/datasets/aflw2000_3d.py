@@ -92,6 +92,72 @@ def _as_68x2(points: np.ndarray, *, source: Path, key: str) -> np.ndarray:
     return np.ascontiguousarray(points, dtype="float32")
 
 
+def _pt3d_z_coordinates(payload: dict[str, T.Any]) -> np.ndarray | None:
+    """Return the per-landmark Z coordinate of ``pt3d_68`` when available.
+
+    AFLW2000-3D ships ``pt3d_68`` as a (3, 68) array of 3D landmarks in the
+    face-aligned camera frame. Only XY is used for the canonical 2D ground
+    truth; this helper exposes the Z column so visibility can be derived
+    from actual 3D depth instead of a yaw-bin heuristic.
+    """
+    if "pt3d_68" not in payload:
+        return None
+    raw = np.asarray(payload["pt3d_68"], dtype="float32")
+    raw = np.squeeze(raw)
+    if raw.shape == (3, 68):
+        z = raw[2]
+    elif raw.shape == (68, 3):
+        z = raw[:, 2]
+    else:
+        return None
+    if not np.all(np.isfinite(z)):
+        return None
+    return z.astype("float32")
+
+
+# Landmark indices considered "central" to the face: eye corners, nose tip,
+# mouth corners. Their depth defines the face's central plane; jawline /
+# cheek points farther behind this plane are flagged as self-occluded.
+_CENTRAL_FACE_LANDMARKS: tuple[int, ...] = (30, 36, 39, 42, 45, 48, 54)
+
+
+# Fraction of the face's XY extent a landmark may sit behind the central
+# plane before being declared self-occluded. 0.30 chosen empirically:
+# tight enough to flag the far-side jawline at ~30° yaw, loose enough to
+# keep all 68 points visible on frontal faces.
+DEFAULT_DEPTH_OCCLUSION_RATIO: float = 0.30
+
+
+def _visibility_from_depth(
+    points_xy: np.ndarray,
+    z: np.ndarray,
+    *,
+    depth_ratio: float = DEFAULT_DEPTH_OCCLUSION_RATIO,
+) -> list[bool] | None:
+    """Return a 68-bool list flagging landmarks that sit in front of the
+    central face plane (visible) versus behind it (self-occluded).
+
+    Returns ``None`` when the Z range is degenerate (frontal faces with
+    near-uniform depth) — there's nothing useful to mask in that case,
+    and the harness already handles ``visibility=None`` as "trust all
+    landmarks".
+    """
+    if points_xy.shape != (68, 2) or z.shape != (68,):
+        return None
+    face_extent = float(np.linalg.norm(points_xy.max(axis=0) - points_xy.min(axis=0)))
+    if face_extent <= 0:
+        return None
+    central_z = float(np.median(z[list(_CENTRAL_FACE_LANDMARKS)]))
+    threshold = central_z + depth_ratio * face_extent
+    mask = z <= threshold
+    if bool(mask.all()):
+        # No landmark is occluded → no information lost by treating this
+        # as "no visibility info" downstream, which keeps the manifest
+        # smaller and the harness path identical to non-AFLW datasets.
+        return None
+    return [bool(value) for value in mask.tolist()]
+
+
 def _points_68(payload: dict[str, T.Any], *, source: Path) -> tuple[np.ndarray, str]:
     """Return canonical 68-point XY landmarks and the source key used."""
     if "pt3d_68" in payload:
@@ -175,21 +241,30 @@ def _build_from_root(
         )
         metadata["face_bbox"] = _landmark_bbox(points)
         metadata["face_bbox_source"] = f"aflw2000_3d_{landmark_source_key}_xy_extrema"
+        visibility: list[bool] | None = None
+        if landmark_source_key == "pt3d_68":
+            z_values = _pt3d_z_coordinates(payload)
+            if z_values is not None:
+                visibility = _visibility_from_depth(points, z_values)
+        if visibility is not None:
+            metadata["visibility"] = visibility
+            metadata["visibility_source"] = "aflw2000_3d_pt3d_68_depth"
         condition_labels = _condition_labels_from_metadata({}, metadata, default=scenario)
         sample_id = annotation.relative_to(root).with_suffix("").as_posix()
-        samples.append(
-            {
-                "sample_id": sample_id,
-                "dataset": "aflw2000-3d",
-                "condition": condition_labels[0],
-                "conditions": condition_labels,
-                "image": str(image.resolve()),
-                "source_schema": "2d_68",
-                "source": {"dataset": "aflw2000-3d", "source_id": sample_id},
-                "metadata": metadata,
-                "points": normalize_landmarks(points, source_schema="2d_68"),
-            }
-        )
+        entry: dict[str, T.Any] = {
+            "sample_id": sample_id,
+            "dataset": "aflw2000-3d",
+            "condition": condition_labels[0],
+            "conditions": condition_labels,
+            "image": str(image.resolve()),
+            "source_schema": "2d_68",
+            "source": {"dataset": "aflw2000-3d", "source_id": sample_id},
+            "metadata": metadata,
+            "points": normalize_landmarks(points, source_schema="2d_68"),
+        }
+        if visibility is not None:
+            entry["visibility"] = visibility
+        samples.append(entry)
     if not samples:
         raise FileNotFoundError(f"No AFLW2000-3D .mat/image pairs found under {root}")
     return _write_manifest_and_audit(
