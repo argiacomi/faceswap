@@ -31,7 +31,7 @@ BUCKET_PRIORITIES: dict[str, tuple[str, ...]] = {
     "profile_left": ("static_weighted_downweight", "static_weighted", "spiga", "hrnet", "orformer"),
     "profile_right": ("static_weighted_downweight", "static_weighted", "hrnet", "spiga", "orformer"),
     "rolled_large_yaw_left": ("spiga", "hrnet", "static_weighted_downweight", "orformer"),
-    "rolled_large_yaw_right": ("hrnet", "spiga", "orformer", "static_weighted_downweight"),
+    "rolled_large_yaw_right": ("spiga", "hrnet", "orformer", "static_weighted_downweight"),
     "rolled_profile_left": ("hrnet", "spiga", "static_weighted_downweight", "orformer"),
     "rolled_profile_right": ("spiga", "hrnet", "static_weighted_downweight", "orformer", "static_weighted_hard_drop"),
 }
@@ -99,6 +99,9 @@ def _shape_reasons(condition: str, name: str, metric: base.CandidateMetrics) -> 
     if condition == "rolled_large_yaw_left" and name == "spiga":
         if metric.cloud_area_ratio is not None and metric.cloud_area_ratio < 0.55:
             reasons.append("rolled_left_spiga_cloud_area_low")
+    if condition == "rolled_large_yaw_right" and name == "spiga":
+        if metric.cloud_area_ratio is not None and metric.cloud_area_ratio < 0.60:
+            reasons.append("rolled_right_spiga_cloud_area_low")
     return tuple(reasons)
 
 
