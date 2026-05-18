@@ -66,6 +66,7 @@ class DetectedFace:  # pylint:disable=too-many-instance-attributes
         landmarks_xy: np.ndarray | None = None,
         mask: dict[str, aligned_mask.Mask] | None = None,
         identity: dict[str, np.ndarray] | None = None,
+        metadata: dict[str, T.Any] | None = None,
     ) -> None:
         logger.trace(parse_class_init(locals()))  # type:ignore[attr-defined]
         self.image = image
@@ -88,6 +89,7 @@ class DetectedFace:  # pylint:disable=too-many-instance-attributes
         """The generated mask(s) for the face as generated in :mod:`plugins.extract.mask`"""
         self._landmarks_xy = landmarks_xy
         self._identity: dict[str, np.ndarray] = {} if identity is None else identity
+        self.metadata: dict[str, T.Any] = {} if metadata is None else metadata
         self.thumbnail: np.ndarray | None = None
 
         self._training_masks: tuple[bytes, tuple[int, int, int]] | None = None
@@ -337,6 +339,7 @@ class DetectedFace:  # pylint:disable=too-many-instance-attributes
             landmarks_xy=self.landmarks_xy.tolist(),
             mask={name: mask.to_dict() for name, mask in self.mask.items()},
             identity=self._identity,
+            metadata=self.metadata,
             thumb=thumb,
         )
         logger.trace("Returning: %s", alignment)  # type:ignore[attr-defined]
@@ -378,6 +381,7 @@ class DetectedFace:  # pylint:disable=too-many-instance-attributes
         self.top = alignment.y
         self.height = alignment.h
         self._identity = alignment.identity
+        self.metadata = alignment.metadata
         self._landmarks_xy = alignment.landmarks_xy
         if with_thumb and isinstance(alignment, FileAlignments):
             self.thumbnail = alignment.thumb
@@ -424,6 +428,7 @@ class DetectedFace:  # pylint:disable=too-many-instance-attributes
             landmarks_xy=self.landmarks_xy.tolist(),
             mask={name: mask.to_png_meta() for name, mask in self.mask.items()},
             identity=self._identity,
+            metadata=self.metadata,
         )
         return alignment
 
@@ -450,6 +455,7 @@ class DetectedFace:  # pylint:disable=too-many-instance-attributes
         self._identity = {}
         for key, val in alignment.identity.items():
             self._identity[key] = np.array(val, dtype="float32")
+        self.metadata = alignment.metadata
         logger.trace(
             "Created from png exif header: (left: %s, "  # type:ignore[attr-defined]
             "width: %s, top: %s  height: %s, landmarks: %s, mask: %s, identity: %s)",

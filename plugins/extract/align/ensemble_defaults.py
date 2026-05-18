@@ -139,10 +139,10 @@ use_alignment_resolver = ConfigItem(
     default=False,
     group="landmark_ensemble",
     info=(
-        "Enable the geometry-risk alignment resolver. When on, per-face fusion is routed "
-        "through ``lib.landmarks.ensemble.alignment_resolver`` which uses candidate "
-        "disagreement, bbox-aspect, and validity flags to pick between the general "
-        "strategy, hard-case strategy, or fallback."
+        "Enable the production runtime resolver. When on, per-face fusion is routed "
+        "through ``lib.landmarks.ensemble.runtime_resolver`` which builds single-model "
+        "and fusion candidates, estimates pose/geometry buckets, applies v7 bucket "
+        "priority and vetoes, and emits debug metadata."
     ),
 )
 
