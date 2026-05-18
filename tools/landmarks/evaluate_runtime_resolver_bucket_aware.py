@@ -24,16 +24,59 @@ DEFAULT_PRIORITY: tuple[str, ...] = (
 )
 
 BUCKET_PRIORITIES: dict[str, tuple[str, ...]] = {
-    "large_roll": ("static_weighted_downweight", "static_weighted", "weighted_median", "spiga", "orformer", "hrnet"),
-    "extreme_roll": ("hrnet", "spiga", "orformer", "static_weighted_downweight", "static_weighted"),
-    "large_yaw_left": ("spiga", "static_weighted_downweight", "static_weighted", "hrnet", "orformer"),
-    "large_yaw_right": ("spiga", "static_weighted_downweight", "static_weighted", "hrnet", "orformer"),
-    "profile_left": ("static_weighted_downweight", "static_weighted", "spiga", "hrnet", "orformer"),
-    "profile_right": ("static_weighted_downweight", "static_weighted", "hrnet", "spiga", "orformer"),
+    "large_roll": (
+        "static_weighted_downweight",
+        "static_weighted",
+        "weighted_median",
+        "spiga",
+        "orformer",
+        "hrnet",
+    ),
+    "extreme_roll": (
+        "hrnet",
+        "spiga",
+        "orformer",
+        "static_weighted_downweight",
+        "static_weighted",
+    ),
+    "large_yaw_left": (
+        "spiga",
+        "static_weighted_downweight",
+        "static_weighted",
+        "hrnet",
+        "orformer",
+    ),
+    "large_yaw_right": (
+        "spiga",
+        "static_weighted_downweight",
+        "static_weighted",
+        "hrnet",
+        "orformer",
+    ),
+    "profile_left": (
+        "static_weighted_downweight",
+        "static_weighted",
+        "spiga",
+        "hrnet",
+        "orformer",
+    ),
+    "profile_right": (
+        "static_weighted_downweight",
+        "static_weighted",
+        "hrnet",
+        "spiga",
+        "orformer",
+    ),
     "rolled_large_yaw_left": ("spiga", "hrnet", "static_weighted_downweight", "orformer"),
     "rolled_large_yaw_right": ("spiga", "hrnet", "orformer", "static_weighted_downweight"),
     "rolled_profile_left": ("hrnet", "spiga", "static_weighted_downweight", "orformer"),
-    "rolled_profile_right": ("spiga", "hrnet", "static_weighted_downweight", "orformer", "static_weighted_hard_drop"),
+    "rolled_profile_right": (
+        "spiga",
+        "hrnet",
+        "static_weighted_downweight",
+        "orformer",
+        "static_weighted_hard_drop",
+    ),
 }
 
 _ORIGINAL_EVALUATE_SAMPLE = base.evaluate_sample
@@ -96,12 +139,20 @@ def _shape_reasons(condition: str, name: str, metric: base.CandidateMetrics) -> 
         > base.DEFAULT_MAX_POINTS_OUTSIDE_EXPANDED_BBOX_FRACTION
     ):
         reasons.append("too_many_points_outside_expanded_bbox")
-    if condition == "rolled_large_yaw_left" and name == "spiga":
-        if metric.cloud_area_ratio is not None and metric.cloud_area_ratio < 0.55:
-            reasons.append("rolled_left_spiga_cloud_area_low")
-    if condition == "rolled_large_yaw_right" and name == "spiga":
-        if metric.cloud_area_ratio is not None and metric.cloud_area_ratio < 0.60:
-            reasons.append("rolled_right_spiga_cloud_area_low")
+    if (
+        condition == "rolled_large_yaw_left"
+        and name == "spiga"
+        and metric.cloud_area_ratio is not None
+        and metric.cloud_area_ratio < 0.55
+    ):
+        reasons.append("rolled_left_spiga_cloud_area_low")
+    if (
+        condition == "rolled_large_yaw_right"
+        and name == "spiga"
+        and metric.cloud_area_ratio is not None
+        and metric.cloud_area_ratio < 0.60
+    ):
+        reasons.append("rolled_right_spiga_cloud_area_low")
     return tuple(reasons)
 
 
@@ -180,7 +231,9 @@ def evaluate_sample(
             failure_threshold=failure_threshold,
         )
     truth = base._load_truth(sample)
-    candidates = base._build_candidates(sample, cache, requested, weights, outlier_threshold=outlier_threshold)
+    candidates = base._build_candidates(
+        sample, cache, requested, weights, outlier_threshold=outlier_threshold
+    )
     reference_bbox = sample.face_bbox or base.bbox_from_truth_fallback(truth)
     metrics = {
         candidate.name: base._evaluate_candidate(

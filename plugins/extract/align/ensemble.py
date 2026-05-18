@@ -83,8 +83,8 @@ class Ensemble(ExtractPlugin):
         setup_mode: str | None = None,
         fallback_strategy: str | None = None,
         use_alignment_resolver: bool | None = None,
-        resolver_hard_case_strategy: str | None = None,
-        resolver_high_disagreement_px: float | None = None,
+        hard_case_strategy: str | None = None,
+        hard_disagreement_px: float | None = None,
         resolver_policy: str | None = None,
         secondary_hard_case_strategy: str | None = None,
         fallback_model: str | None = None,
@@ -123,7 +123,9 @@ class Ensemble(ExtractPlugin):
         self._fallback_strategy = self._resolve_fallback_strategy(
             raw_fallback_strategy, configured_strategy
         )
-        self._resolver_policy = cfg.resolver_policy() if resolver_policy is None else resolver_policy
+        self._resolver_policy = (
+            cfg.resolver_policy() if resolver_policy is None else resolver_policy
+        )
         self._secondary_hard_case = (
             cfg.secondary_hard_case_strategy()
             if secondary_hard_case_strategy is None
@@ -166,13 +168,13 @@ class Ensemble(ExtractPlugin):
         )
         self._resolver_hard_case = (
             cfg.hard_case_strategy()
-            if resolver_hard_case_strategy is None
-            else resolver_hard_case_strategy
+            if hard_case_strategy is None
+            else hard_case_strategy
         )
         self._resolver_disagreement_px = float(
-            cfg.resolver_high_disagreement_px()
-            if resolver_high_disagreement_px is None
-            else resolver_high_disagreement_px
+            cfg.hard_disagreement_px()
+            if hard_disagreement_px is None
+            else hard_disagreement_px
         )
         self._last_matrices: np.ndarray | None = None
         self._last_detector_bboxes: np.ndarray | None = None

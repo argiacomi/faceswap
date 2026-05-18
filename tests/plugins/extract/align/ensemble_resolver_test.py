@@ -67,8 +67,8 @@ def test_resolver_enabled_routes_low_risk_path(tmp_path) -> None:
         crop_scale=1.0,
         strategy="plain_average",
         use_alignment_resolver=True,
-        resolver_hard_case_strategy="static_weighted_downweight",
-        resolver_high_disagreement_px=50.0,  # generous so we land in low_risk
+        hard_case_strategy="static_weighted_downweight",
+        hard_disagreement_px=50.0,  # generous so we land in low_risk
     )
     plugin.model = plugin.load_model()
     plugin.predict_landmarks_68(np.zeros((256, 256, 3), dtype="float32"))
@@ -89,8 +89,8 @@ def test_resolver_high_risk_swaps_in_hard_case_strategy(tmp_path) -> None:
         crop_scale=1.0,
         strategy="plain_average",
         use_alignment_resolver=True,
-        resolver_hard_case_strategy="static_weighted_downweight",
-        resolver_high_disagreement_px=10.0,
+        hard_case_strategy="static_weighted_downweight",
+        hard_disagreement_px=10.0,
     )
     plugin.model = plugin.load_model()
     plugin.predict_landmarks_68(np.zeros((256, 256, 3), dtype="float32"))

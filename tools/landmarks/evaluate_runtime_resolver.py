@@ -39,7 +39,11 @@ import numpy as np
 from lib.landmarks.cache.prediction_cache import DiskPredictionCache
 from lib.landmarks.core.fusion_variants import fuse_variant
 from lib.landmarks.core.schema import LandmarkPrediction, normalize_landmarks
-from lib.landmarks.datasets.manifest_io import LandmarkSample, bbox_from_truth_fallback, load_manifest
+from lib.landmarks.datasets.manifest_io import (
+    LandmarkSample,
+    bbox_from_truth_fallback,
+    load_manifest,
+)
 from lib.landmarks.ensemble.strategies import canonical_strategy
 from lib.landmarks.ensemble.weights import load_weights
 from lib.landmarks.evaluation.geometry_signals import AlignmentSummary, alignment_summary
@@ -267,19 +271,16 @@ def _expanded_bbox(
     return (left - margin_x, top - margin_y, right + margin_x, bottom + margin_y)
 
 
-def _points_outside_bbox_fraction(points: np.ndarray, bbox: tuple[float, float, float, float] | None) -> float | None:
+def _points_outside_bbox_fraction(
+    points: np.ndarray, bbox: tuple[float, float, float, float] | None
+) -> float | None:
     if bbox is None:
         return None
     arr = np.asarray(points, dtype="float64")
     if arr.ndim != 2 or arr.shape[1] < 2 or arr.size == 0:
         return None
     left, top, right, bottom = bbox
-    outside = (
-        (arr[:, 0] < left)
-        | (arr[:, 0] > right)
-        | (arr[:, 1] < top)
-        | (arr[:, 1] > bottom)
-    )
+    outside = (arr[:, 0] < left) | (arr[:, 0] > right) | (arr[:, 1] < top) | (arr[:, 1] > bottom)
     return float(np.mean(outside))
 
 
@@ -413,7 +414,9 @@ def _evaluate_candidate(
         yaw_degrees=None if summary is None else float(summary.yaw),
         pitch_degrees=None if summary is None else float(summary.pitch),
         cloud_area_ratio=(
-            None if reference_area is None or candidate_area is None else candidate_area / reference_area
+            None
+            if reference_area is None or candidate_area is None
+            else candidate_area / reference_area
         ),
         hull_area_ratio=(
             None if reference_area is None or hull_area is None else hull_area / reference_area
@@ -453,7 +456,9 @@ def _populate_consensus_geometry(
                 / diag
             )
         metric.landmark_consensus_distance = float(
-            np.mean(np.linalg.norm(candidate.landmarks.astype("float64") - consensus_points, axis=1))
+            np.mean(
+                np.linalg.norm(candidate.landmarks.astype("float64") - consensus_points, axis=1)
+            )
             / diag
         )
         metric.geometry_veto_reasons = _geometry_veto_reasons(metric)
@@ -764,14 +769,18 @@ def write_csv_report(reports: T.Sequence[SampleReport], path: Path) -> None:
                 metric = report.metrics[name]
                 row[f"{name}_nme"] = metric.nme
                 row[f"{name}_failure"] = int(metric.failure)
-                row[f"{name}_roll_deg"] = "" if metric.roll_degrees is None else metric.roll_degrees
+                row[f"{name}_roll_deg"] = (
+                    "" if metric.roll_degrees is None else metric.roll_degrees
+                )
                 row[f"{name}_cloud_area_ratio"] = metric.cloud_area_ratio
                 row[f"{name}_hull_area_ratio"] = metric.hull_area_ratio
                 row[f"{name}_points_outside_expanded_bbox_fraction"] = (
                     metric.points_outside_expanded_bbox_fraction
                 )
                 row[f"{name}_eye_mouth_order_valid_after_deroll"] = (
-                    "" if metric.eye_mouth_order_valid_after_deroll is None else int(metric.eye_mouth_order_valid_after_deroll)
+                    ""
+                    if metric.eye_mouth_order_valid_after_deroll is None
+                    else int(metric.eye_mouth_order_valid_after_deroll)
                 )
                 row[f"{name}_roi_center_consensus_distance"] = metric.roi_center_consensus_distance
                 row[f"{name}_landmark_consensus_distance"] = metric.landmark_consensus_distance
@@ -779,7 +788,9 @@ def write_csv_report(reports: T.Sequence[SampleReport], path: Path) -> None:
             writer.writerow(row)
 
 
-def write_failures_csv(reports: T.Sequence[SampleReport], path: Path, *, failure_threshold: float) -> None:
+def write_failures_csv(
+    reports: T.Sequence[SampleReport], path: Path, *, failure_threshold: float
+) -> None:
     """Write only rows where the resolver's chosen candidate failed."""
     fieldnames = [
         "sample_id",
@@ -856,7 +867,9 @@ def write_worst_samples_json(worst: T.Sequence[SampleReport], path: Path) -> Non
                 "consensus_roll_deg": r.decision.consensus_roll_deg,
                 "vetoed": list(r.decision.vetoed),
                 "rolls": {name: metric.roll_degrees for name, metric in r.metrics.items()},
-                "diagnostics": {name: _metric_diagnostics(metric) for name, metric in r.metrics.items()},
+                "diagnostics": {
+                    name: _metric_diagnostics(metric) for name, metric in r.metrics.items()
+                },
             }
             for r in worst
         ]
@@ -897,7 +910,9 @@ def render_overlay(report: SampleReport, output_path: Path) -> bool:
         f"chosen={report.decision.chosen} nme={chosen_nme:.4f}  "
         f"oracle={report.oracle} nme={oracle_nme:.4f}"
     )
-    cv2.putText(canvas, legend, (10, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1, cv2.LINE_AA)
+    cv2.putText(
+        canvas, legend, (10, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1, cv2.LINE_AA
+    )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     return bool(cv2.imwrite(str(output_path), canvas))
 
@@ -945,7 +960,9 @@ def build_parser() -> argparse.ArgumentParser:
         choices=sorted(POLICY_REGISTRY),
         help="Resolver policy to evaluate.",
     )
-    parser.add_argument("--output-dir", required=True, help="Directory where reports + overlays are written.")
+    parser.add_argument(
+        "--output-dir", required=True, help="Directory where reports + overlays are written."
+    )
     parser.add_argument("--outlier-threshold", type=float, default=3.5)
     parser.add_argument("--failure-threshold", type=float, default=DEFAULT_FAILURE_THRESHOLD)
     parser.add_argument("--worst-count", type=int, default=DEFAULT_WORST_COUNT)
@@ -989,12 +1006,16 @@ def main(argv: T.Sequence[str] | None = None) -> int:
             logger.warning("skipping sample %s: %s", sample.sample_id, err)
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    aggregate = aggregate_reports(reports, policy=args.policy, failure_threshold=args.failure_threshold)
+    aggregate = aggregate_reports(
+        reports, policy=args.policy, failure_threshold=args.failure_threshold
+    )
     (output_dir / "resolver_policy_report.json").write_text(
         json.dumps(aggregate, indent=2) + "\n", encoding="utf-8"
     )
     write_csv_report(reports, output_dir / "resolver_policy_report.csv")
-    write_failures_csv(reports, output_dir / "resolver_failures.csv", failure_threshold=args.failure_threshold)
+    write_failures_csv(
+        reports, output_dir / "resolver_failures.csv", failure_threshold=args.failure_threshold
+    )
     write_worst_samples_json(
         select_worst_samples(reports, count=args.worst_count),
         output_dir / "resolver_worst_samples.json",
