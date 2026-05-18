@@ -30,14 +30,13 @@ BUCKET_PRIORITIES: dict[str, tuple[str, ...]] = {
     "large_yaw_right": ("spiga", "static_weighted_downweight", "static_weighted", "hrnet", "orformer"),
     "profile_left": ("static_weighted_downweight", "static_weighted", "spiga", "hrnet", "orformer"),
     "profile_right": ("static_weighted_downweight", "static_weighted", "hrnet", "spiga", "orformer"),
-    "rolled_large_yaw_left": ("hrnet", "spiga", "static_weighted_downweight", "orformer"),
+    "rolled_large_yaw_left": ("spiga", "hrnet", "static_weighted_downweight", "orformer"),
     "rolled_large_yaw_right": ("hrnet", "spiga", "orformer", "static_weighted_downweight"),
     "rolled_profile_left": ("hrnet", "spiga", "static_weighted_downweight", "orformer"),
     "rolled_profile_right": ("spiga", "hrnet", "static_weighted_downweight", "orformer", "static_weighted_hard_drop"),
 }
 
 _ORIGINAL_EVALUATE_SAMPLE = base.evaluate_sample
-_REASON_ATTR = "geometry_" + "veto_reasons"
 
 
 def _priority_for_bucket(condition: str) -> tuple[str, ...]:
@@ -77,15 +76,49 @@ def _roll_vetoes(
     return names, consensus
 
 
-def _geometry_names(metrics: T.Mapping[str, base.CandidateMetrics]) -> set[str]:
-    return {name for name, metric in metrics.items() if getattr(metric, _REASON_ATTR, ())}
+def _shape_reasons(condition: str, name: str, metric: base.CandidateMetrics) -> tuple[str, ...]:
+    reasons: list[str] = []
+    if metric.cloud_area_ratio is None:
+        reasons.append("missing_cloud_area_ratio")
+    elif metric.cloud_area_ratio < base.DEFAULT_MIN_CLOUD_AREA_RATIO:
+        reasons.append("cloud_area_too_small")
+    elif metric.cloud_area_ratio > base.DEFAULT_MAX_CLOUD_AREA_RATIO:
+        reasons.append("cloud_area_too_large")
+    if metric.hull_area_ratio is None:
+        reasons.append("missing_hull_area_ratio")
+    elif metric.hull_area_ratio < base.DEFAULT_MIN_HULL_AREA_RATIO:
+        reasons.append("hull_area_too_small")
+    elif metric.hull_area_ratio > base.DEFAULT_MAX_HULL_AREA_RATIO:
+        reasons.append("hull_area_too_large")
+    if (
+        metric.points_outside_expanded_bbox_fraction is not None
+        and metric.points_outside_expanded_bbox_fraction
+        > base.DEFAULT_MAX_POINTS_OUTSIDE_EXPANDED_BBOX_FRACTION
+    ):
+        reasons.append("too_many_points_outside_expanded_bbox")
+    if condition == "rolled_large_yaw_left" and name == "spiga":
+        if metric.cloud_area_ratio is not None and metric.cloud_area_ratio < 0.55:
+            reasons.append("rolled_left_spiga_cloud_area_low")
+    return tuple(reasons)
+
+
+def _apply_shape_reasons(
+    condition: str,
+    metrics: T.MutableMapping[str, base.CandidateMetrics],
+) -> set[str]:
+    names: set[str] = set()
+    for name, metric in metrics.items():
+        metric.geometry_veto_reasons = _shape_reasons(condition, name, metric)
+        if metric.geometry_veto_reasons:
+            names.add(name)
+    return names
 
 
 def _geometry_reasons(metrics: T.Mapping[str, base.CandidateMetrics]) -> dict[str, list[str]]:
     return {
-        name: list(getattr(metric, _REASON_ATTR, ()))
+        name: list(metric.geometry_veto_reasons)
         for name, metric in metrics.items()
-        if getattr(metric, _REASON_ATTR, ())
+        if metric.geometry_veto_reasons
     }
 
 
@@ -97,7 +130,7 @@ def resolve_bucket_aware_veto(
     available = {candidate.name for candidate in candidates}
     priority = _priority_for_bucket(condition)
     roll_names, consensus = _roll_vetoes(candidates, metrics)
-    shape_names = _geometry_names(metrics)
+    shape_names = {name for name, metric in metrics.items() if metric.geometry_veto_reasons}
     vetoed = roll_names | shape_names
     survivors = available - vetoed
     diagnostics: dict[str, T.Any] = {
@@ -158,6 +191,7 @@ def evaluate_sample(
         for candidate in candidates
     }
     base._populate_consensus_geometry(candidates, metrics, reference_bbox=reference_bbox)
+    _apply_shape_reasons(sample.condition, metrics)
     decision = resolve_bucket_aware_veto(sample.condition, candidates, metrics)
     oracle = min(metrics.items(), key=lambda item: item[1].nme)[0]
     decision.diagnostics["oracle_vetoed"] = oracle in decision.vetoed
