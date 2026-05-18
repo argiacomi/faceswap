@@ -4,9 +4,9 @@
 Reads an existing manifest (typically AFLW2000-3D, which preserves the 3DDFA
 ``Pose_Para`` vector in ``metadata``) and writes a filtered manifest plus the
 standard geometry outputs into ``outputs/landmarks/hard_alignment_validation``
-by default. Hard-case sample tagging is yaw-driven (``hard_slice``
-∈ ``profile_left``, ``profile_right``, ``large_yaw_left``, ``large_yaw_right``)
-so downstream geometry tooling can group by it like any other condition.
+by default. Hard-case sample tagging is pose-driven. Yaw/profile buckets cover
+ordinary profile and large-yaw cases, while explicit roll buckets isolate the
+rotated-face failures seen in geometry validation.
 
 The v1 flow is entirely automated: no manual landmarks, no real-failure
 collection. Dataset landmarks remain the ground truth.
@@ -25,9 +25,11 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from lib.landmarks.evaluation.hard_slices import (
+    DEFAULT_EXTREME_ROLL_DEGREES,
     DEFAULT_FRONTAL_YAW_DEGREES,
     DEFAULT_PROFILE_MAX_DEGREES,
     DEFAULT_PROFILE_MIN_DEGREES,
+    DEFAULT_ROLL_DEGREES,
     HardSliceThresholds,
     slice_manifest_samples,
 )
@@ -100,6 +102,8 @@ def build_hard_manifest(
             "frontal_degrees": thresholds.frontal_degrees,
             "profile_min_degrees": thresholds.profile_min_degrees,
             "profile_max_degrees": thresholds.profile_max_degrees,
+            "roll_degrees": thresholds.roll_degrees,
+            "extreme_roll_degrees": thresholds.extreme_roll_degrees,
         },
         "selected_sample_count": len(sliced),
         "source_sample_count": len(samples),
@@ -167,6 +171,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--profile-min-degrees", type=float, default=DEFAULT_PROFILE_MIN_DEGREES)
     parser.add_argument("--profile-max-degrees", type=float, default=DEFAULT_PROFILE_MAX_DEGREES)
     parser.add_argument(
+        "--roll-degrees",
+        type=float,
+        default=DEFAULT_ROLL_DEGREES,
+        help="|roll| at or above this is routed to roll-specific hard buckets.",
+    )
+    parser.add_argument(
+        "--extreme-roll-degrees",
+        type=float,
+        default=DEFAULT_EXTREME_ROLL_DEGREES,
+        help="|roll| at or above this is labeled 'extreme_roll' for non-yaw-hard samples.",
+    )
+    parser.add_argument(
         "--include-unposed",
         action="store_true",
         help="Keep samples that lack Pose_Para (tagged as 'no_pose').",
@@ -204,6 +220,8 @@ def main(argv: list[str] | None = None) -> int:
         frontal_degrees=args.frontal_degrees,
         profile_min_degrees=args.profile_min_degrees,
         profile_max_degrees=args.profile_max_degrees,
+        roll_degrees=args.roll_degrees,
+        extreme_roll_degrees=args.extreme_roll_degrees,
     )
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
