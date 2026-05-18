@@ -20,12 +20,6 @@ from lib.landmarks.adapters import (
     LandmarkAdapter,
     LandmarkAdapterConfig,
 )
-from lib.landmarks.alignment.resolver import (
-    AlignmentResolverConfig,
-    AlignmentResolverError,
-    CandidateInput,
-    resolve_alignment_geometry,
-)
 from lib.landmarks.coordinates import (
     frame_to_normalized_crop,
     roi_to_matrix,
@@ -44,6 +38,12 @@ from lib.landmarks.ensemble.promoted_setup import (
     ensure_compatible_adapters,
     load_promoted_setup,
     strategy_supported_by_runtime,
+)
+from lib.landmarks.ensemble.runtime_resolver import (
+    ModelPrediction,
+    RuntimeResolverConfig,
+    RuntimeResolverError,
+    resolve_runtime,
 )
 from lib.landmarks.ensemble.strategies import (
     CANONICAL_STRATEGIES,
@@ -492,6 +492,9 @@ class Ensemble(ExtractPlugin):
         """Store and log per-face resolver metadata."""
         self.last_debug_metadata.append(metadata)
         logger.debug("[Ensemble] runtime resolver metadata: %s", metadata)
+        bucket = metadata.get("bucket")
+        if bucket not in (None, "", "frontal", "intermediate", "no_pose"):
+            logger.info("[Ensemble] runtime resolver hard/profile metadata: %s", metadata)
 
     def _resolve_via_geometry(
         self,
@@ -502,91 +505,87 @@ class Ensemble(ExtractPlugin):
         threshold: float | None,
         detector_bbox: tuple[float, float, float, float] | None = None,
     ) -> np.ndarray | None:
-        """Route this face through the geometry-risk resolver (#78)."""
+        """Route this face through the production runtime resolver."""
         weights_map: dict[str, list[float]] | None = None
         if self._promoted is not None and self._promoted.weights:
             weights_map = {model: list(values) for model, values in self._promoted.weights.items()}
-        candidates = [
-            CandidateInput(
-                model=adapter.config.name,
-                landmarks=prediction.canonical_68().points,
+        model_predictions = [
+            ModelPrediction(
+                adapter.config.name,
+                prediction.canonical_68().points,
+                weight=float(adapter.config.weight),
             )
             for adapter, prediction in zip(adapters, items, strict=True)
         ]
-        resolver_config = AlignmentResolverConfig(
+        resolver_config = RuntimeResolverConfig(
+            policy=self._resolver_policy,
             general_strategy=self._strategy,
             hard_case_strategy=canonical_strategy(self._resolver_hard_case),
+            secondary_hard_case_strategy=canonical_strategy(self._secondary_hard_case),
             fallback_strategy=canonical_strategy(self._fallback_strategy)
             if self._fallback_strategy
             else "plain_average",
+            fallback_model=self._fallback_model,
             outlier_threshold=self._outlier_threshold,
             weights=weights_map,
-            high_disagreement_px=self._resolver_disagreement_px,
-            min_models_after_rejection=self._min_models,
+            adapter_weights={adapter.config.name: adapter.config.weight for adapter in adapters},
+            hard_disagreement_px=self._resolver_disagreement_px,
+            roll_veto_degrees=self._roll_veto_degrees,
+            hard_roll_degrees=self._hard_roll_degrees,
+            strict=self._strict,
         )
         try:
-            result = resolve_alignment_geometry(
-                candidates,
-                config=resolver_config,
+            result = resolve_runtime(
+                model_predictions,
+                resolver_config,
                 detector_bbox=detector_bbox,
-                image_shape=None,
             )
-        except AlignmentResolverError as err:
-            logger.warning("[Ensemble] geometry resolver hard-failed: %s", err)
+        except RuntimeResolverError as err:
+            logger.warning("[Ensemble] runtime resolver hard-failed: %s", err)
             return None
 
-        selected_candidate = (
-            result.active_models[0] if len(result.active_models) == 1 else result.chosen_strategy
-        )
-        veto_reasons = list(result.geometry_flags)
-        veto_reasons.extend(f"rejected_model:{model}" for model in result.rejected_models)
-        fallback_used = bool(result.debug_metadata.get("fallback_used", False)) or (
-            result.chosen_strategy == resolver_config.fallback_strategy
-        )
+        veto_reasons = list(result.metadata.get("vetoed", ()))
         metadata = self._base_runtime_debug(
-            selected_candidate=selected_candidate,
-            fallback_used=fallback_used,
+            selected_candidate=result.selected_candidate,
+            fallback_used=bool(result.metadata.get("fallback_reason")),
             veto_reasons=veto_reasons,
-            points=result.alignment_landmarks,
+            points=result.landmarks,
             items=items,
             adapters=adapters,
             errors=errors,
-            geometry_valid=not bool(result.geometry_flags),
+            geometry_valid=not bool(veto_reasons),
             detector_bbox=detector_bbox,
+        )
+        selected_strategy = (
+            result.selected_candidate
+            if result.selected_candidate in CANONICAL_STRATEGIES
+            else self._strategy
         )
         metadata.update(
             {
                 "sources": tuple(adapter.config.name for adapter in adapters),
                 "weights": [],
-                "kept_indices": tuple(range(len(result.active_models))),
-                "rejected_indices": tuple(
-                    idx
-                    for idx, adapter in enumerate(adapters)
-                    if adapter.config.name in result.rejected_models
-                ),
+                "kept_indices": tuple(range(len(adapters))),
+                "rejected_indices": (),
                 "rejected_landmarks": 0,
                 "adapter_errors": tuple(errors),
-                "strategy": result.chosen_strategy,
-                "outlier_method": strategy_outlier_method(result.chosen_strategy),
+                "strategy": selected_strategy,
+                "outlier_method": strategy_outlier_method(selected_strategy),
                 "outlier_threshold": threshold,
-                "weight_source": "geometry_resolver",
-                "active_models": result.active_models,
-                "resolver": {
-                    "risk_route": result.risk_route,
-                    "risk_score": result.risk_score,
-                    "geometry_confidence": result.geometry_confidence,
-                    "geometry_flags": list(result.geometry_flags),
-                    "rejected_models": list(result.rejected_models),
-                    "max_disagreement_px": result.debug_metadata.get("max_disagreement_px", 0.0),
-                    "detector_bbox": list(detector_bbox) if detector_bbox is not None else None,
-                },
+                "weight_source": "runtime_resolver",
+                "active_models": tuple(adapter.config.name for adapter in adapters),
+                "resolver": result.metadata,
             }
         )
-        metadata["consensus_distances"]["max_disagreement_px"] = result.debug_metadata.get(
-            "max_disagreement_px", 0.0
+        metadata.update(result.metadata)
+        metadata["model_predictions_available"].update(
+            {
+                model: model in metadata["model_predictions_available"]
+                for model in ("hrnet", "spiga", "orformer")
+            }
         )
         self._append_debug_metadata(metadata)
-        return result.alignment_landmarks.astype("float32", copy=False)
+        return result.landmarks.astype("float32", copy=False)
 
     def _fuse_face(
         self,

@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import numpy as np
 
 from lib.infer.align import Align
+from lib.infer.objects import ExtractBatchAligned
 
 
 class _MatrixAwarePlugin:
@@ -75,3 +76,28 @@ def test_prepare_data_passes_realign_second_pass_matrices_to_plugin() -> None:
     np.testing.assert_allclose(plugin.matrices, re_align.matrices)
     np.testing.assert_allclose(plugin.detector_bboxes, batch.bboxes.astype("float32"))
     assert batch.data.shape == (2, 256, 256, 3)
+
+
+def test_post_process_persists_plugin_debug_metadata() -> None:
+    """Align post-process stores plugin metadata for alignments serialization."""
+    handler = object.__new__(Align)
+    handler.plugin = SimpleNamespace(
+        name="Ensemble",
+        last_debug_metadata=[{"selected_candidate": "spiga", "bucket": "profile_left"}],
+    )
+    handler._overridden = {"post_process": False}
+    handler._re_align = SimpleNamespace(enabled=False)
+    handler._re_feed = SimpleNamespace(total_feeds=1, merge=lambda landmarks: landmarks)
+    handler._filters = lambda batch: None
+    handler._landmark_type = None
+    batch = SimpleNamespace(
+        data=np.zeros((1, 68, 2), dtype="float32"),
+        matrices=np.eye(3, dtype="float32")[None],
+        aligned=ExtractBatchAligned(),
+    )
+
+    Align.post_process(handler, batch)
+
+    assert batch.aligned.metadata == [
+        {"landmark_ensemble": {"selected_candidate": "spiga", "bucket": "profile_left"}}
+    ]

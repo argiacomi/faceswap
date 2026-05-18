@@ -407,11 +407,39 @@ class Align(ExtractHandler):
 
         batch.landmarks = landmarks
         batch.landmark_type = self._landmark_type
+        self._store_plugin_metadata(batch, landmarks.shape[0], result.shape[0])
         self._filters(batch)
 
     def output_info(self) -> None:
         """Output the counts from the aligner filter"""
         self._filters.output_counts()
+
+    def _store_plugin_metadata(
+        self,
+        batch: ExtractBatch,
+        face_count: int,
+        feed_count: int,
+    ) -> None:
+        """Persist optional per-face plugin metadata into the batch alignment payload."""
+        metadata = getattr(self.plugin, "last_debug_metadata", None)
+        if not isinstance(metadata, list) or not metadata:
+            return
+        if len(metadata) == face_count:
+            batch.aligned.metadata = [{"landmark_ensemble": item} for item in metadata]
+            return
+        total_feeds = self._re_feed.total_feeds
+        if total_feeds <= 1 or len(metadata) != feed_count:
+            logger.debug(
+                "[%s.post_process] Plugin metadata count %s does not match faces=%s feeds=%s",
+                self.plugin.name,
+                len(metadata),
+                face_count,
+                feed_count,
+            )
+            return
+        batch.aligned.metadata = [
+            {"landmark_ensemble": metadata[index * total_feeds]} for index in range(face_count)
+        ]
 
     def set_normalize_method(
         self, method: T.Literal["none", "clahe", "hist", "mean"] | None

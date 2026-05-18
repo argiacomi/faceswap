@@ -73,9 +73,9 @@ def test_resolver_enabled_routes_low_risk_path(tmp_path) -> None:
     plugin.model = plugin.load_model()
     plugin.predict_landmarks_68(np.zeros((256, 256, 3), dtype="float32"))
     debug = plugin.last_debug_metadata[0]
-    assert debug["weight_source"] == "geometry_resolver"
+    assert debug["weight_source"] == "runtime_resolver"
     assert debug["resolver"]["risk_route"] == "low_risk"
-    assert debug["strategy"] == "plain_average"
+    assert debug["selected_candidate"] in debug["candidate_priority"]
     assert "active_models" in debug
 
 
@@ -97,7 +97,7 @@ def test_resolver_high_risk_swaps_in_hard_case_strategy(tmp_path) -> None:
     debug = plugin.last_debug_metadata[0]
     assert debug["resolver"]["risk_route"] == "high_risk"
     assert debug["strategy"] == "static_weighted_downweight"
-    assert "high_disagreement" in debug["resolver"]["geometry_flags"]
+    assert debug["resolver"]["max_disagreement_px"] > 10.0
 
 
 def test_resolver_metadata_carries_per_model_disagreement(tmp_path) -> None:
@@ -114,4 +114,4 @@ def test_resolver_metadata_carries_per_model_disagreement(tmp_path) -> None:
     debug = plugin.last_debug_metadata[0]
     assert "max_disagreement_px" in debug["resolver"]
     assert debug["resolver"]["max_disagreement_px"] >= 0.0
-    assert debug["resolver"]["geometry_confidence"] >= 0.0
+    assert "landmark_consensus_distance" in debug["resolver"]

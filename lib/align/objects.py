@@ -240,6 +240,8 @@ class PNGAlignments(DataclassDict):
     """The masks stored for the face"""
     identity: dict[str, npt.NDArray[np.float32]] = field(default_factory=dict)
     """The identity vectors stored for the face"""
+    metadata: dict[str, T.Any] = field(default_factory=dict)
+    """Optional per-face plugin metadata for debugging and downstream tooling"""
 
     def __repr__(self) -> str:
         """Pretty print for logging"""
