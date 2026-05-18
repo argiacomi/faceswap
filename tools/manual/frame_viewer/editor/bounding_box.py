@@ -9,6 +9,7 @@ import numpy as np
 
 from lib.gui.custom_widgets import RightClickMenu
 from lib.utils import get_module_objects
+from tools.manual.aligners import available_aligners, default_aligner
 
 from ._base import ControlPanelOption, Editor, logger
 
@@ -74,13 +75,13 @@ class BoundingBox(Editor):
             "Aligner",
             str,
             group="Aligner",
-            choices=["cv2-dnn", "FAN", "HRNet"],
-            default="HRNet",
+            choices=available_aligners(),
+            default=default_aligner(),
             is_radio=True,
             helptext=_(
-                "Aligner to use. HRNet and FAN will obtain better alignments, but cv2-dnn "
-                "can be useful if these cannot get decent alignments and you want to set a "
-                "base to edit from."
+                "Aligner to use. Model-based aligners will usually obtain better alignments, "
+                "but cv2-dnn can be useful if these cannot get decent alignments and you want "
+                "to set a base to edit from."
             ),
         )
         self._tk_aligner = align_ctl.tk_var

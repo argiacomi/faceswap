@@ -332,9 +332,30 @@ class Ensemble(ExtractPlugin):
         retval[:, 1] = ctr_y - half
         retval[:, 2] = ctr_x + half
         retval[:, 3] = ctr_y + half
-        self._last_matrices = roi_to_matrix(retval)
-        self._last_detector_bboxes = batch.astype("float32", copy=True)
+        self.set_crop_matrices(roi_to_matrix(retval), detector_bboxes=batch)
         return retval
+
+    def set_crop_matrices(
+        self,
+        matrices: np.ndarray,
+        *,
+        detector_bboxes: np.ndarray | None = None,
+    ) -> None:
+        """Receive the runner's current crop-to-frame matrices for the next feed batch."""
+        self._last_matrices = np.asarray(matrices, dtype="float32").copy()
+        if detector_bboxes is None:
+            self._last_detector_bboxes = None
+            return
+        bboxes = np.asarray(detector_bboxes, dtype="float32")
+        if bboxes.shape[0] != self._last_matrices.shape[0]:
+            logger.debug(
+                "[Ensemble] Ignoring detector bboxes with shape %s for crop matrices %s",
+                bboxes.shape,
+                self._last_matrices.shape,
+            )
+            self._last_detector_bboxes = None
+            return
+        self._last_detector_bboxes = bboxes.copy()
 
     def _active_adapters(self) -> list[LandmarkAdapter]:
         """Return loaded or injected adapters."""

@@ -240,6 +240,20 @@ def test_ensemble_crop_matrices_match_normalized_crop_contract() -> None:
     )
 
 
+def test_ensemble_accepts_runner_crop_matrices_for_current_feed() -> None:
+    """The align runner can replace pre-process matrix cache for re-align feeds."""
+    plugin = Ensemble(adapters=[], crop_scale=1.0)
+    plugin.pre_process(np.array([[10, 20, 50, 60]], dtype="int32"))
+    matrices = roi_to_matrix(np.array([[100, 200, 200, 300], [300, 400, 500, 600]], dtype="int32"))
+    bboxes = np.array([[101, 201, 199, 299], [310, 410, 490, 590]], dtype="float32")
+
+    plugin.set_crop_matrices(matrices, detector_bboxes=bboxes)
+
+    np.testing.assert_allclose(plugin._last_matrices, matrices)
+    np.testing.assert_allclose(plugin._last_detector_bboxes, bboxes)
+    assert plugin._bbox_for_face(1) == (310.0, 410.0, 490.0, 590.0)
+
+
 def test_ensemble_frame_space_api_matches_faceswap_normalized_process_output() -> None:
     """Frame-space public predictions round-trip to the process output contract."""
     adapters = [

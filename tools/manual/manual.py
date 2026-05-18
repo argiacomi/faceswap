@@ -22,6 +22,7 @@ from lib.logger import parse_class_init
 from lib.multithreading import MultiThread
 from lib.utils import get_module_objects, handle_deprecated_cli_opts
 
+from .aligners import available_aligners
 from .detected_faces import DetectedFaces
 from .face_viewer.frame import FacesFrame
 from .frame_viewer.frame import DisplayFrame
@@ -467,10 +468,7 @@ class Aligner:
     def __init__(self, tk_globals: TkGlobals) -> None:
         logger.debug("Initializing: %s (tk_globals: %s)", self.__class__.__name__, tk_globals)
         self._globals = tk_globals
-        self._aligners: dict[
-            T.Literal["FAN", "HRNet", "cv2-dnn"],  # type:ignore[type-var]
-            ExtractRunner[Align],
-        ] = {}
+        self._aligners: dict[str, ExtractRunner[Align]] = {}
         self._detected_faces: DetectedFaces
         self._init_thread = self._background_init_aligner()
         logger.debug("Initialized: %s", self.__class__.__name__)
@@ -510,7 +508,7 @@ class Aligner:
     def _init_aligner(self) -> None:
         """Initialize Aligner in a background thread, and set it to :attr:`_aligners`."""
         logger.debug("Initialize Aligner")
-        for plugin in ("cv2-dnn", "FAN", "HRNet"):
+        for plugin in available_aligners():
             logger.debug("Initializing Aligner: %s", plugin)
             self._aligners[plugin] = Align(plugin, normalization="hist")()
             logger.debug("Initialized '%s' Aligner", plugin)
@@ -536,7 +534,7 @@ class Aligner:
         self,
         frame_index: int,
         face_index: int,
-        aligner: T.Literal["FAN", "HRNet", "cv2-dnn"],
+        aligner: str,
     ) -> np.ndarray:
         """Feed the detected face into the alignment pipeline and retrieve the landmarks.
 
