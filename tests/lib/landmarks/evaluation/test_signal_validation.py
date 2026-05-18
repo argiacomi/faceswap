@@ -3,11 +3,16 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
+from lib.landmarks.evaluation.geometry_signals import AlignmentSummary
 from lib.landmarks.evaluation.signal_validation import (
     SELECTORS,
+    TRUTH_FREE_SELECTORS,
     CandidateRecord,
+    attach_consensus_signals,
+    consensus_alignment_summary,
     evaluate_selector,
     evaluate_selectors,
     evaluate_signals,
@@ -184,3 +189,196 @@ def test_validate_signal_handles_empty_records() -> None:
     assert report.precision == pytest.approx(0.0)
     assert report.recall == pytest.approx(0.0)
     assert report.auc == pytest.approx(0.0)
+
+
+def _make_summary(
+    *,
+    scale: float = 1.0,
+    rotation: float = 0.0,
+    translation: tuple[float, float] = (0.0, 0.0),
+    roi_center: tuple[float, float] = (100.0, 100.0),
+    roll: float = 0.0,
+) -> AlignmentSummary:
+    """Build a minimal AlignmentSummary for consensus-math tests."""
+    half = 50.0
+    cx, cy = roi_center
+    roi = np.array(
+        [
+            [cx - half, cy - half],
+            [cx + half, cy - half],
+            [cx + half, cy + half],
+            [cx - half, cy + half],
+        ],
+        dtype="float64",
+    )
+    matrix = np.array(
+        [[scale, 0.0, translation[0]], [0.0, scale, translation[1]]], dtype="float64"
+    )
+    landmarks = np.zeros((68, 2), dtype="float64")
+    return AlignmentSummary(
+        matrix=matrix,
+        roi=roi,
+        aligned_landmarks=landmarks,
+        normalized_landmarks=landmarks,
+        average_distance=0.0,
+        relative_eye_mouth_position=0.5,
+        pitch=0.0,
+        yaw=0.0,
+        roll=roll,
+        scale=scale,
+        rotation_degrees=rotation,
+        translation=translation,
+    )
+
+
+def test_consensus_alignment_summary_returns_per_component_median() -> None:
+    """Consensus picks the median of each scalar field and array column."""
+    summaries = [
+        _make_summary(scale=1.0, translation=(0.0, 0.0), roll=0.0),
+        _make_summary(scale=2.0, translation=(10.0, 10.0), roll=5.0),
+        _make_summary(scale=3.0, translation=(20.0, 20.0), roll=10.0),
+    ]
+    consensus = consensus_alignment_summary(summaries)
+    assert consensus.scale == pytest.approx(2.0)
+    assert consensus.translation == pytest.approx((10.0, 10.0))
+    assert consensus.roll == pytest.approx(5.0)
+    np.testing.assert_allclose(consensus.matrix, summaries[1].matrix)
+
+
+def test_consensus_alignment_summary_is_robust_to_one_outlier() -> None:
+    """Median consensus does not collapse to a single catastrophic candidate."""
+    good_a = _make_summary(scale=1.0, translation=(0.0, 0.0))
+    good_b = _make_summary(scale=1.0, translation=(0.0, 0.0))
+    catastrophic = _make_summary(scale=10.0, translation=(500.0, 500.0))
+    consensus = consensus_alignment_summary([good_a, good_b, catastrophic])
+    assert consensus.scale == pytest.approx(1.0)
+    assert consensus.translation == pytest.approx((0.0, 0.0))
+
+
+def test_consensus_alignment_summary_requires_at_least_one_summary() -> None:
+    """Empty input is a programmer error, not a silent 0-vector."""
+    with pytest.raises(ValueError):
+        consensus_alignment_summary([])
+
+
+def test_attach_consensus_signals_fills_truth_free_fields() -> None:
+    """Each candidate gets a delta-to-consensus filled into the truth-free fields."""
+    records = [
+        _record("a", "good", geometry=0.05),
+        _record("a", "bad", geometry=0.20),
+    ]
+    summaries_by_sample = {
+        "a": {
+            "good": _make_summary(translation=(0.0, 0.0), roi_center=(100.0, 100.0), roll=0.0),
+            "bad": _make_summary(translation=(40.0, 40.0), roi_center=(140.0, 140.0), roll=20.0),
+        }
+    }
+    normalizer_by_sample = {"a": 100.0}
+
+    attached = attach_consensus_signals(
+        records,
+        summaries_by_sample=summaries_by_sample,
+        normalizer_by_sample=normalizer_by_sample,
+    )
+
+    by_label = {r.candidate_label: r for r in attached}
+    # With two candidates, the median equals each end of the pair, so both
+    # deltas to consensus are equal in magnitude. What matters is that the
+    # numbers are populated and non-degenerate.
+    assert by_label["good"].transform_consensus_distance > 0.0
+    assert by_label["bad"].transform_consensus_distance > 0.0
+    assert by_label["good"].crop_center_consensus_distance > 0.0
+    assert by_label["bad"].roll_consensus_delta == pytest.approx(10.0)
+
+
+def test_attach_consensus_signals_picks_closer_candidate_to_median_with_three() -> None:
+    """The candidate closest to the cohort median scores the lowest consensus distance."""
+    records = [
+        _record("a", "median", geometry=0.05),
+        _record("a", "outlier_high", geometry=0.10),
+        _record("a", "outlier_low", geometry=0.10),
+    ]
+    summaries_by_sample = {
+        "a": {
+            "median": _make_summary(translation=(10.0, 10.0)),
+            "outlier_high": _make_summary(translation=(100.0, 100.0)),
+            "outlier_low": _make_summary(translation=(-80.0, -80.0)),
+        }
+    }
+    attached = attach_consensus_signals(
+        records,
+        summaries_by_sample=summaries_by_sample,
+        normalizer_by_sample={"a": 100.0},
+    )
+    by_label = {r.candidate_label: r for r in attached}
+    # The median candidate should be the closest to the consensus.
+    assert (
+        by_label["median"].transform_consensus_distance
+        < by_label["outlier_high"].transform_consensus_distance
+    )
+    assert (
+        by_label["median"].transform_consensus_distance
+        < by_label["outlier_low"].transform_consensus_distance
+    )
+
+
+def test_attach_consensus_signals_passes_records_through_when_summary_missing() -> None:
+    """Records without a matching summary remain unchanged (defaults stay at 0.0)."""
+    record = _record("missing", "x", geometry=0.05)
+    attached = attach_consensus_signals(
+        [record],
+        summaries_by_sample={},
+        normalizer_by_sample={},
+    )
+    assert attached[0].transform_consensus_distance == pytest.approx(0.0)
+    assert attached[0].crop_center_consensus_distance == pytest.approx(0.0)
+    assert attached[0].roll_consensus_delta == pytest.approx(0.0)
+
+
+def test_truth_free_selectors_pick_median_candidate() -> None:
+    """The truth-free transform selector picks the candidate closest to the consensus."""
+    records = [
+        _record("a", "median", geometry=0.05),
+        _record("a", "outlier_high", geometry=0.10),
+        _record("a", "outlier_low", geometry=0.10),
+    ]
+    summaries_by_sample = {
+        "a": {
+            "median": _make_summary(translation=(10.0, 10.0)),
+            "outlier_high": _make_summary(translation=(100.0, 100.0)),
+            "outlier_low": _make_summary(translation=(-80.0, -80.0)),
+        }
+    }
+    attached = attach_consensus_signals(
+        records,
+        summaries_by_sample=summaries_by_sample,
+        normalizer_by_sample={"a": 100.0},
+    )
+    chosen = selector_pick(
+        attached,
+        signal="transform_consensus_distance",
+        direction="higher_is_worse",
+    )
+    assert chosen.candidate_label == "median"
+
+
+def test_evaluate_selectors_runs_truth_free_set() -> None:
+    """The TRUTH_FREE_SELECTORS tuple is wired through evaluate_selectors."""
+    records = [_record(f"s{i}", "a", geometry=0.05) for i in range(3)] + [
+        _record(f"s{i}", "b", geometry=0.10) for i in range(3)
+    ]
+    summaries_by_sample = {
+        f"s{i}": {
+            "a": _make_summary(translation=(0.0, 0.0)),
+            "b": _make_summary(translation=(50.0, 50.0)),
+        }
+        for i in range(3)
+    }
+    attached = attach_consensus_signals(
+        records,
+        summaries_by_sample=summaries_by_sample,
+        normalizer_by_sample={f"s{i}": 100.0 for i in range(3)},
+    )
+    reports = evaluate_selectors(attached, selectors=TRUTH_FREE_SELECTORS)
+    names = {r.name for r in reports}
+    assert names == {name for name, _, _ in TRUTH_FREE_SELECTORS}

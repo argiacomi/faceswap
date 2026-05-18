@@ -27,12 +27,19 @@ the search and geometry CLIs use.
 
 from __future__ import annotations
 
+import dataclasses
 import typing as T
 from dataclasses import dataclass, field
 
 import numpy as np
 
 from lib.landmarks.evaluation.geometry_metrics import GeometrySampleMetrics
+from lib.landmarks.evaluation.geometry_signals import (
+    AlignmentSummary,
+    alignment_matrix_delta,
+    pose_delta,
+    roi_delta,
+)
 
 DEFAULT_BAD_CANDIDATE_MARGIN: float = 0.05
 """How much worse than the per-sample oracle a candidate's geometry score must
@@ -57,6 +64,14 @@ class CandidateRecord:
     hull_iou: float
     catastrophic: bool
     is_oracle: bool = False  # True when this is the per-sample best
+    # Truth-free signals — filled in by attach_consensus_signals. Each one is
+    # the candidate's delta vs the per-sample candidate-cohort consensus
+    # (median alignment summary), so they're usable at production time where
+    # ground truth is unavailable. Default 0.0 keeps records constructed
+    # without consensus attachment numerically inert in the selector picks.
+    transform_consensus_distance: float = 0.0
+    crop_center_consensus_distance: float = 0.0
+    roll_consensus_delta: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -127,22 +142,7 @@ def tag_oracle(records: T.Sequence[CandidateRecord]) -> list[CandidateRecord]:
 
 
 def _replace_oracle(record: CandidateRecord, is_oracle: bool) -> CandidateRecord:
-    return CandidateRecord(
-        sample_id=record.sample_id,
-        dataset=record.dataset,
-        condition=record.condition,
-        hard_slice=record.hard_slice,
-        candidate_label=record.candidate_label,
-        is_baseline=record.is_baseline,
-        geometry_score=record.geometry_score,
-        nme=record.nme,
-        transform_normalized=record.transform_normalized,
-        crop_center_normalized=record.crop_center_normalized,
-        roll_degrees_delta=record.roll_degrees_delta,
-        hull_iou=record.hull_iou,
-        catastrophic=record.catastrophic,
-        is_oracle=is_oracle,
-    )
+    return dataclasses.replace(record, is_oracle=is_oracle)
 
 
 def label_bad_candidates(
@@ -177,6 +177,18 @@ def _values_for_signal(name: str, records: T.Sequence[CandidateRecord]) -> tuple
         return np.array([r.hull_iou for r in records]), "lower_is_worse"
     if name == "geometry_score":
         return np.array([r.geometry_score for r in records]), "higher_is_worse"
+    if name == "transform_consensus_distance":
+        return (
+            np.array([r.transform_consensus_distance for r in records]),
+            "higher_is_worse",
+        )
+    if name == "crop_center_consensus_distance":
+        return (
+            np.array([r.crop_center_consensus_distance for r in records]),
+            "higher_is_worse",
+        )
+    if name == "roll_consensus_delta":
+        return np.array([r.roll_consensus_delta for r in records]), "higher_is_worse"
     raise KeyError(f"unknown signal {name!r}")
 
 
@@ -252,6 +264,24 @@ SELECTORS: tuple[tuple[str, str, str], ...] = (
     ("lowest_roll_error", "roll_degrees_delta", "higher_is_worse"),
     ("highest_hull_iou", "hull_iou", "lower_is_worse"),
     ("composite_geometry", "geometry_score", "higher_is_worse"),
+)
+
+TRUTH_FREE_SELECTORS: tuple[tuple[str, str, str], ...] = (
+    (
+        "lowest_transform_consensus_distance",
+        "transform_consensus_distance",
+        "higher_is_worse",
+    ),
+    (
+        "lowest_crop_center_consensus_distance",
+        "crop_center_consensus_distance",
+        "higher_is_worse",
+    ),
+    (
+        "lowest_roll_consensus_delta",
+        "roll_consensus_delta",
+        "higher_is_worse",
+    ),
 )
 
 
@@ -344,6 +374,91 @@ def evaluate_selectors(
     ]
 
 
+def consensus_alignment_summary(
+    summaries: T.Sequence[AlignmentSummary],
+) -> AlignmentSummary:
+    """Return a per-component median consensus over candidate alignment summaries.
+
+    The consensus is a synthetic ``AlignmentSummary`` whose fields are the
+    component-wise median of the inputs. It exists so each candidate can be
+    scored against the cohort centroid using the same matrix/ROI/pose delta
+    primitives the GT-anchored signals use, without needing ground truth.
+    Median (not mean) is used so a single catastrophic candidate cannot drag
+    the reference far enough to invert the ranking.
+    """
+    if not summaries:
+        raise ValueError("consensus_alignment_summary requires at least one summary")
+    matrices = np.stack([s.matrix for s in summaries], axis=0)
+    rois = np.stack([s.roi for s in summaries], axis=0)
+    aligned = np.stack([s.aligned_landmarks for s in summaries], axis=0)
+    normalized = np.stack([s.normalized_landmarks for s in summaries], axis=0)
+    return AlignmentSummary(
+        matrix=np.median(matrices, axis=0).astype("float64"),
+        roi=np.median(rois, axis=0).astype("float64"),
+        aligned_landmarks=np.median(aligned, axis=0).astype("float64"),
+        normalized_landmarks=np.median(normalized, axis=0).astype("float64"),
+        average_distance=float(np.median([s.average_distance for s in summaries])),
+        relative_eye_mouth_position=float(
+            np.median([s.relative_eye_mouth_position for s in summaries])
+        ),
+        pitch=float(np.median([s.pitch for s in summaries])),
+        yaw=float(np.median([s.yaw for s in summaries])),
+        roll=float(np.median([s.roll for s in summaries])),
+        scale=float(np.median([s.scale for s in summaries])),
+        rotation_degrees=float(np.median([s.rotation_degrees for s in summaries])),
+        translation=(
+            float(np.median([s.translation[0] for s in summaries])),
+            float(np.median([s.translation[1] for s in summaries])),
+        ),
+    )
+
+
+def attach_consensus_signals(
+    records: T.Sequence[CandidateRecord],
+    *,
+    summaries_by_sample: T.Mapping[str, T.Mapping[str, AlignmentSummary]],
+    normalizer_by_sample: T.Mapping[str, float],
+) -> list[CandidateRecord]:
+    """Return new records with truth-free consensus deltas filled in.
+
+    For each sample, the per-sample consensus summary is built from every
+    candidate summary supplied for that sample; each candidate is then scored
+    via :func:`alignment_matrix_delta`, :func:`roi_delta`, and
+    :func:`pose_delta` against that consensus. Records whose sample/label
+    pair is missing from ``summaries_by_sample`` are passed through unchanged.
+    """
+    consensus_by_sample: dict[str, AlignmentSummary] = {}
+    for sample_id, label_summaries in summaries_by_sample.items():
+        if not label_summaries:
+            continue
+        consensus_by_sample[sample_id] = consensus_alignment_summary(
+            list(label_summaries.values())
+        )
+    out: list[CandidateRecord] = []
+    for record in records:
+        consensus = consensus_by_sample.get(record.sample_id)
+        sample_summaries = summaries_by_sample.get(record.sample_id, {})
+        summary = sample_summaries.get(record.candidate_label)
+        if consensus is None or summary is None:
+            out.append(record)
+            continue
+        normalizer = float(normalizer_by_sample.get(record.sample_id) or 1.0)
+        if normalizer <= 0:
+            normalizer = 1.0
+        m_delta = alignment_matrix_delta(summary, consensus, normalizer=normalizer)
+        r_delta = roi_delta(summary, consensus, normalizer=normalizer)
+        p_delta = pose_delta(summary, consensus)
+        out.append(
+            dataclasses.replace(
+                record,
+                transform_consensus_distance=float(m_delta.translation_normalized_distance),
+                crop_center_consensus_distance=float(r_delta.center_normalized_distance),
+                roll_consensus_delta=float(p_delta.roll_delta_degrees),
+            )
+        )
+    return out
+
+
 def candidate_record_from_geometry(
     metrics: GeometrySampleMetrics,
     *,
@@ -374,9 +489,12 @@ __all__ = [
     "CandidateRecord",
     "DEFAULT_BAD_CANDIDATE_MARGIN",
     "SELECTORS",
+    "TRUTH_FREE_SELECTORS",
     "SelectorReport",
     "SignalReport",
+    "attach_consensus_signals",
     "candidate_record_from_geometry",
+    "consensus_alignment_summary",
     "evaluate_selector",
     "evaluate_selectors",
     "evaluate_signal",

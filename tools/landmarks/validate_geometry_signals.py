@@ -39,11 +39,14 @@ from lib.landmarks.core.fusion_variants import fuse_variant as _fuse_variant
 from lib.landmarks.datasets.manifest_io import bbox_for_sample as _bbox_for_sample
 from lib.landmarks.ensemble.weights import load_weights
 from lib.landmarks.evaluation.geometry_metrics import evaluate_geometry_sample
-from lib.landmarks.evaluation.geometry_signals import alignment_summary
+from lib.landmarks.evaluation.geometry_signals import AlignmentSummary, alignment_summary
 from lib.landmarks.evaluation.harness import load_manifest
 from lib.landmarks.evaluation.nme_metrics import evaluate_prediction
 from lib.landmarks.evaluation.signal_validation import (
+    SELECTORS,
+    TRUTH_FREE_SELECTORS,
     CandidateRecord,
+    attach_consensus_signals,
     candidate_record_from_geometry,
     evaluate_selectors,
     evaluate_signals,
@@ -73,6 +76,8 @@ def build_candidate_records(
     cache = DiskPredictionCache(cache_dir)
     weights = load_weights(weights_path) if weights_path else None
     records: list[CandidateRecord] = []
+    summaries_by_sample: dict[str, dict[str, AlignmentSummary]] = {}
+    normalizer_by_sample: dict[str, float] = {}
     for sample in samples:
         bbox = _bbox_for_sample(sample)
         if bbox is None:
@@ -86,6 +91,11 @@ def build_candidate_records(
         predictions = {name: cache.read(sample.sample_id, name) for name in models}
         prediction_items = [predictions[name] for name in models]
         hard_slice = sample.condition  # build_hard_alignment_validation copies this
+        left, top, right, bottom = (float(v) for v in bbox)
+        bbox_diagonal = float(np.hypot(right - left, bottom - top)) or 1.0
+        normalizer_by_sample[sample.sample_id] = bbox_diagonal
+        sample_summaries: dict[str, AlignmentSummary] = {}
+        summaries_by_sample[sample.sample_id] = sample_summaries
         for model_name in models:
             metrics = evaluate_geometry_sample(
                 predictions[model_name].landmarks,
@@ -105,6 +115,9 @@ def build_candidate_records(
                     truth,
                     normalizer=sample.normalizer,
                 )["nme"]
+            )
+            sample_summaries[model_name] = alignment_summary(
+                predictions[model_name].landmarks, size=aligned_size
             )
             records.append(
                 candidate_record_from_geometry(
@@ -136,6 +149,7 @@ def build_candidate_records(
                 truth_summary=truth_summary,
             )
             nme = float(evaluate_prediction(fused, truth, normalizer=sample.normalizer)["nme"])
+            sample_summaries[variant] = alignment_summary(fused, size=aligned_size)
             records.append(
                 candidate_record_from_geometry(
                     metrics,
@@ -145,6 +159,11 @@ def build_candidate_records(
                     hard_slice=hard_slice,
                 )
             )
+    records = attach_consensus_signals(
+        records,
+        summaries_by_sample=summaries_by_sample,
+        normalizer_by_sample=normalizer_by_sample,
+    )
     return tag_oracle(records)
 
 
@@ -164,6 +183,9 @@ def _write_candidate_index(path: Path, records: T.Sequence[CandidateRecord]) -> 
         "roll_degrees_delta",
         "hull_iou",
         "catastrophic",
+        "transform_consensus_distance",
+        "crop_center_consensus_distance",
+        "roll_consensus_delta",
     ]
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
@@ -185,6 +207,9 @@ def _write_candidate_index(path: Path, records: T.Sequence[CandidateRecord]) -> 
                     "roll_degrees_delta": record.roll_degrees_delta,
                     "hull_iou": record.hull_iou,
                     "catastrophic": record.catastrophic,
+                    "transform_consensus_distance": record.transform_consensus_distance,
+                    "crop_center_consensus_distance": record.crop_center_consensus_distance,
+                    "roll_consensus_delta": record.roll_consensus_delta,
                 }
             )
 
@@ -286,8 +311,22 @@ def main(argv: list[str] | None = None) -> int:
         records,
         margin=args.bad_candidate_margin,
         threshold_quantile=args.threshold_quantile,
+        signals=(
+            "nme",
+            "transform_normalized",
+            "crop_center_normalized",
+            "roll_degrees_delta",
+            "hull_iou",
+            "geometry_score",
+            "transform_consensus_distance",
+            "crop_center_consensus_distance",
+            "roll_consensus_delta",
+        ),
     )
-    selector_reports = evaluate_selectors(records)
+    selector_reports = evaluate_selectors(
+        records,
+        selectors=SELECTORS + TRUTH_FREE_SELECTORS,
+    )
 
     _write_signal_report(
         output / "signal_validation_report.json",
