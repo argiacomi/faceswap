@@ -95,7 +95,7 @@ def resolve_bucket_aware_veto(
     return base.PolicyDecision(
         policy="bucket_aware_veto",
         chosen=chosen,
-        vetoed=tuple(name for name in available if name in vetoed),
+        vetoed=tuple(sorted(vetoed & available)),
         consensus_roll_deg=consensus,
         diagnostics=diagnostics,
     )
