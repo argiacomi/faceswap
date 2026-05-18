@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
-"""Unit tests for the runtime resolver evaluation harness."""
+"""Tests for the runtime resolver evaluation harness."""
 
 from __future__ import annotations
 
+import json
 import numpy as np
 import pytest
 
+from lib.landmarks.cache.prediction_cache import DiskPredictionCache
+from lib.landmarks.core.schema import LandmarkPrediction
 from tools.landmarks.evaluate_runtime_resolver import (
     CandidateMetrics,
     CandidateRecord,
     aggregate_reports,
     apply_policy,
+    main,
     render_overlays,
     select_worst_samples,
     write_csv_report,
@@ -36,6 +40,15 @@ def _metric(nme: float, *, roll: float | None) -> CandidateMetrics:
         yaw_degrees=None,
         pitch_degrees=None,
     )
+
+
+def _truth_points() -> np.ndarray:
+    points = np.zeros((68, 2), dtype="float32")
+    points[:, 0] = np.linspace(10.0, 90.0, 68)
+    points[:, 1] = 50.0 + np.sin(np.linspace(0.0, np.pi, 68)) * 30.0
+    points[36] = [35.0, 45.0]
+    points[45] = [65.0, 45.0]
+    return points
 
 
 def test_roll_aware_veto_vetoes_roll_outlier_and_picks_survivor() -> None:
@@ -88,3 +101,67 @@ def test_output_helpers_handle_empty_reports(tmp_path) -> None:
     assert failures_path.read_text(encoding="utf-8").startswith("sample_id,dataset")
     assert worst_path.read_text(encoding="utf-8") == '{\n  "samples": []\n}\n'
     assert overlay_counts == {"requested": 0, "written": 0}
+
+
+def test_main_writes_all_resolver_outputs_for_minimal_cache(tmp_path) -> None:
+    truth = _truth_points()
+    landmarks_path = tmp_path / "landmarks.npy"
+    np.save(str(landmarks_path), truth)
+
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "samples": [
+                    {
+                        "sample_id": "sample-1",
+                        "dataset": "aflw2000-3d",
+                        "condition": "large_roll",
+                        "image": str(tmp_path / "missing.jpg"),
+                        "landmarks": str(landmarks_path),
+                        "normalizer": 100.0,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    cache = DiskPredictionCache(tmp_path / "cache")
+    cache.write("sample-1", LandmarkPrediction(truth, model_name="spiga"), refresh=True)
+    cache.write("sample-1", LandmarkPrediction(truth + 1.0, model_name="orformer"), refresh=True)
+
+    weights_path = tmp_path / "weights.json"
+    weights_path.write_text(
+        json.dumps({"spiga": [0.5] * 68, "orformer": [0.5] * 68}),
+        encoding="utf-8",
+    )
+    output_dir = tmp_path / "resolver"
+
+    assert main(
+        [
+            "--manifest",
+            str(manifest_path),
+            "--cache-dir",
+            str(tmp_path / "cache"),
+            "--weights",
+            str(weights_path),
+            "--candidates",
+            "spiga,orformer",
+            "--output-dir",
+            str(output_dir),
+            "--worst-count",
+            "0",
+        ]
+    ) == 0
+
+    expected = {
+        "resolver_policy_report.json",
+        "resolver_policy_report.csv",
+        "resolver_failures.csv",
+        "resolver_worst_samples.json",
+    }
+    assert expected.issubset({path.name for path in output_dir.iterdir()})
+    payload = json.loads((output_dir / "resolver_policy_report.json").read_text(encoding="utf-8"))
+    assert payload["sample_count"] == 1
+    assert payload["chosen"]["pick_counts"]["spiga"] == 1
