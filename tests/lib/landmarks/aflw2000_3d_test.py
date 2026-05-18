@@ -332,14 +332,11 @@ def test_zbuffer_occlusion_label_labels_when_only_fraction_threshold_met() -> No
     # 18 hidden of 68 ≈ 0.265 → above 0.25 fraction floor but below a raised count threshold.
     for idx in range(18):
         visibility[idx] = False
-    assert (
-        _zbuffer_occlusion_label(
-            visibility,
-            hidden_threshold=99,
-            hidden_fraction_threshold=DEFAULT_OCCLUSION_HIDDEN_FRACTION_THRESHOLD,
-        )
-        == ("occlusion",)
-    )
+    assert _zbuffer_occlusion_label(
+        visibility,
+        hidden_threshold=99,
+        hidden_fraction_threshold=DEFAULT_OCCLUSION_HIDDEN_FRACTION_THRESHOLD,
+    ) == ("occlusion",)
 
 
 def test_build_aflw2000_3d_manifest_labels_occlusion_when_threshold_met(tmp_path: Path) -> None:
