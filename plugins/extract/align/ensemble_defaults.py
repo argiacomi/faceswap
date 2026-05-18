@@ -90,18 +90,18 @@ min_models = ConfigItem(
 
 setup_path = ConfigItem(
     datatype=str,
-    default="best_setup.json",
+    default="",
     group="landmark_ensemble",
     info=(
         "Optional path to a promoted ``best_setup.json`` (#71). When set, the plugin "
         "loads the setup and uses its strategy / outlier threshold / per-landmark "
-        "weights for fusion."
+        "weights for fusion. Leave empty to keep config-driven behavior."
     ),
 )
 
 weights_path = ConfigItem(
     datatype=str,
-    default="best_weights.json",
+    default="",
     group="landmark_ensemble",
     info=(
         "Static per-landmark weight JSON for production ensemble fusion. This is used by "
@@ -112,12 +112,13 @@ weights_path = ConfigItem(
 
 setup_mode = ConfigItem(
     datatype=str,
-    default="strict",
+    default="off",
     group="landmark_ensemble",
     info=(
         "How to consume ``setup_path``. ``off`` ignores it. ``strict`` hard-fails on "
         "any incompatible artifact. ``fallback`` logs a warning and falls back to the "
-        "configured ``strategy`` when the artifact is unusable."
+        "configured ``strategy`` when the artifact is unusable. An empty ``setup_path`` "
+        "implies ``off`` regardless of this value."
     ),
     choices=["off", "strict", "fallback"],
 )
@@ -135,7 +136,7 @@ resolver_policy = ConfigItem(
 
 use_alignment_resolver = ConfigItem(
     datatype=bool,
-    default=True,
+    default=False,
     group="landmark_ensemble",
     info=(
         "Enable the geometry-risk alignment resolver. When on, per-face fusion is routed "
@@ -232,7 +233,7 @@ fallback_strategy = ConfigItem(
 
 strict = ConfigItem(
     datatype=bool,
-    default=True,
+    default=False,
     group="landmark_ensemble",
     info=(
         "Fail fast when configured setup/weights/adapters are unavailable. Disable to allow "
