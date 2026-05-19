@@ -86,6 +86,7 @@ class Ensemble(ExtractPlugin):
         hard_case_strategy: str | None = None,
         hard_disagreement_px: float | None = None,
         resolver_policy: str | None = None,
+        resolver_scorer_path: str | None = None,
         secondary_hard_case_strategy: str | None = None,
         fallback_model: str | None = None,
         strict: bool | None = None,
@@ -125,6 +126,9 @@ class Ensemble(ExtractPlugin):
         )
         self._resolver_policy = (
             cfg.resolver_policy() if resolver_policy is None else resolver_policy
+        )
+        self._resolver_scorer_path = (
+            cfg.resolver_scorer_path() if resolver_scorer_path is None else resolver_scorer_path
         )
         self._secondary_hard_case = (
             cfg.secondary_hard_case_strategy()
@@ -474,6 +478,7 @@ class Ensemble(ExtractPlugin):
             "model_predictions_available": self._prediction_availability(adapters, errors),
             "detector_bbox": list(detector_bbox) if detector_bbox is not None else None,
             "resolver_policy": self._resolver_policy,
+            "resolver_scorer_path": self._resolver_scorer_path,
             "hard_case_strategy": self._resolver_hard_case,
             "secondary_hard_case_strategy": self._secondary_hard_case,
             "fallback_model": self._fallback_model,
@@ -523,6 +528,7 @@ class Ensemble(ExtractPlugin):
         ]
         resolver_config = RuntimeResolverConfig(
             policy=self._resolver_policy,
+            scorer_path=str(self._resolver_scorer_path or ""),
             general_strategy=self._strategy,
             hard_case_strategy=canonical_strategy(self._resolver_hard_case),
             secondary_hard_case_strategy=canonical_strategy(self._secondary_hard_case),

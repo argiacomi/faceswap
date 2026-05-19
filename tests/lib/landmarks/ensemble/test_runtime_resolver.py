@@ -15,6 +15,10 @@ from lib.landmarks.ensemble.runtime_resolver import (
     RuntimeResolverConfig,
     resolve_runtime,
 )
+from lib.landmarks.ensemble.runtime_resolver_scorer import (
+    RuntimeResolverScorer,
+    write_runtime_resolver_scorer,
+)
 
 _LEGACY_LANDMARK_POSE_BUCKET_KEY = "_".join(("landmark", "pose", "bucket"))
 
@@ -178,8 +182,52 @@ def test_runtime_resolver_metadata_contains_requested_debug_fields(monkeypatch) 
         assert key in result.metadata
 
 
-def test_runtime_resolver_uses_eye_visual_evidence_for_runtime_bucket() -> None:
-    """A one-eye visual crop can promote a side-profile runtime bucket."""
+def test_learned_quality_policy_scores_geometry_valid_candidates(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    """learned_quality_v1 chooses the lowest predicted risk instead of bucket priority."""
+    monkeypatch.setattr(
+        runtime_resolver,
+        "infer_runtime_bucket",
+        lambda **kwargs: RuntimeBucketResult(bucket="large_yaw_left", features={}),
+    )
+    scorer_path = write_runtime_resolver_scorer(
+        RuntimeResolverScorer(
+            features=("candidate_name=hrnet", "candidate_name=spiga"),
+            coefficients=(-5.0, 5.0),
+            intercept=0.0,
+        ),
+        tmp_path / "runtime_resolver_scorer.json",
+    )
+    base = _face()
+
+    result = resolve_runtime(
+        [
+            ModelPrediction("hrnet", base + 0.1),
+            ModelPrediction("spiga", base),
+            ModelPrediction("orformer", base + 0.2),
+        ],
+        RuntimeResolverConfig(
+            policy="learned_quality_v1",
+            scorer_path=str(scorer_path),
+            weights={name: [1.0 / 3.0] * 68 for name in ("hrnet", "spiga", "orformer")},
+        ),
+        detector_bbox=(35.0, 65.0, 165.0, 155.0),
+    )
+
+    assert result.selected_candidate == "hrnet"
+    assert result.metadata["policy"] == "learned_quality_v1"
+    assert (
+        result.metadata["selected_candidate_score"] < result.metadata["candidate_scores"]["spiga"]
+    )
+    assert result.metadata["candidate_risk_rank"][0] == "hrnet"
+    assert result.metadata["scorer_path"] == str(scorer_path)
+    assert result.metadata["fallback_used"] is False
+
+
+def test_runtime_resolver_records_eye_visual_evidence_for_runtime_bucket() -> None:
+    """Eye visual evidence is diagnostic and stays within the canonical bucket family."""
     base = _face()
     crop = np.full((200, 200, 3), 0.55, dtype="float32")
     for y in range(75, 96):
@@ -200,12 +248,12 @@ def test_runtime_resolver_uses_eye_visual_evidence_for_runtime_bucket() -> None:
         crop_to_frame_matrix=roi_to_matrix(np.array([0, 0, 200, 200], dtype="float32")),
     )
 
-    assert result.metadata["runtime_bucket"] == "profile_left"
-    assert result.metadata["bucket"] == "profile_left"
+    assert result.metadata["runtime_bucket"] == "frontal"
+    assert result.metadata["bucket"] == "frontal"
     assert _LEGACY_LANDMARK_POSE_BUCKET_KEY not in result.metadata
     assert result.metadata["left_eye_visual_score"] > result.metadata["right_eye_visual_score"]
     assert result.metadata["eye_visibility_asymmetry"] > 0.12
-    assert result.metadata["runtime_bucket_severity_source"] == "eye_visibility_asymmetry"
+    assert result.metadata["runtime_bucket_eye_side"] == "right"
 
 
 def test_runtime_bucket_routes_profile_like_00012_to_profile_left(monkeypatch) -> None:
@@ -227,7 +275,7 @@ def test_runtime_bucket_routes_profile_like_00012_to_profile_left(monkeypatch) -
 
     assert result.bucket == "profile_left"
     assert result.features["runtime_bucket_side"] == "left"
-    assert result.features["runtime_bucket_side_source"] == "nose_offset"
+    assert result.features["runtime_bucket_side_source"] == "hrnet_yaw"
     assert result.features["runtime_bucket_severity"] == "profile"
     assert result.features["runtime_bucket_severity_source"] == "candidate_instability"
     assert result.features["candidate_yaw_disagreement"] > 120.0
@@ -252,7 +300,7 @@ def test_runtime_bucket_uses_image_facing_side_convention_for_00114(monkeypatch)
 
     assert result.bucket == "large_yaw_left"
     assert result.features["runtime_bucket_side"] == "left"
-    assert result.features["runtime_bucket_side_source"] == "nose_offset"
+    assert result.features["runtime_bucket_side_source"] == "hrnet_yaw"
     assert result.features["candidate_yaw_disagreement"] > 80.0
 
 
@@ -343,11 +391,11 @@ def test_runtime_bucket_routes_known_visual_left_profiles_to_profile_left(monkey
     cases = (
         ("00015", 0.380, 0.491, -0.047, -37.395, 65.761, 124.710),
         ("00025", 0.382, 1.101, -1.000, -49.134, 65.159, 124.414),
-        ("00036", 0.161, 0.617, -0.990, -59.495, -79.521, 146.152),
-        ("00040", -0.042, 0.098, -0.210, -31.619, -77.617, 138.380),
-        ("00106", 0.272, 0.810, -0.757, -38.291, -73.171, 132.394),
-        ("00109", 0.130, 0.551, -0.533, 15.570, -76.759, 131.690),
-        ("00113", 0.092, 0.395, -0.317, -1.516, -78.386, 132.493),
+        ("00036", 0.161, 0.617, -0.990, -59.495, 55.000, 146.152),
+        ("00040", -0.042, 0.098, -0.210, -31.619, 55.000, 138.380),
+        ("00106", 0.272, 0.810, -0.757, -38.291, 55.000, 132.394),
+        ("00109", 0.130, 0.551, -0.533, 15.570, 55.000, 131.690),
+        ("00113", 0.092, 0.395, -0.317, -1.516, 55.000, 132.493),
     )
     for sample_id, image_yaw, nose, jaw, pose_yaw, dominant_yaw, yaw_spread in cases:
         other_yaw = dominant_yaw - yaw_spread if dominant_yaw > 0 else dominant_yaw + yaw_spread
@@ -357,7 +405,7 @@ def test_runtime_bucket_routes_known_visual_left_profiles_to_profile_left(monkey
             nose_offset_from_face_center=nose,
             mouth_nose_jaw_asymmetry=jaw,
             landmark_pose_yaw=pose_yaw,
-            candidate_yaws={"dominant": dominant_yaw, "other": other_yaw},
+            candidate_yaws={"hrnet": dominant_yaw, "spiga": other_yaw},
             max_disagreement_px=190.0,
         )
 
