@@ -1,0 +1,391 @@
+#!/usr/bin/env python3
+"""Export a landmark manifest from reviewed Faceswap production alignments."""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import logging
+import re
+import sys
+import typing as T
+from collections import Counter
+from dataclasses import dataclass
+from pathlib import Path
+
+import numpy as np
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from lib.align.alignments import Alignments
+from lib.align.objects import FileAlignments
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_DATASET = "production_validated"
+DEFAULT_SOURCE = "faceswap_extraction_plugin_reviewed"
+DEFAULT_LABEL_QUALITY = "human_validated"
+VALID_REVIEW_STATUSES = frozenset(("accepted", "rejected", "needs_review"))
+VALID_ISSUE_TYPES = frozenset(
+    (
+        "",
+        "bad_profile_alignment",
+        "bad_roll",
+        "occlusion",
+        "wrong_face",
+        "partial_face",
+        "blur",
+        "expression",
+        "detector_bbox_bad",
+    )
+)
+
+
+@dataclass(frozen=True)
+class ReviewLabel:
+    """Human review label for one production alignment sample."""
+
+    sample_id: str
+    image_path: str
+    face_index: int
+    review_status: str
+    issue_type: str = ""
+    notes: str = ""
+
+
+def _json_safe(value: T.Any) -> T.Any:
+    """Convert numpy/scalar payloads from alignments metadata to JSON-safe values."""
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return [_json_safe(item) for item in value]
+    return value
+
+
+def _safe_sample_id(frame_name: str, face_index: int) -> str:
+    """Return a stable sample id from a Faceswap frame key and face index."""
+    stem = Path(frame_name).stem
+    safe_stem = re.sub(r"[^A-Za-z0-9_.-]+", "_", stem).strip("_")
+    return f"{safe_stem or 'frame'}_face{face_index}"
+
+
+def _resolve_image_path(images_dir: Path, frame_name: str) -> Path:
+    """Resolve a frame key from alignments against the image root."""
+    candidate = images_dir / frame_name
+    if candidate.is_file():
+        return candidate.resolve()
+    basename = images_dir / Path(frame_name).name
+    if basename.is_file():
+        return basename.resolve()
+    return candidate.resolve()
+
+
+def _load_review_labels(path: Path | None) -> dict[str, ReviewLabel]:
+    """Load optional review labels keyed by sample id."""
+    if path is None or not path.is_file():
+        return {}
+    labels: dict[str, ReviewLabel] = {}
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        required = {"sample_id", "image_path", "face_index", "review_status"}
+        missing = required.difference(reader.fieldnames or ())
+        if missing:
+            raise ValueError(f"review labels missing columns: {sorted(missing)}")
+        for row_num, row in enumerate(reader, start=2):
+            sample_id = str(row.get("sample_id", "")).strip()
+            status = str(row.get("review_status", "")).strip()
+            issue_type = str(row.get("issue_type", "")).strip()
+            if not sample_id:
+                raise ValueError(f"review labels row {row_num} has empty sample_id")
+            if status not in VALID_REVIEW_STATUSES:
+                raise ValueError(
+                    f"review labels row {row_num} has invalid review_status: {status!r}"
+                )
+            if issue_type not in VALID_ISSUE_TYPES:
+                raise ValueError(f"review labels row {row_num} has invalid issue_type: {issue_type!r}")
+            try:
+                face_index = int(str(row.get("face_index", "")).strip())
+            except ValueError as err:
+                raise ValueError(f"review labels row {row_num} has invalid face_index") from err
+            labels[sample_id] = ReviewLabel(
+                sample_id=sample_id,
+                image_path=str(row.get("image_path", "")).strip(),
+                face_index=face_index,
+                review_status=status,
+                issue_type=issue_type,
+                notes=str(row.get("notes", "")).strip(),
+            )
+    return labels
+
+
+def _bbox(face: FileAlignments) -> list[float]:
+    """Return face bbox in canonical ltrb order."""
+    return [
+        float(face.x),
+        float(face.y),
+        float(face.x + face.w),
+        float(face.y + face.h),
+    ]
+
+
+def _normalizer(face: FileAlignments) -> float:
+    """Return bbox diagonal normalizer for landmark metrics."""
+    return float(np.hypot(float(face.w), float(face.h)))
+
+
+def _review_for_sample(
+    sample_id: str,
+    image_path: Path,
+    face_index: int,
+    review_labels: dict[str, ReviewLabel],
+) -> ReviewLabel:
+    """Return human review label, defaulting to accepted for reviewed extraction exports."""
+    label = review_labels.get(sample_id)
+    if label is not None:
+        return label
+    return ReviewLabel(
+        sample_id=sample_id,
+        image_path=str(image_path),
+        face_index=face_index,
+        review_status="accepted",
+    )
+
+
+def _write_landmarks(output_dir: Path, sample_id: str, face: FileAlignments) -> str:
+    """Write one reviewed landmark array and return its manifest-relative path."""
+    landmarks_dir = output_dir / "landmarks"
+    landmarks_dir.mkdir(parents=True, exist_ok=True)
+    landmarks_path = landmarks_dir / f"{sample_id}.npy"
+    np.save(str(landmarks_path), np.asarray(face.landmarks_xy, dtype="float32"))
+    return landmarks_path.relative_to(output_dir).as_posix()
+
+
+def _metadata_summary(
+    face: FileAlignments,
+    review: ReviewLabel,
+    frame_name: str,
+    alignments_path: Path,
+) -> dict[str, T.Any]:
+    """Build compact manifest metadata for one sample."""
+    ensemble_metadata = face.metadata.get("landmark_ensemble", {})
+    bucket = ensemble_metadata.get("bucket") if isinstance(ensemble_metadata, dict) else None
+    metadata: dict[str, T.Any] = {
+        "review_status": review.review_status,
+        "label_quality": DEFAULT_LABEL_QUALITY,
+        "source": DEFAULT_SOURCE,
+        "frame": frame_name,
+        "face_index": review.face_index,
+        "alignments_file": str(alignments_path.resolve()),
+    }
+    if review.issue_type:
+        metadata["issue_type"] = review.issue_type
+    if review.notes:
+        metadata["notes"] = review.notes
+    if bucket:
+        metadata["runtime_bucket"] = str(bucket)
+    if isinstance(ensemble_metadata, dict):
+        for key in (
+            "selected_candidate",
+            "bucket",
+            "roll_estimate",
+            "yaw_estimate",
+            "risk_route",
+            "max_disagreement_px",
+        ):
+            if key in ensemble_metadata:
+                metadata[f"landmark_ensemble_{key}"] = ensemble_metadata[key]
+    return _json_safe(metadata)
+
+
+def build_manifest(
+    images_dir: Path,
+    alignments_path: Path,
+    output_dir: Path,
+    *,
+    dataset_name: str = DEFAULT_DATASET,
+    review_labels_path: Path | None = None,
+    only_reviewed: str = "accepted",
+    require_landmark_ensemble_metadata: bool = False,
+) -> dict[str, T.Any]:
+    """Export manifest, resolver JSONL sidecar and audit from Faceswap alignments."""
+    if only_reviewed != "all" and only_reviewed not in VALID_REVIEW_STATUSES:
+        raise ValueError(f"invalid --only-reviewed value: {only_reviewed!r}")
+    if not images_dir.is_dir():
+        raise FileNotFoundError(f"images directory not found: {images_dir}")
+    if not alignments_path.is_file():
+        raise FileNotFoundError(f"alignments file not found: {alignments_path}")
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    default_review_labels = output_dir / "review_labels.csv"
+    labels_path = review_labels_path or (default_review_labels if default_review_labels.is_file() else None)
+    review_labels = _load_review_labels(labels_path)
+    alignments = Alignments(str(alignments_path.parent), alignments_path.name)
+
+    samples: list[dict[str, T.Any]] = []
+    resolver_records: list[dict[str, T.Any]] = []
+    audit: dict[str, T.Any] = {
+        "schema_version": 1,
+        "dataset": dataset_name,
+        "images": str(images_dir.resolve()),
+        "alignments": str(alignments_path.resolve()),
+        "review_labels": str(labels_path.resolve()) if labels_path else None,
+        "options": {
+            "only_reviewed": only_reviewed,
+            "require_landmark_ensemble_metadata": require_landmark_ensemble_metadata,
+        },
+        "frames_total": alignments.frames_count,
+        "faces_total": alignments.faces_count,
+        "samples_written": 0,
+        "skipped": Counter(),
+        "review_status_counts": Counter(),
+        "condition_counts": Counter(),
+        "issue_type_counts": Counter(),
+        "missing_images": [],
+        "missing_landmark_ensemble_metadata": [],
+    }
+
+    used_ids: Counter[str] = Counter()
+    for frame_name, entry in sorted(alignments.data.items()):
+        image_path = _resolve_image_path(images_dir, frame_name)
+        if not image_path.is_file():
+            audit["missing_images"].append(str(image_path))
+            audit["skipped"]["missing_image"] += len(entry.faces)
+            continue
+
+        for face_index, face in enumerate(entry.faces):
+            sample_id = _safe_sample_id(frame_name, face_index)
+            used_ids[sample_id] += 1
+            if used_ids[sample_id] > 1:
+                sample_id = f"{sample_id}_{used_ids[sample_id]}"
+
+            review = _review_for_sample(sample_id, image_path, face_index, review_labels)
+            audit["review_status_counts"][review.review_status] += 1
+            if review.issue_type:
+                audit["issue_type_counts"][review.issue_type] += 1
+            if only_reviewed != "all" and review.review_status != only_reviewed:
+                audit["skipped"][f"review_status:{review.review_status}"] += 1
+                continue
+
+            ensemble_metadata = face.metadata.get("landmark_ensemble")
+            if require_landmark_ensemble_metadata and not isinstance(ensemble_metadata, dict):
+                audit["missing_landmark_ensemble_metadata"].append(sample_id)
+                audit["skipped"]["missing_landmark_ensemble_metadata"] += 1
+                continue
+
+            condition = "unknown"
+            if isinstance(ensemble_metadata, dict):
+                condition = str(ensemble_metadata.get("bucket") or condition)
+            audit["condition_counts"][condition] += 1
+            landmark_path = _write_landmarks(output_dir, sample_id, face)
+            metadata = _metadata_summary(face, review, frame_name, alignments_path)
+            sample = {
+                "sample_id": sample_id,
+                "dataset": dataset_name,
+                "condition": condition,
+                "conditions": [condition],
+                "source_schema": "2d_68",
+                "image": str(image_path),
+                "landmarks": landmark_path,
+                "face_bbox": _bbox(face),
+                "normalizer": _normalizer(face),
+                "source": {"dataset": dataset_name, "source_id": sample_id},
+                "metadata": metadata,
+            }
+            samples.append(sample)
+            resolver_records.append(
+                {
+                    "sample_id": sample_id,
+                    "image_path": str(image_path),
+                    "face_index": face_index,
+                    "review_status": review.review_status,
+                    "condition": condition,
+                    "landmark_ensemble": _json_safe(ensemble_metadata or {}),
+                }
+            )
+
+    audit["samples_written"] = len(samples)
+    manifest_payload = {
+        "dataset": dataset_name,
+        "metadata": {
+            "review_status": only_reviewed,
+            "label_quality": DEFAULT_LABEL_QUALITY,
+            "source": DEFAULT_SOURCE,
+        },
+        "samples": sorted(samples, key=lambda item: str(item["sample_id"])),
+    }
+    (output_dir / "manifest.json").write_text(
+        json.dumps(manifest_payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    with (output_dir / "resolver_metadata.jsonl").open("w", encoding="utf-8") as handle:
+        for record in sorted(resolver_records, key=lambda item: str(item["sample_id"])):
+            handle.write(json.dumps(record, sort_keys=True) + "\n")
+
+    serializable_audit = dict(audit)
+    for key in ("skipped", "review_status_counts", "condition_counts", "issue_type_counts"):
+        serializable_audit[key] = dict(sorted(audit[key].items()))
+    (output_dir / "audit.json").write_text(
+        json.dumps(serializable_audit, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return serializable_audit
+
+
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Build a production validated landmark manifest from Faceswap alignments."
+    )
+    parser.add_argument("--images", type=Path, required=True, help="Directory containing source images")
+    parser.add_argument("--alignments", type=Path, required=True, help="Faceswap .fsa alignments file")
+    parser.add_argument("--output-dir", type=Path, required=True, help="Output directory")
+    parser.add_argument("--dataset-name", default=DEFAULT_DATASET, help="Dataset name for manifest")
+    parser.add_argument(
+        "--review-labels",
+        type=Path,
+        default=None,
+        help="Optional review_labels.csv. Defaults to output-dir/review_labels.csv when present.",
+    )
+    parser.add_argument(
+        "--require-landmark-ensemble-metadata",
+        action="store_true",
+        help="Skip samples that do not carry landmark_ensemble metadata.",
+    )
+    parser.add_argument(
+        "--only-reviewed",
+        default="accepted",
+        choices=sorted(VALID_REVIEW_STATUSES | {"all"}),
+        help="Review status to export, or 'all'.",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI entry point."""
+    args = _parse_args(argv)
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+    audit = build_manifest(
+        args.images,
+        args.alignments,
+        args.output_dir,
+        dataset_name=args.dataset_name,
+        review_labels_path=args.review_labels,
+        only_reviewed=args.only_reviewed,
+        require_landmark_ensemble_metadata=args.require_landmark_ensemble_metadata,
+    )
+    logger.info(
+        "Wrote %d samples to %s",
+        audit["samples_written"],
+        args.output_dir / "manifest.json",
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
