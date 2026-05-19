@@ -253,6 +253,14 @@ def evaluate_production_gate(
         failure_threshold=config.failure_threshold,
         outlier_threshold=config.outlier_threshold,
     )
+    missing_current = [
+        context.sample_id for context in contexts if context.selected_candidate_missing_from_eval
+    ]
+    if missing_current:
+        raise ValueError(
+            "current runtime policy selected candidates missing from production evaluation set for "
+            f"{len(missing_current)} sample(s): {missing_current[:10]}"
+        )
     evaluations: list[ProductionSampleEvaluation] = []
     for context in contexts:
         metadata = raw_metadata.get(context.sample_id, {})

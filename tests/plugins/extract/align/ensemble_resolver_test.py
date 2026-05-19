@@ -4,8 +4,11 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
+import plugins.extract.align.ensemble as ensemble_module
 from lib.landmarks.adapters import LandmarkAdapterConfig, StaticLandmarkAdapter
+from lib.landmarks.ensemble.runtime_resolver import RuntimeResolverError
 from plugins.extract.align.ensemble import Ensemble
 
 
@@ -115,3 +118,28 @@ def test_resolver_metadata_carries_per_model_disagreement(tmp_path) -> None:
     assert "max_disagreement_px" in debug["resolver"]
     assert debug["resolver"]["max_disagreement_px"] >= 0.0
     assert "landmark_consensus_distance" in debug["resolver"]
+
+
+def test_strict_resolver_error_hard_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Strict mode must not fall back when the runtime resolver cannot run."""
+    adapters = _three_adapters((0.0, 0.5, 1.0))
+    plugin = Ensemble(
+        adapters=adapters,
+        crop_scale=1.0,
+        strategy="plain_average",
+        use_alignment_resolver=True,
+        resolver_policy="learned_quality_v1",
+        resolver_scorer_path="",
+        strict=True,
+    )
+    plugin.model = plugin.load_model()
+    monkeypatch.setattr(
+        ensemble_module,
+        "resolve_runtime",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeResolverError("learned_quality_v1 requires resolver_scorer_path")
+        ),
+    )
+
+    with pytest.raises(RuntimeResolverError, match="resolver_scorer_path"):
+        plugin.predict_landmarks_68(np.zeros((256, 256, 3), dtype="float32"))

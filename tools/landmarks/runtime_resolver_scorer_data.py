@@ -22,6 +22,7 @@ from lib.landmarks.ensemble.runtime_resolver import (
     CandidateMetrics,
     CandidateRecord,
     ModelPrediction,
+    RuntimeBucketResult,
     RuntimeResolverConfig,
     _circular_median,
     _max_landmark_consensus_px,
@@ -46,6 +47,7 @@ DEFAULT_RESOLVER_CANDIDATES: tuple[str, ...] = (
     "hrnet",
     "spiga",
     "orformer",
+    "plain_average",
     "static_weighted",
     "static_weighted_downweight",
     "static_weighted_hard_drop",
@@ -74,6 +76,8 @@ CANDIDATE_TABLE_COLUMNS: tuple[str, ...] = (
     "max_disagreement_px",
     "candidate_yaw_disagreement",
     "runtime_bucket",
+    "runtime_bucket_source",
+    "selected_candidate_missing_from_eval",
     "geometry_veto_reasons",
 )
 
@@ -95,7 +99,9 @@ class CandidateQualityRow:
     risk_route: str
     feature_values: dict[str, float]
     selected_by_current_policy: str
+    selected_candidate_missing_from_eval: bool
     oracle: str
+    runtime_bucket_source: str
     geometry_veto_reasons: tuple[str, ...]
 
     def to_csv_row(self) -> dict[str, T.Any]:
@@ -111,9 +117,13 @@ class CandidateQualityRow:
             "was_selected_by_current_policy": int(self.was_selected_by_current_policy),
             "gap_vs_oracle": self.gap_vs_oracle,
             "runtime_bucket": self.runtime_bucket,
+            "runtime_bucket_source": self.runtime_bucket_source,
             "risk_route": self.risk_route,
             "geometry_veto_reasons": "|".join(self.geometry_veto_reasons),
             "selected_by_current_policy": self.selected_by_current_policy,
+            "selected_candidate_missing_from_eval": int(
+                self.selected_candidate_missing_from_eval
+            ),
             "oracle": self.oracle,
             "features_json": json.dumps(self.feature_values, sort_keys=True),
         }
@@ -139,6 +149,8 @@ class SampleCandidateContext:
     yaw_estimate: float | None
     candidate_yaw_disagreement: float | None
     max_disagreement_px: float
+    runtime_bucket_source: str
+    selected_candidate_missing_from_eval: bool
 
 
 def parse_candidates(
@@ -162,6 +174,58 @@ def _is_strategy(name: str) -> bool:
 
 def _load_truth(sample: LandmarkSample) -> np.ndarray:
     return np.load(sample.landmarks).astype("float32")
+
+
+def _runtime_metadata(sample: LandmarkSample) -> dict[str, T.Any]:
+    metadata = sample.metadata if isinstance(sample.metadata, dict) else {}
+    resolver = metadata.get("landmark_ensemble")
+    return resolver if isinstance(resolver, dict) else {}
+
+
+def _stored_runtime_diagnostics(sample: LandmarkSample) -> tuple[str, dict[str, T.Any]] | None:
+    resolver = _runtime_metadata(sample)
+    bucket = resolver.get("runtime_bucket") or resolver.get("bucket")
+    if not bucket:
+        return None
+    features: dict[str, T.Any] = {}
+    raw_features = resolver.get("runtime_bucket_features")
+    if isinstance(raw_features, dict):
+        features.update(raw_features)
+    for key in (
+        "candidate_yaw_disagreement",
+        "max_disagreement_px",
+        "landmark_pose_yaw",
+        "landmark_pose_roll",
+        "image_geometry_yaw_signal",
+        "runtime_bucket_side",
+        "runtime_bucket_side_source",
+        "runtime_bucket_side_confidence",
+        "runtime_bucket_side_votes",
+        "runtime_bucket_side_conflict",
+        "runtime_bucket_geometry_side",
+        "runtime_bucket_geometry_side_source",
+        "runtime_bucket_severity",
+        "runtime_bucket_severity_source",
+        "left_eye_visual_score",
+        "right_eye_visual_score",
+        "eye_visibility_asymmetry",
+        "nose_offset_from_face_center",
+        "mouth_nose_jaw_asymmetry",
+        "max_disagreement_bbox_fraction",
+        "dominant_candidate_yaw",
+    ):
+        if key in resolver:
+            features[key] = resolver[key]
+    return str(bucket), features
+
+
+def _optional_float(value: T.Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _candidate_config(
@@ -252,17 +316,34 @@ def build_sample_context(
         [metric.yaw_degrees for metric in metrics.values() if metric.yaw_degrees is not None]
     )
     max_disagreement_px = _max_landmark_consensus_px(candidates)
-    bucket_result = infer_runtime_bucket(
-        image_crop=None,
-        crop_to_frame_matrix=None,
-        detector_bbox=reference_bbox,
-        candidates=candidates,
-        metrics=metrics,
-        yaw_estimate=yaw_estimate,
-        roll_estimate=roll_estimate,
-        max_disagreement_px=max_disagreement_px,
-        hard_roll_degrees=config.hard_roll_degrees,
-    )
+    stored_runtime = _stored_runtime_diagnostics(sample)
+    if stored_runtime is None:
+        bucket_result = infer_runtime_bucket(
+            image_crop=None,
+            crop_to_frame_matrix=None,
+            detector_bbox=reference_bbox,
+            candidates=candidates,
+            metrics=metrics,
+            yaw_estimate=yaw_estimate,
+            roll_estimate=roll_estimate,
+            max_disagreement_px=max_disagreement_px,
+            hard_roll_degrees=config.hard_roll_degrees,
+        )
+        runtime_bucket_source = "derived_no_image_evidence"
+    else:
+        bucket, stored_features = stored_runtime
+        bucket_result = RuntimeBucketResult(bucket=bucket, features=stored_features)
+        runtime_bucket_source = "stored_manifest_landmark_ensemble"
+        stored_roll = _optional_float(
+            stored_features.get("landmark_pose_roll", stored_features.get("roll_estimate"))
+        )
+        if stored_roll is not None:
+            roll_estimate = stored_roll
+        stored_yaw = _optional_float(
+            stored_features.get("landmark_pose_yaw", stored_features.get("yaw_estimate"))
+        )
+        if stored_yaw is not None:
+            yaw_estimate = stored_yaw
     for name, metric in metrics.items():
         metric.geometry_veto_reasons = _shape_reasons(bucket_result.bucket, name, metric)
 
@@ -283,9 +364,8 @@ def build_sample_context(
         detector_bbox=reference_bbox,
     )
     oracle = min(nme_by_candidate, key=lambda name: nme_by_candidate[name])
-    current_policy_choice = (
-        current.selected_candidate if current.selected_candidate in nme_by_candidate else oracle
-    )
+    current_policy_choice = current.selected_candidate
+    selected_candidate_missing_from_eval = current_policy_choice not in nme_by_candidate
     hard_bucket = bucket_result.bucket not in {"frontal", "intermediate", "no_pose"}
     vetoed = {name for name, metric in metrics.items() if metric.geometry_veto_reasons}
     risk_route = (
@@ -309,7 +389,16 @@ def build_sample_context(
         roll_estimate=roll_estimate,
         yaw_estimate=yaw_estimate,
         candidate_yaw_disagreement=bucket_result.features.get("candidate_yaw_disagreement"),
-        max_disagreement_px=max_disagreement_px,
+        max_disagreement_px=(
+            stored_max_disagreement
+            if (stored_max_disagreement := _optional_float(
+                bucket_result.features.get("max_disagreement_px")
+            ))
+            is not None
+            else max_disagreement_px
+        ),
+        runtime_bucket_source=runtime_bucket_source,
+        selected_candidate_missing_from_eval=selected_candidate_missing_from_eval,
     )
 
 
@@ -351,7 +440,11 @@ def rows_for_context(
                     max_disagreement_px=context.max_disagreement_px,
                 ),
                 selected_by_current_policy=context.current_policy_choice,
+                selected_candidate_missing_from_eval=(
+                    context.selected_candidate_missing_from_eval
+                ),
                 oracle=context.oracle,
+                runtime_bucket_source=context.runtime_bucket_source,
                 geometry_veto_reasons=tuple(metric.geometry_veto_reasons),
             )
         )
@@ -404,6 +497,10 @@ def candidate_table_rows_for_context(
                 "max_disagreement_px": context.max_disagreement_px,
                 "candidate_yaw_disagreement": context.candidate_yaw_disagreement,
                 "runtime_bucket": context.runtime_bucket,
+                "runtime_bucket_source": context.runtime_bucket_source,
+                "selected_candidate_missing_from_eval": int(
+                    context.selected_candidate_missing_from_eval
+                ),
                 "geometry_veto_reasons": "|".join(metric.geometry_veto_reasons),
             }
         )
@@ -516,9 +613,11 @@ def write_rows_csv(rows: T.Sequence[CandidateQualityRow], path: Path) -> Path:
         "was_selected_by_current_policy",
         "gap_vs_oracle",
         "runtime_bucket",
+        "runtime_bucket_source",
         "risk_route",
         "geometry_veto_reasons",
         "selected_by_current_policy",
+        "selected_candidate_missing_from_eval",
         "oracle",
         "features_json",
         *feature_names,

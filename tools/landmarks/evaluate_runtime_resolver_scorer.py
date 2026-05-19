@@ -19,6 +19,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from lib.landmarks.ensemble.runtime_resolver_scorer import load_runtime_resolver_scorer
+from lib.landmarks.ensemble.strategies import canonical_strategy
 from lib.landmarks.ensemble.weights import load_weights
 from tools.landmarks.runtime_resolver_scorer_data import (
     DEFAULT_FAILURE_THRESHOLD,
@@ -95,6 +96,14 @@ def _candidate_summary(
     )
 
 
+def _is_fusion_candidate(name: str) -> bool:
+    try:
+        canonical_strategy(name)
+    except (KeyError, ValueError):
+        return False
+    return True
+
+
 def _best_single(
     contexts: T.Sequence[SampleCandidateContext],
     candidates: T.Sequence[str],
@@ -103,10 +112,10 @@ def _best_single(
         name
         for name in candidates
         if name in contexts[0].nme_by_candidate
-        and name not in {"static_weighted", "static_weighted_downweight"}
+        and not _is_fusion_candidate(name)
     ]
     if not single_names:
-        single_names = [name for name in candidates if name in contexts[0].nme_by_candidate]
+        raise ValueError("best-single baseline requires at least one non-fusion model candidate")
     summaries = {name: _candidate_summary(contexts, name) for name in single_names}
     best = min(
         summaries,
@@ -212,6 +221,14 @@ def evaluate_runtime_resolver_scorer(
         failure_threshold=failure_threshold,
         outlier_threshold=outlier_threshold,
     )
+    missing_current = [
+        context.sample_id for context in contexts if context.selected_candidate_missing_from_eval
+    ]
+    if missing_current:
+        raise ValueError(
+            "current runtime policy selected candidates missing from evaluation set for "
+            f"{len(missing_current)} sample(s): {missing_current[:10]}"
+        )
 
     rows: list[dict[str, T.Any]] = []
     scorer_choices: dict[str, str] = {}
@@ -228,8 +245,6 @@ def evaluate_runtime_resolver_scorer(
         scorer_choices[context.sample_id] = chosen
         current_choices[context.sample_id] = (
             context.current_policy_choice
-            if context.current_policy_choice in context.nme_by_candidate
-            else chosen
         )
         oracle_choices[context.sample_id] = context.oracle
         rows.append(
@@ -238,6 +253,7 @@ def evaluate_runtime_resolver_scorer(
                 "dataset": context.dataset,
                 "condition": context.condition,
                 "runtime_bucket": context.runtime_bucket,
+                "runtime_bucket_source": context.runtime_bucket_source,
                 "chosen": chosen,
                 "chosen_nme": context.nme_by_candidate[chosen],
                 "chosen_failure": int(context.failure_by_candidate[chosen]),
