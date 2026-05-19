@@ -481,7 +481,9 @@ class Ensemble(ExtractPlugin):
             "roll_veto_degrees": self._roll_veto_degrees,
             "hard_roll_degrees": self._hard_roll_degrees,
             "setup_path": self._setup_path,
-            "weights_path": self._weights_path,
+            "weights_path": (
+                self._promoted.weights_path if self._promoted is not None else self._weights_path
+            ),
             "setup_mode": self._setup_mode,
             "promoted_candidate_id": (
                 self._promoted.candidate_id if self._promoted is not None else ""
@@ -492,9 +494,9 @@ class Ensemble(ExtractPlugin):
         """Store and log per-face resolver metadata."""
         self.last_debug_metadata.append(metadata)
         logger.debug("[Ensemble] runtime resolver metadata: %s", metadata)
-        bucket = metadata.get("bucket")
+        bucket = metadata.get("runtime_bucket")
         if bucket not in (None, "", "frontal", "intermediate", "no_pose"):
-            logger.info("[Ensemble] runtime resolver hard/profile metadata: %s", metadata)
+            logger.debug("[Ensemble] runtime resolver hard/profile metadata: %s", metadata)
 
     def _resolve_via_geometry(
         self,
@@ -504,6 +506,8 @@ class Ensemble(ExtractPlugin):
         errors: list[str],
         threshold: float | None,
         detector_bbox: tuple[float, float, float, float] | None = None,
+        image_crop: np.ndarray | None = None,
+        crop_to_frame_matrix: np.ndarray | None = None,
     ) -> np.ndarray | None:
         """Route this face through the production runtime resolver."""
         weights_map: dict[str, list[float]] | None = None
@@ -539,6 +543,8 @@ class Ensemble(ExtractPlugin):
                 model_predictions,
                 resolver_config,
                 detector_bbox=detector_bbox,
+                image_crop=image_crop,
+                crop_to_frame_matrix=crop_to_frame_matrix,
             )
         except RuntimeResolverError as err:
             logger.warning("[Ensemble] runtime resolver hard-failed: %s", err)
@@ -593,6 +599,8 @@ class Ensemble(ExtractPlugin):
         errors: list[str],
         *,
         detector_bbox: tuple[float, float, float, float] | None = None,
+        image_crop: np.ndarray | None = None,
+        crop_to_frame_matrix: np.ndarray | None = None,
     ) -> np.ndarray:
         """Fuse one face's adapter predictions and return frame-space points."""
         if len(predictions) < self._min_models:
@@ -612,6 +620,8 @@ class Ensemble(ExtractPlugin):
                 errors=errors,
                 threshold=threshold,
                 detector_bbox=detector_bbox,
+                image_crop=image_crop,
+                crop_to_frame_matrix=crop_to_frame_matrix,
             )
             if resolver_points is not None:
                 return resolver_points
@@ -695,7 +705,13 @@ class Ensemble(ExtractPlugin):
         )
         per_face, errors = self._collect_predictions(image[None], matrices)
         self.last_debug_metadata = []
-        return self._fuse_face(per_face[0], errors, detector_bbox=None)
+        return self._fuse_face(
+            per_face[0],
+            errors,
+            detector_bbox=None,
+            image_crop=image,
+            crop_to_frame_matrix=matrices[0],
+        )
 
     def process(self, batch: np.ndarray) -> np.ndarray:
         """Run adapter predictions, fuse in frame space and return normalized landmarks."""
@@ -709,7 +725,13 @@ class Ensemble(ExtractPlugin):
         output = np.empty((batch.shape[0], 68, 2), dtype="float32")
         for idx, predictions in enumerate(per_face):
             output[idx] = frame_to_normalized_crop(
-                self._fuse_face(predictions, errors, detector_bbox=self._bbox_for_face(idx)),
+                self._fuse_face(
+                    predictions,
+                    errors,
+                    detector_bbox=self._bbox_for_face(idx),
+                    image_crop=batch[idx],
+                    crop_to_frame_matrix=matrices[idx],
+                ),
                 matrices[idx],
             )
         return output
