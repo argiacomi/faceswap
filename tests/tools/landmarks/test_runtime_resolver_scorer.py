@@ -6,9 +6,12 @@ from __future__ import annotations
 import csv
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
+import tools.landmarks.runtime_resolver_scorer_data as scorer_data
 from lib.landmarks.cache.prediction_cache import DiskPredictionCache
 from lib.landmarks.core.schema import LandmarkPrediction
 from lib.landmarks.ensemble.runtime_resolver_scorer import (
@@ -76,6 +79,19 @@ def _write_fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
                 "condition": "profile_left",
                 "normalizer": 100.0,
                 "face_bbox": [0.0, 20.0, 100.0, 110.0],
+                "metadata": {
+                    "landmark_ensemble": {
+                        "runtime_bucket": "stored_profile_left",
+                        "bucket": "stored_profile_left",
+                        "selected_candidate": "hrnet",
+                        "runtime_bucket_features": {
+                            "candidate_yaw_disagreement": 12.5,
+                            "max_disagreement_px": 42.0,
+                            "landmark_pose_yaw": -36.0,
+                            "landmark_pose_roll": 4.0,
+                        },
+                    }
+                },
             }
         )
     manifest_path.write_text(
@@ -162,15 +178,52 @@ def test_export_resolver_candidate_table_row_count_and_gate_metrics(
 
     assert report["row_count"] == 6
     assert len(rows) == 6
+    assert {row["runtime_bucket"] for row in rows} == {"stored_profile_left"}
+    assert {row["runtime_bucket_source"] for row in rows} == {
+        "stored_manifest_landmark_ensemble"
+    }
     assert set(rows[0]) >= {
         "sample_id",
         "candidate",
         "nme",
         "failure",
         "runtime_bucket",
+        "runtime_bucket_source",
         "geometry_veto_reasons",
     }
     assert hrnet_mean == gate["best_single_mean_nme"]
+
+
+def test_scorer_evaluator_fails_when_current_policy_candidate_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest_path, cache_dir, weights_path = _write_fixture(tmp_path)
+    scorer_path = write_runtime_resolver_scorer(
+        RuntimeResolverScorer(
+            features=("candidate_name=hrnet", "candidate_name=spiga"),
+            coefficients=(-5.0, 5.0),
+            intercept=0.0,
+        ),
+        tmp_path / "runtime_resolver_scorer.json",
+    )
+    monkeypatch.setattr(
+        scorer_data,
+        "resolve_runtime",
+        lambda *_args, **_kwargs: SimpleNamespace(selected_candidate="plain_average"),
+    )
+
+    with pytest.raises(ValueError, match="missing from evaluation set"):
+        evaluate_runtime_resolver_scorer(
+            gt_manifest=None,
+            gt_cache_dir=None,
+            production_manifest=manifest_path,
+            production_cache_dir=cache_dir,
+            weights_path=weights_path,
+            scorer_path=scorer_path,
+            candidates=("hrnet", "spiga", "static_weighted_downweight"),
+            output_dir=tmp_path / "eval",
+        )
 
 
 def test_export_resolver_candidate_table_skips_missing_candidate_prediction(

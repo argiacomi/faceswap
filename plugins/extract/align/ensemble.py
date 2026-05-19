@@ -554,6 +554,8 @@ class Ensemble(ExtractPlugin):
             )
         except RuntimeResolverError as err:
             logger.warning("[Ensemble] runtime resolver hard-failed: %s", err)
+            if self._strict:
+                raise
             return None
 
         veto_reasons = list(result.metadata.get("vetoed", ()))

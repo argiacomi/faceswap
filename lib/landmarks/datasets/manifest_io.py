@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 import typing as T
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -41,6 +41,7 @@ class LandmarkSample:
     normalizer: float | None = None
     face_bbox: tuple[float, float, float, float] | None = None
     visibility: tuple[bool, ...] | None = None
+    metadata: dict[str, T.Any] = field(default_factory=dict)
 
 
 def coerce_bbox(value: T.Any) -> tuple[float, float, float, float] | None:
@@ -155,6 +156,7 @@ def load_manifest(path: str | Path) -> list[LandmarkSample]:
                 normalizer=entry.get("normalizer", metadata.get("normalizer")),
                 face_bbox=bbox,
                 visibility=visibility,
+                metadata=dict(metadata),
             )
         )
     return samples

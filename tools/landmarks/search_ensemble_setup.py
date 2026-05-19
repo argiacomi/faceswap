@@ -7,6 +7,7 @@ import argparse
 import csv
 import json
 import sys
+import tempfile
 import time
 import typing as T
 from dataclasses import dataclass
@@ -303,7 +304,6 @@ def _validate_production_gate_args(args: argparse.Namespace) -> None:
         for flag, attr in (
             ("--production-manifest", "production_manifest"),
             ("--production-cache-dir", "production_cache_dir"),
-            ("--production-weights", "production_weights"),
         )
         if getattr(args, attr) is None
     ]
@@ -789,7 +789,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--production-weights",
         default=None,
-        help="Weights JSON used to evaluate production static/resolver candidates.",
+        help=(
+            "Deprecated for search promotion: the production gate evaluates the "
+            "candidate winner's weights. Use production_promotion_gate.py for "
+            "standalone evaluation of an explicit weights JSON."
+        ),
     )
     parser.add_argument(
         "--production-policy",
@@ -1036,23 +1040,34 @@ def main(argv: list[str] | None = None) -> int:
         production_output = Path(args.production_gate_output or args.output_dir)
 
         def _run_production_gate() -> dict[str, T.Any]:
-            return run_production_promotion_gate(
-                manifest_path=Path(args.production_manifest),
-                cache_dir=Path(args.production_cache_dir),
-                weights_path=Path(args.production_weights),
-                output_dir=production_output,
-                config=ProductionGateConfig(
-                    policy=args.production_policy,
-                    mean_epsilon_nme=args.production_epsilon_mean_nme,
-                    p90_epsilon_nme=args.production_epsilon_p90_nme,
-                    failure_threshold=args.production_failure_threshold,
-                    outlier_threshold=(
-                        3.5
-                        if winner.candidate.outlier_threshold is None
-                        else float(winner.candidate.outlier_threshold)
+            production_output.mkdir(parents=True, exist_ok=True)
+            with tempfile.TemporaryDirectory(
+                prefix="candidate-production-gate-",
+                dir=str(production_output),
+            ) as temp_dir:
+                candidate_weights_path = Path(temp_dir) / WEIGHTS_FILENAME
+                write_best_weights(
+                    candidate_weights_path,
+                    winner.weights,
+                    models=winner.candidate.models,
+                )
+                return run_production_promotion_gate(
+                    manifest_path=Path(args.production_manifest),
+                    cache_dir=Path(args.production_cache_dir),
+                    weights_path=candidate_weights_path,
+                    output_dir=production_output,
+                    config=ProductionGateConfig(
+                        policy=args.production_policy,
+                        mean_epsilon_nme=args.production_epsilon_mean_nme,
+                        p90_epsilon_nme=args.production_epsilon_p90_nme,
+                        failure_threshold=args.production_failure_threshold,
+                        outlier_threshold=(
+                            3.5
+                            if winner.candidate.outlier_threshold is None
+                            else float(winner.candidate.outlier_threshold)
+                        ),
                     ),
-                ),
-            )
+                )
 
         production_report = _stage("production_promotion_gate", _run_production_gate)
         if production_report["status"] != "pass":
