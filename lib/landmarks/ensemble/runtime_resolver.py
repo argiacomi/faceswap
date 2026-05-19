@@ -20,6 +20,12 @@ import numpy as np
 from lib.landmarks.core.fusion import normalize_weight_matrix, plain_average, static_weighted
 from lib.landmarks.core.rejection import weighted_median
 from lib.landmarks.core.schema import LandmarkPrediction
+from lib.landmarks.ensemble.runtime_resolver_scorer import (
+    candidate_scores as score_runtime_candidates,
+)
+from lib.landmarks.ensemble.runtime_resolver_scorer import (
+    load_runtime_resolver_scorer,
+)
 from lib.landmarks.ensemble.strategies import (
     canonical_strategy,
     strategy_outlier_method,
@@ -179,6 +185,7 @@ class RuntimeResolverConfig:
     """Configuration for the production runtime resolver."""
 
     policy: str = "roll_aware_veto"
+    scorer_path: str = ""
     general_strategy: str = "static_weighted"
     hard_case_strategy: str = "static_weighted_downweight"
     secondary_hard_case_strategy: str = "static_weighted_hard_drop"
@@ -935,7 +942,9 @@ def infer_runtime_bucket(
         landmark_pose_yaw=yaw_estimate,
         dominant_candidate_yaw=dominant_candidate_yaw,
     )
-    trusted_side, trusted_side_source, side_confidence, side_votes = _runtime_side_from_single_model_yaws(metrics)
+    trusted_side, trusted_side_source, side_confidence, side_votes = (
+        _runtime_side_from_single_model_yaws(metrics)
+    )
     if trusted_side is None:
         yaw_side = geometry_side
         yaw_side_source = f"landmark_geometry_fallback:{geometry_side_source}"
@@ -1025,8 +1034,8 @@ def resolve_runtime(
     image_crop: np.ndarray | None = None,
     crop_to_frame_matrix: np.ndarray | None = None,
 ) -> RuntimeResolverResult:
-    """Resolve one face using v7 runtime candidate priority and vetoes."""
-    if config.policy != "roll_aware_veto":
+    """Resolve one face using runtime candidate diagnostics and policy selection."""
+    if config.policy not in {"roll_aware_veto", "learned_quality_v1"}:
         raise RuntimeResolverError(f"unsupported runtime resolver policy {config.policy!r}")
     candidates = build_candidates(predictions, config)
     if not candidates:
@@ -1079,15 +1088,48 @@ def resolve_runtime(
         if hard_bucket or max_disagreement_px > config.hard_disagreement_px or vetoed
         else "low_risk"
     )
-    selected = (
-        _available_by_priority(priority, survivors)
-        if survivors
-        else _available_by_priority(priority, available)
-    )
     if not survivors:
         fallback_reason: str | None = "all_candidates_vetoed"
     else:
         fallback_reason = None
+    scorer_metadata: dict[str, T.Any] = {}
+    if config.policy == "learned_quality_v1":
+        if not config.scorer_path:
+            raise RuntimeResolverError("learned_quality_v1 requires resolver_scorer_path")
+        scorer = load_runtime_resolver_scorer(config.scorer_path)
+        model_available = {prediction.model: True for prediction in predictions}
+        scores = score_runtime_candidates(
+            scorer,
+            candidates,
+            metrics,
+            runtime_bucket=bucket,
+            risk_route=risk_route,
+            model_predictions_available=model_available,
+            roll_estimate=roll_estimate,
+            yaw_estimate=yaw_estimate,
+            candidate_yaw_disagreement=runtime_bucket.features.get("candidate_yaw_disagreement"),
+            max_disagreement_px=max_disagreement_px,
+        )
+        selectable = survivors if survivors else available
+        selected = min(
+            selectable,
+            key=lambda name: (scores.get(name, float("inf")), priority.index(name), name),
+        )
+        scorer_metadata = {
+            "selected_candidate_score": scores.get(selected),
+            "candidate_scores": dict(sorted(scores.items())),
+            "candidate_risk_rank": [
+                name for name, _ in sorted(scores.items(), key=lambda item: (item[1], item[0]))
+            ],
+            "scorer_path": str(config.scorer_path),
+            "scorer_version": scorer.version,
+        }
+    else:
+        selected = (
+            _available_by_priority(priority, survivors)
+            if survivors
+            else _available_by_priority(priority, available)
+        )
 
     by_name = {candidate.name: candidate for candidate in candidates}
     metadata: dict[str, T.Any] = {
@@ -1125,7 +1167,9 @@ def resolve_runtime(
         "max_disagreement_px": max_disagreement_px,
         "risk_route": risk_route,
         "fallback_reason": fallback_reason,
+        "fallback_used": fallback_reason is not None,
         "policy": config.policy,
+        **scorer_metadata,
     }
     return RuntimeResolverResult(
         selected_candidate=selected,

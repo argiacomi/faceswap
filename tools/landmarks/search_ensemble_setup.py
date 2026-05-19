@@ -60,6 +60,13 @@ from lib.landmarks.search.promotion_gates import (
     apply_gates,
     no_promotion_payload,
 )
+from tools.landmarks.production_promotion_gate import (
+    DEFAULT_PRODUCTION_FAILURE_THRESHOLD,
+    DEFAULT_PRODUCTION_MEAN_EPSILON_NME,
+    DEFAULT_PRODUCTION_P90_EPSILON_NME,
+    ProductionGateConfig,
+    run_production_promotion_gate,
+)
 
 
 def _parse_csv(value: str) -> tuple[str, ...]:
@@ -274,6 +281,34 @@ def _gates_need_profile(config: GateConfig) -> bool:
 
 def _gates_need_geometry(config: GateConfig, args: argparse.Namespace) -> bool:
     return bool(config.requires_geometry() or args.include_geometry_metrics)
+
+
+def _production_gate_enabled(args: argparse.Namespace) -> bool:
+    return any(
+        getattr(args, name) is not None
+        for name in (
+            "production_manifest",
+            "production_cache_dir",
+            "production_weights",
+            "production_gate_output",
+        )
+    )
+
+
+def _validate_production_gate_args(args: argparse.Namespace) -> None:
+    if not _production_gate_enabled(args):
+        return
+    missing = [
+        flag
+        for flag, attr in (
+            ("--production-manifest", "production_manifest"),
+            ("--production-cache-dir", "production_cache_dir"),
+            ("--production-weights", "production_weights"),
+        )
+        if getattr(args, attr) is None
+    ]
+    if missing:
+        raise SystemExit("production validation gate requires " + ", ".join(missing))
 
 
 def _candidate_models(results: T.Sequence[CandidateResult]) -> tuple[str, ...]:
@@ -741,7 +776,54 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--min-per-bucket-p05-hull-iou", type=float, default=None)
     parser.add_argument("--max-hard-slice-regression-rate", type=float, default=None)
     parser.add_argument("--allow-nme-only-promotion", action="store_true")
+    parser.add_argument(
+        "--production-manifest",
+        default=None,
+        help="Optional reviewed production validation manifest for promotion gating.",
+    )
+    parser.add_argument(
+        "--production-cache-dir",
+        default=None,
+        help="Prediction cache directory for --production-manifest.",
+    )
+    parser.add_argument(
+        "--production-weights",
+        default=None,
+        help="Weights JSON used to evaluate production static/resolver candidates.",
+    )
+    parser.add_argument(
+        "--production-policy",
+        default="bucket_aware_veto",
+        help=(
+            "Production resolver policy to gate. Supports bucket_aware_veto, "
+            "roll_aware_veto, manifest_selected_candidate, or candidate:<name>."
+        ),
+    )
+    parser.add_argument(
+        "--production-gate-output",
+        default=None,
+        help=(
+            "Directory for production_promotion_report.* artifacts. Defaults to "
+            "--output-dir when any production gate argument is supplied."
+        ),
+    )
+    parser.add_argument(
+        "--production-epsilon-mean-nme",
+        type=float,
+        default=DEFAULT_PRODUCTION_MEAN_EPSILON_NME,
+    )
+    parser.add_argument(
+        "--production-epsilon-p90-nme",
+        type=float,
+        default=DEFAULT_PRODUCTION_P90_EPSILON_NME,
+    )
+    parser.add_argument(
+        "--production-failure-threshold",
+        type=float,
+        default=DEFAULT_PRODUCTION_FAILURE_THRESHOLD,
+    )
     args = parser.parse_args(argv)
+    _validate_production_gate_args(args)
 
     if args.allow_single_model_promotion:
         args.include_single_model_baselines = True
@@ -949,6 +1031,36 @@ def main(argv: list[str] | None = None) -> int:
         winner = results[0] if results else None
         if winner is None:
             raise SystemExit("no candidates were evaluated")
+
+    if _production_gate_enabled(args):
+        production_output = Path(args.production_gate_output or args.output_dir)
+
+        def _run_production_gate() -> dict[str, T.Any]:
+            return run_production_promotion_gate(
+                manifest_path=Path(args.production_manifest),
+                cache_dir=Path(args.production_cache_dir),
+                weights_path=Path(args.production_weights),
+                output_dir=production_output,
+                config=ProductionGateConfig(
+                    policy=args.production_policy,
+                    mean_epsilon_nme=args.production_epsilon_mean_nme,
+                    p90_epsilon_nme=args.production_epsilon_p90_nme,
+                    failure_threshold=args.production_failure_threshold,
+                    outlier_threshold=(
+                        3.5
+                        if winner.candidate.outlier_threshold is None
+                        else float(winner.candidate.outlier_threshold)
+                    ),
+                ),
+            )
+
+        production_report = _stage("production_promotion_gate", _run_production_gate)
+        if production_report["status"] != "pass":
+            print(
+                "Production promotion gate failed; see "
+                f"{production_output / 'production_promotion_report.json'}"
+            )
+            return 1
 
     _fit_result, report_metrics = _stage(
         "report_evaluate_winner",
