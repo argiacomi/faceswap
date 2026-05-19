@@ -3,9 +3,9 @@
 
 This module promotes the v7 bucket-aware resolver path from the offline
 evaluation harness into runtime code. It builds single-model and fusion
-candidates, derives pose/shape diagnostics from prediction geometry only, maps
-the face into a roll/yaw bucket, applies bucket priority plus vetoes, and
-returns both the selected landmarks and serializable debug metadata.
+candidates, derives pose/shape diagnostics from prediction geometry plus image
+crop evidence, maps the face into a runtime bucket, applies bucket priority plus
+vetoes, and returns both the selected landmarks and serializable debug metadata.
 """
 
 from __future__ import annotations
@@ -27,7 +27,6 @@ from lib.landmarks.ensemble.strategies import (
     strategy_uses_threshold,
 )
 from lib.landmarks.evaluation.geometry_signals import AlignmentSummary, alignment_summary
-from lib.landmarks.evaluation.hard_slices import HardSliceThresholds, hard_slice_label
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +37,19 @@ DEFAULT_MAX_HULL_AREA_RATIO: float = 2.25
 DEFAULT_MAX_POINTS_OUTSIDE_EXPANDED_BBOX_FRACTION: float = 0.35
 DEFAULT_MAX_ROI_CENTER_CONSENSUS_DISTANCE: float = 0.22
 DEFAULT_MAX_LANDMARK_CONSENSUS_DISTANCE: float = 0.16
+IMAGE_YAW_SIDE_THRESHOLD: float = 0.08
+LANDMARK_YAW_SIDE_THRESHOLD: float = 3.0
+NOSE_SIDE_THRESHOLD: float = 0.08
+JAW_SIDE_THRESHOLD: float = 0.20
+LARGE_YAW_IMAGE_SIGNAL_THRESHOLD: float = 0.18
+LARGE_YAW_LANDMARK_THRESHOLD: float = 35.0
+PROFILE_IMAGE_SIGNAL_THRESHOLD: float = 0.34
+PROFILE_LANDMARK_YAW_THRESHOLD: float = 55.0
+PROFILE_CANDIDATE_YAW_DISAGREEMENT_THRESHOLD: float = 120.0
+PROFILE_MAX_DISAGREEMENT_BBOX_FRACTION_THRESHOLD: float = 0.28
+PROFILE_SIDE_STRUCTURE_THRESHOLD: float = 0.22
+PROFILE_NOSE_OFFSET_THRESHOLD: float = 0.12
+PROFILE_LANDMARK_YAW_WEAK_THRESHOLD: float = 20.0
 
 DEFAULT_PRIORITY: tuple[str, ...] = (
     "static_weighted_downweight",
@@ -47,6 +59,23 @@ DEFAULT_PRIORITY: tuple[str, ...] = (
     "spiga",
     "hrnet",
     "orformer",
+)
+
+RUNTIME_BUCKETS: frozenset[str] = frozenset(
+    (
+        "frontal",
+        "intermediate",
+        "large_yaw_left",
+        "large_yaw_right",
+        "profile_left",
+        "profile_right",
+        "large_roll",
+        "extreme_roll",
+        "rolled_large_yaw_left",
+        "rolled_large_yaw_right",
+        "rolled_profile_left",
+        "rolled_profile_right",
+    )
 )
 
 BUCKET_PRIORITIES: dict[str, tuple[str, ...]] = {
@@ -171,6 +200,14 @@ class RuntimeResolverResult:
 
 class RuntimeResolverError(RuntimeError):
     """Raised when no runtime candidate can be selected."""
+
+
+@dataclass(frozen=True)
+class RuntimeBucketResult:
+    """Image-aware runtime bucket plus diagnostic features."""
+
+    bucket: str
+    features: dict[str, float | str | None]
 
 
 def _safe_alignment_summary(landmarks: np.ndarray) -> AlignmentSummary | None:
@@ -587,11 +624,337 @@ def _max_landmark_consensus_px(candidates: T.Sequence[CandidateRecord]) -> float
     return float(per_candidate.max()) if per_candidate.size else 0.0
 
 
+def _frame_to_crop_pixels(
+    points: np.ndarray,
+    crop_to_frame_matrix: np.ndarray,
+    image_crop: np.ndarray,
+) -> np.ndarray:
+    """Transform frame-space landmarks to image-crop pixel coordinates."""
+    matrix = np.asarray(crop_to_frame_matrix, dtype="float64")
+    if matrix.shape != (3, 3):
+        raise ValueError(f"crop_to_frame_matrix must have shape (3, 3), got {matrix.shape}")
+    height, width = image_crop.shape[:2]
+    pts = np.asarray(points, dtype="float64")
+    ones = np.ones((pts.shape[0], 1), dtype="float64")
+    normalized = np.concatenate([pts[:, :2], ones], axis=1) @ np.linalg.inv(matrix).T
+    pixels = normalized[:, :2].copy()
+    pixels[:, 0] *= float(width)
+    pixels[:, 1] *= float(height)
+    return pixels.astype("float32", copy=False)
+
+
+def _crop_gray(image_crop: np.ndarray) -> np.ndarray:
+    """Return a float grayscale crop in 0..1 range."""
+    crop = np.asarray(image_crop)
+    if crop.ndim == 2:
+        gray = crop.astype("float32", copy=False)
+    elif crop.ndim == 3 and crop.shape[2] >= 3:
+        arr = crop[..., :3].astype("float32", copy=False)
+        gray = (0.299 * arr[..., 0]) + (0.587 * arr[..., 1]) + (0.114 * arr[..., 2])
+    else:
+        raise ValueError(f"image_crop must have shape (H, W) or (H, W, C), got {crop.shape}")
+    if gray.size and float(np.nanmax(gray)) > 2.0:
+        gray = gray / 255.0
+    return np.nan_to_num(gray, nan=0.0, posinf=1.0, neginf=0.0).clip(0.0, 1.0)
+
+
+def _eye_visual_score(gray: np.ndarray, eye_points: np.ndarray) -> float:
+    """Return a rough visual evidence score for an eye landmark region."""
+    points = np.asarray(eye_points, dtype="float32")
+    if points.ndim != 2 or points.shape[0] == 0 or points.shape[1] < 2:
+        return 0.0
+    height, width = gray.shape[:2]
+    if width <= 1 or height <= 1:
+        return 0.0
+    finite = points[np.all(np.isfinite(points[:, :2]), axis=1), :2]
+    if finite.size == 0:
+        return 0.0
+    left, top = np.min(finite, axis=0)
+    right, bottom = np.max(finite, axis=0)
+    eye_w = max(float(right - left), 4.0)
+    eye_h = max(float(bottom - top), 4.0)
+    margin_x = max(eye_w * 0.9, 6.0)
+    margin_y = max(eye_h * 1.2, 6.0)
+    x0 = max(0, int(math.floor(left - margin_x)))
+    y0 = max(0, int(math.floor(top - margin_y)))
+    x1 = min(width, int(math.ceil(right + margin_x)))
+    y1 = min(height, int(math.ceil(bottom + margin_y)))
+    if x1 <= x0 + 2 or y1 <= y0 + 2:
+        return 0.0
+    patch = gray[y0:y1, x0:x1]
+    if patch.size < 9:
+        return 0.0
+    contrast = float(np.std(patch))
+    grad_y, grad_x = np.gradient(patch.astype("float32", copy=False))
+    edge = float(np.mean(np.hypot(grad_x, grad_y)))
+    darkness = max(0.0, 0.55 - float(np.percentile(patch, 20)))
+    score = (2.4 * contrast) + (3.2 * edge) + (0.7 * darkness)
+    return float(max(0.0, min(score, 1.0)))
+
+
+def _signed_candidate_yaw_disagreement(metrics: T.Mapping[str, CandidateMetrics]) -> float:
+    """Return yaw spread across candidates, ignoring missing estimates."""
+    yaws = [metric.yaw_degrees for metric in metrics.values() if metric.yaw_degrees is not None]
+    if len(yaws) < 2:
+        return 0.0
+    return float(max(yaws) - min(yaws))
+
+
+def _dominant_candidate_yaw(metrics: T.Mapping[str, CandidateMetrics]) -> float:
+    """Return the candidate yaw with the strongest absolute side evidence."""
+    yaws = [
+        float(metric.yaw_degrees)
+        for metric in metrics.values()
+        if metric.yaw_degrees is not None and math.isfinite(float(metric.yaw_degrees))
+    ]
+    if not yaws:
+        return 0.0
+    return max(yaws, key=abs)
+
+
+def _runtime_side_from_signals(
+    *,
+    image_geometry_yaw_signal: float,
+    nose_offset_from_face_center: float,
+    mouth_nose_jaw_asymmetry: float,
+    landmark_pose_yaw: float | None,
+    dominant_candidate_yaw: float,
+) -> tuple[str, str]:
+    """Return image-facing side and the signal used to choose it.
+
+    Bucket suffixes use image-facing direction:
+    ``*_left`` means the front/nose of the face points toward image-left, and
+    ``*_right`` means it points toward image-right. For completed 68-point
+    profile landmarks, the nose/front often sits on the opposite side of the
+    detector box from the visible facial mass, so positive nose offset maps to
+    image-left. Pose yaw from ``alignment_summary`` is less reliable for side
+    profiles, but positive pose yaw generally maps to image-left.
+    """
+    if abs(nose_offset_from_face_center) >= NOSE_SIDE_THRESHOLD:
+        return ("left" if nose_offset_from_face_center > 0 else "right"), "nose_offset"
+    if abs(mouth_nose_jaw_asymmetry) >= JAW_SIDE_THRESHOLD:
+        return ("left" if mouth_nose_jaw_asymmetry < 0 else "right"), "jaw_asymmetry"
+    if abs(image_geometry_yaw_signal) >= IMAGE_YAW_SIDE_THRESHOLD:
+        return ("left" if image_geometry_yaw_signal > 0 else "right"), "image_geometry"
+    if (
+        landmark_pose_yaw is not None
+        and abs(float(landmark_pose_yaw)) >= LANDMARK_YAW_SIDE_THRESHOLD
+    ):
+        return ("left" if float(landmark_pose_yaw) > 0 else "right"), "landmark_pose_yaw"
+    if abs(dominant_candidate_yaw) >= LANDMARK_YAW_SIDE_THRESHOLD:
+        return ("left" if dominant_candidate_yaw > 0 else "right"), "dominant_candidate_yaw"
+    return ("left" if image_geometry_yaw_signal > 0 else "right"), "weak_image_geometry"
+
+
+def _normalized_max_disagreement(
+    max_disagreement_px: float,
+    detector_bbox: T.Sequence[float] | None,
+    consensus_landmarks: np.ndarray,
+) -> float:
+    """Return max candidate disagreement normalized by detector or landmark size."""
+    bbox: tuple[float, float, float, float] | None = None
+    if detector_bbox is not None:
+        left, top, right, bottom = (float(value) for value in detector_bbox)
+        if right > left and bottom > top:
+            bbox = (left, top, right, bottom)
+    if bbox is None:
+        bbox = _landmark_bbox(consensus_landmarks)
+    diag = _bbox_diag(bbox)
+    if diag is None:
+        return 0.0
+    return float(max_disagreement_px / diag)
+
+
+def _runtime_yaw_severity(
+    *,
+    image_geometry_yaw_signal: float,
+    landmark_pose_yaw: float | None,
+    candidate_yaw_disagreement: float,
+    max_disagreement_bbox_fraction: float,
+    nose_offset_from_face_center: float,
+    mouth_nose_jaw_asymmetry: float,
+) -> tuple[str, str]:
+    """Return yaw severity and evidence source.
+
+    Visual definitions:
+    ``intermediate`` is a moderate turn without strong profile evidence.
+    ``large_yaw`` is a strongly turned face where both sides still have
+    meaningful visual/geometric support. ``profile`` is a near side-on view:
+    one side dominates, the far-side landmarks are mostly inferred or unstable,
+    or the nose/front is close to a silhouette.
+    """
+    abs_image_yaw = abs(image_geometry_yaw_signal)
+    abs_landmark_yaw = 0.0 if landmark_pose_yaw is None else abs(float(landmark_pose_yaw))
+    side_structure = max(abs(nose_offset_from_face_center), abs(mouth_nose_jaw_asymmetry))
+    if abs_image_yaw >= PROFILE_IMAGE_SIGNAL_THRESHOLD:
+        return "profile", "image_geometry"
+    if abs_landmark_yaw >= PROFILE_LANDMARK_YAW_THRESHOLD:
+        return "profile", "landmark_pose_yaw"
+    if (
+        candidate_yaw_disagreement >= PROFILE_CANDIDATE_YAW_DISAGREEMENT_THRESHOLD
+        and max_disagreement_bbox_fraction >= PROFILE_MAX_DISAGREEMENT_BBOX_FRACTION_THRESHOLD
+        and (
+            side_structure >= PROFILE_SIDE_STRUCTURE_THRESHOLD
+            or abs(nose_offset_from_face_center) >= PROFILE_NOSE_OFFSET_THRESHOLD
+            or abs_landmark_yaw >= PROFILE_LANDMARK_YAW_WEAK_THRESHOLD
+        )
+    ):
+        return "profile", "candidate_instability"
+    if (
+        abs_image_yaw >= LARGE_YAW_IMAGE_SIGNAL_THRESHOLD
+        or abs_landmark_yaw >= LARGE_YAW_LANDMARK_THRESHOLD
+        or candidate_yaw_disagreement >= 35.0
+    ):
+        return "large_yaw", "yaw_evidence"
+    if abs_landmark_yaw <= 15.0:
+        return "frontal", "low_yaw"
+    return "intermediate", "moderate_yaw"
+
+
+def _consensus_landmarks(candidates: T.Sequence[CandidateRecord]) -> np.ndarray:
+    """Return median candidate landmarks in frame coordinates."""
+    stack = np.stack([candidate.landmarks.astype("float64") for candidate in candidates], axis=0)
+    return np.median(stack, axis=0).astype("float32", copy=False)
+
+
+def _image_geometry_yaw_signal(
+    landmarks: np.ndarray,
+    detector_bbox: T.Sequence[float] | None,
+) -> tuple[float, float, float]:
+    """Return signed image-aware yaw signal and supporting asymmetry terms."""
+    points = np.asarray(landmarks, dtype="float64")
+    if points.shape[0] < 68:
+        return 0.0, 0.0, 0.0
+    if detector_bbox is not None:
+        left, _top, right, _bottom = (float(value) for value in detector_bbox)
+    else:
+        bbox = _landmark_bbox(points)
+        if bbox is None:
+            return 0.0, 0.0, 0.0
+        left, _top, right, _bottom = bbox
+    width = max(right - left, 1.0)
+    face_center_x = (left + right) * 0.5
+    nose_tip_x = float(points[30, 0])
+    mouth_center_x = float(points[48:68, 0].mean())
+    jaw_left_x = float(points[0, 0])
+    jaw_right_x = float(points[16, 0])
+    nose_offset = (nose_tip_x - face_center_x) / (width * 0.5)
+    mouth_offset = (mouth_center_x - face_center_x) / (width * 0.5)
+    left_span = max(nose_tip_x - jaw_left_x, 1e-6)
+    right_span = max(jaw_right_x - nose_tip_x, 1e-6)
+    jaw_asymmetry = (right_span - left_span) / max(right_span + left_span, 1e-6)
+    signal = (0.55 * nose_offset) + (0.25 * mouth_offset) + (0.20 * jaw_asymmetry)
+    return float(signal), float(nose_offset), float(jaw_asymmetry)
+
+
+def infer_runtime_bucket(
+    *,
+    image_crop: np.ndarray | None,
+    crop_to_frame_matrix: np.ndarray | None,
+    detector_bbox: T.Sequence[float] | None,
+    candidates: T.Sequence[CandidateRecord],
+    metrics: T.Mapping[str, CandidateMetrics],
+    yaw_estimate: float | None,
+    roll_estimate: float | None,
+    max_disagreement_px: float,
+    hard_roll_degrees: float,
+) -> RuntimeBucketResult:
+    """Infer an image-aware runtime bucket for resolver routing and metadata."""
+    consensus = _consensus_landmarks(candidates)
+    yaw_signal, nose_offset, jaw_asymmetry = _image_geometry_yaw_signal(consensus, detector_bbox)
+    candidate_yaw_disagreement = _signed_candidate_yaw_disagreement(metrics)
+    dominant_candidate_yaw = _dominant_candidate_yaw(metrics)
+    max_disagreement_bbox_fraction = _normalized_max_disagreement(
+        max_disagreement_px,
+        detector_bbox,
+        consensus,
+    )
+    yaw_side, yaw_side_source = _runtime_side_from_signals(
+        image_geometry_yaw_signal=yaw_signal,
+        nose_offset_from_face_center=nose_offset,
+        mouth_nose_jaw_asymmetry=jaw_asymmetry,
+        landmark_pose_yaw=yaw_estimate,
+        dominant_candidate_yaw=dominant_candidate_yaw,
+    )
+    yaw_severity, yaw_severity_source = _runtime_yaw_severity(
+        image_geometry_yaw_signal=yaw_signal,
+        landmark_pose_yaw=yaw_estimate,
+        candidate_yaw_disagreement=candidate_yaw_disagreement,
+        max_disagreement_bbox_fraction=max_disagreement_bbox_fraction,
+        nose_offset_from_face_center=nose_offset,
+        mouth_nose_jaw_asymmetry=jaw_asymmetry,
+    )
+    abs_roll = 0.0 if roll_estimate is None else abs(float(roll_estimate))
+    hard_roll = abs_roll >= hard_roll_degrees
+    features: dict[str, float | str | None] = {
+        "left_eye_visual_score": None,
+        "right_eye_visual_score": None,
+        "eye_visibility_asymmetry": None,
+        "nose_offset_from_face_center": nose_offset,
+        "mouth_nose_jaw_asymmetry": jaw_asymmetry,
+        "candidate_yaw_disagreement": candidate_yaw_disagreement,
+        "max_disagreement_px": max_disagreement_px,
+        "max_disagreement_bbox_fraction": max_disagreement_bbox_fraction,
+        "landmark_pose_yaw": yaw_estimate,
+        "landmark_pose_roll": roll_estimate,
+        "image_geometry_yaw_signal": yaw_signal,
+        "dominant_candidate_yaw": dominant_candidate_yaw,
+        "runtime_bucket_side": yaw_side,
+        "runtime_bucket_side_source": yaw_side_source,
+        "runtime_bucket_severity": yaw_severity,
+        "runtime_bucket_severity_source": yaw_severity_source,
+    }
+    if image_crop is not None and crop_to_frame_matrix is not None:
+        try:
+            crop_points = _frame_to_crop_pixels(consensus, crop_to_frame_matrix, image_crop)
+            gray = _crop_gray(image_crop)
+            left_eye_score = _eye_visual_score(gray, crop_points[36:42])
+            right_eye_score = _eye_visual_score(gray, crop_points[42:48])
+            eye_asymmetry = left_eye_score - right_eye_score
+            features.update(
+                {
+                    "left_eye_visual_score": left_eye_score,
+                    "right_eye_visual_score": right_eye_score,
+                    "eye_visibility_asymmetry": eye_asymmetry,
+                }
+            )
+            if max(left_eye_score, right_eye_score) >= 0.18 and abs(eye_asymmetry) >= 0.12:
+                eye_side = "left" if eye_asymmetry > 0 else "right"
+                bucket = f"rolled_profile_{eye_side}" if hard_roll else f"profile_{eye_side}"
+                features["runtime_bucket_severity"] = "profile"
+                features["runtime_bucket_severity_source"] = "eye_visibility_asymmetry"
+                features["runtime_bucket_side"] = eye_side
+                features["runtime_bucket_side_source"] = "eye_visibility_asymmetry"
+                return RuntimeBucketResult(bucket=bucket, features=features)
+        except Exception as err:  # noqa: BLE001
+            logger.debug("image-aware runtime bucket eye scoring failed: %s", err)
+
+    if yaw_severity == "profile" and hard_roll:
+        return RuntimeBucketResult(bucket=f"rolled_profile_{yaw_side}", features=features)
+    if yaw_severity == "large_yaw" and hard_roll:
+        return RuntimeBucketResult(bucket=f"rolled_large_yaw_{yaw_side}", features=features)
+    if yaw_severity == "profile":
+        return RuntimeBucketResult(bucket=f"profile_{yaw_side}", features=features)
+    if yaw_severity == "large_yaw":
+        return RuntimeBucketResult(bucket=f"large_yaw_{yaw_side}", features=features)
+
+    if abs_roll >= max(hard_roll_degrees * 1.8, 55.0):
+        return RuntimeBucketResult(bucket="extreme_roll", features=features)
+    if abs_roll >= hard_roll_degrees:
+        return RuntimeBucketResult(bucket="large_roll", features=features)
+
+    if yaw_severity == "frontal" and abs_roll <= max(hard_roll_degrees * 0.5, 12.0):
+        return RuntimeBucketResult(bucket="frontal", features=features)
+    return RuntimeBucketResult(bucket="intermediate", features=features)
+
+
 def resolve_runtime(
     predictions: T.Sequence[ModelPrediction],
     config: RuntimeResolverConfig,
     *,
     detector_bbox: T.Sequence[float] | None = None,
+    image_crop: np.ndarray | None = None,
+    crop_to_frame_matrix: np.ndarray | None = None,
 ) -> RuntimeResolverResult:
     """Resolve one face using v7 runtime candidate priority and vetoes."""
     if config.policy != "roll_aware_veto":
@@ -613,11 +976,19 @@ def resolve_runtime(
     yaw_estimate = _circular_median(
         [metric.yaw_degrees for metric in metrics.values() if metric.yaw_degrees is not None]
     )
-    bucket = hard_slice_label(
-        yaw_estimate,
-        roll_deg=roll_estimate,
-        thresholds=HardSliceThresholds(roll_degrees=config.hard_roll_degrees),
+    max_disagreement_px = _max_landmark_consensus_px(candidates)
+    runtime_bucket = infer_runtime_bucket(
+        image_crop=image_crop,
+        crop_to_frame_matrix=crop_to_frame_matrix,
+        detector_bbox=detector_bbox,
+        candidates=candidates,
+        metrics=metrics,
+        yaw_estimate=yaw_estimate,
+        roll_estimate=roll_estimate,
+        max_disagreement_px=max_disagreement_px,
+        hard_roll_degrees=config.hard_roll_degrees,
     )
+    bucket = runtime_bucket.bucket
 
     for name, metric in metrics.items():
         metric.geometry_veto_reasons = _shape_reasons(bucket, name, metric)
@@ -633,7 +1004,6 @@ def resolve_runtime(
     geometry_vetoed = {name for name, metric in metrics.items() if metric.geometry_veto_reasons}
     vetoed = roll_vetoed | geometry_vetoed
     survivors = available - vetoed
-    max_disagreement_px = _max_landmark_consensus_px(candidates)
     hard_bucket = bucket not in {"frontal", "intermediate", "no_pose"}
     risk_route = (
         "high_risk"
@@ -653,7 +1023,10 @@ def resolve_runtime(
     by_name = {candidate.name: candidate for candidate in candidates}
     metadata: dict[str, T.Any] = {
         "selected_candidate": selected,
+        "runtime_bucket": bucket,
         "bucket": bucket,
+        "runtime_bucket_features": runtime_bucket.features,
+        **runtime_bucket.features,
         "candidate_priority": priority,
         "vetoed": sorted(vetoed & available),
         "veto_reasons": {
@@ -701,6 +1074,8 @@ __all__ = [
     "RuntimeResolverConfig",
     "RuntimeResolverError",
     "RuntimeResolverResult",
+    "RuntimeBucketResult",
+    "RUNTIME_BUCKETS",
     "build_candidates",
     "resolve_runtime",
 ]
