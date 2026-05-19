@@ -722,28 +722,26 @@ def _runtime_side_from_signals(
 ) -> tuple[str, str]:
     """Return image-facing side and the signal used to choose it.
 
-    Bucket suffixes use image-facing direction:
-    ``*_left`` means the front/nose of the face points toward image-left, and
-    ``*_right`` means it points toward image-right. For completed 68-point
-    profile landmarks, the nose/front often sits on the opposite side of the
-    detector box from the visible facial mass, so positive nose offset maps to
-    image-left. Pose yaw from ``alignment_summary`` is less reliable for side
-    profiles, but positive pose yaw generally maps to image-left.
+    Bucket suffixes use image coordinates: ``*_left`` means the front/nose of
+    the face points toward image-left, and ``*_right`` means it points toward
+    image-right. Image x increases left-to-right, so negative x-derived signals
+    map to image-left. Pose yaw follows the same convention for runtime bucket
+    selection.
     """
     if abs(nose_offset_from_face_center) >= NOSE_SIDE_THRESHOLD:
-        return ("left" if nose_offset_from_face_center > 0 else "right"), "nose_offset"
+        return ("left" if nose_offset_from_face_center < 0 else "right"), "nose_offset"
     if abs(mouth_nose_jaw_asymmetry) >= JAW_SIDE_THRESHOLD:
-        return ("left" if mouth_nose_jaw_asymmetry < 0 else "right"), "jaw_asymmetry"
+        return ("left" if mouth_nose_jaw_asymmetry > 0 else "right"), "jaw_asymmetry"
     if abs(image_geometry_yaw_signal) >= IMAGE_YAW_SIDE_THRESHOLD:
-        return ("left" if image_geometry_yaw_signal > 0 else "right"), "image_geometry"
+        return ("left" if image_geometry_yaw_signal < 0 else "right"), "image_geometry"
     if (
         landmark_pose_yaw is not None
         and abs(float(landmark_pose_yaw)) >= LANDMARK_YAW_SIDE_THRESHOLD
     ):
-        return ("left" if float(landmark_pose_yaw) > 0 else "right"), "landmark_pose_yaw"
+        return ("left" if float(landmark_pose_yaw) < 0 else "right"), "landmark_pose_yaw"
     if abs(dominant_candidate_yaw) >= LANDMARK_YAW_SIDE_THRESHOLD:
-        return ("left" if dominant_candidate_yaw > 0 else "right"), "dominant_candidate_yaw"
-    return ("left" if image_geometry_yaw_signal > 0 else "right"), "weak_image_geometry"
+        return ("left" if dominant_candidate_yaw < 0 else "right"), "dominant_candidate_yaw"
+    return ("left" if image_geometry_yaw_signal < 0 else "right"), "weak_image_geometry"
 
 
 def _normalized_max_disagreement(
@@ -919,7 +917,7 @@ def infer_runtime_bucket(
                 }
             )
             if max(left_eye_score, right_eye_score) >= 0.18 and abs(eye_asymmetry) >= 0.12:
-                eye_side = "left" if eye_asymmetry > 0 else "right"
+                eye_side = "left" if eye_asymmetry < 0 else "right"
                 bucket = f"rolled_profile_{eye_side}" if hard_roll else f"profile_{eye_side}"
                 features["runtime_bucket_severity"] = "profile"
                 features["runtime_bucket_severity_source"] = "eye_visibility_asymmetry"
