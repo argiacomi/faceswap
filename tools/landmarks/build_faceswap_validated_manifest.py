@@ -22,12 +22,14 @@ if str(_REPO_ROOT) not in sys.path:
 
 from lib.align.alignments import Alignments
 from lib.align.objects import FileAlignments
+from lib.logger import get_loglevel
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_DATASET = "production_validated"
 DEFAULT_SOURCE = "faceswap_extraction_plugin_reviewed"
 DEFAULT_LABEL_QUALITY = "human_validated"
+LOG_LEVELS = ("INFO", "VERBOSE", "DEBUG", "TRACE", "WARNING", "ERROR")
 VALID_REVIEW_STATUSES = frozenset(("accepted", "rejected", "needs_review"))
 VALID_ISSUE_TYPES = frozenset(
     (
@@ -90,6 +92,7 @@ def _resolve_image_path(images_dir: Path, frame_name: str) -> Path:
 def _load_review_labels(path: Path | None) -> dict[str, ReviewLabel]:
     """Load optional review labels keyed by sample id."""
     if path is None or not path.is_file():
+        logger.debug("No review labels file selected")
         return {}
     labels: dict[str, ReviewLabel] = {}
     with path.open("r", encoding="utf-8", newline="") as handle:
@@ -122,6 +125,14 @@ def _load_review_labels(path: Path | None) -> dict[str, ReviewLabel]:
                 issue_type=issue_type,
                 notes=str(row.get("notes", "")).strip(),
             )
+            logger.trace(  # type:ignore[attr-defined]
+                "Loaded review label: sample_id=%s face_index=%d status=%s issue_type=%s",
+                sample_id,
+                face_index,
+                status,
+                issue_type or "<none>",
+            )
+    logger.info("Loaded %d review labels from %s", len(labels), path)
     return labels
 
 
@@ -164,6 +175,7 @@ def _write_landmarks(output_dir: Path, sample_id: str, face: FileAlignments) -> 
     landmarks_dir.mkdir(parents=True, exist_ok=True)
     landmarks_path = landmarks_dir / f"{sample_id}.npy"
     np.save(str(landmarks_path), np.asarray(face.landmarks_xy, dtype="float32"))
+    logger.trace("Wrote landmarks for %s to %s", sample_id, landmarks_path)  # type:ignore[attr-defined]
     return landmarks_path.relative_to(output_dir).as_posix()
 
 
@@ -204,6 +216,41 @@ def _metadata_summary(
     return _json_safe(metadata)
 
 
+def _log_audit_summary(audit: dict[str, T.Any]) -> None:
+    """Log a compact manifest build summary."""
+    skipped = T.cast(Counter[str], audit["skipped"])
+    review_status_counts = T.cast(Counter[str], audit["review_status_counts"])
+    condition_counts = T.cast(Counter[str], audit["condition_counts"])
+    missing_images = T.cast(list[str], audit["missing_images"])
+    missing_ensemble = T.cast(list[str], audit["missing_landmark_ensemble_metadata"])
+
+    logger.info(
+        "Manifest build summary: frames=%d faces=%d samples=%d skipped=%d",
+        audit["frames_total"],
+        audit["faces_total"],
+        audit["samples_written"],
+        sum(skipped.values()),
+    )
+    if review_status_counts:
+        logger.info("Review status counts: %s", dict(sorted(review_status_counts.items())))
+    if condition_counts:
+        logger.info("Condition counts: %s", dict(sorted(condition_counts.items())))
+    if skipped:
+        logger.info("Skip breakdown: %s", dict(sorted(skipped.items())))
+    if missing_images:
+        logger.debug(
+            "Missing images: count=%d first=%s",
+            len(missing_images),
+            missing_images[:10],
+        )
+    if missing_ensemble:
+        logger.debug(
+            "Missing landmark ensemble metadata: count=%d first=%s",
+            len(missing_ensemble),
+            missing_ensemble[:10],
+        )
+
+
 def build_manifest(
     images_dir: Path,
     alignments_path: Path,
@@ -222,11 +269,32 @@ def build_manifest(
     if not alignments_path.is_file():
         raise FileNotFoundError(f"alignments file not found: {alignments_path}")
 
+    logger.info(
+        "Building manifest: dataset=%s images=%s alignments=%s output=%s",
+        dataset_name,
+        images_dir,
+        alignments_path,
+        output_dir,
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
     default_review_labels = output_dir / "review_labels.csv"
     labels_path = review_labels_path or (default_review_labels if default_review_labels.is_file() else None)
+    logger.debug(
+        "Resolved paths: images=%s alignments=%s output=%s review_labels=%s",
+        images_dir.resolve(),
+        alignments_path.resolve(),
+        output_dir.resolve(),
+        labels_path.resolve() if labels_path else None,
+    )
     review_labels = _load_review_labels(labels_path)
+    if labels_path is None:
+        logger.info("No review labels file found; unlabeled samples default to accepted")
     alignments = Alignments(str(alignments_path.parent), alignments_path.name)
+    logger.info(
+        "Loaded alignments: frames=%d faces=%d",
+        alignments.frames_count,
+        alignments.faces_count,
+    )
 
     samples: list[dict[str, T.Any]] = []
     resolver_records: list[dict[str, T.Any]] = []
@@ -253,8 +321,17 @@ def build_manifest(
 
     used_ids: Counter[str] = Counter()
     for frame_name, entry in sorted(alignments.data.items()):
+        logger.trace(  # type:ignore[attr-defined]
+            "Processing frame %s with %d faces", frame_name, len(entry.faces)
+        )
         image_path = _resolve_image_path(images_dir, frame_name)
         if not image_path.is_file():
+            logger.debug(
+                "Skipping frame %s: resolved image missing at %s (faces=%d)",
+                frame_name,
+                image_path,
+                len(entry.faces),
+            )
             audit["missing_images"].append(str(image_path))
             audit["skipped"]["missing_image"] += len(entry.faces)
             continue
@@ -263,18 +340,46 @@ def build_manifest(
             sample_id = _safe_sample_id(frame_name, face_index)
             used_ids[sample_id] += 1
             if used_ids[sample_id] > 1:
+                logger.debug(
+                    "Sample id collision for %s; using suffix %d",
+                    sample_id,
+                    used_ids[sample_id],
+                )
                 sample_id = f"{sample_id}_{used_ids[sample_id]}"
 
             review = _review_for_sample(sample_id, image_path, face_index, review_labels)
+            logger.trace(  # type:ignore[attr-defined]
+                "Evaluating sample %s: frame=%s face_index=%d image=%s review_status=%s",
+                sample_id,
+                frame_name,
+                face_index,
+                image_path,
+                review.review_status,
+            )
             audit["review_status_counts"][review.review_status] += 1
             if review.issue_type:
                 audit["issue_type_counts"][review.issue_type] += 1
             if only_reviewed != "all" and review.review_status != only_reviewed:
+                logger.debug(
+                    "Skipping sample %s: review_status=%s required=%s",
+                    sample_id,
+                    review.review_status,
+                    only_reviewed,
+                )
                 audit["skipped"][f"review_status:{review.review_status}"] += 1
                 continue
 
             ensemble_metadata = face.metadata.get("landmark_ensemble")
+            logger.trace(  # type:ignore[attr-defined]
+                "Sample %s landmark_ensemble metadata keys: %s",
+                sample_id,
+                sorted(ensemble_metadata) if isinstance(ensemble_metadata, dict) else "<missing>",
+            )
             if require_landmark_ensemble_metadata and not isinstance(ensemble_metadata, dict):
+                logger.debug(
+                    "Skipping sample %s: missing landmark_ensemble metadata",
+                    sample_id,
+                )
                 audit["missing_landmark_ensemble_metadata"].append(sample_id)
                 audit["skipped"]["missing_landmark_ensemble_metadata"] += 1
                 continue
@@ -299,6 +404,13 @@ def build_manifest(
                 "metadata": metadata,
             }
             samples.append(sample)
+            logger.trace(  # type:ignore[attr-defined]
+                "Accepted sample %s: condition=%s bbox=%s normalizer=%.6f",
+                sample_id,
+                condition,
+                sample["face_bbox"],
+                sample["normalizer"],
+            )
             resolver_records.append(
                 {
                     "sample_id": sample_id,
@@ -311,6 +423,7 @@ def build_manifest(
             )
 
     audit["samples_written"] = len(samples)
+    _log_audit_summary(audit)
     manifest_payload = {
         "dataset": dataset_name,
         "metadata": {
@@ -334,6 +447,12 @@ def build_manifest(
     (output_dir / "audit.json").write_text(
         json.dumps(serializable_audit, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
+    )
+    logger.debug(
+        "Wrote manifest artifacts: manifest=%s resolver=%s audit=%s",
+        output_dir / "manifest.json",
+        output_dir / "resolver_metadata.jsonl",
+        output_dir / "audit.json",
     )
     return serializable_audit
 
@@ -363,13 +482,22 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         choices=sorted(VALID_REVIEW_STATUSES | {"all"}),
         help="Review status to export, or 'all'.",
     )
+    parser.add_argument(
+        "--log-level",
+        default="INFO",
+        choices=LOG_LEVELS,
+        help="Logging verbosity.",
+    )
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point."""
     args = _parse_args(argv)
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+    logging.basicConfig(
+        level=get_loglevel(args.log_level),
+        format="%(levelname)s:%(name)s:%(message)s",
+    )
     audit = build_manifest(
         args.images,
         args.alignments,
