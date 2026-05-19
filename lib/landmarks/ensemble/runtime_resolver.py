@@ -421,18 +421,9 @@ def _shape_reasons(bucket: str, name: str, metric: CandidateMetrics) -> tuple[st
         > DEFAULT_MAX_POINTS_OUTSIDE_EXPANDED_BBOX_FRACTION
     ):
         reasons.append("too_many_points_outside_expanded_bbox")
-    if metric.eye_mouth_order_valid_after_deroll is False:
-        reasons.append("eye_mouth_order_invalid_after_deroll")
-    if (
-        metric.roi_center_consensus_distance is not None
-        and metric.roi_center_consensus_distance > DEFAULT_MAX_ROI_CENTER_CONSENSUS_DISTANCE
-    ):
-        reasons.append("roi_center_consensus_distance_high")
-    if (
-        metric.landmark_consensus_distance is not None
-        and metric.landmark_consensus_distance > DEFAULT_MAX_LANDMARK_CONSENSUS_DISTANCE
-    ):
-        reasons.append("landmark_consensus_distance_high")
+    # Keep eye/mouth ordering and consensus-distance diagnostics in metadata only.
+    # Offline v5 showed these are unsafe as hard vetoes: when a bad majority forms
+    # the consensus, the good single-model candidate becomes the apparent outlier.
     if (
         bucket == "rolled_large_yaw_left"
         and name == "spiga"
@@ -583,7 +574,7 @@ def _roll_vetoes(
 def _metrics_payload(
     metrics: T.Mapping[str, CandidateMetrics],
     attr: str,
-) -> dict[str, float | None]:
+) -> dict[str, float | bool | None]:
     return {name: getattr(metric, attr) for name, metric in metrics.items()}
 
 
@@ -674,6 +665,12 @@ def resolve_runtime(
         "yaw_estimate": yaw_estimate,
         "cloud_area_ratio": _metrics_payload(metrics, "cloud_area_ratio"),
         "hull_area_ratio": _metrics_payload(metrics, "hull_area_ratio"),
+        "points_outside_expanded_bbox_fraction": _metrics_payload(
+            metrics, "points_outside_expanded_bbox_fraction"
+        ),
+        "eye_mouth_order_valid_after_deroll": _metrics_payload(
+            metrics, "eye_mouth_order_valid_after_deroll"
+        ),
         "landmark_consensus_distance": _metrics_payload(metrics, "landmark_consensus_distance"),
         "roi_center_consensus_distance": _metrics_payload(
             metrics, "roi_center_consensus_distance"
