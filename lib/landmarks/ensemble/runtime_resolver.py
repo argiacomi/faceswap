@@ -50,6 +50,10 @@ PROFILE_MAX_DISAGREEMENT_BBOX_FRACTION_THRESHOLD: float = 0.28
 PROFILE_SIDE_STRUCTURE_THRESHOLD: float = 0.22
 PROFILE_NOSE_OFFSET_THRESHOLD: float = 0.12
 PROFILE_LANDMARK_YAW_WEAK_THRESHOLD: float = 20.0
+SIDE_YAW_TRUSTED_MODELS: tuple[str, ...] = ("hrnet", "spiga", "orformer")
+SIDE_YAW_PRIMARY_MODEL: str = "hrnet"
+SIDE_YAW_MIN_ABS_DEGREES: float = 20.0
+SIDE_YAW_FULL_CONFIDENCE_DEGREES: float = 75.0
 
 DEFAULT_PRIORITY: tuple[str, ...] = (
     "static_weighted_downweight",
@@ -207,7 +211,7 @@ class RuntimeBucketResult:
     """Image-aware runtime bucket plus diagnostic features."""
 
     bucket: str
-    features: dict[str, float | str | None]
+    features: dict[str, T.Any]
 
 
 def _safe_alignment_summary(landmarks: np.ndarray) -> AlignmentSummary | None:
@@ -712,6 +716,65 @@ def _dominant_candidate_yaw(metrics: T.Mapping[str, CandidateMetrics]) -> float:
     return max(yaws, key=abs)
 
 
+def _side_from_model_yaw(yaw_degrees: float) -> str:
+    """Map raw single-model yaw to image-facing side."""
+    return "left" if yaw_degrees > 0.0 else "right"
+
+
+def _side_yaw_confidence(yaw_degrees: float) -> float:
+    """Normalize absolute yaw into a 0..1 side confidence score."""
+    return float(min(abs(yaw_degrees) / SIDE_YAW_FULL_CONFIDENCE_DEGREES, 1.0))
+
+
+def _runtime_side_from_single_model_yaws(
+    metrics: T.Mapping[str, CandidateMetrics],
+) -> tuple[str | None, str, float, dict[str, dict[str, T.Any]]]:
+    """Infer side from trusted single-model yaw only.
+
+    Fused candidates and consensus-derived geometry are deliberately excluded:
+    their side signs can flip when the 68-point profile topology is completed or
+    hallucinated. HRNet is treated as the primary side source when available;
+    the other single-model yaws are only a fallback when HRNet is missing or too
+    weak.
+    """
+    votes: dict[str, dict[str, T.Any]] = {}
+    for model in SIDE_YAW_TRUSTED_MODELS:
+        metric = metrics.get(model)
+        yaw = None if metric is None else metric.yaw_degrees
+        if yaw is None or not math.isfinite(float(yaw)):
+            continue
+        yaw_value = float(yaw)
+        usable = abs(yaw_value) >= SIDE_YAW_MIN_ABS_DEGREES
+        votes[model] = {
+            "yaw": yaw_value,
+            "side": _side_from_model_yaw(yaw_value),
+            "usable": usable,
+            "confidence": _side_yaw_confidence(yaw_value) if usable else 0.0,
+        }
+
+    primary = votes.get(SIDE_YAW_PRIMARY_MODEL)
+    if primary is not None and bool(primary["usable"]):
+        return (
+            T.cast(str, primary["side"]),
+            f"{SIDE_YAW_PRIMARY_MODEL}_yaw",
+            float(primary["confidence"]),
+            votes,
+        )
+
+    usable_votes = [vote for vote in votes.values() if bool(vote["usable"])]
+    if usable_votes:
+        score = sum(
+            float(vote["confidence"]) * (1.0 if vote["side"] == "left" else -1.0)
+            for vote in usable_votes
+        )
+        total = sum(float(vote["confidence"]) for vote in usable_votes)
+        side = "left" if score >= 0.0 else "right"
+        confidence = 0.0 if total <= 0.0 else abs(score) / total
+        return side, "single_model_yaw_vote", float(confidence), votes
+
+    return None, "single_model_yaw_unavailable", 0.0, votes
+
+
 def _runtime_side_from_signals(
     *,
     image_geometry_yaw_signal: float,
@@ -720,13 +783,11 @@ def _runtime_side_from_signals(
     landmark_pose_yaw: float | None,
     dominant_candidate_yaw: float,
 ) -> tuple[str, str]:
-    """Return image-facing side and the signal used to choose it.
+    """Return landmark-geometry side for diagnostics and fallback only.
 
-    Bucket suffixes use image coordinates: ``*_left`` means the front/nose of
-    the face points toward image-left, and ``*_right`` means it points toward
-    image-right. Image x increases left-to-right, so negative x-derived signals
-    map to image-left. Pose yaw follows the same convention for runtime bucket
-    selection.
+    This signal is not trusted for normal profile/large-yaw side routing because
+    it is derived from consensus/completed 68-point geometry rather than a raw
+    image-native side source.
     """
     if abs(nose_offset_from_face_center) >= NOSE_SIDE_THRESHOLD:
         return ("left" if nose_offset_from_face_center < 0 else "right"), "nose_offset"
@@ -867,13 +928,22 @@ def infer_runtime_bucket(
         detector_bbox,
         consensus,
     )
-    yaw_side, yaw_side_source = _runtime_side_from_signals(
+    geometry_side, geometry_side_source = _runtime_side_from_signals(
         image_geometry_yaw_signal=yaw_signal,
         nose_offset_from_face_center=nose_offset,
         mouth_nose_jaw_asymmetry=jaw_asymmetry,
         landmark_pose_yaw=yaw_estimate,
         dominant_candidate_yaw=dominant_candidate_yaw,
     )
+    trusted_side, trusted_side_source, side_confidence, side_votes = _runtime_side_from_single_model_yaws(metrics)
+    if trusted_side is None:
+        yaw_side = geometry_side
+        yaw_side_source = f"landmark_geometry_fallback:{geometry_side_source}"
+        side_confidence = 0.0
+    else:
+        yaw_side = trusted_side
+        yaw_side_source = trusted_side_source
+    side_conflict = bool(geometry_side != yaw_side)
     yaw_severity, yaw_severity_source = _runtime_yaw_severity(
         image_geometry_yaw_signal=yaw_signal,
         landmark_pose_yaw=yaw_estimate,
@@ -884,7 +954,7 @@ def infer_runtime_bucket(
     )
     abs_roll = 0.0 if roll_estimate is None else abs(float(roll_estimate))
     hard_roll = abs_roll >= hard_roll_degrees
-    features: dict[str, float | str | None] = {
+    features: dict[str, T.Any] = {
         "left_eye_visual_score": None,
         "right_eye_visual_score": None,
         "eye_visibility_asymmetry": None,
@@ -899,6 +969,11 @@ def infer_runtime_bucket(
         "dominant_candidate_yaw": dominant_candidate_yaw,
         "runtime_bucket_side": yaw_side,
         "runtime_bucket_side_source": yaw_side_source,
+        "runtime_bucket_side_confidence": side_confidence,
+        "runtime_bucket_side_votes": side_votes,
+        "runtime_bucket_side_conflict": side_conflict,
+        "runtime_bucket_geometry_side": geometry_side,
+        "runtime_bucket_geometry_side_source": geometry_side_source,
         "runtime_bucket_severity": yaw_severity,
         "runtime_bucket_severity_source": yaw_severity_source,
     }
@@ -918,12 +993,8 @@ def infer_runtime_bucket(
             )
             if max(left_eye_score, right_eye_score) >= 0.18 and abs(eye_asymmetry) >= 0.12:
                 eye_side = "left" if eye_asymmetry < 0 else "right"
-                bucket = f"rolled_profile_{eye_side}" if hard_roll else f"profile_{eye_side}"
-                features["runtime_bucket_severity"] = "profile"
-                features["runtime_bucket_severity_source"] = "eye_visibility_asymmetry"
-                features["runtime_bucket_side"] = eye_side
-                features["runtime_bucket_side_source"] = "eye_visibility_asymmetry"
-                return RuntimeBucketResult(bucket=bucket, features=features)
+                features["runtime_bucket_eye_side"] = eye_side
+                features["runtime_bucket_eye_side_conflict"] = bool(eye_side != yaw_side)
         except Exception as err:  # noqa: BLE001
             logger.debug("image-aware runtime bucket eye scoring failed: %s", err)
 
