@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""Run the landmark resolver promotion pipeline end to end.
-
-This wrapper delegates heavy work to the existing landmark tools. It owns stage
-ordering, stage contracts, path conventions, resume/dry-run semantics, final
-summaries, artifact export, and config update preview/write.
-"""
+"""Run the landmark resolver promotion pipeline end to end."""
 
 from __future__ import annotations
 
@@ -45,9 +40,11 @@ STAGES: tuple[str, ...] = (
     "artifact_export",
     "config_update",
 )
-
 DEFAULT_MODELS = "hrnet,spiga,orformer"
 DEFAULT_CANDIDATES = "hrnet,spiga,orformer,plain_average,static_weighted,static_weighted_downweight,static_weighted_hard_drop,weighted_median"
+DEFAULT_CONFIG_SECTION = "align.ensemble"
+CONFIG_PREVIEW_FILENAME = "config_update_preview.json"
+CONFIG_PATCH_FILENAME = "config_update_patch.ini"
 
 
 class PipelineContractError(RuntimeError):
@@ -56,8 +53,6 @@ class PipelineContractError(RuntimeError):
 
 @dataclass(frozen=True)
 class PipelinePaths:
-    """Resolved inputs and outputs for one wrapper run."""
-
     run_root: Path
     production_root: Path
     output_root: Path
@@ -93,15 +88,15 @@ class PipelinePaths:
         object.__setattr__(self, "production_manifest", _first_existing(self.production_root / "manifest.json", self.production_root / "dataset" / "manifest.json"))
         object.__setattr__(self, "production_cache", _first_existing(self.production_root / "cache", self.production_root / "prediction_cache"))
         object.__setattr__(self, "candidate_dir", self.output_root / "candidate_search")
-        object.__setattr__(self, "best_setup", self.output_root / "candidate_search" / "best_setup.json")
-        object.__setattr__(self, "best_weights", self.output_root / "candidate_search" / "best_weights.json")
+        object.__setattr__(self, "best_setup", self.candidate_dir / "best_setup.json")
+        object.__setattr__(self, "best_weights", self.candidate_dir / "best_weights.json")
         object.__setattr__(self, "hard_dir", self.output_root / "gt_hard_validation")
-        object.__setattr__(self, "hard_manifest", self.output_root / "gt_hard_validation" / "manifest.json")
+        object.__setattr__(self, "hard_manifest", self.hard_dir / "manifest.json")
         object.__setattr__(self, "frozen_gt_metadata", self.output_root / RESOLVER_METADATA_JSONL)
         object.__setattr__(self, "scorer_train_dir", self.output_root / "scorer_training")
-        object.__setattr__(self, "scorer_artifact", self.output_root / "scorer_training" / "runtime_resolver_scorer.json")
+        object.__setattr__(self, "scorer_artifact", self.scorer_train_dir / "runtime_resolver_scorer.json")
         object.__setattr__(self, "scorer_eval_dir", self.output_root / "scorer_evaluation")
-        object.__setattr__(self, "scorer_report", self.output_root / "scorer_evaluation" / SCORER_POLICY_REPORT_JSON)
+        object.__setattr__(self, "scorer_report", self.scorer_eval_dir / SCORER_POLICY_REPORT_JSON)
         object.__setattr__(self, "artifacts_dir", self.output_root / "artifacts")
         object.__setattr__(self, "summary_json", self.output_root / "pipeline_summary.json")
         object.__setattr__(self, "summary_md", self.output_root / "pipeline_summary.md")
@@ -109,8 +104,6 @@ class PipelinePaths:
 
 @dataclass(frozen=True)
 class StageContract:
-    """Declared contract for a pipeline stage."""
-
     name: str
     inputs: list[str]
     outputs: list[str]
@@ -119,20 +112,18 @@ class StageContract:
     success_criteria: list[str]
 
     def to_json(self) -> dict[str, T.Any]:
-        return {
-            "name": self.name,
-            "inputs": self.inputs,
-            "outputs": self.outputs,
-            "cache_behavior": self.cache_behavior,
-            "required_files": self.required_files,
-            "success_criteria": self.success_criteria,
-        }
+        return dict(
+            name=self.name,
+            inputs=self.inputs,
+            outputs=self.outputs,
+            cache_behavior=self.cache_behavior,
+            required_files=self.required_files,
+            success_criteria=self.success_criteria,
+        )
 
 
 @dataclass
 class StageResult:
-    """One executed, skipped, or planned pipeline stage."""
-
     name: str
     status: str
     duration_seconds: float = 0.0
@@ -154,9 +145,7 @@ def _first_existing(*paths: Path) -> Path:
 def _jsonable(value: T.Any) -> T.Any:
     if isinstance(value, Path):
         return str(value)
-    if isinstance(value, tuple):
-        return [_jsonable(item) for item in value]
-    if isinstance(value, list):
+    if isinstance(value, tuple | list):
         return [_jsonable(item) for item in value]
     if isinstance(value, dict):
         return {str(key): _jsonable(item) for key, item in value.items()}
@@ -205,18 +194,15 @@ def _command_candidate_search(args: argparse.Namespace, paths: PipelinePaths) ->
 def _command_hard_validation(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
     source_manifest = args.hard_source_manifest or paths.run_manifest
     weights = paths.best_weights if paths.best_weights.exists() else paths.run_static_weights
-    argv = [args.python_executable, _script("build_hard_alignment_validation.py"), "--manifest", str(source_manifest), "--output-dir", str(paths.hard_dir), "--cache-dir", str(paths.run_cache), "--models", args.models, "--weights", str(weights)]
-    return _append_extra(argv, args.hard_validation_arg)
+    return _append_extra([args.python_executable, _script("build_hard_alignment_validation.py"), "--manifest", str(source_manifest), "--output-dir", str(paths.hard_dir), "--cache-dir", str(paths.run_cache), "--models", args.models, "--weights", str(weights)], args.hard_validation_arg)
 
 
 def _command_scorer_training(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
-    argv = [args.python_executable, _script("train_runtime_resolver_scorer.py"), "--gt-manifest", str(paths.hard_manifest), "--gt-cache-dir", str(paths.run_cache), "--production-manifest", str(paths.production_manifest), "--production-cache-dir", str(paths.production_cache), "--weights", str(paths.best_weights), "--candidates", args.candidates, "--output-dir", str(paths.scorer_train_dir), "--gt-hard-resolver-metadata", str(paths.frozen_gt_metadata)]
-    return _append_extra(argv, args.scorer_train_arg)
+    return _append_extra([args.python_executable, _script("train_runtime_resolver_scorer.py"), "--gt-manifest", str(paths.hard_manifest), "--gt-cache-dir", str(paths.run_cache), "--production-manifest", str(paths.production_manifest), "--production-cache-dir", str(paths.production_cache), "--weights", str(paths.best_weights), "--candidates", args.candidates, "--output-dir", str(paths.scorer_train_dir), "--gt-hard-resolver-metadata", str(paths.frozen_gt_metadata)], args.scorer_train_arg)
 
 
 def _command_scorer_eval(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
-    argv = [args.python_executable, _script("evaluate_runtime_resolver_scorer.py"), "--gt-manifest", str(paths.hard_manifest), "--gt-cache-dir", str(paths.run_cache), "--production-manifest", str(paths.production_manifest), "--production-cache-dir", str(paths.production_cache), "--weights", str(paths.best_weights), "--scorer", str(paths.scorer_artifact), "--candidates", args.candidates, "--output-dir", str(paths.scorer_eval_dir), "--promotion-scope", args.promotion_scope, "--gt-hard-resolver-metadata", str(paths.frozen_gt_metadata)]
-    return _append_extra(argv, args.scorer_eval_arg)
+    return _append_extra([args.python_executable, _script("evaluate_runtime_resolver_scorer.py"), "--gt-manifest", str(paths.hard_manifest), "--gt-cache-dir", str(paths.run_cache), "--production-manifest", str(paths.production_manifest), "--production-cache-dir", str(paths.production_cache), "--weights", str(paths.best_weights), "--scorer", str(paths.scorer_artifact), "--candidates", args.candidates, "--output-dir", str(paths.scorer_eval_dir), "--promotion-scope", args.promotion_scope, "--gt-hard-resolver-metadata", str(paths.frozen_gt_metadata)], args.scorer_eval_arg)
 
 
 def _outputs_for(stage: str, paths: PipelinePaths) -> list[Path]:
@@ -229,7 +215,7 @@ def _outputs_for(stage: str, paths: PipelinePaths) -> list[Path]:
         "scorer_evaluation": [paths.scorer_report],
         "production_promotion_check": [paths.scorer_report],
         "artifact_export": [paths.artifacts_dir / "artifacts_manifest.json"],
-        "config_update": [paths.output_root / "config_update_preview.json"],
+        "config_update": [paths.output_root / CONFIG_PREVIEW_FILENAME, paths.output_root / CONFIG_PATCH_FILENAME],
     }[stage]
 
 
@@ -258,7 +244,7 @@ def _contract_for(stage: str, args: argparse.Namespace, paths: PipelinePaths) ->
         "scorer_evaluation": "writes scorer_evaluation reports; --resume skips when scorer_policy_report.json exists",
         "production_promotion_check": "reads scorer report only; no recompute; requires promotion_status/status pass",
         "artifact_export": "copies final artifacts into artifacts/; --resume skips when artifacts_manifest.json exists",
-        "config_update": "always writes config_update_preview.json; writes config only with --write-config",
+        "config_update": "writes deterministic config_update_preview.json and config_update_patch.ini; writes config only with --write-config after promotion passes",
     }[stage]
     success = {
         "static_pipeline": ["run summary, manifest, cache, splits, and static weights exist"],
@@ -269,16 +255,10 @@ def _contract_for(stage: str, args: argparse.Namespace, paths: PipelinePaths) ->
         "scorer_evaluation": ["scorer_policy_report.json exists"],
         "production_promotion_check": ["scorer report promotion_status/status is pass"],
         "artifact_export": ["artifacts_manifest.json exists"],
-        "config_update": ["config_update_preview.json exists", "when --write-config is set, target config file is updated"],
+        "config_update": ["config_update_preview.json exists", "config_update_patch.ini exists", "referenced artifacts exist", "when --write-config is set, target config file is updated"],
     }[stage]
-    return StageContract(
-        name=stage,
-        inputs=[str(path) for path in _required_inputs_for(stage, args, paths) if path is not None],
-        outputs=[str(path) for path in _outputs_for(stage, paths)],
-        cache_behavior=cache_behavior,
-        required_files=[str(path) for path in _required_inputs_for(stage, args, paths) if path is not None],
-        success_criteria=success,
-    )
+    required = [str(path) for path in _required_inputs_for(stage, args, paths) if path is not None]
+    return StageContract(stage, required, [str(path) for path in _outputs_for(stage, paths)], cache_behavior, required, success)
 
 
 def _stage_complete(stage: str, paths: PipelinePaths) -> bool:
@@ -360,39 +340,83 @@ def _export_artifacts(paths: PipelinePaths) -> dict[str, str]:
     return manifest
 
 
-def _config_updates(paths: PipelinePaths) -> dict[str, str]:
+def _config_updates(args: argparse.Namespace, paths: PipelinePaths) -> dict[str, str]:
+    models = ",".join(item.strip() for item in str(args.models).split(",") if item.strip())
     return {
-        "setup_path": str(paths.best_setup),
-        "weights_path": str(paths.best_weights),
-        "setup_mode": "strict",
+        "coordinate_space": "frame",
+        "crop_scale": "1.6",
+        "crop_to_frame": "true",
+        "debug_metadata": "true",
+        "debug_metadata_format": "jsonl",
+        "enabled": "true",
+        "fallback_model": "orformer",
+        "fallback_strategy": "plain_average",
+        "hard_case_strategy": "static_weighted_downweight",
+        "hard_disagreement_px": "12.0",
+        "hard_roll_degrees": "30.0",
+        "min_models": "1",
+        "models": models or DEFAULT_MODELS,
+        "normalized_output": "true",
+        "outlier_threshold": "3.5",
+        "production_artifact_root": str(paths.artifacts_dir),
+        "production_scorer_path": str(paths.scorer_artifact),
+        "production_setup_path": str(paths.best_setup),
+        "production_weights_path": str(paths.best_weights),
+        "reject_outliers": "false",
         "resolver_policy": "learned_quality_v1",
         "resolver_scorer_path": str(paths.scorer_artifact),
-        "use_alignment_resolver": "true",
-        "hard_case_strategy": "static_weighted_downweight",
+        "roll_veto_degrees": "15.0",
         "secondary_hard_case_strategy": "static_weighted_hard_drop",
-        "fallback_model": "orformer",
+        "setup_mode": "strict",
+        "setup_path": str(paths.best_setup),
+        "strategy": "static_weighted_downweight",
         "strict": "true",
+        "use_alignment_resolver": "true",
+        "weights_path": str(paths.best_weights),
     }
 
 
+def _config_patch_text(section: str, updates: T.Mapping[str, str]) -> str:
+    lines = [f"[{section}]"]
+    lines.extend(f"{key} = {updates[key]}" for key in sorted(updates))
+    return "\n".join(lines) + "\n"
+
+
+def _validate_config_artifacts(paths: PipelinePaths) -> None:
+    for path, label in ((paths.best_setup, "promoted setup artifact"), (paths.best_weights, "promoted weights artifact"), (paths.scorer_artifact, "runtime resolver scorer artifact"), (paths.scorer_report, "scorer evaluation report")):
+        _require(path, label)
+
+
+def _write_config_patch_files(args: argparse.Namespace, paths: PipelinePaths, updates: T.Mapping[str, str]) -> str:
+    patch = _config_patch_text(args.config_section, updates)
+    write_json(paths.output_root / CONFIG_PREVIEW_FILENAME, {"config_path": str(args.config_path), "section": args.config_section, "write_config": bool(args.write_config), "updates": dict(updates), "patch": patch})
+    patch_path = paths.output_root / CONFIG_PATCH_FILENAME
+    patch_path.write_text(patch, encoding="utf-8")
+    if args.print_config_patch:
+        print(patch, end="")
+    return patch
+
+
 def _apply_config(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
-    updates = _config_updates(paths)
-    preview = {"config_path": str(args.config_path), "section": args.config_section, "write_config": bool(args.write_config), "updates": updates}
-    write_json(paths.output_root / "config_update_preview.json", preview)
+    updates = _config_updates(args, paths)
+    _validate_config_artifacts(paths)
+    _write_config_patch_files(args, paths, updates)
     if not args.write_config:
         return ["wrote config update preview only"]
+    _promotion_check(paths)
     config_path = Path(args.config_path)
     _require(config_path, "config file for --write-config")
     parser = configparser.ConfigParser()
     parser.optionxform = str
     parser.read(config_path, encoding="utf-8")
-    if not parser.has_section(args.config_section):
-        parser.add_section(args.config_section)
-    for key, value in updates.items():
-        parser.set(args.config_section, key, value)
+    if parser.has_section(args.config_section):
+        parser.remove_section(args.config_section)
+    parser.add_section(args.config_section)
+    for key in sorted(updates):
+        parser.set(args.config_section, key, updates[key])
     with config_path.open("w", encoding="utf-8") as handle:
         parser.write(handle)
-    return [f"updated {config_path} [{args.config_section}]"]
+    return [f"updated {config_path} [{args.config_section}] with finalized ensemble settings"]
 
 
 def _execute_stage(stage: str, args: argparse.Namespace, paths: PipelinePaths) -> StageResult:
@@ -400,7 +424,7 @@ def _execute_stage(stage: str, args: argparse.Namespace, paths: PipelinePaths) -
     outputs = contract.outputs
     if args.resume and _stage_complete(stage, paths):
         validated = _validate_stage_outputs(stage, paths)
-        return StageResult(name=stage, status="skipped", outputs=outputs, validated_outputs=validated, contract=contract.to_json(), notes=["resume: outputs already exist"])
+        return StageResult(stage, "skipped", outputs=outputs, validated_outputs=validated, contract=contract.to_json(), notes=["resume: outputs already exist"])
     command: list[str] = []
     started = time.time()
     try:
@@ -429,8 +453,7 @@ def _execute_stage(stage: str, args: argparse.Namespace, paths: PipelinePaths) -
             if args.dry_run:
                 return StageResult(stage, "planned", outputs=outputs, contract=contract.to_json(), notes=["would copy or reuse frozen GT-hard resolver metadata"])
             notes = _freeze_metadata(args, paths)
-            validated = _validate_stage_outputs(stage, paths)
-            return StageResult(stage, "ok", outputs=outputs, validated_outputs=validated, contract=contract.to_json(), notes=notes)
+            return StageResult(stage, "ok", outputs=outputs, validated_outputs=_validate_stage_outputs(stage, paths), contract=contract.to_json(), notes=notes)
         elif stage == "scorer_training":
             command = _command_scorer_training(args, paths)
             if args.dry_run:
@@ -445,40 +468,32 @@ def _execute_stage(stage: str, args: argparse.Namespace, paths: PipelinePaths) -
             if args.dry_run:
                 return StageResult(stage, "planned", outputs=outputs, contract=contract.to_json(), notes=["would require promotion_status=pass"])
             notes = _promotion_check(paths)
-            validated = _validate_stage_outputs(stage, paths)
-            return StageResult(stage, "ok", outputs=outputs, validated_outputs=validated, contract=contract.to_json(), notes=notes)
+            return StageResult(stage, "ok", outputs=outputs, validated_outputs=_validate_stage_outputs(stage, paths), contract=contract.to_json(), notes=notes)
         elif stage == "artifact_export":
             if args.dry_run:
                 return StageResult(stage, "planned", outputs=outputs, contract=contract.to_json(), notes=["would copy promoted artifacts"])
             exported = _export_artifacts(paths)
-            validated = _validate_stage_outputs(stage, paths)
-            return StageResult(stage, "ok", outputs=outputs, validated_outputs=validated, contract=contract.to_json(), notes=[f"exported {len(exported)} artifact(s)"])
+            return StageResult(stage, "ok", outputs=outputs, validated_outputs=_validate_stage_outputs(stage, paths), contract=contract.to_json(), notes=[f"exported {len(exported)} artifact(s)"])
         elif stage == "config_update":
             if args.dry_run:
                 return StageResult(stage, "planned", outputs=outputs, contract=contract.to_json(), notes=["would write config preview/update"])
             notes = _apply_config(args, paths)
-            validated = _validate_stage_outputs(stage, paths)
-            return StageResult(stage, "ok", outputs=outputs, validated_outputs=validated, contract=contract.to_json(), notes=notes)
-        else:  # pragma: no cover
+            return StageResult(stage, "ok", outputs=outputs, validated_outputs=_validate_stage_outputs(stage, paths), contract=contract.to_json(), notes=notes)
+        else:
             raise AssertionError(stage)
         validated = _validate_stage_outputs(stage, paths)
     except Exception as err:
-        return StageResult(name=stage, status="failed", command=command, outputs=outputs, contract=contract.to_json(), error=f"{type(err).__name__}: {err}", duration_seconds=round(time.time() - started, 3))
-    return StageResult(name=stage, status="ok", command=command, outputs=outputs, validated_outputs=validated, contract=contract.to_json(), duration_seconds=round(time.time() - started, 3))
+        return StageResult(stage, "failed", command=command, outputs=outputs, contract=contract.to_json(), error=f"{type(err).__name__}: {err}", duration_seconds=round(time.time() - started, 3))
+    return StageResult(stage, "ok", command=command, outputs=outputs, validated_outputs=validated, contract=contract.to_json(), duration_seconds=round(time.time() - started, 3))
 
 
 def _fallback_counts(report: T.Mapping[str, T.Any]) -> dict[str, int]:
-    return {
-        "fallback_count": int(report.get("fallback_count", 0) or 0),
-        "safe_fallback_count": int(report.get("safe_fallback_count", 0) or 0),
-        "hard_slice_fallback_count": int(report.get("hard_slice_fallback_count", 0) or 0),
-        "consensus_collapse_fallback_count": int(report.get("consensus_collapse_fallback_count", 0) or 0),
-    }
+    return {"fallback_count": int(report.get("fallback_count", 0) or 0), "safe_fallback_count": int(report.get("safe_fallback_count", 0) or 0), "hard_slice_fallback_count": int(report.get("hard_slice_fallback_count", 0) or 0), "consensus_collapse_fallback_count": int(report.get("consensus_collapse_fallback_count", 0) or 0)}
 
 
 def _summary_payload(args: argparse.Namespace, paths: PipelinePaths, results: T.Sequence[StageResult]) -> dict[str, T.Any]:
     report = _read_json(paths.scorer_report)
-    updates = _config_updates(paths)
+    updates = _config_updates(args, paths)
     promotion_status = str(report.get("promotion_status") or report.get("status") or "")
     return {
         "status": "fail" if any(row.status == "failed" for row in results) else ("planned" if args.dry_run else "pass"),
@@ -491,13 +506,11 @@ def _summary_payload(args: argparse.Namespace, paths: PipelinePaths, results: T.
         "scorer_path": str(paths.scorer_artifact),
         "eval_report_path": str(paths.scorer_report),
         "config_fields_changed": sorted(updates),
+        "config_patch_path": str(paths.output_root / CONFIG_PATCH_FILENAME),
         "run_root": str(paths.run_root),
         "production_root": str(paths.production_root),
         "output_root": str(paths.output_root),
-        "sources": {
-            SOURCE_GT_HARD: {"manifest": str(paths.hard_manifest), "cache": str(paths.run_cache), "resolver_metadata": str(paths.frozen_gt_metadata)},
-            SOURCE_PRODUCTION_VALIDATED: {"manifest": str(paths.production_manifest), "cache": str(paths.production_cache)},
-        },
+        "sources": {SOURCE_GT_HARD: {"manifest": str(paths.hard_manifest), "cache": str(paths.run_cache), "resolver_metadata": str(paths.frozen_gt_metadata)}, SOURCE_PRODUCTION_VALIDATED: {"manifest": str(paths.production_manifest), "cache": str(paths.production_cache)}},
         "artifacts": {"best_setup": str(paths.best_setup), "best_weights": str(paths.best_weights), "runtime_resolver_scorer": str(paths.scorer_artifact), "scorer_policy_report": str(paths.scorer_report)},
         "scorer_report_status": promotion_status,
         "dry_run": bool(args.dry_run),
@@ -508,24 +521,7 @@ def _summary_payload(args: argparse.Namespace, paths: PipelinePaths, results: T.
 
 
 def _write_summary_md(path: Path, summary: dict[str, T.Any]) -> None:
-    lines = [
-        "# Landmark resolver pipeline summary",
-        "",
-        f"Status: **{summary['status']}**",
-        f"Promotion status: `{summary.get('promotion_status', '')}`",
-        f"Promotion scope: `{summary['promotion_scope']}`",
-        f"Selected production policy: `{summary['selected_production_policy']}`",
-        f"Best weights: `{summary['best_weights_path']}`",
-        f"Scorer: `{summary['scorer_path']}`",
-        f"Eval report: `{summary['eval_report_path']}`",
-        f"Failed gates: `{summary['failed_gates']}`",
-        f"Fallback counts: `{summary['fallback_counts']}`",
-        "",
-        "## Stages",
-        "",
-        "| Stage | Status | Duration | Outputs | Notes |",
-        "| --- | --- | ---: | --- | --- |",
-    ]
+    lines = ["# Landmark resolver pipeline summary", "", f"Status: **{summary['status']}**", f"Promotion status: `{summary.get('promotion_status', '')}`", f"Promotion scope: `{summary['promotion_scope']}`", f"Selected production policy: `{summary['selected_production_policy']}`", f"Best weights: `{summary['best_weights_path']}`", f"Scorer: `{summary['scorer_path']}`", f"Eval report: `{summary['eval_report_path']}`", f"Failed gates: `{summary['failed_gates']}`", f"Fallback counts: `{summary['fallback_counts']}`", f"Config patch: `{summary['config_patch_path']}`", "", "## Stages", "", "| Stage | Status | Duration | Outputs | Notes |", "| --- | --- | ---: | --- | --- |"]
     for stage in summary["stages"]:
         notes = "; ".join(stage.get("notes") or [])
         if stage.get("error"):
@@ -533,19 +529,16 @@ def _write_summary_md(path: Path, summary: dict[str, T.Any]) -> None:
         outputs = "<br>".join(stage.get("validated_outputs") or stage.get("outputs") or [])
         lines.append(f"| `{stage['name']}` | {stage['status']} | {stage.get('duration_seconds', 0)}s | {outputs} | {notes} |")
     lines.extend(["", "## Config fields changed", ""])
-    for field_name in summary["config_fields_changed"]:
-        lines.append(f"- `{field_name}`")
+    lines.extend(f"- `{field_name}`" for field_name in summary["config_fields_changed"])
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def run_pipeline(args: argparse.Namespace) -> dict[str, T.Any]:
-    paths = PipelinePaths(run_root=args.run_root, production_root=args.production_root, output_root=args.output_root)
+    paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
     paths.output_root.mkdir(parents=True, exist_ok=True)
-    selected = _stage_slice(args.start_at, args.stop_after)
     results: list[StageResult] = []
-    for stage in selected:
-        logger.info("Running stage %s", stage)
+    for stage in _stage_slice(args.start_at, args.stop_after):
         result = _execute_stage(stage, args, paths)
         results.append(result)
         if result.status == "failed":
@@ -570,8 +563,9 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--stop-after", choices=STAGES)
     parser.add_argument("--start-at", choices=STAGES)
     parser.add_argument("--write-config", action="store_true")
+    parser.add_argument("--print-config-patch", action="store_true")
     parser.add_argument("--config-path", type=Path, default=Path("config/extract.ini"))
-    parser.add_argument("--config-section", default="landmark_ensemble")
+    parser.add_argument("--config-section", default=DEFAULT_CONFIG_SECTION)
     parser.add_argument("--python-executable", default=sys.executable)
     parser.add_argument("--models", default=DEFAULT_MODELS)
     parser.add_argument("--candidates", default=DEFAULT_CANDIDATES)
@@ -589,8 +583,7 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main(argv: T.Sequence[str] | None = None) -> int:
-    parser = _parser()
-    args = parser.parse_args(argv)
+    args = _parser().parse_args(argv)
     logging.basicConfig(level=getattr(logging, str(args.log_level).upper()))
     summary = run_pipeline(args)
     logger.info("Pipeline summary: %s", summary["status"])
