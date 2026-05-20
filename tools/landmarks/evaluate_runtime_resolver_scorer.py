@@ -44,6 +44,8 @@ SCORER_POLICY_REPORT_CSV = "scorer_policy_report.csv"
 SCORER_WORST_SAMPLES_JSON = "scorer_worst_samples.json"
 SCORER_FEATURE_IMPORTANCE_CSV = "scorer_feature_importance.csv"
 DEFAULT_RISK_FLOOR_FOR_SAFE_FALLBACK = 0.50
+SOURCE_GT_HARD = "gt_hard"
+SOURCE_PRODUCTION_VALIDATED = "production_validated"
 HARD_SLICE_POLICY_BUCKETS = {
     "extreme_roll",
     "rolled_large_yaw_left",
@@ -67,8 +69,8 @@ def _collect_contexts(
 ) -> list[SampleCandidateContext]:
     contexts: list[SampleCandidateContext] = []
     for label, manifest_path, cache_dir in (
-        ("gt", gt_manifest, gt_cache_dir),
-        ("production", production_manifest, production_cache_dir),
+        (SOURCE_GT_HARD, gt_manifest, gt_cache_dir),
+        (SOURCE_PRODUCTION_VALIDATED, production_manifest, production_cache_dir),
     ):
         if manifest_path is None and cache_dir is None:
             continue
@@ -91,9 +93,10 @@ def _collect_contexts(
     return contexts
 
 
-def _eval_split_keys(path: Path) -> set[tuple[str, str]]:
-    """Return ``(dataset, sample_id)`` keys from a scorer eval-row CSV."""
-    keys: set[tuple[str, str]] = set()
+def _eval_split_sources(path: Path) -> tuple[set[tuple[str, str, str]], dict[str, str]]:
+    """Return held-out ``(source, dataset, sample_id)`` keys and per-sample source."""
+    keys: set[tuple[str, str, str]] = set()
+    source_by_sample_id: dict[str, str] = {}
     with path.open(encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle)
         if "sample_id" not in (reader.fieldnames or ()):
@@ -102,27 +105,62 @@ def _eval_split_keys(path: Path) -> set[tuple[str, str]]:
             sample_id = str(row.get("sample_id", "")).strip()
             if not sample_id:
                 continue
-            keys.add((str(row.get("dataset", "")).strip(), sample_id))
+            source = str(row.get("source", "")).strip()
+            dataset = str(row.get("dataset", "")).strip()
+            keys.add((source, dataset, sample_id))
+            if source:
+                existing = source_by_sample_id.get(sample_id)
+                if existing is not None and existing != source:
+                    raise ValueError(
+                        f"eval split {path} maps sample {sample_id!r} to multiple sources: "
+                        f"{existing!r}, {source!r}"
+                    )
+                source_by_sample_id[sample_id] = source
     if not keys:
         raise ValueError(f"eval split {path} did not contain any sample ids")
-    return keys
+    return keys, source_by_sample_id
 
 
 def _filter_contexts_by_eval_split(
     contexts: T.Sequence[SampleCandidateContext],
     split_path: Path,
-) -> list[SampleCandidateContext]:
+) -> tuple[list[SampleCandidateContext], dict[str, str]]:
     """Restrict contexts to held-out sample ids from a scorer eval-row CSV."""
-    keys = _eval_split_keys(split_path)
-    split_sample_ids = {sample_id for _dataset, sample_id in keys}
+    keys, source_by_sample_id = _eval_split_sources(split_path)
+    dataset_sample_keys = {(dataset, sample_id) for _source, dataset, sample_id in keys}
+    split_sample_ids = {sample_id for _source, _dataset, sample_id in keys}
     filtered = [
         context
         for context in contexts
-        if (context.dataset, context.sample_id) in keys or context.sample_id in split_sample_ids
+        if (context.dataset, context.sample_id) in dataset_sample_keys
+        or context.sample_id in split_sample_ids
     ]
     if not filtered:
         raise ValueError(f"eval split {split_path} did not match any evaluation contexts")
-    return filtered
+    unique_context_ids = {context.sample_id for context in filtered}
+    if len(unique_context_ids) != len(split_sample_ids):
+        missing = sorted(split_sample_ids - unique_context_ids)
+        raise ValueError(
+            f"eval split {split_path} matched {len(unique_context_ids)} unique contexts for "
+            f"{len(split_sample_ids)} split samples; missing examples: {missing[:10]}"
+        )
+    return filtered, source_by_sample_id
+
+
+def _context_source(
+    context: SampleCandidateContext,
+    source_by_sample_id: T.Mapping[str, str],
+) -> str:
+    """Return the scorer source for a context, preferring explicit eval-split source."""
+    source = source_by_sample_id.get(context.sample_id, "")
+    if source:
+        return source
+    if (
+        context.dataset == SOURCE_PRODUCTION_VALIDATED
+        or context.runtime_bucket_source == "stored_manifest_landmark_ensemble"
+    ):
+        return SOURCE_PRODUCTION_VALIDATED
+    return SOURCE_GT_HARD
 
 
 def _summary(values: T.Sequence[float], failures: T.Sequence[bool]) -> dict[str, float]:
@@ -353,8 +391,9 @@ def evaluate_runtime_resolver_scorer(
         outlier_threshold=outlier_threshold,
         allow_image_backfill=allow_image_backfill,
     )
+    source_by_sample_id: dict[str, str] = {}
     if eval_split is not None:
-        contexts = _filter_contexts_by_eval_split(contexts, eval_split)
+        contexts, source_by_sample_id = _filter_contexts_by_eval_split(contexts, eval_split)
     missing_current = [
         context.sample_id for context in contexts if context.selected_candidate_missing_from_eval
     ]
@@ -395,6 +434,7 @@ def evaluate_runtime_resolver_scorer(
         oracle_choices[context.sample_id] = context.oracle
         rows.append(
             {
+                "source": _context_source(context, source_by_sample_id),
                 "sample_id": context.sample_id,
                 "dataset": context.dataset,
                 "condition": context.condition,
@@ -431,18 +471,18 @@ def evaluate_runtime_resolver_scorer(
     production_contexts = [
         context
         for context in contexts
-        if context.dataset == "production_validated"
-        or context.runtime_bucket_source == "stored_manifest_landmark_ensemble"
+        if _context_source(context, source_by_sample_id) == SOURCE_PRODUCTION_VALIDATED
     ]
-    production_sample_ids = {context.sample_id for context in production_contexts}
-    gt_hard_contexts = [
+    gt_hard_all_contexts = [
         context
         for context in contexts
-        if context.sample_id not in production_sample_ids
-        and (
-            context.condition in HARD_SLICE_POLICY_BUCKETS
-            or context.runtime_bucket in HARD_SLICE_POLICY_BUCKETS
-        )
+        if _context_source(context, source_by_sample_id) == SOURCE_GT_HARD
+    ]
+    gt_roll_hard_contexts = [
+        context
+        for context in gt_hard_all_contexts
+        if context.condition in HARD_SLICE_POLICY_BUCKETS
+        or context.runtime_bucket in HARD_SLICE_POLICY_BUCKETS
     ]
     derived_no_image_contexts = [
         context
@@ -451,7 +491,7 @@ def evaluate_runtime_resolver_scorer(
     ]
     derived_no_image_gt_hard_contexts = [
         context
-        for context in gt_hard_contexts
+        for context in gt_hard_all_contexts
         if context.runtime_bucket_source == "derived_no_image_evidence"
     ]
     production_only_policy_metrics = _policy_metric_bundle(
@@ -461,8 +501,15 @@ def evaluate_runtime_resolver_scorer(
         current_choices=current_choices,
         oracle_choices=oracle_choices,
     )
-    gt_hard_only_policy_metrics = _policy_metric_bundle(
-        gt_hard_contexts,
+    gt_hard_all_policy_metrics = _policy_metric_bundle(
+        gt_hard_all_contexts,
+        candidates=candidates,
+        scorer_choices=scorer_choices,
+        current_choices=current_choices,
+        oracle_choices=oracle_choices,
+    )
+    gt_roll_hard_policy_metrics = _policy_metric_bundle(
+        gt_roll_hard_contexts,
         candidates=candidates,
         scorer_choices=scorer_choices,
         current_choices=current_choices,
@@ -497,9 +544,9 @@ def evaluate_runtime_resolver_scorer(
             > production_hrnet["failure_rate"] + epsilon_failure_rate
         ):
             failed_gates.append("production_scorer_failure_rate_regresses_vs_hrnet")
-    if static_name and gt_hard_contexts:
-        gt_hard_scorer = gt_hard_only_policy_metrics["learned_quality_v1"]
-        gt_hard_static = gt_hard_only_policy_metrics["static_weighted_downweight"]
+    if static_name and gt_hard_all_contexts:
+        gt_hard_scorer = gt_hard_all_policy_metrics["learned_quality_v1"]
+        gt_hard_static = gt_hard_all_policy_metrics["static_weighted_downweight"]
         if gt_hard_scorer["failure_rate"] > gt_hard_static["failure_rate"] + epsilon_failure_rate:
             failed_gates.append("gt_hard_scorer_failure_rate_regresses_vs_static_downweight")
     if derived_no_image_gt_hard_contexts and not allow_derived_no_image_gt_hard:
@@ -533,7 +580,9 @@ def evaluate_runtime_resolver_scorer(
         "safe_fallback_tie_breaker": ["hrnet", "spiga", "orformer"],
         "per_bucket": _per_bucket(contexts, scorer_choices),
         "production_only_policy_metrics": production_only_policy_metrics,
-        "gt_hard_only_policy_metrics": gt_hard_only_policy_metrics,
+        "gt_hard_all_policy_metrics": gt_hard_all_policy_metrics,
+        "gt_hard_only_policy_metrics": gt_hard_all_policy_metrics,
+        "gt_roll_hard_policy_metrics": gt_roll_hard_policy_metrics,
     }
 
     _write_outputs(
