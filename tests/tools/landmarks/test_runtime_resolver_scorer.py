@@ -260,7 +260,7 @@ def test_evaluate_runtime_resolver_scorer_blocks_safe_fallback_without_score_del
     assert report["fallback_impact"]["count_with_rejected_candidate"] == 0
 
 
-def test_evaluate_runtime_resolver_scorer_flags_derived_no_image_gt_hard(
+def test_evaluate_runtime_resolver_scorer_refuses_gt_hard_without_sidecar(
     tmp_path: Path,
 ) -> None:
     manifest_path, cache_dir, weights_path = _write_fixture(tmp_path)
@@ -291,29 +291,23 @@ def test_evaluate_runtime_resolver_scorer_flags_derived_no_image_gt_hard(
         tmp_path / "runtime_resolver_scorer.json",
     )
 
-    report = evaluate_runtime_resolver_scorer(
-        gt_manifest=None,
-        gt_cache_dir=None,
-        production_manifest=manifest_path,
-        production_cache_dir=cache_dir,
-        weights_path=weights_path,
-        scorer_path=scorer_path,
-        candidates=(
-            "hrnet",
-            "spiga",
-            "orformer",
-            "static_weighted",
-            "static_weighted_downweight",
-        ),
-        output_dir=tmp_path / "eval_hard_slice",
-    )
-
-    assert report["status"] == "fail"
-    assert "gt_hard_derived_no_image_evidence_requires_explicit_allow" in report["failed_gates"]
-    assert report["derived_no_image_gt_hard_sample_count"] == 2
-    assert report["consensus_collapse_fallback_count"] == 2
-    rows = list(csv.DictReader((tmp_path / "eval_hard_slice" / "scorer_policy_report.csv").open()))
-    assert {row["runtime_bucket_source"] for row in rows} == {"derived_no_image_evidence"}
+    with pytest.raises(RuntimeError, match="GT-hard sample missing stored resolver metadata"):
+        evaluate_runtime_resolver_scorer(
+            gt_manifest=manifest_path,
+            gt_cache_dir=cache_dir,
+            production_manifest=None,
+            production_cache_dir=None,
+            weights_path=weights_path,
+            scorer_path=scorer_path,
+            candidates=(
+                "hrnet",
+                "spiga",
+                "orformer",
+                "static_weighted",
+                "static_weighted_downweight",
+            ),
+            output_dir=tmp_path / "eval_hard_slice",
+        )
 
 
 def test_backfill_runtime_resolver_metadata_writes_image_aware_source(
@@ -383,6 +377,92 @@ def test_load_contexts_can_backfill_image_aware_runtime_metadata(
 
     assert len(contexts) == 2
     assert {context.runtime_bucket_source for context in contexts} == {"image_aware_backfill"}
+
+
+def test_gt_hard_uses_stored_resolver_metadata(tmp_path: Path) -> None:
+    sidecar = tmp_path / "resolver_metadata.jsonl"
+    sidecar.write_text(
+        json.dumps(
+            {
+                "sample_id": "AFLW2000/image03123",
+                "face_index": 0,
+                "condition": "profile_right",
+                "landmark_ensemble": {"runtime_bucket": "profile_right"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    metadata = scorer_data.load_resolver_metadata(sidecar)
+    row = metadata[("AFLW2000/image03123", 0)]
+
+    assert scorer_data.runtime_bucket_from_resolver_metadata(row) == "profile_right"
+
+
+def test_gt_hard_missing_metadata_refuses_image_backfill(tmp_path: Path) -> None:
+    manifest_path, cache_dir, weights_path = _write_fixture(tmp_path)
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    for sample in payload["samples"]:
+        sample["dataset"] = "aflw2000_3d"
+        sample["condition"] = "profile_right"
+        sample.pop("metadata", None)
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="GT-hard sample missing stored resolver metadata"):
+        scorer_data.load_contexts(
+            manifest_path=manifest_path,
+            cache_dir=cache_dir,
+            weights_path=weights_path,
+            candidates=("hrnet", "spiga", "static_weighted_downweight"),
+            source="gt_hard",
+            resolver_metadata={},
+            allow_image_backfill=True,
+        )
+
+
+def test_gt_hard_load_contexts_reads_frozen_resolver_metadata(tmp_path: Path) -> None:
+    manifest_path, cache_dir, weights_path = _write_fixture(tmp_path)
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    for sample in payload["samples"]:
+        sample["dataset"] = "aflw2000_3d"
+        sample["condition"] = "profile_right"
+        sample.pop("metadata", None)
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+    sidecar = tmp_path / "resolver_metadata.jsonl"
+    with sidecar.open("w", encoding="utf-8") as handle:
+        for sample in payload["samples"]:
+            handle.write(
+                json.dumps(
+                    {
+                        "sample_id": sample["sample_id"],
+                        "face_index": 0,
+                        "condition": "profile_right",
+                        "landmark_ensemble": {
+                            "runtime_bucket": "profile_right",
+                            "selected_candidate": "hrnet",
+                            "runtime_bucket_source": "stored_manifest_landmark_ensemble",
+                        },
+                    }
+                )
+                + "\n"
+            )
+
+    contexts = scorer_data.load_contexts(
+        manifest_path=manifest_path,
+        cache_dir=cache_dir,
+        weights_path=weights_path,
+        candidates=("hrnet", "spiga", "static_weighted_downweight"),
+        source="gt_hard",
+        resolver_metadata=scorer_data.load_resolver_metadata(sidecar),
+        allow_image_backfill=True,
+    )
+
+    assert {context.runtime_bucket for context in contexts} == {"profile_right"}
+    assert {context.runtime_bucket_source for context in contexts} == {
+        "stored_manifest_landmark_ensemble"
+    }
+    assert {context.current_policy_choice for context in contexts} == {"hrnet"}
 
 
 def test_export_resolver_candidate_table_row_count_and_gate_metrics(
