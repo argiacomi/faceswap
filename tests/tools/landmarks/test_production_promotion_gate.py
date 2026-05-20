@@ -228,7 +228,5 @@ def test_production_gate_warns_for_tiny_hard_bucket_regression(tmp_path: Path) -
 
     assert report["status"] == "pass"
     assert not report["failed_gates"]
-    assert report["warnings"] == [
-        "bucket_profile_left_sample_count_1_below_gate_min_20"
-    ]
+    assert report["warnings"] == ["bucket_profile_left_sample_count_1_below_gate_min_20"]
     assert report["per_bucket"]["profile_left"]["sample_count"] == 1.0

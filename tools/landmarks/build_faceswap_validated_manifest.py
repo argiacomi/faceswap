@@ -577,9 +577,7 @@ def build_manifest(
     )
     default_runtime_bucket_overrides = output_dir / "runtime_bucket_overrides.csv"
     bucket_overrides_path = runtime_bucket_overrides_path or (
-        default_runtime_bucket_overrides
-        if default_runtime_bucket_overrides.is_file()
-        else None
+        default_runtime_bucket_overrides if default_runtime_bucket_overrides.is_file() else None
     )
     logger.debug(
         "Resolved paths: images=%s alignments=%s output=%s review_labels=%s bucket_overrides=%s",

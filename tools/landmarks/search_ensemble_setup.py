@@ -1072,9 +1072,7 @@ def main(argv: list[str] | None = None) -> int:
                         mean_epsilon_nme=args.production_epsilon_mean_nme,
                         p90_epsilon_nme=args.production_epsilon_p90_nme,
                         failure_threshold=args.production_failure_threshold,
-                        min_hard_bucket_gate_count=(
-                            args.production_min_hard_bucket_gate_count
-                        ),
+                        min_hard_bucket_gate_count=(args.production_min_hard_bucket_gate_count),
                         outlier_threshold=(
                             3.5
                             if winner.candidate.outlier_threshold is None
