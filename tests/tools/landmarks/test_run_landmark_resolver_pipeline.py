@@ -12,10 +12,13 @@ import pytest
 
 from tools.landmarks.run_landmark_resolver_pipeline import (
     STAGES,
+    PipelineContractError,
     PipelinePaths,
     _apply_config,
+    _contract_for,
     _freeze_metadata,
     _promotion_check,
+    _validate_stage_outputs,
     run_pipeline,
 )
 
@@ -67,7 +70,15 @@ def _touch_pipeline_outputs(paths: PipelinePaths) -> None:
     ):
         path.parent.mkdir(parents=True, exist_ok=True)
         if path.name.endswith(".json"):
-            payload = {"status": "pass", "promotion_status": "pass", "failed_gates": []}
+            payload = {
+                "status": "pass",
+                "promotion_status": "pass",
+                "failed_gates": [],
+                "fallback_count": 3,
+                "safe_fallback_count": 2,
+                "hard_slice_fallback_count": 1,
+                "consensus_collapse_fallback_count": 1,
+            }
             path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
         else:
             path.write_text("{}\n", encoding="utf-8")
@@ -75,7 +86,7 @@ def _touch_pipeline_outputs(paths: PipelinePaths) -> None:
     paths.production_cache.mkdir(parents=True, exist_ok=True)
 
 
-def test_pipeline_runner_dry_run_writes_summaries(tmp_path: Path) -> None:
+def test_pipeline_runner_dry_run_writes_summaries_and_contracts(tmp_path: Path) -> None:
     args = _args(tmp_path, dry_run=True)
 
     summary = run_pipeline(args)
@@ -83,8 +94,36 @@ def test_pipeline_runner_dry_run_writes_summaries(tmp_path: Path) -> None:
     assert summary["status"] == "planned"
     assert len(summary["stages"]) == len(STAGES)
     assert {stage["status"] for stage in summary["stages"]} <= {"planned", "ok"}
+    assert all(stage["contract"]["inputs"] is not None for stage in summary["stages"])
+    assert all(stage["contract"]["outputs"] for stage in summary["stages"])
+    assert all(stage["contract"]["cache_behavior"] for stage in summary["stages"])
+    assert all(stage["contract"]["success_criteria"] for stage in summary["stages"])
+    assert summary["best_weights_path"].endswith("best_weights.json")
+    assert summary["scorer_path"].endswith("runtime_resolver_scorer.json")
+    assert summary["eval_report_path"].endswith("scorer_policy_report.json")
+    assert summary["selected_production_policy"] == "learned_quality_v1"
+    assert "resolver_scorer_path" in summary["config_fields_changed"]
     assert (args.output_root / "pipeline_summary.json").is_file()
     assert (args.output_root / "pipeline_summary.md").is_file()
+
+
+def test_stage_contract_declares_required_files(tmp_path: Path) -> None:
+    args = _args(tmp_path)
+    paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
+
+    contract = _contract_for("scorer_training", args, paths)
+
+    assert str(paths.hard_manifest) in contract.required_files
+    assert str(paths.frozen_gt_metadata) in contract.required_files
+    assert str(paths.scorer_artifact) in contract.outputs
+
+
+def test_stage_output_validation_reports_missing_outputs(tmp_path: Path) -> None:
+    args = _args(tmp_path)
+    paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
+
+    with pytest.raises(PipelineContractError, match="candidate_search.*best_setup.json"):
+        _validate_stage_outputs("candidate_search", paths)
 
 
 def test_freeze_metadata_requires_explicit_source(tmp_path: Path) -> None:
@@ -138,7 +177,7 @@ def test_config_preview_and_write(tmp_path: Path) -> None:
     assert parser.get("landmark_ensemble", "resolver_policy") == "learned_quality_v1"
 
 
-def test_resume_skips_completed_stages(tmp_path: Path) -> None:
+def test_resume_skips_completed_stages_and_records_validated_outputs(tmp_path: Path) -> None:
     args = _args(tmp_path, resume=True, start_at="production_promotion_check", stop_after="config_update")
     paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
     _touch_pipeline_outputs(paths)
@@ -149,4 +188,12 @@ def test_resume_skips_completed_stages(tmp_path: Path) -> None:
     summary = run_pipeline(args)
 
     assert summary["status"] == "pass"
+    assert summary["promotion_status"] == "pass"
+    assert summary["fallback_counts"] == {
+        "fallback_count": 3,
+        "safe_fallback_count": 2,
+        "hard_slice_fallback_count": 1,
+        "consensus_collapse_fallback_count": 1,
+    }
     assert [stage["status"] for stage in summary["stages"]] == ["skipped", "skipped", "skipped"]
+    assert all(stage["validated_outputs"] for stage in summary["stages"])
