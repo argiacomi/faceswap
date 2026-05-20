@@ -326,6 +326,16 @@ def test_all_candidates_vetoed_uses_deterministic_hard_case_fallback(
     )
     assert result.metadata["fallback_reason"] == "all_candidates_vetoed"
     assert result.metadata["scorer_safe_fallback_used"] is False
+    assert result.metadata["replacement_candidate"] == "static_weighted_downweight"
+    assert result.metadata["all_candidates_vetoed_count"] == 8
+    assert set(result.metadata["vetoed_candidates"]) >= {
+        "hrnet",
+        "spiga",
+        "orformer",
+        "plain_average",
+        "static_weighted_downweight",
+    }
+    assert result.metadata["candidate_veto_reasons"]["spiga"] == ["forced_test_veto"]
 
 
 def test_all_candidates_vetoed_fallback_skips_nonfinite_candidates() -> None:
