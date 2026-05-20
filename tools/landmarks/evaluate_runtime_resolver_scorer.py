@@ -31,6 +31,7 @@ from tools.landmarks.runtime_resolver_scorer_data import (
     DEFAULT_SCORER_CANDIDATE_CSV,
     SampleCandidateContext,
     load_contexts,
+    load_resolver_metadata,
     parse_candidates,
     rows_for_context,
 )
@@ -69,8 +70,10 @@ def _collect_contexts(
     failure_threshold: float,
     outlier_threshold: float,
     allow_image_backfill: bool,
+    gt_hard_resolver_metadata: Path | None = None,
 ) -> list[SampleCandidateContext]:
     contexts: list[SampleCandidateContext] = []
+    gt_hard_metadata = load_resolver_metadata(gt_hard_resolver_metadata)
     for label, manifest_path, cache_dir in (
         (SOURCE_GT_HARD, gt_manifest, gt_cache_dir),
         (SOURCE_PRODUCTION_VALIDATED, production_manifest, production_cache_dir),
@@ -86,6 +89,10 @@ def _collect_contexts(
                 cache_dir=cache_dir,
                 weights_path=weights_path,
                 candidates=candidates,
+                source=label,
+                resolver_metadata=(
+                    gt_hard_metadata if label == SOURCE_GT_HARD else None
+                ),
                 failure_threshold=failure_threshold,
                 outlier_threshold=outlier_threshold,
                 allow_image_backfill=allow_image_backfill,
@@ -158,6 +165,8 @@ def _context_source(
     source = source_by_sample_id.get(context.sample_id, "")
     if source:
         return source
+    if context.source:
+        return context.source
     if (
         context.dataset == SOURCE_PRODUCTION_VALIDATED
         or context.runtime_bucket_source == "stored_manifest_landmark_ensemble"
@@ -435,6 +444,7 @@ def evaluate_runtime_resolver_scorer(
     promotion_scope: str = "universal",
     allow_image_backfill: bool = False,
     allow_derived_no_image_gt_hard: bool = False,
+    gt_hard_resolver_metadata: Path | None = None,
 ) -> dict[str, T.Any]:
     """Evaluate learned scorer policy and write reports."""
     if promotion_scope not in PROMOTION_SCOPES:
@@ -453,6 +463,7 @@ def evaluate_runtime_resolver_scorer(
         failure_threshold=failure_threshold,
         outlier_threshold=outlier_threshold,
         allow_image_backfill=allow_image_backfill,
+        gt_hard_resolver_metadata=gt_hard_resolver_metadata,
     )
     source_by_sample_id: dict[str, str] = {}
     if eval_split is not None:
@@ -680,6 +691,9 @@ def evaluate_runtime_resolver_scorer(
         "eval_split": "" if eval_split is None else str(eval_split),
         "allow_image_backfill": allow_image_backfill,
         "allow_derived_no_image_gt_hard": allow_derived_no_image_gt_hard,
+        "gt_hard_resolver_metadata": (
+            "" if gt_hard_resolver_metadata is None else str(gt_hard_resolver_metadata)
+        ),
         "candidate_count": len(candidates),
         "candidates": list(candidates),
         "scorer_path": str(scorer_path),
@@ -822,6 +836,12 @@ def _parser() -> argparse.ArgumentParser:
         help="Compute image-aware runtime metadata for rows without stored metadata.",
     )
     parser.add_argument(
+        "--gt-hard-resolver-metadata",
+        type=Path,
+        default=None,
+        help="Frozen GT-hard resolver_metadata.jsonl sidecar.",
+    )
+    parser.add_argument(
         "--allow-derived-no-image-gt-hard",
         action="store_true",
         help="Allow GT hard diagnostics to use landmark-only derived runtime buckets.",
@@ -856,6 +876,7 @@ def main(argv: T.Sequence[str] | None = None) -> int:
         promotion_scope=args.promotion_scope,
         allow_image_backfill=args.allow_image_backfill,
         allow_derived_no_image_gt_hard=args.allow_derived_no_image_gt_hard,
+        gt_hard_resolver_metadata=args.gt_hard_resolver_metadata,
     )
     logger.info("Scorer policy status: %s", report["status"])
     return 0

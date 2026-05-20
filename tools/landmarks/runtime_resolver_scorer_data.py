@@ -69,6 +69,53 @@ class StoredRuntimeDiagnostics:
     selected_candidate: str
 
 
+def _metadata_key(sample_id: str, face_index: int | None = 0) -> tuple[str, int]:
+    """Return the stable resolver sidecar lookup key."""
+    return str(sample_id).strip(), int(face_index or 0)
+
+
+def load_resolver_metadata(path: Path | None) -> dict[tuple[str, int], dict[str, T.Any]]:
+    """Load a JSONL resolver metadata sidecar keyed by sample id and face index."""
+    if path is None:
+        return {}
+
+    records: dict[tuple[str, int], dict[str, T.Any]] = {}
+    with path.open("r", encoding="utf-8") as handle:
+        for line_num, line in enumerate(handle, start=1):
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            sample_id = row.get("sample_id")
+            if not sample_id:
+                raise ValueError(f"{path}:{line_num} missing sample_id")
+
+            face_index = int(row.get("face_index", 0))
+            key = _metadata_key(str(sample_id), face_index)
+            if key in records:
+                raise ValueError(f"{path}:{line_num} duplicate resolver metadata key {key}")
+            records[key] = row
+    return records
+
+
+def runtime_bucket_from_resolver_metadata(row: dict[str, T.Any]) -> str | None:
+    """Return a runtime bucket from a resolver metadata sidecar row."""
+    le = row.get("landmark_ensemble")
+    if not isinstance(le, dict):
+        return None
+
+    resolver = le.get("resolver")
+    if not isinstance(resolver, dict):
+        resolver = {}
+
+    bucket = (
+        le.get("runtime_bucket")
+        or le.get("bucket")
+        or resolver.get("runtime_bucket")
+        or resolver.get("bucket")
+    )
+    return str(bucket) if bucket else None
+
+
 DEFAULT_SCORER_CANDIDATES: tuple[str, ...] = DEFAULT_RESOLVER_CANDIDATES
 DEFAULT_SCORER_CANDIDATE_CSV: str = ",".join(DEFAULT_SCORER_CANDIDATES)
 CANDIDATE_TABLE_COLUMNS: tuple[str, ...] = (
@@ -150,6 +197,7 @@ class SampleCandidateContext:
 
     sample_id: str
     dataset: str
+    source: str
     condition: str
     candidates: tuple[CandidateRecord, ...]
     metrics: dict[str, CandidateMetrics]
@@ -198,15 +246,19 @@ def _runtime_metadata(sample: LandmarkSample) -> dict[str, T.Any]:
     return resolver if isinstance(resolver, dict) else {}
 
 
-def _stored_runtime_diagnostics(sample: LandmarkSample) -> StoredRuntimeDiagnostics | None:
-    resolver = _runtime_metadata(sample)
-    bucket = resolver.get("runtime_bucket") or resolver.get("bucket")
-    if not bucket:
-        return None
+def _runtime_features_from_metadata(resolver: T.Mapping[str, T.Any]) -> dict[str, T.Any]:
+    """Extract stable runtime feature diagnostics from a metadata payload."""
     features: dict[str, T.Any] = {}
     raw_features = resolver.get("runtime_bucket_features")
     if isinstance(raw_features, dict):
         features.update(raw_features)
+    nested = resolver.get("resolver")
+    if isinstance(nested, dict):
+        nested_features = nested.get("runtime_bucket_features")
+        if isinstance(nested_features, dict):
+            features.update(nested_features)
+    else:
+        nested = {}
     for key in (
         "candidate_yaw_disagreement",
         "max_disagreement_px",
@@ -232,11 +284,43 @@ def _stored_runtime_diagnostics(sample: LandmarkSample) -> StoredRuntimeDiagnost
     ):
         if key in resolver:
             features[key] = resolver[key]
+        elif key in nested:
+            features[key] = nested[key]
+    return features
+
+
+def _stored_runtime_diagnostics(sample: LandmarkSample) -> StoredRuntimeDiagnostics | None:
+    resolver = _runtime_metadata(sample)
+    bucket = resolver.get("runtime_bucket") or resolver.get("bucket")
+    if not bucket:
+        return None
     source = str(resolver.get("runtime_bucket_source") or "stored_manifest_landmark_ensemble")
     selected_candidate = str(resolver.get("selected_candidate") or "")
     return StoredRuntimeDiagnostics(
         bucket=str(bucket),
-        features=features,
+        features=_runtime_features_from_metadata(resolver),
+        source=source,
+        selected_candidate=selected_candidate,
+    )
+
+
+def _stored_runtime_diagnostics_from_sidecar(
+    row: dict[str, T.Any],
+    *,
+    key: tuple[str, int],
+) -> StoredRuntimeDiagnostics:
+    """Return stored diagnostics from a frozen resolver metadata sidecar row."""
+    bucket = runtime_bucket_from_resolver_metadata(row)
+    if not bucket:
+        raise RuntimeError(f"stored resolver metadata has no runtime bucket: {key}")
+    resolver = row.get("landmark_ensemble")
+    if not isinstance(resolver, dict):
+        resolver = {}
+    source = str(resolver.get("runtime_bucket_source") or "stored_manifest_landmark_ensemble")
+    selected_candidate = str(resolver.get("selected_candidate") or "")
+    return StoredRuntimeDiagnostics(
+        bucket=bucket,
+        features=_runtime_features_from_metadata(resolver),
         source=source,
         selected_candidate=selected_candidate,
     )
@@ -398,6 +482,8 @@ def build_sample_context(
     cache: DiskPredictionCache,
     requested_candidates: T.Sequence[str],
     weights: T.Mapping[str, T.Sequence[float]],
+    source: str = "",
+    resolver_metadata: T.Mapping[tuple[str, int], dict[str, T.Any]] | None = None,
     failure_threshold: float = DEFAULT_FAILURE_THRESHOLD,
     outlier_threshold: float = DEFAULT_OUTLIER_THRESHOLD,
     allow_image_backfill: bool = False,
@@ -433,7 +519,21 @@ def build_sample_context(
         [metric.yaw_degrees for metric in metrics.values() if metric.yaw_degrees is not None]
     )
     max_disagreement_px = _max_landmark_consensus_px(candidates)
-    stored_runtime = _stored_runtime_diagnostics(sample)
+    face_index = int(sample.metadata.get("face_index", sample.metadata.get("face", 0)) or 0)
+    metadata_key = _metadata_key(sample.sample_id, face_index)
+    stored_sidecar = (resolver_metadata or {}).get(metadata_key)
+    if stored_sidecar is not None:
+        stored_runtime = _stored_runtime_diagnostics_from_sidecar(
+            stored_sidecar,
+            key=metadata_key,
+        )
+    elif source == "gt_hard":
+        raise RuntimeError(
+            f"GT-hard sample missing stored resolver metadata: sample_id={sample.sample_id!r} "
+            f"face_index={face_index}. Refusing image-aware backfill."
+        )
+    else:
+        stored_runtime = _stored_runtime_diagnostics(sample)
     image_backfill_result = None
     if stored_runtime is None:
         if allow_image_backfill and reference_bbox is not None:
@@ -530,6 +630,7 @@ def build_sample_context(
     return SampleCandidateContext(
         sample_id=sample.sample_id,
         dataset=sample.dataset,
+        source=source,
         condition=sample.condition or bucket_result.bucket or "unknown",
         candidates=candidates,
         metrics=metrics,
@@ -682,6 +783,8 @@ def load_contexts(
     cache_dir: Path,
     weights_path: Path,
     candidates: T.Sequence[str] | None = None,
+    source: str = "",
+    resolver_metadata: T.Mapping[tuple[str, int], dict[str, T.Any]] | None = None,
     failure_threshold: float = DEFAULT_FAILURE_THRESHOLD,
     outlier_threshold: float = DEFAULT_OUTLIER_THRESHOLD,
     allow_image_backfill: bool = False,
@@ -701,6 +804,8 @@ def load_contexts(
                     cache=cache,
                     requested_candidates=requested,
                     weights=weights,
+                    source=source,
+                    resolver_metadata=resolver_metadata,
                     failure_threshold=failure_threshold,
                     outlier_threshold=outlier_threshold,
                     allow_image_backfill=allow_image_backfill,
