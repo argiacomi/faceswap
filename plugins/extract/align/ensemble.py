@@ -60,6 +60,13 @@ from . import ensemble_defaults as cfg
 logger = logging.getLogger(__name__)
 
 
+def _trace(message: str, *args: T.Any) -> None:
+    """Log at Faceswap TRACE level when available."""
+    trace = getattr(logger, "trace", None)
+    if callable(trace):
+        trace(message, *args)
+
+
 _PLUGIN_CLASSES = {
     "hrnet": ("plugins.extract.align.hrnet", "HRNet", "2d_68"),
     "spiga": ("plugins.extract.align.spiga", "SPIGA", None),
@@ -180,6 +187,20 @@ class Ensemble(ExtractPlugin):
         self._last_detector_bboxes: np.ndarray | None = None
         self.last_debug_metadata: list[dict[str, T.Any]] = []
         self.model: list[LandmarkAdapter]
+        logger.debug(
+            "[Ensemble] init strategy=%s setup_mode=%s setup_path=%s promoted=%s "
+            "resolver=%s scorer=%s hard_case=%s secondary=%s fallback=%s strict=%s",
+            self._strategy,
+            self._setup_mode,
+            self._setup_path,
+            self._promoted.candidate_id if self._promoted is not None else "",
+            self._resolver_policy,
+            bool(self._resolver_scorer_path),
+            self._resolver_hard_case,
+            self._secondary_hard_case,
+            self._fallback_strategy,
+            self._strict,
+        )
 
     @staticmethod
     def _resolve_setup_mode(setup_path: str, configured_mode: str | None) -> str:
@@ -218,6 +239,13 @@ class Ensemble(ExtractPlugin):
                 err,
             )
             return None
+        logger.debug(
+            "[Ensemble] loaded promoted setup candidate=%s strategy=%s models=%s crop_scale=%s",
+            setup.candidate_id,
+            setup.strategy,
+            setup.models,
+            setup.crop_scale,
+        )
         return setup
 
     @staticmethod
@@ -262,6 +290,17 @@ class Ensemble(ExtractPlugin):
         logger.info(
             "Loaded landmark ensemble adapters: %s",
             ", ".join(adapter.config.name for adapter in loaded),
+        )
+        logger.debug(
+            "[Ensemble] adapter config=%s",
+            {
+                adapter.config.name: {
+                    "weight": adapter.config.weight,
+                    "schema": adapter.config.schema,
+                    "coordinate_space": adapter.config.coordinate_space,
+                }
+                for adapter in loaded
+            },
         )
         return loaded
 
@@ -337,6 +376,12 @@ class Ensemble(ExtractPlugin):
         retval[:, 2] = ctr_x + half
         retval[:, 3] = ctr_y + half
         self.set_crop_matrices(roi_to_matrix(retval), detector_bboxes=batch)
+        _trace(
+            "[Ensemble] pre_process detector_bboxes=%s crop_rois=%s crop_scale=%s",
+            batch.tolist(),
+            retval.tolist(),
+            self._crop_scale,
+        )
         return retval
 
     def set_crop_matrices(
@@ -349,6 +394,7 @@ class Ensemble(ExtractPlugin):
         self._last_matrices = np.asarray(matrices, dtype="float32").copy()
         if detector_bboxes is None:
             self._last_detector_bboxes = None
+            _trace("[Ensemble] cached crop matrices without detector bboxes: %s", matrices)
             return
         bboxes = np.asarray(detector_bboxes, dtype="float32")
         if bboxes.shape[0] != self._last_matrices.shape[0]:
@@ -360,6 +406,11 @@ class Ensemble(ExtractPlugin):
             self._last_detector_bboxes = None
             return
         self._last_detector_bboxes = bboxes.copy()
+        _trace(
+            "[Ensemble] cached crop matrices=%s detector_bboxes=%s",
+            self._last_matrices.tolist(),
+            self._last_detector_bboxes.tolist(),
+        )
 
     def _active_adapters(self) -> list[LandmarkAdapter]:
         """Return loaded or injected adapters."""
@@ -386,6 +437,11 @@ class Ensemble(ExtractPlugin):
         ]
         errors: list[str] = []
         for adapter in self._active_adapters():
+            logger.debug(
+                "[Ensemble] running adapter=%s batch_shape=%s",
+                adapter.config.name,
+                batch.shape,
+            )
             try:
                 predictions = adapter.predict_batch(batch, matrices=matrices)
             except Exception as err:  # pylint:disable=broad-except
@@ -400,8 +456,23 @@ class Ensemble(ExtractPlugin):
                 logger.warning("[Ensemble] %s", message)
                 errors.append(message)
                 continue
+            logger.debug(
+                "[Ensemble] adapter=%s produced %d predictions",
+                adapter.config.name,
+                len(predictions),
+            )
+            _trace(
+                "[Ensemble] adapter=%s prediction schemas=%s",
+                adapter.config.name,
+                [prediction.schema for prediction in predictions],
+            )
             for idx, prediction in enumerate(predictions):
                 per_face[idx].append((adapter, prediction))
+        logger.debug(
+            "[Ensemble] collected predictions per_face=%s errors=%s",
+            [len(face_predictions) for face_predictions in per_face],
+            errors,
+        )
         return per_face, errors
 
     def _weights_for_face(self, adapters: T.Sequence[LandmarkAdapter]) -> np.ndarray:
@@ -498,7 +569,14 @@ class Ensemble(ExtractPlugin):
     def _append_debug_metadata(self, metadata: dict[str, T.Any]) -> None:
         """Store and log per-face resolver metadata."""
         self.last_debug_metadata.append(metadata)
-        logger.debug("[Ensemble] runtime resolver metadata: %s", metadata)
+        logger.debug(
+            "[Ensemble] runtime metadata selected=%s bucket=%s fallback=%s vetoed=%s",
+            metadata.get("selected_candidate"),
+            metadata.get("runtime_bucket"),
+            metadata.get("fallback_reason"),
+            metadata.get("vetoed"),
+        )
+        _trace("[Ensemble] runtime resolver metadata: %s", metadata)
         bucket = metadata.get("runtime_bucket")
         if bucket not in (None, "", "frontal", "intermediate", "no_pose"):
             logger.debug("[Ensemble] runtime resolver hard/profile metadata: %s", metadata)
@@ -543,6 +621,15 @@ class Ensemble(ExtractPlugin):
             roll_veto_degrees=self._roll_veto_degrees,
             hard_roll_degrees=self._hard_roll_degrees,
             strict=self._strict,
+        )
+        logger.debug(
+            "[Ensemble] resolving via runtime policy=%s models=%s detector_bbox=%s "
+            "image_crop=%s matrix=%s",
+            resolver_config.policy,
+            [prediction.model for prediction in model_predictions],
+            detector_bbox,
+            None if image_crop is None else image_crop.shape,
+            None if crop_to_frame_matrix is None else crop_to_frame_matrix.tolist(),
         )
         try:
             result = resolve_runtime(
@@ -599,6 +686,12 @@ class Ensemble(ExtractPlugin):
             }
         )
         self._append_debug_metadata(metadata)
+        logger.debug(
+            "[Ensemble] runtime resolver selected=%s bucket=%s fallback=%s",
+            result.selected_candidate,
+            result.metadata.get("runtime_bucket"),
+            result.metadata.get("fallback_reason"),
+        )
         return result.landmarks.astype("float32", copy=False)
 
     def _fuse_face(
@@ -633,6 +726,7 @@ class Ensemble(ExtractPlugin):
             )
             if resolver_points is not None:
                 return resolver_points
+            logger.debug("[Ensemble] runtime resolver unavailable; falling back to %s", self._strategy)
 
         if not self._requires_weights:
             fused = plain_average(
@@ -697,6 +791,12 @@ class Ensemble(ExtractPlugin):
             }
         )
         self._append_debug_metadata(metadata)
+        logger.debug(
+            "[Ensemble] fused face strategy=%s sources=%s rejected_landmarks=%s",
+            self._strategy,
+            fused.sources,
+            fused.rejected_landmarks,
+        )
         return fused.points
 
     def predict_landmarks_68(
@@ -728,6 +828,7 @@ class Ensemble(ExtractPlugin):
                 f"Ensemble aligner expects channels-last images, got shape {batch.shape}"
             )
         matrices = self._matrices_for_batch(batch.shape[0])
+        logger.debug("[Ensemble] processing batch shape=%s matrices=%s", batch.shape, matrices.shape)
         per_face, errors = self._collect_predictions(batch, matrices)
         self.last_debug_metadata = []
         output = np.empty((batch.shape[0], 68, 2), dtype="float32")
