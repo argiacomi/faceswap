@@ -50,6 +50,8 @@ def candidate_feature_map(
     yaw_estimate: float | None = None,
     candidate_yaw_disagreement: float | None = None,
     max_disagreement_px: float | None = None,
+    runtime_bucket_source: str = "",
+    candidate_extra_features: T.Mapping[str, T.Mapping[str, float]] | None = None,
 ) -> dict[str, float]:
     """Return numeric and one-hot features for one runtime resolver candidate.
 
@@ -100,11 +102,15 @@ def candidate_feature_map(
         features[f"runtime_bucket={runtime_bucket}"] = 1.0
     if risk_route:
         features[f"risk_route={risk_route}"] = 1.0
+    if runtime_bucket_source:
+        features[f"runtime_bucket_source={runtime_bucket_source}"] = 1.0
     for model, available in model_available.items():
         if available:
             features[f"model_predictions_available={model}"] = 1.0
     for reason in veto_reasons:
         features[f"geometry_veto_reason={reason}"] = 1.0
+    if candidate_extra_features is not None:
+        features.update(candidate_extra_features.get(name, {}))
     return features
 
 

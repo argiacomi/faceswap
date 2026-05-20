@@ -70,6 +70,19 @@ SIDE_YAW_MIN_ABS_DEGREES: float = 20.0
 SIDE_YAW_FULL_CONFIDENCE_DEGREES: float = 75.0
 ROLL_BUCKET_AGREEMENT_DEGREES: float = 15.0
 ROLL_BUCKET_MIN_SUPPORTING_CANDIDATES: int = 2
+HARD_SLICE_SAFE_SINGLE_BUCKETS: frozenset[str] = frozenset(
+    (
+        "extreme_roll",
+        "rolled_large_yaw_left",
+        "rolled_large_yaw_right",
+        "rolled_profile_left",
+        "rolled_profile_right",
+    )
+)
+HARD_SLICE_YAW_DISAGREEMENT_THRESHOLD: float = 90.0
+HARD_SLICE_MAX_DISAGREEMENT_PX_THRESHOLD: float = 60.0
+HARD_SLICE_CONSENSUS_DISTANCE_THRESHOLD: float = 0.04
+HARD_SLICE_SINGLE_MODEL_DISAGREEMENT_PX_THRESHOLD: float = 40.0
 
 DEFAULT_PRIORITY: tuple[str, ...] = (
     "static_weighted_downweight",
@@ -459,6 +472,95 @@ def _populate_consensus_geometry(
             )
             / diag
         )
+
+
+def _mean_landmark_distance_px(left: np.ndarray, right: np.ndarray) -> float:
+    return float(np.mean(np.linalg.norm(left.astype("float64") - right.astype("float64"), axis=1)))
+
+
+def _candidate_extra_features(
+    candidates: T.Sequence[CandidateRecord],
+    metrics: T.Mapping[str, CandidateMetrics],
+    *,
+    reference_bbox: tuple[float, float, float, float] | None,
+    condition: str = "",
+    runtime_bucket: str = "",
+    runtime_bucket_source: str = "",
+) -> dict[str, dict[str, float]]:
+    """Return full-candidate-set features used by learned quality scoring."""
+    diag = _bbox_diag(reference_bbox)
+    by_name = {candidate.name: candidate for candidate in candidates}
+    single_candidates = [
+        candidate for candidate in candidates if not _is_canonical_strategy_name(candidate.name)
+    ]
+    single_stack = (
+        np.stack([candidate.landmarks.astype("float64") for candidate in single_candidates], axis=0)
+        if single_candidates
+        else None
+    )
+    single_cluster = np.median(single_stack, axis=0) if single_stack is not None else None
+    hrnet = by_name.get("hrnet")
+    single_disagreement_px = 0.0
+    for left_index, left in enumerate(single_candidates):
+        for right in single_candidates[left_index + 1 :]:
+            single_disagreement_px = max(
+                single_disagreement_px,
+                _mean_landmark_distance_px(left.landmarks, right.landmarks),
+            )
+    geometry_valid = {
+        name: float(name in metrics and not metrics[name].geometry_veto_reasons)
+        for name in ("hrnet", "spiga", "orformer")
+    }
+    condition_or_bucket = condition or runtime_bucket
+    condition_is_gt_roll_hard = (
+        condition_or_bucket in HARD_SLICE_SAFE_SINGLE_BUCKETS
+        and runtime_bucket_source == "derived_no_image_evidence"
+    )
+    source_is_derived_no_image = runtime_bucket_source == "derived_no_image_evidence"
+
+    payload: dict[str, dict[str, float]] = {}
+    for candidate in candidates:
+        metric = metrics.get(candidate.name)
+        consensus_distance = (
+            float(metric.landmark_consensus_distance or 0.0) if metric is not None else 0.0
+        )
+        distance_to_hrnet_px = (
+            _mean_landmark_distance_px(candidate.landmarks, hrnet.landmarks)
+            if hrnet is not None
+            else 0.0
+        )
+        distance_to_cluster_px = (
+            _mean_landmark_distance_px(candidate.landmarks, single_cluster)
+            if single_cluster is not None
+            else 0.0
+        )
+        fusion_vs_single_px = 0.0
+        if candidate.is_fusion and single_candidates:
+            fusion_vs_single_px = min(
+                _mean_landmark_distance_px(candidate.landmarks, single.landmarks)
+                for single in single_candidates
+            )
+        payload[candidate.name] = {
+            "candidate_is_consensus_like": float(
+                consensus_distance <= HARD_SLICE_CONSENSUS_DISTANCE_THRESHOLD
+            ),
+            "candidate_distance_to_hrnet": (
+                distance_to_hrnet_px / diag if diag is not None else 0.0
+            ),
+            "candidate_distance_to_best_single_cluster": (
+                distance_to_cluster_px / diag if diag is not None else 0.0
+            ),
+            "single_model_disagreement_px": single_disagreement_px,
+            "fusion_vs_single_disagreement_px": fusion_vs_single_px,
+            "hrnet_geometry_valid": geometry_valid["hrnet"],
+            "spiga_geometry_valid": geometry_valid["spiga"],
+            "orformer_geometry_valid": geometry_valid["orformer"],
+            "condition_is_gt_roll_hard": float(condition_is_gt_roll_hard),
+            "runtime_bucket_source_is_derived_no_image_evidence": float(
+                source_is_derived_no_image
+            ),
+        }
+    return payload
 
 
 def _shape_reasons(bucket: str, name: str, metric: CandidateMetrics) -> tuple[str, ...]:
@@ -1208,6 +1310,52 @@ def _high_risk_safe_fallback_candidate(
     return fallback_candidate
 
 
+def _hard_slice_safe_single_candidate(
+    *,
+    selected: str,
+    candidates: T.Mapping[str, CandidateRecord],
+    metrics: T.Mapping[str, CandidateMetrics],
+    candidate_extra_features: T.Mapping[str, T.Mapping[str, float]],
+    condition: str,
+    runtime_bucket: str,
+    candidate_yaw_disagreement: float | None,
+    max_disagreement_px: float,
+    fallback_candidate: str = "hrnet",
+) -> str | None:
+    """Prefer a geometry-valid single model for rolled/profile hard-slice contradictions."""
+    hard_label = condition or runtime_bucket
+    if hard_label not in HARD_SLICE_SAFE_SINGLE_BUCKETS:
+        return None
+    selected_candidate = candidates.get(selected)
+    fallback = candidates.get(fallback_candidate)
+    fallback_metric = metrics.get(fallback_candidate)
+    if (
+        selected_candidate is None
+        or fallback is None
+        or fallback_metric is None
+        or not selected_candidate.is_fusion
+        or fallback_metric.geometry_veto_reasons
+    ):
+        return None
+    selected_features = candidate_extra_features.get(selected, {})
+    consensus_like = bool(selected_features.get("candidate_is_consensus_like", 0.0) >= 1.0)
+    single_disagreement_px = float(selected_features.get("single_model_disagreement_px", 0.0))
+    yaw_disagreement = (
+        0.0 if candidate_yaw_disagreement is None else abs(float(candidate_yaw_disagreement))
+    )
+    disagreement_high = (
+        yaw_disagreement >= HARD_SLICE_YAW_DISAGREEMENT_THRESHOLD
+        or max_disagreement_px >= HARD_SLICE_MAX_DISAGREEMENT_PX_THRESHOLD
+    )
+    consensus_contradiction = (
+        consensus_like
+        and single_disagreement_px >= HARD_SLICE_SINGLE_MODEL_DISAGREEMENT_PX_THRESHOLD
+    )
+    if disagreement_high or consensus_contradiction:
+        return fallback_candidate
+    return None
+
+
 def resolve_runtime(
     predictions: T.Sequence[ModelPrediction],
     config: RuntimeResolverConfig,
@@ -1252,6 +1400,17 @@ def resolve_runtime(
 
     for name, metric in metrics.items():
         metric.geometry_veto_reasons = _shape_reasons(bucket, name, metric)
+    runtime_bucket_source = (
+        "runtime_image_evidence" if image_crop is not None else "derived_no_image_evidence"
+    )
+    candidate_extra_features = _candidate_extra_features(
+        candidates,
+        metrics,
+        reference_bbox=reference_bbox,
+        condition=bucket,
+        runtime_bucket=bucket,
+        runtime_bucket_source=runtime_bucket_source,
+    )
 
     available = {candidate.name for candidate in candidates}
     priority = _priority_for_bucket(bucket, available)
@@ -1291,12 +1450,32 @@ def resolve_runtime(
             yaw_estimate=yaw_estimate,
             candidate_yaw_disagreement=runtime_bucket.features.get("candidate_yaw_disagreement"),
             max_disagreement_px=max_disagreement_px,
+            runtime_bucket_source=runtime_bucket_source,
+            candidate_extra_features=candidate_extra_features,
         )
         selectable = survivors if survivors else available
         selected = min(
             selectable,
             key=lambda name: (scores.get(name, float("inf")), priority.index(name), name),
         )
+        by_name = {candidate.name: candidate for candidate in candidates}
+        hard_slice_fallback = _hard_slice_safe_single_candidate(
+            selected=selected,
+            candidates=by_name,
+            metrics=metrics,
+            candidate_extra_features=candidate_extra_features,
+            condition=bucket,
+            runtime_bucket=bucket,
+            candidate_yaw_disagreement=runtime_bucket.features.get("candidate_yaw_disagreement"),
+            max_disagreement_px=max_disagreement_px,
+            fallback_candidate=config.safe_fallback_candidate,
+        )
+        hard_slice_fallback_used = (
+            hard_slice_fallback is not None and hard_slice_fallback != selected
+        )
+        if hard_slice_fallback_used:
+            selected = hard_slice_fallback
+            fallback_reason = "hard_slice_safe_single_fallback"
         safe_fallback = _high_risk_safe_fallback_candidate(
             scores=scores,
             selectable=selectable,
@@ -1319,6 +1498,7 @@ def resolve_runtime(
             "scorer_safe_fallback_candidate": config.safe_fallback_candidate,
             "scorer_safe_fallback_floor": config.risk_floor_for_safe_fallback,
             "scorer_safe_fallback_used": safe_fallback_used,
+            "hard_slice_safe_fallback_used": hard_slice_fallback_used,
         }
     else:
         selected = (
@@ -1332,6 +1512,7 @@ def resolve_runtime(
         "selected_candidate": selected,
         "runtime_bucket": bucket,
         "bucket": bucket,
+        "runtime_bucket_source": runtime_bucket_source,
         "runtime_bucket_features": runtime_bucket.features,
         **runtime_bucket.features,
         "candidate_priority": priority,

@@ -18,7 +18,10 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from lib.landmarks.ensemble.runtime_resolver import _high_risk_safe_fallback_candidate
+from lib.landmarks.ensemble.runtime_resolver import (
+    _hard_slice_safe_single_candidate,
+    _high_risk_safe_fallback_candidate,
+)
 from lib.landmarks.ensemble.runtime_resolver_scorer import load_runtime_resolver_scorer
 from lib.landmarks.ensemble.strategies import canonical_strategy
 from lib.landmarks.ensemble.weights import load_weights
@@ -41,6 +44,13 @@ SCORER_WORST_SAMPLES_JSON = "scorer_worst_samples.json"
 SCORER_FEATURE_IMPORTANCE_CSV = "scorer_feature_importance.csv"
 DEFAULT_RISK_FLOOR_FOR_SAFE_FALLBACK = 0.50
 DEFAULT_SAFE_FALLBACK_CANDIDATE = "hrnet"
+HARD_SLICE_POLICY_BUCKETS = {
+    "extreme_roll",
+    "rolled_large_yaw_left",
+    "rolled_large_yaw_right",
+    "rolled_profile_left",
+    "rolled_profile_right",
+}
 
 
 def _collect_contexts(
@@ -149,6 +159,21 @@ def _choose_scorer(
     fallback_reason = "all_candidates_vetoed" if fallback_used else ""
     selectable = survivors if survivors else available
     chosen = min(selectable, key=lambda name: (scores.get(name, float("inf")), name))
+    hard_slice_fallback = _hard_slice_safe_single_candidate(
+        selected=chosen,
+        candidates={candidate.name: candidate for candidate in context.candidates},
+        metrics=context.metrics,
+        candidate_extra_features=context.candidate_extra_features,
+        condition=context.condition,
+        runtime_bucket=context.runtime_bucket,
+        candidate_yaw_disagreement=context.candidate_yaw_disagreement,
+        max_disagreement_px=context.max_disagreement_px,
+        fallback_candidate=safe_fallback_candidate,
+    )
+    if hard_slice_fallback is not None and hard_slice_fallback != chosen:
+        chosen = hard_slice_fallback
+        fallback_used = True
+        fallback_reason = "hard_slice_safe_single_fallback"
     safe_fallback = _high_risk_safe_fallback_candidate(
         scores=scores,
         selectable=selectable,
@@ -209,6 +234,47 @@ def _per_bucket(
     return payload
 
 
+def _choice_subset(
+    contexts: T.Sequence[SampleCandidateContext],
+    choices: T.Mapping[str, str],
+) -> dict[str, str]:
+    return {context.sample_id: choices[context.sample_id] for context in contexts}
+
+
+def _policy_metric_bundle(
+    contexts: T.Sequence[SampleCandidateContext],
+    *,
+    candidates: T.Sequence[str],
+    scorer_choices: T.Mapping[str, str],
+    current_choices: T.Mapping[str, str],
+    oracle_choices: T.Mapping[str, str],
+) -> dict[str, T.Any]:
+    """Return actual selected-policy NME/failure summaries for one source slice."""
+    if not contexts:
+        return {
+            "sample_count": 0,
+            "learned_quality_v1": _policy_summary((), {}),
+            "current_bucket_aware_veto": _policy_summary((), {}),
+            "oracle": _policy_summary((), {}),
+        }
+    payload: dict[str, T.Any] = {
+        "sample_count": len(contexts),
+        "learned_quality_v1": _policy_summary(contexts, _choice_subset(contexts, scorer_choices)),
+        "current_bucket_aware_veto": _policy_summary(
+            contexts, _choice_subset(contexts, current_choices)
+        ),
+        "oracle": _policy_summary(contexts, _choice_subset(contexts, oracle_choices)),
+    }
+    best_single_name, best_single = _best_single(contexts, candidates)
+    payload["best_single"] = {"candidate": best_single_name, **best_single}
+    if "static_weighted_downweight" in candidates:
+        payload["static_weighted_downweight"] = {
+            "candidate": "static_weighted_downweight",
+            **_candidate_summary(contexts, "static_weighted_downweight"),
+        }
+    return payload
+
+
 def evaluate_runtime_resolver_scorer(
     *,
     gt_manifest: Path | None,
@@ -255,6 +321,7 @@ def evaluate_runtime_resolver_scorer(
     oracle_choices: dict[str, str] = {}
     fallback_count = 0
     safe_fallback_count = 0
+    hard_slice_fallback_count = 0
     for context in contexts:
         score_by_candidate = {
             row.candidate_name: scorer.score_feature_map(row.feature_values)
@@ -268,6 +335,7 @@ def evaluate_runtime_resolver_scorer(
         )
         fallback_count += int(fallback_used)
         safe_fallback_count += int(fallback_reason == "scorer_high_risk_safe_fallback")
+        hard_slice_fallback_count += int(fallback_reason == "hard_slice_safe_single_fallback")
         scorer_choices[context.sample_id] = chosen
         current_choices[context.sample_id] = context.current_policy_choice
         oracle_choices[context.sample_id] = context.oracle
@@ -304,6 +372,36 @@ def evaluate_runtime_resolver_scorer(
     scorer_summary = _policy_summary(contexts, scorer_choices)
     current_summary = _policy_summary(contexts, current_choices)
     oracle_summary = _policy_summary(contexts, oracle_choices)
+    production_contexts = [
+        context
+        for context in contexts
+        if context.dataset == "production_validated"
+        or context.runtime_bucket_source == "stored_manifest_landmark_ensemble"
+    ]
+    production_sample_ids = {context.sample_id for context in production_contexts}
+    gt_hard_contexts = [
+        context
+        for context in contexts
+        if context.sample_id not in production_sample_ids
+        and (
+            context.condition in HARD_SLICE_POLICY_BUCKETS
+            or context.runtime_bucket in HARD_SLICE_POLICY_BUCKETS
+        )
+    ]
+    production_only_policy_metrics = _policy_metric_bundle(
+        production_contexts,
+        candidates=candidates,
+        scorer_choices=scorer_choices,
+        current_choices=current_choices,
+        oracle_choices=oracle_choices,
+    )
+    gt_hard_only_policy_metrics = _policy_metric_bundle(
+        gt_hard_contexts,
+        candidates=candidates,
+        scorer_choices=scorer_choices,
+        current_choices=current_choices,
+        oracle_choices=oracle_choices,
+    )
     failed_gates: list[str] = []
     if scorer_summary["mean_nme"] > best_single["mean_nme"] + epsilon_mean_nme:
         failed_gates.append("scorer_mean_nme_regresses_vs_best_single")
@@ -316,6 +414,23 @@ def evaluate_runtime_resolver_scorer(
         and scorer_summary["failure_rate"] > static["failure_rate"] + epsilon_failure_rate
     ):
         failed_gates.append("scorer_failure_rate_regresses_vs_static_downweight")
+    if static_name and production_contexts:
+        production_scorer = production_only_policy_metrics["learned_quality_v1"]
+        production_static = production_only_policy_metrics["static_weighted_downweight"]
+        if production_scorer["mean_nme"] > production_static["mean_nme"] + epsilon_mean_nme:
+            failed_gates.append("production_scorer_mean_nme_regresses_vs_static_downweight")
+        if production_scorer["p90_nme"] > production_static["p90_nme"] + epsilon_mean_nme:
+            failed_gates.append("production_scorer_p90_nme_regresses_vs_static_downweight")
+        if (
+            production_scorer["failure_rate"]
+            > production_static["failure_rate"] + epsilon_failure_rate
+        ):
+            failed_gates.append("production_scorer_failure_rate_regresses_vs_static_downweight")
+    if static_name and gt_hard_contexts:
+        gt_hard_scorer = gt_hard_only_policy_metrics["learned_quality_v1"]
+        gt_hard_static = gt_hard_only_policy_metrics["static_weighted_downweight"]
+        if gt_hard_scorer["failure_rate"] > gt_hard_static["failure_rate"] + epsilon_failure_rate:
+            failed_gates.append("gt_hard_scorer_failure_rate_regresses_vs_static_downweight")
 
     report: dict[str, T.Any] = {
         "status": "pass" if not failed_gates else "fail",
@@ -332,9 +447,12 @@ def evaluate_runtime_resolver_scorer(
         "oracle": oracle_summary,
         "fallback_count": fallback_count,
         "safe_fallback_count": safe_fallback_count,
+        "hard_slice_fallback_count": hard_slice_fallback_count,
         "risk_floor_for_safe_fallback": risk_floor_for_safe_fallback,
         "safe_fallback_candidate": safe_fallback_candidate,
         "per_bucket": _per_bucket(contexts, scorer_choices),
+        "production_only_policy_metrics": production_only_policy_metrics,
+        "gt_hard_only_policy_metrics": gt_hard_only_policy_metrics,
     }
 
     _write_outputs(
