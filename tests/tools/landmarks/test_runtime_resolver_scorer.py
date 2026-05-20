@@ -224,7 +224,7 @@ def test_evaluate_runtime_resolver_scorer_filters_to_eval_split(tmp_path: Path) 
     assert (tmp_path / "heldout_eval" / "scorer_policy_eval_report.json").is_file()
 
 
-def test_evaluate_runtime_resolver_scorer_uses_safe_fallback_for_high_risk(
+def test_evaluate_runtime_resolver_scorer_blocks_safe_fallback_without_score_delta(
     tmp_path: Path,
 ) -> None:
     manifest_path, cache_dir, weights_path = _write_fixture(tmp_path)
@@ -254,8 +254,10 @@ def test_evaluate_runtime_resolver_scorer_uses_safe_fallback_for_high_risk(
         output_dir=tmp_path / "eval_safe",
     )
 
-    assert report["learned_quality_v1"]["pick_counts"] == {"hrnet": 2}
-    assert report["safe_fallback_count"] == 2
+    assert report["learned_quality_v1"]["pick_counts"] == {"static_weighted": 2}
+    assert report["safe_fallback_count"] == 0
+    assert report["safe_fallback_min_delta"] == 0.05
+    assert report["fallback_impact"]["count_with_rejected_candidate"] == 0
 
 
 def test_evaluate_runtime_resolver_scorer_flags_derived_no_image_gt_hard(
