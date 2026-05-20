@@ -22,6 +22,7 @@ from lib.landmarks.adapters import (
 )
 from lib.landmarks.coordinates import (
     frame_to_normalized_crop,
+    normalized_crop_to_frame,
     roi_to_matrix,
 )
 from lib.landmarks.core.fusion import (
@@ -423,10 +424,77 @@ class Ensemble(ExtractPlugin):
 
     def _matrices_for_batch(self, batch_size: int) -> np.ndarray:
         """Return crop-to-frame matrices, falling back to identity for warmup calls."""
-        if self._last_matrices is not None and self._last_matrices.shape[0] == batch_size:
-            return self._last_matrices
         matrices = np.repeat(np.eye(3, dtype="float32")[None], batch_size, axis=0)
+        if self._last_matrices is None:
+            return matrices
+
+        cached_count = self._last_matrices.shape[0]
+        copy_count = min(cached_count, batch_size)
+        matrices[:copy_count] = self._last_matrices[:copy_count]
+        if cached_count != batch_size:
+            logger.debug(
+                "[Ensemble] adjusted cached crop matrices for batch padding: "
+                "cached=%s batch=%s copied=%s",
+                cached_count,
+                batch_size,
+                copy_count,
+            )
         return matrices
+
+    @staticmethod
+    def _looks_normalized_against_bbox(
+        points: np.ndarray,
+        detector_bbox: tuple[float, float, float, float] | None,
+    ) -> bool:
+        """Return ``True`` when tiny normalized coordinates are paired with a large bbox."""
+        if detector_bbox is None:
+            return False
+        left, top, right, bottom = detector_bbox
+        bbox_w = right - left
+        bbox_h = bottom - top
+        if max(bbox_w, bbox_h) <= 100.0:
+            return False
+        arr = np.asarray(points, dtype="float32")
+        if arr.ndim != 2 or arr.shape[1] < 2 or not np.all(np.isfinite(arr[:, :2])):
+            return False
+        extent_x = float(np.max(arr[:, 0]) - np.min(arr[:, 0]))
+        extent_y = float(np.max(arr[:, 1]) - np.min(arr[:, 1]))
+        return extent_x < 2.0 and extent_y < 2.0
+
+    @staticmethod
+    def _is_identity_matrix(matrix: np.ndarray | None) -> bool:
+        """Return whether ``matrix`` is effectively identity."""
+        if matrix is None:
+            return True
+        return bool(np.allclose(np.asarray(matrix, dtype="float32"), np.eye(3, dtype="float32")))
+
+    def _frame_points_for_resolver(
+        self,
+        *,
+        adapter_name: str,
+        points: np.ndarray,
+        detector_bbox: tuple[float, float, float, float] | None,
+        crop_to_frame_matrix: np.ndarray | None,
+    ) -> np.ndarray:
+        """Ensure runtime resolver candidates are in original-frame coordinates."""
+        frame_points = np.asarray(points, dtype="float32")
+        if not self._looks_normalized_against_bbox(frame_points, detector_bbox):
+            return frame_points
+        if not self._is_identity_matrix(crop_to_frame_matrix):
+            converted = normalized_crop_to_frame(frame_points, crop_to_frame_matrix)
+            if not self._looks_normalized_against_bbox(converted, detector_bbox):
+                logger.debug(
+                    "[Ensemble] converted normalized resolver candidate to frame space: "
+                    "adapter=%s bbox=%s",
+                    adapter_name,
+                    detector_bbox,
+                )
+                return converted.astype("float32", copy=False)
+
+        raise RuntimeResolverError(
+            "Runtime resolver received non-frame-space landmarks from "
+            f"{adapter_name!r}; detector_bbox={detector_bbox}"
+        )
 
     def _collect_predictions(
         self, batch: np.ndarray, matrices: np.ndarray
@@ -599,7 +667,12 @@ class Ensemble(ExtractPlugin):
         model_predictions = [
             ModelPrediction(
                 adapter.config.name,
-                prediction.canonical_68().points,
+                self._frame_points_for_resolver(
+                    adapter_name=adapter.config.name,
+                    points=prediction.canonical_68().points,
+                    detector_bbox=detector_bbox,
+                    crop_to_frame_matrix=crop_to_frame_matrix,
+                ),
                 weight=float(adapter.config.weight),
             )
             for adapter, prediction in zip(adapters, items, strict=True)

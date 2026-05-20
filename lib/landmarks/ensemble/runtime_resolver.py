@@ -254,6 +254,40 @@ class RuntimeBucketResult:
     features: dict[str, T.Any]
 
 
+def _assert_frame_space_candidates(
+    candidates: T.Sequence[CandidateRecord],
+    detector_bbox: T.Sequence[float] | None,
+) -> None:
+    """Reject normalized landmarks before frame-space geometry validation."""
+    if detector_bbox is None:
+        return
+    left, top, right, bottom = (float(value) for value in detector_bbox)
+    bbox_w = right - left
+    bbox_h = bottom - top
+    if bbox_w <= 0 or bbox_h <= 0 or max(bbox_w, bbox_h) <= 100.0:
+        return
+
+    leaked: list[str] = []
+    for candidate in candidates:
+        landmarks = np.asarray(candidate.landmarks, dtype="float64")
+        if (
+            landmarks.ndim != 2
+            or landmarks.shape[1] < 2
+            or landmarks.size == 0
+            or not np.all(np.isfinite(landmarks[:, :2]))
+        ):
+            continue
+        extent_x = float(np.max(landmarks[:, 0]) - np.min(landmarks[:, 0]))
+        extent_y = float(np.max(landmarks[:, 1]) - np.min(landmarks[:, 1]))
+        if extent_x < 2.0 and extent_y < 2.0:
+            leaked.append(f"{candidate.name}(extent_x={extent_x:.6g}, extent_y={extent_y:.6g})")
+    if leaked:
+        raise RuntimeResolverError(
+            "Runtime resolver received non-frame-space landmarks for "
+            f"detector_bbox={(left, top, right, bottom)}: {', '.join(leaked)}"
+        )
+
+
 def _safe_alignment_summary(landmarks: np.ndarray) -> AlignmentSummary | None:
     try:
         return alignment_summary(landmarks.astype("float32", copy=False))
@@ -1501,6 +1535,7 @@ def resolve_runtime(
         [candidate.name for candidate in candidates],
         [prediction.model for prediction in predictions],
     )
+    _assert_frame_space_candidates(candidates, detector_bbox)
 
     reference_bbox = _reference_bbox(candidates, detector_bbox)
     metrics = {
