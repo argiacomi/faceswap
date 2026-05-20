@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Evaluate profile-aware alignment metrics for AFLW/profile manifests (#76).
 
+Merge-candidate CLI, not deprecated yet. Keep this entrypoint until the unified
+landmark evaluation/reporting surface fully covers profile metrics and the
+replacement flow is tested.
+
 Reads a manifest plus a populated prediction cache, optionally a static-weight
 JSON or promoted setup, and writes:
 
@@ -133,7 +137,6 @@ def evaluate_manifest(
     skipped: list[str] = []
 
     for sample in samples:
-        # Surface adapter availability up-front for a clear error.
         available = cache.available_models(sample.sample_id)
         missing = [name for name in models if name not in available]
         if missing:
