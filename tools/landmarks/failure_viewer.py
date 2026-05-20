@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Create landmark failure overlays and worst-first contact sheets."""
+"""Create landmark failure overlays and worst-first contact sheets.
+
+Debug helper. Candidate for merge into the main landmark evaluation/reporting
+surface once geometry, signal, profile, and worst-case reports share one CLI.
+"""
 
 from __future__ import annotations
 
@@ -24,8 +28,17 @@ from lib.landmarks.evaluation.visualize import (
     write_debug_records,
     write_overlay,
 )
+from tools.landmarks.pipeline_conventions import (
+    DEBUG_DIRNAME,
+    FAILURE_ENSEMBLE_REGRESSIONS_CONTACT_SHEET,
+    FAILURE_ENSEMBLE_REGRESSIONS_JSON,
+    FAILURE_WORST_CASES_JSON,
+    FAILURE_WORST_CONTACT_SHEET,
+    write_json,
+)
 
 DEFAULT_MODELS = ("hrnet", "spiga", "orformer")
+DEFAULT_DEBUG_DIR = f"outputs/landmark_{DEBUG_DIRNAME}"
 
 
 def _parse_csv_list(value: str, default: T.Sequence[str]) -> tuple[str, ...]:
@@ -49,10 +62,7 @@ def _write_records(
     *,
     fieldnames: T.Sequence[str] | None = None,
 ) -> None:
-    output_path.write_text(
-        json.dumps(records, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    write_json(output_path, records)
     csv_path = output_path.with_suffix(".csv")
     if not records:
         csv_path.write_text("", encoding="utf-8")
@@ -71,7 +81,7 @@ def _legacy_contact_sheet(args: argparse.Namespace) -> int:
         reverse=True,
     )
     images = [f"{args.debug_dir}/{row['sample_id']}.png" for row in rows[: args.limit]]
-    write_contact_sheet(images, args.output or "outputs/landmark_debug/contact_sheet.png")
+    write_contact_sheet(images, args.output or f"{DEFAULT_DEBUG_DIR}/contact_sheet.png")
     return 0
 
 
@@ -226,15 +236,15 @@ def _run_rich_failure_viewer(args: argparse.Namespace) -> int:
             debug_records.append(record)
 
     write_debug_records(debug_records, output_dir)
-    _write_records(worst_records, output_dir / "worst_cases.json")
-    _write_records(regression_records, output_dir / "ensemble_regressions.json")
+    _write_records(worst_records, output_dir / FAILURE_WORST_CASES_JSON)
+    _write_records(regression_records, output_dir / FAILURE_ENSEMBLE_REGRESSIONS_JSON)
     _write_contact_if_possible(
         [str(record["overlay"]) for record in worst_records],
-        output_dir / "worst_contact_sheet.png",
+        output_dir / FAILURE_WORST_CONTACT_SHEET,
     )
     _write_contact_if_possible(
         [str(record["overlay"]) for record in regression_records],
-        output_dir / "ensemble_regressions_contact_sheet.png",
+        output_dir / FAILURE_ENSEMBLE_REGRESSIONS_CONTACT_SHEET,
     )
     return 0
 
@@ -245,7 +255,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--metrics", required=True)
     parser.add_argument("--manifest", default="")
     parser.add_argument("--cache-dir", default="outputs/landmark_predictions")
-    parser.add_argument("--debug-dir", default="outputs/landmark_debug")
+    parser.add_argument("--debug-dir", default=DEFAULT_DEBUG_DIR)
     parser.add_argument("--output-dir", default="")
     parser.add_argument("--output", default="")
     parser.add_argument("--models", default=",".join(DEFAULT_MODELS))
