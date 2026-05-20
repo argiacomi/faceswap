@@ -750,6 +750,26 @@ def _all_candidates_vetoed_fallback(
     raise RuntimeResolverError("all runtime candidates were vetoed and none had finite landmarks")
 
 
+def _candidate_veto_reasons(
+    candidates: T.Sequence[CandidateRecord],
+    metrics: T.Mapping[str, CandidateMetrics],
+    *,
+    roll_vetoed: T.AbstractSet[str],
+    vetoed: T.AbstractSet[str],
+) -> dict[str, list[str]]:
+    """Return per-candidate veto reasons for runtime resolver metadata."""
+    payload: dict[str, list[str]] = {}
+    by_name = {candidate.name: candidate for candidate in candidates}
+    for name in sorted(vetoed & set(by_name)):
+        reasons = list(metrics.get(name, CandidateMetrics(None, None, None)).geometry_veto_reasons)
+        if name in roll_vetoed:
+            reasons.append("roll_veto")
+        if not np.all(np.isfinite(np.asarray(by_name[name].landmarks, dtype="float64"))):
+            reasons.append("nonfinite_landmarks")
+        payload[name] = reasons or ["vetoed_without_specific_reason"]
+    return payload
+
+
 def _roll_vetoes(
     candidates: T.Sequence[CandidateRecord],
     metrics: T.Mapping[str, CandidateMetrics],
@@ -1598,7 +1618,12 @@ def resolve_runtime(
             "scorer_safe_fallback_used": safe_fallback_used,
             "hard_slice_safe_fallback_used": hard_slice_fallback_used,
             "rejected_candidate": rejected_candidate,
-            "replacement_candidate": selected if rejected_candidate else "",
+            "replacement_candidate": (
+                selected
+                if fallback_reason in {"all_candidates_vetoed", "consensus_collapse_fusion_rejected"}
+                or rejected_candidate
+                else ""
+            ),
         }
     else:
         selected = (
@@ -1608,6 +1633,12 @@ def resolve_runtime(
         )
 
     by_name = {candidate.name: candidate for candidate in candidates}
+    candidate_veto_reasons = _candidate_veto_reasons(
+        candidates,
+        metrics,
+        roll_vetoed=roll_vetoed,
+        vetoed=vetoed,
+    )
     metadata: dict[str, T.Any] = {
         "selected_candidate": selected,
         "runtime_bucket": bucket,
@@ -1622,6 +1653,10 @@ def resolve_runtime(
             for name, metric in metrics.items()
             if metric.geometry_veto_reasons
         },
+        "vetoed_candidates": candidate_veto_reasons,
+        "candidate_veto_reasons": candidate_veto_reasons,
+        "all_candidates_vetoed_count": len(vetoed & available) if not survivors else 0,
+        "replacement_candidate": selected if fallback_reason == "all_candidates_vetoed" else "",
         "roll_estimate": roll_estimate,
         "yaw_estimate": yaw_estimate,
         "cloud_area_ratio": _metrics_payload(metrics, "cloud_area_ratio"),
