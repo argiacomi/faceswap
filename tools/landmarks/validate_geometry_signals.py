@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """GT-geometry signal validation report (#80).
 
+Merge-candidate CLI, not deprecated yet. Keep this entrypoint until the unified
+landmark evaluation/reporting surface fully covers geometry signal validation
+and the replacement flow is tested.
+
 Reads a manifest + populated prediction cache, evaluates every candidate
 (single models + named ensemble variants when weights are supplied) against
 GT-derived ``AlignedFace`` geometry, and writes:
@@ -84,13 +88,10 @@ def build_candidate_records(
             logger.warning("[signals] skipping %s: no usable bbox", sample.sample_id)
             continue
         truth = np.load(sample.landmarks).astype("float32")
-        # Build the GT-side AlignedFace summary once per sample so every
-        # downstream candidate (single models + ensemble variants) skips
-        # the redundant Umeyama + solvePnP pass on the same GT cloud.
         truth_summary = alignment_summary(truth, size=aligned_size)
         predictions = {name: cache.read(sample.sample_id, name) for name in models}
         prediction_items = [predictions[name] for name in models]
-        hard_slice = sample.condition  # build_hard_alignment_validation copies this
+        hard_slice = sample.condition
         left, top, right, bottom = (float(v) for v in bbox)
         bbox_diagonal = float(np.hypot(right - left, bottom - top)) or 1.0
         normalizer_by_sample[sample.sample_id] = bbox_diagonal
