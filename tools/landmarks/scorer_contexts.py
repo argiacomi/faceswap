@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 import typing as T
+from dataclasses import replace
 from pathlib import Path
 
 from lib.landmarks.datasets.manifest_io import load_manifest
@@ -89,6 +90,7 @@ def load_scorer_contexts(
     for pair in pairs:
         source = normalize_source_label(pair.source)
         resolver_metadata = None
+        context_source = source
         if source == SOURCE_GT_HARD:
             samples = load_manifest(pair.manifest_path)
             validate_resolver_metadata_for_samples(
@@ -98,20 +100,28 @@ def load_scorer_contexts(
                 require_complete=require_gt_hard_metadata,
             )
             resolver_metadata = gt_hard_metadata
+            # `runtime_resolver_scorer_data.build_sample_context` intentionally
+            # refuses GT-hard rows without stored metadata when source is
+            # `gt_hard`. When the caller explicitly allows derived no-image
+            # GT-hard diagnostics, build through the legacy derived path and
+            # then stamp the canonical source back onto the frozen context.
+            if not require_gt_hard_metadata:
+                context_source = ""
         logger.info("Loading %s scorer contexts from %s", source, pair.manifest_path)
-        contexts.extend(
-            load_contexts(
-                manifest_path=pair.manifest_path,
-                cache_dir=pair.cache_dir,
-                weights_path=weights_path,
-                candidates=candidates,
-                source=source,
-                resolver_metadata=resolver_metadata,
-                failure_threshold=failure_threshold,
-                outlier_threshold=outlier_threshold,
-                allow_image_backfill=allow_image_backfill,
-            )
+        loaded_contexts = load_contexts(
+            manifest_path=pair.manifest_path,
+            cache_dir=pair.cache_dir,
+            weights_path=weights_path,
+            candidates=candidates,
+            source=context_source,
+            resolver_metadata=resolver_metadata,
+            failure_threshold=failure_threshold,
+            outlier_threshold=outlier_threshold,
+            allow_image_backfill=allow_image_backfill,
         )
+        if context_source != source:
+            loaded_contexts = [replace(context, source=source) for context in loaded_contexts]
+        contexts.extend(loaded_contexts)
     if not contexts:
         raise ValueError("no scorer contexts were loaded")
     return contexts
