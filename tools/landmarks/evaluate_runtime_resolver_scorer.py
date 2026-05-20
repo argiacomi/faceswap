@@ -43,7 +43,6 @@ SCORER_POLICY_REPORT_CSV = "scorer_policy_report.csv"
 SCORER_WORST_SAMPLES_JSON = "scorer_worst_samples.json"
 SCORER_FEATURE_IMPORTANCE_CSV = "scorer_feature_importance.csv"
 DEFAULT_RISK_FLOOR_FOR_SAFE_FALLBACK = 0.50
-DEFAULT_SAFE_FALLBACK_CANDIDATE = "hrnet"
 HARD_SLICE_POLICY_BUCKETS = {
     "extreme_roll",
     "rolled_large_yaw_left",
@@ -147,8 +146,7 @@ def _choose_scorer(
     scores: T.Mapping[str, float],
     *,
     risk_floor_for_safe_fallback: float,
-    safe_fallback_candidate: str,
-) -> tuple[str, bool, str]:
+) -> tuple[str, bool, str, str, str]:
     available = set(context.nme_by_candidate)
     survivors = {
         name
@@ -157,35 +155,42 @@ def _choose_scorer(
     }
     fallback_used = not survivors
     fallback_reason = "all_candidates_vetoed" if fallback_used else ""
+    rejected_candidate = ""
+    replacement_candidate = ""
     selectable = survivors if survivors else available
     chosen = min(selectable, key=lambda name: (scores.get(name, float("inf")), name))
+    candidates_by_name = {candidate.name: candidate for candidate in context.candidates}
     hard_slice_fallback = _hard_slice_safe_single_candidate(
         selected=chosen,
-        candidates={candidate.name: candidate for candidate in context.candidates},
+        candidates=candidates_by_name,
         metrics=context.metrics,
         candidate_extra_features=context.candidate_extra_features,
         condition=context.condition,
         runtime_bucket=context.runtime_bucket,
-        candidate_yaw_disagreement=context.candidate_yaw_disagreement,
-        max_disagreement_px=context.max_disagreement_px,
-        fallback_candidate=safe_fallback_candidate,
+        runtime_bucket_source=context.runtime_bucket_source,
+        scores=scores,
+        selectable=selectable,
     )
     if hard_slice_fallback is not None and hard_slice_fallback != chosen:
+        rejected_candidate = chosen
         chosen = hard_slice_fallback
+        replacement_candidate = chosen
         fallback_used = True
-        fallback_reason = "hard_slice_safe_single_fallback"
+        fallback_reason = "consensus_collapse_fusion_rejected"
     safe_fallback = _high_risk_safe_fallback_candidate(
         scores=scores,
         selectable=selectable,
+        candidates=candidates_by_name,
         metrics=context.metrics,
         risk_floor=risk_floor_for_safe_fallback,
-        fallback_candidate=safe_fallback_candidate,
     )
     if safe_fallback is not None and safe_fallback != chosen:
+        rejected_candidate = chosen
         chosen = safe_fallback
+        replacement_candidate = chosen
         fallback_used = True
         fallback_reason = "scorer_high_risk_safe_fallback"
-    return chosen, fallback_used, fallback_reason
+    return chosen, fallback_used, fallback_reason, rejected_candidate, replacement_candidate
 
 
 def _policy_summary(
@@ -291,7 +296,6 @@ def evaluate_runtime_resolver_scorer(
     epsilon_failure_rate: float = 0.0,
     worst_sample_count: int = 25,
     risk_floor_for_safe_fallback: float = DEFAULT_RISK_FLOOR_FOR_SAFE_FALLBACK,
-    safe_fallback_candidate: str = DEFAULT_SAFE_FALLBACK_CANDIDATE,
 ) -> dict[str, T.Any]:
     """Evaluate learned scorer policy and write reports."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -327,15 +331,22 @@ def evaluate_runtime_resolver_scorer(
             row.candidate_name: scorer.score_feature_map(row.feature_values)
             for row in rows_for_context(context)
         }
-        chosen, fallback_used, fallback_reason = _choose_scorer(
+        (
+            chosen,
+            fallback_used,
+            fallback_reason,
+            rejected_candidate,
+            replacement_candidate,
+        ) = _choose_scorer(
             context,
             score_by_candidate,
             risk_floor_for_safe_fallback=risk_floor_for_safe_fallback,
-            safe_fallback_candidate=safe_fallback_candidate,
         )
         fallback_count += int(fallback_used)
         safe_fallback_count += int(fallback_reason == "scorer_high_risk_safe_fallback")
-        hard_slice_fallback_count += int(fallback_reason == "hard_slice_safe_single_fallback")
+        hard_slice_fallback_count += int(
+            fallback_reason == "consensus_collapse_fusion_rejected"
+        )
         scorer_choices[context.sample_id] = chosen
         current_choices[context.sample_id] = context.current_policy_choice
         oracle_choices[context.sample_id] = context.oracle
@@ -361,6 +372,8 @@ def evaluate_runtime_resolver_scorer(
                 "candidate_scores": json.dumps(score_by_candidate, sort_keys=True),
                 "fallback_used": int(fallback_used),
                 "fallback_reason": fallback_reason,
+                "rejected_candidate": rejected_candidate,
+                "replacement_candidate": replacement_candidate,
             }
         )
 
@@ -407,8 +420,10 @@ def evaluate_runtime_resolver_scorer(
         failed_gates.append("scorer_mean_nme_regresses_vs_best_single")
     if scorer_summary["failure_rate"] > best_single["failure_rate"] + epsilon_failure_rate:
         failed_gates.append("scorer_failure_rate_regresses_vs_best_single")
-    if static_name and scorer_summary["mean_nme"] > static["mean_nme"] + epsilon_mean_nme:
-        failed_gates.append("scorer_mean_nme_regresses_vs_static_downweight")
+    if static_name and scorer_summary["mean_nme"] >= static["mean_nme"]:
+        failed_gates.append("scorer_mean_nme_not_better_than_static_downweight")
+    if static_name and scorer_summary["p90_nme"] > static["p90_nme"] + epsilon_mean_nme:
+        failed_gates.append("scorer_p90_nme_regresses_vs_static_downweight")
     if (
         static_name
         and scorer_summary["failure_rate"] > static["failure_rate"] + epsilon_failure_rate
@@ -448,8 +463,9 @@ def evaluate_runtime_resolver_scorer(
         "fallback_count": fallback_count,
         "safe_fallback_count": safe_fallback_count,
         "hard_slice_fallback_count": hard_slice_fallback_count,
+        "consensus_collapse_rejection_count": hard_slice_fallback_count,
         "risk_floor_for_safe_fallback": risk_floor_for_safe_fallback,
-        "safe_fallback_candidate": safe_fallback_candidate,
+        "safe_fallback_tie_breaker": ["hrnet", "spiga", "orformer"],
         "per_bucket": _per_bucket(contexts, scorer_choices),
         "production_only_policy_metrics": production_only_policy_metrics,
         "gt_hard_only_policy_metrics": gt_hard_only_policy_metrics,
@@ -542,7 +558,6 @@ def _parser() -> argparse.ArgumentParser:
         type=float,
         default=DEFAULT_RISK_FLOOR_FOR_SAFE_FALLBACK,
     )
-    parser.add_argument("--safe-fallback-candidate", default=DEFAULT_SAFE_FALLBACK_CANDIDATE)
     parser.add_argument("--log-level", default="INFO")
     return parser
 
@@ -568,7 +583,6 @@ def main(argv: T.Sequence[str] | None = None) -> int:
         epsilon_failure_rate=args.epsilon_failure_rate,
         worst_sample_count=args.worst_sample_count,
         risk_floor_for_safe_fallback=args.risk_floor_for_safe_fallback,
-        safe_fallback_candidate=args.safe_fallback_candidate,
     )
     logger.info("Scorer policy status: %s", report["status"])
     return 0
