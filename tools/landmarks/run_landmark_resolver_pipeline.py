@@ -86,14 +86,8 @@ class PipelinePaths:
         object.__setattr__(self, "run_splits", self.run_root / "splits" / "splits.json")
         object.__setattr__(self, "run_static_weights", self.run_root / "weights" / "static_landmark_weights.json")
         object.__setattr__(self, "run_summary", self.run_root / "run_summary.json")
-        object.__setattr__(self, "production_manifest", _first_existing(
-            self.production_root / "manifest.json",
-            self.production_root / "dataset" / "manifest.json",
-        ))
-        object.__setattr__(self, "production_cache", _first_existing(
-            self.production_root / "cache",
-            self.production_root / "prediction_cache",
-        ))
+        object.__setattr__(self, "production_manifest", _first_existing(self.production_root / "manifest.json", self.production_root / "dataset" / "manifest.json"))
+        object.__setattr__(self, "production_cache", _first_existing(self.production_root / "cache", self.production_root / "prediction_cache"))
         object.__setattr__(self, "candidate_dir", self.output_root / "candidate_search")
         object.__setattr__(self, "best_setup", self.output_root / "candidate_search" / "best_setup.json")
         object.__setattr__(self, "best_weights", self.output_root / "candidate_search" / "best_weights.json")
@@ -171,107 +165,29 @@ def _script(path: str) -> str:
 
 
 def _command_static_pipeline(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
-    return _append_extra(
-        [args.python_executable, _script("run_static_weight_pipeline.py"), "--output-root", str(paths.run_root)],
-        args.static_pipeline_arg,
-    )
+    return _append_extra([args.python_executable, _script("run_static_weight_pipeline.py"), "--output-root", str(paths.run_root)], args.static_pipeline_arg)
 
 
 def _command_candidate_search(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
     manifest = paths.run_report_manifest if paths.run_report_manifest.exists() else paths.run_manifest
-    argv = [
-        args.python_executable,
-        _script("search_ensemble_setup.py"),
-        "--manifest",
-        str(manifest),
-        "--cache-dir",
-        str(paths.run_cache),
-        "--splits",
-        str(paths.run_splits),
-        "--models",
-        args.models,
-        "--output-dir",
-        str(paths.candidate_dir),
-        "--include-geometry-metrics",
-        "--production-manifest",
-        str(paths.production_manifest),
-        "--production-cache-dir",
-        str(paths.production_cache),
-        "--production-gate-output",
-        str(paths.candidate_dir / "production_gate"),
-    ]
+    argv = [args.python_executable, _script("search_ensemble_setup.py"), "--manifest", str(manifest), "--cache-dir", str(paths.run_cache), "--splits", str(paths.run_splits), "--models", args.models, "--output-dir", str(paths.candidate_dir), "--include-geometry-metrics", "--production-manifest", str(paths.production_manifest), "--production-cache-dir", str(paths.production_cache), "--production-gate-output", str(paths.candidate_dir / "production_gate")]
     return _append_extra(argv, args.candidate_search_arg)
 
 
 def _command_hard_validation(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
     source_manifest = args.hard_source_manifest or paths.run_manifest
     weights = paths.best_weights if paths.best_weights.exists() else paths.run_static_weights
-    argv = [
-        args.python_executable,
-        _script("build_hard_alignment_validation.py"),
-        "--manifest",
-        str(source_manifest),
-        "--output-dir",
-        str(paths.hard_dir),
-        "--cache-dir",
-        str(paths.run_cache),
-        "--models",
-        args.models,
-        "--weights",
-        str(weights),
-    ]
+    argv = [args.python_executable, _script("build_hard_alignment_validation.py"), "--manifest", str(source_manifest), "--output-dir", str(paths.hard_dir), "--cache-dir", str(paths.run_cache), "--models", args.models, "--weights", str(weights)]
     return _append_extra(argv, args.hard_validation_arg)
 
 
 def _command_scorer_training(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
-    argv = [
-        args.python_executable,
-        _script("train_runtime_resolver_scorer.py"),
-        "--gt-manifest",
-        str(paths.hard_manifest),
-        "--gt-cache-dir",
-        str(paths.run_cache),
-        "--production-manifest",
-        str(paths.production_manifest),
-        "--production-cache-dir",
-        str(paths.production_cache),
-        "--weights",
-        str(paths.best_weights),
-        "--candidates",
-        args.candidates,
-        "--output-dir",
-        str(paths.scorer_train_dir),
-        "--gt-hard-resolver-metadata",
-        str(paths.frozen_gt_metadata),
-    ]
+    argv = [args.python_executable, _script("train_runtime_resolver_scorer.py"), "--gt-manifest", str(paths.hard_manifest), "--gt-cache-dir", str(paths.run_cache), "--production-manifest", str(paths.production_manifest), "--production-cache-dir", str(paths.production_cache), "--weights", str(paths.best_weights), "--candidates", args.candidates, "--output-dir", str(paths.scorer_train_dir), "--gt-hard-resolver-metadata", str(paths.frozen_gt_metadata)]
     return _append_extra(argv, args.scorer_train_arg)
 
 
 def _command_scorer_eval(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
-    argv = [
-        args.python_executable,
-        _script("evaluate_runtime_resolver_scorer.py"),
-        "--gt-manifest",
-        str(paths.hard_manifest),
-        "--gt-cache-dir",
-        str(paths.run_cache),
-        "--production-manifest",
-        str(paths.production_manifest),
-        "--production-cache-dir",
-        str(paths.production_cache),
-        "--weights",
-        str(paths.best_weights),
-        "--scorer",
-        str(paths.scorer_artifact),
-        "--candidates",
-        args.candidates,
-        "--output-dir",
-        str(paths.scorer_eval_dir),
-        "--promotion-scope",
-        args.promotion_scope,
-        "--gt-hard-resolver-metadata",
-        str(paths.frozen_gt_metadata),
-    ]
+    argv = [args.python_executable, _script("evaluate_runtime_resolver_scorer.py"), "--gt-manifest", str(paths.hard_manifest), "--gt-cache-dir", str(paths.run_cache), "--production-manifest", str(paths.production_manifest), "--production-cache-dir", str(paths.production_cache), "--weights", str(paths.best_weights), "--scorer", str(paths.scorer_artifact), "--candidates", args.candidates, "--output-dir", str(paths.scorer_eval_dir), "--promotion-scope", args.promotion_scope, "--gt-hard-resolver-metadata", str(paths.frozen_gt_metadata)]
     return _append_extra(argv, args.scorer_eval_arg)
 
 
@@ -290,8 +206,7 @@ def _outputs_for(stage: str, paths: PipelinePaths) -> list[Path]:
 
 
 def _stage_complete(stage: str, paths: PipelinePaths) -> bool:
-    outputs = _outputs_for(stage, paths)
-    return all(path.exists() for path in outputs)
+    return all(path.exists() for path in _outputs_for(stage, paths))
 
 
 def _run_command(command: list[str]) -> None:
@@ -302,14 +217,9 @@ def _freeze_metadata(args: argparse.Namespace, paths: PipelinePaths) -> list[str
     if paths.frozen_gt_metadata.exists() and args.resume:
         return [f"reused existing frozen metadata: {paths.frozen_gt_metadata}"]
     if paths.frozen_gt_metadata.exists() and not args.overwrite_frozen_metadata:
-        return [
-            f"frozen metadata already exists and was left unchanged: {paths.frozen_gt_metadata}"
-        ]
+        return [f"frozen metadata already exists and was left unchanged: {paths.frozen_gt_metadata}"]
     if args.gt_hard_resolver_metadata is None:
-        raise FileNotFoundError(
-            "missing required GT-hard resolver sidecar; pass --gt-hard-resolver-metadata. "
-            "The pipeline will not silently regenerate GT-hard metadata."
-        )
+        raise FileNotFoundError("missing required GT-hard resolver sidecar; pass --gt-hard-resolver-metadata. The pipeline will not silently regenerate GT-hard metadata.")
     source = Path(args.gt_hard_resolver_metadata)
     _require(source, "GT-hard resolver sidecar")
     paths.frozen_gt_metadata.parent.mkdir(parents=True, exist_ok=True)
@@ -371,12 +281,7 @@ def _config_updates(paths: PipelinePaths) -> dict[str, str]:
 
 def _apply_config(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
     updates = _config_updates(paths)
-    preview = {
-        "config_path": str(args.config_path),
-        "section": args.config_section,
-        "write_config": bool(args.write_config),
-        "updates": updates,
-    }
+    preview = {"config_path": str(args.config_path), "section": args.config_section, "write_config": bool(args.write_config), "updates": updates}
     write_json(paths.output_root / "config_update_preview.json", preview)
     if not args.write_config:
         return ["wrote config update preview only"]
@@ -398,35 +303,23 @@ def _execute_stage(stage: str, args: argparse.Namespace, paths: PipelinePaths) -
     outputs = [str(path) for path in _outputs_for(stage, paths)]
     if args.resume and _stage_complete(stage, paths):
         return StageResult(name=stage, status="skipped", outputs=outputs, notes=["resume: outputs already exist"])
-
     command: list[str] = []
     started = time.time()
     try:
         if stage == "static_pipeline":
+            command = _command_static_pipeline(args, paths)
+            if args.dry_run:
+                status = "planned" if (args.force_static_pipeline or args.static_pipeline_arg or not paths.run_summary.exists()) else "ok"
+                return StageResult(stage, status, command=command if status == "planned" else [], outputs=outputs)
             if not paths.run_summary.exists() or args.force_static_pipeline:
                 if not args.static_pipeline_arg and not args.force_static_pipeline:
-                    raise FileNotFoundError(
-                        f"missing static pipeline artifacts under {paths.run_root}; either provide an existing --run-root or pass --force-static-pipeline with --static-pipeline-arg values"
-                    )
-                command = _command_static_pipeline(args, paths)
-                if args.dry_run:
-                    return StageResult(stage, "planned", command=command, outputs=outputs)
+                    raise FileNotFoundError(f"missing static pipeline artifacts under {paths.run_root}; either provide an existing --run-root or pass --force-static-pipeline with --static-pipeline-arg values")
                 _run_command(command)
             else:
-                for path, label in (
-                    (paths.run_manifest, "run manifest"),
-                    (paths.run_cache, "run cache"),
-                    (paths.run_splits, "run splits"),
-                    (paths.run_static_weights, "run static weights"),
-                ):
+                for path, label in ((paths.run_manifest, "run manifest"), (paths.run_cache, "run cache"), (paths.run_splits, "run splits"), (paths.run_static_weights, "run static weights")):
                     _require(path, label)
         elif stage == "candidate_search":
-            for path, label in (
-                (paths.run_cache, "run cache"),
-                (paths.run_splits, "run splits"),
-                (paths.production_manifest, "production manifest"),
-                (paths.production_cache, "production cache"),
-            ):
+            for path, label in ((paths.run_cache, "run cache"), (paths.run_splits, "run splits"), (paths.production_manifest, "production manifest"), (paths.production_cache, "production cache")):
                 if not args.dry_run:
                     _require(path, label)
             command = _command_candidate_search(args, paths)
@@ -471,21 +364,8 @@ def _execute_stage(stage: str, args: argparse.Namespace, paths: PipelinePaths) -
         else:  # pragma: no cover
             raise AssertionError(stage)
     except Exception as err:
-        return StageResult(
-            name=stage,
-            status="failed",
-            command=command,
-            outputs=outputs,
-            error=f"{type(err).__name__}: {err}",
-            duration_seconds=round(time.time() - started, 3),
-        )
-    return StageResult(
-        name=stage,
-        status="ok",
-        command=command,
-        outputs=outputs,
-        duration_seconds=round(time.time() - started, 3),
-    )
+        return StageResult(name=stage, status="failed", command=command, outputs=outputs, error=f"{type(err).__name__}: {err}", duration_seconds=round(time.time() - started, 3))
+    return StageResult(name=stage, status="ok", command=command, outputs=outputs, duration_seconds=round(time.time() - started, 3))
 
 
 def _summary_payload(args: argparse.Namespace, paths: PipelinePaths, results: T.Sequence[StageResult]) -> dict[str, T.Any]:
@@ -497,81 +377,36 @@ def _summary_payload(args: argparse.Namespace, paths: PipelinePaths, results: T.
         "production_root": str(paths.production_root),
         "output_root": str(paths.output_root),
         "sources": {
-            SOURCE_GT_HARD: {
-                "manifest": str(paths.hard_manifest),
-                "cache": str(paths.run_cache),
-                "resolver_metadata": str(paths.frozen_gt_metadata),
-            },
-            SOURCE_PRODUCTION_VALIDATED: {
-                "manifest": str(paths.production_manifest),
-                "cache": str(paths.production_cache),
-            },
+            SOURCE_GT_HARD: {"manifest": str(paths.hard_manifest), "cache": str(paths.run_cache), "resolver_metadata": str(paths.frozen_gt_metadata)},
+            SOURCE_PRODUCTION_VALIDATED: {"manifest": str(paths.production_manifest), "cache": str(paths.production_cache)},
         },
-        "artifacts": {
-            "best_setup": str(paths.best_setup),
-            "best_weights": str(paths.best_weights),
-            "runtime_resolver_scorer": str(paths.scorer_artifact),
-            "scorer_policy_report": str(paths.scorer_report),
-        },
+        "artifacts": {"best_setup": str(paths.best_setup), "best_weights": str(paths.best_weights), "runtime_resolver_scorer": str(paths.scorer_artifact), "scorer_policy_report": str(paths.scorer_report)},
         "scorer_report_status": report.get("promotion_status", report.get("status", "")),
         "failed_gates": report.get("failed_gates", []),
         "dry_run": bool(args.dry_run),
         "resume": bool(args.resume),
         "stages": [_jsonable(row.__dict__) for row in results],
-        "config_update": {
-            "config_path": str(args.config_path),
-            "section": args.config_section,
-            "write_config": bool(args.write_config),
-            "updates": _config_updates(paths),
-        },
+        "config_update": {"config_path": str(args.config_path), "section": args.config_section, "write_config": bool(args.write_config), "updates": _config_updates(paths)},
     }
 
 
 def _write_summary_md(path: Path, summary: dict[str, T.Any]) -> None:
-    lines = [
-        "# Landmark resolver pipeline summary",
-        "",
-        f"Status: **{summary['status']}**",
-        f"Promotion scope: `{summary['promotion_scope']}`",
-        f"Run root: `{summary['run_root']}`",
-        f"Production root: `{summary['production_root']}`",
-        f"Output root: `{summary['output_root']}`",
-        "",
-        "## Stages",
-        "",
-        "| Stage | Status | Duration | Notes |",
-        "| --- | --- | ---: | --- |",
-    ]
+    lines = ["# Landmark resolver pipeline summary", "", f"Status: **{summary['status']}**", f"Promotion scope: `{summary['promotion_scope']}`", f"Run root: `{summary['run_root']}`", f"Production root: `{summary['production_root']}`", f"Output root: `{summary['output_root']}`", "", "## Stages", "", "| Stage | Status | Duration | Notes |", "| --- | --- | ---: | --- |"]
     for stage in summary["stages"]:
         notes = "; ".join(stage.get("notes") or [])
         if stage.get("error"):
             notes = stage["error"]
         lines.append(f"| `{stage['name']}` | {stage['status']} | {stage.get('duration_seconds', 0)}s | {notes} |")
-    lines.extend([
-        "",
-        "## Final artifacts",
-        "",
-    ])
+    lines.extend(["", "## Final artifacts", ""])
     for key, value in summary["artifacts"].items():
         lines.append(f"- `{key}`: `{value}`")
-    lines.extend([
-        "",
-        "## Config update",
-        "",
-        f"Config path: `{summary['config_update']['config_path']}`",
-        f"Section: `{summary['config_update']['section']}`",
-        f"Write config: `{summary['config_update']['write_config']}`",
-    ])
+    lines.extend(["", "## Config update", "", f"Config path: `{summary['config_update']['config_path']}`", f"Section: `{summary['config_update']['section']}`", f"Write config: `{summary['config_update']['write_config']}`"])
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def run_pipeline(args: argparse.Namespace) -> dict[str, T.Any]:
-    paths = PipelinePaths(
-        run_root=args.run_root,
-        production_root=args.production_root,
-        output_root=args.output_root,
-    )
+    paths = PipelinePaths(run_root=args.run_root, production_root=args.production_root, output_root=args.output_root)
     paths.output_root.mkdir(parents=True, exist_ok=True)
     selected = _stage_slice(args.start_at, args.stop_after)
     results: list[StageResult] = []
