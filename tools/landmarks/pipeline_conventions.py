@@ -156,15 +156,15 @@ def validate_resolver_metadata_for_samples(
     observed = set(metadata)
     missing = sorted(expected - observed)
     extras = sorted(observed - expected)
-    if require_complete and missing:
-        raise ValueError(
-            f"{source} resolver metadata missing {len(missing)} manifest key(s); "
-            f"examples: {missing[:10]}"
-        )
     if extras:
         raise ValueError(
             f"{source} resolver metadata contains {len(extras)} key(s) not present in manifest; "
             f"examples: {extras[:10]}"
+        )
+    if require_complete and missing:
+        raise ValueError(
+            f"{source} resolver metadata missing {len(missing)} manifest key(s); "
+            f"examples: {missing[:10]}"
         )
     for key, row in metadata.items():
         if key not in expected:
