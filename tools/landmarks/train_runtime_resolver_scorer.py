@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import json
 import logging
@@ -35,7 +36,6 @@ from tools.landmarks.runtime_resolver_scorer_data import (
     parse_candidates,
     rows_for_context,
     write_candidate_table_csv,
-    write_rows_csv,
 )
 
 logger = logging.getLogger("train_runtime_resolver_scorer")
@@ -45,6 +45,8 @@ TRAINING_ROWS_CSV = "runtime_resolver_scorer_training_rows.csv"
 EVAL_ROWS_CSV = "runtime_resolver_scorer_eval_rows.csv"
 TRAINING_CANDIDATE_TABLE_CSV = "candidate_table.csv"
 TRAINING_METRICS_JSON = "runtime_resolver_scorer_training_metrics.json"
+SOURCE_GT_HARD = "gt_hard"
+SOURCE_PRODUCTION_VALIDATED = "production_validated"
 TaggedRow = tuple[CandidateQualityRow, str]
 
 
@@ -62,8 +64,8 @@ def _collect_rows(
     allow_image_backfill: bool,
 ) -> tuple[list[TaggedRow], list[dict[str, T.Any]]]:
     specs = [
-        ("gt", gt_manifest, gt_cache_dir),
-        ("production", production_manifest, production_cache_dir),
+        (SOURCE_GT_HARD, gt_manifest, gt_cache_dir),
+        (SOURCE_PRODUCTION_VALIDATED, production_manifest, production_cache_dir),
     ]
     rows: list[TaggedRow] = []
     candidate_rows: list[dict[str, T.Any]] = []
@@ -139,6 +141,44 @@ def _untag(rows: T.Sequence[TaggedRow]) -> list[CandidateQualityRow]:
 
 def _source_rows(rows: T.Sequence[TaggedRow], source: str) -> list[CandidateQualityRow]:
     return [row for row, row_source in rows if row_source == source]
+
+
+def _write_tagged_rows_csv(rows: T.Sequence[TaggedRow], path: Path) -> Path:
+    """Write scorer rows with an explicit source column for held-out split reuse."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    feature_names = sorted({name for row, _source in rows for name in row.feature_values})
+    base_fieldnames = [
+        "sample_id",
+        "dataset",
+        "condition",
+        "candidate_name",
+        "candidate_nme",
+        "failure_label",
+        "is_oracle",
+        "was_selected_by_current_policy",
+        "gap_vs_oracle",
+        "runtime_bucket",
+        "runtime_bucket_source",
+        "risk_route",
+        "geometry_veto_reasons",
+        "selected_by_current_policy",
+        "selected_candidate_missing_from_eval",
+        "oracle",
+        "features_json",
+    ]
+    fieldnames = ["source", *base_fieldnames, *feature_names]
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for row, source in rows:
+            writer.writerow(
+                {
+                    "source": source,
+                    **row.to_csv_row(),
+                    **{name: row.feature_values.get(name, 0.0) for name in feature_names},
+                }
+            )
+    return path
 
 
 def _feature_order(rows: T.Sequence[CandidateQualityRow]) -> tuple[str, ...]:
@@ -297,8 +337,8 @@ def train_runtime_resolver_scorer(
         calibration={"type": "none", "params": {}},
     )
     scorer_path = write_runtime_resolver_scorer(scorer, output_dir / SCORER_ARTIFACT)
-    rows_path = write_rows_csv(train_rows, output_dir / TRAINING_ROWS_CSV)
-    eval_rows_path = write_rows_csv(eval_rows, output_dir / EVAL_ROWS_CSV)
+    rows_path = _write_tagged_rows_csv(train_tagged_rows, output_dir / TRAINING_ROWS_CSV)
+    eval_rows_path = _write_tagged_rows_csv(eval_tagged_rows, output_dir / EVAL_ROWS_CSV)
     candidate_table_path = write_candidate_table_csv(
         candidate_rows,
         output_dir / TRAINING_CANDIDATE_TABLE_CSV,
@@ -306,8 +346,10 @@ def train_runtime_resolver_scorer(
     metrics = _metrics(scorer, rows)
     train_metrics = _metrics(scorer, train_rows)
     eval_metrics = _metrics(scorer, eval_rows)
-    production_eval_metrics = _metrics(scorer, _source_rows(eval_tagged_rows, "production"))
-    gt_eval_metrics = _metrics(scorer, _source_rows(eval_tagged_rows, "gt"))
+    production_eval_metrics = _metrics(
+        scorer, _source_rows(eval_tagged_rows, SOURCE_PRODUCTION_VALIDATED)
+    )
+    gt_eval_metrics = _metrics(scorer, _source_rows(eval_tagged_rows, SOURCE_GT_HARD))
     metrics.update(
         {
             "artifact": str(scorer_path),
