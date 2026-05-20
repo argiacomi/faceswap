@@ -438,7 +438,9 @@ def evaluate_runtime_resolver_scorer(
 ) -> dict[str, T.Any]:
     """Evaluate learned scorer policy and write reports."""
     if promotion_scope not in PROMOTION_SCOPES:
-        raise ValueError(f"promotion_scope must be one of {PROMOTION_SCOPES}, got {promotion_scope!r}")
+        raise ValueError(
+            f"promotion_scope must be one of {PROMOTION_SCOPES}, got {promotion_scope!r}"
+        )
     output_dir.mkdir(parents=True, exist_ok=True)
     scorer = load_runtime_resolver_scorer(scorer_path)
     contexts = _collect_contexts(
@@ -545,7 +547,9 @@ def evaluate_runtime_resolver_scorer(
                     None if rejected_nme is None else replacement_nme - rejected_nme
                 ),
                 "fallback_failure_delta_vs_rejected": (
-                    None if rejected_failure is None else int(replacement_failure) - int(rejected_failure)
+                    None
+                    if rejected_failure is None
+                    else int(replacement_failure) - int(rejected_failure)
                 ),
             }
         )
@@ -622,14 +626,20 @@ def evaluate_runtime_resolver_scorer(
         production_static = production_only_policy_metrics["static_weighted_downweight"]
         production_hrnet = production_only_policy_metrics.get("hrnet")
         if production_scorer["mean_nme"] >= production_static["mean_nme"]:
-            production_failed_gates.append("production_scorer_mean_nme_not_better_than_static_downweight")
+            production_failed_gates.append(
+                "production_scorer_mean_nme_not_better_than_static_downweight"
+            )
         if production_scorer["p90_nme"] > production_static["p90_nme"]:
-            production_failed_gates.append("production_scorer_p90_nme_regresses_vs_static_downweight")
+            production_failed_gates.append(
+                "production_scorer_p90_nme_regresses_vs_static_downweight"
+            )
         if (
             production_scorer["failure_rate"]
             > production_static["failure_rate"] + epsilon_failure_rate
         ):
-            production_failed_gates.append("production_scorer_failure_rate_regresses_vs_static_downweight")
+            production_failed_gates.append(
+                "production_scorer_failure_rate_regresses_vs_static_downweight"
+            )
         if (
             production_hrnet is not None
             and production_scorer["failure_rate"]
@@ -640,7 +650,9 @@ def evaluate_runtime_resolver_scorer(
         gt_hard_scorer = gt_hard_all_policy_metrics["learned_quality_v1"]
         gt_hard_static = gt_hard_all_policy_metrics["static_weighted_downweight"]
         if gt_hard_scorer["failure_rate"] > gt_hard_static["failure_rate"] + epsilon_failure_rate:
-            gt_hard_failed_gates.append("gt_hard_scorer_failure_rate_regresses_vs_static_downweight")
+            gt_hard_failed_gates.append(
+                "gt_hard_scorer_failure_rate_regresses_vs_static_downweight"
+            )
     if derived_no_image_gt_hard_contexts and not allow_derived_no_image_gt_hard:
         gt_hard_failed_gates.append("gt_hard_derived_no_image_evidence_requires_explicit_allow")
     universal_failed_gates = [
@@ -648,7 +660,9 @@ def evaluate_runtime_resolver_scorer(
         *production_failed_gates,
         *gt_hard_failed_gates,
     ]
-    failed_gates = production_failed_gates if promotion_scope == "production" else universal_failed_gates
+    failed_gates = (
+        production_failed_gates if promotion_scope == "production" else universal_failed_gates
+    )
 
     report: dict[str, T.Any] = {
         "status": "pass" if not failed_gates else "fail",

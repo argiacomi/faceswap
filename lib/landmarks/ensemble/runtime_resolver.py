@@ -83,6 +83,7 @@ HARD_SLICE_CONSENSUS_DISTANCE_THRESHOLD: float = 0.04
 HARD_SLICE_SINGLE_MODEL_DISAGREEMENT_PX_THRESHOLD: float = 35.0
 HARD_SLICE_DISTANCE_TO_HRNET_THRESHOLD: float = 0.08
 SAFE_SINGLE_TIE_BREAKER: tuple[str, ...] = ("hrnet", "spiga", "orformer")
+DEFAULT_SAFE_FALLBACK_MIN_DELTA: float = 0.05
 
 DEFAULT_PRIORITY: tuple[str, ...] = (
     "static_weighted_downweight",
@@ -221,6 +222,7 @@ class RuntimeResolverConfig:
     roll_veto_degrees: float = 15.0
     hard_roll_degrees: float = 30.0
     risk_floor_for_safe_fallback: float = 0.50
+    safe_fallback_min_delta: float = DEFAULT_SAFE_FALLBACK_MIN_DELTA
     strict: bool = False
 
 
@@ -1287,6 +1289,23 @@ def _roll_support_count(
     return support
 
 
+def _score_delta_passes(
+    *,
+    replacement: str,
+    selected: str,
+    scores: T.Mapping[str, float],
+    min_delta: float,
+) -> bool:
+    """Return whether replacement is materially lower risk than selected."""
+    replacement_score = scores.get(replacement)
+    selected_score = scores.get(selected)
+    if replacement_score is None or selected_score is None:
+        return False
+    if not math.isfinite(float(replacement_score)) or not math.isfinite(float(selected_score)):
+        return False
+    return float(replacement_score) < float(selected_score) - min_delta
+
+
 def _high_risk_safe_fallback_candidate(
     *,
     scores: T.Mapping[str, float],
@@ -1513,7 +1532,16 @@ def resolve_runtime(
             metrics=metrics,
             risk_floor=config.risk_floor_for_safe_fallback,
         )
-        safe_fallback_used = safe_fallback is not None and safe_fallback != selected
+        safe_fallback_used = (
+            safe_fallback is not None
+            and safe_fallback != selected
+            and _score_delta_passes(
+                replacement=safe_fallback,
+                selected=selected,
+                scores=scores,
+                min_delta=config.safe_fallback_min_delta,
+            )
+        )
         if safe_fallback_used:
             rejected_candidate = selected
             selected = safe_fallback
@@ -1528,6 +1556,7 @@ def resolve_runtime(
             "scorer_version": scorer.version,
             "scorer_safe_fallback_tie_breaker": SAFE_SINGLE_TIE_BREAKER,
             "scorer_safe_fallback_floor": config.risk_floor_for_safe_fallback,
+            "scorer_safe_fallback_min_delta": config.safe_fallback_min_delta,
             "scorer_safe_fallback_used": safe_fallback_used,
             "hard_slice_safe_fallback_used": hard_slice_fallback_used,
             "rejected_candidate": rejected_candidate,
