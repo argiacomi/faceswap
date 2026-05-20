@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from lib.landmarks.coordinates import roi_to_matrix
 from lib.landmarks.ensemble import runtime_resolver
@@ -13,6 +14,7 @@ from lib.landmarks.ensemble.runtime_resolver import (
     ModelPrediction,
     RuntimeBucketResult,
     RuntimeResolverConfig,
+    RuntimeResolverError,
     resolve_runtime,
 )
 from lib.landmarks.ensemble.runtime_resolver_scorer import (
@@ -363,6 +365,22 @@ def test_all_candidates_vetoed_fallback_skips_nonfinite_candidates() -> None:
     )
 
     assert selected == "static_weighted_hard_drop"
+
+
+def test_runtime_resolver_rejects_normalized_landmarks_with_frame_bbox() -> None:
+    """Normalized crop landmarks must not reach frame-space geometry validation."""
+    base = _face()
+    normalized = (base - np.min(base, axis=0)) / np.ptp(base, axis=0)
+
+    with pytest.raises(RuntimeResolverError, match="non-frame-space landmarks"):
+        resolve_runtime(
+            [
+                ModelPrediction("hrnet", normalized),
+                ModelPrediction("spiga", normalized + 0.01),
+            ],
+            RuntimeResolverConfig(weights={"hrnet": [0.5] * 68, "spiga": [0.5] * 68}),
+            detector_bbox=(187.0, 143.0, 752.0, 884.0),
+        )
 
 
 def test_learned_quality_policy_rejects_consensus_collapse_fusion_for_best_single(

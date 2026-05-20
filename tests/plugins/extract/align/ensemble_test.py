@@ -15,6 +15,7 @@ from lib.landmarks.coordinates import (
     normalized_crop_to_frame,
     roi_to_matrix,
 )
+from lib.landmarks.ensemble.runtime_resolver import RuntimeResolverError
 from plugins.extract.align.ensemble import Ensemble
 from plugins.extract.align.hrnet import HRNet
 
@@ -252,6 +253,55 @@ def test_ensemble_accepts_runner_crop_matrices_for_current_feed() -> None:
     np.testing.assert_allclose(plugin._last_matrices, matrices)
     np.testing.assert_allclose(plugin._last_detector_bboxes, bboxes)
     assert plugin._bbox_for_face(1) == (310.0, 410.0, 490.0, 590.0)
+
+
+def test_ensemble_preserves_cached_matrices_when_runner_pads_batch() -> None:
+    """Padded process batches keep real crop matrices for real face rows."""
+    plugin = Ensemble(adapters=[], crop_scale=1.0)
+    rois = np.array([[10, 20, 110, 120], [200, 300, 400, 500]], dtype="int32")
+    bboxes = np.array([[20, 30, 100, 110], [220, 320, 380, 480]], dtype="float32")
+    plugin.set_crop_matrices(roi_to_matrix(rois), detector_bboxes=bboxes)
+
+    matrices = plugin._matrices_for_batch(4)
+
+    np.testing.assert_allclose(matrices[:2], roi_to_matrix(rois))
+    np.testing.assert_allclose(matrices[2:], np.repeat(np.eye(3)[None], 2, axis=0))
+    assert plugin._bbox_for_face(0) == (20.0, 30.0, 100.0, 110.0)
+    assert plugin._bbox_for_face(2) is None
+
+
+def test_ensemble_converts_normalized_resolver_points_before_validation() -> None:
+    """Resolver handoff repairs normalized candidates when a real crop matrix exists."""
+    plugin = Ensemble(adapters=[], crop_scale=1.0)
+    normalized = np.column_stack(
+        [np.linspace(0.2, 0.8, 68), np.linspace(0.3, 0.9, 68)]
+    ).astype("float32")
+    matrix = roi_to_matrix(np.array([100, 100, 900, 900], dtype="int32"))
+
+    result = plugin._frame_points_for_resolver(
+        adapter_name="hrnet",
+        points=normalized,
+        detector_bbox=(187.0, 143.0, 752.0, 884.0),
+        crop_to_frame_matrix=matrix,
+    )
+
+    np.testing.assert_allclose(result, normalized_crop_to_frame(normalized, matrix))
+
+
+def test_ensemble_rejects_normalized_resolver_points_without_frame_transform() -> None:
+    """The resolver handoff fails fast when normalized points cannot be converted."""
+    plugin = Ensemble(adapters=[], crop_scale=1.0)
+    normalized = np.column_stack(
+        [np.linspace(0.2, 0.8, 68), np.linspace(0.3, 0.9, 68)]
+    ).astype("float32")
+
+    with pytest.raises(RuntimeResolverError, match="non-frame-space landmarks"):
+        plugin._frame_points_for_resolver(
+            adapter_name="hrnet",
+            points=normalized,
+            detector_bbox=(187.0, 143.0, 752.0, 884.0),
+            crop_to_frame_matrix=np.eye(3, dtype="float32"),
+        )
 
 
 def test_ensemble_frame_space_api_matches_faceswap_normalized_process_output() -> None:
