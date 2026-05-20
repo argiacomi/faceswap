@@ -24,6 +24,7 @@ from lib.landmarks.ensemble.runtime_resolver import (
     ModelPrediction,
     RuntimeBucketResult,
     RuntimeResolverConfig,
+    _candidate_extra_features,
     _circular_median,
     _max_landmark_consensus_px,
     _metric_for_candidate,
@@ -150,6 +151,7 @@ class SampleCandidateContext:
     max_disagreement_px: float
     runtime_bucket_source: str
     selected_candidate_missing_from_eval: bool
+    candidate_extra_features: dict[str, dict[str, float]]
 
 
 def parse_candidates(
@@ -345,6 +347,14 @@ def build_sample_context(
             yaw_estimate = stored_yaw
     for name, metric in metrics.items():
         metric.geometry_veto_reasons = _shape_reasons(bucket_result.bucket, name, metric)
+    candidate_extra_features = _candidate_extra_features(
+        candidates,
+        metrics,
+        reference_bbox=reference_bbox,
+        condition=sample.condition or bucket_result.bucket or "unknown",
+        runtime_bucket=bucket_result.bucket,
+        runtime_bucket_source=runtime_bucket_source,
+    )
 
     nme_by_candidate: dict[str, float] = {}
     failure_by_candidate: dict[str, bool] = {}
@@ -400,6 +410,7 @@ def build_sample_context(
         ),
         runtime_bucket_source=runtime_bucket_source,
         selected_candidate_missing_from_eval=selected_candidate_missing_from_eval,
+        candidate_extra_features=candidate_extra_features,
     )
 
 
@@ -439,6 +450,8 @@ def rows_for_context(
                     yaw_estimate=context.yaw_estimate,
                     candidate_yaw_disagreement=context.candidate_yaw_disagreement,
                     max_disagreement_px=context.max_disagreement_px,
+                    runtime_bucket_source=context.runtime_bucket_source,
+                    candidate_extra_features=context.candidate_extra_features,
                 ),
                 selected_by_current_policy=context.current_policy_choice,
                 selected_candidate_missing_from_eval=(

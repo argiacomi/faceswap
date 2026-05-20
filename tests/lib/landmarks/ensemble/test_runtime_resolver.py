@@ -278,6 +278,51 @@ def test_learned_quality_policy_falls_back_to_hrnet_when_all_risks_high(
     assert result.metadata["fallback_reason"] == "scorer_high_risk_safe_fallback"
 
 
+def test_learned_quality_policy_uses_hrnet_for_hard_slice_fusion_contradiction(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    """Rolled hard slices do not let a low-risk fusion override valid HRNet."""
+    monkeypatch.setattr(
+        runtime_resolver,
+        "infer_runtime_bucket",
+        lambda **kwargs: RuntimeBucketResult(
+            bucket="rolled_large_yaw_right",
+            features={"candidate_yaw_disagreement": 95.0},
+        ),
+    )
+    scorer_path = write_runtime_resolver_scorer(
+        RuntimeResolverScorer(
+            features=("candidate_name=static_weighted",),
+            coefficients=(-5.0,),
+            intercept=0.0,
+        ),
+        tmp_path / "runtime_resolver_scorer.json",
+    )
+    base = _face()
+
+    result = resolve_runtime(
+        [
+            ModelPrediction("hrnet", base + 0.1),
+            ModelPrediction("spiga", base + 18.0),
+            ModelPrediction("orformer", base + 9.0),
+        ],
+        RuntimeResolverConfig(
+            policy="learned_quality_v1",
+            scorer_path=str(scorer_path),
+            weights={name: [1.0 / 3.0] * 68 for name in ("hrnet", "spiga", "orformer")},
+        ),
+        detector_bbox=(35.0, 65.0, 165.0, 155.0),
+    )
+
+    assert result.selected_candidate == "hrnet"
+    assert result.metadata["candidate_scores"]["static_weighted"] < result.metadata[
+        "candidate_scores"
+    ]["hrnet"]
+    assert result.metadata["hard_slice_safe_fallback_used"] is True
+    assert result.metadata["fallback_reason"] == "hard_slice_safe_single_fallback"
+
+
 def test_runtime_resolver_records_eye_visual_evidence_for_runtime_bucket() -> None:
     """Eye visual evidence is diagnostic and stays within the canonical bucket family."""
     base = _face()
