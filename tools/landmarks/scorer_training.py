@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import csv
 import hashlib
-import json
 import typing as T
 from pathlib import Path
 
@@ -300,7 +299,9 @@ def train_runtime_resolver_scorer(
     production_eval_metrics = scorer_row_metrics(
         scorer, source_quality_rows(eval_tagged_rows, SOURCE_PRODUCTION_VALIDATED)
     )
-    gt_eval_metrics = scorer_row_metrics(scorer, source_quality_rows(eval_tagged_rows, SOURCE_GT_HARD))
+    gt_eval_metrics = scorer_row_metrics(
+        scorer, source_quality_rows(eval_tagged_rows, SOURCE_GT_HARD)
+    )
     metrics.update(
         {
             "artifact": str(scorer_path),

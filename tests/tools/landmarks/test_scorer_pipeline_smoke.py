@@ -46,7 +46,10 @@ def _ellipse_points(
     stop: float = 2.0 * np.pi,
 ) -> list[list[float]]:
     angles = np.linspace(start, stop, count, endpoint=False, dtype="float32")
-    return [[center_x + radius_x * float(np.cos(a)), center_y + radius_y * float(np.sin(a))] for a in angles]
+    return [
+        [center_x + radius_x * float(np.cos(a)), center_y + radius_y * float(np.sin(a))]
+        for a in angles
+    ]
 
 
 def _canonical_face(offset_x: float = 0.0, offset_y: float = 0.0) -> np.ndarray:
@@ -68,7 +71,9 @@ def _canonical_face(offset_x: float = 0.0, offset_y: float = 0.0) -> np.ndarray:
     return array
 
 
-def _write_manifest(path: Path, sample_id: str, landmarks: Path, *, metadata: dict[str, object]) -> None:
+def _write_manifest(
+    path: Path, sample_id: str, landmarks: Path, *, metadata: dict[str, object]
+) -> None:
     payload = {
         "schema": "2d_68",
         "samples": [
@@ -285,6 +290,8 @@ def test_scorer_pipeline_smoke_catches_schema_drift_in_sidecar_key(tmp_path: Pat
 
 def test_smoke_fixture_contains_expected_gt_sidecar_key(tmp_path: Path) -> None:
     fixture = _make_fixture(tmp_path)
-    rows = [json.loads(line) for line in fixture.gt_sidecar.read_text(encoding="utf-8").splitlines()]
+    rows = [
+        json.loads(line) for line in fixture.gt_sidecar.read_text(encoding="utf-8").splitlines()
+    ]
     assert rows
     assert metadata_key(rows[0]["sample_id"], rows[0]["face_index"]) == ("gt_smoke", 0)

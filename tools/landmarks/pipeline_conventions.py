@@ -102,7 +102,12 @@ def runtime_bucket_from_resolver_metadata(row: T.Mapping[str, T.Any]) -> str | N
     resolver = le.get("resolver")
     if not isinstance(resolver, T.Mapping):
         resolver = {}
-    bucket = le.get("runtime_bucket") or le.get("bucket") or resolver.get("runtime_bucket") or resolver.get("bucket")
+    bucket = (
+        le.get("runtime_bucket")
+        or le.get("bucket")
+        or resolver.get("runtime_bucket")
+        or resolver.get("bucket")
+    )
     return str(bucket) if bucket else None
 
 
@@ -117,13 +122,17 @@ def load_resolver_metadata_sidecar(path: Path | None) -> dict[tuple[str, int], d
                 continue
             row = json.loads(line)
             if not isinstance(row, dict):
-                raise ResolverMetadataValidationError(f"{path}:{line_num} resolver metadata row must be a JSON object")
+                raise ResolverMetadataValidationError(
+                    f"{path}:{line_num} resolver metadata row must be a JSON object"
+                )
             sample_id = row.get("sample_id")
             if not sample_id:
                 raise ResolverMetadataValidationError(f"{path}:{line_num} missing sample_id")
             key = metadata_key(str(sample_id), face_index_from_metadata(row))
             if key in records:
-                raise ResolverMetadataValidationError(f"{path}:{line_num} duplicate resolver metadata key {key}")
+                raise ResolverMetadataValidationError(
+                    f"{path}:{line_num} duplicate resolver metadata key {key}"
+                )
             records[key] = row
     return records
 
@@ -148,13 +157,17 @@ def validate_resolver_metadata_for_samples(
     if require_complete and missing:
         detail = f"{source} resolver metadata missing {len(missing)} manifest key(s); examples: {missing[:10]}"
         if source == SOURCE_GT_HARD:
-            raise ResolverMetadataValidationError("GT-hard sample missing stored resolver metadata. " + detail)
+            raise ResolverMetadataValidationError(
+                "GT-hard sample missing stored resolver metadata. " + detail
+            )
         raise ResolverMetadataValidationError(detail)
     for key, row in metadata.items():
         if key not in expected:
             continue
         if runtime_bucket_from_resolver_metadata(row) is None:
-            raise ResolverMetadataValidationError(f"{source} resolver metadata key {key} has no runtime bucket")
+            raise ResolverMetadataValidationError(
+                f"{source} resolver metadata key {key} has no runtime bucket"
+            )
 
 
 def validate_resolver_metadata_for_manifest(
@@ -165,10 +178,14 @@ def validate_resolver_metadata_for_manifest(
     require_complete: bool,
 ) -> None:
     """Load a manifest and validate resolver sidecar metadata against it."""
-    validate_resolver_metadata_for_samples(load_manifest(manifest_path), metadata, source=source, require_complete=require_complete)
+    validate_resolver_metadata_for_samples(
+        load_manifest(manifest_path), metadata, source=source, require_complete=require_complete
+    )
 
 
-def require_manifest_cache_pair(*, source: str, manifest_path: Path | None, cache_dir: Path | None) -> ManifestCachePair | None:
+def require_manifest_cache_pair(
+    *, source: str, manifest_path: Path | None, cache_dir: Path | None
+) -> ManifestCachePair | None:
     """Return a normalized manifest/cache pair or fail on half-specified inputs."""
     source = normalize_source_label(source)
     if manifest_path is None and cache_dir is None:
@@ -194,7 +211,9 @@ def write_jsonl(path: Path, rows: T.Iterable[T.Mapping[str, T.Any]]) -> Path:
     return path
 
 
-def write_csv(path: Path, rows: T.Sequence[T.Mapping[str, T.Any]], fieldnames: T.Sequence[str] | None = None) -> Path:
+def write_csv(
+    path: Path, rows: T.Sequence[T.Mapping[str, T.Any]], fieldnames: T.Sequence[str] | None = None
+) -> Path:
     """Write rows to CSV with stable field ordering."""
     path.parent.mkdir(parents=True, exist_ok=True)
     names = list(fieldnames or (list(rows[0]) if rows else []))
