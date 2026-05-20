@@ -79,6 +79,12 @@ HARD_SLICE_SAFE_SINGLE_BUCKETS: frozenset[str] = frozenset(
         "rolled_profile_right",
     )
 )
+HARD_POSE_PLAIN_AVERAGE_GUARD_BUCKET_PREFIXES: tuple[str, ...] = (
+    "profile_",
+    "large_yaw_",
+    "rolled_large_yaw_",
+)
+HARD_POSE_PLAIN_AVERAGE_SAFE_MODELS: tuple[str, ...] = ("hrnet", "spiga")
 HARD_SLICE_CONSENSUS_DISTANCE_THRESHOLD: float = 0.04
 HARD_SLICE_SINGLE_MODEL_DISAGREEMENT_PX_THRESHOLD: float = 35.0
 HARD_SLICE_DISTANCE_TO_HRNET_THRESHOLD: float = 0.08
@@ -1504,6 +1510,56 @@ def _hard_slice_safe_single_candidate(
     )
 
 
+def _hard_pose_plain_average_replacement(
+    *,
+    selected: str,
+    bucket: str,
+    selectable: T.AbstractSet[str],
+    candidates: T.Mapping[str, CandidateRecord],
+    metrics: T.Mapping[str, CandidateMetrics],
+    scores: T.Mapping[str, float] | None,
+    min_delta: float,
+) -> str | None:
+    """Avoid plain-average in hard-pose buckets unless it beats HRNet/SPIGA by margin."""
+    if selected != "plain_average" or not bucket.startswith(
+        HARD_POSE_PLAIN_AVERAGE_GUARD_BUCKET_PREFIXES
+    ):
+        return None
+    safe_models = [
+        model
+        for model in HARD_POSE_PLAIN_AVERAGE_SAFE_MODELS
+        if model in selectable
+        and model in candidates
+        and not candidates[model].is_fusion
+        and model in metrics
+        and not metrics[model].geometry_veto_reasons
+        and np.all(np.isfinite(np.asarray(candidates[model].landmarks, dtype="float64")))
+    ]
+    if not safe_models:
+        return None
+    if scores is None:
+        return safe_models[0]
+
+    selected_score = scores.get(selected)
+    scored_safe_models = [
+        model
+        for model in safe_models
+        if model in scores and math.isfinite(float(scores[model]))
+    ]
+    if (
+        selected_score is None
+        or not math.isfinite(float(selected_score))
+        or not scored_safe_models
+    ):
+        return safe_models[0]
+
+    order = {model: index for index, model in enumerate(HARD_POSE_PLAIN_AVERAGE_SAFE_MODELS)}
+    replacement = min(scored_safe_models, key=lambda model: (scores[model], order[model]))
+    if float(selected_score) < float(scores[replacement]) - min_delta:
+        return None
+    return replacement
+
+
 def resolve_runtime(
     predictions: T.Sequence[ModelPrediction],
     config: RuntimeResolverConfig,
@@ -1609,8 +1665,7 @@ def resolve_runtime(
     vetoed = roll_vetoed | geometry_vetoed
     survivors = available - vetoed
     logger.debug(
-        "[RuntimeResolver] veto summary bucket=%s survivors=%s roll_vetoed=%s "
-        "geometry_vetoed=%s",
+        "[RuntimeResolver] veto summary bucket=%s survivors=%s roll_vetoed=%s geometry_vetoed=%s",
         bucket,
         sorted(survivors),
         sorted(roll_vetoed & available),
@@ -1647,6 +1702,8 @@ def resolve_runtime(
         fallback_reason: str | None = "all_candidates_vetoed"
     else:
         fallback_reason = None
+    hard_pose_plain_average_guard_used = False
+    hard_pose_plain_average_rejected_candidate = ""
     scorer_metadata: dict[str, T.Any] = {}
     if config.policy == "learned_quality_v1":
         if not config.scorer_path:
@@ -1669,10 +1726,7 @@ def resolve_runtime(
         )
         logger.debug(
             "[RuntimeResolver] scorer ranked candidates=%s",
-            [
-                name
-                for name, _score in sorted(scores.items(), key=lambda item: (item[1], item[0]))
-            ],
+            [name for name, _score in sorted(scores.items(), key=lambda item: (item[1], item[0]))],
         )
         _trace("[RuntimeResolver] scorer candidate scores: %s", scores)
         by_name = {candidate.name: candidate for candidate in candidates}
@@ -1728,6 +1782,23 @@ def resolve_runtime(
                 rejected_candidate = selected
                 selected = safe_fallback
                 fallback_reason = "scorer_high_risk_safe_fallback"
+            guard_replacement = _hard_pose_plain_average_replacement(
+                selected=selected,
+                bucket=bucket,
+                selectable=selectable,
+                candidates=by_name,
+                metrics=metrics,
+                scores=scores,
+                min_delta=config.safe_fallback_min_delta,
+            )
+            hard_pose_plain_average_guard_used = (
+                guard_replacement is not None and guard_replacement != selected
+            )
+            if hard_pose_plain_average_guard_used:
+                rejected_candidate = selected
+                hard_pose_plain_average_rejected_candidate = selected
+                selected = guard_replacement
+                fallback_reason = fallback_reason or "hard_pose_plain_average_guard"
         logger.debug(
             "[RuntimeResolver] learned selection=%s fallback_reason=%s rejected=%s",
             selected,
@@ -1747,10 +1818,13 @@ def resolve_runtime(
             "scorer_safe_fallback_min_delta": config.safe_fallback_min_delta,
             "scorer_safe_fallback_used": safe_fallback_used,
             "hard_slice_safe_fallback_used": hard_slice_fallback_used,
+            "hard_pose_plain_average_guard_used": hard_pose_plain_average_guard_used,
+            "hard_pose_plain_average_guard_margin": config.safe_fallback_min_delta,
             "rejected_candidate": rejected_candidate,
             "replacement_candidate": (
                 selected
-                if fallback_reason in {"all_candidates_vetoed", "consensus_collapse_fusion_rejected"}
+                if fallback_reason
+                in {"all_candidates_vetoed", "consensus_collapse_fusion_rejected"}
                 or rejected_candidate
                 else ""
             ),
@@ -1761,6 +1835,24 @@ def resolve_runtime(
             if survivors
             else _all_candidates_vetoed_fallback(candidates, config)
         )
+        by_name = {candidate.name: candidate for candidate in candidates}
+        selectable = survivors if survivors else _finite_candidate_names(candidates)
+        guard_replacement = _hard_pose_plain_average_replacement(
+            selected=selected,
+            bucket=bucket,
+            selectable=selectable,
+            candidates=by_name,
+            metrics=metrics,
+            scores=None,
+            min_delta=config.safe_fallback_min_delta,
+        )
+        hard_pose_plain_average_guard_used = (
+            guard_replacement is not None and guard_replacement != selected
+        )
+        if hard_pose_plain_average_guard_used:
+            hard_pose_plain_average_rejected_candidate = selected
+            selected = guard_replacement
+            fallback_reason = fallback_reason or "hard_pose_plain_average_guard"
         logger.debug(
             "[RuntimeResolver] bucket-priority selection=%s fallback_reason=%s",
             selected,
@@ -1815,6 +1907,11 @@ def resolve_runtime(
         "risk_route": risk_route,
         "fallback_reason": fallback_reason,
         "fallback_used": fallback_reason is not None,
+        "hard_pose_plain_average_guard_used": hard_pose_plain_average_guard_used,
+        "hard_pose_plain_average_guard_margin": config.safe_fallback_min_delta,
+        "hard_pose_plain_average_rejected_candidate": (
+            hard_pose_plain_average_rejected_candidate
+        ),
         "policy": config.policy,
         **scorer_metadata,
     }
