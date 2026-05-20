@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Compute static per-landmark ensemble weights from cached predictions."""
+"""Compute static per-landmark ensemble weights from cached predictions.
+
+Legacy diagnostic CLI. Candidate for merge into `search_ensemble_setup.py`
+when the unified promotion flow fully replaces standalone static fitting.
+"""
 
 from __future__ import annotations
 
@@ -23,8 +27,9 @@ from lib.landmarks.ensemble.weights import (
     normalize_static_weights,
 )
 from lib.landmarks.evaluation.harness import load_manifest
+from tools.landmarks.pipeline_conventions import STATIC_WEIGHTS_FILENAME, write_json
 
-DEFAULT_OUTPUT = "configs/ensemble/static_landmark_weights.json"
+DEFAULT_OUTPUT = f"configs/ensemble/{STATIC_WEIGHTS_FILENAME}"
 DEFAULT_GENERATOR = "inverse_mean_error"
 
 
@@ -111,8 +116,6 @@ def save_weight_artifact(
     continue to work; the additional ``generator`` block is optional metadata
     new readers (#71 promoted artifacts) can consume.
     """
-    path = Path(output)
-    path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "schema": "2d_68",
         "weights": normalize_static_weights(result.weights),
@@ -121,7 +124,7 @@ def save_weight_artifact(
             "diagnostics": result.diagnostics,
         },
     }
-    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    write_json(Path(output), payload)
 
 
 def _parse_generator_params(raw: str | None) -> dict[str, T.Any]:
@@ -192,10 +195,7 @@ def main(argv: list[str] | None = None) -> int:
             },
             "dominant_model_by_landmark": dominant.astype(int).tolist(),
         }
-        Path(args.report).parent.mkdir(parents=True, exist_ok=True)
-        with open(args.report, "w", encoding="utf-8") as outfile:
-            json.dump(payload, outfile, indent=2, sort_keys=True)
-            outfile.write("\n")
+        write_json(Path(args.report), payload)
     return 0
 
 
