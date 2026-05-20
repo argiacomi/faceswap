@@ -493,7 +493,9 @@ def _candidate_extra_features(
         candidate for candidate in candidates if not _is_canonical_strategy_name(candidate.name)
     ]
     single_stack = (
-        np.stack([candidate.landmarks.astype("float64") for candidate in single_candidates], axis=0)
+        np.stack(
+            [candidate.landmarks.astype("float64") for candidate in single_candidates], axis=0
+        )
         if single_candidates
         else None
     )
@@ -1332,7 +1334,11 @@ def _lowest_risk_valid_single(
         return None
     return min(
         valid_singles,
-        key=lambda name: (scores.get(name, float("inf")), tie_order.get(name, len(tie_order)), name),
+        key=lambda name: (
+            scores.get(name, float("inf")),
+            tie_order.get(name, len(tie_order)),
+            name,
+        ),
     )
 
 

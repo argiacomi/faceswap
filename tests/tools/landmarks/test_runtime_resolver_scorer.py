@@ -14,11 +14,15 @@ import pytest
 import tools.landmarks.runtime_resolver_scorer_data as scorer_data
 from lib.landmarks.cache.prediction_cache import DiskPredictionCache
 from lib.landmarks.core.schema import LandmarkPrediction
+from lib.landmarks.ensemble.promoted_setup import write_best_setup
 from lib.landmarks.ensemble.runtime_resolver_scorer import (
     RuntimeResolverScorer,
     write_runtime_resolver_scorer,
 )
 from lib.landmarks.ensemble.weights import save_weights
+from tools.landmarks.backfill_runtime_resolver_metadata import (
+    backfill_runtime_resolver_metadata,
+)
 from tools.landmarks.evaluate_runtime_resolver_scorer import (
     evaluate_runtime_resolver_scorer,
 )
@@ -106,6 +110,15 @@ def _write_fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
     return manifest_path, cache_dir, weights_path
 
 
+def _write_fixture_images(manifest_path: Path) -> None:
+    import cv2  # type: ignore[import-not-found]
+
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    for sample in payload["samples"]:
+        image = np.full((128, 128, 3), 128, dtype="uint8")
+        cv2.imwrite(str(manifest_path.parent / sample["image"]), image)
+
+
 def test_train_runtime_resolver_scorer_writes_artifact_and_rows(tmp_path: Path) -> None:
     manifest_path, cache_dir, weights_path = _write_fixture(tmp_path)
     output_dir = tmp_path / "train"
@@ -162,6 +175,7 @@ def test_evaluate_runtime_resolver_scorer_reports_policy(tmp_path: Path) -> None
 
     assert report["status"] == "fail"
     assert "scorer_mean_nme_not_better_than_static_downweight" in report["failed_gates"]
+    assert report["heldout_eval"] is False
     assert report["learned_quality_v1"]["pick_counts"] == {"hrnet": 2}
     assert report["production_only_policy_metrics"]["sample_count"] == 2
     assert report["production_only_policy_metrics"]["learned_quality_v1"]["pick_counts"] == {
@@ -171,6 +185,43 @@ def test_evaluate_runtime_resolver_scorer_reports_policy(tmp_path: Path) -> None
     assert report["best_single"]["candidate"] == "hrnet"
     assert (tmp_path / "eval" / "scorer_policy_report.csv").is_file()
     assert (tmp_path / "eval" / "scorer_feature_importance.csv").is_file()
+
+
+def test_evaluate_runtime_resolver_scorer_filters_to_eval_split(tmp_path: Path) -> None:
+    manifest_path, cache_dir, weights_path = _write_fixture(tmp_path)
+    scorer_path = write_runtime_resolver_scorer(
+        RuntimeResolverScorer(
+            features=("candidate_name=hrnet",),
+            coefficients=(-5.0,),
+            intercept=0.0,
+        ),
+        tmp_path / "runtime_resolver_scorer.json",
+    )
+    eval_split = tmp_path / "runtime_resolver_scorer_eval_rows.csv"
+    eval_split.write_text(
+        "sample_id,dataset,condition,candidate_name\n"
+        "s1,production_validated,profile_left,hrnet\n"
+        "s1,production_validated,profile_left,spiga\n",
+        encoding="utf-8",
+    )
+
+    report = evaluate_runtime_resolver_scorer(
+        gt_manifest=None,
+        gt_cache_dir=None,
+        production_manifest=manifest_path,
+        production_cache_dir=cache_dir,
+        weights_path=weights_path,
+        scorer_path=scorer_path,
+        candidates=("hrnet", "spiga", "static_weighted_downweight"),
+        output_dir=tmp_path / "heldout_eval",
+        eval_split=eval_split,
+    )
+
+    assert report["heldout_eval"] is True
+    assert report["eval_split"] == str(eval_split)
+    assert report["sample_count"] == 1
+    assert report["production_only_policy_metrics"]["sample_count"] == 1
+    assert (tmp_path / "heldout_eval" / "scorer_policy_eval_report.json").is_file()
 
 
 def test_evaluate_runtime_resolver_scorer_uses_safe_fallback_for_high_risk(
@@ -207,7 +258,7 @@ def test_evaluate_runtime_resolver_scorer_uses_safe_fallback_for_high_risk(
     assert report["safe_fallback_count"] == 2
 
 
-def test_evaluate_runtime_resolver_scorer_rejects_consensus_collapse_fusion(
+def test_evaluate_runtime_resolver_scorer_flags_derived_no_image_gt_hard(
     tmp_path: Path,
 ) -> None:
     manifest_path, cache_dir, weights_path = _write_fixture(tmp_path)
@@ -255,13 +306,81 @@ def test_evaluate_runtime_resolver_scorer_rejects_consensus_collapse_fusion(
         output_dir=tmp_path / "eval_hard_slice",
     )
 
-    assert report["learned_quality_v1"]["pick_counts"] == {"orformer": 2}
-    assert report["hard_slice_fallback_count"] == 2
-    assert report["consensus_collapse_rejection_count"] == 2
+    assert report["status"] == "fail"
+    assert "gt_hard_derived_no_image_evidence_requires_explicit_allow" in report["failed_gates"]
+    assert report["derived_no_image_gt_hard_sample_count"] == 2
+    assert report["consensus_collapse_fallback_count"] == 2
     rows = list(csv.DictReader((tmp_path / "eval_hard_slice" / "scorer_policy_report.csv").open()))
-    assert {row["fallback_reason"] for row in rows} == {"consensus_collapse_fusion_rejected"}
-    assert {row["rejected_candidate"] for row in rows} == {"static_weighted"}
-    assert {row["replacement_candidate"] for row in rows} == {"orformer"}
+    assert {row["runtime_bucket_source"] for row in rows} == {"derived_no_image_evidence"}
+
+
+def test_backfill_runtime_resolver_metadata_writes_image_aware_source(
+    tmp_path: Path,
+) -> None:
+    manifest_path, cache_dir, weights_path = _write_fixture(tmp_path)
+    _write_fixture_images(manifest_path)
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    for sample in payload["samples"]:
+        sample.pop("metadata", None)
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+    setup_path = tmp_path / "best_setup.json"
+    write_best_setup(
+        setup_path,
+        candidate_id="test",
+        models=("hrnet", "spiga", "orformer"),
+        strategy="static_weighted",
+        outlier_threshold=None,
+        weight_generator_name="test",
+        weight_generator_params={},
+        crop_scale=1.6,
+        bbox_source="manifest",
+        regression_epsilon_nme=0.001,
+        reproducibility={},
+        fit={},
+        selection_metrics={},
+        weights_path=weights_path.name,
+    )
+    output_path = tmp_path / "manifest.runtime_metadata.json"
+
+    report = backfill_runtime_resolver_metadata(
+        manifest_path=manifest_path,
+        cache_dir=cache_dir,
+        weights_path=weights_path,
+        setup_path=setup_path,
+        output_path=output_path,
+        models=("hrnet", "spiga", "orformer"),
+    )
+    output = json.loads(output_path.read_text(encoding="utf-8"))
+
+    assert report["updated_count"] == 2
+    for sample in output["samples"]:
+        metadata = sample["metadata"]["landmark_ensemble"]
+        assert metadata["runtime_bucket_source"] == "image_aware_backfill"
+        assert metadata["runtime_bucket"]
+        assert metadata["bucket"] == metadata["runtime_bucket"]
+        assert "runtime_bucket_features" in metadata
+
+
+def test_load_contexts_can_backfill_image_aware_runtime_metadata(
+    tmp_path: Path,
+) -> None:
+    manifest_path, cache_dir, weights_path = _write_fixture(tmp_path)
+    _write_fixture_images(manifest_path)
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    for sample in payload["samples"]:
+        sample.pop("metadata", None)
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    contexts = scorer_data.load_contexts(
+        manifest_path=manifest_path,
+        cache_dir=cache_dir,
+        weights_path=weights_path,
+        candidates=("hrnet", "spiga", "orformer", "static_weighted_downweight"),
+        allow_image_backfill=True,
+    )
+
+    assert len(contexts) == 2
+    assert {context.runtime_bucket_source for context in contexts} == {"image_aware_backfill"}
 
 
 def test_export_resolver_candidate_table_row_count_and_gate_metrics(
@@ -335,6 +454,10 @@ def test_scorer_evaluator_fails_when_current_policy_candidate_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     manifest_path, cache_dir, weights_path = _write_fixture(tmp_path)
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    for sample in payload["samples"]:
+        sample.pop("metadata", None)
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
     scorer_path = write_runtime_resolver_scorer(
         RuntimeResolverScorer(
             features=("candidate_name=hrnet", "candidate_name=spiga"),

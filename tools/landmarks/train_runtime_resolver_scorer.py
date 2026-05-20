@@ -59,6 +59,7 @@ def _collect_rows(
     failure_threshold: float,
     high_gap_threshold: float,
     outlier_threshold: float,
+    allow_image_backfill: bool,
 ) -> tuple[list[TaggedRow], list[dict[str, T.Any]]]:
     specs = [
         ("gt", gt_manifest, gt_cache_dir),
@@ -79,6 +80,7 @@ def _collect_rows(
             candidates=candidates,
             failure_threshold=failure_threshold,
             outlier_threshold=outlier_threshold,
+            allow_image_backfill=allow_image_backfill,
         )
         candidate_rows.extend(candidate_table_rows(contexts))
         for context in contexts:
@@ -253,6 +255,7 @@ def train_runtime_resolver_scorer(
     iterations: int = 1500,
     eval_fraction: float = 0.20,
     split_seed: int = 42,
+    allow_image_backfill: bool = False,
 ) -> dict[str, T.Any]:
     """Train the scorer and write the portable artifact plus diagnostics."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -266,6 +269,7 @@ def train_runtime_resolver_scorer(
         failure_threshold=failure_threshold,
         high_gap_threshold=high_gap_threshold,
         outlier_threshold=outlier_threshold,
+        allow_image_backfill=allow_image_backfill,
     )
     train_tagged_rows, eval_tagged_rows = _split_rows(
         tagged_rows,
@@ -318,6 +322,7 @@ def train_runtime_resolver_scorer(
             "l2": l2,
             "split_seed": split_seed,
             "eval_fraction": eval_fraction,
+            "allow_image_backfill": allow_image_backfill,
             "train_metrics": train_metrics,
             "eval_metrics": eval_metrics,
             "production_only_eval_metrics": production_eval_metrics,
@@ -354,6 +359,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--iterations", type=int, default=1500)
     parser.add_argument("--eval-fraction", type=float, default=0.20)
     parser.add_argument("--split-seed", type=int, default=42)
+    parser.add_argument(
+        "--allow-image-backfill",
+        action="store_true",
+        help="Compute image-aware runtime metadata for rows without stored metadata.",
+    )
     parser.add_argument("--log-level", default="INFO")
     return parser
 
@@ -380,6 +390,7 @@ def main(argv: T.Sequence[str] | None = None) -> int:
         iterations=args.iterations,
         eval_fraction=args.eval_fraction,
         split_seed=args.split_seed,
+        allow_image_backfill=args.allow_image_backfill,
     )
     logger.info("Wrote runtime resolver scorer to %s", metrics["artifact"])
     return 0
