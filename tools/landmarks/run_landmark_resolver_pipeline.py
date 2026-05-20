@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Run the landmark resolver promotion pipeline end to end.
 
-This wrapper intentionally delegates heavy work to the existing landmark tools.
-It owns stage ordering, path conventions, resume/dry-run semantics, final
+This wrapper delegates heavy work to the existing landmark tools. It owns stage
+ordering, stage contracts, path conventions, resume/dry-run semantics, final
 summaries, artifact export, and config update preview/write.
 """
 
@@ -48,6 +48,10 @@ STAGES: tuple[str, ...] = (
 
 DEFAULT_MODELS = "hrnet,spiga,orformer"
 DEFAULT_CANDIDATES = "hrnet,spiga,orformer,plain_average,static_weighted,static_weighted_downweight,static_weighted_hard_drop,weighted_median"
+
+
+class PipelineContractError(RuntimeError):
+    """A pipeline stage did not satisfy its declared contract."""
 
 
 @dataclass(frozen=True)
@@ -103,6 +107,28 @@ class PipelinePaths:
         object.__setattr__(self, "summary_md", self.output_root / "pipeline_summary.md")
 
 
+@dataclass(frozen=True)
+class StageContract:
+    """Declared contract for a pipeline stage."""
+
+    name: str
+    inputs: list[str]
+    outputs: list[str]
+    cache_behavior: str
+    required_files: list[str]
+    success_criteria: list[str]
+
+    def to_json(self) -> dict[str, T.Any]:
+        return {
+            "name": self.name,
+            "inputs": self.inputs,
+            "outputs": self.outputs,
+            "cache_behavior": self.cache_behavior,
+            "required_files": self.required_files,
+            "success_criteria": self.success_criteria,
+        }
+
+
 @dataclass
 class StageResult:
     """One executed, skipped, or planned pipeline stage."""
@@ -112,6 +138,8 @@ class StageResult:
     duration_seconds: float = 0.0
     command: list[str] = field(default_factory=list)
     outputs: list[str] = field(default_factory=list)
+    validated_outputs: list[str] = field(default_factory=list)
+    contract: dict[str, T.Any] = field(default_factory=dict)
     error: str = ""
     notes: list[str] = field(default_factory=list)
 
@@ -205,6 +233,54 @@ def _outputs_for(stage: str, paths: PipelinePaths) -> list[Path]:
     }[stage]
 
 
+def _required_inputs_for(stage: str, args: argparse.Namespace, paths: PipelinePaths) -> list[Path]:
+    if stage == "static_pipeline":
+        return [] if (args.force_static_pipeline or args.static_pipeline_arg) else [paths.run_summary, paths.run_manifest, paths.run_cache, paths.run_splits, paths.run_static_weights]
+    return {
+        "candidate_search": [paths.run_cache, paths.run_splits, paths.production_manifest, paths.production_cache],
+        "hard_alignment_validation": [args.hard_source_manifest or paths.run_manifest, paths.run_cache, paths.best_weights if paths.best_weights.exists() else paths.run_static_weights],
+        "freeze_resolver_metadata": [] if paths.frozen_gt_metadata.exists() else ([args.gt_hard_resolver_metadata] if args.gt_hard_resolver_metadata else []),
+        "scorer_training": [paths.hard_manifest, paths.run_cache, paths.production_manifest, paths.production_cache, paths.best_weights, paths.frozen_gt_metadata],
+        "scorer_evaluation": [paths.hard_manifest, paths.run_cache, paths.production_manifest, paths.production_cache, paths.best_weights, paths.scorer_artifact, paths.frozen_gt_metadata],
+        "production_promotion_check": [paths.scorer_report],
+        "artifact_export": [paths.best_setup, paths.best_weights, paths.scorer_artifact, paths.scorer_report, paths.frozen_gt_metadata],
+        "config_update": [Path(args.config_path)] if args.write_config else [],
+    }[stage]
+
+
+def _contract_for(stage: str, args: argparse.Namespace, paths: PipelinePaths) -> StageContract:
+    cache_behavior = {
+        "static_pipeline": "reuse existing run-root artifacts unless --force-static-pipeline is set; --resume skips when all outputs exist",
+        "candidate_search": "writes candidate_search artifacts; --resume skips when best_setup.json and best_weights.json exist",
+        "hard_alignment_validation": "writes gt_hard_validation artifacts; --resume skips when manifest.json exists",
+        "freeze_resolver_metadata": "copies caller-supplied GT-hard sidecar once; never silently regenerates; --resume reuses existing frozen copy",
+        "scorer_training": "writes scorer_training artifacts; --resume skips when runtime_resolver_scorer.json exists",
+        "scorer_evaluation": "writes scorer_evaluation reports; --resume skips when scorer_policy_report.json exists",
+        "production_promotion_check": "reads scorer report only; no recompute; requires promotion_status/status pass",
+        "artifact_export": "copies final artifacts into artifacts/; --resume skips when artifacts_manifest.json exists",
+        "config_update": "always writes config_update_preview.json; writes config only with --write-config",
+    }[stage]
+    success = {
+        "static_pipeline": ["run summary, manifest, cache, splits, and static weights exist"],
+        "candidate_search": ["best_setup.json and best_weights.json exist"],
+        "hard_alignment_validation": ["GT-hard manifest exists"],
+        "freeze_resolver_metadata": ["frozen resolver_metadata.jsonl exists and was not regenerated implicitly"],
+        "scorer_training": ["runtime_resolver_scorer.json exists"],
+        "scorer_evaluation": ["scorer_policy_report.json exists"],
+        "production_promotion_check": ["scorer report promotion_status/status is pass"],
+        "artifact_export": ["artifacts_manifest.json exists"],
+        "config_update": ["config_update_preview.json exists", "when --write-config is set, target config file is updated"],
+    }[stage]
+    return StageContract(
+        name=stage,
+        inputs=[str(path) for path in _required_inputs_for(stage, args, paths) if path is not None],
+        outputs=[str(path) for path in _outputs_for(stage, paths)],
+        cache_behavior=cache_behavior,
+        required_files=[str(path) for path in _required_inputs_for(stage, args, paths) if path is not None],
+        success_criteria=success,
+    )
+
+
 def _stage_complete(stage: str, paths: PipelinePaths) -> bool:
     return all(path.exists() for path in _outputs_for(stage, paths))
 
@@ -235,6 +311,26 @@ def _promotion_check(paths: PipelinePaths) -> list[str]:
     if status != "pass":
         raise RuntimeError(f"production promotion check failed: status={status!r}, failed_gates={failed}")
     return ["promotion_status=pass"]
+
+
+def _validate_required_files(stage: str, args: argparse.Namespace, paths: PipelinePaths) -> None:
+    for required in _required_inputs_for(stage, args, paths):
+        if required is not None:
+            _require(required, f"{stage} input")
+
+
+def _validate_stage_outputs(stage: str, paths: PipelinePaths) -> list[str]:
+    missing = [path for path in _outputs_for(stage, paths) if not path.exists()]
+    if missing:
+        details = ", ".join(str(path) for path in missing)
+        raise PipelineContractError(f"stage {stage!r} did not produce required output(s): {details}")
+    if stage == "production_promotion_check":
+        report = _read_json(paths.scorer_report)
+        status = str(report.get("promotion_status") or report.get("status") or "")
+        if status != "pass":
+            failed = report.get("failed_gates") or []
+            raise PipelineContractError(f"stage 'production_promotion_check' expected promotion_status=pass but got {status!r}; failed_gates={failed}")
+    return [str(path) for path in _outputs_for(stage, paths)]
 
 
 def _copy_if_exists(source: Path, dest_dir: Path, *, name: str | None = None) -> str:
@@ -300,79 +396,101 @@ def _apply_config(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
 
 
 def _execute_stage(stage: str, args: argparse.Namespace, paths: PipelinePaths) -> StageResult:
-    outputs = [str(path) for path in _outputs_for(stage, paths)]
+    contract = _contract_for(stage, args, paths)
+    outputs = contract.outputs
     if args.resume and _stage_complete(stage, paths):
-        return StageResult(name=stage, status="skipped", outputs=outputs, notes=["resume: outputs already exist"])
+        validated = _validate_stage_outputs(stage, paths)
+        return StageResult(name=stage, status="skipped", outputs=outputs, validated_outputs=validated, contract=contract.to_json(), notes=["resume: outputs already exist"])
     command: list[str] = []
     started = time.time()
     try:
+        if not args.dry_run:
+            _validate_required_files(stage, args, paths)
         if stage == "static_pipeline":
             command = _command_static_pipeline(args, paths)
             if args.dry_run:
                 status = "planned" if (args.force_static_pipeline or args.static_pipeline_arg or not paths.run_summary.exists()) else "ok"
-                return StageResult(stage, status, command=command if status == "planned" else [], outputs=outputs)
+                return StageResult(stage, status, command=command if status == "planned" else [], outputs=outputs, contract=contract.to_json())
             if not paths.run_summary.exists() or args.force_static_pipeline:
                 if not args.static_pipeline_arg and not args.force_static_pipeline:
                     raise FileNotFoundError(f"missing static pipeline artifacts under {paths.run_root}; either provide an existing --run-root or pass --force-static-pipeline with --static-pipeline-arg values")
                 _run_command(command)
-            else:
-                for path, label in ((paths.run_manifest, "run manifest"), (paths.run_cache, "run cache"), (paths.run_splits, "run splits"), (paths.run_static_weights, "run static weights")):
-                    _require(path, label)
         elif stage == "candidate_search":
-            for path, label in ((paths.run_cache, "run cache"), (paths.run_splits, "run splits"), (paths.production_manifest, "production manifest"), (paths.production_cache, "production cache")):
-                if not args.dry_run:
-                    _require(path, label)
             command = _command_candidate_search(args, paths)
             if args.dry_run:
-                return StageResult(stage, "planned", command=command, outputs=outputs)
+                return StageResult(stage, "planned", command=command, outputs=outputs, contract=contract.to_json())
             _run_command(command)
         elif stage == "hard_alignment_validation":
             command = _command_hard_validation(args, paths)
             if args.dry_run:
-                return StageResult(stage, "planned", command=command, outputs=outputs)
+                return StageResult(stage, "planned", command=command, outputs=outputs, contract=contract.to_json())
             _run_command(command)
         elif stage == "freeze_resolver_metadata":
             if args.dry_run:
-                return StageResult(stage, "planned", outputs=outputs, notes=["would copy or reuse frozen GT-hard resolver metadata"])
+                return StageResult(stage, "planned", outputs=outputs, contract=contract.to_json(), notes=["would copy or reuse frozen GT-hard resolver metadata"])
             notes = _freeze_metadata(args, paths)
-            return StageResult(stage, "ok", outputs=outputs, notes=notes)
+            validated = _validate_stage_outputs(stage, paths)
+            return StageResult(stage, "ok", outputs=outputs, validated_outputs=validated, contract=contract.to_json(), notes=notes)
         elif stage == "scorer_training":
             command = _command_scorer_training(args, paths)
             if args.dry_run:
-                return StageResult(stage, "planned", command=command, outputs=outputs)
+                return StageResult(stage, "planned", command=command, outputs=outputs, contract=contract.to_json())
             _run_command(command)
         elif stage == "scorer_evaluation":
             command = _command_scorer_eval(args, paths)
             if args.dry_run:
-                return StageResult(stage, "planned", command=command, outputs=outputs)
+                return StageResult(stage, "planned", command=command, outputs=outputs, contract=contract.to_json())
             _run_command(command)
         elif stage == "production_promotion_check":
             if args.dry_run:
-                return StageResult(stage, "planned", outputs=outputs, notes=["would require promotion_status=pass"])
+                return StageResult(stage, "planned", outputs=outputs, contract=contract.to_json(), notes=["would require promotion_status=pass"])
             notes = _promotion_check(paths)
-            return StageResult(stage, "ok", outputs=outputs, notes=notes)
+            validated = _validate_stage_outputs(stage, paths)
+            return StageResult(stage, "ok", outputs=outputs, validated_outputs=validated, contract=contract.to_json(), notes=notes)
         elif stage == "artifact_export":
             if args.dry_run:
-                return StageResult(stage, "planned", outputs=outputs, notes=["would copy promoted artifacts"])
+                return StageResult(stage, "planned", outputs=outputs, contract=contract.to_json(), notes=["would copy promoted artifacts"])
             exported = _export_artifacts(paths)
-            return StageResult(stage, "ok", outputs=outputs, notes=[f"exported {len(exported)} artifact(s)"])
+            validated = _validate_stage_outputs(stage, paths)
+            return StageResult(stage, "ok", outputs=outputs, validated_outputs=validated, contract=contract.to_json(), notes=[f"exported {len(exported)} artifact(s)"])
         elif stage == "config_update":
             if args.dry_run:
-                return StageResult(stage, "planned", outputs=outputs, notes=["would write config preview/update"])
+                return StageResult(stage, "planned", outputs=outputs, contract=contract.to_json(), notes=["would write config preview/update"])
             notes = _apply_config(args, paths)
-            return StageResult(stage, "ok", outputs=outputs, notes=notes)
+            validated = _validate_stage_outputs(stage, paths)
+            return StageResult(stage, "ok", outputs=outputs, validated_outputs=validated, contract=contract.to_json(), notes=notes)
         else:  # pragma: no cover
             raise AssertionError(stage)
+        validated = _validate_stage_outputs(stage, paths)
     except Exception as err:
-        return StageResult(name=stage, status="failed", command=command, outputs=outputs, error=f"{type(err).__name__}: {err}", duration_seconds=round(time.time() - started, 3))
-    return StageResult(name=stage, status="ok", command=command, outputs=outputs, duration_seconds=round(time.time() - started, 3))
+        return StageResult(name=stage, status="failed", command=command, outputs=outputs, contract=contract.to_json(), error=f"{type(err).__name__}: {err}", duration_seconds=round(time.time() - started, 3))
+    return StageResult(name=stage, status="ok", command=command, outputs=outputs, validated_outputs=validated, contract=contract.to_json(), duration_seconds=round(time.time() - started, 3))
+
+
+def _fallback_counts(report: T.Mapping[str, T.Any]) -> dict[str, int]:
+    return {
+        "fallback_count": int(report.get("fallback_count", 0) or 0),
+        "safe_fallback_count": int(report.get("safe_fallback_count", 0) or 0),
+        "hard_slice_fallback_count": int(report.get("hard_slice_fallback_count", 0) or 0),
+        "consensus_collapse_fallback_count": int(report.get("consensus_collapse_fallback_count", 0) or 0),
+    }
 
 
 def _summary_payload(args: argparse.Namespace, paths: PipelinePaths, results: T.Sequence[StageResult]) -> dict[str, T.Any]:
     report = _read_json(paths.scorer_report)
+    updates = _config_updates(paths)
+    promotion_status = str(report.get("promotion_status") or report.get("status") or "")
     return {
         "status": "fail" if any(row.status == "failed" for row in results) else ("planned" if args.dry_run else "pass"),
         "promotion_scope": args.promotion_scope,
+        "promotion_status": promotion_status,
+        "failed_gates": report.get("failed_gates", []),
+        "selected_production_policy": updates["resolver_policy"],
+        "fallback_counts": _fallback_counts(report),
+        "best_weights_path": str(paths.best_weights),
+        "scorer_path": str(paths.scorer_artifact),
+        "eval_report_path": str(paths.scorer_report),
+        "config_fields_changed": sorted(updates),
         "run_root": str(paths.run_root),
         "production_root": str(paths.production_root),
         "output_root": str(paths.output_root),
@@ -381,26 +499,42 @@ def _summary_payload(args: argparse.Namespace, paths: PipelinePaths, results: T.
             SOURCE_PRODUCTION_VALIDATED: {"manifest": str(paths.production_manifest), "cache": str(paths.production_cache)},
         },
         "artifacts": {"best_setup": str(paths.best_setup), "best_weights": str(paths.best_weights), "runtime_resolver_scorer": str(paths.scorer_artifact), "scorer_policy_report": str(paths.scorer_report)},
-        "scorer_report_status": report.get("promotion_status", report.get("status", "")),
-        "failed_gates": report.get("failed_gates", []),
+        "scorer_report_status": promotion_status,
         "dry_run": bool(args.dry_run),
         "resume": bool(args.resume),
         "stages": [_jsonable(row.__dict__) for row in results],
-        "config_update": {"config_path": str(args.config_path), "section": args.config_section, "write_config": bool(args.write_config), "updates": _config_updates(paths)},
+        "config_update": {"config_path": str(args.config_path), "section": args.config_section, "write_config": bool(args.write_config), "updates": updates},
     }
 
 
 def _write_summary_md(path: Path, summary: dict[str, T.Any]) -> None:
-    lines = ["# Landmark resolver pipeline summary", "", f"Status: **{summary['status']}**", f"Promotion scope: `{summary['promotion_scope']}`", f"Run root: `{summary['run_root']}`", f"Production root: `{summary['production_root']}`", f"Output root: `{summary['output_root']}`", "", "## Stages", "", "| Stage | Status | Duration | Notes |", "| --- | --- | ---: | --- |"]
+    lines = [
+        "# Landmark resolver pipeline summary",
+        "",
+        f"Status: **{summary['status']}**",
+        f"Promotion status: `{summary.get('promotion_status', '')}`",
+        f"Promotion scope: `{summary['promotion_scope']}`",
+        f"Selected production policy: `{summary['selected_production_policy']}`",
+        f"Best weights: `{summary['best_weights_path']}`",
+        f"Scorer: `{summary['scorer_path']}`",
+        f"Eval report: `{summary['eval_report_path']}`",
+        f"Failed gates: `{summary['failed_gates']}`",
+        f"Fallback counts: `{summary['fallback_counts']}`",
+        "",
+        "## Stages",
+        "",
+        "| Stage | Status | Duration | Outputs | Notes |",
+        "| --- | --- | ---: | --- | --- |",
+    ]
     for stage in summary["stages"]:
         notes = "; ".join(stage.get("notes") or [])
         if stage.get("error"):
             notes = stage["error"]
-        lines.append(f"| `{stage['name']}` | {stage['status']} | {stage.get('duration_seconds', 0)}s | {notes} |")
-    lines.extend(["", "## Final artifacts", ""])
-    for key, value in summary["artifacts"].items():
-        lines.append(f"- `{key}`: `{value}`")
-    lines.extend(["", "## Config update", "", f"Config path: `{summary['config_update']['config_path']}`", f"Section: `{summary['config_update']['section']}`", f"Write config: `{summary['config_update']['write_config']}`"])
+        outputs = "<br>".join(stage.get("validated_outputs") or stage.get("outputs") or [])
+        lines.append(f"| `{stage['name']}` | {stage['status']} | {stage.get('duration_seconds', 0)}s | {outputs} | {notes} |")
+    lines.extend(["", "## Config fields changed", ""])
+    for field_name in summary["config_fields_changed"]:
+        lines.append(f"- `{field_name}`")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
