@@ -22,6 +22,7 @@ if str(_REPO_ROOT) not in sys.path:
 
 from lib.align.alignments import Alignments
 from lib.align.objects import FileAlignments
+from lib.landmarks.ensemble.runtime_resolver import RUNTIME_BUCKETS
 from lib.logger import get_loglevel
 
 logger = logging.getLogger(__name__)
@@ -90,6 +91,15 @@ class ReviewLabel:
     review_status: str
     issue_type: str = ""
     notes: str = ""
+
+
+@dataclass(frozen=True)
+class RuntimeBucketOverride:
+    """Manual runtime-bucket correction from visual review."""
+
+    key: str
+    runtime_bucket: str
+    reason: str = ""
 
 
 def _json_safe(value: T.Any) -> T.Any:
@@ -170,6 +180,55 @@ def _load_review_labels(path: Path | None) -> dict[str, ReviewLabel]:
             )
     logger.info("Loaded %d review labels from %s", len(labels), path)
     return labels
+
+
+def _load_runtime_bucket_overrides(path: Path | None) -> dict[str, RuntimeBucketOverride]:
+    """Load optional manual bucket overrides keyed by sample id or frame name."""
+    if path is None or not path.is_file():
+        logger.debug("No runtime bucket overrides file selected")
+        return {}
+    overrides: dict[str, RuntimeBucketOverride] = {}
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        fieldnames = set(reader.fieldnames or ())
+        if "runtime_bucket" not in fieldnames:
+            raise ValueError("runtime bucket overrides missing column: runtime_bucket")
+        if not {"sample_id", "frame"}.intersection(fieldnames):
+            raise ValueError("runtime bucket overrides require sample_id or frame column")
+        for row_num, row in enumerate(reader, start=2):
+            key = str(row.get("sample_id") or row.get("frame") or "").strip()
+            bucket = str(row.get("runtime_bucket", "")).strip()
+            reason = str(row.get("reason", "")).strip()
+            if not key:
+                raise ValueError(f"runtime bucket override row {row_num} missing sample_id/frame")
+            if bucket not in RUNTIME_BUCKETS:
+                raise ValueError(
+                    f"runtime bucket override row {row_num} has invalid bucket {bucket!r}"
+                )
+            if key in overrides:
+                raise ValueError(f"duplicate runtime bucket override for {key!r}")
+            overrides[key] = RuntimeBucketOverride(
+                key=key,
+                runtime_bucket=bucket,
+                reason=reason,
+            )
+    logger.info("Loaded runtime bucket overrides: %d", len(overrides))
+    return overrides
+
+
+def _runtime_bucket_override_for_sample(
+    overrides: dict[str, RuntimeBucketOverride],
+    *,
+    sample_id: str,
+    frame_name: str,
+) -> RuntimeBucketOverride | None:
+    """Return the most specific runtime bucket override for a sample."""
+    return (
+        overrides.get(sample_id)
+        or overrides.get(frame_name)
+        or overrides.get(Path(frame_name).name)
+        or overrides.get(Path(frame_name).stem)
+    )
 
 
 def _bbox(face: FileAlignments) -> list[float]:
@@ -300,6 +359,36 @@ def _manifest_landmark_ensemble_metadata(
     resolver = metadata.get("resolver")
     if isinstance(resolver, dict):
         resolver.pop(LEGACY_LANDMARK_POSE_BUCKET_KEY, None)
+    return T.cast(dict[str, T.Any], _json_safe(metadata))
+
+
+def _apply_runtime_bucket_override(
+    ensemble_metadata: T.Any,
+    override: RuntimeBucketOverride | None,
+) -> dict[str, T.Any] | None:
+    """Return ensemble metadata with a reviewed runtime-bucket correction applied."""
+    if override is None or not isinstance(ensemble_metadata, dict):
+        return ensemble_metadata if isinstance(ensemble_metadata, dict) else None
+    metadata = _manifest_landmark_ensemble_metadata(ensemble_metadata)
+    original_bucket = _landmark_ensemble_bucket(metadata)
+    if original_bucket and original_bucket != override.runtime_bucket:
+        metadata.setdefault("runtime_bucket_original", original_bucket)
+        metadata.setdefault("bucket_original", metadata.get("bucket", original_bucket))
+    metadata["runtime_bucket"] = override.runtime_bucket
+    metadata["bucket"] = override.runtime_bucket
+    metadata["runtime_bucket_override_source"] = "runtime_bucket_overrides"
+    if override.reason:
+        metadata["runtime_bucket_override_reason"] = override.reason
+    resolver = metadata.get("resolver")
+    if isinstance(resolver, dict):
+        if original_bucket and original_bucket != override.runtime_bucket:
+            resolver.setdefault("runtime_bucket_original", original_bucket)
+            resolver.setdefault("bucket_original", resolver.get("bucket", original_bucket))
+        resolver["runtime_bucket"] = override.runtime_bucket
+        resolver["bucket"] = override.runtime_bucket
+        resolver["runtime_bucket_override_source"] = "runtime_bucket_overrides"
+        if override.reason:
+            resolver["runtime_bucket_override_reason"] = override.reason
     return T.cast(dict[str, T.Any], _json_safe(metadata))
 
 
@@ -463,6 +552,7 @@ def build_manifest(
     extract_landmark_ensemble_metadata: bool = False,
     landmark_ensemble_setup_path: Path | None = None,
     landmark_ensemble_setup_mode: str = "strict",
+    runtime_bucket_overrides_path: Path | None = None,
     metadata_extractor: LandmarkEnsembleMetadataExtractor | None = None,
 ) -> dict[str, T.Any]:
     """Export manifest, resolver JSONL sidecar and audit from Faceswap alignments."""
@@ -485,14 +575,22 @@ def build_manifest(
     labels_path = review_labels_path or (
         default_review_labels if default_review_labels.is_file() else None
     )
+    default_runtime_bucket_overrides = output_dir / "runtime_bucket_overrides.csv"
+    bucket_overrides_path = runtime_bucket_overrides_path or (
+        default_runtime_bucket_overrides
+        if default_runtime_bucket_overrides.is_file()
+        else None
+    )
     logger.debug(
-        "Resolved paths: images=%s alignments=%s output=%s review_labels=%s",
+        "Resolved paths: images=%s alignments=%s output=%s review_labels=%s bucket_overrides=%s",
         images_dir.resolve(),
         alignments_path.resolve(),
         output_dir.resolve(),
         labels_path.resolve() if labels_path else None,
+        bucket_overrides_path.resolve() if bucket_overrides_path else None,
     )
     review_labels = _load_review_labels(labels_path)
+    bucket_overrides = _load_runtime_bucket_overrides(bucket_overrides_path)
     if labels_path is None:
         logger.info("No review labels file found; unlabeled samples default to accepted")
     alignments = Alignments(str(alignments_path.parent), alignments_path.name)
@@ -520,6 +618,9 @@ def build_manifest(
                 else None
             ),
             "landmark_ensemble_setup_mode": landmark_ensemble_setup_mode,
+            "runtime_bucket_overrides": (
+                str(bucket_overrides_path.resolve()) if bucket_overrides_path else None
+            ),
         },
         "frames_total": alignments.frames_count,
         "faces_total": alignments.faces_count,
@@ -533,6 +634,7 @@ def build_manifest(
         "incomplete_landmark_ensemble_metadata": [],
         "extracted_landmark_ensemble_metadata": [],
         "failed_landmark_ensemble_extraction": [],
+        "runtime_bucket_overrides_applied": [],
     }
 
     used_ids: Counter[str] = Counter()
@@ -587,6 +689,11 @@ def build_manifest(
                 continue
 
             ensemble_metadata = face.metadata.get("landmark_ensemble")
+            bucket_override = _runtime_bucket_override_for_sample(
+                bucket_overrides,
+                sample_id=sample_id,
+                frame_name=frame_name,
+            )
             logger.trace(  # type:ignore[attr-defined]
                 "Sample %s landmark_ensemble metadata keys: %s",
                 sample_id,
@@ -634,6 +741,22 @@ def build_manifest(
                     audit["failed_landmark_ensemble_extraction"].append(
                         {"sample_id": sample_id, "error": str(err)}
                     )
+                missing_production_keys = _missing_production_landmark_ensemble_keys(
+                    ensemble_metadata
+                )
+            ensemble_metadata = _apply_runtime_bucket_override(
+                ensemble_metadata,
+                bucket_override,
+            )
+            if bucket_override is not None:
+                audit["runtime_bucket_overrides_applied"].append(
+                    {
+                        "sample_id": sample_id,
+                        "frame": frame_name,
+                        "runtime_bucket": bucket_override.runtime_bucket,
+                        "reason": bucket_override.reason,
+                    }
+                )
                 missing_production_keys = _missing_production_landmark_ensemble_keys(
                     ensemble_metadata
                 )
@@ -755,6 +878,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Optional review_labels.csv. Defaults to output-dir/review_labels.csv when present.",
     )
     parser.add_argument(
+        "--runtime-bucket-overrides",
+        type=Path,
+        default=None,
+        help=(
+            "Optional CSV with sample_id or frame plus runtime_bucket columns for visual-review "
+            "bucket corrections. Defaults to output-dir/runtime_bucket_overrides.csv when present."
+        ),
+    )
+    parser.add_argument(
         "--require-landmark-ensemble-metadata",
         action="store_true",
         help=(
@@ -822,6 +954,7 @@ def main(argv: list[str] | None = None) -> int:
         extract_landmark_ensemble_metadata=args.extract_landmark_ensemble_metadata,
         landmark_ensemble_setup_path=args.landmark_ensemble_setup_path,
         landmark_ensemble_setup_mode=args.landmark_ensemble_setup_mode,
+        runtime_bucket_overrides_path=args.runtime_bucket_overrides,
     )
     logger.info(
         "Wrote %d samples to %s",

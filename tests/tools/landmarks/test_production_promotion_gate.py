@@ -85,6 +85,7 @@ def _run(
     *,
     policy: str,
     weights: dict[str, float] | None = None,
+    min_hard_bucket_gate_count: int = 20,
 ) -> dict[str, object]:
     manifest_path, cache_dir, weights_path, output_dir = _write_fixture(
         tmp_path,
@@ -96,7 +97,10 @@ def _run(
         cache_dir=cache_dir,
         weights_path=weights_path,
         output_dir=output_dir,
-        config=ProductionGateConfig(policy=policy),
+        config=ProductionGateConfig(
+            policy=policy,
+            min_hard_bucket_gate_count=min_hard_bucket_gate_count,
+        ),
     )
 
 
@@ -197,7 +201,34 @@ def test_production_gate_fails_per_bucket_regression(tmp_path: Path) -> None:
             },
         ],
         policy="candidate:spiga",
+        min_hard_bucket_gate_count=1,
     )
 
     assert report["status"] == "fail"
     assert "bucket_profile_left_mean_regresses_vs_best_single" in report["failed_gates"]
+
+
+def test_production_gate_warns_for_tiny_hard_bucket_regression(tmp_path: Path) -> None:
+    report = _run(
+        tmp_path,
+        [
+            {
+                "sample_id": "frontal_1",
+                "condition": "frontal",
+                "predictions": {"hrnet": 5.0, "spiga": 1.0, "orformer": 5.0},
+            },
+            {
+                "sample_id": "profile_1",
+                "condition": "profile_left",
+                "predictions": {"hrnet": 1.0, "spiga": 5.0, "orformer": 5.0},
+            },
+        ],
+        policy="candidate:spiga",
+    )
+
+    assert report["status"] == "pass"
+    assert not report["failed_gates"]
+    assert report["warnings"] == [
+        "bucket_profile_left_sample_count_1_below_gate_min_20"
+    ]
+    assert report["per_bucket"]["profile_left"]["sample_count"] == 1.0

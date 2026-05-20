@@ -53,13 +53,17 @@ PROFILE_IMAGE_SIGNAL_THRESHOLD: float = 0.34
 PROFILE_LANDMARK_YAW_THRESHOLD: float = 55.0
 PROFILE_CANDIDATE_YAW_DISAGREEMENT_THRESHOLD: float = 120.0
 PROFILE_MAX_DISAGREEMENT_BBOX_FRACTION_THRESHOLD: float = 0.28
-PROFILE_SIDE_STRUCTURE_THRESHOLD: float = 0.22
+PROFILE_SIDE_STRUCTURE_THRESHOLD: float = 0.20
+PROFILE_CANDIDATE_SIDE_STRUCTURE_THRESHOLD: float = 0.30
 PROFILE_NOSE_OFFSET_THRESHOLD: float = 0.12
-PROFILE_LANDMARK_YAW_WEAK_THRESHOLD: float = 20.0
+PROFILE_TRUSTED_SINGLE_MODEL_YAW_THRESHOLD: float = 60.0
+PROFILE_CANDIDATE_TRUSTED_YAW_THRESHOLD: float = 40.0
 SIDE_YAW_TRUSTED_MODELS: tuple[str, ...] = ("hrnet", "spiga", "orformer")
 SIDE_YAW_PRIMARY_MODEL: str = "hrnet"
 SIDE_YAW_MIN_ABS_DEGREES: float = 20.0
 SIDE_YAW_FULL_CONFIDENCE_DEGREES: float = 75.0
+ROLL_BUCKET_AGREEMENT_DEGREES: float = 15.0
+ROLL_BUCKET_MIN_SUPPORTING_CANDIDATES: int = 2
 
 DEFAULT_PRIORITY: tuple[str, ...] = (
     "static_weighted_downweight",
@@ -723,6 +727,27 @@ def _dominant_candidate_yaw(metrics: T.Mapping[str, CandidateMetrics]) -> float:
     return max(yaws, key=abs)
 
 
+def _trusted_single_model_yaw(metrics: T.Mapping[str, CandidateMetrics]) -> float:
+    """Return the strongest finite yaw from trusted single-model pose estimates."""
+    yaws: list[float] = []
+    for model in SIDE_YAW_TRUSTED_MODELS:
+        metric = metrics.get(model)
+        yaw = None if metric is None else metric.yaw_degrees
+        if yaw is not None and math.isfinite(float(yaw)):
+            yaws.append(float(yaw))
+    if not yaws:
+        return 0.0
+    return max(yaws, key=abs)
+
+
+def _is_canonical_strategy_name(name: str) -> bool:
+    try:
+        canonical_strategy(name)
+    except (KeyError, ValueError):
+        return False
+    return True
+
+
 def _side_from_model_yaw(yaw_degrees: float) -> str:
     """Map raw single-model yaw to image-facing side."""
     return "left" if yaw_degrees > 0.0 else "right"
@@ -835,6 +860,7 @@ def _runtime_yaw_severity(
     *,
     image_geometry_yaw_signal: float,
     landmark_pose_yaw: float | None,
+    trusted_single_model_yaw: float,
     candidate_yaw_disagreement: float,
     max_disagreement_bbox_fraction: float,
     nose_offset_from_face_center: float,
@@ -851,25 +877,26 @@ def _runtime_yaw_severity(
     """
     abs_image_yaw = abs(image_geometry_yaw_signal)
     abs_landmark_yaw = 0.0 if landmark_pose_yaw is None else abs(float(landmark_pose_yaw))
+    abs_trusted_yaw = abs(float(trusted_single_model_yaw))
     side_structure = max(abs(nose_offset_from_face_center), abs(mouth_nose_jaw_asymmetry))
-    if abs_image_yaw >= PROFILE_IMAGE_SIGNAL_THRESHOLD:
+    if abs_trusted_yaw >= PROFILE_TRUSTED_SINGLE_MODEL_YAW_THRESHOLD:
+        return "profile", "trusted_single_model_yaw"
+    if (
+        abs_image_yaw >= PROFILE_IMAGE_SIGNAL_THRESHOLD
+        and side_structure >= PROFILE_SIDE_STRUCTURE_THRESHOLD
+    ):
         return "profile", "image_geometry"
-    if abs_landmark_yaw >= PROFILE_LANDMARK_YAW_THRESHOLD:
-        return "profile", "landmark_pose_yaw"
     if (
         candidate_yaw_disagreement >= PROFILE_CANDIDATE_YAW_DISAGREEMENT_THRESHOLD
         and max_disagreement_bbox_fraction >= PROFILE_MAX_DISAGREEMENT_BBOX_FRACTION_THRESHOLD
-        and (
-            side_structure >= PROFILE_SIDE_STRUCTURE_THRESHOLD
-            or abs(nose_offset_from_face_center) >= PROFILE_NOSE_OFFSET_THRESHOLD
-            or abs_landmark_yaw >= PROFILE_LANDMARK_YAW_WEAK_THRESHOLD
-        )
+        and side_structure >= PROFILE_CANDIDATE_SIDE_STRUCTURE_THRESHOLD
+        and abs_trusted_yaw >= PROFILE_CANDIDATE_TRUSTED_YAW_THRESHOLD
     ):
         return "profile", "candidate_instability"
     if (
         abs_image_yaw >= LARGE_YAW_IMAGE_SIGNAL_THRESHOLD
         or abs_landmark_yaw >= LARGE_YAW_LANDMARK_THRESHOLD
-        or candidate_yaw_disagreement >= 35.0
+        or abs_trusted_yaw >= LARGE_YAW_LANDMARK_THRESHOLD
     ):
         return "large_yaw", "yaw_evidence"
     if abs_landmark_yaw <= 15.0:
@@ -930,6 +957,7 @@ def infer_runtime_bucket(
     yaw_signal, nose_offset, jaw_asymmetry = _image_geometry_yaw_signal(consensus, detector_bbox)
     candidate_yaw_disagreement = _signed_candidate_yaw_disagreement(metrics)
     dominant_candidate_yaw = _dominant_candidate_yaw(metrics)
+    trusted_single_model_yaw = _trusted_single_model_yaw(metrics)
     max_disagreement_bbox_fraction = _normalized_max_disagreement(
         max_disagreement_px,
         detector_bbox,
@@ -956,13 +984,32 @@ def infer_runtime_bucket(
     yaw_severity, yaw_severity_source = _runtime_yaw_severity(
         image_geometry_yaw_signal=yaw_signal,
         landmark_pose_yaw=yaw_estimate,
+        trusted_single_model_yaw=trusted_single_model_yaw,
         candidate_yaw_disagreement=candidate_yaw_disagreement,
         max_disagreement_bbox_fraction=max_disagreement_bbox_fraction,
         nose_offset_from_face_center=nose_offset,
         mouth_nose_jaw_asymmetry=jaw_asymmetry,
     )
     abs_roll = 0.0 if roll_estimate is None else abs(float(roll_estimate))
-    hard_roll = abs_roll >= hard_roll_degrees
+    hard_roll_support_count = _roll_support_count(
+        metrics,
+        consensus_roll=roll_estimate,
+        threshold_degrees=hard_roll_degrees,
+    )
+    hard_roll = (
+        abs_roll >= hard_roll_degrees
+        and hard_roll_support_count >= ROLL_BUCKET_MIN_SUPPORTING_CANDIDATES
+    )
+    extreme_roll_threshold = max(hard_roll_degrees * 1.8, 55.0)
+    extreme_roll_support_count = _roll_support_count(
+        metrics,
+        consensus_roll=roll_estimate,
+        threshold_degrees=extreme_roll_threshold,
+    )
+    extreme_roll = (
+        abs_roll >= extreme_roll_threshold
+        and extreme_roll_support_count >= ROLL_BUCKET_MIN_SUPPORTING_CANDIDATES
+    )
     features: dict[str, T.Any] = {
         "left_eye_visual_score": None,
         "right_eye_visual_score": None,
@@ -974,6 +1021,7 @@ def infer_runtime_bucket(
         "max_disagreement_bbox_fraction": max_disagreement_bbox_fraction,
         "landmark_pose_yaw": yaw_estimate,
         "landmark_pose_roll": roll_estimate,
+        "trusted_single_model_yaw": trusted_single_model_yaw,
         "image_geometry_yaw_signal": yaw_signal,
         "dominant_candidate_yaw": dominant_candidate_yaw,
         "runtime_bucket_side": yaw_side,
@@ -985,6 +1033,10 @@ def infer_runtime_bucket(
         "runtime_bucket_geometry_side_source": geometry_side_source,
         "runtime_bucket_severity": yaw_severity,
         "runtime_bucket_severity_source": yaw_severity_source,
+        "runtime_bucket_hard_roll_supported": hard_roll,
+        "runtime_bucket_hard_roll_support_count": hard_roll_support_count,
+        "runtime_bucket_extreme_roll_supported": extreme_roll,
+        "runtime_bucket_extreme_roll_support_count": extreme_roll_support_count,
     }
     if image_crop is not None and crop_to_frame_matrix is not None:
         try:
@@ -1016,14 +1068,38 @@ def infer_runtime_bucket(
     if yaw_severity == "large_yaw":
         return RuntimeBucketResult(bucket=f"large_yaw_{yaw_side}", features=features)
 
-    if abs_roll >= max(hard_roll_degrees * 1.8, 55.0):
+    if extreme_roll:
         return RuntimeBucketResult(bucket="extreme_roll", features=features)
-    if abs_roll >= hard_roll_degrees:
+    if hard_roll:
         return RuntimeBucketResult(bucket="large_roll", features=features)
 
     if yaw_severity == "frontal" and abs_roll <= max(hard_roll_degrees * 0.5, 12.0):
         return RuntimeBucketResult(bucket="frontal", features=features)
     return RuntimeBucketResult(bucket="intermediate", features=features)
+
+
+def _roll_support_count(
+    metrics: T.Mapping[str, CandidateMetrics],
+    *,
+    consensus_roll: float | None,
+    threshold_degrees: float,
+    agreement_degrees: float = ROLL_BUCKET_AGREEMENT_DEGREES,
+) -> int:
+    """Return count of roll estimates that independently support a hard roll bucket."""
+    if consensus_roll is None or abs(float(consensus_roll)) < threshold_degrees:
+        return 0
+    support = 0
+    for name, metric in metrics.items():
+        if _is_canonical_strategy_name(name):
+            continue
+        roll = metric.roll_degrees
+        if roll is None or not math.isfinite(float(roll)):
+            continue
+        if abs(float(roll)) < threshold_degrees:
+            continue
+        if abs(_signed_degree_delta(float(roll), float(consensus_roll))) <= agreement_degrees:
+            support += 1
+    return support
 
 
 def resolve_runtime(

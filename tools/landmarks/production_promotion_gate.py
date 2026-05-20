@@ -23,6 +23,7 @@ DEFAULT_PRODUCTION_MEAN_EPSILON_NME: float = 0.001
 DEFAULT_PRODUCTION_P90_EPSILON_NME: float = 0.003
 DEFAULT_PRODUCTION_FAILURE_THRESHOLD: float = 0.08
 DEFAULT_WORST_SAMPLE_COUNT: int = 25
+DEFAULT_MIN_HARD_BUCKET_GATE_COUNT: int = 20
 PRODUCTION_REPORT_JSON = "production_promotion_report.json"
 PRODUCTION_REPORT_MD = "production_promotion_report.md"
 PRODUCTION_PER_BUCKET_CSV = "production_per_bucket_metrics.csv"
@@ -41,6 +42,7 @@ class ProductionGateConfig:
     failure_rate_epsilon: float = 0.0
     worst_sample_count: int = DEFAULT_WORST_SAMPLE_COUNT
     outlier_threshold: float = 3.5
+    min_hard_bucket_gate_count: int = DEFAULT_MIN_HARD_BUCKET_GATE_COUNT
 
 
 @dataclass(frozen=True)
@@ -202,6 +204,7 @@ def _gate_failures(
     config: ProductionGateConfig,
 ) -> list[str]:
     failures: list[str] = []
+    warnings: list[str] = []
     chosen = report["chosen_policy"]
     best = report["best_single"]
     static = report["static_downweight"]
@@ -220,6 +223,14 @@ def _gate_failures(
     for bucket, metrics in report["per_bucket"].items():
         if not _hard_bucket(bucket):
             continue
+        sample_count = int(metrics["sample_count"])
+        if sample_count < config.min_hard_bucket_gate_count:
+            warnings.append(
+                "bucket_"
+                f"{bucket}_sample_count_{sample_count}_below_gate_min_"
+                f"{config.min_hard_bucket_gate_count}"
+            )
+            continue
         if metrics["regression_vs_best_single"] > config.mean_epsilon_nme:
             failures.append(f"bucket_{bucket}_mean_regresses_vs_best_single")
         if metrics["regression_vs_static_downweight"] > config.mean_epsilon_nme:
@@ -228,6 +239,7 @@ def _gate_failures(
             failures.append(f"bucket_{bucket}_failure_regresses_vs_best_single")
         if metrics["failure_regression_vs_static_downweight"] > config.failure_rate_epsilon:
             failures.append(f"bucket_{bucket}_failure_regresses_vs_static_downweight")
+    report["warnings"] = warnings
     return failures
 
 
@@ -383,6 +395,7 @@ def evaluate_production_gate(
             "p90_epsilon_nme": config.p90_epsilon_nme,
             "failure_threshold": config.failure_threshold,
             "failure_rate_epsilon": config.failure_rate_epsilon,
+            "min_hard_bucket_gate_count": config.min_hard_bucket_gate_count,
             "policy": config.policy,
         },
     }
@@ -425,6 +438,11 @@ def _write_markdown(report: dict[str, T.Any], output_dir: Path) -> Path:
         lines.extend(f"- {gate}" for gate in report["failed_gates"])
     else:
         lines.append("- none")
+    lines.extend(["", "## Warnings", ""])
+    if report.get("warnings"):
+        lines.extend(f"- {warning}" for warning in report["warnings"])
+    else:
+        lines.append("- none")
     lines.extend(["", "## Pick Counts", ""])
     for candidate, count in sorted(report["chosen_policy_pick_counts"].items()):
         lines.append(f"- {candidate}: {count}")
@@ -447,12 +465,23 @@ def _write_bucket_csv(report: dict[str, T.Any], output_dir: Path) -> Path:
         "regression_vs_static_downweight",
         "failure_regression_vs_best_single",
         "failure_regression_vs_static_downweight",
+        "gate_enforced",
     ]
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         for bucket, values in report["per_bucket"].items():
-            writer.writerow({"bucket": bucket, **values})
+            writer.writerow(
+                {
+                    "bucket": bucket,
+                    **values,
+                    "gate_enforced": int(
+                        not _hard_bucket(bucket)
+                        or int(values["sample_count"])
+                        >= int(report["gate_config"]["min_hard_bucket_gate_count"])
+                    ),
+                }
+            )
     return path
 
 
@@ -582,6 +611,7 @@ def run_production_promotion_gate(
 
 
 __all__ = [
+    "DEFAULT_MIN_HARD_BUCKET_GATE_COUNT",
     "DEFAULT_PRODUCTION_FAILURE_THRESHOLD",
     "DEFAULT_PRODUCTION_MEAN_EPSILON_NME",
     "DEFAULT_PRODUCTION_P90_EPSILON_NME",

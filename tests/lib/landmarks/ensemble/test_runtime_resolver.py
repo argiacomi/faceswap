@@ -63,9 +63,17 @@ def _face() -> np.ndarray:
     return points
 
 
-def _candidate_metrics(yaws: dict[str, float]) -> dict[str, CandidateMetrics]:
+def _candidate_metrics(
+    yaws: dict[str, float],
+    *,
+    rolls: dict[str, float] | None = None,
+) -> dict[str, CandidateMetrics]:
     return {
-        name: CandidateMetrics(roll_degrees=0.0, yaw_degrees=yaw, pitch_degrees=None)
+        name: CandidateMetrics(
+            roll_degrees=0.0 if rolls is None else rolls.get(name, 0.0),
+            yaw_degrees=yaw,
+            pitch_degrees=None,
+        )
         for name, yaw in yaws.items()
     }
 
@@ -78,6 +86,7 @@ def _runtime_bucket_for_production_signals(
     mouth_nose_jaw_asymmetry: float,
     landmark_pose_yaw: float,
     candidate_yaws: dict[str, float],
+    candidate_rolls: dict[str, float] | None = None,
     max_disagreement_px: float = 190.0,
     roll_estimate: float = 0.0,
 ) -> RuntimeBucketResult:
@@ -99,7 +108,7 @@ def _runtime_bucket_for_production_signals(
         crop_to_frame_matrix=None,
         detector_bbox=(35.0, 65.0, 165.0, 155.0),
         candidates=candidates,
-        metrics=_candidate_metrics(candidate_yaws),
+        metrics=_candidate_metrics(candidate_yaws, rolls=candidate_rolls),
         yaw_estimate=landmark_pose_yaw,
         roll_estimate=roll_estimate,
         max_disagreement_px=max_disagreement_px,
@@ -277,7 +286,7 @@ def test_runtime_bucket_routes_profile_like_00012_to_profile_left(monkeypatch) -
     assert result.features["runtime_bucket_side"] == "left"
     assert result.features["runtime_bucket_side_source"] == "hrnet_yaw"
     assert result.features["runtime_bucket_severity"] == "profile"
-    assert result.features["runtime_bucket_severity_source"] == "candidate_instability"
+    assert result.features["runtime_bucket_severity_source"] == "trusted_single_model_yaw"
     assert result.features["candidate_yaw_disagreement"] > 120.0
 
 
@@ -346,12 +355,59 @@ def test_runtime_bucket_keeps_borderline_profile_evidence_as_large_yaw(monkeypat
         nose_offset_from_face_center=0.11,
         mouth_nose_jaw_asymmetry=0.21,
         landmark_pose_yaw=19.5,
-        candidate_yaws={"hrnet": 55.0, "spiga": 15.0, "orformer": -62.0},
+        candidate_yaws={"hrnet": 55.0, "spiga": 15.0, "orformer": -58.0},
         max_disagreement_px=40.0,
     )
 
     assert result.bucket == "large_yaw_left"
     assert result.features["runtime_bucket_severity"] == "large_yaw"
+
+
+def test_runtime_bucket_demotes_candidate_instability_without_strong_yaw(
+    monkeypatch,
+) -> None:
+    """Candidate disagreement alone cannot create profile or large-yaw buckets."""
+    result = _runtime_bucket_for_production_signals(
+        monkeypatch,
+        image_geometry_yaw_signal=0.07,
+        nose_offset_from_face_center=0.10,
+        mouth_nose_jaw_asymmetry=0.12,
+        landmark_pose_yaw=18.0,
+        candidate_yaws={
+            "hrnet": 24.0,
+            "spiga": 28.0,
+            "orformer": 20.0,
+            "static_weighted": -125.0,
+        },
+        max_disagreement_px=315.0,
+    )
+
+    assert result.bucket == "intermediate"
+    assert result.features["runtime_bucket_severity"] == "intermediate"
+    assert result.features["candidate_yaw_disagreement"] > 120.0
+
+
+def test_runtime_bucket_allows_candidate_instability_profile_with_trusted_yaw(
+    monkeypatch,
+) -> None:
+    """Candidate instability can support profile only with strong trusted yaw and shape."""
+    result = _runtime_bucket_for_production_signals(
+        monkeypatch,
+        image_geometry_yaw_signal=0.12,
+        nose_offset_from_face_center=0.31,
+        mouth_nose_jaw_asymmetry=0.10,
+        landmark_pose_yaw=22.0,
+        candidate_yaws={
+            "hrnet": 44.0,
+            "spiga": 40.0,
+            "orformer": 42.0,
+            "static_weighted": -86.0,
+        },
+        max_disagreement_px=190.0,
+    )
+
+    assert result.bucket == "profile_left"
+    assert result.features["runtime_bucket_severity_source"] == "candidate_instability"
 
 
 def test_runtime_bucket_uses_rolled_large_yaw_family(monkeypatch) -> None:
@@ -363,6 +419,7 @@ def test_runtime_bucket_uses_rolled_large_yaw_family(monkeypatch) -> None:
         mouth_nose_jaw_asymmetry=0.18,
         landmark_pose_yaw=31.0,
         candidate_yaws={"hrnet": 44.0, "spiga": 20.0, "orformer": -22.0},
+        candidate_rolls={"hrnet": 34.0, "spiga": 35.0, "orformer": 3.0},
         max_disagreement_px=35.0,
         roll_estimate=36.0,
     )
@@ -379,11 +436,31 @@ def test_runtime_bucket_uses_rolled_profile_family(monkeypatch) -> None:
         mouth_nose_jaw_asymmetry=0.45,
         landmark_pose_yaw=-18.0,
         candidate_yaws={"hrnet": -28.0, "spiga": -24.0, "orformer": -15.0},
+        candidate_rolls={"hrnet": 34.0, "spiga": 35.0, "orformer": 3.0},
         max_disagreement_px=45.0,
         roll_estimate=34.0,
     )
 
     assert result.bucket == "rolled_profile_right"
+
+
+def test_runtime_bucket_demotes_unsupported_roll_estimate(monkeypatch) -> None:
+    """A high consensus roll without two agreeing candidates cannot create roll buckets."""
+    result = _runtime_bucket_for_production_signals(
+        monkeypatch,
+        image_geometry_yaw_signal=0.08,
+        nose_offset_from_face_center=0.02,
+        mouth_nose_jaw_asymmetry=0.05,
+        landmark_pose_yaw=2.0,
+        candidate_yaws={"hrnet": 2.0, "spiga": 3.0, "orformer": -1.0},
+        candidate_rolls={"hrnet": 116.0, "spiga": 2.0, "orformer": -1.0},
+        max_disagreement_px=20.0,
+        roll_estimate=116.0,
+    )
+
+    assert result.bucket == "intermediate"
+    assert result.features["runtime_bucket_extreme_roll_supported"] is False
+    assert result.features["runtime_bucket_extreme_roll_support_count"] == 1
 
 
 def test_runtime_bucket_routes_known_visual_left_profiles_to_profile_left(monkeypatch) -> None:

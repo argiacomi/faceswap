@@ -236,6 +236,69 @@ def test_build_faceswap_validated_manifest_allows_missing_resolver_metadata(
     assert audit["skipped"] == {}
 
 
+def test_build_faceswap_validated_manifest_applies_runtime_bucket_overrides(
+    tmp_path: Path,
+) -> None:
+    images, alignments, review_labels, output = _build_fixture(tmp_path)
+    overrides = tmp_path / "runtime_bucket_overrides.csv"
+    overrides.write_text(
+        "sample_id,runtime_bucket,reason\n"
+        "IMG_000123_face0,intermediate,visual review: frontal/intermediate\n",
+        encoding="utf-8",
+    )
+
+    assert (
+        main(
+            [
+                "--images",
+                str(images),
+                "--alignments",
+                str(alignments),
+                "--output-dir",
+                str(output),
+                "--review-labels",
+                str(review_labels),
+                "--runtime-bucket-overrides",
+                str(overrides),
+                "--require-landmark-ensemble-metadata",
+                "--only-reviewed",
+                "accepted",
+            ]
+        )
+        == 0
+    )
+
+    manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
+    sample = manifest["samples"][0]
+    assert sample["condition"] == "intermediate"
+    assert sample["conditions"] == ["intermediate"]
+    assert sample["metadata"]["runtime_bucket"] == "intermediate"
+    assert sample["metadata"]["landmark_ensemble"]["runtime_bucket"] == "intermediate"
+    assert sample["metadata"]["landmark_ensemble"]["bucket"] == "intermediate"
+    assert sample["metadata"]["landmark_ensemble"]["runtime_bucket_original"] == "profile_left"
+    assert (
+        sample["metadata"]["landmark_ensemble"]["runtime_bucket_override_source"]
+        == "runtime_bucket_overrides"
+    )
+
+    resolver = json.loads(
+        (output / "resolver_metadata.jsonl").read_text(encoding="utf-8").splitlines()[0]
+    )
+    assert resolver["condition"] == "intermediate"
+    assert resolver["landmark_ensemble"]["runtime_bucket"] == "intermediate"
+
+    audit = json.loads((output / "audit.json").read_text(encoding="utf-8"))
+    assert audit["condition_counts"] == {"intermediate": 1}
+    assert audit["runtime_bucket_overrides_applied"] == [
+        {
+            "sample_id": "IMG_000123_face0",
+            "frame": "IMG_000123.png",
+            "runtime_bucket": "intermediate",
+            "reason": "visual review: frontal/intermediate",
+        }
+    ]
+
+
 def test_build_faceswap_validated_manifest_can_require_resolver_metadata(tmp_path: Path) -> None:
     images, alignments, review_labels, output = _build_fixture(tmp_path)
 

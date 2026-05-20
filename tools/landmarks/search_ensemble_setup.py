@@ -62,6 +62,7 @@ from lib.landmarks.search.promotion_gates import (
     no_promotion_payload,
 )
 from tools.landmarks.production_promotion_gate import (
+    DEFAULT_MIN_HARD_BUCKET_GATE_COUNT,
     DEFAULT_PRODUCTION_FAILURE_THRESHOLD,
     DEFAULT_PRODUCTION_MEAN_EPSILON_NME,
     DEFAULT_PRODUCTION_P90_EPSILON_NME,
@@ -826,6 +827,16 @@ def main(argv: list[str] | None = None) -> int:
         type=float,
         default=DEFAULT_PRODUCTION_FAILURE_THRESHOLD,
     )
+    parser.add_argument(
+        "--production-min-hard-bucket-gate-count",
+        type=int,
+        default=DEFAULT_MIN_HARD_BUCKET_GATE_COUNT,
+        help=(
+            "Minimum production samples required before a hard runtime bucket's "
+            "per-bucket regression checks become hard failures. Smaller buckets "
+            "are reported as warnings."
+        ),
+    )
     args = parser.parse_args(argv)
     _validate_production_gate_args(args)
 
@@ -1061,6 +1072,9 @@ def main(argv: list[str] | None = None) -> int:
                         mean_epsilon_nme=args.production_epsilon_mean_nme,
                         p90_epsilon_nme=args.production_epsilon_p90_nme,
                         failure_threshold=args.production_failure_threshold,
+                        min_hard_bucket_gate_count=(
+                            args.production_min_hard_bucket_gate_count
+                        ),
                         outlier_threshold=(
                             3.5
                             if winner.candidate.outlier_threshold is None
