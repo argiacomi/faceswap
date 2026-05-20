@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Production-validation promotion gate for landmark ensemble policies."""
+"""Production-validation promotion gate for landmark ensemble policies.
+
+Standalone validation CLI retained for repeatable gate checks. Candidate for a
+thin facade over the unified resolver pipeline once promotion flows are fully
+centralized.
+"""
 
 from __future__ import annotations
 
@@ -13,6 +18,14 @@ from pathlib import Path
 import numpy as np
 
 from lib.landmarks.ensemble.weights import load_weights
+from tools.landmarks.pipeline_conventions import (
+    PRODUCTION_PER_BUCKET_CSV,
+    PRODUCTION_POLICY_FAILURES_CSV,
+    PRODUCTION_PROMOTION_REPORT_JSON,
+    PRODUCTION_PROMOTION_REPORT_MD,
+    PRODUCTION_WORST_SAMPLES_JSON,
+    write_json,
+)
 from tools.landmarks.runtime_resolver_scorer_data import (
     DEFAULT_RESOLVER_CANDIDATES,
     SampleCandidateContext,
@@ -24,11 +37,8 @@ DEFAULT_PRODUCTION_P90_EPSILON_NME: float = 0.003
 DEFAULT_PRODUCTION_FAILURE_THRESHOLD: float = 0.08
 DEFAULT_WORST_SAMPLE_COUNT: int = 25
 DEFAULT_MIN_HARD_BUCKET_GATE_COUNT: int = 20
-PRODUCTION_REPORT_JSON = "production_promotion_report.json"
-PRODUCTION_REPORT_MD = "production_promotion_report.md"
-PRODUCTION_PER_BUCKET_CSV = "production_per_bucket_metrics.csv"
-PRODUCTION_POLICY_FAILURES_CSV = "production_policy_failures.csv"
-PRODUCTION_WORST_SAMPLES_JSON = "production_worst_samples.json"
+PRODUCTION_REPORT_JSON = PRODUCTION_PROMOTION_REPORT_JSON
+PRODUCTION_REPORT_MD = PRODUCTION_PROMOTION_REPORT_MD
 
 
 @dataclass(frozen=True)
@@ -413,9 +423,7 @@ def evaluate_production_gate(
 
 
 def _write_json(report: dict[str, T.Any], output_dir: Path) -> Path:
-    path = output_dir / PRODUCTION_REPORT_JSON
-    path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    return path
+    return write_json(output_dir / PRODUCTION_REPORT_JSON, report)
 
 
 def _write_markdown(report: dict[str, T.Any], output_dir: Path) -> Path:
@@ -568,8 +576,7 @@ def _write_worst_samples(
             for row in worst
         ]
     }
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    return path
+    return write_json(path, payload)
 
 
 def write_production_gate_artifacts(
@@ -626,6 +633,8 @@ __all__ = [
     "DEFAULT_PRODUCTION_FAILURE_THRESHOLD",
     "DEFAULT_PRODUCTION_MEAN_EPSILON_NME",
     "DEFAULT_PRODUCTION_P90_EPSILON_NME",
+    "PRODUCTION_REPORT_JSON",
+    "PRODUCTION_REPORT_MD",
     "ProductionGateConfig",
     "ProductionSampleEvaluation",
     "evaluate_production_gate",
