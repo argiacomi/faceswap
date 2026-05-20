@@ -33,6 +33,13 @@ from tools.landmarks.runtime_resolver_scorer_data import (
 logger = logging.getLogger("backfill_runtime_resolver_metadata")
 
 
+def _trace(message: str, *args: T.Any) -> None:
+    """Log at Faceswap TRACE level when available."""
+    trace = getattr(logger, "trace", None)
+    if callable(trace):
+        trace(message, *args)
+
+
 def _json_safe(value: T.Any) -> T.Any:
     if isinstance(value, np.ndarray):
         return _json_safe(value.tolist())
@@ -128,6 +135,13 @@ def backfill_runtime_resolver_metadata(
     model_names = _models(models)
     if not model_names:
         raise ValueError("at least one model is required")
+    logger.info(
+        "Backfilling runtime resolver metadata: manifest=%s samples=%d models=%s crop_scale=%s",
+        manifest_path,
+        len(entries),
+        ",".join(model_names),
+        crop_scale,
+    )
 
     updated = 0
     for entry in entries:
@@ -137,6 +151,13 @@ def backfill_runtime_resolver_metadata(
             raise ValueError(f"could not resolve manifest sample {sample_id!r}")
         bbox = _bbox_for_sample(sample)
         predictions = _read_predictions(cache, sample, models=model_names)
+        logger.debug(
+            "Backfilling sample=%s image=%s bbox=%s models=%s",
+            sample.sample_id,
+            sample.image,
+            bbox,
+            [prediction.model for prediction in predictions],
+        )
         result = image_aware_runtime_result(
             sample,
             predictions=predictions,
@@ -145,6 +166,14 @@ def backfill_runtime_resolver_metadata(
             crop_scale=crop_scale,
             crop_size=crop_size,
         )
+        logger.debug(
+            "Backfilled sample=%s bucket=%s selected=%s fallback=%s",
+            sample.sample_id,
+            result.metadata.get("runtime_bucket"),
+            result.selected_candidate,
+            result.metadata.get("fallback_reason"),
+        )
+        _trace("Backfilled sample=%s metadata=%s", sample.sample_id, result.metadata)
         metadata = entry.setdefault("metadata", {})
         if not isinstance(metadata, dict):
             metadata = {}

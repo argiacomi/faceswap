@@ -169,6 +169,13 @@ BUCKET_PRIORITIES: dict[str, tuple[str, ...]] = {
 }
 
 
+def _trace(message: str, *args: T.Any) -> None:
+    """Log at Faceswap TRACE level when available."""
+    trace = getattr(logger, "trace", None)
+    if callable(trace):
+        trace(message, *args)
+
+
 @dataclass(frozen=True)
 class ModelPrediction:
     """One single-model prediction entering the runtime resolver."""
@@ -746,6 +753,15 @@ def _all_candidates_vetoed_fallback(
     )
     for name in dict.fromkeys(fallback_order):
         if name in available:
+            logger.debug(
+                "[RuntimeResolver] all candidates vetoed; emergency fallback selected %s",
+                name,
+            )
+            _trace(
+                "[RuntimeResolver] all-veto fallback order=%s finite_candidates=%s",
+                fallback_order,
+                sorted(available),
+            )
             return name
     raise RuntimeResolverError("all runtime candidates were vetoed and none had finite landmarks")
 
@@ -1465,9 +1481,26 @@ def resolve_runtime(
     """Resolve one face using runtime candidate diagnostics and policy selection."""
     if config.policy not in {"roll_aware_veto", "learned_quality_v1"}:
         raise RuntimeResolverError(f"unsupported runtime resolver policy {config.policy!r}")
+    logger.debug(
+        "[RuntimeResolver] resolving face policy=%s scorer=%s bbox=%s image_evidence=%s "
+        "general=%s hard=%s secondary=%s fallback=%s",
+        config.policy,
+        bool(config.scorer_path),
+        detector_bbox,
+        image_crop is not None and crop_to_frame_matrix is not None,
+        config.general_strategy,
+        config.hard_case_strategy,
+        config.secondary_hard_case_strategy,
+        config.fallback_strategy,
+    )
     candidates = build_candidates(predictions, config)
     if not candidates:
         raise RuntimeResolverError("no runtime resolver candidates were provided")
+    logger.debug(
+        "[RuntimeResolver] built candidates=%s from models=%s",
+        [candidate.name for candidate in candidates],
+        [prediction.model for prediction in predictions],
+    )
 
     reference_bbox = _reference_bbox(candidates, detector_bbox)
     metrics = {
@@ -1495,6 +1528,25 @@ def resolve_runtime(
         hard_roll_degrees=config.hard_roll_degrees,
     )
     bucket = runtime_bucket.bucket
+    logger.debug(
+        "[RuntimeResolver] bucket=%s roll=%s yaw=%s max_disagreement_px=%.3f features=%s",
+        bucket,
+        roll_estimate,
+        yaw_estimate,
+        max_disagreement_px,
+        {
+            key: runtime_bucket.features.get(key)
+            for key in (
+                "runtime_bucket_severity",
+                "runtime_bucket_severity_source",
+                "runtime_bucket_side",
+                "runtime_bucket_side_source",
+                "candidate_yaw_disagreement",
+                "max_disagreement_bbox_fraction",
+            )
+        },
+    )
+    _trace("[RuntimeResolver] bucket features: %s", runtime_bucket.features)
 
     for name, metric in metrics.items():
         metric.geometry_veto_reasons = _shape_reasons(bucket, name, metric)
@@ -1521,6 +1573,35 @@ def resolve_runtime(
     geometry_vetoed = {name for name, metric in metrics.items() if metric.geometry_veto_reasons}
     vetoed = roll_vetoed | geometry_vetoed
     survivors = available - vetoed
+    logger.debug(
+        "[RuntimeResolver] veto summary bucket=%s survivors=%s roll_vetoed=%s "
+        "geometry_vetoed=%s",
+        bucket,
+        sorted(survivors),
+        sorted(roll_vetoed & available),
+        {
+            name: list(metrics[name].geometry_veto_reasons)
+            for name in sorted(geometry_vetoed & available)
+        },
+    )
+    _trace(
+        "[RuntimeResolver] candidate metrics: %s",
+        {
+            name: {
+                "roll": metric.roll_degrees,
+                "yaw": metric.yaw_degrees,
+                "cloud_area_ratio": metric.cloud_area_ratio,
+                "hull_area_ratio": metric.hull_area_ratio,
+                "points_outside_expanded_bbox_fraction": (
+                    metric.points_outside_expanded_bbox_fraction
+                ),
+                "landmark_consensus_distance": metric.landmark_consensus_distance,
+                "roi_center_consensus_distance": metric.roi_center_consensus_distance,
+                "geometry_veto_reasons": metric.geometry_veto_reasons,
+            }
+            for name, metric in metrics.items()
+        },
+    )
     hard_bucket = bucket not in {"frontal", "intermediate", "no_pose"}
     risk_route = (
         "high_risk"
@@ -1551,6 +1632,14 @@ def resolve_runtime(
             runtime_bucket_source=runtime_bucket_source,
             candidate_extra_features=candidate_extra_features,
         )
+        logger.debug(
+            "[RuntimeResolver] scorer ranked candidates=%s",
+            [
+                name
+                for name, _score in sorted(scores.items(), key=lambda item: (item[1], item[0]))
+            ],
+        )
+        _trace("[RuntimeResolver] scorer candidate scores: %s", scores)
         by_name = {candidate.name: candidate for candidate in candidates}
         hard_slice_fallback_used = False
         safe_fallback_used = False
@@ -1604,6 +1693,12 @@ def resolve_runtime(
                 rejected_candidate = selected
                 selected = safe_fallback
                 fallback_reason = "scorer_high_risk_safe_fallback"
+        logger.debug(
+            "[RuntimeResolver] learned selection=%s fallback_reason=%s rejected=%s",
+            selected,
+            fallback_reason,
+            rejected_candidate,
+        )
         scorer_metadata = {
             "selected_candidate_score": scores.get(selected),
             "candidate_scores": dict(sorted(scores.items())),
@@ -1630,6 +1725,11 @@ def resolve_runtime(
             _available_by_priority(priority, survivors)
             if survivors
             else _all_candidates_vetoed_fallback(candidates, config)
+        )
+        logger.debug(
+            "[RuntimeResolver] bucket-priority selection=%s fallback_reason=%s",
+            selected,
+            fallback_reason,
         )
 
     by_name = {candidate.name: candidate for candidate in candidates}
@@ -1683,6 +1783,13 @@ def resolve_runtime(
         "policy": config.policy,
         **scorer_metadata,
     }
+    logger.debug(
+        "[RuntimeResolver] final selected=%s bucket=%s fallback=%s vetoed_count=%d",
+        selected,
+        bucket,
+        fallback_reason,
+        len(vetoed & available),
+    )
     return RuntimeResolverResult(
         selected_candidate=selected,
         landmarks=by_name[selected].landmarks.astype("float32", copy=False),
