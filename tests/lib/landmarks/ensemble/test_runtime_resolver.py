@@ -278,11 +278,11 @@ def test_learned_quality_policy_falls_back_to_hrnet_when_all_risks_high(
     assert result.metadata["fallback_reason"] == "scorer_high_risk_safe_fallback"
 
 
-def test_learned_quality_policy_uses_hrnet_for_hard_slice_fusion_contradiction(
+def test_learned_quality_policy_rejects_consensus_collapse_fusion_for_best_single(
     monkeypatch,
     tmp_path,
 ) -> None:
-    """Rolled hard slices do not let a low-risk fusion override valid HRNet."""
+    """Rolled hard slices reject consensus-collapse fusion and choose the best single."""
     monkeypatch.setattr(
         runtime_resolver,
         "infer_runtime_bucket",
@@ -293,8 +293,8 @@ def test_learned_quality_policy_uses_hrnet_for_hard_slice_fusion_contradiction(
     )
     scorer_path = write_runtime_resolver_scorer(
         RuntimeResolverScorer(
-            features=("candidate_name=static_weighted",),
-            coefficients=(-5.0,),
+            features=("candidate_name=static_weighted", "candidate_name=orformer"),
+            coefficients=(-5.0, -4.0),
             intercept=0.0,
         ),
         tmp_path / "runtime_resolver_scorer.json",
@@ -304,8 +304,8 @@ def test_learned_quality_policy_uses_hrnet_for_hard_slice_fusion_contradiction(
     result = resolve_runtime(
         [
             ModelPrediction("hrnet", base + 0.1),
-            ModelPrediction("spiga", base + 18.0),
-            ModelPrediction("orformer", base + 9.0),
+            ModelPrediction("spiga", base + 40.0),
+            ModelPrediction("orformer", base + 20.0),
         ],
         RuntimeResolverConfig(
             policy="learned_quality_v1",
@@ -315,12 +315,14 @@ def test_learned_quality_policy_uses_hrnet_for_hard_slice_fusion_contradiction(
         detector_bbox=(35.0, 65.0, 165.0, 155.0),
     )
 
-    assert result.selected_candidate == "hrnet"
+    assert result.selected_candidate == "orformer"
     assert result.metadata["candidate_scores"]["static_weighted"] < result.metadata[
         "candidate_scores"
-    ]["hrnet"]
+    ]["orformer"]
     assert result.metadata["hard_slice_safe_fallback_used"] is True
-    assert result.metadata["fallback_reason"] == "hard_slice_safe_single_fallback"
+    assert result.metadata["fallback_reason"] == "consensus_collapse_fusion_rejected"
+    assert result.metadata["rejected_candidate"] == "static_weighted"
+    assert result.metadata["replacement_candidate"] == "orformer"
 
 
 def test_runtime_resolver_records_eye_visual_evidence_for_runtime_bucket() -> None:

@@ -160,7 +160,8 @@ def test_evaluate_runtime_resolver_scorer_reports_policy(tmp_path: Path) -> None
         output_dir=tmp_path / "eval",
     )
 
-    assert report["status"] == "pass"
+    assert report["status"] == "fail"
+    assert "scorer_mean_nme_not_better_than_static_downweight" in report["failed_gates"]
     assert report["learned_quality_v1"]["pick_counts"] == {"hrnet": 2}
     assert report["production_only_policy_metrics"]["sample_count"] == 2
     assert report["production_only_policy_metrics"]["learned_quality_v1"]["pick_counts"] == {
@@ -206,23 +207,32 @@ def test_evaluate_runtime_resolver_scorer_uses_safe_fallback_for_high_risk(
     assert report["safe_fallback_count"] == 2
 
 
-def test_evaluate_runtime_resolver_scorer_uses_hrnet_for_hard_slice_contradiction(
+def test_evaluate_runtime_resolver_scorer_rejects_consensus_collapse_fusion(
     tmp_path: Path,
 ) -> None:
     manifest_path, cache_dir, weights_path = _write_fixture(tmp_path)
+    save_weights(
+        weights_path,
+        {"hrnet": [1.0 / 3.0] * 68, "spiga": [1.0 / 3.0] * 68, "orformer": [1.0 / 3.0] * 68},
+    )
+    cache = DiskPredictionCache(cache_dir)
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     for sample in payload["samples"]:
+        sample["dataset"] = "aflw2000_3d"
         sample["condition"] = "rolled_large_yaw_right"
-        ensemble = sample["metadata"]["landmark_ensemble"]
-        ensemble["runtime_bucket"] = "rolled_large_yaw_right"
-        ensemble["bucket"] = "rolled_large_yaw_right"
-        ensemble["runtime_bucket_features"]["candidate_yaw_disagreement"] = 95.0
-        ensemble["runtime_bucket_features"]["max_disagreement_px"] = 95.0
+        sample.pop("metadata", None)
+        sample_id = sample["sample_id"]
+        for model, offset in {"hrnet": 0.0, "spiga": 40.0, "orformer": 20.0}.items():
+            cache.write(
+                sample_id,
+                LandmarkPrediction(_face(offset), model_name=model),
+                checkpoint="test",
+            )
     manifest_path.write_text(json.dumps(payload), encoding="utf-8")
     scorer_path = write_runtime_resolver_scorer(
         RuntimeResolverScorer(
-            features=("candidate_name=static_weighted",),
-            coefficients=(-5.0,),
+            features=("candidate_name=static_weighted", "candidate_name=orformer"),
+            coefficients=(-5.0, -4.0),
             intercept=0.0,
         ),
         tmp_path / "runtime_resolver_scorer.json",
@@ -245,8 +255,13 @@ def test_evaluate_runtime_resolver_scorer_uses_hrnet_for_hard_slice_contradictio
         output_dir=tmp_path / "eval_hard_slice",
     )
 
-    assert report["learned_quality_v1"]["pick_counts"] == {"hrnet": 2}
+    assert report["learned_quality_v1"]["pick_counts"] == {"orformer": 2}
     assert report["hard_slice_fallback_count"] == 2
+    assert report["consensus_collapse_rejection_count"] == 2
+    rows = list(csv.DictReader((tmp_path / "eval_hard_slice" / "scorer_policy_report.csv").open()))
+    assert {row["fallback_reason"] for row in rows} == {"consensus_collapse_fusion_rejected"}
+    assert {row["rejected_candidate"] for row in rows} == {"static_weighted"}
+    assert {row["replacement_candidate"] for row in rows} == {"orformer"}
 
 
 def test_export_resolver_candidate_table_row_count_and_gate_metrics(

@@ -79,10 +79,10 @@ HARD_SLICE_SAFE_SINGLE_BUCKETS: frozenset[str] = frozenset(
         "rolled_profile_right",
     )
 )
-HARD_SLICE_YAW_DISAGREEMENT_THRESHOLD: float = 90.0
-HARD_SLICE_MAX_DISAGREEMENT_PX_THRESHOLD: float = 60.0
 HARD_SLICE_CONSENSUS_DISTANCE_THRESHOLD: float = 0.04
-HARD_SLICE_SINGLE_MODEL_DISAGREEMENT_PX_THRESHOLD: float = 40.0
+HARD_SLICE_SINGLE_MODEL_DISAGREEMENT_PX_THRESHOLD: float = 35.0
+HARD_SLICE_DISTANCE_TO_HRNET_THRESHOLD: float = 0.08
+SAFE_SINGLE_TIE_BREAKER: tuple[str, ...] = ("hrnet", "spiga", "orformer")
 
 DEFAULT_PRIORITY: tuple[str, ...] = (
     "static_weighted_downweight",
@@ -221,7 +221,6 @@ class RuntimeResolverConfig:
     roll_veto_degrees: float = 15.0
     hard_roll_degrees: float = 30.0
     risk_floor_for_safe_fallback: float = 0.50
-    safe_fallback_candidate: str = "hrnet"
     strict: bool = False
 
 
@@ -1290,15 +1289,12 @@ def _high_risk_safe_fallback_candidate(
     *,
     scores: T.Mapping[str, float],
     selectable: T.AbstractSet[str],
+    candidates: T.Mapping[str, CandidateRecord],
     metrics: T.Mapping[str, CandidateMetrics],
     risk_floor: float,
-    fallback_candidate: str,
 ) -> str | None:
-    """Return the safe fallback when every selectable scorer risk is high."""
-    if risk_floor < 0.0 or not fallback_candidate or fallback_candidate not in selectable:
-        return None
-    fallback_metric = metrics.get(fallback_candidate)
-    if fallback_metric is None or fallback_metric.geometry_veto_reasons:
+    """Return the lowest-risk valid single model when every selectable risk is high."""
+    if risk_floor < 0.0:
         return None
     selectable_scores = [
         float(scores[name])
@@ -1307,7 +1303,37 @@ def _high_risk_safe_fallback_candidate(
     ]
     if not selectable_scores or min(selectable_scores) <= risk_floor:
         return None
-    return fallback_candidate
+    return _lowest_risk_valid_single(
+        scores=scores,
+        selectable=selectable,
+        candidates=candidates,
+        metrics=metrics,
+    )
+
+
+def _lowest_risk_valid_single(
+    *,
+    scores: T.Mapping[str, float],
+    selectable: T.AbstractSet[str],
+    candidates: T.Mapping[str, CandidateRecord],
+    metrics: T.Mapping[str, CandidateMetrics],
+) -> str | None:
+    """Return the lowest-risk geometry-valid single model using stable tie-breaks."""
+    tie_order = {name: index for index, name in enumerate(SAFE_SINGLE_TIE_BREAKER)}
+    valid_singles = [
+        name
+        for name, candidate in candidates.items()
+        if name in selectable
+        and not candidate.is_fusion
+        and name in metrics
+        and not metrics[name].geometry_veto_reasons
+    ]
+    if not valid_singles:
+        return None
+    return min(
+        valid_singles,
+        key=lambda name: (scores.get(name, float("inf")), tie_order.get(name, len(tie_order)), name),
+    )
 
 
 def _hard_slice_safe_single_candidate(
@@ -1318,42 +1344,37 @@ def _hard_slice_safe_single_candidate(
     candidate_extra_features: T.Mapping[str, T.Mapping[str, float]],
     condition: str,
     runtime_bucket: str,
-    candidate_yaw_disagreement: float | None,
-    max_disagreement_px: float,
-    fallback_candidate: str = "hrnet",
+    runtime_bucket_source: str,
+    scores: T.Mapping[str, float],
+    selectable: T.AbstractSet[str],
 ) -> str | None:
-    """Prefer a geometry-valid single model for rolled/profile hard-slice contradictions."""
+    """Reject consensus-collapse fusion on derived rolled/profile hard slices."""
     hard_label = condition or runtime_bucket
-    if hard_label not in HARD_SLICE_SAFE_SINGLE_BUCKETS:
+    if (
+        hard_label not in HARD_SLICE_SAFE_SINGLE_BUCKETS
+        or runtime_bucket_source != "derived_no_image_evidence"
+    ):
         return None
     selected_candidate = candidates.get(selected)
-    fallback = candidates.get(fallback_candidate)
-    fallback_metric = metrics.get(fallback_candidate)
-    if (
-        selected_candidate is None
-        or fallback is None
-        or fallback_metric is None
-        or not selected_candidate.is_fusion
-        or fallback_metric.geometry_veto_reasons
-    ):
+    if selected_candidate is None or not selected_candidate.is_fusion:
         return None
     selected_features = candidate_extra_features.get(selected, {})
     consensus_like = bool(selected_features.get("candidate_is_consensus_like", 0.0) >= 1.0)
     single_disagreement_px = float(selected_features.get("single_model_disagreement_px", 0.0))
-    yaw_disagreement = (
-        0.0 if candidate_yaw_disagreement is None else abs(float(candidate_yaw_disagreement))
-    )
-    disagreement_high = (
-        yaw_disagreement >= HARD_SLICE_YAW_DISAGREEMENT_THRESHOLD
-        or max_disagreement_px >= HARD_SLICE_MAX_DISAGREEMENT_PX_THRESHOLD
-    )
-    consensus_contradiction = (
+    distance_to_hrnet = float(selected_features.get("candidate_distance_to_hrnet", 0.0))
+    consensus_collapse = (
         consensus_like
         and single_disagreement_px >= HARD_SLICE_SINGLE_MODEL_DISAGREEMENT_PX_THRESHOLD
+        and distance_to_hrnet >= HARD_SLICE_DISTANCE_TO_HRNET_THRESHOLD
     )
-    if disagreement_high or consensus_contradiction:
-        return fallback_candidate
-    return None
+    if not consensus_collapse:
+        return None
+    return _lowest_risk_valid_single(
+        scores=scores,
+        selectable=selectable,
+        candidates=candidates,
+        metrics=metrics,
+    )
 
 
 def resolve_runtime(
@@ -1466,25 +1487,29 @@ def resolve_runtime(
             candidate_extra_features=candidate_extra_features,
             condition=bucket,
             runtime_bucket=bucket,
-            candidate_yaw_disagreement=runtime_bucket.features.get("candidate_yaw_disagreement"),
-            max_disagreement_px=max_disagreement_px,
-            fallback_candidate=config.safe_fallback_candidate,
+            runtime_bucket_source=runtime_bucket_source,
+            scores=scores,
+            selectable=selectable,
         )
         hard_slice_fallback_used = (
             hard_slice_fallback is not None and hard_slice_fallback != selected
         )
         if hard_slice_fallback_used:
+            rejected_candidate = selected
             selected = hard_slice_fallback
-            fallback_reason = "hard_slice_safe_single_fallback"
+            fallback_reason = "consensus_collapse_fusion_rejected"
+        else:
+            rejected_candidate = ""
         safe_fallback = _high_risk_safe_fallback_candidate(
             scores=scores,
             selectable=selectable,
+            candidates=by_name,
             metrics=metrics,
             risk_floor=config.risk_floor_for_safe_fallback,
-            fallback_candidate=config.safe_fallback_candidate,
         )
         safe_fallback_used = safe_fallback is not None and safe_fallback != selected
         if safe_fallback_used:
+            rejected_candidate = selected
             selected = safe_fallback
             fallback_reason = "scorer_high_risk_safe_fallback"
         scorer_metadata = {
@@ -1495,10 +1520,12 @@ def resolve_runtime(
             ],
             "scorer_path": str(config.scorer_path),
             "scorer_version": scorer.version,
-            "scorer_safe_fallback_candidate": config.safe_fallback_candidate,
+            "scorer_safe_fallback_tie_breaker": SAFE_SINGLE_TIE_BREAKER,
             "scorer_safe_fallback_floor": config.risk_floor_for_safe_fallback,
             "scorer_safe_fallback_used": safe_fallback_used,
             "hard_slice_safe_fallback_used": hard_slice_fallback_used,
+            "rejected_candidate": rejected_candidate,
+            "replacement_candidate": selected if rejected_candidate else "",
         }
     else:
         selected = (
