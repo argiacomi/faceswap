@@ -44,6 +44,9 @@ SCORER_POLICY_REPORT_CSV = "scorer_policy_report.csv"
 SCORER_WORST_SAMPLES_JSON = "scorer_worst_samples.json"
 SCORER_FEATURE_IMPORTANCE_CSV = "scorer_feature_importance.csv"
 DEFAULT_RISK_FLOOR_FOR_SAFE_FALLBACK = 0.50
+DEFAULT_SAFE_FALLBACK_MIN_DELTA = 0.05
+DEFAULT_FALLBACK_CATASTROPHIC_WORSE_NME = 0.02
+PROMOTION_SCOPES = ("universal", "production")
 SOURCE_GT_HARD = "gt_hard"
 SOURCE_PRODUCTION_VALIDATED = "production_validated"
 HARD_SLICE_POLICY_BUCKETS = {
@@ -216,11 +219,33 @@ def _best_single(
     return best, summaries[best]
 
 
+def _score_delta_passes(
+    *,
+    replacement: str,
+    selected: str,
+    scores: T.Mapping[str, float],
+    min_delta: float,
+) -> bool:
+    """Return whether replacement is materially lower risk than selected."""
+    replacement_score = scores.get(replacement)
+    selected_score = scores.get(selected)
+    if replacement_score is None or selected_score is None:
+        return False
+    if not math_is_finite(replacement_score) or not math_is_finite(selected_score):
+        return False
+    return float(replacement_score) < float(selected_score) - min_delta
+
+
+def math_is_finite(value: float) -> bool:
+    return bool(np.isfinite(float(value)))
+
+
 def _choose_scorer(
     context: SampleCandidateContext,
     scores: T.Mapping[str, float],
     *,
     risk_floor_for_safe_fallback: float,
+    safe_fallback_min_delta: float,
 ) -> tuple[str, bool, str, str, str]:
     available = set(context.nme_by_candidate)
     survivors = {
@@ -259,7 +284,16 @@ def _choose_scorer(
         metrics=context.metrics,
         risk_floor=risk_floor_for_safe_fallback,
     )
-    if safe_fallback is not None and safe_fallback != chosen:
+    if (
+        safe_fallback is not None
+        and safe_fallback != chosen
+        and _score_delta_passes(
+            replacement=safe_fallback,
+            selected=chosen,
+            scores=scores,
+            min_delta=safe_fallback_min_delta,
+        )
+    ):
         rejected_candidate = chosen
         chosen = safe_fallback
         replacement_candidate = chosen
@@ -357,6 +391,29 @@ def _policy_metric_bundle(
     return payload
 
 
+def _fallback_impact_summary(impacts: T.Sequence[dict[str, T.Any]]) -> dict[str, T.Any]:
+    if not impacts:
+        return {
+            "count_with_rejected_candidate": 0,
+            "mean_nme_delta_vs_rejected": 0.0,
+            "mean_failure_delta_vs_rejected": 0.0,
+            "worse_count": 0,
+            "catastrophic_worse_count": 0,
+        }
+    nme_deltas = [float(item["nme_delta_vs_rejected"]) for item in impacts]
+    failure_deltas = [float(item["failure_delta_vs_rejected"]) for item in impacts]
+    return {
+        "count_with_rejected_candidate": len(impacts),
+        "mean_nme_delta_vs_rejected": float(np.mean(nme_deltas)),
+        "mean_failure_delta_vs_rejected": float(np.mean(failure_deltas)),
+        "worse_count": sum(delta > 0.0 for delta in nme_deltas),
+        "catastrophic_worse_count": sum(
+            delta >= DEFAULT_FALLBACK_CATASTROPHIC_WORSE_NME or failure_delta > 0.0
+            for delta, failure_delta in zip(nme_deltas, failure_deltas, strict=True)
+        ),
+    }
+
+
 def evaluate_runtime_resolver_scorer(
     *,
     gt_manifest: Path | None,
@@ -374,10 +431,14 @@ def evaluate_runtime_resolver_scorer(
     epsilon_failure_rate: float = 0.0,
     worst_sample_count: int = 25,
     risk_floor_for_safe_fallback: float = DEFAULT_RISK_FLOOR_FOR_SAFE_FALLBACK,
+    safe_fallback_min_delta: float = DEFAULT_SAFE_FALLBACK_MIN_DELTA,
+    promotion_scope: str = "universal",
     allow_image_backfill: bool = False,
     allow_derived_no_image_gt_hard: bool = False,
 ) -> dict[str, T.Any]:
     """Evaluate learned scorer policy and write reports."""
+    if promotion_scope not in PROMOTION_SCOPES:
+        raise ValueError(f"promotion_scope must be one of {PROMOTION_SCOPES}, got {promotion_scope!r}")
     output_dir.mkdir(parents=True, exist_ok=True)
     scorer = load_runtime_resolver_scorer(scorer_path)
     contexts = _collect_contexts(
@@ -407,6 +468,7 @@ def evaluate_runtime_resolver_scorer(
     scorer_choices: dict[str, str] = {}
     current_choices: dict[str, str] = {}
     oracle_choices: dict[str, str] = {}
+    fallback_impacts: list[dict[str, T.Any]] = []
     fallback_count = 0
     safe_fallback_count = 0
     hard_slice_fallback_count = 0
@@ -425,10 +487,30 @@ def evaluate_runtime_resolver_scorer(
             context,
             score_by_candidate,
             risk_floor_for_safe_fallback=risk_floor_for_safe_fallback,
+            safe_fallback_min_delta=safe_fallback_min_delta,
         )
         fallback_count += int(fallback_used)
         safe_fallback_count += int(fallback_reason == "scorer_high_risk_safe_fallback")
         hard_slice_fallback_count += int(fallback_reason == "consensus_collapse_fusion_rejected")
+        rejected_nme = None
+        replacement_nme = None
+        rejected_failure = None
+        replacement_failure = None
+        if rejected_candidate and rejected_candidate in context.nme_by_candidate:
+            rejected_nme = context.nme_by_candidate[rejected_candidate]
+            replacement_nme = context.nme_by_candidate[chosen]
+            rejected_failure = context.failure_by_candidate[rejected_candidate]
+            replacement_failure = context.failure_by_candidate[chosen]
+            fallback_impacts.append(
+                {
+                    "sample_id": context.sample_id,
+                    "fallback_reason": fallback_reason,
+                    "rejected_candidate": rejected_candidate,
+                    "replacement_candidate": chosen,
+                    "nme_delta_vs_rejected": replacement_nme - rejected_nme,
+                    "failure_delta_vs_rejected": int(replacement_failure) - int(rejected_failure),
+                }
+            )
         scorer_choices[context.sample_id] = chosen
         current_choices[context.sample_id] = context.current_policy_choice
         oracle_choices[context.sample_id] = context.oracle
@@ -457,6 +539,14 @@ def evaluate_runtime_resolver_scorer(
                 "fallback_reason": fallback_reason,
                 "rejected_candidate": rejected_candidate,
                 "replacement_candidate": replacement_candidate,
+                "rejected_candidate_nme": rejected_nme,
+                "replacement_candidate_nme": replacement_nme,
+                "fallback_nme_delta_vs_rejected": (
+                    None if rejected_nme is None else replacement_nme - rejected_nme
+                ),
+                "fallback_failure_delta_vs_rejected": (
+                    None if rejected_failure is None else int(replacement_failure) - int(rejected_failure)
+                ),
             }
         )
 
@@ -515,46 +605,62 @@ def evaluate_runtime_resolver_scorer(
         current_choices=current_choices,
         oracle_choices=oracle_choices,
     )
-    failed_gates: list[str] = []
+    combined_failed_gates: list[str] = []
+    production_failed_gates: list[str] = []
+    gt_hard_failed_gates: list[str] = []
     if static_name and scorer_summary["mean_nme"] >= static["mean_nme"]:
-        failed_gates.append("scorer_mean_nme_not_better_than_static_downweight")
+        combined_failed_gates.append("scorer_mean_nme_not_better_than_static_downweight")
     if static_name and scorer_summary["p90_nme"] > static["p90_nme"]:
-        failed_gates.append("scorer_p90_nme_regresses_vs_static_downweight")
+        combined_failed_gates.append("scorer_p90_nme_regresses_vs_static_downweight")
     if (
         static_name
         and scorer_summary["failure_rate"] > static["failure_rate"] + epsilon_failure_rate
     ):
-        failed_gates.append("scorer_failure_rate_regresses_vs_static_downweight")
+        combined_failed_gates.append("scorer_failure_rate_regresses_vs_static_downweight")
     if static_name and production_contexts:
         production_scorer = production_only_policy_metrics["learned_quality_v1"]
         production_static = production_only_policy_metrics["static_weighted_downweight"]
         production_hrnet = production_only_policy_metrics.get("hrnet")
         if production_scorer["mean_nme"] >= production_static["mean_nme"]:
-            failed_gates.append("production_scorer_mean_nme_not_better_than_static_downweight")
+            production_failed_gates.append("production_scorer_mean_nme_not_better_than_static_downweight")
         if production_scorer["p90_nme"] > production_static["p90_nme"]:
-            failed_gates.append("production_scorer_p90_nme_regresses_vs_static_downweight")
+            production_failed_gates.append("production_scorer_p90_nme_regresses_vs_static_downweight")
         if (
             production_scorer["failure_rate"]
             > production_static["failure_rate"] + epsilon_failure_rate
         ):
-            failed_gates.append("production_scorer_failure_rate_regresses_vs_static_downweight")
+            production_failed_gates.append("production_scorer_failure_rate_regresses_vs_static_downweight")
         if (
             production_hrnet is not None
             and production_scorer["failure_rate"]
             > production_hrnet["failure_rate"] + epsilon_failure_rate
         ):
-            failed_gates.append("production_scorer_failure_rate_regresses_vs_hrnet")
+            production_failed_gates.append("production_scorer_failure_rate_regresses_vs_hrnet")
     if static_name and gt_hard_all_contexts:
         gt_hard_scorer = gt_hard_all_policy_metrics["learned_quality_v1"]
         gt_hard_static = gt_hard_all_policy_metrics["static_weighted_downweight"]
         if gt_hard_scorer["failure_rate"] > gt_hard_static["failure_rate"] + epsilon_failure_rate:
-            failed_gates.append("gt_hard_scorer_failure_rate_regresses_vs_static_downweight")
+            gt_hard_failed_gates.append("gt_hard_scorer_failure_rate_regresses_vs_static_downweight")
     if derived_no_image_gt_hard_contexts and not allow_derived_no_image_gt_hard:
-        failed_gates.append("gt_hard_derived_no_image_evidence_requires_explicit_allow")
+        gt_hard_failed_gates.append("gt_hard_derived_no_image_evidence_requires_explicit_allow")
+    universal_failed_gates = [
+        *combined_failed_gates,
+        *production_failed_gates,
+        *gt_hard_failed_gates,
+    ]
+    failed_gates = production_failed_gates if promotion_scope == "production" else universal_failed_gates
 
     report: dict[str, T.Any] = {
         "status": "pass" if not failed_gates else "fail",
+        "promotion_status": "pass" if not failed_gates else "fail",
+        "promotion_scope": promotion_scope,
         "failed_gates": failed_gates,
+        "universal_failed_gates": universal_failed_gates,
+        "combined_failed_gates": combined_failed_gates,
+        "production_failed_gates": production_failed_gates,
+        "gt_hard_failed_gates": gt_hard_failed_gates,
+        "production_gate_status": "pass" if not production_failed_gates else "fail",
+        "gt_hard_gate_status": "pass" if not gt_hard_failed_gates else "diagnostic_fail",
         "sample_count": len(contexts),
         "heldout_eval": eval_split is not None,
         "eval_split": "" if eval_split is None else str(eval_split),
@@ -574,9 +680,11 @@ def evaluate_runtime_resolver_scorer(
         "hard_slice_fallback_count": hard_slice_fallback_count,
         "consensus_collapse_rejection_count": hard_slice_fallback_count,
         "consensus_collapse_fallback_count": hard_slice_fallback_count,
+        "fallback_impact": _fallback_impact_summary(fallback_impacts),
         "derived_no_image_sample_count": len(derived_no_image_contexts),
         "derived_no_image_gt_hard_sample_count": len(derived_no_image_gt_hard_contexts),
         "risk_floor_for_safe_fallback": risk_floor_for_safe_fallback,
+        "safe_fallback_min_delta": safe_fallback_min_delta,
         "safe_fallback_tie_breaker": ["hrnet", "spiga", "orformer"],
         "per_bucket": _per_bucket(contexts, scorer_choices),
         "production_only_policy_metrics": production_only_policy_metrics,
@@ -683,6 +791,18 @@ def _parser() -> argparse.ArgumentParser:
         default=DEFAULT_RISK_FLOOR_FOR_SAFE_FALLBACK,
     )
     parser.add_argument(
+        "--safe-fallback-min-delta",
+        type=float,
+        default=DEFAULT_SAFE_FALLBACK_MIN_DELTA,
+        help="Require a safe-fallback replacement risk score to beat selected risk by this margin.",
+    )
+    parser.add_argument(
+        "--promotion-scope",
+        choices=PROMOTION_SCOPES,
+        default="universal",
+        help="Gate production only, or require both production and GT-hard diagnostics to pass.",
+    )
+    parser.add_argument(
         "--allow-image-backfill",
         action="store_true",
         help="Compute image-aware runtime metadata for rows without stored metadata.",
@@ -718,6 +838,8 @@ def main(argv: T.Sequence[str] | None = None) -> int:
         epsilon_failure_rate=args.epsilon_failure_rate,
         worst_sample_count=args.worst_sample_count,
         risk_floor_for_safe_fallback=args.risk_floor_for_safe_fallback,
+        safe_fallback_min_delta=args.safe_fallback_min_delta,
+        promotion_scope=args.promotion_scope,
         allow_image_backfill=args.allow_image_backfill,
         allow_derived_no_image_gt_hard=args.allow_derived_no_image_gt_hard,
     )
