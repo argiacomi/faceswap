@@ -235,6 +235,49 @@ def test_learned_quality_policy_scores_geometry_valid_candidates(
     assert result.metadata["fallback_used"] is False
 
 
+def test_learned_quality_policy_falls_back_to_hrnet_when_all_risks_high(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    """High-risk scorer outputs prefer HRNet over a less-bad fusion candidate."""
+    monkeypatch.setattr(
+        runtime_resolver,
+        "infer_runtime_bucket",
+        lambda **kwargs: RuntimeBucketResult(bucket="large_yaw_left", features={}),
+    )
+    scorer_path = write_runtime_resolver_scorer(
+        RuntimeResolverScorer(
+            features=("candidate_name=static_weighted",),
+            coefficients=(-0.25,),
+            intercept=1.0,
+        ),
+        tmp_path / "runtime_resolver_scorer.json",
+    )
+    base = _face()
+
+    result = resolve_runtime(
+        [
+            ModelPrediction("hrnet", base + 0.1),
+            ModelPrediction("spiga", base),
+            ModelPrediction("orformer", base + 0.2),
+        ],
+        RuntimeResolverConfig(
+            policy="learned_quality_v1",
+            scorer_path=str(scorer_path),
+            weights={name: [1.0 / 3.0] * 68 for name in ("hrnet", "spiga", "orformer")},
+        ),
+        detector_bbox=(35.0, 65.0, 165.0, 155.0),
+    )
+
+    assert result.selected_candidate == "hrnet"
+    assert result.metadata["candidate_scores"]["static_weighted"] < result.metadata[
+        "candidate_scores"
+    ]["hrnet"]
+    assert result.metadata["candidate_scores"]["static_weighted"] > 0.50
+    assert result.metadata["scorer_safe_fallback_used"] is True
+    assert result.metadata["fallback_reason"] == "scorer_high_risk_safe_fallback"
+
+
 def test_runtime_resolver_records_eye_visual_evidence_for_runtime_bucket() -> None:
     """Eye visual evidence is diagnostic and stays within the canonical bucket family."""
     base = _face()
@@ -334,10 +377,10 @@ def test_runtime_bucket_keeps_obvious_large_yaw_out_of_profile(monkeypatch) -> N
 
 
 def test_runtime_bucket_routes_obvious_profile_by_image_geometry(monkeypatch) -> None:
-    """Strong silhouette/nose geometry is sufficient profile evidence."""
+    """Strong image yaw plus nose and jaw geometry is sufficient profile evidence."""
     result = _runtime_bucket_for_production_signals(
         monkeypatch,
-        image_geometry_yaw_signal=-0.38,
+        image_geometry_yaw_signal=-0.55,
         nose_offset_from_face_center=-0.72,
         mouth_nose_jaw_asymmetry=0.45,
         landmark_pose_yaw=-18.0,
@@ -414,7 +457,7 @@ def test_runtime_bucket_allows_candidate_instability_profile_with_trusted_yaw(
     """Candidate instability can support profile only with model side agreement and shape."""
     result = _runtime_bucket_for_production_signals(
         monkeypatch,
-        image_geometry_yaw_signal=0.12,
+        image_geometry_yaw_signal=0.50,
         nose_offset_from_face_center=0.31,
         mouth_nose_jaw_asymmetry=0.10,
         landmark_pose_yaw=22.0,
@@ -453,6 +496,26 @@ def test_runtime_bucket_caps_listed_single_orformer_yaw_spike(monkeypatch) -> No
     assert result.features["profile_yaw_agreement"] is False
 
 
+def test_runtime_bucket_demotes_02181_nose_only_profile_signal(monkeypatch) -> None:
+    """02181-style high nose offset without jaw corroboration is large-yaw, not profile."""
+    result = _runtime_bucket_for_production_signals(
+        monkeypatch,
+        image_geometry_yaw_signal=0.3422617854807459,
+        nose_offset_from_face_center=0.46056017070386623,
+        mouth_nose_jaw_asymmetry=-0.10832770523689941,
+        landmark_pose_yaw=-31.592052459716793,
+        candidate_yaws={
+            "hrnet": -9.942437171936035,
+            "spiga": -37.887,
+            "orformer": 8.0,
+        },
+        max_disagreement_px=203.0580158386968,
+    )
+
+    assert result.bucket == "large_yaw_right"
+    assert result.features["runtime_bucket_severity_source"] == "yaw_evidence"
+
+
 def test_runtime_bucket_uses_rolled_large_yaw_family(monkeypatch) -> None:
     """Hard roll plus large-yaw uses the canonical rolled yaw bucket family."""
     result = _runtime_bucket_for_production_signals(
@@ -474,7 +537,7 @@ def test_runtime_bucket_uses_rolled_profile_family(monkeypatch) -> None:
     """Hard roll plus profile uses the canonical rolled profile bucket family."""
     result = _runtime_bucket_for_production_signals(
         monkeypatch,
-        image_geometry_yaw_signal=-0.38,
+        image_geometry_yaw_signal=-0.55,
         nose_offset_from_face_center=-0.72,
         mouth_nose_jaw_asymmetry=0.45,
         landmark_pose_yaw=-18.0,
@@ -509,8 +572,8 @@ def test_runtime_bucket_demotes_unsupported_roll_estimate(monkeypatch) -> None:
 def test_runtime_bucket_routes_known_visual_left_profiles_to_profile_left(monkeypatch) -> None:
     """Known strong-image-geometry profiles should resolve profile-left."""
     cases = (
-        ("00015", 0.380, 0.491, -0.047, -37.395, 65.761, 124.710),
-        ("00025", 0.382, 1.101, -1.000, -49.134, 65.159, 124.414),
+        ("strong_profile_left_a", 0.550, 0.491, -0.450, -37.395, 65.761, 124.710),
+        ("strong_profile_left_b", 0.560, 1.101, -1.000, -49.134, 65.159, 124.414),
     )
     for sample_id, image_yaw, nose, jaw, pose_yaw, dominant_yaw, yaw_spread in cases:
         other_yaw = dominant_yaw - yaw_spread if dominant_yaw > 0 else dominant_yaw + yaw_spread

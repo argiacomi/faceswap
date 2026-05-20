@@ -48,13 +48,14 @@ IMAGE_YAW_SIDE_THRESHOLD: float = 0.08
 LANDMARK_YAW_SIDE_THRESHOLD: float = 3.0
 NOSE_SIDE_THRESHOLD: float = 0.08
 JAW_SIDE_THRESHOLD: float = 0.20
-LARGE_YAW_IMAGE_SIGNAL_THRESHOLD: float = 0.18
+LARGE_YAW_IMAGE_SIGNAL_THRESHOLD: float = 0.28
 LARGE_YAW_LANDMARK_THRESHOLD: float = 35.0
-PROFILE_IMAGE_SIGNAL_THRESHOLD: float = 0.34
+PROFILE_IMAGE_SIGNAL_THRESHOLD: float = 0.50
 PROFILE_LANDMARK_YAW_THRESHOLD: float = 55.0
 PROFILE_CANDIDATE_YAW_DISAGREEMENT_THRESHOLD: float = 120.0
 PROFILE_MAX_DISAGREEMENT_BBOX_FRACTION_THRESHOLD: float = 0.28
-PROFILE_SIDE_STRUCTURE_THRESHOLD: float = 0.20
+PROFILE_JAW_STRUCTURE_THRESHOLD: float = 0.45
+PROFILE_NOSE_STRUCTURE_THRESHOLD: float = 0.35
 PROFILE_CANDIDATE_SIDE_STRUCTURE_THRESHOLD: float = 0.30
 PROFILE_NOSE_OFFSET_THRESHOLD: float = 0.12
 PROFILE_MULTI_MODEL_YAW_THRESHOLD: float = 60.0
@@ -206,6 +207,8 @@ class RuntimeResolverConfig:
     hard_disagreement_px: float = 12.0
     roll_veto_degrees: float = 15.0
     hard_roll_degrees: float = 30.0
+    risk_floor_for_safe_fallback: float = 0.50
+    safe_fallback_candidate: str = "hrnet"
     strict: bool = False
 
 
@@ -908,19 +911,35 @@ def _runtime_yaw_severity(
     abs_image_yaw = abs(image_geometry_yaw_signal)
     abs_landmark_yaw = 0.0 if landmark_pose_yaw is None else abs(float(landmark_pose_yaw))
     abs_trusted_yaw = abs(float(trusted_single_model_yaw))
-    side_structure = max(abs(nose_offset_from_face_center), abs(mouth_nose_jaw_asymmetry))
-    if (
+    nose_structure = abs(nose_offset_from_face_center)
+    jaw_structure = abs(mouth_nose_jaw_asymmetry)
+    side_structure = max(nose_structure, jaw_structure)
+    profile_allowed = (
         abs_image_yaw >= PROFILE_IMAGE_SIGNAL_THRESHOLD
-        and side_structure >= PROFILE_SIDE_STRUCTURE_THRESHOLD
+        or abs_trusted_yaw >= PROFILE_MULTI_MODEL_YAW_THRESHOLD
+    )
+    strong_profile_shape = (
+        nose_structure >= PROFILE_NOSE_STRUCTURE_THRESHOLD
+        and jaw_structure >= PROFILE_JAW_STRUCTURE_THRESHOLD
+    )
+    if (
+        profile_allowed
+        and abs_image_yaw >= PROFILE_IMAGE_SIGNAL_THRESHOLD
+        and strong_profile_shape
     ):
         return "profile", "image_geometry"
-    if profile_yaw_agreement and (
-        abs_image_yaw >= PROFILE_VISUAL_SUPPORT_IMAGE_THRESHOLD
-        or side_structure >= PROFILE_VISUAL_SUPPORT_STRUCTURE_THRESHOLD
+    if (
+        profile_allowed
+        and profile_yaw_agreement
+        and (
+            abs_image_yaw >= PROFILE_VISUAL_SUPPORT_IMAGE_THRESHOLD
+            or side_structure >= PROFILE_VISUAL_SUPPORT_STRUCTURE_THRESHOLD
+        )
     ):
         return "profile", "multi_model_yaw_agreement"
     if (
-        candidate_yaw_disagreement >= PROFILE_CANDIDATE_YAW_DISAGREEMENT_THRESHOLD
+        profile_allowed
+        and candidate_yaw_disagreement >= PROFILE_CANDIDATE_YAW_DISAGREEMENT_THRESHOLD
         and max_disagreement_bbox_fraction >= PROFILE_MAX_DISAGREEMENT_BBOX_FRACTION_THRESHOLD
         and side_structure >= PROFILE_CANDIDATE_SIDE_STRUCTURE_THRESHOLD
         and candidate_profile_yaw_agreement
@@ -1165,6 +1184,30 @@ def _roll_support_count(
     return support
 
 
+def _high_risk_safe_fallback_candidate(
+    *,
+    scores: T.Mapping[str, float],
+    selectable: T.AbstractSet[str],
+    metrics: T.Mapping[str, CandidateMetrics],
+    risk_floor: float,
+    fallback_candidate: str,
+) -> str | None:
+    """Return the safe fallback when every selectable scorer risk is high."""
+    if risk_floor < 0.0 or not fallback_candidate or fallback_candidate not in selectable:
+        return None
+    fallback_metric = metrics.get(fallback_candidate)
+    if fallback_metric is None or fallback_metric.geometry_veto_reasons:
+        return None
+    selectable_scores = [
+        float(scores[name])
+        for name in selectable
+        if name in scores and math.isfinite(float(scores[name]))
+    ]
+    if not selectable_scores or min(selectable_scores) <= risk_floor:
+        return None
+    return fallback_candidate
+
+
 def resolve_runtime(
     predictions: T.Sequence[ModelPrediction],
     config: RuntimeResolverConfig,
@@ -1254,6 +1297,17 @@ def resolve_runtime(
             selectable,
             key=lambda name: (scores.get(name, float("inf")), priority.index(name), name),
         )
+        safe_fallback = _high_risk_safe_fallback_candidate(
+            scores=scores,
+            selectable=selectable,
+            metrics=metrics,
+            risk_floor=config.risk_floor_for_safe_fallback,
+            fallback_candidate=config.safe_fallback_candidate,
+        )
+        safe_fallback_used = safe_fallback is not None and safe_fallback != selected
+        if safe_fallback_used:
+            selected = safe_fallback
+            fallback_reason = "scorer_high_risk_safe_fallback"
         scorer_metadata = {
             "selected_candidate_score": scores.get(selected),
             "candidate_scores": dict(sorted(scores.items())),
@@ -1262,6 +1316,9 @@ def resolve_runtime(
             ],
             "scorer_path": str(config.scorer_path),
             "scorer_version": scorer.version,
+            "scorer_safe_fallback_candidate": config.safe_fallback_candidate,
+            "scorer_safe_fallback_floor": config.risk_floor_for_safe_fallback,
+            "scorer_safe_fallback_used": safe_fallback_used,
         }
     else:
         selected = (
