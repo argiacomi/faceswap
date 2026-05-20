@@ -17,12 +17,52 @@ SOURCE_PRODUCTION_EXTRACTION = "production_extraction"
 METADATA_SOURCES = (SOURCE_GT_HARD, SOURCE_PRODUCTION_VALIDATED, SOURCE_PRODUCTION_EXTRACTION)
 
 MANIFEST_FILENAME = "manifest.json"
+REPORT_MANIFEST_FILENAME = "report_manifest.json"
+RUN_SUMMARY_JSON = "run_summary.json"
+SPLITS_FILENAME = "splits.json"
+DATASET_AUDIT_JSON = "dataset_audit.json"
 PREDICTION_CACHE_DIRNAME = "cache"
 RESOLVER_METADATA_JSONL = "resolver_metadata.jsonl"
 SCORER_REPORT_DIRNAME = "scorer_reports"
 DEBUG_DIRNAME = "debug"
 DEBUG_JSON_SUFFIX = ".json"
 DEBUG_JSONL_SUFFIX = ".jsonl"
+
+STATIC_WEIGHTS_FILENAME = "static_landmark_weights.json"
+BEST_SETUP_FILENAME = "best_setup.json"
+BEST_WEIGHTS_FILENAME = "best_weights.json"
+CANDIDATE_RESULTS_CSV = "candidate_results.csv"
+CANDIDATE_RESULTS_JSON = "candidate_results.json"
+PROMOTION_REPORT_MD = "promotion_report.md"
+NO_PROMOTION_JSON = "no_promotion.json"
+
+GEOMETRY_METRICS_JSON = "geometry_metrics.json"
+GEOMETRY_METRICS_CSV = "geometry_metrics.csv"
+PER_REGION_GEOMETRY_CSV = "per_region_geometry.csv"
+CATASTROPHIC_GEOMETRY_FAILURES_CSV = "catastrophic_geometry_failures.csv"
+WORST_GEOMETRY_FAILURES_DIRNAME = "worst_geometry_failures"
+WORST_SAMPLES_JSON = "worst_samples.json"
+
+SIGNAL_CANDIDATE_INDEX_CSV = "candidate_index.csv"
+SIGNAL_VALIDATION_REPORT_JSON = "signal_validation_report.json"
+SIGNAL_VALIDATION_REPORT_CSV = "signal_validation_report.csv"
+SELECTOR_ABLATIONS_JSON = "selector_ablations.json"
+SELECTOR_ABLATIONS_CSV = "selector_ablations.csv"
+
+AFLW_PROFILE_METRICS_JSON = "aflw_profile_metrics.json"
+AFLW_PROFILE_METRICS_CSV = "aflw_profile_metrics.csv"
+AFLW_REGION_FAILURES_CSV = "aflw_region_failures.csv"
+
+PRODUCTION_PROMOTION_REPORT_JSON = "production_promotion_report.json"
+PRODUCTION_PROMOTION_REPORT_MD = "production_promotion_report.md"
+PRODUCTION_PER_BUCKET_CSV = "production_per_bucket_metrics.csv"
+PRODUCTION_POLICY_FAILURES_CSV = "production_policy_failures.csv"
+PRODUCTION_WORST_SAMPLES_JSON = "production_worst_samples.json"
+
+FAILURE_WORST_CASES_JSON = "worst_cases.json"
+FAILURE_ENSEMBLE_REGRESSIONS_JSON = "ensemble_regressions.json"
+FAILURE_WORST_CONTACT_SHEET = "worst_contact_sheet.png"
+FAILURE_ENSEMBLE_REGRESSIONS_CONTACT_SHEET = "ensemble_regressions_contact_sheet.png"
 
 SCORER_METRICS_JSON = "scorer_metrics.json"
 SCORER_POLICY_REPORT_JSON = "scorer_policy_report.json"
@@ -226,13 +266,38 @@ def write_csv(
 
 
 __all__ = [
+    "AFLW_PROFILE_METRICS_CSV",
+    "AFLW_PROFILE_METRICS_JSON",
+    "AFLW_REGION_FAILURES_CSV",
+    "BEST_SETUP_FILENAME",
+    "BEST_WEIGHTS_FILENAME",
+    "CANDIDATE_RESULTS_CSV",
+    "CANDIDATE_RESULTS_JSON",
+    "CATASTROPHIC_GEOMETRY_FAILURES_CSV",
+    "DATASET_AUDIT_JSON",
     "DEBUG_DIRNAME",
     "DEBUG_JSON_SUFFIX",
     "DEBUG_JSONL_SUFFIX",
+    "FAILURE_ENSEMBLE_REGRESSIONS_CONTACT_SHEET",
+    "FAILURE_ENSEMBLE_REGRESSIONS_JSON",
+    "FAILURE_WORST_CASES_JSON",
+    "FAILURE_WORST_CONTACT_SHEET",
+    "GEOMETRY_METRICS_CSV",
+    "GEOMETRY_METRICS_JSON",
     "MANIFEST_FILENAME",
     "METADATA_SOURCES",
+    "NO_PROMOTION_JSON",
     "PREDICTION_CACHE_DIRNAME",
+    "PER_REGION_GEOMETRY_CSV",
+    "PRODUCTION_PER_BUCKET_CSV",
+    "PRODUCTION_POLICY_FAILURES_CSV",
+    "PRODUCTION_PROMOTION_REPORT_JSON",
+    "PRODUCTION_PROMOTION_REPORT_MD",
+    "PRODUCTION_WORST_SAMPLES_JSON",
+    "PROMOTION_REPORT_MD",
+    "REPORT_MANIFEST_FILENAME",
     "RESOLVER_METADATA_JSONL",
+    "RUN_SUMMARY_JSON",
     "SCORER_FEATURE_IMPORTANCE_CSV",
     "SCORER_HELDOUT_POLICY_REPORT_JSON",
     "SCORER_METRICS_JSON",
@@ -240,9 +305,18 @@ __all__ = [
     "SCORER_POLICY_REPORT_JSON",
     "SCORER_REPORT_DIRNAME",
     "SCORER_WORST_SAMPLES_JSON",
+    "SELECTOR_ABLATIONS_CSV",
+    "SELECTOR_ABLATIONS_JSON",
+    "SIGNAL_CANDIDATE_INDEX_CSV",
+    "SIGNAL_VALIDATION_REPORT_CSV",
+    "SIGNAL_VALIDATION_REPORT_JSON",
     "SOURCE_GT_HARD",
     "SOURCE_PRODUCTION_EXTRACTION",
     "SOURCE_PRODUCTION_VALIDATED",
+    "SPLITS_FILENAME",
+    "STATIC_WEIGHTS_FILENAME",
+    "WORST_GEOMETRY_FAILURES_DIRNAME",
+    "WORST_SAMPLES_JSON",
     "ManifestCachePair",
     "ResolverMetadataValidationError",
     "expected_metadata_keys",
