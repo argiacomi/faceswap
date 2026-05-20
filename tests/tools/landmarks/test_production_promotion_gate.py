@@ -185,6 +185,32 @@ def test_production_gate_fails_missing_runtime_metadata(tmp_path: Path) -> None:
     assert "missing_production_runtime_metadata" in report["failed_gates"]
 
 
+def test_production_gate_fails_derived_no_image_runtime_metadata(tmp_path: Path) -> None:
+    report = _run(
+        tmp_path,
+        [
+            {
+                "sample_id": "s1",
+                "condition": "frontal",
+                "predictions": {"hrnet": 1.0, "spiga": 3.0, "orformer": 4.0},
+                "metadata": {
+                    "landmark_ensemble": {
+                        "runtime_bucket": "frontal",
+                        "bucket": "frontal",
+                        "selected_candidate": "hrnet",
+                        "runtime_bucket_source": "derived_no_image_evidence",
+                    }
+                },
+            }
+        ],
+        policy="candidate:hrnet",
+    )
+
+    assert report["status"] == "fail"
+    assert report["derived_no_image_runtime_metadata_count"] == 1
+    assert "production_runtime_bucket_source_derived_no_image_evidence" in report["failed_gates"]
+
+
 def test_production_gate_fails_per_bucket_regression(tmp_path: Path) -> None:
     report = _run(
         tmp_path,

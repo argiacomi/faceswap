@@ -56,6 +56,7 @@ class ProductionSampleEvaluation:
     nme_by_candidate: dict[str, float]
     failure_by_candidate: dict[str, bool]
     missing_runtime_metadata: bool
+    runtime_bucket_source: str
 
 
 def _raw_manifest_metadata(path: Path) -> dict[str, dict[str, T.Any]]:
@@ -220,6 +221,8 @@ def _gate_failures(
         failures.append("chosen_policy_failure_rate_regresses_vs_static_downweight")
     if report["missing_runtime_metadata_count"] > 0:
         failures.append("missing_production_runtime_metadata")
+    if report["derived_no_image_runtime_metadata_count"] > 0:
+        failures.append("production_runtime_bucket_source_derived_no_image_evidence")
     for bucket, metrics in report["per_bucket"].items():
         if not _hard_bucket(bucket):
             continue
@@ -290,6 +293,7 @@ def evaluate_production_gate(
                 nme_by_candidate=context.nme_by_candidate,
                 failure_by_candidate=context.failure_by_candidate,
                 missing_runtime_metadata=not _has_runtime_metadata(metadata),
+                runtime_bucket_source=context.runtime_bucket_source,
             )
         )
     if not evaluations:
@@ -328,6 +332,9 @@ def evaluate_production_gate(
         "production_condition_counts": dict(Counter(row.condition for row in evaluations)),
         "missing_runtime_metadata_count": sum(
             1 for row in evaluations if row.missing_runtime_metadata
+        ),
+        "derived_no_image_runtime_metadata_count": sum(
+            1 for row in evaluations if row.runtime_bucket_source == "derived_no_image_evidence"
         ),
         "best_single": {
             "candidate": best_single_name,
@@ -500,6 +507,7 @@ def _write_policy_failures(
         "oracle_nme",
         "gap_vs_oracle",
         "missing_runtime_metadata",
+        "runtime_bucket_source",
     ]
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
@@ -511,6 +519,7 @@ def _write_policy_failures(
                 not row.failure_by_candidate[row.chosen]
                 and chosen_nme <= oracle_nme
                 and not row.missing_runtime_metadata
+                and row.runtime_bucket_source != "derived_no_image_evidence"
             ):
                 continue
             writer.writerow(
@@ -524,6 +533,7 @@ def _write_policy_failures(
                     "oracle_nme": oracle_nme,
                     "gap_vs_oracle": chosen_nme - oracle_nme,
                     "missing_runtime_metadata": int(row.missing_runtime_metadata),
+                    "runtime_bucket_source": row.runtime_bucket_source,
                 }
             )
     return path
@@ -553,6 +563,7 @@ def _write_worst_samples(
                 "gap_vs_oracle": row.nme_by_candidate[row.chosen]
                 - row.nme_by_candidate[row.oracle],
                 "missing_runtime_metadata": row.missing_runtime_metadata,
+                "runtime_bucket_source": row.runtime_bucket_source,
             }
             for row in worst
         ]

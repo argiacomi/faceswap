@@ -270,9 +270,10 @@ def test_learned_quality_policy_falls_back_to_hrnet_when_all_risks_high(
     )
 
     assert result.selected_candidate == "hrnet"
-    assert result.metadata["candidate_scores"]["static_weighted"] < result.metadata[
-        "candidate_scores"
-    ]["hrnet"]
+    assert (
+        result.metadata["candidate_scores"]["static_weighted"]
+        < result.metadata["candidate_scores"]["hrnet"]
+    )
     assert result.metadata["candidate_scores"]["static_weighted"] > 0.50
     assert result.metadata["scorer_safe_fallback_used"] is True
     assert result.metadata["fallback_reason"] == "scorer_high_risk_safe_fallback"
@@ -316,9 +317,10 @@ def test_learned_quality_policy_rejects_consensus_collapse_fusion_for_best_singl
     )
 
     assert result.selected_candidate == "orformer"
-    assert result.metadata["candidate_scores"]["static_weighted"] < result.metadata[
-        "candidate_scores"
-    ]["orformer"]
+    assert (
+        result.metadata["candidate_scores"]["static_weighted"]
+        < result.metadata["candidate_scores"]["orformer"]
+    )
     assert result.metadata["hard_slice_safe_fallback_used"] is True
     assert result.metadata["fallback_reason"] == "consensus_collapse_fusion_rejected"
     assert result.metadata["rejected_candidate"] == "static_weighted"

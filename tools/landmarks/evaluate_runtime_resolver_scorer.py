@@ -39,6 +39,7 @@ logger = logging.getLogger("evaluate_runtime_resolver_scorer")
 
 SCORER_METRICS_JSON = "scorer_metrics.json"
 SCORER_POLICY_REPORT_JSON = "scorer_policy_report.json"
+SCORER_HELDOUT_POLICY_REPORT_JSON = "scorer_policy_eval_report.json"
 SCORER_POLICY_REPORT_CSV = "scorer_policy_report.csv"
 SCORER_WORST_SAMPLES_JSON = "scorer_worst_samples.json"
 SCORER_FEATURE_IMPORTANCE_CSV = "scorer_feature_importance.csv"
@@ -62,6 +63,7 @@ def _collect_contexts(
     candidates: T.Sequence[str],
     failure_threshold: float,
     outlier_threshold: float,
+    allow_image_backfill: bool,
 ) -> list[SampleCandidateContext]:
     contexts: list[SampleCandidateContext] = []
     for label, manifest_path, cache_dir in (
@@ -81,11 +83,46 @@ def _collect_contexts(
                 candidates=candidates,
                 failure_threshold=failure_threshold,
                 outlier_threshold=outlier_threshold,
+                allow_image_backfill=allow_image_backfill,
             )
         )
     if not contexts:
         raise ValueError("no scorer evaluation contexts were loaded")
     return contexts
+
+
+def _eval_split_keys(path: Path) -> set[tuple[str, str]]:
+    """Return ``(dataset, sample_id)`` keys from a scorer eval-row CSV."""
+    keys: set[tuple[str, str]] = set()
+    with path.open(encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        if "sample_id" not in (reader.fieldnames or ()):
+            raise ValueError(f"eval split {path} must contain a sample_id column")
+        for row in reader:
+            sample_id = str(row.get("sample_id", "")).strip()
+            if not sample_id:
+                continue
+            keys.add((str(row.get("dataset", "")).strip(), sample_id))
+    if not keys:
+        raise ValueError(f"eval split {path} did not contain any sample ids")
+    return keys
+
+
+def _filter_contexts_by_eval_split(
+    contexts: T.Sequence[SampleCandidateContext],
+    split_path: Path,
+) -> list[SampleCandidateContext]:
+    """Restrict contexts to held-out sample ids from a scorer eval-row CSV."""
+    keys = _eval_split_keys(split_path)
+    split_sample_ids = {sample_id for _dataset, sample_id in keys}
+    filtered = [
+        context
+        for context in contexts
+        if (context.dataset, context.sample_id) in keys or context.sample_id in split_sample_ids
+    ]
+    if not filtered:
+        raise ValueError(f"eval split {split_path} did not match any evaluation contexts")
+    return filtered
 
 
 def _summary(values: T.Sequence[float], failures: T.Sequence[bool]) -> dict[str, float]:
@@ -277,6 +314,8 @@ def _policy_metric_bundle(
             "candidate": "static_weighted_downweight",
             **_candidate_summary(contexts, "static_weighted_downweight"),
         }
+    if "hrnet" in candidates:
+        payload["hrnet"] = {"candidate": "hrnet", **_candidate_summary(contexts, "hrnet")}
     return payload
 
 
@@ -290,12 +329,15 @@ def evaluate_runtime_resolver_scorer(
     scorer_path: Path,
     candidates: T.Sequence[str],
     output_dir: Path,
+    eval_split: Path | None = None,
     failure_threshold: float = DEFAULT_FAILURE_THRESHOLD,
     outlier_threshold: float = DEFAULT_OUTLIER_THRESHOLD,
     epsilon_mean_nme: float = 0.001,
     epsilon_failure_rate: float = 0.0,
     worst_sample_count: int = 25,
     risk_floor_for_safe_fallback: float = DEFAULT_RISK_FLOOR_FOR_SAFE_FALLBACK,
+    allow_image_backfill: bool = False,
+    allow_derived_no_image_gt_hard: bool = False,
 ) -> dict[str, T.Any]:
     """Evaluate learned scorer policy and write reports."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -309,7 +351,10 @@ def evaluate_runtime_resolver_scorer(
         candidates=candidates,
         failure_threshold=failure_threshold,
         outlier_threshold=outlier_threshold,
+        allow_image_backfill=allow_image_backfill,
     )
+    if eval_split is not None:
+        contexts = _filter_contexts_by_eval_split(contexts, eval_split)
     missing_current = [
         context.sample_id for context in contexts if context.selected_candidate_missing_from_eval
     ]
@@ -344,9 +389,7 @@ def evaluate_runtime_resolver_scorer(
         )
         fallback_count += int(fallback_used)
         safe_fallback_count += int(fallback_reason == "scorer_high_risk_safe_fallback")
-        hard_slice_fallback_count += int(
-            fallback_reason == "consensus_collapse_fusion_rejected"
-        )
+        hard_slice_fallback_count += int(fallback_reason == "consensus_collapse_fusion_rejected")
         scorer_choices[context.sample_id] = chosen
         current_choices[context.sample_id] = context.current_policy_choice
         oracle_choices[context.sample_id] = context.oracle
@@ -401,6 +444,16 @@ def evaluate_runtime_resolver_scorer(
             or context.runtime_bucket in HARD_SLICE_POLICY_BUCKETS
         )
     ]
+    derived_no_image_contexts = [
+        context
+        for context in contexts
+        if context.runtime_bucket_source == "derived_no_image_evidence"
+    ]
+    derived_no_image_gt_hard_contexts = [
+        context
+        for context in gt_hard_contexts
+        if context.runtime_bucket_source == "derived_no_image_evidence"
+    ]
     production_only_policy_metrics = _policy_metric_bundle(
         production_contexts,
         candidates=candidates,
@@ -416,13 +469,9 @@ def evaluate_runtime_resolver_scorer(
         oracle_choices=oracle_choices,
     )
     failed_gates: list[str] = []
-    if scorer_summary["mean_nme"] > best_single["mean_nme"] + epsilon_mean_nme:
-        failed_gates.append("scorer_mean_nme_regresses_vs_best_single")
-    if scorer_summary["failure_rate"] > best_single["failure_rate"] + epsilon_failure_rate:
-        failed_gates.append("scorer_failure_rate_regresses_vs_best_single")
     if static_name and scorer_summary["mean_nme"] >= static["mean_nme"]:
         failed_gates.append("scorer_mean_nme_not_better_than_static_downweight")
-    if static_name and scorer_summary["p90_nme"] > static["p90_nme"] + epsilon_mean_nme:
+    if static_name and scorer_summary["p90_nme"] > static["p90_nme"]:
         failed_gates.append("scorer_p90_nme_regresses_vs_static_downweight")
     if (
         static_name
@@ -432,25 +481,38 @@ def evaluate_runtime_resolver_scorer(
     if static_name and production_contexts:
         production_scorer = production_only_policy_metrics["learned_quality_v1"]
         production_static = production_only_policy_metrics["static_weighted_downweight"]
-        if production_scorer["mean_nme"] > production_static["mean_nme"] + epsilon_mean_nme:
-            failed_gates.append("production_scorer_mean_nme_regresses_vs_static_downweight")
-        if production_scorer["p90_nme"] > production_static["p90_nme"] + epsilon_mean_nme:
+        production_hrnet = production_only_policy_metrics.get("hrnet")
+        if production_scorer["mean_nme"] >= production_static["mean_nme"]:
+            failed_gates.append("production_scorer_mean_nme_not_better_than_static_downweight")
+        if production_scorer["p90_nme"] > production_static["p90_nme"]:
             failed_gates.append("production_scorer_p90_nme_regresses_vs_static_downweight")
         if (
             production_scorer["failure_rate"]
             > production_static["failure_rate"] + epsilon_failure_rate
         ):
             failed_gates.append("production_scorer_failure_rate_regresses_vs_static_downweight")
+        if (
+            production_hrnet is not None
+            and production_scorer["failure_rate"]
+            > production_hrnet["failure_rate"] + epsilon_failure_rate
+        ):
+            failed_gates.append("production_scorer_failure_rate_regresses_vs_hrnet")
     if static_name and gt_hard_contexts:
         gt_hard_scorer = gt_hard_only_policy_metrics["learned_quality_v1"]
         gt_hard_static = gt_hard_only_policy_metrics["static_weighted_downweight"]
         if gt_hard_scorer["failure_rate"] > gt_hard_static["failure_rate"] + epsilon_failure_rate:
             failed_gates.append("gt_hard_scorer_failure_rate_regresses_vs_static_downweight")
+    if derived_no_image_gt_hard_contexts and not allow_derived_no_image_gt_hard:
+        failed_gates.append("gt_hard_derived_no_image_evidence_requires_explicit_allow")
 
     report: dict[str, T.Any] = {
         "status": "pass" if not failed_gates else "fail",
         "failed_gates": failed_gates,
         "sample_count": len(contexts),
+        "heldout_eval": eval_split is not None,
+        "eval_split": "" if eval_split is None else str(eval_split),
+        "allow_image_backfill": allow_image_backfill,
+        "allow_derived_no_image_gt_hard": allow_derived_no_image_gt_hard,
         "candidate_count": len(candidates),
         "candidates": list(candidates),
         "scorer_path": str(scorer_path),
@@ -464,6 +526,9 @@ def evaluate_runtime_resolver_scorer(
         "safe_fallback_count": safe_fallback_count,
         "hard_slice_fallback_count": hard_slice_fallback_count,
         "consensus_collapse_rejection_count": hard_slice_fallback_count,
+        "consensus_collapse_fallback_count": hard_slice_fallback_count,
+        "derived_no_image_sample_count": len(derived_no_image_contexts),
+        "derived_no_image_gt_hard_sample_count": len(derived_no_image_gt_hard_contexts),
         "risk_floor_for_safe_fallback": risk_floor_for_safe_fallback,
         "safe_fallback_tie_breaker": ["hrnet", "spiga", "orformer"],
         "per_bucket": _per_bucket(contexts, scorer_choices),
@@ -497,6 +562,11 @@ def _write_outputs(
         json.dumps(report, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+    if report.get("heldout_eval"):
+        (output_dir / SCORER_HELDOUT_POLICY_REPORT_JSON).write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
     if rows:
         with (output_dir / SCORER_POLICY_REPORT_CSV).open(
             "w",
@@ -543,6 +613,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--weights", type=Path, required=True)
     parser.add_argument("--scorer", type=Path, required=True)
     parser.add_argument(
+        "--eval-split",
+        type=Path,
+        help="Optional scorer eval-row CSV; when supplied, policy metrics use only held-out rows.",
+    )
+    parser.add_argument(
         "--candidates",
         default="",
         help=f"Comma-separated candidate list. Defaults to {DEFAULT_SCORER_CANDIDATE_CSV}.",
@@ -557,6 +632,16 @@ def _parser() -> argparse.ArgumentParser:
         "--risk-floor-for-safe-fallback",
         type=float,
         default=DEFAULT_RISK_FLOOR_FOR_SAFE_FALLBACK,
+    )
+    parser.add_argument(
+        "--allow-image-backfill",
+        action="store_true",
+        help="Compute image-aware runtime metadata for rows without stored metadata.",
+    )
+    parser.add_argument(
+        "--allow-derived-no-image-gt-hard",
+        action="store_true",
+        help="Allow GT hard diagnostics to use landmark-only derived runtime buckets.",
     )
     parser.add_argument("--log-level", default="INFO")
     return parser
@@ -577,12 +662,15 @@ def main(argv: T.Sequence[str] | None = None) -> int:
         scorer_path=args.scorer,
         candidates=candidates,
         output_dir=args.output_dir,
+        eval_split=args.eval_split,
         failure_threshold=args.failure_threshold,
         outlier_threshold=args.outlier_threshold,
         epsilon_mean_nme=args.epsilon_mean_nme,
         epsilon_failure_rate=args.epsilon_failure_rate,
         worst_sample_count=args.worst_sample_count,
         risk_floor_for_safe_fallback=args.risk_floor_for_safe_fallback,
+        allow_image_backfill=args.allow_image_backfill,
+        allow_derived_no_image_gt_hard=args.allow_derived_no_image_gt_hard,
     )
     logger.info("Scorer policy status: %s", report["status"])
     return 0

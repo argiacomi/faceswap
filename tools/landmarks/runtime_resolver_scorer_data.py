@@ -13,6 +13,7 @@ from pathlib import Path
 import numpy as np
 
 from lib.landmarks.cache.prediction_cache import DiskPredictionCache
+from lib.landmarks.coordinates import roi_to_matrix
 from lib.landmarks.datasets.manifest_io import (
     LandmarkSample,
     bbox_from_truth_fallback,
@@ -44,6 +45,8 @@ logger = logging.getLogger(__name__)
 DEFAULT_FAILURE_THRESHOLD: float = 0.08
 DEFAULT_HIGH_GAP_THRESHOLD: float = 0.01
 DEFAULT_OUTLIER_THRESHOLD: float = 3.5
+DEFAULT_IMAGE_BACKFILL_CROP_SCALE: float = 1.6
+DEFAULT_IMAGE_BACKFILL_CROP_SIZE: int = 256
 DEFAULT_RESOLVER_CANDIDATES: tuple[str, ...] = (
     "hrnet",
     "spiga",
@@ -54,6 +57,18 @@ DEFAULT_RESOLVER_CANDIDATES: tuple[str, ...] = (
     "static_weighted_hard_drop",
     "weighted_median",
 )
+
+
+@dataclass(frozen=True)
+class StoredRuntimeDiagnostics:
+    """Runtime diagnostics already attached to a manifest sample."""
+
+    bucket: str
+    features: dict[str, T.Any]
+    source: str
+    selected_candidate: str
+
+
 DEFAULT_SCORER_CANDIDATES: tuple[str, ...] = DEFAULT_RESOLVER_CANDIDATES
 DEFAULT_SCORER_CANDIDATE_CSV: str = ",".join(DEFAULT_SCORER_CANDIDATES)
 CANDIDATE_TABLE_COLUMNS: tuple[str, ...] = (
@@ -183,7 +198,7 @@ def _runtime_metadata(sample: LandmarkSample) -> dict[str, T.Any]:
     return resolver if isinstance(resolver, dict) else {}
 
 
-def _stored_runtime_diagnostics(sample: LandmarkSample) -> tuple[str, dict[str, T.Any]] | None:
+def _stored_runtime_diagnostics(sample: LandmarkSample) -> StoredRuntimeDiagnostics | None:
     resolver = _runtime_metadata(sample)
     bucket = resolver.get("runtime_bucket") or resolver.get("bucket")
     if not bucket:
@@ -217,7 +232,105 @@ def _stored_runtime_diagnostics(sample: LandmarkSample) -> tuple[str, dict[str, 
     ):
         if key in resolver:
             features[key] = resolver[key]
-    return str(bucket), features
+    source = str(resolver.get("runtime_bucket_source") or "stored_manifest_landmark_ensemble")
+    selected_candidate = str(resolver.get("selected_candidate") or "")
+    return StoredRuntimeDiagnostics(
+        bucket=str(bucket),
+        features=features,
+        source=source,
+        selected_candidate=selected_candidate,
+    )
+
+
+def ensemble_crop_roi(
+    detector_bbox: T.Sequence[float],
+    *,
+    crop_scale: float = DEFAULT_IMAGE_BACKFILL_CROP_SCALE,
+) -> np.ndarray:
+    """Return the same square ROI used by the production ensemble aligner."""
+    bbox = np.asarray(detector_bbox, dtype="float32")
+    if bbox.shape != (4,):
+        raise ValueError(f"detector bbox must have shape (4,), got {bbox.shape}")
+    height = bbox[3] - bbox[1]
+    width = bbox[2] - bbox[0]
+    if width <= 0 or height <= 0:
+        raise ValueError(f"detector bbox must have positive width/height, got {bbox.tolist()}")
+    ctr_x = int(np.rint((bbox[0] + bbox[2]) * 0.5))
+    ctr_y = int(np.rint((bbox[1] + bbox[3]) * 0.5))
+    half = int(np.rint(max(float(width), float(height)) * float(crop_scale) * 0.5))
+    return np.asarray([ctr_x - half, ctr_y - half, ctr_x + half, ctr_y + half], dtype="int32")
+
+
+def crop_square_rgb(
+    image_rgb: np.ndarray,
+    roi: T.Sequence[float],
+    *,
+    crop_size: int = DEFAULT_IMAGE_BACKFILL_CROP_SIZE,
+) -> np.ndarray:
+    """Crop a square ROI with zero padding, then resize to the aligner crop size."""
+    try:
+        import cv2  # type: ignore[import-not-found]
+    except ModuleNotFoundError as err:  # pragma: no cover - environment guard
+        raise RuntimeError("image-aware runtime metadata backfill requires opencv-python") from err
+
+    image = np.asarray(image_rgb)
+    if image.ndim != 3 or image.shape[2] < 3:
+        raise ValueError(f"expected RGB image with shape HxWx3, got {image.shape}")
+    left, top, right, bottom = (int(np.rint(value)) for value in roi)
+    width = right - left
+    height = bottom - top
+    if width <= 0 or height <= 0 or width != height:
+        raise ValueError(f"ROI must be positive square ltrb, got {list(roi)}")
+    canvas = np.zeros((height, width, 3), dtype=image.dtype)
+    src_left = max(left, 0)
+    src_top = max(top, 0)
+    src_right = min(right, image.shape[1])
+    src_bottom = min(bottom, image.shape[0])
+    if src_right > src_left and src_bottom > src_top:
+        dst_left = src_left - left
+        dst_top = src_top - top
+        canvas[
+            dst_top : dst_top + (src_bottom - src_top),
+            dst_left : dst_left + (src_right - src_left),
+        ] = image[src_top:src_bottom, src_left:src_right, :3]
+    if width == crop_size and height == crop_size:
+        return canvas
+    return cv2.resize(canvas, (crop_size, crop_size), interpolation=cv2.INTER_LINEAR)
+
+
+def load_image_rgb(path: str | Path) -> np.ndarray:
+    """Load an RGB image for image-aware runtime bucket backfill."""
+    try:
+        import cv2  # type: ignore[import-not-found]
+    except ModuleNotFoundError as err:  # pragma: no cover - environment guard
+        raise RuntimeError("image-aware runtime metadata backfill requires opencv-python") from err
+
+    image_bgr = cv2.imread(str(path), cv2.IMREAD_COLOR)
+    if image_bgr is None:
+        raise FileNotFoundError(f"could not read image {path}")
+    return cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+
+
+def image_aware_runtime_result(
+    sample: LandmarkSample,
+    *,
+    predictions: T.Sequence[ModelPrediction],
+    config: RuntimeResolverConfig,
+    detector_bbox: T.Sequence[float],
+    crop_scale: float = DEFAULT_IMAGE_BACKFILL_CROP_SCALE,
+    crop_size: int = DEFAULT_IMAGE_BACKFILL_CROP_SIZE,
+) -> T.Any:
+    """Run the runtime resolver with the production crop and image evidence."""
+    image_rgb = load_image_rgb(sample.image)
+    roi = ensemble_crop_roi(detector_bbox, crop_scale=crop_scale)
+    crop = crop_square_rgb(image_rgb, roi, crop_size=crop_size).astype("float32") / 255.0
+    return resolve_runtime(
+        predictions,
+        config,
+        detector_bbox=detector_bbox,
+        image_crop=crop,
+        crop_to_frame_matrix=roi_to_matrix(roi),
+    )
 
 
 def _optional_float(value: T.Any) -> float | None:
@@ -287,6 +400,9 @@ def build_sample_context(
     weights: T.Mapping[str, T.Sequence[float]],
     failure_threshold: float = DEFAULT_FAILURE_THRESHOLD,
     outlier_threshold: float = DEFAULT_OUTLIER_THRESHOLD,
+    allow_image_backfill: bool = False,
+    image_backfill_crop_scale: float = DEFAULT_IMAGE_BACKFILL_CROP_SCALE,
+    image_backfill_crop_size: int = DEFAULT_IMAGE_BACKFILL_CROP_SIZE,
 ) -> SampleCandidateContext:
     """Build candidates, diagnostics, labels, and current-policy choice for one sample."""
     single_models = {name for name in requested_candidates if not _is_strategy(name)}
@@ -318,23 +434,47 @@ def build_sample_context(
     )
     max_disagreement_px = _max_landmark_consensus_px(candidates)
     stored_runtime = _stored_runtime_diagnostics(sample)
+    image_backfill_result = None
     if stored_runtime is None:
-        bucket_result = infer_runtime_bucket(
-            image_crop=None,
-            crop_to_frame_matrix=None,
-            detector_bbox=reference_bbox,
-            candidates=candidates,
-            metrics=metrics,
-            yaw_estimate=yaw_estimate,
-            roll_estimate=roll_estimate,
-            max_disagreement_px=max_disagreement_px,
-            hard_roll_degrees=config.hard_roll_degrees,
-        )
-        runtime_bucket_source = "derived_no_image_evidence"
+        if allow_image_backfill and reference_bbox is not None:
+            try:
+                image_backfill_result = image_aware_runtime_result(
+                    sample,
+                    predictions=predictions,
+                    config=config,
+                    detector_bbox=reference_bbox,
+                    crop_scale=image_backfill_crop_scale,
+                    crop_size=image_backfill_crop_size,
+                )
+            except (FileNotFoundError, RuntimeError, ValueError) as err:
+                logger.warning("sample %s image-aware backfill failed: %s", sample.sample_id, err)
+        if image_backfill_result is None:
+            bucket_result = infer_runtime_bucket(
+                image_crop=None,
+                crop_to_frame_matrix=None,
+                detector_bbox=reference_bbox,
+                candidates=candidates,
+                metrics=metrics,
+                yaw_estimate=yaw_estimate,
+                roll_estimate=roll_estimate,
+                max_disagreement_px=max_disagreement_px,
+                hard_roll_degrees=config.hard_roll_degrees,
+            )
+            runtime_bucket_source = "derived_no_image_evidence"
+        else:
+            metadata = image_backfill_result.metadata
+            bucket_result = RuntimeBucketResult(
+                bucket=str(metadata.get("runtime_bucket") or metadata.get("bucket") or ""),
+                features=dict(metadata.get("runtime_bucket_features") or {}),
+            )
+            runtime_bucket_source = "image_aware_backfill"
     else:
-        bucket, stored_features = stored_runtime
-        bucket_result = RuntimeBucketResult(bucket=bucket, features=stored_features)
-        runtime_bucket_source = "stored_manifest_landmark_ensemble"
+        bucket_result = RuntimeBucketResult(
+            bucket=stored_runtime.bucket,
+            features=stored_runtime.features,
+        )
+        runtime_bucket_source = stored_runtime.source
+        stored_features = stored_runtime.features
         stored_roll = _optional_float(
             stored_features.get("landmark_pose_roll", stored_features.get("roll_estimate"))
         )
@@ -367,13 +507,18 @@ def build_sample_context(
         )
         nme_by_candidate[candidate.name] = nme
         failure_by_candidate[candidate.name] = failure
-    current = resolve_runtime(
-        predictions,
-        config,
-        detector_bbox=reference_bbox,
-    )
     oracle = min(nme_by_candidate, key=lambda name: nme_by_candidate[name])
-    current_policy_choice = current.selected_candidate
+    if stored_runtime is not None and stored_runtime.selected_candidate:
+        current_policy_choice = stored_runtime.selected_candidate
+    elif image_backfill_result is not None:
+        current_policy_choice = image_backfill_result.selected_candidate
+    else:
+        current = resolve_runtime(
+            predictions,
+            config,
+            detector_bbox=reference_bbox,
+        )
+        current_policy_choice = current.selected_candidate
     selected_candidate_missing_from_eval = current_policy_choice not in nme_by_candidate
     hard_bucket = bucket_result.bucket not in {"frontal", "intermediate", "no_pose"}
     vetoed = {name for name, metric in metrics.items() if metric.geometry_veto_reasons}
@@ -539,6 +684,9 @@ def load_contexts(
     candidates: T.Sequence[str] | None = None,
     failure_threshold: float = DEFAULT_FAILURE_THRESHOLD,
     outlier_threshold: float = DEFAULT_OUTLIER_THRESHOLD,
+    allow_image_backfill: bool = False,
+    image_backfill_crop_scale: float = DEFAULT_IMAGE_BACKFILL_CROP_SCALE,
+    image_backfill_crop_size: int = DEFAULT_IMAGE_BACKFILL_CROP_SIZE,
 ) -> list[SampleCandidateContext]:
     """Load all sample contexts for one manifest/cache pair."""
     weights = load_weights(weights_path)
@@ -555,6 +703,9 @@ def load_contexts(
                     weights=weights,
                     failure_threshold=failure_threshold,
                     outlier_threshold=outlier_threshold,
+                    allow_image_backfill=allow_image_backfill,
+                    image_backfill_crop_scale=image_backfill_crop_scale,
+                    image_backfill_crop_size=image_backfill_crop_size,
                 )
             )
         except (FileNotFoundError, ValueError) as err:
@@ -599,6 +750,9 @@ def export_candidate_table(
     candidates: T.Sequence[str] | None = None,
     failure_threshold: float = DEFAULT_FAILURE_THRESHOLD,
     outlier_threshold: float = DEFAULT_OUTLIER_THRESHOLD,
+    allow_image_backfill: bool = False,
+    image_backfill_crop_scale: float = DEFAULT_IMAGE_BACKFILL_CROP_SCALE,
+    image_backfill_crop_size: int = DEFAULT_IMAGE_BACKFILL_CROP_SIZE,
 ) -> list[dict[str, T.Any]]:
     """Build the canonical candidate diagnostic table for one manifest/cache pair."""
     contexts = load_contexts(
@@ -608,6 +762,9 @@ def export_candidate_table(
         candidates=candidates,
         failure_threshold=failure_threshold,
         outlier_threshold=outlier_threshold,
+        allow_image_backfill=allow_image_backfill,
+        image_backfill_crop_scale=image_backfill_crop_scale,
+        image_backfill_crop_size=image_backfill_crop_size,
     )
     return candidate_table_rows(contexts)
 

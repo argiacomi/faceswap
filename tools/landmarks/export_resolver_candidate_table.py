@@ -37,6 +37,7 @@ def export_resolver_candidate_table(
     output_csv: Path | None = None,
     failure_threshold: float = DEFAULT_FAILURE_THRESHOLD,
     outlier_threshold: float = DEFAULT_OUTLIER_THRESHOLD,
+    allow_image_backfill: bool = False,
 ) -> dict[str, T.Any]:
     """Build and write the canonical candidate diagnostic table."""
     rows = export_candidate_table(
@@ -46,6 +47,7 @@ def export_resolver_candidate_table(
         candidates=candidates,
         failure_threshold=failure_threshold,
         outlier_threshold=outlier_threshold,
+        allow_image_backfill=allow_image_backfill,
     )
     artifacts: dict[str, str] = {}
     if output_csv is not None:
@@ -72,6 +74,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-csv", type=Path)
     parser.add_argument("--failure-threshold", type=float, default=DEFAULT_FAILURE_THRESHOLD)
     parser.add_argument("--outlier-threshold", type=float, default=DEFAULT_OUTLIER_THRESHOLD)
+    parser.add_argument(
+        "--allow-image-backfill",
+        action="store_true",
+        help="Compute image-aware runtime metadata for rows without stored metadata.",
+    )
     parser.add_argument("--log-level", default="INFO")
     return parser
 
@@ -93,6 +100,7 @@ def main(argv: T.Sequence[str] | None = None) -> int:
         output_csv=args.output_csv,
         failure_threshold=args.failure_threshold,
         outlier_threshold=args.outlier_threshold,
+        allow_image_backfill=args.allow_image_backfill,
     )
     logger.info("Exported %d candidate rows", report["row_count"])
     return 0
