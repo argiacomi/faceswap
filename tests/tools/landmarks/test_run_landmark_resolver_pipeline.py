@@ -34,8 +34,9 @@ def _args(tmp_path: Path, **overrides: object) -> argparse.Namespace:
         "stop_after": None,
         "start_at": None,
         "write_config": False,
+        "print_config_patch": False,
         "config_path": tmp_path / "extract.ini",
-        "config_section": "landmark_ensemble",
+        "config_section": "align.ensemble",
         "python_executable": "python",
         "models": "hrnet,spiga,orformer",
         "candidates": "hrnet,spiga,orformer,static_weighted_downweight",
@@ -54,7 +55,7 @@ def _args(tmp_path: Path, **overrides: object) -> argparse.Namespace:
     return argparse.Namespace(**values)
 
 
-def _touch_pipeline_outputs(paths: PipelinePaths) -> None:
+def _touch_pipeline_outputs(paths: PipelinePaths, *, promotion_status: str = "pass") -> None:
     for path in (
         paths.run_manifest,
         paths.run_splits,
@@ -71,9 +72,9 @@ def _touch_pipeline_outputs(paths: PipelinePaths) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         if path.name.endswith(".json"):
             payload = {
-                "status": "pass",
-                "promotion_status": "pass",
-                "failed_gates": [],
+                "status": promotion_status,
+                "promotion_status": promotion_status,
+                "failed_gates": [] if promotion_status == "pass" else ["gate_failed"],
                 "fallback_count": 3,
                 "safe_fallback_count": 2,
                 "hard_slice_fallback_count": 1,
@@ -103,6 +104,7 @@ def test_pipeline_runner_dry_run_writes_summaries_and_contracts(tmp_path: Path) 
     assert summary["eval_report_path"].endswith("scorer_policy_report.json")
     assert summary["selected_production_policy"] == "learned_quality_v1"
     assert "resolver_scorer_path" in summary["config_fields_changed"]
+    assert "production_weights_path" in summary["config_fields_changed"]
     assert (args.output_root / "pipeline_summary.json").is_file()
     assert (args.output_root / "pipeline_summary.md").is_file()
 
@@ -159,22 +161,47 @@ def test_promotion_check_fails_on_failed_gate(tmp_path: Path) -> None:
         _promotion_check(paths)
 
 
-def test_config_preview_and_write(tmp_path: Path) -> None:
+def test_config_preview_and_write_replaces_stale_align_ensemble(tmp_path: Path) -> None:
     args = _args(tmp_path)
     paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
+    _touch_pipeline_outputs(paths)
 
     notes = _apply_config(args, paths)
     preview = json.loads((args.output_root / "config_update_preview.json").read_text(encoding="utf-8"))
+    patch = (args.output_root / "config_update_patch.ini").read_text(encoding="utf-8")
     assert "preview" in notes[0]
+    assert preview["section"] == "align.ensemble"
     assert preview["updates"]["resolver_policy"] == "learned_quality_v1"
+    assert patch.startswith("[align.ensemble]\n")
+    assert "production_weights_path = " in patch
 
-    args.config_path.write_text("[global]\n", encoding="utf-8")
+    args.config_path.write_text(
+        "[global]\nfoo = bar\n\n[align.ensemble]\nstale_experimental = true\nresolver_policy = roll_aware_veto\n",
+        encoding="utf-8",
+    )
     args.write_config = True
     _apply_config(args, paths)
     parser = configparser.ConfigParser()
     parser.read(args.config_path, encoding="utf-8")
-    assert parser.get("landmark_ensemble", "use_alignment_resolver") == "true"
-    assert parser.get("landmark_ensemble", "resolver_policy") == "learned_quality_v1"
+    assert parser.has_section("align.ensemble")
+    assert parser.get("align.ensemble", "use_alignment_resolver") == "true"
+    assert parser.get("align.ensemble", "resolver_policy") == "learned_quality_v1"
+    assert parser.get("align.ensemble", "resolver_scorer_path") == str(paths.scorer_artifact)
+    assert parser.get("align.ensemble", "weights_path") == str(paths.best_weights)
+    assert not parser.has_option("align.ensemble", "stale_experimental")
+
+
+def test_config_write_requires_artifacts_and_passing_promotion(tmp_path: Path) -> None:
+    args = _args(tmp_path, write_config=True)
+    paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
+    args.config_path.write_text("[global]\n", encoding="utf-8")
+
+    with pytest.raises(FileNotFoundError, match="promoted setup artifact"):
+        _apply_config(args, paths)
+
+    _touch_pipeline_outputs(paths, promotion_status="fail")
+    with pytest.raises(RuntimeError, match="production promotion check failed"):
+        _apply_config(args, paths)
 
 
 def test_resume_skips_completed_stages_and_records_validated_outputs(tmp_path: Path) -> None:
@@ -184,6 +211,7 @@ def test_resume_skips_completed_stages_and_records_validated_outputs(tmp_path: P
     paths.artifacts_dir.mkdir(parents=True, exist_ok=True)
     (paths.artifacts_dir / "artifacts_manifest.json").write_text("{}\n", encoding="utf-8")
     (paths.output_root / "config_update_preview.json").write_text("{}\n", encoding="utf-8")
+    (paths.output_root / "config_update_patch.ini").write_text("[align.ensemble]\n", encoding="utf-8")
 
     summary = run_pipeline(args)
 
