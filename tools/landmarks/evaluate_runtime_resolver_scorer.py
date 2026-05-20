@@ -90,9 +90,7 @@ def _collect_contexts(
                 weights_path=weights_path,
                 candidates=candidates,
                 source=label,
-                resolver_metadata=(
-                    gt_hard_metadata if label == SOURCE_GT_HARD else None
-                ),
+                resolver_metadata=(gt_hard_metadata if label == SOURCE_GT_HARD else None),
                 failure_threshold=failure_threshold,
                 outlier_threshold=outlier_threshold,
                 allow_image_backfill=allow_image_backfill,

@@ -320,9 +320,10 @@ def test_hard_pose_guard_rejects_plain_average_without_single_model_margin(
         detector_bbox=(35.0, 65.0, 165.0, 155.0),
     )
 
-    assert result.metadata["candidate_scores"]["plain_average"] < result.metadata[
-        "candidate_scores"
-    ]["hrnet"]
+    assert (
+        result.metadata["candidate_scores"]["plain_average"]
+        < result.metadata["candidate_scores"]["hrnet"]
+    )
     assert result.selected_candidate == "hrnet"
     assert result.metadata["fallback_reason"] == "hard_pose_plain_average_guard"
     assert result.metadata["hard_pose_plain_average_guard_used"] is True

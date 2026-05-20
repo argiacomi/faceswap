@@ -799,7 +799,9 @@ class Ensemble(ExtractPlugin):
             )
             if resolver_points is not None:
                 return resolver_points
-            logger.debug("[Ensemble] runtime resolver unavailable; falling back to %s", self._strategy)
+            logger.debug(
+                "[Ensemble] runtime resolver unavailable; falling back to %s", self._strategy
+            )
 
         if not self._requires_weights:
             fused = plain_average(
@@ -901,7 +903,9 @@ class Ensemble(ExtractPlugin):
                 f"Ensemble aligner expects channels-last images, got shape {batch.shape}"
             )
         matrices = self._matrices_for_batch(batch.shape[0])
-        logger.debug("[Ensemble] processing batch shape=%s matrices=%s", batch.shape, matrices.shape)
+        logger.debug(
+            "[Ensemble] processing batch shape=%s matrices=%s", batch.shape, matrices.shape
+        )
         per_face, errors = self._collect_predictions(batch, matrices)
         self.last_debug_metadata = []
         output = np.empty((batch.shape[0], 68, 2), dtype="float32")

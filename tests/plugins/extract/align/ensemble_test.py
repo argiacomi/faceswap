@@ -273,9 +273,9 @@ def test_ensemble_preserves_cached_matrices_when_runner_pads_batch() -> None:
 def test_ensemble_converts_normalized_resolver_points_before_validation() -> None:
     """Resolver handoff repairs normalized candidates when a real crop matrix exists."""
     plugin = Ensemble(adapters=[], crop_scale=1.0)
-    normalized = np.column_stack(
-        [np.linspace(0.2, 0.8, 68), np.linspace(0.3, 0.9, 68)]
-    ).astype("float32")
+    normalized = np.column_stack([np.linspace(0.2, 0.8, 68), np.linspace(0.3, 0.9, 68)]).astype(
+        "float32"
+    )
     matrix = roi_to_matrix(np.array([100, 100, 900, 900], dtype="int32"))
 
     result = plugin._frame_points_for_resolver(
@@ -291,9 +291,9 @@ def test_ensemble_converts_normalized_resolver_points_before_validation() -> Non
 def test_ensemble_rejects_normalized_resolver_points_without_frame_transform() -> None:
     """The resolver handoff fails fast when normalized points cannot be converted."""
     plugin = Ensemble(adapters=[], crop_scale=1.0)
-    normalized = np.column_stack(
-        [np.linspace(0.2, 0.8, 68), np.linspace(0.3, 0.9, 68)]
-    ).astype("float32")
+    normalized = np.column_stack([np.linspace(0.2, 0.8, 68), np.linspace(0.3, 0.9, 68)]).astype(
+        "float32"
+    )
 
     with pytest.raises(RuntimeResolverError, match="non-frame-space landmarks"):
         plugin._frame_points_for_resolver(

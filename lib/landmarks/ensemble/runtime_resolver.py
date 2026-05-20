@@ -1542,9 +1542,7 @@ def _hard_pose_plain_average_replacement(
 
     selected_score = scores.get(selected)
     scored_safe_models = [
-        model
-        for model in safe_models
-        if model in scores and math.isfinite(float(scores[model]))
+        model for model in safe_models if model in scores and math.isfinite(float(scores[model]))
     ]
     if (
         selected_score is None
@@ -1909,9 +1907,7 @@ def resolve_runtime(
         "fallback_used": fallback_reason is not None,
         "hard_pose_plain_average_guard_used": hard_pose_plain_average_guard_used,
         "hard_pose_plain_average_guard_margin": config.safe_fallback_min_delta,
-        "hard_pose_plain_average_rejected_candidate": (
-            hard_pose_plain_average_rejected_candidate
-        ),
+        "hard_pose_plain_average_rejected_candidate": (hard_pose_plain_average_rejected_candidate),
         "policy": config.policy,
         **scorer_metadata,
     }
