@@ -13,19 +13,19 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from lib.landmarks.ensemble.weights import load_weights
-from tools.landmarks.runtime_resolver_scorer_data import (
+from lib.landmarks.ensemble.runtime_resolver_scorer_data import (
     DEFAULT_FAILURE_THRESHOLD,
     DEFAULT_OUTLIER_THRESHOLD,
     DEFAULT_SCORER_CANDIDATE_CSV,
     parse_candidates,
 )
-from tools.landmarks.scorer_eval import (
+from lib.landmarks.ensemble.scorer_eval import (
     DEFAULT_RISK_FLOOR_FOR_SAFE_FALLBACK,
     DEFAULT_SAFE_FALLBACK_MIN_DELTA,
     PROMOTION_SCOPES,
     evaluate_runtime_resolver_scorer,
 )
+from lib.landmarks.ensemble.weights import load_weights
 
 logger = logging.getLogger("evaluate_runtime_resolver_scorer")
 
