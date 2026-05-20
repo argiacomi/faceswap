@@ -14,11 +14,7 @@ from lib.landmarks.datasets.manifest_io import LandmarkSample, load_manifest
 SOURCE_GT_HARD = "gt_hard"
 SOURCE_PRODUCTION_VALIDATED = "production_validated"
 SOURCE_PRODUCTION_EXTRACTION = "production_extraction"
-METADATA_SOURCES = (
-    SOURCE_GT_HARD,
-    SOURCE_PRODUCTION_VALIDATED,
-    SOURCE_PRODUCTION_EXTRACTION,
-)
+METADATA_SOURCES = (SOURCE_GT_HARD, SOURCE_PRODUCTION_VALIDATED, SOURCE_PRODUCTION_EXTRACTION)
 
 MANIFEST_FILENAME = "manifest.json"
 PREDICTION_CACHE_DIRNAME = "cache"
@@ -36,6 +32,10 @@ SCORER_WORST_SAMPLES_JSON = "scorer_worst_samples.json"
 SCORER_FEATURE_IMPORTANCE_CSV = "scorer_feature_importance.csv"
 
 
+class ResolverMetadataValidationError(RuntimeError, ValueError):
+    """Resolver sidecar validation error compatible with legacy callers."""
+
+
 @dataclass(frozen=True)
 class ManifestCachePair:
     """Explicit manifest/cache pair for a scorer or promotion source."""
@@ -46,9 +46,7 @@ class ManifestCachePair:
 
     def __post_init__(self) -> None:
         if self.source not in METADATA_SOURCES:
-            raise ValueError(
-                f"source must be one of {METADATA_SOURCES}, got {self.source!r}"
-            )
+            raise ValueError(f"source must be one of {METADATA_SOURCES}, got {self.source!r}")
 
 
 def normalize_source_label(value: str) -> str:
@@ -101,30 +99,17 @@ def runtime_bucket_from_resolver_metadata(row: T.Mapping[str, T.Any]) -> str | N
     le = row.get("landmark_ensemble")
     if not isinstance(le, T.Mapping):
         return None
-
     resolver = le.get("resolver")
     if not isinstance(resolver, T.Mapping):
         resolver = {}
-
-    bucket = (
-        le.get("runtime_bucket")
-        or le.get("bucket")
-        or resolver.get("runtime_bucket")
-        or resolver.get("bucket")
-    )
+    bucket = le.get("runtime_bucket") or le.get("bucket") or resolver.get("runtime_bucket") or resolver.get("bucket")
     return str(bucket) if bucket else None
 
 
 def load_resolver_metadata_sidecar(path: Path | None) -> dict[tuple[str, int], dict[str, T.Any]]:
-    """Load resolver metadata JSONL keyed by `(sample_id, face_index)`.
-
-    Each non-empty line must contain `sample_id`; `face_index` defaults to 0.
-    Duplicate keys fail fast because they make runtime bucket provenance
-    ambiguous.
-    """
+    """Load resolver metadata JSONL keyed by `(sample_id, face_index)`."""
     if path is None:
         return {}
-
     records: dict[tuple[str, int], dict[str, T.Any]] = {}
     with Path(path).open("r", encoding="utf-8") as handle:
         for line_num, line in enumerate(handle, start=1):
@@ -132,13 +117,13 @@ def load_resolver_metadata_sidecar(path: Path | None) -> dict[tuple[str, int], d
                 continue
             row = json.loads(line)
             if not isinstance(row, dict):
-                raise ValueError(f"{path}:{line_num} resolver metadata row must be a JSON object")
+                raise ResolverMetadataValidationError(f"{path}:{line_num} resolver metadata row must be a JSON object")
             sample_id = row.get("sample_id")
             if not sample_id:
-                raise ValueError(f"{path}:{line_num} missing sample_id")
+                raise ResolverMetadataValidationError(f"{path}:{line_num} missing sample_id")
             key = metadata_key(str(sample_id), face_index_from_metadata(row))
             if key in records:
-                raise ValueError(f"{path}:{line_num} duplicate resolver metadata key {key}")
+                raise ResolverMetadataValidationError(f"{path}:{line_num} duplicate resolver metadata key {key}")
             records[key] = row
     return records
 
@@ -157,20 +142,19 @@ def validate_resolver_metadata_for_samples(
     missing = sorted(expected - observed)
     extras = sorted(observed - expected)
     if extras:
-        raise ValueError(
-            f"{source} resolver metadata contains {len(extras)} key(s) not present in manifest; "
-            f"examples: {extras[:10]}"
+        raise ResolverMetadataValidationError(
+            f"{source} resolver metadata contains {len(extras)} key(s) not present in manifest; examples: {extras[:10]}"
         )
     if require_complete and missing:
-        raise ValueError(
-            f"{source} resolver metadata missing {len(missing)} manifest key(s); "
-            f"examples: {missing[:10]}"
-        )
+        detail = f"{source} resolver metadata missing {len(missing)} manifest key(s); examples: {missing[:10]}"
+        if source == SOURCE_GT_HARD:
+            raise ResolverMetadataValidationError("GT-hard sample missing stored resolver metadata. " + detail)
+        raise ResolverMetadataValidationError(detail)
     for key, row in metadata.items():
         if key not in expected:
             continue
         if runtime_bucket_from_resolver_metadata(row) is None:
-            raise ValueError(f"{source} resolver metadata key {key} has no runtime bucket")
+            raise ResolverMetadataValidationError(f"{source} resolver metadata key {key} has no runtime bucket")
 
 
 def validate_resolver_metadata_for_manifest(
@@ -181,20 +165,10 @@ def validate_resolver_metadata_for_manifest(
     require_complete: bool,
 ) -> None:
     """Load a manifest and validate resolver sidecar metadata against it."""
-    validate_resolver_metadata_for_samples(
-        load_manifest(manifest_path),
-        metadata,
-        source=source,
-        require_complete=require_complete,
-    )
+    validate_resolver_metadata_for_samples(load_manifest(manifest_path), metadata, source=source, require_complete=require_complete)
 
 
-def require_manifest_cache_pair(
-    *,
-    source: str,
-    manifest_path: Path | None,
-    cache_dir: Path | None,
-) -> ManifestCachePair | None:
+def require_manifest_cache_pair(*, source: str, manifest_path: Path | None, cache_dir: Path | None) -> ManifestCachePair | None:
     """Return a normalized manifest/cache pair or fail on half-specified inputs."""
     source = normalize_source_label(source)
     if manifest_path is None and cache_dir is None:
@@ -251,6 +225,7 @@ __all__ = [
     "SOURCE_PRODUCTION_EXTRACTION",
     "SOURCE_PRODUCTION_VALIDATED",
     "ManifestCachePair",
+    "ResolverMetadataValidationError",
     "expected_metadata_keys",
     "face_index_for_sample",
     "face_index_from_metadata",
