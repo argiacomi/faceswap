@@ -718,6 +718,38 @@ def _available_by_priority(priority: T.Sequence[str], available: T.AbstractSet[s
     return sorted(available)[0]
 
 
+def _finite_candidate_names(candidates: T.Sequence[CandidateRecord]) -> set[str]:
+    return {
+        candidate.name
+        for candidate in candidates
+        if np.all(np.isfinite(np.asarray(candidate.landmarks, dtype="float64")))
+    }
+
+
+def _all_candidates_vetoed_fallback(
+    candidates: T.Sequence[CandidateRecord],
+    config: RuntimeResolverConfig,
+) -> str:
+    """Return deterministic safe fallback when every candidate was vetoed."""
+    available = _finite_candidate_names(candidates)
+    fallback_order = (
+        config.hard_case_strategy,
+        config.secondary_hard_case_strategy,
+        "static_weighted_downweight",
+        "static_weighted_hard_drop",
+        "plain_average",
+        "static_weighted",
+        "weighted_median",
+        "hrnet",
+        "spiga",
+        "orformer",
+    )
+    for name in dict.fromkeys(fallback_order):
+        if name in available:
+            return name
+    raise RuntimeResolverError("all runtime candidates were vetoed and none had finite landmarks")
+
+
 def _roll_vetoes(
     candidates: T.Sequence[CandidateRecord],
     metrics: T.Mapping[str, CandidateMetrics],
@@ -1499,53 +1531,59 @@ def resolve_runtime(
             runtime_bucket_source=runtime_bucket_source,
             candidate_extra_features=candidate_extra_features,
         )
-        selectable = survivors if survivors else available
-        selected = min(
-            selectable,
-            key=lambda name: (scores.get(name, float("inf")), priority.index(name), name),
-        )
         by_name = {candidate.name: candidate for candidate in candidates}
-        hard_slice_fallback = _hard_slice_safe_single_candidate(
-            selected=selected,
-            candidates=by_name,
-            metrics=metrics,
-            candidate_extra_features=candidate_extra_features,
-            condition=bucket,
-            runtime_bucket=bucket,
-            runtime_bucket_source=runtime_bucket_source,
-            scores=scores,
-            selectable=selectable,
-        )
-        hard_slice_fallback_used = (
-            hard_slice_fallback is not None and hard_slice_fallback != selected
-        )
-        if hard_slice_fallback_used:
-            rejected_candidate = selected
-            selected = hard_slice_fallback
-            fallback_reason = "consensus_collapse_fusion_rejected"
-        else:
+        hard_slice_fallback_used = False
+        safe_fallback_used = False
+        if not survivors:
+            selected = _all_candidates_vetoed_fallback(candidates, config)
             rejected_candidate = ""
-        safe_fallback = _high_risk_safe_fallback_candidate(
-            scores=scores,
-            selectable=selectable,
-            candidates=by_name,
-            metrics=metrics,
-            risk_floor=config.risk_floor_for_safe_fallback,
-        )
-        safe_fallback_used = (
-            safe_fallback is not None
-            and safe_fallback != selected
-            and _score_delta_passes(
-                replacement=safe_fallback,
-                selected=selected,
-                scores=scores,
-                min_delta=config.safe_fallback_min_delta,
+        else:
+            selectable = survivors
+            selected = min(
+                selectable,
+                key=lambda name: (scores.get(name, float("inf")), priority.index(name), name),
             )
-        )
-        if safe_fallback_used:
-            rejected_candidate = selected
-            selected = safe_fallback
-            fallback_reason = "scorer_high_risk_safe_fallback"
+            hard_slice_fallback = _hard_slice_safe_single_candidate(
+                selected=selected,
+                candidates=by_name,
+                metrics=metrics,
+                candidate_extra_features=candidate_extra_features,
+                condition=bucket,
+                runtime_bucket=bucket,
+                runtime_bucket_source=runtime_bucket_source,
+                scores=scores,
+                selectable=selectable,
+            )
+            hard_slice_fallback_used = (
+                hard_slice_fallback is not None and hard_slice_fallback != selected
+            )
+            if hard_slice_fallback_used:
+                rejected_candidate = selected
+                selected = hard_slice_fallback
+                fallback_reason = "consensus_collapse_fusion_rejected"
+            else:
+                rejected_candidate = ""
+            safe_fallback = _high_risk_safe_fallback_candidate(
+                scores=scores,
+                selectable=selectable,
+                candidates=by_name,
+                metrics=metrics,
+                risk_floor=config.risk_floor_for_safe_fallback,
+            )
+            safe_fallback_used = (
+                safe_fallback is not None
+                and safe_fallback != selected
+                and _score_delta_passes(
+                    replacement=safe_fallback,
+                    selected=selected,
+                    scores=scores,
+                    min_delta=config.safe_fallback_min_delta,
+                )
+            )
+            if safe_fallback_used:
+                rejected_candidate = selected
+                selected = safe_fallback
+                fallback_reason = "scorer_high_risk_safe_fallback"
         scorer_metadata = {
             "selected_candidate_score": scores.get(selected),
             "candidate_scores": dict(sorted(scores.items())),
@@ -1566,7 +1604,7 @@ def resolve_runtime(
         selected = (
             _available_by_priority(priority, survivors)
             if survivors
-            else _available_by_priority(priority, available)
+            else _all_candidates_vetoed_fallback(candidates, config)
         )
 
     by_name = {candidate.name: candidate for candidate in candidates}

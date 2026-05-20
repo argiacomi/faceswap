@@ -243,7 +243,7 @@ def test_learned_quality_policy_falls_back_to_hrnet_when_all_risks_high(
     monkeypatch.setattr(
         runtime_resolver,
         "infer_runtime_bucket",
-        lambda **kwargs: RuntimeBucketResult(bucket="large_yaw_left", features={}),
+        lambda **kwargs: RuntimeBucketResult(bucket="frontal", features={}),
     )
     scorer_path = write_runtime_resolver_scorer(
         RuntimeResolverScorer(
@@ -265,6 +265,7 @@ def test_learned_quality_policy_falls_back_to_hrnet_when_all_risks_high(
             policy="learned_quality_v1",
             scorer_path=str(scorer_path),
             weights={name: [1.0 / 3.0] * 68 for name in ("hrnet", "spiga", "orformer")},
+            safe_fallback_min_delta=-1.0,
         ),
         detector_bbox=(35.0, 65.0, 165.0, 155.0),
     )
@@ -277,6 +278,81 @@ def test_learned_quality_policy_falls_back_to_hrnet_when_all_risks_high(
     assert result.metadata["candidate_scores"]["static_weighted"] > 0.50
     assert result.metadata["scorer_safe_fallback_used"] is True
     assert result.metadata["fallback_reason"] == "scorer_high_risk_safe_fallback"
+
+
+def test_all_candidates_vetoed_uses_deterministic_hard_case_fallback(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    """All-vetoed fallback ignores scorer ranking and prefers static downweight."""
+    monkeypatch.setattr(
+        runtime_resolver,
+        "infer_runtime_bucket",
+        lambda **kwargs: RuntimeBucketResult(bucket="large_yaw_left", features={}),
+    )
+    monkeypatch.setattr(
+        runtime_resolver,
+        "_shape_reasons",
+        lambda *_args, **_kwargs: ("forced_test_veto",),
+    )
+    scorer_path = write_runtime_resolver_scorer(
+        RuntimeResolverScorer(
+            features=("candidate_name=spiga", "candidate_name=static_weighted_downweight"),
+            coefficients=(-8.0, 8.0),
+            intercept=0.0,
+        ),
+        tmp_path / "runtime_resolver_scorer.json",
+    )
+    base = _face()
+
+    result = resolve_runtime(
+        [
+            ModelPrediction("hrnet", base + 0.1),
+            ModelPrediction("spiga", base),
+            ModelPrediction("orformer", base + 0.2),
+        ],
+        RuntimeResolverConfig(
+            policy="learned_quality_v1",
+            scorer_path=str(scorer_path),
+            weights={name: [1.0 / 3.0] * 68 for name in ("hrnet", "spiga", "orformer")},
+        ),
+        detector_bbox=(35.0, 65.0, 165.0, 155.0),
+    )
+
+    assert result.selected_candidate == "static_weighted_downweight"
+    assert (
+        result.metadata["candidate_scores"]["spiga"]
+        < result.metadata["candidate_scores"]["static_weighted_downweight"]
+    )
+    assert result.metadata["fallback_reason"] == "all_candidates_vetoed"
+    assert result.metadata["scorer_safe_fallback_used"] is False
+
+
+def test_all_candidates_vetoed_fallback_skips_nonfinite_candidates() -> None:
+    """The deterministic all-vetoed fallback only returns finite candidates."""
+    finite = _face()
+    nonfinite = finite.copy()
+    nonfinite[0, 0] = np.nan
+
+    selected = runtime_resolver._all_candidates_vetoed_fallback(  # noqa: SLF001
+        [
+            CandidateRecord(
+                name="static_weighted_downweight",
+                landmarks=nonfinite,
+                is_fusion=True,
+                contributing_models=("hrnet", "spiga"),
+            ),
+            CandidateRecord(
+                name="static_weighted_hard_drop",
+                landmarks=finite,
+                is_fusion=True,
+                contributing_models=("hrnet", "spiga"),
+            ),
+        ],
+        RuntimeResolverConfig(),
+    )
+
+    assert selected == "static_weighted_hard_drop"
 
 
 def test_learned_quality_policy_rejects_consensus_collapse_fusion_for_best_single(
