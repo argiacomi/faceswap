@@ -35,6 +35,8 @@ def _args(tmp_path: Path, **overrides: object) -> argparse.Namespace:
         "start_at": None,
         "write_config": False,
         "print_config_patch": False,
+        "progress": False,
+        "no_progress": True,
         "config_path": tmp_path / "extract.ini",
         "config_section": "align.ensemble",
         "python_executable": "python",
@@ -87,7 +89,7 @@ def _touch_pipeline_outputs(paths: PipelinePaths, *, promotion_status: str = "pa
     paths.production_cache.mkdir(parents=True, exist_ok=True)
 
 
-def test_pipeline_runner_dry_run_writes_summaries_and_contracts(tmp_path: Path) -> None:
+def test_pipeline_runner_dry_run_writes_summaries_contracts_and_progress(tmp_path: Path) -> None:
     args = _args(tmp_path, dry_run=True)
 
     summary = run_pipeline(args)
@@ -105,6 +107,13 @@ def test_pipeline_runner_dry_run_writes_summaries_and_contracts(tmp_path: Path) 
     assert summary["selected_production_policy"] == "learned_quality_v1"
     assert "resolver_scorer_path" in summary["config_fields_changed"]
     assert "production_weights_path" in summary["config_fields_changed"]
+    progress_log = Path(summary["progress_log_path"])
+    assert progress_log.is_file()
+    progress_rows = [json.loads(line) for line in progress_log.read_text(encoding="utf-8").splitlines()]
+    assert len(progress_rows) == len(STAGES) * 2
+    assert {row["event"] for row in progress_rows} == {"start", "finish"}
+    assert progress_rows[0]["stage"] == STAGES[0]
+    assert progress_rows[-1]["stage"] == STAGES[-1]
     assert (args.output_root / "pipeline_summary.json").is_file()
     assert (args.output_root / "pipeline_summary.md").is_file()
 
@@ -204,7 +213,7 @@ def test_config_write_requires_artifacts_and_passing_promotion(tmp_path: Path) -
         _apply_config(args, paths)
 
 
-def test_resume_skips_completed_stages_and_records_validated_outputs(tmp_path: Path) -> None:
+def test_resume_skips_completed_stages_records_validated_outputs_and_progress(tmp_path: Path) -> None:
     args = _args(tmp_path, resume=True, start_at="production_promotion_check", stop_after="config_update")
     paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
     _touch_pipeline_outputs(paths)
@@ -225,3 +234,9 @@ def test_resume_skips_completed_stages_and_records_validated_outputs(tmp_path: P
     }
     assert [stage["status"] for stage in summary["stages"]] == ["skipped", "skipped", "skipped"]
     assert all(stage["validated_outputs"] for stage in summary["stages"])
+    progress_rows = [json.loads(line) for line in Path(summary["progress_log_path"]).read_text(encoding="utf-8").splitlines()]
+    assert [row["stage"] for row in progress_rows if row["event"] == "start"] == [
+        "production_promotion_check",
+        "artifact_export",
+        "config_update",
+    ]
