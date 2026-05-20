@@ -18,12 +18,14 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from lib.landmarks.ensemble.runtime_resolver import _high_risk_safe_fallback_candidate
 from lib.landmarks.ensemble.runtime_resolver_scorer import load_runtime_resolver_scorer
 from lib.landmarks.ensemble.strategies import canonical_strategy
 from lib.landmarks.ensemble.weights import load_weights
 from tools.landmarks.runtime_resolver_scorer_data import (
     DEFAULT_FAILURE_THRESHOLD,
     DEFAULT_OUTLIER_THRESHOLD,
+    DEFAULT_SCORER_CANDIDATE_CSV,
     SampleCandidateContext,
     load_contexts,
     parse_candidates,
@@ -37,6 +39,8 @@ SCORER_POLICY_REPORT_JSON = "scorer_policy_report.json"
 SCORER_POLICY_REPORT_CSV = "scorer_policy_report.csv"
 SCORER_WORST_SAMPLES_JSON = "scorer_worst_samples.json"
 SCORER_FEATURE_IMPORTANCE_CSV = "scorer_feature_importance.csv"
+DEFAULT_RISK_FLOOR_FOR_SAFE_FALLBACK = 0.50
+DEFAULT_SAFE_FALLBACK_CANDIDATE = "hrnet"
 
 
 def _collect_contexts(
@@ -111,8 +115,7 @@ def _best_single(
     single_names = [
         name
         for name in candidates
-        if name in contexts[0].nme_by_candidate
-        and not _is_fusion_candidate(name)
+        if name in contexts[0].nme_by_candidate and not _is_fusion_candidate(name)
     ]
     if not single_names:
         raise ValueError("best-single baseline requires at least one non-fusion model candidate")
@@ -132,6 +135,9 @@ def _best_single(
 def _choose_scorer(
     context: SampleCandidateContext,
     scores: T.Mapping[str, float],
+    *,
+    risk_floor_for_safe_fallback: float,
+    safe_fallback_candidate: str,
 ) -> tuple[str, bool, str]:
     available = set(context.nme_by_candidate)
     survivors = {
@@ -143,6 +149,17 @@ def _choose_scorer(
     fallback_reason = "all_candidates_vetoed" if fallback_used else ""
     selectable = survivors if survivors else available
     chosen = min(selectable, key=lambda name: (scores.get(name, float("inf")), name))
+    safe_fallback = _high_risk_safe_fallback_candidate(
+        scores=scores,
+        selectable=selectable,
+        metrics=context.metrics,
+        risk_floor=risk_floor_for_safe_fallback,
+        fallback_candidate=safe_fallback_candidate,
+    )
+    if safe_fallback is not None and safe_fallback != chosen:
+        chosen = safe_fallback
+        fallback_used = True
+        fallback_reason = "scorer_high_risk_safe_fallback"
     return chosen, fallback_used, fallback_reason
 
 
@@ -207,6 +224,8 @@ def evaluate_runtime_resolver_scorer(
     epsilon_mean_nme: float = 0.001,
     epsilon_failure_rate: float = 0.0,
     worst_sample_count: int = 25,
+    risk_floor_for_safe_fallback: float = DEFAULT_RISK_FLOOR_FOR_SAFE_FALLBACK,
+    safe_fallback_candidate: str = DEFAULT_SAFE_FALLBACK_CANDIDATE,
 ) -> dict[str, T.Any]:
     """Evaluate learned scorer policy and write reports."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -235,17 +254,22 @@ def evaluate_runtime_resolver_scorer(
     current_choices: dict[str, str] = {}
     oracle_choices: dict[str, str] = {}
     fallback_count = 0
+    safe_fallback_count = 0
     for context in contexts:
         score_by_candidate = {
             row.candidate_name: scorer.score_feature_map(row.feature_values)
             for row in rows_for_context(context)
         }
-        chosen, fallback_used, fallback_reason = _choose_scorer(context, score_by_candidate)
-        fallback_count += int(fallback_used)
-        scorer_choices[context.sample_id] = chosen
-        current_choices[context.sample_id] = (
-            context.current_policy_choice
+        chosen, fallback_used, fallback_reason = _choose_scorer(
+            context,
+            score_by_candidate,
+            risk_floor_for_safe_fallback=risk_floor_for_safe_fallback,
+            safe_fallback_candidate=safe_fallback_candidate,
         )
+        fallback_count += int(fallback_used)
+        safe_fallback_count += int(fallback_reason == "scorer_high_risk_safe_fallback")
+        scorer_choices[context.sample_id] = chosen
+        current_choices[context.sample_id] = context.current_policy_choice
         oracle_choices[context.sample_id] = context.oracle
         rows.append(
             {
@@ -307,6 +331,9 @@ def evaluate_runtime_resolver_scorer(
         "current_bucket_aware_veto": current_summary,
         "oracle": oracle_summary,
         "fallback_count": fallback_count,
+        "safe_fallback_count": safe_fallback_count,
+        "risk_floor_for_safe_fallback": risk_floor_for_safe_fallback,
+        "safe_fallback_candidate": safe_fallback_candidate,
         "per_bucket": _per_bucket(contexts, scorer_choices),
     }
 
@@ -384,7 +411,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--candidates",
         default="",
-        help="Comma-separated candidate list. Defaults to models from weights plus static fusions.",
+        help=f"Comma-separated candidate list. Defaults to {DEFAULT_SCORER_CANDIDATE_CSV}.",
     )
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--failure-threshold", type=float, default=DEFAULT_FAILURE_THRESHOLD)
@@ -392,6 +419,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--epsilon-mean-nme", type=float, default=0.001)
     parser.add_argument("--epsilon-failure-rate", type=float, default=0.0)
     parser.add_argument("--worst-sample-count", type=int, default=25)
+    parser.add_argument(
+        "--risk-floor-for-safe-fallback",
+        type=float,
+        default=DEFAULT_RISK_FLOOR_FOR_SAFE_FALLBACK,
+    )
+    parser.add_argument("--safe-fallback-candidate", default=DEFAULT_SAFE_FALLBACK_CANDIDATE)
     parser.add_argument("--log-level", default="INFO")
     return parser
 
@@ -416,6 +449,8 @@ def main(argv: T.Sequence[str] | None = None) -> int:
         epsilon_mean_nme=args.epsilon_mean_nme,
         epsilon_failure_rate=args.epsilon_failure_rate,
         worst_sample_count=args.worst_sample_count,
+        risk_floor_for_safe_fallback=args.risk_floor_for_safe_fallback,
+        safe_fallback_candidate=args.safe_fallback_candidate,
     )
     logger.info("Scorer policy status: %s", report["status"])
     return 0
