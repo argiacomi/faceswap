@@ -282,6 +282,93 @@ def test_learned_quality_policy_falls_back_to_hrnet_when_all_risks_high(
     assert result.metadata["fallback_reason"] == "scorer_high_risk_safe_fallback"
 
 
+def test_hard_pose_guard_rejects_plain_average_without_single_model_margin(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    """Hard pose buckets avoid plain_average unless it beats HRNet/SPIGA by margin."""
+    monkeypatch.setattr(
+        runtime_resolver,
+        "infer_runtime_bucket",
+        lambda **kwargs: RuntimeBucketResult(bucket="large_yaw_left", features={}),
+    )
+    scorer_path = write_runtime_resolver_scorer(
+        RuntimeResolverScorer(
+            features=(
+                "candidate_name=plain_average",
+                "candidate_name=hrnet",
+                "candidate_name=spiga",
+            ),
+            coefficients=(-0.20, -0.12, 0.20),
+            intercept=0.0,
+        ),
+        tmp_path / "runtime_resolver_scorer.json",
+    )
+    base = _face()
+
+    result = resolve_runtime(
+        [
+            ModelPrediction("hrnet", base + 0.1),
+            ModelPrediction("spiga", base),
+            ModelPrediction("orformer", base + 0.2),
+        ],
+        RuntimeResolverConfig(
+            policy="learned_quality_v1",
+            scorer_path=str(scorer_path),
+            weights={name: [1.0 / 3.0] * 68 for name in ("hrnet", "spiga", "orformer")},
+        ),
+        detector_bbox=(35.0, 65.0, 165.0, 155.0),
+    )
+
+    assert result.metadata["candidate_scores"]["plain_average"] < result.metadata[
+        "candidate_scores"
+    ]["hrnet"]
+    assert result.selected_candidate == "hrnet"
+    assert result.metadata["fallback_reason"] == "hard_pose_plain_average_guard"
+    assert result.metadata["hard_pose_plain_average_guard_used"] is True
+    assert result.metadata["hard_pose_plain_average_rejected_candidate"] == "plain_average"
+    assert result.metadata["replacement_candidate"] == "hrnet"
+
+
+def test_hard_pose_guard_allows_plain_average_when_margin_clears(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    """Plain average remains selectable when its risk clears the configured margin."""
+    monkeypatch.setattr(
+        runtime_resolver,
+        "infer_runtime_bucket",
+        lambda **kwargs: RuntimeBucketResult(bucket="profile_right", features={}),
+    )
+    scorer_path = write_runtime_resolver_scorer(
+        RuntimeResolverScorer(
+            features=("candidate_name=plain_average", "candidate_name=hrnet"),
+            coefficients=(-0.70, -0.12),
+            intercept=0.0,
+        ),
+        tmp_path / "runtime_resolver_scorer.json",
+    )
+    base = _face()
+
+    result = resolve_runtime(
+        [
+            ModelPrediction("hrnet", base + 0.1),
+            ModelPrediction("spiga", base),
+            ModelPrediction("orformer", base + 0.2),
+        ],
+        RuntimeResolverConfig(
+            policy="learned_quality_v1",
+            scorer_path=str(scorer_path),
+            weights={name: [1.0 / 3.0] * 68 for name in ("hrnet", "spiga", "orformer")},
+        ),
+        detector_bbox=(35.0, 65.0, 165.0, 155.0),
+    )
+
+    assert result.selected_candidate == "plain_average"
+    assert result.metadata["hard_pose_plain_average_guard_used"] is False
+    assert result.metadata["fallback_reason"] is None
+
+
 def test_all_candidates_vetoed_uses_deterministic_hard_case_fallback(
     monkeypatch,
     tmp_path,
