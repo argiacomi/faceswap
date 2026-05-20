@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import math
 import typing as T
+from collections import Counter
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -56,8 +57,12 @@ PROFILE_MAX_DISAGREEMENT_BBOX_FRACTION_THRESHOLD: float = 0.28
 PROFILE_SIDE_STRUCTURE_THRESHOLD: float = 0.20
 PROFILE_CANDIDATE_SIDE_STRUCTURE_THRESHOLD: float = 0.30
 PROFILE_NOSE_OFFSET_THRESHOLD: float = 0.12
-PROFILE_TRUSTED_SINGLE_MODEL_YAW_THRESHOLD: float = 60.0
+PROFILE_MULTI_MODEL_YAW_THRESHOLD: float = 60.0
 PROFILE_CANDIDATE_TRUSTED_YAW_THRESHOLD: float = 40.0
+PROFILE_VISUAL_SUPPORT_IMAGE_THRESHOLD: float = 0.12
+PROFILE_VISUAL_SUPPORT_STRUCTURE_THRESHOLD: float = 0.18
+WEAK_YAW_CAP_IMAGE_THRESHOLD: float = 0.12
+WEAK_YAW_CAP_STRUCTURE_THRESHOLD: float = 0.18
 SIDE_YAW_TRUSTED_MODELS: tuple[str, ...] = ("hrnet", "spiga", "orformer")
 SIDE_YAW_PRIMARY_MODEL: str = "hrnet"
 SIDE_YAW_MIN_ABS_DEGREES: float = 20.0
@@ -748,6 +753,29 @@ def _is_canonical_strategy_name(name: str) -> bool:
     return True
 
 
+def _single_model_yaw_side_agreement(
+    metrics: T.Mapping[str, CandidateMetrics],
+    *,
+    min_abs_degrees: float,
+) -> tuple[bool, str | None, int]:
+    """Return whether at least two non-fusion models agree on yaw side."""
+    side_counts: Counter[str] = Counter()
+    for name, metric in metrics.items():
+        if _is_canonical_strategy_name(name):
+            continue
+        yaw = metric.yaw_degrees
+        if yaw is None or not math.isfinite(float(yaw)):
+            continue
+        yaw_value = float(yaw)
+        if abs(yaw_value) < min_abs_degrees:
+            continue
+        side_counts[_side_from_model_yaw(yaw_value)] += 1
+    if not side_counts:
+        return False, None, 0
+    side, count = side_counts.most_common(1)[0]
+    return count >= 2, side, int(count)
+
+
 def _side_from_model_yaw(yaw_degrees: float) -> str:
     """Map raw single-model yaw to image-facing side."""
     return "left" if yaw_degrees > 0.0 else "right"
@@ -861,6 +889,8 @@ def _runtime_yaw_severity(
     image_geometry_yaw_signal: float,
     landmark_pose_yaw: float | None,
     trusted_single_model_yaw: float,
+    profile_yaw_agreement: bool,
+    candidate_profile_yaw_agreement: bool,
     candidate_yaw_disagreement: float,
     max_disagreement_bbox_fraction: float,
     nose_offset_from_face_center: float,
@@ -879,20 +909,31 @@ def _runtime_yaw_severity(
     abs_landmark_yaw = 0.0 if landmark_pose_yaw is None else abs(float(landmark_pose_yaw))
     abs_trusted_yaw = abs(float(trusted_single_model_yaw))
     side_structure = max(abs(nose_offset_from_face_center), abs(mouth_nose_jaw_asymmetry))
-    if abs_trusted_yaw >= PROFILE_TRUSTED_SINGLE_MODEL_YAW_THRESHOLD:
-        return "profile", "trusted_single_model_yaw"
     if (
         abs_image_yaw >= PROFILE_IMAGE_SIGNAL_THRESHOLD
         and side_structure >= PROFILE_SIDE_STRUCTURE_THRESHOLD
     ):
         return "profile", "image_geometry"
+    if profile_yaw_agreement and (
+        abs_image_yaw >= PROFILE_VISUAL_SUPPORT_IMAGE_THRESHOLD
+        or side_structure >= PROFILE_VISUAL_SUPPORT_STRUCTURE_THRESHOLD
+    ):
+        return "profile", "multi_model_yaw_agreement"
     if (
         candidate_yaw_disagreement >= PROFILE_CANDIDATE_YAW_DISAGREEMENT_THRESHOLD
         and max_disagreement_bbox_fraction >= PROFILE_MAX_DISAGREEMENT_BBOX_FRACTION_THRESHOLD
         and side_structure >= PROFILE_CANDIDATE_SIDE_STRUCTURE_THRESHOLD
-        and abs_trusted_yaw >= PROFILE_CANDIDATE_TRUSTED_YAW_THRESHOLD
+        and candidate_profile_yaw_agreement
     ):
         return "profile", "candidate_instability"
+    if (
+        abs_image_yaw < WEAK_YAW_CAP_IMAGE_THRESHOLD
+        and side_structure < WEAK_YAW_CAP_STRUCTURE_THRESHOLD
+        and abs_landmark_yaw < LARGE_YAW_LANDMARK_THRESHOLD
+    ):
+        if abs_landmark_yaw <= 15.0:
+            return "frontal", "low_yaw"
+        return "intermediate", "weak_visual_shape_cap"
     if (
         abs_image_yaw >= LARGE_YAW_IMAGE_SIGNAL_THRESHOLD
         or abs_landmark_yaw >= LARGE_YAW_LANDMARK_THRESHOLD
@@ -958,6 +999,20 @@ def infer_runtime_bucket(
     candidate_yaw_disagreement = _signed_candidate_yaw_disagreement(metrics)
     dominant_candidate_yaw = _dominant_candidate_yaw(metrics)
     trusted_single_model_yaw = _trusted_single_model_yaw(metrics)
+    profile_yaw_agreement, profile_yaw_side, profile_yaw_agreement_count = (
+        _single_model_yaw_side_agreement(
+            metrics,
+            min_abs_degrees=PROFILE_MULTI_MODEL_YAW_THRESHOLD,
+        )
+    )
+    (
+        candidate_profile_yaw_agreement,
+        candidate_profile_yaw_side,
+        candidate_profile_yaw_agreement_count,
+    ) = _single_model_yaw_side_agreement(
+        metrics,
+        min_abs_degrees=PROFILE_CANDIDATE_TRUSTED_YAW_THRESHOLD,
+    )
     max_disagreement_bbox_fraction = _normalized_max_disagreement(
         max_disagreement_px,
         detector_bbox,
@@ -985,6 +1040,8 @@ def infer_runtime_bucket(
         image_geometry_yaw_signal=yaw_signal,
         landmark_pose_yaw=yaw_estimate,
         trusted_single_model_yaw=trusted_single_model_yaw,
+        profile_yaw_agreement=profile_yaw_agreement,
+        candidate_profile_yaw_agreement=candidate_profile_yaw_agreement,
         candidate_yaw_disagreement=candidate_yaw_disagreement,
         max_disagreement_bbox_fraction=max_disagreement_bbox_fraction,
         nose_offset_from_face_center=nose_offset,
@@ -1022,6 +1079,12 @@ def infer_runtime_bucket(
         "landmark_pose_yaw": yaw_estimate,
         "landmark_pose_roll": roll_estimate,
         "trusted_single_model_yaw": trusted_single_model_yaw,
+        "profile_yaw_agreement": profile_yaw_agreement,
+        "profile_yaw_agreement_side": profile_yaw_side,
+        "profile_yaw_agreement_count": profile_yaw_agreement_count,
+        "candidate_profile_yaw_agreement": candidate_profile_yaw_agreement,
+        "candidate_profile_yaw_agreement_side": candidate_profile_yaw_side,
+        "candidate_profile_yaw_agreement_count": candidate_profile_yaw_agreement_count,
         "image_geometry_yaw_signal": yaw_signal,
         "dominant_candidate_yaw": dominant_candidate_yaw,
         "runtime_bucket_side": yaw_side,

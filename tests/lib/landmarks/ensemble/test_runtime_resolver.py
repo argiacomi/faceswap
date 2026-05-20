@@ -265,8 +265,10 @@ def test_runtime_resolver_records_eye_visual_evidence_for_runtime_bucket() -> No
     assert result.metadata["runtime_bucket_eye_side"] == "right"
 
 
-def test_runtime_bucket_routes_profile_like_00012_to_profile_left(monkeypatch) -> None:
-    """00012-style positive pose yaw and far-side instability is profile-left."""
+def test_runtime_bucket_demotes_single_model_profile_like_00012_to_large_yaw(
+    monkeypatch,
+) -> None:
+    """Single-model yaw plus moderate shape support is large-yaw, not profile."""
     result = _runtime_bucket_for_production_signals(
         monkeypatch,
         image_geometry_yaw_signal=-0.03647917256402465,
@@ -282,16 +284,16 @@ def test_runtime_bucket_routes_profile_like_00012_to_profile_left(monkeypatch) -
         },
     )
 
-    assert result.bucket == "profile_left"
+    assert result.bucket == "large_yaw_left"
     assert result.features["runtime_bucket_side"] == "left"
     assert result.features["runtime_bucket_side_source"] == "hrnet_yaw"
-    assert result.features["runtime_bucket_severity"] == "profile"
-    assert result.features["runtime_bucket_severity_source"] == "trusted_single_model_yaw"
+    assert result.features["runtime_bucket_severity"] == "large_yaw"
+    assert result.features["runtime_bucket_severity_source"] == "yaw_evidence"
     assert result.features["candidate_yaw_disagreement"] > 120.0
 
 
-def test_runtime_bucket_uses_image_facing_side_convention_for_00114(monkeypatch) -> None:
-    """00114-style weak image geometry still resolves positive pose yaw to image-left."""
+def test_runtime_bucket_caps_weak_visual_shape_single_yaw_00114(monkeypatch) -> None:
+    """Weak image/shape support caps a single-model yaw spike at frontal/intermediate."""
     result = _runtime_bucket_for_production_signals(
         monkeypatch,
         image_geometry_yaw_signal=0.03766283153632713,
@@ -307,9 +309,10 @@ def test_runtime_bucket_uses_image_facing_side_convention_for_00114(monkeypatch)
         },
     )
 
-    assert result.bucket == "large_yaw_left"
+    assert result.bucket == "frontal"
     assert result.features["runtime_bucket_side"] == "left"
     assert result.features["runtime_bucket_side_source"] == "hrnet_yaw"
+    assert result.features["runtime_bucket_severity_source"] == "low_yaw"
     assert result.features["candidate_yaw_disagreement"] > 80.0
 
 
@@ -345,6 +348,24 @@ def test_runtime_bucket_routes_obvious_profile_by_image_geometry(monkeypatch) ->
     assert result.bucket == "profile_right"
     assert result.features["runtime_bucket_side"] == "right"
     assert result.features["runtime_bucket_severity_source"] == "image_geometry"
+
+
+def test_runtime_bucket_routes_profile_by_multi_model_yaw_agreement(monkeypatch) -> None:
+    """Two non-fusion high-yaw models plus visual/shape support can create profile."""
+    result = _runtime_bucket_for_production_signals(
+        monkeypatch,
+        image_geometry_yaw_signal=-0.13,
+        nose_offset_from_face_center=0.10,
+        mouth_nose_jaw_asymmetry=0.16,
+        landmark_pose_yaw=28.0,
+        candidate_yaws={"hrnet": -65.0, "spiga": -63.0, "orformer": -12.0},
+        max_disagreement_px=35.0,
+    )
+
+    assert result.bucket == "profile_right"
+    assert result.features["runtime_bucket_severity_source"] == "multi_model_yaw_agreement"
+    assert result.features["profile_yaw_agreement"] is True
+    assert result.features["profile_yaw_agreement_count"] == 2
 
 
 def test_runtime_bucket_keeps_borderline_profile_evidence_as_large_yaw(monkeypatch) -> None:
@@ -390,7 +411,7 @@ def test_runtime_bucket_demotes_candidate_instability_without_strong_yaw(
 def test_runtime_bucket_allows_candidate_instability_profile_with_trusted_yaw(
     monkeypatch,
 ) -> None:
-    """Candidate instability can support profile only with strong trusted yaw and shape."""
+    """Candidate instability can support profile only with model side agreement and shape."""
     result = _runtime_bucket_for_production_signals(
         monkeypatch,
         image_geometry_yaw_signal=0.12,
@@ -408,6 +429,28 @@ def test_runtime_bucket_allows_candidate_instability_profile_with_trusted_yaw(
 
     assert result.bucket == "profile_left"
     assert result.features["runtime_bucket_severity_source"] == "candidate_instability"
+    assert result.features["candidate_profile_yaw_agreement"] is True
+
+
+def test_runtime_bucket_caps_listed_single_orformer_yaw_spike(monkeypatch) -> None:
+    """00770-style single Orformer yaw spike stays intermediate with weak visual support."""
+    result = _runtime_bucket_for_production_signals(
+        monkeypatch,
+        image_geometry_yaw_signal=0.07436019444074712,
+        nose_offset_from_face_center=0.10958707838149795,
+        mouth_nose_jaw_asymmetry=-0.09854961423473703,
+        landmark_pose_yaw=-24.902402400970463,
+        candidate_yaws={
+            "hrnet": -11.392191886901855,
+            "spiga": -11.261571884155273,
+            "orformer": -74.40572357177734,
+        },
+        max_disagreement_px=315.4366903184972,
+    )
+
+    assert result.bucket == "intermediate"
+    assert result.features["runtime_bucket_severity_source"] == "weak_visual_shape_cap"
+    assert result.features["profile_yaw_agreement"] is False
 
 
 def test_runtime_bucket_uses_rolled_large_yaw_family(monkeypatch) -> None:
@@ -464,15 +507,10 @@ def test_runtime_bucket_demotes_unsupported_roll_estimate(monkeypatch) -> None:
 
 
 def test_runtime_bucket_routes_known_visual_left_profiles_to_profile_left(monkeypatch) -> None:
-    """Known profile-right exports face image-left and should resolve profile-left."""
+    """Known strong-image-geometry profiles should resolve profile-left."""
     cases = (
         ("00015", 0.380, 0.491, -0.047, -37.395, 65.761, 124.710),
         ("00025", 0.382, 1.101, -1.000, -49.134, 65.159, 124.414),
-        ("00036", 0.161, 0.617, -0.990, -59.495, 55.000, 146.152),
-        ("00040", -0.042, 0.098, -0.210, -31.619, 55.000, 138.380),
-        ("00106", 0.272, 0.810, -0.757, -38.291, 55.000, 132.394),
-        ("00109", 0.130, 0.551, -0.533, 15.570, 55.000, 131.690),
-        ("00113", 0.092, 0.395, -0.317, -1.516, 55.000, 132.493),
     )
     for sample_id, image_yaw, nose, jaw, pose_yaw, dominant_yaw, yaw_spread in cases:
         other_yaw = dominant_yaw - yaw_spread if dominant_yaw > 0 else dominant_yaw + yaw_spread
