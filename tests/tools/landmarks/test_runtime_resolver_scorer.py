@@ -22,7 +22,12 @@ from lib.landmarks.ensemble.weights import save_weights
 from tools.landmarks.evaluate_runtime_resolver_scorer import (
     evaluate_runtime_resolver_scorer,
 )
-from tools.landmarks.export_resolver_candidate_table import export_resolver_candidate_table
+from tools.landmarks.export_resolver_candidate_table import (
+    export_resolver_candidate_table,
+)
+from tools.landmarks.export_resolver_candidate_table import (
+    main as export_resolver_candidate_table_main,
+)
 from tools.landmarks.production_promotion_gate import (
     ProductionGateConfig,
     run_production_promotion_gate,
@@ -118,9 +123,14 @@ def test_train_runtime_resolver_scorer_writes_artifact_and_rows(tmp_path: Path) 
 
     artifact = json.loads((output_dir / "runtime_resolver_scorer.json").read_text())
     assert metrics["row_count"] == 6
+    assert metrics["train_metrics"]["row_count"] == 3
+    assert metrics["eval_metrics"]["row_count"] == 3
+    assert metrics["production_only_eval_metrics"]["row_count"] == 3
+    assert metrics["gt_hard_only_eval_metrics"]["row_count"] == 0
     assert artifact["model_type"] == "logistic_regression"
     assert "candidate_name=spiga" in artifact["features"]
     assert (output_dir / "runtime_resolver_scorer_training_rows.csv").is_file()
+    assert (output_dir / "runtime_resolver_scorer_eval_rows.csv").is_file()
     assert (output_dir / "candidate_table.csv").is_file()
 
 
@@ -153,6 +163,40 @@ def test_evaluate_runtime_resolver_scorer_reports_policy(tmp_path: Path) -> None
     assert (tmp_path / "eval" / "scorer_feature_importance.csv").is_file()
 
 
+def test_evaluate_runtime_resolver_scorer_uses_safe_fallback_for_high_risk(
+    tmp_path: Path,
+) -> None:
+    manifest_path, cache_dir, weights_path = _write_fixture(tmp_path)
+    scorer_path = write_runtime_resolver_scorer(
+        RuntimeResolverScorer(
+            features=("candidate_name=static_weighted",),
+            coefficients=(-0.25,),
+            intercept=1.0,
+        ),
+        tmp_path / "runtime_resolver_scorer.json",
+    )
+
+    report = evaluate_runtime_resolver_scorer(
+        gt_manifest=None,
+        gt_cache_dir=None,
+        production_manifest=manifest_path,
+        production_cache_dir=cache_dir,
+        weights_path=weights_path,
+        scorer_path=scorer_path,
+        candidates=(
+            "hrnet",
+            "spiga",
+            "orformer",
+            "static_weighted",
+            "static_weighted_downweight",
+        ),
+        output_dir=tmp_path / "eval_safe",
+    )
+
+    assert report["learned_quality_v1"]["pick_counts"] == {"hrnet": 2}
+    assert report["safe_fallback_count"] == 2
+
+
 def test_export_resolver_candidate_table_row_count_and_gate_metrics(
     tmp_path: Path,
 ) -> None:
@@ -179,9 +223,7 @@ def test_export_resolver_candidate_table_row_count_and_gate_metrics(
     assert report["row_count"] == 6
     assert len(rows) == 6
     assert {row["runtime_bucket"] for row in rows} == {"stored_profile_left"}
-    assert {row["runtime_bucket_source"] for row in rows} == {
-        "stored_manifest_landmark_ensemble"
-    }
+    assert {row["runtime_bucket_source"] for row in rows} == {"stored_manifest_landmark_ensemble"}
     assert set(rows[0]) >= {
         "sample_id",
         "candidate",
@@ -192,6 +234,33 @@ def test_export_resolver_candidate_table_row_count_and_gate_metrics(
         "geometry_veto_reasons",
     }
     assert hrnet_mean == gate["best_single_mean_nme"]
+
+
+def test_export_resolver_candidate_table_cli_default_includes_plain_average(
+    tmp_path: Path,
+) -> None:
+    manifest_path, cache_dir, weights_path = _write_fixture(tmp_path)
+    output_csv = tmp_path / "candidate_table_default.csv"
+
+    exit_code = export_resolver_candidate_table_main(
+        [
+            "--manifest",
+            str(manifest_path),
+            "--cache-dir",
+            str(cache_dir),
+            "--weights",
+            str(weights_path),
+            "--output-csv",
+            str(output_csv),
+        ]
+    )
+
+    rows = list(csv.DictReader(output_csv.open(encoding="utf-8")))
+    assert exit_code == 0
+    assert len(rows) == 16
+    assert sum(1 for _line in output_csv.open(encoding="utf-8")) == 17
+    assert {row["candidate"] for row in rows} == set(scorer_data.DEFAULT_SCORER_CANDIDATES)
+    assert "plain_average" in {row["candidate"] for row in rows}
 
 
 def test_scorer_evaluator_fails_when_current_policy_candidate_missing(

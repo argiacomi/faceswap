@@ -17,6 +17,7 @@ from lib.landmarks.ensemble.weights import load_weights
 from tools.landmarks.runtime_resolver_scorer_data import (
     DEFAULT_FAILURE_THRESHOLD,
     DEFAULT_OUTLIER_THRESHOLD,
+    DEFAULT_SCORER_CANDIDATE_CSV,
     export_candidate_table,
     parse_candidates,
     write_candidate_table_csv,
@@ -65,10 +66,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--weights", type=Path, required=True)
     parser.add_argument(
         "--candidates",
-        default=(
-            "hrnet,spiga,orformer,static_weighted,static_weighted_downweight,"
-            "static_weighted_hard_drop,weighted_median"
-        ),
+        default=DEFAULT_SCORER_CANDIDATE_CSV,
     )
     parser.add_argument("--output", type=Path)
     parser.add_argument("--output-csv", type=Path)

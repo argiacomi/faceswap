@@ -54,6 +54,7 @@ DEFAULT_RESOLVER_CANDIDATES: tuple[str, ...] = (
     "weighted_median",
 )
 DEFAULT_SCORER_CANDIDATES: tuple[str, ...] = DEFAULT_RESOLVER_CANDIDATES
+DEFAULT_SCORER_CANDIDATE_CSV: str = ",".join(DEFAULT_SCORER_CANDIDATES)
 CANDIDATE_TABLE_COLUMNS: tuple[str, ...] = (
     "sample_id",
     "dataset",
@@ -121,9 +122,7 @@ class CandidateQualityRow:
             "risk_route": self.risk_route,
             "geometry_veto_reasons": "|".join(self.geometry_veto_reasons),
             "selected_by_current_policy": self.selected_by_current_policy,
-            "selected_candidate_missing_from_eval": int(
-                self.selected_candidate_missing_from_eval
-            ),
+            "selected_candidate_missing_from_eval": int(self.selected_candidate_missing_from_eval),
             "oracle": self.oracle,
             "features_json": json.dumps(self.feature_values, sort_keys=True),
         }
@@ -391,9 +390,11 @@ def build_sample_context(
         candidate_yaw_disagreement=bucket_result.features.get("candidate_yaw_disagreement"),
         max_disagreement_px=(
             stored_max_disagreement
-            if (stored_max_disagreement := _optional_float(
-                bucket_result.features.get("max_disagreement_px")
-            ))
+            if (
+                stored_max_disagreement := _optional_float(
+                    bucket_result.features.get("max_disagreement_px")
+                )
+            )
             is not None
             else max_disagreement_px
         ),
@@ -639,6 +640,8 @@ __all__ = [
     "CANDIDATE_TABLE_COLUMNS",
     "CandidateQualityRow",
     "DEFAULT_RESOLVER_CANDIDATES",
+    "DEFAULT_SCORER_CANDIDATES",
+    "DEFAULT_SCORER_CANDIDATE_CSV",
     "SampleCandidateContext",
     "build_sample_context",
     "candidate_table_rows",
