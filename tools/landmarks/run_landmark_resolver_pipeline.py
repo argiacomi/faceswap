@@ -26,6 +26,7 @@ from tools.landmarks.pipeline_conventions import (
     SOURCE_PRODUCTION_VALIDATED,
     write_json,
 )
+from tools.landmarks.pipeline_progress import PipelineProgress, configure_logging
 
 logger = logging.getLogger("run_landmark_resolver_pipeline")
 
@@ -45,6 +46,7 @@ DEFAULT_CANDIDATES = "hrnet,spiga,orformer,plain_average,static_weighted,static_
 DEFAULT_CONFIG_SECTION = "align.ensemble"
 CONFIG_PREVIEW_FILENAME = "config_update_preview.json"
 CONFIG_PATCH_FILENAME = "config_update_patch.ini"
+PROGRESS_LOG_FILENAME = "pipeline_progress.jsonl"
 
 
 class PipelineContractError(RuntimeError):
@@ -75,6 +77,7 @@ class PipelinePaths:
     scorer_eval_dir: Path = field(init=False)
     scorer_report: Path = field(init=False)
     artifacts_dir: Path = field(init=False)
+    progress_log: Path = field(init=False)
     summary_json: Path = field(init=False)
     summary_md: Path = field(init=False)
 
@@ -98,6 +101,7 @@ class PipelinePaths:
         object.__setattr__(self, "scorer_eval_dir", self.output_root / "scorer_evaluation")
         object.__setattr__(self, "scorer_report", self.scorer_eval_dir / SCORER_POLICY_REPORT_JSON)
         object.__setattr__(self, "artifacts_dir", self.output_root / "artifacts")
+        object.__setattr__(self, "progress_log", self.output_root / PROGRESS_LOG_FILENAME)
         object.__setattr__(self, "summary_json", self.output_root / "pipeline_summary.json")
         object.__setattr__(self, "summary_md", self.output_root / "pipeline_summary.md")
 
@@ -266,6 +270,10 @@ def _stage_complete(stage: str, paths: PipelinePaths) -> bool:
 
 
 def _run_command(command: list[str]) -> None:
+    logger.info("Running command: %s", " ".join(command))
+    logger.debug("Pipeline child command argv=%r", command)
+    if logger.isEnabledFor(5):
+        logger.log(5, "Pipeline child command cwd=%s argv=%s", ROOT, json.dumps(command))
     subprocess.run(command, check=True, cwd=str(ROOT))
 
 
@@ -296,6 +304,7 @@ def _promotion_check(paths: PipelinePaths) -> list[str]:
 def _validate_required_files(stage: str, args: argparse.Namespace, paths: PipelinePaths) -> None:
     for required in _required_inputs_for(stage, args, paths):
         if required is not None:
+            logger.debug("Validating required file for stage=%s path=%s", stage, required)
             _require(required, f"{stage} input")
 
 
@@ -310,7 +319,9 @@ def _validate_stage_outputs(stage: str, paths: PipelinePaths) -> list[str]:
         if status != "pass":
             failed = report.get("failed_gates") or []
             raise PipelineContractError(f"stage 'production_promotion_check' expected promotion_status=pass but got {status!r}; failed_gates={failed}")
-    return [str(path) for path in _outputs_for(stage, paths)]
+    validated = [str(path) for path in _outputs_for(stage, paths)]
+    logger.debug("Validated outputs for stage=%s outputs=%s", stage, validated)
+    return validated
 
 
 def _copy_if_exists(source: Path, dest_dir: Path, *, name: str | None = None) -> str:
@@ -324,6 +335,7 @@ def _copy_if_exists(source: Path, dest_dir: Path, *, name: str | None = None) ->
         shutil.copytree(source, target)
     else:
         shutil.copyfile(source, target)
+    logger.debug("Exported artifact source=%s target=%s", source, target)
     return str(target)
 
 
@@ -392,8 +404,9 @@ def _write_config_patch_files(args: argparse.Namespace, paths: PipelinePaths, up
     write_json(paths.output_root / CONFIG_PREVIEW_FILENAME, {"config_path": str(args.config_path), "section": args.config_section, "write_config": bool(args.write_config), "updates": dict(updates), "patch": patch})
     patch_path = paths.output_root / CONFIG_PATCH_FILENAME
     patch_path.write_text(patch, encoding="utf-8")
-    if args.print_config_patch:
+    if getattr(args, "print_config_patch", False):
         print(patch, end="")
+    logger.debug("Wrote config patch files preview=%s patch=%s", paths.output_root / CONFIG_PREVIEW_FILENAME, patch_path)
     return patch
 
 
@@ -428,6 +441,9 @@ def _execute_stage(stage: str, args: argparse.Namespace, paths: PipelinePaths) -
     command: list[str] = []
     started = time.time()
     try:
+        logger.debug("Starting stage=%s contract=%s", stage, json.dumps(contract.to_json(), sort_keys=True))
+        if logger.isEnabledFor(5):
+            logger.log(5, "stage_contract=%s", json.dumps(contract.to_json(), sort_keys=True))
         if not args.dry_run:
             _validate_required_files(stage, args, paths)
         if stage == "static_pipeline":
@@ -483,8 +499,11 @@ def _execute_stage(stage: str, args: argparse.Namespace, paths: PipelinePaths) -
             raise AssertionError(stage)
         validated = _validate_stage_outputs(stage, paths)
     except Exception as err:
+        logger.exception("Stage failed: %s", stage)
         return StageResult(stage, "failed", command=command, outputs=outputs, contract=contract.to_json(), error=f"{type(err).__name__}: {err}", duration_seconds=round(time.time() - started, 3))
-    return StageResult(stage, "ok", command=command, outputs=outputs, validated_outputs=validated, contract=contract.to_json(), duration_seconds=round(time.time() - started, 3))
+    result = StageResult(stage, "ok", command=command, outputs=outputs, validated_outputs=validated, contract=contract.to_json(), duration_seconds=round(time.time() - started, 3))
+    logger.debug("Finished stage=%s result=%s", stage, json.dumps(_jsonable(result.__dict__), sort_keys=True))
+    return result
 
 
 def _fallback_counts(report: T.Mapping[str, T.Any]) -> dict[str, int]:
@@ -507,6 +526,7 @@ def _summary_payload(args: argparse.Namespace, paths: PipelinePaths, results: T.
         "eval_report_path": str(paths.scorer_report),
         "config_fields_changed": sorted(updates),
         "config_patch_path": str(paths.output_root / CONFIG_PATCH_FILENAME),
+        "progress_log_path": str(paths.progress_log),
         "run_root": str(paths.run_root),
         "production_root": str(paths.production_root),
         "output_root": str(paths.output_root),
@@ -521,7 +541,7 @@ def _summary_payload(args: argparse.Namespace, paths: PipelinePaths, results: T.
 
 
 def _write_summary_md(path: Path, summary: dict[str, T.Any]) -> None:
-    lines = ["# Landmark resolver pipeline summary", "", f"Status: **{summary['status']}**", f"Promotion status: `{summary.get('promotion_status', '')}`", f"Promotion scope: `{summary['promotion_scope']}`", f"Selected production policy: `{summary['selected_production_policy']}`", f"Best weights: `{summary['best_weights_path']}`", f"Scorer: `{summary['scorer_path']}`", f"Eval report: `{summary['eval_report_path']}`", f"Failed gates: `{summary['failed_gates']}`", f"Fallback counts: `{summary['fallback_counts']}`", f"Config patch: `{summary['config_patch_path']}`", "", "## Stages", "", "| Stage | Status | Duration | Outputs | Notes |", "| --- | --- | ---: | --- | --- |"]
+    lines = ["# Landmark resolver pipeline summary", "", f"Status: **{summary['status']}**", f"Promotion status: `{summary.get('promotion_status', '')}`", f"Promotion scope: `{summary['promotion_scope']}`", f"Selected production policy: `{summary['selected_production_policy']}`", f"Best weights: `{summary['best_weights_path']}`", f"Scorer: `{summary['scorer_path']}`", f"Eval report: `{summary['eval_report_path']}`", f"Failed gates: `{summary['failed_gates']}`", f"Fallback counts: `{summary['fallback_counts']}`", f"Config patch: `{summary['config_patch_path']}`", f"Progress log: `{summary['progress_log_path']}`", "", "## Stages", "", "| Stage | Status | Duration | Outputs | Notes |", "| --- | --- | ---: | --- | --- |"]
     for stage in summary["stages"]:
         notes = "; ".join(stage.get("notes") or [])
         if stage.get("error"):
@@ -534,13 +554,31 @@ def _write_summary_md(path: Path, summary: dict[str, T.Any]) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def _progress_enabled(args: argparse.Namespace) -> bool | None:
+    if getattr(args, "no_progress", False):
+        return False
+    if getattr(args, "progress", False):
+        return True
+    return None
+
+
 def run_pipeline(args: argparse.Namespace) -> dict[str, T.Any]:
     paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
     paths.output_root.mkdir(parents=True, exist_ok=True)
+    selected = _stage_slice(args.start_at, args.stop_after)
+    progress = PipelineProgress(
+        total=len(selected),
+        output_path=paths.progress_log,
+        enabled=_progress_enabled(args),
+        logger=logger,
+    )
     results: list[StageResult] = []
-    for stage in _stage_slice(args.start_at, args.stop_after):
+    for index, stage in enumerate(selected, start=1):
+        progress.start(stage, index=index, message="stage starting")
+        logger.info("Starting pipeline stage %s/%s: %s", index, len(selected), stage)
         result = _execute_stage(stage, args, paths)
         results.append(result)
+        progress.finish(stage, index=index, status=result.status, message=result.error or "; ".join(result.notes))
         if result.status == "failed":
             break
     summary = _summary_payload(args, paths, results)
@@ -564,6 +602,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--start-at", choices=STAGES)
     parser.add_argument("--write-config", action="store_true")
     parser.add_argument("--print-config-patch", action="store_true")
+    parser.add_argument("--progress", action="store_true", help="Force terminal progress bar output.")
+    parser.add_argument("--no-progress", action="store_true", help="Disable terminal progress bar output while keeping JSONL progress logs.")
     parser.add_argument("--config-path", type=Path, default=Path("config/extract.ini"))
     parser.add_argument("--config-section", default=DEFAULT_CONFIG_SECTION)
     parser.add_argument("--python-executable", default=sys.executable)
@@ -578,13 +618,13 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--hard-validation-arg", action="append", default=[])
     parser.add_argument("--scorer-train-arg", action="append", default=[])
     parser.add_argument("--scorer-eval-arg", action="append", default=[])
-    parser.add_argument("--log-level", default="INFO")
+    parser.add_argument("--log-level", default="INFO", help="TRACE, DEBUG, INFO, WARNING, or ERROR")
     return parser
 
 
 def main(argv: T.Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    logging.basicConfig(level=getattr(logging, str(args.log_level).upper()))
+    configure_logging(args.log_level)
     summary = run_pipeline(args)
     logger.info("Pipeline summary: %s", summary["status"])
     return 0
