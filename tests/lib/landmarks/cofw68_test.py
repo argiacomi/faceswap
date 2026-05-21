@@ -4,12 +4,13 @@
 from __future__ import annotations
 
 import json
+import zipfile
 from pathlib import Path
 
 import numpy as np
 import pytest
 
-from lib.landmarks.datasets.cofw68 import build_cofw68_json_from_sources
+from lib.landmarks.datasets.cofw68 import build_cofw68_json_from_sources, resolve_cofw68_json
 
 
 def _points_68(offset: float) -> np.ndarray:
@@ -72,3 +73,37 @@ def test_build_cofw68_json_from_color_mat_and_annotation_mats(tmp_path: Path) ->
     assert samples[1]["conditions"] == {"occlusion": True}
     assert samples[1]["metadata"]["occlusion"] == [1] * 68
     assert samples[1]["visibility"] == [False] * 68
+
+
+def test_resolve_cofw68_json_uses_cached_archives_when_download_disabled(
+    tmp_path: Path,
+) -> None:
+    """Cached COFW source archives can materialize cofw_68.json offline."""
+    scipy_io = pytest.importorskip("scipy.io")
+    staging = tmp_path / "staging"
+    color_root = staging / "color"
+    annotation_root = staging / "annotations" / "COFW68_Data"
+    test_annotations = annotation_root / "test_annotations"
+    color_root.mkdir(parents=True)
+    test_annotations.mkdir(parents=True)
+    images = np.empty((1, 1), dtype=object)
+    images[0, 0] = np.full((8, 9, 3), 32, dtype="uint8")
+    scipy_io.savemat(str(color_root / "COFW_test_color.mat"), {"IsT": images})
+    scipy_io.savemat(
+        str(test_annotations / "1_points.mat"),
+        {"Points": _points_68(0), "Occ": np.zeros((1, 68), dtype="uint8")},
+    )
+
+    cache_root = tmp_path / "cache" / "cofw"
+    cache_root.mkdir(parents=True)
+    with zipfile.ZipFile(cache_root / "COFW_color.zip", "w") as zf:
+        zf.write(color_root / "COFW_test_color.mat", "COFW_test_color.mat")
+    with zipfile.ZipFile(cache_root / "cofw68-benchmark-master.zip", "w") as zf:
+        zf.write(test_annotations / "1_points.mat", "COFW68_Data/test_annotations/1_points.mat")
+
+    output = resolve_cofw68_json(cache_dir=tmp_path / "cache", no_download=True)
+
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["dataset"] == "cofw_68"
+    assert len(payload["samples"]) == 1
+    assert Path(payload["samples"][0]["image"]).is_file()

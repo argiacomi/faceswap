@@ -288,23 +288,27 @@ def resolve_cofw68_json(
         logger.info(
             "Rebuilding stale COFW-68 JSON export with normalized bbox metadata: %s", output_json
         )
-    if no_download:
+    color_archive = cache_root / "COFW_color.zip"
+    annotations_archive = cache_root / "cofw68-benchmark-master.zip"
+    cached_archives_available = color_archive.is_file() and annotations_archive.is_file()
+    if no_download and not cached_archives_available:
         raise FileNotFoundError(
             f"COFW-68 JSON export not found or stale in {cache_root}. Download disabled by --no-download. "
             "Provide --cofw-json or rebuild .fs_cache/landmark_quality/cofw/cofw_68.json with normalized bboxes."
         )
-    color_archive = download(
-        COFW_COLOR_URL,
-        cache_root / "COFW_color.zip",
-        force=force_download,
-        label="COFW color images",
-    )
-    annotations_archive = download(
-        COFW68_ANNOTATIONS_URL,
-        cache_root / "cofw68-benchmark-master.zip",
-        force=force_download,
-        label="COFW-68 annotations",
-    )
+    if not cached_archives_available or force_download:
+        color_archive = download(
+            COFW_COLOR_URL,
+            color_archive,
+            force=force_download,
+            label="COFW color images",
+        )
+        annotations_archive = download(
+            COFW68_ANNOTATIONS_URL,
+            annotations_archive,
+            force=force_download,
+            label="COFW-68 annotations",
+        )
     color_root = extract_archive_to_cache(
         color_archive,
         cache_root / "color" / "extracted",

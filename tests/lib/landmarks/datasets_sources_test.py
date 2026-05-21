@@ -234,6 +234,35 @@ def test_resolve_multipart_dataset_source_downloads_extracts_and_reuses(tmp_path
     assert (resolved / "WFLW_images" / "images" / "sample.jpg").is_file()
 
 
+def test_build_wflw_manifest_uses_official_multipart_cache_by_default(
+    tmp_path: Path,
+) -> None:
+    """Default WFLW resolution should join cached official annotations and images."""
+    cache_dir = tmp_path / "cache"
+    cache_root = cache_dir / "wflw"
+    cache_root.mkdir(parents=True)
+    _write_wflw_annotations_archive(cache_root / "WFLW_annotations.tar.gz")
+    _write_wflw_images_archive(cache_root / "WFLW_images.zip")
+
+    manifest = build_wflw_manifest(None, tmp_path / "out", cache_dir=cache_dir, no_download=True)
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    image = tmp_path / "out" / payload["samples"][0]["image"]
+
+    assert image.is_file()
+
+
+def test_build_wflw_manifest_rejects_partial_official_cache(
+    tmp_path: Path,
+) -> None:
+    """Annotation-only official caches must not be treated as complete WFLW."""
+    cache_root = tmp_path / "cache" / "wflw"
+    cache_root.mkdir(parents=True)
+    _write_wflw_annotations_archive(cache_root / "WFLW_annotations.tar.gz")
+
+    with pytest.raises(FileNotFoundError, match="Incomplete WFLW official multipart cache"):
+        build_wflw_manifest(None, tmp_path / "out", cache_dir=tmp_path / "cache", no_download=True)
+
+
 def test_resolve_multipart_dataset_source_reuses_extracted_cache_without_archives(
     tmp_path: Path,
 ) -> None:

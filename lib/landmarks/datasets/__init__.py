@@ -15,10 +15,13 @@ import numpy as np
 from lib.landmarks.core.schema import normalize_landmarks
 from lib.landmarks.datasets.sources import (
     DEFAULT_CACHE_DIR,
+    EXTRACTED_DIR_NAME,
+    WFLW_OFFICIAL_SOURCE,
     DatasetSourceSpec,
     extract_archive_to_temp,
     is_archive,
     resolve_dataset_source,
+    resolve_wflw_official_source,
 )
 
 logger = logging.getLogger(__name__)
@@ -37,6 +40,51 @@ WFLW_SOURCE = DatasetSourceSpec(
         "dataset under .fs_cache/landmark_quality/wflw."
     ),
 )
+
+
+def _wflw_official_cache_present(cache_dir: str | Path) -> bool:
+    """Return whether the cache contains official WFLW multipart artifacts."""
+    cache_root = Path(cache_dir) / WFLW_OFFICIAL_SOURCE.cache_root_name
+    if any((cache_root / part.archive_name).exists() for part in WFLW_OFFICIAL_SOURCE.parts):
+        return True
+    extracted = cache_root / EXTRACTED_DIR_NAME
+    return any((extracted / name).exists() for name in ("WFLW_annotations", "WFLW_images"))
+
+
+def _resolve_wflw_source(
+    *,
+    source_dir: str | Path | None,
+    source_zip: str | Path | None,
+    cache_dir: str | Path,
+    download_url: str | None,
+    force_download: bool,
+    no_download: bool,
+) -> Path:
+    """Resolve WFLW sources, preferring complete official multipart cache parts."""
+    if source_dir is None and source_zip is None and download_url is None:
+        try:
+            return resolve_wflw_official_source(
+                cache_dir=cache_dir,
+                force_download=False,
+                no_download=True,
+            )
+        except FileNotFoundError as err:
+            if _wflw_official_cache_present(cache_dir):
+                raise FileNotFoundError(
+                    "Incomplete WFLW official multipart cache. Expected both "
+                    "WFLW_annotations.tar.gz and WFLW_images.zip, or a complete "
+                    "extracted cache with WFLW_annotations and WFLW_images. Remove "
+                    "the partial cache or provide --source-dir/--source-zip."
+                ) from err
+    return resolve_dataset_source(
+        WFLW_SOURCE,
+        cache_dir=cache_dir,
+        source_dir=source_dir,
+        source_zip=source_zip,
+        download_url=download_url,
+        force_download=force_download,
+        no_download=no_download,
+    )
 COFW_SOURCE = DatasetSourceSpec(
     dataset="COFW",
     cache_subdir="cofw",
@@ -280,11 +328,10 @@ def build_wflw_manifest(
     """Build a WFLW manifest from 98-point annotations."""
     cleanup: contextlib.AbstractContextManager[Path] | None = None
     if annotation_file is None:
-        resolved = resolve_dataset_source(
-            WFLW_SOURCE,
-            cache_dir=cache_dir,
+        resolved = _resolve_wflw_source(
             source_dir=source_dir,
             source_zip=source_zip,
+            cache_dir=cache_dir,
             download_url=download_url,
             force_download=force_download,
             no_download=no_download,
