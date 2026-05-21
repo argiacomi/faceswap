@@ -182,9 +182,7 @@ class PipelinePaths:
         object.__setattr__(self, "hard_manifest", self.hard_dir / "manifest.json")
         object.__setattr__(self, "frozen_gt_metadata", self.output_root / RESOLVER_METADATA_JSONL)
         object.__setattr__(self, "scorer_train_dir", self.output_root / "scorer_training")
-        object.__setattr__(
-            self, "binary_scorer_train_dir", self.scorer_train_dir / "v1_binary"
-        )
+        object.__setattr__(self, "binary_scorer_train_dir", self.scorer_train_dir / "v1_binary")
         object.__setattr__(
             self,
             "binary_scorer_artifact",
@@ -210,7 +208,9 @@ class PipelinePaths:
         object.__setattr__(self, "artifacts_dir", self.stable_root / "artifacts")
         object.__setattr__(self, "exported_candidate_dir", self.stable_root / "candidate_search")
         object.__setattr__(self, "exported_scorer_dir", self.stable_root / "scorer_training")
-        object.__setattr__(self, "exported_best_setup", self.exported_candidate_dir / "best_setup.json")
+        object.__setattr__(
+            self, "exported_best_setup", self.exported_candidate_dir / "best_setup.json"
+        )
         object.__setattr__(
             self, "exported_best_weights", self.exported_candidate_dir / "best_weights.json"
         )
@@ -1001,9 +1001,11 @@ def _execute_stage(stage: str, args: argparse.Namespace, paths: PipelinePaths) -
                 notes=notes,
             )
         elif stage == "build_production_manifest":
-            if paths.production_manifest.exists() and (
-                paths.production_root / RESOLVER_METADATA_JSONL
-            ).exists() and (paths.production_root / "audit.json").exists():
+            if (
+                paths.production_manifest.exists()
+                and (paths.production_root / RESOLVER_METADATA_JSONL).exists()
+                and (paths.production_root / "audit.json").exists()
+            ):
                 validated = _validate_stage_outputs(stage, paths)
                 return StageResult(
                     stage,
