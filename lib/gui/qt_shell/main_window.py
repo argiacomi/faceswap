@@ -30,6 +30,7 @@ from lib.gui.qt_shell.analysis_panel import AnalysisPanel
 from lib.gui.qt_shell.command_panel import CommandPanel
 from lib.gui.qt_shell.command_schema import CommandSchema
 from lib.gui.qt_shell.command_schema_service import CommandSchemaService
+from lib.gui.qt_shell.console_router import QtConsoleRouter
 from lib.gui.qt_shell.display_controller import DisplayController
 from lib.gui.qt_shell.graph_panel import GraphPanel
 from lib.gui.qt_shell.job_runner import JobRunner
@@ -79,8 +80,19 @@ class FreeSplitter(QSplitter):
         self.setCollapsible(self.count() - 1, True)
 
 
+_CONSOLE_TAG_COLORS: dict[str, str] = {
+    "stdout": "console_text",
+    "stderr": "error",
+    "info": "info",
+    "verbose": "verbose",
+    "warning": "warning",
+    "error": "error",
+    "critical": "critical",
+}
+
+
 class ConsolePane(QPlainTextEdit):
-    """Read-only console output pane."""
+    """Read-only console output pane with Tk-parity level-aware colorization."""
 
     def __init__(self, parent: QMainWindow | None = None) -> None:
         super().__init__(parent)
@@ -89,18 +101,45 @@ class ConsolePane(QPlainTextEdit):
         self.setReadOnly(True)
         self.setPlaceholderText("Generated commands and process output appear here.")
         self.setMinimumSize(0, 0)
+        self._formats: dict[str, T.Any] = {}
+        self._theme: T.Any = None
 
-    def write(self, text: str) -> None:
-        """Append raw console text."""
+    def set_theme(self, theme: T.Any) -> None:
+        """Cache theme colour lookup for tagged inserts."""
+        self._theme = theme
+        self._formats.clear()
+
+    def write(self, text: str, tag: str = "stdout") -> None:
+        """Append console text styled for the supplied tag (Tk parity)."""
+        if not text:
+            return
         cursor = self.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
-        cursor.insertText(text)
+        char_format = self._format_for(tag)
+        if char_format is None:
+            cursor.insertText(text)
+        else:
+            cursor.insertText(text, char_format)
         self.setTextCursor(cursor)
         self.ensureCursorVisible()
 
-    def write_line(self, text: str = "") -> None:
-        """Append one console line."""
-        self.write(f"{text}\n")
+    def write_line(self, text: str = "", tag: str = "stdout") -> None:
+        """Append one console line with the requested tag."""
+        self.write(f"{text}\n", tag=tag)
+
+    def _format_for(self, tag: str):  # type:ignore[no-untyped-def]
+        """Return a cached QTextCharFormat for one console tag."""
+        if tag not in _CONSOLE_TAG_COLORS or self._theme is None:
+            return None
+        cached = self._formats.get(tag)
+        if cached is not None:
+            return cached
+        from PySide6.QtGui import QColor, QTextCharFormat
+
+        char_format = QTextCharFormat()
+        char_format.setForeground(QColor(self._theme.color(_CONSOLE_TAG_COLORS[tag])))
+        self._formats[tag] = char_format
+        return char_format
 
 
 class MainWindow(QMainWindow):
@@ -126,6 +165,9 @@ class MainWindow(QMainWindow):
         self._running = False
         self._command_panel = CommandPanel(self._schema)
         self._console = ConsolePane()
+        self._console.set_theme(self._theme)
+        self._console_stdout_router = QtConsoleRouter(self._console, "stdout")
+        self._console_stderr_router = QtConsoleRouter(self._console, "stderr")
         self._progress = QProgressBar()
         self._menus: list[object] = []
         self._recent_menu: QMenu | None = None
@@ -151,6 +193,11 @@ class MainWindow(QMainWindow):
         self._console.write_line(
             "Scope: real CLI metadata rendering, command generation and QProcess jobs"
         )
+
+    @property
+    def console(self) -> ConsolePane:
+        """Return the bottom console pane (Tk-parity logger destination)."""
+        return self._console
 
     def eventFilter(self, watched: object, event: QEvent) -> bool:  # noqa:N802
         """Track command-panel user edits for dirty-state updates."""
@@ -470,8 +517,8 @@ class MainWindow(QMainWindow):
         self._command_panel.generate_requested.connect(self._generate_command)
         self._command_panel.run_requested.connect(self._run_command)
         self._command_panel.value_changed.connect(self._mark_modified_from_user_event)
-        self._runner.stdout.connect(self._console.write)
-        self._runner.stderr.connect(self._console.write)
+        self._runner.stdout.connect(self._console_stdout_router.write)
+        self._runner.stderr.connect(self._console_stderr_router.write)
         self._runner.progress.connect(self._consume_runtime_event)
         self._runner.finished.connect(self._job_finished)
 
