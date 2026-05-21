@@ -27,7 +27,8 @@ def write_scorer_policy_outputs(
     worst_sample_count: int,
 ) -> None:
     """Write the standard scorer policy report bundle."""
-    write_json(output_dir / SCORER_METRICS_JSON, report["learned_quality_v1"])
+    primary_policy = str(report.get("primary_scorer_policy") or "scorer_version")
+    write_json(output_dir / SCORER_METRICS_JSON, report[primary_policy])
     write_json(output_dir / SCORER_POLICY_REPORT_JSON, report)
     if report.get("heldout_eval"):
         write_json(output_dir / SCORER_HELDOUT_POLICY_REPORT_JSON, report)

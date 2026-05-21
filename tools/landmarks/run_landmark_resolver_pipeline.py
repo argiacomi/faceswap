@@ -1372,12 +1372,34 @@ def _copy_if_exists(source: Path, dest_dir: Path, *, name: str | None = None) ->
     return str(target)
 
 
+def _copy_scorer_with_promotion_metadata(source: Path, target: Path, *, promoted_from: str) -> str:
+    if not source.exists():
+        return ""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.loads(source.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise PipelineContractError(f"scorer artifact must be a JSON object: {source}")
+    payload["scorer_version"] = str(payload.get("scorer_version") or payload.get("version") or "")
+    if not payload["scorer_version"]:
+        payload["scorer_version"] = "continuous_regret_v1_1"
+    payload.setdefault("selection_target", "continuous_regret")
+    payload.setdefault("objective", "minimize_candidate_selection_regret")
+    payload.setdefault("training_mode", "continuous_selection_cost")
+    payload.setdefault("runtime_policy", "learned_quality_v1")
+    payload["promoted_from"] = promoted_from
+    target.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    logger.debug("Exported scorer artifact source=%s target=%s", source, target)
+    return str(target)
+
+
 def _export_artifacts(paths: PipelinePaths) -> dict[str, str]:
     exported = {
         "best_setup": _copy_if_exists(paths.best_setup, paths.exported_candidate_dir),
         "best_weights": _copy_if_exists(paths.best_weights, paths.exported_candidate_dir),
-        "runtime_resolver_scorer": _copy_if_exists(
-            paths.scorer_artifact, paths.exported_scorer_dir
+        "runtime_resolver_scorer": _copy_scorer_with_promotion_metadata(
+            paths.scorer_artifact,
+            paths.exported_scorer_artifact,
+            promoted_from=str(paths.scorer_artifact.relative_to(paths.output_root)),
         ),
         "scorer_policy_report": _copy_if_exists(paths.scorer_report, paths.artifacts_dir),
         "gt_hard_resolver_metadata": _copy_if_exists(
@@ -1385,6 +1407,14 @@ def _export_artifacts(paths: PipelinePaths) -> dict[str, str]:
         ),
     }
     manifest = {key: value for key, value in exported.items() if value}
+    if exported["runtime_resolver_scorer"]:
+        scorer_payload = _read_json(paths.exported_scorer_artifact)
+        manifest["runtime_resolver_scorer_source"] = str(paths.scorer_artifact)
+        manifest["runtime_resolver_scorer_version"] = str(
+            scorer_payload.get("scorer_version")
+            or scorer_payload.get("version")
+            or "continuous_regret_v1_1"
+        )
     write_json(paths.artifacts_dir / "artifacts_manifest.json", manifest)
     return manifest
 
@@ -1956,6 +1986,12 @@ def _summary_payload(
     report = _read_json(paths.scorer_report)
     updates = _config_updates(args, paths)
     promotion_status = str(report.get("promotion_status") or report.get("status") or "")
+    promoted_scorer_version = str(report.get("promoted_scorer_version") or "")
+    if not promoted_scorer_version:
+        promoted_scorer_version = "continuous_regret_v1_1"
+    promoted_scorer_target = str(report.get("promoted_scorer_target") or "")
+    if not promoted_scorer_target:
+        promoted_scorer_target = TARGET_SELECTION_COST
     return {
         "status": "fail"
         if any(row.status == "failed" for row in results)
@@ -1963,7 +1999,10 @@ def _summary_payload(
         "promotion_scope": args.promotion_scope,
         "promotion_status": promotion_status,
         "failed_gates": report.get("failed_gates", []),
+        "selected_runtime_policy": updates["resolver_policy"],
         "selected_production_policy": updates["resolver_policy"],
+        "promoted_scorer_version": promoted_scorer_version,
+        "promoted_scorer_target": promoted_scorer_target,
         "fallback_counts": _fallback_counts(report),
         "best_weights_path": str(paths.exported_best_weights),
         "scorer_path": str(paths.exported_scorer_artifact),
@@ -2026,7 +2065,9 @@ def _write_summary_md(path: Path, summary: dict[str, T.Any]) -> None:
         f"Status: **{summary['status']}**",
         f"Promotion status: `{summary.get('promotion_status', '')}`",
         f"Promotion scope: `{summary['promotion_scope']}`",
-        f"Selected production policy: `{summary['selected_production_policy']}`",
+        f"Selected runtime policy: `{summary['selected_runtime_policy']}`",
+        f"Promoted scorer version: `{summary['promoted_scorer_version']}`",
+        f"Promoted scorer target: `{summary['promoted_scorer_target']}`",
         f"Best weights: `{summary['best_weights_path']}`",
         f"Scorer: `{summary['scorer_path']}`",
         f"Eval report: `{summary['eval_report_path']}`",

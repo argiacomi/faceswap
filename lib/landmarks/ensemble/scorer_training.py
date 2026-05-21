@@ -393,7 +393,10 @@ def train_runtime_resolver_scorer(
         coefficients, intercept = fit_linear_regression(x, y, l2=l2)
         model_type = MODEL_TYPE_LINEAR_REGRESSION
         score_semantics = SCORE_SEMANTICS_PREDICTED_COST
-        version = "learned_quality_v1.1"
+        version = "continuous_regret_v1_1"
+        selection_target = "continuous_regret"
+        objective = "minimize_candidate_selection_regret"
+        training_mode = "continuous_selection_cost"
     else:
         coefficients, intercept = fit_logistic(
             x,
@@ -405,6 +408,9 @@ def train_runtime_resolver_scorer(
         model_type = MODEL_TYPE_LOGISTIC_REGRESSION
         score_semantics = SCORE_SEMANTICS_PREDICTED_RISK
         version = "learned_quality_v1"
+        selection_target = "binary_failure_or_high_gap"
+        objective = "minimize_candidate_failure_risk"
+        training_mode = "binary_failure_or_high_gap"
     scorer = RuntimeResolverScorer(
         features=features,
         coefficients=tuple(float(item) for item in coefficients),
@@ -416,6 +422,10 @@ def train_runtime_resolver_scorer(
         failure_threshold=failure_threshold,
         calibration={"type": "none", "params": {}},
         version=version,
+        selection_target=selection_target,
+        objective=objective,
+        training_mode=training_mode,
+        runtime_policy="learned_quality_v1",
     )
     scorer_path = write_runtime_resolver_scorer(scorer, output_dir / SCORER_ARTIFACT)
     rows_path = write_tagged_rows_csv(train_tagged_rows, output_dir / TRAINING_ROWS_CSV)

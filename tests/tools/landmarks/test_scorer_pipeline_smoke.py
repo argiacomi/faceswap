@@ -248,7 +248,8 @@ def test_scorer_pipeline_smoke_build_train_evaluate_and_report(tmp_path: Path) -
     assert payload["promotion_scope"] == "production"
     assert payload["promotion_status"] in {"pass", "fail"}
     assert isinstance(payload["failed_gates"], list)
-    assert "learned_quality_v1" in payload
+    assert payload["primary_scorer_policy"] in payload
+    assert payload["runtime_policy"] == "learned_quality_v1"
     assert "production_only_policy_metrics" in payload
     assert payload["production_only_policy_metrics"]["sample_count"] == 1
     assert "gt_hard_all_policy_metrics" in payload

@@ -30,6 +30,7 @@ from tools.landmarks.run_landmark_resolver_pipeline import (
     _command_scorer_training,
     _commands_dataset_build,
     _contract_for,
+    _export_artifacts,
     _freeze_metadata,
     _promotion_check,
     _stage_complete,
@@ -161,7 +162,10 @@ def test_pipeline_runner_dry_run_writes_summaries_contracts_and_progress(tmp_pat
     assert summary["best_weights_path"].endswith("best_weights.json")
     assert summary["scorer_path"].endswith("runtime_resolver_scorer.json")
     assert summary["eval_report_path"].endswith("scorer_policy_report.json")
+    assert summary["selected_runtime_policy"] == "learned_quality_v1"
     assert summary["selected_production_policy"] == "learned_quality_v1"
+    assert summary["promoted_scorer_version"] == "continuous_regret_v1_1"
+    assert summary["promoted_scorer_target"] == "selection_cost"
     assert "resolver_scorer_path" in summary["config_fields_changed"]
     assert "weights_path" in summary["config_fields_changed"]
     progress_log = Path(summary["progress_log_path"])
@@ -1114,6 +1118,42 @@ def test_resume_skips_completed_stages_records_validated_outputs_and_progress(
         "artifact_export",
         "config_update",
     ]
+
+
+def test_artifact_export_records_promoted_scorer_provenance(tmp_path: Path) -> None:
+    args = _args(tmp_path)
+    paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
+    _touch_pipeline_outputs(paths)
+    paths.scorer_artifact.write_text(
+        json.dumps(
+            {
+                "artifact_schema_version": 1,
+                "model_type": "linear_regression",
+                "target": "selection_cost",
+                "score_semantics": "predicted_cost",
+                "higher_is_better": False,
+                "features": ["candidate_name=hrnet"],
+                "coefficients": [1.0],
+                "intercept": 0.0,
+                "version": "continuous_regret_v1_1",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    manifest = _export_artifacts(paths)
+    scorer_payload = json.loads(paths.exported_scorer_artifact.read_text(encoding="utf-8"))
+
+    assert manifest["runtime_resolver_scorer"] == str(paths.exported_scorer_artifact)
+    assert manifest["runtime_resolver_scorer_source"] == str(paths.scorer_artifact)
+    assert manifest["runtime_resolver_scorer_version"] == "continuous_regret_v1_1"
+    assert scorer_payload["scorer_version"] == "continuous_regret_v1_1"
+    assert scorer_payload["model_type"] == "linear_regression"
+    assert scorer_payload["target"] == "selection_cost"
+    assert scorer_payload["objective"] == "minimize_candidate_selection_regret"
+    assert scorer_payload["training_mode"] == "continuous_selection_cost"
+    assert scorer_payload["runtime_policy"] == "learned_quality_v1"
 
 
 def test_resume_write_config_does_not_skip_config_update(tmp_path: Path) -> None:

@@ -138,6 +138,11 @@ class RuntimeResolverScorer:
     calibration: dict[str, T.Any] | None = None
     source_path: str = ""
     version: str = "learned_quality_v1"
+    selection_target: str = "binary_failure_or_high_gap"
+    promoted_from: str = ""
+    objective: str = "minimize_candidate_failure_risk"
+    training_mode: str = "binary_failure_or_high_gap"
+    runtime_policy: str = "learned_quality_v1"
 
     def __post_init__(self) -> None:
         """Validate the score direction contract at construction time."""
@@ -205,6 +210,11 @@ class RuntimeResolverScorer:
             version=str(
                 payload.get("version", payload.get("scorer_version", "learned_quality_v1"))
             ),
+            selection_target=str(payload.get("selection_target", "binary_failure_or_high_gap")),
+            promoted_from=str(payload.get("promoted_from", "")),
+            objective=str(payload.get("objective", "minimize_candidate_failure_risk")),
+            training_mode=str(payload.get("training_mode", "binary_failure_or_high_gap")),
+            runtime_policy=str(payload.get("runtime_policy", "learned_quality_v1")),
         )
 
     def to_payload(self) -> dict[str, T.Any]:
@@ -221,6 +231,12 @@ class RuntimeResolverScorer:
             "intercept": self.intercept,
             "calibration": self.calibration or {"type": "none", "params": {}},
             "version": self.version,
+            "scorer_version": self.version,
+            "selection_target": self.selection_target,
+            "promoted_from": self.promoted_from,
+            "objective": self.objective,
+            "training_mode": self.training_mode,
+            "runtime_policy": self.runtime_policy,
         }
 
     def score_feature_map(self, features: T.Mapping[str, float]) -> float:

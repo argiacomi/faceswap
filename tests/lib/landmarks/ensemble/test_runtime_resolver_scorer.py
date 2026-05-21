@@ -313,7 +313,12 @@ def test_train_runtime_resolver_scorer_supports_selection_cost_regressor(
     assert artifact["model_type"] == MODEL_TYPE_LINEAR_REGRESSION
     assert artifact["score_semantics"] == SCORE_SEMANTICS_PREDICTED_COST
     assert artifact["higher_is_better"] is False
-    assert artifact["version"] == "learned_quality_v1.1"
+    assert artifact["version"] == "continuous_regret_v1_1"
+    assert artifact["scorer_version"] == "continuous_regret_v1_1"
+    assert artifact["selection_target"] == "continuous_regret"
+    assert artifact["objective"] == "minimize_candidate_selection_regret"
+    assert artifact["training_mode"] == "continuous_selection_cost"
+    assert artifact["runtime_policy"] == "learned_quality_v1"
     assert metrics["score_semantics"] == SCORE_SEMANTICS_PREDICTED_COST
     assert metrics["higher_is_better"] is False
     assert metrics["target_stats"]["target"] == TARGET_SELECTION_COST
@@ -378,11 +383,15 @@ def test_evaluate_runtime_resolver_scorer_reports_policy(tmp_path: Path) -> None
     assert report["status"] == "fail"
     assert "scorer_mean_nme_not_better_than_static_downweight" in report["failed_gates"]
     assert report["heldout_eval"] is False
-    assert report["learned_quality_v1"]["pick_counts"] == {"hrnet": 2}
+    assert report["runtime_policy"] == "learned_quality_v1"
+    assert report["promoted_scorer_label"] == "current_binary_logistic_scorer"
+    assert "learned_quality_v1" not in report
+    assert report["current_binary_logistic_scorer"]["pick_counts"] == {"hrnet": 2}
     assert report["production_only_policy_metrics"]["sample_count"] == 2
-    assert report["production_only_policy_metrics"]["learned_quality_v1"]["pick_counts"] == {
-        "hrnet": 2
-    }
+    assert "learned_quality_v1" not in report["production_only_policy_metrics"]
+    assert report["production_only_policy_metrics"]["current_binary_logistic_scorer"][
+        "pick_counts"
+    ] == {"hrnet": 2}
     assert report["gt_hard_only_policy_metrics"]["sample_count"] == 0
     assert report["best_single"]["candidate"] == "hrnet"
     assert (tmp_path / "eval" / "scorer_policy_report.csv").is_file()
@@ -410,7 +419,8 @@ def test_evaluate_runtime_resolver_scorer_compares_binary_and_continuous(
             target=TARGET_SELECTION_COST,
             score_semantics=SCORE_SEMANTICS_PREDICTED_COST,
             higher_is_better=False,
-            version="learned_quality_v1.1",
+            version="continuous_regret_v1_1",
+            selection_target="continuous_regret",
         ),
         tmp_path / "continuous_runtime_resolver_scorer.json",
     )
@@ -427,17 +437,22 @@ def test_evaluate_runtime_resolver_scorer_compares_binary_and_continuous(
         output_dir=tmp_path / "eval_compare",
     )
 
-    assert report["primary_scorer_policy"] == "continuous_regret_v1_1"
+    assert report["primary_scorer_policy"] == "scorer_version"
+    assert report["runtime_policy"] == "learned_quality_v1"
+    assert report["promoted_scorer_version"] == "continuous_regret_v1_1"
+    assert report["promoted_scorer_target"] == TARGET_SELECTION_COST
+    assert report["promoted_scorer_label"] == "scorer_version"
     assert report["scorer_target"] == TARGET_SELECTION_COST
     assert report["scorer_model_type"] == MODEL_TYPE_LINEAR_REGRESSION
     assert report["scorer_comparison"]["uses_same_contexts"] is True
     assert report["scorer_comparison"]["uses_same_candidates"] is True
     assert report["scorer_comparison"]["context_count"] == report["sample_count"]
-    assert report["continuous_regret_v1_1"]["pick_counts"] == {"hrnet": 2}
+    assert report["scorer_version"]["pick_counts"] == {"hrnet": 2}
+    assert "learned_quality_v1" not in report
     assert report["current_binary_logistic_scorer"]["pick_counts"] == {"hrnet": 2}
     assert "static_weighted_downweight" in report
     assert "oracle" in report
-    assert report["production_only_policy_metrics"]["continuous_regret_v1_1"]["pick_counts"] == {
+    assert report["production_only_policy_metrics"]["scorer_version"]["pick_counts"] == {
         "hrnet": 2
     }
     assert report["production_only_policy_metrics"]["current_binary_logistic_scorer"][
@@ -512,7 +527,7 @@ def test_evaluate_runtime_resolver_scorer_blocks_safe_fallback_without_score_del
         output_dir=tmp_path / "eval_safe",
     )
 
-    assert report["learned_quality_v1"]["pick_counts"] == {"static_weighted": 2}
+    assert report["current_binary_logistic_scorer"]["pick_counts"] == {"static_weighted": 2}
     assert report["safe_fallback_count"] == 0
     assert report["safe_fallback_min_delta"] == 0.05
     assert report["fallback_impact"]["count_with_rejected_candidate"] == 0

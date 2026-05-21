@@ -41,6 +41,8 @@ DEFAULT_RISK_FLOOR_FOR_SAFE_FALLBACK = 0.50
 DEFAULT_SAFE_FALLBACK_MIN_DELTA = 0.05
 DEFAULT_FALLBACK_CATASTROPHIC_WORSE_NME = 0.02
 PROMOTION_SCOPES = ("universal", "production")
+SCORER_VERSION_REPORT_LABEL = "scorer_version"
+RUNTIME_POLICY_REPORT_LABEL = "runtime_policy_learned_quality"
 HARD_SLICE_POLICY_BUCKETS = {
     "extreme_roll",
     "rolled_large_yaw_left",
@@ -316,6 +318,7 @@ def policy_metric_bundle(
     contexts: T.Sequence[SampleCandidateContext],
     *,
     candidates: T.Sequence[str],
+    scorer_policy_name: str,
     scorer_choices: T.Mapping[str, str],
     current_choices: T.Mapping[str, str],
     oracle_choices: T.Mapping[str, str],
@@ -325,22 +328,26 @@ def policy_metric_bundle(
     if not contexts:
         payload = {
             "sample_count": 0,
-            "learned_quality_v1": policy_summary((), {}),
-            "current_bucket_aware_veto": policy_summary((), {}),
+            scorer_policy_name: policy_summary((), {}),
+            RUNTIME_POLICY_REPORT_LABEL: policy_summary((), {}),
             "oracle": policy_summary((), {}),
         }
         for policy_name in extra_scorer_choices or {}:
+            if policy_name == scorer_policy_name:
+                continue
             payload[policy_name] = policy_summary((), {})
         return payload
     payload: dict[str, T.Any] = {
         "sample_count": len(contexts),
-        "learned_quality_v1": policy_summary(contexts, choice_subset(contexts, scorer_choices)),
-        "current_bucket_aware_veto": policy_summary(
+        scorer_policy_name: policy_summary(contexts, choice_subset(contexts, scorer_choices)),
+        RUNTIME_POLICY_REPORT_LABEL: policy_summary(
             contexts, choice_subset(contexts, current_choices)
         ),
         "oracle": policy_summary(contexts, choice_subset(contexts, oracle_choices)),
     }
     for policy_name, policy_choices in (extra_scorer_choices or {}).items():
+        if policy_name == scorer_policy_name:
+            continue
         payload[policy_name] = policy_summary(
             contexts,
             choice_subset(contexts, policy_choices),
@@ -386,7 +393,7 @@ def scorer_policy_key(scorer: RuntimeResolverScorer) -> str:
         scorer.model_type == MODEL_TYPE_LINEAR_REGRESSION
         or scorer.target != TARGET_CANDIDATE_FAILURE_OR_HIGH_GAP
     ):
-        return "continuous_regret_v1_1"
+        return SCORER_VERSION_REPORT_LABEL
     return "current_binary_logistic_scorer"
 
 
@@ -614,6 +621,7 @@ def evaluate_runtime_resolver_scorer(
     production_only_policy_metrics = policy_metric_bundle(
         production_contexts,
         candidates=candidates,
+        scorer_policy_name=primary_scorer_policy,
         scorer_choices=scorer_choices,
         current_choices=current_choices,
         oracle_choices=oracle_choices,
@@ -622,6 +630,7 @@ def evaluate_runtime_resolver_scorer(
     gt_hard_all_policy_metrics = policy_metric_bundle(
         gt_hard_all_contexts,
         candidates=candidates,
+        scorer_policy_name=primary_scorer_policy,
         scorer_choices=scorer_choices,
         current_choices=current_choices,
         oracle_choices=oracle_choices,
@@ -630,6 +639,7 @@ def evaluate_runtime_resolver_scorer(
     gt_roll_hard_policy_metrics = policy_metric_bundle(
         gt_roll_hard_contexts,
         candidates=candidates,
+        scorer_policy_name=primary_scorer_policy,
         scorer_choices=scorer_choices,
         current_choices=current_choices,
         oracle_choices=oracle_choices,
@@ -648,7 +658,7 @@ def evaluate_runtime_resolver_scorer(
     ):
         combined_failed_gates.append("scorer_failure_rate_regresses_vs_static_downweight")
     if static_name and production_contexts:
-        production_scorer = production_only_policy_metrics["learned_quality_v1"]
+        production_scorer = production_only_policy_metrics[primary_scorer_policy]
         production_static = production_only_policy_metrics["static_weighted_downweight"]
         production_hrnet = production_only_policy_metrics.get("hrnet")
         if production_scorer["mean_nme"] >= production_static["mean_nme"]:
@@ -673,7 +683,7 @@ def evaluate_runtime_resolver_scorer(
         ):
             production_failed_gates.append("production_scorer_failure_rate_regresses_vs_hrnet")
     if static_name and gt_hard_all_contexts:
-        gt_hard_scorer = gt_hard_all_policy_metrics["learned_quality_v1"]
+        gt_hard_scorer = gt_hard_all_policy_metrics[primary_scorer_policy]
         gt_hard_static = gt_hard_all_policy_metrics["static_weighted_downweight"]
         if gt_hard_scorer["failure_rate"] > gt_hard_static["failure_rate"] + epsilon_failure_rate:
             gt_hard_failed_gates.append(
@@ -723,12 +733,14 @@ def evaluate_runtime_resolver_scorer(
         "primary_scorer_policy": primary_scorer_policy,
         "scorer_model_type": scorer.model_type,
         "scorer_target": scorer.target,
-        "scorer_version": scorer.version,
+        "promoted_scorer_version": scorer.version,
+        "promoted_scorer_target": scorer.target,
+        "promoted_scorer_label": primary_scorer_policy,
+        "runtime_policy": "learned_quality_v1",
         "best_single": {"candidate": best_single_name, **best_single_summary},
         "static_weighted_downweight": {"candidate": static_name, **static},
-        "learned_quality_v1": scorer_summary,
         primary_scorer_policy: scorer_summary,
-        "current_bucket_aware_veto": current_summary,
+        RUNTIME_POLICY_REPORT_LABEL: current_summary,
         "oracle": oracle_summary,
         "fallback_count": fallback_count,
         "safe_fallback_count": safe_fallback_count,
