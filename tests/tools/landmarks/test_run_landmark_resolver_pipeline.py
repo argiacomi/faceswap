@@ -15,6 +15,8 @@ from tools.landmarks.run_landmark_resolver_pipeline import (
     PipelineContractError,
     PipelinePaths,
     _apply_config,
+    _command_scorer_eval,
+    _command_scorer_training,
     _contract_for,
     _freeze_metadata,
     _promotion_check,
@@ -54,6 +56,7 @@ def _args(tmp_path: Path, **overrides: object) -> argparse.Namespace:
         "split_report": 0.2,
         "split_seed": 1337,
         "scorer_target": "selection_cost",
+        "allow_image_backfill": False,
         "dataset_build_arg": [],
         "cache_prediction_arg": [],
         "production_manifest_arg": [],
@@ -153,6 +156,36 @@ def test_stage_contract_declares_required_files(tmp_path: Path) -> None:
     assert str(paths.continuous_scorer_eval_rows) in contract.outputs
 
 
+def test_scorer_train_and_eval_commands_allow_image_backfill_when_enabled(
+    tmp_path: Path,
+) -> None:
+    args = _args(tmp_path, allow_image_backfill=True)
+    paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
+
+    train_command = _command_scorer_training(
+        args, paths, output_dir=paths.continuous_scorer_train_dir, target=args.scorer_target
+    )
+    eval_command = _command_scorer_eval(args, paths)
+
+    assert "--allow-image-backfill" in train_command
+    assert "--allow-image-backfill" in eval_command
+
+
+def test_scorer_train_and_eval_commands_do_not_allow_image_backfill_by_default(
+    tmp_path: Path,
+) -> None:
+    args = _args(tmp_path)
+    paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
+
+    train_command = _command_scorer_training(
+        args, paths, output_dir=paths.continuous_scorer_train_dir, target=args.scorer_target
+    )
+    eval_command = _command_scorer_eval(args, paths)
+
+    assert "--allow-image-backfill" not in train_command
+    assert "--allow-image-backfill" not in eval_command
+
+
 def test_stage_output_validation_reports_missing_outputs(tmp_path: Path) -> None:
     args = _args(tmp_path)
     paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
@@ -244,14 +277,19 @@ def test_config_preview_and_write_preserves_unmanaged_config_entries(tmp_path: P
     args.config_path.write_text(
         "\n".join(
             [
+                "# global comment survives",
                 "[global]",
                 "aligner_min_scale = 0.03",
                 "",
                 "[align.ensemble]",
+                "# align ensemble intro comment survives",
                 "stale_experimental = true",
                 "resolver_policy = roll_aware_veto",
+                "# align ensemble key comment survives",
+                "; align ensemble footer comment survives",
                 "",
                 "[align.fan]",
+                "# align fan comment survives",
                 "batch_size = 16",
                 "",
                 "[detect.scrfd]",
@@ -278,6 +316,13 @@ def test_config_preview_and_write_preserves_unmanaged_config_entries(tmp_path: P
         paths.exported_scorer_artifact
     )
     assert parser.get("align.ensemble", "weights_path") == str(paths.exported_best_weights)
+
+    config_text = args.config_path.read_text(encoding="utf-8")
+    assert "# global comment survives" in config_text
+    assert "# align ensemble intro comment survives" in config_text
+    assert "# align ensemble key comment survives" in config_text
+    assert "; align ensemble footer comment survives" in config_text
+    assert "# align fan comment survives" in config_text
 
 
 def test_config_write_requires_artifacts_and_passing_promotion(tmp_path: Path) -> None:
@@ -329,3 +374,38 @@ def test_resume_skips_completed_stages_records_validated_outputs_and_progress(
         "artifact_export",
         "config_update",
     ]
+
+
+def test_resume_write_config_does_not_skip_config_update(tmp_path: Path) -> None:
+    args = _args(
+        tmp_path,
+        resume=True,
+        write_config=True,
+        start_at="config_update",
+        stop_after="config_update",
+    )
+    paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
+    _touch_pipeline_outputs(paths)
+    (paths.output_root / "config_update_preview.json").write_text("{}\n", encoding="utf-8")
+    (paths.output_root / "config_update_patch.ini").write_text(
+        "[align.ensemble]\n", encoding="utf-8"
+    )
+    args.config_path.write_text(
+        "\n".join(
+            [
+                "# config comment survives",
+                "[align.ensemble]",
+                "resolver_policy = stale_policy",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    summary = run_pipeline(args)
+
+    assert summary["stages"][0]["name"] == "config_update"
+    assert summary["stages"][0]["status"] == "ok"
+    config_text = args.config_path.read_text(encoding="utf-8")
+    assert "resolver_policy = learned_quality_v1" in config_text
+    assert "# config comment survives" in config_text

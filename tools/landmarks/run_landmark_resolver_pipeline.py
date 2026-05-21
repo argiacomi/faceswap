@@ -4,9 +4,9 @@
 from __future__ import annotations
 
 import argparse
-import configparser
 import json
 import logging
+import re
 import shutil
 import subprocess
 import sys
@@ -404,65 +404,63 @@ def _command_scorer_training(
     output_dir: Path,
     target: str,
 ) -> list[str]:
-    return _append_extra(
-        [
-            args.python_executable,
-            _script("train_runtime_resolver_scorer.py"),
-            "--gt-manifest",
-            str(paths.hard_manifest),
-            "--gt-cache-dir",
-            str(paths.run_cache),
-            "--production-manifest",
-            str(paths.production_manifest),
-            "--production-cache-dir",
-            str(paths.production_cache),
-            "--weights",
-            str(paths.best_weights),
-            "--candidates",
-            args.candidates,
-            "--output-dir",
-            str(output_dir),
-            "--target",
-            target,
-            "--gt-hard-resolver-metadata",
-            str(paths.frozen_gt_metadata),
-        ],
-        args.scorer_train_arg,
-    )
+    argv = [
+        args.python_executable,
+        _script("train_runtime_resolver_scorer.py"),
+        "--gt-manifest",
+        str(paths.hard_manifest),
+        "--gt-cache-dir",
+        str(paths.run_cache),
+        "--production-manifest",
+        str(paths.production_manifest),
+        "--production-cache-dir",
+        str(paths.production_cache),
+        "--weights",
+        str(paths.best_weights),
+        "--candidates",
+        args.candidates,
+        "--output-dir",
+        str(output_dir),
+        "--target",
+        target,
+    ]
+    if args.allow_image_backfill:
+        argv.append("--allow-image-backfill")
+    argv.extend(["--gt-hard-resolver-metadata", str(paths.frozen_gt_metadata)])
+    return _append_extra(argv, args.scorer_train_arg)
 
 
 def _command_scorer_eval(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
-    return _append_extra(
-        [
-            args.python_executable,
-            _script("evaluate_runtime_resolver_scorer.py"),
-            "--gt-manifest",
-            str(paths.hard_manifest),
-            "--gt-cache-dir",
-            str(paths.run_cache),
-            "--production-manifest",
-            str(paths.production_manifest),
-            "--production-cache-dir",
-            str(paths.production_cache),
-            "--weights",
-            str(paths.best_weights),
-            "--scorer",
-            str(paths.scorer_artifact),
-            "--binary-scorer",
-            str(paths.binary_scorer_artifact),
-            "--eval-split",
-            str(paths.continuous_scorer_eval_rows),
-            "--candidates",
-            args.candidates,
-            "--output-dir",
-            str(paths.scorer_eval_dir),
-            "--promotion-scope",
-            args.promotion_scope,
-            "--gt-hard-resolver-metadata",
-            str(paths.frozen_gt_metadata),
-        ],
-        args.scorer_eval_arg,
-    )
+    argv = [
+        args.python_executable,
+        _script("evaluate_runtime_resolver_scorer.py"),
+        "--gt-manifest",
+        str(paths.hard_manifest),
+        "--gt-cache-dir",
+        str(paths.run_cache),
+        "--production-manifest",
+        str(paths.production_manifest),
+        "--production-cache-dir",
+        str(paths.production_cache),
+        "--weights",
+        str(paths.best_weights),
+        "--scorer",
+        str(paths.scorer_artifact),
+        "--binary-scorer",
+        str(paths.binary_scorer_artifact),
+        "--eval-split",
+        str(paths.continuous_scorer_eval_rows),
+        "--candidates",
+        args.candidates,
+        "--output-dir",
+        str(paths.scorer_eval_dir),
+        "--promotion-scope",
+        args.promotion_scope,
+    ]
+    if args.allow_image_backfill:
+        argv.append("--allow-image-backfill")
+    argv.extend(["--gt-hard-resolver-metadata", str(paths.frozen_gt_metadata)])
+    return _append_extra(argv, args.scorer_eval_arg)
 
 
 def _outputs_for(stage: str, paths: PipelinePaths) -> list[Path]:
@@ -894,6 +892,108 @@ def _write_config_patch_files(
     return patch
 
 
+def _line_ending_for(text: str) -> str:
+    return "\r\n" if text.count("\r\n") > text.count("\n") - text.count("\r\n") else "\n"
+
+
+def _split_line_ending(line: str) -> tuple[str, str]:
+    if line.endswith("\r\n"):
+        return line[:-2], "\r\n"
+    if line.endswith("\n"):
+        return line[:-1], "\n"
+    if line.endswith("\r"):
+        return line[:-1], "\r"
+    return line, ""
+
+
+def _section_name(line: str) -> str | None:
+    body, _newline = _split_line_ending(line)
+    match = re.match(r"^\s*\[([^\]]+)\]\s*(?:[;#].*)?$", body)
+    return match.group(1).strip() if match else None
+
+
+def _split_inline_comment(value: str) -> tuple[str, str]:
+    for index, char in enumerate(value):
+        if char in {"#", ";"} and (index == 0 or value[index - 1].isspace()):
+            return value[:index], value[index:]
+    return value, ""
+
+
+def _patch_option_line(line: str, updates: T.Mapping[str, str]) -> tuple[str, str | None]:
+    body, newline = _split_line_ending(line)
+    stripped = body.lstrip()
+    if not stripped or stripped[0] in {"#", ";", "["}:
+        return line, None
+    match = re.match(
+        r"^(?P<indent>\s*)(?P<key>[^:=\s][^:=]*?)(?P<spacing>\s*(?:=|:)\s*)(?P<value>.*)$",
+        body,
+    )
+    if not match:
+        return line, None
+    key = match.group("key").strip()
+    if key not in updates:
+        return line, None
+    value_prefix, comment = _split_inline_comment(match.group("value"))
+    trailing_space = re.search(r"\s*$", value_prefix)
+    spacer = trailing_space.group(0) if trailing_space else ""
+    patched = (
+        f"{match.group('indent')}{match.group('key')}{match.group('spacing')}"
+        f"{updates[key]}{spacer}{comment}{newline}"
+    )
+    return patched, key
+
+
+def _patch_config_section_text(text: str, section: str, updates: T.Mapping[str, str]) -> str:
+    newline = _line_ending_for(text)
+    lines = text.splitlines(keepends=True)
+    section_start: int | None = None
+    for index, line in enumerate(lines):
+        if _section_name(line) == section:
+            section_start = index
+            break
+
+    new_update_lines = [f"{key} = {updates[key]}{newline}" for key in sorted(updates)]
+    if section_start is None:
+        prefix = text
+        if prefix and not prefix.endswith(("\n", "\r")):
+            prefix += newline
+        if prefix and not prefix.endswith(f"{newline}{newline}"):
+            prefix += newline
+        return prefix + f"[{section}]{newline}" + "".join(new_update_lines)
+
+    section_end = len(lines)
+    for index in range(section_start + 1, len(lines)):
+        if _section_name(lines[index]) is not None:
+            section_end = index
+            break
+
+    seen: set[str] = set()
+    for index in range(section_start + 1, section_end):
+        patched, key = _patch_option_line(lines[index], updates)
+        lines[index] = patched
+        if key is not None:
+            seen.add(key)
+
+    missing = [key for key in sorted(updates) if key not in seen]
+    if missing:
+        insert_at = section_end
+        while insert_at > section_start + 1 and not lines[insert_at - 1].strip():
+            insert_at -= 1
+        if insert_at > 0 and not lines[insert_at - 1].endswith(("\n", "\r")):
+            lines[insert_at - 1] += newline
+        lines[insert_at:insert_at] = [f"{key} = {updates[key]}{newline}" for key in missing]
+
+    return "".join(lines)
+
+
+def _write_config_updates_in_place(
+    config_path: Path, section: str, updates: T.Mapping[str, str]
+) -> None:
+    original = config_path.read_text(encoding="utf-8")
+    patched = _patch_config_section_text(original, section, updates)
+    config_path.write_text(patched, encoding="utf-8")
+
+
 def _apply_config(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
     updates = _config_updates(args, paths)
     _validate_config_artifacts(paths)
@@ -903,30 +1003,22 @@ def _apply_config(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
     _promotion_check(paths, promotion_scope=args.promotion_scope)
     config_path = Path(args.config_path)
     _require(config_path, "config file for --write-config")
-
-    parser = configparser.ConfigParser(allow_no_value=True)
-    parser.optionxform = str
-    parser.read(config_path, encoding="utf-8")
-
-    if not parser.has_section(args.config_section):
-        parser.add_section(args.config_section)
-
-    for key, value in updates.items():
-        parser.set(args.config_section, key, value)
-
-    with config_path.open("w", encoding="utf-8") as handle:
-        parser.write(handle)
+    _write_config_updates_in_place(config_path, args.config_section, updates)
 
     return [
         f"updated {config_path} [{args.config_section}] with finalized ensemble settings "
-        "and preserved unmanaged config entries"
+        "and preserved unmanaged config entries, comments, and formatting"
     ]
 
 
 def _execute_stage(stage: str, args: argparse.Namespace, paths: PipelinePaths) -> StageResult:
     contract = _contract_for(stage, args, paths)
     outputs = contract.outputs
-    if args.resume and _stage_complete(stage, paths):
+    if (
+        args.resume
+        and _stage_complete(stage, paths)
+        and not (stage == "config_update" and args.write_config)
+    ):
         validated = _validate_stage_outputs(stage, paths)
         return StageResult(
             stage,
@@ -1363,6 +1455,11 @@ def _parser() -> argparse.ArgumentParser:
         "--scorer-target",
         choices=SCORER_TARGETS,
         default=TARGET_SELECTION_COST,
+    )
+    parser.add_argument(
+        "--allow-image-backfill",
+        action="store_true",
+        help="Allow scorer train/eval CLIs to backfill image paths from manifests when metadata is incomplete.",
     )
     parser.add_argument("--dataset-build-arg", action="append", default=[])
     parser.add_argument("--cache-prediction-arg", action="append", default=[])
