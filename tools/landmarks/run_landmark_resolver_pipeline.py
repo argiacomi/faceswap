@@ -58,6 +58,7 @@ STAGES: tuple[str, ...] = (
     "build_production_prediction_cache",
     "candidate_search",
     "hard_alignment_validation",
+    "build_gt_hard_resolver_metadata",
     "freeze_resolver_metadata",
     "binary_scorer_training",
     "continuous_scorer_training",
@@ -416,6 +417,28 @@ def _command_hard_validation(args: argparse.Namespace, paths: PipelinePaths) -> 
     )
 
 
+def _command_gt_hard_resolver_metadata(
+    args: argparse.Namespace, paths: PipelinePaths
+) -> list[str]:
+    argv = [
+        args.python_executable,
+        _script("build_runtime_resolver_metadata.py"),
+        "--manifest",
+        str(paths.hard_manifest),
+        "--cache-dir",
+        str(paths.run_cache),
+        "--weights",
+        str(paths.best_weights),
+        "--candidates",
+        args.candidates,
+        "--output",
+        str(paths.frozen_gt_metadata),
+    ]
+    if args.allow_image_backfill:
+        argv.append("--allow-image-backfill")
+    return _append_extra(argv, args.gt_hard_resolver_metadata_arg)
+
+
 def _command_scorer_training(
     args: argparse.Namespace,
     paths: PipelinePaths,
@@ -502,6 +525,7 @@ def _outputs_for(stage: str, paths: PipelinePaths) -> list[Path]:
         "build_production_prediction_cache": [paths.production_cache],
         "candidate_search": [paths.best_setup, paths.best_weights],
         "hard_alignment_validation": [paths.hard_manifest],
+        "build_gt_hard_resolver_metadata": [paths.frozen_gt_metadata],
         "freeze_resolver_metadata": [paths.frozen_gt_metadata],
         "binary_scorer_training": [paths.binary_scorer_artifact],
         "continuous_scorer_training": [paths.scorer_artifact, paths.continuous_scorer_eval_rows],
@@ -547,12 +571,23 @@ def _required_inputs_for(stage: str, args: argparse.Namespace, paths: PipelinePa
             paths.run_cache,
             paths.best_weights if paths.best_weights.exists() else paths.run_static_weights,
         ],
+        "build_gt_hard_resolver_metadata": []
+        if paths.frozen_gt_metadata.exists()
+        else (
+            [args.gt_hard_resolver_metadata]
+            if args.gt_hard_resolver_metadata
+            else (
+                [paths.hard_manifest, paths.run_cache, paths.best_weights]
+                if args.generate_gt_hard_resolver_metadata
+                else []
+            )
+        ),
         "freeze_resolver_metadata": []
         if paths.frozen_gt_metadata.exists()
         else (
             [args.gt_hard_resolver_metadata]
             if args.gt_hard_resolver_metadata
-            else ([paths.hard_manifest] if args.generate_gt_hard_resolver_metadata else [])
+            else [paths.frozen_gt_metadata]
         ),
         "binary_scorer_training": [
             paths.hard_manifest,
@@ -603,7 +638,8 @@ def _contract_for(stage: str, args: argparse.Namespace, paths: PipelinePaths) ->
         "build_production_prediction_cache": "writes production_validated prediction cache from the production manifest; --resume skips when cache dir exists",
         "candidate_search": "writes candidate_search artifacts; --resume skips when best_setup.json and best_weights.json exist",
         "hard_alignment_validation": "writes gt_hard_validation artifacts; --resume skips when manifest.json exists",
-        "freeze_resolver_metadata": "copies caller-supplied GT-hard sidecar or derives it from GT-hard manifest runtime metadata; never fabricates missing runtime metadata; --resume reuses existing frozen copy",
+        "build_gt_hard_resolver_metadata": "runs the runtime resolver on the GT-hard manifest and writes the frozen resolver metadata sidecar; explicit sidecars are copied into the same frozen path",
+        "freeze_resolver_metadata": "validates the caller-supplied or freshly generated frozen GT-hard resolver metadata sidecar; never derives runtime metadata from a plain manifest",
         "binary_scorer_training": "writes v1 binary scorer artifacts; --resume skips when runtime_resolver_scorer.json exists",
         "continuous_scorer_training": "writes v1.1 continuous scorer artifacts; --resume skips when runtime_resolver_scorer.json and eval rows exist",
         "scorer_evaluation": "writes scorer_evaluation reports; --resume skips when scorer_policy_report.json exists",
@@ -622,6 +658,9 @@ def _contract_for(stage: str, args: argparse.Namespace, paths: PipelinePaths) ->
         "build_production_prediction_cache": ["production prediction cache exists"],
         "candidate_search": ["best_setup.json and best_weights.json exist"],
         "hard_alignment_validation": ["GT-hard manifest exists"],
+        "build_gt_hard_resolver_metadata": [
+            "frozen resolver_metadata.jsonl exists and validates against the hard manifest"
+        ],
         "freeze_resolver_metadata": [
             "frozen resolver_metadata.jsonl exists and validates against the hard manifest"
         ],
@@ -729,63 +768,11 @@ def _validate_frozen_metadata(paths: PipelinePaths) -> None:
     )
 
 
-def _resolver_metadata_from_sample(sample: T.Mapping[str, T.Any]) -> dict[str, T.Any]:
-    metadata = sample.get("metadata") if isinstance(sample.get("metadata"), dict) else {}
-    nested = metadata.get("resolver_metadata") if isinstance(metadata, dict) else None
-    if not isinstance(nested, dict):
-        nested = sample.get("resolver_metadata")
-    if isinstance(nested, dict):
-        row = dict(nested)
-    elif isinstance(metadata, dict) and isinstance(metadata.get("landmark_ensemble"), dict):
-        row = dict(metadata)
-    elif isinstance(sample.get("landmark_ensemble"), dict):
-        row = {"landmark_ensemble": sample["landmark_ensemble"]}
-    else:
-        sample_id = sample.get("sample_id") or sample.get("id") or sample.get("image")
-        raise ValueError(
-            "cannot derive GT-hard resolver metadata for sample "
-            f"{sample_id!r}: missing landmark_ensemble runtime metadata"
-        )
-
-    sample_id = sample.get("sample_id") or row.get("sample_id")
-    if sample_id is None:
-        raise ValueError("cannot derive GT-hard resolver metadata: sample is missing sample_id")
-    row["sample_id"] = sample_id
-
-    if "face_index" not in row:
-        for source in (metadata, sample):
-            if isinstance(source, dict) and "face_index" in source:
-                row["face_index"] = source["face_index"]
-                break
-
-    if not isinstance(row.get("landmark_ensemble"), dict):
-        raise ValueError(
-            "cannot derive GT-hard resolver metadata for sample "
-            f"{sample_id!r}: missing landmark_ensemble runtime metadata"
-        )
-    return row
-
-
-def _generate_frozen_metadata_from_hard_manifest(paths: PipelinePaths) -> None:
-    _require(paths.hard_manifest, "GT-hard manifest for resolver metadata generation")
-    payload = _load_manifest_payload(paths.hard_manifest)
-    samples = payload.get("samples", payload.get("scenarios", []))
-    if not isinstance(samples, list):
-        raise ValueError(f"manifest samples must be a list: {paths.hard_manifest}")
-    if not samples:
-        raise ValueError(
-            f"cannot derive GT-hard resolver metadata from empty manifest: {paths.hard_manifest}"
-        )
-    rows = [
-        _resolver_metadata_from_sample(sample) for sample in samples if isinstance(sample, dict)
-    ]
-    if len(rows) != len(samples):
-        raise ValueError(f"manifest contains non-object sample rows: {paths.hard_manifest}")
+def _copy_gt_hard_resolver_metadata(source: Path, paths: PipelinePaths) -> None:
+    _require(source, "GT-hard resolver sidecar")
     paths.frozen_gt_metadata.parent.mkdir(parents=True, exist_ok=True)
-    paths.frozen_gt_metadata.write_text(
-        "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows),
-        encoding="utf-8",
-    )
+    shutil.copyfile(source, paths.frozen_gt_metadata)
+    _validate_frozen_metadata(paths)
 
 
 def _freeze_metadata(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
@@ -797,21 +784,17 @@ def _freeze_metadata(args: argparse.Namespace, paths: PipelinePaths) -> list[str
         return [
             f"frozen metadata already exists and was left unchanged: {paths.frozen_gt_metadata}"
         ]
+    if paths.frozen_gt_metadata.exists() and args.gt_hard_resolver_metadata is None:
+        _validate_frozen_metadata(paths)
+        return [f"validated freshly generated frozen metadata: {paths.frozen_gt_metadata}"]
     if args.gt_hard_resolver_metadata is not None:
         source = Path(args.gt_hard_resolver_metadata)
-        _require(source, "GT-hard resolver sidecar")
-        paths.frozen_gt_metadata.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source, paths.frozen_gt_metadata)
-        _validate_frozen_metadata(paths)
+        _copy_gt_hard_resolver_metadata(source, paths)
         return [f"copied and validated frozen metadata from {source}"]
-    if args.generate_gt_hard_resolver_metadata:
-        _generate_frozen_metadata_from_hard_manifest(paths)
-        _validate_frozen_metadata(paths)
-        return [f"derived and validated frozen metadata from {paths.hard_manifest}"]
     raise FileNotFoundError(
-        "missing required GT-hard resolver sidecar; pass --gt-hard-resolver-metadata "
-        "or enable --generate-gt-hard-resolver-metadata. The pipeline will not fabricate "
-        "GT-hard runtime metadata."
+        "missing generated GT-hard resolver metadata sidecar; run the "
+        "build_gt_hard_resolver_metadata stage or pass --gt-hard-resolver-metadata. "
+        "The pipeline will not derive runtime resolver metadata from a plain hard manifest."
     )
 
 
@@ -857,7 +840,7 @@ def _validate_stage_outputs(stage: str, paths: PipelinePaths) -> list[str]:
         raise PipelineContractError(
             f"stage {stage!r} did not produce required output(s): {details}"
         )
-    if stage == "freeze_resolver_metadata":
+    if stage in {"build_gt_hard_resolver_metadata", "freeze_resolver_metadata"}:
         _validate_frozen_metadata(paths)
     if stage == "production_promotion_check":
         report = _read_json(paths.scorer_report)
@@ -1231,6 +1214,43 @@ def _execute_stage(stage: str, args: argparse.Namespace, paths: PipelinePaths) -
                     stage, "planned", command=command, outputs=outputs, contract=contract.to_json()
                 )
             _run_command(command)
+        elif stage == "build_gt_hard_resolver_metadata":
+            if args.gt_hard_resolver_metadata is not None:
+                if args.dry_run:
+                    return StageResult(
+                        stage,
+                        "planned",
+                        outputs=outputs,
+                        contract=contract.to_json(),
+                        notes=["would copy caller-supplied GT-hard resolver metadata sidecar"],
+                    )
+                _copy_gt_hard_resolver_metadata(Path(args.gt_hard_resolver_metadata), paths)
+                return StageResult(
+                    stage,
+                    "ok",
+                    outputs=outputs,
+                    validated_outputs=_validate_stage_outputs(stage, paths),
+                    contract=contract.to_json(),
+                    notes=[
+                        f"copied GT-hard resolver metadata from {args.gt_hard_resolver_metadata}"
+                    ],
+                )
+            if not args.generate_gt_hard_resolver_metadata:
+                raise FileNotFoundError(
+                    "missing required GT-hard resolver sidecar; pass --gt-hard-resolver-metadata "
+                    "or enable --generate-gt-hard-resolver-metadata"
+                )
+            command = _command_gt_hard_resolver_metadata(args, paths)
+            if args.dry_run:
+                return StageResult(
+                    stage,
+                    "planned",
+                    command=command,
+                    outputs=outputs,
+                    contract=contract.to_json(),
+                    notes=["would run runtime resolver to write GT-hard metadata sidecar"],
+                )
+            _run_command(command)
         elif stage == "freeze_resolver_metadata":
             if args.dry_run:
                 return StageResult(
@@ -1238,7 +1258,7 @@ def _execute_stage(stage: str, args: argparse.Namespace, paths: PipelinePaths) -
                     "planned",
                     outputs=outputs,
                     contract=contract.to_json(),
-                    notes=["would copy, derive, or reuse frozen GT-hard resolver metadata"],
+                    notes=["would validate, copy, or reuse frozen GT-hard resolver metadata"],
                 )
             notes = _freeze_metadata(args, paths)
             return StageResult(
@@ -1545,8 +1565,8 @@ def _parser() -> argparse.ArgumentParser:
         action=argparse.BooleanOptionalAction,
         default=True,
         help=(
-            "Derive the frozen GT-hard resolver metadata sidecar from runtime metadata "
-            "stored in the GT-hard manifest when --gt-hard-resolver-metadata is not supplied. "
+            "Run the runtime resolver on the GT-hard manifest to build the frozen "
+            "resolver metadata sidecar when --gt-hard-resolver-metadata is not supplied. "
             "Enabled by default; use --no-generate-gt-hard-resolver-metadata to require "
             "an explicit sidecar."
         ),
@@ -1582,6 +1602,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--production-cache-prediction-arg", action="append", default=[])
     parser.add_argument("--candidate-search-arg", action="append", default=[])
     parser.add_argument("--hard-validation-arg", action="append", default=[])
+    parser.add_argument("--gt-hard-resolver-metadata-arg", action="append", default=[])
     parser.add_argument("--scorer-train-arg", action="append", default=[])
     parser.add_argument("--scorer-eval-arg", action="append", default=[])
     parser.add_argument(

@@ -15,6 +15,7 @@ from tools.landmarks.run_landmark_resolver_pipeline import (
     PipelineContractError,
     PipelinePaths,
     _apply_config,
+    _command_gt_hard_resolver_metadata,
     _command_production_prediction_cache,
     _command_scorer_eval,
     _command_scorer_training,
@@ -65,6 +66,7 @@ def _args(tmp_path: Path, **overrides: object) -> argparse.Namespace:
         "production_cache_prediction_arg": [],
         "candidate_search_arg": [],
         "hard_validation_arg": [],
+        "gt_hard_resolver_metadata_arg": [],
         "scorer_train_arg": [],
         "scorer_eval_arg": [],
         "log_level": "INFO",
@@ -157,6 +159,11 @@ def test_pipeline_declares_production_prediction_cache_stage(tmp_path: Path) -> 
         < STAGES.index("build_production_prediction_cache")
         < STAGES.index("candidate_search")
     )
+    assert (
+        STAGES.index("hard_alignment_validation")
+        < STAGES.index("build_gt_hard_resolver_metadata")
+        < STAGES.index("freeze_resolver_metadata")
+    )
 
     contract = _contract_for("build_production_prediction_cache", args, paths)
 
@@ -188,6 +195,38 @@ def test_candidate_search_contract_requires_built_production_prediction_cache(
     contract = _contract_for("candidate_search", args, paths)
 
     assert str(paths.production_cache) in contract.required_files
+
+
+def test_gt_hard_resolver_metadata_contract_runs_after_hard_validation(
+    tmp_path: Path,
+) -> None:
+    args = _args(tmp_path)
+    paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
+
+    contract = _contract_for("build_gt_hard_resolver_metadata", args, paths)
+
+    assert str(paths.hard_manifest) in contract.required_files
+    assert str(paths.run_cache) in contract.required_files
+    assert str(paths.best_weights) in contract.required_files
+    assert str(paths.frozen_gt_metadata) in contract.outputs
+
+
+def test_gt_hard_resolver_metadata_command_writes_frozen_sidecar(
+    tmp_path: Path,
+) -> None:
+    args = _args(tmp_path, gt_hard_resolver_metadata_arg=["--extra-runtime-option"])
+    paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
+
+    command = _command_gt_hard_resolver_metadata(args, paths)
+
+    assert "build_runtime_resolver_metadata.py" in command[1]
+    assert command[command.index("--manifest") + 1] == str(paths.hard_manifest)
+    assert command[command.index("--cache-dir") + 1] == str(paths.run_cache)
+    assert command[command.index("--weights") + 1] == str(paths.best_weights)
+    assert command[command.index("--candidates") + 1] == args.candidates
+    assert command[command.index("--output") + 1] == str(paths.frozen_gt_metadata)
+    assert "--allow-image-backfill" in command
+    assert "--extra-runtime-option" in command
 
 
 def test_stage_contract_declares_required_files(tmp_path: Path) -> None:
@@ -246,11 +285,13 @@ def test_freeze_metadata_requires_explicit_source_when_generation_is_disabled(
     args = _args(tmp_path, generate_gt_hard_resolver_metadata=False)
     paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
 
-    with pytest.raises(FileNotFoundError, match="will not fabricate"):
+    with pytest.raises(FileNotFoundError, match="will not derive runtime resolver metadata"):
         _freeze_metadata(args, paths)
 
 
-def test_freeze_metadata_derives_from_hard_manifest_runtime_metadata(tmp_path: Path) -> None:
+def test_freeze_metadata_does_not_derive_from_plain_hard_manifest(
+    tmp_path: Path,
+) -> None:
     args = _args(tmp_path)
     paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
     paths.hard_manifest.parent.mkdir(parents=True, exist_ok=True)
@@ -263,10 +304,7 @@ def test_freeze_metadata_derives_from_hard_manifest_runtime_metadata(tmp_path: P
                         "sample_id": "s1",
                         "image": "s1.png",
                         "landmarks": "s1.npy",
-                        "metadata": {
-                            "face_index": 0,
-                            "landmark_ensemble": {"runtime_bucket": "frontal"},
-                        },
+                        "metadata": {"face_index": 0},
                     }
                 ],
             }
@@ -275,9 +313,50 @@ def test_freeze_metadata_derives_from_hard_manifest_runtime_metadata(tmp_path: P
         encoding="utf-8",
     )
 
+    with pytest.raises(FileNotFoundError, match="will not derive runtime resolver metadata"):
+        _freeze_metadata(args, paths)
+
+
+def test_freeze_metadata_copies_explicit_sidecar(
+    tmp_path: Path,
+) -> None:
+    args = _args(tmp_path)
+    paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
+    paths.hard_manifest.parent.mkdir(parents=True, exist_ok=True)
+    paths.hard_manifest.write_text(
+        json.dumps(
+            {
+                "dataset": "gt_hard",
+                "samples": [
+                    {
+                        "sample_id": "s1",
+                        "image": "s1.png",
+                        "landmarks": "s1.npy",
+                        "metadata": {"face_index": 0},
+                    }
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    sidecar = tmp_path / "explicit_resolver_metadata.jsonl"
+    sidecar.write_text(
+        json.dumps(
+            {
+                "sample_id": "s1",
+                "face_index": 0,
+                "landmark_ensemble": {"runtime_bucket": "frontal"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    args.gt_hard_resolver_metadata = sidecar
+
     notes = _freeze_metadata(args, paths)
 
-    assert "derived and validated frozen metadata" in notes[0]
+    assert "copied and validated frozen metadata" in notes[0]
     rows = [
         json.loads(line)
         for line in paths.frozen_gt_metadata.read_text(encoding="utf-8").splitlines()
