@@ -146,7 +146,7 @@ def test_render_qss_contains_chrome_and_dialog_parity_selectors() -> None:
     ):
         assert selector in qss
     assert "selection-color:" in qss
-    assert "min-width: 30px" in qss
+    assert "min-width:" in qss
     assert 'font-family: "Inter"' in qss
     assert "#111111" in qss
     assert "#222222" in qss

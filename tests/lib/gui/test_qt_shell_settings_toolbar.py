@@ -66,20 +66,18 @@ def test_toolbar_settings_actions_use_tk_parity_tooltips(
     )
 
 
-def test_toolbar_settings_actions_appear_after_run_stop(
+def test_toolbar_settings_actions_appear_after_task_group(
     qtbot, monkeypatch, tmp_path: Path
 ) -> None:  # type:ignore[no-untyped-def]
-    """Settings buttons must follow Run/Stop in the toolbar order."""
+    """Settings buttons must follow the task button group in toolbar order."""
     window = _main_window(qtbot, monkeypatch, tmp_path)
     toolbar = _toolbar(window)
 
-    actions = list(toolbar.actions())
-    run_idx = actions.index(window._run_action)  # pylint:disable=protected-access
-    stop_idx = actions.index(window._stop_action)  # pylint:disable=protected-access
-    names = [action.objectName() for action in actions]
+    names = [action.objectName() for action in toolbar.actions() if action.objectName()]
     settings_idx = names.index("qt-shell-toolbar-settings-extract")
+    task_last_idx = names.index("qt-shell-toolbar-task-reload")
 
-    assert run_idx < stop_idx < settings_idx
+    assert task_last_idx < settings_idx
     assert names[settings_idx : settings_idx + 3] == [
         "qt-shell-toolbar-settings-extract",
         "qt-shell-toolbar-settings-train",

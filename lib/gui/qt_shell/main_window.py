@@ -180,6 +180,51 @@ class MainWindow(QMainWindow):
         else:
             event.ignore()
 
+    def apply_gui_settings(self) -> None:
+        """Apply ``config/gui.ini`` runtime preferences.
+
+        Reads ``lib.gui.gui_config`` values for the initial command tab, splitter
+        ratios and fullscreen flag and applies them to the shell. Safe to call
+        multiple times; missing keys fall back to the existing layout.
+        """
+        try:
+            from lib.gui import gui_config as cfg
+        except ImportError:  # pragma: no cover - gui_config always ships
+            return
+        tab_name = self._safe_call(cfg, "tab")
+        if isinstance(tab_name, str) and tab_name:
+            self._command_panel.select_command(tab_name)
+        width_pct = self._safe_call(cfg, "options_panel_width")
+        height_pct = self._safe_call(cfg, "console_panel_height")
+        self._apply_splitter_ratios(width_pct, height_pct)
+        fullscreen = self._safe_call(cfg, "fullscreen")
+        if fullscreen:
+            self.showMaximized()
+
+    def _apply_splitter_ratios(
+        self, options_panel_width_pct: object, console_panel_height_pct: object
+    ) -> None:
+        """Reflow main splitters from gui.ini percentage settings."""
+        if self._main_splitter is not None and isinstance(options_panel_width_pct, int | float):
+            total = max(1, self._main_splitter.width() or self.width())
+            left = max(0, int(total * float(options_panel_width_pct) / 100.0))
+            self._main_splitter.setSizes([left, max(0, total - left)])
+        if self._vertical_splitter is not None and isinstance(
+            console_panel_height_pct, int | float
+        ):
+            total = max(1, self._vertical_splitter.height() or self.height())
+            bottom = max(0, int(total * float(console_panel_height_pct) / 100.0))
+            self._vertical_splitter.setSizes([max(0, total - bottom), bottom])
+
+    @staticmethod
+    def _safe_call(module: T.Any, attribute: str) -> object:
+        """Return the result of calling a gui_config ConfigItem, or ``None``."""
+        func = getattr(module, attribute, None)
+        try:
+            return func() if callable(func) else None
+        except (AttributeError, KeyError, ValueError):
+            return None
+
     def _build_ui(self) -> None:
         """Build the Qt shell layout."""
         self._apply_window_chrome()

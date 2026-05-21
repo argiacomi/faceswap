@@ -892,6 +892,19 @@ class CommandPanel(QWidget):
         self._select_tabs_for_command(category, command)
         self._set_command_options(command)
 
+    def select_command(self, command: str) -> bool:
+        """Select a command tab by name without seeding any values.
+
+        Returns ``True`` if the named command is available; ``False`` otherwise.
+        """
+        if not command:
+            return False
+        category = self._schema.category_for_command(command)
+        if category is None:
+            return False
+        self._select_tabs_for_command(category, command)
+        return True
+
     def clear_values(self) -> None:
         """Reset rendered fields to empty/default values."""
         self._command_value_cache.pop(self._command.currentText(), None)

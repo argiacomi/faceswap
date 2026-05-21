@@ -15,7 +15,7 @@ from lib.gui.qt_shell.main import (
     interrupt_window,
 )
 from lib.gui.qt_shell.main_window import MainWindow
-from lib.gui.qt_shell.theme import apply_theme
+from lib.gui.qt_shell.theme import QtTheme, apply_theme, theme_from_gui_config
 from lib.utils import get_module_objects
 
 QT_NO_EXEC_ENV = "FACESWAP_QT_NO_EXEC"
@@ -31,8 +31,8 @@ class Gui:
         self._no_exec = self._resolve_no_exec(arguments)
         self.app = QApplication.instance() or QApplication(sys.argv)
         cfg.load_config(getattr(arguments, "config_file", None))
-        self.theme = apply_theme(self.app)
-        self.root = MainWindow()
+        self.theme = apply_theme(self.app, theme_from_gui_config(QtTheme.default()))
+        self.root = MainWindow(theme=self.theme)
         resize = getattr(self.root, "resize", None)
         if callable(resize):
             resize(1280, 760)
@@ -42,6 +42,7 @@ class Gui:
         if self._no_exec:
             return
         self.root.show()
+        self.root.apply_gui_settings()
         if not self._owns_app:
             return
         install_signal_handlers(self.app, self.root)

@@ -481,6 +481,46 @@ def apply_theme(app: QApplication, theme: QtTheme | None = None) -> QtTheme:
     return selected
 
 
+def theme_from_gui_config(base: QtTheme | None = None) -> QtTheme:
+    """Return a QtTheme overridden with ``lib.gui.gui_config`` font/icon settings.
+
+    Falls back to ``base`` (or the default theme) when gui_config has not been
+    registered yet or when a value is unusable.
+    """
+    template = base or QtTheme.default()
+    try:
+        from lib.gui import gui_config as cfg
+    except ImportError:  # pragma: no cover - module always ships
+        return template
+
+    def call(attribute: str) -> object:
+        func = getattr(cfg, attribute, None)
+        try:
+            return func() if callable(func) else None
+        except (AttributeError, KeyError, ValueError):
+            return None
+
+    font_family = call("font")
+    if not isinstance(font_family, str) or font_family in ("", "default"):
+        font_family = template.font_family
+    font_size = call("font_size")
+    if not isinstance(font_size, int) or isinstance(font_size, bool) or font_size <= 0:
+        font_size = template.font_size
+    icon_size = call("icon_size")
+    if not isinstance(icon_size, int) or isinstance(icon_size, bool) or icon_size <= 0:
+        icon_size = template.icon_size
+    return QtTheme(
+        name=template.name,
+        font_family=str(font_family),
+        font_size=int(font_size),
+        icon_size=int(icon_size),
+        spacing=template.spacing,
+        radius=template.radius,
+        colors=dict(template.colors),
+        icons=dict(template.icons),
+    )
+
+
 def _combo_arrow_icon_paths(theme: QtTheme) -> tuple[Path, Path]:
     """Return cached SVG paths for the QComboBox down-arrow button."""
     size = _COMBO_ARROW_BUTTON_SIZE
