@@ -1422,8 +1422,10 @@ def _validate_v2_promotion_gate(report: T.Mapping[str, T.Any]) -> list[str]:
     status_keys = (
         "learned_quality_v2_gate_status",
         "learned_quality_v2_production_gate_status",
+        "learned_quality_v2_promotion_status",
         "v2_gate_status",
         "v2_production_gate_status",
+        "v2_promotion_status",
     )
     failed_keys = (
         "learned_quality_v2_failed_gates",
