@@ -12,6 +12,7 @@ import pytest
 
 from lib.landmarks.cache.prediction_cache import DiskPredictionCache
 from lib.landmarks.core.schema import LandmarkPrediction
+from lib.landmarks.ensemble.scorer_contexts import load_scorer_contexts
 from lib.landmarks.ensemble.scorer_eval import evaluate_runtime_resolver_scorer
 from lib.landmarks.ensemble.scorer_training import SCORER_ARTIFACT, train_runtime_resolver_scorer
 from lib.landmarks.ensemble.weights import save_weights
@@ -20,7 +21,6 @@ from tools.landmarks.pipeline_conventions import (
     SOURCE_GT_HARD,
     metadata_key,
 )
-from tools.landmarks.scorer_contexts import load_scorer_contexts
 
 MODELS = ("hrnet", "spiga", "orformer")
 CANDIDATES = ("hrnet", "spiga", "orformer", "static_weighted_downweight")

@@ -23,12 +23,12 @@ from lib.landmarks.ensemble.runtime_resolver_scorer_data import (
     CandidateQualityRow,
     write_candidate_table_csv,
 )
+from lib.landmarks.ensemble.scorer_contexts import load_scorer_contexts
 from tools.landmarks.pipeline_conventions import (
     SOURCE_GT_HARD,
     SOURCE_PRODUCTION_VALIDATED,
     write_json,
 )
-from tools.landmarks.scorer_contexts import load_scorer_contexts
 from tools.landmarks.scorer_targets import (
     TaggedRow,
     scorer_candidate_table_rows,
