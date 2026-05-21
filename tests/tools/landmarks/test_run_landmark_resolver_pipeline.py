@@ -18,6 +18,7 @@ from tools.landmarks.run_landmark_resolver_pipeline import (
     PipelinePaths,
     _apply_config,
     _build_splits,
+    _command_candidate_search,
     _command_dataset_build,
     _command_gt_hard_resolver_metadata,
     _command_hard_source_manifest,
@@ -430,6 +431,20 @@ def test_candidate_search_contract_requires_built_production_prediction_cache(
 
     assert str(paths.production_cache) in contract.required_files
     assert str(paths.production_cache_sentinel) in contract.required_files
+
+
+def test_candidate_search_command_uses_full_manifest_with_splits(
+    tmp_path: Path,
+) -> None:
+    args = _args(tmp_path)
+    paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
+    paths.run_report_manifest.parent.mkdir(parents=True)
+    paths.run_report_manifest.write_text("{}", encoding="utf-8")
+
+    command = _command_candidate_search(args, paths)
+
+    assert command[command.index("--manifest") + 1] == str(paths.run_manifest)
+    assert command[command.index("--splits") + 1] == str(paths.run_splits)
 
 
 def test_gt_hard_resolver_metadata_contract_runs_after_hard_validation(

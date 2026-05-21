@@ -568,14 +568,11 @@ def _command_production_prediction_cache(
 
 
 def _command_candidate_search(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
-    manifest = (
-        paths.run_report_manifest if paths.run_report_manifest.exists() else paths.run_manifest
-    )
     argv = [
         args.python_executable,
         _script("search_ensemble_setup.py"),
         "--manifest",
-        str(manifest),
+        str(paths.run_manifest),
         "--cache-dir",
         str(paths.run_cache),
         "--splits",
