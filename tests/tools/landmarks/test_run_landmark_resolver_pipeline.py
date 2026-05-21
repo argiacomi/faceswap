@@ -25,6 +25,7 @@ from tools.landmarks.run_landmark_resolver_pipeline import (
     _command_hard_source_prediction_cache,
     _command_hard_validation,
     _command_production_prediction_cache,
+    _command_production_resolver_metadata,
     _command_scorer_eval,
     _command_scorer_training,
     _commands_dataset_build,
@@ -84,6 +85,7 @@ def _args(tmp_path: Path, **overrides: object) -> argparse.Namespace:
         "hard_source_cache_prediction_arg": [],
         "production_manifest_arg": [],
         "production_cache_prediction_arg": [],
+        "production_resolver_metadata_arg": [],
         "candidate_search_arg": [],
         "hard_validation_arg": [],
         "gt_hard_resolver_metadata_arg": [],
@@ -108,6 +110,7 @@ def _touch_pipeline_outputs(paths: PipelinePaths, *, promotion_status: str = "pa
         paths.production_manifest,
         paths.production_cache_sentinel,
         paths.production_root / "resolver_metadata.jsonl",
+        paths.production_resolver_metadata_sentinel,
         paths.production_root / "audit.json",
         paths.best_setup,
         paths.best_weights,
@@ -192,6 +195,14 @@ def test_force_downstream_of_excludes_named_stage(
     assert not _stage_forced("build_production_manifest", args)
     assert _stage_forced("build_production_prediction_cache", args)
     assert _stage_forced("candidate_search", args)
+
+
+def test_pipeline_includes_production_resolver_metadata_before_candidate_search() -> None:
+    assert (
+        STAGES.index("build_production_prediction_cache")
+        < STAGES.index("build_production_resolver_metadata")
+        < STAGES.index("candidate_search")
+    )
 
 
 def test_overwrite_from_production_manifest_bypasses_existing_artifact_reuse(
@@ -431,6 +442,7 @@ def test_pipeline_declares_production_prediction_cache_stage(tmp_path: Path) -> 
     assert (
         STAGES.index("build_production_manifest")
         < STAGES.index("build_production_prediction_cache")
+        < STAGES.index("build_production_resolver_metadata")
         < STAGES.index("candidate_search")
     )
     assert (
@@ -444,6 +456,22 @@ def test_pipeline_declares_production_prediction_cache_stage(tmp_path: Path) -> 
     assert str(paths.production_manifest) in contract.required_files
     assert str(paths.production_cache) in contract.outputs
     assert str(paths.production_cache_sentinel) in contract.outputs
+
+
+def test_production_resolver_metadata_contract_uses_image_cache_and_static_weights(
+    tmp_path: Path,
+) -> None:
+    args = _args(tmp_path)
+    paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
+
+    contract = _contract_for("build_production_resolver_metadata", args, paths)
+
+    assert str(paths.production_manifest) in contract.required_files
+    assert str(paths.production_cache) in contract.required_files
+    assert str(paths.production_cache_sentinel) in contract.required_files
+    assert str(paths.run_static_weights) in contract.required_files
+    assert str(paths.production_resolver_metadata) in contract.outputs
+    assert str(paths.production_resolver_metadata_sentinel) in contract.outputs
 
 
 def test_production_prediction_cache_command_uses_production_manifest_and_cache(
@@ -460,6 +488,23 @@ def test_production_prediction_cache_command_uses_production_manifest_and_cache(
     assert command[command.index("--models") + 1] == args.models
     assert "--run-models" in command
     assert "--extra-cache-option" in command
+
+
+def test_production_resolver_metadata_command_writes_image_aware_sidecar(
+    tmp_path: Path,
+) -> None:
+    args = _args(tmp_path, production_resolver_metadata_arg=["--extra-metadata-option"])
+    paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
+
+    command = _command_production_resolver_metadata(args, paths)
+
+    assert "build_production_resolver_metadata.py" in command[1]
+    assert command[command.index("--manifest") + 1] == str(paths.production_manifest)
+    assert command[command.index("--cache-dir") + 1] == str(paths.production_cache)
+    assert command[command.index("--weights") + 1] == str(paths.run_static_weights)
+    assert command[command.index("--candidates") + 1] == args.candidates
+    assert command[command.index("--output") + 1] == str(paths.production_resolver_metadata)
+    assert "--extra-metadata-option" in command
 
 
 def test_prediction_cache_mode_fixtures_does_not_add_run_models(tmp_path: Path) -> None:
@@ -480,6 +525,8 @@ def test_candidate_search_contract_requires_built_production_prediction_cache(
 
     assert str(paths.production_cache) in contract.required_files
     assert str(paths.production_cache_sentinel) in contract.required_files
+    assert str(paths.production_resolver_metadata) in contract.required_files
+    assert str(paths.production_resolver_metadata_sentinel) in contract.required_files
 
 
 def test_candidate_search_command_uses_full_manifest_with_splits(
@@ -494,6 +541,9 @@ def test_candidate_search_command_uses_full_manifest_with_splits(
 
     assert command[command.index("--manifest") + 1] == str(paths.run_manifest)
     assert command[command.index("--splits") + 1] == str(paths.run_splits)
+    assert command[command.index("--production-resolver-metadata") + 1] == str(
+        paths.production_resolver_metadata
+    )
 
 
 def test_gt_hard_resolver_metadata_contract_runs_after_hard_validation(

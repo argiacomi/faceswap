@@ -211,6 +211,56 @@ def test_production_gate_fails_derived_no_image_runtime_metadata(tmp_path: Path)
     assert "production_runtime_bucket_source_derived_no_image_evidence" in report["failed_gates"]
 
 
+def test_production_gate_uses_image_aware_sidecar_metadata(tmp_path: Path) -> None:
+    manifest_path, cache_dir, weights_path, output_dir = _write_fixture(
+        tmp_path,
+        [
+            {
+                "sample_id": "s1",
+                "condition": "frontal",
+                "predictions": {"hrnet": 1.0, "spiga": 3.0, "orformer": 4.0},
+                "metadata": {},
+            }
+        ],
+    )
+    sidecar = tmp_path / "resolver_metadata.jsonl"
+    sidecar.write_text(
+        json.dumps(
+            {
+                "sample_id": "s1",
+                "face_index": 0,
+                "landmark_ensemble": {
+                    "runtime_bucket": "profile_left",
+                    "bucket": "profile_left",
+                    "selected_candidate": "spiga",
+                    "runtime_bucket_source": "image_aware_backfill",
+                    "runtime_bucket_features": {"landmark_pose_yaw": -45.0},
+                    "resolver": {
+                        "runtime_bucket": "profile_left",
+                        "bucket": "profile_left",
+                        "selected_candidate": "spiga",
+                    },
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    report = run_production_promotion_gate(
+        manifest_path=manifest_path,
+        cache_dir=cache_dir,
+        weights_path=weights_path,
+        output_dir=output_dir,
+        resolver_metadata_path=sidecar,
+        config=ProductionGateConfig(policy="candidate:hrnet"),
+    )
+
+    assert report["missing_runtime_metadata_count"] == 0
+    assert report["derived_no_image_runtime_metadata_count"] == 0
+    assert report["production_condition_counts"] == {"profile_left": 1}
+
+
 def test_production_gate_fails_per_bucket_regression(tmp_path: Path) -> None:
     report = _run(
         tmp_path,

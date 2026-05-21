@@ -17,6 +17,7 @@ from pathlib import Path
 
 import numpy as np
 
+from lib.landmarks.datasets.manifest_io import load_manifest
 from lib.landmarks.ensemble.runtime_resolver_scorer_data import (
     DEFAULT_RESOLVER_CANDIDATES,
     SampleCandidateContext,
@@ -29,6 +30,11 @@ from lib.landmarks.pipeline_conventions import (
     PRODUCTION_PROMOTION_REPORT_JSON,
     PRODUCTION_PROMOTION_REPORT_MD,
     PRODUCTION_WORST_SAMPLES_JSON,
+    SOURCE_PRODUCTION_VALIDATED,
+    face_index_for_sample,
+    load_resolver_metadata_sidecar,
+    metadata_key,
+    validate_resolver_metadata_for_manifest,
     write_json,
 )
 
@@ -77,6 +83,57 @@ def _raw_manifest_metadata(path: Path) -> dict[str, dict[str, T.Any]]:
         metadata = entry.get("metadata", {})
         retval[sample_id] = metadata if isinstance(metadata, dict) else {}
     return retval
+
+
+def _sidecar_metadata_by_sample_id(
+    manifest_path: Path,
+    resolver_metadata_path: Path | None,
+) -> dict[str, dict[str, T.Any]]:
+    if resolver_metadata_path is None:
+        return {}
+    metadata = load_resolver_metadata_sidecar(resolver_metadata_path)
+    validate_resolver_metadata_for_manifest(
+        manifest_path,
+        metadata,
+        source=SOURCE_PRODUCTION_VALIDATED,
+        require_complete=True,
+    )
+    retval: dict[str, dict[str, T.Any]] = {}
+    for sample in load_manifest(manifest_path):
+        row = metadata.get(metadata_key(sample.sample_id, face_index_for_sample(sample)))
+        if row is not None:
+            retval[sample.sample_id] = row
+    return retval
+
+
+def _resolver_metadata_without_selected_candidate(
+    manifest_path: Path,
+    resolver_metadata_path: Path | None,
+) -> dict[tuple[str, int], dict[str, T.Any]]:
+    if resolver_metadata_path is None:
+        return {}
+    metadata = load_resolver_metadata_sidecar(resolver_metadata_path)
+    validate_resolver_metadata_for_manifest(
+        manifest_path,
+        metadata,
+        source=SOURCE_PRODUCTION_VALIDATED,
+        require_complete=True,
+    )
+    sanitized: dict[tuple[str, int], dict[str, T.Any]] = {}
+    for key, row in metadata.items():
+        copied = dict(row)
+        landmark_ensemble = copied.get("landmark_ensemble")
+        if isinstance(landmark_ensemble, dict):
+            landmark_ensemble = dict(landmark_ensemble)
+            landmark_ensemble.pop("selected_candidate", None)
+            resolver = landmark_ensemble.get("resolver")
+            if isinstance(resolver, dict):
+                resolver = dict(resolver)
+                resolver.pop("selected_candidate", None)
+                landmark_ensemble["resolver"] = resolver
+            copied["landmark_ensemble"] = landmark_ensemble
+        sanitized[key] = copied
+    return sanitized
 
 
 def _runtime_metadata(metadata: T.Mapping[str, T.Any]) -> dict[str, T.Any]:
@@ -262,9 +319,15 @@ def evaluate_production_gate(
     cache_dir: Path,
     weights_path: Path,
     config: ProductionGateConfig,
+    resolver_metadata_path: Path | None = None,
 ) -> tuple[dict[str, T.Any], list[ProductionSampleEvaluation]]:
     """Evaluate a production manifest and return gate report plus per-sample rows."""
     raw_metadata = _raw_manifest_metadata(manifest_path)
+    sidecar_metadata = _sidecar_metadata_by_sample_id(manifest_path, resolver_metadata_path)
+    context_resolver_metadata = _resolver_metadata_without_selected_candidate(
+        manifest_path,
+        resolver_metadata_path,
+    )
     weights = load_weights(weights_path)
     models = tuple(weights)
     if not models:
@@ -275,6 +338,8 @@ def evaluate_production_gate(
         cache_dir=cache_dir,
         weights_path=weights_path,
         candidates=requested_candidates,
+        source=SOURCE_PRODUCTION_VALIDATED,
+        resolver_metadata=context_resolver_metadata or None,
         failure_threshold=config.failure_threshold,
         outlier_threshold=config.outlier_threshold,
     )
@@ -288,7 +353,7 @@ def evaluate_production_gate(
         )
     evaluations: list[ProductionSampleEvaluation] = []
     for context in contexts:
-        metadata = raw_metadata.get(context.sample_id, {})
+        metadata = sidecar_metadata.get(context.sample_id, raw_metadata.get(context.sample_id, {}))
         chosen = _resolve_policy_choice(
             config.policy,
             metadata=metadata,
@@ -297,7 +362,7 @@ def evaluate_production_gate(
         evaluations.append(
             ProductionSampleEvaluation(
                 sample_id=context.sample_id,
-                condition=context.condition or "unknown",
+                condition=context.runtime_bucket or context.condition or "unknown",
                 chosen=chosen,
                 oracle=context.oracle,
                 nme_by_candidate=context.nme_by_candidate,
@@ -609,6 +674,7 @@ def run_production_promotion_gate(
     weights_path: Path,
     output_dir: Path,
     config: ProductionGateConfig | None = None,
+    resolver_metadata_path: Path | None = None,
 ) -> dict[str, T.Any]:
     """Evaluate production validation and write promotion-gate artifacts."""
     gate_config = config or ProductionGateConfig()
@@ -617,6 +683,7 @@ def run_production_promotion_gate(
         cache_dir=cache_dir,
         weights_path=weights_path,
         config=gate_config,
+        resolver_metadata_path=resolver_metadata_path,
     )
     report["artifacts"] = write_production_gate_artifacts(
         report,

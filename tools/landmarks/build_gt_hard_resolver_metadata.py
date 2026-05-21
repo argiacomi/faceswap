@@ -25,9 +25,11 @@ from lib.landmarks.ensemble.runtime_resolver_scorer_data import (
 )
 from lib.landmarks.ensemble.weights import load_weights
 from lib.landmarks.pipeline_conventions import (
+    METADATA_SOURCES,
     SOURCE_GT_HARD,
     face_index_for_sample,
     load_resolver_metadata_sidecar,
+    normalize_source_label,
     validate_resolver_metadata_for_manifest,
     write_jsonl,
 )
@@ -126,8 +128,10 @@ def build_gt_hard_resolver_metadata(
     allow_image_backfill: bool = False,
     image_backfill_crop_scale: float = DEFAULT_IMAGE_BACKFILL_CROP_SCALE,
     image_backfill_crop_size: int = DEFAULT_IMAGE_BACKFILL_CROP_SIZE,
+    source: str = SOURCE_GT_HARD,
 ) -> list[dict[str, T.Any]]:
     """Run the runtime resolver context builder and write a complete GT-hard sidecar."""
+    source = normalize_source_label(source)
     loaded_weights = load_weights(weights)
     requested_candidates = tuple(candidates or parse_candidates(None, loaded_weights))
     cache = DiskPredictionCache(cache_dir)
@@ -164,7 +168,7 @@ def build_gt_hard_resolver_metadata(
     validate_resolver_metadata_for_manifest(
         manifest,
         load_resolver_metadata_sidecar(output),
-        source=SOURCE_GT_HARD,
+        source=source,
         require_complete=True,
     )
     logger.info("Wrote %d GT-hard resolver metadata row(s) to %s", len(rows), output)
@@ -201,6 +205,7 @@ def _parser() -> argparse.ArgumentParser:
         type=int,
         default=DEFAULT_IMAGE_BACKFILL_CROP_SIZE,
     )
+    parser.add_argument("--source", choices=METADATA_SOURCES, default=SOURCE_GT_HARD)
     parser.add_argument("--log-level", default="INFO")
     return parser
 
@@ -219,6 +224,7 @@ def main(argv: T.Sequence[str] | None = None) -> int:
         allow_image_backfill=args.allow_image_backfill,
         image_backfill_crop_scale=args.image_backfill_crop_scale,
         image_backfill_crop_size=args.image_backfill_crop_size,
+        source=args.source,
     )
     return 0
 

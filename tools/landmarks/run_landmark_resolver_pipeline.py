@@ -59,6 +59,7 @@ STAGES: tuple[str, ...] = (
     "fit_static_weights",
     "build_production_manifest",
     "build_production_prediction_cache",
+    "build_production_resolver_metadata",
     "candidate_search",
     "hard_alignment_validation",
     "build_gt_hard_resolver_metadata",
@@ -77,6 +78,7 @@ BASE_DATASET_MANIFEST_SENTINEL_FILENAME = ".base_dataset_manifest_complete.json"
 BASE_CACHE_SENTINEL_FILENAME = ".base_prediction_cache_complete.json"
 HARD_SOURCE_CACHE_SENTINEL_FILENAME = ".hard_source_prediction_cache_complete.json"
 PRODUCTION_CACHE_SENTINEL_FILENAME = ".production_prediction_cache_complete.json"
+PRODUCTION_RESOLVER_METADATA_SENTINEL_FILENAME = ".production_resolver_metadata_complete.json"
 DEFAULT_CONFIG_SECTION = "align.ensemble"
 CONFIG_PREVIEW_FILENAME = "config_update_preview.json"
 CONFIG_PATCH_FILENAME = "config_update_patch.ini"
@@ -135,6 +137,8 @@ class PipelinePaths:
     production_manifest: Path = field(init=False)
     production_cache: Path = field(init=False)
     production_cache_sentinel: Path = field(init=False)
+    production_resolver_metadata: Path = field(init=False)
+    production_resolver_metadata_sentinel: Path = field(init=False)
     candidate_dir: Path = field(init=False)
     best_setup: Path = field(init=False)
     best_weights: Path = field(init=False)
@@ -212,6 +216,16 @@ class PipelinePaths:
             self,
             "production_cache_sentinel",
             self.production_cache / PRODUCTION_CACHE_SENTINEL_FILENAME,
+        )
+        object.__setattr__(
+            self,
+            "production_resolver_metadata",
+            self.production_root / RESOLVER_METADATA_JSONL,
+        )
+        object.__setattr__(
+            self,
+            "production_resolver_metadata_sentinel",
+            self.production_root / PRODUCTION_RESOLVER_METADATA_SENTINEL_FILENAME,
         )
         object.__setattr__(self, "candidate_dir", self.output_root / "candidate_search")
         object.__setattr__(self, "best_setup", self.candidate_dir / "best_setup.json")
@@ -534,6 +548,27 @@ def _write_cache_sentinel(
     )
 
 
+def _write_production_resolver_metadata_sentinel(
+    args: argparse.Namespace,
+    paths: PipelinePaths,
+) -> None:
+    write_json(
+        paths.production_resolver_metadata_sentinel,
+        {
+            "manifest": str(paths.production_manifest),
+            "manifest_sha256": _sha256_file(paths.production_manifest),
+            "cache_sentinel": str(paths.production_cache_sentinel),
+            "cache_sentinel_sha256": _sha256_file(paths.production_cache_sentinel),
+            "weights": str(paths.run_static_weights),
+            "weights_sha256": _sha256_file(paths.run_static_weights),
+            "candidates": str(args.candidates),
+            "allow_image_backfill": True,
+            "source": SOURCE_PRODUCTION_VALIDATED,
+            "extra_args": list(getattr(args, "production_resolver_metadata_arg", [])),
+        },
+    )
+
+
 def _command_production_manifest(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
     argv = [
         args.python_executable,
@@ -567,6 +602,28 @@ def _command_production_prediction_cache(
     )
 
 
+def _command_production_resolver_metadata(
+    args: argparse.Namespace, paths: PipelinePaths
+) -> list[str]:
+    return _append_extra(
+        [
+            args.python_executable,
+            _script("build_production_resolver_metadata.py"),
+            "--manifest",
+            str(paths.production_manifest),
+            "--cache-dir",
+            str(paths.production_cache),
+            "--weights",
+            str(paths.run_static_weights),
+            "--candidates",
+            args.candidates,
+            "--output",
+            str(paths.production_resolver_metadata),
+        ],
+        getattr(args, "production_resolver_metadata_arg", []),
+    )
+
+
 def _command_candidate_search(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
     argv = [
         args.python_executable,
@@ -586,6 +643,8 @@ def _command_candidate_search(args: argparse.Namespace, paths: PipelinePaths) ->
         str(paths.production_manifest),
         "--production-cache-dir",
         str(paths.production_cache),
+        "--production-resolver-metadata",
+        str(paths.production_resolver_metadata),
         "--production-gate-output",
         str(paths.candidate_dir / "production_gate"),
     ]
@@ -725,6 +784,10 @@ def _outputs_for(stage: str, paths: PipelinePaths) -> list[Path]:
             paths.production_cache,
             paths.production_cache_sentinel,
         ],
+        "build_production_resolver_metadata": [
+            paths.production_resolver_metadata,
+            paths.production_resolver_metadata_sentinel,
+        ],
         "candidate_search": [paths.best_setup, paths.best_weights],
         "hard_alignment_validation": [paths.hard_manifest],
         "build_gt_hard_resolver_metadata": [paths.frozen_gt_metadata],
@@ -765,6 +828,12 @@ def _required_inputs_for(stage: str, args: argparse.Namespace, paths: PipelinePa
             args.production_alignments,
         ],
         "build_production_prediction_cache": [paths.production_manifest],
+        "build_production_resolver_metadata": [
+            paths.production_manifest,
+            paths.production_cache,
+            paths.production_cache_sentinel,
+            paths.run_static_weights,
+        ],
         "candidate_search": [
             paths.run_cache,
             paths.run_cache_sentinel,
@@ -772,6 +841,8 @@ def _required_inputs_for(stage: str, args: argparse.Namespace, paths: PipelinePa
             paths.production_manifest,
             paths.production_cache,
             paths.production_cache_sentinel,
+            paths.production_resolver_metadata,
+            paths.production_resolver_metadata_sentinel,
         ],
         "hard_alignment_validation": [
             _effective_hard_source_manifest(args, paths),
@@ -857,6 +928,7 @@ def _contract_for(stage: str, args: argparse.Namespace, paths: PipelinePaths) ->
         "fit_static_weights": "fits initial static weights from the fit split; --resume skips when weights exist",
         "build_production_manifest": "writes production_validated manifest, resolver metadata, and audit from Faceswap alignments; --resume skips when outputs exist",
         "build_production_prediction_cache": "writes production_validated prediction cache from the production manifest and records a production-cache sentinel",
+        "build_production_resolver_metadata": "runs the runtime resolver over production_validated with image access and writes image-aware resolver metadata plus a completion sentinel",
         "candidate_search": "writes candidate_search artifacts; --resume skips when best_setup.json and best_weights.json exist",
         "hard_alignment_validation": "writes gt_hard_validation artifacts; --resume skips when manifest.json exists",
         "build_gt_hard_resolver_metadata": "runs the GT-hard resolver metadata CLI on the GT-hard manifest and writes the frozen resolver metadata sidecar; explicit sidecars are copied into the same frozen path",
@@ -879,6 +951,9 @@ def _contract_for(stage: str, args: argparse.Namespace, paths: PipelinePaths) ->
             "production manifest, resolver_metadata.jsonl, and audit.json exist"
         ],
         "build_production_prediction_cache": ["production prediction cache sentinel exists"],
+        "build_production_resolver_metadata": [
+            "image-aware production resolver_metadata.jsonl and completion sentinel exist"
+        ],
         "candidate_search": ["best_setup.json and best_weights.json exist"],
         "hard_alignment_validation": ["GT-hard manifest exists"],
         "build_gt_hard_resolver_metadata": [
@@ -933,6 +1008,34 @@ def _cache_sentinel_matches(
     )
 
 
+def _production_resolver_metadata_sentinel_matches(
+    args: argparse.Namespace,
+    paths: PipelinePaths,
+) -> bool:
+    payload = _read_json(paths.production_resolver_metadata_sentinel)
+    if (
+        not payload
+        or not paths.production_manifest.is_file()
+        or not paths.production_cache_sentinel.is_file()
+        or not paths.run_static_weights.is_file()
+    ):
+        return False
+    return (
+        payload.get("manifest") == str(paths.production_manifest)
+        and payload.get("manifest_sha256") == _sha256_file(paths.production_manifest)
+        and payload.get("cache_sentinel") == str(paths.production_cache_sentinel)
+        and payload.get("cache_sentinel_sha256")
+        == _sha256_file(paths.production_cache_sentinel)
+        and payload.get("weights") == str(paths.run_static_weights)
+        and payload.get("weights_sha256") == _sha256_file(paths.run_static_weights)
+        and payload.get("candidates") == str(args.candidates)
+        and payload.get("allow_image_backfill") is True
+        and payload.get("source") == SOURCE_PRODUCTION_VALIDATED
+        and payload.get("extra_args")
+        == list(getattr(args, "production_resolver_metadata_arg", []))
+    )
+
+
 def _dataset_manifest_sentinel_matches(args: argparse.Namespace, paths: PipelinePaths) -> bool:
     payload = _read_json(paths.run_manifest_sentinel)
     if not payload or not paths.run_manifest.is_file():
@@ -983,6 +1086,8 @@ def _stage_complete(stage: str, args: argparse.Namespace, paths: PipelinePaths) 
             mode=_prediction_cache_mode(args),
             extra_args=getattr(args, "production_cache_prediction_arg", []),
         )
+    if stage == "build_production_resolver_metadata":
+        return _production_resolver_metadata_sentinel_matches(args, paths)
     return True
 
 
@@ -1214,6 +1319,23 @@ def _validate_stage_outputs(
         raise PipelineContractError(
             "stage 'build_production_prediction_cache' sentinel does not match "
             "the requested cache inputs"
+        )
+    if (
+        args is not None
+        and stage == "build_production_resolver_metadata"
+        and not _production_resolver_metadata_sentinel_matches(args, paths)
+    ):
+        raise PipelineContractError(
+            "stage 'build_production_resolver_metadata' sentinel does not match "
+            "the requested production metadata inputs"
+        )
+    if stage == "build_production_resolver_metadata":
+        metadata = load_resolver_metadata_sidecar(paths.production_resolver_metadata)
+        validate_resolver_metadata_for_manifest(
+            paths.production_manifest,
+            metadata,
+            source=SOURCE_PRODUCTION_VALIDATED,
+            require_complete=True,
         )
     if stage in {"build_gt_hard_resolver_metadata", "freeze_resolver_metadata"}:
         _validate_frozen_metadata(paths)
@@ -1624,6 +1746,14 @@ def _execute_stage(stage: str, args: argparse.Namespace, paths: PipelinePaths) -
                 mode=_prediction_cache_mode(args),
                 extra_args=getattr(args, "production_cache_prediction_arg", []),
             )
+        elif stage == "build_production_resolver_metadata":
+            command = _command_production_resolver_metadata(args, paths)
+            if args.dry_run:
+                return StageResult(
+                    stage, "planned", command=command, outputs=outputs, contract=contract.to_json()
+                )
+            _run_command(command)
+            _write_production_resolver_metadata_sentinel(args, paths)
         elif stage == "candidate_search":
             command = _command_candidate_search(args, paths)
             if args.dry_run:
@@ -1864,7 +1994,7 @@ def _summary_payload(
             SOURCE_PRODUCTION_VALIDATED: {
                 "manifest": str(paths.production_manifest),
                 "cache": str(paths.production_cache),
-                "resolver_metadata": str(paths.production_root / RESOLVER_METADATA_JSONL),
+                "resolver_metadata": str(paths.production_resolver_metadata),
             },
         },
         "artifacts": {
@@ -2094,6 +2224,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--hard-source-cache-prediction-arg", action="append", default=[])
     parser.add_argument("--production-manifest-arg", action="append", default=[])
     parser.add_argument("--production-cache-prediction-arg", action="append", default=[])
+    parser.add_argument("--production-resolver-metadata-arg", action="append", default=[])
     parser.add_argument("--candidate-search-arg", action="append", default=[])
     parser.add_argument("--hard-validation-arg", action="append", default=[])
     parser.add_argument("--gt-hard-resolver-metadata-arg", action="append", default=[])

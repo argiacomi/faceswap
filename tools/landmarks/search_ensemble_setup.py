@@ -788,6 +788,14 @@ def main(argv: list[str] | None = None) -> int:
         help="Prediction cache directory for --production-manifest.",
     )
     parser.add_argument(
+        "--production-resolver-metadata",
+        default=None,
+        help=(
+            "Image-aware production resolver_metadata.jsonl sidecar. When supplied, "
+            "the production gate uses its runtime buckets instead of no-image fallback."
+        ),
+    )
+    parser.add_argument(
         "--production-weights",
         default=None,
         help=(
@@ -1067,6 +1075,11 @@ def main(argv: list[str] | None = None) -> int:
                     cache_dir=Path(args.production_cache_dir),
                     weights_path=candidate_weights_path,
                     output_dir=production_output,
+                    resolver_metadata_path=(
+                        None
+                        if args.production_resolver_metadata is None
+                        else Path(args.production_resolver_metadata)
+                    ),
                     config=ProductionGateConfig(
                         policy=args.production_policy,
                         mean_epsilon_nme=args.production_epsilon_mean_nme,
