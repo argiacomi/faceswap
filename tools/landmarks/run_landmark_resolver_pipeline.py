@@ -422,7 +422,7 @@ def _command_gt_hard_resolver_metadata(
 ) -> list[str]:
     argv = [
         args.python_executable,
-        _script("build_runtime_resolver_metadata.py"),
+        _script("build_gt_hard_resolver_metadata.py"),
         "--manifest",
         str(paths.hard_manifest),
         "--cache-dir",
@@ -638,7 +638,7 @@ def _contract_for(stage: str, args: argparse.Namespace, paths: PipelinePaths) ->
         "build_production_prediction_cache": "writes production_validated prediction cache from the production manifest; --resume skips when cache dir exists",
         "candidate_search": "writes candidate_search artifacts; --resume skips when best_setup.json and best_weights.json exist",
         "hard_alignment_validation": "writes gt_hard_validation artifacts; --resume skips when manifest.json exists",
-        "build_gt_hard_resolver_metadata": "runs the runtime resolver on the GT-hard manifest and writes the frozen resolver metadata sidecar; explicit sidecars are copied into the same frozen path",
+        "build_gt_hard_resolver_metadata": "runs the GT-hard resolver metadata CLI on the GT-hard manifest and writes the frozen resolver metadata sidecar; explicit sidecars are copied into the same frozen path",
         "freeze_resolver_metadata": "validates the caller-supplied or freshly generated frozen GT-hard resolver metadata sidecar; never derives runtime metadata from a plain manifest",
         "binary_scorer_training": "writes v1 binary scorer artifacts; --resume skips when runtime_resolver_scorer.json exists",
         "continuous_scorer_training": "writes v1.1 continuous scorer artifacts; --resume skips when runtime_resolver_scorer.json and eval rows exist",

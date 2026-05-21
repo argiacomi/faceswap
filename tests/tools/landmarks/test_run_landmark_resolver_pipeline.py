@@ -219,7 +219,7 @@ def test_gt_hard_resolver_metadata_command_writes_frozen_sidecar(
 
     command = _command_gt_hard_resolver_metadata(args, paths)
 
-    assert "build_runtime_resolver_metadata.py" in command[1]
+    assert "build_gt_hard_resolver_metadata.py" in command[1]
     assert command[command.index("--manifest") + 1] == str(paths.hard_manifest)
     assert command[command.index("--cache-dir") + 1] == str(paths.run_cache)
     assert command[command.index("--weights") + 1] == str(paths.best_weights)
@@ -227,6 +227,19 @@ def test_gt_hard_resolver_metadata_command_writes_frozen_sidecar(
     assert command[command.index("--output") + 1] == str(paths.frozen_gt_metadata)
     assert "--allow-image-backfill" in command
     assert "--extra-runtime-option" in command
+
+
+def test_gt_hard_resolver_metadata_command_references_existing_cli(
+    tmp_path: Path,
+) -> None:
+    args = _args(tmp_path)
+    paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
+
+    command = _command_gt_hard_resolver_metadata(args, paths)
+    script = Path(command[1])
+
+    assert script.name == "build_gt_hard_resolver_metadata.py"
+    assert script.is_file()
 
 
 def test_stage_contract_declares_required_files(tmp_path: Path) -> None:
