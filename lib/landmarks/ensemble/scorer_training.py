@@ -94,7 +94,13 @@ def write_tagged_rows_csv(rows: T.Sequence[TaggedRow], path: Path) -> Path:
         "condition",
         "candidate_name",
         "candidate_nme",
+        "oracle_nme",
+        "regret_vs_oracle",
+        "normalized_regret",
         "failure_label",
+        "large_regret_label",
+        "candidate_failure_or_high_gap",
+        "selection_cost",
         "is_oracle",
         "was_selected_by_current_policy",
         "gap_vs_oracle",
@@ -202,7 +208,10 @@ def scorer_row_metrics(
             "accuracy_at_0_5": 0.0,
             "log_loss": 0.0,
         }
-    labels = np.asarray([float(row.failure_label) for row in rows], dtype="float64")
+    labels = np.asarray(
+        [float(row.candidate_failure_or_high_gap) for row in rows],
+        dtype="float64",
+    )
     scores = np.asarray(
         [scorer.score_feature_map(row.feature_values) for row in rows],
         dtype="float64",
@@ -271,7 +280,10 @@ def train_runtime_resolver_scorer(
     eval_rows = untag_quality_rows(eval_tagged_rows)
     features = feature_order(train_rows)
     x = feature_matrix([row.feature_values for row in train_rows], features)
-    y = np.asarray([float(row.failure_label) for row in train_rows], dtype="float64")
+    y = np.asarray(
+        [float(row.candidate_failure_or_high_gap) for row in train_rows],
+        dtype="float64",
+    )
     coefficients, intercept = fit_logistic(
         x,
         y,

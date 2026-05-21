@@ -6,6 +6,7 @@ from __future__ import annotations
 import csv
 import json
 import logging
+import math
 import typing as T
 from dataclasses import dataclass
 from pathlib import Path
@@ -44,6 +45,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_FAILURE_THRESHOLD: float = 0.08
 DEFAULT_HIGH_GAP_THRESHOLD: float = 0.01
+DEFAULT_REGRET_NORMALIZER: float = 0.03
 DEFAULT_OUTLIER_THRESHOLD: float = 3.5
 DEFAULT_IMAGE_BACKFILL_CROP_SCALE: float = 1.6
 DEFAULT_IMAGE_BACKFILL_CROP_SIZE: int = 256
@@ -155,7 +157,13 @@ class CandidateQualityRow:
     condition: str
     candidate_name: str
     candidate_nme: float
+    oracle_nme: float
+    regret_vs_oracle: float
+    normalized_regret: float
     failure_label: bool
+    large_regret_label: bool
+    candidate_failure_or_high_gap: bool
+    selection_cost: float
     is_oracle: bool
     was_selected_by_current_policy: bool
     gap_vs_oracle: float
@@ -176,7 +184,13 @@ class CandidateQualityRow:
             "condition": self.condition,
             "candidate_name": self.candidate_name,
             "candidate_nme": self.candidate_nme,
+            "oracle_nme": self.oracle_nme,
+            "regret_vs_oracle": self.regret_vs_oracle,
+            "normalized_regret": self.normalized_regret,
             "failure_label": int(self.failure_label),
+            "large_regret_label": int(self.large_regret_label),
+            "candidate_failure_or_high_gap": int(self.candidate_failure_or_high_gap),
+            "selection_cost": self.selection_cost,
             "is_oracle": int(self.is_oracle),
             "was_selected_by_current_policy": int(self.was_selected_by_current_policy),
             "gap_vs_oracle": self.gap_vs_oracle,
@@ -189,6 +203,34 @@ class CandidateQualityRow:
             "oracle": self.oracle,
             "features_json": json.dumps(self.feature_values, sort_keys=True),
         }
+
+
+def _required_nme(context: SampleCandidateContext, candidate_name: str) -> float:
+    """Return a finite candidate NME or fail before writing invalid targets."""
+    try:
+        nme = float(context.nme_by_candidate[candidate_name])
+    except KeyError as err:
+        raise ValueError(
+            f"sample {context.sample_id!r} missing NME for candidate {candidate_name!r}"
+        ) from err
+    if not math.isfinite(nme):
+        raise ValueError(
+            f"sample {context.sample_id!r} has non-finite NME for candidate {candidate_name!r}: "
+            f"{nme!r}"
+        )
+    return nme
+
+
+def _catastrophic_or_visual_collapse(reasons: T.Iterable[str]) -> bool:
+    """Return whether geometry diagnostics indicate collapse-style failure."""
+    collapse_markers = (
+        "collapse",
+        "cloud_area_too_small",
+        "hull_area_too_small",
+        "weak_visual",
+        "visual_collapse",
+    )
+    return any(any(marker in str(reason) for marker in collapse_markers) for reason in reasons)
 
 
 @dataclass(frozen=True)
@@ -667,23 +709,35 @@ def rows_for_context(
 ) -> list[CandidateQualityRow]:
     """Expand a sample context into one row per candidate."""
     rows: list[CandidateQualityRow] = []
-    oracle_nme = context.nme_by_candidate[context.oracle]
+    oracle_nme = _required_nme(context, context.oracle)
     for candidate in context.candidates:
         metric = context.metrics[candidate.name]
-        gap = context.nme_by_candidate[candidate.name] - oracle_nme
+        candidate_nme = _required_nme(context, candidate.name)
+        regret = max(candidate_nme - oracle_nme, 0.0)
+        normalized_regret = min(regret / DEFAULT_REGRET_NORMALIZER, 1.0)
+        candidate_failure = bool(context.failure_by_candidate[candidate.name])
+        large_regret = regret > high_gap_threshold
+        collapse = _catastrophic_or_visual_collapse(metric.geometry_veto_reasons)
+        selection_cost = (
+            normalized_regret + (2.0 if candidate_failure else 0.0) + (0.5 if collapse else 0.0)
+        )
         rows.append(
             CandidateQualityRow(
                 sample_id=context.sample_id,
                 dataset=context.dataset,
                 condition=context.condition,
                 candidate_name=candidate.name,
-                candidate_nme=context.nme_by_candidate[candidate.name],
-                failure_label=bool(
-                    context.failure_by_candidate[candidate.name] or gap > high_gap_threshold
-                ),
+                candidate_nme=candidate_nme,
+                oracle_nme=oracle_nme,
+                regret_vs_oracle=candidate_nme - oracle_nme,
+                normalized_regret=normalized_regret,
+                failure_label=candidate_failure,
+                large_regret_label=large_regret,
+                candidate_failure_or_high_gap=bool(candidate_failure or large_regret),
+                selection_cost=selection_cost,
                 is_oracle=candidate.name == context.oracle,
                 was_selected_by_current_policy=(candidate.name == context.current_policy_choice),
-                gap_vs_oracle=gap,
+                gap_vs_oracle=candidate_nme - oracle_nme,
                 runtime_bucket=context.runtime_bucket,
                 risk_route=context.risk_route,
                 feature_values=candidate_feature_map(
@@ -884,7 +938,13 @@ def write_rows_csv(rows: T.Sequence[CandidateQualityRow], path: Path) -> Path:
         "condition",
         "candidate_name",
         "candidate_nme",
+        "oracle_nme",
+        "regret_vs_oracle",
+        "normalized_regret",
         "failure_label",
+        "large_regret_label",
+        "candidate_failure_or_high_gap",
+        "selection_cost",
         "is_oracle",
         "was_selected_by_current_policy",
         "gap_vs_oracle",

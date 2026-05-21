@@ -15,6 +15,7 @@ import lib.landmarks.ensemble.runtime_resolver_scorer_data as scorer_data
 from lib.landmarks.cache.prediction_cache import DiskPredictionCache
 from lib.landmarks.core.schema import LandmarkPrediction
 from lib.landmarks.ensemble.promoted_setup import write_best_setup
+from lib.landmarks.ensemble.runtime_resolver import CandidateMetrics, CandidateRecord
 from lib.landmarks.ensemble.runtime_resolver_scorer import (
     RuntimeResolverScorer,
     write_runtime_resolver_scorer,
@@ -119,6 +120,111 @@ def _write_fixture_images(manifest_path: Path) -> None:
         cv2.imwrite(str(manifest_path.parent / sample["image"]), image)
 
 
+def _candidate_context(
+    *,
+    nme_by_candidate: dict[str, float],
+    failure_by_candidate: dict[str, bool] | None = None,
+    geometry_veto_reasons: dict[str, tuple[str, ...]] | None = None,
+    oracle: str = "oracle",
+) -> scorer_data.SampleCandidateContext:
+    candidates = tuple(
+        CandidateRecord(
+            name=name,
+            landmarks=_face(),
+            is_fusion=False,
+            contributing_models=(name,),
+        )
+        for name in ("oracle", "zero", "small", "large", "failure")
+    )
+    veto_reasons = geometry_veto_reasons or {}
+    return scorer_data.SampleCandidateContext(
+        sample_id="sample",
+        dataset="test",
+        source="production_validated",
+        condition="frontal",
+        candidates=candidates,
+        metrics={
+            candidate.name: CandidateMetrics(
+                roll_degrees=0.0,
+                yaw_degrees=0.0,
+                pitch_degrees=0.0,
+                geometry_veto_reasons=veto_reasons.get(candidate.name, ()),
+            )
+            for candidate in candidates
+        },
+        nme_by_candidate=nme_by_candidate,
+        failure_by_candidate={
+            candidate.name: bool((failure_by_candidate or {}).get(candidate.name, False))
+            for candidate in candidates
+        },
+        runtime_bucket="frontal",
+        risk_route="low_risk",
+        current_policy_choice="oracle",
+        oracle=oracle,
+        model_predictions_available={candidate.name: True for candidate in candidates},
+        roll_estimate=0.0,
+        yaw_estimate=0.0,
+        candidate_yaw_disagreement=0.0,
+        max_disagreement_px=0.0,
+        runtime_bucket_source="test",
+        selected_candidate_missing_from_eval=False,
+        candidate_extra_features={},
+    )
+
+
+def test_rows_for_context_adds_continuous_regret_targets() -> None:
+    rows = scorer_data.rows_for_context(
+        _candidate_context(
+            nme_by_candidate={
+                "oracle": 0.01,
+                "zero": 0.01,
+                "small": 0.015,
+                "large": 0.05,
+                "failure": 0.02,
+            },
+            failure_by_candidate={"failure": True},
+            geometry_veto_reasons={"failure": ("cloud_area_too_small",)},
+        )
+    )
+    by_name = {row.candidate_name: row for row in rows}
+
+    assert by_name["oracle"].is_oracle is True
+    assert by_name["oracle"].regret_vs_oracle == pytest.approx(0.0)
+    assert by_name["oracle"].normalized_regret == pytest.approx(0.0)
+    assert by_name["oracle"].selection_cost == pytest.approx(0.0)
+
+    assert by_name["zero"].regret_vs_oracle == pytest.approx(0.0)
+    assert by_name["zero"].normalized_regret == pytest.approx(0.0)
+    assert by_name["zero"].candidate_failure_or_high_gap is False
+
+    assert by_name["small"].regret_vs_oracle == pytest.approx(0.005)
+    assert by_name["small"].normalized_regret == pytest.approx(0.005 / 0.03)
+    assert by_name["small"].large_regret_label is False
+
+    assert by_name["large"].regret_vs_oracle == pytest.approx(0.04)
+    assert by_name["large"].normalized_regret == pytest.approx(1.0)
+    assert by_name["large"].large_regret_label is True
+    assert by_name["large"].candidate_failure_or_high_gap is True
+
+    assert by_name["failure"].failure_label is True
+    assert by_name["failure"].candidate_failure_or_high_gap is True
+    assert by_name["failure"].selection_cost == pytest.approx((0.01 / 0.03) + 2.0 + 0.5)
+
+
+def test_rows_for_context_rejects_missing_nme() -> None:
+    context = _candidate_context(
+        nme_by_candidate={
+            "oracle": 0.01,
+            "zero": 0.01,
+            "small": 0.015,
+            "large": 0.05,
+        }
+    )
+
+    with pytest.raises(ValueError, match="missing NME for candidate 'failure'"):
+        scorer_data.rows_for_context(context)
+
+
 def test_train_runtime_resolver_scorer_writes_artifact_and_rows(tmp_path: Path) -> None:
     manifest_path, cache_dir, weights_path = _write_fixture(tmp_path)
     output_dir = tmp_path / "train"
@@ -149,6 +255,15 @@ def test_train_runtime_resolver_scorer_writes_artifact_and_rows(tmp_path: Path) 
     assert (output_dir / "runtime_resolver_scorer_training_rows.csv").is_file()
     assert (output_dir / "runtime_resolver_scorer_eval_rows.csv").is_file()
     assert (output_dir / "candidate_table.csv").is_file()
+    training_rows = output_dir / "runtime_resolver_scorer_training_rows.csv"
+    with training_rows.open("r", newline="", encoding="utf-8") as handle:
+        header = next(csv.DictReader(handle))
+    assert "oracle_nme" in header
+    assert "regret_vs_oracle" in header
+    assert "normalized_regret" in header
+    assert "large_regret_label" in header
+    assert "candidate_failure_or_high_gap" in header
+    assert "selection_cost" in header
 
 
 def test_evaluate_runtime_resolver_scorer_reports_policy(tmp_path: Path) -> None:

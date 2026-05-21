@@ -20,7 +20,9 @@ def write_failure_report_from_metrics(
     pipeline only needs stable debug artifacts for smoke tests and summaries.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
-    payload = json.loads(metrics_path.read_text(encoding="utf-8")) if metrics_path.is_file() else {}
+    payload = (
+        json.loads(metrics_path.read_text(encoding="utf-8")) if metrics_path.is_file() else {}
+    )
     rows = list(payload.get("rows", [])) if isinstance(payload, dict) else []
     worst = sorted(rows, key=lambda row: float(row.get("nme", 0.0) or 0.0), reverse=True)[:limit]
     regressions = [

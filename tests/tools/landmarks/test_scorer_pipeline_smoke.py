@@ -199,9 +199,15 @@ def test_scorer_pipeline_smoke_build_train_evaluate_and_report(tmp_path: Path) -
         candidates=CANDIDATES,
         gt_hard_resolver_metadata=fixture.gt_sidecar,
     )
-    assert {context.source for context in contexts} == {SOURCE_GT_HARD, SOURCE_PRODUCTION_VALIDATED}
+    assert {context.source for context in contexts} == {
+        SOURCE_GT_HARD,
+        SOURCE_PRODUCTION_VALIDATED,
+    }
     assert any(context.runtime_bucket_source == "smoke_resolver_sidecar" for context in contexts)
-    assert any(context.runtime_bucket_source == "stored_manifest_landmark_ensemble" for context in contexts)
+    assert any(
+        context.runtime_bucket_source == "stored_manifest_landmark_ensemble"
+        for context in contexts
+    )
 
     train_dir = fixture.root / "train"
     metrics = train_runtime_resolver_scorer(
