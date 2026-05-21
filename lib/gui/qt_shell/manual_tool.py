@@ -15,13 +15,11 @@ import typing as T
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QAction, QCloseEvent, QPixmap
 from PySide6.QtWidgets import (
-    QHBoxLayout,
     QLabel,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
     QMessageBox,
-    QPushButton,
     QSizePolicy,
     QSplitter,
     QStatusBar,
@@ -31,7 +29,12 @@ from PySide6.QtWidgets import (
 )
 
 from lib.gui.services.command_builder import CommandBuilder
-from tools.manual.session import ManualFrame, ManualSession
+from tools.manual.session import (
+    ManualEditorState,
+    ManualFrame,
+    ManualSession,
+    ManualVideoMetadata,
+)
 
 
 class ManualFrameView(QLabel):
@@ -166,8 +169,9 @@ class ManualToolWindow(QMainWindow):
         self.setObjectName("qt-manual-tool-window")
         self.setWindowTitle("Faceswap Manual Tool")
         self._session = session
+        self._editor_state = session.create_editor_state()
+        self._video_metadata: ManualVideoMetadata | None = None
         self._legacy_args = legacy_args or []
-        self._dirty = False
         self._current_frame: ManualFrame | None = None
         self._frame_view = ManualFrameView()
         self._thumbnail_panel = ManualThumbnailPanel()
@@ -175,6 +179,7 @@ class ManualToolWindow(QMainWindow):
         self._metadata_label = QLabel()
         self._save_action: QAction | None = None
         self._legacy_action: QAction | None = None
+        self._editor_state.subscribe("unsaved", self._on_unsaved_changed)
         self._build_ui()
         self._connect_signals()
         self._load_session()
@@ -187,7 +192,17 @@ class ManualToolWindow(QMainWindow):
     @property
     def is_dirty(self) -> bool:
         """Return whether the Qt Manual Tool has unsaved edits."""
-        return self._dirty
+        return self._editor_state.unsaved
+
+    @property
+    def editor_state(self) -> ManualEditorState:
+        """Return the shared GUI-neutral editor state."""
+        return self._editor_state
+
+    @property
+    def video_metadata(self) -> ManualVideoMetadata | None:
+        """Return cached neutral video metadata, if loaded."""
+        return self._video_metadata
 
     @classmethod
     def from_command_values(
@@ -196,7 +211,7 @@ class ManualToolWindow(QMainWindow):
         *,
         builder: CommandBuilder,
         parent: QWidget | None = None,
-    ) -> "ManualToolWindow":
+    ) -> ManualToolWindow:
         """Create a Manual Tool window from command-panel values."""
         session = ManualSession.from_cli_values(values)
         legacy_args = builder.build("tools", "manual", values, generate=False)
@@ -204,7 +219,7 @@ class ManualToolWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa:N802
         """Prompt before closing when the editor has unsaved changes."""
-        if not self._dirty:
+        if not self._editor_state.unsaved:
             event.accept()
             return
         answer = QMessageBox.question(
@@ -221,11 +236,7 @@ class ManualToolWindow(QMainWindow):
 
     def mark_dirty(self, dirty: bool = True) -> None:
         """Set dirty state and update action availability."""
-        if self._dirty == dirty:
-            return
-        self._dirty = dirty
-        self.dirty_changed.emit(dirty)
-        self._sync_actions()
+        self._editor_state.set("unsaved", dirty)
 
     def save(self) -> bool:
         """Save seam for future alignment persistence integration."""
@@ -298,12 +309,26 @@ class ManualToolWindow(QMainWindow):
 
     def _load_session(self) -> None:
         """Populate the Qt Manual Tool from a neutral session."""
+        alignments = self._session.alignments_handle()
+        if self._session.is_video_input:
+            self._video_metadata = alignments.video_metadata()
+        frame_summary: str
+        if self._session.has_images:
+            frame_summary = str(self._session.frame_count)
+        elif self._video_metadata is not None and self._video_metadata.is_valid:
+            frame_summary = f"{self._video_metadata.frame_count} (video)"
+        else:
+            frame_summary = "video input"
+        thumbs_state = "cached" if alignments.has_thumbnails() else "needs generation"
+        if self._session.thumb_regenerate:
+            thumbs_state = "regenerate forced"
         self._metadata_label.setText(
             "\n".join(
                 (
                     f"Input: {self._session.frames}",
-                    f"Alignments: {self._session.alignments_path or 'default'}",
-                    f"Frames: {self._session.frame_count if self._session.has_images else 'video input'}",
+                    f"Alignments: {alignments.path}",
+                    f"Frames: {frame_summary}",
+                    f"Thumbnails: {thumbs_state}",
                 )
             )
         )
@@ -311,8 +336,15 @@ class ManualToolWindow(QMainWindow):
         if self._session.frame_list:
             self._thumbnail_panel.setCurrentRow(0)
         else:
-            self._frame_view.clear_frame("Video input detected. Frame extraction will be wired in a follow-up.")
+            self._frame_view.clear_frame(
+                "Video input detected. Frame extraction will be wired in a follow-up."
+            )
         self._status_label.setText("Native Qt Manual Tool loaded")
+        self._sync_actions()
+
+    def _on_unsaved_changed(self, dirty: bool) -> None:
+        """Forward editor-state unsaved changes to UI signals."""
+        self.dirty_changed.emit(bool(dirty))
         self._sync_actions()
 
     def _thumbnail_selected(
@@ -328,8 +360,11 @@ class ManualToolWindow(QMainWindow):
             return
         frame = self._session.frame_list[index]
         self._current_frame = frame
+        self._editor_state.set("frame_index", frame.index)
         if self._frame_view.load_frame(frame):
-            self._status_label.setText(f"Frame {frame.index + 1} of {self._session.frame_count}: {frame.name}")
+            self._status_label.setText(
+                f"Frame {frame.index + 1} of {self._session.frame_count}: {frame.name}"
+            )
 
     def _previous_frame(self) -> None:
         """Select previous frame."""
@@ -346,7 +381,7 @@ class ManualToolWindow(QMainWindow):
     def _sync_actions(self) -> None:
         """Update action availability from session and dirty state."""
         if self._save_action is not None:
-            self._save_action.setEnabled(self._dirty)
+            self._save_action.setEnabled(self._editor_state.unsaved)
         if self._legacy_action is not None:
             self._legacy_action.setEnabled(bool(self._legacy_args))
 
