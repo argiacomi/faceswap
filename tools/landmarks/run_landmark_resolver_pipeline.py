@@ -1458,8 +1458,13 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--allow-image-backfill",
-        action="store_true",
-        help="Allow scorer train/eval CLIs to backfill image paths from manifests when metadata is incomplete.",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Allow scorer train/eval CLIs to backfill image paths from manifests "
+            "when metadata is incomplete. Enabled by default for the blessed pipeline; "
+            "use --no-allow-image-backfill to opt out."
+        ),
     )
     parser.add_argument("--dataset-build-arg", action="append", default=[])
     parser.add_argument("--cache-prediction-arg", action="append", default=[])

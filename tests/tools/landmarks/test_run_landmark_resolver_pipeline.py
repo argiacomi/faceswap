@@ -56,7 +56,7 @@ def _args(tmp_path: Path, **overrides: object) -> argparse.Namespace:
         "split_report": 0.2,
         "split_seed": 1337,
         "scorer_target": "selection_cost",
-        "allow_image_backfill": False,
+        "allow_image_backfill": True,
         "dataset_build_arg": [],
         "cache_prediction_arg": [],
         "production_manifest_arg": [],
@@ -156,10 +156,10 @@ def test_stage_contract_declares_required_files(tmp_path: Path) -> None:
     assert str(paths.continuous_scorer_eval_rows) in contract.outputs
 
 
-def test_scorer_train_and_eval_commands_allow_image_backfill_when_enabled(
+def test_scorer_train_and_eval_commands_allow_image_backfill_by_default(
     tmp_path: Path,
 ) -> None:
-    args = _args(tmp_path, allow_image_backfill=True)
+    args = _args(tmp_path)
     paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
 
     train_command = _command_scorer_training(
@@ -171,10 +171,10 @@ def test_scorer_train_and_eval_commands_allow_image_backfill_when_enabled(
     assert "--allow-image-backfill" in eval_command
 
 
-def test_scorer_train_and_eval_commands_do_not_allow_image_backfill_by_default(
+def test_scorer_train_and_eval_commands_allow_image_backfill_can_be_disabled(
     tmp_path: Path,
 ) -> None:
-    args = _args(tmp_path)
+    args = _args(tmp_path, allow_image_backfill=False)
     paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
 
     train_command = _command_scorer_training(
@@ -323,6 +323,66 @@ def test_config_preview_and_write_preserves_unmanaged_config_entries(tmp_path: P
     assert "# align ensemble key comment survives" in config_text
     assert "; align ensemble footer comment survives" in config_text
     assert "# align fan comment survives" in config_text
+
+
+def test_config_write_appends_missing_align_ensemble_section(tmp_path: Path) -> None:
+    args = _args(tmp_path, write_config=True)
+    paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
+    _touch_pipeline_outputs(paths)
+    args.config_path.write_text(
+        "\n".join(
+            [
+                "# config header comment survives",
+                "[global]",
+                "aligner_min_scale = 0.03",
+                "",
+                "[detect.scrfd]",
+                "model = 10g",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    _apply_config(args, paths)
+
+    config_text = args.config_path.read_text(encoding="utf-8")
+    assert "# config header comment survives" in config_text
+    assert "[global]" in config_text
+    assert "[detect.scrfd]" in config_text
+    assert "[align.ensemble]" in config_text
+    assert "resolver_policy = learned_quality_v1" in config_text
+
+    parser = configparser.ConfigParser()
+    parser.optionxform = str
+    parser.read(args.config_path, encoding="utf-8")
+    assert parser.get("global", "aligner_min_scale") == "0.03"
+    assert parser.get("detect.scrfd", "model") == "10g"
+    assert parser.get("align.ensemble", "resolver_policy") == "learned_quality_v1"
+    assert parser.get("align.ensemble", "weights_path") == str(paths.exported_best_weights)
+
+
+def test_config_write_preserves_inline_comments_on_managed_keys(tmp_path: Path) -> None:
+    args = _args(tmp_path, write_config=True)
+    paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
+    _touch_pipeline_outputs(paths)
+    args.config_path.write_text(
+        "\n".join(
+            [
+                "[align.ensemble]",
+                "resolver_policy = stale_policy # keep this comment",
+                "weights_path = old_weights.json ; keep weights comment",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    _apply_config(args, paths)
+
+    config_text = args.config_path.read_text(encoding="utf-8")
+    assert "resolver_policy = learned_quality_v1 # keep this comment" in config_text
+    assert f"weights_path = {paths.exported_best_weights} ; keep weights comment" in config_text
 
 
 def test_config_write_requires_artifacts_and_passing_promotion(tmp_path: Path) -> None:
