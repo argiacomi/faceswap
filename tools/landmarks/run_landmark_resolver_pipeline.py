@@ -1491,8 +1491,10 @@ def _validate_stage_outputs(
             "stage 'v2_scorer_training' sentinel does not match the requested "
             "training inputs or hyperparameters"
         )
-    if args is not None and stage == "artifact_export" and not _artifact_export_matches(
-        args, paths
+    if (
+        args is not None
+        and stage == "artifact_export"
+        and not _artifact_export_matches(args, paths)
     ):
         raise PipelineContractError(
             "stage 'artifact_export' did not export the selected promoted scorer version"

@@ -168,9 +168,7 @@ def _touch_pipeline_outputs(paths: PipelinePaths, *, promotion_status: str = "pa
         "runtime_policy": "learned_quality_v1",
     }
     paths.scorer_artifact.write_text(json.dumps(scorer_payload) + "\n", encoding="utf-8")
-    paths.exported_scorer_artifact.write_text(
-        json.dumps(scorer_payload) + "\n", encoding="utf-8"
-    )
+    paths.exported_scorer_artifact.write_text(json.dumps(scorer_payload) + "\n", encoding="utf-8")
     paths.artifacts_dir.mkdir(parents=True, exist_ok=True)
     (paths.artifacts_dir / "artifacts_manifest.json").write_text(
         json.dumps(
@@ -787,12 +785,8 @@ def test_scorer_train_and_eval_commands_allow_image_backfill_by_default(
     assert v2_train_command[v2_train_command.index("--learning-rate") + 1] == str(
         args.v2_learning_rate
     )
-    assert v2_train_command[v2_train_command.index("--iterations") + 1] == str(
-        args.v2_iterations
-    )
-    assert v2_train_command[v2_train_command.index("--num-leaves") + 1] == str(
-        args.v2_num_leaves
-    )
+    assert v2_train_command[v2_train_command.index("--iterations") + 1] == str(args.v2_iterations)
+    assert v2_train_command[v2_train_command.index("--num-leaves") + 1] == str(args.v2_num_leaves)
     assert v2_train_command[v2_train_command.index("--output-dir") + 1] == str(
         paths.v2_scorer_train_dir
     )
