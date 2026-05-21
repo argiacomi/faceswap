@@ -27,10 +27,13 @@ from lib.landmarks.ensemble.scorer_contexts import load_scorer_contexts
 from lib.landmarks.ensemble.scorer_target_config import (
     DEFAULT_COLLAPSE_COST_PENALTY,
     DEFAULT_FAILURE_COST_PENALTY,
+    DEFAULT_LARGE_COST_THRESHOLD,
     DEFAULT_REGRET_NORMALIZER,
     MODEL_TYPE_LINEAR_REGRESSION,
     MODEL_TYPE_LOGISTIC_REGRESSION,
     REGRESSION_TARGETS,
+    SCORE_SEMANTICS_PREDICTED_COST,
+    SCORE_SEMANTICS_PREDICTED_RISK,
     SCORER_TARGETS,
     TARGET_CANDIDATE_FAILURE_OR_HIGH_GAP,
     TARGET_NORMALIZED_REGRET,
@@ -239,6 +242,37 @@ def scorer_target_value(row: CandidateQualityRow, target: str) -> float:
     raise ValueError(f"unsupported scorer target {target!r}")
 
 
+def target_distribution_stats(
+    rows: T.Sequence[CandidateQualityRow],
+    *,
+    target: str,
+    large_cost_threshold: float = DEFAULT_LARGE_COST_THRESHOLD,
+) -> dict[str, T.Any]:
+    """Return training-target distribution diagnostics."""
+    values = np.asarray([scorer_target_value(row, target) for row in rows], dtype="float64")
+    if values.size == 0:
+        return {
+            "target": target,
+            "target_mean": 0.0,
+            "target_p50": 0.0,
+            "target_p90": 0.0,
+            "target_p99": 0.0,
+            "zero_cost_rate": 0.0,
+            "large_cost_rate": 0.0,
+            "large_cost_threshold": large_cost_threshold,
+        }
+    return {
+        "target": target,
+        "target_mean": float(np.mean(values)),
+        "target_p50": float(np.percentile(values, 50)),
+        "target_p90": float(np.percentile(values, 90)),
+        "target_p99": float(np.percentile(values, 99)),
+        "zero_cost_rate": float(np.mean(values <= 0.0)),
+        "large_cost_rate": float(np.mean(values >= large_cost_threshold)),
+        "large_cost_threshold": large_cost_threshold,
+    }
+
+
 def scorer_row_metrics(
     scorer: RuntimeResolverScorer,
     rows: T.Sequence[CandidateQualityRow],
@@ -358,6 +392,7 @@ def train_runtime_resolver_scorer(
     if target in REGRESSION_TARGETS:
         coefficients, intercept = fit_linear_regression(x, y, l2=l2)
         model_type = MODEL_TYPE_LINEAR_REGRESSION
+        score_semantics = SCORE_SEMANTICS_PREDICTED_COST
         version = "learned_quality_v1.1"
     else:
         coefficients, intercept = fit_logistic(
@@ -368,6 +403,7 @@ def train_runtime_resolver_scorer(
             iterations=iterations,
         )
         model_type = MODEL_TYPE_LOGISTIC_REGRESSION
+        score_semantics = SCORE_SEMANTICS_PREDICTED_RISK
         version = "learned_quality_v1"
     scorer = RuntimeResolverScorer(
         features=features,
@@ -375,6 +411,8 @@ def train_runtime_resolver_scorer(
         intercept=float(intercept),
         model_type=model_type,
         target=target,
+        score_semantics=score_semantics,
+        higher_is_better=False,
         failure_threshold=failure_threshold,
         calibration={"type": "none", "params": {}},
         version=version,
@@ -387,6 +425,7 @@ def train_runtime_resolver_scorer(
         output_dir / TRAINING_CANDIDATE_TABLE_CSV,
     )
     metrics = scorer_row_metrics(scorer, rows)
+    target_stats = target_distribution_stats(rows, target=target)
     train_metrics = scorer_row_metrics(scorer, train_rows)
     eval_metrics = scorer_row_metrics(scorer, eval_rows)
     production_eval_metrics = scorer_row_metrics(
@@ -406,6 +445,9 @@ def train_runtime_resolver_scorer(
             "feature_count": len(features),
             "target": target,
             "model_type": model_type,
+            "score_semantics": score_semantics,
+            "higher_is_better": False,
+            "target_stats": target_stats,
             "failure_threshold": failure_threshold,
             "high_gap_threshold": high_gap_threshold,
             "normalized_regret_clamp": DEFAULT_REGRET_NORMALIZER,
@@ -441,6 +483,7 @@ __all__ = [
     "scorer_target_value",
     "scorer_row_metrics",
     "split_tagged_rows",
+    "target_distribution_stats",
     "train_runtime_resolver_scorer",
     "write_tagged_rows_csv",
 ]

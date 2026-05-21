@@ -390,6 +390,14 @@ def scorer_policy_key(scorer: RuntimeResolverScorer) -> str:
     return "current_binary_logistic_scorer"
 
 
+def assert_lower_score_is_better(scorer: RuntimeResolverScorer) -> None:
+    """Fail fast if a scorer artifact cannot be ranked by ascending score."""
+    if scorer.higher_is_better:
+        raise ValueError(
+            f"runtime resolver scorer {scorer.source_path or '<memory>'} is not lower-is-better"
+        )
+
+
 def evaluate_runtime_resolver_scorer(
     *,
     gt_manifest: Path | None,
@@ -421,9 +429,12 @@ def evaluate_runtime_resolver_scorer(
         )
     output_dir.mkdir(parents=True, exist_ok=True)
     scorer = load_runtime_resolver_scorer(scorer_path)
+    assert_lower_score_is_better(scorer)
     binary_scorer = (
         None if binary_scorer_path is None else load_runtime_resolver_scorer(binary_scorer_path)
     )
+    if binary_scorer is not None:
+        assert_lower_score_is_better(binary_scorer)
     contexts = load_scorer_contexts(
         gt_manifest=gt_manifest,
         gt_cache_dir=gt_cache_dir,
@@ -702,6 +713,13 @@ def evaluate_runtime_resolver_scorer(
         "candidates": list(candidates),
         "scorer_path": str(scorer_path),
         "binary_scorer_path": "" if binary_scorer_path is None else str(binary_scorer_path),
+        "scorer_comparison": {
+            "context_count": len(contexts),
+            "candidate_count": len(candidates),
+            "uses_same_contexts": True,
+            "uses_same_candidates": True,
+            "binary_scorer_present": binary_scorer is not None,
+        },
         "primary_scorer_policy": primary_scorer_policy,
         "scorer_model_type": scorer.model_type,
         "scorer_target": scorer.target,
@@ -749,5 +767,6 @@ __all__ = [
     "DEFAULT_RISK_FLOOR_FOR_SAFE_FALLBACK",
     "DEFAULT_SAFE_FALLBACK_MIN_DELTA",
     "PROMOTION_SCOPES",
+    "assert_lower_score_is_better",
     "evaluate_runtime_resolver_scorer",
 ]

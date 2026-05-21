@@ -18,6 +18,7 @@ from lib.landmarks.ensemble.promoted_setup import write_best_setup
 from lib.landmarks.ensemble.runtime_resolver import CandidateMetrics, CandidateRecord
 from lib.landmarks.ensemble.runtime_resolver_scorer import (
     RuntimeResolverScorer,
+    load_runtime_resolver_scorer,
     write_runtime_resolver_scorer,
 )
 from lib.landmarks.ensemble.scorer_target_config import (
@@ -25,6 +26,8 @@ from lib.landmarks.ensemble.scorer_target_config import (
     DEFAULT_FAILURE_COST_PENALTY,
     DEFAULT_REGRET_NORMALIZER,
     MODEL_TYPE_LINEAR_REGRESSION,
+    SCORE_SEMANTICS_PREDICTED_COST,
+    SCORE_SEMANTICS_PREDICTED_RISK,
     TARGET_CANDIDATE_FAILURE_OR_HIGH_GAP,
     TARGET_SELECTION_COST,
 )
@@ -256,6 +259,10 @@ def test_train_runtime_resolver_scorer_writes_artifact_and_rows(tmp_path: Path) 
     assert metrics["row_count"] == 6
     assert metrics["target"] == TARGET_CANDIDATE_FAILURE_OR_HIGH_GAP
     assert metrics["model_type"] == "logistic_regression"
+    assert metrics["score_semantics"] == SCORE_SEMANTICS_PREDICTED_RISK
+    assert metrics["higher_is_better"] is False
+    assert metrics["target_stats"]["target"] == TARGET_CANDIDATE_FAILURE_OR_HIGH_GAP
+    assert metrics["target_stats"]["target_p90"] >= metrics["target_stats"]["target_p50"]
     assert metrics["train_metrics"]["row_count"] == 3
     assert metrics["eval_metrics"]["row_count"] == 3
     assert metrics["production_only_eval_metrics"]["row_count"] == 3
@@ -304,7 +311,46 @@ def test_train_runtime_resolver_scorer_supports_selection_cost_regressor(
     assert metrics["train_metrics"]["mse"] >= 0.0
     assert artifact["target"] == TARGET_SELECTION_COST
     assert artifact["model_type"] == MODEL_TYPE_LINEAR_REGRESSION
+    assert artifact["score_semantics"] == SCORE_SEMANTICS_PREDICTED_COST
+    assert artifact["higher_is_better"] is False
     assert artifact["version"] == "learned_quality_v1.1"
+    assert metrics["score_semantics"] == SCORE_SEMANTICS_PREDICTED_COST
+    assert metrics["higher_is_better"] is False
+    assert metrics["target_stats"]["target"] == TARGET_SELECTION_COST
+    assert metrics["target_stats"]["target_mean"] >= 0.0
+    assert metrics["target_stats"]["target_p50"] >= 0.0
+    assert metrics["target_stats"]["target_p90"] >= metrics["target_stats"]["target_p50"]
+    assert metrics["target_stats"]["target_p99"] >= metrics["target_stats"]["target_p90"]
+    assert 0.0 <= metrics["target_stats"]["zero_cost_rate"] <= 1.0
+    assert 0.0 <= metrics["target_stats"]["large_cost_rate"] <= 1.0
+
+
+def test_selection_cost_regressor_artifact_ranks_lower_cost_features_first(
+    tmp_path: Path,
+) -> None:
+    manifest_path, cache_dir, weights_path = _write_fixture(tmp_path)
+    output_dir = tmp_path / "train_rank_smoke"
+
+    train_runtime_resolver_scorer(
+        gt_manifest=None,
+        gt_cache_dir=None,
+        production_manifest=manifest_path,
+        production_cache_dir=cache_dir,
+        weights_path=weights_path,
+        candidates=("hrnet", "spiga", "static_weighted_downweight"),
+        output_dir=output_dir,
+        iterations=20,
+        target=TARGET_SELECTION_COST,
+    )
+
+    scorer = load_runtime_resolver_scorer(output_dir / "runtime_resolver_scorer.json")
+    low_cost_score = scorer.score_feature_map({"candidate_name=hrnet": 1.0})
+    high_cost_score = scorer.score_feature_map({"candidate_name=spiga": 1.0})
+
+    assert scorer.model_type == MODEL_TYPE_LINEAR_REGRESSION
+    assert scorer.score_semantics == SCORE_SEMANTICS_PREDICTED_COST
+    assert scorer.higher_is_better is False
+    assert low_cost_score < high_cost_score
 
 
 def test_evaluate_runtime_resolver_scorer_reports_policy(tmp_path: Path) -> None:
@@ -362,6 +408,8 @@ def test_evaluate_runtime_resolver_scorer_compares_binary_and_continuous(
             intercept=0.0,
             model_type=MODEL_TYPE_LINEAR_REGRESSION,
             target=TARGET_SELECTION_COST,
+            score_semantics=SCORE_SEMANTICS_PREDICTED_COST,
+            higher_is_better=False,
             version="learned_quality_v1.1",
         ),
         tmp_path / "continuous_runtime_resolver_scorer.json",
@@ -382,6 +430,9 @@ def test_evaluate_runtime_resolver_scorer_compares_binary_and_continuous(
     assert report["primary_scorer_policy"] == "continuous_regret_v1_1"
     assert report["scorer_target"] == TARGET_SELECTION_COST
     assert report["scorer_model_type"] == MODEL_TYPE_LINEAR_REGRESSION
+    assert report["scorer_comparison"]["uses_same_contexts"] is True
+    assert report["scorer_comparison"]["uses_same_candidates"] is True
+    assert report["scorer_comparison"]["context_count"] == report["sample_count"]
     assert report["continuous_regret_v1_1"]["pick_counts"] == {"hrnet": 2}
     assert report["current_binary_logistic_scorer"]["pick_counts"] == {"hrnet": 2}
     assert "static_weighted_downweight" in report

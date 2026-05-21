@@ -15,6 +15,8 @@ import numpy as np
 from lib.landmarks.ensemble.scorer_target_config import (
     MODEL_TYPE_LINEAR_REGRESSION,
     MODEL_TYPE_LOGISTIC_REGRESSION,
+    SCORE_SEMANTICS_PREDICTED_COST,
+    SCORE_SEMANTICS_PREDICTED_RISK,
     TARGET_CANDIDATE_FAILURE_OR_HIGH_GAP,
 )
 
@@ -130,10 +132,27 @@ class RuntimeResolverScorer:
     artifact_schema_version: int = 1
     model_type: str = MODEL_TYPE_LOGISTIC_REGRESSION
     target: str = TARGET_CANDIDATE_FAILURE_OR_HIGH_GAP
+    score_semantics: str = SCORE_SEMANTICS_PREDICTED_RISK
+    higher_is_better: bool = False
     failure_threshold: float = 0.08
     calibration: dict[str, T.Any] | None = None
     source_path: str = ""
     version: str = "learned_quality_v1"
+
+    def __post_init__(self) -> None:
+        """Validate the score direction contract at construction time."""
+        expected_semantics = (
+            SCORE_SEMANTICS_PREDICTED_COST
+            if self.model_type == MODEL_TYPE_LINEAR_REGRESSION
+            else SCORE_SEMANTICS_PREDICTED_RISK
+        )
+        if self.score_semantics != expected_semantics:
+            raise ValueError(
+                "runtime resolver scorer score_semantics/model_type mismatch: "
+                f"{self.score_semantics!r} for {self.model_type!r}"
+            )
+        if self.higher_is_better:
+            raise ValueError("runtime resolver scorer scores must rank lower as better")
 
     @classmethod
     def from_payload(
@@ -156,6 +175,20 @@ class RuntimeResolverScorer:
         supported_model_types = {MODEL_TYPE_LOGISTIC_REGRESSION, MODEL_TYPE_LINEAR_REGRESSION}
         if model_type not in supported_model_types:
             raise ValueError(f"unsupported runtime resolver scorer model_type {model_type!r}")
+        default_score_semantics = (
+            SCORE_SEMANTICS_PREDICTED_COST
+            if model_type == MODEL_TYPE_LINEAR_REGRESSION
+            else SCORE_SEMANTICS_PREDICTED_RISK
+        )
+        score_semantics = str(payload.get("score_semantics", default_score_semantics))
+        if score_semantics != default_score_semantics:
+            raise ValueError(
+                "runtime resolver scorer score_semantics/model_type mismatch: "
+                f"{score_semantics!r} for {model_type!r}"
+            )
+        higher_is_better = bool(payload.get("higher_is_better", False))
+        if higher_is_better:
+            raise ValueError("runtime resolver scorer scores must rank lower as better")
         calibration = payload.get("calibration", {"type": "none", "params": {}})
         return cls(
             features=features,
@@ -164,6 +197,8 @@ class RuntimeResolverScorer:
             artifact_schema_version=int(payload.get("artifact_schema_version", 1)),
             model_type=model_type,
             target=str(payload.get("target", TARGET_CANDIDATE_FAILURE_OR_HIGH_GAP)),
+            score_semantics=score_semantics,
+            higher_is_better=higher_is_better,
             failure_threshold=float(payload.get("failure_threshold", 0.08)),
             calibration=calibration if isinstance(calibration, dict) else None,
             source_path=source_path,
@@ -178,6 +213,8 @@ class RuntimeResolverScorer:
             "artifact_schema_version": self.artifact_schema_version,
             "model_type": self.model_type,
             "target": self.target,
+            "score_semantics": self.score_semantics,
+            "higher_is_better": self.higher_is_better,
             "failure_threshold": self.failure_threshold,
             "features": list(self.features),
             "coefficients": list(self.coefficients),
