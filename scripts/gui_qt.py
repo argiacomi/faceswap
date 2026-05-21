@@ -8,6 +8,7 @@ import sys
 
 from PySide6.QtWidgets import QApplication
 
+from lib.gui import gui_config as cfg
 from lib.gui.qt_shell.main import (
     INTERRUPT_EXIT_CODE,
     install_signal_handlers,
@@ -29,6 +30,7 @@ class Gui:
         self._owns_app = QApplication.instance() is None
         self._no_exec = self._resolve_no_exec(arguments)
         self.app = QApplication.instance() or QApplication(sys.argv)
+        cfg.load_config(getattr(arguments, "config_file", None))
         self.theme = apply_theme(self.app)
         self.root = MainWindow()
         resize = getattr(self.root, "resize", None)
