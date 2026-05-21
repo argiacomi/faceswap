@@ -20,6 +20,14 @@ from lib.landmarks.ensemble.runtime_resolver_scorer import (
     RuntimeResolverScorer,
     write_runtime_resolver_scorer,
 )
+from lib.landmarks.ensemble.scorer_target_config import (
+    DEFAULT_COLLAPSE_COST_PENALTY,
+    DEFAULT_FAILURE_COST_PENALTY,
+    DEFAULT_REGRET_NORMALIZER,
+    MODEL_TYPE_LINEAR_REGRESSION,
+    TARGET_CANDIDATE_FAILURE_OR_HIGH_GAP,
+    TARGET_SELECTION_COST,
+)
 from lib.landmarks.ensemble.weights import save_weights
 from tools.landmarks.backfill_runtime_resolver_metadata import (
     backfill_runtime_resolver_metadata,
@@ -198,7 +206,7 @@ def test_rows_for_context_adds_continuous_regret_targets() -> None:
     assert by_name["zero"].candidate_failure_or_high_gap is False
 
     assert by_name["small"].regret_vs_oracle == pytest.approx(0.005)
-    assert by_name["small"].normalized_regret == pytest.approx(0.005 / 0.03)
+    assert by_name["small"].normalized_regret == pytest.approx(0.005 / DEFAULT_REGRET_NORMALIZER)
     assert by_name["small"].large_regret_label is False
 
     assert by_name["large"].regret_vs_oracle == pytest.approx(0.04)
@@ -208,7 +216,11 @@ def test_rows_for_context_adds_continuous_regret_targets() -> None:
 
     assert by_name["failure"].failure_label is True
     assert by_name["failure"].candidate_failure_or_high_gap is True
-    assert by_name["failure"].selection_cost == pytest.approx((0.01 / 0.03) + 2.0 + 0.5)
+    assert by_name["failure"].selection_cost == pytest.approx(
+        (0.01 / DEFAULT_REGRET_NORMALIZER)
+        + DEFAULT_FAILURE_COST_PENALTY
+        + DEFAULT_COLLAPSE_COST_PENALTY
+    )
 
 
 def test_rows_for_context_rejects_missing_nme() -> None:
@@ -242,6 +254,8 @@ def test_train_runtime_resolver_scorer_writes_artifact_and_rows(tmp_path: Path) 
 
     artifact = json.loads((output_dir / "runtime_resolver_scorer.json").read_text())
     assert metrics["row_count"] == 6
+    assert metrics["target"] == TARGET_CANDIDATE_FAILURE_OR_HIGH_GAP
+    assert metrics["model_type"] == "logistic_regression"
     assert metrics["train_metrics"]["row_count"] == 3
     assert metrics["eval_metrics"]["row_count"] == 3
     assert metrics["production_only_eval_metrics"]["row_count"] == 3
@@ -264,6 +278,33 @@ def test_train_runtime_resolver_scorer_writes_artifact_and_rows(tmp_path: Path) 
     assert "large_regret_label" in header
     assert "candidate_failure_or_high_gap" in header
     assert "selection_cost" in header
+
+
+def test_train_runtime_resolver_scorer_supports_selection_cost_regressor(
+    tmp_path: Path,
+) -> None:
+    manifest_path, cache_dir, weights_path = _write_fixture(tmp_path)
+    output_dir = tmp_path / "train_regressor"
+
+    metrics = train_runtime_resolver_scorer(
+        gt_manifest=None,
+        gt_cache_dir=None,
+        production_manifest=manifest_path,
+        production_cache_dir=cache_dir,
+        weights_path=weights_path,
+        candidates=("hrnet", "spiga", "static_weighted_downweight"),
+        output_dir=output_dir,
+        iterations=20,
+        target=TARGET_SELECTION_COST,
+    )
+
+    artifact = json.loads((output_dir / "runtime_resolver_scorer.json").read_text())
+    assert metrics["target"] == TARGET_SELECTION_COST
+    assert metrics["model_type"] == MODEL_TYPE_LINEAR_REGRESSION
+    assert metrics["train_metrics"]["mse"] >= 0.0
+    assert artifact["target"] == TARGET_SELECTION_COST
+    assert artifact["model_type"] == MODEL_TYPE_LINEAR_REGRESSION
+    assert artifact["version"] == "learned_quality_v1.1"
 
 
 def test_evaluate_runtime_resolver_scorer_reports_policy(tmp_path: Path) -> None:
@@ -300,6 +341,57 @@ def test_evaluate_runtime_resolver_scorer_reports_policy(tmp_path: Path) -> None
     assert report["best_single"]["candidate"] == "hrnet"
     assert (tmp_path / "eval" / "scorer_policy_report.csv").is_file()
     assert (tmp_path / "eval" / "scorer_feature_importance.csv").is_file()
+
+
+def test_evaluate_runtime_resolver_scorer_compares_binary_and_continuous(
+    tmp_path: Path,
+) -> None:
+    manifest_path, cache_dir, weights_path = _write_fixture(tmp_path)
+    binary_scorer_path = write_runtime_resolver_scorer(
+        RuntimeResolverScorer(
+            features=("candidate_name=hrnet", "candidate_name=spiga"),
+            coefficients=(-5.0, 5.0),
+            intercept=0.0,
+        ),
+        tmp_path / "binary_runtime_resolver_scorer.json",
+    )
+    continuous_scorer_path = write_runtime_resolver_scorer(
+        RuntimeResolverScorer(
+            features=("candidate_name=hrnet", "candidate_name=spiga"),
+            coefficients=(-1.0, 1.0),
+            intercept=0.0,
+            model_type=MODEL_TYPE_LINEAR_REGRESSION,
+            target=TARGET_SELECTION_COST,
+            version="learned_quality_v1.1",
+        ),
+        tmp_path / "continuous_runtime_resolver_scorer.json",
+    )
+
+    report = evaluate_runtime_resolver_scorer(
+        gt_manifest=None,
+        gt_cache_dir=None,
+        production_manifest=manifest_path,
+        production_cache_dir=cache_dir,
+        weights_path=weights_path,
+        scorer_path=continuous_scorer_path,
+        binary_scorer_path=binary_scorer_path,
+        candidates=("hrnet", "spiga", "static_weighted_downweight"),
+        output_dir=tmp_path / "eval_compare",
+    )
+
+    assert report["primary_scorer_policy"] == "continuous_regret_v1_1"
+    assert report["scorer_target"] == TARGET_SELECTION_COST
+    assert report["scorer_model_type"] == MODEL_TYPE_LINEAR_REGRESSION
+    assert report["continuous_regret_v1_1"]["pick_counts"] == {"hrnet": 2}
+    assert report["current_binary_logistic_scorer"]["pick_counts"] == {"hrnet": 2}
+    assert "static_weighted_downweight" in report
+    assert "oracle" in report
+    assert report["production_only_policy_metrics"]["continuous_regret_v1_1"]["pick_counts"] == {
+        "hrnet": 2
+    }
+    assert report["production_only_policy_metrics"]["current_binary_logistic_scorer"][
+        "pick_counts"
+    ] == {"hrnet": 2}
 
 
 def test_evaluate_runtime_resolver_scorer_filters_to_eval_split(tmp_path: Path) -> None:

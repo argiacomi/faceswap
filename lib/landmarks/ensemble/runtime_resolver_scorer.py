@@ -12,6 +12,12 @@ from pathlib import Path
 
 import numpy as np
 
+from lib.landmarks.ensemble.scorer_target_config import (
+    MODEL_TYPE_LINEAR_REGRESSION,
+    MODEL_TYPE_LOGISTIC_REGRESSION,
+    TARGET_CANDIDATE_FAILURE_OR_HIGH_GAP,
+)
+
 CandidateLike = T.Any
 MetricLike = T.Any
 
@@ -116,14 +122,14 @@ def candidate_feature_map(
 
 @dataclass(frozen=True)
 class RuntimeResolverScorer:
-    """Loaded logistic-regression scorer artifact."""
+    """Loaded runtime resolver scorer artifact."""
 
     features: tuple[str, ...]
     coefficients: tuple[float, ...]
     intercept: float
     artifact_schema_version: int = 1
-    model_type: str = "logistic_regression"
-    target: str = "candidate_failure_or_high_gap"
+    model_type: str = MODEL_TYPE_LOGISTIC_REGRESSION
+    target: str = TARGET_CANDIDATE_FAILURE_OR_HIGH_GAP
     failure_threshold: float = 0.08
     calibration: dict[str, T.Any] | None = None
     source_path: str = ""
@@ -146,8 +152,9 @@ class RuntimeResolverScorer:
                 "runtime resolver scorer features/coefficients length mismatch: "
                 f"{len(features)} != {len(coefficients)}"
             )
-        model_type = str(payload.get("model_type", "logistic_regression"))
-        if model_type != "logistic_regression":
+        model_type = str(payload.get("model_type", MODEL_TYPE_LOGISTIC_REGRESSION))
+        supported_model_types = {MODEL_TYPE_LOGISTIC_REGRESSION, MODEL_TYPE_LINEAR_REGRESSION}
+        if model_type not in supported_model_types:
             raise ValueError(f"unsupported runtime resolver scorer model_type {model_type!r}")
         calibration = payload.get("calibration", {"type": "none", "params": {}})
         return cls(
@@ -156,7 +163,7 @@ class RuntimeResolverScorer:
             intercept=float(payload.get("intercept", 0.0)),
             artifact_schema_version=int(payload.get("artifact_schema_version", 1)),
             model_type=model_type,
-            target=str(payload.get("target", "candidate_failure_or_high_gap")),
+            target=str(payload.get("target", TARGET_CANDIDATE_FAILURE_OR_HIGH_GAP)),
             failure_threshold=float(payload.get("failure_threshold", 0.08)),
             calibration=calibration if isinstance(calibration, dict) else None,
             source_path=source_path,
@@ -180,10 +187,12 @@ class RuntimeResolverScorer:
         }
 
     def score_feature_map(self, features: T.Mapping[str, float]) -> float:
-        """Return predicted candidate risk for a precomputed feature map."""
+        """Return predicted candidate risk/cost for a precomputed feature map."""
         linear = self.intercept
         for name, coefficient in zip(self.features, self.coefficients, strict=True):
             linear += coefficient * _float(features.get(name))
+        if self.model_type == MODEL_TYPE_LINEAR_REGRESSION:
+            return float(linear)
         return sigmoid(linear)
 
     def score_candidate(

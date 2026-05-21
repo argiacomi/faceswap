@@ -15,7 +15,10 @@ from lib.landmarks.ensemble.runtime_resolver import (
     _hard_slice_safe_single_candidate,
     _high_risk_safe_fallback_candidate,
 )
-from lib.landmarks.ensemble.runtime_resolver_scorer import load_runtime_resolver_scorer
+from lib.landmarks.ensemble.runtime_resolver_scorer import (
+    RuntimeResolverScorer,
+    load_runtime_resolver_scorer,
+)
 from lib.landmarks.ensemble.runtime_resolver_scorer_data import (
     DEFAULT_FAILURE_THRESHOLD,
     DEFAULT_OUTLIER_THRESHOLD,
@@ -24,6 +27,10 @@ from lib.landmarks.ensemble.runtime_resolver_scorer_data import (
 )
 from lib.landmarks.ensemble.scorer_contexts import load_scorer_contexts
 from lib.landmarks.ensemble.scorer_reports import write_scorer_policy_outputs
+from lib.landmarks.ensemble.scorer_target_config import (
+    MODEL_TYPE_LINEAR_REGRESSION,
+    TARGET_CANDIDATE_FAILURE_OR_HIGH_GAP,
+)
 from lib.landmarks.ensemble.strategies import canonical_strategy
 from lib.landmarks.pipeline_conventions import (
     SOURCE_GT_HARD,
@@ -312,15 +319,19 @@ def policy_metric_bundle(
     scorer_choices: T.Mapping[str, str],
     current_choices: T.Mapping[str, str],
     oracle_choices: T.Mapping[str, str],
+    extra_scorer_choices: T.Mapping[str, T.Mapping[str, str]] | None = None,
 ) -> dict[str, T.Any]:
     """Return selected-policy NME/failure summaries for one source slice."""
     if not contexts:
-        return {
+        payload = {
             "sample_count": 0,
             "learned_quality_v1": policy_summary((), {}),
             "current_bucket_aware_veto": policy_summary((), {}),
             "oracle": policy_summary((), {}),
         }
+        for policy_name in extra_scorer_choices or {}:
+            payload[policy_name] = policy_summary((), {})
+        return payload
     payload: dict[str, T.Any] = {
         "sample_count": len(contexts),
         "learned_quality_v1": policy_summary(contexts, choice_subset(contexts, scorer_choices)),
@@ -329,6 +340,11 @@ def policy_metric_bundle(
         ),
         "oracle": policy_summary(contexts, choice_subset(contexts, oracle_choices)),
     }
+    for policy_name, policy_choices in (extra_scorer_choices or {}).items():
+        payload[policy_name] = policy_summary(
+            contexts,
+            choice_subset(contexts, policy_choices),
+        )
     best_single_name, best_single_summary = best_single(contexts, candidates)
     payload["best_single"] = {"candidate": best_single_name, **best_single_summary}
     if "static_weighted_downweight" in candidates:
@@ -364,6 +380,16 @@ def fallback_impact_summary(impacts: T.Sequence[dict[str, T.Any]]) -> dict[str, 
     }
 
 
+def scorer_policy_key(scorer: RuntimeResolverScorer) -> str:
+    """Return the stable report key for a scorer artifact."""
+    if (
+        scorer.model_type == MODEL_TYPE_LINEAR_REGRESSION
+        or scorer.target != TARGET_CANDIDATE_FAILURE_OR_HIGH_GAP
+    ):
+        return "continuous_regret_v1_1"
+    return "current_binary_logistic_scorer"
+
+
 def evaluate_runtime_resolver_scorer(
     *,
     gt_manifest: Path | None,
@@ -372,6 +398,7 @@ def evaluate_runtime_resolver_scorer(
     production_cache_dir: Path | None,
     weights_path: Path,
     scorer_path: Path,
+    binary_scorer_path: Path | None = None,
     candidates: T.Sequence[str],
     output_dir: Path,
     eval_split: Path | None = None,
@@ -394,6 +421,9 @@ def evaluate_runtime_resolver_scorer(
         )
     output_dir.mkdir(parents=True, exist_ok=True)
     scorer = load_runtime_resolver_scorer(scorer_path)
+    binary_scorer = (
+        None if binary_scorer_path is None else load_runtime_resolver_scorer(binary_scorer_path)
+    )
     contexts = load_scorer_contexts(
         gt_manifest=gt_manifest,
         gt_cache_dir=gt_cache_dir,
@@ -421,6 +451,7 @@ def evaluate_runtime_resolver_scorer(
 
     rows: list[dict[str, T.Any]] = []
     scorer_choices: dict[str, str] = {}
+    binary_scorer_choices: dict[str, str] = {}
     current_choices: dict[str, str] = {}
     oracle_choices: dict[str, str] = {}
     fallback_impacts: list[dict[str, T.Any]] = []
@@ -428,10 +459,25 @@ def evaluate_runtime_resolver_scorer(
     safe_fallback_count = 0
     hard_slice_fallback_count = 0
     for context in contexts:
+        context_rows = rows_for_context(context)
         score_by_candidate = {
             row.candidate_name: scorer.score_feature_map(row.feature_values)
-            for row in rows_for_context(context)
+            for row in context_rows
         }
+        binary_score_by_candidate: dict[str, float] = {}
+        binary_chosen = ""
+        if binary_scorer is not None:
+            binary_score_by_candidate = {
+                row.candidate_name: binary_scorer.score_feature_map(row.feature_values)
+                for row in context_rows
+            }
+            binary_chosen = choose_scorer(
+                context,
+                binary_score_by_candidate,
+                risk_floor_for_safe_fallback=risk_floor_for_safe_fallback,
+                safe_fallback_min_delta=safe_fallback_min_delta,
+            )[0]
+            binary_scorer_choices[context.sample_id] = binary_chosen
         (
             chosen,
             fallback_used,
@@ -490,6 +536,11 @@ def evaluate_runtime_resolver_scorer(
                     context.nme_by_candidate[chosen] - context.nme_by_candidate[context.oracle]
                 ),
                 "candidate_scores": json.dumps(score_by_candidate, sort_keys=True),
+                "binary_logistic_scorer_chosen": binary_chosen,
+                "binary_logistic_candidate_scores": json.dumps(
+                    binary_score_by_candidate,
+                    sort_keys=True,
+                ),
                 "fallback_used": int(fallback_used),
                 "fallback_reason": fallback_reason,
                 "rejected_candidate": rejected_candidate,
@@ -513,6 +564,14 @@ def evaluate_runtime_resolver_scorer(
     )
     static = candidate_summary(contexts, static_name) if static_name else best_single_summary
     scorer_summary = policy_summary(contexts, scorer_choices)
+    primary_scorer_policy = scorer_policy_key(scorer)
+    extra_scorer_choices: dict[str, T.Mapping[str, str]] = {
+        primary_scorer_policy: scorer_choices,
+    }
+    if binary_scorer is not None:
+        extra_scorer_choices["current_binary_logistic_scorer"] = binary_scorer_choices
+    elif primary_scorer_policy == "current_binary_logistic_scorer":
+        binary_scorer_choices = dict(scorer_choices)
     current_summary = policy_summary(contexts, current_choices)
     oracle_summary = policy_summary(contexts, oracle_choices)
     production_contexts = [
@@ -547,6 +606,7 @@ def evaluate_runtime_resolver_scorer(
         scorer_choices=scorer_choices,
         current_choices=current_choices,
         oracle_choices=oracle_choices,
+        extra_scorer_choices=extra_scorer_choices,
     )
     gt_hard_all_policy_metrics = policy_metric_bundle(
         gt_hard_all_contexts,
@@ -554,6 +614,7 @@ def evaluate_runtime_resolver_scorer(
         scorer_choices=scorer_choices,
         current_choices=current_choices,
         oracle_choices=oracle_choices,
+        extra_scorer_choices=extra_scorer_choices,
     )
     gt_roll_hard_policy_metrics = policy_metric_bundle(
         gt_roll_hard_contexts,
@@ -561,6 +622,7 @@ def evaluate_runtime_resolver_scorer(
         scorer_choices=scorer_choices,
         current_choices=current_choices,
         oracle_choices=oracle_choices,
+        extra_scorer_choices=extra_scorer_choices,
     )
     combined_failed_gates: list[str] = []
     production_failed_gates: list[str] = []
@@ -639,10 +701,15 @@ def evaluate_runtime_resolver_scorer(
         "candidate_count": len(candidates),
         "candidates": list(candidates),
         "scorer_path": str(scorer_path),
+        "binary_scorer_path": "" if binary_scorer_path is None else str(binary_scorer_path),
+        "primary_scorer_policy": primary_scorer_policy,
+        "scorer_model_type": scorer.model_type,
+        "scorer_target": scorer.target,
         "scorer_version": scorer.version,
         "best_single": {"candidate": best_single_name, **best_single_summary},
         "static_weighted_downweight": {"candidate": static_name, **static},
         "learned_quality_v1": scorer_summary,
+        primary_scorer_policy: scorer_summary,
         "current_bucket_aware_veto": current_summary,
         "oracle": oracle_summary,
         "fallback_count": fallback_count,
@@ -662,6 +729,11 @@ def evaluate_runtime_resolver_scorer(
         "gt_hard_only_policy_metrics": gt_hard_all_policy_metrics,
         "gt_roll_hard_policy_metrics": gt_roll_hard_policy_metrics,
     }
+    if binary_scorer is not None:
+        report["current_binary_logistic_scorer"] = policy_summary(
+            contexts,
+            binary_scorer_choices,
+        )
 
     write_scorer_policy_outputs(
         report=report,

@@ -20,6 +20,10 @@ from lib.landmarks.ensemble.runtime_resolver_scorer_data import (
     DEFAULT_SCORER_CANDIDATE_CSV,
     parse_candidates,
 )
+from lib.landmarks.ensemble.scorer_target_config import (
+    SCORER_TARGETS,
+    TARGET_CANDIDATE_FAILURE_OR_HIGH_GAP,
+)
 from lib.landmarks.ensemble.scorer_training import (
     EVAL_ROWS_CSV,
     SCORER_ARTIFACT,
@@ -49,6 +53,15 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--failure-threshold", type=float, default=DEFAULT_FAILURE_THRESHOLD)
     parser.add_argument("--high-gap-threshold", type=float, default=DEFAULT_HIGH_GAP_THRESHOLD)
     parser.add_argument("--outlier-threshold", type=float, default=DEFAULT_OUTLIER_THRESHOLD)
+    parser.add_argument(
+        "--target",
+        choices=SCORER_TARGETS,
+        default=TARGET_CANDIDATE_FAILURE_OR_HIGH_GAP,
+        help=(
+            "Training target. The default preserves the binary v1 classifier; "
+            "normalized_regret and selection_cost train a v1.1 linear regressor."
+        ),
+    )
     parser.add_argument("--l2", type=float, default=0.001)
     parser.add_argument("--learning-rate", type=float, default=0.1)
     parser.add_argument("--iterations", type=int, default=1500)
@@ -93,6 +106,7 @@ def main(argv: T.Sequence[str] | None = None) -> int:
         eval_fraction=args.eval_fraction,
         split_seed=args.split_seed,
         allow_image_backfill=args.allow_image_backfill,
+        target=args.target,
     )
     logger.info("Wrote runtime resolver scorer to %s", metrics["artifact"])
     return 0

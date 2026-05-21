@@ -37,15 +37,21 @@ from lib.landmarks.ensemble.runtime_resolver import (
     resolve_runtime,
 )
 from lib.landmarks.ensemble.runtime_resolver_scorer import candidate_feature_map
+from lib.landmarks.ensemble.scorer_target_config import (
+    DEFAULT_COLLAPSE_COST_PENALTY,
+    DEFAULT_FAILURE_COST_PENALTY,
+    DEFAULT_LARGE_REGRET_THRESHOLD,
+    DEFAULT_NME_FAILURE_THRESHOLD,
+    DEFAULT_REGRET_NORMALIZER,
+)
 from lib.landmarks.ensemble.strategies import canonical_strategy
 from lib.landmarks.ensemble.weights import load_weights
 from lib.landmarks.evaluation.nme_metrics import evaluate_prediction
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_FAILURE_THRESHOLD: float = 0.08
-DEFAULT_HIGH_GAP_THRESHOLD: float = 0.01
-DEFAULT_REGRET_NORMALIZER: float = 0.03
+DEFAULT_FAILURE_THRESHOLD: float = DEFAULT_NME_FAILURE_THRESHOLD
+DEFAULT_HIGH_GAP_THRESHOLD: float = DEFAULT_LARGE_REGRET_THRESHOLD
 DEFAULT_OUTLIER_THRESHOLD: float = 3.5
 DEFAULT_IMAGE_BACKFILL_CROP_SCALE: float = 1.6
 DEFAULT_IMAGE_BACKFILL_CROP_SIZE: int = 256
@@ -719,7 +725,9 @@ def rows_for_context(
         large_regret = regret > high_gap_threshold
         collapse = _catastrophic_or_visual_collapse(metric.geometry_veto_reasons)
         selection_cost = (
-            normalized_regret + (2.0 if candidate_failure else 0.0) + (0.5 if collapse else 0.0)
+            normalized_regret
+            + (DEFAULT_FAILURE_COST_PENALTY if candidate_failure else 0.0)
+            + (DEFAULT_COLLAPSE_COST_PENALTY if collapse else 0.0)
         )
         rows.append(
             CandidateQualityRow(

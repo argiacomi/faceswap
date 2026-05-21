@@ -24,6 +24,18 @@ from lib.landmarks.ensemble.runtime_resolver_scorer_data import (
     write_candidate_table_csv,
 )
 from lib.landmarks.ensemble.scorer_contexts import load_scorer_contexts
+from lib.landmarks.ensemble.scorer_target_config import (
+    DEFAULT_COLLAPSE_COST_PENALTY,
+    DEFAULT_FAILURE_COST_PENALTY,
+    DEFAULT_REGRET_NORMALIZER,
+    MODEL_TYPE_LINEAR_REGRESSION,
+    MODEL_TYPE_LOGISTIC_REGRESSION,
+    REGRESSION_TARGETS,
+    SCORER_TARGETS,
+    TARGET_CANDIDATE_FAILURE_OR_HIGH_GAP,
+    TARGET_NORMALIZED_REGRET,
+    TARGET_SELECTION_COST,
+)
 from lib.landmarks.ensemble.scorer_targets import (
     TaggedRow,
     scorer_candidate_table_rows,
@@ -195,27 +207,81 @@ def fit_logistic(
     return raw_coef, raw_intercept
 
 
+def fit_linear_regression(
+    x: np.ndarray,
+    y: np.ndarray,
+    *,
+    l2: float,
+) -> tuple[np.ndarray, float]:
+    """Fit a small ridge linear regressor using numpy only."""
+    if x.shape[0] == 0:
+        raise ValueError("cannot train scorer on an empty matrix")
+    design = np.column_stack([np.ones(x.shape[0], dtype="float64"), x])
+    penalty = np.eye(design.shape[1], dtype="float64") * l2
+    penalty[0, 0] = 0.0
+    lhs = design.T @ design + penalty
+    rhs = design.T @ y
+    try:
+        params = np.linalg.solve(lhs, rhs)
+    except np.linalg.LinAlgError:
+        params = np.linalg.lstsq(lhs, rhs, rcond=None)[0]
+    return params[1:].astype("float64"), float(params[0])
+
+
+def scorer_target_value(row: CandidateQualityRow, target: str) -> float:
+    """Return the configured scorer target value for one training row."""
+    if target == TARGET_CANDIDATE_FAILURE_OR_HIGH_GAP:
+        return float(row.candidate_failure_or_high_gap)
+    if target == TARGET_NORMALIZED_REGRET:
+        return float(row.normalized_regret)
+    if target == TARGET_SELECTION_COST:
+        return float(row.selection_cost)
+    raise ValueError(f"unsupported scorer target {target!r}")
+
+
 def scorer_row_metrics(
     scorer: RuntimeResolverScorer,
     rows: T.Sequence[CandidateQualityRow],
 ) -> dict[str, T.Any]:
-    """Return standard classifier metrics for scorer rows."""
+    """Return standard scorer metrics for scorer rows."""
     if not rows:
-        return {
+        metrics: dict[str, T.Any] = {
             "row_count": 0,
-            "positive_count": 0,
-            "positive_rate": 0.0,
-            "accuracy_at_0_5": 0.0,
-            "log_loss": 0.0,
+            "target": scorer.target,
+            "model_type": scorer.model_type,
         }
+        if scorer.model_type == MODEL_TYPE_LOGISTIC_REGRESSION:
+            metrics.update(
+                {
+                    "positive_count": 0,
+                    "positive_rate": 0.0,
+                    "accuracy_at_0_5": 0.0,
+                    "log_loss": 0.0,
+                }
+            )
+        else:
+            metrics.update({"target_mean": 0.0, "mae": 0.0, "mse": 0.0, "rmse": 0.0})
+        return metrics
     labels = np.asarray(
-        [float(row.candidate_failure_or_high_gap) for row in rows],
+        [scorer_target_value(row, scorer.target) for row in rows],
         dtype="float64",
     )
     scores = np.asarray(
         [scorer.score_feature_map(row.feature_values) for row in rows],
         dtype="float64",
     )
+    if scorer.model_type == MODEL_TYPE_LINEAR_REGRESSION:
+        errors = scores - labels
+        mse = float(np.mean(np.square(errors))) if labels.size else 0.0
+        return {
+            "row_count": len(rows),
+            "target": scorer.target,
+            "model_type": scorer.model_type,
+            "target_mean": float(labels.mean()) if labels.size else 0.0,
+            "mae": float(np.mean(np.abs(errors))) if labels.size else 0.0,
+            "mse": mse,
+            "rmse": float(np.sqrt(mse)),
+        }
     predicted = scores >= 0.5
     accuracy = float(np.mean(predicted == labels)) if labels.size else 0.0
     loss = -np.mean(
@@ -224,6 +290,8 @@ def scorer_row_metrics(
     )
     return {
         "row_count": len(rows),
+        "target": scorer.target,
+        "model_type": scorer.model_type,
         "positive_count": int(labels.sum()),
         "positive_rate": float(labels.mean()) if labels.size else 0.0,
         "accuracy_at_0_5": accuracy,
@@ -250,8 +318,11 @@ def train_runtime_resolver_scorer(
     eval_fraction: float = 0.20,
     split_seed: int = 42,
     allow_image_backfill: bool = False,
+    target: str = TARGET_CANDIDATE_FAILURE_OR_HIGH_GAP,
 ) -> dict[str, T.Any]:
     """Train the scorer and write the portable artifact plus diagnostics."""
+    if target not in SCORER_TARGETS:
+        raise ValueError(f"target must be one of {SCORER_TARGETS}, got {target!r}")
     output_dir.mkdir(parents=True, exist_ok=True)
     contexts = load_scorer_contexts(
         gt_manifest=gt_manifest,
@@ -281,22 +352,32 @@ def train_runtime_resolver_scorer(
     features = feature_order(train_rows)
     x = feature_matrix([row.feature_values for row in train_rows], features)
     y = np.asarray(
-        [float(row.candidate_failure_or_high_gap) for row in train_rows],
+        [scorer_target_value(row, target) for row in train_rows],
         dtype="float64",
     )
-    coefficients, intercept = fit_logistic(
-        x,
-        y,
-        l2=l2,
-        learning_rate=learning_rate,
-        iterations=iterations,
-    )
+    if target in REGRESSION_TARGETS:
+        coefficients, intercept = fit_linear_regression(x, y, l2=l2)
+        model_type = MODEL_TYPE_LINEAR_REGRESSION
+        version = "learned_quality_v1.1"
+    else:
+        coefficients, intercept = fit_logistic(
+            x,
+            y,
+            l2=l2,
+            learning_rate=learning_rate,
+            iterations=iterations,
+        )
+        model_type = MODEL_TYPE_LOGISTIC_REGRESSION
+        version = "learned_quality_v1"
     scorer = RuntimeResolverScorer(
         features=features,
         coefficients=tuple(float(item) for item in coefficients),
         intercept=float(intercept),
+        model_type=model_type,
+        target=target,
         failure_threshold=failure_threshold,
         calibration={"type": "none", "params": {}},
+        version=version,
     )
     scorer_path = write_runtime_resolver_scorer(scorer, output_dir / SCORER_ARTIFACT)
     rows_path = write_tagged_rows_csv(train_tagged_rows, output_dir / TRAINING_ROWS_CSV)
@@ -323,8 +404,13 @@ def train_runtime_resolver_scorer(
             "candidate_count": len(candidates),
             "candidates": list(candidates),
             "feature_count": len(features),
+            "target": target,
+            "model_type": model_type,
             "failure_threshold": failure_threshold,
             "high_gap_threshold": high_gap_threshold,
+            "normalized_regret_clamp": DEFAULT_REGRET_NORMALIZER,
+            "failure_cost_penalty": DEFAULT_FAILURE_COST_PENALTY,
+            "collapse_cost_penalty": DEFAULT_COLLAPSE_COST_PENALTY,
             "l2": l2,
             "split_seed": split_seed,
             "eval_fraction": eval_fraction,
@@ -350,7 +436,9 @@ __all__ = [
     "TRAINING_ROWS_CSV",
     "EVAL_ROWS_CSV",
     "feature_order",
+    "fit_linear_regression",
     "fit_logistic",
+    "scorer_target_value",
     "scorer_row_metrics",
     "split_tagged_rows",
     "train_runtime_resolver_scorer",
