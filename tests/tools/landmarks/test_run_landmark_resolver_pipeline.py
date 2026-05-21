@@ -16,10 +16,15 @@ from tools.landmarks.run_landmark_resolver_pipeline import (
     PipelineContractError,
     PipelinePaths,
     _apply_config,
+    _command_dataset_build,
     _command_gt_hard_resolver_metadata,
+    _command_hard_source_manifest,
+    _command_hard_source_prediction_cache,
+    _command_hard_validation,
     _command_production_prediction_cache,
     _command_scorer_eval,
     _command_scorer_training,
+    _commands_dataset_build,
     _contract_for,
     _freeze_metadata,
     _promotion_check,
@@ -46,6 +51,10 @@ def _args(tmp_path: Path, **overrides: object) -> argparse.Namespace:
         "config_section": "align.ensemble",
         "python_executable": "python",
         "dataset": "wflw",
+        "source_dir": None,
+        "dataset_source": [],
+        "hard_source_dataset": "aflw2000-3d",
+        "hard_source_dir": None,
         "models": "hrnet,spiga,orformer",
         "candidates": "hrnet,spiga,orformer,static_weighted_downweight",
         "production_images": None,
@@ -62,7 +71,9 @@ def _args(tmp_path: Path, **overrides: object) -> argparse.Namespace:
         "scorer_target": "selection_cost",
         "allow_image_backfill": True,
         "dataset_build_arg": [],
+        "hard_source_dataset_build_arg": [],
         "cache_prediction_arg": [],
+        "hard_source_cache_prediction_arg": [],
         "production_manifest_arg": [],
         "production_cache_prediction_arg": [],
         "candidate_search_arg": [],
@@ -79,6 +90,9 @@ def _args(tmp_path: Path, **overrides: object) -> argparse.Namespace:
 def _touch_pipeline_outputs(paths: PipelinePaths, *, promotion_status: str = "pass") -> None:
     for path in (
         paths.run_manifest,
+        paths.hard_source_manifest,
+        paths.run_cache_sentinel,
+        paths.hard_source_cache_sentinel,
         paths.run_splits,
         paths.run_static_weights,
         paths.run_summary,
@@ -148,6 +162,102 @@ def test_pipeline_runner_dry_run_writes_summaries_contracts_and_progress(tmp_pat
     assert progress_rows[-1]["stage"] == STAGES[-1]
     assert (args.output_root / "pipeline_summary.json").is_file()
     assert (args.output_root / "pipeline_summary.md").is_file()
+
+
+def test_base_dataset_build_uses_replace_then_merge_for_multiple_datasets(
+    tmp_path: Path,
+) -> None:
+    args = _args(
+        tmp_path,
+        dataset="wflw,cofw,300w",
+        dataset_source=[
+            f"wflw={tmp_path / 'wflw'}",
+            f"cofw={tmp_path / 'cofw'}",
+            f"300w={tmp_path / '300w'}",
+        ],
+    )
+    paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
+
+    commands = _commands_dataset_build(args, paths)
+
+    assert [command[command.index("--dataset") + 1] for command in commands] == [
+        "wflw",
+        "cofw",
+        "300w",
+    ]
+    assert [command[command.index("--manifest-mode") + 1] for command in commands] == [
+        "replace",
+        "merge",
+        "merge",
+    ]
+    assert commands[0][commands[0].index("--source-dir") + 1] == str(tmp_path / "wflw")
+    assert commands[1][commands[1].index("--source-dir") + 1] == str(tmp_path / "cofw")
+    assert commands[2][commands[2].index("--source-dir") + 1] == str(tmp_path / "300w")
+
+
+def test_single_dataset_source_dir_is_passed_to_base_build(
+    tmp_path: Path,
+) -> None:
+    args = _args(tmp_path, dataset="wflw", source_dir=tmp_path / "wflw_source")
+    paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
+
+    command = _command_dataset_build(args, paths)
+
+    assert command[command.index("--dataset") + 1] == "wflw"
+    assert command[command.index("--source-dir") + 1] == str(tmp_path / "wflw_source")
+    assert command[command.index("--manifest-mode") + 1] == "replace"
+
+
+def test_hard_source_manifest_and_cache_default_to_aflw2000_3d(
+    tmp_path: Path,
+) -> None:
+    args = _args(
+        tmp_path,
+        hard_source_dir=tmp_path / "aflw2000_source",
+        hard_source_dataset_build_arg=["--hard-build-extra"],
+        hard_source_cache_prediction_arg=["--hard-cache-extra"],
+    )
+    paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
+
+    manifest_command = _command_hard_source_manifest(args, paths)
+    cache_command = _command_hard_source_prediction_cache(args, paths)
+
+    assert manifest_command[manifest_command.index("--dataset") + 1] == "aflw2000-3d"
+    assert manifest_command[manifest_command.index("--output-dir") + 1] == str(
+        paths.hard_source_dataset_dir
+    )
+    assert manifest_command[manifest_command.index("--source-dir") + 1] == str(
+        tmp_path / "aflw2000_source"
+    )
+    assert manifest_command[manifest_command.index("--manifest-mode") + 1] == "replace"
+    assert "--hard-build-extra" in manifest_command
+    assert cache_command[cache_command.index("--manifest") + 1] == str(paths.hard_source_manifest)
+    assert cache_command[cache_command.index("--cache-dir") + 1] == str(paths.run_cache)
+    assert "--hard-cache-extra" in cache_command
+
+
+def test_hard_validation_defaults_to_aflw2000_hard_source_manifest(
+    tmp_path: Path,
+) -> None:
+    args = _args(tmp_path)
+    paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
+
+    command = _command_hard_validation(args, paths)
+    contract = _contract_for("hard_alignment_validation", args, paths)
+
+    assert command[command.index("--manifest") + 1] == str(paths.hard_source_manifest)
+    assert str(paths.hard_source_manifest) in contract.required_files
+    assert str(paths.hard_source_cache_sentinel) in contract.required_files
+
+
+def test_split_mode_accepts_uploaded_workflow_alias(tmp_path: Path) -> None:
+    args = _args(tmp_path, dry_run=True, start_at="build_splits", stop_after="build_splits")
+    args.split_mode = "scenario_stratified"
+
+    summary = run_pipeline(args)
+
+    assert summary["stages"][0]["name"] == "build_splits"
+    assert summary["stages"][0]["status"] == "planned"
 
 
 def test_pipeline_declares_production_prediction_cache_stage(tmp_path: Path) -> None:

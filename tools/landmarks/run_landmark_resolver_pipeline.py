@@ -51,7 +51,9 @@ logger = logging.getLogger("run_landmark_resolver_pipeline")
 
 STAGES: tuple[str, ...] = (
     "build_dataset_manifest",
+    "build_hard_source_manifest",
     "build_prediction_cache",
+    "build_hard_source_prediction_cache",
     "build_splits",
     "fit_static_weights",
     "build_production_manifest",
@@ -69,6 +71,9 @@ STAGES: tuple[str, ...] = (
 )
 DEFAULT_MODELS = "hrnet,spiga,orformer"
 DEFAULT_CANDIDATES = "hrnet,spiga,orformer,plain_average,static_weighted,static_weighted_downweight,static_weighted_hard_drop,weighted_median"
+DEFAULT_HARD_SOURCE_DATASET = "aflw2000-3d"
+BASE_CACHE_SENTINEL_FILENAME = ".base_prediction_cache_complete.json"
+HARD_SOURCE_CACHE_SENTINEL_FILENAME = ".hard_source_prediction_cache_complete.json"
 DEFAULT_CONFIG_SECTION = "align.ensemble"
 CONFIG_PREVIEW_FILENAME = "config_update_preview.json"
 CONFIG_PATCH_FILENAME = "config_update_patch.ini"
@@ -116,6 +121,10 @@ class PipelinePaths:
     run_select_manifest: Path = field(init=False)
     run_report_manifest: Path = field(init=False)
     run_cache: Path = field(init=False)
+    run_cache_sentinel: Path = field(init=False)
+    hard_source_dataset_dir: Path = field(init=False)
+    hard_source_manifest: Path = field(init=False)
+    hard_source_cache_sentinel: Path = field(init=False)
     run_splits: Path = field(init=False)
     run_static_weights: Path = field(init=False)
     run_summary: Path = field(init=False)
@@ -157,6 +166,18 @@ class PipelinePaths:
             self, "run_report_manifest", self.run_dataset_dir / REPORT_MANIFEST_FILENAME
         )
         object.__setattr__(self, "run_cache", self.run_root / "cache")
+        object.__setattr__(
+            self, "run_cache_sentinel", self.run_cache / BASE_CACHE_SENTINEL_FILENAME
+        )
+        object.__setattr__(self, "hard_source_dataset_dir", self.run_root / "aflw2000_3d")
+        object.__setattr__(
+            self, "hard_source_manifest", self.hard_source_dataset_dir / "manifest.json"
+        )
+        object.__setattr__(
+            self,
+            "hard_source_cache_sentinel",
+            self.run_cache / HARD_SOURCE_CACHE_SENTINEL_FILENAME,
+        )
         object.__setattr__(self, "run_splits", self.run_root / "splits" / "splits.json")
         object.__setattr__(
             self, "run_static_weights", self.run_root / "weights" / "static_landmark_weights.json"
@@ -305,17 +326,94 @@ def _script(path: str) -> str:
     return str(ROOT / "tools" / "landmarks" / path)
 
 
+def _split_csv_values(value: T.Any) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    raw_items = value if isinstance(value, list | tuple) else [value]
+    items: list[str] = []
+    for raw in raw_items:
+        items.extend(part.strip() for part in str(raw).split(",") if part.strip())
+    return tuple(items)
+
+
+def _base_datasets(args: argparse.Namespace) -> tuple[str, ...]:
+    return _split_csv_values(getattr(args, "dataset", None)) or ("wflw",)
+
+
+def _dataset_source_map(args: argparse.Namespace) -> dict[str, Path]:
+    mapping: dict[str, Path] = {}
+    for spec in getattr(args, "dataset_source", []) or []:
+        if "=" not in str(spec):
+            raise ValueError(f"--dataset-source must use dataset=source_dir format, got {spec!r}")
+        name, source = str(spec).split("=", 1)
+        name = name.strip()
+        source = source.strip()
+        if not name or not source:
+            raise ValueError(f"--dataset-source must use dataset=source_dir format, got {spec!r}")
+        mapping[name] = Path(source)
+    source_dir = getattr(args, "source_dir", None)
+    datasets = _base_datasets(args)
+    if source_dir is not None and len(datasets) == 1:
+        mapping.setdefault(datasets[0], Path(source_dir))
+    return mapping
+
+
+def _dataset_build_command(
+    args: argparse.Namespace,
+    paths: PipelinePaths,
+    *,
+    dataset: str,
+    output_dir: Path,
+    manifest_mode: str,
+    source_dir: Path | None = None,
+    extra: T.Sequence[str] = (),
+) -> list[str]:
+    argv = [
+        args.python_executable,
+        _script("build_quality_dataset.py"),
+        "--dataset",
+        dataset,
+        "--output-dir",
+        str(output_dir),
+        "--manifest-mode",
+        manifest_mode,
+    ]
+    if source_dir is not None:
+        argv.extend(["--source-dir", str(source_dir)])
+    return _append_extra(argv, extra)
+
+
+def _commands_dataset_build(args: argparse.Namespace, paths: PipelinePaths) -> list[list[str]]:
+    source_map = _dataset_source_map(args)
+    commands: list[list[str]] = []
+    for index, dataset in enumerate(_base_datasets(args)):
+        commands.append(
+            _dataset_build_command(
+                args,
+                paths,
+                dataset=dataset,
+                output_dir=paths.run_dataset_dir,
+                manifest_mode="replace" if index == 0 else "merge",
+                source_dir=source_map.get(dataset),
+                extra=getattr(args, "dataset_build_arg", []),
+            )
+        )
+    return commands
+
+
 def _command_dataset_build(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
-    return _append_extra(
-        [
-            args.python_executable,
-            _script("build_quality_dataset.py"),
-            "--dataset",
-            args.dataset,
-            "--output-dir",
-            str(paths.run_dataset_dir),
-        ],
-        args.dataset_build_arg,
+    return _commands_dataset_build(args, paths)[0]
+
+
+def _command_hard_source_manifest(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
+    return _dataset_build_command(
+        args,
+        paths,
+        dataset=getattr(args, "hard_source_dataset", DEFAULT_HARD_SOURCE_DATASET),
+        output_dir=paths.hard_source_dataset_dir,
+        manifest_mode="replace",
+        source_dir=getattr(args, "hard_source_dir", None),
+        extra=getattr(args, "hard_source_dataset_build_arg", []),
     )
 
 
@@ -333,6 +431,28 @@ def _command_prediction_cache(args: argparse.Namespace, paths: PipelinePaths) ->
         ],
         args.cache_prediction_arg,
     )
+
+
+def _command_hard_source_prediction_cache(
+    args: argparse.Namespace, paths: PipelinePaths
+) -> list[str]:
+    return _append_extra(
+        [
+            args.python_executable,
+            _script("cache_predictions.py"),
+            "--manifest",
+            str(paths.hard_source_manifest),
+            "--cache-dir",
+            str(paths.run_cache),
+            "--models",
+            args.models,
+        ],
+        getattr(args, "hard_source_cache_prediction_arg", []),
+    )
+
+
+def _write_cache_sentinel(path: Path, *, manifest: Path, models: str) -> None:
+    write_json(path, {"manifest": str(manifest), "models": models})
 
 
 def _command_production_manifest(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
@@ -396,7 +516,7 @@ def _command_candidate_search(args: argparse.Namespace, paths: PipelinePaths) ->
 
 
 def _command_hard_validation(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
-    source_manifest = args.hard_source_manifest or paths.run_manifest
+    source_manifest = args.hard_source_manifest or paths.hard_source_manifest
     weights = paths.best_weights if paths.best_weights.exists() else paths.run_static_weights
     return _append_extra(
         [
@@ -508,7 +628,9 @@ def _command_scorer_eval(args: argparse.Namespace, paths: PipelinePaths) -> list
 def _outputs_for(stage: str, paths: PipelinePaths) -> list[Path]:
     return {
         "build_dataset_manifest": [paths.run_manifest],
-        "build_prediction_cache": [paths.run_cache],
+        "build_hard_source_manifest": [paths.hard_source_manifest],
+        "build_prediction_cache": [paths.run_cache, paths.run_cache_sentinel],
+        "build_hard_source_prediction_cache": [paths.run_cache, paths.hard_source_cache_sentinel],
         "build_splits": [
             paths.run_splits,
             paths.run_fit_manifest,
@@ -547,11 +669,14 @@ def _outputs_for(stage: str, paths: PipelinePaths) -> list[Path]:
 def _required_inputs_for(stage: str, args: argparse.Namespace, paths: PipelinePaths) -> list[Path]:
     return {
         "build_dataset_manifest": [],
+        "build_hard_source_manifest": [],
         "build_prediction_cache": [paths.run_manifest],
+        "build_hard_source_prediction_cache": [paths.hard_source_manifest],
         "build_splits": [paths.run_manifest],
         "fit_static_weights": [
             paths.run_fit_manifest if paths.run_fit_manifest.exists() else paths.run_manifest,
             paths.run_cache,
+            paths.run_cache_sentinel,
         ],
         "build_production_manifest": []
         if paths.production_manifest.exists()
@@ -562,13 +687,15 @@ def _required_inputs_for(stage: str, args: argparse.Namespace, paths: PipelinePa
         "build_production_prediction_cache": [paths.production_manifest],
         "candidate_search": [
             paths.run_cache,
+            paths.run_cache_sentinel,
             paths.run_splits,
             paths.production_manifest,
             paths.production_cache,
         ],
         "hard_alignment_validation": [
-            args.hard_source_manifest or paths.run_manifest,
+            args.hard_source_manifest or paths.hard_source_manifest,
             paths.run_cache,
+            paths.hard_source_cache_sentinel,
             paths.best_weights if paths.best_weights.exists() else paths.run_static_weights,
         ],
         "build_gt_hard_resolver_metadata": []
@@ -577,7 +704,12 @@ def _required_inputs_for(stage: str, args: argparse.Namespace, paths: PipelinePa
             [args.gt_hard_resolver_metadata]
             if args.gt_hard_resolver_metadata
             else (
-                [paths.hard_manifest, paths.run_cache, paths.best_weights]
+                [
+                    paths.hard_manifest,
+                    paths.run_cache,
+                    paths.hard_source_cache_sentinel,
+                    paths.best_weights,
+                ]
                 if args.generate_gt_hard_resolver_metadata
                 else []
             )
@@ -630,8 +762,10 @@ def _required_inputs_for(stage: str, args: argparse.Namespace, paths: PipelinePa
 
 def _contract_for(stage: str, args: argparse.Namespace, paths: PipelinePaths) -> StageContract:
     cache_behavior = {
-        "build_dataset_manifest": "writes run-root dataset manifest; --resume skips when manifest exists",
-        "build_prediction_cache": "writes run-root prediction cache; --resume skips when cache dir exists",
+        "build_dataset_manifest": "writes merged run-root base GT manifest; first dataset uses --manifest-mode replace and later datasets use --manifest-mode merge",
+        "build_hard_source_manifest": "writes separate AFLW2000-3D hard-source manifest under run-root; --resume skips when manifest exists",
+        "build_prediction_cache": "writes base GT predictions into the shared run-root prediction cache and records a base-cache sentinel",
+        "build_hard_source_prediction_cache": "writes hard-source predictions into the same run-root prediction cache and records a hard-source-cache sentinel",
         "build_splits": "writes fit/select/report splits and split manifests; --resume skips when all split artifacts exist",
         "fit_static_weights": "fits initial static weights from the fit split; --resume skips when weights exist",
         "build_production_manifest": "writes production_validated manifest, resolver metadata, and audit from Faceswap alignments; --resume skips when outputs exist",
@@ -648,8 +782,10 @@ def _contract_for(stage: str, args: argparse.Namespace, paths: PipelinePaths) ->
         "config_update": "writes deterministic config_update_preview.json and config_update_patch.ini; writes only promoted align.ensemble keys with --write-config after promotion passes",
     }[stage]
     success = {
-        "build_dataset_manifest": ["run manifest exists"],
-        "build_prediction_cache": ["run prediction cache exists"],
+        "build_dataset_manifest": ["merged base GT run manifest exists"],
+        "build_hard_source_manifest": ["hard-source manifest exists"],
+        "build_prediction_cache": ["base GT prediction cache sentinel exists"],
+        "build_hard_source_prediction_cache": ["hard-source prediction cache sentinel exists"],
         "build_splits": ["splits.json and fit/select/report manifests exist"],
         "fit_static_weights": ["static landmark weights exist"],
         "build_production_manifest": [
@@ -708,6 +844,10 @@ def _load_manifest_payload(path: Path) -> dict[str, T.Any]:
     return payload
 
 
+def _normalized_split_mode(value: str) -> str:
+    return SCENARIO_STRATIFIED if value == "scenario_stratified" else value
+
+
 def _build_splits(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
     base_manifest = _load_manifest_payload(paths.run_manifest)
     samples = base_manifest.get("samples", base_manifest.get("scenarios", []))
@@ -716,7 +856,7 @@ def _build_splits(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
     ratios = SplitRatios(args.split_fit, args.split_select, args.split_report)
     assignment, diagnostics = split_manifest_samples(
         [sample for sample in samples if isinstance(sample, dict)],
-        mode=args.split_mode,
+        mode=_normalized_split_mode(args.split_mode),
         ratios=ratios,
         seed=args.split_seed,
     )
@@ -738,7 +878,7 @@ def _build_splits(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
             "manifest": str(paths.run_manifest),
             "cache": str(paths.run_cache),
             "splits": str(paths.run_splits),
-            "split_mode": args.split_mode,
+            "split_mode": _normalized_split_mode(args.split_mode),
             "split_seed": args.split_seed,
             "split_counts": split_summary_counts(assignment, samples),
         },
@@ -1114,7 +1254,8 @@ def _execute_stage(stage: str, args: argparse.Namespace, paths: PipelinePaths) -
         if not args.dry_run:
             _validate_required_files(stage, args, paths)
         if stage == "build_dataset_manifest":
-            command = _command_dataset_build(args, paths)
+            commands = _commands_dataset_build(args, paths)
+            command = commands[0]
             if args.dry_run:
                 return StageResult(
                     stage,
@@ -1122,6 +1263,15 @@ def _execute_stage(stage: str, args: argparse.Namespace, paths: PipelinePaths) -
                     command=command,
                     outputs=outputs,
                     contract=contract.to_json(),
+                    notes=[f"would run {len(commands)} dataset build command(s)"],
+                )
+            for command in commands:
+                _run_command(command)
+        elif stage == "build_hard_source_manifest":
+            command = _command_hard_source_manifest(args, paths)
+            if args.dry_run:
+                return StageResult(
+                    stage, "planned", command=command, outputs=outputs, contract=contract.to_json()
                 )
             _run_command(command)
         elif stage == "build_prediction_cache":
@@ -1131,6 +1281,21 @@ def _execute_stage(stage: str, args: argparse.Namespace, paths: PipelinePaths) -
                     stage, "planned", command=command, outputs=outputs, contract=contract.to_json()
                 )
             _run_command(command)
+            _write_cache_sentinel(
+                paths.run_cache_sentinel, manifest=paths.run_manifest, models=args.models
+            )
+        elif stage == "build_hard_source_prediction_cache":
+            command = _command_hard_source_prediction_cache(args, paths)
+            if args.dry_run:
+                return StageResult(
+                    stage, "planned", command=command, outputs=outputs, contract=contract.to_json()
+                )
+            _run_command(command)
+            _write_cache_sentinel(
+                paths.hard_source_cache_sentinel,
+                manifest=paths.hard_source_manifest,
+                models=args.models,
+            )
         elif stage == "build_splits":
             if args.dry_run:
                 return StageResult(
@@ -1422,6 +1587,16 @@ def _summary_payload(
         "production_root": str(paths.production_root),
         "output_root": str(paths.output_root),
         "sources": {
+            "base_gt": {
+                "manifest": str(paths.run_manifest),
+                "cache": str(paths.run_cache),
+                "datasets": list(_base_datasets(args)),
+            },
+            "hard_source": {
+                "manifest": str(paths.hard_source_manifest),
+                "cache": str(paths.run_cache),
+                "dataset": getattr(args, "hard_source_dataset", DEFAULT_HARD_SOURCE_DATASET),
+            },
             SOURCE_GT_HARD: {
                 "manifest": str(paths.hard_manifest),
                 "cache": str(paths.run_cache),
@@ -1553,7 +1728,37 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--config-path", type=Path, default=Path("config/extract.ini"))
     parser.add_argument("--config-section", default=DEFAULT_CONFIG_SECTION)
     parser.add_argument("--python-executable", default=sys.executable)
-    parser.add_argument("--dataset", default="wflw")
+    parser.add_argument(
+        "--dataset",
+        action="append",
+        default=None,
+        help=(
+            "Base GT dataset to include in the search pool. Repeat the flag or pass a "
+            "comma-separated list. The first dataset is written with manifest-mode=replace; "
+            "later datasets use manifest-mode=merge. Defaults to wflw."
+        ),
+    )
+    parser.add_argument(
+        "--source-dir",
+        type=Path,
+        help="Source directory for a single --dataset base GT build.",
+    )
+    parser.add_argument(
+        "--dataset-source",
+        action="append",
+        default=[],
+        help="Per-base-dataset source mapping in dataset=source_dir form.",
+    )
+    parser.add_argument(
+        "--hard-source-dataset",
+        default=DEFAULT_HARD_SOURCE_DATASET,
+        help="Dataset used to build the separate pose-driven GT-hard source manifest.",
+    )
+    parser.add_argument(
+        "--hard-source-dir",
+        type=Path,
+        help="Source directory for --hard-source-dataset, normally AFLW2000-3D.",
+    )
     parser.add_argument("--models", default=DEFAULT_MODELS)
     parser.add_argument("--candidates", default=DEFAULT_CANDIDATES)
     parser.add_argument("--production-images", type=Path)
@@ -1574,7 +1779,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--hard-source-manifest", type=Path)
     parser.add_argument(
         "--split-mode",
-        choices=(SCENARIO_STRATIFIED, RANDOM),
+        choices=(SCENARIO_STRATIFIED, "scenario_stratified", RANDOM),
         default=SCENARIO_STRATIFIED,
     )
     parser.add_argument("--split-fit", type=float, default=0.60)
@@ -1597,7 +1802,9 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--dataset-build-arg", action="append", default=[])
+    parser.add_argument("--hard-source-dataset-build-arg", action="append", default=[])
     parser.add_argument("--cache-prediction-arg", action="append", default=[])
+    parser.add_argument("--hard-source-cache-prediction-arg", action="append", default=[])
     parser.add_argument("--production-manifest-arg", action="append", default=[])
     parser.add_argument("--production-cache-prediction-arg", action="append", default=[])
     parser.add_argument("--candidate-search-arg", action="append", default=[])
