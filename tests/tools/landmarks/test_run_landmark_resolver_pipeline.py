@@ -109,7 +109,9 @@ def test_pipeline_runner_dry_run_writes_summaries_contracts_and_progress(tmp_pat
     assert "production_weights_path" in summary["config_fields_changed"]
     progress_log = Path(summary["progress_log_path"])
     assert progress_log.is_file()
-    progress_rows = [json.loads(line) for line in progress_log.read_text(encoding="utf-8").splitlines()]
+    progress_rows = [
+        json.loads(line) for line in progress_log.read_text(encoding="utf-8").splitlines()
+    ]
     assert len(progress_rows) == len(STAGES) * 2
     assert {row["event"] for row in progress_rows} == {"start", "finish"}
     assert progress_rows[0]["stage"] == STAGES[0]
@@ -176,7 +178,9 @@ def test_config_preview_and_write_replaces_stale_align_ensemble(tmp_path: Path) 
     _touch_pipeline_outputs(paths)
 
     notes = _apply_config(args, paths)
-    preview = json.loads((args.output_root / "config_update_preview.json").read_text(encoding="utf-8"))
+    preview = json.loads(
+        (args.output_root / "config_update_preview.json").read_text(encoding="utf-8")
+    )
     patch = (args.output_root / "config_update_patch.ini").read_text(encoding="utf-8")
     assert "preview" in notes[0]
     assert preview["section"] == "align.ensemble"
@@ -213,14 +217,20 @@ def test_config_write_requires_artifacts_and_passing_promotion(tmp_path: Path) -
         _apply_config(args, paths)
 
 
-def test_resume_skips_completed_stages_records_validated_outputs_and_progress(tmp_path: Path) -> None:
-    args = _args(tmp_path, resume=True, start_at="production_promotion_check", stop_after="config_update")
+def test_resume_skips_completed_stages_records_validated_outputs_and_progress(
+    tmp_path: Path,
+) -> None:
+    args = _args(
+        tmp_path, resume=True, start_at="production_promotion_check", stop_after="config_update"
+    )
     paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
     _touch_pipeline_outputs(paths)
     paths.artifacts_dir.mkdir(parents=True, exist_ok=True)
     (paths.artifacts_dir / "artifacts_manifest.json").write_text("{}\n", encoding="utf-8")
     (paths.output_root / "config_update_preview.json").write_text("{}\n", encoding="utf-8")
-    (paths.output_root / "config_update_patch.ini").write_text("[align.ensemble]\n", encoding="utf-8")
+    (paths.output_root / "config_update_patch.ini").write_text(
+        "[align.ensemble]\n", encoding="utf-8"
+    )
 
     summary = run_pipeline(args)
 
@@ -234,7 +244,10 @@ def test_resume_skips_completed_stages_records_validated_outputs_and_progress(tm
     }
     assert [stage["status"] for stage in summary["stages"]] == ["skipped", "skipped", "skipped"]
     assert all(stage["validated_outputs"] for stage in summary["stages"])
-    progress_rows = [json.loads(line) for line in Path(summary["progress_log_path"]).read_text(encoding="utf-8").splitlines()]
+    progress_rows = [
+        json.loads(line)
+        for line in Path(summary["progress_log_path"]).read_text(encoding="utf-8").splitlines()
+    ]
     assert [row["stage"] for row in progress_rows if row["event"] == "start"] == [
         "production_promotion_check",
         "artifact_export",

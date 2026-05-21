@@ -9,6 +9,12 @@ from dataclasses import replace
 from pathlib import Path
 
 from lib.landmarks.datasets.manifest_io import load_manifest
+from lib.landmarks.ensemble.runtime_resolver_scorer_data import (
+    DEFAULT_FAILURE_THRESHOLD,
+    DEFAULT_OUTLIER_THRESHOLD,
+    SampleCandidateContext,
+    load_contexts,
+)
 from tools.landmarks.pipeline_conventions import (
     SOURCE_GT_HARD,
     SOURCE_PRODUCTION_VALIDATED,
@@ -17,12 +23,6 @@ from tools.landmarks.pipeline_conventions import (
     normalize_source_label,
     require_manifest_cache_pair,
     validate_resolver_metadata_for_samples,
-)
-from tools.landmarks.runtime_resolver_scorer_data import (
-    DEFAULT_FAILURE_THRESHOLD,
-    DEFAULT_OUTLIER_THRESHOLD,
-    SampleCandidateContext,
-    load_contexts,
 )
 
 logger = logging.getLogger(__name__)

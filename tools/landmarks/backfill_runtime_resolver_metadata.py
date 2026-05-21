@@ -24,11 +24,11 @@ from lib.landmarks.datasets.manifest_io import (
 )
 from lib.landmarks.ensemble.promoted_setup import load_promoted_setup
 from lib.landmarks.ensemble.runtime_resolver import ModelPrediction, RuntimeResolverConfig
-from lib.landmarks.ensemble.weights import load_weights
-from tools.landmarks.runtime_resolver_scorer_data import (
+from lib.landmarks.ensemble.runtime_resolver_scorer_data import (
     DEFAULT_IMAGE_BACKFILL_CROP_SIZE,
     image_aware_runtime_result,
 )
+from lib.landmarks.ensemble.weights import load_weights
 
 logger = logging.getLogger("backfill_runtime_resolver_metadata")
 

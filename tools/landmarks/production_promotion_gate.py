@@ -17,6 +17,11 @@ from pathlib import Path
 
 import numpy as np
 
+from lib.landmarks.ensemble.runtime_resolver_scorer_data import (
+    DEFAULT_RESOLVER_CANDIDATES,
+    SampleCandidateContext,
+    load_contexts,
+)
 from lib.landmarks.ensemble.weights import load_weights
 from tools.landmarks.pipeline_conventions import (
     PRODUCTION_PER_BUCKET_CSV,
@@ -25,11 +30,6 @@ from tools.landmarks.pipeline_conventions import (
     PRODUCTION_PROMOTION_REPORT_MD,
     PRODUCTION_WORST_SAMPLES_JSON,
     write_json,
-)
-from tools.landmarks.runtime_resolver_scorer_data import (
-    DEFAULT_RESOLVER_CANDIDATES,
-    SampleCandidateContext,
-    load_contexts,
 )
 
 DEFAULT_PRODUCTION_MEAN_EPSILON_NME: float = 0.001

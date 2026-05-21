@@ -5,14 +5,14 @@ from __future__ import annotations
 
 import typing as T
 
-from tools.landmarks.pipeline_conventions import normalize_source_label
-from tools.landmarks.runtime_resolver_scorer_data import (
+from lib.landmarks.ensemble.runtime_resolver_scorer_data import (
     DEFAULT_HIGH_GAP_THRESHOLD,
     CandidateQualityRow,
     SampleCandidateContext,
     candidate_table_rows,
     rows_for_context,
 )
+from tools.landmarks.pipeline_conventions import normalize_source_label
 
 TaggedRow = tuple[CandidateQualityRow, str]
 

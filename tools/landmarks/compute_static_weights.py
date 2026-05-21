@@ -8,7 +8,6 @@ when the unified promotion flow fully replaces standalone static fitting.
 from __future__ import annotations
 
 import argparse
-import json
 import typing as T
 from pathlib import Path
 

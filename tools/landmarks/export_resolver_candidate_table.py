@@ -13,8 +13,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from lib.landmarks.ensemble.weights import load_weights
-from tools.landmarks.runtime_resolver_scorer_data import (
+from lib.landmarks.ensemble.runtime_resolver_scorer_data import (
     DEFAULT_FAILURE_THRESHOLD,
     DEFAULT_OUTLIER_THRESHOLD,
     DEFAULT_SCORER_CANDIDATE_CSV,
@@ -23,6 +22,7 @@ from tools.landmarks.runtime_resolver_scorer_data import (
     write_candidate_table_csv,
     write_candidate_table_parquet,
 )
+from lib.landmarks.ensemble.weights import load_weights
 
 logger = logging.getLogger("export_resolver_candidate_table")
 

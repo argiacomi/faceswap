@@ -24,7 +24,7 @@ def install_trace_level() -> None:
             self._log(TRACE_LEVEL, message, args, **kwargs)
 
     if not hasattr(logging.Logger, "trace"):
-        setattr(logging.Logger, "trace", trace)
+        logging.Logger.trace = trace
 
 
 def logging_level(value: str | int) -> int:
@@ -133,7 +133,9 @@ class PipelineProgress:
         else:
             self.logger.info(log_message, event, stage, index, self.total, status, message)
         if self.logger.isEnabledFor(TRACE_LEVEL):
-            self.logger.log(TRACE_LEVEL, "pipeline_progress_payload=%s", json.dumps(payload, sort_keys=True))
+            self.logger.log(
+                TRACE_LEVEL, "pipeline_progress_payload=%s", json.dumps(payload, sort_keys=True)
+            )
         if self.enabled:
             self._render_bar(index=index, stage=stage, status=status)
 

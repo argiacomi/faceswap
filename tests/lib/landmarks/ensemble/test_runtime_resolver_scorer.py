@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-import tools.landmarks.runtime_resolver_scorer_data as scorer_data
+import lib.landmarks.ensemble.runtime_resolver_scorer_data as scorer_data
 from lib.landmarks.cache.prediction_cache import DiskPredictionCache
 from lib.landmarks.core.schema import LandmarkPrediction
 from lib.landmarks.ensemble.promoted_setup import write_best_setup
