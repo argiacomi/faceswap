@@ -127,7 +127,7 @@ def test_pipeline_runner_dry_run_writes_summaries_contracts_and_progress(tmp_pat
     assert summary["eval_report_path"].endswith("scorer_policy_report.json")
     assert summary["selected_production_policy"] == "learned_quality_v1"
     assert "resolver_scorer_path" in summary["config_fields_changed"]
-    assert "production_weights_path" in summary["config_fields_changed"]
+    assert "weights_path" in summary["config_fields_changed"]
     progress_log = Path(summary["progress_log_path"])
     assert progress_log.is_file()
     progress_rows = [
@@ -222,7 +222,7 @@ def test_promotion_check_fails_on_failed_gate(tmp_path: Path) -> None:
         _promotion_check(paths)
 
 
-def test_config_preview_and_write_replaces_stale_align_ensemble(tmp_path: Path) -> None:
+def test_config_preview_and_write_preserves_unmanaged_config_entries(tmp_path: Path) -> None:
     args = _args(tmp_path)
     paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
     _touch_pipeline_outputs(paths)
@@ -232,28 +232,52 @@ def test_config_preview_and_write_replaces_stale_align_ensemble(tmp_path: Path) 
         (args.output_root / "config_update_preview.json").read_text(encoding="utf-8")
     )
     patch = (args.output_root / "config_update_patch.ini").read_text(encoding="utf-8")
+
     assert "preview" in notes[0]
     assert preview["section"] == "align.ensemble"
     assert preview["updates"]["resolver_policy"] == "learned_quality_v1"
+    assert "production_weights_path" not in preview["updates"]
+    assert "coordinate_space" not in preview["updates"]
     assert patch.startswith("[align.ensemble]\n")
-    assert "production_weights_path = " in patch
+    assert "weights_path = " in patch
 
     args.config_path.write_text(
-        "[global]\nfoo = bar\n\n[align.ensemble]\nstale_experimental = true\nresolver_policy = roll_aware_veto\n",
+        "\n".join(
+            [
+                "[global]",
+                "aligner_min_scale = 0.03",
+                "",
+                "[align.ensemble]",
+                "stale_experimental = true",
+                "resolver_policy = roll_aware_veto",
+                "",
+                "[align.fan]",
+                "batch_size = 16",
+                "",
+                "[detect.scrfd]",
+                "model = 10g",
+                "",
+            ]
+        ),
         encoding="utf-8",
     )
     args.write_config = True
     _apply_config(args, paths)
+
     parser = configparser.ConfigParser()
+    parser.optionxform = str
     parser.read(args.config_path, encoding="utf-8")
-    assert parser.has_section("align.ensemble")
-    assert parser.get("align.ensemble", "use_alignment_resolver") == "true"
+
+    assert parser.get("global", "aligner_min_scale") == "0.03"
+    assert parser.get("align.fan", "batch_size") == "16"
+    assert parser.get("detect.scrfd", "model") == "10g"
+    assert parser.get("align.ensemble", "stale_experimental") == "true"
+    assert parser.get("align.ensemble", "use_alignment_resolver") == "True"
     assert parser.get("align.ensemble", "resolver_policy") == "learned_quality_v1"
     assert parser.get("align.ensemble", "resolver_scorer_path") == str(
         paths.exported_scorer_artifact
     )
     assert parser.get("align.ensemble", "weights_path") == str(paths.exported_best_weights)
-    assert not parser.has_option("align.ensemble", "stale_experimental")
 
 
 def test_config_write_requires_artifacts_and_passing_promotion(tmp_path: Path) -> None:
