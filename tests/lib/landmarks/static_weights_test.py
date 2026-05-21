@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 from lib.landmarks.cache.prediction_cache import DiskPredictionCache
+from lib.landmarks.core.metrics import per_landmark_error
 from lib.landmarks.core.schema import LandmarkPrediction
 from lib.landmarks.ensemble.weights import (
     LANDMARK_COUNT,
@@ -19,11 +20,7 @@ from lib.landmarks.ensemble.weights import (
     save_weights,
     weights_from_errors,
 )
-from tools.landmarks.compute_static_weights import (
-    DEFAULT_OUTPUT,
-    compute_static_weights,
-    main,
-)
+from lib.landmarks.evaluation.harness import load_manifest
 
 
 def _points(offset: float = 0.0) -> np.ndarray:
@@ -54,6 +51,26 @@ def _write_manifest(tmp_path: Path, sample_ids: tuple[str, ...]) -> Path:
     manifest = tmp_path / "manifest.json"
     manifest.write_text(json.dumps({"samples": samples}) + "\n", encoding="utf-8")
     return manifest
+
+
+def _compute_weights_from_cache(
+    manifest_path: str | Path,
+    cache_dir: str | Path,
+    models: tuple[str, ...] = MODEL_NAMES,
+) -> tuple[dict[str, list[float]], dict[str, list[float]]]:
+    cache = DiskPredictionCache(cache_dir)
+    samples = load_manifest(manifest_path)
+    errors: dict[str, list[np.ndarray]] = {model: [] for model in models}
+    for sample in samples:
+        truth = np.load(sample.landmarks).astype("float32")
+        for model in models:
+            prediction = cache.read(sample.sample_id, model)
+            errors[model].append(per_landmark_error(prediction.landmarks, truth))
+    mean_errors = {
+        model: np.stack(model_errors, axis=0).mean(axis=0).astype("float32").tolist()
+        for model, model_errors in errors.items()
+    }
+    return weights_from_errors(mean_errors), mean_errors
 
 
 def test_weights_from_errors_normalizes_each_landmark() -> None:
@@ -101,7 +118,7 @@ def test_save_and_load_static_weights_round_trip(tmp_path: Path) -> None:
         assert sum(loaded[model][landmark_index] for model in MODEL_NAMES) == pytest.approx(1.0)
 
 
-def test_compute_static_weights_reads_cache_and_ground_truth(tmp_path: Path) -> None:
+def test_static_weights_from_cache_and_ground_truth(tmp_path: Path) -> None:
     """Validation errors from cached predictions drive per-model landmark weights."""
     manifest = _write_manifest(tmp_path, ("a", "b"))
     cache = DiskPredictionCache(tmp_path / "cache")
@@ -110,7 +127,7 @@ def test_compute_static_weights_reads_cache_and_ground_truth(tmp_path: Path) -> 
         cache.write(sample_id, LandmarkPrediction(_points(2.0), model_name="spiga"))
         cache.write(sample_id, LandmarkPrediction(_points(4.0), model_name="orformer"))
 
-    weights, mean_errors = compute_static_weights(manifest, tmp_path / "cache")
+    weights, mean_errors = _compute_weights_from_cache(manifest, tmp_path / "cache")
 
     assert tuple(weights) == MODEL_NAMES
     assert all(len(mean_errors[model]) == LANDMARK_COUNT for model in MODEL_NAMES)
@@ -118,22 +135,3 @@ def test_compute_static_weights_reads_cache_and_ground_truth(tmp_path: Path) -> 
     assert weights["hrnet"][0] > weights["spiga"][0] > weights["orformer"][0]
     for landmark_index in range(LANDMARK_COUNT):
         assert sum(weights[model][landmark_index] for model in MODEL_NAMES) == pytest.approx(1.0)
-
-
-def test_compute_static_weights_cli_default_output(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """CLI defaults to the ensemble static-weight config path."""
-    manifest = _write_manifest(tmp_path, ("sample",))
-    cache = DiskPredictionCache(tmp_path / "cache")
-    for model, offset in zip(MODEL_NAMES, (1.0, 2.0, 4.0), strict=True):
-        cache.write("sample", LandmarkPrediction(_points(offset), model_name=model))
-    monkeypatch.chdir(tmp_path)
-
-    result = main(["--manifest", str(manifest), "--cache-dir", str(tmp_path / "cache")])
-
-    assert result == 0
-    output = tmp_path / DEFAULT_OUTPUT
-    assert output.is_file()
-    weights = load_weights(output)
-    assert tuple(weights) == MODEL_NAMES
