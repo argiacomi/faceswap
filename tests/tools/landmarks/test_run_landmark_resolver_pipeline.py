@@ -15,6 +15,7 @@ from tools.landmarks.run_landmark_resolver_pipeline import (
     PipelineContractError,
     PipelinePaths,
     _apply_config,
+    _command_production_prediction_cache,
     _command_scorer_eval,
     _command_scorer_training,
     _contract_for,
@@ -49,6 +50,7 @@ def _args(tmp_path: Path, **overrides: object) -> argparse.Namespace:
         "production_alignments": None,
         "gt_hard_resolver_metadata": None,
         "overwrite_frozen_metadata": False,
+        "generate_gt_hard_resolver_metadata": True,
         "hard_source_manifest": None,
         "split_mode": "scenario-stratified",
         "split_fit": 0.6,
@@ -60,6 +62,7 @@ def _args(tmp_path: Path, **overrides: object) -> argparse.Namespace:
         "dataset_build_arg": [],
         "cache_prediction_arg": [],
         "production_manifest_arg": [],
+        "production_cache_prediction_arg": [],
         "candidate_search_arg": [],
         "hard_validation_arg": [],
         "scorer_train_arg": [],
@@ -144,6 +147,49 @@ def test_pipeline_runner_dry_run_writes_summaries_contracts_and_progress(tmp_pat
     assert (args.output_root / "pipeline_summary.md").is_file()
 
 
+def test_pipeline_declares_production_prediction_cache_stage(tmp_path: Path) -> None:
+    args = _args(tmp_path)
+    paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
+
+    assert "build_production_prediction_cache" in STAGES
+    assert (
+        STAGES.index("build_production_manifest")
+        < STAGES.index("build_production_prediction_cache")
+        < STAGES.index("candidate_search")
+    )
+
+    contract = _contract_for("build_production_prediction_cache", args, paths)
+
+    assert str(paths.production_manifest) in contract.required_files
+    assert str(paths.production_cache) in contract.outputs
+
+
+def test_production_prediction_cache_command_uses_production_manifest_and_cache(
+    tmp_path: Path,
+) -> None:
+    args = _args(tmp_path, production_cache_prediction_arg=["--extra-cache-option"])
+    paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
+
+    command = _command_production_prediction_cache(args, paths)
+
+    assert "cache_predictions.py" in command[1]
+    assert command[command.index("--manifest") + 1] == str(paths.production_manifest)
+    assert command[command.index("--cache-dir") + 1] == str(paths.production_cache)
+    assert command[command.index("--models") + 1] == args.models
+    assert "--extra-cache-option" in command
+
+
+def test_candidate_search_contract_requires_built_production_prediction_cache(
+    tmp_path: Path,
+) -> None:
+    args = _args(tmp_path)
+    paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
+
+    contract = _contract_for("candidate_search", args, paths)
+
+    assert str(paths.production_cache) in contract.required_files
+
+
 def test_stage_contract_declares_required_files(tmp_path: Path) -> None:
     args = _args(tmp_path)
     paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
@@ -194,12 +240,55 @@ def test_stage_output_validation_reports_missing_outputs(tmp_path: Path) -> None
         _validate_stage_outputs("candidate_search", paths)
 
 
-def test_freeze_metadata_requires_explicit_source(tmp_path: Path) -> None:
-    args = _args(tmp_path)
+def test_freeze_metadata_requires_explicit_source_when_generation_is_disabled(
+    tmp_path: Path,
+) -> None:
+    args = _args(tmp_path, generate_gt_hard_resolver_metadata=False)
     paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
 
-    with pytest.raises(FileNotFoundError, match="will not silently regenerate"):
+    with pytest.raises(FileNotFoundError, match="will not fabricate"):
         _freeze_metadata(args, paths)
+
+
+def test_freeze_metadata_derives_from_hard_manifest_runtime_metadata(tmp_path: Path) -> None:
+    args = _args(tmp_path)
+    paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
+    paths.hard_manifest.parent.mkdir(parents=True, exist_ok=True)
+    paths.hard_manifest.write_text(
+        json.dumps(
+            {
+                "dataset": "gt_hard",
+                "samples": [
+                    {
+                        "sample_id": "s1",
+                        "image": "s1.png",
+                        "landmarks": "s1.npy",
+                        "metadata": {
+                            "face_index": 0,
+                            "landmark_ensemble": {"runtime_bucket": "frontal"},
+                        },
+                    }
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    notes = _freeze_metadata(args, paths)
+
+    assert "derived and validated frozen metadata" in notes[0]
+    rows = [
+        json.loads(line)
+        for line in paths.frozen_gt_metadata.read_text(encoding="utf-8").splitlines()
+    ]
+    assert rows == [
+        {
+            "face_index": 0,
+            "landmark_ensemble": {"runtime_bucket": "frontal"},
+            "sample_id": "s1",
+        }
+    ]
 
 
 def test_freeze_metadata_reuses_existing_on_resume(tmp_path: Path) -> None:
