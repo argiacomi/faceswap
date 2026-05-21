@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
-"""Regression tests for legacy landmark CLI path conventions."""
+"""Regression tests for landmark artifact path conventions."""
 
 from __future__ import annotations
 
 from lib.landmarks.pipeline_conventions import (
-    DEBUG_DIRNAME,
-    FAILURE_ENSEMBLE_REGRESSIONS_CONTACT_SHEET,
-    FAILURE_ENSEMBLE_REGRESSIONS_JSON,
-    FAILURE_WORST_CASES_JSON,
-    FAILURE_WORST_CONTACT_SHEET,
+    BEST_SETUP_FILENAME,
+    BEST_WEIGHTS_FILENAME,
+    CANDIDATE_RESULTS_CSV,
+    CANDIDATE_RESULTS_JSON,
     PRODUCTION_PER_BUCKET_CSV,
     PRODUCTION_POLICY_FAILURES_CSV,
     PRODUCTION_PROMOTION_REPORT_JSON,
@@ -16,23 +15,15 @@ from lib.landmarks.pipeline_conventions import (
     PRODUCTION_WORST_SAMPLES_JSON,
     STATIC_WEIGHTS_FILENAME,
 )
-from tools.landmarks import compute_static_weights, failure_viewer, production_promotion_gate
+from tools.landmarks import production_promotion_gate
 
 
-def test_static_weights_default_output_uses_shared_filename() -> None:
-    assert f"configs/ensemble/{STATIC_WEIGHTS_FILENAME}" == compute_static_weights.DEFAULT_OUTPUT
-
-
-def test_failure_viewer_defaults_use_shared_debug_names() -> None:
-    assert f"outputs/landmark_{DEBUG_DIRNAME}" == failure_viewer.DEFAULT_DEBUG_DIR
-    assert failure_viewer.FAILURE_WORST_CASES_JSON == "worst_cases.json"
-    assert failure_viewer.FAILURE_WORST_CASES_JSON == FAILURE_WORST_CASES_JSON
-    assert failure_viewer.FAILURE_ENSEMBLE_REGRESSIONS_JSON == FAILURE_ENSEMBLE_REGRESSIONS_JSON
-    assert failure_viewer.FAILURE_WORST_CONTACT_SHEET == FAILURE_WORST_CONTACT_SHEET
-    assert (
-        failure_viewer.FAILURE_ENSEMBLE_REGRESSIONS_CONTACT_SHEET
-        == FAILURE_ENSEMBLE_REGRESSIONS_CONTACT_SHEET
-    )
+def test_promoted_search_outputs_use_shared_filenames() -> None:
+    assert STATIC_WEIGHTS_FILENAME == "static_landmark_weights.json"
+    assert BEST_SETUP_FILENAME == "best_setup.json"
+    assert BEST_WEIGHTS_FILENAME == "best_weights.json"
+    assert CANDIDATE_RESULTS_CSV == "candidate_results.csv"
+    assert CANDIDATE_RESULTS_JSON == "candidate_results.json"
 
 
 def test_production_gate_outputs_use_shared_filenames() -> None:
