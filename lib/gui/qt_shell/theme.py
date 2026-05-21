@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 import typing as T
@@ -19,6 +20,10 @@ logger = logging.getLogger(__name__)
 
 _HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 _ICON_CACHE = Path(PROJECT_ROOT) / "lib" / "gui" / ".cache" / "icons"
+_COMBO_ARROW_BUTTON_SIZE = 25
+_COMBO_ARROW_CHEVRON_WIDTH = 6
+_COMBO_ARROW_CHEVRON_DROP = 3
+_COMBO_ARROW_STROKE_WIDTH = 1.6
 
 
 @dataclass(frozen=True, slots=True)
@@ -262,6 +267,7 @@ def render_qss(theme: QtTheme) -> str:
     radius = theme.radius
     half_spacing = max(2, spacing // 2)
     tab_vpad = max(2, spacing // 3)
+    combo_arrow_path, combo_arrow_active_path = _combo_arrow_icon_paths(theme)
     return "\n".join(
         (
             _rule("QWidget", theme, "window", "text"),
@@ -378,25 +384,32 @@ def render_qss(theme: QtTheme) -> str:
             f"color: {theme.color('input_text')}; "
             f"selection-background-color: {theme.color('accent')}; "
             f"selection-color: {theme.color('accent_text')}; "
-            f"padding-right: {theme.icon_size + spacing}px; }}",
+            f"padding-right: {_COMBO_ARROW_BUTTON_SIZE}px; }}",
             "QComboBox::drop-down { "
-            f"subcontrol-origin: padding; subcontrol-position: top right; "
-            f"width: {theme.icon_size + spacing}px; "
+            "subcontrol-origin: padding; "
+            "subcontrol-position: top right; "
+            f"width: {_COMBO_ARROW_BUTTON_SIZE}px; "
             f"background-color: {theme.color('button')}; "
             f"border-left: 1px solid {theme.color('border')}; "
             f"border-top-right-radius: {radius}px; "
             f"border-bottom-right-radius: {radius}px; }}",
-            f"QComboBox::drop-down:hover {{ background-color: {theme.color('button_hover')}; }}",
+            "QComboBox::drop-down:hover, "
+            "QComboBox::drop-down:pressed { "
+            f"background-color: {theme.color('button_hover')}; }}",
             "QComboBox::down-arrow { "
-            "image: none; "
-            "width: 0; height: 0; "
-            "border-left: 5px solid transparent; "
-            "border-right: 5px solid transparent; "
-            f"border-top: 6px solid {theme.color('input_text')}; "
-            "margin: 0; }",
+            f"image: {_qss_url(combo_arrow_path)}; "
+            f"width: {_COMBO_ARROW_BUTTON_SIZE}px; "
+            f"height: {_COMBO_ARROW_BUTTON_SIZE}px; "
+            "margin: 0; "
+            "}",
+            "QComboBox::down-arrow:hover, "
+            "QComboBox::down-arrow:pressed, "
             "QComboBox::down-arrow:on { "
-            "border-top: 0; "
-            f"border-bottom: 6px solid {theme.color('input_text')}; }}",
+            f"image: {_qss_url(combo_arrow_active_path)}; "
+            f"width: {_COMBO_ARROW_BUTTON_SIZE}px; "
+            f"height: {_COMBO_ARROW_BUTTON_SIZE}px; "
+            "margin: 0; "
+            "}",
             "QComboBox QAbstractItemView { "
             f"background-color: {theme.color('input_background')}; "
             f"color: {theme.color('input_text')}; "
@@ -465,6 +478,92 @@ def apply_theme(app: QApplication, theme: QtTheme | None = None) -> QtTheme:
             app.setWindowIcon(icon)
     app.setStyleSheet(render_qss(selected))
     return selected
+
+
+def _combo_arrow_icon_paths(theme: QtTheme) -> tuple[Path, Path]:
+    """Return cached SVG paths for the QComboBox down-arrow button."""
+    size = _COMBO_ARROW_BUTTON_SIZE
+    colors = (
+        theme.color("button"),
+        theme.color("button_hover"),
+        theme.color("input_text"),
+        theme.color("border"),
+        str(theme.radius),
+        str(_COMBO_ARROW_CHEVRON_WIDTH),
+        str(_COMBO_ARROW_CHEVRON_DROP),
+        str(_COMBO_ARROW_STROKE_WIDTH),
+    )
+    digest = hashlib.sha1("|".join(colors).encode("utf-8")).hexdigest()[:12]
+    normal_path = _ICON_CACHE / f"qt_combo_arrow_{digest}_normal.svg"
+    active_path = _ICON_CACHE / f"qt_combo_arrow_{digest}_active.svg"
+
+    _write_combo_arrow_svg(
+        normal_path,
+        size=size,
+        background=theme.color("button"),
+        foreground=theme.color("input_text"),
+        border=theme.color("border"),
+        radius=theme.radius,
+        chevron_width=_COMBO_ARROW_CHEVRON_WIDTH,
+        chevron_drop=_COMBO_ARROW_CHEVRON_DROP,
+        stroke_width=_COMBO_ARROW_STROKE_WIDTH,
+    )
+    _write_combo_arrow_svg(
+        active_path,
+        size=size,
+        background=theme.color("button_hover"),
+        foreground=theme.color("input_text"),
+        border=theme.color("border"),
+        radius=theme.radius,
+        chevron_width=_COMBO_ARROW_CHEVRON_WIDTH,
+        chevron_drop=_COMBO_ARROW_CHEVRON_DROP,
+        stroke_width=_COMBO_ARROW_STROKE_WIDTH,
+    )
+    return normal_path, active_path
+
+
+def _write_combo_arrow_svg(
+    path: Path,
+    *,
+    size: int,
+    background: str,
+    foreground: str,
+    border: str,
+    radius: int,
+    chevron_width: int,
+    chevron_drop: int,
+    stroke_width: float,
+) -> None:
+    """Write a small cached SVG button matching the legacy Tk combobox arrow."""
+    if path.is_file():
+        return
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    safe_radius = max(0, min(radius, size // 2))
+    right = size - 0.5
+    bottom = size - 0.5
+    left = 0.5
+    top = 0.5
+    center_x = size / 2
+    arrow_y = size / 2 - chevron_drop / 2
+    half_width = chevron_width / 2
+    arrow = (
+        f"M {center_x - half_width:.2f} {arrow_y:.2f} "
+        f"L {center_x:.2f} {arrow_y + chevron_drop:.2f} "
+        f"L {center_x + half_width:.2f} {arrow_y:.2f}"
+    )
+
+    svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{size}" viewBox="0 0 {size} {size}">
+  <path d="M {left} {top} H {right - safe_radius} Q {right} {top} {right} {top + safe_radius} V {bottom - safe_radius} Q {right} {bottom} {right - safe_radius} {bottom} H {left} Z" fill="{background}" stroke="{border}" stroke-width="1"/>
+  <path d="{arrow}" fill="none" stroke="{foreground}" stroke-width="{stroke_width}" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
+"""
+    path.write_text(svg, encoding="utf-8")
+
+
+def _qss_url(path: Path) -> str:
+    """Return a quoted Qt stylesheet URL for a local path."""
+    return f'url("{path.resolve().as_posix()}")'
 
 
 def _rule(selector: str, theme: QtTheme, background: str, foreground: str) -> str:
