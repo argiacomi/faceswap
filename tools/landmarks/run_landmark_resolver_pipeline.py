@@ -204,18 +204,6 @@ def _script(path: str) -> str:
     return str(ROOT / "tools" / "landmarks" / path)
 
 
-def _command_static_pipeline(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
-    return _append_extra(
-        [
-            args.python_executable,
-            _script("run_static_weight_pipeline.py"),
-            "--output-root",
-            str(paths.run_root),
-        ],
-        args.static_pipeline_arg,
-    )
-
-
 def _command_candidate_search(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
     manifest = (
         paths.run_report_manifest if paths.run_report_manifest.exists() else paths.run_manifest
@@ -347,17 +335,13 @@ def _outputs_for(stage: str, paths: PipelinePaths) -> list[Path]:
 
 def _required_inputs_for(stage: str, args: argparse.Namespace, paths: PipelinePaths) -> list[Path]:
     if stage == "static_pipeline":
-        return (
-            []
-            if (args.force_static_pipeline or args.static_pipeline_arg)
-            else [
-                paths.run_summary,
-                paths.run_manifest,
-                paths.run_cache,
-                paths.run_splits,
-                paths.run_static_weights,
-            ]
-        )
+        return [
+            paths.run_summary,
+            paths.run_manifest,
+            paths.run_cache,
+            paths.run_splits,
+            paths.run_static_weights,
+        ]
     return {
         "candidate_search": [
             paths.run_cache,
@@ -404,7 +388,7 @@ def _required_inputs_for(stage: str, args: argparse.Namespace, paths: PipelinePa
 
 def _contract_for(stage: str, args: argparse.Namespace, paths: PipelinePaths) -> StageContract:
     cache_behavior = {
-        "static_pipeline": "reuse existing run-root artifacts unless --force-static-pipeline is set; --resume skips when all outputs exist",
+        "static_pipeline": "reuse existing run-root artifacts; generation moved to active dataset/cache/search tools",
         "candidate_search": "writes candidate_search artifacts; --resume skips when best_setup.json and best_weights.json exist",
         "hard_alignment_validation": "writes gt_hard_validation artifacts; --resume skips when manifest.json exists",
         "freeze_resolver_metadata": "copies caller-supplied GT-hard sidecar once; never silently regenerates; --resume reuses existing frozen copy",
@@ -666,30 +650,15 @@ def _execute_stage(stage: str, args: argparse.Namespace, paths: PipelinePaths) -
         if not args.dry_run:
             _validate_required_files(stage, args, paths)
         if stage == "static_pipeline":
-            command = _command_static_pipeline(args, paths)
             if args.dry_run:
-                status = (
-                    "planned"
-                    if (
-                        args.force_static_pipeline
-                        or args.static_pipeline_arg
-                        or not paths.run_summary.exists()
-                    )
-                    else "ok"
-                )
+                status = "planned" if not paths.run_summary.exists() else "ok"
                 return StageResult(
                     stage,
                     status,
-                    command=command if status == "planned" else [],
+                    command=[],
                     outputs=outputs,
                     contract=contract.to_json(),
                 )
-            if not paths.run_summary.exists() or args.force_static_pipeline:
-                if not args.static_pipeline_arg and not args.force_static_pipeline:
-                    raise FileNotFoundError(
-                        f"missing static pipeline artifacts under {paths.run_root}; either provide an existing --run-root or pass --force-static-pipeline with --static-pipeline-arg values"
-                    )
-                _run_command(command)
         elif stage == "candidate_search":
             command = _command_candidate_search(args, paths)
             if args.dry_run:
@@ -992,8 +961,6 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--gt-hard-resolver-metadata", type=Path)
     parser.add_argument("--overwrite-frozen-metadata", action="store_true")
     parser.add_argument("--hard-source-manifest", type=Path)
-    parser.add_argument("--force-static-pipeline", action="store_true")
-    parser.add_argument("--static-pipeline-arg", action="append", default=[])
     parser.add_argument("--candidate-search-arg", action="append", default=[])
     parser.add_argument("--hard-validation-arg", action="append", default=[])
     parser.add_argument("--scorer-train-arg", action="append", default=[])

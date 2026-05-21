@@ -45,8 +45,6 @@ def _args(tmp_path: Path, **overrides: object) -> argparse.Namespace:
         "gt_hard_resolver_metadata": None,
         "overwrite_frozen_metadata": False,
         "hard_source_manifest": None,
-        "force_static_pipeline": False,
-        "static_pipeline_arg": [],
         "candidate_search_arg": [],
         "hard_validation_arg": [],
         "scorer_train_arg": [],

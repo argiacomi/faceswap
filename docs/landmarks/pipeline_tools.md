@@ -26,9 +26,9 @@ python tools/landmarks/evaluate_runtime_resolver_scorer.py --help
 
 | Stage | Primary tools/modules | Notes |
 | --- | --- | --- |
-| Dataset build | `build_quality_dataset.py`, `run_static_weight_pipeline.py`, `run_landmark_resolver_pipeline.py` | Dataset normalization and manifest generation. The resolver wrapper is the canonical full-pipeline entrypoint. |
+| Dataset build | `build_quality_dataset.py`, `run_landmark_resolver_pipeline.py` | Dataset normalization and manifest generation. The resolver wrapper is the canonical full-pipeline entrypoint for existing run artifacts. |
 | Candidate generation | `cache_predictions.py`, `search_ensemble_setup.py`, `run_landmark_resolver_pipeline.py` | Prediction cache population and candidate enumeration. |
-| Static weight search | `search_ensemble_setup.py`, `run_static_weight_pipeline.py`, `run_landmark_resolver_pipeline.py` | `search_ensemble_setup.py` is the promoted setup/weight search path. `compute_static_weights.py` was deleted after merge. |
+| Static weight search | `search_ensemble_setup.py`, `run_landmark_resolver_pipeline.py` | `search_ensemble_setup.py` is the promoted setup/weight search path. `compute_static_weights.py` and the legacy static pipeline orchestrator were deleted after merge. |
 | Hard slice validation | `build_hard_alignment_validation.py`, `evaluate_alignment_geometry.py`, `run_landmark_resolver_pipeline.py` | GT geometry and hard-case validation. Signal/profile/worst-case standalone CLIs were deleted after merge. |
 | Scorer training | `train_runtime_resolver_scorer.py`, `lib.landmarks.ensemble.scorer_training`, `lib.landmarks.ensemble.scorer_contexts`, `lib.landmarks.ensemble.scorer_targets` | CLI is thin; implementation is library-facing. |
 | Scorer evaluation | `evaluate_runtime_resolver_scorer.py`, `lib.landmarks.ensemble.scorer_eval`, `lib.landmarks.ensemble.scorer_reports` | CLI is thin; implementation is library-facing. |
@@ -42,7 +42,6 @@ python tools/landmarks/evaluate_runtime_resolver_scorer.py --help
 | `__init__.py` | Package integration | Keeps `tools.landmarks` importable. | None. | None. | Active helper. |
 | `build_quality_dataset.py` | Dataset build | Builds normalized landmark quality manifests for supported datasets and fixtures. | Dataset selection and source inputs. | `manifest.json`, normalized image/landmark artifacts, `dataset_audit.json`, optional overlays. | Active. |
 | `cache_predictions.py` | Candidate generation | Writes imported fixture predictions or model-run predictions into `DiskPredictionCache`. | `--manifest`, `--models`, `--cache-dir`, prediction roots or model-run options. | Per-sample, per-model cache entries. | Active. |
-| `run_static_weight_pipeline.py` | Legacy static pipeline orchestration | Runs the older static-weight validation flow. | `--output-root`, datasets, models, build/run/skip flags, prediction roots or model-run options. | `run_summary.json`, manifests, cache, splits, static weights/report, weighted metrics, debug artifacts. | Active legacy orchestrator. |
 | `run_landmark_resolver_pipeline.py` | Full pipeline orchestration | Canonical end-to-end resolver pipeline wrapper from existing artifacts through promotion/config update. | `--run-root`, `--production-root`, `--output-root`, frozen GT-hard sidecar when needed. | `pipeline_summary.json`, `pipeline_summary.md`, `pipeline_progress.jsonl`, artifact export, config patch/preview. | Active canonical wrapper. |
 | `search_ensemble_setup.py` | Candidate generation, static weight search, production promotion | Enumerates model subsets, weight generators, strategies, thresholds, crop scales, and writes promoted setup artifacts. | Manifest, cache, splits, models, output dir, optional production manifest/cache. | `candidate_results.csv`, `candidate_results.json`, `best_setup.json`, `best_weights.json`, `promotion_report.md`, optional production gate artifacts. | Active preferred setup/weight promotion path. |
 | `evaluate_alignment_geometry.py` | Hard slice validation, diagnostics | Cache-only GT-derived alignment geometry evaluation for models and optional ensemble variants. | Manifest, cache, models, optional variants/weights/thresholds. | `geometry_metrics.json`, `geometry_metrics.csv`, `per_region_geometry.csv`, catastrophic/worst-sample reports. | Active. |
@@ -76,6 +75,7 @@ These CLIs were removed after their replacement flows were confirmed as canonica
 | Deleted CLI | Replacement path | Reason |
 | --- | --- | --- |
 | `compute_static_weights.py` | `search_ensemble_setup.py` and `run_landmark_resolver_pipeline.py` | Promoted static weight search now happens through candidate search and the full wrapper. |
+| `run_static_weight_pipeline.py` | `build_quality_dataset.py`, `cache_predictions.py`, `search_ensemble_setup.py`, and `run_landmark_resolver_pipeline.py` | Legacy orchestration was replaced by explicit dataset/cache/search stages plus the resolver wrapper. |
 | `validate_geometry_signals.py` | `evaluate_alignment_geometry.py`, `search_ensemble_setup.py`, and wrapper summaries | Signal diagnostics are folded into the active geometry/promotion reporting surface. |
 | `evaluate_aflw_profile.py` | `evaluate_alignment_geometry.py`, `build_hard_alignment_validation.py`, and wrapper summaries | Profile diagnostics are no longer a standalone promotion gate. |
 | `failure_viewer.py` | `evaluate_alignment_geometry.py` debug outputs and wrapper artifact/report outputs | Worst-case/debug sidecars are handled by active reporting flows. |
@@ -85,4 +85,3 @@ These CLIs were removed after their replacement flows were confirmed as canonica
 1. Finish physical migration of the large scorer implementation bodies out of `tools/landmarks` once all imports are migrated and CI is green.
 2. Remove scorer compatibility shims from `tools/landmarks` after no callers import them.
 3. Consider moving `pipeline_conventions.py` to `lib.landmarks.pipeline_conventions` if the lib/tool dependency boundary needs to be strict.
-4. Keep `run_static_weight_pipeline.py` as the legacy static validation orchestrator until no CI or manual workflow depends on it.
