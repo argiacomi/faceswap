@@ -180,6 +180,15 @@ class QtTheme:
         "browser_file": "load2",
         "browser_files": "multi_load",
         "browser_save": "save_as",
+        "browser_video": "video",
+        "browser_picture": "picture",
+        "browser_model": "model",
+        "browser_context": "context",
+        "task_open": "load2",
+        "task_save": "save2",
+        "task_save_as": "save_as2",
+        "task_reset": "clear2",
+        "task_reload": "reload2",
     }
 
     @classmethod
@@ -364,31 +373,47 @@ def render_qss(theme: QtTheme) -> str:
             "QPlainTextEdit:focus { "
             f"background-color: {theme.color('input_focus')}; "
             f"border: 1px solid {theme.color('accent')}; }}",
+            "QComboBox { "
+            f"background-color: {theme.color('input_background')}; "
+            f"color: {theme.color('input_text')}; "
+            f"selection-background-color: {theme.color('accent')}; "
+            f"selection-color: {theme.color('accent_text')}; "
+            f"padding-right: {theme.icon_size + spacing}px; }}",
             "QComboBox::drop-down { "
+            f"subcontrol-origin: padding; subcontrol-position: top right; "
+            f"width: {theme.icon_size + spacing}px; "
             f"background-color: {theme.color('button')}; "
             f"border-left: 1px solid {theme.color('border')}; "
-            f"width: {theme.icon_size + spacing}px; }}",
+            f"border-top-right-radius: {radius}px; "
+            f"border-bottom-right-radius: {radius}px; }}",
+            f"QComboBox::drop-down:hover {{ background-color: {theme.color('button_hover')}; }}",
             "QComboBox::down-arrow { "
             "image: none; "
             "width: 0; height: 0; "
             "border-left: 5px solid transparent; "
             "border-right: 5px solid transparent; "
             f"border-top: 6px solid {theme.color('input_text')}; "
-            f"margin-right: {half_spacing}px; }}",
+            "margin: 0; }",
+            "QComboBox::down-arrow:on { "
+            "border-top: 0; "
+            f"border-bottom: 6px solid {theme.color('input_text')}; }}",
             "QComboBox QAbstractItemView { "
-            f"background-color: {theme.color('menu_background')}; "
-            f"color: {theme.color('menu_text')}; "
-            f"selection-background-color: {theme.color('menu_hover')}; "
-            f"selection-color: {theme.color('menu_text')}; }}",
+            f"background-color: {theme.color('input_background')}; "
+            f"color: {theme.color('input_text')}; "
+            f"border: 1px solid {theme.color('border')}; "
+            f"selection-background-color: {theme.color('accent')}; "
+            f"selection-color: {theme.color('accent_text')}; "
+            "outline: 0; }",
             "QComboBox QAbstractItemView::item { "
-            f"background-color: {theme.color('menu_background')}; "
-            f"color: {theme.color('menu_text')}; "
-            f"padding: {tab_vpad}px {spacing}px; }}",
+            f"background-color: {theme.color('input_background')}; "
+            f"color: {theme.color('input_text')}; "
+            f"padding: {tab_vpad}px {spacing}px; "
+            f"min-height: {theme.icon_size + tab_vpad}px; }}",
             "QComboBox QAbstractItemView::item:selected, "
             "QComboBox QAbstractItemView::item:hover, "
             "QComboBox QAbstractItemView::item:selected:!active { "
-            f"background-color: {theme.color('menu_hover')}; "
-            f"color: {theme.color('menu_text')}; }}",
+            f"background-color: {theme.color('accent')}; "
+            f"color: {theme.color('accent_text')}; }}",
             "QTabWidget#qt-shell-display-tabs::pane, QTabWidget::pane { "
             f"border: 1px solid {theme.color('border')}; top: -1px; }}",
             "QTabBar::tab { "

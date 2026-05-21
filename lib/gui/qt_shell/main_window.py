@@ -159,7 +159,8 @@ class MainWindow(QMainWindow):
         self._build_statusbar()
         top = QSplitter(Qt.Horizontal)
         top.setObjectName("qt-shell-main-splitter")
-        top.setChildrenCollapsible(False)
+        top.setChildrenCollapsible(True)
+        top.setHandleWidth(6)
         top.addWidget(self._command_panel)
         top.addWidget(self._display_tabs())
         top.setStretchFactor(0, 0)
@@ -168,7 +169,8 @@ class MainWindow(QMainWindow):
         self._main_splitter = top
         main = QSplitter(Qt.Vertical)
         main.setObjectName("qt-shell-vertical-splitter")
-        main.setChildrenCollapsible(False)
+        main.setChildrenCollapsible(True)
+        main.setHandleWidth(6)
         main.addWidget(top)
         main.addWidget(self._console)
         main.setStretchFactor(0, 3)
@@ -182,7 +184,7 @@ class MainWindow(QMainWindow):
         icon = self._icon("favicon")
         if not icon.isNull():
             self.setWindowIcon(icon)
-        self.setMinimumSize(900, 560)
+        self.setMinimumSize(640, 400)
 
     def _display_tabs(self) -> QTabWidget:
         """Create right display tabs used only for Analysis, Preview and Graph."""
@@ -327,6 +329,22 @@ class MainWindow(QMainWindow):
         reload_action = self._action("Reload Project", self._reload_current_file, "reload")
         reload_action.setObjectName("qt-shell-toolbar-reload")
         toolbar.addAction(reload_action)
+        toolbar.addSeparator()
+        task_load = self._action("Load Task...", self._open_task, "task_open")
+        task_load.setObjectName("qt-shell-toolbar-task-open")
+        toolbar.addAction(task_load)
+        task_save = self._action("Save Task", self._save_task_current, "task_save")
+        task_save.setObjectName("qt-shell-toolbar-task-save")
+        toolbar.addAction(task_save)
+        task_save_as = self._action("Save Task As...", self._save_task_as, "task_save_as")
+        task_save_as.setObjectName("qt-shell-toolbar-task-save-as")
+        toolbar.addAction(task_save_as)
+        task_reset = self._action("Reset Task", self._reset_task, "task_reset")
+        task_reset.setObjectName("qt-shell-toolbar-task-reset")
+        toolbar.addAction(task_reset)
+        task_reload = self._action("Reload Task", self._reload_task, "task_reload")
+        task_reload.setObjectName("qt-shell-toolbar-task-reload")
+        toolbar.addAction(task_reload)
         toolbar.addSeparator()
         generate_action = self._action("Generate", self._generate_command, "generate")
         generate_action.setObjectName("qt-shell-toolbar-generate")
@@ -660,11 +678,39 @@ class MainWindow(QMainWindow):
         filename, _ = QFileDialog.getSaveFileName(
             self,
             "Save Faceswap Task As",
-            "",
+            self._project_filename if self._file_kind == TASK_KIND else "",
             "Faceswap task (*.fst);;JSON files (*.json);;All files (*)",
         )
         if filename:
             self._save_task(self._with_suffix(filename, TASK_EXTENSION))
+
+    def _save_task_current(self) -> None:
+        """Overwrite the active task file, or prompt when none is active."""
+        if self._project_filename is None or self._file_kind != TASK_KIND:
+            self._save_task_as()
+            return
+        self._save_task(self._project_filename)
+
+    def _reset_task(self) -> None:
+        """Reset the current command's options to their defaults (Tk parity)."""
+        if not self._confirm_discard_changes("reset the current task"):
+            return
+        self._suppress_dirty = True
+        try:
+            self._command_panel.clear_values()
+        finally:
+            self._suppress_dirty = False
+        self._set_modified(False)
+        self._console.write_line("Reset current task to defaults")
+        self.statusBar().showMessage("Task reset", 5000)
+
+    def _reload_task(self) -> bool:
+        """Reload the active task file from disk."""
+        if self._project_filename is None or self._file_kind != TASK_KIND:
+            self.statusBar().showMessage("No task file to reload", 5000)
+            self._console.write_line("No task file to reload")
+            return False
+        return self._reload_current_file()
 
     def _save_project(self, filename: str) -> bool:
         """Persist the full project state."""

@@ -9,6 +9,7 @@ import sys
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
+from lib.gui import gui_config as cfg
 from lib.gui.qt_shell.main_window import MainWindow
 from lib.gui.qt_shell.theme import apply_theme
 
@@ -19,6 +20,7 @@ def main(argv: list[str] | None = None) -> int:
     """Run the Qt shell prototype."""
     args = sys.argv if argv is None else argv
     app = QApplication(args)
+    cfg.load_config(None)
     theme = apply_theme(app)
     window = MainWindow(theme=theme)
     install_signal_handlers(app, window)

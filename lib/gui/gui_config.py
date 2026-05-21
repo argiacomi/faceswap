@@ -57,7 +57,8 @@ def get_commands() -> list[str]:
 def get_clean_fonts() -> list[str]:
     """Return a sane list of fonts for the system that has both regular and bold variants.
 
-    Pre-pend "default" to the beginning of the list.
+    Pre-pend "default" to the beginning of the list. Falls back to matplotlib-only
+    enumeration when no Tk root is available (e.g. the Qt shell entrypoint).
 
     Returns
     -------
@@ -73,18 +74,24 @@ def get_clean_fonts() -> list[str]:
         if str(fnt.weight) in ("700", "bold"):
             fonts.setdefault(fnt.name, {})["bold"] = True
     valid_fonts = {key for key, val in fonts.items() if len(val) == 2}
-    retval = sorted(list(valid_fonts.intersection(tk_font.families())))
+    try:
+        tk_families: set[str] | None = set(tk_font.families())
+    except RuntimeError:
+        tk_families = None
+    if tk_families is None:
+        retval = sorted(valid_fonts)
+    else:
+        retval = sorted(valid_fonts.intersection(tk_families))
     if not retval:
-        # Return the font list with any @prefixed or non-Unicode characters stripped and default
-        # prefixed
         logger.debug("No bold/regular fonts found. Running simple filter")
-        retval = sorted(
-            [
+        if tk_families is None:
+            retval = sorted(valid_fonts)
+        else:
+            retval = sorted(
                 fnt
-                for fnt in tk_font.families()
+                for fnt in tk_families
                 if not fnt.startswith("@") and not any(ord(c) > 127 for c in fnt)
-            ]
-        )
+            )
     return ["default"] + retval
 
 

@@ -29,6 +29,7 @@ class OptionSpec:
     is_required: bool = False
     is_advanced: bool = False
     file_filter: str = ""
+    filetypes: str = ""
 
 
 @dataclass(frozen=True)

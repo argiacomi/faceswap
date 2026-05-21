@@ -564,7 +564,6 @@ class ExtractArgs(ExtractConvertArgs):
                 "opts": ("-k", "--benchmark"),
                 "action": "store_true",
                 "default": False,
-                "backend": ("nvidia", "rocm"),
                 "group": _("settings"),
                 "help": _(
                     "Benchmark the chosen extract plugins for optimal batch sizes. The "

@@ -24,7 +24,7 @@ class TrainingGraphWidget(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("qt-shell-training-graph-widget")
-        self.setMinimumSize(240, 180)
+        self.setMinimumSize(80, 60)
         self._series: tuple[TrainingGraphSeries, ...] = ()
         self._selected_keys: tuple[str, ...] = ()
         self._status_text = "No graph data loaded"
