@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import re
@@ -72,8 +73,10 @@ STAGES: tuple[str, ...] = (
 DEFAULT_MODELS = "hrnet,spiga,orformer"
 DEFAULT_CANDIDATES = "hrnet,spiga,orformer,plain_average,static_weighted,static_weighted_downweight,static_weighted_hard_drop,weighted_median"
 DEFAULT_HARD_SOURCE_DATASET = "aflw2000-3d"
+BASE_DATASET_MANIFEST_SENTINEL_FILENAME = ".base_dataset_manifest_complete.json"
 BASE_CACHE_SENTINEL_FILENAME = ".base_prediction_cache_complete.json"
 HARD_SOURCE_CACHE_SENTINEL_FILENAME = ".hard_source_prediction_cache_complete.json"
+PRODUCTION_CACHE_SENTINEL_FILENAME = ".production_prediction_cache_complete.json"
 DEFAULT_CONFIG_SECTION = "align.ensemble"
 CONFIG_PREVIEW_FILENAME = "config_update_preview.json"
 CONFIG_PATCH_FILENAME = "config_update_patch.ini"
@@ -117,6 +120,7 @@ class PipelinePaths:
     stable_root: Path = field(init=False)
     run_dataset_dir: Path = field(init=False)
     run_manifest: Path = field(init=False)
+    run_manifest_sentinel: Path = field(init=False)
     run_fit_manifest: Path = field(init=False)
     run_select_manifest: Path = field(init=False)
     run_report_manifest: Path = field(init=False)
@@ -130,6 +134,7 @@ class PipelinePaths:
     run_summary: Path = field(init=False)
     production_manifest: Path = field(init=False)
     production_cache: Path = field(init=False)
+    production_cache_sentinel: Path = field(init=False)
     candidate_dir: Path = field(init=False)
     best_setup: Path = field(init=False)
     best_weights: Path = field(init=False)
@@ -158,6 +163,11 @@ class PipelinePaths:
         object.__setattr__(self, "stable_root", self.output_root / "current")
         object.__setattr__(self, "run_dataset_dir", self.run_root / "dataset")
         object.__setattr__(self, "run_manifest", self.run_dataset_dir / "manifest.json")
+        object.__setattr__(
+            self,
+            "run_manifest_sentinel",
+            self.run_dataset_dir / BASE_DATASET_MANIFEST_SENTINEL_FILENAME,
+        )
         object.__setattr__(self, "run_fit_manifest", self.run_dataset_dir / "fit_manifest.json")
         object.__setattr__(
             self, "run_select_manifest", self.run_dataset_dir / "select_manifest.json"
@@ -197,6 +207,11 @@ class PipelinePaths:
             _first_existing(
                 self.production_root / "cache", self.production_root / "prediction_cache"
             ),
+        )
+        object.__setattr__(
+            self,
+            "production_cache_sentinel",
+            self.production_cache / PRODUCTION_CACHE_SENTINEL_FILENAME,
         )
         object.__setattr__(self, "candidate_dir", self.output_root / "candidate_search")
         object.__setattr__(self, "best_setup", self.candidate_dir / "best_setup.json")
@@ -358,6 +373,34 @@ def _dataset_source_map(args: argparse.Namespace) -> dict[str, Path]:
     return mapping
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _effective_hard_source_manifest(args: argparse.Namespace, paths: PipelinePaths) -> Path:
+    return (
+        Path(args.hard_source_manifest)
+        if args.hard_source_manifest
+        else paths.hard_source_manifest
+    )
+
+
+def _prediction_cache_mode(args: argparse.Namespace) -> str:
+    return str(getattr(args, "prediction_cache_mode", "run-models"))
+
+
+def _append_prediction_cache_mode(
+    args: argparse.Namespace, argv: list[str], extra: T.Sequence[str]
+) -> list[str]:
+    if _prediction_cache_mode(args) == "run-models":
+        argv.append("--run-models")
+    return _append_extra(argv, extra)
+
+
 def _dataset_build_command(
     args: argparse.Namespace,
     paths: PipelinePaths,
@@ -418,7 +461,8 @@ def _command_hard_source_manifest(args: argparse.Namespace, paths: PipelinePaths
 
 
 def _command_prediction_cache(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
-    return _append_extra(
+    return _append_prediction_cache_mode(
+        args,
         [
             args.python_executable,
             _script("cache_predictions.py"),
@@ -436,12 +480,13 @@ def _command_prediction_cache(args: argparse.Namespace, paths: PipelinePaths) ->
 def _command_hard_source_prediction_cache(
     args: argparse.Namespace, paths: PipelinePaths
 ) -> list[str]:
-    return _append_extra(
+    return _append_prediction_cache_mode(
+        args,
         [
             args.python_executable,
             _script("cache_predictions.py"),
             "--manifest",
-            str(paths.hard_source_manifest),
+            str(_effective_hard_source_manifest(args, paths)),
             "--cache-dir",
             str(paths.run_cache),
             "--models",
@@ -451,8 +496,42 @@ def _command_hard_source_prediction_cache(
     )
 
 
-def _write_cache_sentinel(path: Path, *, manifest: Path, models: str) -> None:
-    write_json(path, {"manifest": str(manifest), "models": models})
+def _write_dataset_manifest_sentinel(args: argparse.Namespace, paths: PipelinePaths) -> None:
+    source_map = _dataset_source_map(args)
+    write_json(
+        paths.run_manifest_sentinel,
+        {
+            "manifest": str(paths.run_manifest),
+            "manifest_sha256": _sha256_file(paths.run_manifest),
+            "datasets": list(_base_datasets(args)),
+            "dataset_sources": {
+                dataset: str(source_map[dataset])
+                for dataset in sorted(source_map)
+                if dataset in _base_datasets(args)
+            },
+            "dataset_build_args": list(getattr(args, "dataset_build_arg", [])),
+        },
+    )
+
+
+def _write_cache_sentinel(
+    path: Path,
+    *,
+    manifest: Path,
+    models: str,
+    mode: str,
+    extra_args: T.Sequence[str],
+) -> None:
+    write_json(
+        path,
+        {
+            "manifest": str(manifest),
+            "manifest_sha256": _sha256_file(manifest),
+            "models": models,
+            "mode": mode,
+            "extra_args": list(extra_args),
+        },
+    )
 
 
 def _command_production_manifest(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
@@ -472,7 +551,8 @@ def _command_production_manifest(args: argparse.Namespace, paths: PipelinePaths)
 def _command_production_prediction_cache(
     args: argparse.Namespace, paths: PipelinePaths
 ) -> list[str]:
-    return _append_extra(
+    return _append_prediction_cache_mode(
+        args,
         [
             args.python_executable,
             _script("cache_predictions.py"),
@@ -516,7 +596,7 @@ def _command_candidate_search(args: argparse.Namespace, paths: PipelinePaths) ->
 
 
 def _command_hard_validation(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
-    source_manifest = args.hard_source_manifest or paths.hard_source_manifest
+    source_manifest = _effective_hard_source_manifest(args, paths)
     weights = paths.best_weights if paths.best_weights.exists() else paths.run_static_weights
     return _append_extra(
         [
@@ -627,7 +707,7 @@ def _command_scorer_eval(args: argparse.Namespace, paths: PipelinePaths) -> list
 
 def _outputs_for(stage: str, paths: PipelinePaths) -> list[Path]:
     return {
-        "build_dataset_manifest": [paths.run_manifest],
+        "build_dataset_manifest": [paths.run_manifest, paths.run_manifest_sentinel],
         "build_hard_source_manifest": [paths.hard_source_manifest],
         "build_prediction_cache": [paths.run_cache, paths.run_cache_sentinel],
         "build_hard_source_prediction_cache": [paths.run_cache, paths.hard_source_cache_sentinel],
@@ -644,7 +724,10 @@ def _outputs_for(stage: str, paths: PipelinePaths) -> list[Path]:
             paths.production_root / RESOLVER_METADATA_JSONL,
             paths.production_root / "audit.json",
         ],
-        "build_production_prediction_cache": [paths.production_cache],
+        "build_production_prediction_cache": [
+            paths.production_cache,
+            paths.production_cache_sentinel,
+        ],
         "candidate_search": [paths.best_setup, paths.best_weights],
         "hard_alignment_validation": [paths.hard_manifest],
         "build_gt_hard_resolver_metadata": [paths.frozen_gt_metadata],
@@ -671,7 +754,7 @@ def _required_inputs_for(stage: str, args: argparse.Namespace, paths: PipelinePa
         "build_dataset_manifest": [],
         "build_hard_source_manifest": [],
         "build_prediction_cache": [paths.run_manifest],
-        "build_hard_source_prediction_cache": [paths.hard_source_manifest],
+        "build_hard_source_prediction_cache": [_effective_hard_source_manifest(args, paths)],
         "build_splits": [paths.run_manifest],
         "fit_static_weights": [
             paths.run_fit_manifest if paths.run_fit_manifest.exists() else paths.run_manifest,
@@ -691,9 +774,10 @@ def _required_inputs_for(stage: str, args: argparse.Namespace, paths: PipelinePa
             paths.run_splits,
             paths.production_manifest,
             paths.production_cache,
+            paths.production_cache_sentinel,
         ],
         "hard_alignment_validation": [
-            args.hard_source_manifest or paths.hard_source_manifest,
+            _effective_hard_source_manifest(args, paths),
             paths.run_cache,
             paths.hard_source_cache_sentinel,
             paths.best_weights if paths.best_weights.exists() else paths.run_static_weights,
@@ -762,14 +846,14 @@ def _required_inputs_for(stage: str, args: argparse.Namespace, paths: PipelinePa
 
 def _contract_for(stage: str, args: argparse.Namespace, paths: PipelinePaths) -> StageContract:
     cache_behavior = {
-        "build_dataset_manifest": "writes merged run-root base GT manifest; first dataset uses --manifest-mode replace and later datasets use --manifest-mode merge",
+        "build_dataset_manifest": "writes merged run-root base GT manifest; first dataset uses --manifest-mode replace and later datasets use --manifest-mode merge; completion sentinel is written only after all dataset builds succeed",
         "build_hard_source_manifest": "writes separate AFLW2000-3D hard-source manifest under run-root; --resume skips when manifest exists",
         "build_prediction_cache": "writes base GT predictions into the shared run-root prediction cache and records a base-cache sentinel",
         "build_hard_source_prediction_cache": "writes hard-source predictions into the same run-root prediction cache and records a hard-source-cache sentinel",
         "build_splits": "writes fit/select/report splits and split manifests; --resume skips when all split artifacts exist",
         "fit_static_weights": "fits initial static weights from the fit split; --resume skips when weights exist",
         "build_production_manifest": "writes production_validated manifest, resolver metadata, and audit from Faceswap alignments; --resume skips when outputs exist",
-        "build_production_prediction_cache": "writes production_validated prediction cache from the production manifest; --resume skips when cache dir exists",
+        "build_production_prediction_cache": "writes production_validated prediction cache from the production manifest and records a production-cache sentinel",
         "candidate_search": "writes candidate_search artifacts; --resume skips when best_setup.json and best_weights.json exist",
         "hard_alignment_validation": "writes gt_hard_validation artifacts; --resume skips when manifest.json exists",
         "build_gt_hard_resolver_metadata": "runs the GT-hard resolver metadata CLI on the GT-hard manifest and writes the frozen resolver metadata sidecar; explicit sidecars are copied into the same frozen path",
@@ -782,7 +866,7 @@ def _contract_for(stage: str, args: argparse.Namespace, paths: PipelinePaths) ->
         "config_update": "writes deterministic config_update_preview.json and config_update_patch.ini; writes only promoted align.ensemble keys with --write-config after promotion passes",
     }[stage]
     success = {
-        "build_dataset_manifest": ["merged base GT run manifest exists"],
+        "build_dataset_manifest": ["merged base GT run manifest and completion sentinel exist"],
         "build_hard_source_manifest": ["hard-source manifest exists"],
         "build_prediction_cache": ["base GT prediction cache sentinel exists"],
         "build_hard_source_prediction_cache": ["hard-source prediction cache sentinel exists"],
@@ -791,7 +875,7 @@ def _contract_for(stage: str, args: argparse.Namespace, paths: PipelinePaths) ->
         "build_production_manifest": [
             "production manifest, resolver_metadata.jsonl, and audit.json exist"
         ],
-        "build_production_prediction_cache": ["production prediction cache exists"],
+        "build_production_prediction_cache": ["production prediction cache sentinel exists"],
         "candidate_search": ["best_setup.json and best_weights.json exist"],
         "hard_alignment_validation": ["GT-hard manifest exists"],
         "build_gt_hard_resolver_metadata": [
@@ -825,8 +909,76 @@ def _contract_for(stage: str, args: argparse.Namespace, paths: PipelinePaths) ->
     )
 
 
-def _stage_complete(stage: str, paths: PipelinePaths) -> bool:
-    return all(path.exists() for path in _outputs_for(stage, paths))
+def _cache_sentinel_matches(
+    path: Path,
+    *,
+    manifest: Path,
+    models: str,
+    mode: str,
+    extra_args: T.Sequence[str],
+) -> bool:
+    payload = _read_json(path)
+    if not payload:
+        return False
+    expected_hash = _sha256_file(manifest) if manifest.is_file() else ""
+    return (
+        payload.get("manifest") == str(manifest)
+        and payload.get("manifest_sha256") == expected_hash
+        and payload.get("models") == models
+        and payload.get("mode") == mode
+        and payload.get("extra_args") == list(extra_args)
+    )
+
+
+def _dataset_manifest_sentinel_matches(args: argparse.Namespace, paths: PipelinePaths) -> bool:
+    payload = _read_json(paths.run_manifest_sentinel)
+    if not payload or not paths.run_manifest.is_file():
+        return False
+    source_map = _dataset_source_map(args)
+    expected_sources = {
+        dataset: str(source_map[dataset])
+        for dataset in sorted(source_map)
+        if dataset in _base_datasets(args)
+    }
+    return (
+        payload.get("manifest") == str(paths.run_manifest)
+        and payload.get("manifest_sha256") == _sha256_file(paths.run_manifest)
+        and payload.get("datasets") == list(_base_datasets(args))
+        and payload.get("dataset_sources") == expected_sources
+        and payload.get("dataset_build_args") == list(getattr(args, "dataset_build_arg", []))
+    )
+
+
+def _stage_complete(stage: str, args: argparse.Namespace, paths: PipelinePaths) -> bool:
+    if not all(path.exists() for path in _outputs_for(stage, paths)):
+        return False
+    if stage == "build_dataset_manifest":
+        return _dataset_manifest_sentinel_matches(args, paths)
+    if stage == "build_prediction_cache":
+        return _cache_sentinel_matches(
+            paths.run_cache_sentinel,
+            manifest=paths.run_manifest,
+            models=args.models,
+            mode=_prediction_cache_mode(args),
+            extra_args=getattr(args, "cache_prediction_arg", []),
+        )
+    if stage == "build_hard_source_prediction_cache":
+        return _cache_sentinel_matches(
+            paths.hard_source_cache_sentinel,
+            manifest=_effective_hard_source_manifest(args, paths),
+            models=args.models,
+            mode=_prediction_cache_mode(args),
+            extra_args=getattr(args, "hard_source_cache_prediction_arg", []),
+        )
+    if stage == "build_production_prediction_cache":
+        return _cache_sentinel_matches(
+            paths.production_cache_sentinel,
+            manifest=paths.production_manifest,
+            models=args.models,
+            mode=_prediction_cache_mode(args),
+            extra_args=getattr(args, "production_cache_prediction_arg", []),
+        )
+    return True
 
 
 def _run_command(command: list[str]) -> None:
@@ -854,16 +1006,17 @@ def _build_splits(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
     if not isinstance(samples, list):
         raise ValueError(f"manifest samples must be a list: {paths.run_manifest}")
     ratios = SplitRatios(args.split_fit, args.split_select, args.split_report)
+    normalized_mode = _normalized_split_mode(args.split_mode)
     assignment, diagnostics = split_manifest_samples(
         [sample for sample in samples if isinstance(sample, dict)],
-        mode=_normalized_split_mode(args.split_mode),
+        mode=normalized_mode,
         ratios=ratios,
         seed=args.split_seed,
     )
     save_split_file(
         paths.run_splits,
         assignment,
-        mode=args.split_mode,
+        mode=normalized_mode,
         ratios=ratios,
         seed=args.split_seed,
         diagnostics=diagnostics,
@@ -878,7 +1031,7 @@ def _build_splits(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
             "manifest": str(paths.run_manifest),
             "cache": str(paths.run_cache),
             "splits": str(paths.run_splits),
-            "split_mode": _normalized_split_mode(args.split_mode),
+            "split_mode": normalized_mode,
             "split_seed": args.split_seed,
             "split_counts": split_summary_counts(assignment, samples),
         },
@@ -973,12 +1126,67 @@ def _validate_required_files(stage: str, args: argparse.Namespace, paths: Pipeli
             _require(required, f"{stage} input")
 
 
-def _validate_stage_outputs(stage: str, paths: PipelinePaths) -> list[str]:
+def _validate_stage_outputs(
+    stage: str, paths: PipelinePaths, args: argparse.Namespace | None = None
+) -> list[str]:
     missing = [path for path in _outputs_for(stage, paths) if not path.exists()]
     if missing:
         details = ", ".join(str(path) for path in missing)
         raise PipelineContractError(
             f"stage {stage!r} did not produce required output(s): {details}"
+        )
+    if (
+        args is not None
+        and stage == "build_dataset_manifest"
+        and not _dataset_manifest_sentinel_matches(args, paths)
+    ):
+        raise PipelineContractError(
+            "stage 'build_dataset_manifest' completion sentinel does not match "
+            "the requested dataset build inputs"
+        )
+    if (
+        args is not None
+        and stage == "build_prediction_cache"
+        and not _cache_sentinel_matches(
+            paths.run_cache_sentinel,
+            manifest=paths.run_manifest,
+            models=args.models,
+            mode=_prediction_cache_mode(args),
+            extra_args=getattr(args, "cache_prediction_arg", []),
+        )
+    ):
+        raise PipelineContractError(
+            "stage 'build_prediction_cache' sentinel does not match the requested cache inputs"
+        )
+    if (
+        args is not None
+        and stage == "build_hard_source_prediction_cache"
+        and not _cache_sentinel_matches(
+            paths.hard_source_cache_sentinel,
+            manifest=_effective_hard_source_manifest(args, paths),
+            models=args.models,
+            mode=_prediction_cache_mode(args),
+            extra_args=getattr(args, "hard_source_cache_prediction_arg", []),
+        )
+    ):
+        raise PipelineContractError(
+            "stage 'build_hard_source_prediction_cache' sentinel does not match "
+            "the requested cache inputs"
+        )
+    if (
+        args is not None
+        and stage == "build_production_prediction_cache"
+        and not _cache_sentinel_matches(
+            paths.production_cache_sentinel,
+            manifest=paths.production_manifest,
+            models=args.models,
+            mode=_prediction_cache_mode(args),
+            extra_args=getattr(args, "production_cache_prediction_arg", []),
+        )
+    ):
+        raise PipelineContractError(
+            "stage 'build_production_prediction_cache' sentinel does not match "
+            "the requested cache inputs"
         )
     if stage in {"build_gt_hard_resolver_metadata", "freeze_resolver_metadata"}:
         _validate_frozen_metadata(paths)
@@ -1231,10 +1439,10 @@ def _execute_stage(stage: str, args: argparse.Namespace, paths: PipelinePaths) -
     outputs = contract.outputs
     if (
         args.resume
-        and _stage_complete(stage, paths)
+        and _stage_complete(stage, args, paths)
         and not (stage == "config_update" and args.write_config)
     ):
-        validated = _validate_stage_outputs(stage, paths)
+        validated = _validate_stage_outputs(stage, paths, args)
         return StageResult(
             stage,
             "skipped",
@@ -1267,6 +1475,7 @@ def _execute_stage(stage: str, args: argparse.Namespace, paths: PipelinePaths) -
                 )
             for command in commands:
                 _run_command(command)
+            _write_dataset_manifest_sentinel(args, paths)
         elif stage == "build_hard_source_manifest":
             command = _command_hard_source_manifest(args, paths)
             if args.dry_run:
@@ -1282,7 +1491,11 @@ def _execute_stage(stage: str, args: argparse.Namespace, paths: PipelinePaths) -
                 )
             _run_command(command)
             _write_cache_sentinel(
-                paths.run_cache_sentinel, manifest=paths.run_manifest, models=args.models
+                paths.run_cache_sentinel,
+                manifest=paths.run_manifest,
+                models=args.models,
+                mode=_prediction_cache_mode(args),
+                extra_args=getattr(args, "cache_prediction_arg", []),
             )
         elif stage == "build_hard_source_prediction_cache":
             command = _command_hard_source_prediction_cache(args, paths)
@@ -1293,8 +1506,10 @@ def _execute_stage(stage: str, args: argparse.Namespace, paths: PipelinePaths) -
             _run_command(command)
             _write_cache_sentinel(
                 paths.hard_source_cache_sentinel,
-                manifest=paths.hard_source_manifest,
+                manifest=_effective_hard_source_manifest(args, paths),
                 models=args.models,
+                mode=_prediction_cache_mode(args),
+                extra_args=getattr(args, "hard_source_cache_prediction_arg", []),
             )
         elif stage == "build_splits":
             if args.dry_run:
@@ -1310,7 +1525,7 @@ def _execute_stage(stage: str, args: argparse.Namespace, paths: PipelinePaths) -
                 stage,
                 "ok",
                 outputs=outputs,
-                validated_outputs=_validate_stage_outputs(stage, paths),
+                validated_outputs=_validate_stage_outputs(stage, paths, args),
                 contract=contract.to_json(),
                 notes=notes,
             )
@@ -1328,7 +1543,7 @@ def _execute_stage(stage: str, args: argparse.Namespace, paths: PipelinePaths) -
                 stage,
                 "ok",
                 outputs=outputs,
-                validated_outputs=_validate_stage_outputs(stage, paths),
+                validated_outputs=_validate_stage_outputs(stage, paths, args),
                 contract=contract.to_json(),
                 notes=notes,
             )
@@ -1338,7 +1553,7 @@ def _execute_stage(stage: str, args: argparse.Namespace, paths: PipelinePaths) -
                 and (paths.production_root / RESOLVER_METADATA_JSONL).exists()
                 and (paths.production_root / "audit.json").exists()
             ):
-                validated = _validate_stage_outputs(stage, paths)
+                validated = _validate_stage_outputs(stage, paths, args)
                 return StageResult(
                     stage,
                     "ok",
@@ -1365,6 +1580,13 @@ def _execute_stage(stage: str, args: argparse.Namespace, paths: PipelinePaths) -
                     stage, "planned", command=command, outputs=outputs, contract=contract.to_json()
                 )
             _run_command(command)
+            _write_cache_sentinel(
+                paths.production_cache_sentinel,
+                manifest=paths.production_manifest,
+                models=args.models,
+                mode=_prediction_cache_mode(args),
+                extra_args=getattr(args, "production_cache_prediction_arg", []),
+            )
         elif stage == "candidate_search":
             command = _command_candidate_search(args, paths)
             if args.dry_run:
@@ -1394,7 +1616,7 @@ def _execute_stage(stage: str, args: argparse.Namespace, paths: PipelinePaths) -
                     stage,
                     "ok",
                     outputs=outputs,
-                    validated_outputs=_validate_stage_outputs(stage, paths),
+                    validated_outputs=_validate_stage_outputs(stage, paths, args),
                     contract=contract.to_json(),
                     notes=[
                         f"copied GT-hard resolver metadata from {args.gt_hard_resolver_metadata}"
@@ -1430,7 +1652,7 @@ def _execute_stage(stage: str, args: argparse.Namespace, paths: PipelinePaths) -
                 stage,
                 "ok",
                 outputs=outputs,
-                validated_outputs=_validate_stage_outputs(stage, paths),
+                validated_outputs=_validate_stage_outputs(stage, paths, args),
                 contract=contract.to_json(),
                 notes=notes,
             )
@@ -1479,7 +1701,7 @@ def _execute_stage(stage: str, args: argparse.Namespace, paths: PipelinePaths) -
                 stage,
                 "ok",
                 outputs=outputs,
-                validated_outputs=_validate_stage_outputs(stage, paths),
+                validated_outputs=_validate_stage_outputs(stage, paths, args),
                 contract=contract.to_json(),
                 notes=notes,
             )
@@ -1497,7 +1719,7 @@ def _execute_stage(stage: str, args: argparse.Namespace, paths: PipelinePaths) -
                 stage,
                 "ok",
                 outputs=outputs,
-                validated_outputs=_validate_stage_outputs(stage, paths),
+                validated_outputs=_validate_stage_outputs(stage, paths, args),
                 contract=contract.to_json(),
                 notes=[f"exported {len(exported)} artifact(s)"],
             )
@@ -1515,13 +1737,13 @@ def _execute_stage(stage: str, args: argparse.Namespace, paths: PipelinePaths) -
                 stage,
                 "ok",
                 outputs=outputs,
-                validated_outputs=_validate_stage_outputs(stage, paths),
+                validated_outputs=_validate_stage_outputs(stage, paths, args),
                 contract=contract.to_json(),
                 notes=notes,
             )
         else:
             raise AssertionError(stage)
-        validated = _validate_stage_outputs(stage, paths)
+        validated = _validate_stage_outputs(stage, paths, args)
     except Exception as err:
         logger.exception("Stage failed: %s", stage)
         return StageResult(
@@ -1593,7 +1815,7 @@ def _summary_payload(
                 "datasets": list(_base_datasets(args)),
             },
             "hard_source": {
-                "manifest": str(paths.hard_source_manifest),
+                "manifest": str(_effective_hard_source_manifest(args, paths)),
                 "cache": str(paths.run_cache),
                 "dataset": getattr(args, "hard_source_dataset", DEFAULT_HARD_SOURCE_DATASET),
             },
@@ -1617,6 +1839,7 @@ def _summary_payload(
         "scorer_report_status": promotion_status,
         "dry_run": bool(args.dry_run),
         "resume": bool(args.resume),
+        "prediction_cache_mode": _prediction_cache_mode(args),
         "stages": [_jsonable(row.__dict__) for row in results],
         "config_update": {
             "config_path": str(args.config_path),
@@ -1790,6 +2013,15 @@ def _parser() -> argparse.ArgumentParser:
         "--scorer-target",
         choices=SCORER_TARGETS,
         default=TARGET_SELECTION_COST,
+    )
+    parser.add_argument(
+        "--prediction-cache-mode",
+        choices=("run-models", "fixtures"),
+        default="run-models",
+        help=(
+            "How cache_predictions.py should populate caches. Defaults to run-models "
+            "for end-to-end runs; fixtures preserves precomputed prediction import behavior."
+        ),
     )
     parser.add_argument(
         "--allow-image-backfill",

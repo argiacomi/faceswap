@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import configparser
+import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -16,6 +17,7 @@ from tools.landmarks.run_landmark_resolver_pipeline import (
     PipelineContractError,
     PipelinePaths,
     _apply_config,
+    _build_splits,
     _command_dataset_build,
     _command_gt_hard_resolver_metadata,
     _command_hard_source_manifest,
@@ -28,6 +30,7 @@ from tools.landmarks.run_landmark_resolver_pipeline import (
     _contract_for,
     _freeze_metadata,
     _promotion_check,
+    _stage_complete,
     _validate_stage_outputs,
     run_pipeline,
 )
@@ -69,6 +72,7 @@ def _args(tmp_path: Path, **overrides: object) -> argparse.Namespace:
         "split_report": 0.2,
         "split_seed": 1337,
         "scorer_target": "selection_cost",
+        "prediction_cache_mode": "run-models",
         "allow_image_backfill": True,
         "dataset_build_arg": [],
         "hard_source_dataset_build_arg": [],
@@ -90,6 +94,7 @@ def _args(tmp_path: Path, **overrides: object) -> argparse.Namespace:
 def _touch_pipeline_outputs(paths: PipelinePaths, *, promotion_status: str = "pass") -> None:
     for path in (
         paths.run_manifest,
+        paths.run_manifest_sentinel,
         paths.hard_source_manifest,
         paths.run_cache_sentinel,
         paths.hard_source_cache_sentinel,
@@ -97,6 +102,7 @@ def _touch_pipeline_outputs(paths: PipelinePaths, *, promotion_status: str = "pa
         paths.run_static_weights,
         paths.run_summary,
         paths.production_manifest,
+        paths.production_cache_sentinel,
         paths.production_root / "resolver_metadata.jsonl",
         paths.production_root / "audit.json",
         paths.best_setup,
@@ -195,6 +201,15 @@ def test_base_dataset_build_uses_replace_then_merge_for_multiple_datasets(
     assert commands[2][commands[2].index("--source-dir") + 1] == str(tmp_path / "300w")
 
 
+def test_base_dataset_build_resume_requires_completion_sentinel(tmp_path: Path) -> None:
+    args = _args(tmp_path, dataset="wflw,cofw")
+    paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
+    paths.run_manifest.parent.mkdir(parents=True, exist_ok=True)
+    paths.run_manifest.write_text(json.dumps({"samples": []}) + "\n", encoding="utf-8")
+
+    assert not _stage_complete("build_dataset_manifest", args, paths)
+
+
 def test_single_dataset_source_dir_is_passed_to_base_build(
     tmp_path: Path,
 ) -> None:
@@ -233,7 +248,63 @@ def test_hard_source_manifest_and_cache_default_to_aflw2000_3d(
     assert "--hard-build-extra" in manifest_command
     assert cache_command[cache_command.index("--manifest") + 1] == str(paths.hard_source_manifest)
     assert cache_command[cache_command.index("--cache-dir") + 1] == str(paths.run_cache)
+    assert "--run-models" in cache_command
     assert "--hard-cache-extra" in cache_command
+
+
+def test_hard_source_manifest_override_is_used_by_cache_validation_and_summary(
+    tmp_path: Path,
+) -> None:
+    custom_manifest = tmp_path / "custom_hard_manifest.json"
+    args = _args(
+        tmp_path,
+        hard_source_manifest=custom_manifest,
+        dry_run=True,
+        start_at="build_hard_source_prediction_cache",
+        stop_after="hard_alignment_validation",
+    )
+    paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
+
+    cache_command = _command_hard_source_prediction_cache(args, paths)
+    validation_command = _command_hard_validation(args, paths)
+    cache_contract = _contract_for("build_hard_source_prediction_cache", args, paths)
+    validation_contract = _contract_for("hard_alignment_validation", args, paths)
+    summary = run_pipeline(args)
+
+    assert cache_command[cache_command.index("--manifest") + 1] == str(custom_manifest)
+    assert validation_command[validation_command.index("--manifest") + 1] == str(custom_manifest)
+    assert str(custom_manifest) in cache_contract.required_files
+    assert str(custom_manifest) in validation_contract.required_files
+    assert summary["sources"]["hard_source"]["manifest"] == str(custom_manifest)
+
+
+def test_hard_source_cache_resume_rejects_sentinel_for_different_manifest(
+    tmp_path: Path,
+) -> None:
+    custom_manifest = tmp_path / "custom_hard_manifest.json"
+    args = _args(tmp_path, hard_source_manifest=custom_manifest)
+    paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
+    paths.hard_source_manifest.parent.mkdir(parents=True, exist_ok=True)
+    paths.hard_source_manifest.write_text(json.dumps({"samples": []}) + "\n", encoding="utf-8")
+    custom_manifest.write_text(json.dumps({"samples": []}) + "\n", encoding="utf-8")
+    paths.run_cache.mkdir(parents=True, exist_ok=True)
+    paths.hard_source_cache_sentinel.write_text(
+        json.dumps(
+            {
+                "manifest": str(paths.hard_source_manifest),
+                "manifest_sha256": hashlib.sha256(
+                    paths.hard_source_manifest.read_bytes()
+                ).hexdigest(),
+                "models": args.models,
+                "mode": args.prediction_cache_mode,
+                "extra_args": args.hard_source_cache_prediction_arg,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert not _stage_complete("build_hard_source_prediction_cache", args, paths)
 
 
 def test_hard_validation_defaults_to_aflw2000_hard_source_manifest(
@@ -260,6 +331,31 @@ def test_split_mode_accepts_uploaded_workflow_alias(tmp_path: Path) -> None:
     assert summary["stages"][0]["status"] == "planned"
 
 
+def test_split_mode_alias_is_persisted_as_canonical_mode(tmp_path: Path) -> None:
+    args = _args(tmp_path, split_mode="scenario_stratified")
+    paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
+    paths.run_manifest.parent.mkdir(parents=True, exist_ok=True)
+    paths.run_manifest.write_text(
+        json.dumps(
+            {
+                "samples": [
+                    {"sample_id": f"s{i}", "dataset": "wflw", "condition": "frontal"}
+                    for i in range(6)
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    _build_splits(args, paths)
+
+    payload = json.loads(paths.run_splits.read_text(encoding="utf-8"))
+    summary = json.loads(paths.run_summary.read_text(encoding="utf-8"))
+    assert payload["mode"] == "scenario-stratified"
+    assert summary["split_mode"] == "scenario-stratified"
+
+
 def test_pipeline_declares_production_prediction_cache_stage(tmp_path: Path) -> None:
     args = _args(tmp_path)
     paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
@@ -280,6 +376,7 @@ def test_pipeline_declares_production_prediction_cache_stage(tmp_path: Path) -> 
 
     assert str(paths.production_manifest) in contract.required_files
     assert str(paths.production_cache) in contract.outputs
+    assert str(paths.production_cache_sentinel) in contract.outputs
 
 
 def test_production_prediction_cache_command_uses_production_manifest_and_cache(
@@ -294,7 +391,16 @@ def test_production_prediction_cache_command_uses_production_manifest_and_cache(
     assert command[command.index("--manifest") + 1] == str(paths.production_manifest)
     assert command[command.index("--cache-dir") + 1] == str(paths.production_cache)
     assert command[command.index("--models") + 1] == args.models
+    assert "--run-models" in command
     assert "--extra-cache-option" in command
+
+
+def test_prediction_cache_mode_fixtures_does_not_add_run_models(tmp_path: Path) -> None:
+    args = _args(tmp_path, prediction_cache_mode="fixtures")
+    paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
+
+    assert "--run-models" not in _command_production_prediction_cache(args, paths)
+    assert "--run-models" not in _command_hard_source_prediction_cache(args, paths)
 
 
 def test_candidate_search_contract_requires_built_production_prediction_cache(
@@ -306,6 +412,7 @@ def test_candidate_search_contract_requires_built_production_prediction_cache(
     contract = _contract_for("candidate_search", args, paths)
 
     assert str(paths.production_cache) in contract.required_files
+    assert str(paths.production_cache_sentinel) in contract.required_files
 
 
 def test_gt_hard_resolver_metadata_contract_runs_after_hard_validation(
