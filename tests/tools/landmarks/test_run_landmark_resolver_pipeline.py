@@ -7,6 +7,7 @@ import argparse
 import configparser
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -240,6 +241,92 @@ def test_gt_hard_resolver_metadata_command_references_existing_cli(
 
     assert script.name == "build_gt_hard_resolver_metadata.py"
     assert script.is_file()
+
+
+def test_gt_hard_resolver_metadata_generation_ignores_stale_manifest_runtime_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tools.landmarks import build_gt_hard_resolver_metadata as metadata_cli
+
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "dataset": "gt_hard",
+                "samples": [
+                    {
+                        "sample_id": "s1",
+                        "image": "s1.png",
+                        "landmarks": "s1.npy",
+                        "metadata": {
+                            "face_index": 0,
+                            "landmark_ensemble": {
+                                "runtime_bucket": "stale_profile",
+                                "runtime_bucket_source": "stale_manifest",
+                                "selected_candidate": "stale_candidate",
+                            },
+                        },
+                    }
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    sample = metadata_cli.LandmarkSample(
+        sample_id="s1",
+        image=str(tmp_path / "s1.png"),
+        landmarks=str(tmp_path / "s1.npy"),
+        dataset="gt_hard",
+        condition="profile",
+        metadata={
+            "face_index": 0,
+            "landmark_ensemble": {
+                "runtime_bucket": "stale_profile",
+                "runtime_bucket_source": "stale_manifest",
+                "selected_candidate": "stale_candidate",
+            },
+        },
+    )
+    observed: dict[str, object] = {}
+
+    def fake_build_sample_context(sample_arg: object, **_: object) -> SimpleNamespace:
+        observed["metadata"] = dict(sample_arg.metadata)
+        return SimpleNamespace(
+            runtime_bucket="generated_frontal",
+            runtime_bucket_source="derived_no_image_evidence",
+            current_policy_choice="hrnet",
+            risk_route="low_risk",
+            candidate_yaw_disagreement=None,
+            max_disagreement_px=0.0,
+            roll_estimate=0.0,
+            yaw_estimate=0.0,
+            model_predictions_available={"hrnet": True},
+        )
+
+    monkeypatch.setattr(metadata_cli, "load_manifest", lambda _: [sample])
+    monkeypatch.setattr(metadata_cli, "load_weights", lambda _: {"hrnet": [1.0]})
+    monkeypatch.setattr(metadata_cli, "DiskPredictionCache", lambda _: object())
+    monkeypatch.setattr(metadata_cli, "build_sample_context", fake_build_sample_context)
+
+    output = tmp_path / "resolver_metadata.jsonl"
+    rows = metadata_cli.build_gt_hard_resolver_metadata(
+        manifest=manifest,
+        cache_dir=tmp_path / "cache",
+        weights=tmp_path / "weights.json",
+        candidates=("hrnet",),
+        output=output,
+    )
+
+    assert "landmark_ensemble" not in observed["metadata"]
+    assert rows[0]["landmark_ensemble"]["runtime_bucket"] == "generated_frontal"
+    assert rows[0]["landmark_ensemble"]["runtime_bucket_source"] == "derived_no_image_evidence"
+    assert rows[0]["landmark_ensemble"]["selected_candidate"] == "hrnet"
+
+    output_text = output.read_text(encoding="utf-8")
+    assert "stale_profile" not in output_text
+    assert "stale_manifest" not in output_text
+    assert "stale_candidate" not in output_text
 
 
 def test_stage_contract_declares_required_files(tmp_path: Path) -> None:

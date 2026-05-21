@@ -53,6 +53,27 @@ def _json_safe(value: T.Any) -> T.Any:
     return value
 
 
+def _sample_without_manifest_runtime_metadata(sample: LandmarkSample) -> LandmarkSample:
+    """Return a sample copy that cannot reuse stale manifest runtime metadata."""
+    metadata = dict(sample.metadata) if isinstance(sample.metadata, dict) else {}
+    metadata.pop("landmark_ensemble", None)
+    metadata.pop("resolver_metadata", None)
+    for key in list(metadata):
+        if str(key).startswith("landmark_ensemble_"):
+            metadata.pop(key, None)
+    return LandmarkSample(
+        sample_id=sample.sample_id,
+        image=sample.image,
+        landmarks=sample.landmarks,
+        dataset=sample.dataset,
+        condition=sample.condition,
+        normalizer=sample.normalizer,
+        face_bbox=sample.face_bbox,
+        visibility=sample.visibility,
+        metadata=metadata,
+    )
+
+
 def _resolver_metadata_row(context: T.Any, sample: LandmarkSample) -> dict[str, T.Any]:
     """Return one resolver_metadata.jsonl row for a GT-hard sample context."""
     face_index = face_index_for_sample(sample)
@@ -115,8 +136,9 @@ def build_gt_hard_resolver_metadata(
     samples = load_manifest(manifest)
     for sample in samples:
         try:
+            context_sample = _sample_without_manifest_runtime_metadata(sample)
             context = build_sample_context(
-                sample,
+                context_sample,
                 cache=cache,
                 requested_candidates=requested_candidates,
                 weights=loaded_weights,
@@ -167,7 +189,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--allow-image-backfill",
         action="store_true",
-        help="Use image-aware runtime bucket inference when manifest metadata is absent.",
+        help="Use image-aware runtime bucket inference while ignoring manifest-stored runtime metadata.",
     )
     parser.add_argument(
         "--image-backfill-crop-scale",
@@ -205,4 +227,4 @@ if __name__ == "__main__":
     raise SystemExit(main())
 
 
-__all__ = ["build_gt_hard_resolver_metadata", "main"]
+__all__ = ["build_gt_hard_resolver_metadata", "main", "_sample_without_manifest_runtime_metadata"]
