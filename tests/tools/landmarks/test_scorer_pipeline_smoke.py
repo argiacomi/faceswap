@@ -19,6 +19,7 @@ from lib.landmarks.ensemble.weights import save_weights
 from lib.landmarks.pipeline_conventions import (
     SCORER_POLICY_REPORT_JSON,
     SOURCE_GT_HARD,
+    SOURCE_PRODUCTION_VALIDATED,
     metadata_key,
 )
 
@@ -198,8 +199,9 @@ def test_scorer_pipeline_smoke_build_train_evaluate_and_report(tmp_path: Path) -
         candidates=CANDIDATES,
         gt_hard_resolver_metadata=fixture.gt_sidecar,
     )
-    assert {context.source for context in contexts} == {SOURCE_GT_HARD, "production_validated"}
+    assert {context.source for context in contexts} == {SOURCE_GT_HARD, SOURCE_PRODUCTION_VALIDATED}
     assert any(context.runtime_bucket_source == "smoke_resolver_sidecar" for context in contexts)
+    assert any(context.runtime_bucket_source == "stored_manifest_landmark_ensemble" for context in contexts)
 
     train_dir = fixture.root / "train"
     metrics = train_runtime_resolver_scorer(
@@ -229,6 +231,7 @@ def test_scorer_pipeline_smoke_build_train_evaluate_and_report(tmp_path: Path) -
         scorer_path=scorer_path,
         candidates=CANDIDATES,
         output_dir=eval_dir,
+        promotion_scope="production",
         gt_hard_resolver_metadata=fixture.gt_sidecar,
     )
     report_path = eval_dir / SCORER_POLICY_REPORT_JSON
@@ -236,9 +239,14 @@ def test_scorer_pipeline_smoke_build_train_evaluate_and_report(tmp_path: Path) -
     assert report_path.is_file()
     assert report["sample_count"] == 2
     assert payload["sample_count"] == 2
+    assert payload["promotion_scope"] == "production"
+    assert payload["promotion_status"] in {"pass", "fail"}
+    assert isinstance(payload["failed_gates"], list)
     assert "learned_quality_v1" in payload
     assert "production_only_policy_metrics" in payload
+    assert payload["production_only_policy_metrics"]["sample_count"] == 1
     assert "gt_hard_all_policy_metrics" in payload
+    assert payload["gt_hard_all_policy_metrics"]["sample_count"] == 1
 
 
 def test_scorer_pipeline_smoke_requires_gt_hard_sidecar(tmp_path: Path) -> None:
