@@ -32,6 +32,7 @@ from tools.landmarks.run_landmark_resolver_pipeline import (
     _freeze_metadata,
     _promotion_check,
     _stage_complete,
+    _stage_forced,
     _validate_stage_outputs,
     run_pipeline,
 )
@@ -45,6 +46,8 @@ def _args(tmp_path: Path, **overrides: object) -> argparse.Namespace:
         "promotion_scope": "production",
         "dry_run": False,
         "resume": False,
+        "overwrite_from": None,
+        "force_downstream_of": None,
         "stop_after": None,
         "start_at": None,
         "write_config": False,
@@ -169,6 +172,52 @@ def test_pipeline_runner_dry_run_writes_summaries_contracts_and_progress(tmp_pat
     assert progress_rows[-1]["stage"] == STAGES[-1]
     assert (args.output_root / "pipeline_summary.json").is_file()
     assert (args.output_root / "pipeline_summary.md").is_file()
+
+
+def test_overwrite_from_forces_stage_and_downstream_resume_skip(
+    tmp_path: Path,
+) -> None:
+    args = _args(tmp_path, resume=True, overwrite_from="candidate_search")
+
+    assert not _stage_forced("build_production_prediction_cache", args)
+    assert _stage_forced("candidate_search", args)
+    assert _stage_forced("scorer_evaluation", args)
+
+
+def test_force_downstream_of_excludes_named_stage(
+    tmp_path: Path,
+) -> None:
+    args = _args(tmp_path, resume=True, force_downstream_of="build_production_manifest")
+
+    assert not _stage_forced("build_production_manifest", args)
+    assert _stage_forced("build_production_prediction_cache", args)
+    assert _stage_forced("candidate_search", args)
+
+
+def test_overwrite_from_production_manifest_bypasses_existing_artifact_reuse(
+    tmp_path: Path,
+) -> None:
+    args = _args(
+        tmp_path,
+        dry_run=True,
+        resume=True,
+        overwrite_from="build_production_manifest",
+        start_at="build_production_manifest",
+        stop_after="build_production_manifest",
+        production_images=tmp_path / "images",
+        production_alignments=tmp_path / "alignments.fsa",
+    )
+    paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
+    paths.production_manifest.parent.mkdir(parents=True, exist_ok=True)
+    paths.production_manifest.write_text(json.dumps({"samples": []}) + "\n", encoding="utf-8")
+    (paths.production_root / "resolver_metadata.jsonl").write_text("{}", encoding="utf-8")
+    (paths.production_root / "audit.json").write_text("{}", encoding="utf-8")
+
+    summary = run_pipeline(args)
+
+    assert summary["stages"][0]["name"] == "build_production_manifest"
+    assert summary["stages"][0]["status"] == "planned"
+    assert summary["overwrite_from"] == "build_production_manifest"
 
 
 def test_base_dataset_build_uses_replace_then_merge_for_multiple_datasets(

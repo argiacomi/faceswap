@@ -987,11 +987,24 @@ def _stage_complete(stage: str, args: argparse.Namespace, paths: PipelinePaths) 
 
 
 def _should_skip_completed_stage(stage: str, args: argparse.Namespace) -> bool:
+    if _stage_forced(stage, args):
+        return False
     if stage == "config_update" and args.write_config:
         return False
     return not (
         stage in {"build_gt_hard_resolver_metadata", "freeze_resolver_metadata"}
         and (args.overwrite_frozen_metadata or args.gt_hard_resolver_metadata is not None)
+    )
+
+
+def _stage_forced(stage: str, args: argparse.Namespace) -> bool:
+    overwrite_from = getattr(args, "overwrite_from", None)
+    if overwrite_from is not None and STAGES.index(stage) >= STAGES.index(overwrite_from):
+        return True
+    force_downstream_of = getattr(args, "force_downstream_of", None)
+    return (
+        force_downstream_of is not None
+        and STAGES.index(stage) > STAGES.index(force_downstream_of)
     )
 
 
@@ -1575,6 +1588,7 @@ def _execute_stage(stage: str, args: argparse.Namespace, paths: PipelinePaths) -
                 paths.production_manifest.exists()
                 and (paths.production_root / RESOLVER_METADATA_JSONL).exists()
                 and (paths.production_root / "audit.json").exists()
+                and not _stage_forced(stage, args)
             ):
                 validated = _validate_stage_outputs(stage, paths, args)
                 return StageResult(
@@ -1862,6 +1876,8 @@ def _summary_payload(
         "scorer_report_status": promotion_status,
         "dry_run": bool(args.dry_run),
         "resume": bool(args.resume),
+        "overwrite_from": str(getattr(args, "overwrite_from", "") or ""),
+        "force_downstream_of": str(getattr(args, "force_downstream_of", "") or ""),
         "prediction_cache_mode": _prediction_cache_mode(args),
         "stages": [_jsonable(row.__dict__) for row in results],
         "config_update": {
@@ -1959,6 +1975,22 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument(
+        "--overwrite-from",
+        choices=STAGES,
+        help=(
+            "With --resume, rerun this stage and every later selected stage even when "
+            "their outputs already exist."
+        ),
+    )
+    parser.add_argument(
+        "--force-downstream-of",
+        choices=STAGES,
+        help=(
+            "With --resume, rerun every selected stage after this stage even when "
+            "their outputs already exist."
+        ),
+    )
     parser.add_argument("--stop-after", choices=STAGES)
     parser.add_argument("--start-at", choices=STAGES)
     parser.add_argument("--write-config", action="store_true")
