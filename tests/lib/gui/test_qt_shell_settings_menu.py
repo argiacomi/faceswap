@@ -75,15 +75,23 @@ def test_settings_menu_is_inserted_between_project_and_command(
 def test_settings_menu_contains_configure_settings_action(
     qtbot, monkeypatch, tmp_path: Path
 ) -> None:  # type:ignore[no-untyped-def]
-    """Settings menu should expose the Configure Settings entry point."""
+    """Settings menu should expose the Configure Settings entry point plus the
+    per-section shortcuts (Tk parity)."""
     window = _main_window(qtbot, monkeypatch, tmp_path)
 
     settings_menu = _settings_menu(window)
     actions = [action for action in settings_menu.actions() if not action.isSeparator()]
+    object_names = [action.objectName() for action in actions]
 
-    assert [action.text() for action in actions] == [CONFIGURE_SETTINGS_LABEL]
-    assert actions[0].objectName() == "qt-shell-settings-configure"
+    assert object_names[0] == "qt-shell-settings-configure"
+    assert actions[0].text() == CONFIGURE_SETTINGS_LABEL
     assert actions[0].toolTip() == CONFIGURE_SETTINGS_LABEL
+    assert {
+        "qt-shell-settings-configure-extract",
+        "qt-shell-settings-configure-train",
+        "qt-shell-settings-configure-convert",
+        "qt-shell-settings-configure-gui",
+    }.issubset(object_names)
 
 
 def test_settings_menu_action_routes_to_dialog(qtbot, monkeypatch, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]

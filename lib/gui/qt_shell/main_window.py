@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QProgressBar,
+    QSizePolicy,
     QSplitter,
     QStatusBar,
     QTabWidget,
@@ -51,6 +52,33 @@ from lib.serializer import get_serializer
 from lib.utils import PROJECT_ROOT
 
 
+class FreeSplitter(QSplitter):
+    """QSplitter that lets users drag panes to any size in [0, full].
+
+    QSplitter normally respects each child's ``minimumSizeHint`` which prevents
+    continuous dragging past the layout's preferred minimum. Faceswap users
+    expect Tk-parity behavior where a panel can be expanded to fill the entire
+    window or collapsed to nothing without snapping back.
+    """
+
+    def __init__(self, orientation: Qt.Orientation, parent: QWidget | None = None) -> None:
+        super().__init__(orientation, parent)
+        self.setChildrenCollapsible(True)
+        self.setHandleWidth(6)
+        self.setOpaqueResize(True)
+
+    def addWidget(self, widget: QWidget) -> None:  # type:ignore[override]  # noqa:N802
+        """Force each child's minimum to zero so the handle can move anywhere.
+
+        ``QSizePolicy.Ignored`` makes QSplitter ignore the child's minimumSizeHint
+        so the user can drag continuously between zero and the full splitter range.
+        """
+        widget.setMinimumSize(0, 0)
+        widget.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
+        super().addWidget(widget)
+        self.setCollapsible(self.count() - 1, True)
+
+
 class ConsolePane(QPlainTextEdit):
     """Read-only console output pane."""
 
@@ -60,6 +88,7 @@ class ConsolePane(QPlainTextEdit):
         self.setProperty("console", "stdout")
         self.setReadOnly(True)
         self.setPlaceholderText("Generated commands and process output appear here.")
+        self.setMinimumSize(0, 0)
 
     def write(self, text: str) -> None:
         """Append raw console text."""
@@ -157,20 +186,16 @@ class MainWindow(QMainWindow):
         self._build_menus()
         self._build_toolbar()
         self._build_statusbar()
-        top = QSplitter(Qt.Horizontal)
+        top = FreeSplitter(Qt.Horizontal)
         top.setObjectName("qt-shell-main-splitter")
-        top.setChildrenCollapsible(True)
-        top.setHandleWidth(6)
         top.addWidget(self._command_panel)
         top.addWidget(self._display_tabs())
         top.setStretchFactor(0, 0)
         top.setStretchFactor(1, 1)
         top.setSizes([420, 840])
         self._main_splitter = top
-        main = QSplitter(Qt.Vertical)
+        main = FreeSplitter(Qt.Vertical)
         main.setObjectName("qt-shell-vertical-splitter")
-        main.setChildrenCollapsible(True)
-        main.setHandleWidth(6)
         main.addWidget(top)
         main.addWidget(self._console)
         main.setStretchFactor(0, 3)
@@ -190,7 +215,9 @@ class MainWindow(QMainWindow):
         """Create right display tabs used only for Analysis, Preview and Graph."""
         tabs = QTabWidget()
         tabs.setObjectName("qt-shell-display-tabs")
-        tabs.setMinimumWidth(0)
+        tabs.setMinimumSize(0, 0)
+        tabs.tabBar().setExpanding(False)
+        tabs.tabBar().setUsesScrollButtons(True)
         tabs.addTab(self._analysis_panel(), "Analysis")
         tabs.addTab(self._preview_panel(), "Preview")
         tabs.addTab(self._graph_panel(), "Graph")
@@ -272,6 +299,28 @@ class MainWindow(QMainWindow):
         configure.setToolTip("Configure Settings...")
         configure.triggered.connect(lambda _checked=False: self._open_settings_dialog())
         settings_menu.addAction(configure)
+        settings_menu.addSeparator()
+        for name in ("extract", "train", "convert"):
+            entry = QAction(
+                self._icon(f"settings_{name}"),
+                f"Configure {name.title()} Settings...",
+                settings_menu,
+            )
+            entry.setObjectName(f"qt-shell-settings-configure-{name}")
+            entry.setToolTip(f"Configure {name.title()} settings...")
+            entry.triggered.connect(
+                lambda _checked=False, section=name: self._open_settings_dialog(section)
+            )
+            settings_menu.addAction(entry)
+        gui_entry = QAction(
+            self._icon("settings"),
+            "Faceswap GUI Options...",
+            settings_menu,
+        )
+        gui_entry.setObjectName("qt-shell-settings-configure-gui")
+        gui_entry.setToolTip("Configure the appearance and behavior of the GUI")
+        gui_entry.triggered.connect(lambda _checked=False: self._open_settings_dialog("gui"))
+        settings_menu.addAction(gui_entry)
 
         command_menu = menu_bar.addMenu("Command")
         self._menus.append(command_menu)

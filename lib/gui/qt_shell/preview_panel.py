@@ -38,7 +38,7 @@ class PreviewImageView(QLabel):
         self.setObjectName("qt-shell-preview-image")
         self.setAlignment(Qt.AlignCenter)
         self.setWordWrap(True)
-        self.setMinimumSize(80, 60)
+        self.setMinimumSize(0, 0)
         self._source_pixmap = QPixmap()
         self._zoom = 1.0
         self._pan_x = 0.0
