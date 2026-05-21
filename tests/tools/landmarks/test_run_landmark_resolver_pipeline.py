@@ -183,6 +183,51 @@ def _touch_pipeline_outputs(paths: PipelinePaths, *, promotion_status: str = "pa
     )
 
 
+def _write_v2_promotion_report(
+    paths: PipelinePaths,
+    *,
+    v2_failure_rate: float = 0.0,
+    v2_mean_nme: float = 0.015,
+    v2_p90_nme: float = 0.024,
+    static_failure_rate: float = 0.0,
+    static_mean_nme: float = 0.016,
+    static_p90_nme: float = 0.025,
+) -> None:
+    paths.scorer_report.parent.mkdir(parents=True, exist_ok=True)
+    paths.scorer_report.write_text(
+        json.dumps(
+            {
+                "status": "pass",
+                "promotion_status": "pass",
+                "failed_gates": [],
+                "production_gate_status": "pass",
+                "production_failed_gates": [],
+                "gt_hard_gate_status": "pass",
+                "gt_hard_failed_gates": [],
+                "gate_config": {
+                    "failure_rate_epsilon": 0.0,
+                    "mean_epsilon_nme": 0.001,
+                    "p90_epsilon_nme": 0.003,
+                },
+                "production_only_policy_metrics": {
+                    "learned_quality_v2": {
+                        "failure_rate": v2_failure_rate,
+                        "mean_nme": v2_mean_nme,
+                        "p90_nme": v2_p90_nme,
+                    },
+                    "static_weighted_downweight": {
+                        "failure_rate": static_failure_rate,
+                        "mean_nme": static_mean_nme,
+                        "p90_nme": static_p90_nme,
+                    },
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 def test_pipeline_runner_dry_run_writes_summaries_contracts_and_progress(tmp_path: Path) -> None:
     args = _args(tmp_path, dry_run=True)
 
@@ -1239,10 +1284,51 @@ def test_artifact_export_records_promoted_scorer_provenance(tmp_path: Path) -> N
     assert scorer_payload["runtime_policy"] == "learned_quality_v1"
 
 
+def test_v2_promotion_check_requires_v2_policy_metrics(tmp_path: Path) -> None:
+    args = _args(tmp_path, promoted_scorer_version="learned_quality_v2")
+    paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
+    _touch_pipeline_outputs(paths)
+
+    with pytest.raises(RuntimeError, match="learned_quality_v2 promotion check failed"):
+        _promotion_check(paths, promotion_scope=args.promotion_scope, args=args)
+
+
+def test_artifact_export_blocks_v2_when_v2_metrics_regress(tmp_path: Path) -> None:
+    args = _args(tmp_path, promoted_scorer_version="learned_quality_v2")
+    paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
+    _touch_pipeline_outputs(paths)
+    paths.exported_scorer_artifact.unlink()
+    _write_v2_promotion_report(paths, v2_mean_nme=0.020, static_mean_nme=0.016)
+    paths.v2_scorer_artifact.write_text(
+        json.dumps(
+            {
+                "artifact_schema_version": 2,
+                "model_type": "lightgbm_lambdarank",
+                "target": "selection_cost",
+                "score_semantics": "predicted_cost",
+                "higher_is_better": False,
+                "features": ["candidate_name=hrnet"],
+                "model_data": "fake-model",
+                "version": "learned_quality_v2",
+                "scorer_version": "learned_quality_v2",
+                "runtime_policy": "learned_quality_v2",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="learned_quality_v2 promotion check failed"):
+        _export_artifacts(args, paths)
+
+    assert not paths.exported_scorer_artifact.exists()
+
+
 def test_artifact_export_can_promote_v2_scorer(tmp_path: Path) -> None:
     args = _args(tmp_path, promoted_scorer_version="learned_quality_v2")
     paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
     _touch_pipeline_outputs(paths)
+    _write_v2_promotion_report(paths)
     paths.v2_scorer_artifact.write_text(
         json.dumps(
             {

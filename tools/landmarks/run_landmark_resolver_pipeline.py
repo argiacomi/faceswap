@@ -1376,7 +1376,121 @@ def _freeze_metadata(args: argparse.Namespace, paths: PipelinePaths) -> list[str
     )
 
 
-def _promotion_check(paths: PipelinePaths, *, promotion_scope: str = "production") -> list[str]:
+def _metric_value(metrics: T.Mapping[str, T.Any], key: str, *, policy_name: str) -> float:
+    if key not in metrics:
+        raise RuntimeError(f"{policy_name} promotion check failed: missing metric {key!r}")
+    try:
+        return float(metrics[key])
+    except (TypeError, ValueError) as err:
+        raise RuntimeError(
+            f"{policy_name} promotion check failed: invalid metric {key!r}: {metrics[key]!r}"
+        ) from err
+
+
+def _selected_policy_metrics(report: T.Mapping[str, T.Any], policy_name: str) -> dict[str, T.Any]:
+    metrics_by_policy = report.get("production_only_policy_metrics")
+    if not isinstance(metrics_by_policy, dict):
+        raise RuntimeError(
+            f"{policy_name} promotion check failed: missing production_only_policy_metrics"
+        )
+    metrics = metrics_by_policy.get(policy_name)
+    if not isinstance(metrics, dict):
+        raise RuntimeError(
+            f"{policy_name} promotion check failed: missing production metrics for {policy_name!r}"
+        )
+    return metrics
+
+
+def _static_downweight_metrics(report: T.Mapping[str, T.Any]) -> dict[str, T.Any]:
+    metrics_by_policy = report.get("production_only_policy_metrics")
+    if isinstance(metrics_by_policy, dict):
+        metrics = metrics_by_policy.get("static_weighted_downweight")
+        if isinstance(metrics, dict):
+            return metrics
+    for key in ("static_downweight", "best_static_ensemble", "current_promoted_setup"):
+        metrics = report.get(key)
+        if isinstance(metrics, dict):
+            return metrics
+    raise RuntimeError(
+        "learned_quality_v2 promotion check failed: missing static_weighted_downweight "
+        "baseline metrics"
+    )
+
+
+def _validate_v2_promotion_gate(report: T.Mapping[str, T.Any]) -> list[str]:
+    policy_name = SCORER_VERSION_LEARNED_QUALITY_V2
+    status_keys = (
+        "learned_quality_v2_gate_status",
+        "learned_quality_v2_production_gate_status",
+        "v2_gate_status",
+        "v2_production_gate_status",
+    )
+    failed_keys = (
+        "learned_quality_v2_failed_gates",
+        "learned_quality_v2_production_failed_gates",
+        "v2_failed_gates",
+        "v2_production_failed_gates",
+    )
+    for key in status_keys:
+        status = report.get(key)
+        if status is not None and str(status) != "pass":
+            raise RuntimeError(f"{policy_name} promotion check failed: {key}={status!r}")
+    for key in failed_keys:
+        failed = report.get(key) or []
+        if failed:
+            raise RuntimeError(f"{policy_name} promotion check failed: {key}={failed}")
+
+    metrics = _selected_policy_metrics(report, policy_name)
+    baseline = _static_downweight_metrics(report)
+    gate_config = report.get("gate_config")
+    if not isinstance(gate_config, dict):
+        gate_config = {}
+
+    failure_epsilon = float(gate_config.get("failure_rate_epsilon", 0.0) or 0.0)
+    mean_epsilon = float(gate_config.get("mean_epsilon_nme", 0.001) or 0.001)
+    p90_epsilon = float(gate_config.get("p90_epsilon_nme", 0.003) or 0.003)
+
+    policy_failure = _metric_value(metrics, "failure_rate", policy_name=policy_name)
+    baseline_failure = _metric_value(baseline, "failure_rate", policy_name=policy_name)
+    if policy_failure > baseline_failure + failure_epsilon:
+        raise RuntimeError(
+            f"{policy_name} promotion check failed: failure_rate={policy_failure} "
+            f"exceeds static_weighted_downweight failure_rate={baseline_failure} "
+            f"+ epsilon={failure_epsilon}"
+        )
+
+    policy_mean = _metric_value(metrics, "mean_nme", policy_name=policy_name)
+    baseline_mean = _metric_value(baseline, "mean_nme", policy_name=policy_name)
+    if policy_mean > baseline_mean + mean_epsilon:
+        raise RuntimeError(
+            f"{policy_name} promotion check failed: mean_nme={policy_mean} "
+            f"exceeds static_weighted_downweight mean_nme={baseline_mean} "
+            f"+ epsilon={mean_epsilon}"
+        )
+
+    policy_p90 = _metric_value(metrics, "p90_nme", policy_name=policy_name)
+    baseline_p90 = _metric_value(baseline, "p90_nme", policy_name=policy_name)
+    if policy_p90 > baseline_p90 + p90_epsilon:
+        raise RuntimeError(
+            f"{policy_name} promotion check failed: p90_nme={policy_p90} "
+            f"exceeds static_weighted_downweight p90_nme={baseline_p90} "
+            f"+ epsilon={p90_epsilon}"
+        )
+
+    return [
+        f"{policy_name}=pass",
+        f"{policy_name}_failure_rate={policy_failure}",
+        f"{policy_name}_mean_nme={policy_mean}",
+        f"{policy_name}_p90_nme={policy_p90}",
+    ]
+
+
+def _promotion_check(
+    paths: PipelinePaths,
+    *,
+    promotion_scope: str = "production",
+    args: argparse.Namespace | None = None,
+) -> list[str]:
     _require(paths.scorer_report, "scorer evaluation report")
     report = _read_json(paths.scorer_report)
     status = str(report.get("status") or "")
@@ -1393,6 +1507,10 @@ def _promotion_check(paths: PipelinePaths, *, promotion_scope: str = "production
             f"production_gate_status={production_status!r}, "
             f"production_failed_gates={production_failed}"
         )
+    if args is not None and args.promoted_scorer_version == SCORER_VERSION_LEARNED_QUALITY_V2:
+        promoted_notes = _validate_v2_promotion_gate(report)
+    else:
+        promoted_notes = []
     if promotion_scope == "universal":
         gt_status = str(report.get("gt_hard_gate_status") or "")
         gt_failed = report.get("gt_hard_failed_gates") or []
@@ -1401,7 +1519,7 @@ def _promotion_check(paths: PipelinePaths, *, promotion_scope: str = "production
                 "GT-hard diagnostic gate failed: "
                 f"gt_hard_gate_status={gt_status!r}, gt_hard_failed_gates={gt_failed}"
             )
-    return ["status=pass", "production_gate_status=pass"]
+    return ["status=pass", "production_gate_status=pass", *promoted_notes]
 
 
 def _validate_required_files(stage: str, args: argparse.Namespace, paths: PipelinePaths) -> None:
@@ -1491,14 +1609,14 @@ def _validate_stage_outputs(
             "stage 'v2_scorer_training' sentinel does not match the requested "
             "training inputs or hyperparameters"
         )
-    if (
-        args is not None
-        and stage == "artifact_export"
-        and not _artifact_export_matches(args, paths)
-    ):
-        raise PipelineContractError(
-            "stage 'artifact_export' did not export the selected promoted scorer version"
-        )
+    if args is not None and stage == "artifact_export":
+        _promotion_check(paths, promotion_scope=args.promotion_scope, args=args)
+        if not _artifact_export_matches(args, paths):
+            raise PipelineContractError(
+                "stage 'artifact_export' did not export the selected promoted scorer version"
+            )
+    if args is not None and stage == "config_update" and args.write_config:
+        _promotion_check(paths, promotion_scope=args.promotion_scope, args=args)
     if stage == "build_production_resolver_metadata":
         metadata = load_resolver_metadata_sidecar(paths.production_resolver_metadata)
         validate_resolver_metadata_for_manifest(
@@ -1586,6 +1704,7 @@ def _promoted_scorer_target(args: argparse.Namespace, paths: PipelinePaths) -> s
 
 
 def _export_artifacts(args: argparse.Namespace, paths: PipelinePaths) -> dict[str, str]:
+    _promotion_check(paths, promotion_scope=args.promotion_scope, args=args)
     scorer_source = _promoted_scorer_source(args, paths)
     exported = {
         "best_setup": _copy_if_exists(paths.best_setup, paths.exported_candidate_dir),
@@ -1796,7 +1915,7 @@ def _apply_config(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
     _write_config_patch_files(args, paths, updates)
     if not args.write_config:
         return ["wrote config update preview only"]
-    _promotion_check(paths, promotion_scope=args.promotion_scope)
+    _promotion_check(paths, promotion_scope=args.promotion_scope, args=args)
     config_path = Path(args.config_path)
     _require(config_path, "config file for --write-config")
     _write_config_updates_in_place(config_path, args.config_section, updates)
@@ -2095,7 +2214,7 @@ def _execute_stage(stage: str, args: argparse.Namespace, paths: PipelinePaths) -
                     contract=contract.to_json(),
                     notes=["would require promotion_status=pass"],
                 )
-            notes = _promotion_check(paths, promotion_scope=args.promotion_scope)
+            notes = _promotion_check(paths, promotion_scope=args.promotion_scope, args=args)
             return StageResult(
                 stage,
                 "ok",
