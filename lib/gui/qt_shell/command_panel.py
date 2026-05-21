@@ -127,8 +127,9 @@ class OptionsFormRenderer(QWidget):
 
     value_changed = Signal()
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None, option_columns: int = 4) -> None:
         super().__init__(parent)
+        self._option_columns = max(1, int(option_columns))
         self.setMinimumWidth(0)
         self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self._layout = QVBoxLayout(self)
@@ -180,7 +181,7 @@ class OptionsFormRenderer(QWidget):
         grid.setContentsMargins(0, 4, 0, 4)
         grid.setHorizontalSpacing(16)
         grid.setVerticalSpacing(4)
-        columns = max(1, min(3, len(bool_pairs)))
+        columns = self._choice_columns(len(bool_pairs))
         for index, (spec, checkbox) in enumerate(bool_pairs):
             checkbox.setText(spec.title)
             checkbox.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
@@ -340,7 +341,7 @@ class OptionsFormRenderer(QWidget):
         group = QButtonGroup(widget)
         group.setExclusive(True)
         default = self._string_value(spec.default)
-        columns = self._choice_columns(spec.choices)
+        columns = self._choice_columns(len(spec.choices))
         for index, choice in enumerate(spec.choices):
             button = QRadioButton(choice)
             button.setMinimumWidth(0)
@@ -365,7 +366,7 @@ class OptionsFormRenderer(QWidget):
         layout.setHorizontalSpacing(12)
         layout.setVerticalSpacing(6)
         selected = self._value_set(spec.default)
-        columns = self._choice_columns(spec.choices)
+        columns = self._choice_columns(len(spec.choices))
         for index, choice in enumerate(spec.choices):
             checkbox = QCheckBox(choice)
             checkbox.setMinimumWidth(0)
@@ -388,7 +389,7 @@ class OptionsFormRenderer(QWidget):
 
         slider = QSlider(Qt.Horizontal)
         line_edit = QLineEdit()
-        line_edit.setFixedWidth(36)
+        line_edit.setFixedWidth(54)
         line_edit.setAlignment(Qt.AlignCenter)
         slider.setObjectName("qt-shell-option-slider")
         line_edit.setObjectName("qt-shell-option-slider-value")
@@ -696,10 +697,9 @@ class OptionsFormRenderer(QWidget):
 
     _tooltip_text = staticmethod(_wrap_tooltip)
 
-    @staticmethod
-    def _choice_columns(choices: tuple[str, ...]) -> int:
+    def _choice_columns(self, choice_count: int) -> int:
         """Return the row-major column count for choice option groups."""
-        return 1 if len(choices) <= 1 else min(3, len(choices))
+        return max(1, min(self._option_columns, choice_count))
 
     @staticmethod
     def _apply_widget_policy(widget: QWidget) -> None:
@@ -838,7 +838,7 @@ class CommandPanel(QWidget):
         self._tool_tabs = QTabBar()
         self._command_info = QLabel()
         self._validation_label = QLabel()
-        self._renderer = OptionsFormRenderer()
+        self._renderer = OptionsFormRenderer(option_columns=3)
         self._generate_button = QPushButton("Generate")
         self._run_button = QPushButton("Run")
         self._generate_button.setObjectName("qt-shell-command-generate")

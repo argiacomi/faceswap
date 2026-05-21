@@ -309,9 +309,10 @@ def render_qss(theme: QtTheme) -> str:
             f"spacing: {half_spacing}px; padding: {half_spacing}px; "
             f"border-bottom: 1px solid {theme.color('border')}; }}",
             "QToolBar#qt-shell-toolbar QToolButton { "
-            f"min-width: {theme.icon_size + spacing}px; "
-            f"min-height: {theme.icon_size + spacing}px; "
-            f"padding: {half_spacing}px; border-radius: {radius}px; }}",
+            f"min-width: {theme.icon_size + (spacing * 5)}px; "
+            f"min-height: {theme.icon_size + (spacing // 2)}px; "
+            "margin: 4px 0px;"
+            f"border-radius: {radius}px; }}",
             "QToolBar::separator { "
             f"width: 1px; margin: {half_spacing}px; "
             f"background-color: {theme.color('border')}; }}",
