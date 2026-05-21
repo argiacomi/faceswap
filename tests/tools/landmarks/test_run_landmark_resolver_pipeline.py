@@ -40,11 +40,23 @@ def _args(tmp_path: Path, **overrides: object) -> argparse.Namespace:
         "config_path": tmp_path / "extract.ini",
         "config_section": "align.ensemble",
         "python_executable": "python",
+        "dataset": "wflw",
         "models": "hrnet,spiga,orformer",
         "candidates": "hrnet,spiga,orformer,static_weighted_downweight",
+        "production_images": None,
+        "production_alignments": None,
         "gt_hard_resolver_metadata": None,
         "overwrite_frozen_metadata": False,
         "hard_source_manifest": None,
+        "split_mode": "scenario-stratified",
+        "split_fit": 0.6,
+        "split_select": 0.2,
+        "split_report": 0.2,
+        "split_seed": 1337,
+        "scorer_target": "selection_cost",
+        "dataset_build_arg": [],
+        "cache_prediction_arg": [],
+        "production_manifest_arg": [],
         "candidate_search_arg": [],
         "hard_validation_arg": [],
         "scorer_train_arg": [],
@@ -62,12 +74,19 @@ def _touch_pipeline_outputs(paths: PipelinePaths, *, promotion_status: str = "pa
         paths.run_static_weights,
         paths.run_summary,
         paths.production_manifest,
+        paths.production_root / "resolver_metadata.jsonl",
+        paths.production_root / "audit.json",
         paths.best_setup,
         paths.best_weights,
         paths.hard_manifest,
         paths.frozen_gt_metadata,
+        paths.binary_scorer_artifact,
         paths.scorer_artifact,
+        paths.continuous_scorer_eval_rows,
         paths.scorer_report,
+        paths.exported_best_setup,
+        paths.exported_best_weights,
+        paths.exported_scorer_artifact,
     ):
         path.parent.mkdir(parents=True, exist_ok=True)
         if path.name.endswith(".json"):
@@ -75,6 +94,10 @@ def _touch_pipeline_outputs(paths: PipelinePaths, *, promotion_status: str = "pa
                 "status": promotion_status,
                 "promotion_status": promotion_status,
                 "failed_gates": [] if promotion_status == "pass" else ["gate_failed"],
+                "production_gate_status": promotion_status,
+                "production_failed_gates": [] if promotion_status == "pass" else ["gate_failed"],
+                "gt_hard_gate_status": "pass",
+                "gt_hard_failed_gates": [],
                 "fallback_count": 3,
                 "safe_fallback_count": 2,
                 "hard_slice_fallback_count": 1,
@@ -122,11 +145,12 @@ def test_stage_contract_declares_required_files(tmp_path: Path) -> None:
     args = _args(tmp_path)
     paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
 
-    contract = _contract_for("scorer_training", args, paths)
+    contract = _contract_for("continuous_scorer_training", args, paths)
 
     assert str(paths.hard_manifest) in contract.required_files
     assert str(paths.frozen_gt_metadata) in contract.required_files
     assert str(paths.scorer_artifact) in contract.outputs
+    assert str(paths.continuous_scorer_eval_rows) in contract.outputs
 
 
 def test_stage_output_validation_reports_missing_outputs(tmp_path: Path) -> None:
@@ -148,13 +172,41 @@ def test_freeze_metadata_requires_explicit_source(tmp_path: Path) -> None:
 def test_freeze_metadata_reuses_existing_on_resume(tmp_path: Path) -> None:
     args = _args(tmp_path, resume=True)
     paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
+    paths.hard_manifest.parent.mkdir(parents=True, exist_ok=True)
+    paths.hard_manifest.write_text(
+        json.dumps(
+            {
+                "dataset": "gt_hard",
+                "samples": [
+                    {
+                        "sample_id": "s1",
+                        "image": "s1.png",
+                        "landmarks": "s1.npy",
+                        "metadata": {"face_index": 0},
+                    }
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     paths.frozen_gt_metadata.parent.mkdir(parents=True, exist_ok=True)
-    paths.frozen_gt_metadata.write_text("existing\n", encoding="utf-8")
+    paths.frozen_gt_metadata.write_text(
+        json.dumps(
+            {
+                "sample_id": "s1",
+                "face_index": 0,
+                "landmark_ensemble": {"runtime_bucket": "frontal"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
     notes = _freeze_metadata(args, paths)
 
     assert "reused existing frozen metadata" in notes[0]
-    assert paths.frozen_gt_metadata.read_text(encoding="utf-8") == "existing\n"
+    assert "runtime_bucket" in paths.frozen_gt_metadata.read_text(encoding="utf-8")
 
 
 def test_promotion_check_fails_on_failed_gate(tmp_path: Path) -> None:
@@ -197,8 +249,10 @@ def test_config_preview_and_write_replaces_stale_align_ensemble(tmp_path: Path) 
     assert parser.has_section("align.ensemble")
     assert parser.get("align.ensemble", "use_alignment_resolver") == "true"
     assert parser.get("align.ensemble", "resolver_policy") == "learned_quality_v1"
-    assert parser.get("align.ensemble", "resolver_scorer_path") == str(paths.scorer_artifact)
-    assert parser.get("align.ensemble", "weights_path") == str(paths.best_weights)
+    assert parser.get("align.ensemble", "resolver_scorer_path") == str(
+        paths.exported_scorer_artifact
+    )
+    assert parser.get("align.ensemble", "weights_path") == str(paths.exported_best_weights)
     assert not parser.has_option("align.ensemble", "stale_experimental")
 
 

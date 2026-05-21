@@ -19,11 +19,30 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from lib.landmarks.ensemble.scorer_target_config import (
+    SCORER_TARGETS,
+    TARGET_CANDIDATE_FAILURE_OR_HIGH_GAP,
+    TARGET_SELECTION_COST,
+)
+from lib.landmarks.ensemble.static_weight_fit import compute_static_weights
+from lib.landmarks.ensemble.weights import save_weights
+from lib.landmarks.evaluation.splits import (
+    RANDOM,
+    SCENARIO_STRATIFIED,
+    SplitRatios,
+    save_split_file,
+    split_manifest_samples,
+    split_summary_counts,
+    write_split_manifest,
+)
 from lib.landmarks.pipeline_conventions import (
+    REPORT_MANIFEST_FILENAME,
     RESOLVER_METADATA_JSONL,
     SCORER_POLICY_REPORT_JSON,
     SOURCE_GT_HARD,
     SOURCE_PRODUCTION_VALIDATED,
+    load_resolver_metadata_sidecar,
+    validate_resolver_metadata_for_manifest,
     write_json,
 )
 from tools.landmarks.pipeline_progress import PipelineProgress, configure_logging
@@ -31,11 +50,16 @@ from tools.landmarks.pipeline_progress import PipelineProgress, configure_loggin
 logger = logging.getLogger("run_landmark_resolver_pipeline")
 
 STAGES: tuple[str, ...] = (
-    "static_pipeline",
+    "build_dataset_manifest",
+    "build_prediction_cache",
+    "build_splits",
+    "fit_static_weights",
+    "build_production_manifest",
     "candidate_search",
     "hard_alignment_validation",
     "freeze_resolver_metadata",
-    "scorer_training",
+    "binary_scorer_training",
+    "continuous_scorer_training",
     "scorer_evaluation",
     "production_promotion_check",
     "artifact_export",
@@ -58,7 +82,11 @@ class PipelinePaths:
     run_root: Path
     production_root: Path
     output_root: Path
+    stable_root: Path = field(init=False)
+    run_dataset_dir: Path = field(init=False)
     run_manifest: Path = field(init=False)
+    run_fit_manifest: Path = field(init=False)
+    run_select_manifest: Path = field(init=False)
     run_report_manifest: Path = field(init=False)
     run_cache: Path = field(init=False)
     run_splits: Path = field(init=False)
@@ -73,18 +101,33 @@ class PipelinePaths:
     hard_manifest: Path = field(init=False)
     frozen_gt_metadata: Path = field(init=False)
     scorer_train_dir: Path = field(init=False)
+    binary_scorer_train_dir: Path = field(init=False)
+    binary_scorer_artifact: Path = field(init=False)
+    continuous_scorer_train_dir: Path = field(init=False)
+    continuous_scorer_eval_rows: Path = field(init=False)
     scorer_artifact: Path = field(init=False)
     scorer_eval_dir: Path = field(init=False)
     scorer_report: Path = field(init=False)
     artifacts_dir: Path = field(init=False)
+    exported_candidate_dir: Path = field(init=False)
+    exported_scorer_dir: Path = field(init=False)
+    exported_best_setup: Path = field(init=False)
+    exported_best_weights: Path = field(init=False)
+    exported_scorer_artifact: Path = field(init=False)
     progress_log: Path = field(init=False)
     summary_json: Path = field(init=False)
     summary_md: Path = field(init=False)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "run_manifest", self.run_root / "dataset" / "manifest.json")
+        object.__setattr__(self, "stable_root", self.output_root / "current")
+        object.__setattr__(self, "run_dataset_dir", self.run_root / "dataset")
+        object.__setattr__(self, "run_manifest", self.run_dataset_dir / "manifest.json")
+        object.__setattr__(self, "run_fit_manifest", self.run_dataset_dir / "fit_manifest.json")
         object.__setattr__(
-            self, "run_report_manifest", self.run_root / "dataset" / "report_manifest.json"
+            self, "run_select_manifest", self.run_dataset_dir / "select_manifest.json"
+        )
+        object.__setattr__(
+            self, "run_report_manifest", self.run_dataset_dir / REPORT_MANIFEST_FILENAME
         )
         object.__setattr__(self, "run_cache", self.run_root / "cache")
         object.__setattr__(self, "run_splits", self.run_root / "splits" / "splits.json")
@@ -115,11 +158,42 @@ class PipelinePaths:
         object.__setattr__(self, "frozen_gt_metadata", self.output_root / RESOLVER_METADATA_JSONL)
         object.__setattr__(self, "scorer_train_dir", self.output_root / "scorer_training")
         object.__setattr__(
-            self, "scorer_artifact", self.scorer_train_dir / "runtime_resolver_scorer.json"
+            self, "binary_scorer_train_dir", self.scorer_train_dir / "v1_binary"
+        )
+        object.__setattr__(
+            self,
+            "binary_scorer_artifact",
+            self.binary_scorer_train_dir / "runtime_resolver_scorer.json",
+        )
+        object.__setattr__(
+            self,
+            "continuous_scorer_train_dir",
+            self.scorer_train_dir / "v1_1_selection_cost",
+        )
+        object.__setattr__(
+            self,
+            "continuous_scorer_eval_rows",
+            self.continuous_scorer_train_dir / "runtime_resolver_scorer_eval_rows.csv",
+        )
+        object.__setattr__(
+            self,
+            "scorer_artifact",
+            self.continuous_scorer_train_dir / "runtime_resolver_scorer.json",
         )
         object.__setattr__(self, "scorer_eval_dir", self.output_root / "scorer_evaluation")
         object.__setattr__(self, "scorer_report", self.scorer_eval_dir / SCORER_POLICY_REPORT_JSON)
-        object.__setattr__(self, "artifacts_dir", self.output_root / "artifacts")
+        object.__setattr__(self, "artifacts_dir", self.stable_root / "artifacts")
+        object.__setattr__(self, "exported_candidate_dir", self.stable_root / "candidate_search")
+        object.__setattr__(self, "exported_scorer_dir", self.stable_root / "scorer_training")
+        object.__setattr__(self, "exported_best_setup", self.exported_candidate_dir / "best_setup.json")
+        object.__setattr__(
+            self, "exported_best_weights", self.exported_candidate_dir / "best_weights.json"
+        )
+        object.__setattr__(
+            self,
+            "exported_scorer_artifact",
+            self.exported_scorer_dir / "runtime_resolver_scorer.json",
+        )
         object.__setattr__(self, "progress_log", self.output_root / PROGRESS_LOG_FILENAME)
         object.__setattr__(self, "summary_json", self.output_root / "pipeline_summary.json")
         object.__setattr__(self, "summary_md", self.output_root / "pipeline_summary.md")
@@ -204,6 +278,50 @@ def _script(path: str) -> str:
     return str(ROOT / "tools" / "landmarks" / path)
 
 
+def _command_dataset_build(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
+    return _append_extra(
+        [
+            args.python_executable,
+            _script("build_quality_dataset.py"),
+            "--dataset",
+            args.dataset,
+            "--output-dir",
+            str(paths.run_dataset_dir),
+        ],
+        args.dataset_build_arg,
+    )
+
+
+def _command_prediction_cache(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
+    return _append_extra(
+        [
+            args.python_executable,
+            _script("cache_predictions.py"),
+            "--manifest",
+            str(paths.run_manifest),
+            "--cache-dir",
+            str(paths.run_cache),
+            "--models",
+            args.models,
+        ],
+        args.cache_prediction_arg,
+    )
+
+
+def _command_production_manifest(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
+    argv = [
+        args.python_executable,
+        _script("build_faceswap_validated_manifest.py"),
+        "--images",
+        str(args.production_images),
+        "--alignments",
+        str(args.production_alignments),
+        "--output-dir",
+        str(paths.production_root),
+    ]
+    return _append_extra(argv, args.production_manifest_arg)
+
+
 def _command_candidate_search(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
     manifest = (
         paths.run_report_manifest if paths.run_report_manifest.exists() else paths.run_manifest
@@ -254,7 +372,13 @@ def _command_hard_validation(args: argparse.Namespace, paths: PipelinePaths) -> 
     )
 
 
-def _command_scorer_training(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
+def _command_scorer_training(
+    args: argparse.Namespace,
+    paths: PipelinePaths,
+    *,
+    output_dir: Path,
+    target: str,
+) -> list[str]:
     return _append_extra(
         [
             args.python_executable,
@@ -272,7 +396,9 @@ def _command_scorer_training(args: argparse.Namespace, paths: PipelinePaths) -> 
             "--candidates",
             args.candidates,
             "--output-dir",
-            str(paths.scorer_train_dir),
+            str(output_dir),
+            "--target",
+            target,
             "--gt-hard-resolver-metadata",
             str(paths.frozen_gt_metadata),
         ],
@@ -297,6 +423,10 @@ def _command_scorer_eval(args: argparse.Namespace, paths: PipelinePaths) -> list
             str(paths.best_weights),
             "--scorer",
             str(paths.scorer_artifact),
+            "--binary-scorer",
+            str(paths.binary_scorer_artifact),
+            "--eval-split",
+            str(paths.continuous_scorer_eval_rows),
             "--candidates",
             args.candidates,
             "--output-dir",
@@ -312,20 +442,34 @@ def _command_scorer_eval(args: argparse.Namespace, paths: PipelinePaths) -> list
 
 def _outputs_for(stage: str, paths: PipelinePaths) -> list[Path]:
     return {
-        "static_pipeline": [
-            paths.run_summary,
-            paths.run_manifest,
-            paths.run_cache,
+        "build_dataset_manifest": [paths.run_manifest],
+        "build_prediction_cache": [paths.run_cache],
+        "build_splits": [
             paths.run_splits,
-            paths.run_static_weights,
+            paths.run_fit_manifest,
+            paths.run_select_manifest,
+            paths.run_report_manifest,
+            paths.run_summary,
+        ],
+        "fit_static_weights": [paths.run_static_weights],
+        "build_production_manifest": [
+            paths.production_manifest,
+            paths.production_root / RESOLVER_METADATA_JSONL,
+            paths.production_root / "audit.json",
         ],
         "candidate_search": [paths.best_setup, paths.best_weights],
         "hard_alignment_validation": [paths.hard_manifest],
         "freeze_resolver_metadata": [paths.frozen_gt_metadata],
-        "scorer_training": [paths.scorer_artifact],
+        "binary_scorer_training": [paths.binary_scorer_artifact],
+        "continuous_scorer_training": [paths.scorer_artifact, paths.continuous_scorer_eval_rows],
         "scorer_evaluation": [paths.scorer_report],
         "production_promotion_check": [paths.scorer_report],
-        "artifact_export": [paths.artifacts_dir / "artifacts_manifest.json"],
+        "artifact_export": [
+            paths.exported_best_setup,
+            paths.exported_best_weights,
+            paths.exported_scorer_artifact,
+            paths.artifacts_dir / "artifacts_manifest.json",
+        ],
         "config_update": [
             paths.output_root / CONFIG_PREVIEW_FILENAME,
             paths.output_root / CONFIG_PATCH_FILENAME,
@@ -334,15 +478,20 @@ def _outputs_for(stage: str, paths: PipelinePaths) -> list[Path]:
 
 
 def _required_inputs_for(stage: str, args: argparse.Namespace, paths: PipelinePaths) -> list[Path]:
-    if stage == "static_pipeline":
-        return [
-            paths.run_summary,
-            paths.run_manifest,
-            paths.run_cache,
-            paths.run_splits,
-            paths.run_static_weights,
-        ]
     return {
+        "build_dataset_manifest": [],
+        "build_prediction_cache": [paths.run_manifest],
+        "build_splits": [paths.run_manifest],
+        "fit_static_weights": [
+            paths.run_fit_manifest if paths.run_fit_manifest.exists() else paths.run_manifest,
+            paths.run_cache,
+        ],
+        "build_production_manifest": []
+        if paths.production_manifest.exists()
+        else [
+            args.production_images,
+            args.production_alignments,
+        ],
         "candidate_search": [
             paths.run_cache,
             paths.run_splits,
@@ -357,7 +506,15 @@ def _required_inputs_for(stage: str, args: argparse.Namespace, paths: PipelinePa
         "freeze_resolver_metadata": []
         if paths.frozen_gt_metadata.exists()
         else ([args.gt_hard_resolver_metadata] if args.gt_hard_resolver_metadata else []),
-        "scorer_training": [
+        "binary_scorer_training": [
+            paths.hard_manifest,
+            paths.run_cache,
+            paths.production_manifest,
+            paths.production_cache,
+            paths.best_weights,
+            paths.frozen_gt_metadata,
+        ],
+        "continuous_scorer_training": [
             paths.hard_manifest,
             paths.run_cache,
             paths.production_manifest,
@@ -372,6 +529,8 @@ def _required_inputs_for(stage: str, args: argparse.Namespace, paths: PipelinePa
             paths.production_cache,
             paths.best_weights,
             paths.scorer_artifact,
+            paths.binary_scorer_artifact,
+            paths.continuous_scorer_eval_rows,
             paths.frozen_gt_metadata,
         ],
         "production_promotion_check": [paths.scorer_report],
@@ -388,24 +547,38 @@ def _required_inputs_for(stage: str, args: argparse.Namespace, paths: PipelinePa
 
 def _contract_for(stage: str, args: argparse.Namespace, paths: PipelinePaths) -> StageContract:
     cache_behavior = {
-        "static_pipeline": "reuse existing run-root artifacts; generation moved to active dataset/cache/search tools",
+        "build_dataset_manifest": "writes run-root dataset manifest; --resume skips when manifest exists",
+        "build_prediction_cache": "writes run-root prediction cache; --resume skips when cache dir exists",
+        "build_splits": "writes fit/select/report splits and split manifests; --resume skips when all split artifacts exist",
+        "fit_static_weights": "fits initial static weights from the fit split; --resume skips when weights exist",
+        "build_production_manifest": "writes production_validated manifest, resolver metadata, and audit from Faceswap alignments; --resume skips when outputs exist",
         "candidate_search": "writes candidate_search artifacts; --resume skips when best_setup.json and best_weights.json exist",
         "hard_alignment_validation": "writes gt_hard_validation artifacts; --resume skips when manifest.json exists",
         "freeze_resolver_metadata": "copies caller-supplied GT-hard sidecar once; never silently regenerates; --resume reuses existing frozen copy",
-        "scorer_training": "writes scorer_training artifacts; --resume skips when runtime_resolver_scorer.json exists",
+        "binary_scorer_training": "writes v1 binary scorer artifacts; --resume skips when runtime_resolver_scorer.json exists",
+        "continuous_scorer_training": "writes v1.1 continuous scorer artifacts; --resume skips when runtime_resolver_scorer.json and eval rows exist",
         "scorer_evaluation": "writes scorer_evaluation reports; --resume skips when scorer_policy_report.json exists",
         "production_promotion_check": "reads scorer report only; no recompute; requires promotion_status/status pass",
         "artifact_export": "copies final artifacts into artifacts/; --resume skips when artifacts_manifest.json exists",
         "config_update": "writes deterministic config_update_preview.json and config_update_patch.ini; writes config only with --write-config after promotion passes",
     }[stage]
     success = {
-        "static_pipeline": ["run summary, manifest, cache, splits, and static weights exist"],
+        "build_dataset_manifest": ["run manifest exists"],
+        "build_prediction_cache": ["run prediction cache exists"],
+        "build_splits": ["splits.json and fit/select/report manifests exist"],
+        "fit_static_weights": ["static landmark weights exist"],
+        "build_production_manifest": [
+            "production manifest, resolver_metadata.jsonl, and audit.json exist"
+        ],
         "candidate_search": ["best_setup.json and best_weights.json exist"],
         "hard_alignment_validation": ["GT-hard manifest exists"],
         "freeze_resolver_metadata": [
-            "frozen resolver_metadata.jsonl exists and was not regenerated implicitly"
+            "frozen resolver_metadata.jsonl exists and validates against the hard manifest"
         ],
-        "scorer_training": ["runtime_resolver_scorer.json exists"],
+        "binary_scorer_training": ["v1 binary runtime_resolver_scorer.json exists"],
+        "continuous_scorer_training": [
+            "v1.1 runtime_resolver_scorer.json and held-out eval rows exist"
+        ],
         "scorer_evaluation": ["scorer_policy_report.json exists"],
         "production_promotion_check": ["scorer report promotion_status/status is pass"],
         "artifact_export": ["artifacts_manifest.json exists"],
@@ -439,10 +612,79 @@ def _run_command(command: list[str]) -> None:
     subprocess.run(command, check=True, cwd=str(ROOT))
 
 
+def _load_manifest_payload(path: Path) -> dict[str, T.Any]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"manifest must be a JSON object: {path}")
+    return payload
+
+
+def _build_splits(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
+    base_manifest = _load_manifest_payload(paths.run_manifest)
+    samples = base_manifest.get("samples", base_manifest.get("scenarios", []))
+    if not isinstance(samples, list):
+        raise ValueError(f"manifest samples must be a list: {paths.run_manifest}")
+    ratios = SplitRatios(args.split_fit, args.split_select, args.split_report)
+    assignment, diagnostics = split_manifest_samples(
+        [sample for sample in samples if isinstance(sample, dict)],
+        mode=args.split_mode,
+        ratios=ratios,
+        seed=args.split_seed,
+    )
+    save_split_file(
+        paths.run_splits,
+        assignment,
+        mode=args.split_mode,
+        ratios=ratios,
+        seed=args.split_seed,
+        diagnostics=diagnostics,
+    )
+    write_split_manifest(paths.run_fit_manifest, base_manifest, assignment.fit)
+    write_split_manifest(paths.run_select_manifest, base_manifest, assignment.select)
+    write_split_manifest(paths.run_report_manifest, base_manifest, assignment.report)
+    write_json(
+        paths.run_summary,
+        {
+            "run_root": str(paths.run_root),
+            "manifest": str(paths.run_manifest),
+            "cache": str(paths.run_cache),
+            "splits": str(paths.run_splits),
+            "split_mode": args.split_mode,
+            "split_seed": args.split_seed,
+            "split_counts": split_summary_counts(assignment, samples),
+        },
+    )
+    return [f"wrote split assignment with {assignment.sample_count} sample(s)"]
+
+
+def _fit_static_weights(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
+    manifest = paths.run_fit_manifest if paths.run_fit_manifest.exists() else paths.run_manifest
+    models = tuple(item.strip() for item in str(args.models).split(",") if item.strip())
+    weights, mean_errors = compute_static_weights(manifest, paths.run_cache, models=models)
+    save_weights(paths.run_static_weights, weights)
+    write_json(
+        paths.run_static_weights.with_name("static_landmark_weight_errors.json"),
+        {"manifest": str(manifest), "models": list(models), "mean_errors": mean_errors},
+    )
+    return [f"fit static weights from {manifest}"]
+
+
+def _validate_frozen_metadata(paths: PipelinePaths) -> None:
+    metadata = load_resolver_metadata_sidecar(paths.frozen_gt_metadata)
+    validate_resolver_metadata_for_manifest(
+        paths.hard_manifest,
+        metadata,
+        source=SOURCE_GT_HARD,
+        require_complete=True,
+    )
+
+
 def _freeze_metadata(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
     if paths.frozen_gt_metadata.exists() and args.resume:
+        _validate_frozen_metadata(paths)
         return [f"reused existing frozen metadata: {paths.frozen_gt_metadata}"]
     if paths.frozen_gt_metadata.exists() and not args.overwrite_frozen_metadata:
+        _validate_frozen_metadata(paths)
         return [
             f"frozen metadata already exists and was left unchanged: {paths.frozen_gt_metadata}"
         ]
@@ -454,19 +696,36 @@ def _freeze_metadata(args: argparse.Namespace, paths: PipelinePaths) -> list[str
     _require(source, "GT-hard resolver sidecar")
     paths.frozen_gt_metadata.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(source, paths.frozen_gt_metadata)
-    return [f"copied frozen metadata from {source}"]
+    _validate_frozen_metadata(paths)
+    return [f"copied and validated frozen metadata from {source}"]
 
 
-def _promotion_check(paths: PipelinePaths) -> list[str]:
+def _promotion_check(paths: PipelinePaths, *, promotion_scope: str = "production") -> list[str]:
     _require(paths.scorer_report, "scorer evaluation report")
     report = _read_json(paths.scorer_report)
-    status = str(report.get("promotion_status") or report.get("status") or "")
+    status = str(report.get("status") or "")
+    production_status = str(report.get("production_gate_status") or "")
+    production_failed = report.get("production_failed_gates") or []
     failed = report.get("failed_gates") or []
     if status != "pass":
         raise RuntimeError(
             f"production promotion check failed: status={status!r}, failed_gates={failed}"
         )
-    return ["promotion_status=pass"]
+    if production_status != "pass" or production_failed:
+        raise RuntimeError(
+            "production promotion check failed: "
+            f"production_gate_status={production_status!r}, "
+            f"production_failed_gates={production_failed}"
+        )
+    if promotion_scope == "universal":
+        gt_status = str(report.get("gt_hard_gate_status") or "")
+        gt_failed = report.get("gt_hard_failed_gates") or []
+        if gt_status not in {"pass", ""} or gt_failed:
+            raise RuntimeError(
+                "GT-hard diagnostic gate failed: "
+                f"gt_hard_gate_status={gt_status!r}, gt_hard_failed_gates={gt_failed}"
+            )
+    return ["status=pass", "production_gate_status=pass"]
 
 
 def _validate_required_files(stage: str, args: argparse.Namespace, paths: PipelinePaths) -> None:
@@ -483,13 +742,20 @@ def _validate_stage_outputs(stage: str, paths: PipelinePaths) -> list[str]:
         raise PipelineContractError(
             f"stage {stage!r} did not produce required output(s): {details}"
         )
+    if stage == "freeze_resolver_metadata":
+        _validate_frozen_metadata(paths)
     if stage == "production_promotion_check":
         report = _read_json(paths.scorer_report)
-        status = str(report.get("promotion_status") or report.get("status") or "")
-        if status != "pass":
+        status = str(report.get("status") or "")
+        production_status = str(report.get("production_gate_status") or "")
+        production_failed = report.get("production_failed_gates") or []
+        if status != "pass" or production_status != "pass" or production_failed:
             failed = report.get("failed_gates") or []
             raise PipelineContractError(
-                f"stage 'production_promotion_check' expected promotion_status=pass but got {status!r}; failed_gates={failed}"
+                "stage 'production_promotion_check' expected status=pass and "
+                "production_gate_status=pass but got "
+                f"status={status!r}, production_gate_status={production_status!r}; "
+                f"failed_gates={failed}; production_failed_gates={production_failed}"
             )
     validated = [str(path) for path in _outputs_for(stage, paths)]
     logger.debug("Validated outputs for stage=%s outputs=%s", stage, validated)
@@ -513,9 +779,11 @@ def _copy_if_exists(source: Path, dest_dir: Path, *, name: str | None = None) ->
 
 def _export_artifacts(paths: PipelinePaths) -> dict[str, str]:
     exported = {
-        "best_setup": _copy_if_exists(paths.best_setup, paths.artifacts_dir),
-        "best_weights": _copy_if_exists(paths.best_weights, paths.artifacts_dir),
-        "runtime_resolver_scorer": _copy_if_exists(paths.scorer_artifact, paths.artifacts_dir),
+        "best_setup": _copy_if_exists(paths.best_setup, paths.exported_candidate_dir),
+        "best_weights": _copy_if_exists(paths.best_weights, paths.exported_candidate_dir),
+        "runtime_resolver_scorer": _copy_if_exists(
+            paths.scorer_artifact, paths.exported_scorer_dir
+        ),
         "scorer_policy_report": _copy_if_exists(paths.scorer_report, paths.artifacts_dir),
         "gt_hard_resolver_metadata": _copy_if_exists(
             paths.frozen_gt_metadata, paths.artifacts_dir
@@ -545,20 +813,20 @@ def _config_updates(args: argparse.Namespace, paths: PipelinePaths) -> dict[str,
         "normalized_output": "true",
         "outlier_threshold": "3.5",
         "production_artifact_root": str(paths.artifacts_dir),
-        "production_scorer_path": str(paths.scorer_artifact),
-        "production_setup_path": str(paths.best_setup),
-        "production_weights_path": str(paths.best_weights),
+        "production_scorer_path": str(paths.exported_scorer_artifact),
+        "production_setup_path": str(paths.exported_best_setup),
+        "production_weights_path": str(paths.exported_best_weights),
         "reject_outliers": "false",
         "resolver_policy": "learned_quality_v1",
-        "resolver_scorer_path": str(paths.scorer_artifact),
+        "resolver_scorer_path": str(paths.exported_scorer_artifact),
         "roll_veto_degrees": "15.0",
         "secondary_hard_case_strategy": "static_weighted_hard_drop",
         "setup_mode": "strict",
-        "setup_path": str(paths.best_setup),
+        "setup_path": str(paths.exported_best_setup),
         "strategy": "static_weighted_downweight",
         "strict": "true",
         "use_alignment_resolver": "true",
-        "weights_path": str(paths.best_weights),
+        "weights_path": str(paths.exported_best_weights),
     }
 
 
@@ -570,9 +838,9 @@ def _config_patch_text(section: str, updates: T.Mapping[str, str]) -> str:
 
 def _validate_config_artifacts(paths: PipelinePaths) -> None:
     for path, label in (
-        (paths.best_setup, "promoted setup artifact"),
-        (paths.best_weights, "promoted weights artifact"),
-        (paths.scorer_artifact, "runtime resolver scorer artifact"),
+        (paths.exported_best_setup, "exported promoted setup artifact"),
+        (paths.exported_best_weights, "exported promoted weights artifact"),
+        (paths.exported_scorer_artifact, "exported runtime resolver scorer artifact"),
         (paths.scorer_report, "scorer evaluation report"),
     ):
         _require(path, label)
@@ -610,7 +878,7 @@ def _apply_config(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
     _write_config_patch_files(args, paths, updates)
     if not args.write_config:
         return ["wrote config update preview only"]
-    _promotion_check(paths)
+    _promotion_check(paths, promotion_scope=args.promotion_scope)
     config_path = Path(args.config_path)
     _require(config_path, "config file for --write-config")
     parser = configparser.ConfigParser()
@@ -649,16 +917,84 @@ def _execute_stage(stage: str, args: argparse.Namespace, paths: PipelinePaths) -
             logger.log(5, "stage_contract=%s", json.dumps(contract.to_json(), sort_keys=True))
         if not args.dry_run:
             _validate_required_files(stage, args, paths)
-        if stage == "static_pipeline":
+        if stage == "build_dataset_manifest":
+            command = _command_dataset_build(args, paths)
             if args.dry_run:
-                status = "planned" if not paths.run_summary.exists() else "ok"
                 return StageResult(
                     stage,
-                    status,
-                    command=[],
+                    "planned",
+                    command=command,
                     outputs=outputs,
                     contract=contract.to_json(),
                 )
+            _run_command(command)
+        elif stage == "build_prediction_cache":
+            command = _command_prediction_cache(args, paths)
+            if args.dry_run:
+                return StageResult(
+                    stage, "planned", command=command, outputs=outputs, contract=contract.to_json()
+                )
+            _run_command(command)
+        elif stage == "build_splits":
+            if args.dry_run:
+                return StageResult(
+                    stage,
+                    "planned",
+                    outputs=outputs,
+                    contract=contract.to_json(),
+                    notes=["would write split assignment and split manifests"],
+                )
+            notes = _build_splits(args, paths)
+            return StageResult(
+                stage,
+                "ok",
+                outputs=outputs,
+                validated_outputs=_validate_stage_outputs(stage, paths),
+                contract=contract.to_json(),
+                notes=notes,
+            )
+        elif stage == "fit_static_weights":
+            if args.dry_run:
+                return StageResult(
+                    stage,
+                    "planned",
+                    outputs=outputs,
+                    contract=contract.to_json(),
+                    notes=["would fit static landmark weights from fit split"],
+                )
+            notes = _fit_static_weights(args, paths)
+            return StageResult(
+                stage,
+                "ok",
+                outputs=outputs,
+                validated_outputs=_validate_stage_outputs(stage, paths),
+                contract=contract.to_json(),
+                notes=notes,
+            )
+        elif stage == "build_production_manifest":
+            if paths.production_manifest.exists() and (
+                paths.production_root / RESOLVER_METADATA_JSONL
+            ).exists() and (paths.production_root / "audit.json").exists():
+                validated = _validate_stage_outputs(stage, paths)
+                return StageResult(
+                    stage,
+                    "ok",
+                    outputs=outputs,
+                    validated_outputs=validated,
+                    contract=contract.to_json(),
+                    notes=["reused existing production manifest artifacts"],
+                )
+            command = _command_production_manifest(args, paths)
+            if args.dry_run:
+                return StageResult(
+                    stage, "planned", command=command, outputs=outputs, contract=contract.to_json()
+                )
+            if args.production_images is None or args.production_alignments is None:
+                raise FileNotFoundError(
+                    "missing production manifest inputs; pass --production-images and "
+                    "--production-alignments or provide existing production manifest artifacts"
+                )
+            _run_command(command)
         elif stage == "candidate_search":
             command = _command_candidate_search(args, paths)
             if args.dry_run:
@@ -691,8 +1027,25 @@ def _execute_stage(stage: str, args: argparse.Namespace, paths: PipelinePaths) -
                 contract=contract.to_json(),
                 notes=notes,
             )
-        elif stage == "scorer_training":
-            command = _command_scorer_training(args, paths)
+        elif stage == "binary_scorer_training":
+            command = _command_scorer_training(
+                args,
+                paths,
+                output_dir=paths.binary_scorer_train_dir,
+                target=TARGET_CANDIDATE_FAILURE_OR_HIGH_GAP,
+            )
+            if args.dry_run:
+                return StageResult(
+                    stage, "planned", command=command, outputs=outputs, contract=contract.to_json()
+                )
+            _run_command(command)
+        elif stage == "continuous_scorer_training":
+            command = _command_scorer_training(
+                args,
+                paths,
+                output_dir=paths.continuous_scorer_train_dir,
+                target=args.scorer_target,
+            )
             if args.dry_run:
                 return StageResult(
                     stage, "planned", command=command, outputs=outputs, contract=contract.to_json()
@@ -714,7 +1067,7 @@ def _execute_stage(stage: str, args: argparse.Namespace, paths: PipelinePaths) -
                     contract=contract.to_json(),
                     notes=["would require promotion_status=pass"],
                 )
-            notes = _promotion_check(paths)
+            notes = _promotion_check(paths, promotion_scope=args.promotion_scope)
             return StageResult(
                 stage,
                 "ok",
@@ -816,8 +1169,9 @@ def _summary_payload(
         "failed_gates": report.get("failed_gates", []),
         "selected_production_policy": updates["resolver_policy"],
         "fallback_counts": _fallback_counts(report),
-        "best_weights_path": str(paths.best_weights),
-        "scorer_path": str(paths.scorer_artifact),
+        "best_weights_path": str(paths.exported_best_weights),
+        "scorer_path": str(paths.exported_scorer_artifact),
+        "binary_scorer_path": str(paths.binary_scorer_artifact),
         "eval_report_path": str(paths.scorer_report),
         "config_fields_changed": sorted(updates),
         "config_patch_path": str(paths.output_root / CONFIG_PATCH_FILENAME),
@@ -834,12 +1188,13 @@ def _summary_payload(
             SOURCE_PRODUCTION_VALIDATED: {
                 "manifest": str(paths.production_manifest),
                 "cache": str(paths.production_cache),
+                "resolver_metadata": str(paths.production_root / RESOLVER_METADATA_JSONL),
             },
         },
         "artifacts": {
-            "best_setup": str(paths.best_setup),
-            "best_weights": str(paths.best_weights),
-            "runtime_resolver_scorer": str(paths.scorer_artifact),
+            "best_setup": str(paths.exported_best_setup),
+            "best_weights": str(paths.exported_best_weights),
+            "runtime_resolver_scorer": str(paths.exported_scorer_artifact),
             "scorer_policy_report": str(paths.scorer_report),
         },
         "scorer_report_status": promotion_status,
@@ -956,11 +1311,31 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--config-path", type=Path, default=Path("config/extract.ini"))
     parser.add_argument("--config-section", default=DEFAULT_CONFIG_SECTION)
     parser.add_argument("--python-executable", default=sys.executable)
+    parser.add_argument("--dataset", default="wflw")
     parser.add_argument("--models", default=DEFAULT_MODELS)
     parser.add_argument("--candidates", default=DEFAULT_CANDIDATES)
+    parser.add_argument("--production-images", type=Path)
+    parser.add_argument("--production-alignments", type=Path)
     parser.add_argument("--gt-hard-resolver-metadata", type=Path)
     parser.add_argument("--overwrite-frozen-metadata", action="store_true")
     parser.add_argument("--hard-source-manifest", type=Path)
+    parser.add_argument(
+        "--split-mode",
+        choices=(SCENARIO_STRATIFIED, RANDOM),
+        default=SCENARIO_STRATIFIED,
+    )
+    parser.add_argument("--split-fit", type=float, default=0.60)
+    parser.add_argument("--split-select", type=float, default=0.20)
+    parser.add_argument("--split-report", type=float, default=0.20)
+    parser.add_argument("--split-seed", type=int, default=1337)
+    parser.add_argument(
+        "--scorer-target",
+        choices=SCORER_TARGETS,
+        default=TARGET_SELECTION_COST,
+    )
+    parser.add_argument("--dataset-build-arg", action="append", default=[])
+    parser.add_argument("--cache-prediction-arg", action="append", default=[])
+    parser.add_argument("--production-manifest-arg", action="append", default=[])
     parser.add_argument("--candidate-search-arg", action="append", default=[])
     parser.add_argument("--hard-validation-arg", action="append", default=[])
     parser.add_argument("--scorer-train-arg", action="append", default=[])
