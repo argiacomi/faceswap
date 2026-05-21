@@ -25,7 +25,7 @@ from lib.landmarks.ensemble.runtime_resolver_scorer_data import (
 from lib.landmarks.ensemble.scorer_contexts import load_scorer_contexts
 from lib.landmarks.ensemble.scorer_reports import write_scorer_policy_outputs
 from lib.landmarks.ensemble.strategies import canonical_strategy
-from tools.landmarks.pipeline_conventions import (
+from lib.landmarks.pipeline_conventions import (
     SOURCE_GT_HARD,
     SOURCE_PRODUCTION_VALIDATED,
 )

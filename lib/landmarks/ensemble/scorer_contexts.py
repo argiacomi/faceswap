@@ -15,7 +15,7 @@ from lib.landmarks.ensemble.runtime_resolver_scorer_data import (
     SampleCandidateContext,
     load_contexts,
 )
-from tools.landmarks.pipeline_conventions import (
+from lib.landmarks.pipeline_conventions import (
     SOURCE_GT_HARD,
     SOURCE_PRODUCTION_VALIDATED,
     ManifestCachePair,

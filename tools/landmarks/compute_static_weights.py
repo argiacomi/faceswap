@@ -27,7 +27,7 @@ from lib.landmarks.ensemble.weights import (
     normalize_static_weights,
 )
 from lib.landmarks.evaluation.harness import load_manifest
-from tools.landmarks.pipeline_conventions import STATIC_WEIGHTS_FILENAME, write_json
+from lib.landmarks.pipeline_conventions import STATIC_WEIGHTS_FILENAME, write_json
 
 DEFAULT_OUTPUT = f"configs/ensemble/{STATIC_WEIGHTS_FILENAME}"
 DEFAULT_GENERATOR = "inverse_mean_error"

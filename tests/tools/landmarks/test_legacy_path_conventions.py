@@ -3,8 +3,7 @@
 
 from __future__ import annotations
 
-from tools.landmarks import compute_static_weights, failure_viewer, production_promotion_gate
-from tools.landmarks.pipeline_conventions import (
+from lib.landmarks.pipeline_conventions import (
     DEBUG_DIRNAME,
     FAILURE_ENSEMBLE_REGRESSIONS_CONTACT_SHEET,
     FAILURE_ENSEMBLE_REGRESSIONS_JSON,
@@ -17,6 +16,7 @@ from tools.landmarks.pipeline_conventions import (
     PRODUCTION_WORST_SAMPLES_JSON,
     STATIC_WEIGHTS_FILENAME,
 )
+from tools.landmarks import compute_static_weights, failure_viewer, production_promotion_gate
 
 
 def test_static_weights_default_output_uses_shared_filename() -> None:

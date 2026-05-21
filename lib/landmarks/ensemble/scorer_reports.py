@@ -7,7 +7,7 @@ import csv
 import typing as T
 from pathlib import Path
 
-from tools.landmarks.pipeline_conventions import (
+from lib.landmarks.pipeline_conventions import (
     SCORER_FEATURE_IMPORTANCE_CSV,
     SCORER_HELDOUT_POLICY_REPORT_JSON,
     SCORER_METRICS_JSON,

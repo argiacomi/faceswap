@@ -12,7 +12,7 @@ from lib.landmarks.ensemble.runtime_resolver_scorer_data import (
     candidate_table_rows,
     rows_for_context,
 )
-from tools.landmarks.pipeline_conventions import normalize_source_label
+from lib.landmarks.pipeline_conventions import normalize_source_label
 
 TaggedRow = tuple[CandidateQualityRow, str]
 

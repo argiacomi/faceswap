@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from tools.landmarks.pipeline_conventions import (
+from lib.landmarks.pipeline_conventions import (
     RESOLVER_METADATA_JSONL,
     SCORER_POLICY_REPORT_JSON,
     SOURCE_GT_HARD,

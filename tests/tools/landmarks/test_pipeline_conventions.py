@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from lib.landmarks.datasets.manifest_io import LandmarkSample
-from tools.landmarks.pipeline_conventions import (
+from lib.landmarks.pipeline_conventions import (
     SOURCE_GT_HARD,
     SOURCE_PRODUCTION_EXTRACTION,
     SOURCE_PRODUCTION_VALIDATED,

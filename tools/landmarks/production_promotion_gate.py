@@ -23,7 +23,7 @@ from lib.landmarks.ensemble.runtime_resolver_scorer_data import (
     load_contexts,
 )
 from lib.landmarks.ensemble.weights import load_weights
-from tools.landmarks.pipeline_conventions import (
+from lib.landmarks.pipeline_conventions import (
     PRODUCTION_PER_BUCKET_CSV,
     PRODUCTION_POLICY_FAILURES_CSV,
     PRODUCTION_PROMOTION_REPORT_JSON,

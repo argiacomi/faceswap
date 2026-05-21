@@ -24,17 +24,17 @@ from lib.landmarks.ensemble.runtime_resolver_scorer_data import (
     write_candidate_table_csv,
 )
 from lib.landmarks.ensemble.scorer_contexts import load_scorer_contexts
-from tools.landmarks.pipeline_conventions import (
-    SOURCE_GT_HARD,
-    SOURCE_PRODUCTION_VALIDATED,
-    write_json,
-)
-from tools.landmarks.scorer_targets import (
+from lib.landmarks.ensemble.scorer_targets import (
     TaggedRow,
     scorer_candidate_table_rows,
     source_quality_rows,
     tagged_quality_rows,
     untag_quality_rows,
+)
+from lib.landmarks.pipeline_conventions import (
+    SOURCE_GT_HARD,
+    SOURCE_PRODUCTION_VALIDATED,
+    write_json,
 )
 
 SCORER_ARTIFACT = "runtime_resolver_scorer.json"

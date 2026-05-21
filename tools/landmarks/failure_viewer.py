@@ -28,7 +28,7 @@ from lib.landmarks.evaluation.visualize import (
     write_debug_records,
     write_overlay,
 )
-from tools.landmarks.pipeline_conventions import (
+from lib.landmarks.pipeline_conventions import (
     DEBUG_DIRNAME,
     FAILURE_ENSEMBLE_REGRESSIONS_CONTACT_SHEET,
     FAILURE_ENSEMBLE_REGRESSIONS_JSON,
