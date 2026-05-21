@@ -255,6 +255,25 @@ def test_resolve_multipart_dataset_source_reuses_extracted_cache_without_archive
     assert resolved == extracted
 
 
+def test_resolve_multipart_dataset_source_rejects_incomplete_extracted_cache(
+    tmp_path: Path,
+) -> None:
+    """A partial multipart extraction is not enough for model-run manifests."""
+    cache_dir = tmp_path / "cache"
+    extracted = cache_dir / "wflw" / "extracted"
+    (extracted / "WFLW_annotations").mkdir(parents=True)
+    (extracted / "WFLW_annotations" / "list_98pt_rect_attr_test.txt").write_text(
+        _points_98_row("0--Parade/sample.jpg"),
+        encoding="utf-8",
+    )
+    spec = _wflw_multipart_spec(
+        tmp_path / "missing-annotations.tar.gz", tmp_path / "missing-images.zip"
+    )
+
+    with pytest.raises(FileNotFoundError, match="WFLW multipart source not found"):
+        resolve_multipart_dataset_source(spec, cache_dir=cache_dir, no_download=True)
+
+
 def test_resolve_multipart_dataset_source_refreshes_when_either_archive_changes(
     tmp_path: Path,
 ) -> None:
