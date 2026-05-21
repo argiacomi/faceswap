@@ -473,17 +473,27 @@ class OptionsFormRenderer(QWidget):
         Mirrors :class:`lib.gui.control_helper.FileBrowser.add_browser_buttons` so
         each filetype/option gets a recognisable icon (film reel for video, mountain
         for folders of images, server for model dirs, file page for generic files).
+
+        Tk looks at the ``dest`` of the argparse argument; the schema may store
+        the short opt (``-i``) so we combine ``dest``, the CLI ``switch`` and the
+        human-facing ``title`` before scanning for option-name tokens.
         """
         filetypes = (spec.filetypes or "").lower()
-        switch = spec.switch.lstrip("-").lower()
+        opt_name = " ".join(
+            (
+                (spec.dest or "").lower(),
+                spec.switch.lstrip("-").lower().replace("-", "_"),
+                spec.title.lower().replace(" ", "_"),
+            )
+        )
         if mode in ("file", "files") and filetypes == "video":
             return "browser_video"
         if mode == "folder":
             if filetypes == "image" or any(
-                token in switch for token in ("frames", "faces", "input")
+                token in opt_name for token in ("frames", "faces", "input")
             ):
                 return "browser_picture"
-            if "model" in switch or filetypes == "model":
+            if "model" in opt_name or filetypes == "model":
                 return "browser_model"
         return f"browser_{mode}"
 
@@ -661,15 +671,21 @@ class OptionsFormRenderer(QWidget):
     def _browser_tooltip(mode: str, spec: OptionSpec) -> str:
         """Return the Tk-parity tooltip for a browser mode/filetypes combo."""
         filetypes = (spec.filetypes or "").lower()
-        switch = spec.switch.lstrip("-").lower()
+        opt_name = " ".join(
+            (
+                (spec.dest or "").lower(),
+                spec.switch.lstrip("-").lower().replace("-", "_"),
+                spec.title.lower().replace(" ", "_"),
+            )
+        )
         if mode in ("file", "files") and filetypes == "video":
             return "Select a video..."
         if mode == "folder":
             if filetypes == "image" or any(
-                token in switch for token in ("frames", "faces", "input")
+                token in opt_name for token in ("frames", "faces", "input")
             ):
                 return "Select a folder of images..."
-            if "model" in switch or filetypes == "model":
+            if "model" in opt_name or filetypes == "model":
                 return "Select a model folder..."
         return {
             "folder": "Select a folder...",

@@ -103,6 +103,7 @@ class CommandSchemaService:
                 slider_rounding=option.slider_rounding,
                 file_filter=_FILE_FILTERS.get(option.filetypes, ""),
                 filetypes=option.filetypes,
+                dest=option.dest,
             )
             for option in options
             if option.opts

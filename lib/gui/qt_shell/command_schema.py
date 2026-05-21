@@ -30,6 +30,7 @@ class OptionSpec:
     is_advanced: bool = False
     file_filter: str = ""
     filetypes: str = ""
+    dest: str = ""
 
 
 @dataclass(frozen=True)
