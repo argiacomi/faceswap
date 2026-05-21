@@ -278,6 +278,23 @@ def test_hard_source_manifest_override_is_used_by_cache_validation_and_summary(
     assert summary["sources"]["hard_source"]["manifest"] == str(custom_manifest)
 
 
+def test_hard_source_manifest_override_skips_default_build_stage(tmp_path: Path) -> None:
+    custom_manifest = tmp_path / "custom_hard_manifest.json"
+    custom_manifest.write_text(json.dumps({"samples": []}) + "\n", encoding="utf-8")
+    args = _args(
+        tmp_path,
+        hard_source_manifest=custom_manifest,
+        start_at="build_hard_source_manifest",
+        stop_after="build_hard_source_manifest",
+    )
+
+    summary = run_pipeline(args)
+
+    assert summary["stages"][0]["status"] == "skipped"
+    assert summary["stages"][0]["validated_outputs"] == [str(custom_manifest)]
+    assert "caller-supplied hard-source manifest" in summary["stages"][0]["notes"][0]
+
+
 def test_hard_source_cache_resume_rejects_sentinel_for_different_manifest(
     tmp_path: Path,
 ) -> None:
@@ -553,6 +570,8 @@ def test_stage_contract_declares_required_files(tmp_path: Path) -> None:
     contract = _contract_for("continuous_scorer_training", args, paths)
 
     assert str(paths.hard_manifest) in contract.required_files
+    assert str(paths.hard_source_cache_sentinel) in contract.required_files
+    assert str(paths.production_cache_sentinel) in contract.required_files
     assert str(paths.frozen_gt_metadata) in contract.required_files
     assert str(paths.scorer_artifact) in contract.outputs
     assert str(paths.continuous_scorer_eval_rows) in contract.outputs
@@ -725,6 +744,68 @@ def test_freeze_metadata_reuses_existing_on_resume(tmp_path: Path) -> None:
 
     assert "reused existing frozen metadata" in notes[0]
     assert "runtime_bucket" in paths.frozen_gt_metadata.read_text(encoding="utf-8")
+
+
+def test_resume_with_explicit_metadata_sidecar_does_not_skip_freeze_stage(
+    tmp_path: Path,
+) -> None:
+    args = _args(
+        tmp_path,
+        resume=True,
+        start_at="freeze_resolver_metadata",
+        stop_after="freeze_resolver_metadata",
+    )
+    paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
+    paths.hard_manifest.parent.mkdir(parents=True, exist_ok=True)
+    paths.hard_manifest.write_text(
+        json.dumps(
+            {
+                "dataset": "gt_hard",
+                "samples": [
+                    {
+                        "sample_id": "s1",
+                        "image": "s1.png",
+                        "landmarks": "s1.npy",
+                        "metadata": {"face_index": 0},
+                    }
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    paths.frozen_gt_metadata.parent.mkdir(parents=True, exist_ok=True)
+    paths.frozen_gt_metadata.write_text(
+        json.dumps(
+            {
+                "sample_id": "s1",
+                "face_index": 0,
+                "landmark_ensemble": {"runtime_bucket": "old"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    replacement = tmp_path / "replacement_resolver_metadata.jsonl"
+    replacement.write_text(
+        json.dumps(
+            {
+                "sample_id": "s1",
+                "face_index": 0,
+                "landmark_ensemble": {"runtime_bucket": "new"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    args.gt_hard_resolver_metadata = replacement
+    args.overwrite_frozen_metadata = True
+
+    summary = run_pipeline(args)
+
+    assert summary["stages"][0]["status"] == "ok"
+    assert "copied and validated frozen metadata" in summary["stages"][0]["notes"][0]
+    assert "new" in paths.frozen_gt_metadata.read_text(encoding="utf-8")
 
 
 def test_promotion_check_fails_on_failed_gate(tmp_path: Path) -> None:

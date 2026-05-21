@@ -808,24 +808,30 @@ def _required_inputs_for(stage: str, args: argparse.Namespace, paths: PipelinePa
         "binary_scorer_training": [
             paths.hard_manifest,
             paths.run_cache,
+            paths.hard_source_cache_sentinel,
             paths.production_manifest,
             paths.production_cache,
+            paths.production_cache_sentinel,
             paths.best_weights,
             paths.frozen_gt_metadata,
         ],
         "continuous_scorer_training": [
             paths.hard_manifest,
             paths.run_cache,
+            paths.hard_source_cache_sentinel,
             paths.production_manifest,
             paths.production_cache,
+            paths.production_cache_sentinel,
             paths.best_weights,
             paths.frozen_gt_metadata,
         ],
         "scorer_evaluation": [
             paths.hard_manifest,
             paths.run_cache,
+            paths.hard_source_cache_sentinel,
             paths.production_manifest,
             paths.production_cache,
+            paths.production_cache_sentinel,
             paths.best_weights,
             paths.scorer_artifact,
             paths.binary_scorer_artifact,
@@ -950,6 +956,8 @@ def _dataset_manifest_sentinel_matches(args: argparse.Namespace, paths: Pipeline
 
 
 def _stage_complete(stage: str, args: argparse.Namespace, paths: PipelinePaths) -> bool:
+    if stage == "build_hard_source_manifest" and args.hard_source_manifest is not None:
+        return True
     if not all(path.exists() for path in _outputs_for(stage, paths)):
         return False
     if stage == "build_dataset_manifest":
@@ -979,6 +987,15 @@ def _stage_complete(stage: str, args: argparse.Namespace, paths: PipelinePaths) 
             extra_args=getattr(args, "production_cache_prediction_arg", []),
         )
     return True
+
+
+def _should_skip_completed_stage(stage: str, args: argparse.Namespace) -> bool:
+    if stage == "config_update" and args.write_config:
+        return False
+    return not (
+        stage in {"build_gt_hard_resolver_metadata", "freeze_resolver_metadata"}
+        and (args.overwrite_frozen_metadata or args.gt_hard_resolver_metadata is not None)
+    )
 
 
 def _run_command(command: list[str]) -> None:
@@ -1069,6 +1086,10 @@ def _copy_gt_hard_resolver_metadata(source: Path, paths: PipelinePaths) -> None:
 
 
 def _freeze_metadata(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
+    if args.gt_hard_resolver_metadata is not None:
+        source = Path(args.gt_hard_resolver_metadata)
+        _copy_gt_hard_resolver_metadata(source, paths)
+        return [f"copied and validated frozen metadata from {source}"]
     if paths.frozen_gt_metadata.exists() and args.resume:
         _validate_frozen_metadata(paths)
         return [f"reused existing frozen metadata: {paths.frozen_gt_metadata}"]
@@ -1080,10 +1101,6 @@ def _freeze_metadata(args: argparse.Namespace, paths: PipelinePaths) -> list[str
     if paths.frozen_gt_metadata.exists() and args.gt_hard_resolver_metadata is None:
         _validate_frozen_metadata(paths)
         return [f"validated freshly generated frozen metadata: {paths.frozen_gt_metadata}"]
-    if args.gt_hard_resolver_metadata is not None:
-        source = Path(args.gt_hard_resolver_metadata)
-        _copy_gt_hard_resolver_metadata(source, paths)
-        return [f"copied and validated frozen metadata from {source}"]
     raise FileNotFoundError(
         "missing generated GT-hard resolver metadata sidecar; run the "
         "build_gt_hard_resolver_metadata stage or pass --gt-hard-resolver-metadata. "
@@ -1440,7 +1457,7 @@ def _execute_stage(stage: str, args: argparse.Namespace, paths: PipelinePaths) -
     if (
         args.resume
         and _stage_complete(stage, args, paths)
-        and not (stage == "config_update" and args.write_config)
+        and _should_skip_completed_stage(stage, args)
     ):
         validated = _validate_stage_outputs(stage, paths, args)
         return StageResult(
@@ -1477,6 +1494,15 @@ def _execute_stage(stage: str, args: argparse.Namespace, paths: PipelinePaths) -
                 _run_command(command)
             _write_dataset_manifest_sentinel(args, paths)
         elif stage == "build_hard_source_manifest":
+            if args.hard_source_manifest is not None:
+                return StageResult(
+                    stage,
+                    "skipped",
+                    outputs=outputs,
+                    validated_outputs=[str(_effective_hard_source_manifest(args, paths))],
+                    contract=contract.to_json(),
+                    notes=["using caller-supplied hard-source manifest"],
+                )
             command = _command_hard_source_manifest(args, paths)
             if args.dry_run:
                 return StageResult(
