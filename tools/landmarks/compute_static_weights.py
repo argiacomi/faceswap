@@ -8,6 +8,7 @@ when the unified promotion flow fully replaces standalone static fitting.
 from __future__ import annotations
 
 import argparse
+import json
 import typing as T
 from pathlib import Path
 
@@ -115,6 +116,10 @@ def save_weight_artifact(
     continue to work; the additional ``generator`` block is optional metadata
     new readers (#71 promoted artifacts) can consume.
     """
+    # Do not use the shared sorted JSON writer here. Static weight readers
+    # preserve JSON object insertion order, and existing tests/API consumers
+    # expect the fitted model order (MODEL_NAMES by default) to survive the
+    # save/load round trip.
     payload = {
         "schema": "2d_68",
         "weights": normalize_static_weights(result.weights),
@@ -123,7 +128,9 @@ def save_weight_artifact(
             "diagnostics": result.diagnostics,
         },
     }
-    write_json(Path(output), payload)
+    path = Path(output)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
 def _parse_generator_params(raw: str | None) -> dict[str, T.Any]:
