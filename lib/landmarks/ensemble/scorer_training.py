@@ -29,6 +29,7 @@ from lib.landmarks.ensemble.scorer_target_config import (
     DEFAULT_FAILURE_COST_PENALTY,
     DEFAULT_LARGE_COST_THRESHOLD,
     DEFAULT_REGRET_NORMALIZER,
+    MODEL_TYPE_LIGHTGBM_LAMBDARANK,
     MODEL_TYPE_LINEAR_REGRESSION,
     MODEL_TYPE_LOGISTIC_REGRESSION,
     REGRESSION_TARGETS,
@@ -53,10 +54,12 @@ from lib.landmarks.pipeline_conventions import (
 )
 
 SCORER_ARTIFACT = "runtime_resolver_scorer.json"
+SCORER_V2_ARTIFACT = "runtime_resolver_scorer_v2.json"
 TRAINING_ROWS_CSV = "runtime_resolver_scorer_training_rows.csv"
 EVAL_ROWS_CSV = "runtime_resolver_scorer_eval_rows.csv"
 TRAINING_CANDIDATE_TABLE_CSV = "candidate_table.csv"
 TRAINING_METRICS_JSON = "runtime_resolver_scorer_training_metrics.json"
+TRAINING_V2_METRICS_JSON = "runtime_resolver_scorer_v2_training_metrics.json"
 
 
 def split_tagged_rows(
@@ -333,6 +336,215 @@ def scorer_row_metrics(
     }
 
 
+def _sample_group_key(row: CandidateQualityRow, source: str) -> tuple[str, str, str, str]:
+    return source, row.dataset, row.condition, row.sample_id
+
+
+def _lambdarank_label(row: CandidateQualityRow) -> int:
+    """Return an integer relevance label where higher means better candidate quality."""
+    if row.is_oracle:
+        return 30
+    clipped_cost = min(max(float(row.selection_cost), 0.0), 3.0)
+    return max(0, min(29, int(round((1.0 - clipped_cost / 3.0) * 29.0))))
+
+
+def _lambdarank_weight(row: CandidateQualityRow, source: str) -> float:
+    """Return documented v2 item weight emphasizing failures and hard runtime buckets."""
+    hard_bucket = row.runtime_bucket not in {"", "frontal", "intermediate", "no_pose"}
+    return (
+        1.0
+        + (2.0 if row.failure_label else 0.0)
+        + (0.5 if hard_bucket else 0.0)
+        + (0.25 if source == SOURCE_PRODUCTION_VALIDATED else 0.0)
+    )
+
+
+def _grouped_rows(rows: T.Sequence[TaggedRow]) -> tuple[list[TaggedRow], list[int]]:
+    groups: dict[tuple[str, str, str, str], list[TaggedRow]] = {}
+    for tagged in rows:
+        row, source = tagged
+        groups.setdefault(_sample_group_key(row, source), []).append(tagged)
+    ordered: list[TaggedRow] = []
+    group_sizes: list[int] = []
+    for key in sorted(groups):
+        group = sorted(groups[key], key=lambda tagged: tagged[0].candidate_name)
+        ordered.extend(group)
+        group_sizes.append(len(group))
+    return ordered, group_sizes
+
+
+def _feature_importance_map(
+    features: T.Sequence[str],
+    importances: T.Sequence[float],
+) -> dict[str, float]:
+    return {
+        feature: float(value)
+        for feature, value in sorted(
+            zip(features, importances, strict=True),
+            key=lambda item: abs(float(item[1])),
+            reverse=True,
+        )
+    }
+
+
+def _write_feature_importance_csv(path: Path, importances: T.Mapping[str, float]) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=["feature", "importance"])
+        writer.writeheader()
+        for feature, importance in importances.items():
+            writer.writerow({"feature": feature, "importance": importance})
+    return path
+
+
+def train_runtime_resolver_scorer_v2(
+    *,
+    gt_manifest: Path | None,
+    gt_cache_dir: Path | None,
+    production_manifest: Path | None,
+    production_cache_dir: Path | None,
+    weights_path: Path,
+    candidates: T.Sequence[str],
+    output_dir: Path,
+    gt_hard_resolver_metadata: Path | None = None,
+    failure_threshold: float = DEFAULT_FAILURE_THRESHOLD,
+    high_gap_threshold: float = DEFAULT_HIGH_GAP_THRESHOLD,
+    outlier_threshold: float = DEFAULT_OUTLIER_THRESHOLD,
+    eval_fraction: float = 0.20,
+    split_seed: int = 42,
+    allow_image_backfill: bool = False,
+    learning_rate: float = 0.05,
+    iterations: int = 150,
+    num_leaves: int = 31,
+) -> dict[str, T.Any]:
+    """Train learned_quality_v2 with LightGBM LambdaRank grouped by sample."""
+    try:
+        import lightgbm as lgb
+    except ModuleNotFoundError as err:  # pragma: no cover - depends on install env
+        raise RuntimeError(
+            "learned_quality_v2 training requires lightgbm; install project requirements first"
+        ) from err
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    contexts = load_scorer_contexts(
+        gt_manifest=gt_manifest,
+        gt_cache_dir=gt_cache_dir,
+        production_manifest=production_manifest,
+        production_cache_dir=production_cache_dir,
+        weights_path=weights_path,
+        candidates=candidates,
+        failure_threshold=failure_threshold,
+        outlier_threshold=outlier_threshold,
+        allow_image_backfill=allow_image_backfill,
+        gt_hard_resolver_metadata=gt_hard_resolver_metadata,
+        require_gt_hard_metadata=True,
+    )
+    tagged_rows = tagged_quality_rows(contexts, high_gap_threshold=high_gap_threshold)
+    if not tagged_rows:
+        raise ValueError("no scorer training rows were loaded")
+    train_tagged_rows, eval_tagged_rows = split_tagged_rows(
+        tagged_rows,
+        eval_fraction=eval_fraction,
+        seed=split_seed,
+    )
+    grouped_train, train_group_sizes = _grouped_rows(train_tagged_rows)
+    train_rows = untag_quality_rows(grouped_train)
+    features = feature_order(train_rows)
+    x = feature_matrix([row.feature_values for row in train_rows], features)
+    y = np.asarray([_lambdarank_label(row) for row in train_rows], dtype="int32")
+    item_weights = np.asarray(
+        [_lambdarank_weight(row, source) for row, source in grouped_train],
+        dtype="float64",
+    )
+    ranker = lgb.LGBMRanker(
+        objective="lambdarank",
+        n_estimators=iterations,
+        learning_rate=learning_rate,
+        num_leaves=num_leaves,
+        random_state=split_seed,
+        deterministic=True,
+        verbosity=-1,
+    )
+    ranker.fit(x, y, group=train_group_sizes, sample_weight=item_weights)
+    booster = ranker.booster_
+    importances = _feature_importance_map(
+        features,
+        booster.feature_importance(importance_type="gain"),
+    )
+    artifact = {
+        "artifact_schema_version": 2,
+        "version": "learned_quality_v2",
+        "scorer_version": "learned_quality_v2",
+        "model_type": MODEL_TYPE_LIGHTGBM_LAMBDARANK,
+        "target": TARGET_SELECTION_COST,
+        "objective": "lambdarank_inverse_regret",
+        "training_mode": "grouped_lambdarank",
+        "selection_target": "inverse_selection_cost_rank",
+        "runtime_policy": "learned_quality_v2",
+        "score_semantics": SCORE_SEMANTICS_PREDICTED_COST,
+        "higher_is_better": False,
+        "failure_threshold": failure_threshold,
+        "features": list(features),
+        "model_data": booster.model_to_string(),
+        "training_data_counts": {
+            "row_count": len(train_rows),
+            "sample_group_count": len(train_group_sizes),
+            "eval_row_count": len(eval_tagged_rows),
+            "candidate_count": len(candidates),
+        },
+        "split_ids": {
+            "seed": split_seed,
+            "eval_fraction": eval_fraction,
+            "train_group_count": len(train_group_sizes),
+        },
+        "feature_importances": importances,
+        "calibration": {"type": "none", "params": {}},
+        "sample_weighting": {
+            "base": 1.0,
+            "candidate_failure_bonus": 2.0,
+            "hard_pose_bucket_bonus": 0.5,
+            "production_validated_bonus": 0.25,
+        },
+        "lightgbm_params": {
+            "objective": "lambdarank",
+            "n_estimators": iterations,
+            "learning_rate": learning_rate,
+            "num_leaves": num_leaves,
+            "random_state": split_seed,
+            "deterministic": True,
+        },
+    }
+    artifact_path = write_json(output_dir / SCORER_V2_ARTIFACT, artifact)
+    rows_path = write_tagged_rows_csv(grouped_train, output_dir / TRAINING_ROWS_CSV)
+    eval_rows_path = write_tagged_rows_csv(eval_tagged_rows, output_dir / EVAL_ROWS_CSV)
+    importances_path = _write_feature_importance_csv(
+        output_dir / "runtime_resolver_scorer_v2_feature_importances.csv",
+        importances,
+    )
+    metrics: dict[str, T.Any] = {
+        "artifact": str(artifact_path),
+        "training_rows": str(rows_path),
+        "eval_rows": str(eval_rows_path),
+        "feature_importances": str(importances_path),
+        "candidate_count": len(candidates),
+        "candidates": list(candidates),
+        "feature_count": len(features),
+        "target": TARGET_SELECTION_COST,
+        "model_type": MODEL_TYPE_LIGHTGBM_LAMBDARANK,
+        "score_semantics": SCORE_SEMANTICS_PREDICTED_COST,
+        "higher_is_better": False,
+        "split_seed": split_seed,
+        "eval_fraction": eval_fraction,
+        "training_data_counts": artifact["training_data_counts"],
+        "split_ids": artifact["split_ids"],
+        "sample_weighting": artifact["sample_weighting"],
+        "lightgbm_params": artifact["lightgbm_params"],
+    }
+    metrics_path = write_json(output_dir / TRAINING_V2_METRICS_JSON, metrics)
+    metrics["metrics_path"] = str(metrics_path)
+    return metrics
+
+
 def train_runtime_resolver_scorer(
     *,
     gt_manifest: Path | None,
@@ -483,8 +695,10 @@ def train_runtime_resolver_scorer(
 
 __all__ = [
     "SCORER_ARTIFACT",
+    "SCORER_V2_ARTIFACT",
     "TRAINING_CANDIDATE_TABLE_CSV",
     "TRAINING_METRICS_JSON",
+    "TRAINING_V2_METRICS_JSON",
     "TRAINING_ROWS_CSV",
     "EVAL_ROWS_CSV",
     "feature_order",
@@ -495,5 +709,6 @@ __all__ = [
     "split_tagged_rows",
     "target_distribution_stats",
     "train_runtime_resolver_scorer",
+    "train_runtime_resolver_scorer_v2",
     "write_tagged_rows_csv",
 ]

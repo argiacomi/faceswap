@@ -468,6 +468,27 @@ class Ensemble(ExtractPlugin):
             return True
         return bool(np.allclose(np.asarray(matrix, dtype="float32"), np.eye(3, dtype="float32")))
 
+    def _matrix_from_detector_bbox(
+        self,
+        detector_bbox: tuple[float, float, float, float] | None,
+    ) -> np.ndarray | None:
+        """Rebuild the shared square crop matrix from the detector bbox."""
+        if detector_bbox is None:
+            return None
+        left, top, right, bottom = detector_bbox
+        width = right - left
+        height = bottom - top
+        if width <= 0.0 or height <= 0.0:
+            return None
+        center_x = round((left + right) * 0.5)
+        center_y = round((top + bottom) * 0.5)
+        half = round(max(width, height) * self._crop_scale * 0.5)
+        roi = np.asarray(
+            [center_x - half, center_y - half, center_x + half, center_y + half],
+            dtype="float32",
+        )
+        return roi_to_matrix(roi)
+
     def _frame_points_for_resolver(
         self,
         *,
@@ -485,6 +506,17 @@ class Ensemble(ExtractPlugin):
             if not self._looks_normalized_against_bbox(converted, detector_bbox):
                 logger.debug(
                     "[Ensemble] converted normalized resolver candidate to frame space: "
+                    "adapter=%s bbox=%s",
+                    adapter_name,
+                    detector_bbox,
+                )
+                return converted.astype("float32", copy=False)
+        fallback_matrix = self._matrix_from_detector_bbox(detector_bbox)
+        if fallback_matrix is not None:
+            converted = normalized_crop_to_frame(frame_points, fallback_matrix)
+            if not self._looks_normalized_against_bbox(converted, detector_bbox):
+                logger.debug(
+                    "[Ensemble] reconstructed crop matrix for normalized resolver candidate: "
                     "adapter=%s bbox=%s",
                     adapter_name,
                     detector_bbox,

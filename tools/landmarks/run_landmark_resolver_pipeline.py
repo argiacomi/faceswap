@@ -66,6 +66,7 @@ STAGES: tuple[str, ...] = (
     "freeze_resolver_metadata",
     "binary_scorer_training",
     "continuous_scorer_training",
+    "v2_scorer_training",
     "scorer_evaluation",
     "production_promotion_check",
     "artifact_export",
@@ -151,6 +152,8 @@ class PipelinePaths:
     continuous_scorer_train_dir: Path = field(init=False)
     continuous_scorer_eval_rows: Path = field(init=False)
     scorer_artifact: Path = field(init=False)
+    v2_scorer_train_dir: Path = field(init=False)
+    v2_scorer_artifact: Path = field(init=False)
     scorer_eval_dir: Path = field(init=False)
     scorer_report: Path = field(init=False)
     artifacts_dir: Path = field(init=False)
@@ -254,6 +257,16 @@ class PipelinePaths:
             self,
             "scorer_artifact",
             self.continuous_scorer_train_dir / "runtime_resolver_scorer.json",
+        )
+        object.__setattr__(
+            self,
+            "v2_scorer_train_dir",
+            self.scorer_train_dir / "v2_lambdarank",
+        )
+        object.__setattr__(
+            self,
+            "v2_scorer_artifact",
+            self.v2_scorer_train_dir / "runtime_resolver_scorer_v2.json",
         )
         object.__setattr__(self, "scorer_eval_dir", self.output_root / "scorer_evaluation")
         object.__setattr__(self, "scorer_report", self.scorer_eval_dir / SCORER_POLICY_REPORT_JSON)
@@ -728,6 +741,37 @@ def _command_scorer_training(
     return _append_extra(argv, args.scorer_train_arg)
 
 
+def _command_v2_scorer_training(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
+    argv = [
+        args.python_executable,
+        _script("train_runtime_resolver_scorer.py"),
+        "--gt-manifest",
+        str(paths.hard_manifest),
+        "--gt-cache-dir",
+        str(paths.run_cache),
+        "--production-manifest",
+        str(paths.production_manifest),
+        "--production-cache-dir",
+        str(paths.production_cache),
+        "--weights",
+        str(paths.best_weights),
+        "--candidates",
+        args.candidates,
+        "--output-dir",
+        str(paths.v2_scorer_train_dir),
+        "--training-mode",
+        "learned_quality_v2",
+        "--target",
+        TARGET_SELECTION_COST,
+        "--split-seed",
+        str(args.split_seed),
+    ]
+    if args.allow_image_backfill:
+        argv.append("--allow-image-backfill")
+    argv.extend(["--gt-hard-resolver-metadata", str(paths.frozen_gt_metadata)])
+    return _append_extra(argv, args.scorer_train_arg)
+
+
 def _command_scorer_eval(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
     argv = [
         args.python_executable,
@@ -746,6 +790,8 @@ def _command_scorer_eval(args: argparse.Namespace, paths: PipelinePaths) -> list
         str(paths.scorer_artifact),
         "--binary-scorer",
         str(paths.binary_scorer_artifact),
+        "--v2-scorer",
+        str(paths.v2_scorer_artifact),
         "--eval-split",
         str(paths.continuous_scorer_eval_rows),
         "--candidates",
@@ -794,6 +840,7 @@ def _outputs_for(stage: str, paths: PipelinePaths) -> list[Path]:
         "freeze_resolver_metadata": [paths.frozen_gt_metadata],
         "binary_scorer_training": [paths.binary_scorer_artifact],
         "continuous_scorer_training": [paths.scorer_artifact, paths.continuous_scorer_eval_rows],
+        "v2_scorer_training": [paths.v2_scorer_artifact],
         "scorer_evaluation": [paths.scorer_report],
         "production_promotion_check": [paths.scorer_report],
         "artifact_export": [
@@ -893,6 +940,16 @@ def _required_inputs_for(stage: str, args: argparse.Namespace, paths: PipelinePa
             paths.best_weights,
             paths.frozen_gt_metadata,
         ],
+        "v2_scorer_training": [
+            paths.hard_manifest,
+            paths.run_cache,
+            paths.hard_source_cache_sentinel,
+            paths.production_manifest,
+            paths.production_cache,
+            paths.production_cache_sentinel,
+            paths.best_weights,
+            paths.frozen_gt_metadata,
+        ],
         "scorer_evaluation": [
             paths.hard_manifest,
             paths.run_cache,
@@ -903,6 +960,7 @@ def _required_inputs_for(stage: str, args: argparse.Namespace, paths: PipelinePa
             paths.best_weights,
             paths.scorer_artifact,
             paths.binary_scorer_artifact,
+            paths.v2_scorer_artifact,
             paths.continuous_scorer_eval_rows,
             paths.frozen_gt_metadata,
         ],
@@ -935,6 +993,7 @@ def _contract_for(stage: str, args: argparse.Namespace, paths: PipelinePaths) ->
         "freeze_resolver_metadata": "validates the caller-supplied or freshly generated frozen GT-hard resolver metadata sidecar; never derives runtime metadata from a plain manifest",
         "binary_scorer_training": "writes v1 binary scorer artifacts; --resume skips when runtime_resolver_scorer.json exists",
         "continuous_scorer_training": "writes v1.1 continuous scorer artifacts; --resume skips when runtime_resolver_scorer.json and eval rows exist",
+        "v2_scorer_training": "writes learned_quality_v2 LightGBM LambdaRank scorer artifacts; --resume skips when runtime_resolver_scorer_v2.json exists",
         "scorer_evaluation": "writes scorer_evaluation reports; --resume skips when scorer_policy_report.json exists",
         "production_promotion_check": "reads scorer report only; no recompute; requires promotion_status/status pass",
         "artifact_export": "copies final artifacts into artifacts/; --resume skips when artifacts_manifest.json exists",
@@ -966,6 +1025,7 @@ def _contract_for(stage: str, args: argparse.Namespace, paths: PipelinePaths) ->
         "continuous_scorer_training": [
             "v1.1 runtime_resolver_scorer.json and held-out eval rows exist"
         ],
+        "v2_scorer_training": ["learned_quality_v2 runtime_resolver_scorer_v2.json exists"],
         "scorer_evaluation": ["scorer_policy_report.json exists"],
         "production_promotion_check": ["scorer report promotion_status/status is pass"],
         "artifact_export": ["artifacts_manifest.json exists"],
@@ -1024,8 +1084,7 @@ def _production_resolver_metadata_sentinel_matches(
         payload.get("manifest") == str(paths.production_manifest)
         and payload.get("manifest_sha256") == _sha256_file(paths.production_manifest)
         and payload.get("cache_sentinel") == str(paths.production_cache_sentinel)
-        and payload.get("cache_sentinel_sha256")
-        == _sha256_file(paths.production_cache_sentinel)
+        and payload.get("cache_sentinel_sha256") == _sha256_file(paths.production_cache_sentinel)
         and payload.get("weights") == str(paths.run_static_weights)
         and payload.get("weights_sha256") == _sha256_file(paths.run_static_weights)
         and payload.get("candidates") == str(args.candidates)
@@ -1107,9 +1166,8 @@ def _stage_forced(stage: str, args: argparse.Namespace) -> bool:
     if overwrite_from is not None and STAGES.index(stage) >= STAGES.index(overwrite_from):
         return True
     force_downstream_of = getattr(args, "force_downstream_of", None)
-    return (
-        force_downstream_of is not None
-        and STAGES.index(stage) > STAGES.index(force_downstream_of)
+    return force_downstream_of is not None and STAGES.index(stage) > STAGES.index(
+        force_downstream_of
     )
 
 
@@ -1872,6 +1930,13 @@ def _execute_stage(stage: str, args: argparse.Namespace, paths: PipelinePaths) -
                 output_dir=paths.continuous_scorer_train_dir,
                 target=args.scorer_target,
             )
+            if args.dry_run:
+                return StageResult(
+                    stage, "planned", command=command, outputs=outputs, contract=contract.to_json()
+                )
+            _run_command(command)
+        elif stage == "v2_scorer_training":
+            command = _command_v2_scorer_training(args, paths)
             if args.dry_run:
                 return StageResult(
                     stage, "planned", command=command, outputs=outputs, contract=contract.to_json()

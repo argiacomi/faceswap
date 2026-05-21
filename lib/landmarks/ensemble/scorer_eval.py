@@ -414,6 +414,7 @@ def evaluate_runtime_resolver_scorer(
     weights_path: Path,
     scorer_path: Path,
     binary_scorer_path: Path | None = None,
+    v2_scorer_path: Path | None = None,
     candidates: T.Sequence[str],
     output_dir: Path,
     eval_split: Path | None = None,
@@ -442,6 +443,9 @@ def evaluate_runtime_resolver_scorer(
     )
     if binary_scorer is not None:
         assert_lower_score_is_better(binary_scorer)
+    v2_scorer = None if v2_scorer_path is None else load_runtime_resolver_scorer(v2_scorer_path)
+    if v2_scorer is not None:
+        assert_lower_score_is_better(v2_scorer)
     contexts = load_scorer_contexts(
         gt_manifest=gt_manifest,
         gt_cache_dir=gt_cache_dir,
@@ -470,6 +474,7 @@ def evaluate_runtime_resolver_scorer(
     rows: list[dict[str, T.Any]] = []
     scorer_choices: dict[str, str] = {}
     binary_scorer_choices: dict[str, str] = {}
+    v2_scorer_choices: dict[str, str] = {}
     current_choices: dict[str, str] = {}
     oracle_choices: dict[str, str] = {}
     fallback_impacts: list[dict[str, T.Any]] = []
@@ -496,6 +501,18 @@ def evaluate_runtime_resolver_scorer(
                 safe_fallback_min_delta=safe_fallback_min_delta,
             )[0]
             binary_scorer_choices[context.sample_id] = binary_chosen
+        if v2_scorer is not None:
+            v2_score_by_candidate = {
+                row.candidate_name: v2_scorer.score_feature_map(row.feature_values)
+                for row in context_rows
+            }
+            v2_chosen = choose_scorer(
+                context,
+                v2_score_by_candidate,
+                risk_floor_for_safe_fallback=risk_floor_for_safe_fallback,
+                safe_fallback_min_delta=safe_fallback_min_delta,
+            )[0]
+            v2_scorer_choices[context.sample_id] = v2_chosen
         (
             chosen,
             fallback_used,
@@ -590,6 +607,8 @@ def evaluate_runtime_resolver_scorer(
         extra_scorer_choices["current_binary_logistic_scorer"] = binary_scorer_choices
     elif primary_scorer_policy == "current_binary_logistic_scorer":
         binary_scorer_choices = dict(scorer_choices)
+    if v2_scorer is not None:
+        extra_scorer_choices["learned_quality_v2"] = v2_scorer_choices
     current_summary = policy_summary(contexts, current_choices)
     oracle_summary = policy_summary(contexts, oracle_choices)
     production_contexts = [
@@ -699,6 +718,13 @@ def evaluate_runtime_resolver_scorer(
     failed_gates = (
         production_failed_gates if promotion_scope == "production" else universal_failed_gates
     )
+    v2_summary = policy_summary(contexts, v2_scorer_choices) if v2_scorer is not None else None
+    v2_failed_gates: list[str] = []
+    if v2_summary is not None:
+        if v2_summary["mean_nme"] > scorer_summary["mean_nme"] + epsilon_mean_nme:
+            v2_failed_gates.append("v2_mean_nme_regresses_vs_promoted_scorer")
+        if v2_summary["failure_rate"] > scorer_summary["failure_rate"] + epsilon_failure_rate:
+            v2_failed_gates.append("v2_failure_rate_regresses_vs_promoted_scorer")
 
     report: dict[str, T.Any] = {
         "status": "pass" if not failed_gates else "fail",
@@ -723,12 +749,14 @@ def evaluate_runtime_resolver_scorer(
         "candidates": list(candidates),
         "scorer_path": str(scorer_path),
         "binary_scorer_path": "" if binary_scorer_path is None else str(binary_scorer_path),
+        "v2_scorer_path": "" if v2_scorer_path is None else str(v2_scorer_path),
         "scorer_comparison": {
             "context_count": len(contexts),
             "candidate_count": len(candidates),
             "uses_same_contexts": True,
             "uses_same_candidates": True,
             "binary_scorer_present": binary_scorer is not None,
+            "v2_scorer_present": v2_scorer is not None,
         },
         "primary_scorer_policy": primary_scorer_policy,
         "scorer_model_type": scorer.model_type,
@@ -742,6 +770,11 @@ def evaluate_runtime_resolver_scorer(
         primary_scorer_policy: scorer_summary,
         RUNTIME_POLICY_REPORT_LABEL: current_summary,
         "oracle": oracle_summary,
+        "learned_quality_v2": v2_summary or {},
+        "learned_quality_v2_promotion_status": (
+            "" if v2_summary is None else ("pass" if not v2_failed_gates else "fail")
+        ),
+        "learned_quality_v2_failed_gates": v2_failed_gates,
         "fallback_count": fallback_count,
         "safe_fallback_count": safe_fallback_count,
         "hard_slice_fallback_count": hard_slice_fallback_count,

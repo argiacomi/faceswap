@@ -130,20 +130,23 @@ resolver_policy = ConfigItem(
     info=(
         "Production runtime resolver policy. ``roll_aware_veto`` applies conservative "
         "roll/geometry safety checks and then chooses from configured candidate priority. "
-        "``learned_quality_v1`` scores geometry-valid candidates with "
-        "``resolver_scorer_path`` and chooses the lowest predicted risk."
+        "``learned_quality_v1``/``learned_quality_v1_1``/``learned_quality_v2`` "
+        "score geometry-valid candidates with ``resolver_scorer_path`` and choose "
+        "the lowest predicted risk/cost."
     ),
-    choices=["roll_aware_veto", "learned_quality_v1"],
+    choices=[
+        "roll_aware_veto",
+        "learned_quality_v1",
+        "learned_quality_v1_1",
+        "learned_quality_v2",
+    ],
 )
 
 resolver_scorer_path = ConfigItem(
     datatype=str,
     default="",
     group="landmark_ensemble",
-    info=(
-        "Path to a ``runtime_resolver_scorer.json`` artifact used when "
-        "``resolver_policy`` is ``learned_quality_v1``."
-    ),
+    info=("Path to a runtime resolver scorer artifact used by learned-quality resolver policies."),
 )
 
 use_alignment_resolver = ConfigItem(

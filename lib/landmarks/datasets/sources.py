@@ -476,16 +476,19 @@ def _multipart_part_has_payload(root: Path, part: MultiSourcePart) -> bool:
     """Return whether an extracted multipart source contains payload for ``part``."""
     name = part.name.lower()
     if "annotation" in name:
-        return any(path.is_file() and path.suffix.lower() in ANNOTATION_SUFFIXES for path in root.rglob("*"))
+        return any(
+            path.is_file() and path.suffix.lower() in ANNOTATION_SUFFIXES
+            for path in root.rglob("*")
+        )
     if "image" in name:
-        return any(path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES for path in root.rglob("*"))
+        return any(
+            path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES for path in root.rglob("*")
+        )
     token = name.replace("_", "-")
     return any(token in path.name.lower().replace("_", "-") for path in root.rglob("*"))
 
 
-def _multipart_extracted_source_is_complete(
-    extracted: Path, spec: MultiDatasetSourceSpec
-) -> bool:
+def _multipart_extracted_source_is_complete(extracted: Path, spec: MultiDatasetSourceSpec) -> bool:
     """Return whether an extracted multipart source has payload for every part."""
     return _extracted_cache_has_content(extracted) and all(
         _multipart_part_has_payload(extracted, part) for part in spec.parts

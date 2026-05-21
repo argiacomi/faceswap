@@ -288,7 +288,29 @@ def test_ensemble_converts_normalized_resolver_points_before_validation() -> Non
     np.testing.assert_allclose(result, normalized_crop_to_frame(normalized, matrix))
 
 
-def test_ensemble_rejects_normalized_resolver_points_without_frame_transform() -> None:
+def test_ensemble_reconstructs_crop_matrix_from_bbox_for_normalized_resolver_points() -> None:
+    """The resolver handoff repairs normalized candidates when only the bbox survived."""
+    plugin = Ensemble(adapters=[], crop_scale=1.0)
+    normalized = np.column_stack([np.linspace(0.2, 0.8, 68), np.linspace(0.3, 0.9, 68)]).astype(
+        "float32"
+    )
+    detector_bbox = (187.0, 143.0, 752.0, 884.0)
+
+    result = plugin._frame_points_for_resolver(
+        adapter_name="hrnet",
+        points=normalized,
+        detector_bbox=detector_bbox,
+        crop_to_frame_matrix=np.eye(3, dtype="float32"),
+    )
+
+    expected = normalized_crop_to_frame(
+        normalized,
+        plugin._matrix_from_detector_bbox(detector_bbox),
+    )
+    np.testing.assert_allclose(result, expected)
+
+
+def test_ensemble_rejects_normalized_resolver_points_without_frame_transform_or_bbox() -> None:
     """The resolver handoff fails fast when normalized points cannot be converted."""
     plugin = Ensemble(adapters=[], crop_scale=1.0)
     normalized = np.column_stack([np.linspace(0.2, 0.8, 68), np.linspace(0.3, 0.9, 68)]).astype(
@@ -299,8 +321,8 @@ def test_ensemble_rejects_normalized_resolver_points_without_frame_transform() -
         plugin._frame_points_for_resolver(
             adapter_name="hrnet",
             points=normalized,
-            detector_bbox=(187.0, 143.0, 752.0, 884.0),
-            crop_to_frame_matrix=np.eye(3, dtype="float32"),
+            detector_bbox=(187.0, 143.0, 187.0, 884.0),
+            crop_to_frame_matrix=None,
         )
 
 

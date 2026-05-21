@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import csv
 import json
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -25,6 +26,7 @@ from lib.landmarks.ensemble.scorer_target_config import (
     DEFAULT_COLLAPSE_COST_PENALTY,
     DEFAULT_FAILURE_COST_PENALTY,
     DEFAULT_REGRET_NORMALIZER,
+    MODEL_TYPE_LIGHTGBM_LAMBDARANK,
     MODEL_TYPE_LINEAR_REGRESSION,
     SCORE_SEMANTICS_PREDICTED_COST,
     SCORE_SEMANTICS_PREDICTED_RISK,
@@ -48,7 +50,11 @@ from tools.landmarks.production_promotion_gate import (
     ProductionGateConfig,
     run_production_promotion_gate,
 )
-from tools.landmarks.train_runtime_resolver_scorer import train_runtime_resolver_scorer
+from tools.landmarks.train_runtime_resolver_scorer import (
+    SCORER_V2_ARTIFACT,
+    train_runtime_resolver_scorer,
+    train_runtime_resolver_scorer_v2,
+)
 
 
 def _face(offset: float = 0.0) -> np.ndarray:
@@ -356,6 +362,86 @@ def test_selection_cost_regressor_artifact_ranks_lower_cost_features_first(
     assert scorer.score_semantics == SCORE_SEMANTICS_PREDICTED_COST
     assert scorer.higher_is_better is False
     assert low_cost_score < high_cost_score
+
+
+def test_train_runtime_resolver_scorer_v2_writes_lightgbm_ranker_artifact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeBooster:
+        def __init__(self, model_str: str = "fake-model", feature_count: int = 1) -> None:
+            self.model_str = model_str
+            self.feature_count = feature_count
+
+        def feature_importance(self, *, importance_type: str = "gain") -> np.ndarray:
+            assert importance_type == "gain"
+            return np.arange(self.feature_count, 0, -1, dtype="float64")
+
+        def model_to_string(self) -> str:
+            return self.model_str
+
+        def predict(self, matrix: np.ndarray) -> np.ndarray:
+            return np.asarray([float(row[0]) for row in matrix], dtype="float64")
+
+    class FakeRanker:
+        def __init__(self, **params: object) -> None:
+            self.params = params
+            self.booster_ = FakeBooster()
+
+        def fit(
+            self,
+            matrix: np.ndarray,
+            labels: np.ndarray,
+            *,
+            group: list[int],
+            sample_weight: np.ndarray,
+        ) -> FakeRanker:
+            assert matrix.shape[0] == labels.shape[0] == sample_weight.shape[0]
+            assert sum(group) == matrix.shape[0]
+            self.booster_ = FakeBooster(feature_count=matrix.shape[1])
+            return self
+
+    monkeypatch.setitem(
+        sys.modules,
+        "lightgbm",
+        SimpleNamespace(LGBMRanker=FakeRanker, Booster=FakeBooster),
+    )
+    manifest_path, cache_dir, weights_path = _write_fixture(tmp_path)
+    output_dir = tmp_path / "train_v2"
+
+    metrics = train_runtime_resolver_scorer_v2(
+        gt_manifest=None,
+        gt_cache_dir=None,
+        production_manifest=manifest_path,
+        production_cache_dir=cache_dir,
+        weights_path=weights_path,
+        candidates=("hrnet", "spiga", "static_weighted_downweight"),
+        output_dir=output_dir,
+        iterations=4,
+        eval_fraction=0.0,
+        split_seed=7,
+    )
+
+    artifact = json.loads((output_dir / SCORER_V2_ARTIFACT).read_text(encoding="utf-8"))
+    scorer = load_runtime_resolver_scorer(output_dir / SCORER_V2_ARTIFACT)
+    feature_map = {"candidate_name=hrnet": 1.0}
+
+    assert metrics["model_type"] == MODEL_TYPE_LIGHTGBM_LAMBDARANK
+    assert metrics["score_semantics"] == SCORE_SEMANTICS_PREDICTED_COST
+    assert artifact["model_type"] == MODEL_TYPE_LIGHTGBM_LAMBDARANK
+    assert artifact["version"] == "learned_quality_v2"
+    assert artifact["runtime_policy"] == "learned_quality_v2"
+    assert artifact["higher_is_better"] is False
+    assert artifact["training_data_counts"]["sample_group_count"] == 2
+    assert artifact["split_ids"]["seed"] == 7
+    assert artifact["feature_importances"]
+    assert (output_dir / "runtime_resolver_scorer_v2_feature_importances.csv").is_file()
+    assert scorer.model_type == MODEL_TYPE_LIGHTGBM_LAMBDARANK
+    assert scorer.score_semantics == SCORE_SEMANTICS_PREDICTED_COST
+    assert scorer.higher_is_better is False
+    assert scorer.score_feature_map(feature_map) == pytest.approx(
+        scorer.score_feature_map(feature_map)
+    )
 
 
 def test_evaluate_runtime_resolver_scorer_reports_policy(tmp_path: Path) -> None:

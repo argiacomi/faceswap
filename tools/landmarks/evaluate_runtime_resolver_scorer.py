@@ -48,6 +48,12 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--v2-scorer",
+        type=Path,
+        default=None,
+        help="Optional learned_quality_v2 LightGBM scorer artifact to compare.",
+    )
+    parser.add_argument(
         "--eval-split",
         type=Path,
         help="Optional scorer eval-row CSV; when supplied, policy metrics use only held-out rows.",
@@ -114,6 +120,7 @@ def main(argv: T.Sequence[str] | None = None) -> int:
         weights_path=args.weights,
         scorer_path=args.scorer,
         binary_scorer_path=args.binary_scorer,
+        v2_scorer_path=args.v2_scorer,
         candidates=candidates,
         output_dir=args.output_dir,
         eval_split=args.eval_split,

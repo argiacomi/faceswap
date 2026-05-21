@@ -28,6 +28,7 @@ from tools.landmarks.run_landmark_resolver_pipeline import (
     _command_production_resolver_metadata,
     _command_scorer_eval,
     _command_scorer_training,
+    _command_v2_scorer_training,
     _commands_dataset_build,
     _contract_for,
     _export_artifacts,
@@ -120,6 +121,7 @@ def _touch_pipeline_outputs(paths: PipelinePaths, *, promotion_status: str = "pa
         paths.binary_scorer_artifact,
         paths.scorer_artifact,
         paths.continuous_scorer_eval_rows,
+        paths.v2_scorer_artifact,
         paths.scorer_report,
         paths.exported_best_setup,
         paths.exported_best_weights,
@@ -686,6 +688,7 @@ def test_stage_contract_declares_required_files(tmp_path: Path) -> None:
     paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
 
     contract = _contract_for("continuous_scorer_training", args, paths)
+    v2_contract = _contract_for("v2_scorer_training", args, paths)
 
     assert str(paths.hard_manifest) in contract.required_files
     assert str(paths.hard_source_cache_sentinel) in contract.required_files
@@ -693,6 +696,11 @@ def test_stage_contract_declares_required_files(tmp_path: Path) -> None:
     assert str(paths.frozen_gt_metadata) in contract.required_files
     assert str(paths.scorer_artifact) in contract.outputs
     assert str(paths.continuous_scorer_eval_rows) in contract.outputs
+    assert str(paths.hard_manifest) in v2_contract.required_files
+    assert str(paths.hard_source_cache_sentinel) in v2_contract.required_files
+    assert str(paths.production_cache_sentinel) in v2_contract.required_files
+    assert str(paths.frozen_gt_metadata) in v2_contract.required_files
+    assert str(paths.v2_scorer_artifact) in v2_contract.outputs
 
 
 def test_scorer_train_and_eval_commands_allow_image_backfill_by_default(
@@ -704,10 +712,18 @@ def test_scorer_train_and_eval_commands_allow_image_backfill_by_default(
     train_command = _command_scorer_training(
         args, paths, output_dir=paths.continuous_scorer_train_dir, target=args.scorer_target
     )
+    v2_train_command = _command_v2_scorer_training(args, paths)
     eval_command = _command_scorer_eval(args, paths)
 
     assert "--allow-image-backfill" in train_command
+    assert "--allow-image-backfill" in v2_train_command
     assert "--allow-image-backfill" in eval_command
+    assert v2_train_command[v2_train_command.index("--training-mode") + 1] == "learned_quality_v2"
+    assert v2_train_command[v2_train_command.index("--target") + 1] == "selection_cost"
+    assert v2_train_command[v2_train_command.index("--output-dir") + 1] == str(
+        paths.v2_scorer_train_dir
+    )
+    assert eval_command[eval_command.index("--v2-scorer") + 1] == str(paths.v2_scorer_artifact)
 
 
 def test_scorer_train_and_eval_commands_allow_image_backfill_can_be_disabled(
@@ -719,9 +735,11 @@ def test_scorer_train_and_eval_commands_allow_image_backfill_can_be_disabled(
     train_command = _command_scorer_training(
         args, paths, output_dir=paths.continuous_scorer_train_dir, target=args.scorer_target
     )
+    v2_train_command = _command_v2_scorer_training(args, paths)
     eval_command = _command_scorer_eval(args, paths)
 
     assert "--allow-image-backfill" not in train_command
+    assert "--allow-image-backfill" not in v2_train_command
     assert "--allow-image-backfill" not in eval_command
 
 

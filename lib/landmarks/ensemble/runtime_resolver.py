@@ -1567,7 +1567,8 @@ def resolve_runtime(
     crop_to_frame_matrix: np.ndarray | None = None,
 ) -> RuntimeResolverResult:
     """Resolve one face using runtime candidate diagnostics and policy selection."""
-    if config.policy not in {"roll_aware_veto", "learned_quality_v1"}:
+    learned_policies = {"learned_quality_v1", "learned_quality_v1_1", "learned_quality_v2"}
+    if config.policy not in {"roll_aware_veto", *learned_policies}:
         raise RuntimeResolverError(f"unsupported runtime resolver policy {config.policy!r}")
     logger.debug(
         "[RuntimeResolver] resolving face policy=%s scorer=%s bbox=%s image_evidence=%s "
@@ -1703,9 +1704,9 @@ def resolve_runtime(
     hard_pose_plain_average_guard_used = False
     hard_pose_plain_average_rejected_candidate = ""
     scorer_metadata: dict[str, T.Any] = {}
-    if config.policy == "learned_quality_v1":
+    if config.policy in learned_policies:
         if not config.scorer_path:
-            raise RuntimeResolverError("learned_quality_v1 requires resolver_scorer_path")
+            raise RuntimeResolverError(f"{config.policy} requires resolver_scorer_path")
         scorer = load_runtime_resolver_scorer(config.scorer_path)
         model_available = {prediction.model: True for prediction in predictions}
         scores = score_runtime_candidates(
@@ -1803,14 +1804,18 @@ def resolve_runtime(
             fallback_reason,
             rejected_candidate,
         )
+        candidate_rank = [
+            name for name, _ in sorted(scores.items(), key=lambda item: (item[1], item[0]))
+        ]
         scorer_metadata = {
             "selected_candidate_score": scores.get(selected),
             "candidate_scores": dict(sorted(scores.items())),
-            "candidate_risk_rank": [
-                name for name, _ in sorted(scores.items(), key=lambda item: (item[1], item[0]))
-            ],
+            "candidate_rank": candidate_rank,
+            "candidate_risk_rank": candidate_rank,
             "scorer_path": str(config.scorer_path),
             "scorer_version": scorer.version,
+            "scorer_model_type": scorer.model_type,
+            "scorer_score_semantics": scorer.score_semantics,
             "scorer_safe_fallback_tie_breaker": SAFE_SINGLE_TIE_BREAKER,
             "scorer_safe_fallback_floor": config.risk_floor_for_safe_fallback,
             "scorer_safe_fallback_min_delta": config.safe_fallback_min_delta,
