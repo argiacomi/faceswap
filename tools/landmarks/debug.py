@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from lib.landmarks.schema import LandmarkPrediction
+from lib.landmarks.core.schema import LandmarkPrediction
 from lib.landmarks.visualization import make_debug_overlay
 
 

@@ -32,6 +32,7 @@ from pathlib import Path
 
 import numpy as np
 
+from lib.landmarks.core.schema import normalize_landmarks
 from lib.landmarks.datasets import (
     IMAGE_EXTS,
     _explicit_scenario_groups,
@@ -47,7 +48,6 @@ from lib.landmarks.datasets.sources import (
     is_archive,
     resolve_dataset_source,
 )
-from lib.landmarks.schema import normalize_landmarks
 
 logger = logging.getLogger(__name__)
 

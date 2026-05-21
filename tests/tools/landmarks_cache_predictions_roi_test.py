@@ -8,8 +8,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from lib.landmarks.eval.harness import LandmarkSample
-from lib.landmarks.schema import normalize_landmarks
+from lib.landmarks.core.schema import normalize_landmarks
+from lib.landmarks.evaluation.harness import LandmarkSample
 from tools.landmarks import cache_predictions
 
 

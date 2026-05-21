@@ -9,8 +9,9 @@ import sys
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
+from lib.gui import gui_config as cfg
 from lib.gui.qt_shell.main_window import MainWindow
-from lib.gui.qt_shell.theme import apply_theme
+from lib.gui.qt_shell.theme import QtTheme, apply_theme, theme_from_gui_config
 
 INTERRUPT_EXIT_CODE = 130
 
@@ -19,11 +20,13 @@ def main(argv: list[str] | None = None) -> int:
     """Run the Qt shell prototype."""
     args = sys.argv if argv is None else argv
     app = QApplication(args)
-    theme = apply_theme(app)
+    cfg.load_config(None)
+    theme = apply_theme(app, theme_from_gui_config(QtTheme.default()))
     window = MainWindow(theme=theme)
     install_signal_handlers(app, window)
     window.resize(1280, 760)
     window.show()
+    window.apply_gui_settings()
     try:
         return app.exec()
     except KeyboardInterrupt:

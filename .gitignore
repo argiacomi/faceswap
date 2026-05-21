@@ -18,6 +18,7 @@
 !/setup.py
 !/tools.py
 !/update_deps.py
+!sitecustomize.py
 !.pre-commit-config.yaml
 
 # Support files

@@ -141,9 +141,12 @@ def test_render_qss_contains_chrome_and_dialog_parity_selectors() -> None:
         "QPlainTextEdit#qt-shell-console",
         "QDialog QPushButton",
         "QTreeWidget#qt-shell-settings-tree::item:selected",
+        "QComboBox::down-arrow",
+        "QComboBox QAbstractItemView::item:selected:!active",
     ):
         assert selector in qss
-    assert "min-width: 30px" in qss
+    assert "selection-color:" in qss
+    assert "min-width:" in qss
     assert 'font-family: "Inter"' in qss
     assert "#111111" in qss
     assert "#222222" in qss

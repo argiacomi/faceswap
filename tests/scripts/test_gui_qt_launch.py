@@ -38,12 +38,21 @@ class _FakeApp:
 class _FakeWindow:
     """Small MainWindow stand-in."""
 
-    def __init__(self) -> None:
+    def __init__(self, *args, **kwargs) -> None:  # type:ignore[no-untyped-def]
         self.show_count = 0
+        self.apply_calls = 0
+        self.theme = kwargs.get("theme")
 
     def show(self) -> None:
         """Capture show calls."""
         self.show_count += 1
+
+    def apply_gui_settings(self) -> None:
+        """Capture gui-config apply calls."""
+        self.apply_calls += 1
+
+    def resize(self, *_args, **_kwargs) -> None:
+        """No-op resize matching MainWindow signature."""
 
 
 def test_qt_gui_resolves_no_exec_from_argument() -> None:

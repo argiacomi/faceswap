@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Tests for :mod:`lib.landmarks.fusion`."""
+"""Tests for :mod:`lib.landmarks.core.fusion`."""
 
 import numpy as np
 
-from lib.landmarks.fusion import (
+from lib.landmarks.core.fusion import (
     normalize_weight_matrix,
     plain_average,
     weighted_average,
     weights_from_sources,
 )
-from lib.landmarks.schema import LandmarkPrediction
+from lib.landmarks.core.schema import LandmarkPrediction
 
 
 def _points(value: float) -> np.ndarray:

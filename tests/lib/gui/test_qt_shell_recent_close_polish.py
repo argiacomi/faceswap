@@ -12,12 +12,22 @@ from lib.gui.services.project_session_service import PROJECT_KIND, TASK_KIND
 
 
 def _main_window(qtbot, monkeypatch, tmp_path: Path):  # type:ignore[no-untyped-def]
-    """Return a MainWindow with a deterministic schema."""
+    """Return a MainWindow with a deterministic schema and isolated caches."""
     monkeypatch.setenv("HOME", str(tmp_path))
 
     from lib.gui.qt_shell.command_schema import CommandSchema, CommandSpec, OptionSpec
     from lib.gui.qt_shell.main_window import MainWindow
 
+    monkeypatch.setattr(
+        MainWindow,
+        "_recent_cache",
+        staticmethod(lambda: tmp_path / ".qt_recent.json"),
+    )
+    monkeypatch.setattr(
+        MainWindow,
+        "_last_session_cache",
+        staticmethod(lambda: tmp_path / ".qt_last_session.json"),
+    )
     schema = CommandSchema(
         (
             CommandSpec("faceswap", "extract", (OptionSpec("Input", "-i"),)),

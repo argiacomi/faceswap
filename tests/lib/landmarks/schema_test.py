@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for :mod:`lib.landmarks.schema`."""
+"""Tests for :mod:`lib.landmarks.core.schema`."""
 
 import typing as T
 from pathlib import Path
@@ -9,7 +9,7 @@ import pytest
 import yaml
 
 from lib.align.constants import LANDMARK_PARTS, MAP_2D_68, LandmarkType
-from lib.landmarks.schema import (
+from lib.landmarks.core.schema import (
     LandmarkPrediction,
     canonicalize_schema,
     normalize_landmark_array,

@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 from lib.landmarks.datasets import (
+    _visibility_from_jaw_asymmetry,
     build_aflw2000_3d_manifest,
     build_cofw_manifest,
     build_directory_manifest,
@@ -141,6 +142,138 @@ def test_wflw_builder_disambiguates_multiple_faces_in_same_image(tmp_path: Path)
     assert sorted(sample_ids) == ["images/group#face-01", "images/group#face-02"]
     assert sorted(source_ids) == sorted(sample_ids)
     assert audit["duplicate_source_ids"] == []
+
+
+def _frontal_canonical_68() -> np.ndarray:
+    """Return synthetic 68-point landmarks where the nose sits between equally-spaced ear jaws."""
+    points = np.zeros((68, 2), dtype="float32")
+    points[0] = [0.0, 50.0]
+    points[16] = [100.0, 50.0]
+    points[30] = [50.0, 30.0]  # nose tip exactly at midpoint
+    return points
+
+
+def _profile_right_canonical_68() -> np.ndarray:
+    """Return a 68-point cloud where the subject's right side is compressed (head turned to subject's right)."""
+    points = np.zeros((68, 2), dtype="float32")
+    # Right jaw close to nose, left jaw far from nose.
+    points[0] = [40.0, 50.0]
+    points[16] = [100.0, 50.0]
+    points[30] = [50.0, 30.0]
+    return points
+
+
+def _profile_left_canonical_68() -> np.ndarray:
+    """Return a 68-point cloud where the subject's left side is compressed (head turned to subject's left)."""
+    points = np.zeros((68, 2), dtype="float32")
+    points[0] = [0.0, 50.0]
+    points[16] = [60.0, 50.0]
+    points[30] = [50.0, 30.0]
+    return points
+
+
+def test_visibility_from_jaw_asymmetry_returns_none_for_frontal() -> None:
+    """Frontal-ish faces (asymmetry below threshold) emit no visibility entry."""
+    assert _visibility_from_jaw_asymmetry(_frontal_canonical_68()) is None
+
+
+def test_visibility_from_jaw_asymmetry_masks_subject_right_when_compressed() -> None:
+    """Heavy yaw toward subject's right occludes the right-side jawline (indices 0..7)."""
+    visibility = _visibility_from_jaw_asymmetry(_profile_right_canonical_68())
+    assert visibility is not None
+    assert len(visibility) == 68
+    assert visibility[0:8] == [False] * 8
+    assert visibility[8] is True  # chin is visible
+    assert visibility[9:17] == [True] * 8
+
+
+def test_visibility_from_jaw_asymmetry_masks_subject_left_when_compressed() -> None:
+    """Heavy yaw toward subject's left occludes the left-side jawline (indices 9..16)."""
+    visibility = _visibility_from_jaw_asymmetry(_profile_left_canonical_68())
+    assert visibility is not None
+    assert visibility[0:9] == [True] * 9
+    assert visibility[9:17] == [False] * 8
+
+
+def test_visibility_from_jaw_asymmetry_returns_none_for_degenerate_nose_at_jaw() -> None:
+    """If the nose collapses onto a jaw extreme (total distance 0), no visibility is emitted."""
+    points = np.zeros((68, 2), dtype="float32")
+    points[0] = [10.0, 0.0]
+    points[16] = [10.0, 0.0]
+    points[30] = [10.0, 0.0]
+    assert _visibility_from_jaw_asymmetry(points) is None
+
+
+def test_visibility_from_jaw_asymmetry_rejects_wrong_shape() -> None:
+    """Non-68-point input returns ``None`` rather than crashing."""
+    assert _visibility_from_jaw_asymmetry(np.zeros((10, 2), dtype="float32")) is None
+
+
+def test_wflw_builder_emits_visibility_when_jawline_is_asymmetric(tmp_path: Path) -> None:
+    """When the WFLW landmark cloud produces an asymmetric canonical jawline, visibility is recorded."""
+    from lib.align.constants import MAP_2D_68, LandmarkType
+
+    # Build a 98-point cloud that lands the canonical jaw/nose triple in a
+    # clearly-profile layout (asymmetry ≈ 0.67), comfortably above the 0.50
+    # threshold. We touch only the three 98-indices that map to canonical
+    # jaw[0]/jaw[16]/nose[30] and leave the rest at innocuous values.
+    mapping = MAP_2D_68[LandmarkType.LM_2D_98]
+    points = np.zeros((98, 2), dtype="float32")
+    points[:, 0] = np.linspace(0, 97, 98, dtype="float32")
+    points[mapping[0]] = [40.0, 50.0]  # subject-right ear close to nose
+    points[mapping[16]] = [100.0, 50.0]  # subject-left ear far from nose
+    points[mapping[30]] = [50.0, 30.0]  # nose tip
+    row = (
+        " ".join(str(value) for value in points.reshape(-1))
+        + " 0 0 100 100"
+        + " 1 0 0 0 0 0"
+        + " images/sample.jpg\n"
+    )
+    annotation = tmp_path / "list_98pt_rect_attr_test.txt"
+    annotation.write_text(row, encoding="utf-8")
+
+    manifest_path = build_wflw_manifest(annotation, tmp_path / "out")
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    sample = payload["samples"][0]
+
+    visibility = sample.get("visibility") or sample["metadata"].get("visibility")
+    assert visibility is not None
+    assert len(visibility) == 68
+    assert sample["metadata"]["visibility_source"] == "wflw_jaw_asymmetry"
+    # Subject-right side compressed → indices 0..7 masked out (8 landmarks).
+    occluded_count = sum(1 for value in visibility if not value)
+    assert occluded_count == 8
+
+
+def test_wflw_builder_omits_visibility_for_symmetric_jawline(tmp_path: Path) -> None:
+    """A 98-point cloud whose canonical-68 jaw/nose layout is symmetric emits no visibility entry."""
+    from lib.align.constants import MAP_2D_68, LandmarkType
+
+    # The 98→68 mapping picks specific 98-indices for canonical jaw[0]/jaw[16]/nose[30].
+    # We build a 98-point cloud that's deliberately symmetric in canonical-68 space
+    # by anchoring those three indices around a common nose X, leaving the other
+    # 95 points at innocuous values that the asymmetry helper never inspects.
+    mapping = MAP_2D_68[LandmarkType.LM_2D_98]
+    points = np.zeros((98, 2), dtype="float32")
+    points[:, 0] = np.linspace(0, 97, 98, dtype="float32")  # arbitrary X for non-jaw
+    points[mapping[0]] = [0.0, 50.0]  # canonical jaw[0]
+    points[mapping[16]] = [100.0, 50.0]  # canonical jaw[16]
+    points[mapping[30]] = [50.0, 30.0]  # canonical nose tip — exactly centered
+    row = (
+        " ".join(str(value) for value in points.reshape(-1))
+        + " 0 0 100 100"
+        + " 0 0 0 0 0 0"
+        + " images/sample.jpg\n"
+    )
+    annotation = tmp_path / "list_98pt_rect_attr_test.txt"
+    annotation.write_text(row, encoding="utf-8")
+
+    manifest_path = build_wflw_manifest(annotation, tmp_path / "out")
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    sample = payload["samples"][0]
+
+    assert "visibility" not in sample
+    assert "visibility" not in sample["metadata"]
 
 
 def test_cofw_builder_preserves_occlusion_metadata(tmp_path: Path) -> None:

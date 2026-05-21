@@ -8,7 +8,7 @@ import typing as T
 from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
@@ -85,8 +85,9 @@ class _SettingsPage(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
         if helptext:
-            summary = QLabel(helptext)
+            summary = QLabel(self._format_helptext(helptext))
             summary.setObjectName("qt-shell-settings-summary")
+            summary.setTextFormat(Qt.RichText)
             summary.setWordWrap(True)
             summary.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
             layout.addWidget(summary)
@@ -103,6 +104,26 @@ class _SettingsPage(QWidget):
         """Store widget values in state."""
         for key, value in self._renderer.values().items():
             self._options[key].value = value
+
+    @staticmethod
+    def _format_helptext(helptext: str) -> str:
+        """Render helptext with the first non-blank line bolded (Tk parity)."""
+        from html import escape
+
+        lines = helptext.splitlines()
+        rendered: list[str] = []
+        bolded = False
+        for line in lines:
+            if not line.strip():
+                if rendered:
+                    rendered.append("")
+                continue
+            if not bolded:
+                rendered.append(f"<b>{escape(line)}</b>")
+                bolded = True
+            else:
+                rendered.append(escape(line))
+        return "<br>".join(rendered)
 
 
 class _LinksPage(QWidget):
@@ -170,6 +191,7 @@ class SettingsDialog(QDialog):
         self._tree = QTreeWidget()
         self._page_host = QWidget()
         self._page_layout = QVBoxLayout(self._page_host)
+        self._scroll: QScrollArea | None = None
         self._status = QLabel("Settings Ready")
         self._build_ui()
         self._select_initial_section(section)
@@ -259,25 +281,31 @@ class SettingsDialog(QDialog):
         self._page_layout.setContentsMargins(0, 0, 0, 0)
         self._page_layout.setSpacing(0)
         scroll.setWidget(self._page_host)
+        self._scroll = scroll
         layout.addWidget(scroll, 1)
         return detail
 
     def _page_actions(self) -> QWidget:
-        """Return the page header and preset buttons."""
+        """Return the page header and preset buttons (icon-only, Tk parity)."""
         widget = QWidget()
         layout = QHBoxLayout(widget)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
         self._page_header.setObjectName("qt-shell-settings-page-header")
         layout.addWidget(self._page_header, 1)
+        button_size = QSize(28, 28)
+        icon_size = QSize(self._theme.icon_size, self._theme.icon_size)
         for text, icon_name, callback in (
             ("Load Preset", "open", self._load_preset),
             ("Save Preset", "save", self._save_preset),
         ):
-            button = QPushButton(text)
+            button = QPushButton()
             button.setObjectName(f"qt-shell-settings-{text.lower().replace(' ', '-')}")
             button.setIcon(icon_for_action(self._theme, icon_name))
-            button.setToolTip(f"{text} for the selected settings page")
+            button.setIconSize(icon_size)
+            button.setFixedSize(button_size)
+            button.setFlat(True)
+            button.setToolTip(f"{text} for this plugin")
             button.clicked.connect(lambda _checked=False, func=callback: func())
             self._page_action_buttons[text] = button
             layout.addWidget(button)
@@ -312,22 +340,26 @@ class SettingsDialog(QDialog):
             button.setToolTip(tooltip)
             button.clicked.connect(lambda _checked=False, func=callback: func())
             self._footer_buttons[text] = button
-        layout.addWidget(self._footer_buttons["Save All"])
         layout.addWidget(self._footer_buttons["Reset All"])
+        layout.addWidget(self._footer_buttons["Save All"])
         layout.addStretch(1)
-        layout.addWidget(self._footer_buttons["Cancel"])
-        layout.addWidget(self._footer_buttons["Save"])
         layout.addWidget(self._footer_buttons["Reset"])
+        layout.addWidget(self._footer_buttons["Save"])
+        layout.addWidget(self._footer_buttons["Cancel"])
         return layout
 
     def _populate_tree(self) -> None:
         """Populate nested tree navigation."""
         self._tree.clear()
         roots: dict[str, QTreeWidgetItem] = {}
+        self._tree.setIconSize(QSize(self._theme.icon_size, self._theme.icon_size))
         for category in self._ordered_categories():
             item = QTreeWidgetItem([category.replace("_", " ").title()])
             item.setData(0, Qt.UserRole, category)
             item.setToolTip(0, self._tree_tooltip(category))
+            icon = icon_for_action(self._theme, f"settings_{category}")
+            if not icon.isNull():
+                item.setIcon(0, icon)
             self._tree.addTopLevelItem(item)
             roots[category] = item
         for category in self._ordered_categories():
@@ -457,6 +489,9 @@ class SettingsDialog(QDialog):
             self._displayed_page.sync_from_state()
         self._page_layout.addWidget(self._displayed_page)
         self._displayed_page.show()
+        if self._scroll is not None:
+            self._scroll.verticalScrollBar().setValue(0)
+            self._scroll.horizontalScrollBar().setValue(0)
         self._refresh_action_state()
 
     def _create_page(self, key: str) -> QWidget:
@@ -785,6 +820,7 @@ class SettingsDialog(QDialog):
         min_max = getattr(option, "min_max", None)
         rounding = getattr(option, "rounding", -1)
         is_slider = datatype in (int, float) and min_max is not None and rounding > 0
+        browser_modes, file_filter = SettingsDialog._browser_spec(name, option)
         return OptionSpec(
             title=name.replace("_", " ").title(),
             switch=name,
@@ -799,7 +835,19 @@ class SettingsDialog(QDialog):
             slider_min=min_max[0] if is_slider else None,
             slider_max=min_max[1] if is_slider else None,
             slider_rounding=rounding if is_slider else None,
+            browser_modes=browser_modes,
+            file_filter=file_filter,
         )
+
+    @staticmethod
+    def _browser_spec(name: str, option: T.Any) -> tuple[tuple[str, ...], str]:
+        """Return Qt browser metadata for config options that should browse files."""
+        if getattr(option, "group", None) == "landmark_ensemble" and name in {
+            "setup_path",
+            "weights_path",
+        }:
+            return (("file",), "JSON files (*.json);;All files (*)")
+        return ((), "")
 
     @staticmethod
     def _key(category: str, section_name: str) -> str:

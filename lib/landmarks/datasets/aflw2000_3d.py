@@ -16,11 +16,13 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import math
 import typing as T
 from pathlib import Path
 
 import numpy as np
 
+from lib.landmarks.core.schema import normalize_landmarks
 from lib.landmarks.datasets import (
     IMAGE_EXTS,
     _condition_labels_from_metadata,
@@ -35,7 +37,6 @@ from lib.landmarks.datasets.sources import (
     is_archive,
     resolve_dataset_source,
 )
-from lib.landmarks.schema import normalize_landmarks
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +91,142 @@ def _as_68x2(points: np.ndarray, *, source: Path, key: str) -> np.ndarray:
     if not np.all(np.isfinite(points)):
         raise ValueError(f"AFLW2000-3D {key} contains NaN/Inf values: {source}")
     return np.ascontiguousarray(points, dtype="float32")
+
+
+def _pt3d_z_coordinates(payload: dict[str, T.Any]) -> np.ndarray | None:
+    """Return the per-landmark Z coordinate of ``pt3d_68`` when available.
+
+    AFLW2000-3D ships ``pt3d_68`` as a (3, 68) array of 3D landmarks in the
+    face-aligned camera frame. Only XY is used for the canonical 2D ground
+    truth; this helper exposes the Z column so visibility can be derived
+    from actual 3D depth instead of a yaw-bin heuristic.
+    """
+    if "pt3d_68" not in payload:
+        return None
+    raw = np.asarray(payload["pt3d_68"], dtype="float32")
+    raw = np.squeeze(raw)
+    if raw.shape == (3, 68):
+        z = raw[2]
+    elif raw.shape == (68, 3):
+        z = raw[:, 2]
+    else:
+        return None
+    if not np.all(np.isfinite(z)):
+        return None
+    return z.astype("float32")
+
+
+# Z-buffer self-occlusion parameters. A landmark is flagged as occluded
+# when another landmark projects within ``neighborhood_ratio * extent``
+# of its XY position AND sits at least ``depth_margin_ratio * extent``
+# closer to the camera in AFLW2000-3D's pt3d_68 frame (larger z).
+# Calibrated against the AFLW2000-3D 60-90° yaw bin so that the full
+# far-side jaw/cheek/ear arc gets hidden instead of leaving 1-8 stray
+# back-side landmarks visible (the failure mode of the previous depth-
+# vs-central-plane heuristic).
+DEFAULT_ZBUFFER_NEIGHBORHOOD_RATIO: float = 0.08
+DEFAULT_ZBUFFER_DEPTH_MARGIN_RATIO: float = 0.10
+
+
+# Below this inter-ocular / sqrt(bbox_w * bbox_h) ratio the eye corners
+# are too collapsed to use as an NME denominator. On the AFLW2000-3D
+# test set, frontal-to-45° samples sit at IO/sqrt(wh) >= 0.37, while
+# 60°+ profiles drop to <0.30 (>=85% of samples). 0.30 cleanly separates
+# the two regimes.
+DEFAULT_INTEROCULAR_COLLAPSE_RATIO: float = 0.30
+
+DEFAULT_OCCLUSION_HIDDEN_LANDMARK_THRESHOLD: int = 16
+DEFAULT_OCCLUSION_HIDDEN_FRACTION_THRESHOLD: float = 0.25
+
+
+def _zbuffer_occlusion_label(
+    visibility: list[bool] | None,
+    *,
+    hidden_threshold: int = DEFAULT_OCCLUSION_HIDDEN_LANDMARK_THRESHOLD,
+    hidden_fraction_threshold: float = DEFAULT_OCCLUSION_HIDDEN_FRACTION_THRESHOLD,
+) -> tuple[str, ...]:
+    """Return AFLW condition labels from z-buffer visibility severity.
+
+    This intentionally does not label every sample with one hidden point as
+    occlusion. It only labels samples where z-buffer self-occlusion is large
+    enough to be a meaningful scenario bucket.
+    """
+    if visibility is None:
+        return ()
+    hidden_count = sum(1 for value in visibility if not value)
+    hidden_fraction = hidden_count / len(visibility) if visibility else 0.0
+    if hidden_count >= hidden_threshold or hidden_fraction >= hidden_fraction_threshold:
+        return ("occlusion",)
+    return ()
+
+
+def _visibility_from_zbuffer(
+    points_xy: np.ndarray,
+    z: np.ndarray,
+    *,
+    neighborhood_ratio: float = DEFAULT_ZBUFFER_NEIGHBORHOOD_RATIO,
+    depth_margin_ratio: float = DEFAULT_ZBUFFER_DEPTH_MARGIN_RATIO,
+) -> list[bool] | None:
+    """Return a 68-bool visibility list using a z-buffer self-occlusion
+    test against AFLW2000-3D's pt3d_68 depths.
+
+    AFLW2000-3D's pt3d_68 stores camera-space coordinates where larger
+    ``z`` means closer to the camera (the 3DMM face normal points out
+    of the face toward the viewer). For each landmark ``i``, check
+    every other landmark ``j``: when ``|xy_j - xy_i|`` is within
+    ``neighborhood_ratio * face_extent`` AND ``z_j`` is at least
+    ``depth_margin_ratio * face_extent`` greater than ``z_i`` (i.e. j
+    sits in front of i toward the camera), ``i`` is flagged invisible.
+    Returns ``None`` when no landmark is occluded so the manifest stays
+    compact and the harness's ``visibility=None`` path applies as
+    before.
+    """
+    if points_xy.shape != (68, 2) or z.shape != (68,):
+        return None
+    face_extent = float(np.linalg.norm(points_xy.max(axis=0) - points_xy.min(axis=0)))
+    if face_extent <= 0:
+        return None
+    neighborhood = neighborhood_ratio * face_extent
+    depth_margin = depth_margin_ratio * face_extent
+    xy = points_xy.astype(np.float64)
+    pairwise_xy_dist = np.linalg.norm(xy[:, None, :] - xy[None, :, :], axis=2)
+    np.fill_diagonal(pairwise_xy_dist, np.inf)
+    within = pairwise_xy_dist < neighborhood
+    # For each i, largest z among XY-neighbors (or -inf if no neighbor).
+    candidate_z = np.where(within, z[None, :], -np.inf)
+    nearest_in_front_z = candidate_z.max(axis=1)
+    occluded = (nearest_in_front_z - z) > depth_margin
+    visibility = (~occluded).tolist()
+    if all(visibility):
+        return None
+    return [bool(value) for value in visibility]
+
+
+def _profile_safe_normalizer(points_xy: np.ndarray) -> float | None:
+    """Return ``sqrt(bbox_w * bbox_h)`` when the inter-ocular distance
+    collapses for profile views, else ``None`` to keep the harness's
+    default inter-ocular normalizer.
+
+    The default NME denominator is the distance between landmarks 36 and
+    45 (outer eye corners). Under extreme yaw the two outer corners
+    project onto nearly the same pixel and that distance approaches
+    zero, inflating NME by an order of magnitude or more. When the
+    inter-ocular distance drops below ``DEFAULT_INTEROCULAR_COLLAPSE_RATIO``
+    of sqrt(bbox_w * bbox_h) we fall back to the published
+    AFLW2000-3D normalizer ``sqrt(bbox_w * bbox_h)`` (Zhu et al., 3DDFA),
+    which stays bounded across the full yaw range.
+    """
+    if points_xy.shape != (68, 2):
+        return None
+    inter_ocular = float(np.linalg.norm(points_xy[36] - points_xy[45]))
+    bbox_w = float(points_xy[:, 0].max() - points_xy[:, 0].min())
+    bbox_h = float(points_xy[:, 1].max() - points_xy[:, 1].min())
+    bbox_sqrt = math.sqrt(max(bbox_w * bbox_h, 0.0))
+    if bbox_sqrt <= 0:
+        return None
+    if inter_ocular < DEFAULT_INTEROCULAR_COLLAPSE_RATIO * bbox_sqrt:
+        return bbox_sqrt
+    return None
 
 
 def _points_68(payload: dict[str, T.Any], *, source: Path) -> tuple[np.ndarray, str]:
@@ -159,13 +296,16 @@ def _build_from_root(
     """Build a manifest from an extracted AFLW2000-3D root."""
     scenario_groups = _explicit_scenario_groups(scenarios)
     samples: list[dict[str, T.Any]] = []
+
     for annotation in sorted(root.rglob("*.mat")):
         image = _matching_image(annotation)
         if image is None:
             logger.debug("Skipping AFLW2000-3D annotation without matching image: %s", annotation)
             continue
+
         payload = _load_mat(annotation)
         points, landmark_source_key = _points_68(payload, source=annotation)
+
         metadata = _metadata(
             payload,
             annotation,
@@ -175,23 +315,83 @@ def _build_from_root(
         )
         metadata["face_bbox"] = _landmark_bbox(points)
         metadata["face_bbox_source"] = f"aflw2000_3d_{landmark_source_key}_xy_extrema"
-        condition_labels = _condition_labels_from_metadata({}, metadata, default=scenario)
-        sample_id = annotation.relative_to(root).with_suffix("").as_posix()
-        samples.append(
-            {
-                "sample_id": sample_id,
-                "dataset": "aflw2000-3d",
-                "condition": condition_labels[0],
-                "conditions": condition_labels,
-                "image": str(image.resolve()),
-                "source_schema": "2d_68",
-                "source": {"dataset": "aflw2000-3d", "source_id": sample_id},
-                "metadata": metadata,
-                "points": normalize_landmarks(points, source_schema="2d_68"),
+
+        visibility: list[bool] | None = None
+        if landmark_source_key == "pt3d_68":
+            z_values = _pt3d_z_coordinates(payload)
+            if z_values is not None:
+                visibility = _visibility_from_zbuffer(points, z_values)
+
+        if visibility is not None:
+            hidden_count = sum(1 for value in visibility if not value)
+            hidden_fraction = hidden_count / len(visibility)
+
+            metadata["visibility"] = visibility
+            metadata["visibility_source"] = "aflw2000_3d_pt3d_68_zbuffer"
+            metadata["self_occlusion_landmark_count"] = hidden_count
+            metadata["self_occlusion_landmark_fraction"] = hidden_fraction
+            metadata["zbuffer_occlusion_label_hidden_threshold"] = (
+                DEFAULT_OCCLUSION_HIDDEN_LANDMARK_THRESHOLD
+            )
+            metadata["zbuffer_occlusion_label_fraction_threshold"] = (
+                DEFAULT_OCCLUSION_HIDDEN_FRACTION_THRESHOLD
+            )
+
+        normalizer = _profile_safe_normalizer(points)
+        if normalizer is not None:
+            metadata["normalizer"] = normalizer
+            metadata["normalizer_source"] = "aflw2000_3d_bbox_sqrt_wh"
+
+        condition_metadata = {
+            key: value
+            for key, value in metadata.items()
+            if key
+            not in {
+                "visibility",
+                "visible",
+                "visibility_source",
+                "normalizer",
+                "normalizer_source",
+                "self_occlusion_landmark_count",
+                "self_occlusion_landmark_fraction",
+                "zbuffer_occlusion_label_hidden_threshold",
+                "zbuffer_occlusion_label_fraction_threshold",
             }
+        }
+
+        condition_labels = _condition_labels_from_metadata(
+            {},
+            condition_metadata,
+            default=scenario,
         )
+
+        zbuffer_labels = _zbuffer_occlusion_label(visibility)
+        if zbuffer_labels:
+            condition_labels = tuple(dict.fromkeys((*zbuffer_labels, *condition_labels)))
+
+        sample_id = annotation.relative_to(root).with_suffix("").as_posix()
+        entry: dict[str, T.Any] = {
+            "sample_id": sample_id,
+            "dataset": "aflw2000-3d",
+            "condition": condition_labels[0],
+            "conditions": condition_labels,
+            "image": str(image.resolve()),
+            "source_schema": "2d_68",
+            "source": {"dataset": "aflw2000-3d", "source_id": sample_id},
+            "metadata": metadata,
+            "points": normalize_landmarks(points, source_schema="2d_68"),
+        }
+
+        if visibility is not None:
+            entry["visibility"] = visibility
+        if normalizer is not None:
+            entry["normalizer"] = normalizer
+
+        samples.append(entry)
+
     if not samples:
         raise FileNotFoundError(f"No AFLW2000-3D .mat/image pairs found under {root}")
+
     return _write_manifest_and_audit(
         _filter_samples(samples, scenario_groups, samples_per_scenario),
         Path(output_dir),

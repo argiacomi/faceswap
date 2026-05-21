@@ -36,7 +36,7 @@ HELPTEXT = (
 
 model = ConfigItem(
     datatype=str,
-    default="wflw",
+    default="merlrav",
     group="settings",
     info="The SPIGA model to use. WFLW outputs 98 landmarks and is the best general-purpose "
     "choice for difficult, occluded, or profile faces. 300W and MERL-RAV output the "

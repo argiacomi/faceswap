@@ -6,19 +6,24 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import sys
 import typing as T
 from dataclasses import dataclass
 from pathlib import Path
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 import cv2
 import numpy as np
 from tqdm import tqdm
 
 from lib.landmarks.adapters import LandmarkAdapter, build_landmark_adapter
+from lib.landmarks.cache.prediction_cache import DiskPredictionCache, config_hash
 from lib.landmarks.coordinates import roi_to_matrix
-from lib.landmarks.eval.harness import LandmarkSample, load_manifest
-from lib.landmarks.eval.prediction_cache import DiskPredictionCache, config_hash
-from lib.landmarks.schema import LandmarkPrediction, normalize_landmarks
+from lib.landmarks.core.schema import LandmarkPrediction, normalize_landmarks
+from lib.landmarks.evaluation.harness import LandmarkSample, load_manifest
 
 logger = logging.getLogger(__name__)
 
@@ -138,23 +143,17 @@ def _checkpoint_value(args: argparse.Namespace) -> str:
 
 
 def _bbox_values(raw: T.Any) -> tuple[float, float, float, float] | None:
-    """Normalize common bbox payloads to ``left, top, right, bottom``."""
-    if raw is None:
-        return None
-    if isinstance(raw, dict):
-        if all(key in raw for key in ("left", "top", "right", "bottom")):
-            return tuple(float(raw[key]) for key in ("left", "top", "right", "bottom"))  # type: ignore[return-value]
-        if all(key in raw for key in ("x", "y", "w", "h")):
-            left = float(raw["x"])
-            top = float(raw["y"])
-            return left, top, left + float(raw["w"]), top + float(raw["h"])
-    values = np.asarray(raw, dtype="float32").reshape(-1)
-    if values.size < 4:
-        return None
-    left, top, third, fourth = (float(value) for value in values[:4])
-    if third <= left or fourth <= top:
-        return left, top, left + max(third, 1.0), top + max(fourth, 1.0)
-    return left, top, third, fourth
+    """Normalize common bbox payloads to ``left, top, right, bottom``.
+
+    Thin wrapper over :func:`lib.landmarks.datasets.manifest_io.coerce_bbox` kept under
+    the legacy name so the cache-build code below stays unchanged. The
+    canonical coercer handles dicts (ltrb/xywh keys) plus 4+ length
+    sequences, including the xywh-fallback case the cache previously
+    open-coded.
+    """
+    from lib.landmarks.datasets.manifest_io import coerce_bbox
+
+    return coerce_bbox(raw)
 
 
 def _entry_face_bbox(entry: dict[str, T.Any]) -> tuple[float, float, float, float] | None:
@@ -585,7 +584,7 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Run selected model adapters against --manifest instead of importing .npy predictions.",
     )
-    parser.add_argument("--batch-size", type=int, default=1)
+    parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument(
         "--device",
         default="auto",

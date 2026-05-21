@@ -12,14 +12,17 @@ from pathlib import Path
 
 import numpy as np
 
+from lib.landmarks.core.schema import normalize_landmarks
 from lib.landmarks.datasets.sources import (
     DEFAULT_CACHE_DIR,
+    EXTRACTED_DIR_NAME,
+    WFLW_OFFICIAL_SOURCE,
     DatasetSourceSpec,
     extract_archive_to_temp,
     is_archive,
     resolve_dataset_source,
+    resolve_wflw_official_source,
 )
-from lib.landmarks.schema import normalize_landmarks
 
 logger = logging.getLogger(__name__)
 SUPPORTED_DATASETS = ("wflw", "cofw", "merl-rav", "aflw2000-3d", "directory")
@@ -37,6 +40,53 @@ WFLW_SOURCE = DatasetSourceSpec(
         "dataset under .fs_cache/landmark_quality/wflw."
     ),
 )
+
+
+def _wflw_official_cache_present(cache_dir: str | Path) -> bool:
+    """Return whether the cache contains official WFLW multipart artifacts."""
+    cache_root = Path(cache_dir) / WFLW_OFFICIAL_SOURCE.cache_root_name
+    if any((cache_root / part.archive_name).exists() for part in WFLW_OFFICIAL_SOURCE.parts):
+        return True
+    extracted = cache_root / EXTRACTED_DIR_NAME
+    return any((extracted / name).exists() for name in ("WFLW_annotations", "WFLW_images"))
+
+
+def _resolve_wflw_source(
+    *,
+    source_dir: str | Path | None,
+    source_zip: str | Path | None,
+    cache_dir: str | Path,
+    download_url: str | None,
+    force_download: bool,
+    no_download: bool,
+) -> Path:
+    """Resolve WFLW sources, preferring complete official multipart cache parts."""
+    if source_dir is None and source_zip is None and download_url is None:
+        try:
+            return resolve_wflw_official_source(
+                cache_dir=cache_dir,
+                force_download=False,
+                no_download=True,
+            )
+        except FileNotFoundError as err:
+            if _wflw_official_cache_present(cache_dir):
+                raise FileNotFoundError(
+                    "Incomplete WFLW official multipart cache. Expected both "
+                    "WFLW_annotations.tar.gz and WFLW_images.zip, or a complete "
+                    "extracted cache with WFLW_annotations and WFLW_images. Remove "
+                    "the partial cache or provide --source-dir/--source-zip."
+                ) from err
+    return resolve_dataset_source(
+        WFLW_SOURCE,
+        cache_dir=cache_dir,
+        source_dir=source_dir,
+        source_zip=source_zip,
+        download_url=download_url,
+        force_download=force_download,
+        no_download=no_download,
+    )
+
+
 COFW_SOURCE = DatasetSourceSpec(
     dataset="COFW",
     cache_subdir="cofw",
@@ -280,11 +330,10 @@ def build_wflw_manifest(
     """Build a WFLW manifest from 98-point annotations."""
     cleanup: contextlib.AbstractContextManager[Path] | None = None
     if annotation_file is None:
-        resolved = resolve_dataset_source(
-            WFLW_SOURCE,
-            cache_dir=cache_dir,
+        resolved = _resolve_wflw_source(
             source_dir=source_dir,
             source_zip=source_zip,
+            cache_dir=cache_dir,
             download_url=download_url,
             force_download=force_download,
             no_download=no_download,
@@ -324,23 +373,30 @@ def build_wflw_manifest(
             condition = (
                 condition_labels[0] if condition_labels else _fallback_condition_label(scenario)
             )
-            samples.append(
-                {
-                    "sample_id": sample_id,
-                    "dataset": "wflw",
-                    "condition": condition,
-                    "conditions": condition_labels or (condition,),
-                    "image": str((root / image_rel).resolve()),
-                    "source_schema": "2d_98",
-                    "source": {"dataset": "wflw", "source_id": sample_id},
-                    "metadata": {
-                        "bbox": bbox,
-                        "attributes": attributes,
-                        "image_id": image_rel,
-                    },
-                    "points": normalize_landmarks(points.reshape(98, 2), source_schema="2d_98"),
-                }
-            )
+            canonical_68 = normalize_landmarks(points.reshape(98, 2), source_schema="2d_98")
+            metadata: dict[str, T.Any] = {
+                "bbox": bbox,
+                "attributes": attributes,
+                "image_id": image_rel,
+            }
+            visibility = _visibility_from_jaw_asymmetry(canonical_68)
+            if visibility is not None:
+                metadata["visibility"] = visibility
+                metadata["visibility_source"] = "wflw_jaw_asymmetry"
+            entry: dict[str, T.Any] = {
+                "sample_id": sample_id,
+                "dataset": "wflw",
+                "condition": condition,
+                "conditions": condition_labels or (condition,),
+                "image": str((root / image_rel).resolve()),
+                "source_schema": "2d_98",
+                "source": {"dataset": "wflw", "source_id": sample_id},
+                "metadata": metadata,
+                "points": canonical_68,
+            }
+            if visibility is not None:
+                entry["visibility"] = visibility
+            samples.append(entry)
         return _write_manifest_and_audit(
             _filter_samples(samples, scenario_groups, samples_per_scenario),
             Path(output_dir),
@@ -362,6 +418,60 @@ def _wflw_sample_id(image_rel: str, occurrence: int, total_occurrences: int) -> 
     if total_occurrences <= 1:
         return base
     return f"{base}#face-{occurrence:02d}"
+
+
+# Asymmetry threshold above which one side of the jawline is considered
+# self-occluded. Calibrated against the WFLW test split: median asymmetry
+# is ~0.25 for non-pose conditions (faces are rarely perfectly centered)
+# and ~0.90 for the ``pose`` condition. 0.50 cleanly isolates the right
+# tail of pose-flagged samples without firing on slightly-tilted faces
+# elsewhere in the dataset.
+DEFAULT_WFLW_ASYMMETRY_THRESHOLD: float = 0.50
+
+
+def _visibility_from_jaw_asymmetry(
+    canonical_68: np.ndarray,
+    *,
+    asymmetry_threshold: float = DEFAULT_WFLW_ASYMMETRY_THRESHOLD,
+) -> list[bool] | None:
+    """Derive per-landmark visibility from 68-point jawline asymmetry.
+
+    Compares the horizontal distance from the nose tip (index 30) to each
+    ear-side jawline endpoint (indices 0 and 16). On a frontal face these
+    distances are roughly equal; under heavy yaw the far-side compresses
+    toward the nose, producing a strong asymmetry. When the asymmetry
+    exceeds ``asymmetry_threshold``, the far half of the jawline is
+    flagged as self-occluded.
+
+    Returns ``None`` for frontal-ish faces so the manifest stays compact
+    and the harness's existing ``visibility=None`` path applies to those
+    samples unchanged.
+    """
+    if canonical_68.shape != (68, 2):
+        return None
+    nose_x = float(canonical_68[30, 0])
+    right_jaw_x = float(canonical_68[0, 0])  # subject's right ear (viewer's left)
+    left_jaw_x = float(canonical_68[16, 0])  # subject's left ear (viewer's right)
+    right_dist = abs(nose_x - right_jaw_x)
+    left_dist = abs(left_jaw_x - nose_x)
+    total = right_dist + left_dist
+    if total <= 0:
+        return None
+    asymmetry = (right_dist - left_dist) / total
+    if abs(asymmetry) < asymmetry_threshold:
+        return None
+    visibility = [True] * 68
+    if asymmetry < 0:
+        # Subject's right side compressed → head turned toward subject's
+        # right → right-side jawline (indices 0..7) is self-occluded.
+        for idx in range(0, 8):
+            visibility[idx] = False
+    else:
+        # Subject's left side compressed → head turned toward subject's
+        # left → left-side jawline (indices 9..16) is self-occluded.
+        for idx in range(9, 17):
+            visibility[idx] = False
+    return visibility
 
 
 def build_cofw_manifest(

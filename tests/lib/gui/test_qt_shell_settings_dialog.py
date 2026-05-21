@@ -236,6 +236,34 @@ def test_settings_dialog_renders_real_option_widgets(qtbot) -> None:  # type:ign
     assert {box.text() for box in modes.findChildren(QCheckBox)} == {"fast", "safe"}
 
 
+def test_settings_dialog_renders_ensemble_paths_with_file_browsers(qtbot) -> None:  # type:ignore[no-untyped-def]
+    """Ensemble setup/weights paths should open file selectors in the Qt settings UI."""
+    configs = {
+        "extract": FakeConfig(
+            {
+                "align.ensemble": _section(
+                    "Ensemble help",
+                    setup_path=FakeOption(str, "", "", group="landmark_ensemble"),
+                    weights_path=FakeOption(str, "", "", group="landmark_ensemble"),
+                )
+            }
+        )
+    }
+    dialog = SettingsDialog(
+        section="extract|align|ensemble",
+        config_provider=lambda: configs,
+    )
+    qtbot.addWidget(dialog)
+    renderer = _renderer(dialog)
+
+    assert isinstance(renderer.widget_for_switch("setup_path"), QLineEdit)
+    assert isinstance(renderer.widget_for_switch("weights_path"), QLineEdit)
+
+    file_buttons = renderer.findChildren(QPushButton, "qt-shell-browser-file")
+    assert len(file_buttons) == 2
+    assert all("JSON files" in spec.file_filter for spec in renderer._specs)
+
+
 def test_settings_dialog_page_save_and_reset_update_config(qtbot) -> None:  # type:ignore[no-untyped-def]
     """Page save/reset should act on the selected page's live config state."""
     configs = _config_provider()

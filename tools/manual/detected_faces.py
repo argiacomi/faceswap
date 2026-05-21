@@ -744,7 +744,7 @@ class FaceUpdate:
         width: int,
         pnt_y: int,
         height: int,
-        aligner: T.Literal["FAN", "HRNet", "cv2-dnn"] = "HRNet",
+        aligner: str = "HRNet",
     ) -> None:
         """Update the bounding box for the :class:`~lib.align.DetectedFace` object at the
         given frame and face indices, with the given dimensions and update the 68 point landmarks

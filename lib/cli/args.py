@@ -18,7 +18,16 @@ from .launcher import ScriptExecutor
 logger = logging.getLogger(__name__)
 
 
-_GPUS = [] if GPUStats is None else GPUStats().cli_devices
+_GPUS: list[str] | None = None
+
+
+def _get_cli_gpus() -> list[str]:
+    """Return CLI GPU labels, loading GPU stats only when needed."""
+    global _GPUS  # pylint:disable=global-statement
+    if _GPUS is None:
+        _GPUS = [] if GPUStats is None else GPUStats().cli_devices
+    return _GPUS
+
 
 # LOCALES
 _LANG = gettext.translation("lib.cli.args", localedir="locales", fallback=True)
@@ -178,6 +187,15 @@ class FaceSwapArgs:
         return argument_list
 
     @staticmethod
+    def _should_include_gpu_cli_options() -> bool:
+        """Return whether CLI GPU options should be populated for this parser.
+
+        The GUI does not need ``--exclude-gpus``, so skip GPU discovery when launching the GUI
+        to avoid triggering backend-specific GPU stats initialization at CLI parse time.
+        """
+        return "gui" not in sys.argv
+
+    @staticmethod
     def _get_global_arguments() -> list[dict[str, T.Any]]:
         """Returns the global Arguments list that are required for ALL commands in Faceswap.
 
@@ -189,7 +207,8 @@ class FaceSwapArgs:
             The list of global command line options for all Faceswap commands.
         """
         global_args: list[dict[str, T.Any]] = []
-        if _GPUS:
+        gpus = _get_cli_gpus() if FaceSwapArgs._should_include_gpu_cli_options() else []
+        if gpus:
             global_args.append(
                 {
                     "opts": ("-X", "--exclude-gpus"),
@@ -197,14 +216,14 @@ class FaceSwapArgs:
                     "action": MultiOption,
                     "type": str.lower,
                     "nargs": "+",
-                    "choices": [str(idx) for idx in range(len(_GPUS))],
+                    "choices": [str(idx) for idx in range(len(gpus))],
                     "group": _("Global Options"),
                     "help": _(
                         "R|Exclude GPUs from use by Faceswap. Select the number(s) which "
                         "correspond "
                         "to any GPU(s) that you do not wish to be made available to Faceswap. "
                         "Selecting all GPUs here will force Faceswap into CPU mode."
-                        "\nL|{}".format(" \nL|".join(_GPUS))
+                        "\nL|{}".format(" \nL|".join(gpus))
                     ),
                 }
             )

@@ -12,6 +12,30 @@ from lib.gui.services.command_schema_discovery import (
     DiscoveredCommand,
 )
 
+# Qt file dialog filters keyed by Faceswap CLI ``filetypes`` strings.
+# Mirrors :class:`lib.gui.utils.file_handler.FileHandler._filetypes`.
+_FILE_FILTERS: dict[str, str] = {
+    "alignments": "Faceswap Alignments (*.fsa);;All files (*)",
+    "config_project": "Faceswap Project files (*.fsw);;All files (*)",
+    "config_task": "Faceswap Task files (*.fst);;All files (*)",
+    "config_all": "Faceswap Project and Task files (*.fst *.fsw);;All files (*)",
+    "csv": "Comma separated values (*.csv);;All files (*)",
+    "image": (
+        "Images (*.bmp *.jpg *.jpeg *.png *.tif *.tiff);;"
+        "Bitmap (*.bmp);;JPG (*.jpg *.jpeg);;PNG (*.png);;TIFF (*.tif *.tiff);;"
+        "All files (*)"
+    ),
+    "ini": "Faceswap config files (*.ini);;All files (*)",
+    "json": "JSON file (*.json);;All files (*)",
+    "model": "Keras model files (*.keras);;All files (*)",
+    "state": "State files (*.json);;All files (*)",
+    "log": "Log files (*.log);;All files (*)",
+    "video": (
+        "Video Files (*.avi *.flv *.mkv *.mov *.mp4 *.mpeg *.mpg *.ts *.vob *.webm *.wmv);;"
+        "All files (*)"
+    ),
+}
+
 
 class CommandSchemaService:
     """Build a Qt command schema from Faceswap CLI option metadata."""
@@ -77,6 +101,9 @@ class CommandSchemaService:
                 slider_min=option.slider_min,
                 slider_max=option.slider_max,
                 slider_rounding=option.slider_rounding,
+                file_filter=_FILE_FILTERS.get(option.filetypes, ""),
+                filetypes=option.filetypes,
+                dest=option.dest,
             )
             for option in options
             if option.opts

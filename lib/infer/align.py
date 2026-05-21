@@ -245,6 +245,31 @@ class Align(ExtractHandler):
         retval[:, 2, 2] = 1.0
         return retval
 
+    def _detector_bboxes_for_matrices(
+        self, batch: ExtractBatch, matrices: npt.NDArray[np.float32]
+    ) -> npt.NDArray[np.float32] | None:
+        """Return detector boxes aligned to the current feed matrix count."""
+        bboxes = batch.bboxes.astype("float32", copy=False)
+        if bboxes.shape[0] == matrices.shape[0]:
+            return bboxes
+        if matrices.shape[0] % bboxes.shape[0] != 0:
+            return None
+        return np.repeat(bboxes, matrices.shape[0] // bboxes.shape[0], axis=0)
+
+    def _set_plugin_crop_matrices(
+        self,
+        batch: ExtractBatch,
+        matrices: npt.NDArray[np.float32],
+    ) -> None:
+        """Pass current crop-to-frame matrices to plugins that need runner geometry."""
+        setter = getattr(self.plugin, "set_crop_matrices", None)
+        if not callable(setter):
+            return
+        setter(
+            matrices,
+            detector_bboxes=self._detector_bboxes_for_matrices(batch, matrices),
+        )
+
     def _prepare_data(self, batch: ExtractBatch, iteration: int = 1) -> None:
         """Prepare the data, in place, for feeding through the model.
 
@@ -268,6 +293,7 @@ class Align(ExtractHandler):
             if is_final and self._re_feed.total_feeds > 1:
                 mats, roi = self._re_feed(mats, with_roi=True)
             batch.matrices = mats
+            self._set_plugin_crop_matrices(batch, mats)
             batch.data = self._prepare_images(batch, roi, is_final)
         else:  # If we are here we are re-aligning
             mats = (
@@ -280,6 +306,7 @@ class Align(ExtractHandler):
                 else self._re_align.default_crop_matrices
             )
             batch.data = self._re_align.get_images(mats, self._re_feed.total_feeds)
+            self._set_plugin_crop_matrices(batch, self._re_align.matrices)
 
     def pre_process(self, batch: ExtractBatch) -> None:
         """Obtain the adjusted square ROIs from the plugin based off the provided detection
@@ -380,11 +407,39 @@ class Align(ExtractHandler):
 
         batch.landmarks = landmarks
         batch.landmark_type = self._landmark_type
+        self._store_plugin_metadata(batch, landmarks.shape[0], result.shape[0])
         self._filters(batch)
 
     def output_info(self) -> None:
         """Output the counts from the aligner filter"""
         self._filters.output_counts()
+
+    def _store_plugin_metadata(
+        self,
+        batch: ExtractBatch,
+        face_count: int,
+        feed_count: int,
+    ) -> None:
+        """Persist optional per-face plugin metadata into the batch alignment payload."""
+        metadata = getattr(self.plugin, "last_debug_metadata", None)
+        if not isinstance(metadata, list) or not metadata:
+            return
+        if len(metadata) == face_count:
+            batch.aligned.metadata = [{"landmark_ensemble": item} for item in metadata]
+            return
+        total_feeds = self._re_feed.total_feeds
+        if total_feeds <= 1 or len(metadata) != feed_count:
+            logger.debug(
+                "[%s.post_process] Plugin metadata count %s does not match faces=%s feeds=%s",
+                self.plugin.name,
+                len(metadata),
+                face_count,
+                feed_count,
+            )
+            return
+        batch.aligned.metadata = [
+            {"landmark_ensemble": metadata[index * total_feeds]} for index in range(face_count)
+        ]
 
     def set_normalize_method(
         self, method: T.Literal["none", "clahe", "hist", "mean"] | None
@@ -538,6 +593,11 @@ class ReAlign:
     def default_crop_matrices(self) -> npt.NDArray[np.float32]:
         """The default crop matrices used for calculating re-feeds"""
         return np.broadcast_to(self._default_crop_matrices, (self._matrices.shape[0], 3, 3))
+
+    @property
+    def matrices(self) -> npt.NDArray[np.float32]:
+        """The current crop-to-frame matrices for the active re-align feed batch."""
+        return self._matrices
 
     def _get_adjust_matrix(self) -> npt.NDArray[np.float32]:
         """Obtain a transformation matrix that applies padding to better represent a face

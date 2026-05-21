@@ -24,6 +24,8 @@ DEFAULT_CACHE_DIR = Path(".fs_cache/landmark_quality")
 ARCHIVE_SUFFIXES = (".zip", ".tar", ".tar.gz", ".tgz")
 EXTRACTED_DIR_NAME = "extracted"
 EXTRACTION_MARKER = ".source.json"
+ANNOTATION_SUFFIXES = (".txt", ".pts", ".json", ".mat", ".npy", ".npz")
+IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff")
 
 WFLW_ANNOTATIONS_URL = "https://wywu.github.io/projects/LAB/support/WFLW_annotations.tar.gz"
 WFLW_IMAGES_GOOGLE_DRIVE_FILE_ID = "1hzBd48JIdWTJSsATBEB_eFVvPL1bx6UC"
@@ -470,6 +472,29 @@ def _multipart_archives_are_cached(
     return None
 
 
+def _multipart_part_has_payload(root: Path, part: MultiSourcePart) -> bool:
+    """Return whether an extracted multipart source contains payload for ``part``."""
+    name = part.name.lower()
+    if "annotation" in name:
+        return any(
+            path.is_file() and path.suffix.lower() in ANNOTATION_SUFFIXES
+            for path in root.rglob("*")
+        )
+    if "image" in name:
+        return any(
+            path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES for path in root.rglob("*")
+        )
+    token = name.replace("_", "-")
+    return any(token in path.name.lower().replace("_", "-") for path in root.rglob("*"))
+
+
+def _multipart_extracted_source_is_complete(extracted: Path, spec: MultiDatasetSourceSpec) -> bool:
+    """Return whether an extracted multipart source has payload for every part."""
+    return _extracted_cache_has_content(extracted) and all(
+        _multipart_part_has_payload(extracted, part) for part in spec.parts
+    )
+
+
 def _extract_multipart_archives(
     archives: T.Mapping[str, Path],
     spec: MultiDatasetSourceSpec,
@@ -502,6 +527,12 @@ def _extract_multipart_archives(
         if tmp_dir.exists():
             shutil.rmtree(tmp_dir)
         raise
+    if not _multipart_extracted_source_is_complete(destination, spec):
+        raise FileNotFoundError(
+            f"{spec.dataset} extracted multipart source is incomplete: {destination}. "
+            "Expected annotation and image payloads. Remove the cached extraction and retry "
+            "with complete source archives."
+        )
     return destination
 
 
@@ -520,7 +551,7 @@ def resolve_multipart_dataset_source(
         for part in spec.parts:
             verify_sha256(archives[part.name], part.sha256, label=f"{spec.dataset} {part.name}")
         return _extract_multipart_archives(archives, spec, extracted, force=False)
-    if not force_download and _extracted_cache_has_content(extracted):
+    if not force_download and _multipart_extracted_source_is_complete(extracted, spec):
         logger.debug(
             "Using cached %s multipart extracted source without archives: %s",
             spec.dataset,

@@ -127,8 +127,14 @@ class PreviewOutputService:
         if self._mode != "batch" or not source.is_dir():
             return source
         folders = [path for path in source.iterdir() if path.is_dir()]
-        folders.sort(key=lambda path: path.stat().st_mtime)
-        return folders[-1] if folders else source
+        return max(folders, key=self._batch_folder_sort_key, default=source)
+
+    def _batch_folder_sort_key(self, folder: Path) -> tuple[int, str]:
+        """Return deterministic freshness key for a batch child folder."""
+        image_mtimes = (
+            path.stat().st_mtime_ns for path in folder.iterdir() if self.is_image(path)
+        )
+        return (max(image_mtimes, default=folder.stat().st_mtime_ns), folder.name)
 
     def _find_training_images(self, source: Path) -> tuple[PreviewOutputImage, ...]:
         """Return the current training preview image from the cache folder."""

@@ -32,6 +32,8 @@ class DiscoveredCliOption:
     slider_min: float | None = None
     slider_max: float | None = None
     slider_rounding: float | None = None
+    filetypes: str = ""
+    dest: str = ""
 
 
 @dataclass(frozen=True)
@@ -207,6 +209,8 @@ class CommandSchemaDiscovery:
             slider_min=slider_min,
             slider_max=slider_max,
             slider_rounding=cls._slider_rounding(option, action),
+            filetypes=str(option.get("filetypes", "") or ""),
+            dest=str(option.get("dest", "") or ""),
         )
 
     @staticmethod

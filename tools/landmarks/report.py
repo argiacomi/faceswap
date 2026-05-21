@@ -43,7 +43,7 @@ def main(argv: list[str] | None = None) -> int:
         "failure_rate_by_condition": summary.get(
             "failure_rate_by_condition", metrics.get("conditions", {})
         ),
-        "threshold_failed": metrics.get("threshold_failed", False),
+        "any_sample_failed": metrics.get("any_sample_failed", False),
     }
     for variant in (
         "plain_average",

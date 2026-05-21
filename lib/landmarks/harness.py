@@ -9,8 +9,8 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from lib.landmarks.adapters import LandmarkAdapter
-from lib.landmarks.metrics import mean_point_error, normalized_mean_error
-from lib.landmarks.schema import LandmarkPrediction, to_canonical_68
+from lib.landmarks.core.metrics import mean_point_error, normalized_mean_error
+from lib.landmarks.core.schema import LandmarkPrediction, to_canonical_68
 
 
 @dataclass(frozen=True)

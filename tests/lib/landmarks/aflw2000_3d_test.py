@@ -9,7 +9,15 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from lib.landmarks.datasets.aflw2000_3d import build_aflw2000_3d_manifest
+from lib.landmarks.datasets.aflw2000_3d import (
+    DEFAULT_OCCLUSION_HIDDEN_FRACTION_THRESHOLD,
+    DEFAULT_OCCLUSION_HIDDEN_LANDMARK_THRESHOLD,
+    _profile_safe_normalizer,
+    _pt3d_z_coordinates,
+    _visibility_from_zbuffer,
+    _zbuffer_occlusion_label,
+    build_aflw2000_3d_manifest,
+)
 
 
 def _points_68_2d() -> np.ndarray:
@@ -98,3 +106,278 @@ def test_build_aflw2000_3d_manifest_falls_back_to_68_point_pt2d(tmp_path: Path) 
     assert sample["metadata"]["landmark_source_key"] == "pt2d"
     assert sample["metadata"]["face_bbox_source"] == "aflw2000_3d_pt2d_xy_extrema"
     assert landmarks.shape == (68, 2)
+
+
+def _frontal_pt3d_68() -> np.ndarray:
+    """Return a 3x68 array with near-uniform depth (frontal face)."""
+    xy = _points_68_2d()
+    z = np.full((1, 68), 50.0, dtype="float32")
+    return np.concatenate((xy, z), axis=0)
+
+
+def _profile_pt3d_68() -> np.ndarray:
+    """Return a 3x68 array where back-of-face landmarks share XY positions
+    with front-of-face landmarks but sit farther from the camera in Z.
+
+    Setup: two clusters far enough apart that 0.08 * face_extent never
+    bridges them. Cluster A at (10, 10) contains a front layer (indices
+    0..7 at z=60, "closer to camera") and a back layer (indices 8..15
+    at z=0). Cluster B at (90, 90) holds the remaining 52 landmarks at
+    z=0; their large XY separation from cluster A keeps them out of
+    each other's neighborhood. The z-buffer test should hide exactly
+    indices 8..15.
+    """
+    xy = np.zeros((68, 2), dtype="float32")
+    xy[0:8] = [10.0, 10.0]  # front layer of cluster A
+    xy[8:16] = [10.0, 10.0]  # back layer of cluster A (XY-coincident with front)
+    xy[16:] = [90.0, 90.0]  # cluster B (isolated from cluster A)
+    z = np.zeros((68,), dtype="float32")
+    z[0:8] = 60.0  # extent ≈ 113 → 60 > depth_margin (0.10 * 113 ≈ 11)
+    return np.concatenate((xy.T, z[None, :]), axis=0)
+
+
+def test_pt3d_z_coordinates_extracts_depth_column_for_3x68() -> None:
+    """``_pt3d_z_coordinates`` returns the Z row for canonical (3, 68) input."""
+    pt3d = _frontal_pt3d_68()
+    z = _pt3d_z_coordinates({"pt3d_68": pt3d})
+    assert z is not None
+    assert z.shape == (68,)
+    np.testing.assert_allclose(z, 50.0)
+
+
+def test_pt3d_z_coordinates_returns_none_when_pt3d_missing() -> None:
+    """Missing ``pt3d_68`` yields ``None`` so callers skip visibility derivation."""
+    assert _pt3d_z_coordinates({}) is None
+    assert _pt3d_z_coordinates({"pt2d": _points_68_2d()}) is None
+
+
+def test_visibility_from_zbuffer_returns_none_for_uniform_depth() -> None:
+    """A face with uniform depth has no front-of-back relationships to flag."""
+    xy = _points_68_2d().T  # (68, 2)
+    z = np.full((68,), 50.0, dtype="float32")
+    assert _visibility_from_zbuffer(xy, z) is None
+
+
+def test_visibility_from_zbuffer_hides_landmarks_behind_xy_neighbors() -> None:
+    """Landmarks whose XY-neighbors sit in front in Z get flagged invisible."""
+    pt3d = _profile_pt3d_68()
+    xy = pt3d[:2].T
+    z = pt3d[2]
+    visibility = _visibility_from_zbuffer(xy, z)
+    assert visibility is not None
+    assert len(visibility) == 68
+    # Indices 8..15 (back cluster) are stacked on top of 0..7 in XY but
+    # sit further in Z → they should be the occluded set.
+    assert visibility[0:8] == [True] * 8
+    assert visibility[8:16] == [False] * 8
+    assert all(visibility[16:])
+
+
+def test_visibility_from_zbuffer_returns_none_when_xy_extent_collapses() -> None:
+    """Degenerate input (no XY extent) returns ``None`` rather than dividing by zero."""
+    xy = np.zeros((68, 2), dtype="float32")
+    z = np.linspace(0, 60, 68, dtype="float32")
+    assert _visibility_from_zbuffer(xy, z) is None
+
+
+def test_profile_safe_normalizer_returns_none_for_frontal_faces() -> None:
+    """When the eye corners are well separated, defer to the harness default."""
+    xy = _points_68_2d().T.copy()
+    # Inter-ocular ≈ 0.62 * sqrt(bbox_w * bbox_h) for a real frontal face;
+    # set eye corners 36/45 explicitly so the ratio is comfortably above 0.30.
+    xy[36] = [20.0, 50.0]
+    xy[45] = [80.0, 50.0]
+    assert _profile_safe_normalizer(xy) is None
+
+
+def test_profile_safe_normalizer_returns_bbox_sqrt_when_eyes_collapse() -> None:
+    """Extreme yaw — eye corners almost on top of each other — switches to sqrt(wh)."""
+    xy = _points_68_2d().T.copy()
+    # Inter-ocular ≈ 1 pixel on a ~100x100 face → ratio ≪ 0.30.
+    xy[36] = [49.0, 50.0]
+    xy[45] = [50.0, 50.0]
+    bbox_w = float(xy[:, 0].max() - xy[:, 0].min())
+    bbox_h = float(xy[:, 1].max() - xy[:, 1].min())
+    expected = (bbox_w * bbox_h) ** 0.5
+    result = _profile_safe_normalizer(xy)
+    assert result is not None
+    np.testing.assert_allclose(result, expected, rtol=1e-5)
+
+
+def test_profile_safe_normalizer_handles_degenerate_bbox() -> None:
+    """A collapsed bbox (zero area) returns None instead of crashing."""
+    xy = np.zeros((68, 2), dtype="float32")
+    assert _profile_safe_normalizer(xy) is None
+
+
+def test_build_aflw2000_3d_manifest_records_visibility_for_profile_pose(tmp_path: Path) -> None:
+    """A pt3d_68 with self-occlusion produces visibility on the sample."""
+    scipy_io = pytest.importorskip("scipy.io")
+    root = tmp_path / "aflw2000"
+    root.mkdir()
+    _write_png(root / "face.jpg")
+    scipy_io.savemat(
+        str(root / "face.mat"),
+        {
+            "pt3d_68": _profile_pt3d_68(),
+            "Pose_Para": np.asarray([[0, 1.0, 0]], dtype="float32"),
+        },
+    )
+
+    manifest = build_aflw2000_3d_manifest(root / "out", source_dir=root)
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    sample = payload["samples"][0]
+
+    visibility = sample.get("visibility") or sample["metadata"].get("visibility")
+    assert visibility is not None
+    assert len(visibility) == 68
+    # Eight back-of-face landmarks were stacked on top of the front
+    # cluster and pushed deeper in Z; the z-buffer test should hide them.
+    occluded = sum(1 for v in visibility if not v)
+    assert occluded == 8
+    assert sample["metadata"]["visibility_source"] == "aflw2000_3d_pt3d_68_zbuffer"
+    # Hidden count of 8 is below the 16-landmark threshold (and the
+    # 0.25 fraction floor) so the sample stays in the default bucket
+    # rather than getting auto-routed into "occlusion".
+    assert sample["condition"] == "default"
+    assert "occlusion" not in sample["conditions"]
+
+
+def test_build_aflw2000_3d_manifest_records_profile_safe_normalizer(tmp_path: Path) -> None:
+    """When eye corners collapse, the entry carries an explicit bbox-sqrt normalizer."""
+    scipy_io = pytest.importorskip("scipy.io")
+    root = tmp_path / "aflw2000"
+    root.mkdir()
+    _write_png(root / "face.jpg")
+    # Force inter-ocular ≪ 0.30 * sqrt(w*h) by colocating eye corners.
+    xy = _points_68_2d().T.copy()
+    xy[36] = [49.0, 50.0]
+    xy[45] = [50.0, 50.0]
+    pt3d = np.concatenate((xy.T, np.full((1, 68), 25.0, dtype="float32")), axis=0)
+    scipy_io.savemat(str(root / "face.mat"), {"pt3d_68": pt3d})
+
+    manifest = build_aflw2000_3d_manifest(root / "out", source_dir=root)
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    sample = payload["samples"][0]
+
+    assert "normalizer" in sample
+    assert sample["normalizer"] > 0
+    assert sample["metadata"]["normalizer_source"] == "aflw2000_3d_bbox_sqrt_wh"
+
+
+def test_build_aflw2000_3d_manifest_omits_visibility_for_frontal_pose(tmp_path: Path) -> None:
+    """Frontal faces (uniform depth) do not emit a visibility entry."""
+    scipy_io = pytest.importorskip("scipy.io")
+    root = tmp_path / "aflw2000"
+    root.mkdir()
+    _write_png(root / "face.jpg")
+    scipy_io.savemat(
+        str(root / "face.mat"),
+        {"pt3d_68": _frontal_pt3d_68()},
+    )
+
+    manifest = build_aflw2000_3d_manifest(root / "out", source_dir=root)
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    sample = payload["samples"][0]
+
+    assert "visibility" not in sample
+    assert "visibility" not in sample["metadata"]
+    assert "visibility_source" not in sample["metadata"]
+
+
+def _heavily_occluded_pt3d_68(hidden_count: int) -> np.ndarray:
+    """Return a 3x68 array where ``hidden_count`` back-of-face landmarks
+    are stacked behind a small front cluster.
+
+    Same construction as ``_profile_pt3d_68`` but with a parameterised
+    back-cluster size so tests can vary the hidden-landmark count to
+    bracket the z-buffer occlusion threshold.
+    """
+    assert 1 <= hidden_count <= 60
+    xy = np.zeros((68, 2), dtype="float32")
+    front_size = 4
+    cluster_a = front_size + hidden_count
+    xy[:front_size] = [10.0, 10.0]
+    xy[front_size:cluster_a] = [10.0, 10.0]
+    xy[cluster_a:] = [90.0, 90.0]
+    z = np.zeros((68,), dtype="float32")
+    z[:front_size] = 60.0
+    return np.concatenate((xy.T, z[None, :]), axis=0)
+
+
+def test_zbuffer_occlusion_label_returns_empty_for_none_visibility() -> None:
+    """A sample with no visibility info stays unlabeled by the threshold gate."""
+    assert _zbuffer_occlusion_label(None) == ()
+
+
+def test_zbuffer_occlusion_label_skips_label_below_thresholds() -> None:
+    """Hidden count <16 and fraction <0.25 leaves the sample in the default bucket."""
+    visibility = [True] * 68
+    for idx in range(15):
+        visibility[idx] = False  # 15 hidden, fraction ≈ 0.22 — both below threshold
+    assert _zbuffer_occlusion_label(visibility) == ()
+
+
+def test_zbuffer_occlusion_label_labels_when_count_threshold_met() -> None:
+    """Hidden count reaching the landmark threshold (16) triggers an ``occlusion`` label."""
+    visibility = [True] * 68
+    for idx in range(DEFAULT_OCCLUSION_HIDDEN_LANDMARK_THRESHOLD):
+        visibility[idx] = False
+    assert _zbuffer_occlusion_label(visibility) == ("occlusion",)
+
+
+def test_zbuffer_occlusion_label_labels_when_only_fraction_threshold_met() -> None:
+    """With a high count threshold, the fraction floor still routes severe occlusion."""
+    visibility = [True] * 68
+    # 18 hidden of 68 ≈ 0.265 → above 0.25 fraction floor but below a raised count threshold.
+    for idx in range(18):
+        visibility[idx] = False
+    assert _zbuffer_occlusion_label(
+        visibility,
+        hidden_threshold=99,
+        hidden_fraction_threshold=DEFAULT_OCCLUSION_HIDDEN_FRACTION_THRESHOLD,
+    ) == ("occlusion",)
+
+
+def test_build_aflw2000_3d_manifest_labels_occlusion_when_threshold_met(tmp_path: Path) -> None:
+    """An AFLW sample whose hidden count clears the threshold gets routed into ``occlusion``."""
+    scipy_io = pytest.importorskip("scipy.io")
+    root = tmp_path / "aflw2000"
+    root.mkdir()
+    _write_png(root / "face.jpg")
+    # 20 hidden landmarks → above the 16-count threshold AND above the
+    # 0.25 fraction floor.
+    scipy_io.savemat(str(root / "face.mat"), {"pt3d_68": _heavily_occluded_pt3d_68(20)})
+
+    manifest = build_aflw2000_3d_manifest(root / "out", source_dir=root)
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    sample = payload["samples"][0]
+
+    visibility = sample["metadata"]["visibility"]
+    hidden = sum(1 for v in visibility if not v)
+    assert hidden == 20
+    assert sample["condition"] == "occlusion"
+    assert "occlusion" in sample["conditions"]
+    # Diagnostic metadata is preserved alongside the routing label.
+    assert sample["metadata"]["self_occlusion_landmark_count"] == 20
+    assert sample["metadata"]["zbuffer_occlusion_label_hidden_threshold"] == (
+        DEFAULT_OCCLUSION_HIDDEN_LANDMARK_THRESHOLD
+    )
+
+
+def test_build_aflw2000_3d_manifest_stays_default_when_threshold_not_met(tmp_path: Path) -> None:
+    """A sample with 15 hidden landmarks stays in the default bucket (15 < 16, 0.22 < 0.25)."""
+    scipy_io = pytest.importorskip("scipy.io")
+    root = tmp_path / "aflw2000"
+    root.mkdir()
+    _write_png(root / "face.jpg")
+    scipy_io.savemat(str(root / "face.mat"), {"pt3d_68": _heavily_occluded_pt3d_68(15)})
+
+    manifest = build_aflw2000_3d_manifest(root / "out", source_dir=root)
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    sample = payload["samples"][0]
+
+    visibility = sample["metadata"]["visibility"]
+    assert sum(1 for v in visibility if not v) == 15
+    assert sample["condition"] == "default"
+    assert "occlusion" not in sample["conditions"]

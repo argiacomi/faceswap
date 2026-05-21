@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QProgressBar,
+    QSizePolicy,
     QSplitter,
     QStatusBar,
     QTabWidget,
@@ -29,6 +30,7 @@ from lib.gui.qt_shell.analysis_panel import AnalysisPanel
 from lib.gui.qt_shell.command_panel import CommandPanel
 from lib.gui.qt_shell.command_schema import CommandSchema
 from lib.gui.qt_shell.command_schema_service import CommandSchemaService
+from lib.gui.qt_shell.console_router import QtConsoleRouter
 from lib.gui.qt_shell.display_controller import DisplayController
 from lib.gui.qt_shell.graph_panel import GraphPanel
 from lib.gui.qt_shell.job_runner import JobRunner
@@ -51,8 +53,46 @@ from lib.serializer import get_serializer
 from lib.utils import PROJECT_ROOT
 
 
+class FreeSplitter(QSplitter):
+    """QSplitter that lets users drag panes to any size in [0, full].
+
+    QSplitter normally respects each child's ``minimumSizeHint`` which prevents
+    continuous dragging past the layout's preferred minimum. Faceswap users
+    expect Tk-parity behavior where a panel can be expanded to fill the entire
+    window or collapsed to nothing without snapping back.
+    """
+
+    def __init__(self, orientation: Qt.Orientation, parent: QWidget | None = None) -> None:
+        super().__init__(orientation, parent)
+        self.setChildrenCollapsible(True)
+        self.setHandleWidth(6)
+        self.setOpaqueResize(True)
+
+    def addWidget(self, widget: QWidget) -> None:  # type:ignore[override]  # noqa:N802
+        """Force each child's minimum to zero so the handle can move anywhere.
+
+        ``QSizePolicy.Ignored`` makes QSplitter ignore the child's minimumSizeHint
+        so the user can drag continuously between zero and the full splitter range.
+        """
+        widget.setMinimumSize(0, 0)
+        widget.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
+        super().addWidget(widget)
+        self.setCollapsible(self.count() - 1, True)
+
+
+_CONSOLE_TAG_COLORS: dict[str, str] = {
+    "stdout": "console_text",
+    "stderr": "error",
+    "info": "info",
+    "verbose": "verbose",
+    "warning": "warning",
+    "error": "error",
+    "critical": "critical",
+}
+
+
 class ConsolePane(QPlainTextEdit):
-    """Read-only console output pane."""
+    """Read-only console output pane with Tk-parity level-aware colorization."""
 
     def __init__(self, parent: QMainWindow | None = None) -> None:
         super().__init__(parent)
@@ -60,18 +100,46 @@ class ConsolePane(QPlainTextEdit):
         self.setProperty("console", "stdout")
         self.setReadOnly(True)
         self.setPlaceholderText("Generated commands and process output appear here.")
+        self.setMinimumSize(0, 0)
+        self._formats: dict[str, T.Any] = {}
+        self._theme: T.Any = None
 
-    def write(self, text: str) -> None:
-        """Append raw console text."""
+    def set_theme(self, theme: T.Any) -> None:
+        """Cache theme colour lookup for tagged inserts."""
+        self._theme = theme
+        self._formats.clear()
+
+    def write(self, text: str, tag: str = "stdout") -> None:
+        """Append console text styled for the supplied tag (Tk parity)."""
+        if not text:
+            return
         cursor = self.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
-        cursor.insertText(text)
+        char_format = self._format_for(tag)
+        if char_format is None:
+            cursor.insertText(text)
+        else:
+            cursor.insertText(text, char_format)
         self.setTextCursor(cursor)
         self.ensureCursorVisible()
 
-    def write_line(self, text: str = "") -> None:
-        """Append one console line."""
-        self.write(f"{text}\n")
+    def write_line(self, text: str = "", tag: str = "stdout") -> None:
+        """Append one console line with the requested tag."""
+        self.write(f"{text}\n", tag=tag)
+
+    def _format_for(self, tag: str):  # type:ignore[no-untyped-def]
+        """Return a cached QTextCharFormat for one console tag."""
+        if tag not in _CONSOLE_TAG_COLORS or self._theme is None:
+            return None
+        cached = self._formats.get(tag)
+        if cached is not None:
+            return cached
+        from PySide6.QtGui import QColor, QTextCharFormat
+
+        char_format = QTextCharFormat()
+        char_format.setForeground(QColor(self._theme.color(_CONSOLE_TAG_COLORS[tag])))
+        self._formats[tag] = char_format
+        return char_format
 
 
 class MainWindow(QMainWindow):
@@ -97,6 +165,9 @@ class MainWindow(QMainWindow):
         self._running = False
         self._command_panel = CommandPanel(self._schema)
         self._console = ConsolePane()
+        self._console.set_theme(self._theme)
+        self._console_stdout_router = QtConsoleRouter(self._console, "stdout")
+        self._console_stderr_router = QtConsoleRouter(self._console, "stderr")
         self._progress = QProgressBar()
         self._menus: list[object] = []
         self._recent_menu: QMenu | None = None
@@ -122,6 +193,11 @@ class MainWindow(QMainWindow):
         self._console.write_line(
             "Scope: real CLI metadata rendering, command generation and QProcess jobs"
         )
+
+    @property
+    def console(self) -> ConsolePane:
+        """Return the bottom console pane (Tk-parity logger destination)."""
+        return self._console
 
     def eventFilter(self, watched: object, event: QEvent) -> bool:  # noqa:N802
         """Track command-panel user edits for dirty-state updates."""
@@ -151,24 +227,67 @@ class MainWindow(QMainWindow):
         else:
             event.ignore()
 
+    def apply_gui_settings(self) -> None:
+        """Apply ``config/gui.ini`` runtime preferences.
+
+        Reads ``lib.gui.gui_config`` values for the initial command tab, splitter
+        ratios and fullscreen flag and applies them to the shell. Safe to call
+        multiple times; missing keys fall back to the existing layout.
+        """
+        try:
+            from lib.gui import gui_config as cfg
+        except ImportError:  # pragma: no cover - gui_config always ships
+            return
+        tab_name = self._safe_call(cfg, "tab")
+        if isinstance(tab_name, str) and tab_name:
+            self._command_panel.select_command(tab_name)
+        width_pct = self._safe_call(cfg, "options_panel_width")
+        height_pct = self._safe_call(cfg, "console_panel_height")
+        self._apply_splitter_ratios(width_pct, height_pct)
+        fullscreen = self._safe_call(cfg, "fullscreen")
+        if fullscreen:
+            self.showMaximized()
+
+    def _apply_splitter_ratios(
+        self, options_panel_width_pct: object, console_panel_height_pct: object
+    ) -> None:
+        """Reflow main splitters from gui.ini percentage settings."""
+        if self._main_splitter is not None and isinstance(options_panel_width_pct, int | float):
+            total = max(1, self._main_splitter.width() or self.width())
+            left = max(0, int(total * float(options_panel_width_pct) / 100.0))
+            self._main_splitter.setSizes([left, max(0, total - left)])
+        if self._vertical_splitter is not None and isinstance(
+            console_panel_height_pct, int | float
+        ):
+            total = max(1, self._vertical_splitter.height() or self.height())
+            bottom = max(0, int(total * float(console_panel_height_pct) / 100.0))
+            self._vertical_splitter.setSizes([max(0, total - bottom), bottom])
+
+    @staticmethod
+    def _safe_call(module: T.Any, attribute: str) -> object:
+        """Return the result of calling a gui_config ConfigItem, or ``None``."""
+        func = getattr(module, attribute, None)
+        try:
+            return func() if callable(func) else None
+        except (AttributeError, KeyError, ValueError):
+            return None
+
     def _build_ui(self) -> None:
         """Build the Qt shell layout."""
         self._apply_window_chrome()
         self._build_menus()
         self._build_toolbar()
         self._build_statusbar()
-        top = QSplitter(Qt.Horizontal)
+        top = FreeSplitter(Qt.Horizontal)
         top.setObjectName("qt-shell-main-splitter")
-        top.setChildrenCollapsible(False)
         top.addWidget(self._command_panel)
         top.addWidget(self._display_tabs())
         top.setStretchFactor(0, 0)
         top.setStretchFactor(1, 1)
         top.setSizes([420, 840])
         self._main_splitter = top
-        main = QSplitter(Qt.Vertical)
+        main = FreeSplitter(Qt.Vertical)
         main.setObjectName("qt-shell-vertical-splitter")
-        main.setChildrenCollapsible(False)
         main.addWidget(top)
         main.addWidget(self._console)
         main.setStretchFactor(0, 3)
@@ -182,13 +301,15 @@ class MainWindow(QMainWindow):
         icon = self._icon("favicon")
         if not icon.isNull():
             self.setWindowIcon(icon)
-        self.setMinimumSize(900, 560)
+        self.setMinimumSize(640, 400)
 
     def _display_tabs(self) -> QTabWidget:
         """Create right display tabs used only for Analysis, Preview and Graph."""
         tabs = QTabWidget()
         tabs.setObjectName("qt-shell-display-tabs")
-        tabs.setMinimumWidth(0)
+        tabs.setMinimumSize(0, 0)
+        tabs.tabBar().setExpanding(False)
+        tabs.tabBar().setUsesScrollButtons(True)
         tabs.addTab(self._analysis_panel(), "Analysis")
         tabs.addTab(self._preview_panel(), "Preview")
         tabs.addTab(self._graph_panel(), "Graph")
@@ -270,6 +391,28 @@ class MainWindow(QMainWindow):
         configure.setToolTip("Configure Settings...")
         configure.triggered.connect(lambda _checked=False: self._open_settings_dialog())
         settings_menu.addAction(configure)
+        settings_menu.addSeparator()
+        for name in ("extract", "train", "convert"):
+            entry = QAction(
+                self._icon(f"settings_{name}"),
+                f"Configure {name.title()} Settings...",
+                settings_menu,
+            )
+            entry.setObjectName(f"qt-shell-settings-configure-{name}")
+            entry.setToolTip(f"Configure {name.title()} settings...")
+            entry.triggered.connect(
+                lambda _checked=False, section=name: self._open_settings_dialog(section)
+            )
+            settings_menu.addAction(entry)
+        gui_entry = QAction(
+            self._icon("settings"),
+            "Faceswap GUI Options...",
+            settings_menu,
+        )
+        gui_entry.setObjectName("qt-shell-settings-configure-gui")
+        gui_entry.setToolTip("Configure the appearance and behavior of the GUI")
+        gui_entry.triggered.connect(lambda _checked=False: self._open_settings_dialog("gui"))
+        settings_menu.addAction(gui_entry)
 
         command_menu = menu_bar.addMenu("Command")
         self._menus.append(command_menu)
@@ -328,15 +471,21 @@ class MainWindow(QMainWindow):
         reload_action.setObjectName("qt-shell-toolbar-reload")
         toolbar.addAction(reload_action)
         toolbar.addSeparator()
-        generate_action = self._action("Generate", self._generate_command, "generate")
-        generate_action.setObjectName("qt-shell-toolbar-generate")
-        toolbar.addAction(generate_action)
-        self._run_action = self._action("Run", self._run_command, "run")
-        self._run_action.setObjectName("qt-shell-toolbar-run")
-        self._stop_action = self._action("Stop", self._stop_job, "stop")
-        self._stop_action.setObjectName("qt-shell-toolbar-stop")
-        toolbar.addAction(self._run_action)
-        toolbar.addAction(self._stop_action)
+        task_load = self._action("Load Task...", self._open_task, "task_open")
+        task_load.setObjectName("qt-shell-toolbar-task-open")
+        toolbar.addAction(task_load)
+        task_save = self._action("Save Task", self._save_task_current, "task_save")
+        task_save.setObjectName("qt-shell-toolbar-task-save")
+        toolbar.addAction(task_save)
+        task_save_as = self._action("Save Task As...", self._save_task_as, "task_save_as")
+        task_save_as.setObjectName("qt-shell-toolbar-task-save-as")
+        toolbar.addAction(task_save_as)
+        task_reset = self._action("Reset Task", self._reset_task, "task_reset")
+        task_reset.setObjectName("qt-shell-toolbar-task-reset")
+        toolbar.addAction(task_reset)
+        task_reload = self._action("Reload Task", self._reload_task, "task_reload")
+        task_reload.setObjectName("qt-shell-toolbar-task-reload")
+        toolbar.addAction(task_reload)
         toolbar.addSeparator()
         for name in ("extract", "train", "convert"):
             action = self._settings_action(name)
@@ -368,8 +517,8 @@ class MainWindow(QMainWindow):
         self._command_panel.generate_requested.connect(self._generate_command)
         self._command_panel.run_requested.connect(self._run_command)
         self._command_panel.value_changed.connect(self._mark_modified_from_user_event)
-        self._runner.stdout.connect(self._console.write)
-        self._runner.stderr.connect(self._console.write)
+        self._runner.stdout.connect(self._console_stdout_router.write)
+        self._runner.stderr.connect(self._console_stderr_router.write)
         self._runner.progress.connect(self._consume_runtime_event)
         self._runner.finished.connect(self._job_finished)
 
@@ -660,11 +809,39 @@ class MainWindow(QMainWindow):
         filename, _ = QFileDialog.getSaveFileName(
             self,
             "Save Faceswap Task As",
-            "",
+            self._project_filename if self._file_kind == TASK_KIND else "",
             "Faceswap task (*.fst);;JSON files (*.json);;All files (*)",
         )
         if filename:
             self._save_task(self._with_suffix(filename, TASK_EXTENSION))
+
+    def _save_task_current(self) -> None:
+        """Overwrite the active task file, or prompt when none is active."""
+        if self._project_filename is None or self._file_kind != TASK_KIND:
+            self._save_task_as()
+            return
+        self._save_task(self._project_filename)
+
+    def _reset_task(self) -> None:
+        """Reset the current command's options to their defaults (Tk parity)."""
+        if not self._confirm_discard_changes("reset the current task"):
+            return
+        self._suppress_dirty = True
+        try:
+            self._command_panel.clear_values()
+        finally:
+            self._suppress_dirty = False
+        self._set_modified(False)
+        self._console.write_line("Reset current task to defaults")
+        self.statusBar().showMessage("Task reset", 5000)
+
+    def _reload_task(self) -> bool:
+        """Reload the active task file from disk."""
+        if self._project_filename is None or self._file_kind != TASK_KIND:
+            self.statusBar().showMessage("No task file to reload", 5000)
+            self._console.write_line("No task file to reload")
+            return False
+        return self._reload_current_file()
 
     def _save_project(self, filename: str) -> bool:
         """Persist the full project state."""

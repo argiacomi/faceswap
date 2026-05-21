@@ -57,6 +57,8 @@ class ExtractBatchAligned:
     """The face landmarks found for this batch in frame space or ``None`` if not populated"""
     landmark_type: LandmarkType | None = None
     """The type of landmarks that the batch holds"""
+    metadata: list[dict[str, T.Any]] = field(default_factory=list)
+    """Optional per-face alignment metadata to serialize with extracted alignments"""
 
     # The following "_cache_" attributes are cached on demand and accessed through their
     # corresponding "non _cache_" properties
@@ -253,6 +255,8 @@ class ExtractBatchAligned:
         retval = ExtractBatchAligned(landmark_type=self.landmark_type)
         if self.landmarks is not None:
             retval.landmarks = self.landmarks[indices]
+        if self.metadata:
+            retval.metadata = self.metadata[indices]
 
         for k, v in self.__dict__.items():
             if k.startswith("_cache_") and v is not None:
@@ -276,6 +280,8 @@ class ExtractBatchAligned:
             )
             if self.landmark_type is None:
                 self.landmark_type = batch.landmark_type
+        if batch.metadata:
+            self.metadata.extend(batch.metadata)
 
         for k, v in batch.__dict__.items():
             if k.startswith("_cache_") and v is not None:
@@ -297,6 +303,10 @@ class ExtractBatchAligned:
 
         if self.landmarks is not None:
             self.landmarks = self.landmarks[mask]
+        if self.metadata:
+            self.metadata = [
+                item for item, keep in zip(self.metadata, mask.tolist(), strict=False) if keep
+            ]
 
         for k, v in self.__dict__.items():
             if k.startswith("_cache_") and v is not None:
@@ -727,6 +737,7 @@ class ExtractBatch:  # pylint:disable=too-many-instance-attributes
         for i, f in enumerate(faces):
             self.bboxes[i] = np.array([f.left, f.top, f.right, f.bottom], dtype=np.int32)
             self.aligned.landmarks[i] = f.landmarks_xy
+            self.aligned.metadata.append(dict(f.metadata))
             for k, idn in f.identity.items():
                 self.identities[k][i] = idn
             for k, m in f.mask.items():
@@ -903,6 +914,7 @@ class FrameFaces:  # pylint:disable=too-many-instance-attributes
                     for k, m in self.masks.items()
                 },
                 identity={k: i[idx] for k, i in self.identities.items() if i.size},
+                metadata=(self.aligned.metadata[idx] if idx < len(self.aligned.metadata) else {}),
             )
             for idx, box in enumerate(self.bboxes)
         ]
@@ -941,6 +953,7 @@ class FrameFaces:  # pylint:disable=too-many-instance-attributes
                     if self.landmarks is None
                     else np.concatenate([self.landmarks, landmarks])
                 )
+            self.aligned.metadata.append(dict(face.metadata))
             for k, m in face.mask.items():
                 msk = ExtractBatchMask(
                     m.stored_centering,
@@ -1067,6 +1080,7 @@ def frame_faces_to_alignment(media: FrameFaces) -> list[PNGAlignments]:
                 for k, m in masks.items()
             },
             identity={k: i[idx].tolist() for k, i in media.identities.items()},
+            metadata=media.aligned.metadata[idx] if idx < len(media.aligned.metadata) else {},
         )
         for idx, (bbox, lms) in enumerate(
             zip(media.bboxes, media.landmarks.tolist(), strict=False)

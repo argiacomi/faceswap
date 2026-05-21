@@ -90,6 +90,9 @@ class OptionGroupDrawer(QWidget):
         self._form.setHorizontalSpacing(12)
         self._form.setVerticalSpacing(6)
         self._form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        self._form.setRowWrapPolicy(QFormLayout.DontWrapRows)
+        self._form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self._form.setFormAlignment(Qt.AlignLeft | Qt.AlignTop)
         outer.addWidget(self._content)
 
     @property
@@ -124,8 +127,9 @@ class OptionsFormRenderer(QWidget):
 
     value_changed = Signal()
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None, option_columns: int = 4) -> None:
         super().__init__(parent)
+        self._option_columns = max(1, int(option_columns))
         self.setMinimumWidth(0)
         self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self._layout = QVBoxLayout(self)
@@ -177,7 +181,7 @@ class OptionsFormRenderer(QWidget):
         grid.setContentsMargins(0, 4, 0, 4)
         grid.setHorizontalSpacing(16)
         grid.setVerticalSpacing(4)
-        columns = max(1, min(3, len(bool_pairs)))
+        columns = self._choice_columns(len(bool_pairs))
         for index, (spec, checkbox) in enumerate(bool_pairs):
             checkbox.setText(spec.title)
             checkbox.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
@@ -259,11 +263,20 @@ class OptionsFormRenderer(QWidget):
         form.setHorizontalSpacing(12)
         form.setVerticalSpacing(6)
         form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        form.setRowWrapPolicy(QFormLayout.DontWrapRows)
+        form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        form.setFormAlignment(Qt.AlignLeft | Qt.AlignTop)
         self._layout.addWidget(section)
         return form
 
+    LABEL_COLUMN_WIDTH = 75
+
     def _label_for(self, spec: OptionSpec) -> QLabel:
-        """Return a label with optional help tooltip and required marker."""
+        """Return a label with optional help tooltip and required marker.
+
+        The label is fixed-width so all inputs align in the right column. It wraps
+        across multiple lines when the title is wider than ``LABEL_COLUMN_WIDTH``.
+        """
         if self._is_required(spec):
             label = QLabel(f'{escape(spec.title)} <span style="color:#c0392b;">*</span>')
             label.setTextFormat(Qt.RichText)
@@ -272,12 +285,21 @@ class OptionsFormRenderer(QWidget):
         else:
             label = QLabel(spec.title)
             label.setObjectName("qt-shell-option-label")
-        label.setMinimumWidth(0)
+        label.setMinimumWidth(self.LABEL_COLUMN_WIDTH)
+        label.setMaximumWidth(self.LABEL_COLUMN_WIDTH)
+        label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         label.setWordWrap(True)
-        label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.MinimumExpanding)
         if spec.helptext:
-            label.setToolTip(self._tooltip_text(spec.helptext))
+            label.setToolTip(self._tooltip_text(self._title_tooltip(spec)))
         return label
+
+    @staticmethod
+    def _title_tooltip(spec: OptionSpec) -> str:
+        """Return the per-option tooltip that pairs the title with its helptext."""
+        if not spec.helptext:
+            return spec.title
+        return f"{spec.title} - {spec.helptext}"
 
     def _build_widget(self, spec: OptionSpec) -> QWidget:
         """Create a Qt widget for an option."""
@@ -319,7 +341,7 @@ class OptionsFormRenderer(QWidget):
         group = QButtonGroup(widget)
         group.setExclusive(True)
         default = self._string_value(spec.default)
-        columns = self._choice_columns(spec.choices)
+        columns = self._choice_columns(len(spec.choices))
         for index, choice in enumerate(spec.choices):
             button = QRadioButton(choice)
             button.setMinimumWidth(0)
@@ -344,7 +366,7 @@ class OptionsFormRenderer(QWidget):
         layout.setHorizontalSpacing(12)
         layout.setVerticalSpacing(6)
         selected = self._value_set(spec.default)
-        columns = self._choice_columns(spec.choices)
+        columns = self._choice_columns(len(spec.choices))
         for index, choice in enumerate(spec.choices):
             checkbox = QCheckBox(choice)
             checkbox.setMinimumWidth(0)
@@ -367,7 +389,8 @@ class OptionsFormRenderer(QWidget):
 
         slider = QSlider(Qt.Horizontal)
         line_edit = QLineEdit()
-        line_edit.setFixedWidth(70)
+        line_edit.setFixedWidth(54)
+        line_edit.setAlignment(Qt.AlignCenter)
         slider.setObjectName("qt-shell-option-slider")
         line_edit.setObjectName("qt-shell-option-slider-value")
         slider.setMinimumWidth(0)
@@ -424,17 +447,17 @@ class OptionsFormRenderer(QWidget):
         layout.addWidget(widget, 1)
         theme = QtTheme.default()
         for mode in spec.browser_modes:
+            icon_key = self._browser_icon_key(mode, spec)
             button = QPushButton()
             button.setObjectName(f"qt-shell-browser-{mode}")
             button.setProperty("qt-shell-role", "browser")
-            icon = icon_for_action(theme, f"browser_{mode}")
+            icon = icon_for_action(theme, icon_key)
             if not icon.isNull():
                 button.setIcon(icon)
                 button.setIconSize(QSize(16, 16))
             else:
                 button.setText(self._browser_label(mode))
-            tooltip = spec.helptext or self._browser_tooltip(mode, spec.title)
-            button.setToolTip(self._tooltip_text(tooltip))
+            button.setToolTip(self._tooltip_text(self._browser_tooltip(mode, spec)))
             button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
             button.setFixedSize(QSize(24, 24))
             button.setFlat(True)
@@ -443,6 +466,37 @@ class OptionsFormRenderer(QWidget):
             )
             layout.addWidget(button)
         return row
+
+    @staticmethod
+    def _browser_icon_key(mode: str, spec: OptionSpec) -> str:
+        """Return the icon key to use for a browser button (Tk parity).
+
+        Mirrors :class:`lib.gui.control_helper.FileBrowser.add_browser_buttons` so
+        each filetype/option gets a recognisable icon (film reel for video, mountain
+        for folders of images, server for model dirs, file page for generic files).
+
+        Tk looks at the ``dest`` of the argparse argument; the schema may store
+        the short opt (``-i``) so we combine ``dest``, the CLI ``switch`` and the
+        human-facing ``title`` before scanning for option-name tokens.
+        """
+        filetypes = (spec.filetypes or "").lower()
+        opt_name = " ".join(
+            (
+                (spec.dest or "").lower(),
+                spec.switch.lstrip("-").lower().replace("-", "_"),
+                spec.title.lower().replace(" ", "_"),
+            )
+        )
+        if mode in ("file", "files") and filetypes == "video":
+            return "browser_video"
+        if mode == "folder":
+            if filetypes == "image" or any(
+                token in opt_name for token in ("frames", "faces", "input")
+            ):
+                return "browser_picture"
+            if "model" in opt_name or filetypes == "model":
+                return "browser_model"
+        return f"browser_{mode}"
 
     def _value_for(self, spec: OptionSpec) -> object:
         """Read and normalize an option widget value."""
@@ -615,21 +669,37 @@ class OptionsFormRenderer(QWidget):
         }.get(mode, "Browse")
 
     @staticmethod
-    def _browser_tooltip(mode: str, title: str) -> str:
-        """Return the default Tk-parity tooltip for a browser mode."""
+    def _browser_tooltip(mode: str, spec: OptionSpec) -> str:
+        """Return the Tk-parity tooltip for a browser mode/filetypes combo."""
+        filetypes = (spec.filetypes or "").lower()
+        opt_name = " ".join(
+            (
+                (spec.dest or "").lower(),
+                spec.switch.lstrip("-").lower().replace("-", "_"),
+                spec.title.lower().replace(" ", "_"),
+            )
+        )
+        if mode in ("file", "files") and filetypes == "video":
+            return "Select a video..."
+        if mode == "folder":
+            if filetypes == "image" or any(
+                token in opt_name for token in ("frames", "faces", "input")
+            ):
+                return "Select a folder of images..."
+            if "model" in opt_name or filetypes == "model":
+                return "Select a model folder..."
         return {
             "folder": "Select a folder...",
             "file": "Select a file...",
             "files": "Select one or more files...",
             "save": "Select a save location...",
-        }.get(mode, f"Browse for {title}")
+        }.get(mode, f"Browse for {spec.title}")
 
     _tooltip_text = staticmethod(_wrap_tooltip)
 
-    @staticmethod
-    def _choice_columns(choices: tuple[str, ...]) -> int:
+    def _choice_columns(self, choice_count: int) -> int:
         """Return the row-major column count for choice option groups."""
-        return 1 if len(choices) <= 1 else min(3, len(choices))
+        return max(1, min(self._option_columns, choice_count))
 
     @staticmethod
     def _apply_widget_policy(widget: QWidget) -> None:
@@ -768,7 +838,7 @@ class CommandPanel(QWidget):
         self._tool_tabs = QTabBar()
         self._command_info = QLabel()
         self._validation_label = QLabel()
-        self._renderer = OptionsFormRenderer()
+        self._renderer = OptionsFormRenderer(option_columns=3)
         self._generate_button = QPushButton("Generate")
         self._run_button = QPushButton("Run")
         self._generate_button.setObjectName("qt-shell-command-generate")
@@ -787,6 +857,7 @@ class CommandPanel(QWidget):
         self._syncing_tabs = False
         self._command_value_cache: dict[str, dict[str, object]] = {}
         self._active_cached_command: str | None = None
+        self._scroll: QScrollArea | None = None
         self._build()
         self._primary_tabs.currentChanged.connect(self._set_primary_tab)
         self._tool_tabs.currentChanged.connect(self._set_tool_tab)
@@ -820,6 +891,19 @@ class CommandPanel(QWidget):
         self._command.setCurrentText(command)
         self._select_tabs_for_command(category, command)
         self._set_command_options(command)
+
+    def select_command(self, command: str) -> bool:
+        """Select a command tab by name without seeding any values.
+
+        Returns ``True`` if the named command is available; ``False`` otherwise.
+        """
+        if not command:
+            return False
+        category = self._schema.category_for_command(command)
+        if category is None:
+            return False
+        self._select_tabs_for_command(category, command)
+        return True
 
     def clear_values(self) -> None:
         """Reset rendered fields to empty/default values."""
@@ -871,6 +955,7 @@ class CommandPanel(QWidget):
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         scroll.setObjectName("qt-shell-command-scroll")
         scroll.setWidget(self._renderer)
+        self._scroll = scroll
         layout.addWidget(scroll, 1)
 
         buttons = QHBoxLayout()
@@ -958,6 +1043,9 @@ class CommandPanel(QWidget):
         self._update_validation()
         self._run_button.setText(command.title() if command else "Run")
         self._active_cached_command = command
+        if self._scroll is not None:
+            self._scroll.verticalScrollBar().setValue(0)
+            self._scroll.horizontalScrollBar().setValue(0)
 
     def _set_command_info(self, command: str) -> None:
         """Render command summary text from CLI metadata."""

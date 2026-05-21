@@ -38,7 +38,7 @@ class PreviewImageView(QLabel):
         self.setObjectName("qt-shell-preview-image")
         self.setAlignment(Qt.AlignCenter)
         self.setWordWrap(True)
-        self.setMinimumSize(240, 180)
+        self.setMinimumSize(0, 0)
         self._source_pixmap = QPixmap()
         self._zoom = 1.0
         self._pan_x = 0.0
@@ -361,7 +361,7 @@ class PreviewPanel(QWidget):
 
         content = QHBoxLayout()
         self._image_list.setObjectName("qt-shell-preview-list")
-        self._image_list.setMinimumWidth(180)
+        self._image_list.setMinimumWidth(0)
         content.addWidget(self._image_list, 0)
 
         scroll = QScrollArea()

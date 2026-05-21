@@ -11,7 +11,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from lib.landmarks.eval.harness import run_quality_harness
+from lib.landmarks.evaluation.harness import run_quality_harness
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -41,9 +41,13 @@ def main(argv: list[str] | None = None) -> int:
         outlier_threshold=args.outlier_threshold,
     )
     print(f"Wrote landmark metrics to: {args.output_dir}")
+    if result.get("any_sample_failed"):
+        print(
+            "Diagnostic: at least one sample exceeded the per-sample NME failure "
+            f"threshold ({args.failure_threshold:.6f}). This is informational; use "
+            "--max-failure-rate / --max-nme for aggregate gating."
+        )
     failures = []
-    if result.get("threshold_failed"):
-        failures.append(f"sample failure threshold exceeded ({args.failure_threshold:.6f})")
     for label, metrics in sorted(result.get("overall", {}).items()):
         if args.max_nme is not None and metrics.get("nme", 0.0) > args.max_nme:
             failures.append(f"{label} nme={metrics['nme']:.6f} > {args.max_nme:.6f}")

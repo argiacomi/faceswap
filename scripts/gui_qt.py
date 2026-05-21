@@ -3,19 +3,29 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
+import typing as T
 
 from PySide6.QtWidgets import QApplication
 
+from lib.gui import gui_config as cfg
+from lib.gui.qt_shell.console_router import (
+    QtConsoleLogHandler,
+    install_console_routers,
+    restore_console_routers,
+)
 from lib.gui.qt_shell.main import (
     INTERRUPT_EXIT_CODE,
     install_signal_handlers,
     interrupt_window,
 )
 from lib.gui.qt_shell.main_window import MainWindow
-from lib.gui.qt_shell.theme import apply_theme
+from lib.gui.qt_shell.theme import QtTheme, apply_theme, theme_from_gui_config
 from lib.utils import get_module_objects
+
+logger = logging.getLogger(__name__)
 
 QT_NO_EXEC_ENV = "FACESWAP_QT_NO_EXEC"
 _TRUE_VALUES = {"1", "true", "yes", "on"}
@@ -29,17 +39,49 @@ class Gui:
         self._owns_app = QApplication.instance() is None
         self._no_exec = self._resolve_no_exec(arguments)
         self.app = QApplication.instance() or QApplication(sys.argv)
-        self.theme = apply_theme(self.app)
-        self.root = MainWindow()
+        cfg.load_config(getattr(arguments, "config_file", None))
+        self.theme = apply_theme(self.app, theme_from_gui_config(QtTheme.default()))
+        self.root = MainWindow(theme=self.theme)
         resize = getattr(self.root, "resize", None)
         if callable(resize):
             resize(1280, 760)
+        self._console_routers: tuple[T.Any, T.Any] | None = None
+        self._log_handler: QtConsoleLogHandler | None = None
+        if not bool(getattr(arguments, "debug", False)):
+            self._install_console_logging()
+        else:
+            logger.info("Console debug activated. Outputting to main terminal")
+
+    def _install_console_logging(self) -> None:
+        """Redirect stdout/stderr and attach a console-aware logging handler.
+
+        Mirrors the Tk ``ConsoleOut`` setup so any ``print`` or ``logging`` call
+        made by the GUI process surfaces in the Qt console pane. Skipped when
+        ``--debug`` is passed (matches Tk behaviour).
+        """
+        console = getattr(self.root, "console", None)
+        if console is None:  # pragma: no cover - defensive
+            return
+        self._console_routers = install_console_routers(console)
+        handler = QtConsoleLogHandler(console)
+        logging.getLogger().addHandler(handler)
+        self._log_handler = handler
+
+    def _restore_console_logging(self) -> None:
+        """Undo :meth:`_install_console_logging`."""
+        if self._console_routers is not None:
+            restore_console_routers(*self._console_routers)
+            self._console_routers = None
+        if self._log_handler is not None:
+            logging.getLogger().removeHandler(self._log_handler)
+            self._log_handler = None
 
     def process(self) -> None:
         """Show and execute the Qt event loop unless running in smoke-test mode."""
         if self._no_exec:
             return
         self.root.show()
+        self.root.apply_gui_settings()
         if not self._owns_app:
             return
         install_signal_handlers(self.app, self.root)
@@ -48,6 +90,8 @@ class Gui:
         except KeyboardInterrupt:
             interrupt_window(self.root)
             sys.exit(INTERRUPT_EXIT_CODE)
+        finally:
+            self._restore_console_logging()
 
     @staticmethod
     def _resolve_no_exec(arguments) -> bool:  # type:ignore[no-untyped-def]

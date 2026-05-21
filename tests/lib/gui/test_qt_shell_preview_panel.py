@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from PySide6.QtGui import QImage
@@ -12,9 +13,11 @@ from lib.gui.services.command_context import CommandExecutionContext
 from lib.gui.services.preview_output_service import PreviewOutputService
 
 
-def _touch(path: Path) -> Path:
+def _touch(path: Path, *, mtime_ns: int | None = None) -> Path:
     """Create an empty preview file and return it."""
     path.write_bytes(b"")
+    if mtime_ns is not None:
+        os.utime(path, ns=(mtime_ns, mtime_ns))
     return path
 
 
@@ -155,9 +158,9 @@ def test_preview_panel_apply_context_uses_batch_mode(qtbot, tmp_path: Path) -> N
     new_batch = tmp_path / "new"
     old_batch.mkdir()
     new_batch.mkdir()
-    _touch(old_batch / "old.png")
-    first = _touch(new_batch / "a.png")
-    second = _touch(new_batch / "b.png")
+    _touch(old_batch / "old.png", mtime_ns=1_000_000_000)
+    first = _touch(new_batch / "a.png", mtime_ns=2_000_000_000)
+    second = _touch(new_batch / "b.png", mtime_ns=3_000_000_000)
     panel = _panel()
     qtbot.addWidget(panel)
     context = CommandExecutionContext(preview_output_path=str(tmp_path), batch_mode=True)
