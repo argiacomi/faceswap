@@ -13,6 +13,7 @@ from lib.landmarks.core.schema import LandmarkPrediction
 from lib.landmarks.ensemble.weights import save_weights
 from tools.landmarks.production_promotion_gate import (
     ProductionGateConfig,
+    _sidecar_metadata_by_key,
     run_production_promotion_gate,
 )
 
@@ -259,6 +260,60 @@ def test_production_gate_uses_image_aware_sidecar_metadata(tmp_path: Path) -> No
     assert report["missing_runtime_metadata_count"] == 0
     assert report["derived_no_image_runtime_metadata_count"] == 0
     assert report["production_condition_counts"] == {"profile_left": 1}
+
+
+def test_production_sidecar_metadata_keeps_face_index_key(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "dataset": "production_validated",
+                "samples": [
+                    {
+                        "sample_id": "frame1",
+                        "image": "frame1.jpg",
+                        "landmarks": "face0.npy",
+                        "metadata": {"face_index": 0},
+                    },
+                    {
+                        "sample_id": "frame1",
+                        "image": "frame1.jpg",
+                        "landmarks": "face1.npy",
+                        "metadata": {"face_index": 1},
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    sidecar = tmp_path / "resolver_metadata.jsonl"
+    sidecar.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "sample_id": "frame1",
+                        "face_index": 0,
+                        "landmark_ensemble": {"runtime_bucket": "frontal"},
+                    }
+                ),
+                json.dumps(
+                    {
+                        "sample_id": "frame1",
+                        "face_index": 1,
+                        "landmark_ensemble": {"runtime_bucket": "profile_left"},
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    metadata = _sidecar_metadata_by_key(manifest_path, sidecar)
+
+    assert metadata[("frame1", 0)]["landmark_ensemble"]["runtime_bucket"] == "frontal"
+    assert metadata[("frame1", 1)]["landmark_ensemble"]["runtime_bucket"] == "profile_left"
 
 
 def test_production_gate_fails_per_bucket_regression(tmp_path: Path) -> None:

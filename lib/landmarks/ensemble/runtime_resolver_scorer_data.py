@@ -244,6 +244,7 @@ class SampleCandidateContext:
     """Resolved candidates and row data for one manifest sample."""
 
     sample_id: str
+    face_index: int
     dataset: str
     source: str
     condition: str
@@ -677,6 +678,7 @@ def build_sample_context(
     )
     return SampleCandidateContext(
         sample_id=sample.sample_id,
+        face_index=face_index,
         dataset=sample.dataset,
         source=source,
         condition=sample.condition or bucket_result.bucket or "unknown",

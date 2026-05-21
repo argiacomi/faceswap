@@ -156,6 +156,7 @@ def _candidate_context(
     veto_reasons = geometry_veto_reasons or {}
     return scorer_data.SampleCandidateContext(
         sample_id="sample",
+        face_index=0,
         dataset="test",
         source="production_validated",
         condition="frontal",

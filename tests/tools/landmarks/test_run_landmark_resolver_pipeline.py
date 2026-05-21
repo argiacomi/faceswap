@@ -37,6 +37,7 @@ from tools.landmarks.run_landmark_resolver_pipeline import (
     _stage_complete,
     _stage_forced,
     _validate_stage_outputs,
+    _write_v2_scorer_training_sentinel,
     run_pipeline,
 )
 
@@ -79,6 +80,11 @@ def _args(tmp_path: Path, **overrides: object) -> argparse.Namespace:
         "split_report": 0.2,
         "split_seed": 1337,
         "scorer_target": "selection_cost",
+        "promoted_scorer_version": "continuous_regret_v1_1",
+        "v2_eval_fraction": 0.20,
+        "v2_learning_rate": 0.05,
+        "v2_iterations": 150,
+        "v2_num_leaves": 31,
         "prediction_cache_mode": "run-models",
         "allow_image_backfill": True,
         "dataset_build_arg": [],
@@ -122,6 +128,7 @@ def _touch_pipeline_outputs(paths: PipelinePaths, *, promotion_status: str = "pa
         paths.scorer_artifact,
         paths.continuous_scorer_eval_rows,
         paths.v2_scorer_artifact,
+        paths.v2_scorer_training_sentinel,
         paths.scorer_report,
         paths.exported_best_setup,
         paths.exported_best_weights,
@@ -147,6 +154,35 @@ def _touch_pipeline_outputs(paths: PipelinePaths, *, promotion_status: str = "pa
             path.write_text("{}\n", encoding="utf-8")
     paths.run_cache.mkdir(parents=True, exist_ok=True)
     paths.production_cache.mkdir(parents=True, exist_ok=True)
+    scorer_payload = {
+        "artifact_schema_version": 1,
+        "model_type": "linear_regression",
+        "target": "selection_cost",
+        "score_semantics": "predicted_cost",
+        "higher_is_better": False,
+        "features": ["candidate_name=hrnet"],
+        "coefficients": [1.0],
+        "intercept": 0.0,
+        "version": "continuous_regret_v1_1",
+        "scorer_version": "continuous_regret_v1_1",
+        "runtime_policy": "learned_quality_v1",
+    }
+    paths.scorer_artifact.write_text(json.dumps(scorer_payload) + "\n", encoding="utf-8")
+    paths.exported_scorer_artifact.write_text(
+        json.dumps(scorer_payload) + "\n", encoding="utf-8"
+    )
+    paths.artifacts_dir.mkdir(parents=True, exist_ok=True)
+    (paths.artifacts_dir / "artifacts_manifest.json").write_text(
+        json.dumps(
+            {
+                "runtime_resolver_scorer": str(paths.exported_scorer_artifact),
+                "runtime_resolver_scorer_source": str(paths.scorer_artifact),
+                "runtime_resolver_scorer_version": "continuous_regret_v1_1",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
 
 def test_pipeline_runner_dry_run_writes_summaries_contracts_and_progress(tmp_path: Path) -> None:
@@ -701,6 +737,31 @@ def test_stage_contract_declares_required_files(tmp_path: Path) -> None:
     assert str(paths.production_cache_sentinel) in v2_contract.required_files
     assert str(paths.frozen_gt_metadata) in v2_contract.required_files
     assert str(paths.v2_scorer_artifact) in v2_contract.outputs
+    assert str(paths.v2_scorer_training_sentinel) in v2_contract.outputs
+
+
+def test_v2_scorer_training_resume_requires_matching_sentinel(tmp_path: Path) -> None:
+    args = _args(tmp_path)
+    paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
+    for path in (
+        paths.hard_manifest,
+        paths.production_manifest,
+        paths.hard_source_cache_sentinel,
+        paths.production_cache_sentinel,
+        paths.best_weights,
+        paths.frozen_gt_metadata,
+        paths.v2_scorer_artifact,
+    ):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}\n", encoding="utf-8")
+
+    assert not _stage_complete("v2_scorer_training", args, paths)
+
+    _write_v2_scorer_training_sentinel(args, paths)
+    assert _stage_complete("v2_scorer_training", args, paths)
+
+    changed_args = _args(tmp_path, v2_iterations=args.v2_iterations + 1)
+    assert not _stage_complete("v2_scorer_training", changed_args, paths)
 
 
 def test_scorer_train_and_eval_commands_allow_image_backfill_by_default(
@@ -720,6 +781,18 @@ def test_scorer_train_and_eval_commands_allow_image_backfill_by_default(
     assert "--allow-image-backfill" in eval_command
     assert v2_train_command[v2_train_command.index("--training-mode") + 1] == "learned_quality_v2"
     assert v2_train_command[v2_train_command.index("--target") + 1] == "selection_cost"
+    assert v2_train_command[v2_train_command.index("--eval-fraction") + 1] == str(
+        args.v2_eval_fraction
+    )
+    assert v2_train_command[v2_train_command.index("--learning-rate") + 1] == str(
+        args.v2_learning_rate
+    )
+    assert v2_train_command[v2_train_command.index("--iterations") + 1] == str(
+        args.v2_iterations
+    )
+    assert v2_train_command[v2_train_command.index("--num-leaves") + 1] == str(
+        args.v2_num_leaves
+    )
     assert v2_train_command[v2_train_command.index("--output-dir") + 1] == str(
         paths.v2_scorer_train_dir
     )
@@ -1108,8 +1181,6 @@ def test_resume_skips_completed_stages_records_validated_outputs_and_progress(
     )
     paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
     _touch_pipeline_outputs(paths)
-    paths.artifacts_dir.mkdir(parents=True, exist_ok=True)
-    (paths.artifacts_dir / "artifacts_manifest.json").write_text("{}\n", encoding="utf-8")
     (paths.output_root / "config_update_preview.json").write_text("{}\n", encoding="utf-8")
     (paths.output_root / "config_update_patch.ini").write_text(
         "[align.ensemble]\n", encoding="utf-8"
@@ -1160,7 +1231,7 @@ def test_artifact_export_records_promoted_scorer_provenance(tmp_path: Path) -> N
         encoding="utf-8",
     )
 
-    manifest = _export_artifacts(paths)
+    manifest = _export_artifacts(args, paths)
     scorer_payload = json.loads(paths.exported_scorer_artifact.read_text(encoding="utf-8"))
 
     assert manifest["runtime_resolver_scorer"] == str(paths.exported_scorer_artifact)
@@ -1172,6 +1243,44 @@ def test_artifact_export_records_promoted_scorer_provenance(tmp_path: Path) -> N
     assert scorer_payload["objective"] == "minimize_candidate_selection_regret"
     assert scorer_payload["training_mode"] == "continuous_selection_cost"
     assert scorer_payload["runtime_policy"] == "learned_quality_v1"
+
+
+def test_artifact_export_can_promote_v2_scorer(tmp_path: Path) -> None:
+    args = _args(tmp_path, promoted_scorer_version="learned_quality_v2")
+    paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
+    _touch_pipeline_outputs(paths)
+    paths.v2_scorer_artifact.write_text(
+        json.dumps(
+            {
+                "artifact_schema_version": 2,
+                "model_type": "lightgbm_lambdarank",
+                "target": "selection_cost",
+                "score_semantics": "predicted_cost",
+                "higher_is_better": False,
+                "features": ["candidate_name=hrnet"],
+                "model_data": "fake-model",
+                "version": "learned_quality_v2",
+                "scorer_version": "learned_quality_v2",
+                "runtime_policy": "learned_quality_v2",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    manifest = _export_artifacts(args, paths)
+    updates = _apply_config(args, paths)
+    scorer_payload = json.loads(paths.exported_scorer_artifact.read_text(encoding="utf-8"))
+    preview = json.loads(
+        (args.output_root / "config_update_preview.json").read_text(encoding="utf-8")
+    )
+
+    assert manifest["runtime_resolver_scorer_source"] == str(paths.v2_scorer_artifact)
+    assert manifest["runtime_resolver_scorer_version"] == "learned_quality_v2"
+    assert scorer_payload["model_type"] == "lightgbm_lambdarank"
+    assert scorer_payload["runtime_policy"] == "learned_quality_v2"
+    assert preview["updates"]["resolver_policy"] == "learned_quality_v2"
+    assert "preview" in updates[0]
 
 
 def test_resume_write_config_does_not_skip_config_update(tmp_path: Path) -> None:

@@ -80,9 +80,12 @@ BASE_CACHE_SENTINEL_FILENAME = ".base_prediction_cache_complete.json"
 HARD_SOURCE_CACHE_SENTINEL_FILENAME = ".hard_source_prediction_cache_complete.json"
 PRODUCTION_CACHE_SENTINEL_FILENAME = ".production_prediction_cache_complete.json"
 PRODUCTION_RESOLVER_METADATA_SENTINEL_FILENAME = ".production_resolver_metadata_complete.json"
+V2_SCORER_TRAINING_SENTINEL_FILENAME = ".v2_scorer_training_complete.json"
 DEFAULT_CONFIG_SECTION = "align.ensemble"
 CONFIG_PREVIEW_FILENAME = "config_update_preview.json"
 CONFIG_PATCH_FILENAME = "config_update_patch.ini"
+SCORER_VERSION_CONTINUOUS_REGRET = "continuous_regret_v1_1"
+SCORER_VERSION_LEARNED_QUALITY_V2 = "learned_quality_v2"
 PROGRESS_LOG_FILENAME = "pipeline_progress.jsonl"
 VALID_ALIGN_ENSEMBLE_CONFIG_KEYS = frozenset(
     {
@@ -154,6 +157,7 @@ class PipelinePaths:
     scorer_artifact: Path = field(init=False)
     v2_scorer_train_dir: Path = field(init=False)
     v2_scorer_artifact: Path = field(init=False)
+    v2_scorer_training_sentinel: Path = field(init=False)
     scorer_eval_dir: Path = field(init=False)
     scorer_report: Path = field(init=False)
     artifacts_dir: Path = field(init=False)
@@ -267,6 +271,11 @@ class PipelinePaths:
             self,
             "v2_scorer_artifact",
             self.v2_scorer_train_dir / "runtime_resolver_scorer_v2.json",
+        )
+        object.__setattr__(
+            self,
+            "v2_scorer_training_sentinel",
+            self.v2_scorer_train_dir / V2_SCORER_TRAINING_SENTINEL_FILENAME,
         )
         object.__setattr__(self, "scorer_eval_dir", self.output_root / "scorer_evaluation")
         object.__setattr__(self, "scorer_report", self.scorer_eval_dir / SCORER_POLICY_REPORT_JSON)
@@ -582,6 +591,45 @@ def _write_production_resolver_metadata_sentinel(
     )
 
 
+def _v2_scorer_training_sentinel_payload(
+    args: argparse.Namespace,
+    paths: PipelinePaths,
+) -> dict[str, T.Any]:
+    return {
+        "hard_manifest": str(paths.hard_manifest),
+        "hard_manifest_sha256": _sha256_file(paths.hard_manifest),
+        "production_manifest": str(paths.production_manifest),
+        "production_manifest_sha256": _sha256_file(paths.production_manifest),
+        "hard_source_cache_sentinel": str(paths.hard_source_cache_sentinel),
+        "hard_source_cache_sentinel_sha256": _sha256_file(paths.hard_source_cache_sentinel),
+        "production_cache_sentinel": str(paths.production_cache_sentinel),
+        "production_cache_sentinel_sha256": _sha256_file(paths.production_cache_sentinel),
+        "best_weights": str(paths.best_weights),
+        "best_weights_sha256": _sha256_file(paths.best_weights),
+        "frozen_gt_metadata": str(paths.frozen_gt_metadata),
+        "frozen_gt_metadata_sha256": _sha256_file(paths.frozen_gt_metadata),
+        "candidates": str(args.candidates),
+        "split_seed": int(args.split_seed),
+        "eval_fraction": float(args.v2_eval_fraction),
+        "learning_rate": float(args.v2_learning_rate),
+        "iterations": int(args.v2_iterations),
+        "num_leaves": int(args.v2_num_leaves),
+        "scorer_train_arg": list(getattr(args, "scorer_train_arg", [])),
+        "allow_image_backfill": bool(args.allow_image_backfill),
+        "training_mode": SCORER_VERSION_LEARNED_QUALITY_V2,
+    }
+
+
+def _write_v2_scorer_training_sentinel(
+    args: argparse.Namespace,
+    paths: PipelinePaths,
+) -> None:
+    write_json(
+        paths.v2_scorer_training_sentinel,
+        _v2_scorer_training_sentinel_payload(args, paths),
+    )
+
+
 def _command_production_manifest(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
     argv = [
         args.python_executable,
@@ -765,6 +813,14 @@ def _command_v2_scorer_training(args: argparse.Namespace, paths: PipelinePaths) 
         TARGET_SELECTION_COST,
         "--split-seed",
         str(args.split_seed),
+        "--eval-fraction",
+        str(args.v2_eval_fraction),
+        "--learning-rate",
+        str(args.v2_learning_rate),
+        "--iterations",
+        str(args.v2_iterations),
+        "--num-leaves",
+        str(args.v2_num_leaves),
     ]
     if args.allow_image_backfill:
         argv.append("--allow-image-backfill")
@@ -840,7 +896,7 @@ def _outputs_for(stage: str, paths: PipelinePaths) -> list[Path]:
         "freeze_resolver_metadata": [paths.frozen_gt_metadata],
         "binary_scorer_training": [paths.binary_scorer_artifact],
         "continuous_scorer_training": [paths.scorer_artifact, paths.continuous_scorer_eval_rows],
-        "v2_scorer_training": [paths.v2_scorer_artifact],
+        "v2_scorer_training": [paths.v2_scorer_artifact, paths.v2_scorer_training_sentinel],
         "scorer_evaluation": [paths.scorer_report],
         "production_promotion_check": [paths.scorer_report],
         "artifact_export": [
@@ -968,7 +1024,7 @@ def _required_inputs_for(stage: str, args: argparse.Namespace, paths: PipelinePa
         "artifact_export": [
             paths.best_setup,
             paths.best_weights,
-            paths.scorer_artifact,
+            _promoted_scorer_source(args, paths),
             paths.scorer_report,
             paths.frozen_gt_metadata,
         ],
@@ -993,7 +1049,7 @@ def _contract_for(stage: str, args: argparse.Namespace, paths: PipelinePaths) ->
         "freeze_resolver_metadata": "validates the caller-supplied or freshly generated frozen GT-hard resolver metadata sidecar; never derives runtime metadata from a plain manifest",
         "binary_scorer_training": "writes v1 binary scorer artifacts; --resume skips when runtime_resolver_scorer.json exists",
         "continuous_scorer_training": "writes v1.1 continuous scorer artifacts; --resume skips when runtime_resolver_scorer.json and eval rows exist",
-        "v2_scorer_training": "writes learned_quality_v2 LightGBM LambdaRank scorer artifacts; --resume skips when runtime_resolver_scorer_v2.json exists",
+        "v2_scorer_training": "writes learned_quality_v2 LightGBM LambdaRank scorer artifacts and an input/hyperparameter sentinel; --resume skips only when both match",
         "scorer_evaluation": "writes scorer_evaluation reports; --resume skips when scorer_policy_report.json exists",
         "production_promotion_check": "reads scorer report only; no recompute; requires promotion_status/status pass",
         "artifact_export": "copies final artifacts into artifacts/; --resume skips when artifacts_manifest.json exists",
@@ -1025,7 +1081,10 @@ def _contract_for(stage: str, args: argparse.Namespace, paths: PipelinePaths) ->
         "continuous_scorer_training": [
             "v1.1 runtime_resolver_scorer.json and held-out eval rows exist"
         ],
-        "v2_scorer_training": ["learned_quality_v2 runtime_resolver_scorer_v2.json exists"],
+        "v2_scorer_training": [
+            "learned_quality_v2 runtime_resolver_scorer_v2.json exists",
+            "v2 scorer training sentinel matches requested inputs and hyperparameters",
+        ],
         "scorer_evaluation": ["scorer_policy_report.json exists"],
         "production_promotion_check": ["scorer report promotion_status/status is pass"],
         "artifact_export": ["artifacts_manifest.json exists"],
@@ -1114,6 +1173,38 @@ def _dataset_manifest_sentinel_matches(args: argparse.Namespace, paths: Pipeline
     )
 
 
+def _v2_scorer_training_sentinel_matches(
+    args: argparse.Namespace,
+    paths: PipelinePaths,
+) -> bool:
+    if (
+        not paths.v2_scorer_training_sentinel.is_file()
+        or not paths.hard_manifest.is_file()
+        or not paths.production_manifest.is_file()
+        or not paths.hard_source_cache_sentinel.is_file()
+        or not paths.production_cache_sentinel.is_file()
+        or not paths.best_weights.is_file()
+        or not paths.frozen_gt_metadata.is_file()
+    ):
+        return False
+    return _read_json(paths.v2_scorer_training_sentinel) == _v2_scorer_training_sentinel_payload(
+        args, paths
+    )
+
+
+def _artifact_export_matches(args: argparse.Namespace, paths: PipelinePaths) -> bool:
+    manifest = _read_json(paths.artifacts_dir / "artifacts_manifest.json")
+    scorer_payload = _read_json(paths.exported_scorer_artifact)
+    expected_source = str(_promoted_scorer_source(args, paths))
+    return (
+        manifest.get("runtime_resolver_scorer") == str(paths.exported_scorer_artifact)
+        and manifest.get("runtime_resolver_scorer_source") == expected_source
+        and manifest.get("runtime_resolver_scorer_version") == args.promoted_scorer_version
+        and str(scorer_payload.get("scorer_version") or scorer_payload.get("version") or "")
+        == args.promoted_scorer_version
+    )
+
+
 def _stage_complete(stage: str, args: argparse.Namespace, paths: PipelinePaths) -> bool:
     if stage == "build_hard_source_manifest" and args.hard_source_manifest is not None:
         return True
@@ -1147,6 +1238,10 @@ def _stage_complete(stage: str, args: argparse.Namespace, paths: PipelinePaths) 
         )
     if stage == "build_production_resolver_metadata":
         return _production_resolver_metadata_sentinel_matches(args, paths)
+    if stage == "v2_scorer_training":
+        return _v2_scorer_training_sentinel_matches(args, paths)
+    if stage == "artifact_export":
+        return _artifact_export_matches(args, paths)
     return True
 
 
@@ -1387,6 +1482,21 @@ def _validate_stage_outputs(
             "stage 'build_production_resolver_metadata' sentinel does not match "
             "the requested production metadata inputs"
         )
+    if (
+        args is not None
+        and stage == "v2_scorer_training"
+        and not _v2_scorer_training_sentinel_matches(args, paths)
+    ):
+        raise PipelineContractError(
+            "stage 'v2_scorer_training' sentinel does not match the requested "
+            "training inputs or hyperparameters"
+        )
+    if args is not None and stage == "artifact_export" and not _artifact_export_matches(
+        args, paths
+    ):
+        raise PipelineContractError(
+            "stage 'artifact_export' did not export the selected promoted scorer version"
+        )
     if stage == "build_production_resolver_metadata":
         metadata = load_resolver_metadata_sidecar(paths.production_resolver_metadata)
         validate_resolver_metadata_for_manifest(
@@ -1439,25 +1549,49 @@ def _copy_scorer_with_promotion_metadata(source: Path, target: Path, *, promoted
         raise PipelineContractError(f"scorer artifact must be a JSON object: {source}")
     payload["scorer_version"] = str(payload.get("scorer_version") or payload.get("version") or "")
     if not payload["scorer_version"]:
-        payload["scorer_version"] = "continuous_regret_v1_1"
-    payload.setdefault("selection_target", "continuous_regret")
-    payload.setdefault("objective", "minimize_candidate_selection_regret")
-    payload.setdefault("training_mode", "continuous_selection_cost")
-    payload.setdefault("runtime_policy", "learned_quality_v1")
+        payload["scorer_version"] = SCORER_VERSION_CONTINUOUS_REGRET
+    if payload["scorer_version"] == SCORER_VERSION_LEARNED_QUALITY_V2:
+        payload.setdefault("selection_target", "inverse_selection_cost_rank")
+        payload.setdefault("objective", "lambdarank_inverse_regret")
+        payload.setdefault("training_mode", "grouped_lambdarank")
+        payload.setdefault("runtime_policy", "learned_quality_v2")
+    else:
+        payload.setdefault("selection_target", "continuous_regret")
+        payload.setdefault("objective", "minimize_candidate_selection_regret")
+        payload.setdefault("training_mode", "continuous_selection_cost")
+        payload.setdefault("runtime_policy", "learned_quality_v1")
     payload["promoted_from"] = promoted_from
     target.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     logger.debug("Exported scorer artifact source=%s target=%s", source, target)
     return str(target)
 
 
-def _export_artifacts(paths: PipelinePaths) -> dict[str, str]:
+def _promoted_scorer_source(args: argparse.Namespace, paths: PipelinePaths) -> Path:
+    if args.promoted_scorer_version == SCORER_VERSION_LEARNED_QUALITY_V2:
+        return paths.v2_scorer_artifact
+    return paths.scorer_artifact
+
+
+def _promoted_runtime_policy(args: argparse.Namespace) -> str:
+    if args.promoted_scorer_version == SCORER_VERSION_LEARNED_QUALITY_V2:
+        return "learned_quality_v2"
+    return "learned_quality_v1"
+
+
+def _promoted_scorer_target(args: argparse.Namespace, paths: PipelinePaths) -> str:
+    payload = _read_json(_promoted_scorer_source(args, paths))
+    return str(payload.get("target") or TARGET_SELECTION_COST)
+
+
+def _export_artifacts(args: argparse.Namespace, paths: PipelinePaths) -> dict[str, str]:
+    scorer_source = _promoted_scorer_source(args, paths)
     exported = {
         "best_setup": _copy_if_exists(paths.best_setup, paths.exported_candidate_dir),
         "best_weights": _copy_if_exists(paths.best_weights, paths.exported_candidate_dir),
         "runtime_resolver_scorer": _copy_scorer_with_promotion_metadata(
-            paths.scorer_artifact,
+            scorer_source,
             paths.exported_scorer_artifact,
-            promoted_from=str(paths.scorer_artifact.relative_to(paths.output_root)),
+            promoted_from=str(scorer_source.relative_to(paths.output_root)),
         ),
         "scorer_policy_report": _copy_if_exists(paths.scorer_report, paths.artifacts_dir),
         "gt_hard_resolver_metadata": _copy_if_exists(
@@ -1467,11 +1601,11 @@ def _export_artifacts(paths: PipelinePaths) -> dict[str, str]:
     manifest = {key: value for key, value in exported.items() if value}
     if exported["runtime_resolver_scorer"]:
         scorer_payload = _read_json(paths.exported_scorer_artifact)
-        manifest["runtime_resolver_scorer_source"] = str(paths.scorer_artifact)
+        manifest["runtime_resolver_scorer_source"] = str(scorer_source)
         manifest["runtime_resolver_scorer_version"] = str(
             scorer_payload.get("scorer_version")
             or scorer_payload.get("version")
-            or "continuous_regret_v1_1"
+            or args.promoted_scorer_version
         )
     write_json(paths.artifacts_dir / "artifacts_manifest.json", manifest)
     return manifest
@@ -1490,7 +1624,7 @@ def _config_updates(args: argparse.Namespace, paths: PipelinePaths) -> dict[str,
         "setup_path": str(paths.exported_best_setup),
         "weights_path": str(paths.exported_best_weights),
         "setup_mode": "strict",
-        "resolver_policy": "learned_quality_v1",
+        "resolver_policy": _promoted_runtime_policy(args),
         "resolver_scorer_path": str(paths.exported_scorer_artifact),
         "use_alignment_resolver": "True",
         "hard_case_strategy": "static_weighted_downweight",
@@ -1942,6 +2076,7 @@ def _execute_stage(stage: str, args: argparse.Namespace, paths: PipelinePaths) -
                     stage, "planned", command=command, outputs=outputs, contract=contract.to_json()
                 )
             _run_command(command)
+            _write_v2_scorer_training_sentinel(args, paths)
         elif stage == "scorer_evaluation":
             command = _command_scorer_eval(args, paths)
             if args.dry_run:
@@ -1976,7 +2111,7 @@ def _execute_stage(stage: str, args: argparse.Namespace, paths: PipelinePaths) -
                     contract=contract.to_json(),
                     notes=["would copy promoted artifacts"],
                 )
-            exported = _export_artifacts(paths)
+            exported = _export_artifacts(args, paths)
             return StageResult(
                 stage,
                 "ok",
@@ -2048,15 +2183,11 @@ def _fallback_counts(report: T.Mapping[str, T.Any]) -> dict[str, int]:
 def _summary_payload(
     args: argparse.Namespace, paths: PipelinePaths, results: T.Sequence[StageResult]
 ) -> dict[str, T.Any]:
-    report = _read_json(paths.scorer_report)
     updates = _config_updates(args, paths)
+    report = _read_json(paths.scorer_report)
     promotion_status = str(report.get("promotion_status") or report.get("status") or "")
-    promoted_scorer_version = str(report.get("promoted_scorer_version") or "")
-    if not promoted_scorer_version:
-        promoted_scorer_version = "continuous_regret_v1_1"
-    promoted_scorer_target = str(report.get("promoted_scorer_target") or "")
-    if not promoted_scorer_target:
-        promoted_scorer_target = TARGET_SELECTION_COST
+    promoted_scorer_version = str(args.promoted_scorer_version)
+    promoted_scorer_target = _promoted_scorer_target(args, paths)
     return {
         "status": "fail"
         if any(row.status == "failed" for row in results)
@@ -2305,6 +2436,20 @@ def _parser() -> argparse.ArgumentParser:
         choices=SCORER_TARGETS,
         default=TARGET_SELECTION_COST,
     )
+    parser.add_argument(
+        "--promoted-scorer-version",
+        choices=(SCORER_VERSION_CONTINUOUS_REGRET, SCORER_VERSION_LEARNED_QUALITY_V2),
+        default=SCORER_VERSION_CONTINUOUS_REGRET,
+        help=(
+            "Scorer artifact to export into the stable runtime resolver scorer path. "
+            "The config resolver_policy is learned_quality_v2 only when this is "
+            "learned_quality_v2."
+        ),
+    )
+    parser.add_argument("--v2-eval-fraction", type=float, default=0.20)
+    parser.add_argument("--v2-learning-rate", type=float, default=0.05)
+    parser.add_argument("--v2-iterations", type=int, default=150)
+    parser.add_argument("--v2-num-leaves", type=int, default=31)
     parser.add_argument(
         "--prediction-cache-mode",
         choices=("run-models", "fixtures"),

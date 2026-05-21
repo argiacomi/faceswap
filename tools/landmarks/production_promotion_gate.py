@@ -85,10 +85,10 @@ def _raw_manifest_metadata(path: Path) -> dict[str, dict[str, T.Any]]:
     return retval
 
 
-def _sidecar_metadata_by_sample_id(
+def _sidecar_metadata_by_key(
     manifest_path: Path,
     resolver_metadata_path: Path | None,
-) -> dict[str, dict[str, T.Any]]:
+) -> dict[tuple[str, int], dict[str, T.Any]]:
     if resolver_metadata_path is None:
         return {}
     metadata = load_resolver_metadata_sidecar(resolver_metadata_path)
@@ -98,11 +98,12 @@ def _sidecar_metadata_by_sample_id(
         source=SOURCE_PRODUCTION_VALIDATED,
         require_complete=True,
     )
-    retval: dict[str, dict[str, T.Any]] = {}
+    retval: dict[tuple[str, int], dict[str, T.Any]] = {}
     for sample in load_manifest(manifest_path):
-        row = metadata.get(metadata_key(sample.sample_id, face_index_for_sample(sample)))
+        key = metadata_key(sample.sample_id, face_index_for_sample(sample))
+        row = metadata.get(key)
         if row is not None:
-            retval[sample.sample_id] = row
+            retval[key] = row
     return retval
 
 
@@ -323,7 +324,7 @@ def evaluate_production_gate(
 ) -> tuple[dict[str, T.Any], list[ProductionSampleEvaluation]]:
     """Evaluate a production manifest and return gate report plus per-sample rows."""
     raw_metadata = _raw_manifest_metadata(manifest_path)
-    sidecar_metadata = _sidecar_metadata_by_sample_id(manifest_path, resolver_metadata_path)
+    sidecar_metadata = _sidecar_metadata_by_key(manifest_path, resolver_metadata_path)
     context_resolver_metadata = _resolver_metadata_without_selected_candidate(
         manifest_path,
         resolver_metadata_path,
@@ -353,7 +354,10 @@ def evaluate_production_gate(
         )
     evaluations: list[ProductionSampleEvaluation] = []
     for context in contexts:
-        metadata = sidecar_metadata.get(context.sample_id, raw_metadata.get(context.sample_id, {}))
+        metadata = sidecar_metadata.get(
+            metadata_key(context.sample_id, context.face_index),
+            raw_metadata.get(context.sample_id, {}),
+        )
         chosen = _resolve_policy_choice(
             config.policy,
             metadata=metadata,
