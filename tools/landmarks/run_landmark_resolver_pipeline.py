@@ -71,6 +71,31 @@ DEFAULT_CONFIG_SECTION = "align.ensemble"
 CONFIG_PREVIEW_FILENAME = "config_update_preview.json"
 CONFIG_PATCH_FILENAME = "config_update_patch.ini"
 PROGRESS_LOG_FILENAME = "pipeline_progress.jsonl"
+VALID_ALIGN_ENSEMBLE_CONFIG_KEYS = frozenset(
+    {
+        "batch_size",
+        "models",
+        "crop_scale",
+        "strategy",
+        "reject_outliers",
+        "outlier_threshold",
+        "min_models",
+        "setup_path",
+        "weights_path",
+        "setup_mode",
+        "resolver_policy",
+        "resolver_scorer_path",
+        "use_alignment_resolver",
+        "hard_case_strategy",
+        "secondary_hard_case_strategy",
+        "hard_disagreement_px",
+        "fallback_model",
+        "fallback_strategy",
+        "strict",
+        "roll_veto_degrees",
+        "hard_roll_degrees",
+    }
+)
 
 
 class PipelineContractError(RuntimeError):
@@ -560,7 +585,7 @@ def _contract_for(stage: str, args: argparse.Namespace, paths: PipelinePaths) ->
         "scorer_evaluation": "writes scorer_evaluation reports; --resume skips when scorer_policy_report.json exists",
         "production_promotion_check": "reads scorer report only; no recompute; requires promotion_status/status pass",
         "artifact_export": "copies final artifacts into artifacts/; --resume skips when artifacts_manifest.json exists",
-        "config_update": "writes deterministic config_update_preview.json and config_update_patch.ini; writes config only with --write-config after promotion passes",
+        "config_update": "writes deterministic config_update_preview.json and config_update_patch.ini; writes only promoted align.ensemble keys with --write-config after promotion passes",
     }[stage]
     success = {
         "build_dataset_manifest": ["run manifest exists"],
@@ -586,7 +611,7 @@ def _contract_for(stage: str, args: argparse.Namespace, paths: PipelinePaths) ->
             "config_update_preview.json exists",
             "config_update_patch.ini exists",
             "referenced artifacts exist",
-            "when --write-config is set, target config file is updated",
+            "when --write-config is set, target config file is updated without deleting unmanaged sections/options",
         ],
     }[stage]
     required = [str(path) for path in _required_inputs_for(stage, args, paths) if path is not None]
@@ -795,39 +820,36 @@ def _export_artifacts(paths: PipelinePaths) -> dict[str, str]:
 
 
 def _config_updates(args: argparse.Namespace, paths: PipelinePaths) -> dict[str, str]:
-    models = ",".join(item.strip() for item in str(args.models).split(",") if item.strip())
-    return {
-        "coordinate_space": "frame",
-        "crop_scale": "1.6",
-        "crop_to_frame": "true",
-        "debug_metadata": "true",
-        "debug_metadata_format": "jsonl",
-        "enabled": "true",
-        "fallback_model": "orformer",
-        "fallback_strategy": "plain_average",
-        "hard_case_strategy": "static_weighted_downweight",
-        "hard_disagreement_px": "12.0",
-        "hard_roll_degrees": "30.0",
-        "min_models": "1",
+    models = ", ".join(item.strip() for item in str(args.models).split(",") if item.strip())
+    updates = {
+        "batch_size": "8",
         "models": models or DEFAULT_MODELS,
-        "normalized_output": "true",
+        "crop_scale": "1.6",
+        "strategy": "static_weighted_downweight",
+        "reject_outliers": "False",
         "outlier_threshold": "3.5",
-        "production_artifact_root": str(paths.artifacts_dir),
-        "production_scorer_path": str(paths.exported_scorer_artifact),
-        "production_setup_path": str(paths.exported_best_setup),
-        "production_weights_path": str(paths.exported_best_weights),
-        "reject_outliers": "false",
+        "min_models": "1",
+        "setup_path": str(paths.exported_best_setup),
+        "weights_path": str(paths.exported_best_weights),
+        "setup_mode": "strict",
         "resolver_policy": "learned_quality_v1",
         "resolver_scorer_path": str(paths.exported_scorer_artifact),
-        "roll_veto_degrees": "15.0",
+        "use_alignment_resolver": "True",
+        "hard_case_strategy": "static_weighted_downweight",
         "secondary_hard_case_strategy": "static_weighted_hard_drop",
-        "setup_mode": "strict",
-        "setup_path": str(paths.exported_best_setup),
-        "strategy": "static_weighted_downweight",
-        "strict": "true",
-        "use_alignment_resolver": "true",
-        "weights_path": str(paths.exported_best_weights),
+        "hard_disagreement_px": "12.0",
+        "fallback_model": "orformer",
+        "fallback_strategy": "plain_average",
+        "strict": "True",
+        "roll_veto_degrees": "15.0",
+        "hard_roll_degrees": "30.0",
     }
+    unsupported = sorted(set(updates).difference(VALID_ALIGN_ENSEMBLE_CONFIG_KEYS))
+    if unsupported:
+        raise PipelineContractError(
+            f"unsupported {DEFAULT_CONFIG_SECTION} config update key(s): {unsupported}"
+        )
+    return updates
 
 
 def _config_patch_text(section: str, updates: T.Mapping[str, str]) -> str:
@@ -881,17 +903,24 @@ def _apply_config(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
     _promotion_check(paths, promotion_scope=args.promotion_scope)
     config_path = Path(args.config_path)
     _require(config_path, "config file for --write-config")
-    parser = configparser.ConfigParser()
+
+    parser = configparser.ConfigParser(allow_no_value=True)
     parser.optionxform = str
     parser.read(config_path, encoding="utf-8")
-    if parser.has_section(args.config_section):
-        parser.remove_section(args.config_section)
-    parser.add_section(args.config_section)
-    for key in sorted(updates):
-        parser.set(args.config_section, key, updates[key])
+
+    if not parser.has_section(args.config_section):
+        parser.add_section(args.config_section)
+
+    for key, value in updates.items():
+        parser.set(args.config_section, key, value)
+
     with config_path.open("w", encoding="utf-8") as handle:
         parser.write(handle)
-    return [f"updated {config_path} [{args.config_section}] with finalized ensemble settings"]
+
+    return [
+        f"updated {config_path} [{args.config_section}] with finalized ensemble settings "
+        "and preserved unmanaged config entries"
+    ]
 
 
 def _execute_stage(stage: str, args: argparse.Namespace, paths: PipelinePaths) -> StageResult:
