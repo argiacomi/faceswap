@@ -112,21 +112,25 @@ def test_save_action_disabled_until_dirty(qtbot, tmp_path: Path) -> None:  # typ
     assert save_action.isEnabled() is True
 
 
-def test_save_action_is_a_stub_until_persistence_lands(  # type:ignore[no-untyped-def]
+def test_save_success_clears_dirty_state(  # type:ignore[no-untyped-def]
     qtbot,
     tmp_path: Path,
 ) -> None:
-    """save() must not claim success: it leaves the session dirty and returns False."""
+    """save() persists edits, clears dirty state and drops the undo history."""
     session = _session_with_frames(tmp_path)
     window = ManualToolWindow(session)
     qtbot.addWidget(window)
-    window.mark_dirty(True)
-
-    result = window.save()
-
-    assert result is False
+    window.editable_alignments.add_face(0, (10.0, 10.0, 30.0, 30.0))
     assert window.editor_state.unsaved is True
-    assert window.actions_by_key["save"].isEnabled() is True
+    assert window.editable_alignments.can_undo is True
+
+    assert window.save() is True
+
+    assert window.editor_state.unsaved is False
+    assert window.editor_state.edited is False
+    assert window.editable_alignments.can_undo is False
+    assert window.editable_alignments.can_redo is False
+    assert (tmp_path / "alignments.fsa").exists()
 
 
 def test_navigation_actions_track_thumbnail_position(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]

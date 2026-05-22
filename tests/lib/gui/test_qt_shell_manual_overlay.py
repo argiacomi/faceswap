@@ -196,6 +196,62 @@ def test_face_panel_clear_resets_editor_state_face_index(  # type:ignore[no-unty
     assert window.editor_state.face_index == -1
 
 
+def test_revert_only_reverts_current_frame_edits(  # type:ignore[no-untyped-def]
+    qtbot,
+    tmp_path: Path,
+) -> None:
+    """revert_current_frame must not touch edits made on other frames."""
+    session = _session_with_frames(tmp_path, count=3)
+    window = ManualToolWindow(session)
+    qtbot.addWidget(window)
+    window.add_face_at_center()  # frame 0
+    window._next_frame()  # noqa: SLF001 - move to frame 1.
+    window.add_face_at_center()  # frame 1
+    window._next_frame()  # noqa: SLF001 - back to frame 2 via wrap? confirm.
+
+    # Move back to frame 1 and revert only it.
+    window._previous_frame()  # noqa: SLF001 - row 1
+
+    window.revert_current_frame()
+    assert window.editable_alignments.face_count(0) == 1, "frame 0 must be preserved"
+    assert window.editable_alignments.face_count(1) == 0
+    assert window.editor_state.unsaved is True  # frame 0 still dirty
+
+
+def test_delete_last_face_clears_active_face(  # type:ignore[no-untyped-def]
+    qtbot,
+    tmp_path: Path,
+) -> None:
+    """Deleting the only face leaves face_index = -1, not 0."""
+    session = _session_with_frames(tmp_path)
+    window = ManualToolWindow(session)
+    qtbot.addWidget(window)
+    window.editable_alignments.add_face(0, (10.0, 10.0, 30.0, 30.0))
+    window.editor_state.set("face_index", 0)
+
+    window.delete_active_face()
+
+    assert window.editable_alignments.face_count(0) == 0
+    assert window.editor_state.face_index == -1
+
+
+def test_face_panel_reflects_editable_model_pre_save(  # type:ignore[no-untyped-def]
+    qtbot,
+    tmp_path: Path,
+) -> None:
+    """The face panel renders editable-model faces before they are persisted."""
+    session = _session_with_frames(tmp_path)
+    window = ManualToolWindow(session)
+    qtbot.addWidget(window)
+
+    window.editable_alignments.add_face(0, (10.0, 10.0, 30.0, 30.0))
+    window.editable_alignments.add_face(0, (50.0, 10.0, 20.0, 20.0))
+
+    # No persistence yet, but the panel should already show 2 entries.
+    assert len(window.face_panel.faces) == 2
+    assert [face.face_index for face in window.face_panel.faces] == [0, 1]
+
+
 def test_overlay_active_face_tracks_editor_state(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
     """Updating editor_state.face_index syncs the overlay highlight."""
     session = _session_with_frames(tmp_path)

@@ -1067,18 +1067,49 @@ class ManualToolWindow(QMainWindow):
         self._editor_state.set("unsaved", dirty)
 
     def save(self) -> bool:
-        """Save seam for future alignment persistence integration.
+        """Persist editable alignment edits back to the alignments file.
 
-        Persistence of in-memory edits back to the alignments file is not
-        wired yet.  Calling this surfaces a clear notice and leaves the
-        editor state dirty so the user knows nothing was actually written.
-        Returns ``False`` to mark the operation as not-yet-implemented.
+        On success: clears dirty state, drops the editable undo/redo history
+        (so the user cannot undo past the save point) and refreshes the face
+        thumbnail panel against the freshly-written alignments file.
+
+        On failure: leaves the editor state dirty, logs the exception and
+        surfaces the error to the user through both the status bar and a
+        modal dialog so a silent save-failure is not possible.
         """
-        message = "Save to alignments file is not yet wired — edits remain in memory only"
-        self.statusBar().showMessage(message, 7000)
-        logger.warning(message)
-        QMessageBox.information(self, "Manual Tool Save", message)
-        return False
+        if self._current_frame_index() < 0 and not any(
+            self._editable.face_count(i) for i in range(self._session.frame_count)
+        ):
+            self.statusBar().showMessage("Nothing to save", 3000)
+            return True
+        try:
+            frame_names = self._frame_names_for_persist()
+            modified = self._alignments_handle.persist(self._editable, frame_names=frame_names)
+        except Exception as err:  # noqa:BLE001 - surface any persist failure
+            message = f"Manual Tool save failed: {err}"
+            logger.exception("Manual Tool save failed")
+            self.statusBar().showMessage(message, 7000)
+            QMessageBox.critical(self, "Manual Tool Save", message)
+            return False
+        self._editable.clear_history()
+        self.mark_dirty(False)
+        self._editor_state.set("edited", False)
+        self._editor_state.set("face_count_changed", False)
+        self.refresh_faces()
+        self._frame_view.update()
+        self.statusBar().showMessage(f"Saved {modified} frame(s) to alignments file", 5000)
+        return True
+
+    def _frame_names_for_persist(self) -> list[str]:
+        """Return frame names ordered to match the editable model's frame_index.
+
+        Prefers the source frame list (image-folder sessions) so that newly
+        added frames map cleanly onto on-disk filenames.  Falls back to the
+        alignments file's existing keys for video-input sessions.
+        """
+        if self._session.has_images:
+            return [frame.name for frame in self._session.frame_list]
+        return list(self._alignments_handle.sorted_frame_names())
 
     def launch_legacy(self) -> bool:
         """Launch the existing Tk Manual Tool as a fallback subprocess."""
@@ -1111,24 +1142,24 @@ class ManualToolWindow(QMainWindow):
         self._editor_state.set("is_playing", not self._editor_state.is_playing)
 
     def revert_current_frame(self) -> None:
-        """Revert all editable edits stacked on the current frame."""
+        """Revert editable edits recorded against the current frame only.
+
+        Edits on other frames stay on the undo stack so unrelated work is
+        not silently discarded.  Dirty state is recomputed from the
+        remaining undo records rather than blanket-cleared.
+        """
         frame_index = self._current_frame_index()
         if frame_index < 0:
-            self._editor_state.set("edited", False)
-            self.mark_dirty(False)
             self.statusBar().showMessage("Nothing to revert", 3000)
             return
-        reverted = 0
-        while self._editable.can_undo:
-            if not self._editable.undo():
-                break
-            reverted += 1
-        self._editor_state.set("edited", False)
-        self.mark_dirty(False)
+        reverted = self._editable.revert_frame(frame_index)
+        self.mark_dirty(self._editable.can_undo)
+        if not self._editable.can_undo:
+            self._editor_state.set("edited", False)
         if reverted:
-            self.statusBar().showMessage(f"Reverted {reverted} edit(s) in current frame", 5000)
+            self.statusBar().showMessage(f"Reverted {reverted} edit(s) in this frame", 5000)
         else:
-            self.statusBar().showMessage("Nothing to revert", 3000)
+            self.statusBar().showMessage("Nothing to revert in this frame", 3000)
 
     def copy_prev_face(self) -> bool:
         """Copy the editable faces from the previous frame onto the current one."""
@@ -1181,7 +1212,8 @@ class ManualToolWindow(QMainWindow):
         self.mark_dirty(True)
         new_count = self._editable.face_count(frame_index)
         if new_count == 0:
-            self._editor_state.set("face_index", 0)
+            # No face left to operate on; flag "no active selection".
+            self._editor_state.set("face_index", -1)
         else:
             self._editor_state.set("face_index", min(face_index, new_count - 1))
         self.statusBar().showMessage(f"Deleted face index {face_index}", 5000)
@@ -1497,8 +1529,12 @@ class ManualToolWindow(QMainWindow):
         The face panel mirrors the alignments-file thumbnails (read-only) and
         emits ``face_selected(-1)`` whenever it is empty.  Refresh it first,
         then resync ``editor_state.face_index`` against the editable model so
-        a programmatic add does not leave us pointed at ``-1``.
+        a programmatic add does not leave us pointed at ``-1``.  Dirty state
+        is derived from the model's undo stack so any edit (including ones
+        made on a non-current frame) marks the session unsaved, and undoing
+        back to the saved snapshot drops the dirty flag automatically.
         """
+        self.mark_dirty(self._editable.can_undo)
         if frame_index != self._current_frame_index():
             return
         self.refresh_faces()
@@ -1523,16 +1559,44 @@ class ManualToolWindow(QMainWindow):
         self._face_panel.select_face(face_index)
 
     def refresh_faces(self) -> None:
-        """Reload face thumbnails for the current frame from the session.
+        """Rebuild the face panel from the editable model + persisted thumbs.
 
-        Call this after add/remove/update operations on the alignments file so
-        the panel reflects the latest state.
+        The editable model is the source of truth for what's currently on
+        screen — add/delete/move edits must appear in the panel before
+        Save runs.  Thumbnails come from the alignments file when the face
+        is unchanged from its persisted bbox; otherwise we surface a
+        placeholder so a stale JPEG is never shown next to a moved bbox.
         """
         if self._current_frame is None:
             self._face_panel.set_faces(())
             return
-        faces = self._alignments_handle.faces_for_frame(self._current_frame.index)
-        self._face_panel.set_faces(faces)
+        frame_index = self._current_frame.index
+        editable_faces = self._editable.faces(frame_index)
+        if not editable_faces:
+            self._face_panel.set_faces(())
+            return
+        persisted = {
+            entry.face_index: entry
+            for entry in self._alignments_handle.faces_for_frame(frame_index)
+        }
+        frame_names = self._frame_names_for_persist()
+        frame_name = (
+            frame_names[frame_index]
+            if 0 <= frame_index < len(frame_names)
+            else self._current_frame.name
+        )
+        entries = []
+        for face in editable_faces:
+            previous = persisted.get(face.face_index)
+            entries.append(
+                FaceThumbnail(
+                    frame_index=frame_index,
+                    frame_name=frame_name,
+                    face_index=face.face_index,
+                    thumbnail_jpeg=previous.thumbnail_jpeg if previous else b"",
+                )
+            )
+        self._face_panel.set_faces(entries)
 
     def _thumbnail_selected(
         self,

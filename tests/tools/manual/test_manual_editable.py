@@ -172,6 +172,34 @@ def test_seed_from_handle_clears_history() -> None:
     assert model.can_undo is True
 
 
+def test_revert_frame_only_undoes_matching_frame() -> None:
+    """revert_frame leaves edits on other frames in place."""
+    model = ManualEditableAlignments()
+    model.add_face(0, _bbox(0, 0))  # frame 0
+    model.add_face(1, _bbox(40, 40))  # frame 1
+    model.add_face(0, _bbox(80, 0))  # frame 0 again
+
+    reverted = model.revert_frame(0)
+
+    assert reverted == 2
+    assert model.face_count(0) == 0
+    assert model.face_count(1) == 1
+    # Frame-1 op is preserved on the undo stack so it can still be undone.
+    assert model.can_undo is True
+
+    assert model.undo() is True
+    assert model.face_count(1) == 0
+
+
+def test_revert_frame_no_op_when_no_matching_edits() -> None:
+    """revert_frame reports zero and leaves the stack untouched if no matches."""
+    model = ManualEditableAlignments()
+    model.add_face(0, _bbox())
+    assert model.revert_frame(7) == 0
+    assert model.can_undo is True
+    assert model.face_count(0) == 1
+
+
 def test_editable_face_contains_and_center() -> None:
     """EditableFace.contains and EditableFace.center work in source coordinates."""
     face = EditableFace(face_index=0, bbox=(10.0, 20.0, 30.0, 40.0))

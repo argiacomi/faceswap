@@ -249,6 +249,53 @@ class ManualAlignmentsHandle:
             return False
         return bool(self.open().thumbnails.has_thumbnails)
 
+    def persist(
+        self,
+        editable: ManualEditableAlignments,
+        *,
+        frame_names: T.Sequence[str],
+    ) -> int:
+        """Write ``editable``'s in-memory edits back to the alignments file.
+
+        Opens the alignments file (bootstrapping a minimal one on disk first
+        when none exists), applies the editable model's frame data via
+        :meth:`ManualEditableAlignments.apply_to_alignments`, then writes the
+        file out atomically through ``Alignments.save``.
+
+        Returns the number of frames modified.  Re-raises any persistence
+        error from :class:`lib.align.Alignments` so the caller (typically
+        :class:`ManualToolWindow`) can surface the failure to the user
+        without silently clearing dirty state.
+        """
+        self._bootstrap_alignments_file()
+        alignments = self.open()
+        try:
+            modified = editable.apply_to_alignments(alignments, frame_names=frame_names)
+        except Exception:  # pragma: no cover - re-raised below with context
+            logger.exception("Manual Tool persist: apply_to_alignments failed")
+            raise
+        alignments.save()
+        return modified
+
+    def _bootstrap_alignments_file(self) -> None:
+        """Create a minimal alignments file on disk if one does not yet exist.
+
+        The legacy ``Alignments`` constructor refuses to open a missing file,
+        but Manual Tool edits can be the first thing that touches the
+        alignments path (especially when the user runs the Qt shell against a
+        fresh folder of frames).  Write out the smallest valid payload so the
+        existing ``Alignments`` load + ``save`` pipeline can take over.
+        """
+        if self.exists or self._alignments is not None:
+            return
+        os.makedirs(self._folder, exist_ok=True)
+        # Lazy imports keep tkinter and heavyweight dependencies out of the
+        # module's import-time graph.
+        from lib.serializer import get_serializer
+
+        serializer = get_serializer("compressed")
+        serializer.save(self.path, {"__meta__": {"version": 2.4}, "__data__": {}})
+
     def sorted_frame_names(self) -> tuple[str, ...]:
         """Return frame names from the alignments file in sorted order."""
         if not self.exists:
@@ -543,6 +590,127 @@ class ManualEditableAlignments:
         self._undo.append((do, undo, frame_index))
         self._redo.clear()
         self._notify(frame_index)
+
+    def clear_history(self) -> None:
+        """Drop the undo and redo stacks.
+
+        Called after a successful persist so the user cannot undo back past
+        the save point in the editor.
+        """
+        self._undo.clear()
+        self._redo.clear()
+
+    def revert_frame(self, frame_index: int) -> int:
+        """Undo only the operations recorded against ``frame_index``.
+
+        The undo stack is rewritten so that records tagged with other frame
+        indices are preserved in their original order.  Returns the number
+        of operations reverted.  The redo stack is cleared because the
+        partial replay produces a state that cannot be re-derived from the
+        existing redo records.
+        """
+        kept: list[tuple[T.Callable[[], None], T.Callable[[], None], int]] = []
+        reverted = 0
+        for record in reversed(self._undo):
+            do, undo, op_frame = record
+            if op_frame == frame_index:
+                undo()
+                reverted += 1
+            else:
+                kept.append(record)
+        # ``kept`` is built reverse-of-reverse so it preserves stack order.
+        self._undo = list(reversed(kept))
+        if reverted:
+            self._redo.clear()
+            self._notify(frame_index)
+        return reverted
+
+    def apply_to_alignments(
+        self,
+        alignments: T.Any,
+        *,
+        frame_names: T.Sequence[str],
+    ) -> int:
+        """Write in-memory edits back to a :class:`lib.align.Alignments` object.
+
+        Mutates ``alignments.data`` in place: matching face indices keep their
+        ``mask`` / ``identity`` / ``metadata`` payloads while bbox + landmarks
+        come from the editable model.  Thumbnails are invalidated whenever the
+        bbox changes so a stale crop is never written.  Added faces produce a
+        fresh :class:`lib.align.objects.FileAlignments` entry; removed faces
+        are dropped.
+
+        Returns the number of frames that were modified.
+
+        Raises ``ValueError`` if any frame_index referenced by the editable
+        model cannot be mapped onto ``frame_names``.
+        """
+        import numpy as np
+
+        from lib.align.objects import AlignmentsEntry, FileAlignments
+
+        modified = 0
+        for frame_index in sorted(self._faces):
+            if frame_index < 0 or frame_index >= len(frame_names):
+                raise ValueError(f"Frame index {frame_index} has no matching frame name")
+            frame_name = frame_names[frame_index]
+            entry = alignments.data.get(frame_name)
+            if entry is None:
+                entry = AlignmentsEntry(faces=[], video_meta={})
+                alignments.data[frame_name] = entry
+            original_faces = list(entry.faces)
+            new_faces: list[FileAlignments] = []
+            for face in self._faces[frame_index]:
+                landmarks_array = (
+                    np.asarray(face.landmarks, dtype=np.float32)
+                    if face.landmarks
+                    else np.zeros((0, 2), dtype=np.float32)
+                )
+                prev = (
+                    original_faces[face.face_index]
+                    if face.face_index < len(original_faces)
+                    else None
+                )
+                x, y, w, h = (int(round(v)) for v in face.bbox)
+                if prev is not None and (
+                    int(prev.x),
+                    int(prev.y),
+                    int(prev.w),
+                    int(prev.h),
+                ) == (x, y, w, h):
+                    # Bbox unchanged — keep the cached thumb + landmark data
+                    # but accept any landmark replacement from the editable
+                    # model so update_landmark survives a round-trip.
+                    prev.landmarks_xy = landmarks_array
+                    new_faces.append(prev)
+                else:
+                    if prev is not None:
+                        new_faces.append(
+                            FileAlignments(
+                                x=x,
+                                y=y,
+                                w=w,
+                                h=h,
+                                landmarks_xy=landmarks_array,
+                                mask=prev.mask,
+                                identity=prev.identity,
+                                metadata=prev.metadata,
+                                thumb=None,
+                            )
+                        )
+                    else:
+                        new_faces.append(
+                            FileAlignments(
+                                x=x,
+                                y=y,
+                                w=w,
+                                h=h,
+                                landmarks_xy=landmarks_array,
+                            )
+                        )
+            entry.faces = new_faces
+            modified += 1
+        return modified
 
     def _notify(self, frame_index: int) -> None:
         for callback in list(self._listeners):
