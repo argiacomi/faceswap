@@ -12,6 +12,9 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
+import threading
+import time
 import typing as T
 
 import numpy as np
@@ -23,6 +26,7 @@ logger = logging.getLogger(__name__)
 ProgressCallback = T.Callable[[int, int, str], None]
 
 _INSTALLED = False
+_PROGRESS_PATCH_INSTALLED = False
 _ORIGINAL_ALIGNMENTS_HANDLE = _session.ManualSession.alignments_handle
 _ORIGINAL_HAS_THUMBNAILS = _session.ManualAlignmentsHandle.has_thumbnails
 
@@ -30,12 +34,12 @@ _ORIGINAL_HAS_THUMBNAILS = _session.ManualAlignmentsHandle.has_thumbnails
 def install() -> None:
     """Install the Qt thumbnail-regeneration shim once per interpreter."""
     global _INSTALLED  # noqa: PLW0603 - module-level one-shot guard
-    if _INSTALLED:
-        return
-    _session.ManualSession.alignments_handle = _session_alignments_handle  # type:ignore[method-assign]
-    _session.ManualAlignmentsHandle.has_thumbnails = _handle_has_thumbnails  # type:ignore[method-assign]
-    _session.ManualAlignmentsHandle.regenerate_thumbnails = _handle_regenerate_thumbnails  # type:ignore[attr-defined,method-assign]
-    _INSTALLED = True
+    if not _INSTALLED:
+        _session.ManualSession.alignments_handle = _session_alignments_handle  # type:ignore[method-assign]
+        _session.ManualAlignmentsHandle.has_thumbnails = _handle_has_thumbnails  # type:ignore[method-assign]
+        _session.ManualAlignmentsHandle.regenerate_thumbnails = _handle_regenerate_thumbnails  # type:ignore[attr-defined,method-assign]
+        _INSTALLED = True
+    _install_manual_tool_progress_patch()
 
 
 def _session_alignments_handle(self: _session.ManualSession) -> _session.ManualAlignmentsHandle:
@@ -49,6 +53,8 @@ def _handle_has_thumbnails(self: _session.ManualAlignmentsHandle) -> bool:
     """Return thumbnail state, generating missing/forced thumbnails when possible."""
     if not self.exists:
         return False
+    if getattr(self, "_qt_manual_thumbs_generated", False) and _ORIGINAL_HAS_THUMBNAILS(self):
+        return True
     manual_session = _session_from_handle(self)
     force = bool(manual_session and manual_session.thumb_regenerate)
     if not force and _ORIGINAL_HAS_THUMBNAILS(self):
@@ -56,6 +62,7 @@ def _handle_has_thumbnails(self: _session.ManualAlignmentsHandle) -> bool:
     if manual_session is None:
         return _ORIGINAL_HAS_THUMBNAILS(self)
     generated = _regenerate_thumbnails(self, manual_session)
+    setattr(self, "_qt_manual_thumbs_generated", True)
     if generated:
         logger.info("Manual Tool generated thumbnails for %s frame(s)", generated)
     return _ORIGINAL_HAS_THUMBNAILS(self)
@@ -69,13 +76,104 @@ def _handle_regenerate_thumbnails(
     manual_session = _session_from_handle(self)
     if manual_session is None:
         raise ValueError("Manual thumbnail regeneration requires ManualSession context")
-    return _regenerate_thumbnails(self, manual_session, progress=progress)
+    generated = _regenerate_thumbnails(self, manual_session, progress=progress)
+    setattr(self, "_qt_manual_thumbs_generated", True)
+    return generated
 
 
 def _session_from_handle(handle: _session.ManualAlignmentsHandle) -> _session.ManualSession | None:
     """Return the ManualSession attached by ``_session_alignments_handle``."""
     candidate = getattr(handle, "_qt_manual_session", None)
     return candidate if isinstance(candidate, _session.ManualSession) else None
+
+
+def _install_manual_tool_progress_patch() -> None:
+    """Patch ``_ManualStartupTask.run`` once the Qt module has finished loading."""
+    module = sys.modules.get("lib.gui.qt_shell.manual_tool")
+    if module is not None and hasattr(module, "_ManualStartupTask"):
+        _patch_manual_tool_module(module)
+        return
+    thread = threading.Thread(
+        target=_wait_for_manual_tool_module,
+        name="QtManualThumbnailProgressPatch",
+        daemon=True,
+    )
+    thread.start()
+
+
+def _wait_for_manual_tool_module() -> None:
+    """Wait briefly for ``manual_tool`` class definitions, then patch progress support."""
+    for _ in range(100):
+        module = sys.modules.get("lib.gui.qt_shell.manual_tool")
+        if module is not None and hasattr(module, "_ManualStartupTask"):
+            _patch_manual_tool_module(module)
+            return
+        time.sleep(0.05)
+
+
+def _patch_manual_tool_module(module: T.Any) -> None:
+    """Install a thumbnail-aware startup task run method."""
+    global _PROGRESS_PATCH_INSTALLED  # noqa: PLW0603 - module-level one-shot guard
+    task_cls = getattr(module, "_ManualStartupTask", None)
+    if task_cls is None or _PROGRESS_PATCH_INSTALLED:
+        return
+    if getattr(task_cls, "_qt_thumbnail_progress_patch", False):
+        _PROGRESS_PATCH_INSTALLED = True
+        return
+    task_cls.run = _thumbnail_aware_startup_run
+    setattr(task_cls, "_qt_thumbnail_progress_patch", True)
+    _PROGRESS_PATCH_INSTALLED = True
+
+
+def _thumbnail_aware_startup_run(task: T.Any) -> None:
+    """Replacement startup task that emits per-frame thumbnail progress."""
+    try:
+        handle = task._handle  # noqa: SLF001 - patched method for existing worker
+        if not handle.exists:
+            task.progress.emit("complete", "No alignments file yet — ready")
+            task.completed.emit(False, "No alignments file yet")
+            return
+
+        task.progress.emit("open", "Opening alignments file…")
+        alignments = handle.open()
+        face_count = sum(len(entry.faces) for entry in alignments.data.values())
+
+        task.progress.emit("thumbs", "Checking thumbnail cache…")
+        manual_session = _session_from_handle(handle)
+        force = bool(manual_session and manual_session.thumb_regenerate)
+        had_thumbnails = _ORIGINAL_HAS_THUMBNAILS(handle)
+        generated = 0
+        if manual_session is not None and (force or not had_thumbnails):
+            targets = _frames_with_faces(alignments)
+            if targets:
+                generated = handle.regenerate_thumbnails(
+                    _progress_emitter(task, base_percent=66, span_percent=33)
+                )
+            else:
+                task.progress.emit("thumbs", "No faces need thumbnails")
+        has_thumbnails = _ORIGINAL_HAS_THUMBNAILS(handle)
+
+        summary = f"Loaded {face_count} face(s) across {len(alignments.data)} frame(s)"
+        if generated:
+            summary = f"{summary}; generated thumbnails for {generated} frame(s)"
+        task.progress.emit("complete", summary)
+        task.completed.emit(has_thumbnails, summary)
+    except Exception as err:  # noqa: BLE001 - surface any startup failure
+        logger.exception("Manual Tool startup failed")
+        task.failed.emit(str(err))
+
+
+def _progress_emitter(task: T.Any, *, base_percent: int, span_percent: int) -> ProgressCallback:
+    """Return a neutral-to-Qt progress bridge for thumbnail regeneration."""
+
+    def _emit(done: int, total: int, message: str) -> None:
+        denominator = max(1, total)
+        percent = min(99, base_percent + round((done / denominator) * span_percent))
+        stage = f"thumbs:{done}:{total}"
+        task.STAGE_PERCENT[stage] = percent
+        task.progress.emit(stage, message)
+
+    return _emit
 
 
 def _regenerate_thumbnails(
