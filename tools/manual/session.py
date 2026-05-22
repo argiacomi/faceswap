@@ -29,6 +29,18 @@ _VIDEO_SUFFIXES = frozenset(ext.lower() for ext in VIDEO_EXTENSIONS)
 _ALIGNMENTS_FILENAME = "alignments.fsa"
 
 
+def _thumb_bytes(thumb: object) -> bytes:
+    """Normalize a FileAlignments.thumb value to opaque JPEG bytes."""
+    if thumb is None:
+        return b""
+    if isinstance(thumb, (bytes, bytearray, memoryview)):
+        return bytes(thumb)
+    try:  # numpy uint8 array
+        return bytes(thumb.tobytes())  # type: ignore[attr-defined]
+    except AttributeError:
+        return b""
+
+
 @dataclass(frozen=True)
 class ManualFrame:
     """One source frame candidate for the Manual Tool."""
@@ -36,6 +48,30 @@ class ManualFrame:
     index: int
     name: str
     path: str
+
+
+@dataclass(frozen=True)
+class FaceThumbnail:
+    """One detected face entry for a Manual Tool frame.
+
+    The thumbnail payload is the raw JPEG byte string stored inside the
+    alignments file.  Callers decode it with whichever image library their UI
+    layer prefers (cv2.imdecode, Pillow, QImage.loadFromData, …).
+    """
+
+    frame_index: int
+    """Sorted-frame index this face belongs to."""
+    frame_name: str
+    """The frame's filename inside the alignments dict."""
+    face_index: int
+    """Position of this face inside the frame's face list."""
+    thumbnail_jpeg: bytes
+    """JPEG-encoded thumbnail bytes (may be empty when no thumb cached)."""
+
+    @property
+    def has_image(self) -> bool:
+        """Return whether the entry has a cached thumbnail payload."""
+        return bool(self.thumbnail_jpeg)
 
 
 @dataclass(frozen=True)
@@ -183,6 +219,40 @@ class ManualAlignmentsHandle:
             return False
         return bool(self.open().thumbnails.has_thumbnails)
 
+    def sorted_frame_names(self) -> tuple[str, ...]:
+        """Return frame names from the alignments file in sorted order."""
+        if not self.exists:
+            return ()
+        return tuple(sorted(self.open().data))
+
+    def faces_for_frame(self, frame_index: int) -> tuple[FaceThumbnail, ...]:
+        """Return GUI-neutral face thumbnail entries for the given frame index.
+
+        Returns an empty tuple when the alignments file does not exist yet, the
+        index is out of range, or the frame has no detected faces.
+        """
+        if frame_index < 0 or not self.exists:
+            return ()
+        alignments = self.open()
+        names = sorted(alignments.data)
+        if frame_index >= len(names):
+            return ()
+        frame_name = names[frame_index]
+        faces = alignments.data[frame_name].faces
+        return tuple(
+            FaceThumbnail(
+                frame_index=frame_index,
+                frame_name=frame_name,
+                face_index=face_index,
+                thumbnail_jpeg=_thumb_bytes(face.thumb),
+            )
+            for face_index, face in enumerate(faces)
+        )
+
+    def face_count_for_frame(self, frame_index: int) -> int:
+        """Return the number of faces stored for a given sorted-frame index."""
+        return len(self.faces_for_frame(frame_index))
+
 
 @dataclass(frozen=True)
 class ManualSession:
@@ -275,6 +345,10 @@ class ManualSession:
     def video_metadata(self) -> ManualVideoMetadata | None:
         """Convenience accessor for video metadata via the alignments handle."""
         return self.alignments_handle().video_metadata()
+
+    def faces_for_frame(self, frame_index: int) -> tuple[FaceThumbnail, ...]:
+        """Convenience accessor for face thumbnails via the alignments handle."""
+        return self.alignments_handle().faces_for_frame(frame_index)
 
     def has_thumbnails(self) -> bool:
         """Return whether thumbnails already exist in the alignments file."""

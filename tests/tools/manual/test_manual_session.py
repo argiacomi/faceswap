@@ -9,10 +9,12 @@ from pathlib import Path
 import pytest
 
 from tools.manual.session import (
+    FaceThumbnail,
     ManualAlignmentsHandle,
     ManualEditorState,
     ManualSession,
     ManualVideoMetadata,
+    _thumb_bytes,
 )
 
 
@@ -166,6 +168,90 @@ def test_session_needs_thumbnail_regeneration_when_missing(tmp_path: Path) -> No
 
     session_force = ManualSession.create(frames=str(tmp_path), thumb_regenerate=True)
     assert session_force.needs_thumbnail_regeneration() is True
+
+
+def test_alignments_handle_faces_for_frame_empty_when_missing(tmp_path: Path) -> None:
+    """faces_for_frame is empty when the alignments file does not exist."""
+    (tmp_path / "frame.png").write_bytes(b"png")
+    session = ManualSession.create(frames=str(tmp_path))
+    handle = session.alignments_handle()
+
+    assert handle.faces_for_frame(0) == ()
+    assert handle.face_count_for_frame(0) == 0
+    assert handle.sorted_frame_names() == ()
+
+
+def test_alignments_handle_faces_for_frame_returns_neutral_entries(tmp_path: Path) -> None:
+    """faces_for_frame yields FaceThumbnail entries for each face in a frame."""
+    import numpy as np
+
+    from lib.serializer import get_serializer
+
+    (tmp_path / "frame.png").write_bytes(b"png")
+    payload = b"\xff\xd8\xff\xe0\x00\x10JFIF"
+    face_with_thumb = {
+        "x": 0,
+        "y": 0,
+        "w": 10,
+        "h": 10,
+        "landmarks_xy": [[0.0, 0.0]] * 68,
+        "mask": {},
+        "identity": {},
+        "thumb": list(payload),
+    }
+    face_without_thumb = {**face_with_thumb, "thumb": None}
+    serialized = {
+        "__meta__": {"version": 2.4},
+        "__data__": {
+            "frame.png": {
+                "faces": [face_with_thumb, face_without_thumb],
+                "video_meta": {},
+            }
+        },
+    }
+    serializer = get_serializer("compressed")
+    serializer.save(str(tmp_path / "alignments.fsa"), serialized)
+
+    session = ManualSession.create(frames=str(tmp_path))
+    entries = session.faces_for_frame(0)
+
+    assert len(entries) == 2
+    assert entries[0].face_index == 0
+    assert entries[0].thumbnail_jpeg == payload
+    assert entries[0].has_image is True
+    assert entries[1].thumbnail_jpeg == b""
+    assert entries[1].has_image is False
+
+    # Confirm numpy-array thumbs are normalized via _thumb_bytes too.
+    assert _thumb_bytes(np.frombuffer(payload, dtype=np.uint8)) == payload
+
+
+def test_thumb_bytes_handles_supported_inputs() -> None:
+    """_thumb_bytes accepts numpy arrays, bytes-like inputs and falls back safely."""
+    import numpy as np
+
+    assert _thumb_bytes(None) == b""
+    assert _thumb_bytes(b"abc") == b"abc"
+    assert _thumb_bytes(bytearray(b"abc")) == b"abc"
+    assert _thumb_bytes(np.frombuffer(b"\xff\xd8", dtype=np.uint8)) == b"\xff\xd8"
+    # Unsupported objects degrade to empty bytes instead of raising.
+    assert _thumb_bytes(42) == b""
+
+
+def test_face_thumbnail_has_image_marks_payload_presence() -> None:
+    """FaceThumbnail.has_image reflects whether the JPEG payload is non-empty."""
+    assert (
+        FaceThumbnail(
+            frame_index=0, frame_name="x.png", face_index=0, thumbnail_jpeg=b""
+        ).has_image
+        is False
+    )
+    assert (
+        FaceThumbnail(
+            frame_index=0, frame_name="x.png", face_index=0, thumbnail_jpeg=b"\xff"
+        ).has_image
+        is True
+    )
 
 
 def test_session_create_editor_state_returns_fresh_state(tmp_path: Path) -> None:

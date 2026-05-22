@@ -13,11 +13,12 @@ import logging
 import subprocess
 import typing as T
 
-from PySide6.QtCore import QObject, QPoint, QPointF, QRectF, Qt, QThread, Signal
+from PySide6.QtCore import QObject, QPoint, QPointF, QRectF, QSize, Qt, QThread, Signal
 from PySide6.QtGui import (
     QAction,
     QCloseEvent,
     QColor,
+    QIcon,
     QImage,
     QMouseEvent,
     QPainter,
@@ -28,6 +29,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QLabel,
+    QListView,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
@@ -42,6 +44,7 @@ from PySide6.QtWidgets import (
 
 from lib.gui.services.command_builder import CommandBuilder
 from tools.manual.session import (
+    FaceThumbnail,
     ManualEditorState,
     ManualFrame,
     ManualSession,
@@ -466,6 +469,127 @@ class ManualThumbnailPanel(QListWidget):
             self.addItem(item)
 
 
+def _decode_jpeg_to_qimage(payload: bytes) -> QImage:
+    """Decode a JPEG byte string into a QImage. Returns a null image on failure."""
+    if not payload:
+        return QImage()
+    image = QImage()
+    if not image.loadFromData(payload, "JPG"):
+        # Some thumbnails are JPEG-encoded but without a JPG hint; let Qt sniff.
+        image = QImage()
+        if not image.loadFromData(payload):
+            return QImage()
+    return image
+
+
+class FaceThumbnailPanel(QListWidget):
+    """Detected-face thumbnail panel for the currently selected frame.
+
+    Renders the JPEG thumbnails stored in the Manual Tool alignments file as a
+    horizontally-scrollable strip of selectable items. The active selection is
+    surfaced through :attr:`face_selected` for the host window to wire into the
+    shared editor state.
+    """
+
+    face_selected = Signal(int)
+    """Emits the face_index of the currently active entry, or -1 when cleared."""
+
+    _ICON_SIZE = 72
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("qt-manual-face-thumbnail-panel")
+        self.setFlow(QListView.LeftToRight)
+        self.setViewMode(QListView.IconMode)
+        self.setMovement(QListView.Static)
+        self.setResizeMode(QListView.Adjust)
+        self.setWrapping(False)
+        self.setSelectionMode(QListWidget.SingleSelection)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setIconSize(QSize(self._ICON_SIZE, self._ICON_SIZE))
+        self.setSpacing(6)
+        self.setMinimumHeight(self._ICON_SIZE + 36)
+        self.setUniformItemSizes(True)
+        self._faces: tuple[FaceThumbnail, ...] = ()
+        self._placeholder = self._build_placeholder_icon()
+        self.currentRowChanged.connect(self._on_row_changed)
+
+    @property
+    def faces(self) -> tuple[FaceThumbnail, ...]:
+        """Return the currently displayed face entries."""
+        return self._faces
+
+    def set_faces(self, faces: T.Iterable[FaceThumbnail]) -> None:
+        """Refresh the panel with the given face entries."""
+        self._faces = tuple(faces)
+        self.blockSignals(True)
+        try:
+            self.clear()
+            if not self._faces:
+                item = QListWidgetItem("No faces in frame")
+                item.setFlags(Qt.NoItemFlags)
+                item.setTextAlignment(Qt.AlignCenter)
+                self.addItem(item)
+                return
+            for face in self._faces:
+                item = QListWidgetItem(f"Face {face.face_index + 1}")
+                item.setData(Qt.UserRole, face.face_index)
+                item.setTextAlignment(Qt.AlignCenter)
+                item.setIcon(self._icon_for(face))
+                item.setSizeHint(QSize(self._ICON_SIZE + 24, self._ICON_SIZE + 28))
+                self.addItem(item)
+        finally:
+            self.blockSignals(False)
+        if self._faces:
+            self.setCurrentRow(0)
+        else:
+            self.face_selected.emit(-1)
+
+    def select_face(self, face_index: int) -> bool:
+        """Select the row matching ``face_index``. Returns ``True`` on success."""
+        for row in range(self.count()):
+            item = self.item(row)
+            if item is None:
+                continue
+            data = item.data(Qt.UserRole)
+            if isinstance(data, int) and data == face_index:
+                self.setCurrentRow(row)
+                return True
+        return False
+
+    def active_face(self) -> FaceThumbnail | None:
+        """Return the currently selected face entry, or ``None`` when empty."""
+        row = self.currentRow()
+        if row < 0 or row >= len(self._faces):
+            return None
+        return self._faces[row]
+
+    def _icon_for(self, face: FaceThumbnail) -> QIcon:
+        """Decode a JPEG thumbnail into a QIcon, falling back to the placeholder."""
+        image = _decode_jpeg_to_qimage(face.thumbnail_jpeg)
+        if image.isNull():
+            return self._placeholder
+        return QIcon(QPixmap.fromImage(image))
+
+    def _build_placeholder_icon(self) -> QIcon:
+        """Build a generic placeholder icon for missing/undecodable thumbnails."""
+        pixmap = QPixmap(self._ICON_SIZE, self._ICON_SIZE)
+        pixmap.fill(QColor("#222"))
+        painter = QPainter(pixmap)
+        painter.setPen(QColor("#888"))
+        painter.drawText(pixmap.rect(), Qt.AlignCenter, "?")
+        painter.end()
+        return QIcon(pixmap)
+
+    def _on_row_changed(self, row: int) -> None:
+        """Translate row changes into ``face_selected`` events."""
+        if row < 0 or row >= len(self._faces):
+            self.face_selected.emit(-1)
+            return
+        self.face_selected.emit(self._faces[row].face_index)
+
+
 class ManualToolWindow(QMainWindow):
     """Qt-native Manual Tool window with legacy fallback support."""
 
@@ -491,6 +615,7 @@ class ManualToolWindow(QMainWindow):
         self._current_frame: ManualFrame | None = None
         self._frame_view = ManualFrameView()
         self._thumbnail_panel = ManualThumbnailPanel()
+        self._face_panel = FaceThumbnailPanel()
         self._status_label = QLabel()
         self._metadata_label = QLabel()
         self._save_action: QAction | None = None
@@ -524,6 +649,11 @@ class ManualToolWindow(QMainWindow):
     def frame_view(self) -> ManualFrameView:
         """Return the embedded frame view widget."""
         return self._frame_view
+
+    @property
+    def face_panel(self) -> FaceThumbnailPanel:
+        """Return the per-frame face thumbnail panel widget."""
+        return self._face_panel
 
     @property
     def video_provider(self) -> VideoFrameProvider | None:
@@ -603,9 +733,11 @@ class ManualToolWindow(QMainWindow):
         splitter = QSplitter(Qt.Vertical)
         splitter.setObjectName("qt-manual-main-splitter")
         splitter.addWidget(left)
+        splitter.addWidget(self._face_panel)
         splitter.addWidget(self._thumbnail_panel)
-        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 0)
+        splitter.setStretchFactor(2, 0)
         self.setCentralWidget(splitter)
 
     def _build_toolbar(self) -> None:
@@ -627,6 +759,7 @@ class ManualToolWindow(QMainWindow):
     def _connect_signals(self) -> None:
         """Connect selection and dirty-state signals."""
         self._thumbnail_panel.currentItemChanged.connect(self._thumbnail_selected)
+        self._face_panel.face_selected.connect(self._on_face_selected)
         self.dirty_changed.connect(
             lambda dirty: self.statusBar().showMessage(
                 "Manual Tool has unsaved changes" if dirty else "Manual Tool ready",
@@ -724,6 +857,24 @@ class ManualToolWindow(QMainWindow):
         self.dirty_changed.emit(bool(dirty))
         self._sync_actions()
 
+    def _on_face_selected(self, face_index: int) -> None:
+        """Propagate active face selection to the shared editor state."""
+        if face_index < 0:
+            return
+        self._editor_state.set("face_index", face_index)
+
+    def refresh_faces(self) -> None:
+        """Reload face thumbnails for the current frame from the session.
+
+        Call this after add/remove/update operations on the alignments file so
+        the panel reflects the latest state.
+        """
+        if self._current_frame is None:
+            self._face_panel.set_faces(())
+            return
+        faces = self._session.faces_for_frame(self._current_frame.index)
+        self._face_panel.set_faces(faces)
+
     def _thumbnail_selected(
         self,
         current: QListWidgetItem | None,
@@ -746,6 +897,7 @@ class ManualToolWindow(QMainWindow):
                 self._status_label.setText(
                     f"Frame {frame.index + 1} of {self._session.frame_count}: {frame.name}"
                 )
+            self.refresh_faces()
         elif self._video_frames:
             if index >= len(self._video_frames):
                 return
@@ -758,6 +910,7 @@ class ManualToolWindow(QMainWindow):
                 self._status_label.setText(
                     f"Loading frame {frame.index + 1} of {len(self._video_frames)}"
                 )
+            self.refresh_faces()
 
     def _previous_frame(self) -> None:
         """Select previous frame."""
@@ -780,6 +933,7 @@ class ManualToolWindow(QMainWindow):
 
 
 __all__ = [
+    "FaceThumbnailPanel",
     "FrameViewport",
     "ManualFrameView",
     "ManualThumbnailPanel",
