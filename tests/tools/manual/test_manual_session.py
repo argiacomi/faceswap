@@ -226,6 +226,60 @@ def test_alignments_handle_faces_for_frame_returns_neutral_entries(tmp_path: Pat
     assert _thumb_bytes(np.frombuffer(payload, dtype=np.uint8)) == payload
 
 
+def test_alignments_handle_faces_for_frame_name_resolves_sparse_entries(
+    tmp_path: Path,
+) -> None:
+    """faces_for_frame_name keys lookups by name, not by sorted-index position."""
+    from lib.serializer import get_serializer
+
+    (tmp_path / "frame_000.png").write_bytes(b"png")
+    (tmp_path / "frame_010.png").write_bytes(b"png")
+    payload_a = b"\xff\xd8\xff\xe0AAA"
+    payload_b = b"\xff\xd8\xff\xe0BBB"
+    face = {
+        "x": 0,
+        "y": 0,
+        "w": 10,
+        "h": 10,
+        "landmarks_xy": [[0.0, 0.0]] * 68,
+        "mask": {},
+        "identity": {},
+    }
+    serialized = {
+        "__meta__": {"version": 2.4},
+        "__data__": {
+            "frame_010.png": {
+                "faces": [{**face, "thumb": list(payload_a)}],
+                "video_meta": {},
+            },
+            "frame_020.png": {
+                "faces": [{**face, "thumb": list(payload_b)}],
+                "video_meta": {},
+            },
+        },
+    }
+    get_serializer("compressed").save(str(tmp_path / "alignments.fsa"), serialized)
+    handle = ManualSession.create(frames=str(tmp_path)).alignments_handle()
+
+    # faces_for_frame(0) keys by sorted alignments position and returns frame_010.
+    sorted_first = handle.faces_for_frame(0)
+    assert sorted_first[0].frame_name == "frame_010.png"
+    assert sorted_first[0].thumbnail_jpeg == payload_a
+
+    # By name we get the right frame even when the source list is sparse vs.
+    # the alignments file (here frame_020.png is sorted index 1 in alignments
+    # but would be index 2 in the source frame list if it existed there).
+    by_name = handle.faces_for_frame_name("frame_020.png", frame_index=2)
+    assert len(by_name) == 1
+    assert by_name[0].frame_index == 2
+    assert by_name[0].frame_name == "frame_020.png"
+    assert by_name[0].thumbnail_jpeg == payload_b
+
+    # Unknown frame names return an empty tuple rather than raising.
+    assert handle.faces_for_frame_name("frame_999.png") == ()
+    assert handle.faces_for_frame_name("") == ()
+
+
 def test_thumb_bytes_handles_supported_inputs() -> None:
     """_thumb_bytes accepts numpy arrays, bytes-like inputs and falls back safely."""
     import numpy as np

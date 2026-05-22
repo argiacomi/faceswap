@@ -1824,16 +1824,22 @@ class ManualToolWindow(QMainWindow):
         if not editable_faces:
             self._face_panel.set_faces(())
             return
-        persisted = {
-            entry.face_index: entry
-            for entry in self._alignments_handle.faces_for_frame(frame_index)
-        }
         frame_names = self._frame_names_for_persist()
         frame_name = (
             frame_names[frame_index]
             if 0 <= frame_index < len(frame_names)
             else self._current_frame.name
         )
+        # Look up persisted thumbnails by frame *name* — the editable model is
+        # anchored to the source frame list, but the alignments file may be
+        # sparse, so sorted-index lookups (``faces_for_frame``) can attach the
+        # wrong frame's thumbnail to a given editable index.
+        persisted = {
+            entry.face_index: entry
+            for entry in self._alignments_handle.faces_for_frame_name(
+                frame_name, frame_index=frame_index
+            )
+        }
         entries = []
         for face in editable_faces:
             previous = persisted.get(face.face_index)

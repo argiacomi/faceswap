@@ -305,6 +305,12 @@ class ManualAlignmentsHandle:
     def faces_for_frame(self, frame_index: int) -> tuple[FaceThumbnail, ...]:
         """Return GUI-neutral face thumbnail entries for the given frame index.
 
+        Resolves ``frame_index`` against the sorted alignments-file keys. Callers
+        that drive their model from a separate frame list (eg. image-folder
+        sessions whose source list is sparse relative to alignments) should use
+        :meth:`faces_for_frame_name` so the thumbnail is fetched by the same
+        frame name the model uses to persist.
+
         Returns an empty tuple when the alignments file does not exist yet, the
         index is out of range, or the frame has no detected faces.
         """
@@ -314,7 +320,35 @@ class ManualAlignmentsHandle:
         names = sorted(alignments.data)
         if frame_index >= len(names):
             return ()
-        frame_name = names[frame_index]
+        return self._thumbnails_for(frame_index, names[frame_index], alignments)
+
+    def faces_for_frame_name(
+        self, frame_name: str, frame_index: int | None = None
+    ) -> tuple[FaceThumbnail, ...]:
+        """Return GUI-neutral face thumbnail entries keyed by frame *name*.
+
+        Use this in the Manual Tool's panel refresh: the editable model's
+        ``frame_index`` is anchored to the source frame list, but the alignments
+        file may store sparse entries with arbitrary names. Looking up by name
+        guarantees the persisted thumbnail came from the same frame the editable
+        face was seeded from.
+
+        Returns an empty tuple when the alignments file does not exist yet or
+        ``frame_name`` is not present in it.
+        """
+        if not frame_name or not self.exists:
+            return ()
+        alignments = self.open()
+        if frame_name not in alignments.data:
+            return ()
+        resolved_index = -1 if frame_index is None else frame_index
+        return self._thumbnails_for(resolved_index, frame_name, alignments)
+
+    @staticmethod
+    def _thumbnails_for(
+        frame_index: int, frame_name: str, alignments: T.Any
+    ) -> tuple[FaceThumbnail, ...]:
+        """Build ``FaceThumbnail`` entries for one resolved frame name."""
         faces = alignments.data[frame_name].faces
         return tuple(
             FaceThumbnail(
