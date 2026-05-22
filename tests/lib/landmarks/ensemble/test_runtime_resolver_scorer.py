@@ -552,18 +552,9 @@ def test_evaluate_runtime_resolver_scorer_compares_binary_and_continuous(
     assert primary_scorer["target"] == TARGET_SELECTION_COST
     assert primary_scorer["model_type"] == MODEL_TYPE_LINEAR_REGRESSION
     assert primary_scorer["metrics"] == report["learned_quality_v1_1"]
-
-    # Legacy "scorer_version" alias mirrors the canonical v1.1 metrics for one
-    # release. Remove once external consumers migrate to learned_quality_v1_1.
-    assert report["scorer_version"] == report["learned_quality_v1_1"]
-    assert (
-        report["production_only_policy_metrics"]["scorer_version"]
-        == report["production_only_policy_metrics"]["learned_quality_v1_1"]
-    )
-    assert (
-        report["gt_hard_all_policy_metrics"]["scorer_version"]
-        == report["gt_hard_all_policy_metrics"]["learned_quality_v1_1"]
-    )
+    assert "scorer_version" not in report
+    assert "scorer_version" not in report["production_only_policy_metrics"]
+    assert "scorer_version" not in report["gt_hard_all_policy_metrics"]
 
 
 def test_evaluate_runtime_resolver_scorer_emits_stable_keys_for_all_scorers(
@@ -572,8 +563,7 @@ def test_evaluate_runtime_resolver_scorer_emits_stable_keys_for_all_scorers(
     """Three-way comparison: v1.1 primary + binary peer + v2 peer.
 
     Locks in the stable report contract: each scorer gets a version-explicit
-    bucket key, the legacy ``scorer_version`` alias mirrors v1.1, and the
-    ``primary_scorer`` block names the canonical label (not the alias).
+    bucket key and the ``primary_scorer`` block names the canonical v1.1 label.
     """
     manifest_path, cache_dir, weights_path = _write_fixture(tmp_path)
     binary_scorer_path = write_runtime_resolver_scorer(
@@ -646,17 +636,17 @@ def test_evaluate_runtime_resolver_scorer_emits_stable_keys_for_all_scorers(
     assert "learned_quality_v2" in production
     assert "current_binary_logistic_scorer" in production
 
-    # Legacy scorer_version alias mirrors v1.1 (top-level and inside bundles).
-    assert report["scorer_version"] == report["learned_quality_v1_1"]
-    assert production["scorer_version"] == production["learned_quality_v1_1"]
-    assert (
-        report["gt_hard_all_policy_metrics"]["scorer_version"]
-        == report["gt_hard_all_policy_metrics"]["learned_quality_v1_1"]
-    )
+    # No legacy alias keys leak into the report or the per-source bundles.
+    assert "scorer_version" not in report
+    assert "scorer_version" not in production
+    assert "scorer_version" not in report["gt_hard_all_policy_metrics"]
 
-    # Alias points at v1.1, never at v2 — no accidental double-binding.
+    # Each named scorer has its own metrics bucket — no aliasing or sharing.
     assert production["learned_quality_v2"] is not production["learned_quality_v1_1"]
-    assert production["learned_quality_v2"] is not production["scorer_version"]
+    assert (
+        production["current_binary_logistic_scorer"]
+        is not production["learned_quality_v1_1"]
+    )
 
 
 def test_evaluate_runtime_resolver_scorer_filters_to_eval_split(tmp_path: Path) -> None:
