@@ -361,6 +361,10 @@ class ManualEditableAlignments:
         self._undo: list[tuple[T.Callable[[], None], T.Callable[[], None], int]] = []
         self._redo: list[tuple[T.Callable[[], None], T.Callable[[], None], int]] = []
         self._listeners: list[T.Callable[[int], None]] = []
+        # Frame indices that have been mutated since the last persist/seed.
+        # Tracked separately from ``_faces`` so fully emptied frames (every
+        # face deleted) are still written back to the alignments file on save.
+        self._dirty_frames: set[int] = set()
 
     # ---- read API ----
     def faces(self, frame_index: int) -> tuple[EditableFace, ...]:
@@ -405,6 +409,7 @@ class ManualEditableAlignments:
         self._faces.clear()
         self._undo.clear()
         self._redo.clear()
+        self._dirty_frames.clear()
         for frame_index, frame_name in enumerate(names):
             entries = []
             for face_index, face in enumerate(alignments.data[frame_name].faces):
@@ -457,8 +462,6 @@ class ManualEditableAlignments:
             faces = self._faces.get(frame_index, [])
             if faces:
                 faces.pop()
-            if not faces:
-                self._faces.pop(frame_index, None)
 
         self._apply(do, undo, frame_index)
         return face_index
@@ -473,8 +476,9 @@ class ManualEditableAlignments:
         def do() -> None:
             self._faces[frame_index].pop(face_index)
             self._reindex(frame_index)
-            if not self._faces[frame_index]:
-                self._faces.pop(frame_index, None)
+            # Keep the (now-empty) entry in _faces so apply_to_alignments()
+            # writes ``entry.faces = []`` to disk; tracking dirty frames
+            # ensures the persist still hits this frame.
 
         def undo() -> None:
             target = self._faces.setdefault(frame_index, [])
@@ -554,6 +558,7 @@ class ManualEditableAlignments:
         do, undo, frame_index = self._undo.pop()
         undo()
         self._redo.append((do, undo, frame_index))
+        self._dirty_frames.add(frame_index)
         self._notify(frame_index)
         return True
 
@@ -564,6 +569,7 @@ class ManualEditableAlignments:
         do, undo, frame_index = self._redo.pop()
         do()
         self._undo.append((do, undo, frame_index))
+        self._dirty_frames.add(frame_index)
         self._notify(frame_index)
         return True
 
@@ -585,20 +591,30 @@ class ManualEditableAlignments:
         undo: T.Callable[[], None],
         frame_index: int,
     ) -> None:
-        """Run ``do``, push the inverse onto undo, and notify listeners."""
+        """Run ``do``, push the inverse onto undo, and notify listeners.
+
+        Also marks ``frame_index`` dirty so :meth:`apply_to_alignments`
+        knows the frame needs writing — even if the operation ends up
+        leaving the editable face list empty (e.g. deleting the last
+        face), the touched-frames set guarantees the alignments file is
+        updated to match on the next save.
+        """
         do()
         self._undo.append((do, undo, frame_index))
         self._redo.clear()
+        self._dirty_frames.add(frame_index)
         self._notify(frame_index)
 
     def clear_history(self) -> None:
         """Drop the undo and redo stacks.
 
         Called after a successful persist so the user cannot undo back past
-        the save point in the editor.
+        the save point in the editor and so the next save only writes frames
+        that have actually been mutated since this point.
         """
         self._undo.clear()
         self._redo.clear()
+        self._dirty_frames.clear()
 
     def revert_frame(self, frame_index: int) -> int:
         """Undo only the operations recorded against ``frame_index``.
@@ -622,6 +638,8 @@ class ManualEditableAlignments:
         self._undo = list(reversed(kept))
         if reverted:
             self._redo.clear()
+            if not any(op_frame == frame_index for _do, _undo, op_frame in self._undo):
+                self._dirty_frames.discard(frame_index)
             self._notify(frame_index)
         return reverted
 
@@ -650,7 +668,8 @@ class ManualEditableAlignments:
         from lib.align.objects import AlignmentsEntry, FileAlignments
 
         modified = 0
-        for frame_index in sorted(self._faces):
+        targets = sorted(self._dirty_frames or self._faces.keys())
+        for frame_index in targets:
             if frame_index < 0 or frame_index >= len(frame_names):
                 raise ValueError(f"Frame index {frame_index} has no matching frame name")
             frame_name = frame_names[frame_index]
@@ -660,7 +679,7 @@ class ManualEditableAlignments:
                 alignments.data[frame_name] = entry
             original_faces = list(entry.faces)
             new_faces: list[FileAlignments] = []
-            for face in self._faces[frame_index]:
+            for face in self._faces.get(frame_index, []):
                 landmarks_array = (
                     np.asarray(face.landmarks, dtype=np.float32)
                     if face.landmarks

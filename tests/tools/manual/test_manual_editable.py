@@ -172,6 +172,61 @@ def test_seed_from_handle_clears_history() -> None:
     assert model.can_undo is True
 
 
+def test_delete_last_face_keeps_frame_dirty_for_persist() -> None:
+    """Deleting the only face on a frame still records the frame as dirty.
+
+    Without dirty-frame tracking ``apply_to_alignments`` would iterate
+    ``self._faces`` and skip the now-empty frame, leaving the on-disk
+    alignments stale.  Confirm the model can still report the frame
+    needs to be written.
+    """
+    model = ManualEditableAlignments(
+        {0: [EditableFace(face_index=0, bbox=_bbox())]},
+    )
+    # Seeded entries do not pre-populate the dirty set.
+    assert model._dirty_frames == set()  # noqa: SLF001
+
+    model.delete_face(0, 0)
+
+    assert model.face_count(0) == 0
+    assert 0 in model._dirty_frames  # noqa: SLF001
+
+
+def test_apply_to_alignments_writes_empty_for_fully_deleted_frame() -> None:
+    """A frame with all faces deleted is written as ``entry.faces = []``."""
+    import numpy as np
+
+    from lib.align.objects import AlignmentsEntry, FileAlignments
+
+    class _StubAlignments:
+        def __init__(self) -> None:
+            self.data: dict[str, AlignmentsEntry] = {
+                "frame.png": AlignmentsEntry(
+                    faces=[
+                        FileAlignments(
+                            x=10,
+                            y=10,
+                            w=20,
+                            h=20,
+                            landmarks_xy=np.zeros((0, 2), dtype=np.float32),
+                        )
+                    ],
+                    video_meta={},
+                )
+            }
+
+    alignments = _StubAlignments()
+    model = ManualEditableAlignments(
+        {0: [EditableFace(face_index=0, bbox=(10.0, 10.0, 20.0, 20.0))]},
+    )
+    model.delete_face(0, 0)
+
+    modified = model.apply_to_alignments(alignments, frame_names=["frame.png"])
+
+    assert modified == 1
+    assert alignments.data["frame.png"].faces == []
+
+
 def test_revert_frame_only_undoes_matching_frame() -> None:
     """revert_frame leaves edits on other frames in place."""
     model = ManualEditableAlignments()

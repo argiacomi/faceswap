@@ -635,6 +635,7 @@ class MainWindow(QMainWindow):
                 values,
                 builder=self._builder,
                 parent=self,
+                console_logger=self._console.write_line,
             )
         except ValueError as err:
             message = str(err)

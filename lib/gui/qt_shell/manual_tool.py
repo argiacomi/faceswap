@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMainWindow,
     QMessageBox,
+    QProgressBar,
     QSizePolicy,
     QSplitter,
     QStatusBar,
@@ -49,6 +50,7 @@ from lib.gui.qt_shell.theme import QtTheme, icon_for_action
 from lib.gui.services.command_builder import CommandBuilder
 from tools.manual.session import (
     FaceThumbnail,
+    ManualAlignmentsHandle,
     ManualEditableAlignments,
     ManualEditorState,
     ManualFrame,
@@ -915,6 +917,111 @@ MANUAL_ACTIONS: tuple[ManualAction, ...] = (
 )
 
 
+class _ManualStartupTask(QObject):
+    """Worker that performs Manual Tool session preparation off the UI thread.
+
+    Stages reported via :attr:`progress`:
+        * ``"open"``      – Open the alignments file (parses on first access).
+        * ``"seed"``      – Seed the editable model from the alignments file.
+        * ``"thumbs"``    – Check the thumbnail cache state.
+        * ``"complete"``  – All stages finished.
+
+    The worker is intentionally tiny and synchronous inside :meth:`run` — Qt
+    moves it to a dedicated QThread, so blocking IO inside this object does
+    not freeze the window.
+    """
+
+    progress = Signal(str, str)
+    """Emitted with ``(stage, message)`` as each stage starts."""
+    completed = Signal(bool, str)
+    """Emitted with ``(has_thumbnails, summary)`` on success."""
+    failed = Signal(str)
+    """Emitted with a user-facing error message on failure."""
+    _start = Signal()
+
+    def __init__(
+        self,
+        handle: ManualAlignmentsHandle,
+        editable: ManualEditableAlignments,
+    ) -> None:
+        super().__init__()
+        self._handle = handle
+        self._editable = editable
+        self._start.connect(self.run)
+
+    def kick_off(self) -> None:
+        """Schedule the worker on its owning thread."""
+        self._start.emit()
+
+    def run(self) -> None:  # noqa: D401 - Qt slot
+        """Execute the staged startup work."""
+        try:
+            if not self._handle.exists:
+                self.progress.emit("complete", "No alignments file yet — ready")
+                self.completed.emit(False, "No alignments file yet")
+                return
+
+            self.progress.emit("open", "Opening alignments file…")
+            alignments = self._handle.open()
+            face_count = sum(len(entry.faces) for entry in alignments.data.values())
+
+            self.progress.emit("thumbs", "Checking thumbnail cache…")
+            has_thumbnails = self._handle.has_thumbnails()
+
+            summary = f"Loaded {face_count} face(s) across {len(alignments.data)} frame(s)"
+            self.progress.emit("complete", summary)
+            self.completed.emit(has_thumbnails, summary)
+        except Exception as err:  # noqa: BLE001 - surface any startup failure
+            logger.exception("Manual Tool startup failed")
+            self.failed.emit(str(err))
+
+
+class ManualStartupWorker(QObject):
+    """Owns the QThread that runs :class:`_ManualStartupTask`.
+
+    The window subscribes to :attr:`progress`, :attr:`completed` and
+    :attr:`failed` for user-facing feedback.  Calling :meth:`stop` is safe at
+    any time — it gracefully terminates the thread even if the user closes
+    the window mid-load.
+    """
+
+    progress = Signal(str, str)
+    completed = Signal(bool, str)
+    failed = Signal(str)
+
+    def __init__(
+        self,
+        handle: ManualAlignmentsHandle,
+        editable: ManualEditableAlignments,
+        parent: QObject | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._thread = QThread(self)
+        self._task = _ManualStartupTask(handle, editable)
+        self._task.moveToThread(self._thread)
+        self._task.progress.connect(self.progress)
+        self._task.completed.connect(self.completed)
+        self._task.failed.connect(self.failed)
+        # Auto-quit the QThread as soon as the task reports a terminal
+        # state so the thread is fully stopped before the parent window
+        # destructor runs.  Without this, Qt aborts on the QThread
+        # destructor under pytest teardown when stop() was not called.
+        self._task.completed.connect(self._thread.quit)
+        self._task.failed.connect(self._thread.quit)
+        self._thread.finished.connect(self._task.deleteLater)
+        self._thread.start()
+
+    def start(self) -> None:
+        """Begin background processing on the worker thread."""
+        self._task.kick_off()
+
+    def stop(self) -> None:
+        """Stop the worker thread and wait for it to exit."""
+        if self._thread.isRunning():
+            self._thread.quit()
+            self._thread.wait(2000)
+
+
 class ManualToolWindow(QMainWindow):
     """Qt-native Manual Tool window with legacy fallback support."""
 
@@ -933,6 +1040,7 @@ class ManualToolWindow(QMainWindow):
         *,
         legacy_args: list[str] | None = None,
         parent: QWidget | None = None,
+        console_logger: T.Callable[[str], None] | None = None,
     ) -> None:
         super().__init__(parent)
         self.setObjectName("qt-manual-tool-window")
@@ -949,6 +1057,10 @@ class ManualToolWindow(QMainWindow):
         self._face_panel = FaceThumbnailPanel()
         self._status_label = QLabel()
         self._metadata_label = QLabel()
+        self._progress_bar: QProgressBar | None = None
+        self._console_logger = console_logger
+        self._startup_worker: ManualStartupWorker | None = None
+        self._startup_complete = False
         self._actions: dict[str, QAction] = {}
         # One cached alignments handle for the lifetime of this window so we
         # are not reopening the alignments file on every face refresh.
@@ -971,6 +1083,7 @@ class ManualToolWindow(QMainWindow):
         self._connect_signals()
         self._load_session()
         self._frame_view.add_overlay(self._overlay)
+        self._start_background_startup()
 
     @property
     def session(self) -> ManualSession:
@@ -1038,11 +1151,17 @@ class ManualToolWindow(QMainWindow):
         *,
         builder: CommandBuilder,
         parent: QWidget | None = None,
+        console_logger: T.Callable[[str], None] | None = None,
     ) -> ManualToolWindow:
         """Create a Manual Tool window from command-panel values."""
         session = ManualSession.from_cli_values(values)
         legacy_args = builder.build("tools", "manual", values, generate=False)
-        return cls(session, legacy_args=legacy_args, parent=parent)
+        return cls(
+            session,
+            legacy_args=legacy_args,
+            parent=parent,
+            console_logger=console_logger,
+        )
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa:N802
         """Prompt before closing when the editor has unsaved changes."""
@@ -1060,6 +1179,9 @@ class ManualToolWindow(QMainWindow):
         if self._video_provider is not None:
             self._video_provider.shutdown()
             self._video_provider = None
+        if self._startup_worker is not None:
+            self._startup_worker.stop()
+            self._startup_worker = None
         event.accept()
 
     def mark_dirty(self, dirty: bool = True) -> None:
@@ -1420,30 +1542,41 @@ class ManualToolWindow(QMainWindow):
         )
 
     def _load_session(self) -> None:
-        """Populate the Qt Manual Tool from a neutral session."""
-        alignments = self._session.alignments_handle()
-        if self._session.is_video_input:
-            self._video_metadata = alignments.video_metadata()
+        """Populate the Qt Manual Tool from a neutral session.
+
+        Only renders cheap session metadata + frame discovery here.  The
+        expensive alignments-file parse and thumbnail-cache check run in
+        :class:`ManualStartupWorker` and refresh the metadata label once
+        they complete.
+        """
         frame_summary: str
         if self._session.has_images:
             frame_summary = str(self._session.frame_count)
-        elif self._video_metadata is not None and self._video_metadata.is_valid:
-            frame_summary = f"{self._video_metadata.frame_count} (video)"
+        elif self._session.is_video_input:
+            frame_summary = "video input (loading…)"
         else:
             frame_summary = "video input"
-        thumbs_state = "cached" if alignments.has_thumbnails() else "needs generation"
-        if self._session.thumb_regenerate:
-            thumbs_state = "regenerate forced"
+        thumbs_state = "regenerate forced" if self._session.thumb_regenerate else "loading…"
         self._metadata_label.setText(
             "\n".join(
                 (
                     f"Input: {self._session.frames}",
-                    f"Alignments: {alignments.path}",
+                    f"Alignments: {self._alignments_handle.path}",
                     f"Frames: {frame_summary}",
                     f"Thumbnails: {thumbs_state}",
                 )
             )
         )
+        # Seed the editable model from any existing on-disk alignments
+        # before the first frame is selected so the overlay + face panel show
+        # the persisted faces immediately.  This open() blocks the UI for the
+        # duration of an Alignments load; that is acceptable because the
+        # alternative (empty panel until the worker completes) breaks core
+        # Manual Tool behavior on an existing alignments file.
+        try:
+            self._editable.seed_from_handle(self._alignments_handle)
+        except Exception:  # noqa: BLE001 - re-surfaced by the startup worker
+            logger.exception("Manual Tool synchronous seed failed")
         if self._session.has_images:
             self._thumbnail_panel.set_frames(self._session.frame_list)
             self._thumbnail_panel.setCurrentRow(0)
@@ -1453,8 +1586,104 @@ class ManualToolWindow(QMainWindow):
             self._frame_view.clear_frame(
                 "Video input detected. Frame extraction will be wired in a follow-up."
             )
-        self._status_label.setText("Native Qt Manual Tool loaded")
+        self._status_label.setText("Manual Tool starting…")
         self._sync_actions()
+
+    def _start_background_startup(self) -> None:
+        """Kick off ``ManualStartupWorker`` for async alignments preparation."""
+        self._progress_bar = self._build_progress_bar()
+        if self._progress_bar is not None:
+            self.statusBar().addPermanentWidget(self._progress_bar)
+            self._progress_bar.show()
+        self._startup_worker = ManualStartupWorker(
+            self._alignments_handle, self._editable, parent=self
+        )
+        self._startup_worker.progress.connect(self._on_startup_progress)
+        self._startup_worker.completed.connect(self._on_startup_completed)
+        self._startup_worker.failed.connect(self._on_startup_failed)
+        logger.info("Manual Tool startup worker scheduled")
+        self._emit_console("Manual Tool: preparing session…")
+        self._startup_worker.start()
+
+    def _build_progress_bar(self) -> QProgressBar:
+        """Return a Qt-native indeterminate progress bar for the status bar."""
+        bar = QProgressBar()
+        bar.setObjectName("qt-manual-startup-progress")
+        bar.setRange(0, 0)
+        bar.setMaximumWidth(160)
+        bar.setTextVisible(False)
+        bar.hide()
+        return bar
+
+    def _on_startup_progress(self, stage: str, message: str) -> None:
+        """Surface intermediate startup messages to the status bar + console."""
+        logger.debug("Manual Tool startup [%s]: %s", stage, message)
+        self.statusBar().showMessage(message)
+        self._emit_console(f"Manual Tool [{stage}]: {message}")
+
+    def _on_startup_completed(self, has_thumbnails: bool, summary: str) -> None:
+        """Finalize UI state once the startup worker reports success."""
+        self._startup_complete = True
+        thumbs_state = (
+            "regenerate forced"
+            if self._session.thumb_regenerate
+            else ("cached" if has_thumbnails else "needs generation")
+        )
+        self._metadata_label.setText(
+            "\n".join(
+                (
+                    f"Input: {self._session.frames}",
+                    f"Alignments: {self._alignments_handle.path}",
+                    f"Frames: {self._frame_summary_text()}",
+                    f"Thumbnails: {thumbs_state}",
+                )
+            )
+        )
+        if self._session.is_video_input:
+            self._video_metadata = self._alignments_handle.video_metadata()
+        self._status_label.setText("Manual Tool ready")
+        self.statusBar().showMessage(summary, 5000)
+        self._hide_progress_bar()
+        logger.info("Manual Tool startup complete: %s", summary)
+        self._emit_console(f"Manual Tool ready — {summary}")
+        # The editable model may now hold seeded faces; repaint + refresh.
+        self.refresh_faces()
+        self._frame_view.update()
+        self._sync_actions()
+
+    def _on_startup_failed(self, message: str) -> None:
+        """Surface startup failures through status, console, log and dialog."""
+        self._startup_complete = False
+        self._status_label.setText("Manual Tool startup failed")
+        self.statusBar().showMessage(message, 7000)
+        self._hide_progress_bar()
+        logger.error("Manual Tool startup failed: %s", message)
+        self._emit_console(f"Manual Tool startup failed: {message}")
+        QMessageBox.critical(self, "Manual Tool Startup", message)
+
+    def _hide_progress_bar(self) -> None:
+        """Hide and detach the indeterminate startup progress widget."""
+        if self._progress_bar is not None:
+            self._progress_bar.hide()
+            self.statusBar().removeWidget(self._progress_bar)
+            self._progress_bar = None
+
+    def _emit_console(self, message: str) -> None:
+        """Forward a user-facing message to the host shell console, if any."""
+        if self._console_logger is None:
+            return
+        try:
+            self._console_logger(message)
+        except Exception:  # pragma: no cover - defensive
+            logger.exception("Manual Tool console logger raised")
+
+    def _frame_summary_text(self) -> str:
+        """Return the metadata summary text for the loaded frame source."""
+        if self._session.has_images:
+            return str(self._session.frame_count)
+        if self._video_metadata is not None and self._video_metadata.is_valid:
+            return f"{self._video_metadata.frame_count} (video)"
+        return "video input"
 
     def _start_video_provider(self) -> None:
         """Initialize the async video frame provider for video sessions."""
