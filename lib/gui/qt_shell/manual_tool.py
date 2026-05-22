@@ -16,6 +16,7 @@ import typing as T
 from PySide6.QtCore import QObject, QPoint, QPointF, QRectF, QSize, Qt, QThread, Signal
 from PySide6.QtGui import (
     QAction,
+    QBrush,
     QCloseEvent,
     QColor,
     QIcon,
@@ -24,6 +25,7 @@ from PySide6.QtGui import (
     QMouseEvent,
     QPainter,
     QPaintEvent,
+    QPen,
     QPixmap,
     QResizeEvent,
     QWheelEvent,
@@ -47,6 +49,7 @@ from lib.gui.qt_shell.theme import QtTheme, icon_for_action
 from lib.gui.services.command_builder import CommandBuilder
 from tools.manual.session import (
     FaceThumbnail,
+    ManualEditableAlignments,
     ManualEditorState,
     ManualFrame,
     ManualSession,
@@ -67,6 +70,88 @@ class FrameViewport(T.NamedTuple):
     """Destination rectangle in widget coordinates where the frame is drawn."""
     zoom: float
     """Effective zoom factor relative to the fit-to-widget baseline."""
+
+    def source_to_widget(self, sx: float, sy: float) -> QPointF:
+        """Translate a source-image point into widget-coordinate space."""
+        src_w, src_h = self.source_size
+        if src_w <= 0 or src_h <= 0:
+            return QPointF(self.target_rect.x(), self.target_rect.y())
+        rx = sx / src_w
+        ry = sy / src_h
+        return QPointF(
+            self.target_rect.x() + rx * self.target_rect.width(),
+            self.target_rect.y() + ry * self.target_rect.height(),
+        )
+
+    def source_rect_to_widget(self, x: float, y: float, w: float, h: float) -> QRectF:
+        """Translate a source-image rect into widget-coordinate space."""
+        top_left = self.source_to_widget(x, y)
+        bottom_right = self.source_to_widget(x + w, y + h)
+        return QRectF(top_left, bottom_right)
+
+
+class ManualFrameOverlay:
+    """Stateful painter for editable bounding boxes + landmarks.
+
+    The overlay is registered with :meth:`ManualFrameView.add_overlay` and
+    draws one rectangle per :class:`EditableFace` returned by the bound
+    :class:`ManualEditableAlignments`.  The active face (passed via
+    :meth:`set_active`) is rendered with a contrasting accent and a halo so
+    follow-up editor surfaces can build on the same hit-target.
+    """
+
+    _DEFAULT_COLOR = QColor("#3aa0ff")
+    _ACTIVE_COLOR = QColor("#ffb000")
+    _LANDMARK_COLOR = QColor("#ffffff")
+    _LANDMARK_RADIUS = 2.0
+
+    def __init__(
+        self,
+        model: ManualEditableAlignments,
+        *,
+        frame_index_provider: T.Callable[[], int],
+    ) -> None:
+        self._model = model
+        self._frame_index_provider = frame_index_provider
+        self._active_face: int | None = None
+
+    def set_active(self, face_index: int | None) -> None:
+        """Mark a face as the active selection for highlight rendering."""
+        self._active_face = face_index
+
+    @property
+    def active_face(self) -> int | None:
+        """Return the currently highlighted ``face_index`` (or ``None``)."""
+        return self._active_face
+
+    def __call__(self, painter: QPainter, viewport: FrameViewport) -> None:
+        """Draw the overlay during :meth:`ManualFrameView.paintEvent`."""
+        frame_index = self._frame_index_provider()
+        faces = self._model.faces(frame_index)
+        if not faces:
+            return
+        pen_width = max(1.0, 1.5 * (1.0 / max(viewport.zoom, 0.001)) * viewport.zoom)
+        for face in faces:
+            is_active = face.face_index == self._active_face
+            painter.save()
+            rect = viewport.source_rect_to_widget(*face.bbox)
+            color = self._ACTIVE_COLOR if is_active else self._DEFAULT_COLOR
+            pen = QPen(color)
+            pen.setWidthF(pen_width + (1.0 if is_active else 0.0))
+            painter.setPen(pen)
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRect(rect)
+            if face.landmarks:
+                painter.setBrush(QBrush(self._LANDMARK_COLOR))
+                painter.setPen(Qt.NoPen)
+                for lx, ly in face.landmarks:
+                    point = viewport.source_to_widget(lx, ly)
+                    painter.drawEllipse(
+                        point,
+                        self._LANDMARK_RADIUS,
+                        self._LANDMARK_RADIUS,
+                    )
+            painter.restore()
 
 
 class ManualFrameView(QWidget):
@@ -523,24 +608,29 @@ class FaceThumbnailPanel(QListWidget):
         return self._faces
 
     def set_faces(self, faces: T.Iterable[FaceThumbnail]) -> None:
-        """Refresh the panel with the given face entries."""
+        """Refresh the panel with the given face entries.
+
+        When ``faces`` is empty, emits ``face_selected(-1)`` so the host
+        window can clear stale active-face state instead of leaving it
+        pointed at a face from the previous frame.
+        """
         self._faces = tuple(faces)
         self.blockSignals(True)
         try:
             self.clear()
             if not self._faces:
-                item = QListWidgetItem("No faces in frame")
-                item.setFlags(Qt.NoItemFlags)
-                item.setTextAlignment(Qt.AlignCenter)
-                self.addItem(item)
-                return
-            for face in self._faces:
-                item = QListWidgetItem(f"Face {face.face_index + 1}")
-                item.setData(Qt.UserRole, face.face_index)
-                item.setTextAlignment(Qt.AlignCenter)
-                item.setIcon(self._icon_for(face))
-                item.setSizeHint(QSize(self._ICON_SIZE + 24, self._ICON_SIZE + 28))
-                self.addItem(item)
+                placeholder = QListWidgetItem("No faces in frame")
+                placeholder.setFlags(Qt.NoItemFlags)
+                placeholder.setTextAlignment(Qt.AlignCenter)
+                self.addItem(placeholder)
+            else:
+                for face in self._faces:
+                    item = QListWidgetItem(f"Face {face.face_index + 1}")
+                    item.setData(Qt.UserRole, face.face_index)
+                    item.setTextAlignment(Qt.AlignCenter)
+                    item.setIcon(self._icon_for(face))
+                    item.setSizeHint(QSize(self._ICON_SIZE + 24, self._ICON_SIZE + 28))
+                    self.addItem(item)
         finally:
             self.blockSignals(False)
         if self._faces:
@@ -705,6 +795,31 @@ MANUAL_ACTIONS: tuple[ManualAction, ...] = (
         tooltip="Delete the active face (Delete)",
     ),
     ManualAction(
+        key="add_face",
+        label="Add Face",
+        handler="add_face_at_center",
+        shortcut=("Ctrl+N",),
+        icon=None,  # (missing) — no dedicated add-face icon in the cache.
+        tooltip="Add a new face at the center of the current frame (Ctrl+N)",
+    ),
+    ManualAction(
+        key="undo_edit",
+        label="Undo",
+        handler="undo_edit",
+        shortcut=("Ctrl+Z",),
+        icon=None,  # (missing) — no dedicated undo icon in the cache.
+        tooltip="Undo the last edit (Ctrl+Z)",
+        separator_before=True,
+    ),
+    ManualAction(
+        key="redo_edit",
+        label="Redo",
+        handler="redo_edit",
+        shortcut=("Ctrl+Shift+Z", "Ctrl+Y"),
+        icon=None,  # (missing) — no dedicated redo icon in the cache.
+        tooltip="Redo the last undone edit (Ctrl+Shift+Z)",
+    ),
+    ManualAction(
         key="cycle_filter",
         label="Filter",
         handler="cycle_filter_mode",
@@ -835,13 +950,27 @@ class ManualToolWindow(QMainWindow):
         self._status_label = QLabel()
         self._metadata_label = QLabel()
         self._actions: dict[str, QAction] = {}
+        # One cached alignments handle for the lifetime of this window so we
+        # are not reopening the alignments file on every face refresh.
+        self._alignments_handle = session.alignments_handle()
+        self._editable = ManualEditableAlignments()
+        self._editable.subscribe(self._on_editable_changed)
+        self._overlay = ManualFrameOverlay(
+            self._editable,
+            frame_index_provider=self._current_frame_index,
+        )
         self._editor_state.subscribe("unsaved", self._on_unsaved_changed)
         self._editor_state.subscribe("face_index", lambda _v: self._sync_actions())
+        self._editor_state.subscribe(
+            "face_index", lambda value: self._overlay.set_active(int(value))
+        )
+        self._editor_state.subscribe("face_index", lambda _v: self._frame_view.update())
         self._editor_state.subscribe("frame_index", lambda _v: self._sync_actions())
         self._editor_state.subscribe("editor_mode", self._on_editor_mode_changed)
         self._build_ui()
         self._connect_signals()
         self._load_session()
+        self._frame_view.add_overlay(self._overlay)
 
     @property
     def session(self) -> ManualSession:
@@ -872,6 +1001,21 @@ class ManualToolWindow(QMainWindow):
     def face_panel(self) -> FaceThumbnailPanel:
         """Return the per-frame face thumbnail panel widget."""
         return self._face_panel
+
+    @property
+    def editable_alignments(self) -> ManualEditableAlignments:
+        """Return the GUI-neutral editable alignment model.
+
+        Exposed so callers (tests, follow-up integration code) can seed it
+        from a real alignments file or assert edit/undo behavior without
+        scraping internal state.
+        """
+        return self._editable
+
+    @property
+    def frame_overlay(self) -> ManualFrameOverlay:
+        """Return the editable-alignments overlay painter."""
+        return self._overlay
 
     @property
     def actions_by_key(self) -> dict[str, QAction]:
@@ -923,10 +1067,18 @@ class ManualToolWindow(QMainWindow):
         self._editor_state.set("unsaved", dirty)
 
     def save(self) -> bool:
-        """Save seam for future alignment persistence integration."""
-        self.mark_dirty(False)
-        self.statusBar().showMessage("Manual Tool session saved", 5000)
-        return True
+        """Save seam for future alignment persistence integration.
+
+        Persistence of in-memory edits back to the alignments file is not
+        wired yet.  Calling this surfaces a clear notice and leaves the
+        editor state dirty so the user knows nothing was actually written.
+        Returns ``False`` to mark the operation as not-yet-implemented.
+        """
+        message = "Save to alignments file is not yet wired — edits remain in memory only"
+        self.statusBar().showMessage(message, 7000)
+        logger.warning(message)
+        QMessageBox.information(self, "Manual Tool Save", message)
+        return False
 
     def launch_legacy(self) -> bool:
         """Launch the existing Tk Manual Tool as a fallback subprocess."""
@@ -959,30 +1111,140 @@ class ManualToolWindow(QMainWindow):
         self._editor_state.set("is_playing", not self._editor_state.is_playing)
 
     def revert_current_frame(self) -> None:
-        """Revert seam for the current frame. Concrete persistence lands in follow-up."""
+        """Revert all editable edits stacked on the current frame."""
+        frame_index = self._current_frame_index()
+        if frame_index < 0:
+            self._editor_state.set("edited", False)
+            self.mark_dirty(False)
+            self.statusBar().showMessage("Nothing to revert", 3000)
+            return
+        reverted = 0
+        while self._editable.can_undo:
+            if not self._editable.undo():
+                break
+            reverted += 1
         self._editor_state.set("edited", False)
         self.mark_dirty(False)
-        self.statusBar().showMessage("Reverted edits in current frame", 5000)
+        if reverted:
+            self.statusBar().showMessage(f"Reverted {reverted} edit(s) in current frame", 5000)
+        else:
+            self.statusBar().showMessage("Nothing to revert", 3000)
 
-    def copy_prev_face(self) -> None:
-        """Copy seam from the previous frame. Concrete copy lands in follow-up."""
-        self._editor_state.set("edited", True)
-        self.mark_dirty(True)
-        self.statusBar().showMessage("Copied alignment from previous frame", 5000)
+    def copy_prev_face(self) -> bool:
+        """Copy the editable faces from the previous frame onto the current one."""
+        return self._copy_faces_from(self._current_frame_index() - 1, "previous")
 
-    def copy_next_face(self) -> None:
-        """Copy seam from the next frame. Concrete copy lands in follow-up."""
-        self._editor_state.set("edited", True)
-        self.mark_dirty(True)
-        self.statusBar().showMessage("Copied alignment from next frame", 5000)
+    def copy_next_face(self) -> bool:
+        """Copy the editable faces from the next frame onto the current one."""
+        return self._copy_faces_from(self._current_frame_index() + 1, "next")
 
-    def delete_active_face(self) -> None:
-        """Delete the active face. Concrete persistence lands in follow-up."""
-        face_index = self._editor_state.face_index
+    def _copy_faces_from(self, source_frame_index: int, direction: str) -> bool:
+        """Replace current frame faces with the source frame's editable faces.
+
+        Operates entirely on :class:`ManualEditableAlignments` so each
+        deletion/addition lands on the shared undo stack and the overlay
+        repaints itself via the existing listener.  Returns ``False`` and
+        surfaces a status message when there is nothing to copy.
+        """
+        current_index = self._current_frame_index()
+        if current_index < 0:
+            return False
+        source_faces = self._editable.faces(source_frame_index)
+        if not source_faces:
+            self.statusBar().showMessage(f"No faces in the {direction} frame to copy", 5000)
+            return False
+        for face_index in reversed(range(self._editable.face_count(current_index))):
+            self._editable.delete_face(current_index, face_index)
+        for face in source_faces:
+            self._editable.add_face(current_index, face.bbox, landmarks=face.landmarks)
         self._editor_state.set("face_count_changed", True)
         self._editor_state.set("edited", True)
         self.mark_dirty(True)
+        if self._editable.face_count(current_index):
+            self._editor_state.set("face_index", 0)
+        self.statusBar().showMessage(
+            f"Copied {len(source_faces)} face(s) from the {direction} frame", 5000
+        )
+        return True
+
+    def delete_active_face(self) -> None:
+        """Delete the active face from the editable alignment model."""
+        frame_index = self._current_frame_index()
+        if frame_index < 0:
+            return
+        face_index = self._editor_state.face_index
+        if not self._editable.delete_face(frame_index, face_index):
+            self.statusBar().showMessage("No face selected to delete", 5000)
+            return
+        self._editor_state.set("face_count_changed", True)
+        self._editor_state.set("edited", True)
+        self.mark_dirty(True)
+        new_count = self._editable.face_count(frame_index)
+        if new_count == 0:
+            self._editor_state.set("face_index", 0)
+        else:
+            self._editor_state.set("face_index", min(face_index, new_count - 1))
         self.statusBar().showMessage(f"Deleted face index {face_index}", 5000)
+
+    def add_face_at_center(
+        self,
+        bbox: tuple[float, float, float, float] | None = None,
+    ) -> int | None:
+        """Add a new face. Defaults to a centered fixed-size bbox.
+
+        ``bbox`` is provided in source-image coordinates. The convenience
+        default places a 64x64 box centred in the source frame so the action
+        is usable without a pointer-driven add gesture.
+        """
+        frame_index = self._current_frame_index()
+        if frame_index < 0:
+            return None
+        if bbox is None:
+            src_w, src_h = self._frame_view.source_size
+            if src_w <= 0 or src_h <= 0:
+                self.statusBar().showMessage("Cannot add face: frame not loaded", 5000)
+                return None
+            size = float(min(64, max(8, min(src_w, src_h) // 4)))
+            bbox = (src_w / 2 - size / 2, src_h / 2 - size / 2, size, size)
+        try:
+            new_index = self._editable.add_face(frame_index, bbox)
+        except ValueError as err:
+            self.statusBar().showMessage(str(err), 5000)
+            return None
+        self._editor_state.set("face_count_changed", True)
+        self._editor_state.set("edited", True)
+        self.mark_dirty(True)
+        self._editor_state.set("face_index", new_index)
+        self.statusBar().showMessage(f"Added face index {new_index}", 5000)
+        return new_index
+
+    def nudge_active_face(self, dx: float, dy: float) -> bool:
+        """Translate the active face's bbox + landmarks by ``(dx, dy)`` pixels."""
+        frame_index = self._current_frame_index()
+        if frame_index < 0:
+            return False
+        face_index = self._editor_state.face_index
+        if not self._editable.move_face(frame_index, face_index, dx, dy):
+            return False
+        self._editor_state.set("edited", True)
+        self.mark_dirty(True)
+        return True
+
+    def undo_edit(self) -> bool:
+        """Reverse the last edit (if any)."""
+        if not self._editable.undo():
+            self.statusBar().showMessage("Nothing to undo", 3000)
+            return False
+        self.statusBar().showMessage("Undid last edit", 3000)
+        return True
+
+    def redo_edit(self) -> bool:
+        """Re-apply the most recently undone edit (if any)."""
+        if not self._editable.redo():
+            self.statusBar().showMessage("Nothing to redo", 3000)
+            return False
+        self.statusBar().showMessage("Redid last edit", 3000)
+        return True
 
     def cycle_filter_mode(self) -> None:
         """Advance to the next filter mode in the legacy rotation order."""
@@ -1117,6 +1379,7 @@ class ManualToolWindow(QMainWindow):
         self._thumbnail_panel.currentItemChanged.connect(self._thumbnail_selected)
         self._thumbnail_panel.currentRowChanged.connect(lambda _row: self._sync_actions())
         self._face_panel.face_selected.connect(self._on_face_selected)
+        self._frame_view.clicked_at.connect(self._on_frame_clicked)
         self.dirty_changed.connect(
             lambda dirty: self.statusBar().showMessage(
                 "Manual Tool has unsaved changes" if dirty else "Manual Tool ready",
@@ -1215,10 +1478,49 @@ class ManualToolWindow(QMainWindow):
         self._sync_actions()
 
     def _on_face_selected(self, face_index: int) -> None:
-        """Propagate active face selection to the shared editor state."""
-        if face_index >= 0:
-            self._editor_state.set("face_index", face_index)
+        """Propagate active face selection to the shared editor state.
+
+        A negative ``face_index`` (emitted when the panel is cleared) is
+        propagated as ``-1`` so editor state and the overlay do not keep
+        pointing at a face that no longer exists.
+        """
+        self._editor_state.set("face_index", face_index if face_index >= 0 else -1)
         self._sync_actions()
+
+    def _current_frame_index(self) -> int:
+        """Return the sorted-frame index of the active frame, or -1 if none."""
+        return -1 if self._current_frame is None else self._current_frame.index
+
+    def _on_editable_changed(self, frame_index: int) -> None:
+        """React to any change in the editable alignment model.
+
+        The face panel mirrors the alignments-file thumbnails (read-only) and
+        emits ``face_selected(-1)`` whenever it is empty.  Refresh it first,
+        then resync ``editor_state.face_index`` against the editable model so
+        a programmatic add does not leave us pointed at ``-1``.
+        """
+        if frame_index != self._current_frame_index():
+            return
+        self.refresh_faces()
+        self._frame_view.update()
+        face_count = self._editable.face_count(frame_index)
+        active = self._editor_state.face_index
+        if face_count > 0 and active < 0:
+            self._editor_state.set("face_index", 0)
+        elif face_count == 0 and active >= 0:
+            self._editor_state.set("face_index", -1)
+        self._sync_actions()
+
+    def _on_frame_clicked(self, point: QPointF) -> None:
+        """Hit-test the editable model at the clicked source-image point."""
+        frame_index = self._current_frame_index()
+        if frame_index < 0:
+            return
+        face_index = self._editable.hit_test(frame_index, point.x(), point.y())
+        if face_index is None:
+            return
+        self._editor_state.set("face_index", face_index)
+        self._face_panel.select_face(face_index)
 
     def refresh_faces(self) -> None:
         """Reload face thumbnails for the current frame from the session.
@@ -1229,7 +1531,7 @@ class ManualToolWindow(QMainWindow):
         if self._current_frame is None:
             self._face_panel.set_faces(())
             return
-        faces = self._session.faces_for_frame(self._current_frame.index)
+        faces = self._alignments_handle.faces_for_frame(self._current_frame.index)
         self._face_panel.set_faces(faces)
 
     def _thumbnail_selected(
@@ -1290,12 +1592,19 @@ class ManualToolWindow(QMainWindow):
         has_frames = frame_total > 0
         not_first = has_frames and current_row > 0
         not_last = has_frames and 0 <= current_row < frame_total - 1
-        face_selected = self._editor_state.face_index >= 0 and bool(self._face_panel.faces)
+        frame_index = self._current_frame_index()
+        editable_count = self._editable.face_count(frame_index) if frame_index >= 0 else 0
+        face_selected = self._editor_state.face_index >= 0 and (
+            editable_count > 0 or bool(self._face_panel.faces)
+        )
+        has_frame_loaded = self._frame_view.has_frame
         editor_mode = self._editor_state.editor_mode
 
         availability: dict[str, bool] = {
             "save": self._editor_state.unsaved,
-            "revert_frame": self._editor_state.edited or self._editor_state.unsaved,
+            "revert_frame": self._editor_state.edited
+            or self._editor_state.unsaved
+            or self._editable.can_undo,
             "first_frame": not_first,
             "previous_frame": not_first,
             "next_frame": not_last,
@@ -1303,7 +1612,10 @@ class ManualToolWindow(QMainWindow):
             "play_pause": has_frames,
             "copy_prev_face": not_first,
             "copy_next_face": not_last,
-            "delete_face": face_selected,
+            "delete_face": face_selected and editable_count > 0,
+            "add_face": has_frame_loaded,
+            "undo_edit": self._editable.can_undo,
+            "redo_edit": self._editable.can_redo,
             "cycle_filter": has_frames,
             "cycle_annotation": has_frames,
             "set_view_mode": editor_mode != "View",
@@ -1331,6 +1643,7 @@ __all__ = [
     "FaceThumbnailPanel",
     "FrameViewport",
     "ManualAction",
+    "ManualFrameOverlay",
     "ManualFrameView",
     "ManualThumbnailPanel",
     "ManualToolWindow",

@@ -75,6 +75,26 @@ def test_face_panel_empty_state_shows_placeholder_item(qtbot) -> None:  # type:i
     assert panel.active_face() is None
 
 
+def test_face_panel_emits_minus_one_when_cleared(qtbot) -> None:  # type:ignore[no-untyped-def]
+    """Clearing the panel must emit face_selected(-1) so callers can reset state."""
+    panel = FaceThumbnailPanel()
+    qtbot.addWidget(panel)
+    captured: list[int] = []
+    panel.face_selected.connect(captured.append)
+
+    panel.set_faces(())  # Initial population while empty.
+    assert -1 in captured
+
+    captured.clear()
+    payload = _make_jpeg_bytes()
+    panel.set_faces([_face(0, payload)])  # Now populated; no -1 expected.
+    assert -1 not in captured
+
+    captured.clear()
+    panel.set_faces(())  # Clear it again -> must re-emit -1.
+    assert -1 in captured
+
+
 def test_face_panel_emits_face_selected_on_row_change(qtbot) -> None:  # type:ignore[no-untyped-def]
     """Selecting a row emits the face_selected signal with the face_index."""
     panel = FaceThumbnailPanel()

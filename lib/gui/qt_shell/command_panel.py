@@ -1030,6 +1030,11 @@ class CommandPanel(QWidget):
     def _set_command_options(self, command: str) -> None:
         """Render fields for the selected command."""
         previous = self._active_cached_command
+        if previous and previous != command:
+            # Stale external errors (e.g. launcher validation from another
+            # command's Run path) should not bleed into a freshly selected
+            # command's validation surface.
+            self._external_errors = ()
         if previous and previous != command and self._renderer.rendered_switches:
             self._command_value_cache[previous] = self._renderer.values()
         options = self._schema.options(command)

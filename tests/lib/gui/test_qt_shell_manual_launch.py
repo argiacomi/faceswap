@@ -25,6 +25,32 @@ def test_command_panel_set_external_errors_shown_inline(qtbot) -> None:  # type:
     assert panel._validation_label.isHidden() is False  # noqa: SLF001
 
 
+def test_command_panel_switching_commands_clears_external_errors(  # type:ignore[no-untyped-def]
+    qtbot,
+) -> None:
+    """Switching to a different command must drop stale launcher errors."""
+    from lib.gui.qt_shell.command_panel import CommandPanel
+    from lib.gui.qt_shell.command_schema import CommandSchema, CommandSpec, OptionSpec
+
+    schema = CommandSchema(
+        (
+            CommandSpec("tools", "manual", (OptionSpec("Frames", "-f"),)),
+            CommandSpec("tools", "alignments", (OptionSpec("Input", "-i"),)),
+        ),
+    )
+    panel = CommandPanel(schema)
+    qtbot.addWidget(panel)
+    # Seed an external error against the manual command.
+    panel.set_external_errors(("Frames input does not exist: /missing",))
+    assert panel._validation_label.isHidden() is False  # noqa: SLF001
+
+    # Switching to another command should drop the stale error.
+    panel.set_command("alignments", {})
+
+    assert panel._external_errors == ()  # noqa: SLF001
+    assert panel._validation_label.isHidden() is True  # noqa: SLF001
+
+
 def test_command_panel_value_change_clears_external_errors(qtbot) -> None:  # type:ignore[no-untyped-def]
     """Editing a field should drop stale external errors."""
     from lib.gui.qt_shell.command_panel import CommandPanel

@@ -110,8 +110,23 @@ def test_save_action_disabled_until_dirty(qtbot, tmp_path: Path) -> None:  # typ
     assert save_action.isEnabled() is False
     window.mark_dirty(True)
     assert save_action.isEnabled() is True
-    window.save()
-    assert save_action.isEnabled() is False
+
+
+def test_save_action_is_a_stub_until_persistence_lands(  # type:ignore[no-untyped-def]
+    qtbot,
+    tmp_path: Path,
+) -> None:
+    """save() must not claim success: it leaves the session dirty and returns False."""
+    session = _session_with_frames(tmp_path)
+    window = ManualToolWindow(session)
+    qtbot.addWidget(window)
+    window.mark_dirty(True)
+
+    result = window.save()
+
+    assert result is False
+    assert window.editor_state.unsaved is True
+    assert window.actions_by_key["save"].isEnabled() is True
 
 
 def test_navigation_actions_track_thumbnail_position(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
@@ -139,14 +154,14 @@ def test_navigation_actions_track_thumbnail_position(qtbot, tmp_path: Path) -> N
 
 
 def test_delete_face_action_requires_face_selection(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
-    """Delete is disabled when the face panel is empty, enabled when a face is active."""
+    """Delete is disabled when the editable model is empty, enabled when a face exists."""
     session = _session_with_frames(tmp_path)
     window = ManualToolWindow(session)
     qtbot.addWidget(window)
     delete_action = window.actions_by_key["delete_face"]
     assert delete_action.isEnabled() is False
 
-    window.face_panel.set_faces([_face_fixture(0), _face_fixture(1)])
+    window.editable_alignments.add_face(0, (10.0, 10.0, 30.0, 30.0))
     assert delete_action.isEnabled() is True
 
 
@@ -186,17 +201,41 @@ def test_cycle_filter_advances_state(qtbot, tmp_path: Path) -> None:  # type:ign
     assert seen[-1] == "Has Face(s)"
 
 
-def test_copy_actions_mark_dirty(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
-    """copy_prev/next set unsaved + edited so Save is enabled afterwards."""
+def test_copy_prev_face_copies_into_editable_model(  # type:ignore[no-untyped-def]
+    qtbot,
+    tmp_path: Path,
+) -> None:
+    """copy_prev_face replaces the current frame faces with the previous frame's."""
     session = _session_with_frames(tmp_path, count=3)
     window = ManualToolWindow(session)
     qtbot.addWidget(window)
-    window._next_frame()  # noqa: SLF001 - need not-first row for copy_prev semantics.
+    window.editable_alignments.add_face(0, (5.0, 5.0, 30.0, 30.0))
+    window._next_frame()  # noqa: SLF001 - move to frame 1 so prev = frame 0.
 
-    window.copy_prev_face()
+    assert window.copy_prev_face() is True
+
+    faces = window.editable_alignments.faces(1)
+    assert len(faces) == 1
+    assert faces[0].bbox == (5.0, 5.0, 30.0, 30.0)
     assert window.editor_state.unsaved is True
     assert window.editor_state.edited is True
     assert window.actions_by_key["save"].isEnabled() is True
+
+
+def test_copy_prev_face_noop_when_source_empty(  # type:ignore[no-untyped-def]
+    qtbot,
+    tmp_path: Path,
+) -> None:
+    """copy_prev_face does not mark the session dirty when prev frame has no faces."""
+    session = _session_with_frames(tmp_path, count=3)
+    window = ManualToolWindow(session)
+    qtbot.addWidget(window)
+    window._next_frame()  # noqa: SLF001 - prev frame (0) is empty.
+
+    assert window.copy_prev_face() is False
+    assert window.editor_state.unsaved is False
+    assert window.editor_state.edited is False
+    assert window.editable_alignments.face_count(1) == 0
 
 
 def test_revert_clears_dirty(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]

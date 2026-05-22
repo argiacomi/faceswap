@@ -75,6 +75,30 @@ class FaceThumbnail:
 
 
 @dataclass(frozen=True)
+class EditableFace:
+    """One face's editable bounding box and landmarks for the Manual Tool overlay.
+
+    Coordinates use source-image pixels. ``landmarks`` may be empty when the
+    legacy alignment did not store per-point data.
+    """
+
+    face_index: int
+    bbox: tuple[float, float, float, float]
+    """Source-image bounding box as ``(x, y, width, height)``."""
+    landmarks: tuple[tuple[float, float], ...] = ()
+
+    def center(self) -> tuple[float, float]:
+        """Return the bounding-box center in source-image pixels."""
+        x, y, w, h = self.bbox
+        return (x + w / 2.0, y + h / 2.0)
+
+    def contains(self, px: float, py: float) -> bool:
+        """Return whether ``(px, py)`` falls inside the bounding box."""
+        x, y, w, h = self.bbox
+        return x <= px <= x + w and y <= py <= y + h
+
+
+@dataclass(frozen=True)
 class ManualVideoMetadata:
     """GUI-neutral view of alignments-file video metadata."""
 
@@ -258,6 +282,305 @@ class ManualAlignmentsHandle:
     def face_count_for_frame(self, frame_index: int) -> int:
         """Return the number of faces stored for a given sorted-frame index."""
         return len(self.faces_for_frame(frame_index))
+
+
+class ManualEditableAlignments:
+    """GUI-neutral editable alignment model for the Manual Tool overlay layer.
+
+    Stages face edits per frame in memory so the Qt frame viewer can drive
+    select / move / add / delete / update operations without touching the
+    on-disk alignments file before the user saves.  Each mutation pushes a
+    matching inverse onto an undo stack so the overlay can offer undo/redo.
+
+    Seeding from an existing alignments file is opt-in: callers either pass an
+    initial ``faces`` mapping at construction time, or call
+    :meth:`seed_from_handle` to lazily import the read-only handle data.
+    """
+
+    _MIN_BBOX = 1.0
+
+    def __init__(
+        self,
+        faces: T.Mapping[int, T.Sequence[EditableFace]] | None = None,
+    ) -> None:
+        self._faces: dict[int, list[EditableFace]] = {}
+        if faces is not None:
+            for frame_index, frame_faces in faces.items():
+                self._faces[int(frame_index)] = [
+                    self._normalize(face_index, face)
+                    for face_index, face in enumerate(frame_faces)
+                ]
+        # Each entry is (do, undo, frame_index).
+        self._undo: list[tuple[T.Callable[[], None], T.Callable[[], None], int]] = []
+        self._redo: list[tuple[T.Callable[[], None], T.Callable[[], None], int]] = []
+        self._listeners: list[T.Callable[[int], None]] = []
+
+    # ---- read API ----
+    def faces(self, frame_index: int) -> tuple[EditableFace, ...]:
+        """Return the editable faces for a sorted-frame index."""
+        return tuple(self._faces.get(frame_index, ()))
+
+    def face_count(self, frame_index: int) -> int:
+        """Return the number of editable faces for a frame."""
+        return len(self._faces.get(frame_index, ()))
+
+    def hit_test(self, frame_index: int, px: float, py: float) -> int | None:
+        """Return the face_index whose bbox contains ``(px, py)`` or ``None``.
+
+        Selects the topmost face when multiple bboxes overlap.
+        """
+        for face in reversed(self._faces.get(frame_index, ())):
+            if face.contains(px, py):
+                return face.face_index
+        return None
+
+    @property
+    def can_undo(self) -> bool:
+        """Return whether the undo stack has any reversible operations."""
+        return bool(self._undo)
+
+    @property
+    def can_redo(self) -> bool:
+        """Return whether the redo stack has any replayable operations."""
+        return bool(self._redo)
+
+    # ---- mutation API ----
+    def seed_from_handle(self, handle: ManualAlignmentsHandle) -> None:
+        """Lazily import face metadata from a :class:`ManualAlignmentsHandle`.
+
+        Reads bbox + landmark data from the underlying alignments file.  Clears
+        the existing in-memory edits and the undo/redo stacks.
+        """
+        if not handle.exists:
+            return
+        alignments = handle.open()
+        names = sorted(alignments.data)
+        self._faces.clear()
+        self._undo.clear()
+        self._redo.clear()
+        for frame_index, frame_name in enumerate(names):
+            entries = []
+            for face_index, face in enumerate(alignments.data[frame_name].faces):
+                landmarks: tuple[tuple[float, float], ...] = ()
+                raw_landmarks = getattr(face, "landmarks_xy", None)
+                if raw_landmarks is not None:
+                    try:
+                        landmarks = tuple((float(x), float(y)) for x, y in raw_landmarks)
+                    except (TypeError, ValueError):
+                        landmarks = ()
+                entries.append(
+                    EditableFace(
+                        face_index=face_index,
+                        bbox=(
+                            float(getattr(face, "x", 0)),
+                            float(getattr(face, "y", 0)),
+                            float(getattr(face, "w", 0)),
+                            float(getattr(face, "h", 0)),
+                        ),
+                        landmarks=landmarks,
+                    )
+                )
+            if entries:
+                self._faces[frame_index] = entries
+        for callback in list(self._listeners):
+            for frame in self._faces:
+                callback(frame)
+
+    def add_face(
+        self,
+        frame_index: int,
+        bbox: tuple[float, float, float, float],
+        *,
+        landmarks: T.Sequence[tuple[float, float]] = (),
+    ) -> int:
+        """Add a new face at ``bbox`` and return its new ``face_index``."""
+        validated = self._validate_bbox(bbox)
+        face_index = self.face_count(frame_index)
+        face = EditableFace(
+            face_index=face_index,
+            bbox=validated,
+            landmarks=tuple((float(x), float(y)) for x, y in landmarks),
+        )
+
+        def do() -> None:
+            self._faces.setdefault(frame_index, []).append(face)
+            self._reindex(frame_index)
+
+        def undo() -> None:
+            faces = self._faces.get(frame_index, [])
+            if faces:
+                faces.pop()
+            if not faces:
+                self._faces.pop(frame_index, None)
+
+        self._apply(do, undo, frame_index)
+        return face_index
+
+    def delete_face(self, frame_index: int, face_index: int) -> bool:
+        """Delete the face at ``face_index`` in ``frame_index``."""
+        faces = self._faces.get(frame_index, [])
+        if face_index < 0 or face_index >= len(faces):
+            return False
+        removed = faces[face_index]
+
+        def do() -> None:
+            self._faces[frame_index].pop(face_index)
+            self._reindex(frame_index)
+            if not self._faces[frame_index]:
+                self._faces.pop(frame_index, None)
+
+        def undo() -> None:
+            target = self._faces.setdefault(frame_index, [])
+            target.insert(face_index, removed)
+            self._reindex(frame_index)
+
+        self._apply(do, undo, frame_index)
+        return True
+
+    def move_face(
+        self,
+        frame_index: int,
+        face_index: int,
+        dx: float,
+        dy: float,
+    ) -> bool:
+        """Translate the face's bbox + landmarks by ``(dx, dy)`` source pixels."""
+        faces = self._faces.get(frame_index, [])
+        if face_index < 0 or face_index >= len(faces):
+            return False
+        if dx == 0.0 and dy == 0.0:
+            return True
+        previous = faces[face_index]
+        x, y, w, h = previous.bbox
+        moved = EditableFace(
+            face_index=face_index,
+            bbox=(x + dx, y + dy, w, h),
+            landmarks=tuple((lx + dx, ly + dy) for lx, ly in previous.landmarks),
+        )
+
+        def do() -> None:
+            self._faces[frame_index][face_index] = moved
+
+        def undo() -> None:
+            self._faces[frame_index][face_index] = previous
+
+        self._apply(do, undo, frame_index)
+        return True
+
+    def update_landmark(
+        self,
+        frame_index: int,
+        face_index: int,
+        landmark_index: int,
+        px: float,
+        py: float,
+    ) -> bool:
+        """Move a single landmark to ``(px, py)`` in source coordinates."""
+        faces = self._faces.get(frame_index, [])
+        if face_index < 0 or face_index >= len(faces):
+            return False
+        face = faces[face_index]
+        if landmark_index < 0 or landmark_index >= len(face.landmarks):
+            return False
+        previous = face
+        new_landmarks = list(face.landmarks)
+        new_landmarks[landmark_index] = (float(px), float(py))
+        updated = EditableFace(
+            face_index=face.face_index,
+            bbox=face.bbox,
+            landmarks=tuple(new_landmarks),
+        )
+
+        def do() -> None:
+            self._faces[frame_index][face_index] = updated
+
+        def undo() -> None:
+            self._faces[frame_index][face_index] = previous
+
+        self._apply(do, undo, frame_index)
+        return True
+
+    def undo(self) -> bool:
+        """Replay the last inverse operation; returns ``False`` when empty."""
+        if not self._undo:
+            return False
+        do, undo, frame_index = self._undo.pop()
+        undo()
+        self._redo.append((do, undo, frame_index))
+        self._notify(frame_index)
+        return True
+
+    def redo(self) -> bool:
+        """Replay the last undone operation; returns ``False`` when empty."""
+        if not self._redo:
+            return False
+        do, undo, frame_index = self._redo.pop()
+        do()
+        self._undo.append((do, undo, frame_index))
+        self._notify(frame_index)
+        return True
+
+    # ---- observer hooks ----
+    def subscribe(self, callback: T.Callable[[int], None]) -> T.Callable[[], None]:
+        """Register a callback fired with the modified ``frame_index``."""
+        self._listeners.append(callback)
+
+        def _unsubscribe() -> None:
+            if callback in self._listeners:
+                self._listeners.remove(callback)
+
+        return _unsubscribe
+
+    # ---- internals ----
+    def _apply(
+        self,
+        do: T.Callable[[], None],
+        undo: T.Callable[[], None],
+        frame_index: int,
+    ) -> None:
+        """Run ``do``, push the inverse onto undo, and notify listeners."""
+        do()
+        self._undo.append((do, undo, frame_index))
+        self._redo.clear()
+        self._notify(frame_index)
+
+    def _notify(self, frame_index: int) -> None:
+        for callback in list(self._listeners):
+            try:
+                callback(frame_index)
+            except Exception:  # pragma: no cover - defensive
+                logger.exception("Editable alignment listener raised")
+
+    def _reindex(self, frame_index: int) -> None:
+        """Reassign monotonically increasing ``face_index`` after add/delete."""
+        faces = self._faces.get(frame_index, [])
+        for new_index, face in enumerate(faces):
+            if face.face_index != new_index:
+                faces[new_index] = EditableFace(
+                    face_index=new_index,
+                    bbox=face.bbox,
+                    landmarks=face.landmarks,
+                )
+
+    def _validate_bbox(
+        self, bbox: tuple[float, float, float, float]
+    ) -> tuple[float, float, float, float]:
+        """Reject degenerate bounding boxes before recording the edit."""
+        x, y, w, h = (float(v) for v in bbox)
+        if w < self._MIN_BBOX or h < self._MIN_BBOX:
+            raise ValueError(f"Bounding box must have width and height >= {self._MIN_BBOX}")
+        return (x, y, w, h)
+
+    @staticmethod
+    def _normalize(face_index: int, face: EditableFace) -> EditableFace:
+        """Ensure a seeded face uses the expected positional index."""
+        if face.face_index == face_index:
+            return face
+        return EditableFace(
+            face_index=face_index,
+            bbox=face.bbox,
+            landmarks=face.landmarks,
+        )
 
 
 @dataclass(frozen=True)
