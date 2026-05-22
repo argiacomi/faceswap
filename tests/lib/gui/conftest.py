@@ -21,6 +21,14 @@ import pytest
 from PySide6.QtWidgets import QMessageBox
 
 
+def pytest_configure(config: pytest.Config) -> None:
+    """Keep known PySide6 mouse-event deprecations out of Qt GUI test output."""
+    config.addinivalue_line(
+        "filterwarnings",
+        "ignore:Function: 'QMouseEvent\\..* is marked as deprecated.*:DeprecationWarning",
+    )
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _suppress_manual_tool_startup_logs() -> None:
     """Silence routine Manual Tool startup INFO logs for Qt GUI tests."""
