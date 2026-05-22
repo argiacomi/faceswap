@@ -312,6 +312,26 @@ def _validate_production_gate_args(args: argparse.Namespace) -> None:
         raise SystemExit("production validation gate requires " + ", ".join(missing))
 
 
+def _resolve_production_policy(policy: str, winner: CandidateResult) -> str:
+    """Translate ``--production-policy auto`` into a winner-anchored choice.
+
+    The production gate evaluates one resolver policy. ``bucket_aware_veto``
+    (the historical default) reports the *runtime resolver*'s behavior on
+    production data, which mixes several fusion strategies — useful as a
+    runtime smoke test but unrelated to whichever candidate the search just
+    promoted. The ``auto`` default switches the gate to the promoted
+    candidate so the failure modes match the artifact about to land on
+    disk; users who want the runtime policy validated can still pass
+    ``--production-policy bucket_aware_veto`` (or any other policy)
+    explicitly.
+    """
+    if policy != "auto":
+        return policy
+    if winner.is_single_model_baseline and winner.candidate.models:
+        return f"candidate:{winner.candidate.models[0]}"
+    return f"candidate:{winner.candidate.strategy}"
+
+
 def _candidate_models(results: T.Sequence[CandidateResult]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(model for result in results for model in result.candidate.models))
 
@@ -806,10 +826,25 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--production-policy",
-        default="bucket_aware_veto",
+        default="auto",
         help=(
-            "Production resolver policy to gate. Supports bucket_aware_veto, "
-            "roll_aware_veto, manifest_selected_candidate, or candidate:<name>."
+            "Production resolver policy to gate. ``auto`` (default) evaluates the "
+            "candidate the search actually promoted (``candidate:<winner-strategy>`` "
+            "for ensembles, ``candidate:<model>`` for single-model baselines). "
+            "Pass an explicit policy to override: ``bucket_aware_veto``, "
+            "``roll_aware_veto``, ``manifest_selected_candidate``, or ``candidate:<name>``."
+        ),
+    )
+    parser.add_argument(
+        "--production-gate-blocks",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "When the production validation gate fails, return a non-zero exit code "
+            "and skip writing promoted artifacts. Defaults to off so the search still "
+            "writes ``best_setup.json``/``best_weights.json`` and the production "
+            "report side-by-side; the downstream ``production_promotion_check`` stage "
+            "in the resolver pipeline is the authoritative gate."
         ),
     )
     parser.add_argument(
@@ -1051,12 +1086,46 @@ def main(argv: list[str] | None = None) -> int:
             return 1
     else:
         gate_application = None
-        winner = results[0] if results else None
-        if winner is None:
+        if not results:
             raise SystemExit("no candidates were evaluated")
+        # Without active gates, fall back to the top-ranked result — but
+        # respect ``--allow-single-model-promotion``. Otherwise the
+        # baselines that get enumerated for comparison (via
+        # ``--include-single-model-baselines``, geometry metrics, or
+        # ``--objective alignment_geometry_v1``) would be eligible for
+        # promotion through the no-gates path, even though
+        # ``apply_gates`` blocks them when gates are configured.
+        eligible_results = (
+            list(results)
+            if args.allow_single_model_promotion
+            else [result for result in results if not result.is_single_model_baseline]
+        )
+        if not eligible_results:
+            payload = {
+                "status": "no_promotion",
+                "reason": (
+                    "only single-model baselines were evaluated and "
+                    "--allow-single-model-promotion was not set; refusing to "
+                    "promote a single-model baseline as the ensemble winner"
+                ),
+                "objective": args.objective,
+                "evaluated_candidates": len(results),
+            }
+            no_promotion_path = output_dir / "no_promotion.json"
+            no_promotion_path.write_text(
+                json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            )
+            print(
+                "Only single-model baselines were evaluated; pass "
+                "--allow-single-model-promotion to write one as best_setup.json. "
+                f"See {no_promotion_path}"
+            )
+            return 1
+        winner = eligible_results[0]
 
     if _production_gate_enabled(args):
         production_output = Path(args.production_gate_output or args.output_dir)
+        resolved_policy = _resolve_production_policy(args.production_policy, winner)
 
         def _run_production_gate() -> dict[str, T.Any]:
             production_output.mkdir(parents=True, exist_ok=True)
@@ -1081,7 +1150,7 @@ def main(argv: list[str] | None = None) -> int:
                         else Path(args.production_resolver_metadata)
                     ),
                     config=ProductionGateConfig(
-                        policy=args.production_policy,
+                        policy=resolved_policy,
                         mean_epsilon_nme=args.production_epsilon_mean_nme,
                         p90_epsilon_nme=args.production_epsilon_p90_nme,
                         failure_threshold=args.production_failure_threshold,
@@ -1096,11 +1165,23 @@ def main(argv: list[str] | None = None) -> int:
 
         production_report = _stage("production_promotion_gate", _run_production_gate)
         if production_report["status"] != "pass":
+            report_path = production_output / "production_promotion_report.json"
+            failed_gates = production_report.get("failed_gates") or []
+            if args.production_gate_blocks:
+                print(
+                    f"Production promotion gate failed ({', '.join(failed_gates) or 'see report'}); "
+                    f"see {report_path}"
+                )
+                return 1
+            # Non-blocking by default: the downstream ``production_promotion_check``
+            # stage in the resolver pipeline is the authoritative gate, and one
+            # bucket-level regression in this pre-check shouldn't prevent the
+            # search from writing artifacts the rest of the pipeline depends on.
             print(
-                "Production promotion gate failed; see "
-                f"{production_output / 'production_promotion_report.json'}"
+                f"Production promotion gate reported status={production_report['status']!r} "
+                f"(failed_gates={failed_gates or '[]'}); continuing because "
+                f"--production-gate-blocks is off. See {report_path}"
             )
-            return 1
 
     _fit_result, report_metrics = _stage(
         "report_evaluate_winner",

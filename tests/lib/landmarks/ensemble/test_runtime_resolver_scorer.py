@@ -643,10 +643,7 @@ def test_evaluate_runtime_resolver_scorer_emits_stable_keys_for_all_scorers(
 
     # Each named scorer has its own metrics bucket — no aliasing or sharing.
     assert production["learned_quality_v2"] is not production["learned_quality_v1_1"]
-    assert (
-        production["current_binary_logistic_scorer"]
-        is not production["learned_quality_v1_1"]
-    )
+    assert production["current_binary_logistic_scorer"] is not production["learned_quality_v1_1"]
 
 
 def test_evaluate_runtime_resolver_scorer_filters_to_eval_split(tmp_path: Path) -> None:

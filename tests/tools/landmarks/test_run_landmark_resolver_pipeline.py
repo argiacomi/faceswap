@@ -631,6 +631,28 @@ def test_candidate_search_command_uses_full_manifest_with_splits(
     )
 
 
+@pytest.mark.parametrize(
+    "promoted_scorer_version",
+    ("continuous_regret_v1_1", "learned_quality_v2"),
+)
+def test_candidate_search_command_requires_effective_ensemble(
+    tmp_path: Path,
+    promoted_scorer_version: str,
+) -> None:
+    """Every promoted scorer version this pipeline supports installs a
+    learned_quality_* runtime policy whose ranker has to choose between
+    multiple fusion candidates built from the promoted setup. The pipeline
+    therefore always passes ``--require-effective-ensemble`` to the search
+    so a single-model or collapsed ensemble cannot reach disk as
+    ``best_setup.json`` and leave the ranker with nothing to score."""
+    args = _args(tmp_path, promoted_scorer_version=promoted_scorer_version)
+    paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
+
+    command = _command_candidate_search(args, paths)
+
+    assert "--require-effective-ensemble" in command
+
+
 def test_gt_hard_resolver_metadata_contract_runs_after_hard_validation(
     tmp_path: Path,
 ) -> None:

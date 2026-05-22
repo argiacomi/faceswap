@@ -709,6 +709,18 @@ def _command_candidate_search(args: argparse.Namespace, paths: PipelinePaths) ->
         "--production-gate-output",
         str(paths.candidate_dir / "production_gate"),
     ]
+    # Every promoted scorer version this pipeline supports
+    # (``continuous_regret_v1_1`` → runtime policy ``learned_quality_v1``,
+    # ``learned_quality_v2`` → ``learned_quality_v2``) installs a learned
+    # quality runtime policy whose ranker has to choose between *multiple*
+    # fusion candidates that ``runtime_resolver.build_candidates`` derives
+    # from the promoted setup. A single-model or collapsed setup
+    # degenerates to one usable candidate and makes the trained ranker
+    # meaningless, so the candidate search must promote a real ensemble.
+    # ``--require-effective-ensemble`` activates the effective-ensemble
+    # gate (which also blocks dominant-model collapse) without enabling
+    # ``--allow-single-model-promotion``.
+    argv.append("--require-effective-ensemble")
     return _append_extra(argv, args.candidate_search_arg)
 
 
@@ -1737,7 +1749,7 @@ def _export_artifacts(args: argparse.Namespace, paths: PipelinePaths) -> dict[st
 def _config_updates(args: argparse.Namespace, paths: PipelinePaths) -> dict[str, str]:
     models = ", ".join(item.strip() for item in str(args.models).split(",") if item.strip())
     updates = {
-        "batch_size": "8",
+        "batch_size": "16",
         "models": models or DEFAULT_MODELS,
         "crop_scale": "1.6",
         "strategy": "static_weighted_downweight",

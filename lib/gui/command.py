@@ -142,7 +142,7 @@ class CommandTab(ttk.Frame):  # pylint:disable=too-many-ancestors
         ControlPanel(
             self,
             cp_opts,
-            label_width=16,
+            label_width=14,
             option_columns=3,
             columns=1,
             header_text=options.get("helptext", None),
