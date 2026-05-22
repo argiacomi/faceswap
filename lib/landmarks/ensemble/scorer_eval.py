@@ -41,7 +41,8 @@ DEFAULT_RISK_FLOOR_FOR_SAFE_FALLBACK = 0.50
 DEFAULT_SAFE_FALLBACK_MIN_DELTA = 0.05
 DEFAULT_FALLBACK_CATASTROPHIC_WORSE_NME = 0.02
 PROMOTION_SCOPES = ("universal", "production")
-SCORER_VERSION_REPORT_LABEL = "scorer_version"
+SCORER_VERSION_REPORT_LABEL = "learned_quality_v1_1"
+LEGACY_SCORER_VERSION_REPORT_LABEL = "scorer_version"
 RUNTIME_POLICY_REPORT_LABEL = "runtime_policy_learned_quality"
 HARD_SLICE_POLICY_BUCKETS = {
     "extreme_roll",
@@ -797,6 +798,25 @@ def evaluate_runtime_resolver_scorer(
             contexts,
             binary_scorer_choices,
         )
+
+    report["primary_scorer"] = {
+        "label": primary_scorer_policy,
+        "version": scorer.version,
+        "target": scorer.target,
+        "model_type": scorer.model_type,
+        "metrics": scorer_summary,
+    }
+    if primary_scorer_policy == SCORER_VERSION_REPORT_LABEL:
+        # One-release compatibility alias for consumers reading the legacy
+        # `scorer_version` key. Canonical key is `learned_quality_v1_1`.
+        report[LEGACY_SCORER_VERSION_REPORT_LABEL] = scorer_summary
+        for bucket in (
+            production_only_policy_metrics,
+            gt_hard_all_policy_metrics,
+            gt_roll_hard_policy_metrics,
+        ):
+            if SCORER_VERSION_REPORT_LABEL in bucket:
+                bucket[LEGACY_SCORER_VERSION_REPORT_LABEL] = bucket[SCORER_VERSION_REPORT_LABEL]
 
     write_scorer_policy_outputs(
         report=report,
