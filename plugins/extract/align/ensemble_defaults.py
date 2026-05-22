@@ -88,40 +88,16 @@ min_models = ConfigItem(
     min_max=(1, 3),
 )
 
-setup_path = ConfigItem(
-    datatype=str,
-    default="",
-    group="landmark_ensemble",
-    info=(
-        "Optional path to a promoted ``best_setup.json`` (#71). When set, the plugin "
-        "loads the setup and uses its strategy / outlier threshold / per-landmark "
-        "weights for fusion. Leave empty to keep config-driven behavior."
-    ),
-)
-
-weights_path = ConfigItem(
-    datatype=str,
-    default="",
-    group="landmark_ensemble",
-    info=(
-        "Static per-landmark weight JSON for production ensemble fusion. This is used by "
-        "runtime resolver configs and by tooling that promotes static weights separately "
-        "from a full setup artifact."
-    ),
-)
-
-setup_mode = ConfigItem(
-    datatype=str,
-    default="off",
-    group="landmark_ensemble",
-    info=(
-        "How to consume ``setup_path``. ``off`` ignores it. ``strict`` hard-fails on "
-        "any incompatible artifact. ``fallback`` logs a warning and falls back to the "
-        "configured ``strategy`` when the artifact is unusable. An empty ``setup_path`` "
-        "implies ``off`` regardless of this value."
-    ),
-    choices=["off", "strict", "fallback"],
-)
+# NOTE: setup_path, weights_path, setup_mode, and resolver_scorer_path used
+# to be user-visible config knobs. They are now deployment artifacts the
+# landmark resolver pipeline installs into a known location
+# (.fs_cache/landmark_ensemble/current/ by default, overridable via the
+# FACESWAP_LANDMARK_ENSEMBLE_ARTIFACTS env var). The runtime reads them from
+# the installed bundle in plugins/extract/align/ensemble.py, so they no
+# longer belong in the user-editable config schema. Removing them prevents
+# extract.ini from carrying a path that no longer matches the artifact on
+# disk — the historical cause of resolver_policy ↔ scorer_model_type
+# mismatches.
 
 resolver_policy = ConfigItem(
     datatype=str,
@@ -131,7 +107,7 @@ resolver_policy = ConfigItem(
         "Production runtime resolver policy. ``roll_aware_veto`` applies conservative "
         "roll/geometry safety checks and then chooses from configured candidate priority. "
         "``learned_quality_v1``/``learned_quality_v1_1``/``learned_quality_v2`` "
-        "score geometry-valid candidates with ``resolver_scorer_path`` and choose "
+        "score geometry-valid candidates with the installed scorer artifact and choose "
         "the lowest predicted risk/cost."
     ),
     choices=[
@@ -140,13 +116,6 @@ resolver_policy = ConfigItem(
         "learned_quality_v1_1",
         "learned_quality_v2",
     ],
-)
-
-resolver_scorer_path = ConfigItem(
-    datatype=str,
-    default="",
-    group="landmark_ensemble",
-    info=("Path to a runtime resolver scorer artifact used by learned-quality resolver policies."),
 )
 
 use_alignment_resolver = ConfigItem(
@@ -215,7 +184,7 @@ fallback_strategy = ConfigItem(
     default="plain_average",
     group="landmark_ensemble",
     info=(
-        "Strategy used when ``setup_mode=fallback`` and the promoted setup fails to "
+        "Strategy used when the promoted setup fails strict validation and falls back to "
         "load. Set to ``adapter_config`` to fall back to the ``strategy`` field above; "
         "any other value names a canonical strategy directly."
     ),
