@@ -54,10 +54,9 @@ class QtConsoleRouter(QObject):
         if not text:
             return 0
         cleaned = _ANSI_ESCAPE_RE.sub("", text)
-        if (
-            bool(getattr(self._console, "_qt_console_log_handler_active", False))
-            and _is_log_handler_output(cleaned)
-        ):
+        if bool(
+            getattr(self._console, "_qt_console_log_handler_active", False)
+        ) and _is_log_handler_output(cleaned):
             return len(text)
         self.text_ready.emit(cleaned, self._stream)
         return len(text)
@@ -108,7 +107,7 @@ class QtConsoleLogHandler(logging.Handler):
     def _set_active(self, active: bool) -> None:
         """Set the console flag used by stream routers to avoid duplicated log records."""
         with contextlib.suppress(Exception):
-            setattr(self._console, "_qt_console_log_handler_active", active)
+            self._console._qt_console_log_handler_active = active
 
 
 def install_console_routers(console: ConsolePane) -> tuple[QtConsoleRouter, QtConsoleRouter]:

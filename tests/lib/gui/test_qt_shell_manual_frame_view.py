@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 from PySide6.QtCore import QPoint, QPointF, Qt
-from PySide6.QtGui import QColor, QImage, QPainter, QPixmap, QWheelEvent
+from PySide6.QtGui import QColor, QPainter, QPixmap, QWheelEvent
 from PySide6.QtTest import QTest
 
 from lib.gui.qt_shell.manual_tool import FrameViewport, ManualFrameView, ManualToolWindow
@@ -227,4 +227,3 @@ def test_manual_tool_window_navigation_emits_frame_changed(  # type:ignore[no-un
 
     assert captured == [1, 2, 1]
     assert window.frame_view.has_frame is True
-
