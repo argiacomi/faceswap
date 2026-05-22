@@ -7,6 +7,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+import pytest
 
 from tools.manual.session import ManualEditableAlignments, ManualSession
 
@@ -69,6 +70,29 @@ def test_thumbnail_generation_progress_callback(tmp_path: Path) -> None:
 
     assert generated == 1
     assert progress == [(1, 1, "Generated thumbnails for frame_000.png")]
+
+
+def test_thumbnail_generation_restores_payload_when_reader_raises(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The in-memory thumbnail payload is restored when source reading raises."""
+    session = _session_with_face(tmp_path)
+    handle = session.alignments_handle()
+    assert handle.has_thumbnails()
+    alignments = handle.open()
+    original = alignments.data["frame_000.png"].faces[0].thumb
+    assert original is not None
+
+    def _raise_reader(*_args: object, **_kwargs: object) -> np.ndarray:
+        raise RuntimeError("reader unavailable")
+
+    monkeypatch.setattr("lib.image.read_image", _raise_reader)
+
+    with pytest.raises(RuntimeError, match="reader unavailable"):
+        handle.regenerate_thumbnails()
+
+    assert alignments.data["frame_000.png"].faces[0].thumb is original
 
 
 def test_thumbnail_generation_skips_missing_source_frame(tmp_path: Path) -> None:
