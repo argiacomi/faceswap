@@ -1574,13 +1574,33 @@ class ManualToolWindow(QMainWindow):
         # alternative (empty panel until the worker completes) breaks core
         # Manual Tool behavior on an existing alignments file.
         try:
-            self._editable.seed_from_handle(self._alignments_handle)
+            # Image-folder sessions seed against their source filenames so
+            # sparse alignments (an entry only for ``frame_010.png``) attach
+            # to the matching frame index — not lexicographic position 0.
+            # Video sessions fall back to the alignment-keys ordering since
+            # those keys *are* the canonical frame order.
+            if self._session.has_images:
+                self._editable.seed_from_handle(
+                    self._alignments_handle,
+                    frame_names=[frame.name for frame in self._session.frame_list],
+                )
+            else:
+                self._editable.seed_from_handle(self._alignments_handle)
         except Exception:  # noqa: BLE001 - re-surfaced by the startup worker
             logger.exception("Manual Tool synchronous seed failed")
         if self._session.has_images:
             self._thumbnail_panel.set_frames(self._session.frame_list)
             self._thumbnail_panel.setCurrentRow(0)
         elif self._session.is_video_input:
+            # Load video metadata synchronously before the provider starts
+            # so the worker (a) does not race the provider for the same
+            # alignments-file open and (b) the provider sees any persisted
+            # pts_time / keyframes payload from disk on first launch.
+            try:
+                self._video_metadata = self._alignments_handle.video_metadata()
+            except Exception:  # noqa: BLE001 - re-surfaced by the startup worker
+                logger.exception("Manual Tool video metadata load failed")
+                self._video_metadata = None
             self._start_video_provider()
         else:
             self._frame_view.clear_frame(

@@ -124,6 +124,28 @@ def test_manual_tool_window_seeds_editable_model_synchronously(  # type:ignore[n
     assert len(window.face_panel.faces) == 1
 
 
+def test_manual_tool_window_seeds_sparse_alignments_to_filename_index(  # type:ignore[no-untyped-def]
+    qtbot,
+    tmp_path: Path,
+) -> None:
+    """An alignments file with only ``frame_002.png`` seeds onto frame index 2."""
+    session = _session_with_frames(tmp_path, count=5)
+    handle = session.alignments_handle()
+    # Persist a face onto the third frame only (frame_002.png).
+    seed = ManualEditableAlignments()
+    seed.add_face(2, (10.0, 10.0, 30.0, 30.0))
+    handle.persist(seed, frame_names=[f.name for f in session.frame_list])
+
+    window = ManualToolWindow(session)
+    qtbot.addWidget(window)
+
+    # The face must attach to frame_index 2 (which corresponds to
+    # ``frame_002.png`` in the source frame list) not 0.
+    assert window.editable_alignments.face_count(0) == 0
+    assert window.editable_alignments.face_count(2) == 1
+    assert window.editable_alignments.faces(2)[0].bbox == (10.0, 10.0, 30.0, 30.0)
+
+
 def test_startup_task_emits_failed_signal_on_exception(  # type:ignore[no-untyped-def]
     qtbot,
     tmp_path: Path,
@@ -203,6 +225,62 @@ def test_manual_tool_window_shows_failure_dialog_on_startup_error(  # type:ignor
     assert "failed" in window._status_label.text().lower()  # noqa: SLF001
     assert any("boom" in line for line in captured)
     assert any("boom" in record.message for record in caplog.records)
+
+
+def test_video_metadata_loaded_before_video_provider_starts(  # type:ignore[no-untyped-def]
+    qtbot,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Video sessions must populate _video_metadata before the provider starts.
+
+    Builds a minimal video-input session via monkeypatching so the test does
+    not require a real ffmpeg-decodable file, then asserts that
+    ``_start_video_provider`` runs only after ``self._video_metadata`` has
+    been assigned.
+    """
+    from tools.manual.session import ManualSession, ManualVideoMetadata
+
+    fake_video = tmp_path / "input.mp4"
+    fake_video.write_bytes(b"\x00")
+
+    # Build a session whose ``is_video_input`` flag is True without
+    # exercising the real video detection path (which requires ffmpeg).
+    session = ManualSession(
+        frames=str(fake_video),
+        alignments_path=str(tmp_path / "alignments.fsa"),
+        is_video_input=True,
+        frame_list=(),
+    )
+
+    fake_meta = ManualVideoMetadata(pts_time=(0, 1, 2), keyframes=(0,))
+
+    def _fake_video_metadata(_self: object) -> ManualVideoMetadata:
+        return fake_meta
+
+    monkeypatch.setattr(
+        "tools.manual.session.ManualAlignmentsHandle.video_metadata",
+        _fake_video_metadata,
+    )
+
+    observed: dict[str, object] = {}
+
+    def _capture_start_video_provider(self: object) -> None:
+        observed["video_metadata"] = self._video_metadata  # noqa: SLF001
+
+    monkeypatch.setattr(
+        ManualToolWindow,
+        "_start_video_provider",
+        _capture_start_video_provider,
+    )
+
+    window = ManualToolWindow(session)
+    qtbot.addWidget(window)
+
+    assert observed.get("video_metadata") is fake_meta, (
+        "Video provider must see populated metadata before it starts; "
+        f"observed={observed.get('video_metadata')!r}"
+    )
 
 
 def test_manual_startup_worker_stop_quits_thread(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]

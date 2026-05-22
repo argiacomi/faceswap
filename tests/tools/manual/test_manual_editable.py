@@ -172,6 +172,104 @@ def test_seed_from_handle_clears_history() -> None:
     assert model.can_undo is True
 
 
+def test_seed_from_handle_maps_sparse_alignments_to_filename_index() -> None:
+    """Sparse alignments seed into the frame index that matches the filename."""
+    import numpy as np
+
+    from lib.align.objects import AlignmentsEntry, FileAlignments
+
+    class _StubHandle:
+        exists = True
+
+        def __init__(self, payload: object) -> None:
+            self._payload = payload
+
+        def open(self) -> object:
+            return self._payload
+
+    class _StubAlignments:
+        def __init__(self) -> None:
+            self.data: dict[str, AlignmentsEntry] = {
+                "frame_010.png": AlignmentsEntry(
+                    faces=[
+                        FileAlignments(
+                            x=10,
+                            y=20,
+                            w=30,
+                            h=40,
+                            landmarks_xy=np.zeros((0, 2), dtype=np.float32),
+                        )
+                    ],
+                    video_meta={},
+                )
+            }
+
+    handle = _StubHandle(_StubAlignments())
+    model = ManualEditableAlignments()
+    frame_names = [f"frame_{idx:03d}.png" for idx in range(20)]
+
+    model.seed_from_handle(handle, frame_names=frame_names)
+
+    # The sole alignment entry must land on frame_index 10 (the position of
+    # ``frame_010.png`` in the source frame list), not 0 (the lexicographic
+    # position of the alignment key).
+    assert model.face_count(0) == 0
+    assert model.face_count(10) == 1
+    assert model.faces(10)[0].bbox == (10.0, 20.0, 30.0, 40.0)
+
+
+def test_seed_from_handle_falls_back_to_sorted_alignments_for_video() -> None:
+    """Without ``frame_names`` the seed uses sorted(alignments.data) order."""
+    import numpy as np
+
+    from lib.align.objects import AlignmentsEntry, FileAlignments
+
+    class _StubAlignments:
+        def __init__(self) -> None:
+            self.data: dict[str, AlignmentsEntry] = {
+                "frame_b.png": AlignmentsEntry(
+                    faces=[
+                        FileAlignments(
+                            x=1,
+                            y=2,
+                            w=3,
+                            h=4,
+                            landmarks_xy=np.zeros((0, 2), dtype=np.float32),
+                        )
+                    ],
+                    video_meta={},
+                ),
+                "frame_a.png": AlignmentsEntry(
+                    faces=[
+                        FileAlignments(
+                            x=5,
+                            y=6,
+                            w=7,
+                            h=8,
+                            landmarks_xy=np.zeros((0, 2), dtype=np.float32),
+                        )
+                    ],
+                    video_meta={},
+                ),
+            }
+
+    class _StubHandle:
+        exists = True
+
+        def __init__(self) -> None:
+            self._payload = _StubAlignments()
+
+        def open(self) -> object:
+            return self._payload
+
+    model = ManualEditableAlignments()
+    model.seed_from_handle(_StubHandle())
+
+    # Sorted alphabetically: frame_a.png -> index 0, frame_b.png -> index 1.
+    assert model.faces(0)[0].bbox == (5.0, 6.0, 7.0, 8.0)
+    assert model.faces(1)[0].bbox == (1.0, 2.0, 3.0, 4.0)
+
+
 def test_delete_last_face_keeps_frame_dirty_for_persist() -> None:
     """Deleting the only face on a frame still records the frame as dirty.
 

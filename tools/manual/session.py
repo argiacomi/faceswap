@@ -396,23 +396,52 @@ class ManualEditableAlignments:
         return bool(self._redo)
 
     # ---- mutation API ----
-    def seed_from_handle(self, handle: ManualAlignmentsHandle) -> None:
+    def seed_from_handle(
+        self,
+        handle: ManualAlignmentsHandle,
+        *,
+        frame_names: T.Sequence[str] | None = None,
+    ) -> None:
         """Lazily import face metadata from a :class:`ManualAlignmentsHandle`.
 
         Reads bbox + landmark data from the underlying alignments file.  Clears
         the existing in-memory edits and the undo/redo stacks.
+
+        ``frame_names`` is an optional ordered list of filenames that defines
+        the canonical mapping from positional ``frame_index`` to filename.
+        Image-folder sessions pass their source ``frame_list`` so that sparse
+        alignments (e.g. one entry for ``frame_010.png``) seed onto the
+        matching frame index rather than the lexicographic position of the
+        alignment key.  When ``None``, the legacy behavior of
+        ``sorted(alignments.data)`` is used (the right choice for video
+        inputs whose frame order *is* the sorted alignment-key order).
         """
         if not handle.exists:
             return
         alignments = handle.open()
-        names = sorted(alignments.data)
         self._faces.clear()
         self._undo.clear()
         self._redo.clear()
         self._dirty_frames.clear()
-        for frame_index, frame_name in enumerate(names):
-            entries = []
-            for face_index, face in enumerate(alignments.data[frame_name].faces):
+        if frame_names is None:
+            index_map = {
+                frame_name: frame_index
+                for frame_index, frame_name in enumerate(sorted(alignments.data))
+            }
+        else:
+            index_map = {
+                frame_name: frame_index for frame_index, frame_name in enumerate(frame_names)
+            }
+        for frame_name, entry in alignments.data.items():
+            frame_index = index_map.get(frame_name)
+            if frame_index is None:
+                logger.debug(
+                    "Manual Tool seed: alignments key %s has no matching source frame; skipping",
+                    frame_name,
+                )
+                continue
+            entries: list[EditableFace] = []
+            for face_index, face in enumerate(entry.faces):
                 landmarks: tuple[tuple[float, float], ...] = ()
                 raw_landmarks = getattr(face, "landmarks_xy", None)
                 if raw_landmarks is not None:
