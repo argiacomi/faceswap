@@ -111,6 +111,9 @@ class ManualEditorState:
     unsaved: bool = False
     edited: bool = False
     face_count_changed: bool = False
+    editor_mode: str = "View"
+    annotation_mode: str = ""
+    is_playing: bool = False
     _listeners: dict[str, list[T.Callable[[T.Any], None]]] = field(
         default_factory=dict, repr=False
     )
@@ -125,6 +128,9 @@ class ManualEditorState:
         "unsaved",
         "edited",
         "face_count_changed",
+        "editor_mode",
+        "annotation_mode",
+        "is_playing",
     )
 
     def subscribe(self, name: str, callback: T.Callable[[T.Any], None]) -> T.Callable[[], None]:

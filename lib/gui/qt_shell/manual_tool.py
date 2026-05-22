@@ -20,6 +20,7 @@ from PySide6.QtGui import (
     QColor,
     QIcon,
     QImage,
+    QKeySequence,
     QMouseEvent,
     QPainter,
     QPaintEvent,
@@ -42,6 +43,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from lib.gui.qt_shell.theme import QtTheme, icon_for_action
 from lib.gui.services.command_builder import CommandBuilder
 from tools.manual.session import (
     FaceThumbnail,
@@ -590,11 +592,225 @@ class FaceThumbnailPanel(QListWidget):
         self.face_selected.emit(self._faces[row].face_index)
 
 
+class ManualAction(T.NamedTuple):
+    """Static metadata for one Manual Tool editor action.
+
+    The legacy Tk Manual Tool wires editor commands through Tk widgets and key
+    bindings; the Qt shell mirrors the same surface through a registry so each
+    action has a single source of truth for label, icon, shortcut, tooltip and
+    availability semantics.  ``handler`` is the unbound method name on
+    :class:`ManualToolWindow` that performs the action when triggered.
+
+    Icons reuse the existing Qt theme icon cache where available.  Actions
+    whose ``icon`` does not yet resolve are documented inline below.
+    """
+
+    key: str
+    label: str
+    handler: str
+    shortcut: tuple[str, ...] = ()
+    icon: str | None = None
+    tooltip: str = ""
+    separator_before: bool = False
+
+
+# Manual Tool action registry. The first six actions cover the legacy file/
+# navigation surface. The remaining entries register editor operations
+# (add/delete/copy/revert), the filter cycle, the F1-F5 editor modes, the
+# F9/F10 annotation toggles and the legacy-tool fallback.  Icons marked
+# "(missing)" in the comments fall back to a null QIcon — replace them with
+# real PNGs in lib/gui/.cache/icons/ when art lands.
+MANUAL_ACTIONS: tuple[ManualAction, ...] = (
+    ManualAction(
+        key="save",
+        label="Save",
+        handler="save",
+        shortcut=("Ctrl+S",),
+        icon="save",
+        tooltip="Save edits to the alignments file (Ctrl+S)",
+    ),
+    ManualAction(
+        key="revert_frame",
+        label="Revert Frame",
+        handler="revert_current_frame",
+        shortcut=("R",),
+        icon="reload",
+        tooltip="Revert edits in the current frame (R)",
+        separator_before=True,
+    ),
+    ManualAction(
+        key="first_frame",
+        label="First Frame",
+        handler="goto_first_frame",
+        shortcut=("Home",),
+        icon="beginning",
+        tooltip="Jump to the first frame (Home)",
+        separator_before=True,
+    ),
+    ManualAction(
+        key="previous_frame",
+        label="Previous",
+        handler="_previous_frame",
+        shortcut=("Z", "Left"),
+        icon="prev",
+        tooltip="Previous frame (Z)",
+    ),
+    ManualAction(
+        key="next_frame",
+        label="Next",
+        handler="_next_frame",
+        shortcut=("X", "Right"),
+        icon="next",
+        tooltip="Next frame (X)",
+    ),
+    ManualAction(
+        key="last_frame",
+        label="Last Frame",
+        handler="goto_last_frame",
+        shortcut=("End",),
+        icon="end",
+        tooltip="Jump to the last frame (End)",
+    ),
+    ManualAction(
+        key="play_pause",
+        label="Play / Pause",
+        handler="toggle_play",
+        shortcut=("Space",),
+        icon="play",
+        tooltip="Play / pause playback (Space)",
+    ),
+    ManualAction(
+        key="copy_prev_face",
+        label="Copy From Previous",
+        handler="copy_prev_face",
+        shortcut=("C",),
+        icon="copy_prev",
+        tooltip="Copy alignment from the previous frame (C)",
+        separator_before=True,
+    ),
+    ManualAction(
+        key="copy_next_face",
+        label="Copy From Next",
+        handler="copy_next_face",
+        shortcut=("V",),
+        icon="copy_next",
+        tooltip="Copy alignment from the next frame (V)",
+    ),
+    ManualAction(
+        key="delete_face",
+        label="Delete Face",
+        handler="delete_active_face",
+        shortcut=("Delete", "Backspace"),
+        icon="clear",  # No dedicated trash icon yet; reusing the "clear" glyph.
+        tooltip="Delete the active face (Delete)",
+    ),
+    ManualAction(
+        key="cycle_filter",
+        label="Filter",
+        handler="cycle_filter_mode",
+        shortcut=("F",),
+        icon=None,  # (missing) — no filter icon in the cache.
+        tooltip="Cycle the navigation filter mode (F)",
+        separator_before=True,
+    ),
+    ManualAction(
+        key="set_view_mode",
+        label="View",
+        handler="set_editor_view",
+        shortcut=("F1",),
+        icon="view",
+        tooltip="Switch to View editor (F1)",
+        separator_before=True,
+    ),
+    ManualAction(
+        key="set_boundingbox_mode",
+        label="Bounding Box",
+        handler="set_editor_boundingbox",
+        shortcut=("F2",),
+        icon="boundingbox",
+        tooltip="Switch to Bounding Box editor (F2)",
+    ),
+    ManualAction(
+        key="set_extractbox_mode",
+        label="Extract Box",
+        handler="set_editor_extractbox",
+        shortcut=("F3",),
+        icon="extractbox",
+        tooltip="Switch to Extract Box editor (F3)",
+    ),
+    ManualAction(
+        key="set_landmarks_mode",
+        label="Landmarks",
+        handler="set_editor_landmarks",
+        shortcut=("F4",),
+        icon="landmarks",
+        tooltip="Switch to Landmarks editor (F4)",
+    ),
+    ManualAction(
+        key="set_mask_mode",
+        label="Mask",
+        handler="set_editor_mask",
+        shortcut=("F5",),
+        icon="mask",
+        tooltip="Switch to Mask editor (F5)",
+    ),
+    ManualAction(
+        key="cycle_annotation",
+        label="Annotation",
+        handler="cycle_annotation_display",
+        shortcut=("F9",),
+        icon=None,  # (missing) — no annotation icon in the cache.
+        tooltip="Cycle annotation display (F9)",
+        separator_before=True,
+    ),
+    ManualAction(
+        key="zoom_in",
+        label="Zoom In",
+        handler="zoom_in",
+        shortcut=("=", "+"),
+        icon="zoom",
+        tooltip="Zoom in on the frame view (+)",
+        separator_before=True,
+    ),
+    ManualAction(
+        key="zoom_out",
+        label="Zoom Out",
+        handler="zoom_out",
+        shortcut=("-",),
+        icon=None,  # (missing) — no dedicated zoom-out icon.
+        tooltip="Zoom out of the frame view (-)",
+    ),
+    ManualAction(
+        key="reset_view",
+        label="Reset View",
+        handler="reset_view",
+        shortcut=("0",),
+        icon=None,  # (missing) — reuse default until art lands.
+        tooltip="Reset zoom and pan (0)",
+    ),
+    ManualAction(
+        key="legacy_tool",
+        label="Open Legacy Tool",
+        handler="launch_legacy",
+        shortcut=(),
+        icon=None,  # (missing) — no dedicated legacy icon.
+        tooltip="Launch the legacy Tk Manual Tool",
+        separator_before=True,
+    ),
+)
+
+
 class ManualToolWindow(QMainWindow):
     """Qt-native Manual Tool window with legacy fallback support."""
 
     dirty_changed = Signal(bool)
     frame_changed = Signal(int)
+    action_triggered = Signal(str)
+    """Emitted with the :class:`ManualAction.key` whenever an action fires.
+
+    Editor-mode and stubbed editing actions (copy/revert/delete) connect
+    follow-up tickets through this signal without needing direct method hooks.
+    """
 
     def __init__(
         self,
@@ -618,9 +834,11 @@ class ManualToolWindow(QMainWindow):
         self._face_panel = FaceThumbnailPanel()
         self._status_label = QLabel()
         self._metadata_label = QLabel()
-        self._save_action: QAction | None = None
-        self._legacy_action: QAction | None = None
+        self._actions: dict[str, QAction] = {}
         self._editor_state.subscribe("unsaved", self._on_unsaved_changed)
+        self._editor_state.subscribe("face_index", lambda _v: self._sync_actions())
+        self._editor_state.subscribe("frame_index", lambda _v: self._sync_actions())
+        self._editor_state.subscribe("editor_mode", self._on_editor_mode_changed)
         self._build_ui()
         self._connect_signals()
         self._load_session()
@@ -654,6 +872,15 @@ class ManualToolWindow(QMainWindow):
     def face_panel(self) -> FaceThumbnailPanel:
         """Return the per-frame face thumbnail panel widget."""
         return self._face_panel
+
+    @property
+    def actions_by_key(self) -> dict[str, QAction]:
+        """Return the registered Manual Tool actions keyed by :class:`ManualAction.key`.
+
+        Exposed so that follow-up integrations and tests can drive specific
+        actions (and assert their enabled state) without scraping the toolbar.
+        """
+        return dict(self._actions)
 
     @property
     def video_provider(self) -> VideoFrameProvider | None:
@@ -714,6 +941,109 @@ class ManualToolWindow(QMainWindow):
         self.statusBar().showMessage("Launched legacy Manual Tool", 5000)
         return True
 
+    def goto_first_frame(self) -> None:
+        """Select the first available frame in the thumbnail panel."""
+        if self._thumbnail_panel.count() == 0:
+            return
+        self._thumbnail_panel.setCurrentRow(0)
+
+    def goto_last_frame(self) -> None:
+        """Select the last available frame in the thumbnail panel."""
+        count = self._thumbnail_panel.count()
+        if count == 0:
+            return
+        self._thumbnail_panel.setCurrentRow(count - 1)
+
+    def toggle_play(self) -> None:
+        """Toggle the editor playback flag.  Concrete playback lands in a follow-up."""
+        self._editor_state.set("is_playing", not self._editor_state.is_playing)
+
+    def revert_current_frame(self) -> None:
+        """Revert seam for the current frame. Concrete persistence lands in follow-up."""
+        self._editor_state.set("edited", False)
+        self.mark_dirty(False)
+        self.statusBar().showMessage("Reverted edits in current frame", 5000)
+
+    def copy_prev_face(self) -> None:
+        """Copy seam from the previous frame. Concrete copy lands in follow-up."""
+        self._editor_state.set("edited", True)
+        self.mark_dirty(True)
+        self.statusBar().showMessage("Copied alignment from previous frame", 5000)
+
+    def copy_next_face(self) -> None:
+        """Copy seam from the next frame. Concrete copy lands in follow-up."""
+        self._editor_state.set("edited", True)
+        self.mark_dirty(True)
+        self.statusBar().showMessage("Copied alignment from next frame", 5000)
+
+    def delete_active_face(self) -> None:
+        """Delete the active face. Concrete persistence lands in follow-up."""
+        face_index = self._editor_state.face_index
+        self._editor_state.set("face_count_changed", True)
+        self._editor_state.set("edited", True)
+        self.mark_dirty(True)
+        self.statusBar().showMessage(f"Deleted face index {face_index}", 5000)
+
+    def cycle_filter_mode(self) -> None:
+        """Advance to the next filter mode in the legacy rotation order."""
+        order = (
+            "All Frames",
+            "Has Face(s)",
+            "No Faces",
+            "Multiple Faces",
+            "Misaligned Faces",
+        )
+        current = self._editor_state.filter_mode or order[0]
+        try:
+            index = order.index(current)
+        except ValueError:
+            index = -1
+        self._editor_state.set("filter_mode", order[(index + 1) % len(order)])
+        self.statusBar().showMessage(f"Filter: {self._editor_state.filter_mode}", 5000)
+
+    def cycle_annotation_display(self) -> None:
+        """Cycle annotation overlays in the legacy rotation order."""
+        order = ("None", "Mesh", "Mask", "Landmarks")
+        current = self._editor_state.annotation_mode or order[0]
+        try:
+            index = order.index(current)
+        except ValueError:
+            index = -1
+        self._editor_state.set("annotation_mode", order[(index + 1) % len(order)])
+        self.statusBar().showMessage(f"Annotation: {self._editor_state.annotation_mode}", 5000)
+
+    def set_editor_view(self) -> None:
+        """Activate the View editor mode."""
+        self._editor_state.set("editor_mode", "View")
+
+    def set_editor_boundingbox(self) -> None:
+        """Activate the Bounding Box editor mode."""
+        self._editor_state.set("editor_mode", "BoundingBox")
+
+    def set_editor_extractbox(self) -> None:
+        """Activate the Extract Box editor mode."""
+        self._editor_state.set("editor_mode", "ExtractBox")
+
+    def set_editor_landmarks(self) -> None:
+        """Activate the Landmarks editor mode."""
+        self._editor_state.set("editor_mode", "Landmarks")
+
+    def set_editor_mask(self) -> None:
+        """Activate the Mask editor mode."""
+        self._editor_state.set("editor_mode", "Mask")
+
+    def zoom_in(self) -> None:
+        """Zoom into the embedded frame view (action handler)."""
+        self._frame_view.zoom_in()
+
+    def zoom_out(self) -> None:
+        """Zoom out of the embedded frame view (action handler)."""
+        self._frame_view.zoom_out()
+
+    def reset_view(self) -> None:
+        """Reset the embedded frame view (action handler)."""
+        self._frame_view.reset_view()
+
     def _build_ui(self) -> None:
         """Build Manual Tool widgets."""
         self.resize(980, 680)
@@ -741,24 +1071,51 @@ class ManualToolWindow(QMainWindow):
         self.setCentralWidget(splitter)
 
     def _build_toolbar(self) -> None:
-        """Build Manual Tool action toolbar."""
+        """Build the Manual Tool action toolbar from :data:`MANUAL_ACTIONS`."""
         toolbar = QToolBar("Manual Tool")
         toolbar.setObjectName("qt-manual-toolbar")
         self.addToolBar(toolbar)
-        self._save_action = toolbar.addAction("Save", self.save)
-        toolbar.addSeparator()
-        toolbar.addAction("Previous", self._previous_frame)
-        toolbar.addAction("Next", self._next_frame)
-        toolbar.addAction("Zoom In", self._frame_view.zoom_in)
-        toolbar.addAction("Zoom Out", self._frame_view.zoom_out)
-        toolbar.addAction("Reset View", self._frame_view.reset_view)
-        toolbar.addSeparator()
-        toolbar.addAction("Mark Dirty", lambda: self.mark_dirty(True))
-        self._legacy_action = toolbar.addAction("Open Legacy Tool", self.launch_legacy)
+        theme = QtTheme.default()
+        for spec in MANUAL_ACTIONS:
+            if spec.separator_before:
+                toolbar.addSeparator()
+            action = QAction(spec.label, self)
+            action.setObjectName(f"qt-manual-action-{spec.key}")
+            if spec.tooltip:
+                action.setToolTip(spec.tooltip)
+                action.setStatusTip(spec.tooltip)
+            if spec.icon:
+                icon = icon_for_action(theme, spec.icon)
+                if not icon.isNull():
+                    action.setIcon(icon)
+            shortcuts = [QKeySequence(text) for text in spec.shortcut]
+            if shortcuts:
+                action.setShortcuts(shortcuts)
+                action.setShortcutContext(Qt.WindowShortcut)
+            handler = getattr(self, spec.handler)
+            action.triggered.connect(self._make_action_dispatch(spec.key, handler))
+            self.addAction(action)  # Register shortcut on the window too.
+            toolbar.addAction(action)
+            self._actions[spec.key] = action
+
+    def _make_action_dispatch(
+        self, key: str, handler: T.Callable[[], object]
+    ) -> T.Callable[[], None]:
+        """Return a closure that invokes ``handler`` and emits :attr:`action_triggered`."""
+
+        def _dispatch(_checked: bool = False) -> None:
+            self.action_triggered.emit(key)
+            try:
+                handler()
+            except Exception:  # pragma: no cover - defensive; surface in logs
+                logger.exception("Manual Tool action %s raised", key)
+
+        return _dispatch
 
     def _connect_signals(self) -> None:
         """Connect selection and dirty-state signals."""
         self._thumbnail_panel.currentItemChanged.connect(self._thumbnail_selected)
+        self._thumbnail_panel.currentRowChanged.connect(lambda _row: self._sync_actions())
         self._face_panel.face_selected.connect(self._on_face_selected)
         self.dirty_changed.connect(
             lambda dirty: self.statusBar().showMessage(
@@ -859,9 +1216,9 @@ class ManualToolWindow(QMainWindow):
 
     def _on_face_selected(self, face_index: int) -> None:
         """Propagate active face selection to the shared editor state."""
-        if face_index < 0:
-            return
-        self._editor_state.set("face_index", face_index)
+        if face_index >= 0:
+            self._editor_state.set("face_index", face_index)
+        self._sync_actions()
 
     def refresh_faces(self) -> None:
         """Reload face thumbnails for the current frame from the session.
@@ -925,16 +1282,55 @@ class ManualToolWindow(QMainWindow):
             self._thumbnail_panel.setCurrentRow(row + 1)
 
     def _sync_actions(self) -> None:
-        """Update action availability from session and dirty state."""
-        if self._save_action is not None:
-            self._save_action.setEnabled(self._editor_state.unsaved)
-        if self._legacy_action is not None:
-            self._legacy_action.setEnabled(bool(self._legacy_args))
+        """Update action availability from session, selection and dirty state."""
+        if not self._actions:
+            return
+        frame_total = self._thumbnail_panel.count()
+        current_row = self._thumbnail_panel.currentRow()
+        has_frames = frame_total > 0
+        not_first = has_frames and current_row > 0
+        not_last = has_frames and 0 <= current_row < frame_total - 1
+        face_selected = self._editor_state.face_index >= 0 and bool(self._face_panel.faces)
+        editor_mode = self._editor_state.editor_mode
+
+        availability: dict[str, bool] = {
+            "save": self._editor_state.unsaved,
+            "revert_frame": self._editor_state.edited or self._editor_state.unsaved,
+            "first_frame": not_first,
+            "previous_frame": not_first,
+            "next_frame": not_last,
+            "last_frame": not_last,
+            "play_pause": has_frames,
+            "copy_prev_face": not_first,
+            "copy_next_face": not_last,
+            "delete_face": face_selected,
+            "cycle_filter": has_frames,
+            "cycle_annotation": has_frames,
+            "set_view_mode": editor_mode != "View",
+            "set_boundingbox_mode": editor_mode != "BoundingBox",
+            "set_extractbox_mode": editor_mode != "ExtractBox",
+            "set_landmarks_mode": editor_mode != "Landmarks",
+            "set_mask_mode": editor_mode != "Mask",
+            "zoom_in": has_frames,
+            "zoom_out": has_frames,
+            "reset_view": has_frames,
+            "legacy_tool": bool(self._legacy_args),
+        }
+        for key, enabled in availability.items():
+            action = self._actions.get(key)
+            if action is not None:
+                action.setEnabled(enabled)
+
+    def _on_editor_mode_changed(self, _mode: object) -> None:
+        """Refresh action availability when the editor mode flips."""
+        self._sync_actions()
 
 
 __all__ = [
+    "MANUAL_ACTIONS",
     "FaceThumbnailPanel",
     "FrameViewport",
+    "ManualAction",
     "ManualFrameView",
     "ManualThumbnailPanel",
     "ManualToolWindow",
