@@ -295,21 +295,23 @@ class ManualFrameView(QWidget):
         if self._source.isNull() or event.button() != Qt.LeftButton:
             super().mousePressEvent(event)
             return
-        self._drag_anchor = event.pos()
+        position = event.position()
+        self._drag_anchor = position.toPoint()
         self._drag_origin = QPointF(self._offset)
         self.setCursor(Qt.ClosedHandCursor)
-        source_point = self._widget_to_source(QPointF(event.pos()))
+        source_point = self._widget_to_source(position)
         if source_point is not None:
             self.clicked_at.emit(source_point)
         event.accept()
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa:N802
         """Update pan offset while dragging."""
+        position = event.position()
         if self._drag_anchor is None:
-            self._update_hover_cursor(event.pos())
+            self._update_hover_cursor(position)
             super().mouseMoveEvent(event)
             return
-        delta = event.pos() - self._drag_anchor
+        delta = position - QPointF(self._drag_anchor)
         self._offset = QPointF(
             self._drag_origin.x() + delta.x(),
             self._drag_origin.y() + delta.y(),
@@ -325,7 +327,7 @@ class ManualFrameView(QWidget):
             super().mouseReleaseEvent(event)
             return
         self._drag_anchor = None
-        self._update_hover_cursor(event.pos())
+        self._update_hover_cursor(event.position())
         event.accept()
 
     def paintEvent(self, _event: QPaintEvent) -> None:  # noqa:N802
@@ -414,12 +416,12 @@ class ManualFrameView(QWidget):
         rel_y = (point.y() - target.y()) / target.height()
         return QPointF(rel_x * src_w, rel_y * src_h)
 
-    def _update_hover_cursor(self, position: QPoint) -> None:
+    def _update_hover_cursor(self, position: QPointF) -> None:
         """Show a hand cursor when hovering a pannable region."""
         if self._source.isNull() or self._zoom <= self._MIN_ZOOM:
             self.setCursor(Qt.ArrowCursor)
             return
-        if self._target_rect().contains(QPointF(position)):
+        if self._target_rect().contains(position):
             self.setCursor(Qt.OpenHandCursor)
         else:
             self.setCursor(Qt.ArrowCursor)
@@ -1222,15 +1224,37 @@ class ManualToolWindow(QMainWindow):
         self.statusBar().showMessage(f"Saved {modified} frame(s) to alignments file", 5000)
         return True
 
-    def _frame_names_for_persist(self) -> list[str]:
-        """Return frame names ordered to match the editable model's frame_index.
+    def _frame_name_for_index(self, frame_index: int) -> str | None:
+        """Resolve one editable frame_index to its on-disk frame name.
 
-        Prefers the source frame list (image-folder sessions) so that newly
-        added frames map cleanly onto on-disk filenames.  Falls back to the
-        alignments file's existing keys for video-input sessions.
+        Mirrors :meth:`_frame_names_for_persist` but for a single index — used
+        when refreshing the face panel where we just need the current frame's
+        name for thumbnail lookup, not the whole mapping.
+        """
+        mapping = self._frame_names_for_persist()
+        if callable(mapping):
+            return mapping(frame_index)
+        if 0 <= frame_index < len(mapping):
+            return mapping[frame_index]
+        return None
+
+    def _frame_names_for_persist(
+        self,
+    ) -> list[str] | T.Callable[[int], str | None]:
+        """Return a frame-name mapping ordered to match the editable model.
+
+        Image-folder sessions return the source frame list (sparse alignments
+        still align to the source ordering); video sessions return a callable
+        that synthesizes the Faceswap-standard dummy frame name on demand, so
+        edits on frames the alignments file has *never* seen before (the
+        common case for fresh video input) still resolve to a writable name.
+        Falls back to the alignments file's existing keys when neither source
+        is available.
         """
         if self._session.has_images:
             return [frame.name for frame in self._session.frame_list]
+        if self._session.is_video_input:
+            return self._session.frame_name_for_index
         return list(self._alignments_handle.sorted_frame_names())
 
     def launch_legacy(self) -> bool:
@@ -1824,12 +1848,7 @@ class ManualToolWindow(QMainWindow):
         if not editable_faces:
             self._face_panel.set_faces(())
             return
-        frame_names = self._frame_names_for_persist()
-        frame_name = (
-            frame_names[frame_index]
-            if 0 <= frame_index < len(frame_names)
-            else self._current_frame.name
-        )
+        frame_name = self._frame_name_for_index(frame_index) or self._current_frame.name
         # Look up persisted thumbnails by frame *name* — the editable model is
         # anchored to the source frame list, but the alignments file may be
         # sparse, so sorted-index lookups (``faces_for_frame``) can attach the

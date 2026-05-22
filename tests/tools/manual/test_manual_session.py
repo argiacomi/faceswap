@@ -110,6 +110,30 @@ def test_alignments_handle_video_default_name(tmp_path: Path) -> None:
     assert session.is_video_input
 
 
+def test_frame_name_for_index_video_synthesizes_dummy_name(tmp_path: Path) -> None:
+    """Video sessions derive ``<basename>_<NNNNNN><ext>`` for any index."""
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"vid")
+    session = ManualSession.create(frames=str(video))
+
+    # Faceswap's ImagesLoader._dummy_video_frame_name uses 1-indexed frames.
+    assert session.frame_name_for_index(0) == "clip_000001.mp4"
+    assert session.frame_name_for_index(249) == "clip_000250.mp4"
+    assert session.frame_name_for_index(-1) is None
+
+
+def test_frame_name_for_index_image_folder_uses_source_list(tmp_path: Path) -> None:
+    """Image-folder sessions resolve through the discovered frame list."""
+    (tmp_path / "frame_000.png").write_bytes(b"png")
+    (tmp_path / "frame_010.png").write_bytes(b"png")
+    session = ManualSession.create(frames=str(tmp_path))
+
+    names = [session.frame_name_for_index(i) for i in range(session.frame_count)]
+    assert names == ["frame_000.png", "frame_010.png"]
+    # Index past the end maps to None rather than raising.
+    assert session.frame_name_for_index(session.frame_count) is None
+
+
 def test_alignments_handle_honors_explicit_path(tmp_path: Path) -> None:
     """An explicit alignments path is preserved through the session."""
     (tmp_path / "frame.png").write_bytes(b"png")

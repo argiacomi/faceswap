@@ -290,6 +290,44 @@ def test_delete_last_face_keeps_frame_dirty_for_persist() -> None:
     assert 0 in model._dirty_frames  # noqa: SLF001
 
 
+def test_apply_to_alignments_accepts_callable_resolver() -> None:
+    """Video sessions pass a callable; frames without existing entries persist."""
+    from lib.align.objects import AlignmentsEntry
+
+    class _StubAlignments:
+        def __init__(self) -> None:
+            self.data: dict[str, AlignmentsEntry] = {}
+
+    alignments = _StubAlignments()
+    model = ManualEditableAlignments()
+    # Add a face on frame 250 of a video — no existing alignments key.
+    model.add_face(250, _bbox(5, 5))
+
+    def resolver(index: int) -> str | None:
+        return f"clip_{index + 1:06d}.mp4" if index >= 0 else None
+
+    modified = model.apply_to_alignments(alignments, frame_names=resolver)
+
+    assert modified == 1
+    assert "clip_000251.mp4" in alignments.data
+    assert len(alignments.data["clip_000251.mp4"].faces) == 1
+
+
+def test_apply_to_alignments_raises_when_resolver_returns_none() -> None:
+    """A resolver returning None for a dirty frame surfaces as ValueError."""
+
+    class _StubAlignments:
+        def __init__(self) -> None:
+            self.data: dict[str, object] = {}
+
+    alignments = _StubAlignments()
+    model = ManualEditableAlignments()
+    model.add_face(0, _bbox(0, 0))
+
+    with pytest.raises(ValueError, match="no matching frame name"):
+        model.apply_to_alignments(alignments, frame_names=lambda _idx: None)
+
+
 def test_apply_to_alignments_writes_empty_for_fully_deleted_frame() -> None:
     """A frame with all faces deleted is written as ``entry.faces = []``."""
     import numpy as np

@@ -195,10 +195,10 @@ def test_cycle_filter_advances_state(qtbot, tmp_path: Path) -> None:  # type:ign
     seen: list[str] = []
     window.editor_state.subscribe("filter_mode", seen.append)
 
-    for _ in range(6):
+    for _ in range(7):
         window.cycle_filter_mode()
 
-    assert len(seen) == 6
+    assert len(seen) == 7
     # First call leaves the rotation at "Has Face(s)" (next after "All Frames").
     assert seen[0] == "Has Face(s)"
     # After a full rotation through 5 modes, we land back at "Has Face(s)".

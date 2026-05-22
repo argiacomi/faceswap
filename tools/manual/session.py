@@ -253,7 +253,7 @@ class ManualAlignmentsHandle:
         self,
         editable: ManualEditableAlignments,
         *,
-        frame_names: T.Sequence[str],
+        frame_names: T.Sequence[str] | T.Callable[[int], str | None],
     ) -> int:
         """Write ``editable``'s in-memory edits back to the alignments file.
 
@@ -710,7 +710,7 @@ class ManualEditableAlignments:
         self,
         alignments: T.Any,
         *,
-        frame_names: T.Sequence[str],
+        frame_names: T.Sequence[str] | T.Callable[[int], str | None],
     ) -> int:
         """Write in-memory edits back to a :class:`lib.align.Alignments` object.
 
@@ -721,21 +721,39 @@ class ManualEditableAlignments:
         fresh :class:`lib.align.objects.FileAlignments` entry; removed faces
         are dropped.
 
+        ``frame_names`` may be a :class:`Sequence` (image-folder mode, where the
+        source frame list is bounded and pre-known) or a callable
+        ``Callable[[int], str | None]`` (video mode, where the frame name is
+        synthesized on demand from the frame index — see
+        :meth:`ManualSession.frame_name_for_index`). Returning ``None`` from
+        the callable indicates the index cannot be mapped and raises
+        ``ValueError`` just like falling past the end of a sequence does.
+
         Returns the number of frames that were modified.
 
         Raises ``ValueError`` if any frame_index referenced by the editable
-        model cannot be mapped onto ``frame_names``.
+        model cannot be mapped to a frame name.
         """
         import numpy as np
 
         from lib.align.objects import AlignmentsEntry, FileAlignments
 
+        if callable(frame_names):
+            resolver: T.Callable[[int], str | None] = frame_names
+        else:
+            sequence = frame_names
+
+            def resolver(frame_index: int) -> str | None:
+                if frame_index < 0 or frame_index >= len(sequence):
+                    return None
+                return sequence[frame_index]
+
         modified = 0
         targets = sorted(self._dirty_frames or self._faces.keys())
         for frame_index in targets:
-            if frame_index < 0 or frame_index >= len(frame_names):
+            frame_name = resolver(frame_index)
+            if not frame_name:
                 raise ValueError(f"Frame index {frame_index} has no matching frame name")
-            frame_name = frame_names[frame_index]
             entry = alignments.data.get(frame_name)
             if entry is None:
                 entry = AlignmentsEntry(faces=[], video_meta={})
@@ -915,6 +933,29 @@ class ManualSession:
     def frame_count(self) -> int:
         """Return the number of directly discoverable image frames."""
         return len(self.frame_list)
+
+    def frame_name_for_index(self, frame_index: int) -> str | None:
+        """Return the on-disk frame name that maps to ``frame_index``.
+
+        Used by Manual Tool persistence: image-folder sessions resolve through
+        the source frame list (so sparse alignments still align to the source
+        ordering), while video sessions synthesize the Faceswap-standard dummy
+        frame name (``<video_basename>_<NNNNNN><ext>``, matching
+        ``lib.image.ImagesLoader._dummy_video_frame_name``).
+
+        Returns ``None`` when no valid name can be derived (e.g. negative index,
+        image-folder index past the discovered frame list).
+        """
+        if frame_index < 0:
+            return None
+        if self.frame_list:
+            if frame_index >= len(self.frame_list):
+                return None
+            return self.frame_list[frame_index].name
+        if self.is_video_input:
+            video_path = Path(self.frames)
+            return f"{video_path.stem}_{frame_index + 1:06d}{video_path.suffix}"
+        return None
 
     def alignments_handle(self) -> ManualAlignmentsHandle:
         """Resolve and return a GUI-neutral handle to the alignments file."""
