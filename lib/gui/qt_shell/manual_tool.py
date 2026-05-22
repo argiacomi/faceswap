@@ -2,18 +2,30 @@
 """Native Qt Manual Tool shell.
 
 This is the first Qt-native surface for the Manual Tool migration.  It provides
-startup validation, frame display, thumbnail/selection placeholders, action
-state, dirty-state lifecycle and a legacy fallback launcher without importing
-``tkinter`` on the Qt path.
+startup validation, frame display with zoom/pan/overlay seams, thumbnail/
+selection, navigation, dirty-state lifecycle, async video-frame loading and a
+legacy fallback launcher without importing ``tkinter`` on the Qt path.
 """
 
 from __future__ import annotations
 
+import logging
 import subprocess
 import typing as T
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QAction, QCloseEvent, QPixmap
+from PySide6.QtCore import QObject, QPoint, QPointF, QRectF, Qt, QThread, Signal
+from PySide6.QtGui import (
+    QAction,
+    QCloseEvent,
+    QColor,
+    QImage,
+    QMouseEvent,
+    QPainter,
+    QPaintEvent,
+    QPixmap,
+    QResizeEvent,
+    QWheelEvent,
+)
 from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
@@ -36,72 +48,149 @@ from tools.manual.session import (
     ManualVideoMetadata,
 )
 
+logger = logging.getLogger(__name__)
 
-class ManualFrameView(QLabel):
-    """Manual Tool frame display with basic zoom/pan seams."""
+OverlayPainter = T.Callable[[QPainter, "FrameViewport"], None]
+
+
+class FrameViewport(T.NamedTuple):
+    """Snapshot of a frame view geometry passed to overlay painters."""
+
+    source_size: tuple[int, int]
+    """(width, height) of the source frame in pixels."""
+    target_rect: QRectF
+    """Destination rectangle in widget coordinates where the frame is drawn."""
+    zoom: float
+    """Effective zoom factor relative to the fit-to-widget baseline."""
+
+
+class ManualFrameView(QWidget):
+    """Manual Tool frame display with pan/zoom and overlay seams."""
 
     view_changed = Signal()
+    frame_loaded = Signal(ManualFrame)
+    clicked_at = Signal(QPointF)
+    """Emitted with source-image coordinates when the view is left-clicked."""
+
+    _MIN_ZOOM = 1.0
+    _MAX_ZOOM = 20.0
+    _ZOOM_STEP = 1.25
 
     def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__("No frame selected", parent)
+        super().__init__(parent)
         self.setObjectName("qt-manual-frame-view")
-        self.setAlignment(Qt.AlignCenter)
-        self.setWordWrap(True)
         self.setMinimumSize(0, 0)
         self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
-        self._source_pixmap = QPixmap()
-        self._zoom = 1.0
-        self._drag_start: tuple[float, float] | None = None
+        self.setMouseTracking(True)
+        self.setCursor(Qt.ArrowCursor)
+        self._source: QPixmap = QPixmap()
+        self._zoom: float = 1.0
+        self._offset: QPointF = QPointF(0.0, 0.0)
+        self._drag_anchor: QPoint | None = None
+        self._drag_origin: QPointF = QPointF(0.0, 0.0)
+        self._empty_message: str = "No frame selected"
+        self._overlays: list[OverlayPainter] = []
 
+    # ---- public API ----
     @property
     def zoom(self) -> float:
         """Return current zoom factor."""
         return self._zoom
 
     @property
+    def offset(self) -> QPointF:
+        """Return current pan offset (widget-pixel translation of the target rect)."""
+        return QPointF(self._offset)
+
+    @property
     def has_frame(self) -> bool:
         """Return whether a frame pixmap is loaded."""
-        return not self._source_pixmap.isNull()
+        return not self._source.isNull()
+
+    @property
+    def source_size(self) -> tuple[int, int]:
+        """Return (width, height) of the current source frame, or (0, 0) when empty."""
+        if self._source.isNull():
+            return (0, 0)
+        return (self._source.width(), self._source.height())
 
     def load_frame(self, frame: ManualFrame) -> bool:
-        """Load and display a source frame image."""
+        """Load and display a source frame image from disk."""
         pixmap = QPixmap(frame.path)
         if pixmap.isNull():
             self.clear_frame(f"Could not load frame: {frame.name}")
             return False
-        self._source_pixmap = pixmap
-        self.setText("")
-        self._render_pixmap()
-        return True
+        return self._set_pixmap(pixmap, frame)
+
+    def set_image(self, image: QImage, frame: ManualFrame | None = None) -> bool:
+        """Load and display a pre-decoded QImage (e.g. from a video frame loader)."""
+        if image.isNull():
+            self.clear_frame("Could not load frame: empty image")
+            return False
+        return self._set_pixmap(QPixmap.fromImage(image), frame)
 
     def clear_frame(self, message: str = "No frame selected") -> None:
         """Clear the current frame."""
-        self._source_pixmap = QPixmap()
+        self._source = QPixmap()
         self._zoom = 1.0
-        self.setPixmap(QPixmap())
-        self.setText(message)
+        self._offset = QPointF(0.0, 0.0)
+        self._empty_message = message
+        self.update()
         self.view_changed.emit()
 
     def zoom_in(self) -> None:
         """Zoom into the frame display."""
-        self._set_zoom(self._zoom * 1.25)
+        self._set_zoom(self._zoom * self._ZOOM_STEP)
 
     def zoom_out(self) -> None:
         """Zoom out of the frame display."""
-        self._set_zoom(self._zoom / 1.25)
+        self._set_zoom(self._zoom / self._ZOOM_STEP)
 
     def reset_view(self) -> None:
-        """Reset zoom and redraw."""
-        self._set_zoom(1.0)
+        """Reset zoom + pan and redraw."""
+        self._zoom = 1.0
+        self._offset = QPointF(0.0, 0.0)
+        self.update()
+        self.view_changed.emit()
 
-    def resizeEvent(self, event) -> None:  # type:ignore[no-untyped-def] # noqa:N802
-        """Re-render scaled pixmap on resize."""
+    def add_overlay(self, painter: OverlayPainter) -> T.Callable[[], None]:
+        """Register a callable invoked after the frame is painted.
+
+        ``painter(qpainter, viewport)`` receives the active ``QPainter`` and the
+        current :class:`FrameViewport` describing the source size, on-widget
+        target rect and zoom.  Returns an unregister callable.
+        """
+        self._overlays.append(painter)
+
+        def _remove() -> None:
+            if painter in self._overlays:
+                self._overlays.remove(painter)
+            self.update()
+
+        self.update()
+        return _remove
+
+    def viewport(self) -> FrameViewport | None:
+        """Return the current viewport snapshot, or ``None`` when empty."""
+        if self._source.isNull():
+            return None
+        return FrameViewport(
+            source_size=(self._source.width(), self._source.height()),
+            target_rect=self._target_rect(),
+            zoom=self._zoom,
+        )
+
+    # ---- Qt event handlers ----
+    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa:N802
+        """Redraw on resize."""
         super().resizeEvent(event)
-        self._render_pixmap()
+        self._clamp_offset()
+        self.update()
 
-    def wheelEvent(self, event) -> None:  # type:ignore[no-untyped-def] # noqa:N802
+    def wheelEvent(self, event: QWheelEvent) -> None:  # noqa:N802
         """Zoom with mouse wheel."""
-        if self._source_pixmap.isNull():
+        if self._source.isNull():
+            event.ignore()
             return
         if event.angleDelta().y() > 0:
             self.zoom_in()
@@ -109,26 +198,250 @@ class ManualFrameView(QLabel):
             self.zoom_out()
         event.accept()
 
+    def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa:N802
+        """Start drag-pan on left click; capture click position for click signal."""
+        if self._source.isNull() or event.button() != Qt.LeftButton:
+            super().mousePressEvent(event)
+            return
+        self._drag_anchor = event.pos()
+        self._drag_origin = QPointF(self._offset)
+        self.setCursor(Qt.ClosedHandCursor)
+        source_point = self._widget_to_source(QPointF(event.pos()))
+        if source_point is not None:
+            self.clicked_at.emit(source_point)
+        event.accept()
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa:N802
+        """Update pan offset while dragging."""
+        if self._drag_anchor is None:
+            self._update_hover_cursor(event.pos())
+            super().mouseMoveEvent(event)
+            return
+        delta = event.pos() - self._drag_anchor
+        self._offset = QPointF(
+            self._drag_origin.x() + delta.x(),
+            self._drag_origin.y() + delta.y(),
+        )
+        self._clamp_offset()
+        self.update()
+        self.view_changed.emit()
+        event.accept()
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa:N802
+        """End drag-pan."""
+        if self._drag_anchor is None:
+            super().mouseReleaseEvent(event)
+            return
+        self._drag_anchor = None
+        self._update_hover_cursor(event.pos())
+        event.accept()
+
+    def paintEvent(self, _event: QPaintEvent) -> None:  # noqa:N802
+        """Draw the source frame at the current zoom+offset, then overlays."""
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), QColor("#101418"))
+        if self._source.isNull():
+            painter.setPen(QColor("#cccccc"))
+            painter.drawText(self.rect(), Qt.AlignCenter | Qt.TextWordWrap, self._empty_message)
+            return
+        target = self._target_rect()
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        painter.drawPixmap(target, self._source, QRectF(self._source.rect()))
+        viewport = FrameViewport(
+            source_size=(self._source.width(), self._source.height()),
+            target_rect=target,
+            zoom=self._zoom,
+        )
+        for overlay in tuple(self._overlays):
+            try:
+                overlay(painter, viewport)
+            except Exception:  # pragma: no cover - defensive against bad overlay callables
+                logger.exception("Overlay painter raised; continuing")
+
+    # ---- internals ----
+    def _set_pixmap(self, pixmap: QPixmap, frame: ManualFrame | None) -> bool:
+        """Install a new source pixmap and reset view state."""
+        self._source = pixmap
+        self._offset = QPointF(0.0, 0.0)
+        self.update()
+        self.view_changed.emit()
+        if frame is not None:
+            self.frame_loaded.emit(frame)
+        return True
+
     def _set_zoom(self, zoom: float) -> None:
         """Clamp and apply zoom."""
-        self._zoom = max(1.0, min(20.0, zoom))
-        self._render_pixmap()
+        clamped = max(self._MIN_ZOOM, min(self._MAX_ZOOM, zoom))
+        if clamped == self._zoom:
+            return
+        self._zoom = clamped
+        self._clamp_offset()
+        self.update()
         self.view_changed.emit()
 
-    def _render_pixmap(self) -> None:
-        """Render the source pixmap scaled to the available panel."""
-        if self._source_pixmap.isNull() or self.width() <= 0 or self.height() <= 0:
-            return
-        target_width = max(1, int(self.width() * self._zoom))
-        target_height = max(1, int(self.height() * self._zoom))
-        self.setPixmap(
-            self._source_pixmap.scaled(
-                target_width,
-                target_height,
-                Qt.KeepAspectRatio,
-                Qt.SmoothTransformation,
-            )
+    def _fit_size(self) -> tuple[float, float]:
+        """Return the (width, height) the source frame uses at zoom=1 inside the widget."""
+        if self._source.isNull() or self.width() <= 0 or self.height() <= 0:
+            return (0.0, 0.0)
+        source_aspect = self._source.width() / self._source.height()
+        widget_aspect = self.width() / self.height()
+        if source_aspect >= widget_aspect:
+            width = float(self.width())
+            height = width / source_aspect
+        else:
+            height = float(self.height())
+            width = height * source_aspect
+        return (width, height)
+
+    def _target_rect(self) -> QRectF:
+        """Compute the destination rect for the source frame at the current zoom+offset."""
+        fit_w, fit_h = self._fit_size()
+        width = fit_w * self._zoom
+        height = fit_h * self._zoom
+        x = (self.width() - width) / 2.0 + self._offset.x()
+        y = (self.height() - height) / 2.0 + self._offset.y()
+        return QRectF(x, y, width, height)
+
+    def _clamp_offset(self) -> None:
+        """Clamp pan offset so the source frame cannot be dragged fully off-screen."""
+        fit_w, fit_h = self._fit_size()
+        margin_x = max(0.0, (fit_w * self._zoom - self.width()) / 2.0)
+        margin_y = max(0.0, (fit_h * self._zoom - self.height()) / 2.0)
+        self._offset = QPointF(
+            max(-margin_x, min(margin_x, self._offset.x())),
+            max(-margin_y, min(margin_y, self._offset.y())),
         )
+
+    def _widget_to_source(self, point: QPointF) -> QPointF | None:
+        """Translate a widget-coordinate point to source-image pixel coordinates."""
+        target = self._target_rect()
+        if not target.contains(point) or target.width() <= 0 or target.height() <= 0:
+            return None
+        src_w, src_h = self.source_size
+        rel_x = (point.x() - target.x()) / target.width()
+        rel_y = (point.y() - target.y()) / target.height()
+        return QPointF(rel_x * src_w, rel_y * src_h)
+
+    def _update_hover_cursor(self, position: QPoint) -> None:
+        """Show a hand cursor when hovering a pannable region."""
+        if self._source.isNull() or self._zoom <= self._MIN_ZOOM:
+            self.setCursor(Qt.ArrowCursor)
+            return
+        if self._target_rect().contains(QPointF(position)):
+            self.setCursor(Qt.OpenHandCursor)
+        else:
+            self.setCursor(Qt.ArrowCursor)
+
+
+class _VideoFrameWorker(QObject):
+    """Worker that lives on a QThread and serves video frames on demand."""
+
+    count_ready = Signal(int)
+    frame_ready = Signal(int, str, QImage)
+    load_failed = Signal(int, str)
+
+    def __init__(
+        self,
+        path: str,
+        video_meta_data: dict[str, list[int]] | None,
+    ) -> None:
+        super().__init__()
+        self._path = path
+        self._video_meta_data = video_meta_data
+        self._loader: T.Any | None = None
+
+    def initialize(self) -> None:
+        """Open the underlying SingleFrameLoader and emit the frame count."""
+        from lib.image import SingleFrameLoader
+
+        try:
+            self._loader = SingleFrameLoader(self._path, video_meta_data=self._video_meta_data)
+        except Exception as err:  # pragma: no cover - exercised through integration
+            self.load_failed.emit(-1, f"Could not open video: {err}")
+            return
+        self.count_ready.emit(int(self._loader.count))
+
+    def fetch(self, index: int) -> None:
+        """Decode and emit the requested frame index as a QImage."""
+        if self._loader is None:
+            self.load_failed.emit(index, "Video frame loader not initialized")
+            return
+        try:
+            filename, frame = self._loader.image_from_index(index)
+        except Exception as err:  # pragma: no cover - exercised through integration
+            self.load_failed.emit(index, str(err))
+            return
+        image = _bgr_array_to_qimage(frame)
+        if image.isNull():
+            self.load_failed.emit(index, "Decoded frame produced an empty image")
+            return
+        self.frame_ready.emit(index, filename, image)
+
+
+def _bgr_array_to_qimage(frame: T.Any) -> QImage:
+    """Convert a numpy BGR uint8 array (from SingleFrameLoader) to a QImage."""
+    if frame is None or frame.size == 0:
+        return QImage()
+    height, width = frame.shape[:2]
+    channels = 1 if frame.ndim == 2 else frame.shape[2]
+    if channels == 1:
+        image = QImage(frame.data, width, height, width, QImage.Format_Grayscale8)
+    elif channels == 3:
+        # SingleFrameLoader returns BGR; Qt expects RGB, so swap into Format_BGR888.
+        image = QImage(frame.data, width, height, width * 3, QImage.Format_BGR888)
+    else:
+        # 4-channel BGRA fallback.
+        image = QImage(frame.data, width, height, width * 4, QImage.Format_ARGB32)
+    # The numpy buffer is owned by the caller; copy to detach.
+    return image.copy()
+
+
+class VideoFrameProvider(QObject):
+    """Async video frame provider for the native Qt Manual Tool.
+
+    The provider owns a worker QObject moved onto a private QThread.  Consumers
+    call :meth:`request_frame` and listen on :attr:`frame_ready` (or
+    :attr:`load_failed`) for results, keeping the UI thread responsive while
+    individual frames decode.
+    """
+
+    count_ready = Signal(int)
+    frame_ready = Signal(int, str, QImage)
+    load_failed = Signal(int, str)
+    _request = Signal(int)
+    _start_init = Signal()
+
+    def __init__(
+        self,
+        path: str,
+        video_meta_data: dict[str, list[int]] | None = None,
+        parent: QObject | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._thread = QThread(self)
+        self._worker = _VideoFrameWorker(path, video_meta_data)
+        self._worker.moveToThread(self._thread)
+        self._worker.count_ready.connect(self.count_ready)
+        self._worker.frame_ready.connect(self.frame_ready)
+        self._worker.load_failed.connect(self.load_failed)
+        self._start_init.connect(self._worker.initialize)
+        self._request.connect(self._worker.fetch)
+        self._thread.start()
+
+    def start(self) -> None:
+        """Open the video on the worker thread."""
+        self._start_init.emit()
+
+    def request_frame(self, index: int) -> None:
+        """Ask the worker thread to decode and emit the given frame index."""
+        self._request.emit(int(index))
+
+    def shutdown(self) -> None:
+        """Stop the worker thread and release resources."""
+        if not self._thread.isRunning():
+            return
+        self._thread.quit()
+        self._thread.wait(2000)
 
 
 class ManualThumbnailPanel(QListWidget):
@@ -157,6 +470,7 @@ class ManualToolWindow(QMainWindow):
     """Qt-native Manual Tool window with legacy fallback support."""
 
     dirty_changed = Signal(bool)
+    frame_changed = Signal(int)
 
     def __init__(
         self,
@@ -171,6 +485,8 @@ class ManualToolWindow(QMainWindow):
         self._session = session
         self._editor_state = session.create_editor_state()
         self._video_metadata: ManualVideoMetadata | None = None
+        self._video_provider: VideoFrameProvider | None = None
+        self._video_frames: list[ManualFrame] = []
         self._legacy_args = legacy_args or []
         self._current_frame: ManualFrame | None = None
         self._frame_view = ManualFrameView()
@@ -204,6 +520,16 @@ class ManualToolWindow(QMainWindow):
         """Return cached neutral video metadata, if loaded."""
         return self._video_metadata
 
+    @property
+    def frame_view(self) -> ManualFrameView:
+        """Return the embedded frame view widget."""
+        return self._frame_view
+
+    @property
+    def video_provider(self) -> VideoFrameProvider | None:
+        """Return the async video frame provider for video inputs (or ``None``)."""
+        return self._video_provider
+
     @classmethod
     def from_command_values(
         cls,
@@ -219,20 +545,21 @@ class ManualToolWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa:N802
         """Prompt before closing when the editor has unsaved changes."""
-        if not self._editor_state.unsaved:
-            event.accept()
-            return
-        answer = QMessageBox.question(
-            self,
-            "Unsaved Manual Tool Changes",
-            "Close the Manual Tool and discard unsaved changes?",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
-        )
-        if answer == QMessageBox.Yes:
-            event.accept()
-        else:
-            event.ignore()
+        if self._editor_state.unsaved:
+            answer = QMessageBox.question(
+                self,
+                "Unsaved Manual Tool Changes",
+                "Close the Manual Tool and discard unsaved changes?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if answer != QMessageBox.Yes:
+                event.ignore()
+                return
+        if self._video_provider is not None:
+            self._video_provider.shutdown()
+            self._video_provider = None
+        event.accept()
 
     def mark_dirty(self, dirty: bool = True) -> None:
         """Set dirty state and update action availability."""
@@ -332,15 +659,65 @@ class ManualToolWindow(QMainWindow):
                 )
             )
         )
-        self._thumbnail_panel.set_frames(self._session.frame_list)
-        if self._session.frame_list:
+        if self._session.has_images:
+            self._thumbnail_panel.set_frames(self._session.frame_list)
             self._thumbnail_panel.setCurrentRow(0)
+        elif self._session.is_video_input:
+            self._start_video_provider()
         else:
             self._frame_view.clear_frame(
                 "Video input detected. Frame extraction will be wired in a follow-up."
             )
         self._status_label.setText("Native Qt Manual Tool loaded")
         self._sync_actions()
+
+    def _start_video_provider(self) -> None:
+        """Initialize the async video frame provider for video sessions."""
+        self._frame_view.clear_frame("Loading video frames…")
+        meta_dict: dict[str, list[int]] | None
+        if self._video_metadata is not None and self._video_metadata.is_valid:
+            meta_dict = {
+                "pts_time": list(self._video_metadata.pts_time),
+                "keyframes": list(self._video_metadata.keyframes),
+            }
+        else:
+            meta_dict = None
+        self._video_provider = VideoFrameProvider(
+            self._session.frames,
+            video_meta_data=meta_dict,
+            parent=self,
+        )
+        self._video_provider.count_ready.connect(self._on_video_count_ready)
+        self._video_provider.frame_ready.connect(self._on_video_frame_ready)
+        self._video_provider.load_failed.connect(self._on_video_load_failed)
+        self._video_provider.start()
+
+    def _on_video_count_ready(self, count: int) -> None:
+        """Populate the thumbnail list with video frame placeholders."""
+        if count <= 0:
+            self._frame_view.clear_frame("Video reported zero frames")
+            return
+        self._video_frames = [
+            ManualFrame(index=idx, name=f"frame_{idx:06d}", path=self._session.frames)
+            for idx in range(count)
+        ]
+        self._thumbnail_panel.set_frames(tuple(self._video_frames))
+        self._thumbnail_panel.setCurrentRow(0)
+
+    def _on_video_frame_ready(self, index: int, filename: str, image: QImage) -> None:
+        """Display a video frame that was decoded on the worker thread."""
+        if (
+            self._current_frame is not None
+            and self._current_frame.index == index
+            and self._session.is_video_input
+        ):
+            self._frame_view.set_image(image, self._current_frame)
+            self._status_label.setText(f"Frame {index + 1}: {filename}")
+
+    def _on_video_load_failed(self, index: int, message: str) -> None:
+        """Surface a video load failure in the status label and console."""
+        logger.warning("Manual Tool video frame %s failed: %s", index, message)
+        self._status_label.setText(f"Failed to load frame {index}: {message}")
 
     def _on_unsaved_changed(self, dirty: bool) -> None:
         """Forward editor-state unsaved changes to UI signals."""
@@ -356,15 +733,31 @@ class ManualToolWindow(QMainWindow):
         if current is None:
             return
         index = current.data(Qt.UserRole)
-        if not isinstance(index, int) or index >= len(self._session.frame_list):
+        if not isinstance(index, int):
             return
-        frame = self._session.frame_list[index]
-        self._current_frame = frame
-        self._editor_state.set("frame_index", frame.index)
-        if self._frame_view.load_frame(frame):
-            self._status_label.setText(
-                f"Frame {frame.index + 1} of {self._session.frame_count}: {frame.name}"
-            )
+        if self._session.has_images:
+            if index >= len(self._session.frame_list):
+                return
+            frame = self._session.frame_list[index]
+            self._current_frame = frame
+            self._editor_state.set("frame_index", frame.index)
+            self.frame_changed.emit(frame.index)
+            if self._frame_view.load_frame(frame):
+                self._status_label.setText(
+                    f"Frame {frame.index + 1} of {self._session.frame_count}: {frame.name}"
+                )
+        elif self._video_frames:
+            if index >= len(self._video_frames):
+                return
+            frame = self._video_frames[index]
+            self._current_frame = frame
+            self._editor_state.set("frame_index", frame.index)
+            self.frame_changed.emit(frame.index)
+            if self._video_provider is not None:
+                self._video_provider.request_frame(frame.index)
+                self._status_label.setText(
+                    f"Loading frame {frame.index + 1} of {len(self._video_frames)}"
+                )
 
     def _previous_frame(self) -> None:
         """Select previous frame."""
@@ -387,7 +780,9 @@ class ManualToolWindow(QMainWindow):
 
 
 __all__ = [
+    "FrameViewport",
     "ManualFrameView",
     "ManualThumbnailPanel",
     "ManualToolWindow",
+    "VideoFrameProvider",
 ]
