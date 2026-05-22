@@ -1002,8 +1002,7 @@ def test_resolve_production_policy_passes_explicit_policy_through() -> None:
     )
 
     assert (
-        search_cli._resolve_production_policy("bucket_aware_veto", winner)
-        == "bucket_aware_veto"
+        search_cli._resolve_production_policy("bucket_aware_veto", winner) == "bucket_aware_veto"
     )
     assert (
         search_cli._resolve_production_policy("candidate:weighted_median", winner)
