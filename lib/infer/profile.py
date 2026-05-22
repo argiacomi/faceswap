@@ -7,7 +7,6 @@ import logging
 import math
 import typing as T
 from dataclasses import InitVar, dataclass, field
-from operator import itemgetter
 from threading import Event, Lock
 from time import perf_counter
 
@@ -826,7 +825,7 @@ class Profiler:
     def __call__(self) -> None:
         """Call the profiler"""
         # model_benchmarks = self._profile_isolated()  # Unused. Kept for if/when multi-gpu support
-        plugins = [r.handler.plugin for r in itemgetter(*self._torch_runners)(self._chain)]
+        plugins = [self._chain[idx].handler.plugin for idx in self._torch_runners]
         has_detector = self._chain[self._torch_runners[0]].handler.plugin_type == "detect"
         pipeline_benchmarks = PipelineProfile(
             plugins,
