@@ -1430,6 +1430,7 @@ class ManualToolWindow(QMainWindow):
             "All Frames",
             "Has Face(s)",
             "No Faces",
+            "Single Face",
             "Multiple Faces",
             "Misaligned Faces",
         )

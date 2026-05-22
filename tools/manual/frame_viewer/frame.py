@@ -158,6 +158,7 @@ class DisplayFrame(ttk.Frame):  # pylint:disable=too-many-ancestors
             "All Frames",
             "Has Face(s)",
             "No Faces",
+            "Single Face",
             "Multiple Faces",
             "Misaligned Faces",
         ]
