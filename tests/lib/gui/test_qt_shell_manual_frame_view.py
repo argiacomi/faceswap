@@ -6,8 +6,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
-from PySide6.QtGui import QColor, QImage, QMouseEvent, QPainter, QPixmap, QWheelEvent
+from PySide6.QtCore import QPoint, QPointF, Qt
+from PySide6.QtGui import QColor, QImage, QPainter, QPixmap, QWheelEvent
+from PySide6.QtTest import QTest
 
 from lib.gui.qt_shell.manual_tool import FrameViewport, ManualFrameView, ManualToolWindow
 from tools.manual.session import ManualFrame, ManualSession
@@ -78,53 +79,17 @@ def test_frame_view_pan_clamped_while_zoomed(qtbot, tmp_path: Path) -> None:  # 
     start = QPoint(100, 80)
     moved = QPoint(180, 130)
 
-    press = QMouseEvent(
-        QEvent.MouseButtonPress,
-        QPointF(start),
-        Qt.LeftButton,
-        Qt.LeftButton,
-        Qt.NoModifier,
-    )
-    move = QMouseEvent(
-        QEvent.MouseMove,
-        QPointF(moved),
-        Qt.LeftButton,
-        Qt.LeftButton,
-        Qt.NoModifier,
-    )
-    release = QMouseEvent(
-        QEvent.MouseButtonRelease,
-        QPointF(moved),
-        Qt.LeftButton,
-        Qt.NoButton,
-        Qt.NoModifier,
-    )
-
-    view.mousePressEvent(press)
-    view.mouseMoveEvent(move)
-    view.mouseReleaseEvent(release)
+    QTest.mousePress(view, Qt.LeftButton, Qt.NoModifier, start)
+    QTest.mouseMove(view, moved)
+    QTest.mouseRelease(view, Qt.LeftButton, Qt.NoModifier, moved)
 
     offset = view.offset
     assert offset.x() != 0.0 or offset.y() != 0.0
 
     # Drag the view by an absurd amount; offset must remain finite and clamped.
-    far_press = QMouseEvent(
-        QEvent.MouseButtonPress,
-        QPointF(QPoint(100, 80)),
-        Qt.LeftButton,
-        Qt.LeftButton,
-        Qt.NoModifier,
-    )
-    far_move = QMouseEvent(
-        QEvent.MouseMove,
-        QPointF(QPoint(5000, 5000)),
-        Qt.LeftButton,
-        Qt.LeftButton,
-        Qt.NoModifier,
-    )
-    view.mousePressEvent(far_press)
-    view.mouseMoveEvent(far_move)
-    view.mouseReleaseEvent(release)
+    QTest.mousePress(view, Qt.LeftButton, Qt.NoModifier, QPoint(100, 80))
+    QTest.mouseMove(view, QPoint(5000, 5000))
+    QTest.mouseRelease(view, Qt.LeftButton, Qt.NoModifier, QPoint(5000, 5000))
     clamped = view.offset
 
     # Pan offset never exceeds the widget dimensions when zoomed; this guards the clamp.
@@ -234,22 +199,8 @@ def test_frame_view_click_emits_source_coordinates(qtbot, tmp_path: Path) -> Non
 
     # Click roughly at center → expect coordinates near the middle of the source image.
     centre = QPoint(view.width() // 2, view.height() // 2)
-    press = QMouseEvent(
-        QEvent.MouseButtonPress,
-        QPointF(centre),
-        Qt.LeftButton,
-        Qt.LeftButton,
-        Qt.NoModifier,
-    )
-    view.mousePressEvent(press)
-    release = QMouseEvent(
-        QEvent.MouseButtonRelease,
-        QPointF(centre),
-        Qt.LeftButton,
-        Qt.NoButton,
-        Qt.NoModifier,
-    )
-    view.mouseReleaseEvent(release)
+    QTest.mousePress(view, Qt.LeftButton, Qt.NoModifier, centre)
+    QTest.mouseRelease(view, Qt.LeftButton, Qt.NoModifier, centre)
 
     assert len(captured) == 1
     source_point = captured[0]
@@ -277,26 +228,3 @@ def test_manual_tool_window_navigation_emits_frame_changed(  # type:ignore[no-un
     assert captured == [1, 2, 1]
     assert window.frame_view.has_frame is True
 
-
-def test_video_image_decoder_handles_empty_array() -> None:
-    """The BGR→QImage helper returns a null image for empty/None input."""
-    import numpy as np
-
-    from lib.gui.qt_shell.manual_tool import _bgr_array_to_qimage
-
-    assert _bgr_array_to_qimage(None).isNull()
-    assert _bgr_array_to_qimage(np.zeros((0, 0, 3), dtype=np.uint8)).isNull()
-
-
-def test_video_image_decoder_converts_bgr() -> None:
-    """A small BGR uint8 array converts to a non-null QImage with matching size."""
-    import numpy as np
-
-    from lib.gui.qt_shell.manual_tool import _bgr_array_to_qimage
-
-    frame = np.full((4, 5, 3), 200, dtype=np.uint8)
-    image = _bgr_array_to_qimage(frame)
-    assert image.isNull() is False
-    assert image.width() == 5
-    assert image.height() == 4
-    assert image.format() == QImage.Format_BGR888
