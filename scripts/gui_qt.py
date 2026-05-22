@@ -83,12 +83,12 @@ class Gui:
         self.root.apply_gui_settings()
         if not self._owns_app:
             return
-        if not bool(getattr(self._arguments, "debug", False)):
-            self._install_console_logging()
-        else:
-            logger.info("Console debug activated. Outputting to main terminal")
-        install_signal_handlers(self.app, self.root)
         try:
+            if not bool(getattr(self._arguments, "debug", False)):
+                self._install_console_logging()
+            else:
+                logger.info("Console debug activated. Outputting to main terminal")
+            install_signal_handlers(self.app, self.root)
             self.app.exec()
         except KeyboardInterrupt:
             interrupt_window(self.root)
