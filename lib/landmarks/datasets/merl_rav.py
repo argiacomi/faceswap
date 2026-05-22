@@ -10,13 +10,14 @@ derived from the 68 landmarks compared against the AFLW 5-point keypoints in
 MERL-RAV label semantics:
 
 * positive ``x y``: visible landmark
-* negative ``-x -y``: externally occluded, estimated at ``abs(x), abs(y)``
-* ``-1 -1``: self-occluded, location not estimated
+* negative ``-x -y``: externally occluded landmark estimated at ``abs(x), abs(y)``
+* ``-1 -1``: self-occluded landmark with no estimated location
 
-For the AFLW release-2 crop manifest path all negative coordinates are treated
-as invalid: they are masked out instead of forced into the crop with ``abs()``.
-The per-landmark validity is preserved alongside the translated landmarks so
-downstream consumers can score only the source-valid, in-crop positions.
+For the AFLW release-2 crop manifest path, externally occluded points are kept
+as coordinate-valid estimated locations. Only ``-1 -1`` points are treated as
+coordinate-invalid. Coordinate validity and scoring visibility are tracked
+separately so downstream evaluation can mask landmarks according to policy
+without discarding useful crop/bbox/normalizer geometry.
 """
 
 from __future__ import annotations
@@ -139,27 +140,38 @@ def _parse_pts_signed(path: Path) -> np.ndarray:
 
 def _visibility_for_crop(
     signed_xy: np.ndarray,
-) -> tuple[list[str], np.ndarray]:
-    """Return per-landmark visibility labels plus source points (NaN where invalid).
+) -> tuple[list[str], np.ndarray, np.ndarray]:
+    """Return labels, coordinate-valid points, and default score visibility.
 
-    For the AFLW release-2 crop manifest path, negative coordinates (both the
-    ``-1 -1`` self-occluded sentinel and externally-occluded ``-x -y`` pairs)
-    are treated as invalid/missing. ``abs()`` is not applied: invalid positions
-    are masked instead so the per-image crop origin is estimated from only the
-    source-valid landmarks.
+    MERL-RAV signed-coordinate semantics:
+
+    * positive ``x y``: visible landmark with directly usable coordinate
+    * negative ``-x -y``: externally occluded landmark estimated at ``abs(x), abs(y)``
+    * ``-1 -1``: self-occluded landmark with no usable coordinate
+
+    Externally occluded landmarks are coordinate-valid, but excluded from the
+    default scoring visibility mask.
     """
     visibility: list[str] = []
     points = np.full(signed_xy.shape, np.nan, dtype=np.float64)
+    score_visible = np.zeros((signed_xy.shape[0],), dtype=bool)
+
     for idx, (x_value, y_value) in enumerate(signed_xy):
         if x_value == -1 and y_value == -1:
             visibility.append("self_occluded")
-        elif x_value < 0 or y_value < 0:
-            visibility.append("externally_occluded")
-        else:
-            visibility.append("visible")
-            points[idx] = (x_value, y_value)
-    return visibility, points
+            continue
 
+        if x_value < 0 or y_value < 0:
+            visibility.append("externally_occluded")
+            points[idx] = (abs(x_value), abs(y_value))
+            score_visible[idx] = False
+            continue
+
+        visibility.append("visible")
+        points[idx] = (x_value, y_value)
+        score_visible[idx] = True
+
+    return visibility, points, score_visible
 
 def _source_valid_xy(points_xy: np.ndarray) -> np.ndarray:
     """Return a boolean mask of finite, non-negative landmark positions."""
@@ -384,6 +396,7 @@ def _sample_from_aflw_crop(
     residuals: np.ndarray,
     used_anchors: int,
     visibility: list[str],
+    score_visible: np.ndarray,
     image_hw: tuple[int, int],
 ) -> dict[str, T.Any]:
     """Build a manifest sample for one MERL-RAV/AFLW release-2 crop pair."""
@@ -392,9 +405,35 @@ def _sample_from_aflw_crop(
     condition_labels = _labels_from_path(relative_annotation)
     if any(value == "externally_occluded" for value in visibility):
         condition_labels = tuple(dict.fromkeys((*condition_labels, "occlusion")))
+
     label_id = relative_annotation.with_suffix("").as_posix().replace("/", "_")
     sample_id = f"{label_id}__{crop_entry['stem']}"
     residual_abs = np.abs(residuals) if residuals.size else np.zeros((0, 2), dtype=np.float64)
+
+    coordinate_valid_in_crop = in_crop_mask
+    score_visibility = coordinate_valid_in_crop & score_visible
+
+    face_bbox = _bbox_from_valid(translated, coordinate_valid_in_crop, image_hw)
+    if not all(np.isfinite(value) for value in face_bbox):
+        raise ValueError(f"MERL-RAV sample {sample_id} has non-finite face_bbox={face_bbox!r}")
+
+    left, top, right, bottom = face_bbox
+    bbox_width = float(right - left)
+    bbox_height = float(bottom - top)
+    normalizer = max(bbox_width, bbox_height)
+
+    if not np.isfinite(normalizer) or normalizer <= 0.0:
+        normalizer = float(max(image_hw[1], image_hw[0]))
+
+    if not np.isfinite(normalizer) or normalizer <= 0.0:
+        raise ValueError(
+            f"MERL-RAV sample {sample_id} has invalid fallback normalizer={normalizer!r}"
+        )
+
+    top_level_visibility = [bool(value) for value in score_visibility.tolist()]
+    coordinate_valid_mask = [bool(value) for value in coordinate_valid_in_crop.tolist()]
+    source_valid_mask = [bool(value) for value in src_valid_mask.tolist()]
+
     metadata: dict[str, T.Any] = {
         "image_id": crop_entry["relative"],
         "annotation_file": relative_annotation.as_posix(),
@@ -417,17 +456,21 @@ def _sample_from_aflw_crop(
             float(np.max(residual_abs[:, 0])) if residual_abs.size else 0.0,
             float(np.max(residual_abs[:, 1])) if residual_abs.size else 0.0,
         ],
-        "landmark_source_valid_mask": [bool(value) for value in src_valid_mask.tolist()],
-        "landmark_in_crop_mask": [bool(value) for value in in_crop_mask.tolist()],
+        "landmark_source_valid_mask": source_valid_mask,
+        "landmark_in_crop_mask": coordinate_valid_mask,
+        "landmark_coordinate_valid_mask": coordinate_valid_mask,
+        "landmark_score_visibility_mask": top_level_visibility,
         "landmark_source_valid_count": int(src_valid_mask.sum()),
-        "landmark_in_crop_count": int(in_crop_mask.sum()),
-        "face_bbox": _bbox_from_valid(translated, in_crop_mask, image_hw),
+        "landmark_in_crop_count": int(coordinate_valid_in_crop.sum()),
+        "landmark_score_visible_count": int(score_visibility.sum()),
+        "face_bbox": face_bbox,
         "face_bbox_source": "merl_rav_aflw_release2_crop_translated_landmarks",
+        "normalizer_source": "merl_rav_coordinate_valid_landmark_bbox_max_side",
         "aflw_image_source": "aflw_release2_cropped",
     }
-    # Saved landmarks must remain finite; invalid positions are zeroed and the
-    # validity is preserved in the per-landmark mask above.
+
     finite_landmarks = np.where(np.isfinite(translated), translated, 0.0).astype("float32")
+
     return {
         "sample_id": sample_id,
         "dataset": "merl-rav",
@@ -436,6 +479,8 @@ def _sample_from_aflw_crop(
         "image": str(crop_entry["absolute"].resolve()),
         "source_schema": "2d_68",
         "source": {"dataset": "merl-rav-aflw-release2", "source_id": sample_id},
+        "normalizer": float(normalizer),
+        "visibility": top_level_visibility,
         "metadata": metadata,
         "points": finite_landmarks,
     }
@@ -461,11 +506,14 @@ def _build_samples_aflw_release2(
         "skipped_missing_image": 0,
         "skipped_bad_hw": 0,
         "skipped_all_outside_crop": 0,
+        "skipped_no_score_visible": 0,
         "total_source_valid_landmarks": 0,
         "total_in_crop_landmarks": 0,
+        "total_score_visible_landmarks": 0,
         "residual_medians": [],
         "aflw_release2_split_counts": split_counts,
     }
+
     for annotation in _label_files(label_root):
         stats["labels"] += 1
         source_stem = _aflw_source_stem(annotation.stem)
@@ -473,8 +521,9 @@ def _build_samples_aflw_release2(
         if not candidates:
             stats["skipped_no_candidate"] += 1
             continue
+
         signed = _parse_pts_signed(annotation)
-        visibility, src_points = _visibility_for_crop(signed)
+        visibility, src_points, score_visible = _visibility_for_crop(signed)
         src5_xy = _landmarks68_to_5anchors_xy(src_points)
         chosen, origin, residuals, used = _select_best_crop_candidate(
             src5_xy, candidates, min_anchors=min_anchors
@@ -485,6 +534,7 @@ def _build_samples_aflw_release2(
         if not chosen["absolute"].is_file():
             stats["skipped_missing_image"] += 1
             continue
+
         expected_h, expected_w = chosen["hw"]
         image_hw: tuple[int, int] = (expected_h, expected_w)
         if validate_hw:
@@ -506,6 +556,7 @@ def _build_samples_aflw_release2(
                 stats["skipped_bad_hw"] += 1
                 continue
             image_hw = actual_hw
+
         sample = _sample_from_aflw_crop(
             annotation=annotation,
             label_root=label_root,
@@ -515,18 +566,28 @@ def _build_samples_aflw_release2(
             residuals=residuals,
             used_anchors=used,
             visibility=visibility,
+            score_visible=score_visible,
             image_hw=image_hw,
         )
+
         if sample["metadata"]["landmark_in_crop_count"] == 0:
             stats["skipped_all_outside_crop"] += 1
             continue
+        if not any(sample["visibility"]):
+            stats["skipped_no_score_visible"] += 1
+            continue
+
         samples.append(sample)
         stats["matched"] += 1
         stats["total_source_valid_landmarks"] += int(
             sample["metadata"]["landmark_source_valid_count"]
         )
         stats["total_in_crop_landmarks"] += int(sample["metadata"]["landmark_in_crop_count"])
+        stats["total_score_visible_landmarks"] += int(
+            sample["metadata"]["landmark_score_visible_count"]
+        )
         stats["residual_medians"].append(sample["metadata"]["anchor_residual_median_xy"])
+
     return samples, stats
 
 
@@ -541,11 +602,14 @@ def _log_aflw_release2_audit(stats: dict[str, T.Any]) -> None:
             "aflw_release2_split_counts",
             "total_source_valid_landmarks",
             "total_in_crop_landmarks",
+            "total_score_visible_landmarks",
         }
     }
     summary["split_counts"] = stats.get("aflw_release2_split_counts", {})
     summary["total_source_valid_landmarks"] = stats.get("total_source_valid_landmarks", 0)
     summary["total_in_crop_landmarks"] = stats.get("total_in_crop_landmarks", 0)
+    summary["total_score_visible_landmarks"] = stats.get("total_score_visible_landmarks", 0)
+
     residuals = stats.get("residual_medians") or []
     if residuals:
         arr = np.asarray(residuals, dtype=np.float64)
@@ -585,12 +649,22 @@ def build_merl_rav_manifest(
     MERL-RAV 68-point reannotations are matched to AFLW release-2 crops via the
     stem ``imageNNNNN``. Per-image crop origins ``(x1, y1)`` are recovered by
     comparing 5 robust anchors derived from the 68-point annotation against the
-    AFLW 5-point keypoints in ``mat['gt']`` and translating every valid
-    landmark by the same global origin. Negative MERL-RAV coordinates are
-    treated as invalid (no ``abs()`` translation); per-landmark validity is
-    written into the sample metadata so downstream scoring can mask invalid
-    positions instead of evaluating against forced coordinates. Saved
-    ``.npy`` landmarks remain finite (invalid positions are zeroed).
+    AFLW 5-point keypoints in ``mat['gt']`` and translating every coordinate-
+    valid landmark by the same global origin.
+
+    MERL-RAV signed-coordinate semantics are preserved:
+
+    * positive ``x y``: visible landmark with a directly usable coordinate
+    * negative ``-x -y``: externally occluded landmark estimated at
+      ``abs(x), abs(y)``
+    * ``-1 -1``: self-occluded landmark with no usable coordinate
+
+    Externally occluded landmarks are retained as coordinate-valid points for
+    crop matching, bbox construction, and normalizer computation. Scoring
+    visibility is tracked separately so downstream evaluation can decide whether
+    to score only visible landmarks or include estimated occluded landmarks.
+    Saved ``.npy`` landmarks remain finite; truly invalid positions are zeroed
+    after validity masks have been computed and written into metadata.
     """
     release2_dir = (
         Path(aflw_release2_dir) if aflw_release2_dir is not None else DEFAULT_AFLW_RELEASE2_DIR
@@ -627,8 +701,10 @@ def build_merl_rav_manifest(
             "skipped_missing_image": 0,
             "skipped_bad_hw": 0,
             "skipped_all_outside_crop": 0,
+            "skipped_no_score_visible": 0,
             "total_source_valid_landmarks": 0,
             "total_in_crop_landmarks": 0,
+            "total_score_visible_landmarks": 0,
             "residual_medians": [],
             "aflw_release2_split_counts": {},
         }
