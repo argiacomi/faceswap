@@ -1,17 +1,5 @@
 #!/usr/bin/env python3
-"""Shared pytest fixtures for Qt GUI tests.
-
-Auto-accepts modal QMessageBox prompts so test teardown does not hang waiting
-for user input.  Without this, closing a ManualToolWindow that has unsaved
-edits (or any other widget that prompts for confirmation in ``closeEvent``)
-blocks pytest forever in headless mode.
-
-The native Manual Tool also reports startup progress through the normal
-application logger.  That is useful at runtime, but in widget tests the
-background startup worker can finish between pytest progress dots and print
-non-pytest log lines.  Keep those routine INFO messages quiet for this test
-package while still allowing warnings/errors through.
-"""
+"""Shared pytest fixtures for Qt GUI tests."""
 
 from __future__ import annotations
 
@@ -19,14 +7,6 @@ import logging
 
 import pytest
 from PySide6.QtWidgets import QMessageBox
-
-
-def pytest_configure(config: pytest.Config) -> None:
-    """Keep known PySide6 mouse-event deprecations out of Qt GUI test output."""
-    config.addinivalue_line(
-        "filterwarnings",
-        "ignore:Function: 'QMouseEvent\\..* is marked as deprecated.*:DeprecationWarning",
-    )
 
 
 @pytest.fixture(scope="session", autouse=True)
