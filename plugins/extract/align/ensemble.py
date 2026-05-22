@@ -46,6 +46,7 @@ from lib.landmarks.ensemble.runtime_resolver import (
     RuntimeResolverError,
     resolve_runtime,
 )
+from lib.landmarks.ensemble.runtime_resolver_scorer import load_runtime_resolver_scorer
 from lib.landmarks.ensemble.strategies import (
     CANONICAL_STRATEGIES,
     canonical_strategy,
@@ -187,6 +188,7 @@ class Ensemble(ExtractPlugin):
         self._last_matrices: np.ndarray | None = None
         self._last_detector_bboxes: np.ndarray | None = None
         self.last_debug_metadata: list[dict[str, T.Any]] = []
+        self._runtime_scorer: T.Any = None
         self.model: list[LandmarkAdapter]
         logger.debug(
             "[Ensemble] init strategy=%s setup_mode=%s setup_path=%s promoted=%s "
@@ -271,6 +273,23 @@ class Ensemble(ExtractPlugin):
 
     def load_model(self) -> list[LandmarkAdapter]:
         """Load configured adapters."""
+        # Construct the LightGBM Booster BEFORE Torch/MPS adapter loads.
+        # If the booster is built later (inside the ensemble worker, after
+        # Torch/MPS is warm) it can hang on macOS — instead, build it up
+        # front, then hand the preloaded scorer to resolve_runtime so the
+        # live path skips re-construction.
+        if self._use_resolver and self._resolver_policy.startswith("learned_quality"):
+            if not self._resolver_scorer_path:
+                raise ValueError(
+                    f"{self._resolver_policy} requires resolver_scorer_path"
+                )
+            self._runtime_scorer = load_runtime_resolver_scorer(self._resolver_scorer_path)
+            if hasattr(self._runtime_scorer, "_booster"):
+                logger.debug(
+                    "[Ensemble] warming runtime LightGBM scorer before Torch/MPS adapters"
+                )
+                self._runtime_scorer._booster()
+                logger.debug("[Ensemble] warmed runtime LightGBM scorer")
         adapters = (
             list(self._injected_adapters)
             if self._injected_adapters is not None
@@ -743,9 +762,19 @@ class Ensemble(ExtractPlugin):
                 detector_bbox=detector_bbox,
                 image_crop=image_crop,
                 crop_to_frame_matrix=crop_to_frame_matrix,
+                preloaded_scorer=self._runtime_scorer,
             )
         except RuntimeResolverError as err:
             logger.warning("[Ensemble] runtime resolver hard-failed: %s", err)
+            if self._strict:
+                raise
+            return None
+        except Exception:  # noqa: BLE001 - diagnostic: surface unexpected crashes
+            # Temporary widened catch to surface stack traces when the
+            # runtime resolver silently swallows an unexpected exception
+            # (e.g. lightgbm loading, scorer payload mismatch). Keep
+            # narrowing once the failure mode is identified.
+            logger.exception("[Ensemble] runtime resolver crashed")
             if self._strict:
                 raise
             return None

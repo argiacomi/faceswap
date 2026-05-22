@@ -1565,6 +1565,7 @@ def resolve_runtime(
     detector_bbox: T.Sequence[float] | None = None,
     image_crop: np.ndarray | None = None,
     crop_to_frame_matrix: np.ndarray | None = None,
+    preloaded_scorer: T.Any = None,
 ) -> RuntimeResolverResult:
     """Resolve one face using runtime candidate diagnostics and policy selection."""
     learned_policies = {"learned_quality_v1", "learned_quality_v1_1", "learned_quality_v2"}
@@ -1705,10 +1706,22 @@ def resolve_runtime(
     hard_pose_plain_average_rejected_candidate = ""
     scorer_metadata: dict[str, T.Any] = {}
     if config.policy in learned_policies:
-        if not config.scorer_path:
-            raise RuntimeResolverError(f"{config.policy} requires resolver_scorer_path")
-        scorer = load_runtime_resolver_scorer(config.scorer_path)
+        if preloaded_scorer is not None:
+            logger.debug("[RuntimeResolver] using preloaded scorer type=%s", type(preloaded_scorer).__name__)
+            scorer = preloaded_scorer
+        else:
+            if not config.scorer_path:
+                raise RuntimeResolverError(f"{config.policy} requires resolver_scorer_path")
+            logger.debug("[RuntimeResolver] loading scorer path=%s", config.scorer_path)
+            scorer = load_runtime_resolver_scorer(config.scorer_path)
+        logger.debug(
+            "[RuntimeResolver] loaded scorer type=%s version=%s policy=%s",
+            type(scorer).__name__,
+            getattr(scorer, "version", ""),
+            getattr(scorer, "runtime_policy", ""),
+        )
         model_available = {prediction.model: True for prediction in predictions}
+        logger.debug("[RuntimeResolver] scoring candidates count=%d", len(candidates))
         scores = score_runtime_candidates(
             scorer,
             candidates,
@@ -1723,6 +1736,7 @@ def resolve_runtime(
             runtime_bucket_source=runtime_bucket_source,
             candidate_extra_features=candidate_extra_features,
         )
+        logger.debug("[RuntimeResolver] scored candidates=%s", scores)
         logger.debug(
             "[RuntimeResolver] scorer ranked candidates=%s",
             [name for name, _score in sorted(scores.items(), key=lambda item: (item[1], item[0]))],
