@@ -227,3 +227,174 @@ def test_manual_tool_window_navigation_emits_frame_changed(  # type:ignore[no-un
 
     assert captured == [1, 2, 1]
     assert window.frame_view.has_frame is True
+
+
+def test_frame_view_drag_inside_bbox_emits_move(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+    """Dragging from inside an active bbox emits face_move_requested on release."""
+    from PySide6.QtCore import QPointF, QRectF
+    from PySide6.QtGui import QMouseEvent
+
+    view = ManualFrameView()
+    qtbot.addWidget(view)
+    view.resize(100, 100)
+    view.show()
+
+    # Load a 100x100 fixture so source coords map 1:1 to widget coords.
+    fixture = tmp_path / "f.png"
+    pixmap = QPixmap(100, 100)
+    pixmap.fill(QColor("#888"))
+    assert pixmap.save(str(fixture), "PNG")
+    view.load_frame(ManualFrame(index=0, name=fixture.name, path=str(fixture)))
+
+    view.install_editor_seams(
+        active_face_provider=lambda: 0,
+        active_bbox_provider=lambda: QRectF(20.0, 20.0, 30.0, 30.0),
+    )
+
+    moves: list[tuple[int, float, float]] = []
+    view.face_move_requested.connect(lambda idx, dx, dy: moves.append((idx, dx, dy)))
+
+    # Press inside the bbox at (30, 30), drag to (50, 40), release.
+    target = view._target_rect()  # internal helper — fixture maps 1:1 once shown
+    start_widget = QPointF(target.x() + 30.0, target.y() + 30.0)
+    end_widget = QPointF(target.x() + 50.0, target.y() + 40.0)
+    press = QMouseEvent(
+        QMouseEvent.Type.MouseButtonPress,
+        start_widget,
+        Qt.LeftButton,
+        Qt.LeftButton,
+        Qt.NoModifier,
+    )
+    move = QMouseEvent(
+        QMouseEvent.Type.MouseMove,
+        end_widget,
+        Qt.NoButton,
+        Qt.LeftButton,
+        Qt.NoModifier,
+    )
+    release = QMouseEvent(
+        QMouseEvent.Type.MouseButtonRelease,
+        end_widget,
+        Qt.LeftButton,
+        Qt.NoButton,
+        Qt.NoModifier,
+    )
+    view.mousePressEvent(press)
+    view.mouseMoveEvent(move)
+    view.mouseReleaseEvent(release)
+
+    assert len(moves) == 1
+    face_index, dx, dy = moves[0]
+    assert face_index == 0
+    # Source-to-widget is 1:1 because target_rect spans full widget size.
+    assert dx == pytest.approx(20.0, abs=0.5)
+    assert dy == pytest.approx(10.0, abs=0.5)
+
+
+def test_frame_view_drag_se_handle_emits_resize(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+    """Dragging the SE handle emits face_resize_requested with grown bbox."""
+    from PySide6.QtCore import QPointF, QRectF
+    from PySide6.QtGui import QMouseEvent
+
+    view = ManualFrameView()
+    qtbot.addWidget(view)
+    view.resize(100, 100)
+    view.show()
+
+    fixture = tmp_path / "f.png"
+    pixmap = QPixmap(100, 100)
+    pixmap.fill(QColor("#888"))
+    assert pixmap.save(str(fixture), "PNG")
+    view.load_frame(ManualFrame(index=0, name=fixture.name, path=str(fixture)))
+    view.install_editor_seams(
+        active_face_provider=lambda: 0,
+        active_bbox_provider=lambda: QRectF(20.0, 20.0, 30.0, 30.0),
+    )
+
+    captured: list[tuple[int, QRectF]] = []
+    view.face_resize_requested.connect(lambda idx, rect: captured.append((idx, QRectF(rect))))
+
+    target = view._target_rect()
+    # SE corner of source bbox at (50,50) — also widget coords here.
+    start_widget = QPointF(target.x() + 50.0, target.y() + 50.0)
+    end_widget = QPointF(target.x() + 70.0, target.y() + 65.0)
+    press = QMouseEvent(
+        QMouseEvent.Type.MouseButtonPress,
+        start_widget,
+        Qt.LeftButton,
+        Qt.LeftButton,
+        Qt.NoModifier,
+    )
+    move = QMouseEvent(
+        QMouseEvent.Type.MouseMove,
+        end_widget,
+        Qt.NoButton,
+        Qt.LeftButton,
+        Qt.NoModifier,
+    )
+    release = QMouseEvent(
+        QMouseEvent.Type.MouseButtonRelease,
+        end_widget,
+        Qt.LeftButton,
+        Qt.NoButton,
+        Qt.NoModifier,
+    )
+    view.mousePressEvent(press)
+    view.mouseMoveEvent(move)
+    view.mouseReleaseEvent(release)
+
+    assert len(captured) == 1
+    idx, rect = captured[0]
+    assert idx == 0
+    # Bbox should have grown by ~20px wide and 15px tall, anchored at (20,20).
+    assert rect.x() == pytest.approx(20.0, abs=0.5)
+    assert rect.y() == pytest.approx(20.0, abs=0.5)
+    assert rect.width() == pytest.approx(50.0, abs=0.5)
+    assert rect.height() == pytest.approx(45.0, abs=0.5)
+
+
+def test_frame_view_hover_cursor_switches_on_handle(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+    """Hovering an active-face resize handle yields a diagonal sizing cursor."""
+    from PySide6.QtCore import QPointF, QRectF
+
+    view = ManualFrameView()
+    qtbot.addWidget(view)
+    view.resize(100, 100)
+    view.show()
+
+    fixture = tmp_path / "f.png"
+    pixmap = QPixmap(100, 100)
+    pixmap.fill(QColor("#888"))
+    assert pixmap.save(str(fixture), "PNG")
+    view.load_frame(ManualFrame(index=0, name=fixture.name, path=str(fixture)))
+    view.install_editor_seams(
+        active_face_provider=lambda: 0,
+        active_bbox_provider=lambda: QRectF(20.0, 20.0, 30.0, 30.0),
+    )
+
+    target = view._target_rect()
+    # Hover SE corner -> SizeFDiagCursor; inside body -> SizeAllCursor.
+    view._update_hover_cursor(QPointF(target.x() + 50.0, target.y() + 50.0))
+    assert view.cursor().shape() == Qt.SizeFDiagCursor
+    view._update_hover_cursor(QPointF(target.x() + 30.0, target.y() + 30.0))
+    assert view.cursor().shape() == Qt.SizeAllCursor
+
+
+def test_manual_window_arrow_key_nudges_active_face(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+    """The Up arrow keyboard shortcut translates the active face one source pixel."""
+    session = _session_with_frames(tmp_path, count=1)
+    window = ManualToolWindow(session)
+    qtbot.addWidget(window)
+    window.show()
+    window.editable_alignments.add_face(0, (50.0, 50.0, 30.0, 30.0))
+    window.editor_state.set("face_index", 0)
+
+    assert window.nudge_up_one() is True
+    face = window.editable_alignments.faces(0)[0]
+    assert face.bbox == (50.0, 49.0, 30.0, 30.0)
+
+    assert window.nudge_right_one() is True
+    assert window.editable_alignments.faces(0)[0].bbox == (51.0, 49.0, 30.0, 30.0)
+
+    assert window.nudge_down_fast() is True
+    assert window.editable_alignments.faces(0)[0].bbox == (51.0, 59.0, 30.0, 30.0)

@@ -551,6 +551,54 @@ class ManualEditableAlignments:
         self._apply(do, undo, frame_index)
         return True
 
+    def resize_face(
+        self,
+        frame_index: int,
+        face_index: int,
+        bbox: tuple[float, float, float, float],
+    ) -> bool:
+        """Replace the face's bbox with ``bbox`` (source pixels).
+
+        Landmarks are rescaled proportionally to the new bbox dimensions so a
+        resize-drag keeps the landmark cloud anchored relative to the box; this
+        mirrors the Tk Manual Tool's resize behavior.  Returns ``False`` when
+        the index is invalid or the new bbox would be degenerate.
+        """
+        faces = self._faces.get(frame_index, [])
+        if face_index < 0 or face_index >= len(faces):
+            return False
+        new_x, new_y, new_w, new_h = self._validate_bbox(bbox)
+        previous = faces[face_index]
+        prev_x, prev_y, prev_w, prev_h = previous.bbox
+        if new_x == prev_x and new_y == prev_y and new_w == prev_w and new_h == prev_h:
+            return True
+        if prev_w > 0 and prev_h > 0 and previous.landmarks:
+            scale_x = new_w / prev_w
+            scale_y = new_h / prev_h
+            landmarks = tuple(
+                (
+                    new_x + (lx - prev_x) * scale_x,
+                    new_y + (ly - prev_y) * scale_y,
+                )
+                for lx, ly in previous.landmarks
+            )
+        else:
+            landmarks = previous.landmarks
+        resized = EditableFace(
+            face_index=face_index,
+            bbox=(new_x, new_y, new_w, new_h),
+            landmarks=landmarks,
+        )
+
+        def do() -> None:
+            self._faces[frame_index][face_index] = resized
+
+        def undo() -> None:
+            self._faces[frame_index][face_index] = previous
+
+        self._apply(do, undo, frame_index)
+        return True
+
     def move_face(
         self,
         frame_index: int,

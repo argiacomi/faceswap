@@ -263,3 +263,22 @@ def test_overlay_active_face_tracks_editor_state(qtbot, tmp_path: Path) -> None:
     assert window.frame_overlay.active_face == 7
     window.editor_state.set("face_index", 0)
     assert window.frame_overlay.active_face == 0
+
+
+def test_manual_frame_overlay_handle_at_hits_eight_handles() -> None:
+    """All eight resize handles are addressable around a bbox."""
+    rect = QRectF(100.0, 50.0, 200.0, 100.0)  # x,y,w,h
+    # Anchor points (corner + midpoints) should all hit.
+    hits = {
+        ManualFrameOverlay.handle_at(rect, QPointF(100.0, 50.0)),  # nw
+        ManualFrameOverlay.handle_at(rect, QPointF(200.0, 50.0)),  # n
+        ManualFrameOverlay.handle_at(rect, QPointF(300.0, 50.0)),  # ne
+        ManualFrameOverlay.handle_at(rect, QPointF(300.0, 100.0)),  # e
+        ManualFrameOverlay.handle_at(rect, QPointF(300.0, 150.0)),  # se
+        ManualFrameOverlay.handle_at(rect, QPointF(200.0, 150.0)),  # s
+        ManualFrameOverlay.handle_at(rect, QPointF(100.0, 150.0)),  # sw
+        ManualFrameOverlay.handle_at(rect, QPointF(100.0, 100.0)),  # w
+    }
+    assert hits == {"nw", "n", "ne", "e", "se", "s", "sw", "w"}
+    # A point well inside the bbox but away from any handle returns None.
+    assert ManualFrameOverlay.handle_at(rect, QPointF(200.0, 100.0)) is None

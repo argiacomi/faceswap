@@ -22,7 +22,7 @@ from lib.landmarks.datasets import (
 )
 from lib.landmarks.datasets.aflw2000_3d import build_aflw2000_3d_manifest
 from lib.landmarks.datasets.cofw68 import resolve_cofw68_json
-from lib.landmarks.datasets.merl_rav import build_merl_rav_manifest
+from lib.landmarks.datasets.merl_rav import DEFAULT_AFLW_RELEASE2_DIR, build_merl_rav_manifest
 from lib.landmarks.datasets.polish import polish_landmark_dataset_artifacts
 from lib.landmarks.datasets.sources import DEFAULT_CACHE_DIR, resolve_wflw_official_source
 from lib.landmarks.datasets.visual_overlays import write_indexed_region_overlays
@@ -106,19 +106,31 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "Caltech COFW color archive and the COFW-68 annotation benchmark.",
     )
     parser.add_argument(
-        "--aflw-source-dir",
-        default=None,
-        help="Explicit AFLW image directory for MERL-RAV label matching.",
+        "--aflw-release2-dir",
+        default=str(DEFAULT_AFLW_RELEASE2_DIR),
+        help="AFLW release-2 directory containing output/ and aflw_*_keypoints.mat. "
+        "Used by --dataset merl-rav to translate MERL-RAV 68-point reannotations "
+        "into AFLW release-2 cropped image coordinates. Defaults to "
+        f"{DEFAULT_AFLW_RELEASE2_DIR}.",
     )
     parser.add_argument(
-        "--aflw-source-zip",
-        default=None,
-        help="Explicit AFLW image archive for MERL-RAV label matching.",
+        "--aflw-release2-splits",
+        default="train,test",
+        help="Comma-separated AFLW release-2 splits to use ('train', 'test'). "
+        "Only meaningful with --aflw-release2-dir.",
     )
     parser.add_argument(
-        "--aflw-download-url",
-        default=None,
-        help="Override AFLW image archive URL for MERL-RAV label matching.",
+        "--aflw-release2-min-anchors",
+        type=int,
+        default=3,
+        help="Minimum number of valid AFLW 5-point anchors required to estimate a "
+        "crop origin per sample (default 3).",
+    )
+    parser.add_argument(
+        "--aflw-release2-no-validate-hw",
+        action="store_true",
+        help="Skip validation of mat['hw'] against the actual cropped image "
+        "dimensions in --aflw-release2-dir mode.",
     )
     parser.add_argument("--image-root", default=None)
     parser.add_argument("--recursive", action="store_true")
@@ -153,10 +165,16 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 
 def _validate_args(args: argparse.Namespace) -> None:
     """Validate source-mode combinations before building a manifest."""
-    merl_aflw_args = (args.aflw_source_dir, args.aflw_source_zip, args.aflw_download_url)
-    if args.dataset != "merl-rav" and any(merl_aflw_args):
+    release2_args_set = (
+        args.aflw_release2_splits != "train,test",
+        args.aflw_release2_min_anchors != 3,
+        args.aflw_release2_no_validate_hw,
+    )
+    if args.dataset != "merl-rav" and (
+        args.aflw_release2_dir != str(DEFAULT_AFLW_RELEASE2_DIR) or any(release2_args_set)
+    ):
         raise ValueError(
-            "--aflw-source-dir/--aflw-source-zip/--aflw-download-url are only valid with --dataset merl-rav"
+            "--aflw-release2-dir and --aflw-release2-* are only valid with --dataset merl-rav"
         )
     if args.audit_only:
         if any(
@@ -166,7 +184,8 @@ def _validate_args(args: argparse.Namespace) -> None:
                 args.cofw_json,
                 args.source_dir,
                 args.source_zip,
-                *merl_aflw_args,
+                args.aflw_release2_dir != str(DEFAULT_AFLW_RELEASE2_DIR),
+                *release2_args_set,
             )
         ):
             raise ValueError(
@@ -188,11 +207,6 @@ def _validate_args(args: argparse.Namespace) -> None:
         raise ValueError(
             "Pass only one source mode: --wflw-annotations, "
             "--wflw-download-official, --cofw-json, --source-dir, or --source-zip"
-        )
-    aflw_source_modes = [bool(value) for value in merl_aflw_args]
-    if sum(aflw_source_modes) > 1:
-        raise ValueError(
-            "Pass only one AFLW image source mode: --aflw-source-dir, --aflw-source-zip, or --aflw-download-url"
         )
     if args.dataset == "wflw" and args.cofw_json:
         raise ValueError("--cofw-json is only valid with --dataset cofw")
@@ -319,15 +333,14 @@ def main(argv: list[str] | None = None) -> int:
             write_overlays=args.write_overlays,
         )
     elif args.dataset == "merl-rav":
+        release2_splits = tuple(_parse_csv(args.aflw_release2_splits) or ("train", "test"))
         manifest = build_merl_rav_manifest(
             args.output_dir,
+            aflw_release2_dir=args.aflw_release2_dir,
             source_dir=args.source_dir,
             source_zip=args.source_zip,
             cache_dir=args.cache_dir,
             download_url=args.download_url,
-            aflw_source_dir=args.aflw_source_dir,
-            aflw_source_zip=args.aflw_source_zip,
-            aflw_download_url=args.aflw_download_url,
             force_download=args.force_download,
             no_download=args.no_download,
             scenario=args.scenario,
@@ -336,6 +349,9 @@ def main(argv: list[str] | None = None) -> int:
             manifest_mode=args.manifest_mode,
             allow_overlap=args.allow_overlap,
             write_overlays=args.write_overlays,
+            splits=release2_splits,
+            min_anchors=args.aflw_release2_min_anchors,
+            validate_hw=not args.aflw_release2_no_validate_hw,
         )
     elif args.dataset == "aflw2000-3d":
         manifest = build_aflw2000_3d_manifest(

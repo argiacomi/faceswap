@@ -397,3 +397,67 @@ def test_editable_face_contains_and_center() -> None:
     assert face.contains(15.0, 25.0) is True
     assert face.contains(9.0, 25.0) is False
     assert face.center() == (25.0, 40.0)
+
+
+def test_resize_face_updates_bbox_and_scales_landmarks() -> None:
+    """resize_face replaces the bbox and rescales landmarks proportionally."""
+    model = ManualEditableAlignments(
+        {
+            0: [
+                EditableFace(
+                    face_index=0,
+                    bbox=(10.0, 10.0, 20.0, 20.0),
+                    landmarks=((20.0, 20.0), (25.0, 25.0)),  # center, 3/4
+                )
+            ]
+        }
+    )
+
+    # Double width + height, anchor shifted by 5 in each axis.
+    assert model.resize_face(0, 0, (5.0, 5.0, 40.0, 40.0)) is True
+    face = model.faces(0)[0]
+    assert face.bbox == (5.0, 5.0, 40.0, 40.0)
+    # Original landmark (20,20) was bbox-center; should stay relative center.
+    assert face.landmarks[0] == (25.0, 25.0)
+    # Original (25,25) at 75%; new should be at 5 + 0.75 * 40 = 35.
+    assert face.landmarks[1] == (35.0, 35.0)
+
+
+def test_resize_face_rejects_invalid_face_index() -> None:
+    """An out-of-range face_index returns False without mutating state."""
+    model = ManualEditableAlignments({0: [EditableFace(face_index=0, bbox=_bbox())]})
+
+    assert model.resize_face(0, 5, (0.0, 0.0, 10.0, 10.0)) is False
+    assert model.faces(0)[0].bbox == _bbox()
+
+
+def test_resize_face_is_undoable() -> None:
+    """resize_face participates in the undo/redo stack."""
+    model = ManualEditableAlignments(
+        {0: [EditableFace(face_index=0, bbox=(10.0, 10.0, 20.0, 20.0))]}
+    )
+
+    assert model.resize_face(0, 0, (0.0, 0.0, 40.0, 40.0)) is True
+    assert model.faces(0)[0].bbox == (0.0, 0.0, 40.0, 40.0)
+    assert model.undo() is True
+    assert model.faces(0)[0].bbox == (10.0, 10.0, 20.0, 20.0)
+    assert model.redo() is True
+    assert model.faces(0)[0].bbox == (0.0, 0.0, 40.0, 40.0)
+
+
+def test_resize_face_rejects_degenerate_input() -> None:
+    """Inverted/degenerate rects must be rejected at the model boundary.
+
+    The frame view normalizes drag rects before calling :meth:`resize_face` so
+    inverted bbox should never reach the model in practice — but the model is
+    the last line of defence and surfaces the same ``ValueError`` that
+    :meth:`_validate_bbox` raises elsewhere.
+    """
+    model = ManualEditableAlignments(
+        {0: [EditableFace(face_index=0, bbox=(50.0, 50.0, 20.0, 20.0))]}
+    )
+
+    with pytest.raises(ValueError, match="width and height"):
+        model.resize_face(0, 0, (60.0, 60.0, -30.0, -30.0))
+    # Bbox is unchanged after the rejection.
+    assert model.faces(0)[0].bbox == (50.0, 50.0, 20.0, 20.0)

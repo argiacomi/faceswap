@@ -293,3 +293,38 @@ def test_manual_startup_worker_stop_quits_thread(qtbot, tmp_path: Path) -> None:
     _drain_qt_events(qtbot, timeout_ms=200)
     worker.stop()
     assert worker._thread.isRunning() is False  # noqa: SLF001
+
+
+def test_manual_startup_progress_bar_reports_determinate_percent(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+    """Each startup stage advances the progress bar to its mapped percent."""
+    from lib.gui.qt_shell.manual_tool import ManualToolWindow, _ManualStartupTask
+
+    session = _session_with_frames(tmp_path)
+    window = ManualToolWindow(session)
+    qtbot.addWidget(window)
+
+    assert window._progress_bar.minimum() == 0
+    assert window._progress_bar.maximum() == 100
+
+    # Drive the staged progress slot directly to assert per-stage percentages.
+    window._on_startup_progress("open", "Opening alignments file…")
+    assert window._progress_bar.value() == _ManualStartupTask.STAGE_PERCENT["open"]
+
+    window._on_startup_progress("thumbs", "Checking thumbnail cache…")
+    assert window._progress_bar.value() == _ManualStartupTask.STAGE_PERCENT["thumbs"]
+
+    window._on_startup_progress("complete", "Done")
+    assert window._progress_bar.value() == _ManualStartupTask.STAGE_PERCENT["complete"]
+
+
+def test_manual_startup_task_stage_percent_is_monotonic() -> None:
+    """Stage percentages must monotonically advance toward 100."""
+    from lib.gui.qt_shell.manual_tool import _ManualStartupTask
+
+    percentages = [
+        _ManualStartupTask.STAGE_PERCENT["open"],
+        _ManualStartupTask.STAGE_PERCENT["thumbs"],
+        _ManualStartupTask.STAGE_PERCENT["complete"],
+    ]
+    assert percentages == sorted(percentages)
+    assert percentages[-1] == 100

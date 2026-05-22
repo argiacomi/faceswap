@@ -106,6 +106,23 @@ class ManualFrameOverlay:
     _ACTIVE_COLOR = QColor("#ffb000")
     _LANDMARK_COLOR = QColor("#ffffff")
     _LANDMARK_RADIUS = 2.0
+    _HANDLE_SIZE = 7.0  # square handle side length in widget pixels
+    _HANDLE_FILL = QColor("#ffffff")
+    _HANDLE_EDGE = QColor("#11191c")
+    # Source-coordinate offsets for the 8 resize handles drawn on the active
+    # face, expressed as (anchor_x_fraction, anchor_y_fraction) relative to
+    # the bbox. ``0.5`` is the midpoint. Order matches Qt's
+    # ``size*Cursor`` cursor naming so a hit-test can drive cursors directly.
+    HANDLE_OFFSETS: T.ClassVar[tuple[tuple[str, float, float], ...]] = (
+        ("nw", 0.0, 0.0),
+        ("n", 0.5, 0.0),
+        ("ne", 1.0, 0.0),
+        ("e", 1.0, 0.5),
+        ("se", 1.0, 1.0),
+        ("s", 0.5, 1.0),
+        ("sw", 0.0, 1.0),
+        ("w", 0.0, 0.5),
+    )
 
     def __init__(
         self,
@@ -153,7 +170,47 @@ class ManualFrameOverlay:
                         self._LANDMARK_RADIUS,
                         self._LANDMARK_RADIUS,
                     )
+            if is_active:
+                self._draw_handles(painter, rect)
             painter.restore()
+
+    def _draw_handles(self, painter: QPainter, bbox: QRectF) -> None:
+        """Draw eight square resize handles around the active bbox."""
+        painter.save()
+        edge_pen = QPen(self._HANDLE_EDGE)
+        edge_pen.setWidthF(1.0)
+        painter.setPen(edge_pen)
+        painter.setBrush(QBrush(self._HANDLE_FILL))
+        for _name, fx, fy in self.HANDLE_OFFSETS:
+            cx = bbox.x() + bbox.width() * fx
+            cy = bbox.y() + bbox.height() * fy
+            half = self._HANDLE_SIZE / 2.0
+            painter.drawRect(QRectF(cx - half, cy - half, self._HANDLE_SIZE, self._HANDLE_SIZE))
+        painter.restore()
+
+    @classmethod
+    def handle_at(
+        cls,
+        bbox: QRectF,
+        widget_point: QPointF,
+        tolerance: float = 0.0,
+    ) -> str | None:
+        """Return the handle name (``nw``/``n``/...) under ``widget_point``.
+
+        ``tolerance`` adds extra pixels around each handle for forgiving hit
+        targets when the source-image zoom is small. Returns ``None`` when
+        the point misses every handle.
+        """
+        half = cls._HANDLE_SIZE / 2.0 + max(0.0, tolerance)
+        for name, fx, fy in cls.HANDLE_OFFSETS:
+            cx = bbox.x() + bbox.width() * fx
+            cy = bbox.y() + bbox.height() * fy
+            if (
+                cx - half <= widget_point.x() <= cx + half
+                and cy - half <= widget_point.y() <= cy + half
+            ):
+                return name
+        return None
 
 
 class ManualFrameView(QWidget):
@@ -163,6 +220,10 @@ class ManualFrameView(QWidget):
     frame_loaded = Signal(ManualFrame)
     clicked_at = Signal(QPointF)
     """Emitted with source-image coordinates when the view is left-clicked."""
+    face_move_requested = Signal(int, float, float)
+    """Emitted at the end of a bbox drag: (face_index, dx, dy) in source pixels."""
+    face_resize_requested = Signal(int, QRectF)
+    """Emitted at the end of a handle drag: (face_index, new_bbox in source pixels)."""
 
     _MIN_ZOOM = 1.0
     _MAX_ZOOM = 20.0
@@ -182,6 +243,16 @@ class ManualFrameView(QWidget):
         self._drag_origin: QPointF = QPointF(0.0, 0.0)
         self._empty_message: str = "No frame selected"
         self._overlays: list[OverlayPainter] = []
+        # Editor seam: when an active face + bbox provider are installed the
+        # frame view drives bbox move/resize gestures and emits face_*_requested
+        # signals on commit. Without these the view falls back to pure pan.
+        self._active_bbox_provider: T.Callable[[], QRectF | None] | None = None
+        self._active_face_provider: T.Callable[[], int | None] | None = None
+        self._edit_drag_mode: str | None = None  # "move" | "resize"
+        self._edit_drag_handle: str | None = None
+        self._edit_drag_source_anchor: QPointF | None = None
+        self._edit_drag_original_bbox: QRectF | None = None
+        self._edit_drag_current_bbox: QRectF | None = None
 
     # ---- public API ----
     @property
@@ -290,23 +361,58 @@ class ManualFrameView(QWidget):
             self.zoom_out()
         event.accept()
 
+    def install_editor_seams(
+        self,
+        *,
+        active_face_provider: T.Callable[[], int | None],
+        active_bbox_provider: T.Callable[[], QRectF | None],
+    ) -> None:
+        """Install editor callbacks so pointer drags drive face move/resize.
+
+        ``active_face_provider`` returns the currently selected ``face_index``
+        (or ``None`` when nothing is selected) and ``active_bbox_provider``
+        returns its source-coordinate :class:`QRectF`. Without these the view
+        falls back to plain pan behaviour, preserving existing test contracts.
+        """
+        self._active_face_provider = active_face_provider
+        self._active_bbox_provider = active_bbox_provider
+
+    def edit_drag_preview_bbox(self) -> QRectF | None:
+        """Return the in-progress drag bbox in source coordinates, if any.
+
+        Tests and overlays use this to render a preview rectangle before the
+        drag is committed.
+        """
+        if self._edit_drag_current_bbox is None:
+            return None
+        return QRectF(self._edit_drag_current_bbox)
+
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa:N802
-        """Start drag-pan on left click; capture click position for click signal."""
+        """Pointer-down dispatch: resize handle, bbox move, or fall back to pan."""
         if self._source.isNull() or event.button() != Qt.LeftButton:
             super().mousePressEvent(event)
             return
         position = event.position()
-        self._drag_anchor = position.toPoint()
-        self._drag_origin = QPointF(self._offset)
-        self.setCursor(Qt.ClosedHandCursor)
+        # Always emit clicked_at so selection on empty-space click is preserved.
         source_point = self._widget_to_source(position)
         if source_point is not None:
             self.clicked_at.emit(source_point)
+        if self._begin_edit_drag(position):
+            event.accept()
+            return
+        # No edit drag available — start pan.
+        self._drag_anchor = position.toPoint()
+        self._drag_origin = QPointF(self._offset)
+        self.setCursor(Qt.ClosedHandCursor)
         event.accept()
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa:N802
-        """Update pan offset while dragging."""
+        """Dispatch pointer motion to active drag mode or update hover cursor."""
         position = event.position()
+        if self._edit_drag_mode is not None:
+            self._update_edit_drag(position)
+            event.accept()
+            return
         if self._drag_anchor is None:
             self._update_hover_cursor(position)
             super().mouseMoveEvent(event)
@@ -322,7 +428,12 @@ class ManualFrameView(QWidget):
         event.accept()
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa:N802
-        """End drag-pan."""
+        """Commit an active edit drag or end the pan drag."""
+        if self._edit_drag_mode is not None:
+            self._commit_edit_drag()
+            self._update_hover_cursor(event.position())
+            event.accept()
+            return
         if self._drag_anchor is None:
             super().mouseReleaseEvent(event)
             return
@@ -417,14 +528,176 @@ class ManualFrameView(QWidget):
         return QPointF(rel_x * src_w, rel_y * src_h)
 
     def _update_hover_cursor(self, position: QPointF) -> None:
-        """Show a hand cursor when hovering a pannable region."""
-        if self._source.isNull() or self._zoom <= self._MIN_ZOOM:
+        """Cursor priority: resize handle > bbox body > pannable > default."""
+        if self._source.isNull():
             self.setCursor(Qt.ArrowCursor)
             return
-        if self._target_rect().contains(position):
+        # Hover an active-face resize handle?
+        widget_bbox = self._active_bbox_widget_rect()
+        if widget_bbox is not None:
+            handle = ManualFrameOverlay.handle_at(widget_bbox, position, tolerance=2.0)
+            if handle is not None:
+                self.setCursor(self._cursor_for_handle(handle))
+                return
+            if widget_bbox.contains(position):
+                self.setCursor(Qt.SizeAllCursor)
+                return
+        if self._zoom > self._MIN_ZOOM and self._target_rect().contains(position):
             self.setCursor(Qt.OpenHandCursor)
+            return
+        self.setCursor(Qt.ArrowCursor)
+
+    @staticmethod
+    def _cursor_for_handle(handle: str) -> Qt.CursorShape:
+        """Map a handle name to a Qt sizing cursor."""
+        if handle in ("nw", "se"):
+            return Qt.SizeFDiagCursor
+        if handle in ("ne", "sw"):
+            return Qt.SizeBDiagCursor
+        if handle in ("n", "s"):
+            return Qt.SizeVerCursor
+        return Qt.SizeHorCursor
+
+    def _active_bbox_source_rect(self) -> QRectF | None:
+        """Resolve the current active face's source-coordinate bbox."""
+        if self._active_face_provider is None or self._active_bbox_provider is None:
+            return None
+        if self._active_face_provider() is None:
+            return None
+        return self._active_bbox_provider()
+
+    def _active_bbox_widget_rect(self) -> QRectF | None:
+        """Project the active source bbox into widget coordinates."""
+        source = self._active_bbox_source_rect()
+        if source is None or self._source.isNull():
+            return None
+        viewport = FrameViewport(
+            source_size=(self._source.width(), self._source.height()),
+            target_rect=self._target_rect(),
+            zoom=self._zoom,
+        )
+        return viewport.source_rect_to_widget(
+            source.x(), source.y(), source.width(), source.height()
+        )
+
+    def _begin_edit_drag(self, position: QPointF) -> bool:
+        """Try to start a move/resize drag on the active face. Returns True on hit."""
+        if self._active_face_provider is None:
+            return False
+        face_index = self._active_face_provider()
+        if face_index is None:
+            return False
+        widget_bbox = self._active_bbox_widget_rect()
+        source_bbox = self._active_bbox_source_rect()
+        if widget_bbox is None or source_bbox is None:
+            return False
+        source_point = self._widget_to_source(position)
+        if source_point is None:
+            return False
+        handle = ManualFrameOverlay.handle_at(widget_bbox, position, tolerance=2.0)
+        if handle is not None:
+            self._edit_drag_mode = "resize"
+            self._edit_drag_handle = handle
+        elif widget_bbox.contains(position):
+            self._edit_drag_mode = "move"
+            self._edit_drag_handle = None
         else:
-            self.setCursor(Qt.ArrowCursor)
+            return False
+        self._edit_drag_source_anchor = source_point
+        self._edit_drag_original_bbox = QRectF(source_bbox)
+        self._edit_drag_current_bbox = QRectF(source_bbox)
+        return True
+
+    def _update_edit_drag(self, position: QPointF) -> None:
+        """Apply pointer motion to the active resize/move drag preview."""
+        source_point = self._widget_to_source(position)
+        if (
+            source_point is None
+            or self._edit_drag_source_anchor is None
+            or self._edit_drag_original_bbox is None
+        ):
+            return
+        dx = source_point.x() - self._edit_drag_source_anchor.x()
+        dy = source_point.y() - self._edit_drag_source_anchor.y()
+        if self._edit_drag_mode == "move":
+            origin = self._edit_drag_original_bbox
+            self._edit_drag_current_bbox = QRectF(
+                origin.x() + dx,
+                origin.y() + dy,
+                origin.width(),
+                origin.height(),
+            )
+        else:
+            self._edit_drag_current_bbox = self._resize_bbox(
+                self._edit_drag_original_bbox, self._edit_drag_handle or "", dx, dy
+            )
+        self.update()
+
+    @staticmethod
+    def _resize_bbox(original: QRectF, handle: str, dx: float, dy: float) -> QRectF:
+        """Compute the new bbox for a resize drag in source coordinates.
+
+        Enforces a minimum 1px dimension so the bbox can't collapse, and lets
+        opposing handles cross (the user expects the box to flip rather than
+        get stuck) by normalising via :meth:`QRectF.normalized`.
+        """
+        x = original.x()
+        y = original.y()
+        w = original.width()
+        h = original.height()
+        # West edges move x; east edges move width; analogous for vertical.
+        if "w" in handle:
+            x += dx
+            w -= dx
+        if "e" in handle:
+            w += dx
+        if "n" in handle:
+            y += dy
+            h -= dy
+        if "s" in handle:
+            h += dy
+        rect = QRectF(x, y, w, h).normalized()
+        return QRectF(rect.x(), rect.y(), max(1.0, rect.width()), max(1.0, rect.height()))
+
+    def _commit_edit_drag(self) -> None:
+        """Emit the appropriate signal then clear the in-progress drag state."""
+        if self._active_face_provider is None:
+            self._reset_edit_drag()
+            return
+        face_index = self._active_face_provider()
+        original = self._edit_drag_original_bbox
+        current = self._edit_drag_current_bbox
+        mode = self._edit_drag_mode
+        self._reset_edit_drag()
+        if face_index is None or original is None or current is None:
+            self.update()
+            return
+        if mode == "move":
+            dx = current.x() - original.x()
+            dy = current.y() - original.y()
+            if dx == 0.0 and dy == 0.0:
+                self.update()
+                return
+            self.face_move_requested.emit(face_index, float(dx), float(dy))
+        elif mode == "resize":
+            if (
+                current.x() == original.x()
+                and current.y() == original.y()
+                and current.width() == original.width()
+                and current.height() == original.height()
+            ):
+                self.update()
+                return
+            self.face_resize_requested.emit(face_index, QRectF(current))
+        self.update()
+
+    def _reset_edit_drag(self) -> None:
+        """Clear all in-progress edit-drag state without emitting signals."""
+        self._edit_drag_mode = None
+        self._edit_drag_handle = None
+        self._edit_drag_source_anchor = None
+        self._edit_drag_original_bbox = None
+        self._edit_drag_current_bbox = None
 
 
 class _VideoFrameWorker(QObject):
@@ -706,6 +979,9 @@ class ManualAction(T.NamedTuple):
     icon: str | None = None
     tooltip: str = ""
     separator_before: bool = False
+    toolbar_visible: bool = True
+    """When ``False``, the action is registered for its shortcut but not added
+    to the toolbar — used by keyboard-only commands (nudge arrows, etc.)."""
 
 
 # Manual Tool action registry. The first six actions cover the legacy file/
@@ -908,6 +1184,78 @@ MANUAL_ACTIONS: tuple[ManualAction, ...] = (
         tooltip="Reset zoom and pan (0)",
     ),
     ManualAction(
+        key="nudge_up",
+        label="Nudge Up",
+        handler="nudge_up_one",
+        shortcut=("Up",),
+        icon=None,
+        tooltip="Nudge the active face up one source pixel (Up)",
+        toolbar_visible=False,
+    ),
+    ManualAction(
+        key="nudge_down",
+        label="Nudge Down",
+        handler="nudge_down_one",
+        shortcut=("Down",),
+        icon=None,
+        tooltip="Nudge the active face down one source pixel (Down)",
+        toolbar_visible=False,
+    ),
+    ManualAction(
+        key="nudge_left",
+        label="Nudge Left",
+        handler="nudge_left_one",
+        shortcut=("Left",),
+        icon=None,
+        tooltip="Nudge the active face left one source pixel (Left)",
+        toolbar_visible=False,
+    ),
+    ManualAction(
+        key="nudge_right",
+        label="Nudge Right",
+        handler="nudge_right_one",
+        shortcut=("Right",),
+        icon=None,
+        tooltip="Nudge the active face right one source pixel (Right)",
+        toolbar_visible=False,
+    ),
+    ManualAction(
+        key="nudge_up_fast",
+        label="Nudge Up (10px)",
+        handler="nudge_up_fast",
+        shortcut=("Shift+Up",),
+        icon=None,
+        tooltip="Nudge the active face up ten source pixels (Shift+Up)",
+        toolbar_visible=False,
+    ),
+    ManualAction(
+        key="nudge_down_fast",
+        label="Nudge Down (10px)",
+        handler="nudge_down_fast",
+        shortcut=("Shift+Down",),
+        icon=None,
+        tooltip="Nudge the active face down ten source pixels (Shift+Down)",
+        toolbar_visible=False,
+    ),
+    ManualAction(
+        key="nudge_left_fast",
+        label="Nudge Left (10px)",
+        handler="nudge_left_fast",
+        shortcut=("Shift+Left",),
+        icon=None,
+        tooltip="Nudge the active face left ten source pixels (Shift+Left)",
+        toolbar_visible=False,
+    ),
+    ManualAction(
+        key="nudge_right_fast",
+        label="Nudge Right (10px)",
+        handler="nudge_right_fast",
+        shortcut=("Shift+Right",),
+        icon=None,
+        tooltip="Nudge the active face right ten source pixels (Shift+Right)",
+        toolbar_visible=False,
+    ),
+    ManualAction(
         key="legacy_tool",
         label="Open Legacy Tool",
         handler="launch_legacy",
@@ -954,6 +1302,12 @@ class _ManualStartupTask(QObject):
     def kick_off(self) -> None:
         """Schedule the worker on its owning thread."""
         self._start.emit()
+
+    STAGE_PERCENT: T.ClassVar[dict[str, int]] = {
+        "open": 33,
+        "thumbs": 66,
+        "complete": 100,
+    }
 
     def run(self) -> None:  # noqa: D401 - Qt slot
         """Execute the staged startup work."""
@@ -1400,13 +1754,52 @@ class ManualToolWindow(QMainWindow):
         """Translate the active face's bbox + landmarks by ``(dx, dy)`` pixels."""
         frame_index = self._current_frame_index()
         if frame_index < 0:
+            self.statusBar().showMessage("No frame to edit", 3000)
             return False
         face_index = self._editor_state.face_index
+        if face_index < 0:
+            self.statusBar().showMessage("No active face to nudge", 3000)
+            return False
         if not self._editable.move_face(frame_index, face_index, dx, dy):
+            self.statusBar().showMessage("Nudge failed (no active face)", 3000)
             return False
         self._editor_state.set("edited", True)
         self.mark_dirty(True)
+        self.refresh_faces()
+        self._frame_view.update()
         return True
+
+    def nudge_up_one(self) -> bool:
+        """Nudge active face up by 1 source pixel."""
+        return self.nudge_active_face(0.0, -1.0)
+
+    def nudge_down_one(self) -> bool:
+        """Nudge active face down by 1 source pixel."""
+        return self.nudge_active_face(0.0, 1.0)
+
+    def nudge_left_one(self) -> bool:
+        """Nudge active face left by 1 source pixel."""
+        return self.nudge_active_face(-1.0, 0.0)
+
+    def nudge_right_one(self) -> bool:
+        """Nudge active face right by 1 source pixel."""
+        return self.nudge_active_face(1.0, 0.0)
+
+    def nudge_up_fast(self) -> bool:
+        """Nudge active face up by 10 source pixels (Shift modifier)."""
+        return self.nudge_active_face(0.0, -10.0)
+
+    def nudge_down_fast(self) -> bool:
+        """Nudge active face down by 10 source pixels (Shift modifier)."""
+        return self.nudge_active_face(0.0, 10.0)
+
+    def nudge_left_fast(self) -> bool:
+        """Nudge active face left by 10 source pixels (Shift modifier)."""
+        return self.nudge_active_face(-10.0, 0.0)
+
+    def nudge_right_fast(self) -> bool:
+        """Nudge active face right by 10 source pixels (Shift modifier)."""
+        return self.nudge_active_face(10.0, 0.0)
 
     def undo_edit(self) -> bool:
         """Reverse the last edit (if any)."""
@@ -1518,7 +1911,7 @@ class ManualToolWindow(QMainWindow):
         self.addToolBar(toolbar)
         theme = QtTheme.default()
         for spec in MANUAL_ACTIONS:
-            if spec.separator_before:
+            if spec.separator_before and spec.toolbar_visible:
                 toolbar.addSeparator()
             action = QAction(spec.label, self)
             action.setObjectName(f"qt-manual-action-{spec.key}")
@@ -1536,7 +1929,8 @@ class ManualToolWindow(QMainWindow):
             handler = getattr(self, spec.handler)
             action.triggered.connect(self._make_action_dispatch(spec.key, handler))
             self.addAction(action)  # Register shortcut on the window too.
-            toolbar.addAction(action)
+            if spec.toolbar_visible:
+                toolbar.addAction(action)
             self._actions[spec.key] = action
 
     def _make_action_dispatch(
@@ -1559,6 +1953,12 @@ class ManualToolWindow(QMainWindow):
         self._thumbnail_panel.currentRowChanged.connect(lambda _row: self._sync_actions())
         self._face_panel.face_selected.connect(self._on_face_selected)
         self._frame_view.clicked_at.connect(self._on_frame_clicked)
+        self._frame_view.face_move_requested.connect(self._on_face_move_requested)
+        self._frame_view.face_resize_requested.connect(self._on_face_resize_requested)
+        self._frame_view.install_editor_seams(
+            active_face_provider=self._active_face_index,
+            active_bbox_provider=self._active_face_bbox,
+        )
         self.dirty_changed.connect(
             lambda dirty: self.statusBar().showMessage(
                 "Manual Tool has unsaved changes" if dirty else "Manual Tool ready",
@@ -1651,12 +2051,19 @@ class ManualToolWindow(QMainWindow):
         self._startup_worker.start()
 
     def _build_progress_bar(self) -> QProgressBar:
-        """Return a Qt-native indeterminate progress bar for the status bar."""
+        """Return a Qt-native determinate progress bar for the status bar.
+
+        Stages reported by :class:`_ManualStartupTask` map to discrete
+        percentages (``open=33``, ``thumbs=66``, ``complete=100``) so users
+        see real forward motion instead of a spinning indeterminate bar.
+        """
         bar = QProgressBar()
         bar.setObjectName("qt-manual-startup-progress")
-        bar.setRange(0, 0)
-        bar.setMaximumWidth(160)
-        bar.setTextVisible(False)
+        bar.setRange(0, 100)
+        bar.setValue(0)
+        bar.setMaximumWidth(180)
+        bar.setTextVisible(True)
+        bar.setFormat("Loading %p%")
         bar.hide()
         return bar
 
@@ -1665,6 +2072,9 @@ class ManualToolWindow(QMainWindow):
         logger.debug("Manual Tool startup [%s]: %s", stage, message)
         self.statusBar().showMessage(message)
         self._emit_console(f"Manual Tool [{stage}]: {message}")
+        percent = _ManualStartupTask.STAGE_PERCENT.get(stage)
+        if percent is not None and self._progress_bar is not None:
+            self._progress_bar.setValue(percent)
 
     def _on_startup_completed(self, has_thumbnails: bool, summary: str) -> None:
         """Finalize UI state once the startup worker reports success."""
@@ -1831,6 +2241,54 @@ class ManualToolWindow(QMainWindow):
             return
         self._editor_state.set("face_index", face_index)
         self._face_panel.select_face(face_index)
+
+    def _active_face_index(self) -> int | None:
+        """Return the currently selected ``face_index`` or ``None``."""
+        index = self._editor_state.get("face_index")
+        if not isinstance(index, int) or index < 0:
+            return None
+        return index
+
+    def _active_face_bbox(self) -> QRectF | None:
+        """Return the active face's source-coordinate bbox or ``None``."""
+        face_index = self._active_face_index()
+        if face_index is None:
+            return None
+        frame_index = self._current_frame_index()
+        if frame_index < 0:
+            return None
+        faces = self._editable.faces(frame_index)
+        if face_index >= len(faces):
+            return None
+        x, y, w, h = faces[face_index].bbox
+        return QRectF(x, y, w, h)
+
+    def _on_face_move_requested(self, face_index: int, dx: float, dy: float) -> None:
+        """Apply a pointer-driven bbox translation and refresh views."""
+        frame_index = self._current_frame_index()
+        if frame_index < 0:
+            self.statusBar().showMessage("No frame to edit", 3000)
+            return
+        if not self._editable.move_face(frame_index, face_index, dx, dy):
+            self.statusBar().showMessage("Move failed (no active face)", 3000)
+            return
+        self._editor_state.set("edited", True)
+        self.refresh_faces()
+        self._frame_view.update()
+
+    def _on_face_resize_requested(self, face_index: int, bbox: QRectF) -> None:
+        """Apply a pointer-driven bbox resize and refresh views."""
+        frame_index = self._current_frame_index()
+        if frame_index < 0:
+            self.statusBar().showMessage("No frame to edit", 3000)
+            return
+        new_bbox = (bbox.x(), bbox.y(), bbox.width(), bbox.height())
+        if not self._editable.resize_face(frame_index, face_index, new_bbox):
+            self.statusBar().showMessage("Resize failed (no active face)", 3000)
+            return
+        self._editor_state.set("edited", True)
+        self.refresh_faces()
+        self._frame_view.update()
 
     def refresh_faces(self) -> None:
         """Rebuild the face panel from the editable model + persisted thumbs.
