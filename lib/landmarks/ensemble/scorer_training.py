@@ -609,6 +609,12 @@ def train_runtime_resolver_scorer(
         selection_target = "continuous_regret"
         objective = "minimize_candidate_selection_regret"
         training_mode = "continuous_selection_cost"
+        # The v1.1 continuous scorer is selected at runtime by policy
+        # "learned_quality_v1_1"; the v1 binary classifier ships under
+        # "learned_quality_v1". Writing the wrong runtime_policy lets the
+        # production bundle install this artifact under a manifest slot it
+        # was not trained for and the runtime validation catches that.
+        runtime_policy = "learned_quality_v1_1"
     else:
         coefficients, intercept = fit_logistic(
             x,
@@ -623,6 +629,7 @@ def train_runtime_resolver_scorer(
         selection_target = "binary_failure_or_high_gap"
         objective = "minimize_candidate_failure_risk"
         training_mode = "binary_failure_or_high_gap"
+        runtime_policy = "learned_quality_v1"
     scorer = RuntimeResolverScorer(
         features=features,
         coefficients=tuple(float(item) for item in coefficients),
@@ -637,7 +644,7 @@ def train_runtime_resolver_scorer(
         selection_target=selection_target,
         objective=objective,
         training_mode=training_mode,
-        runtime_policy="learned_quality_v1",
+        runtime_policy=runtime_policy,
     )
     scorer_path = write_runtime_resolver_scorer(scorer, output_dir / SCORER_ARTIFACT)
     rows_path = write_tagged_rows_csv(train_tagged_rows, output_dir / TRAINING_ROWS_CSV)

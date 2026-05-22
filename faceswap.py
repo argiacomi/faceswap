@@ -14,6 +14,10 @@ import sys
 if sys.platform == "darwin":
     os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
     os.environ.setdefault("OMP_NUM_THREADS", "1")
+    # Apple's clang libomp respects LIBOMP_NUM_THREADS independently of the
+    # generic OMP_NUM_THREADS; set both to keep every libomp implementation
+    # that might end up in the process single-threaded.
+    os.environ.setdefault("LIBOMP_NUM_THREADS", "1")
 
 # Translations don't work by default in Windows, so hack in environment variable
 if sys.platform.startswith("win"):

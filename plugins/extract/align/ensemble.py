@@ -129,10 +129,34 @@ class Ensemble(ExtractPlugin):
         # bundle when kwargs are absent (the new contract). Kwargs still win so
         # tests can inject paths without installing a bundle. config no longer
         # carries these paths — the bundle is the single source of truth.
+        effective_use_resolver = bool(
+            cfg.use_alignment_resolver()
+            if use_alignment_resolver is None
+            else use_alignment_resolver
+        )
         bundle = self._load_bundle_or_none(
             need_setup=setup_path is None,
             need_scorer=resolver_scorer_path is None,
         )
+        # If the resolver is enabled in config but no path kwargs were
+        # supplied and no bundle is installed, the deployment is broken —
+        # we'd otherwise run extraction without the promoted setup/weights
+        # the operator intended, possibly with use_alignment_resolver=True
+        # on a roll_aware_veto policy that doesn't need a scorer (which
+        # would silently degrade to non-production behavior). Fail loudly
+        # so the operator can install or repair the bundle.
+        if (
+            effective_use_resolver
+            and setup_path is None
+            and resolver_scorer_path is None
+            and bundle is None
+        ):
+            raise ProductionBundleMissing(
+                "use_alignment_resolver=True requires an installed production "
+                "landmark-ensemble bundle. Run `tools/landmarks/run_landmark_resolver_pipeline.py"
+                " ... --write-config` to install one, or point FACESWAP_LANDMARK_ENSEMBLE_ARTIFACTS"
+                " at an existing bundle directory."
+            )
         if setup_path is not None:
             raw_setup_path: str = str(setup_path)
             bundle_supplied_setup = False

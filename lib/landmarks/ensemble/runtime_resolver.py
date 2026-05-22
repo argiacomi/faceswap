@@ -1707,7 +1707,9 @@ def resolve_runtime(
     scorer_metadata: dict[str, T.Any] = {}
     if config.policy in learned_policies:
         if preloaded_scorer is not None:
-            logger.debug("[RuntimeResolver] using preloaded scorer type=%s", type(preloaded_scorer).__name__)
+            logger.debug(
+                "[RuntimeResolver] using preloaded scorer type=%s", type(preloaded_scorer).__name__
+            )
             scorer = preloaded_scorer
         else:
             if not config.scorer_path:
@@ -1720,6 +1722,18 @@ def resolve_runtime(
             getattr(scorer, "version", ""),
             getattr(scorer, "runtime_policy", ""),
         )
+        scorer_policy = getattr(scorer, "runtime_policy", "")
+        if scorer_policy and scorer_policy != config.policy:
+            # The artifact was trained for a different runtime policy than the
+            # one currently configured. Refuse to proceed: the production
+            # bundle's manifest mapped this file under the wrong slot, or the
+            # operator pointed resolver_policy at a scorer it does not match.
+            # Either way, predictions would be silently mis-ranked.
+            raise RuntimeResolverError(
+                f"scorer runtime_policy={scorer_policy!r} does not match "
+                f"config policy={config.policy!r}; re-promote the artifact "
+                "or align resolver_policy with the installed scorer"
+            )
         model_available = {prediction.model: True for prediction in predictions}
         logger.debug("[RuntimeResolver] scoring candidates count=%d", len(candidates))
         scores = score_runtime_candidates(

@@ -34,6 +34,19 @@ def _face() -> np.ndarray:
     return points
 
 
+_TEST_NO_BUNDLE_KWARGS: dict[str, str] = {
+    "setup_path": "",
+    "resolver_scorer_path": "",
+}
+"""Sentinel kwargs that bypass the production bundle requirement.
+
+The plugin requires a bundle whenever ``use_alignment_resolver=True`` and
+neither path kwarg is supplied. Tests construct adapters directly and have
+no setup/scorer file on disk, so they pass these explicit empty strings to
+opt out of the bundle lookup.
+"""
+
+
 def _three_adapters(offsets: tuple[float, float, float]) -> list[StaticLandmarkAdapter]:
     """Three static adapters returning the canonical face shifted by ``offsets``."""
     base = _face()
@@ -70,6 +83,7 @@ def test_resolver_enabled_routes_low_risk_path(tmp_path) -> None:
         crop_scale=1.0,
         strategy="plain_average",
         use_alignment_resolver=True,
+        **_TEST_NO_BUNDLE_KWARGS,  # bypass production bundle requirement
         hard_case_strategy="static_weighted_downweight",
         hard_disagreement_px=50.0,  # generous so we land in low_risk
     )
@@ -92,6 +106,7 @@ def test_resolver_high_risk_swaps_in_hard_case_strategy(tmp_path) -> None:
         crop_scale=1.0,
         strategy="plain_average",
         use_alignment_resolver=True,
+        **_TEST_NO_BUNDLE_KWARGS,  # bypass production bundle requirement
         hard_case_strategy="static_weighted_downweight",
         hard_disagreement_px=10.0,
     )
@@ -111,6 +126,7 @@ def test_resolver_metadata_carries_per_model_disagreement(tmp_path) -> None:
         crop_scale=1.0,
         strategy="plain_average",
         use_alignment_resolver=True,
+        **_TEST_NO_BUNDLE_KWARGS,  # bypass production bundle requirement
     )
     plugin.model = plugin.load_model()
     plugin.predict_landmarks_68(np.zeros((256, 256, 3), dtype="float32"))
@@ -135,6 +151,11 @@ def test_strict_resolver_error_hard_fails(monkeypatch: pytest.MonkeyPatch) -> No
         crop_scale=1.0,
         strategy="plain_average",
         use_alignment_resolver=True,
+        # Explicit empty setup/scorer kwargs trigger the strict-failure path
+        # without needing a real bundle on disk; the test is specifically
+        # validating that load_model raises when the learned policy has no
+        # scorer artifact.
+        setup_path="",
         resolver_policy="learned_quality_v1",
         resolver_scorer_path="",
         strict=True,
@@ -270,16 +291,66 @@ def test_init_kwargs_override_bundle(tmp_path, monkeypatch: pytest.MonkeyPatch) 
     assert plugin._setup_mode == "off"
 
 
-def test_init_no_bundle_and_no_kwargs_does_not_crash(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Missing bundle without kwargs degrades gracefully for non-learned policies.
+def test_init_resolver_enabled_without_bundle_or_kwargs_is_fatal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Missing bundle is fatal when use_alignment_resolver=True and no kwargs.
 
-    ``roll_aware_veto`` does not need a scorer, so an absent bundle should
-    not be a hard failure at init time. Learned policies will still error
-    at ``load_model`` (covered by ``test_strict_resolver_error_hard_fails``).
+    Previously this case silently degraded (no setup, no scorer) which let
+    roll_aware_veto run on a misconfigured deployment without the promoted
+    setup/weights the operator intended. The new contract treats the bundle
+    as authoritative whenever the resolver is enabled.
     """
     from lib.landmarks.ensemble import production_artifacts as pa
 
-    monkeypatch.setenv(pa.BUNDLE_DIR_ENV, "/tmp/definitely-no-bundle-here-phase3")
+    monkeypatch.setenv(pa.BUNDLE_DIR_ENV, str(tmp_path / "no_bundle_here"))
+
+    with pytest.raises(pa.ProductionBundleMissing, match="use_alignment_resolver=True"):
+        Ensemble(
+            adapters=_three_adapters((0.0, 0.5, 1.0)),
+            crop_scale=1.0,
+            strategy="plain_average",
+            use_alignment_resolver=True,
+            resolver_policy="roll_aware_veto",
+        )
+
+
+def test_init_resolver_disabled_without_bundle_is_ok(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Disabling the resolver makes the bundle optional.
+
+    Without ``use_alignment_resolver=True`` the plugin is in legacy fusion
+    mode and the production bundle is not load-bearing, so a missing
+    bundle should not block construction.
+    """
+    from lib.landmarks.ensemble import production_artifacts as pa
+
+    monkeypatch.setenv(pa.BUNDLE_DIR_ENV, str(tmp_path / "no_bundle_here"))
+
+    plugin = Ensemble(
+        adapters=_three_adapters((0.0, 0.5, 1.0)),
+        crop_scale=1.0,
+        strategy="plain_average",
+        use_alignment_resolver=False,
+    )
+
+    assert plugin._setup_path == ""
+    assert plugin._resolver_scorer_path == ""
+
+
+def test_init_resolver_enabled_with_test_kwargs_skips_bundle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Explicit setup/scorer kwargs (even empty) bypass the bundle requirement.
+
+    Tests construct plugins with adapters directly and have no real bundle
+    on disk. Passing explicit path kwargs (the test-injection hatch) opts
+    out of the bundle check so unit tests don't need to materialize one.
+    """
+    from lib.landmarks.ensemble import production_artifacts as pa
+
+    monkeypatch.setenv(pa.BUNDLE_DIR_ENV, str(tmp_path / "no_bundle_here"))
 
     plugin = Ensemble(
         adapters=_three_adapters((0.0, 0.5, 1.0)),
@@ -287,6 +358,7 @@ def test_init_no_bundle_and_no_kwargs_does_not_crash(monkeypatch: pytest.MonkeyP
         strategy="plain_average",
         use_alignment_resolver=True,
         resolver_policy="roll_aware_veto",
+        **_TEST_NO_BUNDLE_KWARGS,
     )
 
     assert plugin._setup_path == ""

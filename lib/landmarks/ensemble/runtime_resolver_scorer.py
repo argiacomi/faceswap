@@ -345,8 +345,10 @@ class RuntimeResolverLightGBMScorer:
         # runtime no-op instead of aborting, and pinning OMP_NUM_THREADS
         # to 1 avoids LightGBM's thread pool fighting with Torch's.
         import os
+
         os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
         os.environ.setdefault("OMP_NUM_THREADS", "1")
+        os.environ.setdefault("LIBOMP_NUM_THREADS", "1")
         logger.debug("[RuntimeResolver] importing lightgbm")
         try:
             import lightgbm as lgb
@@ -356,7 +358,16 @@ class RuntimeResolverLightGBMScorer:
             ) from err
         logger.debug("[RuntimeResolver] imported lightgbm")
         logger.debug("[RuntimeResolver] constructing LightGBM Booster")
-        booster = lgb.Booster(model_str=self.model_data)
+        # Force single-threaded Booster construction *and* prediction. The
+        # original crash on macOS was LightGBM bringing up its own OpenMP
+        # runtime in a process where PyTorch's libomp was already loaded;
+        # pinning num_threads=1 here keeps the second runtime from
+        # spawning a thread pool. verbosity=-1 also silences LightGBM's
+        # info logging on the extract path.
+        booster = lgb.Booster(
+            model_str=self.model_data,
+            params={"num_threads": 1, "verbosity": -1},
+        )
         logger.debug("[RuntimeResolver] constructed LightGBM Booster")
         object.__setattr__(self, "_booster_cache", booster)
         return booster
@@ -390,9 +401,7 @@ class RuntimeResolverLightGBMScorer:
         logger.debug("[RuntimeResolver] predicted LightGBM score=%s", predicted_relevance)
         return -predicted_relevance
 
-    def score_feature_maps(
-        self, feature_maps: T.Sequence[T.Mapping[str, float]]
-    ) -> list[float]:
+    def score_feature_maps(self, feature_maps: T.Sequence[T.Mapping[str, float]]) -> list[float]:
         """Score N feature dicts in one LightGBM predict call.
 
         ``score_feature_map`` does a 1-row predict per candidate. Each call
@@ -403,7 +412,9 @@ class RuntimeResolverLightGBMScorer:
         """
         if not feature_maps:
             return []
-        logger.debug("[RuntimeResolver] building LightGBM feature matrix batch=%d", len(feature_maps))
+        logger.debug(
+            "[RuntimeResolver] building LightGBM feature matrix batch=%d", len(feature_maps)
+        )
         x = feature_matrix(feature_maps, self.features)
         logger.debug("[RuntimeResolver] predicting LightGBM x_shape=%s", x.shape)
         predicted = self._booster().predict(x, num_threads=1)

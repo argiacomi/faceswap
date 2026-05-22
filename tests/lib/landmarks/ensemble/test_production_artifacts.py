@@ -181,3 +181,72 @@ def test_load_rejects_missing_referenced_setup(
 
     with pytest.raises(pa.ProductionBundleInvalid, match="setup file is missing"):
         pa.load_production_bundle()
+
+
+# ---------------------------------------------------------------------------
+# Policy ↔ scorer-runtime_policy consistency
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_runtime_rejects_scorer_runtime_policy_mismatch(tmp_path: Path) -> None:
+    """The runtime refuses to score with a scorer trained for a different policy.
+
+    Regression for the bug where the v1.1 continuous scorer was installed
+    under the v1 manifest slot. With the corrected scorer-training output
+    this can no longer happen via the pipeline, but operators editing
+    extract.ini or manifests by hand could still produce a mismatch; the
+    runtime check makes that loud instead of silent.
+    """
+    from lib.landmarks.ensemble.runtime_resolver import (
+        ModelPrediction,
+        RuntimeResolverConfig,
+        RuntimeResolverError,
+        resolve_runtime,
+    )
+    from lib.landmarks.ensemble.runtime_resolver_scorer import (
+        RuntimeResolverScorer,
+        write_runtime_resolver_scorer,
+    )
+
+    # Minimal one-feature scorer artifact carrying runtime_policy=v1.
+    scorer = RuntimeResolverScorer(
+        features=("candidate_name=hrnet",),
+        coefficients=(1.0,),
+        intercept=0.0,
+        runtime_policy="learned_quality_v1",
+    )
+    scorer_path = write_runtime_resolver_scorer(scorer, tmp_path / "scorer.json")
+
+    # Three synthetic predictions with simple frame-space landmarks. The
+    # actual scoring details don't matter — the test just needs the runtime
+    # to reach the policy check; the mismatch must raise before that.
+    import numpy as np
+
+    # 68 landmarks spread across a 200x200 region so the resolver's
+    # frame-space validator accepts them.
+    base = np.column_stack([np.linspace(20.0, 220.0, 68), np.linspace(20.0, 220.0, 68)]).astype(
+        "float32"
+    )
+    predictions = [
+        ModelPrediction(model=name, landmarks=base + offset, weight=1.0)
+        for name, offset in (("hrnet", 0.0), ("spiga", 1.0), ("orformer", -1.0))
+    ]
+    config = RuntimeResolverConfig(
+        policy="learned_quality_v1_1",  # mismatch vs scorer's "learned_quality_v1"
+        scorer_path=str(scorer_path),
+        general_strategy="plain_average",
+        hard_case_strategy="plain_average",
+        secondary_hard_case_strategy="plain_average",
+        fallback_strategy="plain_average",
+        fallback_model="hrnet",
+        outlier_threshold=3.5,
+        weights=None,
+        adapter_weights={"hrnet": 1.0, "spiga": 1.0, "orformer": 1.0},
+        hard_disagreement_px=12.0,
+        roll_veto_degrees=15.0,
+        hard_roll_degrees=30.0,
+        strict=True,
+    )
+
+    with pytest.raises(RuntimeResolverError, match="runtime_policy"):
+        resolve_runtime(predictions, config, detector_bbox=(0.0, 0.0, 256.0, 256.0))

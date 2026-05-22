@@ -325,7 +325,7 @@ def test_train_runtime_resolver_scorer_supports_selection_cost_regressor(
     assert artifact["selection_target"] == "continuous_regret"
     assert artifact["objective"] == "minimize_candidate_selection_regret"
     assert artifact["training_mode"] == "continuous_selection_cost"
-    assert artifact["runtime_policy"] == "learned_quality_v1"
+    assert artifact["runtime_policy"] == "learned_quality_v1_1"
     assert metrics["score_semantics"] == SCORE_SEMANTICS_PREDICTED_COST
     assert metrics["higher_is_better"] is False
     assert metrics["target_stats"]["target"] == TARGET_SELECTION_COST
@@ -370,7 +370,12 @@ def test_train_runtime_resolver_scorer_v2_writes_lightgbm_ranker_artifact(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class FakeBooster:
-        def __init__(self, model_str: str = "fake-model", feature_count: int = 1) -> None:
+        def __init__(
+            self,
+            model_str: str = "fake-model",
+            feature_count: int = 1,
+            **_kwargs: object,
+        ) -> None:
             self.model_str = model_str
             self.feature_count = feature_count
 
