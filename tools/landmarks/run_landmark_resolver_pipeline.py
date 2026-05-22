@@ -20,6 +20,10 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from lib.landmarks.ensemble.production_artifacts import (
+    LEARNED_POLICIES,
+    install_production_bundle,
+)
 from lib.landmarks.ensemble.scorer_target_config import (
     SCORER_TARGETS,
     TARGET_CANDIDATE_FAILURE_OR_HIGH_GAP,
@@ -1709,7 +1713,7 @@ def _promoted_scorer_source(args: argparse.Namespace, paths: PipelinePaths) -> P
 def _promoted_runtime_policy(args: argparse.Namespace) -> str:
     if args.promoted_scorer_version == SCORER_VERSION_LEARNED_QUALITY_V2:
         return "learned_quality_v2"
-    return "learned_quality_v1"
+    return "learned_quality_v1_1"
 
 
 def _promoted_scorer_target(args: argparse.Namespace, paths: PipelinePaths) -> str:
@@ -1756,11 +1760,7 @@ def _config_updates(args: argparse.Namespace, paths: PipelinePaths) -> dict[str,
         "reject_outliers": "False",
         "outlier_threshold": "3.5",
         "min_models": "1",
-        "setup_path": str(paths.exported_best_setup),
-        "weights_path": str(paths.exported_best_weights),
-        "setup_mode": "strict",
         "resolver_policy": _promoted_runtime_policy(args),
-        "resolver_scorer_path": str(paths.exported_scorer_artifact),
         "use_alignment_resolver": "True",
         "hard_case_strategy": "static_weighted_downweight",
         "secondary_hard_case_strategy": "static_weighted_hard_drop",
@@ -1923,6 +1923,35 @@ def _write_config_updates_in_place(
     config_path.write_text(patched, encoding="utf-8")
 
 
+def _install_production_bundle_artifacts(args: argparse.Namespace, paths: PipelinePaths) -> Path:
+    """Install the runtime artifact bundle that the extract plugin reads.
+
+    Replaces the legacy contract where extract.ini carried setup_path /
+    weights_path / resolver_scorer_path. The bundle puts those files in a
+    known location (``.fs_cache/landmark_ensemble/current/`` by default,
+    overridable via FACESWAP_LANDMARK_ENSEMBLE_ARTIFACTS) and a manifest
+    maps resolver_policy → scorer file so changing the policy in config
+    automatically selects the matching scorer.
+    """
+    scorer_sources = {
+        "learned_quality_v1": paths.binary_scorer_artifact,
+        "learned_quality_v1_1": paths.scorer_artifact,
+        "learned_quality_v2": paths.v2_scorer_artifact,
+    }
+    return install_production_bundle(
+        setup_src=paths.exported_best_setup,
+        weights_src=paths.exported_best_weights,
+        scorer_sources={
+            policy: source
+            for policy, source in scorer_sources.items()
+            if policy in LEARNED_POLICIES and source.is_file()
+        },
+        active_policy=_promoted_runtime_policy(args),
+        source_output_root=paths.output_root,
+        created_by="run_landmark_resolver_pipeline.py",
+    )
+
+
 def _apply_config(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
     updates = _config_updates(args, paths)
     _validate_config_artifacts(paths)
@@ -1933,10 +1962,12 @@ def _apply_config(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
     config_path = Path(args.config_path)
     _require(config_path, "config file for --write-config")
     _write_config_updates_in_place(config_path, args.config_section, updates)
+    manifest_file = _install_production_bundle_artifacts(args, paths)
 
     return [
         f"updated {config_path} [{args.config_section}] with finalized ensemble settings "
-        "and preserved unmanaged config entries, comments, and formatting"
+        "and preserved unmanaged config entries, comments, and formatting",
+        f"installed production landmark-ensemble bundle manifest at {manifest_file}",
     ]
 
 
