@@ -33,6 +33,12 @@ from lib.landmarks.core.fusion import (
 )
 from lib.landmarks.core.schema import CANONICAL_SCHEMA, LandmarkPrediction
 from lib.landmarks.ensemble.outliers import weighted_median
+from lib.landmarks.ensemble.production_artifacts import (
+    ProductionBundle,
+    ProductionBundleError,
+    ProductionBundleMissing,
+    load_production_bundle,
+)
 from lib.landmarks.ensemble.promoted_setup import (
     PromotedSetup,
     PromotedSetupError,
@@ -119,16 +125,39 @@ class Ensemble(ExtractPlugin):
             cfg.outlier_threshold() if outlier_threshold is None else outlier_threshold
         )
 
-        raw_setup_path = cfg.setup_path() if setup_path is None else setup_path
+        # Resolve setup_path / scorer_path from the production landmark-ensemble
+        # bundle when kwargs are absent (the new contract). Kwargs still win so
+        # tests can inject paths without installing a bundle. config no longer
+        # carries these paths — the bundle is the single source of truth.
+        bundle = self._load_bundle_or_none(
+            need_setup=setup_path is None,
+            need_scorer=resolver_scorer_path is None,
+        )
+        if setup_path is not None:
+            raw_setup_path: str = str(setup_path)
+            bundle_supplied_setup = False
+        elif bundle is not None:
+            raw_setup_path = str(bundle.setup_path)
+            bundle_supplied_setup = True
+        else:
+            raw_setup_path = ""
+            bundle_supplied_setup = False
         if setup_mode is None:
-            raw_setup_mode = "strict" if setup_path is not None else cfg.setup_mode()
+            # Strict whenever we have a real setup file (kwarg or bundle); the
+            # only "off" path is when no source produced a setup at all.
+            raw_setup_mode = (
+                "strict" if (setup_path is not None or bundle_supplied_setup) else "off"
+            )
         else:
             raw_setup_mode = setup_mode
         raw_fallback_strategy = (
             cfg.fallback_strategy() if fallback_strategy is None else fallback_strategy
         )
         self._setup_path = str(raw_setup_path or "")
-        self._weights_path = str(cfg.weights_path() or "")
+        # weights_path is no longer user-settable; best_setup.json references
+        # best_weights.json relatively and load_promoted_setup resolves it.
+        # The empty default keeps the debug-metadata fallback string-typed.
+        self._weights_path = ""
         self._setup_mode = self._resolve_setup_mode(self._setup_path, raw_setup_mode)
         self._fallback_strategy = self._resolve_fallback_strategy(
             raw_fallback_strategy, configured_strategy
@@ -136,9 +165,13 @@ class Ensemble(ExtractPlugin):
         self._resolver_policy = (
             cfg.resolver_policy() if resolver_policy is None else resolver_policy
         )
-        self._resolver_scorer_path = (
-            cfg.resolver_scorer_path() if resolver_scorer_path is None else resolver_scorer_path
-        )
+        if resolver_scorer_path is not None:
+            self._resolver_scorer_path: str = str(resolver_scorer_path)
+        elif bundle is not None:
+            scorer_path = bundle.scorer_path_for(self._resolver_policy)
+            self._resolver_scorer_path = "" if scorer_path is None else str(scorer_path)
+        else:
+            self._resolver_scorer_path = ""
         self._secondary_hard_case = (
             cfg.secondary_hard_case_strategy()
             if secondary_hard_case_strategy is None
@@ -204,6 +237,26 @@ class Ensemble(ExtractPlugin):
             self._fallback_strategy,
             self._strict,
         )
+
+    @staticmethod
+    def _load_bundle_or_none(*, need_setup: bool, need_scorer: bool) -> ProductionBundle | None:
+        """Return the installed production bundle, or None if not needed/installed.
+
+        Returns ``None`` when callers supplied both ``setup_path`` and
+        ``resolver_scorer_path`` kwargs (nothing to look up), or when no
+        bundle is installed. ``ProductionBundleInvalid`` from a malformed
+        bundle propagates — that is a config error worth surfacing loudly.
+        """
+        if not need_setup and not need_scorer:
+            return None
+        try:
+            return load_production_bundle()
+        except ProductionBundleMissing:
+            return None
+        except ProductionBundleError:
+            # ProductionBundleInvalid and subclasses we don't know about:
+            # let them propagate so init fails fast on a broken bundle.
+            raise
 
     @staticmethod
     def _resolve_setup_mode(setup_path: str, configured_mode: str | None) -> str:
@@ -280,9 +333,7 @@ class Ensemble(ExtractPlugin):
         # live path skips re-construction.
         if self._use_resolver and self._resolver_policy.startswith("learned_quality"):
             if not self._resolver_scorer_path:
-                raise ValueError(
-                    f"{self._resolver_policy} requires resolver_scorer_path"
-                )
+                raise ValueError(f"{self._resolver_policy} requires resolver_scorer_path")
             self._runtime_scorer = load_runtime_resolver_scorer(self._resolver_scorer_path)
             if hasattr(self._runtime_scorer, "_booster"):
                 logger.debug(

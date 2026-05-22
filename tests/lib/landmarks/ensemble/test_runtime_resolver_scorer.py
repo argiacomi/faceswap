@@ -381,7 +381,7 @@ def test_train_runtime_resolver_scorer_v2_writes_lightgbm_ranker_artifact(
         def model_to_string(self) -> str:
             return self.model_str
 
-        def predict(self, matrix: np.ndarray) -> np.ndarray:
+        def predict(self, matrix: np.ndarray, **_kwargs: object) -> np.ndarray:
             return np.asarray([float(row[0]) for row in matrix], dtype="float64")
 
     class FakeRanker:
