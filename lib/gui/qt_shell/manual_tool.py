@@ -11,10 +11,11 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import os
 import subprocess
 import typing as T
 
-from PySide6.QtCore import QObject, QPoint, QPointF, QRectF, QSize, Qt, QThread, Signal
+from PySide6.QtCore import QObject, QPoint, QPointF, QRectF, QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import (
     QAction,
     QBrush,
@@ -22,6 +23,7 @@ from PySide6.QtGui import (
     QColor,
     QIcon,
     QImage,
+    QIntValidator,
     QKeySequence,
     QMouseEvent,
     QPainter,
@@ -32,7 +34,10 @@ from PySide6.QtGui import (
     QWheelEvent,
 )
 from PySide6.QtWidgets import (
+    QFileDialog,
+    QHBoxLayout,
     QLabel,
+    QLineEdit,
     QListView,
     QListWidget,
     QListWidgetItem,
@@ -40,6 +45,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QSizePolicy,
+    QSlider,
     QSplitter,
     QStatusBar,
     QToolBar,
@@ -1106,6 +1112,125 @@ class FaceThumbnailPanel(QListWidget):
         self.face_selected.emit(self._faces[row].face_index)
 
 
+class ManualTransportBar(QWidget):
+    """Transport controls below the frame view (slider + jump entry + counter).
+
+    The widget is deliberately driven by ``set_total`` / ``set_position`` calls
+    and emits ``position_changed`` for any user-driven motion (slider drag,
+    jump-entry submit).  The host window owns the actual frame index — this is
+    purely UI glue.
+
+    Layout::
+
+        [ slider ─────────────────────────────── ] [Frame: 12 / 250] [Go: 12]
+
+    """
+
+    position_changed = Signal(int)
+    """Emitted when the user moves the slider or submits a jump-to value."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("qt-manual-transport-bar")
+        self._total = 0
+        self._suppress_signal = False
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(4, 0, 4, 0)
+        layout.setSpacing(8)
+
+        self._slider = QSlider(Qt.Horizontal)
+        self._slider.setObjectName("qt-manual-transport-slider")
+        self._slider.setRange(0, 0)
+        self._slider.setEnabled(False)
+        self._slider.setTracking(True)
+        self._slider.valueChanged.connect(self._on_slider_value_changed)
+        layout.addWidget(self._slider, 1)
+
+        self._counter = QLabel("Frame: – / 0")
+        self._counter.setObjectName("qt-manual-transport-counter")
+        layout.addWidget(self._counter)
+
+        self._jump_label = QLabel("Go:")
+        layout.addWidget(self._jump_label)
+        self._jump_entry = QLineEdit()
+        self._jump_entry.setObjectName("qt-manual-transport-jump")
+        self._jump_entry.setFixedWidth(60)
+        self._jump_entry.setValidator(QIntValidator(0, 0, self))
+        self._jump_entry.setPlaceholderText("#")
+        self._jump_entry.editingFinished.connect(self._on_jump_submit)
+        self._jump_entry.returnPressed.connect(self._on_jump_submit)
+        layout.addWidget(self._jump_entry)
+
+    @property
+    def slider(self) -> QSlider:
+        """Return the underlying transport slider widget (for tests/styling)."""
+        return self._slider
+
+    @property
+    def jump_entry(self) -> QLineEdit:
+        """Return the jump-to-frame line edit (for tests)."""
+        return self._jump_entry
+
+    @property
+    def counter_label(self) -> QLabel:
+        """Return the ``Frame: X / N`` counter label (for tests/styling)."""
+        return self._counter
+
+    def set_total(self, total: int) -> None:
+        """Resize the transport range to ``total`` frames (0 disables the bar)."""
+        self._total = max(0, int(total))
+        last = max(0, self._total - 1)
+        self._slider.setEnabled(self._total > 0)
+        self._slider.setRange(0, last)
+        self._jump_entry.setEnabled(self._total > 0)
+        validator = self._jump_entry.validator()
+        if isinstance(validator, QIntValidator):
+            validator.setRange(0, last)
+        self._update_counter(self._slider.value())
+
+    def set_position(self, position: int) -> None:
+        """Snap the slider + counter to ``position`` without emitting signals."""
+        if self._total <= 0:
+            return
+        clamped = max(0, min(int(position), self._total - 1))
+        self._suppress_signal = True
+        try:
+            self._slider.setValue(clamped)
+        finally:
+            self._suppress_signal = False
+        self._update_counter(clamped)
+
+    def _on_slider_value_changed(self, value: int) -> None:
+        """User dragged the slider — emit unless we're applying a programmatic snap."""
+        self._update_counter(value)
+        if not self._suppress_signal:
+            self.position_changed.emit(int(value))
+
+    def _on_jump_submit(self) -> None:
+        """Parse jump entry, clamp to range, emit if changed."""
+        text = self._jump_entry.text().strip()
+        if not text:
+            self._jump_entry.setText(str(self._slider.value()))
+            return
+        try:
+            value = int(text)
+        except ValueError:
+            self._jump_entry.setText(str(self._slider.value()))
+            return
+        clamped = max(0, min(value, max(0, self._total - 1)))
+        if clamped != self._slider.value():
+            self.position_changed.emit(clamped)
+        self._jump_entry.setText(str(clamped))
+
+    def _update_counter(self, position: int) -> None:
+        """Refresh the ``Frame: X / N`` label."""
+        if self._total <= 0:
+            self._counter.setText("Frame: – / 0")
+            return
+        self._counter.setText(f"Frame: {position + 1} / {self._total}")
+
+
 class ManualAction(T.NamedTuple):
     """Static metadata for one Manual Tool editor action.
 
@@ -1416,6 +1541,15 @@ MANUAL_ACTIONS: tuple[ManualAction, ...] = (
         focus_scope="frame_view",
     ),
     ManualAction(
+        key="extract_faces",
+        label="Extract Faces",
+        handler="extract_faces",
+        shortcut=("Ctrl+E",),
+        icon="task_save_as",
+        tooltip="Extract aligned faces to a folder (Ctrl+E)",
+        separator_before=True,
+    ),
+    ManualAction(
         key="legacy_tool",
         label="Open Legacy Tool",
         handler="launch_legacy",
@@ -1565,6 +1699,114 @@ class ManualStartupWorker(QObject):
             self._thread.wait(2000)
 
 
+class _ManualExtractFacesTask(QObject):
+    """Worker that runs Tk-parity Extract Faces off the UI thread.
+
+    Construct with the alignments handle, the live session, and the user-
+    picked output folder; connect to :attr:`progress` / :attr:`completed` /
+    :attr:`failed`; then call :meth:`kick_off`.  ``cancel`` is thread-safe
+    and surfaces to the next ``is_cancelled()`` poll between frames.
+    """
+
+    progress = Signal(int, int, str)
+    """``(done, total, message)`` — total is the number of source frames."""
+    completed = Signal(object)
+    """Emits the :class:`ExtractFacesResult` from a finished run."""
+    failed = Signal(str)
+    """Emits a user-facing error string when extraction raises."""
+    _start = Signal()
+
+    def __init__(
+        self,
+        handle: ManualAlignmentsHandle,
+        session: ManualSession,
+        output_folder: str,
+    ) -> None:
+        super().__init__()
+        self._handle = handle
+        self._session = session
+        self._output_folder = output_folder
+        self._cancelled = False
+        self._start.connect(self.run)
+
+    def kick_off(self) -> None:
+        """Schedule :meth:`run` on this object's owning thread."""
+        self._start.emit()
+
+    def cancel(self) -> None:
+        """Request cancellation between frames.  Safe to call from any thread."""
+        self._cancelled = True
+
+    def is_cancelled(self) -> bool:
+        """Return whether :meth:`cancel` has been called."""
+        return self._cancelled
+
+    def run(self) -> None:  # noqa: D401 - Qt slot
+        """Execute the extraction and emit terminal signals."""
+        try:
+            from tools.manual.face_extraction import (
+                FaceExtractionRequest,
+                extract_faces,
+            )
+
+            request = FaceExtractionRequest(
+                handle=self._handle,
+                session=self._session,
+                output_folder=self._output_folder,
+            )
+            result = extract_faces(
+                request,
+                progress=lambda done, total, message: self.progress.emit(done, total, message),
+                is_cancelled=self.is_cancelled,
+            )
+        except Exception as err:  # noqa: BLE001 - surface any failure
+            logger.exception("Manual Tool extract faces failed")
+            self.failed.emit(str(err))
+            return
+        self.completed.emit(result)
+
+
+class ManualExtractFacesWorker(QObject):
+    """Owns the QThread that drives :class:`_ManualExtractFacesTask`."""
+
+    progress = Signal(int, int, str)
+    completed = Signal(object)
+    failed = Signal(str)
+
+    def __init__(
+        self,
+        handle: ManualAlignmentsHandle,
+        session: ManualSession,
+        output_folder: str,
+        parent: QObject | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._thread = QThread(self)
+        self._task = _ManualExtractFacesTask(handle, session, output_folder)
+        self._task.moveToThread(self._thread)
+        self._task.progress.connect(self.progress)
+        self._task.completed.connect(self.completed)
+        self._task.failed.connect(self.failed)
+        self._task.completed.connect(self._thread.quit)
+        self._task.failed.connect(self._thread.quit)
+        self._thread.finished.connect(self._task.deleteLater)
+        self._thread.start()
+
+    def start(self) -> None:
+        """Begin background extraction on the worker thread."""
+        self._task.kick_off()
+
+    def cancel(self) -> None:
+        """Forward a cancel request to the underlying task."""
+        self._task.cancel()
+
+    def stop(self) -> None:
+        """Stop the worker thread (after cancel if still running)."""
+        if self._thread.isRunning():
+            self._thread.quit()
+            self._thread.wait(3000)
+
+
 class ManualToolWindow(QMainWindow):
     """Qt-native Manual Tool window with legacy fallback support."""
 
@@ -1600,10 +1842,21 @@ class ManualToolWindow(QMainWindow):
         self._face_panel = FaceThumbnailPanel()
         self._status_label = QLabel()
         self._metadata_label = QLabel()
+        # Frame-navigation widgets — drive an internal "transport position"
+        # that maps 1:1 onto the thumbnail panel today.  When filter awareness
+        # lands the mapping switches to filtered-frame indices.
+        self._transport_bar = ManualTransportBar()
+        self._play_timer = QTimer(self)
+        self._play_timer.setInterval(int(1000 / 24))
+        self._play_timer.setTimerType(Qt.PreciseTimer)
+        self._play_timer.timeout.connect(self._advance_during_playback)
         self._progress_bar: QProgressBar | None = None
         self._console_logger = console_logger
         self._startup_worker: ManualStartupWorker | None = None
         self._startup_complete = False
+        # Extract Faces worker — held so cancel/close can stop it cleanly.
+        self._extract_worker: ManualExtractFacesWorker | None = None
+        self._extract_total: int = 0
         self._actions: dict[str, QAction] = {}
         # Save/bulk-operation lock state.  ``_busy_operation`` carries a short
         # user-facing label for the in-flight job ("Saving alignments…", etc.)
@@ -1725,6 +1978,12 @@ class ManualToolWindow(QMainWindow):
             if answer != QMessageBox.Yes:
                 event.ignore()
                 return
+        if self._play_timer.isActive():
+            self._play_timer.stop()
+        if self._extract_worker is not None:
+            self._extract_worker.cancel()
+            self._extract_worker.stop()
+            self._extract_worker = None
         if self._video_provider is not None:
             self._video_provider.shutdown()
             self._video_provider = None
@@ -1879,6 +2138,135 @@ class ManualToolWindow(QMainWindow):
             return self._session.frame_name_for_index
         return list(self._alignments_handle.sorted_frame_names())
 
+    def extract_faces(self) -> bool:
+        """Prompt for an output folder and run Tk-parity Extract Faces.
+
+        Returns ``True`` when the extraction was scheduled, ``False`` when
+        the user cancelled the folder picker or there is nothing to extract.
+        Mirrors the Tk Extract button: aligned 512-px PNGs per face, named
+        ``{source_stem}_{face_index}.png``, with alignments + source
+        metadata embedded in the PNG header.
+        """
+        if self._extract_worker is not None:
+            self.statusBar().showMessage("Extraction already in progress…", 4000)
+            return False
+        if not self._alignments_handle.exists:
+            self.statusBar().showMessage("No alignments file to extract from", 4000)
+            return False
+        if not self._has_any_face():
+            self.statusBar().showMessage("Nothing to extract — no faces in alignments", 4000)
+            return False
+        initial_dir = self._initial_extract_dir()
+        chosen = QFileDialog.getExistingDirectory(
+            self,
+            "Select output folder for extracted faces",
+            initial_dir,
+            QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks,
+        )
+        if not chosen:
+            return False
+        self._start_extract_worker(chosen)
+        return True
+
+    def _has_any_face(self) -> bool:
+        """Return whether the alignments file currently stores any faces."""
+        if not self._alignments_handle.exists:
+            return False
+        try:
+            alignments = self._alignments_handle.open()
+        except Exception:  # noqa: BLE001 - non-fatal probe
+            return False
+        return any(bool(entry.faces) for entry in alignments.data.values())
+
+    def _initial_extract_dir(self) -> str:
+        """Default the folder picker to a sibling of the input source."""
+        if self._session.is_video_input:
+            return os.path.dirname(self._session.frames)
+        return self._session.frames
+
+    def _start_extract_worker(self, output_folder: str) -> None:
+        """Spin up :class:`ManualExtractFacesWorker` and wire its signals."""
+        worker = ManualExtractFacesWorker(
+            self._alignments_handle, self._session, output_folder, parent=self
+        )
+        worker.progress.connect(self._on_extract_progress)
+        worker.completed.connect(self._on_extract_completed)
+        worker.failed.connect(self._on_extract_failed)
+        self._extract_worker = worker
+        self._extract_total = 0
+        if self._progress_bar is None:
+            self._progress_bar = self._build_progress_bar()
+            self.statusBar().addPermanentWidget(self._progress_bar)
+        self._progress_bar.setRange(0, 0)
+        self._progress_bar.setFormat("Extracting faces…")
+        self._progress_bar.show()
+        self.statusBar().showMessage(f"Extracting faces to {output_folder}", 5000)
+        self._busy_operation = "Extracting faces…"
+        self._sync_actions()
+        logger.info("Manual Tool extract started → %s", output_folder)
+        self._emit_console(f"Manual Tool: extracting faces to {output_folder}")
+        worker.start()
+
+    def _on_extract_progress(self, done: int, total: int, message: str) -> None:
+        """Update the determinate progress bar from the extract worker."""
+        if total > 0 and self._extract_total != total:
+            self._extract_total = total
+            if self._progress_bar is not None:
+                self._progress_bar.setRange(0, total)
+                self._progress_bar.setFormat("Extracting %v / %m frame(s)")
+        if self._progress_bar is not None and total > 0:
+            self._progress_bar.setValue(min(done, total))
+        self.statusBar().showMessage(message, 2000)
+
+    def _on_extract_completed(self, result: object) -> None:
+        """Surface a summary message and tear down the extract worker."""
+        from tools.manual.face_extraction import ExtractFacesResult
+
+        self._teardown_extract_worker()
+        if not isinstance(result, ExtractFacesResult):  # pragma: no cover - defensive
+            return
+        if result.cancelled:
+            self.statusBar().showMessage("Extract cancelled", 5000)
+            return
+        summary = (
+            f"Extracted {result.faces_written} face(s) from {result.frames_processed} frame(s)"
+        )
+        if result.skipped_frames:
+            summary += f" — skipped {result.skipped_frames}"
+        self.statusBar().showMessage(summary, 7000)
+        self._emit_console(f"Manual Tool: {summary}")
+        logger.info("Manual Tool extract completed: %s", summary)
+        if result.errors:
+            joined_errors = chr(10).join(result.errors[:10])
+            QMessageBox.warning(
+                self,
+                "Extract Faces",
+                f"{summary}{chr(10)}{chr(10)}{joined_errors}",
+            )
+
+    def _on_extract_failed(self, message: str) -> None:
+        """Report worker-level failure and tear down the extract worker."""
+        self._teardown_extract_worker()
+        full = f"Extract faces failed: {message}"
+        logger.error(full)
+        self._emit_console(full)
+        self.statusBar().showMessage(full, 7000)
+        QMessageBox.critical(self, "Extract Faces", full)
+
+    def _teardown_extract_worker(self) -> None:
+        """Hide progress, clear busy state and join the worker thread."""
+        if self._progress_bar is not None:
+            self._progress_bar.hide()
+            self._progress_bar.setRange(0, 100)
+            self._progress_bar.setFormat("Loading %p%")
+        self._busy_operation = None
+        if self._extract_worker is not None:
+            self._extract_worker.stop()
+            self._extract_worker.deleteLater()
+            self._extract_worker = None
+        self._extract_total = 0
+        self._sync_actions()
+
     def launch_legacy(self) -> bool:
         """Launch the existing Tk Manual Tool as a fallback subprocess."""
         if not self._legacy_args:
@@ -1896,6 +2284,7 @@ class ManualToolWindow(QMainWindow):
         """Select the first available frame in the thumbnail panel."""
         if self._thumbnail_panel.count() == 0:
             return
+        self._stop_playback()
         self._thumbnail_panel.setCurrentRow(0)
 
     def goto_last_frame(self) -> None:
@@ -1903,11 +2292,66 @@ class ManualToolWindow(QMainWindow):
         count = self._thumbnail_panel.count()
         if count == 0:
             return
+        self._stop_playback()
         self._thumbnail_panel.setCurrentRow(count - 1)
 
     def toggle_play(self) -> None:
-        """Toggle the editor playback flag.  Concrete playback lands in a follow-up."""
-        self._editor_state.set("is_playing", not self._editor_state.is_playing)
+        """Toggle playback. Auto-advance fires at 24 fps and stops at the end."""
+        if self._editor_state.is_playing:
+            self._stop_playback()
+            return
+        if self._thumbnail_panel.count() == 0:
+            self.statusBar().showMessage("Nothing to play", 3000)
+            return
+        if self._thumbnail_panel.currentRow() >= self._thumbnail_panel.count() - 1:
+            # At the last frame — rewind to the start so Play does something
+            # visible instead of being an immediate no-op.
+            self._thumbnail_panel.setCurrentRow(0)
+        self._editor_state.set("is_playing", True)
+        self._play_timer.start()
+        self._sync_play_action_icon()
+
+    def _stop_playback(self) -> None:
+        """Halt the auto-advance timer and reset the play-action icon."""
+        if self._play_timer.isActive():
+            self._play_timer.stop()
+        if self._editor_state.is_playing:
+            self._editor_state.set("is_playing", False)
+        self._sync_play_action_icon()
+
+    def _advance_during_playback(self) -> None:
+        """QTimer slot: step forward; stop at the filtered-range end."""
+        row = self._thumbnail_panel.currentRow()
+        count = self._thumbnail_panel.count()
+        if count == 0 or row >= count - 1:
+            self._stop_playback()
+            return
+        self._thumbnail_panel.setCurrentRow(row + 1)
+
+    def _sync_play_action_icon(self) -> None:
+        """Switch the Play/Pause toolbar icon to match playback state."""
+        action = self._actions.get("play_pause")
+        if action is None:
+            return
+        theme = QtTheme.default()
+        icon_key = "stop" if self._editor_state.is_playing else "run"
+        icon = icon_for_action(theme, icon_key)
+        if not icon.isNull():
+            action.setIcon(icon)
+        action.setText("Pause" if self._editor_state.is_playing else "Play")
+
+    def _on_thumbnail_row_changed(self, _row: int) -> None:
+        """Refresh action availability + keep the transport bar in sync."""
+        self._sync_actions()
+        self._transport_bar.set_position(self._thumbnail_panel.currentRow())
+
+    def _on_transport_position_changed(self, position: int) -> None:
+        """Apply a user-driven slider / jump-entry change to the thumbnail panel."""
+        if position == self._thumbnail_panel.currentRow():
+            return
+        self._stop_playback()
+        if 0 <= position < self._thumbnail_panel.count():
+            self._thumbnail_panel.setCurrentRow(position)
 
     def revert_current_frame(self) -> None:
         """Revert editable edits recorded against the current frame only.
@@ -2160,6 +2604,7 @@ class ManualToolWindow(QMainWindow):
         self._metadata_label.setWordWrap(True)
         left_layout.addWidget(self._metadata_label)
         left_layout.addWidget(self._frame_view, 1)
+        left_layout.addWidget(self._transport_bar)
         left_layout.addWidget(self._status_label)
 
         splitter = QSplitter(Qt.Vertical)
@@ -2209,6 +2654,9 @@ class ManualToolWindow(QMainWindow):
             if spec.toolbar_visible:
                 toolbar.addAction(action)
             self._actions[spec.key] = action
+        # Initial play/pause icon + text mirrors the editor state's not-playing
+        # state — actions are built fresh so the default label/icon land here.
+        self._sync_play_action_icon()
 
     def _make_action_dispatch(
         self, key: str, handler: T.Callable[[], object]
@@ -2227,7 +2675,8 @@ class ManualToolWindow(QMainWindow):
     def _connect_signals(self) -> None:
         """Connect selection and dirty-state signals."""
         self._thumbnail_panel.currentItemChanged.connect(self._thumbnail_selected)
-        self._thumbnail_panel.currentRowChanged.connect(lambda _row: self._sync_actions())
+        self._thumbnail_panel.currentRowChanged.connect(self._on_thumbnail_row_changed)
+        self._transport_bar.position_changed.connect(self._on_transport_position_changed)
         self._face_panel.face_selected.connect(self._on_face_selected)
         self._frame_view.clicked_at.connect(self._on_frame_clicked)
         self._frame_view.face_move_requested.connect(self._on_face_move_requested)
@@ -2299,6 +2748,7 @@ class ManualToolWindow(QMainWindow):
             logger.exception("Manual Tool synchronous seed failed")
         if self._session.has_images:
             self._thumbnail_panel.set_frames(self._session.frame_list)
+            self._transport_bar.set_total(len(self._session.frame_list))
             self._thumbnail_panel.setCurrentRow(0)
         elif self._session.is_video_input:
             # Load video metadata synchronously before the provider starts
@@ -2455,6 +2905,7 @@ class ManualToolWindow(QMainWindow):
             for idx in range(count)
         ]
         self._thumbnail_panel.set_frames(tuple(self._video_frames))
+        self._transport_bar.set_total(len(self._video_frames))
         self._thumbnail_panel.setCurrentRow(0)
 
     def _on_video_frame_ready(self, index: int, filename: str, image: QImage) -> None:
@@ -2724,13 +3175,15 @@ class ManualToolWindow(QMainWindow):
             self.refresh_faces()
 
     def _previous_frame(self) -> None:
-        """Select previous frame."""
+        """Select previous frame; manual nav always stops playback."""
+        self._stop_playback()
         row = self._thumbnail_panel.currentRow()
         if row > 0:
             self._thumbnail_panel.setCurrentRow(row - 1)
 
     def _next_frame(self) -> None:
-        """Select next frame."""
+        """Select next frame; manual nav always stops playback."""
+        self._stop_playback()
         row = self._thumbnail_panel.currentRow()
         if 0 <= row < self._thumbnail_panel.count() - 1:
             self._thumbnail_panel.setCurrentRow(row + 1)
@@ -2744,6 +3197,7 @@ class ManualToolWindow(QMainWindow):
         "add_face",
         "undo_edit",
         "redo_edit",
+        "extract_faces",
     )
 
     def _sync_actions(self) -> None:
@@ -2790,6 +3244,7 @@ class ManualToolWindow(QMainWindow):
             "zoom_out": has_frames,
             "reset_view": has_frames,
             "legacy_tool": bool(self._legacy_args),
+            "extract_faces": has_frames and self._alignments_handle.exists,
         }
         # When a blocking operation is in flight, disable every mutating /
         # save-conflicting action regardless of the underlying availability so
