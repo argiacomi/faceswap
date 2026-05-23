@@ -2646,11 +2646,29 @@ class ManualExtractFacesWorker(QObject):
         """Forward a cancel request to the underlying task."""
         self._task.cancel()
 
-    def stop(self) -> None:
-        """Stop the worker thread (after cancel if still running)."""
-        if self._thread.isRunning():
-            self._thread.quit()
-            self._thread.wait(3000)
+    _STOP_WAIT_MS = 3000
+    """How long ``stop()`` waits for the QThread to exit before giving up."""
+
+    def stop(self, *, wait_ms: int | None = None) -> bool:
+        """Try to shut down the worker thread; report whether it exited.
+
+        Cancellation is polled by ``_ManualExtractFacesTask`` between
+        frames, so a long-running per-frame operation (image read, mask
+        encode, alignment) may not finish within the wait window.  Returns
+        ``True`` iff the QThread has actually exited by the deadline; the
+        caller can then drop its reference safely.  ``False`` means the
+        worker is still in-flight and must NOT have its reference cleared
+        — see :meth:`ManualToolWindow.closeEvent` for the reentrant-safe
+        cleanup path (issue #119 task 2).
+        """
+        if not self._thread.isRunning():
+            return True
+        self.cancel()
+        self._thread.quit()
+        timeout = self._STOP_WAIT_MS if wait_ms is None else int(wait_ms)
+        # ``QThread.wait`` returns True iff the thread terminated within
+        # the timeout — that's our return contract.
+        return bool(self._thread.wait(timeout))
 
 
 class _ManualSaveTask(QObject):
@@ -2946,8 +2964,21 @@ class ManualToolWindow(QMainWindow):
         if self._play_timer.isActive():
             self._play_timer.stop()
         if self._extract_worker is not None:
-            self._extract_worker.cancel()
-            self._extract_worker.stop()
+            # ``stop()`` returns True iff the worker thread actually
+            # exited within the wait window.  If extraction is stuck in
+            # a long per-frame op the thread keeps running — we must NOT
+            # drop the reference (Python would then GC the QThread mid-
+            # flight and SIGABRT in Qt) and we must NOT consume the
+            # close event (so the user can try again once it does
+            # finish).  See #119 task 2.
+            stopped = self._extract_worker.stop()
+            if not stopped:
+                self.statusBar().showMessage(
+                    "Extraction still running — please wait for it to finish, then close again.",
+                    7000,
+                )
+                event.ignore()
+                return
             self._extract_worker = None
         if self._save_worker is not None:
             # The save worker is uncancellable but short-lived; stop() blocks
@@ -3419,8 +3450,13 @@ class ManualToolWindow(QMainWindow):
             self._extract_cancel_button.hide()
             self._extract_cancel_button.setEnabled(False)
         self._busy_operation = None
-        if self._extract_worker is not None:
-            self._extract_worker.stop()
+        # ``_teardown_extract_worker`` fires from completed/failed handlers;
+        # the underlying QThread has already received ``quit()`` via signal
+        # connections, so ``stop()`` is just the join.  Still respect the
+        # bool contract (#119 task 2): if the thread refuses to exit, keep
+        # the reference alive so the QThread destructor doesn't fire on a
+        # live thread.
+        if self._extract_worker is not None and self._extract_worker.stop():
             self._extract_worker.deleteLater()
             self._extract_worker = None
         self._extract_total = 0

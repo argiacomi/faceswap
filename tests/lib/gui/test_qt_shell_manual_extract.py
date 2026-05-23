@@ -251,3 +251,117 @@ def test_cancel_extract_forwards_to_worker_and_disables_button(
 
     # Clean up so qtbot doesn't complain about a dangling worker thread.
     window._teardown_extract_worker()
+
+
+# ---------------------------------------------------------------------------
+# #119 task 2 — extract worker shutdown contract
+# ---------------------------------------------------------------------------
+
+
+def test_extract_worker_stop_returns_true_when_thread_already_finished(
+    qtbot, tmp_path: Path
+) -> None:  # type:ignore[no-untyped-def]
+    """A no-op stop on a worker whose thread already exited returns True."""
+    from lib.gui.qt_shell.manual_tool import ManualExtractFacesWorker
+
+    session = _session_with_real_frames(tmp_path, count=1)
+    worker = ManualExtractFacesWorker(
+        session.alignments_handle(),
+        session,
+        str(tmp_path / "out"),
+    )
+    qtbot.addWidget = lambda *_args, **_kwargs: None  # type:ignore[assignment]
+    # Quit the QThread before we call ``stop`` — it should report success.
+    worker._thread.quit()  # noqa: SLF001
+    worker._thread.wait(1000)  # noqa: SLF001
+    assert worker._thread.isRunning() is False  # noqa: SLF001
+    assert worker.stop() is True
+
+
+def test_extract_worker_stop_returns_false_when_thread_refuses_to_exit(
+    qtbot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:  # type:ignore[no-untyped-def]
+    """A worker whose thread is stuck mid-frame reports stop() == False."""
+    import threading
+
+    from lib.gui.qt_shell.manual_tool import ManualExtractFacesWorker
+
+    session = _session_with_real_frames(tmp_path, count=1)
+    release = threading.Event()
+    in_run = threading.Event()
+
+    def slow_run(self) -> None:  # type:ignore[no-untyped-def]
+        in_run.set()
+        # Block until the test releases us.  This simulates a frame
+        # operation that ignores the cancel poll between frames.
+        release.wait(timeout=5.0)
+        self.completed.emit(object())
+
+    monkeypatch.setattr("lib.gui.qt_shell.manual_tool._ManualExtractFacesTask.run", slow_run)
+    worker = ManualExtractFacesWorker(
+        session.alignments_handle(),
+        session,
+        str(tmp_path / "out"),
+    )
+    try:
+        worker.start()
+        assert in_run.wait(timeout=2.0)
+        # The run slot is blocked; stop() with a small timeout must return False.
+        assert worker.stop(wait_ms=100) is False
+        # ``cancel()`` was called as part of ``stop()`` before ``quit``.
+        assert worker._task.is_cancelled() is True  # noqa: SLF001
+    finally:
+        release.set()
+        worker._thread.wait(2000)  # noqa: SLF001
+
+
+def test_close_event_ignores_close_while_extract_thread_alive(
+    qtbot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:  # type:ignore[no-untyped-def]
+    """Closing the window during a stuck extract is rejected; ref stays alive."""
+    import threading
+
+    from PySide6.QtGui import QCloseEvent
+
+    session = _session_with_real_frames(tmp_path, count=1)
+    release = threading.Event()
+    in_run = threading.Event()
+
+    def slow_run(self) -> None:  # type:ignore[no-untyped-def]
+        in_run.set()
+        release.wait(timeout=5.0)
+        self.completed.emit(object())
+
+    monkeypatch.setattr("lib.gui.qt_shell.manual_tool._ManualExtractFacesTask.run", slow_run)
+    # Shorten the worker's stop wait so the test doesn't sit for 3 s.
+    from lib.gui.qt_shell.manual_tool import ManualExtractFacesWorker
+
+    monkeypatch.setattr(ManualExtractFacesWorker, "_STOP_WAIT_MS", 100)
+
+    window = ManualToolWindow(session)
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitExposed(window)
+    qtbot.waitUntil(lambda: window._frame_view.source_size != (0, 0), timeout=2000)
+
+    monkeypatch.setattr(
+        QFileDialog, "getExistingDirectory", staticmethod(lambda *_a, **_k: str(tmp_path / "out"))
+    )
+    _seed_face(window, 0, (20.0, 20.0, 50.0, 50.0))
+    assert window.extract_faces() is True
+    qtbot.waitUntil(lambda: in_run.is_set(), timeout=2000)
+
+    # Simulate the user closing the window while extraction is stuck.
+    event = QCloseEvent()
+    window.closeEvent(event)
+    try:
+        assert event.isAccepted() is False
+        # The reference is preserved so the QThread destructor does not
+        # fire on a still-running thread.
+        assert window._extract_worker is not None  # noqa: SLF001
+    finally:
+        # Let the worker finish so cleanup can complete.
+        release.set()
+        worker = window._extract_worker  # noqa: SLF001
+        if worker is not None:
+            worker._thread.wait(2000)  # noqa: SLF001
