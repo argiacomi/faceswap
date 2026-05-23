@@ -10,7 +10,6 @@ import numpy as np
 from lib.align.objects import AlignmentsEntry, FileAlignments, MaskAlignmentsFile
 from tools.manual.session import ManualEditableAlignments
 
-
 _MASK_KEY = (0, 0, "components")
 _BBOX = (0.0, 0.0, 64.0, 64.0)
 

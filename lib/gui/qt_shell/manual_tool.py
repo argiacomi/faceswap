@@ -34,6 +34,8 @@ from PySide6.QtGui import (
     QWheelEvent,
 )
 from PySide6.QtWidgets import (
+    QButtonGroup,
+    QCheckBox,
     QComboBox,
     QFileDialog,
     QHBoxLayout,
@@ -45,6 +47,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QProgressBar,
+    QRadioButton,
     QSizePolicy,
     QSlider,
     QSplitter,
@@ -2672,6 +2675,88 @@ class ManualExtractFacesWorker(QObject):
         return bool(self._thread.wait(timeout))
 
 
+class _ManualAlignerLoadTask(QObject):
+    """Worker task that preloads one aligner backend off the UI thread."""
+
+    status = Signal(str, str, str)
+    """``(kind, aligner, message)`` for visible load-progress updates."""
+    completed = Signal(str, str, bool, str)
+    """``(aligner, normalization, ok, message)`` once preload finishes."""
+    _start = Signal()
+
+    def __init__(self, service: T.Any, aligner: str, normalization: str) -> None:
+        super().__init__()
+        self._service = service
+        self._aligner = str(aligner)
+        self._normalization = str(normalization)
+        self._start.connect(self.run)
+
+    def kick_off(self) -> None:
+        """Schedule :meth:`run` on this object's owning thread."""
+        self._start.emit()
+
+    def run(self) -> None:  # noqa: D401 - Qt slot
+        """Preload the requested aligner backend and emit terminal status."""
+        loading = f"Loading aligner '{self._aligner}'…"
+        self.status.emit("loading", self._aligner, loading)
+        try:
+            # Keep GUI updates on Qt signals by avoiding ManualAlignerService.preload(),
+            # whose status callback may call directly from this worker thread.
+            # The private method is part of the same service boundary this Qt
+            # host already depends on for cached backend lifetime.
+            get_backend = getattr(self._service, "_get_backend", None)
+            if callable(get_backend):
+                get_backend(self._aligner, self._normalization)
+            else:  # pragma: no cover - compatibility fallback for non-standard stubs
+                ok = bool(self._service.preload(self._aligner, self._normalization))
+                if not ok:
+                    raise RuntimeError(f"Aligner '{self._aligner}' failed to load")
+        except Exception as err:  # noqa: BLE001 - surface to the host
+            logger.exception("Manual Tool: aligner preload failed (%s)", self._aligner)
+            message = f"Aligner '{self._aligner}' failed to load: {err}"
+            self.status.emit("failed", self._aligner, message)
+            self.completed.emit(self._aligner, self._normalization, False, message)
+            return
+        message = f"Aligner '{self._aligner}' ready"
+        self.status.emit("ready", self._aligner, message)
+        self.completed.emit(self._aligner, self._normalization, True, message)
+
+
+class ManualAlignerLoadWorker(QObject):
+    """Owns the QThread that preloads an aligner backend."""
+
+    status = Signal(str, str, str)
+    completed = Signal(str, str, bool, str)
+
+    def __init__(
+        self,
+        service: T.Any,
+        aligner: str,
+        normalization: str,
+        parent: QObject | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._thread = QThread(self)
+        self._task = _ManualAlignerLoadTask(service, aligner, normalization)
+        self._task.moveToThread(self._thread)
+        self._task.status.connect(self.status)
+        self._task.completed.connect(self.completed)
+        self._task.completed.connect(self._thread.quit)
+        self._thread.finished.connect(self._task.deleteLater)
+        self._thread.start()
+
+    def start(self) -> None:
+        """Begin background aligner preload."""
+        self._task.kick_off()
+
+    def stop(self, *, wait_ms: int = 1000) -> bool:
+        """Stop the loader thread and report whether it exited."""
+        if not self._thread.isRunning():
+            return True
+        self._thread.quit()
+        return bool(self._thread.wait(int(wait_ms)))
+
+
 class _ManualSaveTask(QObject):
     """Worker that runs alignment persistence off the UI thread.
 
@@ -2793,7 +2878,9 @@ class ManualToolWindow(QMainWindow):
 
             aligner_service = ManualAlignerService(status_callback=self._on_aligner_status)
         self._aligner_service = aligner_service
-        self._aligner_load_thread: QThread | None = None
+        self._aligner_load_worker: ManualAlignerLoadWorker | None = None
+        self._aligner_load_target: tuple[str, str] | None = None
+        self._aligner_loaded_targets: set[tuple[str, str]] = set()
         self._video_metadata: ManualVideoMetadata | None = None
         self._video_provider: VideoFrameProvider | None = None
         self._video_frames: list[ManualFrame] = []
@@ -2868,9 +2955,15 @@ class ManualToolWindow(QMainWindow):
         self._editor_state.subscribe(
             "face_index", lambda _v: self._refresh_mask_controls_visibility()
         )
+        self._editor_state.subscribe(
+            "face_index", lambda _v: self._refresh_aligner_controls_visibility()
+        )
         self._editor_state.subscribe("frame_index", lambda _v: self._sync_actions())
         self._editor_state.subscribe(
             "frame_index", lambda _v: self._refresh_mask_controls_visibility()
+        )
+        self._editor_state.subscribe(
+            "frame_index", lambda _v: self._refresh_aligner_controls_visibility()
         )
         self._editor_state.subscribe("editor_mode", self._on_editor_mode_changed)
         self._build_ui()
@@ -2996,6 +3089,17 @@ class ManualToolWindow(QMainWindow):
             self._save_worker.stop()
             self._save_worker = None
             self._drain_save_busy_stack()
+        if self._aligner_load_worker is not None:
+            stopped = self._aligner_load_worker.stop()
+            if not stopped:
+                self.statusBar().showMessage(
+                    "Aligner is still loading — please wait, then close again.",
+                    7000,
+                )
+                event.ignore()
+                return
+            self._aligner_load_worker = None
+            self._aligner_load_target = None
         if self._video_provider is not None:
             self._video_provider.shutdown()
             self._video_provider = None
@@ -3863,6 +3967,11 @@ class ManualToolWindow(QMainWindow):
         # editor (F5) is active so it doesn't clutter the View mode.
         self._mask_controls = self._build_mask_controls()
         left_layout.addWidget(self._mask_controls)
+        # Bounding Box editor (#104): aligner plugin selection, normalization,
+        # auto-run, explicit rerun, and visible load progress.  Hidden except
+        # while F2 / BoundingBox mode is active.
+        self._aligner_controls = self._build_aligner_controls()
+        left_layout.addWidget(self._aligner_controls)
         left_layout.addWidget(self._frame_view, 1)
         left_layout.addWidget(self._transport_bar)
         left_layout.addWidget(self._status_label)
@@ -4489,11 +4598,13 @@ class ManualToolWindow(QMainWindow):
     # ---- Aligner integration (#104) ----
 
     def _on_aligner_status(self, status: T.Any) -> None:
-        """Forward :class:`AlignerStatus` events to the status bar + console."""
+        """Forward :class:`AlignerStatus` events to status, console and controls."""
         message = getattr(status, "message", "") or ""
         kind = getattr(status, "kind", "") or ""
+        aligner = getattr(status, "aligner", "") or self._active_aligner_name()
         if not message:
             return
+        self._set_aligner_load_status(kind, aligner, message)
         timeout = 5000 if kind == "failed" else 3000
         self.statusBar().showMessage(message, timeout)
         self._emit_console(f"Manual Tool aligner: {message}")
@@ -4510,65 +4621,270 @@ class ManualToolWindow(QMainWindow):
 
     def set_aligner_name(self, name: str) -> None:
         """Select the active aligner plugin (Bounding Box dropdown handler)."""
-        self._editor_state.set("aligner_name", str(name))
+        value = str(name).strip()
+        if not value or value.startswith("No aligners"):
+            return
+        self._editor_state.set("aligner_name", value)
+        self._sync_aligner_controls()
+        self._schedule_aligner_preload()
 
     def set_aligner_normalization(self, method: str) -> None:
         """Apply a normalization method to the aligner service (radio handler)."""
-        self._editor_state.set("aligner_normalization", str(method))
-        self._aligner_service.set_normalization(str(method))
+        value = str(method)
+        self._editor_state.set("aligner_normalization", value)
+        self._aligner_service.set_normalization(value)
+        self._sync_aligner_controls()
+        self._schedule_aligner_preload()
 
     def _active_aligner_name(self) -> str:
         """Return the editor-state aligner name, falling back to the service default."""
         return self._editor_state.aligner_name or self._aligner_service.default_aligner()
 
-    def rerun_aligner_for_face(self, face_index: int) -> bool:
-        """Rerun the configured aligner against ``face_index`` on the current frame.
+    def _build_aligner_controls(self) -> QWidget:
+        """Return the Bounding Box aligner control panel (#104).
 
-        Returns ``True`` if landmarks were refreshed.  Failures (no image,
-        empty bbox, aligner unavailable, model error) surface a status
-        message + console line and **never** corrupt the editable model
-        — the existing landmark cloud stays put.
+        Hidden by default; surfaced only while ``editor_mode == "BoundingBox"``.
+        The selected aligner, normalization and auto-run values are stored on
+        :class:`ManualEditorState` so they persist across editor-mode switches.
         """
-        frame_index = self._current_frame_index()
-        if frame_index < 0:
-            self.statusBar().showMessage("No frame to align", 3000)
-            return False
-        faces = self._editable.faces(frame_index)
-        if face_index < 0 or face_index >= len(faces):
-            self.statusBar().showMessage("No active face to align", 3000)
-            return False
-        image = self._frame_view.current_frame_array()
-        if image is None:
-            self.statusBar().showMessage("Cannot align: frame image not loaded", 4000)
-            return False
-        face = faces[face_index]
-        try:
-            landmarks = self._aligner_service.align(
-                image,
-                face.bbox,
-                aligner=self._active_aligner_name() or None,
-                normalization=self._editor_state.aligner_normalization,
-            )
-        except Exception as err:  # noqa: BLE001 - surface to the user; model untouched
-            logger.exception("Manual Tool: aligner run failed")
-            self.statusBar().showMessage(f"Aligner failed: {err}", 5000)
-            self._emit_console(f"Manual Tool aligner failed: {err}")
-            return False
-        new_points = [(float(point[0]), float(point[1])) for point in landmarks]
-        if not self._editable.set_landmarks(frame_index, face_index, new_points):
-            return False
-        self._editor_state.set("edited", True)
-        self.refresh_faces()
-        self._frame_view.update()
-        return True
+        container = QWidget()
+        container.setObjectName("qt-manual-aligner-controls")
+        outer = QVBoxLayout(container)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(4)
 
-    def _maybe_run_aligner(self, face_index: int) -> None:
-        """Run the aligner after a bbox edit when ``aligner_auto_run`` is on."""
-        if not self._editor_state.aligner_auto_run:
-            return
-        if self._editor_state.editor_mode != "BoundingBox":
+        top = QHBoxLayout()
+        top.setContentsMargins(0, 0, 0, 0)
+        top.setSpacing(8)
+        top.addWidget(QLabel("Aligner:"))
+
+        self._aligner_combo = QComboBox()
+        self._aligner_combo.setObjectName("qt-manual-aligner-combo")
+        self._aligner_combo.setMinimumWidth(150)
+        self._aligner_combo.currentTextChanged.connect(self._on_aligner_combo_changed)
+        top.addWidget(self._aligner_combo)
+
+        self._aligner_auto_run_checkbox = QCheckBox("Auto-run")
+        self._aligner_auto_run_checkbox.setObjectName("qt-manual-aligner-auto-run")
+        self._aligner_auto_run_checkbox.setChecked(bool(self._editor_state.aligner_auto_run))
+        self._aligner_auto_run_checkbox.toggled.connect(self._on_aligner_auto_run_toggled)
+        top.addWidget(self._aligner_auto_run_checkbox)
+
+        self._aligner_rerun_button = QToolButton()
+        self._aligner_rerun_button.setObjectName("qt-manual-aligner-rerun")
+        self._aligner_rerun_button.setText("Run")
+        self._aligner_rerun_button.setToolTip("Run the selected aligner for the active face")
+        self._aligner_rerun_button.clicked.connect(self._on_aligner_rerun_clicked)
+        top.addWidget(self._aligner_rerun_button)
+        top.addStretch(1)
+        outer.addLayout(top)
+
+        norm_row = QHBoxLayout()
+        norm_row.setContentsMargins(0, 0, 0, 0)
+        norm_row.setSpacing(8)
+        norm_row.addWidget(QLabel("Normalization:"))
+        self._aligner_normalization_group = QButtonGroup(container)
+        self._aligner_normalization_group.setExclusive(True)
+        self._aligner_normalization_buttons: dict[str, QRadioButton] = {}
+        for method in self.available_normalizations():
+            button = QRadioButton(str(method))
+            button.setObjectName(f"qt-manual-aligner-normalization-{method}")
+            button.toggled.connect(
+                lambda checked, value=str(method): (
+                    self.set_aligner_normalization(value) if checked else None
+                )
+            )
+            self._aligner_normalization_group.addButton(button)
+            self._aligner_normalization_buttons[str(method)] = button
+            norm_row.addWidget(button)
+        norm_row.addStretch(1)
+        outer.addLayout(norm_row)
+
+        progress_row = QHBoxLayout()
+        progress_row.setContentsMargins(0, 0, 0, 0)
+        progress_row.setSpacing(8)
+        self._aligner_load_progress = QProgressBar()
+        self._aligner_load_progress.setObjectName("qt-manual-aligner-load-progress")
+        self._aligner_load_progress.setRange(0, 100)
+        self._aligner_load_progress.setValue(0)
+        self._aligner_load_progress.setMaximumWidth(160)
+        self._aligner_load_progress.setTextVisible(True)
+        self._aligner_load_progress.hide()
+        progress_row.addWidget(self._aligner_load_progress)
+
+        self._aligner_status_label = QLabel("Aligner idle")
+        self._aligner_status_label.setObjectName("qt-manual-aligner-status-label")
+        self._aligner_status_label.setWordWrap(True)
+        progress_row.addWidget(self._aligner_status_label, 1)
+        outer.addLayout(progress_row)
+
+        container.setVisible(self._editor_state.editor_mode == "BoundingBox")
+        self._sync_aligner_controls()
+        return container
+
+    def _on_aligner_combo_changed(self, name: str) -> None:
+        """Handle a user-selected aligner plugin from the dropdown."""
+        self.set_aligner_name(name)
+
+    def _on_aligner_auto_run_toggled(self, checked: bool) -> None:
+        """Persist the auto-run checkbox value on editor state."""
+        self._editor_state.set("aligner_auto_run", bool(checked))
+        self._sync_aligner_controls()
+
+    def _on_aligner_rerun_clicked(self) -> None:
+        """Run the active aligner against the selected face."""
+        face_index = self._active_face_index()
+        if face_index is None:
+            self.statusBar().showMessage("No active face to align", 3000)
             return
         self.rerun_aligner_for_face(int(face_index))
+
+    def _refresh_aligner_controls_visibility(self) -> None:
+        """Show or hide Bounding Box aligner controls to match editor mode."""
+        controls = getattr(self, "_aligner_controls", None)
+        if controls is None:
+            return
+        active = self._editor_state.editor_mode == "BoundingBox"
+        controls.setVisible(active)
+        if active:
+            self._sync_aligner_controls()
+            self._schedule_aligner_preload()
+
+    def _sync_aligner_controls(self) -> None:
+        """Mirror editor-state aligner settings into the visible controls."""
+        combo = getattr(self, "_aligner_combo", None)
+        if combo is None:
+            return
+        aligners = list(self.available_aligners())
+        current = self._editor_state.aligner_name or (
+            self._aligner_service.default_aligner() if aligners else ""
+        )
+        if current and current not in aligners:
+            aligners.insert(0, current)
+
+        combo.blockSignals(True)
+        combo.clear()
+        if aligners:
+            combo.addItems(aligners)
+            combo.setEnabled(True)
+            index = combo.findText(current)
+            combo.setCurrentIndex(index if index >= 0 else 0)
+        else:
+            combo.addItem("No aligners available")
+            combo.setEnabled(False)
+        combo.blockSignals(False)
+
+        normalization = str(self._editor_state.aligner_normalization)
+        for method, button in self._aligner_normalization_buttons.items():
+            button.blockSignals(True)
+            button.setChecked(method == normalization)
+            button.blockSignals(False)
+        if (
+            normalization not in self._aligner_normalization_buttons
+            and self._aligner_normalization_buttons
+        ):
+            first = next(iter(self._aligner_normalization_buttons.values()))
+            first.blockSignals(True)
+            first.setChecked(True)
+            first.blockSignals(False)
+
+        auto_run = getattr(self, "_aligner_auto_run_checkbox", None)
+        if auto_run is not None:
+            auto_run.blockSignals(True)
+            auto_run.setChecked(bool(self._editor_state.aligner_auto_run))
+            auto_run.blockSignals(False)
+
+        rerun = getattr(self, "_aligner_rerun_button", None)
+        if rerun is not None:
+            rerun.setEnabled(bool(aligners) and self._active_face_index() is not None)
+
+    def _schedule_aligner_preload(self) -> None:
+        """Preload the selected aligner/backend while BBox controls are visible."""
+        controls = getattr(self, "_aligner_controls", None)
+        if controls is None or not controls.isVisible():
+            return
+        aligner = self._active_aligner_name()
+        normalization = str(self._editor_state.aligner_normalization)
+        if not aligner:
+            self._set_aligner_load_status("failed", "", "No aligner plugins available")
+            return
+        target = (aligner, normalization)
+        if target in self._aligner_loaded_targets:
+            self._set_aligner_load_status("ready", aligner, f"Aligner '{aligner}' ready")
+            return
+        if self._aligner_load_worker is not None and self._aligner_load_target == target:
+            return
+        if self._aligner_load_worker is not None:
+            if not self._aligner_load_worker.stop():
+                self.statusBar().showMessage(
+                    "Aligner is still loading — wait for it to finish before changing selection.",
+                    5000,
+                )
+                return
+            self._aligner_load_worker.deleteLater()
+            self._aligner_load_worker = None
+
+        worker = ManualAlignerLoadWorker(
+            self._aligner_service,
+            aligner,
+            normalization,
+            parent=self,
+        )
+        worker.status.connect(self._on_aligner_load_status)
+        worker.completed.connect(self._on_aligner_load_completed)
+        self._aligner_load_worker = worker
+        self._aligner_load_target = target
+        self._set_aligner_load_status("loading", aligner, f"Loading aligner '{aligner}'…")
+        worker.start()
+
+    def _on_aligner_load_status(self, kind: str, aligner: str, message: str) -> None:
+        """Handle status emitted by the background aligner preload worker."""
+        self._set_aligner_load_status(kind, aligner, message)
+        timeout = 5000 if kind == "failed" else 3000
+        self.statusBar().showMessage(message, timeout)
+        self._emit_console(f"Manual Tool aligner: {message}")
+
+    def _on_aligner_load_completed(
+        self, aligner: str, normalization: str, ok: bool, message: str
+    ) -> None:
+        """Finalize the visible aligner preload state."""
+        target = (str(aligner), str(normalization))
+        if self._aligner_load_target is not None and target != self._aligner_load_target:
+            return
+        if ok:
+            self._aligner_loaded_targets.add(target)
+            self._set_aligner_load_status("ready", aligner, message)
+        else:
+            self._set_aligner_load_status("failed", aligner, message)
+        if self._aligner_load_worker is not None:
+            self._aligner_load_worker.deleteLater()
+            self._aligner_load_worker = None
+        self._aligner_load_target = None
+        self._sync_aligner_controls()
+
+    def _set_aligner_load_status(self, kind: str, aligner: str, message: str) -> None:
+        """Paint the inline aligner load-progress widget."""
+        progress = getattr(self, "_aligner_load_progress", None)
+        label = getattr(self, "_aligner_status_label", None)
+        if label is not None and message:
+            label.setText(message)
+        if progress is None:
+            return
+        if kind in ("loading", "aligning"):
+            progress.setRange(0, 0)
+            progress.setFormat("Loading aligner…")
+            progress.show()
+            rerun = getattr(self, "_aligner_rerun_button", None)
+            if rerun is not None:
+                rerun.setEnabled(False)
+        elif kind in ("ready", "aligned"):
+            progress.hide()
+            progress.setRange(0, 100)
+            progress.setValue(100)
+        elif kind == "failed":
+            progress.hide()
+            progress.setRange(0, 100)
+            progress.setValue(0)
 
     def _face_at_source_point(self, sx: float, sy: float) -> int | None:
         """Hit-test the editable model at a source-coordinate point."""
@@ -4867,6 +5183,7 @@ class ManualToolWindow(QMainWindow):
         """Refresh action availability when the editor mode flips."""
         self._sync_actions()
         self._refresh_mask_controls_visibility()
+        self._refresh_aligner_controls_visibility()
 
     MASK_DEFAULT_TYPES: T.ClassVar[tuple[str, ...]] = (
         "components",
