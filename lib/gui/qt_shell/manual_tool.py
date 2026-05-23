@@ -501,6 +501,34 @@ class ManualFrameView(QWidget):
             return (0, 0)
         return (self._source.width(), self._source.height())
 
+    def current_frame_array(self) -> T.Any:
+        """Return the current source frame as a numpy ``(H, W, 3)`` uint8 array.
+
+        Used by the Aligner integration (#104) to feed the pipeline without
+        re-reading the file from disk.  Returns ``None`` when no frame is
+        loaded.  The conversion goes through ``QImage`` so the same path
+        works for both image-folder and video sessions.
+        """
+        if self._source.isNull():
+            return None
+        try:
+            import numpy as np
+
+            image = self._source.toImage().convertToFormat(QImage.Format_RGB888)
+            width = image.width()
+            height = image.height()
+            ptr = image.constBits()
+            buffer = bytes(ptr)
+            # ``Format_RGB888`` rows are padded to 4-byte multiples; strip the
+            # padding by selecting the meaningful width × 3 prefix per row.
+            row_stride = image.bytesPerLine()
+            array = np.frombuffer(buffer, dtype=np.uint8)
+            array = array.reshape(height, row_stride)[:, : width * 3]
+            return array.reshape(height, width, 3).copy()
+        except Exception:  # pragma: no cover - defensive
+            logger.exception("Manual Tool: current_frame_array conversion failed")
+            return None
+
     def load_frame(self, frame: ManualFrame) -> bool:
         """Load and display a source frame image from disk."""
         pixmap = QPixmap(frame.path)
@@ -2727,12 +2755,23 @@ class ManualToolWindow(QMainWindow):
         legacy_args: list[str] | None = None,
         parent: QWidget | None = None,
         console_logger: T.Callable[[str], None] | None = None,
+        aligner_service: T.Any = None,
     ) -> None:
         super().__init__(parent)
         self.setObjectName("qt-manual-tool-window")
         self.setWindowTitle("Faceswap Manual Tool")
         self._session = session
         self._editor_state = session.create_editor_state()
+        # Aligner integration (#104) — accept an optional injected service so
+        # tests don't need to construct the production plugin pipeline.  The
+        # real path lazily imports the default service so importing this
+        # module stays cheap.
+        if aligner_service is None:
+            from tools.manual.aligner_service import ManualAlignerService
+
+            aligner_service = ManualAlignerService(status_callback=self._on_aligner_status)
+        self._aligner_service = aligner_service
+        self._aligner_load_thread: QThread | None = None
         self._video_metadata: ManualVideoMetadata | None = None
         self._video_provider: VideoFrameProvider | None = None
         self._video_frames: list[ManualFrame] = []
@@ -3596,6 +3635,12 @@ class ManualToolWindow(QMainWindow):
         self.mark_dirty(True)
         self._editor_state.set("face_index", new_index)
         self.statusBar().showMessage(f"Added face index {new_index}", 5000)
+        # Aligner integration (#104): initialise landmarks for the new face
+        # through the configured aligner when auto-run is on.  Failures are
+        # surfaced through ``rerun_aligner_for_face`` and leave the new face
+        # in place with empty landmarks — Tk's behaviour when the aligner
+        # refuses to produce points.
+        self._maybe_run_aligner(int(new_index))
         return new_index
 
     def nudge_active_face(self, dx: float, dy: float) -> bool:
@@ -4203,6 +4248,9 @@ class ManualToolWindow(QMainWindow):
         self._editor_state.set("edited", True)
         self.refresh_faces()
         self._frame_view.update()
+        # Aligner integration (#104): refresh landmarks from the moved bbox
+        # when the Bounding Box editor + auto-run is on.
+        self._maybe_run_aligner(face_index)
 
     def _on_face_resize_requested(self, face_index: int, bbox: QRectF) -> None:
         """Apply a pointer-driven bbox resize and refresh views."""
@@ -4217,6 +4265,7 @@ class ManualToolWindow(QMainWindow):
         self._editor_state.set("edited", True)
         self.refresh_faces()
         self._frame_view.update()
+        self._maybe_run_aligner(face_index)
 
     def _is_add_mode_active(self) -> bool:
         """Return whether empty-space clicks should create a new face."""
@@ -4352,6 +4401,90 @@ class ManualToolWindow(QMainWindow):
             self._editor_state.set("edited", True)
             self._frame_view.update()
         return ok
+
+    # ---- Aligner integration (#104) ----
+
+    def _on_aligner_status(self, status: T.Any) -> None:
+        """Forward :class:`AlignerStatus` events to the status bar + console."""
+        message = getattr(status, "message", "") or ""
+        kind = getattr(status, "kind", "") or ""
+        if not message:
+            return
+        timeout = 5000 if kind == "failed" else 3000
+        self.statusBar().showMessage(message, timeout)
+        self._emit_console(f"Manual Tool aligner: {message}")
+        if kind == "failed":
+            logger.error("Manual Tool aligner: %s", message)
+
+    def available_aligners(self) -> tuple[str, ...]:
+        """Return aligner plugin display names from the cached service."""
+        return self._aligner_service.available_aligners
+
+    def available_normalizations(self) -> tuple[str, ...]:
+        """Return normalization methods supported by the aligner service."""
+        return self._aligner_service.available_normalizations()
+
+    def set_aligner_name(self, name: str) -> None:
+        """Select the active aligner plugin (Bounding Box dropdown handler)."""
+        self._editor_state.set("aligner_name", str(name))
+
+    def set_aligner_normalization(self, method: str) -> None:
+        """Apply a normalization method to the aligner service (radio handler)."""
+        self._editor_state.set("aligner_normalization", str(method))
+        self._aligner_service.set_normalization(str(method))
+
+    def _active_aligner_name(self) -> str:
+        """Return the editor-state aligner name, falling back to the service default."""
+        return self._editor_state.aligner_name or self._aligner_service.default_aligner()
+
+    def rerun_aligner_for_face(self, face_index: int) -> bool:
+        """Rerun the configured aligner against ``face_index`` on the current frame.
+
+        Returns ``True`` if landmarks were refreshed.  Failures (no image,
+        empty bbox, aligner unavailable, model error) surface a status
+        message + console line and **never** corrupt the editable model
+        — the existing landmark cloud stays put.
+        """
+        frame_index = self._current_frame_index()
+        if frame_index < 0:
+            self.statusBar().showMessage("No frame to align", 3000)
+            return False
+        faces = self._editable.faces(frame_index)
+        if face_index < 0 or face_index >= len(faces):
+            self.statusBar().showMessage("No active face to align", 3000)
+            return False
+        image = self._frame_view.current_frame_array()
+        if image is None:
+            self.statusBar().showMessage("Cannot align: frame image not loaded", 4000)
+            return False
+        face = faces[face_index]
+        try:
+            landmarks = self._aligner_service.align(
+                image,
+                face.bbox,
+                aligner=self._active_aligner_name() or None,
+                normalization=self._editor_state.aligner_normalization,
+            )
+        except Exception as err:  # noqa: BLE001 - surface to the user; model untouched
+            logger.exception("Manual Tool: aligner run failed")
+            self.statusBar().showMessage(f"Aligner failed: {err}", 5000)
+            self._emit_console(f"Manual Tool aligner failed: {err}")
+            return False
+        new_points = [(float(point[0]), float(point[1])) for point in landmarks]
+        if not self._editable.set_landmarks(frame_index, face_index, new_points):
+            return False
+        self._editor_state.set("edited", True)
+        self.refresh_faces()
+        self._frame_view.update()
+        return True
+
+    def _maybe_run_aligner(self, face_index: int) -> None:
+        """Run the aligner after a bbox edit when ``aligner_auto_run`` is on."""
+        if not self._editor_state.aligner_auto_run:
+            return
+        if self._editor_state.editor_mode != "BoundingBox":
+            return
+        self.rerun_aligner_for_face(int(face_index))
 
     def _face_at_source_point(self, sx: float, sy: float) -> int | None:
         """Hit-test the editable model at a source-coordinate point."""

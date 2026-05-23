@@ -752,3 +752,49 @@ def test_known_mask_types_lists_painted_types_only() -> None:
     model.paint_mask_stroke(0, 0, "extended", 16.0, 16.0, 2.0, 255)
     types = model.known_mask_types(0, 0)
     assert types == ("components", "extended")
+
+
+# ---------------------------------------------------------------------------
+# #104 — set_landmarks (Aligner integration)
+# ---------------------------------------------------------------------------
+
+
+def test_set_landmarks_replaces_all_points_and_keeps_bbox() -> None:
+    """set_landmarks swaps the landmark cloud without moving the bbox."""
+    model = ManualEditableAlignments()
+    model.add_face(
+        0,
+        (10.0, 10.0, 40.0, 40.0),
+        landmarks=[(20.0, 20.0)],
+    )
+    assert model.set_landmarks(0, 0, [(11.0, 11.0), (12.0, 12.0)]) is True
+    face = model.faces(0)[0]
+    assert face.bbox == (10.0, 10.0, 40.0, 40.0)
+    assert face.landmarks == ((11.0, 11.0), (12.0, 12.0))
+
+
+def test_set_landmarks_records_undo_history() -> None:
+    """set_landmarks participates in undo/redo."""
+    model = ManualEditableAlignments()
+    model.add_face(0, _bbox(), landmarks=[(1.0, 2.0)])
+    model.set_landmarks(0, 0, [(99.0, 99.0)])
+    assert model.faces(0)[0].landmarks == ((99.0, 99.0),)
+    assert model.undo() is True
+    assert model.faces(0)[0].landmarks == ((1.0, 2.0),)
+    assert model.redo() is True
+    assert model.faces(0)[0].landmarks == ((99.0, 99.0),)
+
+
+def test_set_landmarks_invalid_face_returns_false() -> None:
+    """set_landmarks rejects out-of-range face_index."""
+    model = ManualEditableAlignments()
+    model.add_face(0, _bbox())
+    assert model.set_landmarks(0, 9, [(1.0, 2.0)]) is False
+
+
+def test_set_landmarks_with_empty_sequence_clears_landmarks() -> None:
+    """An empty landmarks sequence is allowed and clears the face's points."""
+    model = ManualEditableAlignments()
+    model.add_face(0, _bbox(), landmarks=[(1.0, 2.0), (3.0, 4.0)])
+    assert model.set_landmarks(0, 0, []) is True
+    assert model.faces(0)[0].landmarks == ()

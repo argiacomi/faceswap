@@ -144,6 +144,12 @@ class ManualEditorState:
     brush_mode: str = "draw"
     mask_opacity: int = 50
     mask_type: str = ""
+    # Bounding Box editor (#104) — aligner choices live on the editor
+    # state so dropdowns + post-edit rerun share a single source of
+    # truth.  Empty string means "use service default".
+    aligner_name: str = ""
+    aligner_normalization: str = "hist"
+    aligner_auto_run: bool = True
     _listeners: dict[str, list[T.Callable[[T.Any], None]]] = field(
         default_factory=dict, repr=False
     )
@@ -165,6 +171,9 @@ class ManualEditorState:
         "brush_mode",
         "mask_opacity",
         "mask_type",
+        "aligner_name",
+        "aligner_normalization",
+        "aligner_auto_run",
     )
 
     def subscribe(self, name: str, callback: T.Callable[[T.Any], None]) -> T.Callable[[], None]:
@@ -955,6 +964,41 @@ class ManualEditableAlignments:
             face_index=face.face_index,
             bbox=face.bbox,
             landmarks=tuple(new_landmarks),
+        )
+
+        def do() -> None:
+            self._faces[frame_index][face_index] = updated
+
+        def undo() -> None:
+            self._faces[frame_index][face_index] = previous
+
+        self._apply(do, undo, frame_index)
+        return True
+
+    def set_landmarks(
+        self,
+        frame_index: int,
+        face_index: int,
+        landmarks: T.Sequence[tuple[float, float]],
+    ) -> bool:
+        """Replace the full landmark set for a face (Aligner integration, #104).
+
+        Used by the host after a Bounding Box edit reruns the selected
+        aligner: the editable bbox stays put while landmarks are
+        refreshed in one undoable step.  Returns ``False`` for an
+        invalid face_index; an empty ``landmarks`` sequence is treated
+        as "clear" and is allowed so the host can roll back to landmark-
+        less state if the aligner refuses to produce anything.
+        """
+        faces = self._faces.get(frame_index, [])
+        if face_index < 0 or face_index >= len(faces):
+            return False
+        previous = faces[face_index]
+        new_landmarks = tuple((float(x), float(y)) for x, y in landmarks)
+        updated = EditableFace(
+            face_index=previous.face_index,
+            bbox=previous.bbox,
+            landmarks=new_landmarks,
         )
 
         def do() -> None:
