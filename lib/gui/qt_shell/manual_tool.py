@@ -4886,6 +4886,55 @@ class ManualToolWindow(QMainWindow):
             progress.setRange(0, 100)
             progress.setValue(0)
 
+    def rerun_aligner_for_face(self, face_index: int) -> bool:
+        """Rerun the configured aligner against ``face_index`` on the current frame.
+
+        Returns ``True`` if landmarks were refreshed. Failures (no image,
+        empty bbox, aligner unavailable, model error) surface a status
+        message + console line and never corrupt the editable model — the
+        existing landmark cloud stays put.
+        """
+        frame_index = self._current_frame_index()
+        if frame_index < 0:
+            self.statusBar().showMessage("No frame to align", 3000)
+            return False
+        faces = self._editable.faces(frame_index)
+        if face_index < 0 or face_index >= len(faces):
+            self.statusBar().showMessage("No active face to align", 3000)
+            return False
+        image = self._frame_view.current_frame_array()
+        if image is None:
+            self.statusBar().showMessage("Cannot align: frame image not loaded", 4000)
+            return False
+        face = faces[face_index]
+        try:
+            landmarks = self._aligner_service.align(
+                image,
+                face.bbox,
+                aligner=self._active_aligner_name() or None,
+                normalization=self._editor_state.aligner_normalization,
+            )
+        except Exception as err:  # noqa: BLE001 - surface to the user; model untouched
+            logger.exception("Manual Tool: aligner run failed")
+            self.statusBar().showMessage(f"Aligner failed: {err}", 5000)
+            self._emit_console(f"Manual Tool aligner failed: {err}")
+            return False
+        new_points = [(float(point[0]), float(point[1])) for point in landmarks]
+        if not self._editable.set_landmarks(frame_index, face_index, new_points):
+            return False
+        self._editor_state.set("edited", True)
+        self.refresh_faces()
+        self._frame_view.update()
+        return True
+
+    def _maybe_run_aligner(self, face_index: int) -> None:
+        """Run the aligner after a bbox edit when ``aligner_auto_run`` is on."""
+        if not self._editor_state.aligner_auto_run:
+            return
+        if self._editor_state.editor_mode != "BoundingBox":
+            return
+        self.rerun_aligner_for_face(int(face_index))
+
     def _face_at_source_point(self, sx: float, sy: float) -> int | None:
         """Hit-test the editable model at a source-coordinate point."""
         frame_index = self._current_frame_index()

@@ -167,9 +167,7 @@ def test_set_normalization_propagates_to_loaded_backends(qtbot, tmp_path: Path) 
 # ---------------------------------------------------------------------------
 
 
-def test_bbox_aligner_controls_exist_and_populate_from_service(
-    qtbot, tmp_path: Path
-) -> None:  # type:ignore[no-untyped-def]
+def test_bbox_aligner_controls_exist_and_populate_from_service(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
     """BBox editor surfaces aligner dropdown, radios, auto-run and progress widgets."""
     service = _stub_service(available=("HRNet", "FAN"), default="FAN")
     window, _ = _make_window(qtbot, tmp_path, service=service)
@@ -196,9 +194,7 @@ def test_bbox_aligner_controls_exist_and_populate_from_service(
     assert status.text()
 
 
-def test_bbox_aligner_controls_are_visible_only_in_bbox_mode(
-    qtbot, tmp_path: Path
-) -> None:  # type:ignore[no-untyped-def]
+def test_bbox_aligner_controls_are_visible_only_in_bbox_mode(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
     """Aligner controls hide outside BoundingBox mode without being destroyed."""
     window, _ = _make_window(qtbot, tmp_path)
     controls = _child(window, QWidget, "qt-manual-aligner-controls")
@@ -215,9 +211,7 @@ def test_bbox_aligner_controls_are_visible_only_in_bbox_mode(
     assert controls.isVisible() is False
 
 
-def test_bbox_aligner_selection_persists_across_editor_mode_changes(
-    qtbot, tmp_path: Path
-) -> None:  # type:ignore[no-untyped-def]
+def test_bbox_aligner_selection_persists_across_editor_mode_changes(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
     """Dropdown + normalization choices survive leaving and re-entering BBox mode."""
     service = _stub_service(available=("HRNet", "FAN"), default="HRNet")
     window, _ = _make_window(qtbot, tmp_path, service=service)
@@ -231,9 +225,7 @@ def test_bbox_aligner_selection_persists_across_editor_mode_changes(
     qtbot.waitUntil(lambda: window._editor_state.aligner_name == "FAN", timeout=2000)
     qtbot.waitUntil(lambda: window._aligner_load_worker is None, timeout=2000)
     clahe.click()
-    qtbot.waitUntil(
-        lambda: window._editor_state.aligner_normalization == "clahe", timeout=2000
-    )
+    qtbot.waitUntil(lambda: window._editor_state.aligner_normalization == "clahe", timeout=2000)
 
     window._editor_state.set("editor_mode", "Landmarks")
     assert controls.isVisible() is False
@@ -246,9 +238,7 @@ def test_bbox_aligner_selection_persists_across_editor_mode_changes(
     assert window._editor_state.aligner_normalization == "clahe"
 
 
-def test_bbox_auto_run_checkbox_updates_state_and_gates_rerun(
-    qtbot, tmp_path: Path
-) -> None:  # type:ignore[no-untyped-def]
+def test_bbox_auto_run_checkbox_updates_state_and_gates_rerun(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
     """The visible Auto-run checkbox controls post-bbox-edit aligner reruns."""
     window, service = _make_window(qtbot, tmp_path)
     checkbox = _child(window, QCheckBox, "qt-manual-aligner-auto-run")
@@ -266,9 +256,7 @@ def test_bbox_auto_run_checkbox_updates_state_and_gates_rerun(
     assert all(not backend.align_calls for backend in instances)
 
 
-def test_bbox_aligner_preload_progress_paints_loading_then_ready(
-    qtbot, tmp_path: Path
-) -> None:  # type:ignore[no-untyped-def]
+def test_bbox_aligner_preload_progress_paints_loading_then_ready(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
     """Entering BBox mode starts background preload and updates inline status."""
     window, _ = _make_window(qtbot, tmp_path)
     progress = _child(window, QProgressBar, "qt-manual-aligner-load-progress")
