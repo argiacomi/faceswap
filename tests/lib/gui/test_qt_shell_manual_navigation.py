@@ -83,7 +83,7 @@ def test_transport_bar_user_slider_drag_emits(qtbot) -> None:  # type:ignore[no-
 
 
 def test_transport_bar_jump_entry_handles_empty_and_invalid(qtbot) -> None:  # type:ignore[no-untyped-def]
-    """Empty / non-numeric input must not emit and must restore the slider value."""
+    """Empty / non-numeric input must not emit and must restore the *1-based* slider value."""
     bar = ManualTransportBar()
     qtbot.addWidget(bar)
     bar.set_total(10)
@@ -93,16 +93,17 @@ def test_transport_bar_jump_entry_handles_empty_and_invalid(qtbot) -> None:  # t
     bar.jump_entry.setText("")
     bar._on_jump_submit()  # noqa: SLF001 - exercising the slot directly
     assert received == []
-    assert bar.jump_entry.text() == "5"
+    # Slider position 5 is 1-based frame "6" — restored as such.
+    assert bar.jump_entry.text() == "6"
 
     bar.jump_entry.setText("oops")
     bar._on_jump_submit()  # noqa: SLF001
     assert received == []
-    assert bar.jump_entry.text() == "5"
+    assert bar.jump_entry.text() == "6"
 
 
 def test_transport_bar_jump_entry_clamps_out_of_range(qtbot) -> None:  # type:ignore[no-untyped-def]
-    """Jump entries past the last frame clamp to ``total - 1``."""
+    """Out-of-range 1-based input clamps to ``1..total`` and emits the 0-based index."""
     bar = ManualTransportBar()
     qtbot.addWidget(bar)
     bar.set_total(10)
@@ -111,8 +112,32 @@ def test_transport_bar_jump_entry_clamps_out_of_range(qtbot) -> None:  # type:ig
     bar.position_changed.connect(received.append)
     bar.jump_entry.setText("999")
     bar._on_jump_submit()  # noqa: SLF001
+    # Entry displays the clamped 1-based frame (10 of 10); emitted index is the
+    # underlying 0-based transport position (9).
     assert received == [9]
-    assert bar.jump_entry.text() == "9"
+    assert bar.jump_entry.text() == "10"
+
+    received.clear()
+    bar.jump_entry.setText("1")
+    bar._on_jump_submit()  # noqa: SLF001
+    assert received == [0]
+    assert bar.jump_entry.text() == "1"
+
+
+def test_transport_bar_jump_entry_uses_one_based_numbering(qtbot) -> None:  # type:ignore[no-untyped-def]
+    """Typing ``5`` selects frame 5 of N (0-based index 4)."""
+    bar = ManualTransportBar()
+    qtbot.addWidget(bar)
+    bar.set_total(10)
+    received: list[int] = []
+    bar.position_changed.connect(received.append)
+    bar.jump_entry.setText("5")
+    bar._on_jump_submit()  # noqa: SLF001
+    assert received == [4]
+    assert bar.jump_entry.text() == "5"
+    # Counter agrees.
+    bar.set_position(4)
+    assert bar.counter_label.text() == "Frame: 5 / 10"
 
 
 # ---------------------------------------------------------------------------
@@ -229,3 +254,40 @@ def test_empty_filter_leaves_transport_disabled(qtbot, tmp_path: Path) -> None: 
     bar._on_jump_submit()  # noqa: SLF001
     assert received == []
     assert bar.slider.isEnabled() is False
+
+
+# ---------------------------------------------------------------------------
+# #113 — arrow-key shortcut collision between navigation and frame-view nudge
+# ---------------------------------------------------------------------------
+
+
+def test_previous_next_frame_shortcuts_drop_left_right(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+    """``previous_frame`` / ``next_frame`` no longer bind ``Left``/``Right``.
+
+    The frame-view-scoped nudge actions own arrow keys when the frame view
+    has focus; binding them to window-level navigation as well caused both
+    actions to fire on every arrow press.
+    """
+    window = _make_window(qtbot, tmp_path, count=3)
+    prev_action = window.actions_by_key["previous_frame"]
+    next_action = window.actions_by_key["next_frame"]
+
+    prev_shortcuts = {seq.toString() for seq in prev_action.shortcuts()}
+    next_shortcuts = {seq.toString() for seq in next_action.shortcuts()}
+
+    # Z / X remain — they're the documented legacy navigation keys.
+    assert "Z" in prev_shortcuts
+    assert "X" in next_shortcuts
+    # Left / Right are NOT bound to navigation any more.
+    assert "Left" not in prev_shortcuts
+    assert "Right" not in next_shortcuts
+
+
+def test_z_and_x_still_trigger_navigation(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+    """The Z / X legacy navigation shortcuts continue to fire prev/next."""
+    window = _make_window(qtbot, tmp_path, count=4)
+    window._thumbnail_panel.setCurrentRow(2)
+    window.actions_by_key["previous_frame"].trigger()
+    assert window._thumbnail_panel.currentRow() == 1
+    window.actions_by_key["next_frame"].trigger()
+    assert window._thumbnail_panel.currentRow() == 2

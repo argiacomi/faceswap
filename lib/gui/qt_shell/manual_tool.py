@@ -1156,6 +1156,9 @@ class ManualTransportBar(QWidget):
         self._jump_entry = QLineEdit()
         self._jump_entry.setObjectName("qt-manual-transport-jump")
         self._jump_entry.setFixedWidth(60)
+        # Jump entry is 1-based to match the visible ``Frame: X / N`` counter.
+        # Validator range follows: ``[1, total]`` when total > 0, else ``[0, 0]``
+        # so the entry stays uneditable when no frames are loaded.
         self._jump_entry.setValidator(QIntValidator(0, 0, self))
         self._jump_entry.setPlaceholderText("#")
         self._jump_entry.editingFinished.connect(self._on_jump_submit)
@@ -1186,7 +1189,12 @@ class ManualTransportBar(QWidget):
         self._jump_entry.setEnabled(self._total > 0)
         validator = self._jump_entry.validator()
         if isinstance(validator, QIntValidator):
-            validator.setRange(0, last)
+            # 1-based validator: when no frames are loaded keep the entry pinned
+            # to (0, 0) so it rejects all input; otherwise accept ``1..total``.
+            if self._total > 0:
+                validator.setRange(1, self._total)
+            else:
+                validator.setRange(0, 0)
         self._update_counter(self._slider.value())
 
     def set_position(self, position: int) -> None:
@@ -1208,27 +1216,45 @@ class ManualTransportBar(QWidget):
             self.position_changed.emit(int(value))
 
     def _on_jump_submit(self) -> None:
-        """Parse jump entry, clamp to range, emit if changed."""
+        """Parse a 1-based jump entry, clamp to ``[1, total]``, emit on change.
+
+        The visible counter is ``Frame: X / N`` (1-based), so the jump entry
+        accepts the same numbering: typing ``1`` selects the first frame,
+        ``N`` selects the last.  The emitted ``position_changed`` signal
+        carries the underlying 0-based transport position.
+        """
         text = self._jump_entry.text().strip()
-        if not text:
-            self._jump_entry.setText(str(self._slider.value()))
+        current_one_based = self._slider.value() + 1 if self._total > 0 else 0
+        if not text or self._total <= 0:
+            self._jump_entry.setText(str(current_one_based) if self._total > 0 else "")
             return
         try:
             value = int(text)
         except ValueError:
-            self._jump_entry.setText(str(self._slider.value()))
+            self._jump_entry.setText(str(current_one_based))
             return
-        clamped = max(0, min(value, max(0, self._total - 1)))
-        if clamped != self._slider.value():
-            self.position_changed.emit(clamped)
-        self._jump_entry.setText(str(clamped))
+        clamped_one_based = max(1, min(value, self._total))
+        position = clamped_one_based - 1
+        if position != self._slider.value():
+            self.position_changed.emit(position)
+        self._jump_entry.setText(str(clamped_one_based))
 
     def _update_counter(self, position: int) -> None:
-        """Refresh the ``Frame: X / N`` label."""
+        """Refresh the ``Frame: X / N`` label and the 1-based jump-entry text.
+
+        The jump entry only refreshes when it is *not* focused so the user
+        can keep typing without their input being clobbered by an in-flight
+        slider move triggered by playback.
+        """
         if self._total <= 0:
             self._counter.setText("Frame: – / 0")
+            if not self._jump_entry.hasFocus():
+                self._jump_entry.setText("")
             return
-        self._counter.setText(f"Frame: {position + 1} / {self._total}")
+        one_based = position + 1
+        self._counter.setText(f"Frame: {one_based} / {self._total}")
+        if not self._jump_entry.hasFocus():
+            self._jump_entry.setText(str(one_based))
 
 
 class ManualAction(T.NamedTuple):
@@ -1298,7 +1324,7 @@ MANUAL_ACTIONS: tuple[ManualAction, ...] = (
         key="previous_frame",
         label="Previous",
         handler="_previous_frame",
-        shortcut=("Z", "Left"),
+        shortcut=("Z",),
         icon="prev",
         tooltip="Previous frame (Z)",
     ),
@@ -1306,7 +1332,7 @@ MANUAL_ACTIONS: tuple[ManualAction, ...] = (
         key="next_frame",
         label="Next",
         handler="_next_frame",
-        shortcut=("X", "Right"),
+        shortcut=("X",),
         icon="next",
         tooltip="Next frame (X)",
     ),
