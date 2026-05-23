@@ -113,7 +113,9 @@ class ManualFrameOverlay:
     _DEFAULT_COLOR = QColor("#3aa0ff")
     _ACTIVE_COLOR = QColor("#ffb000")
     _LANDMARK_COLOR = QColor("#ffffff")
+    _LANDMARK_SELECTED_COLOR = QColor("#ffb000")
     _LANDMARK_RADIUS = 2.0
+    _LANDMARK_SELECTED_RADIUS = 3.5
     _HANDLE_SIZE = 7.0  # square handle side length in widget pixels
     _HANDLE_FILL = QColor("#ffffff")
     _HANDLE_EDGE = QColor("#11191c")
@@ -141,15 +143,29 @@ class ManualFrameOverlay:
         self._model = model
         self._frame_index_provider = frame_index_provider
         self._active_face: int | None = None
+        # Selected landmark indices for the active face (Landmark editor, #103).
+        self._selected_landmarks: frozenset[int] = frozenset()
 
     def set_active(self, face_index: int | None) -> None:
         """Mark a face as the active selection for highlight rendering."""
         self._active_face = face_index
+        # Clear the landmark selection whenever the active face changes; the
+        # selection set is per-face and would otherwise leak across switches.
+        self._selected_landmarks = frozenset()
 
     @property
     def active_face(self) -> int | None:
         """Return the currently highlighted ``face_index`` (or ``None``)."""
         return self._active_face
+
+    def set_selected_landmarks(self, indices: T.Iterable[int]) -> None:
+        """Set the landmark selection set used to render highlight points."""
+        self._selected_landmarks = frozenset(int(i) for i in indices)
+
+    @property
+    def selected_landmarks(self) -> frozenset[int]:
+        """Return the active face's currently selected landmark indices."""
+        return self._selected_landmarks
 
     def __call__(self, painter: QPainter, viewport: FrameViewport) -> None:
         """Draw the overlay during :meth:`ManualFrameView.paintEvent`."""
@@ -169,15 +185,17 @@ class ManualFrameOverlay:
             painter.setBrush(Qt.NoBrush)
             painter.drawRect(rect)
             if face.landmarks:
-                painter.setBrush(QBrush(self._LANDMARK_COLOR))
                 painter.setPen(Qt.NoPen)
-                for lx, ly in face.landmarks:
+                selected = self._selected_landmarks if is_active else frozenset()
+                for lm_index, (lx, ly) in enumerate(face.landmarks):
                     point = viewport.source_to_widget(lx, ly)
-                    painter.drawEllipse(
-                        point,
-                        self._LANDMARK_RADIUS,
-                        self._LANDMARK_RADIUS,
-                    )
+                    if lm_index in selected:
+                        painter.setBrush(QBrush(self._LANDMARK_SELECTED_COLOR))
+                        radius = self._LANDMARK_SELECTED_RADIUS
+                    else:
+                        painter.setBrush(QBrush(self._LANDMARK_COLOR))
+                        radius = self._LANDMARK_RADIUS
+                    painter.drawEllipse(point, radius, radius)
             if is_active:
                 self._draw_handles(painter, rect)
             painter.restore()
@@ -220,6 +238,57 @@ class ManualFrameOverlay:
                 return name
         return None
 
+    @classmethod
+    def landmark_at(
+        cls,
+        landmarks: T.Sequence[tuple[float, float]],
+        source_point: tuple[float, float],
+        *,
+        tolerance: float = 0.0,
+    ) -> int | None:
+        """Return the index of the landmark within ``tolerance`` of ``source_point``.
+
+        Coordinates are in source pixels (no widget mapping). When multiple
+        landmarks fall inside the tolerance radius the *closest* index wins,
+        so users in dense regions (eye/lip contours) get the expected point.
+        Returns ``None`` when nothing is within reach.
+        """
+        if not landmarks:
+            return None
+        sx, sy = source_point
+        radius = cls._LANDMARK_RADIUS + max(0.0, tolerance)
+        radius_sq = radius * radius
+        best_index: int | None = None
+        best_dist_sq = radius_sq
+        for index, (lx, ly) in enumerate(landmarks):
+            dx = lx - sx
+            dy = ly - sy
+            dist_sq = dx * dx + dy * dy
+            if dist_sq <= best_dist_sq:
+                best_dist_sq = dist_sq
+                best_index = index
+        return best_index
+
+    @staticmethod
+    def landmarks_in_rect(
+        landmarks: T.Sequence[tuple[float, float]],
+        source_rect: QRectF,
+    ) -> tuple[int, ...]:
+        """Return indices of every landmark inside ``source_rect`` (inclusive).
+
+        Used by the Landmark editor's marquee selection gesture (#103).
+        An empty rect (zero width or height) returns an empty tuple.
+        """
+        if source_rect.width() <= 0.0 or source_rect.height() <= 0.0:
+            return ()
+        x0 = source_rect.x()
+        y0 = source_rect.y()
+        x1 = x0 + source_rect.width()
+        y1 = y0 + source_rect.height()
+        return tuple(
+            index for index, (lx, ly) in enumerate(landmarks) if x0 <= lx <= x1 and y0 <= ly <= y1
+        )
+
 
 class ManualFrameView(QWidget):
     """Manual Tool frame display with pan/zoom and overlay seams."""
@@ -236,6 +305,12 @@ class ManualFrameView(QWidget):
     """Emitted at the end of an empty-space drag/click in BBox add mode."""
     face_context_menu_requested = Signal(int, QPointF)
     """Emitted on right-click over an existing face: (face_index, global pos)."""
+    landmark_move_requested = Signal(int, int, float, float)
+    """``(face_index, landmark_index, new_source_x, new_source_y)`` on single-point release."""
+    landmarks_move_requested = Signal(int, object, float, float)
+    """``(face_index, tuple(indices), dx, dy)`` on group-move release."""
+    landmarks_select_requested = Signal(int, object)
+    """``(face_index, tuple(indices))`` on marquee release.  Empty tuple clears."""
 
     _MIN_ZOOM = 1.0
     _MAX_ZOOM = 20.0
@@ -271,11 +346,24 @@ class ManualFrameView(QWidget):
         # pure-pan behavior.
         self._add_mode_provider: T.Callable[[], bool] | None = None
         self._face_hit_provider: T.Callable[[float, float], int | None] | None = None
-        self._edit_drag_mode: str | None = None  # "move" | "resize" | "add"
+        # Landmark editor seams (#103) — when installed, landmark-mode pointer
+        # gestures hit-test individual points and emit landmark_*_requested.
+        self._landmark_mode_provider: T.Callable[[], bool] | None = None
+        self._landmark_provider: T.Callable[[], T.Sequence[tuple[float, float]] | None] | None = (
+            None
+        )
+        self._landmark_selection_provider: T.Callable[[], frozenset[int]] | None = None
+        self._edit_drag_mode: str | None = None
+        # Modes: "move" | "resize" | "add" | "landmark" | "landmark_group"
+        # | "landmark_marquee"
         self._edit_drag_handle: str | None = None
         self._edit_drag_source_anchor: QPointF | None = None
         self._edit_drag_original_bbox: QRectF | None = None
         self._edit_drag_current_bbox: QRectF | None = None
+        # Landmark-drag state — populated by ``_begin_landmark_drag``.
+        self._landmark_drag_index: int | None = None
+        self._landmark_drag_indices: tuple[int, ...] = ()
+        self._landmark_drag_origins: tuple[tuple[float, float], ...] = ()
 
     # ---- public API ----
     @property
@@ -338,6 +426,46 @@ class ManualFrameView(QWidget):
         self._offset = QPointF(0.0, 0.0)
         self.update()
         self.view_changed.emit()
+
+    def magnify_to_source_rect(self, source_rect: QRectF) -> bool:
+        """Zoom + pan so ``source_rect`` fills the viewport (Landmark magnify).
+
+        ``source_rect`` is in source-image pixel coordinates.  Returns
+        ``False`` when no source is loaded or the rect is degenerate.
+        """
+        src_w, src_h = self.source_size
+        if src_w <= 0 or src_h <= 0 or source_rect.width() <= 0.0 or source_rect.height() <= 0.0:
+            return False
+        fit_w, fit_h = self._fit_size()
+        if fit_w <= 0.0 or fit_h <= 0.0:
+            return False
+        # Choose the zoom that maps the source-rect's longer side to the widget
+        # axis it fills (matching Qt's ``KeepAspectRatio`` semantics).
+        zoom_x = (src_w / source_rect.width()) * (self.width() / fit_w if fit_w else 1.0)
+        zoom_y = (src_h / source_rect.height()) * (self.height() / fit_h if fit_h else 1.0)
+        zoom = min(zoom_x, zoom_y)
+        clamped = max(self._MIN_ZOOM, min(self._MAX_ZOOM, zoom))
+        self._zoom = clamped
+        # Reset pan, then center the source-rect under the viewport.  ``_target_rect``
+        # already accounts for the centred offset, so we compute the
+        # source-rect's centre in widget coordinates and shift by the
+        # difference from the widget centre.
+        self._offset = QPointF(0.0, 0.0)
+        target = self._target_rect()
+        center_x = target.x() + target.width() * (
+            (source_rect.x() + source_rect.width() / 2.0) / src_w
+        )
+        center_y = target.y() + target.height() * (
+            (source_rect.y() + source_rect.height() / 2.0) / src_h
+        )
+        self._offset = QPointF(
+            self.width() / 2.0 - center_x,
+            self.height() / 2.0 - center_y,
+        )
+        self._clamp_offset()
+        self.update()
+        self.view_changed.emit()
+        return True
 
     def add_overlay(self, painter: OverlayPainter) -> T.Callable[[], None]:
         """Register a callable invoked after the frame is painted.
@@ -413,6 +541,26 @@ class ManualFrameView(QWidget):
         self._add_mode_provider = add_mode_provider
         self._face_hit_provider = face_hit_provider
 
+    def install_landmark_seams(
+        self,
+        *,
+        landmark_mode_provider: T.Callable[[], bool],
+        landmark_provider: T.Callable[[], T.Sequence[tuple[float, float]] | None],
+        landmark_selection_provider: T.Callable[[], frozenset[int]],
+    ) -> None:
+        """Install Landmark editor seams (#103).
+
+        ``landmark_mode_provider`` returns ``True`` while the editor mode is
+        ``"Landmarks"`` — gating point-drag, marquee, and group-move gestures.
+        ``landmark_provider`` returns the active face's landmark sequence (or
+        ``None`` when no face is active).  ``landmark_selection_provider``
+        returns the currently selected landmark indices so group-move uses
+        the same set the marquee defined.
+        """
+        self._landmark_mode_provider = landmark_mode_provider
+        self._landmark_provider = landmark_provider
+        self._landmark_selection_provider = landmark_selection_provider
+
     def edit_drag_preview_bbox(self) -> QRectF | None:
         """Return the in-progress drag bbox in source coordinates, if any.
 
@@ -442,6 +590,11 @@ class ManualFrameView(QWidget):
         # Always emit clicked_at so selection on empty-space click is preserved.
         if source_point is not None:
             self.clicked_at.emit(source_point)
+        # Landmark editor (#103) takes precedence in landmark mode so the user
+        # can drag individual points or marquee-select inside the bbox.
+        if self._begin_landmark_drag(position, source_point, event):
+            event.accept()
+            return
         if self._begin_edit_drag(position):
             event.accept()
             return
@@ -658,17 +811,39 @@ class ManualFrameView(QWidget):
         return True
 
     def _update_edit_drag(self, position: QPointF) -> None:
-        """Apply pointer motion to the active resize/move/add drag preview."""
+        """Apply pointer motion to the active drag preview.
+
+        Handles bbox move/resize/add plus the new landmark, landmark-group,
+        and marquee modes (#103).  All previews update incrementally and
+        request a repaint so the view + overlays stay in sync.
+        """
         source_point = self._widget_to_source(position)
-        if (
-            source_point is None
-            or self._edit_drag_source_anchor is None
-            or self._edit_drag_original_bbox is None
-        ):
+        if source_point is None or self._edit_drag_source_anchor is None:
             return
-        dx = source_point.x() - self._edit_drag_source_anchor.x()
-        dy = source_point.y() - self._edit_drag_source_anchor.y()
-        if self._edit_drag_mode == "move":
+        anchor = self._edit_drag_source_anchor
+        dx = source_point.x() - anchor.x()
+        dy = source_point.y() - anchor.y()
+        mode = self._edit_drag_mode
+        if mode == "landmark":
+            # Single-point drag: the overlay reads the live coord from
+            # ``landmark_drag_preview`` so we just store the new position.
+            self._edit_drag_current_bbox = QRectF(source_point.x(), source_point.y(), 0.0, 0.0)
+            self.update()
+            return
+        if mode == "landmark_group":
+            # Group move: overlay reads ``landmark_drag_preview`` for each
+            # selected index — we just store the delta in the current bbox.
+            self._edit_drag_current_bbox = QRectF(dx, dy, 0.0, 0.0)
+            self.update()
+            return
+        if mode == "landmark_marquee":
+            rect = QRectF(anchor, source_point).normalized()
+            self._edit_drag_current_bbox = rect
+            self.update()
+            return
+        if self._edit_drag_original_bbox is None:
+            return
+        if mode == "move":
             origin = self._edit_drag_original_bbox
             self._edit_drag_current_bbox = QRectF(
                 origin.x() + dx,
@@ -676,10 +851,8 @@ class ManualFrameView(QWidget):
                 origin.width(),
                 origin.height(),
             )
-        elif self._edit_drag_mode == "add":
-            anchor = self._edit_drag_source_anchor
-            rect = QRectF(anchor, source_point).normalized()
-            self._edit_drag_current_bbox = rect
+        elif mode == "add":
+            self._edit_drag_current_bbox = QRectF(anchor, source_point).normalized()
         else:
             self._edit_drag_current_bbox = self._resize_bbox(
                 self._edit_drag_original_bbox, self._edit_drag_handle or "", dx, dy
@@ -718,10 +891,24 @@ class ManualFrameView(QWidget):
         current = self._edit_drag_current_bbox
         mode = self._edit_drag_mode
         anchor = self._edit_drag_source_anchor
+        landmark_index = self._landmark_drag_index
+        landmark_indices = self._landmark_drag_indices
         face_index = self._active_face_provider() if self._active_face_provider else None
         self._reset_edit_drag()
         if mode == "add":
             self._emit_add_request(anchor, current)
+            self.update()
+            return
+        if mode == "landmark":
+            self._emit_landmark_move(face_index, landmark_index, anchor, current)
+            self.update()
+            return
+        if mode == "landmark_group":
+            self._emit_landmark_group_move(face_index, landmark_indices, current)
+            self.update()
+            return
+        if mode == "landmark_marquee":
+            self._emit_landmark_marquee(face_index, current)
             self.update()
             return
         if face_index is None or original is None or current is None:
@@ -745,6 +932,62 @@ class ManualFrameView(QWidget):
                 return
             self.face_resize_requested.emit(face_index, QRectF(current))
         self.update()
+
+    def _emit_landmark_move(
+        self,
+        face_index: int | None,
+        landmark_index: int | None,
+        anchor: QPointF | None,
+        current: QRectF | None,
+    ) -> None:
+        """Emit ``landmark_move_requested`` for a single-point drag commit."""
+        if face_index is None or landmark_index is None or current is None or anchor is None:
+            return
+        if current.x() == anchor.x() and current.y() == anchor.y():
+            return
+        self.landmark_move_requested.emit(
+            int(face_index), int(landmark_index), float(current.x()), float(current.y())
+        )
+
+    def _emit_landmark_group_move(
+        self,
+        face_index: int | None,
+        indices: tuple[int, ...],
+        current: QRectF | None,
+    ) -> None:
+        """Emit ``landmarks_move_requested`` for a group-drag commit."""
+        if face_index is None or not indices or current is None:
+            return
+        dx = current.x()
+        dy = current.y()
+        if dx == 0.0 and dy == 0.0:
+            return
+        self.landmarks_move_requested.emit(int(face_index), tuple(indices), float(dx), float(dy))
+
+    def _emit_landmark_marquee(
+        self,
+        face_index: int | None,
+        current: QRectF | None,
+    ) -> None:
+        """Emit ``landmarks_select_requested`` with indices inside the marquee.
+
+        A zero-size marquee (click without drag) clears the selection — that
+        mirrors the Tk Manual Tool's behaviour and gives the user a way to
+        deselect everything by clicking on empty space inside the bbox.
+        """
+        if face_index is None:
+            return
+        if (
+            current is None
+            or current.width() <= 0.0
+            or current.height() <= 0.0
+            or self._landmark_provider is None
+        ):
+            self.landmarks_select_requested.emit(int(face_index), ())
+            return
+        landmarks = self._landmark_provider() or ()
+        indices = ManualFrameOverlay.landmarks_in_rect(landmarks, current)
+        self.landmarks_select_requested.emit(int(face_index), indices)
 
     def _emit_add_request(self, anchor: QPointF | None, current: QRectF | None) -> None:
         """Emit ``face_add_requested`` for a committed add gesture.
@@ -798,6 +1041,75 @@ class ManualFrameView(QWidget):
         self.setCursor(Qt.CrossCursor)
         return True
 
+    _LANDMARK_HIT_TOLERANCE = 4.0
+    """Extra source pixels around each landmark for forgiving point hit-test."""
+
+    def _begin_landmark_drag(
+        self,
+        position: QPointF,
+        source_point: QPointF | None,
+        event: QMouseEvent,
+    ) -> bool:
+        """Try to start a single-point, group, or marquee landmark drag (#103).
+
+        Pre-conditions:
+
+        * Landmark editor mode is active (``_landmark_mode_provider`` returns
+          True) — otherwise the bbox edit/add path runs as before.
+        * The active face has landmarks — clicking on a face without landmarks
+          falls back to bbox move/resize.
+        """
+        if (
+            self._landmark_mode_provider is None
+            or self._landmark_provider is None
+            or self._landmark_selection_provider is None
+            or not self._landmark_mode_provider()
+        ):
+            return False
+        if source_point is None:
+            return False
+        if self._active_face_provider is None:
+            return False
+        face_index = self._active_face_provider()
+        if face_index is None:
+            return False
+        landmarks = self._landmark_provider()
+        if not landmarks:
+            return False
+        # 1) Point hit-test first — drag a single landmark, or a group when
+        #    that landmark is part of the current selection.
+        hit_index = ManualFrameOverlay.landmark_at(
+            landmarks,
+            (source_point.x(), source_point.y()),
+            tolerance=self._LANDMARK_HIT_TOLERANCE,
+        )
+        if hit_index is not None:
+            selection = self._landmark_selection_provider()
+            self._edit_drag_source_anchor = QPointF(source_point)
+            self._landmark_drag_index = hit_index
+            if hit_index in selection and len(selection) > 1:
+                self._edit_drag_mode = "landmark_group"
+                self._landmark_drag_indices = tuple(sorted(selection))
+                self._landmark_drag_origins = tuple(
+                    (landmarks[idx][0], landmarks[idx][1]) for idx in self._landmark_drag_indices
+                )
+            else:
+                self._edit_drag_mode = "landmark"
+                self._landmark_drag_indices = (hit_index,)
+                self._landmark_drag_origins = ((landmarks[hit_index][0], landmarks[hit_index][1]),)
+            return True
+        # 2) Empty-space drag inside the active face's bbox starts a marquee.
+        #    Outside the bbox we fall through so the user can still pan.
+        bbox = self._active_bbox_provider() if self._active_bbox_provider else None
+        if bbox is None or not bbox.contains(source_point):
+            return False
+        self._edit_drag_mode = "landmark_marquee"
+        self._edit_drag_source_anchor = QPointF(source_point)
+        self._edit_drag_original_bbox = QRectF(source_point.x(), source_point.y(), 0.0, 0.0)
+        self._edit_drag_current_bbox = QRectF(source_point.x(), source_point.y(), 0.0, 0.0)
+        self.setCursor(Qt.CrossCursor)
+        return True
+
     def _emit_context_menu(self, source_point: QPointF | None, global_position: QPointF) -> bool:
         """Hit-test the right-click and emit ``face_context_menu_requested``.
 
@@ -819,12 +1131,18 @@ class ManualFrameView(QWidget):
         self._edit_drag_source_anchor = None
         self._edit_drag_original_bbox = None
         self._edit_drag_current_bbox = None
+        self._landmark_drag_index = None
+        self._landmark_drag_indices = ()
+        self._landmark_drag_origins = ()
 
     def _paint_add_preview(self, painter: QPainter, viewport: FrameViewport) -> None:
-        """Draw a dashed preview rect while the user is dragging a new face."""
-        if self._edit_drag_mode != "add" or self._edit_drag_current_bbox is None:
+        """Draw a dashed preview rect for in-progress add or marquee gestures."""
+        mode = self._edit_drag_mode
+        if mode not in ("add", "landmark_marquee"):
             return
         source = self._edit_drag_current_bbox
+        if source is None:
+            return
         if source.width() <= 0.0 and source.height() <= 0.0:
             return
         widget_rect = viewport.source_rect_to_widget(
@@ -1486,6 +1804,14 @@ MANUAL_ACTIONS: tuple[ManualAction, ...] = (
         shortcut=("0",),
         icon=None,  # (missing) — reuse default until art lands.
         tooltip="Reset zoom and pan (0)",
+    ),
+    ManualAction(
+        key="magnify_active_face",
+        label="Magnify Active Face",
+        handler="magnify_active_face",
+        shortcut=("M",),
+        icon=None,
+        tooltip="Fit the active face's bbox to the frame view (M)",
     ),
     ManualAction(
         key="nudge_up",
@@ -2953,6 +3279,21 @@ class ManualToolWindow(QMainWindow):
         """Reset the embedded frame view (action handler)."""
         self._frame_view.reset_view()
 
+    def magnify_active_face(self) -> bool:
+        """Fit the active face's bbox to the viewport (Landmark editor M).
+
+        Returns ``False`` and surfaces a status message when no face is
+        active — Tk's Magnify is a no-op in that case too, so parity holds.
+        """
+        bbox = self._active_face_bbox()
+        if bbox is None:
+            self.statusBar().showMessage("No active face to magnify", 3000)
+            return False
+        if not self._frame_view.magnify_to_source_rect(bbox):
+            self.statusBar().showMessage("Could not magnify active face", 3000)
+            return False
+        return True
+
     def _build_ui(self) -> None:
         """Build Manual Tool widgets."""
         self.resize(980, 680)
@@ -3046,6 +3387,9 @@ class ManualToolWindow(QMainWindow):
         self._frame_view.face_resize_requested.connect(self._on_face_resize_requested)
         self._frame_view.face_add_requested.connect(self._on_face_add_requested)
         self._frame_view.face_context_menu_requested.connect(self._on_frame_context_menu_requested)
+        self._frame_view.landmark_move_requested.connect(self._on_landmark_move_requested)
+        self._frame_view.landmarks_move_requested.connect(self._on_landmarks_move_requested)
+        self._frame_view.landmarks_select_requested.connect(self._on_landmarks_select_requested)
         self._face_panel.face_context_menu_requested.connect(
             self._on_face_panel_context_menu_requested
         )
@@ -3054,6 +3398,11 @@ class ManualToolWindow(QMainWindow):
             active_bbox_provider=self._active_face_bbox,
             add_mode_provider=self._is_add_mode_active,
             face_hit_provider=self._face_at_source_point,
+        )
+        self._frame_view.install_landmark_seams(
+            landmark_mode_provider=self._is_landmark_mode_active,
+            landmark_provider=self._active_face_landmarks,
+            landmark_selection_provider=lambda: self._overlay.selected_landmarks,
         )
         self.dirty_changed.connect(
             lambda dirty: self.statusBar().showMessage(
@@ -3417,12 +3766,78 @@ class ManualToolWindow(QMainWindow):
         """Return whether empty-space clicks should create a new face."""
         return self._editor_state.editor_mode == "BoundingBox"
 
+    def _is_landmark_mode_active(self) -> bool:
+        """Return whether the Landmark editor (F4) is active."""
+        return self._editor_state.editor_mode == "Landmarks"
+
     def _face_at_source_point(self, sx: float, sy: float) -> int | None:
         """Hit-test the editable model at a source-coordinate point."""
         frame_index = self._current_frame_index()
         if frame_index < 0:
             return None
         return self._editable.hit_test(frame_index, sx, sy)
+
+    def _active_face_landmarks(self) -> tuple[tuple[float, float], ...] | None:
+        """Return the active face's landmark sequence (Landmark editor seam)."""
+        frame_index = self._current_frame_index()
+        face_index = self._editor_state.face_index
+        if frame_index < 0 or face_index < 0:
+            return None
+        faces = self._editable.faces(frame_index)
+        if face_index >= len(faces):
+            return None
+        return faces[face_index].landmarks
+
+    def _on_landmark_move_requested(
+        self, face_index: int, landmark_index: int, new_x: float, new_y: float
+    ) -> None:
+        """Apply a single-point landmark edit and refresh the overlay."""
+        frame_index = self._current_frame_index()
+        if frame_index < 0:
+            self.statusBar().showMessage("No frame to edit", 3000)
+            return
+        if not self._editable.update_landmark(
+            frame_index, int(face_index), int(landmark_index), float(new_x), float(new_y)
+        ):
+            self.statusBar().showMessage("Landmark edit failed", 3000)
+            return
+        self._editor_state.set("edited", True)
+        self.refresh_faces()
+        self._frame_view.update()
+
+    def _on_landmarks_move_requested(
+        self,
+        face_index: int,
+        indices: T.Any,
+        dx: float,
+        dy: float,
+    ) -> None:
+        """Apply a group-move edit across the marquee-selected landmark set."""
+        frame_index = self._current_frame_index()
+        if frame_index < 0:
+            self.statusBar().showMessage("No frame to edit", 3000)
+            return
+        idx_tuple = tuple(indices) if not isinstance(indices, tuple) else indices
+        if not self._editable.move_landmarks(
+            frame_index, int(face_index), idx_tuple, float(dx), float(dy)
+        ):
+            self.statusBar().showMessage("Landmark group move failed", 3000)
+            return
+        self._editor_state.set("edited", True)
+        self.refresh_faces()
+        self._frame_view.update()
+
+    def _on_landmarks_select_requested(self, face_index: int, indices: T.Any) -> None:
+        """Update the overlay's selection set from a marquee release."""
+        if face_index != self._editor_state.face_index:
+            return
+        idx_tuple = tuple(indices) if not isinstance(indices, tuple) else indices
+        self._overlay.set_selected_landmarks(idx_tuple)
+        if not idx_tuple:
+            self.statusBar().showMessage("Landmark selection cleared", 2000)
+        else:
+            self.statusBar().showMessage(f"Selected {len(idx_tuple)} landmark(s)", 2000)
+        self._frame_view.update()
 
     def _on_face_add_requested(self, bbox: QRectF) -> None:
         """Create a new face from a pointer-driven add gesture."""

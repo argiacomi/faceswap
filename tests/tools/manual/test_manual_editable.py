@@ -153,6 +153,79 @@ def test_update_landmark_out_of_range_returns_false() -> None:
     assert model.update_landmark(0, 9, 0, 0.0, 0.0) is False
 
 
+# ---------------------------------------------------------------------------
+# #103 — Landmark editor group move
+# ---------------------------------------------------------------------------
+
+
+def test_move_landmarks_translates_selected_indices_only() -> None:
+    """move_landmarks shifts only the indices in the selection set."""
+    model = ManualEditableAlignments()
+    model.add_face(
+        0,
+        _bbox(),
+        landmarks=[(1.0, 2.0), (3.0, 4.0), (5.0, 6.0), (7.0, 8.0)],
+    )
+
+    assert model.move_landmarks(0, 0, (1, 3), 10.0, 20.0) is True
+    landmarks = model.faces(0)[0].landmarks
+    assert landmarks == (
+        (1.0, 2.0),
+        (13.0, 24.0),
+        (5.0, 6.0),
+        (17.0, 28.0),
+    )
+
+
+def test_move_landmarks_zero_delta_is_noop_true() -> None:
+    """A zero-pixel delta returns True without recording new history."""
+    model = ManualEditableAlignments()
+    model.add_face(0, _bbox(), landmarks=[(1.0, 2.0)])
+    model.clear_history()  # ignore the add_face undo entry
+    assert model.move_landmarks(0, 0, (0,), 0.0, 0.0) is True
+    assert model.can_undo is False
+
+
+def test_move_landmarks_empty_after_filter_is_noop_true() -> None:
+    """If every index is out of range the call no-ops cleanly."""
+    model = ManualEditableAlignments()
+    model.add_face(0, _bbox(), landmarks=[(1.0, 2.0), (3.0, 4.0)])
+    # Indices 5/6 don't exist; 2 also doesn't.  Should drop them all and
+    # return True without mutating state.
+    assert model.move_landmarks(0, 0, (5, 6), 1.0, 1.0) is True
+    assert model.faces(0)[0].landmarks == ((1.0, 2.0), (3.0, 4.0))
+
+
+def test_move_landmarks_invalid_face_returns_false() -> None:
+    """move_landmarks rejects an out-of-range face_index."""
+    model = ManualEditableAlignments()
+    model.add_face(0, _bbox(), landmarks=[(1.0, 2.0)])
+    assert model.move_landmarks(0, 9, (0,), 1.0, 1.0) is False
+
+
+def test_move_landmarks_no_landmarks_returns_false() -> None:
+    """A face with no stored landmarks cannot have any moved."""
+    model = ManualEditableAlignments()
+    model.add_face(0, _bbox())  # no landmarks
+    assert model.move_landmarks(0, 0, (0,), 1.0, 1.0) is False
+
+
+def test_move_landmarks_records_undo_history() -> None:
+    """move_landmarks participates in the undo/redo stack."""
+    model = ManualEditableAlignments()
+    model.add_face(0, _bbox(), landmarks=[(0.0, 0.0), (10.0, 10.0)])
+
+    assert model.move_landmarks(0, 0, (0, 1), 5.0, 7.0) is True
+    assert model.faces(0)[0].landmarks == ((5.0, 7.0), (15.0, 17.0))
+    assert model.can_undo is True
+
+    assert model.undo() is True
+    assert model.faces(0)[0].landmarks == ((0.0, 0.0), (10.0, 10.0))
+
+    assert model.redo() is True
+    assert model.faces(0)[0].landmarks == ((5.0, 7.0), (15.0, 17.0))
+
+
 def test_seed_from_handle_clears_history() -> None:
     """seed_from_handle resets the undo/redo stacks alongside the data."""
     model = ManualEditableAlignments(

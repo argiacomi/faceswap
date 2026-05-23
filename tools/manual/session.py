@@ -694,6 +694,57 @@ class ManualEditableAlignments:
         self._apply(do, undo, frame_index)
         return True
 
+    def move_landmarks(
+        self,
+        frame_index: int,
+        face_index: int,
+        landmark_indices: T.Iterable[int],
+        dx: float,
+        dy: float,
+    ) -> bool:
+        """Translate the named landmarks by ``(dx, dy)`` source pixels.
+
+        Used by the Landmark editor's group-move gesture: after a marquee
+        selection the user can drag the highlighted points as a unit.  Each
+        ``landmark_index`` is validated; unknown indices are silently dropped
+        rather than raising, so a stale selection from a previous frame
+        cannot crash the editor.
+
+        Returns ``False`` when the frame/face index is invalid or every
+        supplied index is out of range; ``True`` (no-op) when the delta is
+        zero or when nothing remains after validation.
+        """
+        faces = self._faces.get(frame_index, [])
+        if face_index < 0 or face_index >= len(faces):
+            return False
+        if dx == 0.0 and dy == 0.0:
+            return True
+        face = faces[face_index]
+        if not face.landmarks:
+            return False
+        indices = {int(idx) for idx in landmark_indices if 0 <= int(idx) < len(face.landmarks)}
+        if not indices:
+            return True
+        previous = face
+        new_landmarks = list(face.landmarks)
+        for idx in indices:
+            lx, ly = new_landmarks[idx]
+            new_landmarks[idx] = (lx + dx, ly + dy)
+        updated = EditableFace(
+            face_index=face.face_index,
+            bbox=face.bbox,
+            landmarks=tuple(new_landmarks),
+        )
+
+        def do() -> None:
+            self._faces[frame_index][face_index] = updated
+
+        def undo() -> None:
+            self._faces[frame_index][face_index] = previous
+
+        self._apply(do, undo, frame_index)
+        return True
+
     def undo(self) -> bool:
         """Replay the last inverse operation; returns ``False`` when empty."""
         if not self._undo:
