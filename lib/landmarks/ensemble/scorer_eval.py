@@ -956,10 +956,16 @@ def evaluate_runtime_resolver_scorer(
         promotion_policy=promotion_policy,
     )
     if promotion_policy not in installed_baseline_gates:
-        missing_status = "fail" if installed_metrics is not None and installed_policy else "skipped_no_installed_baseline"
+        missing_status = (
+            "fail"
+            if installed_metrics is not None and installed_policy
+            else "skipped_no_installed_baseline"
+        )
         installed_baseline_gates[promotion_policy] = {
             "status": missing_status,
-            "failed_gates": ["missing_selected_policy_metrics"] if missing_status == "fail" else [],
+            "failed_gates": ["missing_selected_policy_metrics"]
+            if missing_status == "fail"
+            else [],
             "installed_policy": installed_policy,
             "selected_policy": promotion_policy,
             "selected_metrics": {},
@@ -974,7 +980,9 @@ def evaluate_runtime_resolver_scorer(
         "skipped_no_installed_baseline",
         "skipped_missing_report_payload",
     }
-    report_failed_gates = installed_failed_gates if using_installed_promotion_gate else failed_gates
+    report_failed_gates = (
+        installed_failed_gates if using_installed_promotion_gate else failed_gates
+    )
     report_status = "pass" if not report_failed_gates else "fail"
 
     report: dict[str, T.Any] = {
@@ -982,7 +990,9 @@ def evaluate_runtime_resolver_scorer(
         "promotion_status": report_status,
         "promotion_scope": promotion_scope,
         "promotion_policy": promotion_policy,
-        "promotion_gate_source": "installed_baseline" if using_installed_promotion_gate else "diagnostic",
+        "promotion_gate_source": "installed_baseline"
+        if using_installed_promotion_gate
+        else "diagnostic",
         "installed_scorer_dir": "" if installed_scorer_dir is None else str(installed_scorer_dir),
         "installed_scorer_status": installed_status,
         "installed_current_policy": installed_policy,
