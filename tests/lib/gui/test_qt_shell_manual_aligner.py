@@ -257,12 +257,15 @@ def test_bbox_auto_run_checkbox_updates_state_and_gates_rerun(qtbot, tmp_path: P
 
 
 def test_bbox_aligner_preload_progress_paints_loading_then_ready(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
-    """Entering BBox mode starts background preload and updates inline status."""
+    """Changing a BBox normalization starts background preload and updates inline status."""
     window, _ = _make_window(qtbot, tmp_path)
     progress = _child(window, QProgressBar, "qt-manual-aligner-load-progress")
     status = _child(window, QLabel, "qt-manual-aligner-status-label")
+    clahe = _child(window, QRadioButton, "qt-manual-aligner-normalization-clahe")
 
     window._editor_state.set("editor_mode", "BoundingBox")
+    assert progress.isVisible() is False
+    clahe.click()
 
     assert progress.isVisible() is True
     assert "Loading aligner" in progress.format()
