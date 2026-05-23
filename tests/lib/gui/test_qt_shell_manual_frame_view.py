@@ -6,8 +6,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QPoint, QPointF, Qt
-from PySide6.QtGui import QColor, QPainter, QPixmap, QWheelEvent
+from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
+from PySide6.QtGui import QColor, QMouseEvent, QPainter, QPixmap, QWheelEvent
 from PySide6.QtTest import QTest
 
 from lib.gui.qt_shell.manual_tool import FrameViewport, ManualFrameView, ManualToolWindow
@@ -31,6 +31,24 @@ def _session_with_frames(folder: Path, count: int = 3) -> ManualSession:
         pixmap.fill(QColor(colors[index % len(colors)]))
         assert pixmap.save(str(path), "PNG")
     return ManualSession.create(frames=str(folder))
+
+
+def _mouse_event(
+    event_type: QEvent.Type,
+    view: ManualFrameView,
+    pos: QPointF,
+    button: Qt.MouseButton,
+    buttons: Qt.MouseButton,
+) -> QMouseEvent:
+    """Return a non-deprecated synthetic mouse event for direct event-handler tests.
+
+    Most tests use :mod:`QTest` helpers, but the bbox editor drag tests call the
+    widget handlers directly so they can inspect emitted model signals.  PySide6
+    deprecates the shorter QMouseEvent constructor; this helper supplies local,
+    scene and global positions explicitly.
+    """
+    global_pos = QPointF(view.mapToGlobal(pos.toPoint()))
+    return QMouseEvent(event_type, pos, pos, global_pos, button, buttons, Qt.NoModifier)
 
 
 def test_frame_view_loads_fixture_image(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
@@ -231,8 +249,7 @@ def test_manual_tool_window_navigation_emits_frame_changed(  # type:ignore[no-un
 
 def test_frame_view_drag_inside_bbox_emits_move(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
     """Dragging from inside an active bbox emits face_move_requested on release."""
-    from PySide6.QtCore import QPointF, QRectF
-    from PySide6.QtGui import QMouseEvent
+    from PySide6.QtCore import QRectF
 
     view = ManualFrameView()
     qtbot.addWidget(view)
@@ -258,26 +275,26 @@ def test_frame_view_drag_inside_bbox_emits_move(qtbot, tmp_path: Path) -> None: 
     target = view._target_rect()  # internal helper — fixture maps 1:1 once shown
     start_widget = QPointF(target.x() + 30.0, target.y() + 30.0)
     end_widget = QPointF(target.x() + 50.0, target.y() + 40.0)
-    press = QMouseEvent(
-        QMouseEvent.Type.MouseButtonPress,
+    press = _mouse_event(
+        QEvent.Type.MouseButtonPress,
+        view,
         start_widget,
         Qt.LeftButton,
         Qt.LeftButton,
-        Qt.NoModifier,
     )
-    move = QMouseEvent(
-        QMouseEvent.Type.MouseMove,
+    move = _mouse_event(
+        QEvent.Type.MouseMove,
+        view,
         end_widget,
         Qt.NoButton,
         Qt.LeftButton,
-        Qt.NoModifier,
     )
-    release = QMouseEvent(
-        QMouseEvent.Type.MouseButtonRelease,
+    release = _mouse_event(
+        QEvent.Type.MouseButtonRelease,
+        view,
         end_widget,
         Qt.LeftButton,
         Qt.NoButton,
-        Qt.NoModifier,
     )
     view.mousePressEvent(press)
     view.mouseMoveEvent(move)
@@ -293,8 +310,7 @@ def test_frame_view_drag_inside_bbox_emits_move(qtbot, tmp_path: Path) -> None: 
 
 def test_frame_view_drag_se_handle_emits_resize(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
     """Dragging the SE handle emits face_resize_requested with grown bbox."""
-    from PySide6.QtCore import QPointF, QRectF
-    from PySide6.QtGui import QMouseEvent
+    from PySide6.QtCore import QRectF
 
     view = ManualFrameView()
     qtbot.addWidget(view)
@@ -318,26 +334,26 @@ def test_frame_view_drag_se_handle_emits_resize(qtbot, tmp_path: Path) -> None: 
     # SE corner of source bbox at (50,50) — also widget coords here.
     start_widget = QPointF(target.x() + 50.0, target.y() + 50.0)
     end_widget = QPointF(target.x() + 70.0, target.y() + 65.0)
-    press = QMouseEvent(
-        QMouseEvent.Type.MouseButtonPress,
+    press = _mouse_event(
+        QEvent.Type.MouseButtonPress,
+        view,
         start_widget,
         Qt.LeftButton,
         Qt.LeftButton,
-        Qt.NoModifier,
     )
-    move = QMouseEvent(
-        QMouseEvent.Type.MouseMove,
+    move = _mouse_event(
+        QEvent.Type.MouseMove,
+        view,
         end_widget,
         Qt.NoButton,
         Qt.LeftButton,
-        Qt.NoModifier,
     )
-    release = QMouseEvent(
-        QMouseEvent.Type.MouseButtonRelease,
+    release = _mouse_event(
+        QEvent.Type.MouseButtonRelease,
+        view,
         end_widget,
         Qt.LeftButton,
         Qt.NoButton,
-        Qt.NoModifier,
     )
     view.mousePressEvent(press)
     view.mouseMoveEvent(move)
@@ -355,7 +371,7 @@ def test_frame_view_drag_se_handle_emits_resize(qtbot, tmp_path: Path) -> None: 
 
 def test_frame_view_hover_cursor_switches_on_handle(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
     """Hovering an active-face resize handle yields a diagonal sizing cursor."""
-    from PySide6.QtCore import QPointF, QRectF
+    from PySide6.QtCore import QRectF
 
     view = ManualFrameView()
     qtbot.addWidget(view)
