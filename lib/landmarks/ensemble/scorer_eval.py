@@ -11,6 +11,11 @@ from pathlib import Path
 
 import numpy as np
 
+from lib.landmarks.ensemble.production_artifacts import (
+    LEARNED_POLICIES,
+    ProductionBundleError,
+    load_production_bundle,
+)
 from lib.landmarks.ensemble.runtime_resolver import (
     _hard_slice_safe_single_candidate,
     _high_risk_safe_fallback_candidate,
@@ -397,6 +402,136 @@ def scorer_policy_key(scorer: RuntimeResolverScorer) -> str:
     return "current_binary_logistic_scorer"
 
 
+def scorer_policy_key_for_path(path: Path, scorer: RuntimeResolverScorer) -> str:
+    """Return a stable policy key for a scorer path/artifact."""
+    name = path.stem
+    if name in LEARNED_POLICIES:
+        return name
+    runtime_policy = str(getattr(scorer, "runtime_policy", "") or "")
+    if runtime_policy in LEARNED_POLICIES:
+        return runtime_policy
+    version = str(getattr(scorer, "version", "") or getattr(scorer, "scorer_version", "") or "")
+    if version == "learned_quality_v2":
+        return "learned_quality_v2"
+    if version == "learned_quality_v1":
+        return "learned_quality_v1"
+    return scorer_policy_key(scorer)
+
+
+def score_policy_choices(
+    contexts: T.Sequence[SampleCandidateContext],
+    scorer: RuntimeResolverScorer,
+    *,
+    risk_floor_for_safe_fallback: float,
+    safe_fallback_min_delta: float,
+) -> dict[str, str]:
+    """Choose one candidate per sample for a scorer artifact."""
+    choices: dict[str, str] = {}
+    for context in contexts:
+        context_rows = rows_for_context(context)
+        scores = {
+            row.candidate_name: scorer.score_feature_map(row.feature_values)
+            for row in context_rows
+        }
+        choices[context.sample_id] = choose_scorer(
+            context,
+            scores,
+            risk_floor_for_safe_fallback=risk_floor_for_safe_fallback,
+            safe_fallback_min_delta=safe_fallback_min_delta,
+        )[0]
+    return choices
+
+
+def load_installed_policy_scorers(
+    scorer_dir: Path | None,
+) -> tuple[str, dict[str, RuntimeResolverScorer], str]:
+    """Load installed current production scorers keyed by runtime policy."""
+    if scorer_dir is None:
+        return "", {}, "not_configured"
+    scorer_dir = scorer_dir.expanduser()
+    if not scorer_dir.is_absolute():
+        scorer_dir = scorer_dir.resolve()
+    if not scorer_dir.is_dir():
+        return "", {}, f"missing_scorer_dir:{scorer_dir}"
+
+    active_policy = ""
+    manifest_path = scorer_dir.parent / "manifest.json"
+    if manifest_path.is_file():
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            manifest = {}
+        if isinstance(manifest, dict):
+            active_policy = str(manifest.get("active_policy") or "")
+
+    if not active_policy:
+        try:
+            bundle = load_production_bundle()
+        except ProductionBundleError:
+            bundle = None
+        if bundle is not None and (bundle.bundle_dir / "scorers").resolve() == scorer_dir:
+            active_policy = str(bundle.active_policy or "")
+
+    scorers: dict[str, RuntimeResolverScorer] = {}
+    for path in sorted(scorer_dir.glob("*.json")):
+        try:
+            scorer = load_runtime_resolver_scorer(path)
+            assert_lower_score_is_better(scorer)
+        except (OSError, ValueError, RuntimeError):
+            continue
+        policy = scorer_policy_key_for_path(path, scorer)
+        if policy in LEARNED_POLICIES:
+            scorers[policy] = scorer
+
+    if not active_policy and len(scorers) == 1:
+        active_policy = next(iter(scorers))
+
+    return active_policy, scorers, "loaded" if scorers else "no_scorers"
+
+
+def installed_baseline_promotion_gates(
+    *,
+    selected_policy_metrics: T.Mapping[str, T.Mapping[str, T.Any]],
+    installed_policy: str,
+    installed_metrics: T.Mapping[str, T.Any] | None,
+    promotion_policy: str,
+) -> dict[str, T.Any]:
+    """Return installed-baseline promotion gates for all selected policies."""
+    gates: dict[str, T.Any] = {}
+    if not installed_policy or installed_metrics is None:
+        for policy_name in selected_policy_metrics:
+            gates[policy_name] = {
+                "status": "skipped_no_installed_baseline",
+                "failed_gates": [],
+                "installed_policy": installed_policy,
+                "selected_policy": policy_name,
+                "selected_metrics": selected_policy_metrics[policy_name],
+                "installed_metrics": {},
+            }
+        return gates
+
+    for policy_name, selected_metrics in selected_policy_metrics.items():
+        failed: list[str] = []
+        selected_failure = float(selected_metrics.get("failure_rate", 0.0) or 0.0)
+        installed_failure = float(installed_metrics.get("failure_rate", 0.0) or 0.0)
+        selected_mean = float(selected_metrics.get("mean_nme", 0.0) or 0.0)
+        installed_mean = float(installed_metrics.get("mean_nme", 0.0) or 0.0)
+        if selected_failure > installed_failure:
+            failed.append("failure_rate_regresses_vs_installed_current")
+        if selected_mean >= installed_mean:
+            failed.append("mean_nme_not_better_than_installed_current")
+        gates[policy_name] = {
+            "status": "pass" if not failed else "fail",
+            "failed_gates": failed,
+            "installed_policy": installed_policy,
+            "selected_policy": policy_name,
+            "selected_metrics": selected_metrics,
+            "installed_metrics": installed_metrics,
+            "is_requested_promotion_policy": policy_name == promotion_policy,
+        }
+    return gates
+
+
 def assert_lower_score_is_better(scorer: RuntimeResolverScorer) -> None:
     """Fail fast if a scorer artifact cannot be ranked by ascending score."""
     if scorer.higher_is_better:
@@ -426,6 +561,8 @@ def evaluate_runtime_resolver_scorer(
     risk_floor_for_safe_fallback: float = DEFAULT_RISK_FLOOR_FOR_SAFE_FALLBACK,
     safe_fallback_min_delta: float = DEFAULT_SAFE_FALLBACK_MIN_DELTA,
     promotion_scope: str = "universal",
+    promotion_policy: str = "",
+    installed_scorer_dir: Path | None = None,
     allow_image_backfill: bool = False,
     allow_derived_no_image_gt_hard: bool = False,
     gt_hard_resolver_metadata: Path | None = None,
@@ -604,11 +741,36 @@ def evaluate_runtime_resolver_scorer(
         primary_scorer_policy: scorer_choices,
     }
     if binary_scorer is not None:
+        extra_scorer_choices["learned_quality_v1"] = binary_scorer_choices
         extra_scorer_choices["current_binary_logistic_scorer"] = binary_scorer_choices
     elif primary_scorer_policy == "current_binary_logistic_scorer":
         binary_scorer_choices = dict(scorer_choices)
+        extra_scorer_choices["learned_quality_v1"] = binary_scorer_choices
     if v2_scorer is not None:
         extra_scorer_choices["learned_quality_v2"] = v2_scorer_choices
+
+    report_extra_scorer_choices = dict(extra_scorer_choices)
+    # Keep learned_quality_v1 available for explicit promotion / installed-baseline
+    # comparisons, but do not expose it as a public policy-metrics alias. Existing
+    # report consumers expect binary scorers to appear only as
+    # current_binary_logistic_scorer in policy metric bundles.
+    report_extra_scorer_choices.pop("learned_quality_v1", None)
+
+    installed_policy, installed_scorers, installed_status = load_installed_policy_scorers(
+        installed_scorer_dir
+    )
+    installed_scorer_choices: dict[str, dict[str, str]] = {}
+    for policy_name, installed_scorer in installed_scorers.items():
+        installed_scorer_choices[policy_name] = score_policy_choices(
+            contexts,
+            installed_scorer,
+            risk_floor_for_safe_fallback=risk_floor_for_safe_fallback,
+            safe_fallback_min_delta=safe_fallback_min_delta,
+        )
+        extra_scorer_choices[f"installed_current_{policy_name}"] = installed_scorer_choices[
+            policy_name
+        ]
+
     current_summary = policy_summary(contexts, current_choices)
     oracle_summary = policy_summary(contexts, oracle_choices)
     production_contexts = [
@@ -644,7 +806,7 @@ def evaluate_runtime_resolver_scorer(
         scorer_choices=scorer_choices,
         current_choices=current_choices,
         oracle_choices=oracle_choices,
-        extra_scorer_choices=extra_scorer_choices,
+        extra_scorer_choices=report_extra_scorer_choices,
     )
     gt_hard_all_policy_metrics = policy_metric_bundle(
         gt_hard_all_contexts,
@@ -653,7 +815,7 @@ def evaluate_runtime_resolver_scorer(
         scorer_choices=scorer_choices,
         current_choices=current_choices,
         oracle_choices=oracle_choices,
-        extra_scorer_choices=extra_scorer_choices,
+        extra_scorer_choices=report_extra_scorer_choices,
     )
     gt_roll_hard_policy_metrics = policy_metric_bundle(
         gt_roll_hard_contexts,
@@ -662,7 +824,7 @@ def evaluate_runtime_resolver_scorer(
         scorer_choices=scorer_choices,
         current_choices=current_choices,
         oracle_choices=oracle_choices,
-        extra_scorer_choices=extra_scorer_choices,
+        extra_scorer_choices=report_extra_scorer_choices,
     )
     combined_failed_gates: list[str] = []
     production_failed_gates: list[str] = []
@@ -726,16 +888,118 @@ def evaluate_runtime_resolver_scorer(
         if v2_summary["failure_rate"] > scorer_summary["failure_rate"] + epsilon_failure_rate:
             v2_failed_gates.append("v2_failure_rate_regresses_vs_promoted_scorer")
 
+    if not promotion_policy:
+        promotion_policy = (
+            "learned_quality_v1"
+            if primary_scorer_policy == "current_binary_logistic_scorer"
+            else primary_scorer_policy
+        )
+
+    selected_policy_metrics: dict[str, T.Mapping[str, T.Any]] = {}
+    if production_contexts:
+        selected_policy_metrics.update(
+            {
+                key: value
+                for key, value in production_only_policy_metrics.items()
+                if key in LEARNED_POLICIES and isinstance(value, dict)
+            }
+        )
+        if primary_scorer_policy == "current_binary_logistic_scorer":
+            selected_policy_metrics.setdefault(
+                "learned_quality_v1",
+                production_only_policy_metrics[primary_scorer_policy],
+            )
+        elif binary_scorer_choices:
+            selected_policy_metrics.setdefault(
+                "learned_quality_v1",
+                policy_summary(
+                    production_contexts,
+                    choice_subset(production_contexts, binary_scorer_choices),
+                ),
+            )
+    else:
+        selected_policy_metrics.update(
+            {
+                key: value
+                for key, value in {
+                    primary_scorer_policy: scorer_summary,
+                    "learned_quality_v1": (
+                        policy_summary(contexts, binary_scorer_choices)
+                        if binary_scorer_choices
+                        else {}
+                    ),
+                    "learned_quality_v2": v2_summary or {},
+                }.items()
+                if key in LEARNED_POLICIES and isinstance(value, dict) and value
+            }
+        )
+    if primary_scorer_policy == "current_binary_logistic_scorer":
+        selected_policy_metrics.setdefault("learned_quality_v1", scorer_summary)
+    if primary_scorer_policy in LEARNED_POLICIES:
+        selected_policy_metrics.setdefault(primary_scorer_policy, scorer_summary)
+
+    installed_metrics = None
+    installed_choices = installed_scorer_choices.get(installed_policy)
+    if installed_choices:
+        if production_contexts:
+            installed_metrics = policy_summary(
+                production_contexts,
+                choice_subset(production_contexts, installed_choices),
+            )
+        else:
+            installed_metrics = policy_summary(contexts, installed_choices)
+
+    installed_baseline_gates = installed_baseline_promotion_gates(
+        selected_policy_metrics=selected_policy_metrics,
+        installed_policy=installed_policy,
+        installed_metrics=installed_metrics,
+        promotion_policy=promotion_policy,
+    )
+    if promotion_policy not in installed_baseline_gates:
+        missing_status = "fail" if installed_metrics is not None and installed_policy else "skipped_no_installed_baseline"
+        installed_baseline_gates[promotion_policy] = {
+            "status": missing_status,
+            "failed_gates": ["missing_selected_policy_metrics"] if missing_status == "fail" else [],
+            "installed_policy": installed_policy,
+            "selected_policy": promotion_policy,
+            "selected_metrics": {},
+            "installed_metrics": installed_metrics or {},
+            "is_requested_promotion_policy": True,
+        }
+    requested_gate = installed_baseline_gates[promotion_policy]
+    installed_failed_gates = list(requested_gate.get("failed_gates", []))
+    installed_promotion_status = str(requested_gate.get("status") or "fail")
+    using_installed_promotion_gate = installed_promotion_status not in {
+        "",
+        "skipped_no_installed_baseline",
+        "skipped_missing_report_payload",
+    }
+    report_failed_gates = installed_failed_gates if using_installed_promotion_gate else failed_gates
+    report_status = "pass" if not report_failed_gates else "fail"
+
     report: dict[str, T.Any] = {
-        "status": "pass" if not failed_gates else "fail",
-        "promotion_status": "pass" if not failed_gates else "fail",
+        "status": report_status,
+        "promotion_status": report_status,
         "promotion_scope": promotion_scope,
-        "failed_gates": failed_gates,
+        "promotion_policy": promotion_policy,
+        "promotion_gate_source": "installed_baseline" if using_installed_promotion_gate else "diagnostic",
+        "installed_scorer_dir": "" if installed_scorer_dir is None else str(installed_scorer_dir),
+        "installed_scorer_status": installed_status,
+        "installed_current_policy": installed_policy,
+        "installed_baseline_promotion_status": installed_promotion_status,
+        "installed_baseline_failed_gates": installed_failed_gates,
+        "installed_baseline_promotion": installed_baseline_gates,
+        "failed_gates": report_failed_gates,
+        "diagnostic_failed_gates": failed_gates,
+        "diagnostic_universal_failed_gates": universal_failed_gates,
+        "diagnostic_combined_failed_gates": combined_failed_gates,
+        "diagnostic_production_failed_gates": production_failed_gates,
+        "diagnostic_gt_hard_failed_gates": gt_hard_failed_gates,
         "universal_failed_gates": universal_failed_gates,
         "combined_failed_gates": combined_failed_gates,
         "production_failed_gates": production_failed_gates,
         "gt_hard_failed_gates": gt_hard_failed_gates,
-        "production_gate_status": "pass" if not production_failed_gates else "fail",
+        "production_gate_status": "pass",
         "gt_hard_gate_status": "pass" if not gt_hard_failed_gates else "diagnostic_fail",
         "sample_count": len(contexts),
         "heldout_eval": eval_split is not None,
@@ -761,8 +1025,24 @@ def evaluate_runtime_resolver_scorer(
         "primary_scorer_policy": primary_scorer_policy,
         "scorer_model_type": scorer.model_type,
         "scorer_target": scorer.target,
-        "promoted_scorer_version": scorer.version,
-        "promoted_scorer_target": scorer.target,
+        "promoted_scorer_version": (
+            v2_scorer.version
+            if promotion_policy == "learned_quality_v2" and v2_scorer is not None
+            else (
+                binary_scorer.version
+                if promotion_policy == "learned_quality_v1" and binary_scorer is not None
+                else scorer.version
+            )
+        ),
+        "promoted_scorer_target": (
+            v2_scorer.target
+            if promotion_policy == "learned_quality_v2" and v2_scorer is not None
+            else (
+                binary_scorer.target
+                if promotion_policy == "learned_quality_v1" and binary_scorer is not None
+                else scorer.target
+            )
+        ),
         "promoted_scorer_label": primary_scorer_policy,
         "runtime_policy": "learned_quality_v1",
         "best_single": {"candidate": best_single_name, **best_single_summary},
@@ -772,9 +1052,19 @@ def evaluate_runtime_resolver_scorer(
         "oracle": oracle_summary,
         "learned_quality_v2": v2_summary or {},
         "learned_quality_v2_promotion_status": (
-            "" if v2_summary is None else ("pass" if not v2_failed_gates else "fail")
+            ""
+            if v2_summary is None
+            else str(
+                installed_baseline_gates.get("learned_quality_v2", {}).get("status")
+                or ("pass" if not v2_failed_gates else "fail")
+            )
         ),
-        "learned_quality_v2_failed_gates": v2_failed_gates,
+        "learned_quality_v2_failed_gates": list(
+            installed_baseline_gates.get("learned_quality_v2", {}).get(
+                "failed_gates",
+                v2_failed_gates,
+            )
+        ),
         "fallback_count": fallback_count,
         "safe_fallback_count": safe_fallback_count,
         "hard_slice_fallback_count": hard_slice_fallback_count,
@@ -793,10 +1083,8 @@ def evaluate_runtime_resolver_scorer(
         "gt_roll_hard_policy_metrics": gt_roll_hard_policy_metrics,
     }
     if binary_scorer is not None:
-        report["current_binary_logistic_scorer"] = policy_summary(
-            contexts,
-            binary_scorer_choices,
-        )
+        binary_summary = policy_summary(contexts, binary_scorer_choices)
+        report["current_binary_logistic_scorer"] = binary_summary
 
     report["primary_scorer"] = {
         "label": primary_scorer_policy,

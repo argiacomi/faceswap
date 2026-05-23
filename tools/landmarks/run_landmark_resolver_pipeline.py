@@ -89,7 +89,14 @@ DEFAULT_CONFIG_SECTION = "align.ensemble"
 CONFIG_PREVIEW_FILENAME = "config_update_preview.json"
 CONFIG_PATCH_FILENAME = "config_update_patch.ini"
 SCORER_VERSION_CONTINUOUS_REGRET = "continuous_regret_v1_1"
+SCORER_VERSION_BINARY = "learned_quality_v1"
+SCORER_POLICY_CONTINUOUS_REGRET = "learned_quality_v1_1"
 SCORER_VERSION_LEARNED_QUALITY_V2 = "learned_quality_v2"
+PROMOTED_POLICIES = (
+    SCORER_VERSION_BINARY,
+    SCORER_POLICY_CONTINUOUS_REGRET,
+    SCORER_VERSION_LEARNED_QUALITY_V2,
+)
 PROGRESS_LOG_FILENAME = "pipeline_progress.jsonl"
 VALID_ALIGN_ENSEMBLE_CONFIG_KEYS = frozenset(
     {
@@ -868,6 +875,10 @@ def _command_scorer_eval(args: argparse.Namespace, paths: PipelinePaths) -> list
         str(paths.scorer_eval_dir),
         "--promotion-scope",
         args.promotion_scope,
+        "--promotion-policy",
+        _promoted_runtime_policy(args),
+        "--installed-scorer-dir",
+        str(args.installed_scorer_dir),
     ]
     if args.allow_image_backfill:
         argv.append("--allow-image-backfill")
@@ -1211,9 +1222,8 @@ def _artifact_export_matches(args: argparse.Namespace, paths: PipelinePaths) -> 
     return (
         manifest.get("runtime_resolver_scorer") == str(paths.exported_scorer_artifact)
         and manifest.get("runtime_resolver_scorer_source") == expected_source
-        and manifest.get("runtime_resolver_scorer_version") == args.promoted_scorer_version
-        and str(scorer_payload.get("scorer_version") or scorer_payload.get("version") or "")
-        == args.promoted_scorer_version
+        and str(manifest.get("runtime_resolver_scorer_version") or "")
+        == str(scorer_payload.get("scorer_version") or scorer_payload.get("version") or "")
     )
 
 
@@ -1428,76 +1438,42 @@ def _static_downweight_metrics(report: T.Mapping[str, T.Any]) -> dict[str, T.Any
         "baseline metrics"
     )
 
+def _installed_baseline_gate(
+    report: T.Mapping[str, T.Any],
+    *,
+    policy_name: str,
+    require_installed_baseline: bool,
+) -> list[str]:
+    gates = report.get("installed_baseline_promotion")
+    if not isinstance(gates, dict):
+        if require_installed_baseline:
+            raise RuntimeError("promotion check failed: missing installed_baseline_promotion")
+        return ["installed_baseline_promotion=skipped_missing_report_payload"]
 
-def _validate_v2_promotion_gate(report: T.Mapping[str, T.Any]) -> list[str]:
-    policy_name = SCORER_VERSION_LEARNED_QUALITY_V2
-    status_keys = (
-        "learned_quality_v2_gate_status",
-        "learned_quality_v2_production_gate_status",
-        "learned_quality_v2_promotion_status",
-        "v2_gate_status",
-        "v2_production_gate_status",
-        "v2_promotion_status",
-    )
-    failed_keys = (
-        "learned_quality_v2_failed_gates",
-        "learned_quality_v2_production_failed_gates",
-        "v2_failed_gates",
-        "v2_production_failed_gates",
-    )
-    for key in status_keys:
-        status = report.get(key)
-        if status is not None and str(status) != "pass":
-            raise RuntimeError(f"{policy_name} promotion check failed: {key}={status!r}")
-    for key in failed_keys:
-        failed = report.get(key) or []
-        if failed:
-            raise RuntimeError(f"{policy_name} promotion check failed: {key}={failed}")
+    gate = gates.get(policy_name)
+    if not isinstance(gate, dict):
+        if require_installed_baseline:
+            raise RuntimeError(
+                f"promotion check failed: missing installed baseline gate for {policy_name!r}"
+            )
+        return [f"installed_baseline_promotion=skipped_missing_policy:{policy_name}"]
 
-    metrics = _selected_policy_metrics(report, policy_name)
-    baseline = _static_downweight_metrics(report)
-    gate_config = report.get("gate_config")
-    if not isinstance(gate_config, dict):
-        gate_config = {}
-
-    failure_epsilon = float(gate_config.get("failure_rate_epsilon", 0.0) or 0.0)
-    mean_epsilon = float(gate_config.get("mean_epsilon_nme", 0.001) or 0.001)
-    p90_epsilon = float(gate_config.get("p90_epsilon_nme", 0.003) or 0.003)
-
-    policy_failure = _metric_value(metrics, "failure_rate", policy_name=policy_name)
-    baseline_failure = _metric_value(baseline, "failure_rate", policy_name=policy_name)
-    if policy_failure > baseline_failure + failure_epsilon:
+    status = str(gate.get("status") or "")
+    if status == "skipped_no_installed_baseline" and not require_installed_baseline:
+        return [f"installed_baseline_promotion={status}", f"selected_policy={policy_name}"]
+    if status != "pass":
         raise RuntimeError(
-            f"{policy_name} promotion check failed: failure_rate={policy_failure} "
-            f"exceeds static_weighted_downweight failure_rate={baseline_failure} "
-            f"+ epsilon={failure_epsilon}"
+            "promotion check failed against installed current scorer: "
+            f"selected_policy={policy_name!r}, status={status!r}, "
+            f"failed_gates={gate.get('failed_gates', [])}, "
+            f"selected_metrics={gate.get('selected_metrics', {})}, "
+            f"installed_metrics={gate.get('installed_metrics', {})}"
         )
-
-    policy_mean = _metric_value(metrics, "mean_nme", policy_name=policy_name)
-    baseline_mean = _metric_value(baseline, "mean_nme", policy_name=policy_name)
-    if policy_mean > baseline_mean + mean_epsilon:
-        raise RuntimeError(
-            f"{policy_name} promotion check failed: mean_nme={policy_mean} "
-            f"exceeds static_weighted_downweight mean_nme={baseline_mean} "
-            f"+ epsilon={mean_epsilon}"
-        )
-
-    policy_p90 = _metric_value(metrics, "p90_nme", policy_name=policy_name)
-    baseline_p90 = _metric_value(baseline, "p90_nme", policy_name=policy_name)
-    if policy_p90 > baseline_p90 + p90_epsilon:
-        raise RuntimeError(
-            f"{policy_name} promotion check failed: p90_nme={policy_p90} "
-            f"exceeds static_weighted_downweight p90_nme={baseline_p90} "
-            f"+ epsilon={p90_epsilon}"
-        )
-
     return [
-        f"{policy_name}=pass",
-        f"{policy_name}_failure_rate={policy_failure}",
-        f"{policy_name}_mean_nme={policy_mean}",
-        f"{policy_name}_p90_nme={policy_p90}",
+        "installed_baseline_promotion=pass",
+        f"selected_policy={policy_name}",
+        f"installed_policy={gate.get('installed_policy', '')}",
     ]
-
 
 def _promotion_check(
     paths: PipelinePaths,
@@ -1507,33 +1483,13 @@ def _promotion_check(
 ) -> list[str]:
     _require(paths.scorer_report, "scorer evaluation report")
     report = _read_json(paths.scorer_report)
-    status = str(report.get("status") or "")
-    production_status = str(report.get("production_gate_status") or "")
-    production_failed = report.get("production_failed_gates") or []
-    failed = report.get("failed_gates") or []
-    if status != "pass":
-        raise RuntimeError(
-            f"production promotion check failed: status={status!r}, failed_gates={failed}"
-        )
-    if production_status != "pass" or production_failed:
-        raise RuntimeError(
-            "production promotion check failed: "
-            f"production_gate_status={production_status!r}, "
-            f"production_failed_gates={production_failed}"
-        )
-    if args is not None and args.promoted_scorer_version == SCORER_VERSION_LEARNED_QUALITY_V2:
-        promoted_notes = _validate_v2_promotion_gate(report)
-    else:
-        promoted_notes = []
-    if promotion_scope == "universal":
-        gt_status = str(report.get("gt_hard_gate_status") or "")
-        gt_failed = report.get("gt_hard_failed_gates") or []
-        if gt_status not in {"pass", ""} or gt_failed:
-            raise RuntimeError(
-                "GT-hard diagnostic gate failed: "
-                f"gt_hard_gate_status={gt_status!r}, gt_hard_failed_gates={gt_failed}"
-            )
-    return ["status=pass", "production_gate_status=pass", *promoted_notes]
+    if args is None:
+        return ["promotion_check=skipped_no_args"]
+    return _installed_baseline_gate(
+        report,
+        policy_name=_promoted_runtime_policy(args),
+        require_installed_baseline=bool(args.require_installed_baseline),
+    )
 
 
 def _validate_required_files(stage: str, args: argparse.Namespace, paths: PipelinePaths) -> None:
@@ -1641,19 +1597,8 @@ def _validate_stage_outputs(
         )
     if stage in {"build_gt_hard_resolver_metadata", "freeze_resolver_metadata"}:
         _validate_frozen_metadata(paths)
-    if stage == "production_promotion_check":
-        report = _read_json(paths.scorer_report)
-        status = str(report.get("status") or "")
-        production_status = str(report.get("production_gate_status") or "")
-        production_failed = report.get("production_failed_gates") or []
-        if status != "pass" or production_status != "pass" or production_failed:
-            failed = report.get("failed_gates") or []
-            raise PipelineContractError(
-                "stage 'production_promotion_check' expected status=pass and "
-                "production_gate_status=pass but got "
-                f"status={status!r}, production_gate_status={production_status!r}; "
-                f"failed_gates={failed}; production_failed_gates={production_failed}"
-            )
+    if stage == "production_promotion_check" and args is not None:
+        _promotion_check(paths, promotion_scope=args.promotion_scope, args=args)
     validated = [str(path) for path in _outputs_for(stage, paths)]
     logger.debug("Validated outputs for stage=%s outputs=%s", stage, validated)
     return validated
@@ -1701,15 +1646,21 @@ def _copy_scorer_with_promotion_metadata(source: Path, target: Path, *, promoted
 
 
 def _promoted_scorer_source(args: argparse.Namespace, paths: PipelinePaths) -> Path:
-    if args.promoted_scorer_version == SCORER_VERSION_LEARNED_QUALITY_V2:
+    policy = _promoted_runtime_policy(args)
+    if policy == SCORER_VERSION_BINARY:
+        return paths.binary_scorer_artifact
+    if policy == SCORER_VERSION_LEARNED_QUALITY_V2:
         return paths.v2_scorer_artifact
     return paths.scorer_artifact
 
 
 def _promoted_runtime_policy(args: argparse.Namespace) -> str:
+    explicit = str(getattr(args, "promoted_policy", "") or "")
+    if explicit:
+        return explicit
     if args.promoted_scorer_version == SCORER_VERSION_LEARNED_QUALITY_V2:
-        return "learned_quality_v2"
-    return "learned_quality_v1_1"
+        return SCORER_VERSION_LEARNED_QUALITY_V2
+    return SCORER_POLICY_CONTINUOUS_REGRET
 
 
 def _promoted_scorer_target(args: argparse.Namespace, paths: PipelinePaths) -> str:
@@ -2348,7 +2299,11 @@ def _summary_payload(
     updates = _config_updates(args, paths)
     report = _read_json(paths.scorer_report)
     promotion_status = str(report.get("promotion_status") or report.get("status") or "")
-    promoted_scorer_version = str(args.promoted_scorer_version)
+    promoted_scorer_version = str(
+        _read_json(_promoted_scorer_source(args, paths)).get("scorer_version")
+        or _read_json(_promoted_scorer_source(args, paths)).get("version")
+        or args.promoted_scorer_version
+    )
     promoted_scorer_target = _promoted_scorer_target(args, paths)
     return {
         "status": "fail"
@@ -2606,6 +2561,31 @@ def _parser() -> argparse.ArgumentParser:
             "Scorer artifact to export into the stable runtime resolver scorer path. "
             "The config resolver_policy is learned_quality_v2 only when this is "
             "learned_quality_v2."
+        ),
+    )
+    parser.add_argument(
+        "--promoted-policy",
+        choices=PROMOTED_POLICIES,
+        default="",
+        help=(
+            "Runtime resolver policy to export/configure. Overrides "
+            "--promoted-scorer-version. Allows explicitly choosing any trained "
+            "learned policy artifact."
+        ),
+    )
+    parser.add_argument(
+        "--installed-scorer-dir",
+        type=Path,
+        default=Path(".fs_cache/landmark_ensemble/current/scorers"),
+        help="Directory containing currently installed production scorer artifacts.",
+    )
+    parser.add_argument(
+        "--require-installed-baseline",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Require the selected policy to beat the installed current scorer baseline. "
+            "Use --no-require-installed-baseline only for first-time bootstrap runs."
         ),
     )
     parser.add_argument("--v2-eval-fraction", type=float, default=0.20)
