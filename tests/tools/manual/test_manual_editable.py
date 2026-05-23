@@ -798,3 +798,233 @@ def test_set_landmarks_with_empty_sequence_clears_landmarks() -> None:
     model.add_face(0, _bbox(), landmarks=[(1.0, 2.0), (3.0, 4.0)])
     assert model.set_landmarks(0, 0, []) is True
     assert model.faces(0)[0].landmarks == ()
+
+
+# ---------------------------------------------------------------------------
+# #101 — Mask blob writeback + lazy decode
+# ---------------------------------------------------------------------------
+
+
+def test_encode_mask_blob_round_trips_through_decode() -> None:
+    """``encode_mask_blob`` + ``decode_mask_blob`` recover the original grid."""
+    import numpy as np
+
+    size = ManualEditableAlignments.MASK_STORED_SIZE
+    grid = np.zeros((size, size), dtype=np.uint8)
+    grid[10:40, 10:40] = 255
+    blob = ManualEditableAlignments.encode_mask_blob(grid, (5.0, 5.0, 100.0, 100.0))
+    decoded = ManualEditableAlignments.decode_mask_blob(blob)
+    assert decoded is not None
+    assert decoded.shape == (size, size)
+    assert np.array_equal(decoded, grid)
+
+
+def test_encode_mask_blob_affine_matrix_maps_to_bbox() -> None:
+    """The encoded affine matrix maps stored (0,0) → bbox origin + stored (size,size) → bbox bottom-right."""
+    import numpy as np
+
+    size = ManualEditableAlignments.MASK_STORED_SIZE
+    grid = np.ones((size, size), dtype=np.uint8) * 200
+    bbox = (12.0, 18.0, 40.0, 80.0)
+    blob = ManualEditableAlignments.encode_mask_blob(grid, bbox)
+    a = blob.affine_matrix
+    # ``[fx, fy] = a @ [sx, sy, 1]``
+    origin = a @ np.array([0.0, 0.0, 1.0], dtype=np.float32)
+    far = a @ np.array([float(size), float(size), 1.0], dtype=np.float32)
+    assert origin[0] == pytest.approx(12.0)
+    assert origin[1] == pytest.approx(18.0)
+    assert far[0] == pytest.approx(12.0 + 40.0)
+    assert far[1] == pytest.approx(18.0 + 80.0)
+    assert blob.stored_size == size
+    assert blob.stored_centering == "head"
+
+
+def test_decode_mask_blob_rejects_mismatched_stored_size() -> None:
+    """A blob whose ``stored_size`` doesn't match the model's canonical size returns None."""
+    import zlib
+
+    import numpy as np
+
+    from lib.align.objects import MaskAlignmentsFile
+
+    blob = MaskAlignmentsFile(
+        mask=zlib.compress(np.zeros((64, 64), dtype=np.uint8).tobytes()),
+        affine_matrix=np.eye(3, dtype=np.float32)[:2],
+        interpolator=1,
+        stored_size=64,
+        stored_centering="head",
+    )
+    assert ManualEditableAlignments.decode_mask_blob(blob) is None
+
+
+def test_decode_mask_blob_rejects_corrupt_compression() -> None:
+    """A blob whose compressed payload is invalid decodes to None."""
+    import numpy as np
+
+    from lib.align.objects import MaskAlignmentsFile
+
+    blob = MaskAlignmentsFile(
+        mask=b"not-zlib-data",
+        affine_matrix=np.eye(3, dtype=np.float32)[:2],
+        interpolator=1,
+        stored_size=ManualEditableAlignments.MASK_STORED_SIZE,
+        stored_centering="head",
+    )
+    assert ManualEditableAlignments.decode_mask_blob(blob) is None
+
+
+def test_apply_to_alignments_writes_painted_masks_to_face() -> None:
+    """A painted mask shows up encoded in the ``faces[i].mask`` dict on save."""
+    import numpy as np
+
+    from lib.align.objects import AlignmentsEntry, FileAlignments
+
+    class _StubAlignments:
+        def __init__(self) -> None:
+            self.data: dict[str, AlignmentsEntry] = {
+                "frame.png": AlignmentsEntry(
+                    faces=[
+                        FileAlignments(
+                            x=10,
+                            y=10,
+                            w=40,
+                            h=40,
+                            landmarks_xy=np.zeros((0, 2), dtype=np.float32),
+                        ),
+                    ],
+                    video_meta={},
+                )
+            }
+
+    model = ManualEditableAlignments()
+    model.add_face(0, (10.0, 10.0, 40.0, 40.0), landmarks=[(20.0, 20.0)])
+    model.paint_mask_stroke(0, 0, "components", 25.0, 25.0, 4.0, 255)
+
+    alignments = _StubAlignments()
+    modified = model.apply_to_alignments(alignments, frame_names=["frame.png"])
+
+    assert modified == 1
+    persisted = alignments.data["frame.png"].faces[0]
+    assert "components" in persisted.mask
+    blob = persisted.mask["components"]
+    decoded = ManualEditableAlignments.decode_mask_blob(blob)
+    assert decoded is not None
+    assert int(decoded.sum()) > 0
+
+
+def test_apply_to_alignments_skips_untouched_persisted_masks() -> None:
+    """A persisted mask that the user never painted is NOT re-encoded on save.
+
+    Re-encoding would replace the legacy landmark-aligned affine matrix
+    with our axis-aligned bbox projection and degrade the mask.
+    """
+    import zlib
+
+    import numpy as np
+
+    from lib.align.objects import AlignmentsEntry, FileAlignments, MaskAlignmentsFile
+
+    original_affine = np.array([[1.5, 0.0, 7.0], [0.0, 1.5, 9.0]], dtype=np.float32)
+    original_blob = MaskAlignmentsFile(
+        mask=zlib.compress(np.full((128, 128), 200, dtype=np.uint8).tobytes()),
+        affine_matrix=original_affine,
+        interpolator=1,
+        stored_size=128,
+        stored_centering="head",
+    )
+
+    class _StubAlignments:
+        def __init__(self) -> None:
+            self.data: dict[str, AlignmentsEntry] = {
+                "frame.png": AlignmentsEntry(
+                    faces=[
+                        FileAlignments(
+                            x=10,
+                            y=10,
+                            w=40,
+                            h=40,
+                            landmarks_xy=np.zeros((0, 2), dtype=np.float32),
+                            mask={"components": original_blob},
+                        ),
+                    ],
+                    video_meta={},
+                )
+            }
+
+    model = ManualEditableAlignments()
+    model.add_face(0, (10.0, 10.0, 40.0, 40.0), landmarks=[(20.0, 20.0)])
+    # Trigger a non-mask edit so the persist path actually runs.
+    model.move_face(0, 0, 0.5, 0.5)
+    alignments = _StubAlignments()
+    model.apply_to_alignments(alignments, frame_names=["frame.png"])
+
+    # The untouched mask blob must be the same object — preserved verbatim.
+    after = alignments.data["frame.png"].faces[0].mask
+    assert after["components"] is original_blob
+    assert np.array_equal(after["components"].affine_matrix, original_affine)
+
+
+def test_apply_to_alignments_clears_mask_after_user_clears_it() -> None:
+    """Calling ``clear_mask`` deletes the persisted entry on the next save."""
+    import zlib
+
+    import numpy as np
+
+    from lib.align.objects import AlignmentsEntry, FileAlignments, MaskAlignmentsFile
+
+    blob = MaskAlignmentsFile(
+        mask=zlib.compress(np.full((128, 128), 200, dtype=np.uint8).tobytes()),
+        affine_matrix=np.eye(3, dtype=np.float32)[:2],
+        interpolator=1,
+        stored_size=128,
+        stored_centering="head",
+    )
+
+    class _StubAlignments:
+        def __init__(self) -> None:
+            self.data: dict[str, AlignmentsEntry] = {
+                "frame.png": AlignmentsEntry(
+                    faces=[
+                        FileAlignments(
+                            x=10,
+                            y=10,
+                            w=40,
+                            h=40,
+                            landmarks_xy=np.zeros((0, 2), dtype=np.float32),
+                            mask={"components": blob},
+                        ),
+                    ],
+                    video_meta={},
+                )
+            }
+
+    model = ManualEditableAlignments()
+    model.add_face(0, (10.0, 10.0, 40.0, 40.0), landmarks=[(20.0, 20.0)])
+    # Materialise the editor cache via get_mask (lazy decode), then clear it.
+    model._persisted_mask_blobs[(0, 0, "components")] = blob  # type:ignore[arg-type]
+    decoded = model.get_mask(0, 0, "components")
+    assert decoded is not None
+    assert model.clear_mask(0, 0, "components") is True
+    alignments = _StubAlignments()
+    model.apply_to_alignments(alignments, frame_names=["frame.png"])
+    after = alignments.data["frame.png"].faces[0].mask
+    assert "components" not in after
+
+
+def test_known_mask_types_includes_persisted_blobs() -> None:
+    """``known_mask_types`` lists masks already on disk via the seed map."""
+    import numpy as np
+
+    from lib.align.objects import MaskAlignmentsFile
+
+    model = ManualEditableAlignments()
+    model.add_face(0, (10.0, 10.0, 40.0, 40.0))
+    blob = MaskAlignmentsFile(
+        mask=b"\x00",
+        affine_matrix=np.eye(3, dtype=np.float32)[:2],
+        interpolator=1,
+        stored_size=128,
+        stored_centering="head",
+    )
+    model._persisted_mask_blobs[(0, 0, "bisenet-fp_head")] = blob  # type:ignore[arg-type]
+    assert "bisenet-fp_head" in model.known_mask_types(0, 0)

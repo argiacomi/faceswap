@@ -445,10 +445,18 @@ class ManualEditableAlignments:
         self._dirty_frames: set[int] = set()
         # Mask Editor (#101) — in-memory mask grids keyed by ``(frame_index,
         # face_index, mask_type)``.  Stored as uint8 numpy arrays sized to
-        # :attr:`MASK_STORED_SIZE`.  Persistence to the alignments-file blob
-        # format is a follow-up; today the editor operates in-memory so the
-        # user can paint, undo/redo, and see live overlay feedback.
+        # :attr:`MASK_STORED_SIZE`.
         self._mask_state: dict[tuple[int, int, str], T.Any] = {}
+        # Keys the user *touched* (paint or clear) since the last persist.
+        # Persistence re-encodes only these so an untouched mask keeps the
+        # legacy landmark-aligned affine matrix it was originally saved
+        # with — our axis-aligned bbox projection is fine for new edits
+        # but would degrade an untouched mask if we encoded it blindly.
+        self._painted_masks: set[tuple[int, int, str]] = set()
+        # Pre-existing mask blobs from the on-disk alignments, surfaced
+        # lazily via :meth:`get_mask` so the editor can preview / edit
+        # masks that were persisted by a previous session.
+        self._persisted_mask_blobs: dict[tuple[int, int, str], T.Any] = {}
 
     # ---- read API ----
     def faces(self, frame_index: int) -> tuple[EditableFace, ...]:
@@ -517,6 +525,12 @@ class ManualEditableAlignments:
         self._undo.clear()
         self._redo.clear()
         self._dirty_frames.clear()
+        # Mask editor (#101): re-seed clears both the editor cache and the
+        # tracking sets so a second seed doesn't smuggle in stale state
+        # from a previous session.
+        self._mask_state.clear()
+        self._painted_masks.clear()
+        self._persisted_mask_blobs.clear()
         if frame_names is None:
             index_map = {
                 frame_name: frame_index
@@ -555,6 +569,12 @@ class ManualEditableAlignments:
                         landmarks=landmarks,
                     )
                 )
+                # Mask editor (#101): record persisted blobs so the editor can
+                # display the existing mask without forcing a re-encode on
+                # save.  Decoding happens lazily through ``get_mask``.
+                face_mask = getattr(face, "mask", None) or {}
+                for mask_type, blob in face_mask.items():
+                    self._persisted_mask_blobs[(frame_index, face_index, str(mask_type))] = blob
             if entries:
                 self._faces[frame_index] = entries
         for callback in list(self._listeners):
@@ -819,26 +839,53 @@ class ManualEditableAlignments:
 
         Returns the in-memory ``numpy.ndarray`` of dtype uint8 sized
         :attr:`MASK_STORED_SIZE` x :attr:`MASK_STORED_SIZE`, or ``None`` if
-        no mask has been created/painted for this combination yet.  The
-        Mask editor consults this lazily — masks are *only* allocated on
-        first paint stroke.
+        no mask has been created/painted *and* no persisted blob exists
+        for this combination.  If a persisted blob exists from
+        :meth:`seed_from_handle` it is decoded on first access and
+        cached in :attr:`_mask_state` so subsequent calls are O(1).
         """
         key = (int(frame_index), int(face_index), str(mask_type))
-        return self._mask_state.get(key)
+        grid = self._mask_state.get(key)
+        if grid is not None:
+            return grid
+        blob = self._persisted_mask_blobs.get(key)
+        if blob is None:
+            return None
+        decoded = self.decode_mask_blob(blob)
+        if decoded is None:
+            return None
+        # Cache the decoded grid so further reads hit memory; do NOT mark
+        # this as a touched mask (so a save that never paints it leaves
+        # the legacy blob intact).
+        self._mask_state[key] = decoded
+        return decoded
 
     def has_mask(self, frame_index: int, face_index: int, mask_type: str) -> bool:
-        """Return whether an editable mask has been populated for this slot."""
-        return (int(frame_index), int(face_index), str(mask_type)) in self._mask_state
+        """Return whether a mask exists for ``(frame, face, type)``.
+
+        ``True`` when an editable grid has been allocated *or* a persisted
+        blob is available from the last seed.  Counts the legacy file's
+        masks so the editor's dropdown can populate from disk even before
+        the user paints anything.
+        """
+        key = (int(frame_index), int(face_index), str(mask_type))
+        return key in self._mask_state or key in self._persisted_mask_blobs
 
     def known_mask_types(self, frame_index: int, face_index: int) -> tuple[str, ...]:
-        """Return every mask type currently materialised for the given face."""
-        return tuple(
-            sorted(
-                mask_type
-                for (fi, faci, mask_type) in self._mask_state
-                if fi == int(frame_index) and faci == int(face_index)
-            )
-        )
+        """Return every mask type with editable OR persisted state for the face.
+
+        Combines in-memory edits and the seed-time persisted-blob set so
+        the Mask editor's dropdown surfaces masks that exist on disk
+        even before the user has painted anything new.
+        """
+        types: set[str] = set()
+        for fi, faci, mask_type in self._mask_state:
+            if fi == int(frame_index) and faci == int(face_index):
+                types.add(mask_type)
+        for fi, faci, mask_type in self._persisted_mask_blobs:
+            if fi == int(frame_index) and faci == int(face_index):
+                types.add(mask_type)
+        return tuple(sorted(types))
 
     def paint_mask_stroke(
         self,
@@ -901,6 +948,7 @@ class ManualEditableAlignments:
         if x0 >= x1 or y0 >= y1:
             return False
         prior_region = existing[y0:y1, x0:x1].copy()
+        self._painted_masks.add(key)
         # Apply the circular stamp.
         yy, xx = np.ogrid[y0:y1, x0:x1]
         mask = (xx - cx) ** 2 + (yy - cy) ** 2 <= stored_radius * stored_radius
@@ -932,6 +980,7 @@ class ManualEditableAlignments:
         if existing is None:
             return False
         prior = existing.copy()
+        self._painted_masks.add(key)
 
         def do() -> None:
             self._mask_state.pop(key, None)
@@ -941,6 +990,121 @@ class ManualEditableAlignments:
 
         self._apply(do, undo, frame_index)
         return True
+
+    def adopt_mask(
+        self,
+        frame_index: int,
+        face_index: int,
+        mask_type: str,
+        grid: T.Any,
+    ) -> None:
+        """Install a pre-built mask grid without recording undo history.
+
+        Used by the lazy decoder on first access so seeding a persisted
+        mask doesn't pollute the user-facing undo stack.  ``grid`` must
+        be a uint8 ``numpy.ndarray`` sized
+        :attr:`MASK_STORED_SIZE` x :attr:`MASK_STORED_SIZE`.
+        """
+        import numpy as np
+
+        if grid is None:
+            return
+        array = np.asarray(grid, dtype=np.uint8)
+        if array.shape != (self.MASK_STORED_SIZE, self.MASK_STORED_SIZE):
+            return
+        key = (int(frame_index), int(face_index), str(mask_type))
+        self._mask_state[key] = array
+
+    # ---- Mask blob persistence (#101) ----
+
+    MASK_STORED_CENTERING: T.ClassVar[str] = "head"
+    """Centering of the stored-space mask grid.  Faceswap masks are stored at
+    head centering by convention; the Qt editor follows the same default so a
+    round-trip with the production alignment pipeline stays compatible."""
+
+    @classmethod
+    def encode_mask_blob(
+        cls,
+        grid: T.Any,
+        bbox: tuple[float, float, float, float],
+    ) -> T.Any:
+        """Encode a stored-space mask grid into a :class:`MaskAlignmentsFile`.
+
+        Compresses the uint8 grid with zlib and computes the 2x3 affine
+        that maps stored-space coordinates back to source-frame pixels via
+        the axis-aligned bbox projection ``paint_mask_stroke`` uses on the
+        way in.  Returns a :class:`lib.align.objects.MaskAlignmentsFile`
+        that can be slotted directly into ``face.mask[mask_type]`` so
+        :meth:`lib.align.Alignments.save` writes it out in the legacy
+        format.
+        """
+        import zlib
+
+        import numpy as np
+
+        from lib.align.objects import MaskAlignmentsFile
+
+        size = cls.MASK_STORED_SIZE
+        array = np.asarray(grid, dtype=np.uint8)
+        if array.shape != (size, size):
+            # Defensive: reshape or pad so the writer never receives a
+            # mismatched grid.  An invalid grid is replaced with zeros so
+            # save still produces a valid blob.
+            array = np.zeros((size, size), dtype=np.uint8)
+        x, y, w, h = bbox
+        scale_x = float(w) / float(size) if size else 0.0
+        scale_y = float(h) / float(size) if size else 0.0
+        affine = np.array(
+            [
+                [scale_x, 0.0, float(x)],
+                [0.0, scale_y, float(y)],
+            ],
+            dtype=np.float32,
+        )
+        # cv2.INTER_LINEAR is 1; we don't import cv2 here to keep this module
+        # tkinter/Qt-neutral and import-light.  The legacy Tk path stores the
+        # cv2 interpolator constant so we mirror the numeric value directly.
+        interpolator = 1
+        return MaskAlignmentsFile(
+            mask=zlib.compress(array.tobytes()),
+            affine_matrix=affine,
+            interpolator=interpolator,
+            stored_size=size,
+            stored_centering=cls.MASK_STORED_CENTERING,
+        )
+
+    @classmethod
+    def decode_mask_blob(cls, blob: T.Any) -> T.Any:
+        """Decode a :class:`MaskAlignmentsFile` back to a uint8 grid.
+
+        Returns ``None`` when the blob is missing or malformed so the
+        caller can fall back to "no mask painted yet".  Decoded grids
+        are sized :attr:`MASK_STORED_SIZE` x :attr:`MASK_STORED_SIZE`;
+        blobs with a different ``stored_size`` are rejected (the editor
+        only paints at the canonical size today; a follow-up can resize
+        smaller / larger blobs on the way in).
+        """
+        import zlib
+
+        import numpy as np
+
+        if blob is None:
+            return None
+        size = cls.MASK_STORED_SIZE
+        stored_size = getattr(blob, "stored_size", size)
+        if int(stored_size) != size:
+            return None
+        raw = getattr(blob, "mask", None)
+        if raw is None:
+            return None
+        try:
+            decompressed = zlib.decompress(bytes(raw))
+        except (zlib.error, TypeError):
+            return None
+        expected = size * size
+        if len(decompressed) != expected:
+            return None
+        return np.frombuffer(decompressed, dtype=np.uint8).reshape(size, size).copy()
 
     def update_landmark(
         self,
@@ -1229,9 +1393,14 @@ class ManualEditableAlignments:
                     # but accept any landmark replacement from the editable
                     # model so update_landmark survives a round-trip.
                     prev.landmarks_xy = landmarks_array
+                    self._apply_editable_masks(prev.mask, frame_index, face.face_index, face.bbox)
                     new_faces.append(prev)
                 else:
                     if prev is not None:
+                        merged_mask = dict(prev.mask) if prev.mask else {}
+                        self._apply_editable_masks(
+                            merged_mask, frame_index, face.face_index, face.bbox
+                        )
                         new_faces.append(
                             FileAlignments(
                                 x=x,
@@ -1239,13 +1408,17 @@ class ManualEditableAlignments:
                                 w=w,
                                 h=h,
                                 landmarks_xy=landmarks_array,
-                                mask=prev.mask,
+                                mask=merged_mask,
                                 identity=prev.identity,
                                 metadata=prev.metadata,
                                 thumb=None,
                             )
                         )
                     else:
+                        fresh_mask: dict[str, T.Any] = {}
+                        self._apply_editable_masks(
+                            fresh_mask, frame_index, face.face_index, face.bbox
+                        )
                         new_faces.append(
                             FileAlignments(
                                 x=x,
@@ -1253,11 +1426,45 @@ class ManualEditableAlignments:
                                 w=w,
                                 h=h,
                                 landmarks_xy=landmarks_array,
+                                mask=fresh_mask,
                             )
                         )
             entry.faces = new_faces
             modified += 1
         return modified
+
+    def _apply_editable_masks(
+        self,
+        mask_dict: dict[str, T.Any],
+        frame_index: int,
+        face_index: int,
+        bbox: tuple[float, float, float, float],
+    ) -> None:
+        """Encode every *user-touched* mask grid into ``mask_dict``.
+
+        Mutates ``mask_dict`` in place.  Only entries the user explicitly
+        painted or cleared (tracked in :attr:`_painted_masks`) are
+        rewritten; untouched masks keep their on-disk blob so we don't
+        downgrade a legacy landmark-aligned affine matrix with our
+        axis-aligned bbox approximation.  A touched-and-now-empty grid
+        deletes the corresponding key from ``mask_dict`` so the user can
+        fully erase a mask through the editor.
+        """
+        import numpy as np
+
+        touched_for_face = [
+            key
+            for key in self._painted_masks
+            if key[0] == int(frame_index) and key[1] == int(face_index)
+        ]
+        for key in touched_for_face:
+            mask_type = key[2]
+            grid = self._mask_state.get(key)
+            if grid is None or not np.any(grid):
+                mask_dict.pop(mask_type, None)
+            else:
+                mask_dict[mask_type] = self.encode_mask_blob(grid, bbox)
+            self._painted_masks.discard(key)
 
     def _notify(self, frame_index: int) -> None:
         for callback in list(self._listeners):

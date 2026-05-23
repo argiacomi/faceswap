@@ -278,3 +278,66 @@ def test_paint_mask_at_no_frame_returns_false(qtbot, tmp_path: Path) -> None:  #
     # Force a missing current frame by clearing the thumbnail panel.
     window._thumbnail_panel.clear()
     assert window.paint_mask_at(0, 100.0, 100.0) is False
+
+
+# ---------------------------------------------------------------------------
+# Mask-type dropdown (#101 remainder)
+# ---------------------------------------------------------------------------
+
+
+def test_mask_controls_hidden_outside_mask_mode(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+    """The Mask control row is hidden in View / BBox / Landmark / Extract modes."""
+    window = _make_window(qtbot, tmp_path)
+    window._editor_state.set("editor_mode", "View")
+    assert window._mask_controls.isVisible() is False
+
+
+def test_mask_controls_visible_when_mask_mode_active(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+    """Entering Mask mode surfaces the mask-type dropdown + opacity slider."""
+    window = _make_window(qtbot, tmp_path)
+    _enter_mask_mode(window)
+    assert window._mask_controls.isVisible() is True
+    # Defaults are present in the dropdown.
+    items = [window._mask_type_combo.itemText(i) for i in range(window._mask_type_combo.count())]
+    assert "components" in items
+    assert "extended" in items
+    # The selected mask type matches the editor-state field.
+    assert window._mask_type_combo.currentText() == window.active_mask_type()
+
+
+def test_mask_type_dropdown_includes_persisted_blobs(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+    """A persisted mask blob surfaces as a dropdown option even without painting."""
+    import numpy as np
+
+    from lib.align.objects import MaskAlignmentsFile
+
+    window = _make_window(qtbot, tmp_path)
+    face_index = _seed_face(window)
+    window._editor_state.set("face_index", face_index)
+    window._editable._persisted_mask_blobs[(0, face_index, "vgg-clear")] = MaskAlignmentsFile(
+        mask=b"\x00",
+        affine_matrix=np.eye(3, dtype=np.float32)[:2],
+        interpolator=1,
+        stored_size=128,
+        stored_centering="head",
+    )
+    _enter_mask_mode(window)
+    items = [window._mask_type_combo.itemText(i) for i in range(window._mask_type_combo.count())]
+    assert "vgg-clear" in items
+
+
+def test_mask_type_dropdown_change_updates_editor_state(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+    """Selecting a different mask type writes through to editor state."""
+    window = _make_window(qtbot, tmp_path)
+    _enter_mask_mode(window)
+    window._mask_type_combo.setCurrentText("extended")
+    assert window._editor_state.mask_type == "extended"
+    assert window.active_mask_type() == "extended"
+
+
+def test_mask_opacity_slider_updates_editor_state(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+    """Moving the opacity slider writes through to editor state."""
+    window = _make_window(qtbot, tmp_path)
+    _enter_mask_mode(window)
+    window._mask_opacity_slider.setValue(80)
+    assert window._editor_state.mask_opacity == 80

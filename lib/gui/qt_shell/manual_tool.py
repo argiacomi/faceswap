@@ -34,6 +34,7 @@ from PySide6.QtGui import (
     QWheelEvent,
 )
 from PySide6.QtWidgets import (
+    QComboBox,
     QFileDialog,
     QHBoxLayout,
     QLabel,
@@ -2862,7 +2863,15 @@ class ManualToolWindow(QMainWindow):
             "face_index", lambda value: self._overlay.set_active(int(value))
         )
         self._editor_state.subscribe("face_index", lambda _v: self._frame_view.update())
+        # When the active face changes, refresh the Mask dropdown so the
+        # option list reflects whatever the new face has persisted on disk.
+        self._editor_state.subscribe(
+            "face_index", lambda _v: self._refresh_mask_controls_visibility()
+        )
         self._editor_state.subscribe("frame_index", lambda _v: self._sync_actions())
+        self._editor_state.subscribe(
+            "frame_index", lambda _v: self._refresh_mask_controls_visibility()
+        )
         self._editor_state.subscribe("editor_mode", self._on_editor_mode_changed)
         self._build_ui()
         self._connect_signals()
@@ -3849,6 +3858,11 @@ class ManualToolWindow(QMainWindow):
         self._metadata_label.setObjectName("qt-manual-session-metadata")
         self._metadata_label.setWordWrap(True)
         left_layout.addWidget(self._metadata_label)
+        # Mask editor (#101): inline dropdown that lets the user pick which
+        # mask type to edit.  Hidden by default; surfaced only when the Mask
+        # editor (F5) is active so it doesn't clutter the View mode.
+        self._mask_controls = self._build_mask_controls()
+        left_layout.addWidget(self._mask_controls)
         left_layout.addWidget(self._frame_view, 1)
         left_layout.addWidget(self._transport_bar)
         left_layout.addWidget(self._status_label)
@@ -4852,6 +4866,114 @@ class ManualToolWindow(QMainWindow):
     def _on_editor_mode_changed(self, _mode: object) -> None:
         """Refresh action availability when the editor mode flips."""
         self._sync_actions()
+        self._refresh_mask_controls_visibility()
+
+    MASK_DEFAULT_TYPES: T.ClassVar[tuple[str, ...]] = (
+        "components",
+        "extended",
+        "bisenet-fp_face",
+        "bisenet-fp_head",
+        "vgg-clear",
+        "vgg-obstructed",
+        "unet-dfl",
+        "custom",
+    )
+    """Faceswap-standard mask plugins.  The dropdown always shows these so
+    the user can pick a type to paint *before* any blob exists on disk."""
+
+    def _build_mask_controls(self) -> QWidget:
+        """Return the Mask-editor control row (mask-type dropdown + opacity).
+
+        Hidden by default; surfaced only while ``editor_mode == "Mask"``.
+        The dropdown is populated lazily by
+        :meth:`_refresh_mask_controls_visibility` so the option list always
+        reflects whatever the active face has persisted on disk + the
+        Faceswap-standard set.
+        """
+        container = QWidget()
+        container.setObjectName("qt-manual-mask-controls")
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+
+        layout.addWidget(QLabel("Mask type:"))
+        self._mask_type_combo = QComboBox()
+        self._mask_type_combo.setObjectName("qt-manual-mask-type-combo")
+        self._mask_type_combo.setMinimumWidth(140)
+        self._mask_type_combo.currentTextChanged.connect(self._on_mask_type_combo_changed)
+        layout.addWidget(self._mask_type_combo)
+
+        layout.addSpacing(12)
+        layout.addWidget(QLabel("Opacity:"))
+        self._mask_opacity_slider = QSlider(Qt.Horizontal)
+        self._mask_opacity_slider.setObjectName("qt-manual-mask-opacity")
+        self._mask_opacity_slider.setRange(0, 100)
+        self._mask_opacity_slider.setValue(int(self._editor_state.mask_opacity))
+        self._mask_opacity_slider.setFixedWidth(140)
+        self._mask_opacity_slider.valueChanged.connect(self._on_mask_opacity_changed)
+        layout.addWidget(self._mask_opacity_slider)
+        layout.addStretch(1)
+
+        container.setVisible(self._editor_state.editor_mode == "Mask")
+        return container
+
+    def _refresh_mask_controls_visibility(self) -> None:
+        """Show or hide the Mask control row to match the editor mode."""
+        controls = getattr(self, "_mask_controls", None)
+        if controls is None:
+            return
+        active = self._editor_state.editor_mode == "Mask"
+        controls.setVisible(active)
+        if active:
+            self._refresh_mask_type_combo()
+
+    def _refresh_mask_type_combo(self) -> None:
+        """Populate the mask-type dropdown for the current frame + face.
+
+        Combines:
+        * Faceswap-standard mask plugins (always available so the user can
+          start painting a type that doesn't yet exist on disk).
+        * Any mask type that already exists for the active face in memory
+          or on disk via :meth:`ManualEditableAlignments.known_mask_types`.
+
+        Preserves the user's current selection when possible; falls back
+        to :attr:`DEFAULT_MASK_TYPE` when no mask_type is set yet.
+        """
+        combo = getattr(self, "_mask_type_combo", None)
+        if combo is None:
+            return
+        frame_index = self._current_frame_index()
+        face_index = int(self._editor_state.face_index)
+        existing: tuple[str, ...] = ()
+        if frame_index >= 0 and face_index >= 0:
+            existing = self._editable.known_mask_types(frame_index, face_index)
+        options = sorted({*self.MASK_DEFAULT_TYPES, *existing})
+        if not options:
+            return
+        current = self._editor_state.mask_type or self.DEFAULT_MASK_TYPE
+        if current not in options:
+            current = self.DEFAULT_MASK_TYPE if self.DEFAULT_MASK_TYPE in options else options[0]
+        combo.blockSignals(True)
+        try:
+            combo.clear()
+            combo.addItems(options)
+            combo.setCurrentText(current)
+        finally:
+            combo.blockSignals(False)
+        if self._editor_state.mask_type != current:
+            self._editor_state.set("mask_type", current)
+
+    def _on_mask_type_combo_changed(self, mask_type: str) -> None:
+        """Persist the chosen mask type to editor state + refresh the overlay."""
+        if not mask_type:
+            return
+        self._editor_state.set("mask_type", mask_type)
+        self._frame_view.update()
+
+    def _on_mask_opacity_changed(self, value: int) -> None:
+        """Push the new opacity onto editor state + repaint the overlay."""
+        self._editor_state.set("mask_opacity", int(value))
+        self._frame_view.update()
 
 
 __all__ = [
