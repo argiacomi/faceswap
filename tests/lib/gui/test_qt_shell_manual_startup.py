@@ -49,7 +49,7 @@ def test_startup_task_completes_quickly_for_missing_alignments(  # type:ignore[n
     session = _session_with_frames(tmp_path)
     handle = session.alignments_handle()
     editable = ManualEditableAlignments()
-    task = _ManualStartupTask(handle, editable)
+    task = _ManualStartupTask(handle, editable, session)
     completed: list[tuple[bool, str]] = []
     failed: list[str] = []
     progress: list[tuple[str, str]] = []
@@ -86,7 +86,7 @@ def test_startup_task_open_and_thumb_stages_complete(  # type:ignore[no-untyped-
 
     fresh_handle = ManualAlignmentsHandle(handle.folder, handle.filename, is_video=False)
     editable = ManualEditableAlignments()
-    task = _ManualStartupTask(fresh_handle, editable)
+    task = _ManualStartupTask(fresh_handle, editable, session)
     completed: list[tuple[bool, str]] = []
     stages: list[str] = []
     task.completed.connect(lambda has_thumbs, msg: completed.append((has_thumbs, msg)))
@@ -163,7 +163,7 @@ def test_startup_task_emits_failed_signal_on_exception(  # type:ignore[no-untype
         raise RuntimeError("simulated open() failure")
 
     monkeypatch.setattr(type(handle), "open", _boom)
-    task = _ManualStartupTask(handle, editable)
+    task = _ManualStartupTask(handle, editable, session)
     completed: list[tuple[bool, str]] = []
     failed: list[str] = []
     task.completed.connect(lambda *args: completed.append(args))
@@ -288,7 +288,7 @@ def test_manual_startup_worker_stop_quits_thread(qtbot, tmp_path: Path) -> None:
     session = _session_with_frames(tmp_path)
     handle = session.alignments_handle()
     editable = ManualEditableAlignments()
-    worker = ManualStartupWorker(handle, editable)
+    worker = ManualStartupWorker(handle, editable, session)
     worker.start()
     _drain_qt_events(qtbot, timeout_ms=200)
     worker.stop()

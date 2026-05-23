@@ -244,10 +244,32 @@ class ManualAlignmentsHandle:
         )
 
     def has_thumbnails(self) -> bool:
-        """Return whether the alignments file already stores thumbnails."""
+        """Return whether the alignments file already stores thumbnails.
+
+        Pure read — does *not* regenerate.  Callers that want missing
+        thumbnails materialized should invoke :meth:`regenerate_thumbnails`
+        explicitly with a session.
+        """
         if not self.exists:
             return False
         return bool(self.open().thumbnails.has_thumbnails)
+
+    def regenerate_thumbnails(
+        self,
+        session: ManualSession,
+        *,
+        progress: T.Callable[[int, int, str], None] | None = None,
+    ) -> int:
+        """Rebuild cached face thumbnails for ``session`` and persist them.
+
+        Delegates to :func:`tools.manual.thumbnail_generation.regenerate_thumbnails`
+        so the heavy work stays in a Qt/Tk-neutral module while callers reach
+        for it through the handle they already hold.  Returns the number of
+        frames regenerated.
+        """
+        from tools.manual.thumbnail_generation import regenerate_thumbnails
+
+        return regenerate_thumbnails(self, session, progress=progress)
 
     def persist(
         self,

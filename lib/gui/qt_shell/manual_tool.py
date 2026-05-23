@@ -1453,10 +1453,12 @@ class _ManualStartupTask(QObject):
         self,
         handle: ManualAlignmentsHandle,
         editable: ManualEditableAlignments,
+        session: ManualSession,
     ) -> None:
         super().__init__()
         self._handle = handle
         self._editable = editable
+        self._session = session
         self._start.connect(self.run)
 
     def kick_off(self) -> None:
@@ -1466,8 +1468,12 @@ class _ManualStartupTask(QObject):
     STAGE_PERCENT: T.ClassVar[dict[str, int]] = {
         "open": 33,
         "thumbs": 66,
+        "thumbs_progress": 66,
         "complete": 100,
     }
+    """Base percent for each named stage.  The ``thumbs_progress`` value is
+    replaced live by :meth:`_emit_thumb_progress` so the determinate startup
+    bar walks 66 → 99 across the regenerated frames."""
 
     def run(self) -> None:  # noqa: D401 - Qt slot
         """Execute the staged startup work."""
@@ -1483,6 +1489,14 @@ class _ManualStartupTask(QObject):
 
             self.progress.emit("thumbs", "Checking thumbnail cache…")
             has_thumbnails = self._handle.has_thumbnails()
+            needs_regen = self._session.thumb_regenerate or not has_thumbnails
+            if needs_regen and face_count:
+                regenerated = self._handle.regenerate_thumbnails(
+                    self._session, progress=self._emit_thumb_progress
+                )
+                if regenerated:
+                    has_thumbnails = True
+                    logger.info("Manual Tool generated thumbnails for %d frame(s)", regenerated)
 
             summary = f"Loaded {face_count} face(s) across {len(alignments.data)} frame(s)"
             self.progress.emit("complete", summary)
@@ -1490,6 +1504,18 @@ class _ManualStartupTask(QObject):
         except Exception as err:  # noqa: BLE001 - surface any startup failure
             logger.exception("Manual Tool startup failed")
             self.failed.emit(str(err))
+
+    def _emit_thumb_progress(self, done: int, total: int, message: str) -> None:
+        """Bridge :mod:`thumbnail_generation` progress to ``self.progress``.
+
+        Maps the (done, total) pair into the 66-99 % band of the startup bar.
+        Writes the live percent into ``STAGE_PERCENT`` under a stage key the
+        progress handler reads, so the determinate bar keeps moving.
+        """
+        denominator = max(1, total)
+        percent = min(99, 66 + round((done / denominator) * 33))
+        self.STAGE_PERCENT["thumbs_progress"] = percent
+        self.progress.emit("thumbs_progress", message)
 
 
 class ManualStartupWorker(QObject):
@@ -1509,11 +1535,12 @@ class ManualStartupWorker(QObject):
         self,
         handle: ManualAlignmentsHandle,
         editable: ManualEditableAlignments,
+        session: ManualSession,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
         self._thread = QThread(self)
-        self._task = _ManualStartupTask(handle, editable)
+        self._task = _ManualStartupTask(handle, editable, session)
         self._task.moveToThread(self._thread)
         self._task.progress.connect(self.progress)
         self._task.completed.connect(self.completed)
@@ -2298,7 +2325,7 @@ class ManualToolWindow(QMainWindow):
             self.statusBar().addPermanentWidget(self._progress_bar)
             self._progress_bar.show()
         self._startup_worker = ManualStartupWorker(
-            self._alignments_handle, self._editable, parent=self
+            self._alignments_handle, self._editable, self._session, parent=self
         )
         self._startup_worker.progress.connect(self._on_startup_progress)
         self._startup_worker.completed.connect(self._on_startup_completed)
