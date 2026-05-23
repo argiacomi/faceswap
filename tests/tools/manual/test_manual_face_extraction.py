@@ -267,3 +267,55 @@ def test_extract_faces_editable_targets_carry_unsaved_bbox_into_metadata(
     # The alignments embed the *editable* bbox, not the persisted (10, 10).
     assert meta.alignments.x == 20
     assert meta.alignments.y == 20
+
+
+# ---------------------------------------------------------------------------
+# #119 task 4 — distinguish skipped faces from skipped frames
+# ---------------------------------------------------------------------------
+
+
+def test_extract_faces_skipped_faces_field_default_is_zero(tmp_path: Path) -> None:
+    """A clean extract leaves ``skipped_faces`` at 0."""
+    session = _session_with_face(tmp_path)
+    output = tmp_path / "extracted"
+    result = extract_faces(
+        FaceExtractionRequest(
+            handle=session.alignments_handle(),
+            session=session,
+            output_folder=str(output),
+        ),
+    )
+    assert result.skipped_faces == 0
+    assert result.skipped_frames == 0
+
+
+def test_extract_faces_per_face_crop_failure_increments_skipped_faces(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A face whose ``AlignedFace.face`` is ``None`` bumps ``skipped_faces``
+    (not ``skipped_frames``) — the source frame was readable."""
+    session = _session_with_face(tmp_path)
+    output = tmp_path / "extracted"
+
+    class _NoneAligned:
+        """Stand-in for ``AlignedFace`` whose ``.face`` is ``None``."""
+
+        face = None
+
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            return None
+
+    monkeypatch.setattr("lib.align.AlignedFace", _NoneAligned)
+    result = extract_faces(
+        FaceExtractionRequest(
+            handle=session.alignments_handle(),
+            session=session,
+            output_folder=str(output),
+        ),
+    )
+    # The frame was processed; only the face was unalignable.
+    assert result.skipped_frames == 0
+    assert result.skipped_faces == 1
+    assert result.frames_processed == 1
+    assert any("no aligned crop" in err for err in result.errors)

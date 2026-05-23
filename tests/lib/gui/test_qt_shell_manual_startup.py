@@ -401,3 +401,73 @@ def test_thumb_progress_state_does_not_bleed_between_tasks(qtbot, tmp_path: Path
 def test_stage_percent_no_longer_contains_thumbs_progress() -> None:
     """``thumbs_progress`` is no longer a static stage in the class table."""
     assert "thumbs_progress" not in _ManualStartupTask.STAGE_PERCENT
+
+
+# ---------------------------------------------------------------------------
+# #121 / #119 task 1 — thumb stage anchor must not reset live percent
+# ---------------------------------------------------------------------------
+
+
+def test_thumbs_named_stage_does_not_reset_live_thumb_percent(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+    """After a per-event percent fires, the named ``thumbs`` stage must not
+    repaint the bar back to the 66% anchor.
+
+    ``_ManualStartupTask._emit_thumb_progress`` emits the per-event percent
+    first and then the named stage signal so console / status messaging
+    stays per-frame.  Without this guard the named-stage handler reads
+    ``STAGE_PERCENT["thumbs"] == 66`` and clobbers the live value.
+    """
+    session = _session_with_frames(tmp_path)
+    window = ManualToolWindow(session)
+    qtbot.addWidget(window)
+
+    # Sanity: pre-condition matches the new initialiser.
+    assert window._thumb_progress_seen is False
+
+    # Simulate first-frame live progress: bar should track the live value.
+    window._on_startup_progress_percent(74, "frame 1")
+    assert window._progress_bar is not None
+    assert window._progress_bar.value() == 74
+    assert window._thumb_progress_seen is True
+
+    # Now the named ``thumbs`` signal arrives for the same frame — it must
+    # NOT reset the bar back to 66.
+    window._on_startup_progress("thumbs", "frame 1")
+    assert window._progress_bar.value() == 74
+
+    # A subsequent live percent still paints normally.
+    window._on_startup_progress_percent(88, "frame 2")
+    assert window._progress_bar.value() == 88
+    window._on_startup_progress("thumbs", "frame 2")
+    assert window._progress_bar.value() == 88
+
+
+def test_thumbs_named_stage_still_paints_anchor_before_live_progress(
+    qtbot, tmp_path: Path
+) -> None:  # type:ignore[no-untyped-def]
+    """The initial ``thumbs`` stage *does* still paint 66% — the guard only
+    suppresses the *reset* once live progress has started."""
+    session = _session_with_frames(tmp_path)
+    window = ManualToolWindow(session)
+    qtbot.addWidget(window)
+    assert window._progress_bar is not None
+
+    # No live percent has fired yet — anchor paints normally.
+    window._on_startup_progress("thumbs", "Checking thumbnail cache…")
+    assert window._progress_bar.value() == 66
+    assert window._thumb_progress_seen is False
+
+
+def test_startup_retry_resets_thumb_progress_seen_flag(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+    """A second startup (e.g. after a failure + retry) clears the guard flag."""
+    session = _session_with_frames(tmp_path)
+    window = ManualToolWindow(session)
+    qtbot.addWidget(window)
+
+    window._on_startup_progress_percent(74, "live")
+    assert window._thumb_progress_seen is True
+
+    # Re-launching the startup worker resets the flag so the named stage
+    # can paint the anchor once more.
+    window._start_background_startup()
+    assert window._thumb_progress_seen is False

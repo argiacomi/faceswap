@@ -95,7 +95,14 @@ class FaceExtractionRequest:
 
 @dataclass
 class ExtractFacesResult:
-    """Outputs from one :func:`extract_faces` call."""
+    """Outputs from one :func:`extract_faces` call.
+
+    ``skipped_frames`` and ``skipped_faces`` are tracked separately so a
+    bad frame (e.g. missing source file) is not conflated with a bad face
+    on an otherwise readable frame (e.g. ``AlignedFace.face is None``).
+    Both counters bump :attr:`errors` so the summary still surfaces every
+    skip to the user.
+    """
 
     frames_processed: int = 0
     """Number of source frames the worker read."""
@@ -103,6 +110,9 @@ class ExtractFacesResult:
     """Number of aligned-face PNGs written to disk."""
     skipped_frames: int = 0
     """Source frames the worker could not read (logged + reported)."""
+    skipped_faces: int = 0
+    """Individual faces on otherwise-readable frames that could not be
+    aligned into a crop (#119 task 4)."""
     cancelled: bool = False
     """``True`` when the cancel predicate returned ``True`` mid-run."""
     errors: list[str] = field(default_factory=list)
@@ -282,7 +292,9 @@ def _emit_faces_for_frame(
             face.landmarks_xy, image=image, centering="head", size=EXTRACT_FACE_SIZE
         )
         if aligned.face is None:
-            result.skipped_frames += 1
+            # Per-face crop failure on an otherwise-readable frame — this
+            # is *not* a skipped frame.  See #119 task 4.
+            result.skipped_faces += 1
             result.errors.append(f"Face {face_index} in {frame_name} produced no aligned crop")
             continue
         png_alignments = PNGAlignments(

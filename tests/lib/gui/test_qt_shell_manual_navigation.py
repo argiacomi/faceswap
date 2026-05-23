@@ -291,3 +291,36 @@ def test_z_and_x_still_trigger_navigation(qtbot, tmp_path: Path) -> None:  # typ
     assert window._thumbnail_panel.currentRow() == 1
     window.actions_by_key["next_frame"].trigger()
     assert window._thumbnail_panel.currentRow() == 2
+
+
+# ---------------------------------------------------------------------------
+# #119 task 3 — Return in the jump entry must not emit twice
+# ---------------------------------------------------------------------------
+
+
+def test_return_in_jump_entry_emits_position_change_once(qtbot) -> None:  # type:ignore[no-untyped-def]
+    """Pressing Return in the jump entry triggers exactly one navigation request.
+
+    Before the fix the bar wired both ``editingFinished`` *and*
+    ``returnPressed`` to ``_on_jump_submit``, so one Return key press
+    produced two emissions and could double-step navigation.
+    """
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    bar = ManualTransportBar()
+    qtbot.addWidget(bar)
+    bar.show()
+    qtbot.waitExposed(bar)
+    bar.set_total(10)
+    bar.set_position(2)
+    received: list[int] = []
+    bar.position_changed.connect(received.append)
+
+    bar.jump_entry.setFocus()
+    bar.jump_entry.selectAll()
+    QTest.keyClicks(bar.jump_entry, "7")
+    QTest.keyClick(bar.jump_entry, Qt.Key_Return)
+
+    # Exactly one emission, carrying the 0-based equivalent of 1-based "7".
+    assert received == [6]

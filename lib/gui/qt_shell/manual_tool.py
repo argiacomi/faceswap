@@ -1917,8 +1917,11 @@ class ManualTransportBar(QWidget):
         # so the entry stays uneditable when no frames are loaded.
         self._jump_entry.setValidator(QIntValidator(0, 0, self))
         self._jump_entry.setPlaceholderText("#")
+        # ``editingFinished`` already fires on Return *and* on focus-out, so
+        # there is no need to also connect ``returnPressed`` — doing both
+        # makes a single Return keystroke emit ``position_changed`` twice
+        # (issue #119 task 3).  ``editingFinished`` covers both paths.
         self._jump_entry.editingFinished.connect(self._on_jump_submit)
-        self._jump_entry.returnPressed.connect(self._on_jump_submit)
         layout.addWidget(self._jump_entry)
 
     @property
@@ -2794,6 +2797,12 @@ class ManualToolWindow(QMainWindow):
         self._console_logger = console_logger
         self._startup_worker: ManualStartupWorker | None = None
         self._startup_complete = False
+        # #121: once a per-event thumb progress signal lands the named
+        # ``"thumbs"`` stage must NOT reset the bar back to 66% — the
+        # named-stage emit still fires alongside ``progress_percent`` so
+        # console + status messaging stay per-frame, but the progress bar
+        # only follows the live percent from that point on.
+        self._thumb_progress_seen = False
         # Extract Faces worker — held so cancel/close can stop it cleanly.
         self._extract_worker: ManualExtractFacesWorker | None = None
         self._extract_total: int = 0
@@ -3373,8 +3382,13 @@ class ManualToolWindow(QMainWindow):
         summary = (
             f"Extracted {result.faces_written} face(s) from {result.frames_processed} frame(s)"
         )
+        skipped_bits: list[str] = []
         if result.skipped_frames:
-            summary += f" — skipped {result.skipped_frames}"
+            skipped_bits.append(f"{result.skipped_frames} frame(s)")
+        if result.skipped_faces:
+            skipped_bits.append(f"{result.skipped_faces} face(s)")
+        if skipped_bits:
+            summary += f" — skipped {', '.join(skipped_bits)}"
         self.statusBar().showMessage(summary, 7000)
         self._emit_console(f"Manual Tool: {summary}")
         logger.info("Manual Tool extract completed: %s", summary)
@@ -3983,6 +3997,9 @@ class ManualToolWindow(QMainWindow):
 
     def _start_background_startup(self) -> None:
         """Kick off ``ManualStartupWorker`` for async alignments preparation."""
+        # Reset the per-startup #121 flag so a retry can paint the static
+        # ``thumbs`` anchor again before any live percent fires.
+        self._thumb_progress_seen = False
         self._progress_bar = self._build_progress_bar()
         if self._progress_bar is not None:
             self.statusBar().addPermanentWidget(self._progress_bar)
@@ -4016,12 +4033,24 @@ class ManualToolWindow(QMainWindow):
         return bar
 
     def _on_startup_progress(self, stage: str, message: str) -> None:
-        """Surface intermediate startup messages to the status bar + console."""
+        """Surface intermediate startup messages to the status bar + console.
+
+        Static stage percents (open / thumbs / complete) paint a fresh value
+        on the determinate bar.  The named ``"thumbs"`` stage in particular
+        fires alongside every per-event ``progress_percent`` emit so console
+        + status messaging stay per-frame — but once live thumbnail progress
+        has started, painting the static 66% anchor would visibly *reset*
+        the bar (see issues #121 / #119 task 1).  Skip that one repaint.
+        """
         logger.debug("Manual Tool startup [%s]: %s", stage, message)
         self.statusBar().showMessage(message)
         self._emit_console(f"Manual Tool [{stage}]: {message}")
         percent = _ManualStartupTask.STAGE_PERCENT.get(stage)
-        if percent is not None and self._progress_bar is not None:
+        if (
+            percent is not None
+            and self._progress_bar is not None
+            and not (stage == "thumbs" and self._thumb_progress_seen)
+        ):
             self._progress_bar.setValue(percent)
 
     def _on_startup_progress_percent(self, percent: int, _message: str) -> None:
@@ -4030,7 +4059,12 @@ class ManualToolWindow(QMainWindow):
         The percent is carried by the signal payload itself, so queued
         deliveries cannot disagree with the value computed at emit time —
         unlike the previous ``STAGE_PERCENT["thumbs_progress"]`` trick.
+
+        Also marks ``_thumb_progress_seen`` so the named-stage handler
+        stops resetting the bar to the 66% static ``thumbs`` anchor for
+        the rest of this startup.
         """
+        self._thumb_progress_seen = True
         if self._progress_bar is None:
             return
         clamped = max(0, min(100, int(percent)))
