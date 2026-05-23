@@ -4863,9 +4863,13 @@ class ManualToolWindow(QMainWindow):
             self._set_aligner_load_status("ready", aligner, message)
         else:
             self._set_aligner_load_status("failed", aligner, message)
-        if self._aligner_load_worker is not None:
-            self._aligner_load_worker.deleteLater()
+
+        worker = self._aligner_load_worker
+        if worker is not None:
+            worker.stop(wait_ms=1000)
+            worker.deleteLater()
             self._aligner_load_worker = None
+
         self._aligner_load_target = None
         self._sync_aligner_controls()
 
