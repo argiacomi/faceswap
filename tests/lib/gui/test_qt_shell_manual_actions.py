@@ -125,6 +125,7 @@ def test_save_success_clears_dirty_state(  # type:ignore[no-untyped-def]
     assert window.editable_alignments.can_undo is True
 
     assert window.save() is True
+    qtbot.waitUntil(lambda: window._save_worker is None, timeout=5000)
 
     assert window.editor_state.unsaved is False
     assert window.editor_state.edited is False

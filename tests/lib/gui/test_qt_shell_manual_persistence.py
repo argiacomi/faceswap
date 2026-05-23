@@ -37,7 +37,10 @@ def test_save_persists_edits_to_alignments_file(qtbot, tmp_path: Path) -> None: 
     window.editable_alignments.add_face(0, (10.0, 12.0, 30.0, 30.0))
     window.editable_alignments.add_face(1, (5.0, 6.0, 20.0, 22.0))
 
+    # Save is now scheduled on a worker thread (#115) — True means scheduled.
     assert window.save() is True
+    qtbot.waitUntil(lambda: window._save_worker is None, timeout=5000)
+    assert window.editor_state.unsaved is False
 
     reloaded = Alignments(str(tmp_path), "alignments.fsa")
     assert len(reloaded.data["frame_000.png"].faces) == 1
@@ -70,7 +73,11 @@ def test_save_failure_keeps_session_dirty(  # type:ignore[no-untyped-def]
     # without coupling to lib.align internals.
     monkeypatch.setattr(window._alignments_handle, "persist", _boom)
 
-    assert window.save() is False
+    # save() now returns True ("scheduled"); the failure surfaces through the
+    # worker's failed signal so wait for the worker to finish before checking
+    # dirty state.
+    assert window.save() is True
+    qtbot.waitUntil(lambda: window._save_worker is None, timeout=5000)
     assert window.editor_state.unsaved is True
     assert window.editable_alignments.face_count(0) == 1
     assert window.editable_alignments.can_undo is True

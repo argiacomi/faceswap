@@ -236,60 +236,85 @@ def test_frame_view_takes_keyboard_focus_on_click(qtbot, tmp_path: Path) -> None
 # ---------------------------------------------------------------------------
 
 
+def _slow_persist(release, observations: list, modified: int = 1):  # type:ignore[no-untyped-def]
+    """Persist stub that pauses on the worker thread until ``release`` fires.
+
+    Used by the #115 async-save tests to assert main-thread state while the
+    worker is mid-persist.  ``observations`` is a list the stub appends to so
+    the test can verify what the worker saw under the busy lock.
+    """
+
+    def _stub(_editable, *, frame_names):  # type:ignore[no-untyped-def]
+        observations.append(frame_names)
+        release.wait(timeout=5.0)
+        return modified
+
+    return _stub
+
+
 def test_save_blocks_duplicate_invocation_while_in_flight(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
-    """A second save() call while one is in flight returns False."""
+    """A second save() call while one is in flight returns False.
+
+    Save is now async (#115) so re-entry is detected by ``_save_in_flight``,
+    not by a re-entrant persist callback. Pause the worker mid-persist on the
+    main thread and try to schedule a second save — it must short-circuit.
+    """
+    import threading
+
     window = _make_window(qtbot, tmp_path)
     window._editor_state.set("editor_mode", "BoundingBox")
     qtbot.waitUntil(lambda: window._frame_view.source_size != (0, 0), timeout=2000)
     window._editable.add_face(0, (5.0, 5.0, 20.0, 20.0))
 
-    # Stub persist with a re-entrant probe: while we're inside persist, fire
-    # another save() and confirm it short-circuits.
-    inner_results: list[bool] = []
+    release = threading.Event()
+    observations: list = []
+    window._alignments_handle.persist = _slow_persist(release, observations)  # type:ignore[assignment]
 
-    def reentrant_persist(_editable, *, frame_names):  # type:ignore[no-untyped-def]
-        inner_results.append(window.save())
-        return 1
-
-    window._alignments_handle.persist = reentrant_persist  # type:ignore[assignment]
-
-    assert window.save() is True
-    assert inner_results == [False], (
-        "Second save invocation must short-circuit while the first is in flight."
-    )
+    try:
+        assert window.save() is True
+        qtbot.waitUntil(lambda: bool(observations), timeout=3000)
+        # First save is mid-persist on the worker thread — try another.
+        assert window.save() is False, (
+            "Second save() must short-circuit while the first is in flight."
+        )
+    finally:
+        release.set()
+        qtbot.waitUntil(lambda: window._save_worker is None, timeout=5000)
 
 
 def test_save_disables_mutating_actions_during_flight(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
     """Mutating actions are disabled while save is running."""
+    import threading
+
     window = _make_window(qtbot, tmp_path)
     qtbot.waitUntil(lambda: window._frame_view.source_size != (0, 0), timeout=2000)
     window._editable.add_face(0, (5.0, 5.0, 20.0, 20.0))
 
-    snapshots: list[dict[str, bool]] = []
+    release = threading.Event()
+    observations: list = []
+    window._alignments_handle.persist = _slow_persist(release, observations)  # type:ignore[assignment]
 
-    def snapshot_then_persist(_editable, *, frame_names):  # type:ignore[no-untyped-def]
-        snapshots.append(
-            {key: window.actions_by_key[key].isEnabled() for key in window._MUTATING_ACTION_KEYS}
-        )
-        return 1
+    try:
+        assert window.save() is True
+        # Wait for the worker to start persisting (it has entered the busy lock
+        # because the worker construction + start happens after the lock).
+        qtbot.waitUntil(lambda: bool(observations), timeout=3000)
+        # Now the worker is paused inside persist — check action state from main.
+        for key in window._MUTATING_ACTION_KEYS:
+            assert window.actions_by_key[key].isEnabled() is False, (
+                f"Action {key} should be disabled during save"
+            )
+    finally:
+        release.set()
+        qtbot.waitUntil(lambda: window._save_worker is None, timeout=5000)
 
-    window._alignments_handle.persist = snapshot_then_persist  # type:ignore[assignment]
-    assert window.save() is True
-
-    assert snapshots, "persist should have been called"
-    snapshot = snapshots[0]
-    for key, enabled in snapshot.items():
-        assert enabled is False, f"Action {key} should be disabled during save"
-
-    # After save, save action is disabled (nothing to save) but copy/add are back on.
+    # After save, save action is disabled (nothing to save) but add is back on.
     assert window.actions_by_key["save"].isEnabled() is False  # clean
     assert window.actions_by_key["add_face"].isEnabled() is True
 
 
 def test_save_failure_preserves_dirty_state(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
     """A persist failure leaves dirty state intact and re-enables save."""
-    from PySide6.QtWidgets import QMessageBox
-
     window = _make_window(qtbot, tmp_path)
     qtbot.waitUntil(lambda: window._frame_view.source_size != (0, 0), timeout=2000)
     window._editable.add_face(0, (5.0, 5.0, 20.0, 20.0))
@@ -299,10 +324,11 @@ def test_save_failure_preserves_dirty_state(qtbot, tmp_path: Path) -> None:  # t
         raise RuntimeError("disk full")
 
     window._alignments_handle.persist = failing_persist  # type:ignore[assignment]
-    # Avoid blocking on the modal dialog in tests.
-    QMessageBox.critical = staticmethod(lambda *args, **kwargs: QMessageBox.Ok)
 
-    assert window.save() is False
+    # save() returns True (scheduled); the failure surfaces through the worker.
+    assert window.save() is True
+    qtbot.waitUntil(lambda: window._save_worker is None, timeout=5000)
+
     assert window._editor_state.unsaved is True
     assert window._save_in_flight is False
     # Save remains available so the user can retry.
@@ -318,6 +344,7 @@ def test_save_success_clears_dirty_state(qtbot, tmp_path: Path) -> None:  # type
 
     window._alignments_handle.persist = lambda *a, **k: 1  # type:ignore[assignment]
     assert window.save() is True
+    qtbot.waitUntil(lambda: window._save_worker is None, timeout=5000)
 
     assert window._editor_state.unsaved is False
     assert window._editor_state.edited is False
@@ -325,33 +352,33 @@ def test_save_success_clears_dirty_state(qtbot, tmp_path: Path) -> None:  # type
 
 
 def test_save_shows_busy_progress_bar(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
-    """A determinate progress bar is materialized + branded for save."""
+    """A determinate progress bar is materialized + branded for save.
+
+    Under async save, observability of the busy state belongs on the main
+    thread — the worker just persists. So we pause persist mid-flight and
+    snapshot the bar from the main thread.
+    """
+    import threading
+
     window = _make_window(qtbot, tmp_path)
     qtbot.waitUntil(lambda: window._frame_view.source_size != (0, 0), timeout=2000)
     window._editable.add_face(0, (5.0, 5.0, 20.0, 20.0))
 
-    observations: list[tuple[bool, str, tuple[int, int]]] = []
+    release = threading.Event()
+    observations: list = []
+    window._alignments_handle.persist = _slow_persist(release, observations)  # type:ignore[assignment]
 
-    def observe_persist(_editable, *, frame_names):  # type:ignore[no-untyped-def]
+    try:
+        assert window.save() is True
+        qtbot.waitUntil(lambda: bool(observations), timeout=3000)
         bar = window._progress_bar
-        # Inside the lock the bar must exist, carry the busy format, and be
-        # set to an indeterminate range (0,0).  We assert these instead of
-        # ``isVisible()`` because widget visibility under offscreen mode is
-        # influenced by previous tests' window lifecycles and is flaky in a
-        # full-suite run.
-        observations.append(
-            (
-                bar is not None,
-                bar.format() if bar is not None else "",
-                (bar.minimum(), bar.maximum()) if bar is not None else (-1, -1),
-            )
-        )
-        return 1
+        assert bar is not None
+        assert bar.format() == "Saving alignments…"
+        assert (bar.minimum(), bar.maximum()) == (0, 0)
+    finally:
+        release.set()
+        qtbot.waitUntil(lambda: window._save_worker is None, timeout=5000)
 
-    window._alignments_handle.persist = observe_persist  # type:ignore[assignment]
-    window.save()
-
-    assert observations == [(True, "Saving alignments…", (0, 0))]
     # And after the save completes the busy state is fully torn down.
     assert window._busy_operation is None
     assert window._save_in_flight is False
@@ -370,3 +397,57 @@ def test_busy_lock_helper_releases_state_on_exception(qtbot, tmp_path: Path) -> 
 
     assert window._busy_operation is None
     assert window._save_in_flight is False
+
+
+# ---------------------------------------------------------------------------
+# #115 — busy/progress feedback is visible BEFORE persistence begins
+# ---------------------------------------------------------------------------
+
+
+def test_save_busy_state_painted_before_persistence_completes(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+    """The busy state + disabled actions are observable before persist returns.
+
+    Under async save (#115), persistence runs on a worker thread, so the
+    main-thread event loop has a chance to repaint between the schedule and
+    the worker's completion.  We assert that *while the worker is still
+    inside persist*:
+
+    * ``_save_in_flight`` is True.
+    * ``_busy_operation == "Saving alignments…"``.
+    * The progress bar exists, is indeterminate (range 0,0) and carries the
+      ``Saving alignments…`` format.
+    * Mutating actions are disabled.
+
+    All four invariants must hold *before* persistence completes — that's the
+    parity-with-Tk concern the issue is closing.
+    """
+    import threading
+
+    window = _make_window(qtbot, tmp_path)
+    qtbot.waitUntil(lambda: window._frame_view.source_size != (0, 0), timeout=2000)
+    window._editable.add_face(0, (5.0, 5.0, 20.0, 20.0))
+
+    release = threading.Event()
+    observations: list = []
+    window._alignments_handle.persist = _slow_persist(release, observations)  # type:ignore[assignment]
+
+    try:
+        assert window.save() is True
+        # Wait for the worker to actually start persisting.
+        qtbot.waitUntil(lambda: bool(observations), timeout=3000)
+        assert window._save_in_flight is True
+        assert window._busy_operation == "Saving alignments…"
+        bar = window._progress_bar
+        assert bar is not None
+        assert bar.format() == "Saving alignments…"
+        assert (bar.minimum(), bar.maximum()) == (0, 0)
+        for key in window._MUTATING_ACTION_KEYS:
+            assert window.actions_by_key[key].isEnabled() is False, (
+                f"Action {key} must be disabled before persistence completes"
+            )
+    finally:
+        release.set()
+        qtbot.waitUntil(lambda: window._save_worker is None, timeout=5000)
+
+    assert window._save_in_flight is False
+    assert window._busy_operation is None

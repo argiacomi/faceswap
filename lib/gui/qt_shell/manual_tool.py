@@ -1854,6 +1854,92 @@ class ManualExtractFacesWorker(QObject):
             self._thread.wait(3000)
 
 
+class _ManualSaveTask(QObject):
+    """Worker that runs alignment persistence off the UI thread.
+
+    Mirrors :class:`_ManualExtractFacesTask`: the host installs progress /
+    completion / failure signal handlers and calls :meth:`kick_off`.  The
+    task is single-shot — re-entry is prevented by ``_save_in_flight`` on
+    the host before this is ever constructed.
+
+    The editable model and frame-name resolver are captured at schedule time
+    by the host; mutating actions are gated through ``_busy_operation`` so
+    no caller thread can race the persist with concurrent edits.
+    """
+
+    completed = Signal(int)
+    """Emits the number of frames modified on a successful save."""
+    failed = Signal(str)
+    """Emits a user-facing error string when persistence raises."""
+    _start = Signal()
+
+    def __init__(
+        self,
+        handle: ManualAlignmentsHandle,
+        editable: ManualEditableAlignments,
+        frame_names: T.Any,
+    ) -> None:
+        super().__init__()
+        self._handle = handle
+        self._editable = editable
+        self._frame_names = frame_names
+        self._start.connect(self.run)
+
+    def kick_off(self) -> None:
+        """Schedule :meth:`run` on this object's owning thread."""
+        self._start.emit()
+
+    def run(self) -> None:  # noqa: D401 - Qt slot
+        """Execute the persist call and emit the terminal signal."""
+        try:
+            modified = self._handle.persist(self._editable, frame_names=self._frame_names)
+        except Exception as err:  # noqa: BLE001 - surface any persist failure
+            logger.exception("Manual Tool save worker failed")
+            self.failed.emit(str(err))
+            return
+        self.completed.emit(int(modified))
+
+
+class ManualSaveWorker(QObject):
+    """Owns the QThread that drives :class:`_ManualSaveTask`.
+
+    Save is short-lived and uncancellable — the worker exists purely to keep
+    persistence off the UI thread so the busy progress bar and disabled
+    mutating-action state can repaint before ``Alignments.save`` blocks.
+    """
+
+    completed = Signal(int)
+    failed = Signal(str)
+
+    def __init__(
+        self,
+        handle: ManualAlignmentsHandle,
+        editable: ManualEditableAlignments,
+        frame_names: T.Any,
+        parent: QObject | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._thread = QThread(self)
+        self._task = _ManualSaveTask(handle, editable, frame_names)
+        self._task.moveToThread(self._thread)
+        self._task.completed.connect(self.completed)
+        self._task.failed.connect(self.failed)
+        self._task.completed.connect(self._thread.quit)
+        self._task.failed.connect(self._thread.quit)
+        self._thread.finished.connect(self._task.deleteLater)
+        self._thread.start()
+
+    def start(self) -> None:
+        """Begin background persistence on the worker thread."""
+        self._task.kick_off()
+
+    def stop(self) -> None:
+        """Stop the worker thread (after any in-flight persist completes)."""
+        if self._thread.isRunning():
+            self._thread.quit()
+            self._thread.wait(3000)
+
+
 class ManualToolWindow(QMainWindow):
     """Qt-native Manual Tool window with legacy fallback support."""
 
@@ -1913,6 +1999,15 @@ class ManualToolWindow(QMainWindow):
         # disabled while this is non-empty.
         self._busy_operation: str | None = None
         self._save_in_flight: bool = False
+        # Async save state — when set, the ExitStack holds the busy-lock open
+        # until the worker's completed/failed signal fires, and ``_save_worker``
+        # is the live :class:`ManualSaveWorker` whose completion drains the
+        # stack and finalises the save (clears dirty / shows status / dialog).
+        self._save_worker: ManualSaveWorker | None = None
+        self._save_busy_stack: contextlib.ExitStack | None = None
+        # When extract is triggered against a dirty session, persistence is
+        # scheduled first; this holds the output folder until save completes.
+        self._pending_extract_folder: str | None = None
         # One cached alignments handle for the lifetime of this window so we
         # are not reopening the alignments file on every face refresh.
         self._alignments_handle = session.alignments_handle()
@@ -2033,6 +2128,13 @@ class ManualToolWindow(QMainWindow):
             self._extract_worker.cancel()
             self._extract_worker.stop()
             self._extract_worker = None
+        if self._save_worker is not None:
+            # The save worker is uncancellable but short-lived; stop() blocks
+            # only until the in-flight persist returns.  Drain the busy-lock
+            # so close doesn't leak the disabled-actions / progress-bar state.
+            self._save_worker.stop()
+            self._save_worker = None
+            self._drain_save_busy_stack()
         if self._video_provider is not None:
             self._video_provider.shutdown()
             self._video_provider = None
@@ -2046,19 +2148,24 @@ class ManualToolWindow(QMainWindow):
         self._editor_state.set("unsaved", dirty)
 
     def save(self) -> bool:
-        """Persist editable alignment edits back to the alignments file.
+        """Schedule a non-blocking save of editable edits.
 
-        On success: clears dirty state, drops the editable undo/redo history
-        (so the user cannot undo past the save point) and refreshes the face
-        thumbnail panel against the freshly-written alignments file.
+        Persistence runs on :class:`ManualSaveWorker` so the busy-lock
+        progress bar and disabled mutating actions can repaint *before*
+        ``Alignments.save`` blocks (issue #115). The host event loop is
+        flushed once after the busy state is installed so the user sees
+        the busy feedback no matter how brief the persist actually is.
 
-        On failure: leaves the editor state dirty, logs the exception and
-        surfaces the error to the user through both the status bar and a
-        modal dialog so a silent save-failure is not possible.
+        Returns:
 
-        Re-entry is blocked: a save already in flight surfaces a status-bar
-        message and returns ``False`` so duplicate Ctrl+S presses cannot
-        race the persist call.
+        * ``True`` when a save was scheduled (or the no-op fast path was
+          taken because there is nothing to persist).
+        * ``False`` when a save is already in flight — duplicate ``Ctrl+S``
+          presses cannot race the persist call.
+
+        Completion arrives through :meth:`_on_save_completed` or
+        :meth:`_on_save_failed`; those handlers drain the busy-lock,
+        update dirty state and post the status message / dialog.
         """
         if self._save_in_flight:
             self.statusBar().showMessage("Save already in progress…", 3000)
@@ -2068,24 +2175,81 @@ class ManualToolWindow(QMainWindow):
         ):
             self.statusBar().showMessage("Nothing to save", 3000)
             return True
-        with self._with_busy_lock("Saving alignments…", save=True):
-            try:
-                frame_names = self._frame_names_for_persist()
-                modified = self._alignments_handle.persist(self._editable, frame_names=frame_names)
-            except Exception as err:  # noqa:BLE001 - surface any persist failure
-                message = f"Manual Tool save failed: {err}"
-                logger.exception("Manual Tool save failed")
-                self.statusBar().showMessage(message, 7000)
-                QMessageBox.critical(self, "Manual Tool Save", message)
-                return False
-            self._editable.clear_history()
-            self.mark_dirty(False)
-            self._editor_state.set("edited", False)
-            self._editor_state.set("face_count_changed", False)
-            self.refresh_faces()
-            self._frame_view.update()
-            self.statusBar().showMessage(f"Saved {modified} frame(s) to alignments file", 5000)
-            return True
+
+        # Install the busy-lock through an ExitStack so the completion handler
+        # can drain it asynchronously.  This keeps the visible busy state,
+        # disabled-mutating-actions, and progress-bar lifecycle identical to
+        # the old synchronous path while moving persistence onto a thread.
+        #
+        # Importantly we do NOT call ``QCoreApplication.processEvents`` here:
+        # the busy lock has already installed the progress bar + disabled
+        # mutating actions by the time we return to the caller, and the
+        # worker's persist call runs on its own QThread — so the OS event
+        # loop naturally paints the busy state on its next tick.  Calling
+        # ``processEvents`` mid-schedule would let unrelated workers (e.g.
+        # the startup thumbnail-cache scan) fire their completion and tear
+        # the progress bar back down from underneath us.
+        self._save_busy_stack = contextlib.ExitStack()
+        self._save_busy_stack.enter_context(self._with_busy_lock("Saving alignments…", save=True))
+
+        try:
+            frame_names = self._frame_names_for_persist()
+            worker = ManualSaveWorker(
+                self._alignments_handle, self._editable, frame_names, parent=self
+            )
+        except Exception as err:  # noqa: BLE001 - schedule-time failure
+            logger.exception("Manual Tool save: failed to schedule worker")
+            self._drain_save_busy_stack()
+            self.statusBar().showMessage(f"Manual Tool save failed: {err}", 7000)
+            QMessageBox.critical(self, "Manual Tool Save", f"Manual Tool save failed: {err}")
+            return False
+        worker.completed.connect(self._on_save_completed)
+        worker.failed.connect(self._on_save_failed)
+        self._save_worker = worker
+        worker.start()
+        return True
+
+    def _on_save_completed(self, modified: int) -> None:
+        """Worker reported success — finalise dirty state and refresh views."""
+        self._drain_save_busy_stack()
+        self._teardown_save_worker()
+        self._editable.clear_history()
+        self.mark_dirty(False)
+        self._editor_state.set("edited", False)
+        self._editor_state.set("face_count_changed", False)
+        self.refresh_faces()
+        self._frame_view.update()
+        self.statusBar().showMessage(f"Saved {modified} frame(s) to alignments file", 5000)
+        self._emit_console(f"Manual Tool: saved {modified} frame(s)")
+        # A pending extract was waiting for this save — resume now.
+        self._resume_extract_after_save()
+
+    def _on_save_failed(self, message: str) -> None:
+        """Worker reported failure — leave dirty state intact, surface error."""
+        self._drain_save_busy_stack()
+        self._teardown_save_worker()
+        full = f"Manual Tool save failed: {message}"
+        logger.error(full)
+        self.statusBar().showMessage(full, 7000)
+        self._emit_console(full)
+        QMessageBox.critical(self, "Manual Tool Save", full)
+        # Abort any pending extract — extracting against a broken save would
+        # write stale or partial output.
+        self._pending_extract_folder = None
+
+    def _drain_save_busy_stack(self) -> None:
+        """Release the busy-lock context held for the in-flight save."""
+        stack = self._save_busy_stack
+        self._save_busy_stack = None
+        if stack is not None:
+            stack.close()
+
+    def _teardown_save_worker(self) -> None:
+        """Stop + drop the save worker, joining its QThread."""
+        if self._save_worker is not None:
+            self._save_worker.stop()
+            self._save_worker.deleteLater()
+            self._save_worker = None
 
     @contextlib.contextmanager
     def _with_busy_lock(self, label: str, *, save: bool = False) -> T.Iterator[None]:
@@ -2316,13 +2480,32 @@ class ManualToolWindow(QMainWindow):
         rather than re-reading ``alignments.data``, so unsaved adds,
         deletes, moves, and resizes all appear in the extracted output —
         matching Tk Manual which extracts its live in-memory face list.
+
+        Save is now asynchronous (#115), so when the session is dirty we
+        chain the actual extract launch onto the save worker's
+        ``completed`` signal — the user sees the "Saving alignments…" busy
+        state, then "Extracting faces…" without either being clobbered.
         """
         if self._editor_state.unsaved:
-            # Synchronously persist so the alignments file reflects the
-            # editable model before extract reads ``alignments.version``.
-            # We use the in-flight ``save`` path (with busy lock) so save
-            # progress + dirty clear behave identically to ``Ctrl+S``.
+            # Persist on the worker thread, then chain the extract launch off
+            # the save completion.  ``_pending_extract_folder`` is consumed by
+            # :meth:`_resume_extract_after_save` so the same code path runs
+            # whether save was sync (legacy) or async.
+            self._pending_extract_folder = output_folder
             self.save()
+            return
+        self._launch_extract_worker(output_folder)
+
+    def _resume_extract_after_save(self) -> None:
+        """Continue a pending extract once a chained save completes."""
+        folder = self._pending_extract_folder
+        self._pending_extract_folder = None
+        if folder is None:
+            return
+        self._launch_extract_worker(folder)
+
+    def _launch_extract_worker(self, output_folder: str) -> None:
+        """Materialize the editable snapshot and start the extract worker."""
         editable_targets = self._build_editable_extract_targets()
         worker = ManualExtractFacesWorker(
             self._alignments_handle,
@@ -3044,7 +3227,19 @@ class ManualToolWindow(QMainWindow):
         QMessageBox.critical(self, "Manual Tool Startup", message)
 
     def _hide_progress_bar(self) -> None:
-        """Hide and detach the indeterminate startup progress widget."""
+        """Hide and detach the indeterminate startup progress widget.
+
+        Yields the bar back to a busy-lock when one is currently active —
+        the lock's ``finally`` restores its prior state, so we mustn't yank
+        the widget out from underneath the in-flight operation.  Without
+        this guard the startup worker's completion can tear down the bar
+        that an async save just materialised.
+        """
+        if self._busy_operation:
+            # Hide is still safe; only avoid the detach/null-out.
+            if self._progress_bar is not None:
+                self._progress_bar.hide()
+            return
         if self._progress_bar is not None:
             self._progress_bar.hide()
             self.statusBar().removeWidget(self._progress_bar)

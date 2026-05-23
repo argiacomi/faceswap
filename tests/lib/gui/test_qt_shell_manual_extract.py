@@ -71,10 +71,18 @@ def test_extract_uses_editable_state_after_unsaved_add(
     _seed_face(window, 0, (10.0, 10.0, 60.0, 60.0))
     assert window.editor_state.unsaved is True
 
-    # extract_faces() returns True on schedule; the worker runs synchronously
-    # off the UI thread, so wait for completion via the dirty flag clearing.
+    # extract_faces() schedules a save first (because the session is dirty)
+    # then chains extract on completion.  Wait for the extracted PNG to land
+    # on disk and the dirty flag to clear.
     assert window.extract_faces() is True
-    qtbot.waitUntil(lambda: window._extract_worker is None, timeout=5000)
+    qtbot.waitUntil(
+        lambda: (
+            (output_folder / "frame_000_0.png").is_file()
+            and window.editor_state.unsaved is False
+            and window._extract_worker is None
+        ),
+        timeout=10000,
+    )
 
     # The added face must show up in the output folder.
     assert (output_folder / "frame_000_0.png").is_file()
@@ -95,6 +103,7 @@ def test_extract_uses_editable_state_after_unsaved_delete(
     qtbot.addWidget(window_seed)
     _seed_face(window_seed, 0, (10.0, 10.0, 60.0, 60.0))
     assert window_seed.save() is True
+    qtbot.waitUntil(lambda: window_seed._save_worker is None, timeout=5000)
     window_seed.close()
 
     # Re-open the session, delete the face in the editable model, do NOT save,
@@ -147,6 +156,11 @@ def test_cancel_button_appears_while_extract_runs(
     monkeypatch.setattr(
         QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **kw: str(tmp_path / "out"))
     )
+
+    # Save first so extract_faces does not detour through the save→extract
+    # chain — this test is about the Cancel button visibility, not chaining.
+    assert window.save() is True
+    qtbot.waitUntil(lambda: window._save_worker is None, timeout=5000)
 
     visible_during_run: list[bool] = []
     enabled_during_run: list[bool] = []
@@ -205,6 +219,10 @@ def test_cancel_extract_forwards_to_worker_and_disables_button(
     monkeypatch.setattr(
         QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **kw: str(tmp_path / "out"))
     )
+
+    # Save first so extract_faces does not detour through the save→extract chain.
+    assert window.save() is True
+    qtbot.waitUntil(lambda: window._save_worker is None, timeout=5000)
 
     cancel_calls: list[int] = []
     from lib.gui.qt_shell import manual_tool as mt
