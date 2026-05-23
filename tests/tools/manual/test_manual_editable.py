@@ -1028,3 +1028,150 @@ def test_known_mask_types_includes_persisted_blobs() -> None:
     )
     model._persisted_mask_blobs[(0, 0, "bisenet-fp_head")] = blob  # type:ignore[arg-type]
     assert "bisenet-fp_head" in model.known_mask_types(0, 0)
+
+
+# ---------------------------------------------------------------------------
+# #101 follow-up — paint/clear over a persisted-but-undecoded mask
+# ---------------------------------------------------------------------------
+
+
+def test_paint_mask_stroke_decodes_persisted_blob_before_writing() -> None:
+    """Painting a persisted mask type for the first time edits the *decoded*
+    persisted grid, not a fresh blank one.
+
+    Without this guard, ``paint_mask_stroke`` allocates ``np.zeros`` when
+    ``_mask_state`` is empty even though a persisted blob exists.  The next
+    save (which only re-encodes touched keys) would then replace the
+    well-aligned legacy blob with a single-stamp grid.
+    """
+    import numpy as np
+
+    model = ManualEditableAlignments()
+    model.add_face(0, (0.0, 0.0, 64.0, 64.0))
+    # Pre-populate a persisted blob with a recognisable "full" region near
+    # the corner so we can prove later that the original pixels survived.
+    size = ManualEditableAlignments.MASK_STORED_SIZE
+    persisted_grid = np.zeros((size, size), dtype=np.uint8)
+    persisted_grid[0:20, 0:20] = 200
+    blob = ManualEditableAlignments.encode_mask_blob(persisted_grid, (0.0, 0.0, 64.0, 64.0))
+    model._persisted_mask_blobs[(0, 0, "components")] = blob  # type:ignore[arg-type]
+
+    # Critical: paint *before* anything calls get_mask().
+    assert model.paint_mask_stroke(0, 0, "components", 50.0, 50.0, 4.0, 255) is True
+
+    after = model.get_mask(0, 0, "components")
+    assert after is not None
+    # The persisted corner pixels are still there...
+    assert int(after[5, 5]) == 200
+    # ...and the new stamp area near (50, 50) is painted on top.
+    sy = sx = int((50.0 / 64.0) * size)
+    assert int(after[sy, sx]) == 255
+
+
+def test_apply_to_alignments_after_paint_over_persisted_preserves_originals() -> None:
+    """A save after painting a loaded mask keeps the original pixels plus the new stroke."""
+    import numpy as np
+
+    from lib.align.objects import AlignmentsEntry, FileAlignments
+
+    size = ManualEditableAlignments.MASK_STORED_SIZE
+    persisted_grid = np.zeros((size, size), dtype=np.uint8)
+    persisted_grid[0:20, 0:20] = 200
+    blob = ManualEditableAlignments.encode_mask_blob(persisted_grid, (0.0, 0.0, 64.0, 64.0))
+
+    class _StubAlignments:
+        def __init__(self) -> None:
+            self.data: dict[str, AlignmentsEntry] = {
+                "frame.png": AlignmentsEntry(
+                    faces=[
+                        FileAlignments(
+                            x=0,
+                            y=0,
+                            w=64,
+                            h=64,
+                            landmarks_xy=np.zeros((0, 2), dtype=np.float32),
+                            mask={"components": blob},
+                        ),
+                    ],
+                    video_meta={},
+                )
+            }
+
+    model = ManualEditableAlignments()
+    model.add_face(0, (0.0, 0.0, 64.0, 64.0), landmarks=[(32.0, 32.0)])
+    model._persisted_mask_blobs[(0, 0, "components")] = blob  # type:ignore[arg-type]
+
+    # Paint *before* anything decodes the blob, then save.
+    model.paint_mask_stroke(0, 0, "components", 50.0, 50.0, 4.0, 255)
+    alignments = _StubAlignments()
+    model.apply_to_alignments(alignments, frame_names=["frame.png"])
+
+    saved = alignments.data["frame.png"].faces[0].mask["components"]
+    decoded = ManualEditableAlignments.decode_mask_blob(saved)
+    assert decoded is not None
+    # Original corner pixels survived round-trip.
+    assert int(decoded[5, 5]) == 200
+    # The new stamp landed too.
+    sy = sx = int((50.0 / 64.0) * size)
+    assert int(decoded[sy, sx]) == 255
+
+
+def test_clear_mask_works_on_persisted_blob_without_pre_decode() -> None:
+    """``clear_mask`` removes a persisted blob even when no render path has
+    materialised it through ``get_mask`` yet."""
+    import numpy as np
+
+    model = ManualEditableAlignments()
+    model.add_face(0, (0.0, 0.0, 64.0, 64.0))
+    blob = ManualEditableAlignments.encode_mask_blob(
+        np.full((128, 128), 100, dtype=np.uint8),
+        (0.0, 0.0, 64.0, 64.0),
+    )
+    model._persisted_mask_blobs[(0, 0, "components")] = blob  # type:ignore[arg-type]
+
+    # Critical: no get_mask call has happened — _mask_state is empty.
+    assert (0, 0, "components") not in model._mask_state
+    assert model.clear_mask(0, 0, "components") is True
+    # The clear set ``_mask_state[key]`` to a freshly-decoded grid before
+    # popping it, so the editor now reports no mask.
+    assert model.get_mask(0, 0, "components") is None
+
+
+def test_clear_mask_persisted_blob_then_save_deletes_disk_entry() -> None:
+    """Clearing a persisted blob and saving deletes the on-disk mask entry."""
+    import numpy as np
+
+    from lib.align.objects import AlignmentsEntry, FileAlignments
+
+    blob = ManualEditableAlignments.encode_mask_blob(
+        np.full((128, 128), 100, dtype=np.uint8),
+        (0.0, 0.0, 64.0, 64.0),
+    )
+
+    class _StubAlignments:
+        def __init__(self) -> None:
+            self.data: dict[str, AlignmentsEntry] = {
+                "frame.png": AlignmentsEntry(
+                    faces=[
+                        FileAlignments(
+                            x=0,
+                            y=0,
+                            w=64,
+                            h=64,
+                            landmarks_xy=np.zeros((0, 2), dtype=np.float32),
+                            mask={"components": blob},
+                        ),
+                    ],
+                    video_meta={},
+                )
+            }
+
+    model = ManualEditableAlignments()
+    model.add_face(0, (0.0, 0.0, 64.0, 64.0), landmarks=[(32.0, 32.0)])
+    model._persisted_mask_blobs[(0, 0, "components")] = blob  # type:ignore[arg-type]
+
+    # No pre-decode: the clear must succeed and the save must delete the key.
+    assert model.clear_mask(0, 0, "components") is True
+    alignments = _StubAlignments()
+    model.apply_to_alignments(alignments, frame_names=["frame.png"])
+    assert "components" not in alignments.data["frame.png"].faces[0].mask

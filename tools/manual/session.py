@@ -860,6 +860,27 @@ class ManualEditableAlignments:
         self._mask_state[key] = decoded
         return decoded
 
+    def _decoded_or_blank_grid(
+        self,
+        key: tuple[int, int, str],
+        size: int,
+    ) -> T.Any:
+        """Return the persisted decoded grid for ``key`` or a fresh zero grid.
+
+        Centralises the "edit an existing persisted mask before any render
+        path has triggered ``get_mask``" path used by ``paint_mask_stroke``
+        and ``clear_mask``.  Falls back to a zero grid when no persisted
+        blob exists or the blob can't be decoded.
+        """
+        import numpy as np
+
+        blob = self._persisted_mask_blobs.get(key)
+        if blob is not None:
+            decoded = self.decode_mask_blob(blob)
+            if decoded is not None:
+                return decoded
+        return np.zeros((size, size), dtype=np.uint8)
+
     def has_mask(self, frame_index: int, face_index: int, mask_type: str) -> bool:
         """Return whether a mask exists for ``(frame, face, type)``.
 
@@ -937,7 +958,13 @@ class ManualEditableAlignments:
         key = (int(frame_index), int(face_index), str(mask_type))
         existing = self._mask_state.get(key)
         if existing is None:
-            existing = np.zeros((size, size), dtype=np.uint8)
+            # Editing a mask type that already exists on disk must start
+            # from the decoded persisted grid, not a fresh zero grid — the
+            # next save (which only re-encodes touched keys) would
+            # otherwise replace the well-aligned legacy blob with the
+            # single new brush stamp.  Fall back to zeros only when no
+            # persisted blob exists for this combination.
+            existing = self._decoded_or_blank_grid(key, size)
             self._mask_state[key] = existing
         # Carve out the stamp region for undo/redo bookkeeping.
         r_ceil = int(np.ceil(stored_radius)) + 1
@@ -973,20 +1000,42 @@ class ManualEditableAlignments:
 
         Used as the explicit clear control (and by full-frame revert).
         Records undo/redo so a clear can be reversed.  Returns ``False``
-        when no mask was materialised in the first place.
+        when no mask exists — either in memory *or* on disk for the
+        given key.
+
+        A persisted-but-not-yet-decoded blob is materialised first so the
+        clear actually deletes the disk content the user can see.  The
+        recorded undo entry restores both the decoded grid *and* the
+        persisted blob entry so :meth:`get_mask` doesn't lazily re-
+        materialise the original after an undo.
         """
         key = (int(frame_index), int(face_index), str(mask_type))
         existing = self._mask_state.get(key)
+        persisted = self._persisted_mask_blobs.get(key)
         if existing is None:
-            return False
+            if persisted is None:
+                return False
+            decoded = self.decode_mask_blob(persisted)
+            if decoded is None:
+                return False
+            self._mask_state[key] = decoded
+            existing = decoded
         prior = existing.copy()
+        had_persisted = persisted is not None
         self._painted_masks.add(key)
 
         def do() -> None:
             self._mask_state.pop(key, None)
+            # Drop the persisted blob too so ``get_mask`` doesn't lazily
+            # re-decode it.  Saving in this state leaves the corresponding
+            # ``mask_dict`` key removed; the undo path below restores it.
+            if had_persisted:
+                self._persisted_mask_blobs.pop(key, None)
 
         def undo() -> None:
             self._mask_state[key] = prior
+            if had_persisted:
+                self._persisted_mask_blobs[key] = persisted
 
         self._apply(do, undo, frame_index)
         return True
