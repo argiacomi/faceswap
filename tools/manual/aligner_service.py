@@ -16,7 +16,7 @@ This module exposes:
 * :class:`AlignerStatus` — a small dataclass the service emits while loading
   / running so the Qt host can surface progress and errors uniformly.
 * :func:`make_default_aligner_factory` — the production factory that wraps
-  the real :class:`plugins.extract.align.Align` pipeline.  Tests inject a
+  the real :class:`lib.infer.align.Align` pipeline.  Tests inject a
   custom callable to bypass plugin loading.
 """
 
@@ -62,7 +62,7 @@ StatusCallback = T.Callable[[AlignerStatus], None]
 class _AlignerBackend(T.Protocol):
     """Protocol that the cached aligner backend must satisfy.
 
-    The production implementation wraps :class:`plugins.extract.align.Align`
+    The production implementation wraps :class:`lib.infer.align.Align`
     through ``Align(plugin, normalization=...)()`` and pumps detected faces
     through the pipeline. Tests inject any callable that satisfies the same
     shape — typically a small class that emits canned landmarks.
@@ -95,7 +95,7 @@ def make_default_aligner_factory() -> AlignerFactory:
     """
 
     def _factory(aligner_name: str, normalization: str) -> _AlignerBackend:
-        from plugins.extract.align import Align  # local import — keeps tests light
+        from lib.infer.align import Align  # local import — keeps tests light
 
         return _PluginAlignerBackend(aligner_name, normalization, Align)
 
