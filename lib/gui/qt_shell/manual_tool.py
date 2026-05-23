@@ -4740,7 +4740,15 @@ class ManualToolWindow(QMainWindow):
         self.rerun_aligner_for_face(int(face_index))
 
     def _refresh_aligner_controls_visibility(self) -> None:
-        """Show or hide Bounding Box aligner controls to match editor mode."""
+        """Show or hide Bounding Box aligner controls to match editor mode.
+
+        Merely entering BoundingBox mode must not preload the production
+        aligner.  Passive preload makes unrelated GUI tests and ordinary mode
+        switches touch plugin/model loading.  Explicit user changes to the
+        aligner dropdown or normalization radios still call
+        :meth:`_schedule_aligner_preload`, and actual alignment runs continue
+        to load on demand through :meth:`rerun_aligner_for_face`.
+        """
         controls = getattr(self, "_aligner_controls", None)
         if controls is None:
             return
@@ -4748,7 +4756,6 @@ class ManualToolWindow(QMainWindow):
         controls.setVisible(active)
         if active:
             self._sync_aligner_controls()
-            self._schedule_aligner_preload()
 
     def _sync_aligner_controls(self) -> None:
         """Mirror editor-state aligner settings into the visible controls."""
