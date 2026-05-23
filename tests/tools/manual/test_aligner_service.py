@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+import sys
 import threading
+import types
 from dataclasses import dataclass
 from typing import Any
 
@@ -14,6 +16,7 @@ from tools.manual.aligner_service import (
     NORMALIZATION_CHOICES,
     AlignerStatus,
     ManualAlignerService,
+    make_default_aligner_factory,
 )
 
 
@@ -128,6 +131,31 @@ def test_default_aligner_empty_when_no_plugins_available() -> None:
     """When no aligners are discoverable, ``default_aligner`` returns ``""``."""
     svc = ManualAlignerService(available=lambda: (), default=lambda: "")
     assert svc.default_aligner() == ""
+
+
+def test_default_factory_imports_pipeline_runner_from_lib_infer_align(monkeypatch) -> None:  # type:ignore[no-untyped-def]
+    """The production factory imports ``lib.infer.align.Align``, not the plugin package."""
+    calls: list[tuple[str, str]] = []
+
+    class _FakeAlign:
+        def __init__(self, plugin: str, *, normalization: str) -> None:
+            calls.append((plugin, normalization))
+
+        def __call__(self) -> str:
+            return "fake-pipeline"
+
+    fake_lib_align = types.ModuleType("lib.infer.align")
+    fake_lib_align.Align = _FakeAlign  # type:ignore[attr-defined]
+    fake_plugin_align = types.ModuleType("plugins.extract.align")
+    # If the factory regresses to ``from plugins.extract.align import Align``,
+    # this module deliberately has no Align attribute and the test fails.
+    monkeypatch.setitem(sys.modules, "lib.infer.align", fake_lib_align)
+    monkeypatch.setitem(sys.modules, "plugins.extract.align", fake_plugin_align)
+
+    backend = make_default_aligner_factory()("HRNet", "clahe")
+
+    assert backend._ensure_pipeline() == "fake-pipeline"  # noqa: SLF001
+    assert calls == [("HRNet", "clahe")]
 
 
 # ---------------------------------------------------------------------------
