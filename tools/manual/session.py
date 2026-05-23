@@ -975,7 +975,7 @@ class ManualEditableAlignments:
         if x0 >= x1 or y0 >= y1:
             return False
         prior_region = existing[y0:y1, x0:x1].copy()
-        self._painted_masks.add(key)
+        was_touched = key in self._painted_masks
         # Apply the circular stamp.
         yy, xx = np.ogrid[y0:y1, x0:x1]
         mask = (xx - cx) ** 2 + (yy - cy) ** 2 <= stored_radius * stored_radius
@@ -988,9 +988,11 @@ class ManualEditableAlignments:
 
         def do() -> None:
             existing[y0:y1, x0:x1] = new_region
+            self._painted_masks.add(key)
 
         def undo() -> None:
             existing[y0:y1, x0:x1] = prior_region
+            self._set_mask_touched(key, was_touched)
 
         self._apply(do, undo, frame_index)
         return True
@@ -1022,7 +1024,7 @@ class ManualEditableAlignments:
             existing = decoded
         prior = existing.copy()
         had_persisted = persisted is not None
-        self._painted_masks.add(key)
+        was_touched = key in self._painted_masks
 
         def do() -> None:
             self._mask_state.pop(key, None)
@@ -1031,11 +1033,13 @@ class ManualEditableAlignments:
             # ``mask_dict`` key removed; the undo path below restores it.
             if had_persisted:
                 self._persisted_mask_blobs.pop(key, None)
+            self._painted_masks.add(key)
 
         def undo() -> None:
             self._mask_state[key] = prior
             if had_persisted:
                 self._persisted_mask_blobs[key] = persisted
+            self._set_mask_touched(key, was_touched)
 
         self._apply(do, undo, frame_index)
         return True
@@ -1338,6 +1342,7 @@ class ManualEditableAlignments:
         self._undo.clear()
         self._redo.clear()
         self._dirty_frames.clear()
+        self._painted_masks.clear()
 
     def revert_frame(self, frame_index: int) -> int:
         """Undo only the operations recorded against ``frame_index``.
@@ -1513,6 +1518,13 @@ class ManualEditableAlignments:
                 mask_dict.pop(mask_type, None)
             else:
                 mask_dict[mask_type] = self.encode_mask_blob(grid, bbox)
+            self._painted_masks.discard(key)
+
+    def _set_mask_touched(self, key: tuple[int, int, str], touched: bool) -> None:
+        """Restore ``_painted_masks`` membership for undo/redo bookkeeping."""
+        if touched:
+            self._painted_masks.add(key)
+        else:
             self._painted_masks.discard(key)
 
     def _notify(self, frame_index: int) -> None:
