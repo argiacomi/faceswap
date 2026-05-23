@@ -274,6 +274,21 @@ def test_bbox_aligner_preload_progress_paints_loading_then_ready(qtbot, tmp_path
     assert "ready" in status.text().lower()
 
 
+def test_bbox_aligner_preload_clears_worker_state_after_completion(
+    qtbot, tmp_path: Path
+) -> None:  # type:ignore[no-untyped-def]
+    """Completed explicit preload drains worker state before tests continue."""
+    window, _ = _make_window(qtbot, tmp_path)
+    clahe = _child(window, QRadioButton, "qt-manual-aligner-normalization-clahe")
+
+    window._editor_state.set("editor_mode", "BoundingBox")
+    clahe.click()
+    qtbot.waitUntil(lambda: window._aligner_load_worker is None, timeout=2000)
+
+    assert window._aligner_load_target is None
+    assert ("HRNet", "clahe") in window._aligner_loaded_targets
+
+
 # ---------------------------------------------------------------------------
 # Rerun on bbox edits
 # ---------------------------------------------------------------------------
@@ -297,6 +312,30 @@ def test_bbox_move_triggers_aligner_when_auto_run_enabled(qtbot, tmp_path: Path)
     # Landmarks were refreshed to the canned reply.
     face = window._editable.faces(0)[0]
     assert face.landmarks[0] == (5.0, 6.0)
+
+
+def test_successful_aligner_refresh_is_dirty_and_undoable(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+    """A successful explicit rerun records an undoable landmark refresh."""
+    canned = np.tile([[9.0, 10.0]], (68, 1)).astype(np.float32)
+    window, _ = _make_window(qtbot, tmp_path, service=_stub_service(landmarks=canned))
+    window._editable.add_face(
+        0,
+        (10.0, 10.0, 40.0, 40.0),
+        landmarks=[(1.0, 1.0), (2.0, 2.0)],
+    )
+    window._editable.clear_history()
+    window._editor_state.set("face_index", 0)
+    window._editor_state.set("editor_mode", "BoundingBox")
+
+    assert window.rerun_aligner_for_face(0) is True
+    assert window._editor_state.edited is True
+    assert window._editable.can_undo is True
+    assert window._editable.faces(0)[0].landmarks[0] == (9.0, 10.0)
+
+    assert window._editable.undo() is True
+    assert window._editable.faces(0)[0].landmarks == ((1.0, 1.0), (2.0, 2.0))
+    assert window._editable.redo() is True
+    assert window._editable.faces(0)[0].landmarks[0] == (9.0, 10.0)
 
 
 def test_bbox_resize_triggers_aligner_when_auto_run_enabled(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
