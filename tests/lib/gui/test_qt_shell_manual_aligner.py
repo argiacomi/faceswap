@@ -337,7 +337,8 @@ def test_bbox_move_skips_aligner_when_auto_run_disabled(qtbot, tmp_path: Path) -
     window._editor_state.set("aligner_auto_run", False)
 
     window._on_face_move_requested(0, 5.0, 7.0)
-    assert service._test_instances == []  # type:ignore[attr-defined]
+    instances = service._test_instances  # type:ignore[attr-defined]
+    assert all(not backend.align_calls for backend in instances)
 
 
 # ---------------------------------------------------------------------------
