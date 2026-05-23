@@ -534,3 +534,125 @@ def test_resize_face_rejects_degenerate_input() -> None:
         model.resize_face(0, 0, (60.0, 60.0, -30.0, -30.0))
     # Bbox is unchanged after the rejection.
     assert model.faces(0)[0].bbox == (50.0, 50.0, 20.0, 20.0)
+
+
+# ---------------------------------------------------------------------------
+# #102 — Extract Box editor: scale + rotate
+# ---------------------------------------------------------------------------
+
+
+def test_scale_face_scales_bbox_and_landmarks_around_center() -> None:
+    """scale_face scales bbox + landmarks uniformly around the bbox centre."""
+    model = ManualEditableAlignments()
+    model.add_face(
+        0,
+        (0.0, 0.0, 20.0, 20.0),
+        landmarks=[(5.0, 5.0), (15.0, 15.0)],
+    )
+    assert model.scale_face(0, 0, 2.0) is True
+    face = model.faces(0)[0]
+    # Centre stays at (10, 10); width/height double; landmarks scale 2x from centre.
+    assert face.bbox == (-10.0, -10.0, 40.0, 40.0)
+    assert face.landmarks == ((0.0, 0.0), (20.0, 20.0))
+
+
+def test_scale_face_one_is_noop_true() -> None:
+    """A 1.0 scale is a no-op and does not push history."""
+    model = ManualEditableAlignments()
+    model.add_face(0, _bbox(), landmarks=[(1.0, 2.0)])
+    model.clear_history()
+    assert model.scale_face(0, 0, 1.0) is True
+    assert model.can_undo is False
+
+
+def test_scale_face_rejects_non_positive_scale() -> None:
+    """A zero or negative scale is rejected."""
+    model = ManualEditableAlignments()
+    model.add_face(0, _bbox(), landmarks=[(1.0, 2.0)])
+    assert model.scale_face(0, 0, 0.0) is False
+    assert model.scale_face(0, 0, -1.0) is False
+
+
+def test_scale_face_rejects_degenerate_result() -> None:
+    """A scale that would shrink the bbox below 1px is rejected."""
+    model = ManualEditableAlignments()
+    model.add_face(0, (0.0, 0.0, 2.0, 2.0))
+    assert model.scale_face(0, 0, 0.1) is False  # would produce 0.2 px sides
+
+
+def test_scale_face_invalid_face_returns_false() -> None:
+    """scale_face rejects an out-of-range face_index."""
+    model = ManualEditableAlignments()
+    model.add_face(0, _bbox())
+    assert model.scale_face(0, 9, 1.5) is False
+
+
+def test_scale_face_records_undo_history() -> None:
+    """scale_face participates in undo/redo."""
+    model = ManualEditableAlignments()
+    model.add_face(0, (0.0, 0.0, 10.0, 10.0), landmarks=[(5.0, 5.0)])
+    assert model.scale_face(0, 0, 2.0) is True
+    assert model.faces(0)[0].bbox == (-5.0, -5.0, 20.0, 20.0)
+    assert model.undo() is True
+    assert model.faces(0)[0].bbox == (0.0, 0.0, 10.0, 10.0)
+    assert model.redo() is True
+    assert model.faces(0)[0].bbox == (-5.0, -5.0, 20.0, 20.0)
+
+
+def test_rotate_face_rotates_landmarks_around_center() -> None:
+    """rotate_face rotates landmarks 90 degrees around the bbox centre."""
+    import math
+
+    model = ManualEditableAlignments()
+    # Centre at (10, 10).  A landmark at (15, 10) should rotate to (10, 15)
+    # under a +90deg (pi/2) rotation in y-down screen coords.
+    model.add_face(
+        0,
+        (0.0, 0.0, 20.0, 20.0),
+        landmarks=[(15.0, 10.0)],
+    )
+    assert model.rotate_face(0, 0, math.pi / 2) is True
+    lx, ly = model.faces(0)[0].landmarks[0]
+    assert abs(lx - 10.0) < 1e-6
+    assert abs(ly - 15.0) < 1e-6
+
+
+def test_rotate_face_zero_angle_is_noop_true() -> None:
+    """A zero-radian rotation is a no-op and does not push history."""
+    model = ManualEditableAlignments()
+    model.add_face(0, _bbox(), landmarks=[(1.0, 2.0)])
+    model.clear_history()
+    assert model.rotate_face(0, 0, 0.0) is True
+    assert model.can_undo is False
+
+
+def test_rotate_face_no_landmarks_is_noop_true() -> None:
+    """rotate_face on a face without landmarks no-ops without raising."""
+    model = ManualEditableAlignments()
+    model.add_face(0, _bbox())
+    assert model.rotate_face(0, 0, 0.5) is True
+
+
+def test_rotate_face_invalid_face_returns_false() -> None:
+    """rotate_face rejects an out-of-range face_index."""
+    model = ManualEditableAlignments()
+    model.add_face(0, _bbox(), landmarks=[(1.0, 2.0)])
+    assert model.rotate_face(0, 9, 0.5) is False
+
+
+def test_rotate_face_records_undo_history() -> None:
+    """rotate_face participates in undo/redo and the bbox tracks the cloud."""
+    import math
+
+    model = ManualEditableAlignments()
+    model.add_face(
+        0,
+        (0.0, 0.0, 10.0, 10.0),
+        landmarks=[(2.0, 5.0), (8.0, 5.0)],
+    )
+    before_bbox = model.faces(0)[0].bbox
+    assert model.rotate_face(0, 0, math.pi / 2) is True
+    after_bbox = model.faces(0)[0].bbox
+    assert after_bbox != before_bbox
+    assert model.undo() is True
+    assert model.faces(0)[0].bbox == before_bbox

@@ -311,6 +311,10 @@ class ManualFrameView(QWidget):
     """``(face_index, tuple(indices), dx, dy)`` on group-move release."""
     landmarks_select_requested = Signal(int, object)
     """``(face_index, tuple(indices))`` on marquee release.  Empty tuple clears."""
+    face_scale_requested = Signal(int, float)
+    """``(face_index, scale_factor)`` on Extract Box corner-drag release (#102)."""
+    face_rotate_requested = Signal(int, float)
+    """``(face_index, angle_radians)`` on Extract Box rotation-zone drag release (#102)."""
 
     _MIN_ZOOM = 1.0
     _MAX_ZOOM = 20.0
@@ -364,6 +368,13 @@ class ManualFrameView(QWidget):
         self._landmark_drag_index: int | None = None
         self._landmark_drag_indices: tuple[int, ...] = ()
         self._landmark_drag_origins: tuple[tuple[float, float], ...] = ()
+        # Extract Box editor (#102) state — set by ``_begin_extract_drag``.
+        self._extract_mode_provider: T.Callable[[], bool] | None = None
+        self._extract_drag_center: QPointF | None = None
+        self._extract_drag_start_radius: float = 0.0
+        self._extract_drag_start_angle: float = 0.0
+        self._extract_drag_scale: float = 1.0
+        self._extract_drag_angle: float = 0.0
 
     # ---- public API ----
     @property
@@ -561,6 +572,20 @@ class ManualFrameView(QWidget):
         self._landmark_provider = landmark_provider
         self._landmark_selection_provider = landmark_selection_provider
 
+    def install_extract_seams(
+        self,
+        *,
+        extract_mode_provider: T.Callable[[], bool],
+    ) -> None:
+        """Install Extract Box editor seam (#102).
+
+        ``extract_mode_provider`` returns ``True`` while the editor mode is
+        ``"ExtractBox"``.  When active, the bbox handle/body hit-tests fan
+        out into translate / scale / rotate drags instead of the bbox
+        move/resize used in the View / BoundingBox editors.
+        """
+        self._extract_mode_provider = extract_mode_provider
+
     def edit_drag_preview_bbox(self) -> QRectF | None:
         """Return the in-progress drag bbox in source coordinates, if any.
 
@@ -593,6 +618,11 @@ class ManualFrameView(QWidget):
         # Landmark editor (#103) takes precedence in landmark mode so the user
         # can drag individual points or marquee-select inside the bbox.
         if self._begin_landmark_drag(position, source_point, event):
+            event.accept()
+            return
+        # Extract Box editor (#102) maps the bbox handles + halo to
+        # translate/scale/rotate drags instead of bbox move/resize.
+        if self._begin_extract_drag(position):
             event.accept()
             return
         if self._begin_edit_drag(position):
@@ -734,16 +764,33 @@ class ManualFrameView(QWidget):
         if self._source.isNull():
             self.setCursor(Qt.ArrowCursor)
             return
+        in_extract_mode = bool(self._extract_mode_provider and self._extract_mode_provider())
         # Hover an active-face resize handle?
         widget_bbox = self._active_bbox_widget_rect()
         if widget_bbox is not None:
             handle = ManualFrameOverlay.handle_at(widget_bbox, position, tolerance=2.0)
             if handle is not None:
+                # Extract Box scale-on-corner reuses the diag/ver/hor sizing
+                # cursors so the user sees the same shape they would for a
+                # normal resize; the distinction is in the dispatch table.
                 self.setCursor(self._cursor_for_handle(handle))
                 return
             if widget_bbox.contains(position):
                 self.setCursor(Qt.SizeAllCursor)
                 return
+            if in_extract_mode:
+                # Outside the bbox but inside the rotation halo (#102).
+                halo = QRectF(
+                    widget_bbox.x() - self._EXTRACT_ROTATION_BAND_PX,
+                    widget_bbox.y() - self._EXTRACT_ROTATION_BAND_PX,
+                    widget_bbox.width() + 2 * self._EXTRACT_ROTATION_BAND_PX,
+                    widget_bbox.height() + 2 * self._EXTRACT_ROTATION_BAND_PX,
+                )
+                if halo.contains(position):
+                    # No native Qt rotate cursor — closed-hand reads as
+                    # "I will turn this".
+                    self.setCursor(Qt.ClosedHandCursor)
+                    return
         if self._zoom > self._MIN_ZOOM and self._target_rect().contains(position):
             self.setCursor(Qt.OpenHandCursor)
             return
@@ -781,6 +828,94 @@ class ManualFrameView(QWidget):
         return viewport.source_rect_to_widget(
             source.x(), source.y(), source.width(), source.height()
         )
+
+    _EXTRACT_ROTATION_BAND_PX = 24.0
+    """Widget-pixel band outside the bbox that triggers rotation drags."""
+
+    def _begin_extract_drag(self, position: QPointF) -> bool:
+        """Try to start an Extract Box translate/scale/rotate drag (#102).
+
+        Hit-test priority (closest action first):
+
+        1. A corner handle → scale uniformly around the bbox centre.
+        2. A point inside the bbox body → translate (landmarks + bbox).
+        3. A point inside a ``_EXTRACT_ROTATION_BAND_PX`` halo outside the
+           bbox → rotate landmarks around the centre.
+        4. Otherwise return ``False`` so the view can pan instead.
+        """
+        import math
+
+        if self._extract_mode_provider is None or not self._extract_mode_provider():
+            return False
+        if self._active_face_provider is None or self._active_bbox_provider is None:
+            return False
+        face_index = self._active_face_provider()
+        if face_index is None:
+            return False
+        widget_bbox = self._active_bbox_widget_rect()
+        source_bbox = self._active_bbox_source_rect()
+        if widget_bbox is None or source_bbox is None:
+            return False
+        source_point = self._widget_to_source(position)
+        if source_point is None:
+            return False
+        QPointF(
+            widget_bbox.x() + widget_bbox.width() / 2.0,
+            widget_bbox.y() + widget_bbox.height() / 2.0,
+        )
+        centre_source = QPointF(
+            source_bbox.x() + source_bbox.width() / 2.0,
+            source_bbox.y() + source_bbox.height() / 2.0,
+        )
+        handle = ManualFrameOverlay.handle_at(widget_bbox, position, tolerance=2.0)
+        # Scale uses only corner handles (nw/ne/sw/se).  Mid-edge handles
+        # also map to scale here (uniform scale by closest corner) so the
+        # whole 8-handle ring is responsive.
+        if handle is not None:
+            radius = math.hypot(
+                source_point.x() - centre_source.x(),
+                source_point.y() - centre_source.y(),
+            )
+            if radius <= 0.0:
+                return False
+            self._edit_drag_mode = "extract_scale"
+            self._edit_drag_handle = handle
+            self._extract_drag_center = centre_source
+            self._extract_drag_start_radius = radius
+            self._extract_drag_scale = 1.0
+            self._edit_drag_source_anchor = source_point
+            self._edit_drag_original_bbox = QRectF(source_bbox)
+            self._edit_drag_current_bbox = QRectF(source_bbox)
+            return True
+        if widget_bbox.contains(position):
+            self._edit_drag_mode = "extract_translate"
+            self._edit_drag_handle = None
+            self._edit_drag_source_anchor = source_point
+            self._edit_drag_original_bbox = QRectF(source_bbox)
+            self._edit_drag_current_bbox = QRectF(source_bbox)
+            return True
+        # Outside the bbox but within the rotation halo → rotate.
+        halo = QRectF(
+            widget_bbox.x() - self._EXTRACT_ROTATION_BAND_PX,
+            widget_bbox.y() - self._EXTRACT_ROTATION_BAND_PX,
+            widget_bbox.width() + 2 * self._EXTRACT_ROTATION_BAND_PX,
+            widget_bbox.height() + 2 * self._EXTRACT_ROTATION_BAND_PX,
+        )
+        if not halo.contains(position):
+            return False
+        start_angle = math.atan2(
+            source_point.y() - centre_source.y(),
+            source_point.x() - centre_source.x(),
+        )
+        self._edit_drag_mode = "extract_rotate"
+        self._edit_drag_handle = None
+        self._extract_drag_center = centre_source
+        self._extract_drag_start_angle = start_angle
+        self._extract_drag_angle = 0.0
+        self._edit_drag_source_anchor = source_point
+        self._edit_drag_original_bbox = QRectF(source_bbox)
+        self._edit_drag_current_bbox = QRectF(source_bbox)
+        return True
 
     def _begin_edit_drag(self, position: QPointF) -> bool:
         """Try to start a move/resize drag on the active face. Returns True on hit."""
@@ -841,6 +976,25 @@ class ManualFrameView(QWidget):
             self._edit_drag_current_bbox = rect
             self.update()
             return
+        if mode == "extract_translate":
+            origin = self._edit_drag_original_bbox
+            if origin is not None:
+                self._edit_drag_current_bbox = QRectF(
+                    origin.x() + dx,
+                    origin.y() + dy,
+                    origin.width(),
+                    origin.height(),
+                )
+            self.update()
+            return
+        if mode == "extract_scale":
+            self._update_extract_scale(source_point)
+            self.update()
+            return
+        if mode == "extract_rotate":
+            self._update_extract_rotate(source_point)
+            self.update()
+            return
         if self._edit_drag_original_bbox is None:
             return
         if mode == "move":
@@ -858,6 +1012,46 @@ class ManualFrameView(QWidget):
                 self._edit_drag_original_bbox, self._edit_drag_handle or "", dx, dy
             )
         self.update()
+
+    def _update_extract_scale(self, source_point: QPointF) -> None:
+        """Track the live scale factor + preview bbox for an Extract Box scale drag."""
+        import math
+
+        if (
+            self._extract_drag_center is None
+            or self._extract_drag_start_radius <= 0.0
+            or self._edit_drag_original_bbox is None
+        ):
+            return
+        radius = math.hypot(
+            source_point.x() - self._extract_drag_center.x(),
+            source_point.y() - self._extract_drag_center.y(),
+        )
+        scale = max(0.05, radius / self._extract_drag_start_radius)
+        self._extract_drag_scale = scale
+        original = self._edit_drag_original_bbox
+        cx = self._extract_drag_center.x()
+        cy = self._extract_drag_center.y()
+        new_w = original.width() * scale
+        new_h = original.height() * scale
+        self._edit_drag_current_bbox = QRectF(cx - new_w / 2.0, cy - new_h / 2.0, new_w, new_h)
+
+    def _update_extract_rotate(self, source_point: QPointF) -> None:
+        """Track the live rotation delta for an Extract Box rotation drag.
+
+        The preview bbox isn't rotated visually (the displayed rect stays
+        axis-aligned) — the rotation only takes effect on commit because
+        ``rotate_face`` is the source of truth.
+        """
+        import math
+
+        if self._extract_drag_center is None:
+            return
+        angle = math.atan2(
+            source_point.y() - self._extract_drag_center.y(),
+            source_point.x() - self._extract_drag_center.x(),
+        )
+        self._extract_drag_angle = angle - self._extract_drag_start_angle
 
     @staticmethod
     def _resize_bbox(original: QRectF, handle: str, dx: float, dy: float) -> QRectF:
@@ -893,6 +1087,8 @@ class ManualFrameView(QWidget):
         anchor = self._edit_drag_source_anchor
         landmark_index = self._landmark_drag_index
         landmark_indices = self._landmark_drag_indices
+        extract_scale = self._extract_drag_scale
+        extract_angle = self._extract_drag_angle
         face_index = self._active_face_provider() if self._active_face_provider else None
         self._reset_edit_drag()
         if mode == "add":
@@ -909,6 +1105,24 @@ class ManualFrameView(QWidget):
             return
         if mode == "landmark_marquee":
             self._emit_landmark_marquee(face_index, current)
+            self.update()
+            return
+        if mode == "extract_translate":
+            if face_index is not None and original is not None and current is not None:
+                dx = current.x() - original.x()
+                dy = current.y() - original.y()
+                if dx != 0.0 or dy != 0.0:
+                    self.face_move_requested.emit(int(face_index), float(dx), float(dy))
+            self.update()
+            return
+        if mode == "extract_scale":
+            if face_index is not None and extract_scale != 1.0:
+                self.face_scale_requested.emit(int(face_index), float(extract_scale))
+            self.update()
+            return
+        if mode == "extract_rotate":
+            if face_index is not None and extract_angle != 0.0:
+                self.face_rotate_requested.emit(int(face_index), float(extract_angle))
             self.update()
             return
         if face_index is None or original is None or current is None:
@@ -1134,6 +1348,11 @@ class ManualFrameView(QWidget):
         self._landmark_drag_index = None
         self._landmark_drag_indices = ()
         self._landmark_drag_origins = ()
+        self._extract_drag_center = None
+        self._extract_drag_start_radius = 0.0
+        self._extract_drag_start_angle = 0.0
+        self._extract_drag_scale = 1.0
+        self._extract_drag_angle = 0.0
 
     def _paint_add_preview(self, painter: QPainter, viewport: FrameViewport) -> None:
         """Draw a dashed preview rect for in-progress add or marquee gestures."""
@@ -3404,6 +3623,11 @@ class ManualToolWindow(QMainWindow):
             landmark_provider=self._active_face_landmarks,
             landmark_selection_provider=lambda: self._overlay.selected_landmarks,
         )
+        self._frame_view.install_extract_seams(
+            extract_mode_provider=self._is_extract_mode_active,
+        )
+        self._frame_view.face_scale_requested.connect(self._on_face_scale_requested)
+        self._frame_view.face_rotate_requested.connect(self._on_face_rotate_requested)
         self.dirty_changed.connect(
             lambda dirty: self.statusBar().showMessage(
                 "Manual Tool has unsaved changes" if dirty else "Manual Tool ready",
@@ -3769,6 +3993,36 @@ class ManualToolWindow(QMainWindow):
     def _is_landmark_mode_active(self) -> bool:
         """Return whether the Landmark editor (F4) is active."""
         return self._editor_state.editor_mode == "Landmarks"
+
+    def _is_extract_mode_active(self) -> bool:
+        """Return whether the Extract Box editor (F3) is active."""
+        return self._editor_state.editor_mode == "ExtractBox"
+
+    def _on_face_scale_requested(self, face_index: int, scale: float) -> None:
+        """Apply an Extract Box corner-drag scale to the active face (#102)."""
+        frame_index = self._current_frame_index()
+        if frame_index < 0:
+            self.statusBar().showMessage("No frame to edit", 3000)
+            return
+        if not self._editable.scale_face(frame_index, int(face_index), float(scale)):
+            self.statusBar().showMessage("Scale failed (degenerate result)", 3000)
+            return
+        self._editor_state.set("edited", True)
+        self.refresh_faces()
+        self._frame_view.update()
+
+    def _on_face_rotate_requested(self, face_index: int, angle: float) -> None:
+        """Apply an Extract Box rotation-zone drag to the active face (#102)."""
+        frame_index = self._current_frame_index()
+        if frame_index < 0:
+            self.statusBar().showMessage("No frame to edit", 3000)
+            return
+        if not self._editable.rotate_face(frame_index, int(face_index), float(angle)):
+            self.statusBar().showMessage("Rotate failed (no active face)", 3000)
+            return
+        self._editor_state.set("edited", True)
+        self.refresh_faces()
+        self._frame_view.update()
 
     def _face_at_source_point(self, sx: float, sy: float) -> int | None:
         """Hit-test the editable model at a source-coordinate point."""

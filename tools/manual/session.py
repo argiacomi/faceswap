@@ -661,6 +661,125 @@ class ManualEditableAlignments:
         self._apply(do, undo, frame_index)
         return True
 
+    def scale_face(
+        self,
+        frame_index: int,
+        face_index: int,
+        scale: float,
+    ) -> bool:
+        """Scale the face's landmarks + bbox uniformly around the bbox centre.
+
+        Used by the Extract Box editor (#102) where corner-drag scales the
+        landmark cloud as a unit.  ``scale`` is the multiplicative factor
+        applied to every landmark coordinate relative to the centre; the
+        bbox grows/shrinks by the same factor centred on the same point.
+
+        Returns ``False`` for an invalid face_index, a non-positive scale,
+        or when the result would produce a degenerate sub-pixel bbox.
+        ``True`` no-op for a 1.0 scale.
+        """
+        faces = self._faces.get(frame_index, [])
+        if face_index < 0 or face_index >= len(faces):
+            return False
+        if not (scale > 0.0):
+            return False
+        if scale == 1.0:
+            return True
+        face = faces[face_index]
+        x, y, w, h = face.bbox
+        new_w = w * scale
+        new_h = h * scale
+        if new_w < 1.0 or new_h < 1.0:
+            return False
+        cx = x + w / 2.0
+        cy = y + h / 2.0
+        new_bbox = (cx - new_w / 2.0, cy - new_h / 2.0, new_w, new_h)
+        new_landmarks: tuple[tuple[float, float], ...]
+        if face.landmarks:
+            new_landmarks = tuple(
+                (cx + (lx - cx) * scale, cy + (ly - cy) * scale) for lx, ly in face.landmarks
+            )
+        else:
+            new_landmarks = face.landmarks
+        previous = face
+        scaled = EditableFace(
+            face_index=face.face_index,
+            bbox=new_bbox,
+            landmarks=new_landmarks,
+        )
+
+        def do() -> None:
+            self._faces[frame_index][face_index] = scaled
+
+        def undo() -> None:
+            self._faces[frame_index][face_index] = previous
+
+        self._apply(do, undo, frame_index)
+        return True
+
+    def rotate_face(
+        self,
+        frame_index: int,
+        face_index: int,
+        angle_radians: float,
+    ) -> bool:
+        """Rotate the face's landmarks around the bbox centre.
+
+        Used by the Extract Box editor (#102) where the outside-corner
+        rotation zone rotates the entire landmark cloud.  The bbox is
+        recomputed as the axis-aligned bounding rectangle of the rotated
+        landmarks so the visible box continues to enclose the points; if
+        the face has no landmarks the bbox stays put and the call no-ops.
+
+        ``angle_radians`` is clockwise in source-image coordinates (Qt's
+        y-down convention).  Returns ``True`` for a no-op zero angle and
+        ``False`` for an invalid face_index.
+        """
+        import math
+
+        faces = self._faces.get(frame_index, [])
+        if face_index < 0 or face_index >= len(faces):
+            return False
+        if angle_radians == 0.0:
+            return True
+        face = faces[face_index]
+        if not face.landmarks:
+            return True
+        x, y, w, h = face.bbox
+        cx = x + w / 2.0
+        cy = y + h / 2.0
+        cos_a = math.cos(angle_radians)
+        sin_a = math.sin(angle_radians)
+        new_points: list[tuple[float, float]] = []
+        for lx, ly in face.landmarks:
+            dx = lx - cx
+            dy = ly - cy
+            new_points.append((cx + dx * cos_a - dy * sin_a, cy + dx * sin_a + dy * cos_a))
+        # Axis-aligned bbox of the rotated landmark cloud — preserves the
+        # visual relationship between the box and the points without
+        # tracking a separate rotation state on the face object.
+        xs = [px for px, _ in new_points]
+        ys = [py for _, py in new_points]
+        nx = min(xs)
+        ny = min(ys)
+        nw = max(1.0, max(xs) - nx)
+        nh = max(1.0, max(ys) - ny)
+        previous = face
+        rotated = EditableFace(
+            face_index=face.face_index,
+            bbox=(nx, ny, nw, nh),
+            landmarks=tuple(new_points),
+        )
+
+        def do() -> None:
+            self._faces[frame_index][face_index] = rotated
+
+        def undo() -> None:
+            self._faces[frame_index][face_index] = previous
+
+        self._apply(do, undo, frame_index)
+        return True
+
     def update_landmark(
         self,
         frame_index: int,
