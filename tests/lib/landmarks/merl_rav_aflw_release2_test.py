@@ -109,8 +109,9 @@ GT5_XY_IMAGE00002 = np.array(
 GT5_YX_IMAGE00002 = GT5_XY_IMAGE00002[:, ::-1]
 EXPECTED_ORIGIN = np.array([57, 19], dtype=int)
 EXPECTED_HW = (338, 337)
-EXPECTED_SOURCE_VALID = 53
-EXPECTED_INVALID_INDICES = [0, 1, 3, 4, 5, 6, 11, 12, 13, 15, 16, 18, 20, 21, 38]
+EXPECTED_SCORE_VISIBLE = 53
+EXPECTED_COORDINATE_VALID = 68
+EXPECTED_SCORE_INVISIBLE_INDICES = [0, 1, 3, 4, 5, 6, 11, 12, 13, 15, 16, 18, 20, 21, 38]
 
 
 def _write_release2_fixture(
@@ -156,8 +157,9 @@ def test_image00002_anchor_and_crop_origin_match_proof_case(tmp_path: Path) -> N
     pts_path = tmp_path / "image00002.pts"
     pts_path.write_text(IMAGE00002_PTS, encoding="utf-8")
     signed = _parse_pts_signed(pts_path)
-    visibility, src = _visibility_for_crop(signed)
-    assert visibility.count("visible") == EXPECTED_SOURCE_VALID
+    visibility, src, score_visible = _visibility_for_crop(signed)
+    assert visibility.count("visible") == EXPECTED_SCORE_VISIBLE
+    assert int(score_visible.sum()) == EXPECTED_SCORE_VISIBLE
     assert sum(1 for v in visibility if v in ("externally_occluded", "self_occluded")) == 15
     src5 = _landmarks68_to_5anchors_xy(src)
     origin, used, residuals = _estimate_crop_origin_xy(src5, GT5_XY_IMAGE00002, min_anchors=3)
@@ -165,10 +167,10 @@ def test_image00002_anchor_and_crop_origin_match_proof_case(tmp_path: Path) -> N
     assert used == 5
     assert residuals.shape == (5, 2)
     translated, src_valid, in_crop = _translate_to_crop(src, origin, EXPECTED_HW)
-    assert int(src_valid.sum()) == EXPECTED_SOURCE_VALID
-    assert int(in_crop.sum()) == EXPECTED_SOURCE_VALID
-    invalid_indices = [int(i) for i, ok in enumerate(src_valid) if not bool(ok)]
-    assert invalid_indices == EXPECTED_INVALID_INDICES
+    assert int(src_valid.sum()) == EXPECTED_COORDINATE_VALID
+    assert int(in_crop.sum()) == EXPECTED_COORDINATE_VALID
+    invisible_indices = [int(i) for i, ok in enumerate(score_visible) if not bool(ok)]
+    assert invisible_indices == EXPECTED_SCORE_INVISIBLE_INDICES
     valid_pts = translated[src_valid]
     assert np.all(valid_pts[:, 0] >= 0)
     assert np.all(valid_pts[:, 1] >= 0)
@@ -204,12 +206,13 @@ def test_build_merl_rav_aflw_release2_manifest_proof_case(tmp_path: Path) -> Non
     assert metadata["crop_origin_xy"] == [57, 19]
     assert metadata["crop_height"] == EXPECTED_HW[0]
     assert metadata["crop_width"] == EXPECTED_HW[1]
-    assert metadata["landmark_source_valid_count"] == EXPECTED_SOURCE_VALID
-    assert metadata["landmark_in_crop_count"] == EXPECTED_SOURCE_VALID
+    assert metadata["landmark_source_valid_count"] == EXPECTED_COORDINATE_VALID
+    assert metadata["landmark_in_crop_count"] == EXPECTED_COORDINATE_VALID
+    assert metadata["landmark_score_visible_count"] == EXPECTED_SCORE_VISIBLE
     invalid_from_mask = [
-        idx for idx, ok in enumerate(metadata["landmark_source_valid_mask"]) if not ok
+        idx for idx, ok in enumerate(metadata["landmark_score_visibility_mask"]) if not ok
     ]
-    assert invalid_from_mask == EXPECTED_INVALID_INDICES
+    assert invalid_from_mask == EXPECTED_SCORE_INVISIBLE_INDICES
     assert sample["image"].endswith("image00002_46712.jpg")
     assert sample["sample_id"] == "frontal_trainset_labels_image00002__image00002_46712"
 
@@ -217,13 +220,13 @@ def test_build_merl_rav_aflw_release2_manifest_proof_case(tmp_path: Path) -> Non
     landmarks = np.load(landmarks_path)
     assert landmarks.shape == (68, 2)
     assert np.all(np.isfinite(landmarks))
-    valid_mask = np.asarray(metadata["landmark_source_valid_mask"], dtype=bool)
+    valid_mask = np.asarray(metadata["landmark_coordinate_valid_mask"], dtype=bool)
     valid_pts = landmarks[valid_mask]
     assert np.all(valid_pts[:, 0] >= 0)
     assert np.all(valid_pts[:, 1] >= 0)
     assert np.all(valid_pts[:, 0] < EXPECTED_HW[1])
     assert np.all(valid_pts[:, 1] < EXPECTED_HW[0])
-    assert np.all(landmarks[~valid_mask] == 0.0)
+    assert valid_mask.all()
 
 
 def test_build_release2_skips_when_too_few_anchors(tmp_path: Path) -> None:
@@ -314,7 +317,7 @@ def test_select_best_candidate_uses_min_residual(tmp_path: Path) -> None:
     pts_path = tmp_path / "image00002.pts"
     pts_path.write_text(IMAGE00002_PTS, encoding="utf-8")
     signed = _parse_pts_signed(pts_path)
-    _, src = _visibility_for_crop(signed)
+    _, src, _score_visible = _visibility_for_crop(signed)
     src5 = _landmarks68_to_5anchors_xy(src)
     good = {"gt5_xy": GT5_XY_IMAGE00002, "stem": "good"}
     bad = {

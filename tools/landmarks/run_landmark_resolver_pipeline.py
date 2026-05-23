@@ -878,7 +878,11 @@ def _command_scorer_eval(args: argparse.Namespace, paths: PipelinePaths) -> list
         "--promotion-policy",
         _promoted_runtime_policy(args),
         "--installed-scorer-dir",
-        str(args.installed_scorer_dir),
+        str(
+            getattr(
+                args, "installed_scorer_dir", Path(".fs_cache/landmark_ensemble/current/scorers")
+            )
+        ),
     ]
     if args.allow_image_backfill:
         argv.append("--allow-image-backfill")
@@ -1438,12 +1442,90 @@ def _static_downweight_metrics(report: T.Mapping[str, T.Any]) -> dict[str, T.Any
         "baseline metrics"
     )
 
+
+def _validate_v2_promotion_gate(report: T.Mapping[str, T.Any]) -> list[str]:
+    """Validate legacy learned_quality_v2 promotion fields when no installed baseline exists."""
+    policy_name = SCORER_VERSION_LEARNED_QUALITY_V2
+    status_keys = (
+        "learned_quality_v2_gate_status",
+        "learned_quality_v2_production_gate_status",
+        "learned_quality_v2_promotion_status",
+        "v2_gate_status",
+        "v2_production_gate_status",
+        "v2_promotion_status",
+    )
+    failed_keys = (
+        "learned_quality_v2_failed_gates",
+        "learned_quality_v2_production_failed_gates",
+        "v2_failed_gates",
+        "v2_production_failed_gates",
+    )
+    for key in status_keys:
+        status = report.get(key)
+        if status is not None and str(status) != "pass":
+            raise RuntimeError(f"{policy_name} promotion check failed: {key}={status!r}")
+    for key in failed_keys:
+        failed = report.get(key) or []
+        if failed:
+            raise RuntimeError(f"{policy_name} promotion check failed: {key}={failed}")
+
+    metrics = _selected_policy_metrics(report, policy_name)
+    baseline = _static_downweight_metrics(report)
+    gate_config = report.get("gate_config")
+    if not isinstance(gate_config, dict):
+        gate_config = {}
+
+    failure_epsilon = float(gate_config.get("failure_rate_epsilon", 0.0) or 0.0)
+    mean_epsilon = float(gate_config.get("mean_epsilon_nme", 0.001) or 0.001)
+    p90_epsilon = float(gate_config.get("p90_epsilon_nme", 0.003) or 0.003)
+
+    policy_failure = _metric_value(metrics, "failure_rate", policy_name=policy_name)
+    baseline_failure = _metric_value(baseline, "failure_rate", policy_name=policy_name)
+    if policy_failure > baseline_failure + failure_epsilon:
+        raise RuntimeError(
+            f"{policy_name} promotion check failed: failure_rate={policy_failure} "
+            f"exceeds static_weighted_downweight failure_rate={baseline_failure} "
+            f"+ epsilon={failure_epsilon}"
+        )
+
+    policy_mean = _metric_value(metrics, "mean_nme", policy_name=policy_name)
+    baseline_mean = _metric_value(baseline, "mean_nme", policy_name=policy_name)
+    if policy_mean > baseline_mean + mean_epsilon:
+        raise RuntimeError(
+            f"{policy_name} promotion check failed: mean_nme={policy_mean} "
+            f"exceeds static_weighted_downweight mean_nme={baseline_mean} "
+            f"+ epsilon={mean_epsilon}"
+        )
+
+    policy_p90 = _metric_value(metrics, "p90_nme", policy_name=policy_name)
+    baseline_p90 = _metric_value(baseline, "p90_nme", policy_name=policy_name)
+    if policy_p90 > baseline_p90 + p90_epsilon:
+        raise RuntimeError(
+            f"{policy_name} promotion check failed: p90_nme={policy_p90} "
+            f"exceeds static_weighted_downweight p90_nme={baseline_p90} "
+            f"+ epsilon={p90_epsilon}"
+        )
+
+    return [
+        f"{policy_name}=pass",
+        f"{policy_name}_failure_rate={policy_failure}",
+        f"{policy_name}_mean_nme={policy_mean}",
+        f"{policy_name}_p90_nme={policy_p90}",
+    ]
+
+
 def _installed_baseline_gate(
     report: T.Mapping[str, T.Any],
     *,
     policy_name: str,
     require_installed_baseline: bool,
 ) -> list[str]:
+    if not require_installed_baseline:
+        return [
+            "installed_baseline_promotion=skipped_by_request",
+            f"selected_policy={policy_name}",
+        ]
+
     gates = report.get("installed_baseline_promotion")
     if not isinstance(gates, dict):
         if require_installed_baseline:
@@ -1475,21 +1557,83 @@ def _installed_baseline_gate(
         f"installed_policy={gate.get('installed_policy', '')}",
     ]
 
+
 def _promotion_check(
     paths: PipelinePaths,
     *,
     promotion_scope: str = "production",
     args: argparse.Namespace | None = None,
 ) -> list[str]:
+    """
+    Validate promotion using installed-baseline reports, with legacy fallback.
+
+    Reports containing installed_baseline_promotion use the installed-current
+    scorer gate. Reports without that payload are legacy reports and must still
+    honor promotion_status/status plus failed_gates.
+
+    Important compatibility rule: args=None does not skip validation. Some unit
+    tests and older callers invoke _promotion_check(paths) directly and still
+    expect failed legacy reports to raise.
+    """
     _require(paths.scorer_report, "scorer evaluation report")
     report = _read_json(paths.scorer_report)
-    if args is None:
-        return ["promotion_check=skipped_no_args"]
-    return _installed_baseline_gate(
-        report,
-        policy_name=_promoted_runtime_policy(args),
-        require_installed_baseline=bool(args.require_installed_baseline),
+
+    if args is not None:
+        policy_name = _promoted_runtime_policy(args)
+    else:
+        policy_name = str(
+            report.get("promotion_policy")
+            or report.get("promoted_policy")
+            or report.get("primary_scorer_policy")
+            or report.get("promoted_scorer_label")
+            or SCORER_POLICY_CONTINUOUS_REGRET
+        )
+
+    gates = report.get("installed_baseline_promotion")
+
+    if isinstance(gates, dict):
+        return _installed_baseline_gate(
+            report,
+            policy_name=policy_name,
+            require_installed_baseline=bool(getattr(args, "require_installed_baseline", True)),
+        )
+
+    raw_status = report.get("promotion_status", report.get("status"))
+    failed = report.get("failed_gates") or []
+    status = str(raw_status) if raw_status is not None else ("fail" if failed else "pass")
+    if status != "pass" or failed:
+        raise RuntimeError(
+            f"production promotion check failed: status={status!r}, failed_gates={failed}"
+        )
+
+    production_failed = report.get("production_failed_gates") or []
+    raw_production_status = report.get("production_gate_status")
+    production_status = (
+        str(raw_production_status)
+        if raw_production_status is not None
+        else ("fail" if production_failed else "pass")
     )
+    if production_status != "pass" or production_failed:
+        raise RuntimeError(
+            "production promotion check failed: "
+            f"production_gate_status={production_status!r}, "
+            f"production_failed_gates={production_failed}"
+        )
+
+    promoted_notes: list[str] = []
+    if policy_name == SCORER_VERSION_LEARNED_QUALITY_V2:
+        promoted_notes = _validate_v2_promotion_gate(report)
+
+    if promotion_scope == "universal":
+        gt_status = str(report.get("gt_hard_gate_status") or "")
+        gt_failed = report.get("gt_hard_failed_gates") or []
+        if gt_status not in {"pass", ""} or gt_failed:
+            raise RuntimeError(
+                "GT-hard diagnostic gate failed: "
+                f"gt_hard_gate_status={gt_status!r}, gt_hard_failed_gates={gt_failed}"
+            )
+
+    return ["status=pass", "production_gate_status=pass", *promoted_notes]
 
 
 def _validate_required_files(stage: str, args: argparse.Namespace, paths: PipelinePaths) -> None:
