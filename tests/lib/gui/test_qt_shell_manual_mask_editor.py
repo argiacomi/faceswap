@@ -7,7 +7,7 @@ Covers #101:
 * Ctrl+drag inverts Draw/Erase for the gesture.
 * Editable mask grid materialises on first paint and the overlay renders it.
 * Host paint_mask_at marks dirty + records undo/redo.
-* No-active-face / out-of-bbox / no-mask edge cases.
+* Mode-scoped mask controls and no-active-face / out-of-bbox / no-mask edge cases.
 """
 
 from __future__ import annotations
@@ -272,12 +272,16 @@ def test_active_mask_type_falls_back_to_default(qtbot, tmp_path: Path) -> None: 
     assert window.active_mask_type() == "extended"
 
 
-def test_paint_mask_at_no_frame_returns_false(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_paint_mask_at_no_frame_returns_false_with_status_message(
+    qtbot, tmp_path: Path
+) -> None:  # type:ignore[no-untyped-def]
     """Painting with no current frame returns False + surfaces a status message."""
     window = _make_window(qtbot, tmp_path)
     # Force a missing current frame by clearing the thumbnail panel.
     window._thumbnail_panel.clear()
+
     assert window.paint_mask_at(0, 100.0, 100.0) is False
+    assert window.statusBar().currentMessage() == "No frame to edit"
 
 
 # ---------------------------------------------------------------------------
@@ -288,7 +292,20 @@ def test_paint_mask_at_no_frame_returns_false(qtbot, tmp_path: Path) -> None:  #
 def test_mask_controls_hidden_outside_mask_mode(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
     """The Mask control row is hidden in View / BBox / Landmark / Extract modes."""
     window = _make_window(qtbot, tmp_path)
-    window._editor_state.set("editor_mode", "View")
+
+    for mode in ("View", "BoundingBox", "Landmarks", "ExtractBox"):
+        window._editor_state.set("editor_mode", mode)
+        assert window._mask_controls.isVisible() is False, mode
+
+
+def test_mask_controls_hide_after_leaving_mask_mode(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+    """Leaving Mask mode immediately hides the mask-type controls."""
+    window = _make_window(qtbot, tmp_path)
+    _enter_mask_mode(window)
+    assert window._mask_controls.isVisible() is True
+
+    window._editor_state.set("editor_mode", "BoundingBox")
+
     assert window._mask_controls.isVisible() is False
 
 
