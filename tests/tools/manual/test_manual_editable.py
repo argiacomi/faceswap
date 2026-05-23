@@ -656,3 +656,99 @@ def test_rotate_face_records_undo_history() -> None:
     assert after_bbox != before_bbox
     assert model.undo() is True
     assert model.faces(0)[0].bbox == before_bbox
+
+
+# ---------------------------------------------------------------------------
+# #101 — Mask editor model API
+# ---------------------------------------------------------------------------
+
+
+def test_paint_mask_stroke_creates_grid_on_first_paint() -> None:
+    """A brush stroke lazily allocates the mask grid for the face."""
+    import numpy as np
+
+    model = ManualEditableAlignments()
+    model.add_face(0, (0.0, 0.0, 64.0, 64.0))
+    assert model.get_mask(0, 0, "components") is None
+
+    assert model.paint_mask_stroke(0, 0, "components", 32.0, 32.0, 4.0, 255) is True
+    mask = model.get_mask(0, 0, "components")
+    assert mask is not None
+    assert mask.shape == (model.MASK_STORED_SIZE, model.MASK_STORED_SIZE)
+    assert mask.dtype == np.uint8
+    # Center of the stamp must be painted ON.
+    cy = cx = model.MASK_STORED_SIZE // 2
+    assert mask[cy, cx] == 255
+
+
+def test_paint_mask_stroke_erase_zeroes_pixels() -> None:
+    """An erase stroke (value=0) clears painted pixels but keeps grid allocated."""
+    model = ManualEditableAlignments()
+    model.add_face(0, (0.0, 0.0, 64.0, 64.0))
+    model.paint_mask_stroke(0, 0, "components", 32.0, 32.0, 8.0, 255)
+    mask = model.get_mask(0, 0, "components")
+    cy = cx = model.MASK_STORED_SIZE // 2
+    assert mask[cy, cx] == 255
+    # Erase a smaller stamp at the same point.
+    assert model.paint_mask_stroke(0, 0, "components", 32.0, 32.0, 4.0, 0) is True
+    assert mask[cy, cx] == 0
+
+
+def test_paint_mask_stroke_out_of_bbox_returns_false() -> None:
+    """A stroke whose centre is outside the face bbox is rejected."""
+    model = ManualEditableAlignments()
+    model.add_face(0, (10.0, 10.0, 20.0, 20.0))
+    assert model.paint_mask_stroke(0, 0, "components", 100.0, 100.0, 4.0, 255) is False
+    assert model.get_mask(0, 0, "components") is None
+
+
+def test_paint_mask_stroke_invalid_face_returns_false() -> None:
+    """An out-of-range face_index is rejected."""
+    model = ManualEditableAlignments()
+    model.add_face(0, (0.0, 0.0, 32.0, 32.0))
+    assert model.paint_mask_stroke(0, 9, "components", 16.0, 16.0, 4.0, 255) is False
+
+
+def test_paint_mask_stroke_records_undo() -> None:
+    """A paint stroke participates in the undo/redo stack."""
+    model = ManualEditableAlignments()
+    model.add_face(0, (0.0, 0.0, 64.0, 64.0))
+    assert model.paint_mask_stroke(0, 0, "components", 32.0, 32.0, 4.0, 255) is True
+    mask = model.get_mask(0, 0, "components")
+    cy = cx = model.MASK_STORED_SIZE // 2
+    assert mask[cy, cx] == 255
+
+    assert model.undo() is True
+    # The pixels written by the stroke must revert.
+    assert mask[cy, cx] == 0
+    assert model.redo() is True
+    assert mask[cy, cx] == 255
+
+
+def test_clear_mask_drops_grid_and_is_undoable() -> None:
+    """clear_mask removes the grid; undo restores the prior state."""
+    model = ManualEditableAlignments()
+    model.add_face(0, (0.0, 0.0, 32.0, 32.0))
+    model.paint_mask_stroke(0, 0, "components", 16.0, 16.0, 4.0, 255)
+    assert model.has_mask(0, 0, "components") is True
+    assert model.clear_mask(0, 0, "components") is True
+    assert model.has_mask(0, 0, "components") is False
+    assert model.undo() is True
+    assert model.has_mask(0, 0, "components") is True
+
+
+def test_clear_mask_when_absent_returns_false() -> None:
+    """clear_mask is a no-op when no mask exists."""
+    model = ManualEditableAlignments()
+    model.add_face(0, (0.0, 0.0, 32.0, 32.0))
+    assert model.clear_mask(0, 0, "components") is False
+
+
+def test_known_mask_types_lists_painted_types_only() -> None:
+    """``known_mask_types`` returns each painted mask type for a face."""
+    model = ManualEditableAlignments()
+    model.add_face(0, (0.0, 0.0, 32.0, 32.0))
+    model.paint_mask_stroke(0, 0, "components", 16.0, 16.0, 2.0, 255)
+    model.paint_mask_stroke(0, 0, "extended", 16.0, 16.0, 2.0, 255)
+    types = model.known_mask_types(0, 0)
+    assert types == ("components", "extended")

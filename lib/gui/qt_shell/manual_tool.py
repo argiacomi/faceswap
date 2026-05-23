@@ -145,6 +145,11 @@ class ManualFrameOverlay:
         self._active_face: int | None = None
         # Selected landmark indices for the active face (Landmark editor, #103).
         self._selected_landmarks: frozenset[int] = frozenset()
+        # Mask editor (#101) render seam — the host installs callables that
+        # return the active mask type / opacity / colour for the overlay.
+        self._mask_type_provider: T.Callable[[], str] | None = None
+        self._mask_opacity_provider: T.Callable[[], int] | None = None
+        self._mask_show_provider: T.Callable[[], bool] | None = None
 
     def set_active(self, face_index: int | None) -> None:
         """Mark a face as the active selection for highlight rendering."""
@@ -166,6 +171,25 @@ class ManualFrameOverlay:
     def selected_landmarks(self) -> frozenset[int]:
         """Return the active face's currently selected landmark indices."""
         return self._selected_landmarks
+
+    def install_mask_render_seam(
+        self,
+        *,
+        mask_type_provider: T.Callable[[], str],
+        mask_opacity_provider: T.Callable[[], int],
+        mask_show_provider: T.Callable[[], bool],
+    ) -> None:
+        """Hook the Mask editor render seam (#101).
+
+        ``mask_type_provider`` returns the mask type to display for the
+        active face.  ``mask_opacity_provider`` returns ``0..100``.
+        ``mask_show_provider`` toggles the overlay layer on/off so other
+        editor modes (View / BBox / Landmark / Extract) don't render
+        masks unintentionally.
+        """
+        self._mask_type_provider = mask_type_provider
+        self._mask_opacity_provider = mask_opacity_provider
+        self._mask_show_provider = mask_show_provider
 
     def __call__(self, painter: QPainter, viewport: FrameViewport) -> None:
         """Draw the overlay during :meth:`ManualFrameView.paintEvent`."""
@@ -197,8 +221,73 @@ class ManualFrameOverlay:
                         radius = self._LANDMARK_RADIUS
                     painter.drawEllipse(point, radius, radius)
             if is_active:
+                self._paint_mask_overlay(painter, viewport, face)
                 self._draw_handles(painter, rect)
             painter.restore()
+
+    def _paint_mask_overlay(
+        self,
+        painter: QPainter,
+        viewport: FrameViewport,
+        face: T.Any,
+    ) -> None:
+        """Render the active face's mask as a colour-tinted alpha layer (#101).
+
+        The mask is stored at ``MASK_STORED_SIZE`` in stored-space and is
+        projected onto the face's source-coordinate bbox via the same
+        axis-aligned mapping ``paint_mask_stroke`` uses.  Opacity is
+        ``mask_opacity_provider() / 100`` so the user can blend the
+        overlay against the underlying frame.
+        """
+        if (
+            self._mask_type_provider is None
+            or self._mask_opacity_provider is None
+            or self._mask_show_provider is None
+            or not self._mask_show_provider()
+        ):
+            return
+        mask_type = self._mask_type_provider()
+        if not mask_type:
+            return
+        frame_index = self._frame_index_provider()
+        mask = self._model.get_mask(frame_index, int(face.face_index), mask_type)
+        if mask is None:
+            return
+        opacity_pct = max(0, min(100, int(self._mask_opacity_provider())))
+        if opacity_pct == 0:
+            return
+        # Build a QImage from the uint8 mask with the editor's colour tint.
+        try:
+            mask_array = mask
+            if mask_array.size == 0:
+                return
+            height, width = mask_array.shape[:2]
+            from PySide6.QtGui import QImage
+
+            argb = bytearray(width * height * 4)
+            tint_r, tint_g, tint_b = (255, 80, 80)
+            alpha_factor = opacity_pct / 100.0
+            mv = memoryview(argb)
+            data = mask_array.tobytes()
+            for i, value in enumerate(data):
+                base = i * 4
+                if value == 0:
+                    mv[base : base + 4] = b"\x00\x00\x00\x00"
+                    continue
+                a = int(min(255, value * alpha_factor))
+                # Qt QImage in Format_ARGB32 is BGRA in memory on little-endian.
+                mv[base] = tint_b
+                mv[base + 1] = tint_g
+                mv[base + 2] = tint_r
+                mv[base + 3] = a
+            image = QImage(bytes(argb), width, height, width * 4, QImage.Format_ARGB32)
+        except Exception:  # pragma: no cover - defensive
+            return
+        rect = viewport.source_rect_to_widget(*face.bbox)
+        painter.save()
+        painter.setOpacity(1.0)
+        painter.drawImage(rect, image)
+        painter.restore()
 
     def _draw_handles(self, painter: QPainter, bbox: QRectF) -> None:
         """Draw eight square resize handles around the active bbox."""
@@ -315,6 +404,13 @@ class ManualFrameView(QWidget):
     """``(face_index, scale_factor)`` on Extract Box corner-drag release (#102)."""
     face_rotate_requested = Signal(int, float)
     """``(face_index, angle_radians)`` on Extract Box rotation-zone drag release (#102)."""
+    mask_paint_requested = Signal(int, float, float, bool)
+    """``(face_index, source_x, source_y, invert)`` during a Mask editor stroke (#101).
+
+    Emitted on press *and* every move so painting is continuous; the host
+    handler stamps the brush at each emit.  ``invert`` is ``True`` when
+    ``Ctrl`` is held to flip Draw/Erase for the duration of one gesture.
+    """
 
     _MIN_ZOOM = 1.0
     _MAX_ZOOM = 20.0
@@ -375,6 +471,12 @@ class ManualFrameView(QWidget):
         self._extract_drag_start_angle: float = 0.0
         self._extract_drag_scale: float = 1.0
         self._extract_drag_angle: float = 0.0
+        # Mask editor (#101) seam.  Active when ``editor_mode == "Mask"``;
+        # press + drag inside the active face's bbox emits
+        # :attr:`mask_paint_requested` continuously for the host to stamp.
+        self._mask_mode_provider: T.Callable[[], bool] | None = None
+        self._mask_drag_active: bool = False
+        self._mask_drag_invert: bool = False
 
     # ---- public API ----
     @property
@@ -586,6 +688,21 @@ class ManualFrameView(QWidget):
         """
         self._extract_mode_provider = extract_mode_provider
 
+    def install_mask_seams(
+        self,
+        *,
+        mask_mode_provider: T.Callable[[], bool],
+    ) -> None:
+        """Install Mask editor seam (#101).
+
+        ``mask_mode_provider`` returns ``True`` while ``editor_mode == "Mask"``.
+        When active, press + drag inside the active face's bbox emits
+        :attr:`mask_paint_requested` continuously so the host can stamp
+        each brush position.  ``Ctrl+drag`` flips Draw/Erase for the
+        duration of the gesture (legacy Tk Manual Tool parity).
+        """
+        self._mask_mode_provider = mask_mode_provider
+
     def edit_drag_preview_bbox(self) -> QRectF | None:
         """Return the in-progress drag bbox in source coordinates, if any.
 
@@ -615,6 +732,12 @@ class ManualFrameView(QWidget):
         # Always emit clicked_at so selection on empty-space click is preserved.
         if source_point is not None:
             self.clicked_at.emit(source_point)
+        # Mask editor (#101) takes precedence in mask mode so the user can
+        # paint continuously inside the active face's bbox.  Ctrl+drag
+        # inverts Draw/Erase for the gesture (Tk parity).
+        if self._begin_mask_drag(position, source_point, event):
+            event.accept()
+            return
         # Landmark editor (#103) takes precedence in landmark mode so the user
         # can drag individual points or marquee-select inside the bbox.
         if self._begin_landmark_drag(position, source_point, event):
@@ -640,6 +763,10 @@ class ManualFrameView(QWidget):
     def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa:N802
         """Dispatch pointer motion to active drag mode or update hover cursor."""
         position = event.position()
+        if self._mask_drag_active:
+            self._continue_mask_drag(position)
+            event.accept()
+            return
         if self._edit_drag_mode is not None:
             self._update_edit_drag(position)
             event.accept()
@@ -660,6 +787,11 @@ class ManualFrameView(QWidget):
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa:N802
         """Commit an active edit drag or end the pan drag."""
+        if self._mask_drag_active:
+            self._end_mask_drag()
+            self._update_hover_cursor(event.position())
+            event.accept()
+            return
         if self._edit_drag_mode is not None:
             self._commit_edit_drag()
             self._update_hover_cursor(event.position())
@@ -831,6 +963,64 @@ class ManualFrameView(QWidget):
 
     _EXTRACT_ROTATION_BAND_PX = 24.0
     """Widget-pixel band outside the bbox that triggers rotation drags."""
+
+    def _begin_mask_drag(
+        self,
+        position: QPointF,
+        source_point: QPointF | None,
+        event: QMouseEvent,
+    ) -> bool:
+        """Try to start a Mask editor stroke (#101).
+
+        Requires the active face to have a bbox covering ``source_point``.
+        Press + every subsequent move emit :attr:`mask_paint_requested` so
+        the host can stamp the brush continuously.  ``Ctrl`` held at press
+        inverts Draw/Erase for the duration of the gesture.
+        """
+        if self._mask_mode_provider is None or not self._mask_mode_provider():
+            return False
+        if source_point is None:
+            return False
+        if self._active_face_provider is None:
+            return False
+        face_index = self._active_face_provider()
+        if face_index is None:
+            return False
+        bbox = self._active_bbox_provider() if self._active_bbox_provider else None
+        if bbox is None or not bbox.contains(source_point):
+            return False
+        self._mask_drag_active = True
+        self._mask_drag_invert = bool(event.modifiers() & Qt.ControlModifier)
+        self.mask_paint_requested.emit(
+            int(face_index),
+            float(source_point.x()),
+            float(source_point.y()),
+            bool(self._mask_drag_invert),
+        )
+        return True
+
+    def _continue_mask_drag(self, position: QPointF) -> bool:
+        """Forward a move event during an in-flight Mask stroke."""
+        if not self._mask_drag_active:
+            return False
+        source_point = self._widget_to_source(position)
+        if source_point is None:
+            return True  # swallow moves that exit the source rect
+        face_index = self._active_face_provider() if self._active_face_provider else None
+        if face_index is None:
+            return True
+        self.mask_paint_requested.emit(
+            int(face_index),
+            float(source_point.x()),
+            float(source_point.y()),
+            bool(self._mask_drag_invert),
+        )
+        return True
+
+    def _end_mask_drag(self) -> None:
+        """Tear down Mask drag state on release."""
+        self._mask_drag_active = False
+        self._mask_drag_invert = False
 
     def _begin_extract_drag(self, position: QPointF) -> bool:
         """Try to start an Extract Box translate/scale/rotate drag (#102).
@@ -2032,6 +2222,39 @@ MANUAL_ACTIONS: tuple[ManualAction, ...] = (
         icon=None,
         tooltip="Fit the active face's bbox to the frame view (M)",
     ),
+    # Mask editor (F5, #101) — Draw / Erase actions + brush size shortcuts.
+    ManualAction(
+        key="mask_draw",
+        label="Mask: Draw",
+        handler="set_mask_draw_mode",
+        shortcut=("B",),
+        icon=None,
+        tooltip="Switch the Mask editor to Draw mode (B)",
+    ),
+    ManualAction(
+        key="mask_erase",
+        label="Mask: Erase",
+        handler="set_mask_erase_mode",
+        shortcut=("D",),
+        icon=None,
+        tooltip="Switch the Mask editor to Erase mode (D)",
+    ),
+    ManualAction(
+        key="brush_size_increase",
+        label="Brush Size +",
+        handler="increase_brush_size",
+        shortcut=("]",),
+        icon=None,
+        tooltip="Increase Mask brush size (])",
+    ),
+    ManualAction(
+        key="brush_size_decrease",
+        label="Brush Size -",
+        handler="decrease_brush_size",
+        shortcut=("[",),
+        icon=None,
+        tooltip="Decrease Mask brush size ([)",
+    ),
     ManualAction(
         key="nudge_up",
         label="Nudge Up",
@@ -2561,6 +2784,11 @@ class ManualToolWindow(QMainWindow):
         self._overlay = ManualFrameOverlay(
             self._editable,
             frame_index_provider=self._current_frame_index,
+        )
+        self._overlay.install_mask_render_seam(
+            mask_type_provider=self.active_mask_type,
+            mask_opacity_provider=lambda: self._editor_state.mask_opacity,
+            mask_show_provider=self._should_render_mask,
         )
         self._editor_state.subscribe("unsaved", self._on_unsaved_changed)
         self._editor_state.subscribe("face_index", lambda _v: self._sync_actions())
@@ -3626,8 +3854,12 @@ class ManualToolWindow(QMainWindow):
         self._frame_view.install_extract_seams(
             extract_mode_provider=self._is_extract_mode_active,
         )
+        self._frame_view.install_mask_seams(
+            mask_mode_provider=self._is_mask_mode_active,
+        )
         self._frame_view.face_scale_requested.connect(self._on_face_scale_requested)
         self._frame_view.face_rotate_requested.connect(self._on_face_rotate_requested)
+        self._frame_view.mask_paint_requested.connect(self._on_mask_paint_requested)
         self.dirty_changed.connect(
             lambda dirty: self.statusBar().showMessage(
                 "Manual Tool has unsaved changes" if dirty else "Manual Tool ready",
@@ -3998,6 +4230,27 @@ class ManualToolWindow(QMainWindow):
         """Return whether the Extract Box editor (F3) is active."""
         return self._editor_state.editor_mode == "ExtractBox"
 
+    def _is_mask_mode_active(self) -> bool:
+        """Return whether the Mask editor (F5) is active."""
+        return self._editor_state.editor_mode == "Mask"
+
+    def _should_render_mask(self) -> bool:
+        """Show mask overlay when the Mask editor is active or annotation toggle on.
+
+        Matches the legacy Tk behaviour where ``F10`` toggles the mask
+        overlay layer in any editor mode and F5 implicitly shows it.
+        """
+        return (
+            self._editor_state.editor_mode == "Mask"
+            or self._editor_state.annotation_mode == "Mask"
+        )
+
+    def _on_mask_paint_requested(
+        self, face_index: int, source_x: float, source_y: float, invert: bool
+    ) -> None:
+        """Apply a Mask editor brush stamp at ``(source_x, source_y)`` (#101)."""
+        self.paint_mask_at(int(face_index), float(source_x), float(source_y), invert=bool(invert))
+
     def _on_face_scale_requested(self, face_index: int, scale: float) -> None:
         """Apply an Extract Box corner-drag scale to the active face (#102)."""
         frame_index = self._current_frame_index()
@@ -4023,6 +4276,82 @@ class ManualToolWindow(QMainWindow):
         self._editor_state.set("edited", True)
         self.refresh_faces()
         self._frame_view.update()
+
+    # ---- Mask editor (#101) public action handlers ----
+    _BRUSH_MIN: T.ClassVar[int] = 2
+    _BRUSH_MAX: T.ClassVar[int] = 64
+    _BRUSH_STEP: T.ClassVar[int] = 2
+    """Brush size bounds + step (source pixels)."""
+
+    DEFAULT_MASK_TYPE: T.ClassVar[str] = "components"
+    """Mask type to use when the user has not picked one explicitly."""
+
+    def set_mask_draw_mode(self) -> bool:
+        """Switch the Mask editor to Draw mode (action handler, B)."""
+        self._editor_state.set("brush_mode", "draw")
+        self.statusBar().showMessage("Mask: Draw mode", 3000)
+        return True
+
+    def set_mask_erase_mode(self) -> bool:
+        """Switch the Mask editor to Erase mode (action handler, D)."""
+        self._editor_state.set("brush_mode", "erase")
+        self.statusBar().showMessage("Mask: Erase mode", 3000)
+        return True
+
+    def increase_brush_size(self) -> int:
+        """Step brush size up by ``_BRUSH_STEP``, clamped at ``_BRUSH_MAX``."""
+        new_size = min(self._BRUSH_MAX, self._editor_state.brush_size + self._BRUSH_STEP)
+        self._editor_state.set("brush_size", new_size)
+        self.statusBar().showMessage(f"Brush size: {new_size}", 2000)
+        return new_size
+
+    def decrease_brush_size(self) -> int:
+        """Step brush size down by ``_BRUSH_STEP``, clamped at ``_BRUSH_MIN``."""
+        new_size = max(self._BRUSH_MIN, self._editor_state.brush_size - self._BRUSH_STEP)
+        self._editor_state.set("brush_size", new_size)
+        self.statusBar().showMessage(f"Brush size: {new_size}", 2000)
+        return new_size
+
+    def active_mask_type(self) -> str:
+        """Return the selected mask type, falling back to the default."""
+        return self._editor_state.mask_type or self.DEFAULT_MASK_TYPE
+
+    def paint_mask_at(
+        self,
+        face_index: int,
+        source_x: float,
+        source_y: float,
+        *,
+        invert: bool = False,
+    ) -> bool:
+        """Stamp the Mask editor brush at the given source coordinate (#101).
+
+        ``invert`` flips the current draw/erase mode for this single
+        stamp — used by Ctrl+click in the legacy Tk editor.  Returns the
+        result of :meth:`ManualEditableAlignments.paint_mask_stroke`.
+        """
+        frame_index = self._current_frame_index()
+        if frame_index < 0:
+            self.statusBar().showMessage("No frame to edit", 3000)
+            return False
+        mode = self._editor_state.brush_mode
+        if invert:
+            mode = "erase" if mode == "draw" else "draw"
+        value = 255 if mode == "draw" else 0
+        radius = max(1.0, self._editor_state.brush_size / 2.0)
+        ok = self._editable.paint_mask_stroke(
+            frame_index,
+            int(face_index),
+            self.active_mask_type(),
+            float(source_x),
+            float(source_y),
+            radius,
+            value,
+        )
+        if ok:
+            self._editor_state.set("edited", True)
+            self._frame_view.update()
+        return ok
 
     def _face_at_source_point(self, sx: float, sy: float) -> int | None:
         """Hit-test the editable model at a source-coordinate point."""

@@ -138,6 +138,12 @@ class ManualEditorState:
     editor_mode: str = "View"
     annotation_mode: str = ""
     is_playing: bool = False
+    # Mask editor (#101) — brush + display state.  Defaults match the Tk
+    # Manual Tool's first-launch values so muscle memory carries over.
+    brush_size: int = 12
+    brush_mode: str = "draw"
+    mask_opacity: int = 50
+    mask_type: str = ""
     _listeners: dict[str, list[T.Callable[[T.Any], None]]] = field(
         default_factory=dict, repr=False
     )
@@ -155,6 +161,10 @@ class ManualEditorState:
         "editor_mode",
         "annotation_mode",
         "is_playing",
+        "brush_size",
+        "brush_mode",
+        "mask_opacity",
+        "mask_type",
     )
 
     def subscribe(self, name: str, callback: T.Callable[[T.Any], None]) -> T.Callable[[], None]:
@@ -401,6 +411,9 @@ class ManualEditableAlignments:
     """
 
     _MIN_BBOX = 1.0
+    MASK_STORED_SIZE: T.ClassVar[int] = 128
+    """Side length (in pixels) of stored-space mask grids used by the
+    Mask editor (#101).  Matches the legacy Tk Manual Tool's default."""
 
     def __init__(
         self,
@@ -421,6 +434,12 @@ class ManualEditableAlignments:
         # Tracked separately from ``_faces`` so fully emptied frames (every
         # face deleted) are still written back to the alignments file on save.
         self._dirty_frames: set[int] = set()
+        # Mask Editor (#101) — in-memory mask grids keyed by ``(frame_index,
+        # face_index, mask_type)``.  Stored as uint8 numpy arrays sized to
+        # :attr:`MASK_STORED_SIZE`.  Persistence to the alignments-file blob
+        # format is a follow-up; today the editor operates in-memory so the
+        # user can paint, undo/redo, and see live overlay feedback.
+        self._mask_state: dict[tuple[int, int, str], T.Any] = {}
 
     # ---- read API ----
     def faces(self, frame_index: int) -> tuple[EditableFace, ...]:
@@ -776,6 +795,140 @@ class ManualEditableAlignments:
 
         def undo() -> None:
             self._faces[frame_index][face_index] = previous
+
+        self._apply(do, undo, frame_index)
+        return True
+
+    # ---- Mask editor (#101) ----
+    def get_mask(
+        self,
+        frame_index: int,
+        face_index: int,
+        mask_type: str,
+    ) -> T.Any:
+        """Return the editable mask grid for ``(frame, face, type)``.
+
+        Returns the in-memory ``numpy.ndarray`` of dtype uint8 sized
+        :attr:`MASK_STORED_SIZE` x :attr:`MASK_STORED_SIZE`, or ``None`` if
+        no mask has been created/painted for this combination yet.  The
+        Mask editor consults this lazily — masks are *only* allocated on
+        first paint stroke.
+        """
+        key = (int(frame_index), int(face_index), str(mask_type))
+        return self._mask_state.get(key)
+
+    def has_mask(self, frame_index: int, face_index: int, mask_type: str) -> bool:
+        """Return whether an editable mask has been populated for this slot."""
+        return (int(frame_index), int(face_index), str(mask_type)) in self._mask_state
+
+    def known_mask_types(self, frame_index: int, face_index: int) -> tuple[str, ...]:
+        """Return every mask type currently materialised for the given face."""
+        return tuple(
+            sorted(
+                mask_type
+                for (fi, faci, mask_type) in self._mask_state
+                if fi == int(frame_index) and faci == int(face_index)
+            )
+        )
+
+    def paint_mask_stroke(
+        self,
+        frame_index: int,
+        face_index: int,
+        mask_type: str,
+        source_x: float,
+        source_y: float,
+        radius: float,
+        value: int,
+    ) -> bool:
+        """Stamp a circular brush of ``radius`` at ``(source_x, source_y)``.
+
+        Source coordinates are mapped into stored-space (the mask grid's
+        coordinate frame) using a simple axis-aligned projection from the
+        face's bounding box: that's lossier than the legacy affine-matrix
+        approach but sufficient for an editor-side preview and keeps the
+        in-memory model free of additional matrix state.
+
+        ``value`` is ``255`` to draw or ``0`` to erase.  Pixels are
+        full-on/full-off — feathered brushes are a follow-up.  Returns
+        ``False`` for an invalid face_index, out-of-bbox coordinates, or
+        a non-positive radius.  Mutates the mask array in place and
+        records undo/redo via a snapshot of the affected stamp region.
+        """
+        import numpy as np
+
+        faces = self._faces.get(frame_index, [])
+        if face_index < 0 or face_index >= len(faces):
+            return False
+        if not (radius > 0.0):
+            return False
+        face = faces[face_index]
+        x, y, w, h = face.bbox
+        if w <= 0.0 or h <= 0.0:
+            return False
+        # Source → stored-space mapping (axis-aligned bbox projection).
+        rel_x = (source_x - x) / w
+        rel_y = (source_y - y) / h
+        if not (0.0 <= rel_x <= 1.0 and 0.0 <= rel_y <= 1.0):
+            return False
+        size = self.MASK_STORED_SIZE
+        cx = rel_x * size
+        cy = rel_y * size
+        # Stored-space brush radius: scale by the smaller bbox dimension so
+        # the on-screen brush size feels uniform regardless of bbox aspect.
+        scale = size / max(1.0, min(w, h))
+        stored_radius = max(1.0, radius * scale)
+        key = (int(frame_index), int(face_index), str(mask_type))
+        existing = self._mask_state.get(key)
+        if existing is None:
+            existing = np.zeros((size, size), dtype=np.uint8)
+            self._mask_state[key] = existing
+        # Carve out the stamp region for undo/redo bookkeeping.
+        r_ceil = int(np.ceil(stored_radius)) + 1
+        x0 = max(0, int(cx) - r_ceil)
+        y0 = max(0, int(cy) - r_ceil)
+        x1 = min(size, int(cx) + r_ceil + 1)
+        y1 = min(size, int(cy) + r_ceil + 1)
+        if x0 >= x1 or y0 >= y1:
+            return False
+        prior_region = existing[y0:y1, x0:x1].copy()
+        # Apply the circular stamp.
+        yy, xx = np.ogrid[y0:y1, x0:x1]
+        mask = (xx - cx) ** 2 + (yy - cy) ** 2 <= stored_radius * stored_radius
+        if int(value) > 0:
+            existing[y0:y1, x0:x1][mask] = int(value)
+        else:
+            existing[y0:y1, x0:x1][mask] = 0
+        # Snapshot AFTER paint so redo replays the same write.
+        new_region = existing[y0:y1, x0:x1].copy()
+
+        def do() -> None:
+            existing[y0:y1, x0:x1] = new_region
+
+        def undo() -> None:
+            existing[y0:y1, x0:x1] = prior_region
+
+        self._apply(do, undo, frame_index)
+        return True
+
+    def clear_mask(self, frame_index: int, face_index: int, mask_type: str) -> bool:
+        """Drop the editable mask for ``(frame, face, type)``.
+
+        Used as the explicit clear control (and by full-frame revert).
+        Records undo/redo so a clear can be reversed.  Returns ``False``
+        when no mask was materialised in the first place.
+        """
+        key = (int(frame_index), int(face_index), str(mask_type))
+        existing = self._mask_state.get(key)
+        if existing is None:
+            return False
+        prior = existing.copy()
+
+        def do() -> None:
+            self._mask_state.pop(key, None)
+
+        def undo() -> None:
+            self._mask_state[key] = prior
 
         self._apply(do, undo, frame_index)
         return True
