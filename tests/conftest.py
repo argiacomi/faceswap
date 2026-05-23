@@ -9,6 +9,9 @@ import tempfile
 
 os.environ["OBJC_DISABLE_CLASS_WARNINGS"] = "YES"
 os.environ["OBJC_DEBUG_DUPLICATE_CLASSES"] = "NO"
+# Keep Qt widget tests headless by default.  Use setdefault so developers can
+# still override the platform plugin explicitly when debugging locally.
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 # Isolate tests from any landmark-ensemble production bundle that happens to be
 # installed at the project's default ``.fs_cache/landmark_ensemble/current/``
