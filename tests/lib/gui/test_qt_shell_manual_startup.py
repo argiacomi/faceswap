@@ -328,3 +328,76 @@ def test_manual_startup_task_stage_percent_is_monotonic() -> None:
     ]
     assert percentages == sorted(percentages)
     assert percentages[-1] == 100
+
+
+# ---------------------------------------------------------------------------
+# #114 — per-event thumbnail progress percent
+# ---------------------------------------------------------------------------
+
+
+def test_emit_thumb_progress_carries_per_event_percent(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+    """Multi-step thumbnail progress emits the right percent for every step.
+
+    The previous implementation mutated ``STAGE_PERCENT["thumbs_progress"]``
+    before emitting on a named-stage signal, which could race queued Qt
+    deliveries and paint the wrong percent.  The new design emits
+    ``(percent, message)`` directly so each event carries an immutable
+    percent value computed at emit time.
+    """
+    session = _session_with_frames(tmp_path)
+    handle = session.alignments_handle()
+    editable = ManualEditableAlignments()
+    task = _ManualStartupTask(handle, editable, session)
+    received: list[tuple[int, str]] = []
+    task.progress_percent.connect(lambda pct, msg: received.append((pct, msg)))
+
+    task._emit_thumb_progress(1, 4, "frame 1")  # noqa: SLF001
+    task._emit_thumb_progress(2, 4, "frame 2")  # noqa: SLF001
+    task._emit_thumb_progress(4, 4, "frame 4")  # noqa: SLF001
+
+    # 66 + round(done/total * 33) clamped to 99.
+    assert received == [
+        (66 + round(1 / 4 * 33), "frame 1"),
+        (66 + round(2 / 4 * 33), "frame 2"),
+        (66 + round(4 / 4 * 33), "frame 4"),
+    ]
+    # Clamped at 99 so the bar never paints "complete" until the worker
+    # explicitly emits the "complete" named stage.
+    assert received[-1][0] == 99
+
+
+def test_thumb_progress_state_does_not_bleed_between_tasks(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+    """Two startup task instances must not influence each other's percent."""
+    folder_a = tmp_path / "a"
+    folder_b = tmp_path / "b"
+    folder_a.mkdir()
+    folder_b.mkdir()
+    session_a = _session_with_frames(folder_a, count=2)
+    session_b = _session_with_frames(folder_b, count=2)
+    handle_a = session_a.alignments_handle()
+    handle_b = session_b.alignments_handle()
+    editable_a = ManualEditableAlignments()
+    editable_b = ManualEditableAlignments()
+    task_a = _ManualStartupTask(handle_a, editable_a, session_a)
+    task_b = _ManualStartupTask(handle_b, editable_b, session_b)
+
+    received_a: list[int] = []
+    received_b: list[int] = []
+    task_a.progress_percent.connect(lambda pct, _msg: received_a.append(pct))
+    task_b.progress_percent.connect(lambda pct, _msg: received_b.append(pct))
+
+    # Task A advances 50 %; Task B then advances 25 %.  The 25 % event must
+    # not be influenced by Task A's previously-emitted 50 % value (which
+    # the old implementation would have stashed onto the shared class
+    # attribute).
+    task_a._emit_thumb_progress(1, 2, "a1")  # noqa: SLF001
+    task_b._emit_thumb_progress(1, 4, "b1")  # noqa: SLF001
+    task_a._emit_thumb_progress(2, 2, "a2")  # noqa: SLF001
+
+    assert received_a == [66 + round(1 / 2 * 33), 99]
+    assert received_b == [66 + round(1 / 4 * 33)]
+
+
+def test_stage_percent_no_longer_contains_thumbs_progress() -> None:
+    """``thumbs_progress`` is no longer a static stage in the class table."""
+    assert "thumbs_progress" not in _ManualStartupTask.STAGE_PERCENT

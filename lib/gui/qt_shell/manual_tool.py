@@ -1602,7 +1602,11 @@ class _ManualStartupTask(QObject):
     """
 
     progress = Signal(str, str)
-    """Emitted with ``(stage, message)`` as each stage starts."""
+    """Emitted with ``(stage, message)`` as each named stage starts."""
+    progress_percent = Signal(int, str)
+    """Emitted with ``(percent, message)`` for live sub-stage progress (eg.
+    per-frame thumbnail regeneration).  Each event carries its own immutable
+    percent value so queued signals always paint the correct bar position."""
     completed = Signal(bool, str)
     """Emitted with ``(has_thumbnails, summary)`` on success."""
     failed = Signal(str)
@@ -1628,12 +1632,15 @@ class _ManualStartupTask(QObject):
     STAGE_PERCENT: T.ClassVar[dict[str, int]] = {
         "open": 33,
         "thumbs": 66,
-        "thumbs_progress": 66,
         "complete": 100,
     }
-    """Base percent for each named stage.  The ``thumbs_progress`` value is
-    replaced live by :meth:`_emit_thumb_progress` so the determinate startup
-    bar walks 66 → 99 across the regenerated frames."""
+    """Static stage anchors used by :meth:`progress` events.
+
+    Live thumbnail-regeneration percentages are *not* stored here — they're
+    delivered through the dedicated :attr:`progress_percent` signal so each
+    event carries its own immutable percent and cannot bleed between
+    Manual Tool windows (see issue #114).
+    """
 
     def run(self) -> None:  # noqa: D401 - Qt slot
         """Execute the staged startup work."""
@@ -1666,16 +1673,17 @@ class _ManualStartupTask(QObject):
             self.failed.emit(str(err))
 
     def _emit_thumb_progress(self, done: int, total: int, message: str) -> None:
-        """Bridge :mod:`thumbnail_generation` progress to ``self.progress``.
+        """Bridge :mod:`thumbnail_generation` progress to immutable per-event percent.
 
-        Maps the (done, total) pair into the 66-99 % band of the startup bar.
-        Writes the live percent into ``STAGE_PERCENT`` under a stage key the
-        progress handler reads, so the determinate bar keeps moving.
+        Maps the (done, total) pair into the 66 → 99 % band of the startup bar
+        and emits it on the dedicated :attr:`progress_percent` signal.  Also
+        fires the named ``progress`` signal so console fanout and status-bar
+        message paths continue to receive each step.
         """
         denominator = max(1, total)
         percent = min(99, 66 + round((done / denominator) * 33))
-        self.STAGE_PERCENT["thumbs_progress"] = percent
-        self.progress.emit("thumbs_progress", message)
+        self.progress_percent.emit(int(percent), message)
+        self.progress.emit("thumbs", message)
 
 
 class ManualStartupWorker(QObject):
@@ -1688,6 +1696,7 @@ class ManualStartupWorker(QObject):
     """
 
     progress = Signal(str, str)
+    progress_percent = Signal(int, str)
     completed = Signal(bool, str)
     failed = Signal(str)
 
@@ -1703,6 +1712,7 @@ class ManualStartupWorker(QObject):
         self._task = _ManualStartupTask(handle, editable, session)
         self._task.moveToThread(self._thread)
         self._task.progress.connect(self.progress)
+        self._task.progress_percent.connect(self.progress_percent)
         self._task.completed.connect(self.completed)
         self._task.failed.connect(self.failed)
         # Auto-quit the QThread as soon as the task reports a terminal
@@ -2804,6 +2814,7 @@ class ManualToolWindow(QMainWindow):
             self._alignments_handle, self._editable, self._session, parent=self
         )
         self._startup_worker.progress.connect(self._on_startup_progress)
+        self._startup_worker.progress_percent.connect(self._on_startup_progress_percent)
         self._startup_worker.completed.connect(self._on_startup_completed)
         self._startup_worker.failed.connect(self._on_startup_failed)
         logger.info("Manual Tool startup worker scheduled")
@@ -2835,6 +2846,18 @@ class ManualToolWindow(QMainWindow):
         percent = _ManualStartupTask.STAGE_PERCENT.get(stage)
         if percent is not None and self._progress_bar is not None:
             self._progress_bar.setValue(percent)
+
+    def _on_startup_progress_percent(self, percent: int, _message: str) -> None:
+        """Paint the determinate progress bar from a per-event thumb percent.
+
+        The percent is carried by the signal payload itself, so queued
+        deliveries cannot disagree with the value computed at emit time —
+        unlike the previous ``STAGE_PERCENT["thumbs_progress"]`` trick.
+        """
+        if self._progress_bar is None:
+            return
+        clamped = max(0, min(100, int(percent)))
+        self._progress_bar.setValue(clamped)
 
     def _on_startup_completed(self, has_thumbnails: bool, summary: str) -> None:
         """Finalize UI state once the startup worker reports success."""
