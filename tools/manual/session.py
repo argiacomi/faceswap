@@ -431,6 +431,16 @@ class ManualEditableAlignments:
         """Return the number of editable faces for a frame."""
         return len(self._faces.get(frame_index, ()))
 
+    def known_frame_indices(self) -> tuple[int, ...]:
+        """Return every frame index this model currently tracks.
+
+        Includes empty-but-known frames (fully deleted entries still appear
+        until explicitly cleared) so callers can decide whether to keep,
+        skip, or surface them — :meth:`apply_to_alignments` already iterates
+        ``_dirty_frames`` to write empty entries back to disk.
+        """
+        return tuple(sorted(self._faces.keys()))
+
     def hit_test(self, frame_index: int, px: float, py: float) -> int | None:
         """Return the face_index whose bbox contains ``(px, py)`` or ``None``.
 

@@ -163,3 +163,107 @@ def test_extract_faces_reader_failure_is_surfaced(
                 output_folder=str(output),
             ),
         )
+
+
+# ---------------------------------------------------------------------------
+# #116 — Extract uses live editable state instead of persisted alignments
+# ---------------------------------------------------------------------------
+
+
+def test_extract_faces_editable_targets_replace_disk_alignments(tmp_path: Path) -> None:
+    """``editable_targets`` bypass ``alignments.data`` entirely.
+
+    Persist one face on frame_000, then pass an editable snapshot that
+    references only frame_001 (a frame the disk file has never seen).
+    Extract should write frame_001's face and skip frame_000 — proving the
+    snapshot is the source of truth, not disk.
+    """
+    from tools.manual.face_extraction import EditableFaceSpec
+
+    session = _session_with_face(tmp_path)
+    _write_frame(tmp_path / "frame_001.png")
+    # Re-create the session so frame_list picks up frame_001 too.
+    session = ManualSession.create(frames=str(tmp_path))
+    landmarks = np.asarray([(40.0 + i * 0.5, 40.0 + i * 0.5) for i in range(68)], dtype=np.float32)
+    targets = (
+        (
+            "frame_001.png",
+            (
+                EditableFaceSpec(
+                    face_index=0,
+                    bbox=(10, 10, 60, 60),
+                    landmarks_xy=landmarks,
+                ),
+            ),
+        ),
+    )
+    output = tmp_path / "extracted"
+    result = extract_faces(
+        FaceExtractionRequest(
+            handle=session.alignments_handle(),
+            session=session,
+            output_folder=str(output),
+            editable_targets=targets,
+        ),
+    )
+    assert result.faces_written == 1
+    assert (output / "frame_001_0.png").is_file()
+    # frame_000 — the only face on disk — must NOT be extracted.
+    assert not (output / "frame_000_0.png").is_file()
+
+
+def test_extract_faces_editable_targets_reflect_unsaved_delete(tmp_path: Path) -> None:
+    """An empty editable snapshot yields an empty result, even with disk faces."""
+    session = _session_with_face(tmp_path)
+    output = tmp_path / "extracted"
+    result = extract_faces(
+        FaceExtractionRequest(
+            handle=session.alignments_handle(),
+            session=session,
+            output_folder=str(output),
+            editable_targets=(),
+        ),
+    )
+    assert result.faces_written == 0
+    assert result.frames_processed == 0
+
+
+def test_extract_faces_editable_targets_carry_unsaved_bbox_into_metadata(
+    tmp_path: Path,
+) -> None:
+    """The PNG metadata reflects the editable bbox, not the persisted one."""
+    from lib.image import png_read_meta
+    from tools.manual.face_extraction import EditableFaceSpec
+
+    session = _session_with_face(tmp_path)
+    # Editable bbox shifted ten pixels right/down from the persisted one.
+    landmarks = np.asarray([(45.0 + i * 0.5, 50.0 + i * 0.4) for i in range(68)], dtype=np.float32)
+    targets = (
+        (
+            "frame_000.png",
+            (
+                EditableFaceSpec(
+                    face_index=0,
+                    bbox=(20, 20, 60, 60),
+                    landmarks_xy=landmarks,
+                ),
+            ),
+        ),
+    )
+    output = tmp_path / "extracted"
+    extract_faces(
+        FaceExtractionRequest(
+            handle=session.alignments_handle(),
+            session=session,
+            output_folder=str(output),
+            editable_targets=targets,
+        ),
+    )
+    meta = png_read_meta((output / "frame_000_0.png").read_bytes())
+    assert meta is not None
+    # Source frame name + face_index are still correct.
+    assert meta.source.source_filename == "frame_000.png"
+    assert meta.source.face_index == 0
+    # The alignments embed the *editable* bbox, not the persisted (10, 10).
+    assert meta.alignments.x == 20
+    assert meta.alignments.y == 20

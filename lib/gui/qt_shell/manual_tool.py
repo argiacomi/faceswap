@@ -49,6 +49,7 @@ from PySide6.QtWidgets import (
     QSplitter,
     QStatusBar,
     QToolBar,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -1757,11 +1758,17 @@ class _ManualExtractFacesTask(QObject):
         handle: ManualAlignmentsHandle,
         session: ManualSession,
         output_folder: str,
+        editable_targets: T.Any = None,
     ) -> None:
         super().__init__()
         self._handle = handle
         self._session = session
         self._output_folder = output_folder
+        # Editable snapshot — when supplied, ``extract_faces`` uses it instead
+        # of the persisted alignments file so unsaved Manual Tool edits are
+        # included in the extracted PNG output (parity with Tk Manual which
+        # extracts from its live in-memory face list).
+        self._editable_targets = editable_targets
         self._cancelled = False
         self._start.connect(self.run)
 
@@ -1789,6 +1796,7 @@ class _ManualExtractFacesTask(QObject):
                 handle=self._handle,
                 session=self._session,
                 output_folder=self._output_folder,
+                editable_targets=self._editable_targets,
             )
             result = extract_faces(
                 request,
@@ -1814,11 +1822,14 @@ class ManualExtractFacesWorker(QObject):
         handle: ManualAlignmentsHandle,
         session: ManualSession,
         output_folder: str,
+        editable_targets: T.Any = None,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
         self._thread = QThread(self)
-        self._task = _ManualExtractFacesTask(handle, session, output_folder)
+        self._task = _ManualExtractFacesTask(
+            handle, session, output_folder, editable_targets=editable_targets
+        )
         self._task.moveToThread(self._thread)
         self._task.progress.connect(self.progress)
         self._task.completed.connect(self.completed)
@@ -1893,6 +1904,8 @@ class ManualToolWindow(QMainWindow):
         # Extract Faces worker — held so cancel/close can stop it cleanly.
         self._extract_worker: ManualExtractFacesWorker | None = None
         self._extract_total: int = 0
+        # Visible Cancel control next to the extract progress bar (issue #118).
+        self._extract_cancel_button: QToolButton | None = None
         self._actions: dict[str, QAction] = {}
         # Save/bulk-operation lock state.  ``_busy_operation`` carries a short
         # user-facing label for the in-flight job ("Saving alignments…", etc.)
@@ -2186,11 +2199,14 @@ class ManualToolWindow(QMainWindow):
         if self._extract_worker is not None:
             self.statusBar().showMessage("Extraction already in progress…", 4000)
             return False
-        if not self._alignments_handle.exists:
-            self.statusBar().showMessage("No alignments file to extract from", 4000)
-            return False
-        if not self._has_any_face():
-            self.statusBar().showMessage("Nothing to extract — no faces in alignments", 4000)
+        # Extract the live editable state — unsaved adds/deletes/moves count.
+        # Persisting bootstraps the alignments file on demand, so we
+        # also persist any in-flight edits first to keep alignments.version
+        # and source metadata accurate inside the PNG headers.
+        if not self._editable_has_any_face():
+            self.statusBar().showMessage(
+                "Nothing to extract — no faces in the editable model", 4000
+            )
             return False
         initial_dir = self._initial_extract_dir()
         chosen = QFileDialog.getExistingDirectory(
@@ -2204,15 +2220,85 @@ class ManualToolWindow(QMainWindow):
         self._start_extract_worker(chosen)
         return True
 
-    def _has_any_face(self) -> bool:
-        """Return whether the alignments file currently stores any faces."""
-        if not self._alignments_handle.exists:
-            return False
+    def _editable_has_any_face(self) -> bool:
+        """Return whether the live editable model has any face anywhere."""
+        return any(
+            self._editable.face_count(index) > 0 for index in self._editable_frame_indices()
+        )
+
+    def _editable_frame_indices(self) -> tuple[int, ...]:
+        """Return every frame index that currently has editable state.
+
+        Covers both ``has_images`` (where indices match the discovered frame
+        list) and the video case (where frame_index is sparse) by combining
+        the discovered range with whatever indices the editable model knows
+        about.  The set is union-deduped and returned sorted.
+        """
+        known = set(self._editable.known_frame_indices())
+        if self._session.has_images:
+            known.update(range(len(self._session.frame_list)))
+        return tuple(sorted(known))
+
+    def _build_editable_extract_targets(self) -> tuple[tuple[str, tuple[T.Any, ...]], ...]:
+        """Materialize the live editable model as ``EditableFaceSpec`` targets.
+
+        Iterates every frame the editable model tracks, resolves each to a
+        frame name through the same mapping ``save`` uses, and copies
+        bbox + landmarks from the editable face.  ``mask`` / ``identity`` /
+        ``metadata`` are sourced from the persisted alignments entry at the
+        same ``face_index`` when available (so identity vectors and mask
+        payloads survive an extract on a face the user has merely moved);
+        if no persisted entry exists, they're empty — matching how Tk
+        Manual treats a brand-new face.
+        """
+        import numpy as np
+
+        from tools.manual.face_extraction import EditableFaceSpec
+
+        resolver = self._frame_names_for_persist()
         try:
             alignments = self._alignments_handle.open()
-        except Exception:  # noqa: BLE001 - non-fatal probe
-            return False
-        return any(bool(entry.faces) for entry in alignments.data.values())
+            persisted_by_name = {
+                name: tuple(entry.faces) for name, entry in alignments.data.items()
+            }
+        except Exception:  # noqa: BLE001 - extract still works against unsaved-only sessions
+            persisted_by_name = {}
+
+        targets: list[tuple[str, tuple[EditableFaceSpec, ...]]] = []
+        for frame_index in self._editable_frame_indices():
+            faces = self._editable.faces(frame_index)
+            if not faces:
+                continue
+            if callable(resolver):
+                frame_name = resolver(frame_index)
+            elif 0 <= frame_index < len(resolver):
+                frame_name = resolver[frame_index]
+            else:
+                frame_name = None
+            if not frame_name:
+                continue
+            persisted = persisted_by_name.get(frame_name, ())
+            specs: list[EditableFaceSpec] = []
+            for face in faces:
+                landmarks = (
+                    np.asarray(face.landmarks, dtype=np.float32)
+                    if face.landmarks
+                    else np.zeros((0, 2), dtype=np.float32)
+                )
+                prev = persisted[face.face_index] if face.face_index < len(persisted) else None
+                x, y, w, h = (int(round(value)) for value in face.bbox)
+                specs.append(
+                    EditableFaceSpec(
+                        face_index=face.face_index,
+                        bbox=(x, y, w, h),
+                        landmarks_xy=landmarks,
+                        mask=dict(getattr(prev, "mask", {}) or {}),
+                        identity=dict(getattr(prev, "identity", {}) or {}),
+                        metadata=dict(getattr(prev, "metadata", {}) or {}),
+                    )
+                )
+            targets.append((frame_name, tuple(specs)))
+        return tuple(targets)
 
     def _initial_extract_dir(self) -> str:
         """Default the folder picker to a sibling of the input source."""
@@ -2221,9 +2307,29 @@ class ManualToolWindow(QMainWindow):
         return self._session.frames
 
     def _start_extract_worker(self, output_folder: str) -> None:
-        """Spin up :class:`ManualExtractFacesWorker` and wire its signals."""
+        """Spin up :class:`ManualExtractFacesWorker` and wire its signals.
+
+        Persists in-flight edits first (which bootstraps the alignments file
+        if it doesn't exist yet so ``alignments.version`` is well-defined
+        inside the PNG header), then builds an editable snapshot to drive
+        the extraction.  ``extract_faces`` iterates the snapshot directly
+        rather than re-reading ``alignments.data``, so unsaved adds,
+        deletes, moves, and resizes all appear in the extracted output —
+        matching Tk Manual which extracts its live in-memory face list.
+        """
+        if self._editor_state.unsaved:
+            # Synchronously persist so the alignments file reflects the
+            # editable model before extract reads ``alignments.version``.
+            # We use the in-flight ``save`` path (with busy lock) so save
+            # progress + dirty clear behave identically to ``Ctrl+S``.
+            self.save()
+        editable_targets = self._build_editable_extract_targets()
         worker = ManualExtractFacesWorker(
-            self._alignments_handle, self._session, output_folder, parent=self
+            self._alignments_handle,
+            self._session,
+            output_folder,
+            editable_targets=editable_targets,
+            parent=self,
         )
         worker.progress.connect(self._on_extract_progress)
         worker.completed.connect(self._on_extract_completed)
@@ -2233,9 +2339,14 @@ class ManualToolWindow(QMainWindow):
         if self._progress_bar is None:
             self._progress_bar = self._build_progress_bar()
             self.statusBar().addPermanentWidget(self._progress_bar)
+        if self._extract_cancel_button is None:
+            self._extract_cancel_button = self._build_extract_cancel_button()
+            self.statusBar().addPermanentWidget(self._extract_cancel_button)
         self._progress_bar.setRange(0, 0)
         self._progress_bar.setFormat("Extracting faces…")
         self._progress_bar.show()
+        self._extract_cancel_button.setEnabled(True)
+        self._extract_cancel_button.show()
         self.statusBar().showMessage(f"Extracting faces to {output_folder}", 5000)
         self._busy_operation = "Extracting faces…"
         self._sync_actions()
@@ -2290,11 +2401,14 @@ class ManualToolWindow(QMainWindow):
         QMessageBox.critical(self, "Extract Faces", full)
 
     def _teardown_extract_worker(self) -> None:
-        """Hide progress, clear busy state and join the worker thread."""
+        """Hide progress + Cancel button, clear busy state, join the worker thread."""
         if self._progress_bar is not None:
             self._progress_bar.hide()
             self._progress_bar.setRange(0, 100)
             self._progress_bar.setFormat("Loading %p%")
+        if self._extract_cancel_button is not None:
+            self._extract_cancel_button.hide()
+            self._extract_cancel_button.setEnabled(False)
         self._busy_operation = None
         if self._extract_worker is not None:
             self._extract_worker.stop()
@@ -2302,6 +2416,36 @@ class ManualToolWindow(QMainWindow):
             self._extract_worker = None
         self._extract_total = 0
         self._sync_actions()
+
+    def _build_extract_cancel_button(self) -> QToolButton:
+        """Return a status-bar Cancel button bound to :meth:`cancel_extract`."""
+        button = QToolButton(self)
+        button.setObjectName("qt-manual-extract-cancel")
+        button.setText("Cancel")
+        button.setToolTip("Cancel Extract Faces (stops at the next frame boundary)")
+        button.setAutoRaise(False)
+        button.setEnabled(False)
+        button.hide()
+        button.clicked.connect(self.cancel_extract)
+        return button
+
+    def cancel_extract(self) -> bool:
+        """Request an in-flight Extract Faces job to stop at the next frame.
+
+        Returns ``True`` when a worker was actively cancelled, ``False`` when
+        no extraction was running.  The Cancel button is disabled immediately
+        so a double-click cannot fire the worker cancel path twice; the
+        teardown later hides + re-disables it.
+        """
+        worker = self._extract_worker
+        if worker is None:
+            return False
+        worker.cancel()
+        if self._extract_cancel_button is not None:
+            self._extract_cancel_button.setEnabled(False)
+        self.statusBar().showMessage("Cancelling extract — stopping at next frame…", 4000)
+        self._emit_console("Manual Tool: extract cancellation requested")
+        return True
 
     def launch_legacy(self) -> bool:
         """Launch the existing Tk Manual Tool as a fallback subprocess."""

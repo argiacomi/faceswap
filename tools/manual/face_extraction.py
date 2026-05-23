@@ -39,12 +39,58 @@ EXTRACT_FACE_SIZE = 512
 
 
 @dataclass(frozen=True)
+class EditableFaceSpec:
+    """One face from the live editable model, shaped for the extract writer.
+
+    Mirrors the duck-typed attribute access the writer already does on
+    :class:`lib.align.objects.FileAlignments` so the same code path can serve
+    both persisted alignments and unsaved Manual Tool edits.
+    """
+
+    face_index: int
+    bbox: tuple[int, int, int, int]
+    landmarks_xy: T.Any
+    """A numpy ``(N, 2)`` float32 array; typed loosely to avoid importing numpy here."""
+    mask: dict[str, T.Any] = field(default_factory=dict)
+    identity: dict[str, T.Any] = field(default_factory=dict)
+    metadata: dict[str, T.Any] = field(default_factory=dict)
+
+    @property
+    def x(self) -> int:
+        return int(self.bbox[0])
+
+    @property
+    def y(self) -> int:
+        return int(self.bbox[1])
+
+    @property
+    def w(self) -> int:
+        return int(self.bbox[2])
+
+    @property
+    def h(self) -> int:
+        return int(self.bbox[3])
+
+
+EditableExtractTargets = tuple[tuple[str, tuple[EditableFaceSpec, ...]], ...]
+"""``((frame_name, (face_spec, ...)), ...)`` — frame ordering is preserved."""
+
+
+@dataclass(frozen=True)
 class FaceExtractionRequest:
-    """Inputs for one :func:`extract_faces` call."""
+    """Inputs for one :func:`extract_faces` call.
+
+    When ``editable_targets`` is provided, extraction uses the live editable
+    model's bboxes + landmarks instead of the persisted alignments file —
+    so unsaved adds/deletes/moves/resizes are included.  The original
+    alignments file is still opened so ``alignments.version`` can be
+    embedded in PNG metadata, but ``alignments.data`` is bypassed.
+    """
 
     handle: ManualAlignmentsHandle
     session: ManualSession
     output_folder: str
+    editable_targets: EditableExtractTargets | None = None
 
 
 @dataclass
@@ -61,6 +107,25 @@ class ExtractFacesResult:
     """``True`` when the cancel predicate returned ``True`` mid-run."""
     errors: list[str] = field(default_factory=list)
     """User-facing error strings for any per-frame failures."""
+
+
+def _entry_faces(entry: T.Any) -> tuple[T.Any, ...]:
+    """Return faces from either an AlignmentFileDict entry or a raw face tuple/list.
+
+    ``Alignments.data`` can expose frame entries as wrapper objects with a
+    ``faces`` attribute in production code, while focused tests and some
+    lightweight handles use the raw tuple of ``FileAlignments`` directly.
+    Support both shapes so extraction remains independent from the exact
+    alignment container implementation.
+    """
+    faces = getattr(entry, "faces", entry)
+    if faces is None:
+        return ()
+    if isinstance(faces, tuple):
+        return faces
+    if isinstance(faces, list):
+        return tuple(faces)
+    return tuple(faces)
 
 
 def extract_faces(
@@ -82,9 +147,16 @@ def extract_faces(
     if not request.handle.exists:
         return result
     alignments = request.handle.open()
-    targets = tuple(
-        (frame_name, entry) for frame_name, entry in alignments.data.items() if entry.faces
-    )
+    if request.editable_targets is not None:
+        targets = tuple(
+            (frame_name, faces) for frame_name, faces in request.editable_targets if faces
+        )
+    else:
+        targets = tuple(
+            (frame_name, entry)
+            for frame_name, entry in alignments.data.items()
+            if _entry_faces(entry)
+        )
     if not targets:
         return result
     output_folder = _ensure_output_folder(request.output_folder)
@@ -198,13 +270,13 @@ def _emit_faces_for_frame(
     request: FaceExtractionRequest,
     result: ExtractFacesResult,
 ) -> None:
-    """Encode + save one aligned face per ``entry.faces`` entry."""
+    """Encode + save one aligned face per frame entry face."""
     from lib.align import AlignedFace
     from lib.align.objects import PNGAlignments, PNGHeader, PNGSource
     from lib.image import encode_image
 
     source_stem = os.path.splitext(os.path.basename(frame_name))[0]
-    for face_index, face in enumerate(entry.faces):
+    for face_index, face in enumerate(_entry_faces(entry)):
         output_name = f"{source_stem}_{face_index}.png"
         aligned = AlignedFace(
             face.landmarks_xy, image=image, centering="head", size=EXTRACT_FACE_SIZE
@@ -213,10 +285,6 @@ def _emit_faces_for_frame(
             result.skipped_frames += 1
             result.errors.append(f"Face {face_index} in {frame_name} produced no aligned crop")
             continue
-        # ``FileAlignments`` extends ``PNGAlignments`` with a ``thumb`` field we
-        # don't want in the PNG header — re-project the shared fields onto a
-        # fresh ``PNGAlignments`` dataclass so the saved payload matches the
-        # legacy Tk header schema exactly.
         png_alignments = PNGAlignments(
             x=face.x,
             y=face.y,
