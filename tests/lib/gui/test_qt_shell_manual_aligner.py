@@ -8,11 +8,21 @@ tests do not load actual aligner plugins.
 
 from __future__ import annotations
 
+import typing as T
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
 from PySide6.QtGui import QColor, QPixmap
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QLabel,
+    QProgressBar,
+    QRadioButton,
+    QToolButton,
+    QWidget,
+)
 
 from lib.gui.qt_shell.manual_tool import ManualToolWindow
 from tools.manual.aligner_service import (
@@ -50,6 +60,8 @@ def _stub_service(
     landmarks: np.ndarray | None = None,
     fail: Exception | None = None,
     instances: list[_StubBackend] | None = None,
+    available: tuple[str, ...] = ("HRNet",),
+    default: str = "HRNet",
 ) -> ManualAlignerService:
     """Build a stubbed service that records every align call."""
     instances = instances if instances is not None else []
@@ -68,8 +80,8 @@ def _stub_service(
         return backend
 
     svc = ManualAlignerService(
-        available=lambda: ("HRNet",),
-        default=lambda: "HRNet",
+        available=lambda: available,
+        default=lambda: default,
         factory=factory,
     )
     svc._test_instances = instances  # type:ignore[attr-defined]
@@ -97,6 +109,16 @@ def _make_window(
     qtbot.waitExposed(window)
     qtbot.waitUntil(lambda: window._frame_view.source_size != (0, 0), timeout=2000)
     return window, service
+
+
+_WidgetT = T.TypeVar("_WidgetT", bound=QWidget)
+
+
+def _child(window: ManualToolWindow, widget_type: type[_WidgetT], name: str) -> _WidgetT:
+    """Return a named child widget, failing with a useful assertion message."""
+    widget = window.findChild(widget_type, name)
+    assert widget is not None, f"Missing widget {name}"
+    return widget
 
 
 # ---------------------------------------------------------------------------
@@ -134,6 +156,127 @@ def test_set_normalization_propagates_to_loaded_backends(qtbot, tmp_path: Path) 
     window.set_aligner_normalization("clahe")
     assert window._editor_state.aligner_normalization == "clahe"
     assert instances[-1].normalization_changes[-1] == "clahe"
+
+
+# ---------------------------------------------------------------------------
+# Visible BBox controls
+# ---------------------------------------------------------------------------
+
+
+def test_bbox_aligner_controls_exist_and_populate_from_service(
+    qtbot, tmp_path: Path
+) -> None:  # type:ignore[no-untyped-def]
+    """BBox editor surfaces aligner dropdown, radios, auto-run and progress widgets."""
+    service = _stub_service(available=("HRNet", "FAN"), default="FAN")
+    window, _ = _make_window(qtbot, tmp_path, service=service)
+
+    controls = _child(window, QWidget, "qt-manual-aligner-controls")
+    combo = _child(window, QComboBox, "qt-manual-aligner-combo")
+    auto_run = _child(window, QCheckBox, "qt-manual-aligner-auto-run")
+    rerun = _child(window, QToolButton, "qt-manual-aligner-rerun")
+    progress = _child(window, QProgressBar, "qt-manual-aligner-load-progress")
+    status = _child(window, QLabel, "qt-manual-aligner-status-label")
+
+    assert controls.isVisible() is False
+    window._editor_state.set("editor_mode", "BoundingBox")
+
+    assert controls.isVisible() is True
+    assert [combo.itemText(index) for index in range(combo.count())] == ["HRNet", "FAN"]
+    assert combo.currentText() == "FAN"
+    assert _child(window, QRadioButton, "qt-manual-aligner-normalization-hist").isChecked()
+    for method in NORMALIZATION_CHOICES:
+        assert _child(window, QRadioButton, f"qt-manual-aligner-normalization-{method}")
+    assert auto_run.isChecked() is True
+    assert rerun.text() == "Run"
+    assert progress is not None
+    assert status.text()
+
+
+def test_bbox_aligner_controls_are_visible_only_in_bbox_mode(
+    qtbot, tmp_path: Path
+) -> None:  # type:ignore[no-untyped-def]
+    """Aligner controls hide outside BoundingBox mode without being destroyed."""
+    window, _ = _make_window(qtbot, tmp_path)
+    controls = _child(window, QWidget, "qt-manual-aligner-controls")
+
+    assert controls.isVisible() is False
+    window._editor_state.set("editor_mode", "BoundingBox")
+    assert controls.isVisible() is True
+
+    window._editor_state.set("editor_mode", "Landmarks")
+    assert controls.isVisible() is False
+    window._editor_state.set("editor_mode", "Mask")
+    assert controls.isVisible() is False
+    window._editor_state.set("editor_mode", "View")
+    assert controls.isVisible() is False
+
+
+def test_bbox_aligner_selection_persists_across_editor_mode_changes(
+    qtbot, tmp_path: Path
+) -> None:  # type:ignore[no-untyped-def]
+    """Dropdown + normalization choices survive leaving and re-entering BBox mode."""
+    service = _stub_service(available=("HRNet", "FAN"), default="HRNet")
+    window, _ = _make_window(qtbot, tmp_path, service=service)
+    controls = _child(window, QWidget, "qt-manual-aligner-controls")
+    combo = _child(window, QComboBox, "qt-manual-aligner-combo")
+    clahe = _child(window, QRadioButton, "qt-manual-aligner-normalization-clahe")
+
+    window._editor_state.set("editor_mode", "BoundingBox")
+    qtbot.waitUntil(lambda: window._aligner_load_worker is None, timeout=2000)
+    combo.setCurrentIndex(combo.findText("FAN"))
+    qtbot.waitUntil(lambda: window._editor_state.aligner_name == "FAN", timeout=2000)
+    qtbot.waitUntil(lambda: window._aligner_load_worker is None, timeout=2000)
+    clahe.click()
+    qtbot.waitUntil(
+        lambda: window._editor_state.aligner_normalization == "clahe", timeout=2000
+    )
+
+    window._editor_state.set("editor_mode", "Landmarks")
+    assert controls.isVisible() is False
+    window._editor_state.set("editor_mode", "BoundingBox")
+
+    assert controls.isVisible() is True
+    assert combo.currentText() == "FAN"
+    assert clahe.isChecked() is True
+    assert window._editor_state.aligner_name == "FAN"
+    assert window._editor_state.aligner_normalization == "clahe"
+
+
+def test_bbox_auto_run_checkbox_updates_state_and_gates_rerun(
+    qtbot, tmp_path: Path
+) -> None:  # type:ignore[no-untyped-def]
+    """The visible Auto-run checkbox controls post-bbox-edit aligner reruns."""
+    window, service = _make_window(qtbot, tmp_path)
+    checkbox = _child(window, QCheckBox, "qt-manual-aligner-auto-run")
+    window._editable.add_face(0, (10.0, 10.0, 40.0, 40.0))
+    window._editor_state.set("face_index", 0)
+    window._editor_state.set("editor_mode", "BoundingBox")
+    qtbot.waitUntil(lambda: window._aligner_load_worker is None, timeout=2000)
+
+    checkbox.click()
+
+    assert checkbox.isChecked() is False
+    assert window._editor_state.aligner_auto_run is False
+    window._on_face_move_requested(0, 5.0, 7.0)
+    instances = service._test_instances  # type:ignore[attr-defined]
+    assert all(not backend.align_calls for backend in instances)
+
+
+def test_bbox_aligner_preload_progress_paints_loading_then_ready(
+    qtbot, tmp_path: Path
+) -> None:  # type:ignore[no-untyped-def]
+    """Entering BBox mode starts background preload and updates inline status."""
+    window, _ = _make_window(qtbot, tmp_path)
+    progress = _child(window, QProgressBar, "qt-manual-aligner-load-progress")
+    status = _child(window, QLabel, "qt-manual-aligner-status-label")
+
+    window._editor_state.set("editor_mode", "BoundingBox")
+
+    assert progress.isVisible() is True
+    assert "Loading aligner" in progress.format()
+    qtbot.waitUntil(lambda: window._aligner_load_worker is None, timeout=2000)
+    assert progress.isVisible() is False
+    assert "ready" in status.text().lower()
 
 
 # ---------------------------------------------------------------------------
