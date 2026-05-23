@@ -1407,6 +1407,7 @@ def _build_audit(
         "supported_datasets": SUPPORTED_DATASETS,
     }
 
+
 def _write_source_notes(output_dir: Path) -> None:
     """Write generated source/licensing notes next to generated manifests."""
     notes = output_dir / "SOURCE_NOTES.md"

@@ -9,6 +9,7 @@ legacy fallback launcher without importing ``tkinter`` on the Qt path.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import subprocess
 import typing as T
@@ -224,6 +225,10 @@ class ManualFrameView(QWidget):
     """Emitted at the end of a bbox drag: (face_index, dx, dy) in source pixels."""
     face_resize_requested = Signal(int, QRectF)
     """Emitted at the end of a handle drag: (face_index, new_bbox in source pixels)."""
+    face_add_requested = Signal(QRectF)
+    """Emitted at the end of an empty-space drag/click in BBox add mode."""
+    face_context_menu_requested = Signal(int, QPointF)
+    """Emitted on right-click over an existing face: (face_index, global pos)."""
 
     _MIN_ZOOM = 1.0
     _MAX_ZOOM = 20.0
@@ -236,6 +241,10 @@ class ManualFrameView(QWidget):
         self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
         self.setMouseTracking(True)
         self.setCursor(Qt.ArrowCursor)
+        # ``StrongFocus`` lets the frame view receive keyboard focus on click
+        # so frame-view-scoped shortcuts (e.g. arrow-key nudge) fire only when
+        # the user is interacting with the frame, not the face panel.
+        self.setFocusPolicy(Qt.StrongFocus)
         self._source: QPixmap = QPixmap()
         self._zoom: float = 1.0
         self._offset: QPointF = QPointF(0.0, 0.0)
@@ -248,7 +257,14 @@ class ManualFrameView(QWidget):
         # signals on commit. Without these the view falls back to pure pan.
         self._active_bbox_provider: T.Callable[[], QRectF | None] | None = None
         self._active_face_provider: T.Callable[[], int | None] | None = None
-        self._edit_drag_mode: str | None = None  # "move" | "resize"
+        # ``add_mode_provider`` returns ``True`` when an empty-space click/drag
+        # should create a new face (BoundingBox editor). ``face_hit_provider``
+        # maps a source point to an existing face_index for right-click context
+        # menus.  Both default to disabled so existing tests keep their
+        # pure-pan behavior.
+        self._add_mode_provider: T.Callable[[], bool] | None = None
+        self._face_hit_provider: T.Callable[[float, float], int | None] | None = None
+        self._edit_drag_mode: str | None = None  # "move" | "resize" | "add"
         self._edit_drag_handle: str | None = None
         self._edit_drag_source_anchor: QPointF | None = None
         self._edit_drag_original_bbox: QRectF | None = None
@@ -366,6 +382,8 @@ class ManualFrameView(QWidget):
         *,
         active_face_provider: T.Callable[[], int | None],
         active_bbox_provider: T.Callable[[], QRectF | None],
+        add_mode_provider: T.Callable[[], bool] | None = None,
+        face_hit_provider: T.Callable[[float, float], int | None] | None = None,
     ) -> None:
         """Install editor callbacks so pointer drags drive face move/resize.
 
@@ -373,9 +391,20 @@ class ManualFrameView(QWidget):
         (or ``None`` when nothing is selected) and ``active_bbox_provider``
         returns its source-coordinate :class:`QRectF`. Without these the view
         falls back to plain pan behaviour, preserving existing test contracts.
+
+        ``add_mode_provider`` (optional) returns ``True`` when an empty-space
+        click/drag should create a new face — set by the host window when the
+        Bounding Box editor is active.
+
+        ``face_hit_provider`` (optional) maps a source-image point to an
+        existing face_index so right-clicking a face emits
+        :attr:`face_context_menu_requested` for the host to surface a context
+        menu (Delete Face, etc.).
         """
         self._active_face_provider = active_face_provider
         self._active_bbox_provider = active_bbox_provider
+        self._add_mode_provider = add_mode_provider
+        self._face_hit_provider = face_hit_provider
 
     def edit_drag_preview_bbox(self) -> QRectF | None:
         """Return the in-progress drag bbox in source coordinates, if any.
@@ -388,19 +417,31 @@ class ManualFrameView(QWidget):
         return QRectF(self._edit_drag_current_bbox)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa:N802
-        """Pointer-down dispatch: resize handle, bbox move, or fall back to pan."""
-        if self._source.isNull() or event.button() != Qt.LeftButton:
+        """Pointer-down dispatch: context menu, resize handle, bbox move, add, or pan."""
+        if self._source.isNull():
             super().mousePressEvent(event)
             return
         position = event.position()
-        # Always emit clicked_at so selection on empty-space click is preserved.
         source_point = self._widget_to_source(position)
+        if event.button() == Qt.RightButton:
+            if self._emit_context_menu(source_point, event.globalPosition()):
+                event.accept()
+                return
+            super().mousePressEvent(event)
+            return
+        if event.button() != Qt.LeftButton:
+            super().mousePressEvent(event)
+            return
+        # Always emit clicked_at so selection on empty-space click is preserved.
         if source_point is not None:
             self.clicked_at.emit(source_point)
         if self._begin_edit_drag(position):
             event.accept()
             return
-        # No edit drag available — start pan.
+        if self._begin_add_drag(position, source_point):
+            event.accept()
+            return
+        # No edit/add drag available — start pan.
         self._drag_anchor = position.toPoint()
         self._drag_origin = QPointF(self._offset)
         self.setCursor(Qt.ClosedHandCursor)
@@ -462,6 +503,7 @@ class ManualFrameView(QWidget):
                 overlay(painter, viewport)
             except Exception:  # pragma: no cover - defensive against bad overlay callables
                 logger.exception("Overlay painter raised; continuing")
+        self._paint_add_preview(painter, viewport)
 
     # ---- internals ----
     def _set_pixmap(self, pixmap: QPixmap, frame: ManualFrame | None) -> bool:
@@ -609,7 +651,7 @@ class ManualFrameView(QWidget):
         return True
 
     def _update_edit_drag(self, position: QPointF) -> None:
-        """Apply pointer motion to the active resize/move drag preview."""
+        """Apply pointer motion to the active resize/move/add drag preview."""
         source_point = self._widget_to_source(position)
         if (
             source_point is None
@@ -627,6 +669,10 @@ class ManualFrameView(QWidget):
                 origin.width(),
                 origin.height(),
             )
+        elif self._edit_drag_mode == "add":
+            anchor = self._edit_drag_source_anchor
+            rect = QRectF(anchor, source_point).normalized()
+            self._edit_drag_current_bbox = rect
         else:
             self._edit_drag_current_bbox = self._resize_bbox(
                 self._edit_drag_original_bbox, self._edit_drag_handle or "", dx, dy
@@ -661,14 +707,16 @@ class ManualFrameView(QWidget):
 
     def _commit_edit_drag(self) -> None:
         """Emit the appropriate signal then clear the in-progress drag state."""
-        if self._active_face_provider is None:
-            self._reset_edit_drag()
-            return
-        face_index = self._active_face_provider()
         original = self._edit_drag_original_bbox
         current = self._edit_drag_current_bbox
         mode = self._edit_drag_mode
+        anchor = self._edit_drag_source_anchor
+        face_index = self._active_face_provider() if self._active_face_provider else None
         self._reset_edit_drag()
+        if mode == "add":
+            self._emit_add_request(anchor, current)
+            self.update()
+            return
         if face_index is None or original is None or current is None:
             self.update()
             return
@@ -691,6 +739,72 @@ class ManualFrameView(QWidget):
             self.face_resize_requested.emit(face_index, QRectF(current))
         self.update()
 
+    def _emit_add_request(self, anchor: QPointF | None, current: QRectF | None) -> None:
+        """Emit ``face_add_requested`` for a committed add gesture.
+
+        A click without motion (current is None or rect is below the
+        ``_ADD_MIN_DRAG`` threshold) becomes a small default-sized box centred
+        at the click anchor. An actual drag emits the normalized rectangle.
+        """
+        if anchor is None:
+            return
+        src_w, src_h = self.source_size
+        if src_w <= 0 or src_h <= 0:
+            return
+        if current is None or (
+            current.width() < self._ADD_MIN_DRAG and current.height() < self._ADD_MIN_DRAG
+        ):
+            default_size = max(8.0, min(64.0, min(src_w, src_h) / 6.0))
+            half = default_size / 2.0
+            rect = QRectF(
+                max(0.0, min(src_w - default_size, anchor.x() - half)),
+                max(0.0, min(src_h - default_size, anchor.y() - half)),
+                default_size,
+                default_size,
+            )
+        else:
+            rect = QRectF(current).normalized()
+            rect = QRectF(
+                max(0.0, min(src_w - 1.0, rect.x())),
+                max(0.0, min(src_h - 1.0, rect.y())),
+                max(1.0, min(src_w - rect.x(), rect.width())),
+                max(1.0, min(src_h - rect.y(), rect.height())),
+            )
+        self.face_add_requested.emit(rect)
+
+    _ADD_MIN_DRAG = 4.0
+    """Source-pixel threshold below which an add-drag is treated as a click."""
+
+    def _begin_add_drag(self, position: QPointF, source_point: QPointF | None) -> bool:
+        """Try to start an add drag if the add-mode provider returns True."""
+        if self._add_mode_provider is None or not self._add_mode_provider():
+            return False
+        if source_point is None or not self._target_rect().contains(position):
+            return False
+        self._edit_drag_mode = "add"
+        self._edit_drag_handle = None
+        self._edit_drag_source_anchor = QPointF(source_point)
+        # ``original_bbox`` is unused for add but the helpers guard on it; use
+        # a zero-sized placeholder anchored at the click point.
+        self._edit_drag_original_bbox = QRectF(source_point.x(), source_point.y(), 0.0, 0.0)
+        self._edit_drag_current_bbox = QRectF(source_point.x(), source_point.y(), 0.0, 0.0)
+        self.setCursor(Qt.CrossCursor)
+        return True
+
+    def _emit_context_menu(self, source_point: QPointF | None, global_position: QPointF) -> bool:
+        """Hit-test the right-click and emit ``face_context_menu_requested``.
+
+        Returns ``True`` when a face was hit (and the host is expected to open
+        a menu); ``False`` lets the caller fall through to the base handler.
+        """
+        if self._face_hit_provider is None or source_point is None:
+            return False
+        face_index = self._face_hit_provider(source_point.x(), source_point.y())
+        if face_index is None:
+            return False
+        self.face_context_menu_requested.emit(face_index, QPointF(global_position))
+        return True
+
     def _reset_edit_drag(self) -> None:
         """Clear all in-progress edit-drag state without emitting signals."""
         self._edit_drag_mode = None
@@ -698,6 +812,25 @@ class ManualFrameView(QWidget):
         self._edit_drag_source_anchor = None
         self._edit_drag_original_bbox = None
         self._edit_drag_current_bbox = None
+
+    def _paint_add_preview(self, painter: QPainter, viewport: FrameViewport) -> None:
+        """Draw a dashed preview rect while the user is dragging a new face."""
+        if self._edit_drag_mode != "add" or self._edit_drag_current_bbox is None:
+            return
+        source = self._edit_drag_current_bbox
+        if source.width() <= 0.0 and source.height() <= 0.0:
+            return
+        widget_rect = viewport.source_rect_to_widget(
+            source.x(), source.y(), source.width(), source.height()
+        )
+        painter.save()
+        pen = QPen(QColor("#88d4ff"))
+        pen.setStyle(Qt.DashLine)
+        pen.setWidthF(2.0)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRect(widget_rect)
+        painter.restore()
 
 
 class _VideoFrameWorker(QObject):
@@ -857,6 +990,8 @@ class FaceThumbnailPanel(QListWidget):
 
     face_selected = Signal(int)
     """Emits the face_index of the currently active entry, or -1 when cleared."""
+    face_context_menu_requested = Signal(int, QPointF)
+    """Emits ``(face_index, global_pos)`` when a face item is right-clicked."""
 
     _ICON_SIZE = 72
 
@@ -878,6 +1013,18 @@ class FaceThumbnailPanel(QListWidget):
         self._faces: tuple[FaceThumbnail, ...] = ()
         self._placeholder = self._build_placeholder_icon()
         self.currentRowChanged.connect(self._on_row_changed)
+        self.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._on_context_menu_requested)
+
+    def _on_context_menu_requested(self, position: QPoint) -> None:
+        """Emit ``face_context_menu_requested`` for the right-clicked item."""
+        item = self.itemAt(position)
+        if item is None:
+            return
+        face_index = item.data(Qt.UserRole)
+        if not isinstance(face_index, int):
+            return
+        self.face_context_menu_requested.emit(face_index, QPointF(self.mapToGlobal(position)))
 
     @property
     def faces(self) -> tuple[FaceThumbnail, ...]:
@@ -982,6 +1129,11 @@ class ManualAction(T.NamedTuple):
     toolbar_visible: bool = True
     """When ``False``, the action is registered for its shortcut but not added
     to the toolbar — used by keyboard-only commands (nudge arrows, etc.)."""
+    focus_scope: str = "window"
+    """Where the shortcut listens. ``"window"`` (default) fires from anywhere
+    in the Manual Tool. ``"frame_view"`` parents the action to the frame view
+    with :data:`Qt.WidgetWithChildrenShortcut` so the panel can claim arrow
+    keys for its own navigation when focused."""
 
 
 # Manual Tool action registry. The first six actions cover the legacy file/
@@ -1191,6 +1343,7 @@ MANUAL_ACTIONS: tuple[ManualAction, ...] = (
         icon=None,
         tooltip="Nudge the active face up one source pixel (Up)",
         toolbar_visible=False,
+        focus_scope="frame_view",
     ),
     ManualAction(
         key="nudge_down",
@@ -1200,6 +1353,7 @@ MANUAL_ACTIONS: tuple[ManualAction, ...] = (
         icon=None,
         tooltip="Nudge the active face down one source pixel (Down)",
         toolbar_visible=False,
+        focus_scope="frame_view",
     ),
     ManualAction(
         key="nudge_left",
@@ -1209,6 +1363,7 @@ MANUAL_ACTIONS: tuple[ManualAction, ...] = (
         icon=None,
         tooltip="Nudge the active face left one source pixel (Left)",
         toolbar_visible=False,
+        focus_scope="frame_view",
     ),
     ManualAction(
         key="nudge_right",
@@ -1218,6 +1373,7 @@ MANUAL_ACTIONS: tuple[ManualAction, ...] = (
         icon=None,
         tooltip="Nudge the active face right one source pixel (Right)",
         toolbar_visible=False,
+        focus_scope="frame_view",
     ),
     ManualAction(
         key="nudge_up_fast",
@@ -1227,6 +1383,7 @@ MANUAL_ACTIONS: tuple[ManualAction, ...] = (
         icon=None,
         tooltip="Nudge the active face up ten source pixels (Shift+Up)",
         toolbar_visible=False,
+        focus_scope="frame_view",
     ),
     ManualAction(
         key="nudge_down_fast",
@@ -1236,6 +1393,7 @@ MANUAL_ACTIONS: tuple[ManualAction, ...] = (
         icon=None,
         tooltip="Nudge the active face down ten source pixels (Shift+Down)",
         toolbar_visible=False,
+        focus_scope="frame_view",
     ),
     ManualAction(
         key="nudge_left_fast",
@@ -1245,6 +1403,7 @@ MANUAL_ACTIONS: tuple[ManualAction, ...] = (
         icon=None,
         tooltip="Nudge the active face left ten source pixels (Shift+Left)",
         toolbar_visible=False,
+        focus_scope="frame_view",
     ),
     ManualAction(
         key="nudge_right_fast",
@@ -1254,6 +1413,7 @@ MANUAL_ACTIONS: tuple[ManualAction, ...] = (
         icon=None,
         tooltip="Nudge the active face right ten source pixels (Shift+Right)",
         toolbar_visible=False,
+        focus_scope="frame_view",
     ),
     ManualAction(
         key="legacy_tool",
@@ -1418,6 +1578,12 @@ class ManualToolWindow(QMainWindow):
         self._startup_worker: ManualStartupWorker | None = None
         self._startup_complete = False
         self._actions: dict[str, QAction] = {}
+        # Save/bulk-operation lock state.  ``_busy_operation`` carries a short
+        # user-facing label for the in-flight job ("Saving alignments…", etc.)
+        # and is set/unset by :meth:`_with_busy_lock`.  Mutating actions are
+        # disabled while this is non-empty.
+        self._busy_operation: str | None = None
+        self._save_in_flight: bool = False
         # One cached alignments handle for the lifetime of this window so we
         # are not reopening the alignments file on every face refresh.
         self._alignments_handle = session.alignments_handle()
@@ -1554,29 +1720,104 @@ class ManualToolWindow(QMainWindow):
         On failure: leaves the editor state dirty, logs the exception and
         surfaces the error to the user through both the status bar and a
         modal dialog so a silent save-failure is not possible.
+
+        Re-entry is blocked: a save already in flight surfaces a status-bar
+        message and returns ``False`` so duplicate Ctrl+S presses cannot
+        race the persist call.
         """
+        if self._save_in_flight:
+            self.statusBar().showMessage("Save already in progress…", 3000)
+            return False
         if self._current_frame_index() < 0 and not any(
             self._editable.face_count(i) for i in range(self._session.frame_count)
         ):
             self.statusBar().showMessage("Nothing to save", 3000)
             return True
+        with self._with_busy_lock("Saving alignments…", save=True):
+            try:
+                frame_names = self._frame_names_for_persist()
+                modified = self._alignments_handle.persist(self._editable, frame_names=frame_names)
+            except Exception as err:  # noqa:BLE001 - surface any persist failure
+                message = f"Manual Tool save failed: {err}"
+                logger.exception("Manual Tool save failed")
+                self.statusBar().showMessage(message, 7000)
+                QMessageBox.critical(self, "Manual Tool Save", message)
+                return False
+            self._editable.clear_history()
+            self.mark_dirty(False)
+            self._editor_state.set("edited", False)
+            self._editor_state.set("face_count_changed", False)
+            self.refresh_faces()
+            self._frame_view.update()
+            self.statusBar().showMessage(f"Saved {modified} frame(s) to alignments file", 5000)
+            return True
+
+    @contextlib.contextmanager
+    def _with_busy_lock(self, label: str, *, save: bool = False) -> T.Iterator[None]:
+        """Run a blocking operation with progress + action gating.
+
+        While the block is active:
+
+        * ``_busy_operation`` carries ``label`` so :meth:`_sync_actions` knows
+          to disable mutating actions and prevent conflicting edits.
+        * The status-bar progress bar is shown in indeterminate mode with
+          ``label`` as the format string.
+        * ``processEvents`` runs once so the busy state paints before the
+          (potentially blocking) work begins.
+
+        Always restores prior state in a ``finally``, including when an
+        exception escapes — the caller is free to ``return``/``raise`` inside
+        the ``with`` block.
+        """
+        prior_progress_format = None
+        prior_progress_range: tuple[int, int] | None = None
+        prior_progress_visible = False
+        owns_progress_bar = False
+        self._busy_operation = label
+        if save:
+            self._save_in_flight = True
+        # The startup worker tears down ``_progress_bar`` once startup is
+        # finished; for save/bulk ops we re-materialize it for the duration
+        # of the operation so the user always gets visible busy feedback.
+        if self._progress_bar is None:
+            self._progress_bar = self._build_progress_bar()
+            self.statusBar().addPermanentWidget(self._progress_bar)
+            owns_progress_bar = True
+        if self._progress_bar is not None:
+            prior_progress_format = self._progress_bar.format()
+            prior_progress_range = (
+                self._progress_bar.minimum(),
+                self._progress_bar.maximum(),
+            )
+            prior_progress_visible = self._progress_bar.isVisible()
+            self._progress_bar.setRange(0, 0)  # indeterminate
+            self._progress_bar.setFormat(label)
+            self._progress_bar.show()
+        self._sync_actions()
+        self.statusBar().showMessage(label, 3000)
+        # Intentionally do NOT call ``processEvents`` here — flushing the event
+        # loop inside the lock can let unrelated workers (eg. the startup
+        # thumbnail-cache scan) complete and tear down the progress bar we
+        # just materialized, which then disappears from underneath the persist
+        # callback.  The lock is already entered before any blocking work
+        # begins, so the paint will happen on the next natural event-loop tick.
         try:
-            frame_names = self._frame_names_for_persist()
-            modified = self._alignments_handle.persist(self._editable, frame_names=frame_names)
-        except Exception as err:  # noqa:BLE001 - surface any persist failure
-            message = f"Manual Tool save failed: {err}"
-            logger.exception("Manual Tool save failed")
-            self.statusBar().showMessage(message, 7000)
-            QMessageBox.critical(self, "Manual Tool Save", message)
-            return False
-        self._editable.clear_history()
-        self.mark_dirty(False)
-        self._editor_state.set("edited", False)
-        self._editor_state.set("face_count_changed", False)
-        self.refresh_faces()
-        self._frame_view.update()
-        self.statusBar().showMessage(f"Saved {modified} frame(s) to alignments file", 5000)
-        return True
+            yield
+        finally:
+            self._busy_operation = None
+            if save:
+                self._save_in_flight = False
+            if self._progress_bar is not None:
+                if owns_progress_bar:
+                    self._hide_progress_bar()
+                else:
+                    if prior_progress_range is not None:
+                        self._progress_bar.setRange(*prior_progress_range)
+                    if prior_progress_format is not None:
+                        self._progress_bar.setFormat(prior_progress_format)
+                    if not prior_progress_visible:
+                        self._progress_bar.hide()
+            self._sync_actions()
 
     def _frame_name_for_index(self, frame_index: int) -> str | None:
         """Resolve one editable frame_index to its on-disk frame name.
@@ -1913,7 +2154,13 @@ class ManualToolWindow(QMainWindow):
         for spec in MANUAL_ACTIONS:
             if spec.separator_before and spec.toolbar_visible:
                 toolbar.addSeparator()
-            action = QAction(spec.label, self)
+            owner: QWidget = self
+            shortcut_context = Qt.WindowShortcut
+            if spec.focus_scope == "frame_view":
+                owner = self._frame_view
+                shortcut_context = Qt.WidgetWithChildrenShortcut
+                self._frame_view.setFocusPolicy(Qt.StrongFocus)
+            action = QAction(spec.label, owner)
             action.setObjectName(f"qt-manual-action-{spec.key}")
             if spec.tooltip:
                 action.setToolTip(spec.tooltip)
@@ -1925,10 +2172,13 @@ class ManualToolWindow(QMainWindow):
             shortcuts = [QKeySequence(text) for text in spec.shortcut]
             if shortcuts:
                 action.setShortcuts(shortcuts)
-                action.setShortcutContext(Qt.WindowShortcut)
+                action.setShortcutContext(shortcut_context)
             handler = getattr(self, spec.handler)
             action.triggered.connect(self._make_action_dispatch(spec.key, handler))
-            self.addAction(action)  # Register shortcut on the window too.
+            # Owner registration wires the shortcut: ``self`` for window-scope,
+            # ``self._frame_view`` for frame-view scope so the face panel can
+            # claim arrow keys for its own navigation when it has focus.
+            owner.addAction(action)
             if spec.toolbar_visible:
                 toolbar.addAction(action)
             self._actions[spec.key] = action
@@ -1955,9 +2205,16 @@ class ManualToolWindow(QMainWindow):
         self._frame_view.clicked_at.connect(self._on_frame_clicked)
         self._frame_view.face_move_requested.connect(self._on_face_move_requested)
         self._frame_view.face_resize_requested.connect(self._on_face_resize_requested)
+        self._frame_view.face_add_requested.connect(self._on_face_add_requested)
+        self._frame_view.face_context_menu_requested.connect(self._on_frame_context_menu_requested)
+        self._face_panel.face_context_menu_requested.connect(
+            self._on_face_panel_context_menu_requested
+        )
         self._frame_view.install_editor_seams(
             active_face_provider=self._active_face_index,
             active_bbox_provider=self._active_face_bbox,
+            add_mode_provider=self._is_add_mode_active,
+            face_hit_provider=self._face_at_source_point,
         )
         self.dirty_changed.connect(
             lambda dirty: self.statusBar().showMessage(
@@ -2244,7 +2501,7 @@ class ManualToolWindow(QMainWindow):
 
     def _active_face_index(self) -> int | None:
         """Return the currently selected ``face_index`` or ``None``."""
-        index = self._editor_state.get("face_index")
+        index = self._editor_state.face_index
         if not isinstance(index, int) or index < 0:
             return None
         return index
@@ -2289,6 +2546,77 @@ class ManualToolWindow(QMainWindow):
         self._editor_state.set("edited", True)
         self.refresh_faces()
         self._frame_view.update()
+
+    def _is_add_mode_active(self) -> bool:
+        """Return whether empty-space clicks should create a new face."""
+        return self._editor_state.editor_mode == "BoundingBox"
+
+    def _face_at_source_point(self, sx: float, sy: float) -> int | None:
+        """Hit-test the editable model at a source-coordinate point."""
+        frame_index = self._current_frame_index()
+        if frame_index < 0:
+            return None
+        return self._editable.hit_test(frame_index, sx, sy)
+
+    def _on_face_add_requested(self, bbox: QRectF) -> None:
+        """Create a new face from a pointer-driven add gesture."""
+        new_index = self.add_face_at_center((bbox.x(), bbox.y(), bbox.width(), bbox.height()))
+        if new_index is None:
+            self.statusBar().showMessage("Could not add face", 5000)
+
+    def _on_frame_context_menu_requested(self, face_index: int, global_pos: QPointF) -> None:
+        """Open a Delete Face context menu for a right-clicked frame face."""
+        self._show_face_context_menu(face_index, global_pos)
+
+    def _on_face_panel_context_menu_requested(self, face_index: int, global_pos: QPointF) -> None:
+        """Open a Delete Face context menu for a right-clicked panel item."""
+        self._show_face_context_menu(face_index, global_pos)
+
+    def _show_face_context_menu(self, face_index: int, global_pos: QPointF) -> None:
+        """Build and show a Delete-Face context menu at ``global_pos``.
+
+        Uses :meth:`QMenu.popup` (non-blocking) rather than ``exec`` so a
+        right-click does not freeze the event loop while the menu is open —
+        important for tests and for keeping the rest of the window responsive.
+        The selected action is routed back through ``triggered``.
+        """
+        if self._save_in_flight:
+            return
+        from PySide6.QtWidgets import QMenu
+
+        menu = QMenu(self)
+        delete_action = menu.addAction("Delete Face")
+        delete_action.triggered.connect(
+            lambda _checked=False, fi=face_index: self._delete_face_by_index(fi)
+        )
+        menu.aboutToHide.connect(menu.deleteLater)
+        menu.popup(global_pos.toPoint())
+
+    def _delete_face_by_index(self, face_index: int) -> None:
+        """Delete the face with ``face_index`` on the current frame.
+
+        Routes through the editable model so the operation is undoable and the
+        same dirty/refresh side-effects as :meth:`delete_active_face` apply.
+        """
+        frame_index = self._current_frame_index()
+        if frame_index < 0:
+            self.statusBar().showMessage("No frame to edit", 3000)
+            return
+        if not self._editable.delete_face(frame_index, face_index):
+            self.statusBar().showMessage("Could not delete face", 3000)
+            return
+        new_count = self._editable.face_count(frame_index)
+        self._editor_state.set("face_count_changed", True)
+        self._editor_state.set("edited", True)
+        active = self._editor_state.face_index
+        if new_count == 0:
+            self._editor_state.set("face_index", -1)
+        elif active >= new_count:
+            self._editor_state.set("face_index", new_count - 1)
+        self.mark_dirty(True)
+        self.refresh_faces()
+        self._frame_view.update()
+        self.statusBar().showMessage(f"Deleted face index {face_index}", 5000)
 
     def refresh_faces(self) -> None:
         """Rebuild the face panel from the editable model + persisted thumbs.
@@ -2380,6 +2708,17 @@ class ManualToolWindow(QMainWindow):
         if 0 <= row < self._thumbnail_panel.count() - 1:
             self._thumbnail_panel.setCurrentRow(row + 1)
 
+    _MUTATING_ACTION_KEYS: T.ClassVar[tuple[str, ...]] = (
+        "save",
+        "revert_frame",
+        "copy_prev_face",
+        "copy_next_face",
+        "delete_face",
+        "add_face",
+        "undo_edit",
+        "redo_edit",
+    )
+
     def _sync_actions(self) -> None:
         """Update action availability from session, selection and dirty state."""
         if not self._actions:
@@ -2425,6 +2764,15 @@ class ManualToolWindow(QMainWindow):
             "reset_view": has_frames,
             "legacy_tool": bool(self._legacy_args),
         }
+        # When a blocking operation is in flight, disable every mutating /
+        # save-conflicting action regardless of the underlying availability so
+        # the user cannot race the save (or future bulk job).  Read-only
+        # navigation, mode switches and view zoom remain enabled so they don't
+        # feel unresponsive while the worker runs.
+        if self._busy_operation is not None:
+            for key in self._MUTATING_ACTION_KEYS:
+                if key in availability:
+                    availability[key] = False
         for key, enabled in availability.items():
             action = self._actions.get(key)
             if action is not None:

@@ -173,6 +173,7 @@ def _visibility_for_crop(
 
     return visibility, points, score_visible
 
+
 def _source_valid_xy(points_xy: np.ndarray) -> np.ndarray:
     """Return a boolean mask of finite, non-negative landmark positions."""
     mask: np.ndarray = (
