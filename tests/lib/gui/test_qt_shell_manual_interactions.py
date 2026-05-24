@@ -63,6 +63,51 @@ def _inert_aligner_service() -> ManualAlignerService:
     )
 
 
+def _wait_for_frame_view_ready(  # type:ignore[no-untyped-def]
+    qtbot, window: ManualToolWindow, *, timeout: int = 3000
+) -> None:
+    """Wait until the frame view has both a source image and a laid-out rect.
+
+    Synthetic mouse tests need both invariants:
+
+    * ``source_size != (0, 0)`` — the source pixmap has been decoded.
+    * ``_target_rect()`` is non-empty — the widget has been resized by the
+      layout system, so widget-coordinate clicks translate to source pixels.
+
+    Polling only ``source_size`` is not enough: on a freshly-shown window the
+    source image may load before the layout has assigned the frame view its
+    final geometry, which leaves ``_target_rect().width() == 0`` and makes
+    every synthetic click land outside the image.
+    """
+
+    def _ready() -> bool:
+        if window._frame_view.source_size == (0, 0):
+            return False
+        rect = window._frame_view._target_rect()
+        return rect.width() > 0 and rect.height() > 0
+
+    try:
+        qtbot.waitUntil(_ready, timeout=timeout)
+    except Exception:
+        from PySide6.QtCore import QSize
+        print(
+            "FRAME VIEW DIAG: source_size=",
+            window._frame_view.source_size,
+            "widget_size=",
+            (window._frame_view.width(), window._frame_view.height()),
+            "target_rect=",
+            window._frame_view._target_rect(),
+            "window_size=",
+            (window.width(), window.height()),
+        )
+        print("  filter_controls sizeHint=", window._filter_controls.sizeHint())
+        print("  filter_controls actual=", (window._filter_controls.width(), window._filter_controls.height()))
+        print("  aligner_controls sizeHint=", window._aligner_controls.sizeHint(), "visible=", window._aligner_controls.isVisible())
+        print("  aligner_controls actual=", (window._aligner_controls.width(), window._aligner_controls.height()))
+        print("  transport_bar=", (window._transport_bar.width(), window._transport_bar.height()))
+        raise
+
+
 def _make_window(qtbot, folder: Path) -> ManualToolWindow:  # type:ignore[no-untyped-def]
     session = _session_with_frames(folder, count=2)
     window = ManualToolWindow(session, aligner_service=_inert_aligner_service())
@@ -73,6 +118,7 @@ def _make_window(qtbot, folder: Path) -> ManualToolWindow:  # type:ignore[no-unt
     qtbot.addWidget(window)
     window.show()
     qtbot.waitExposed(window)
+    _wait_for_frame_view_ready(qtbot, window)
     return window
 
 
@@ -110,7 +156,7 @@ def test_click_in_bbox_mode_creates_face_at_pointer(qtbot, tmp_path: Path) -> No
     """Clicking empty frame space in BBox mode creates a face under the pointer."""
     window = _make_window(qtbot, tmp_path)
     window._editor_state.set("editor_mode", "BoundingBox")
-    qtbot.waitUntil(lambda: window._frame_view.source_size != (0, 0), timeout=2000)
+    _wait_for_frame_view_ready(qtbot, window)
 
     target = window._frame_view._target_rect()
     pos = QPointF(target.x() + target.width() / 2, target.y() + target.height() / 2)
@@ -138,7 +184,7 @@ def test_click_in_view_mode_does_not_create_face(qtbot, tmp_path: Path) -> None:
     """Outside BBox mode an empty-space click must NOT add a face."""
     window = _make_window(qtbot, tmp_path)
     window._editor_state.set("editor_mode", "View")
-    qtbot.waitUntil(lambda: window._frame_view.source_size != (0, 0), timeout=2000)
+    _wait_for_frame_view_ready(qtbot, window)
 
     target = window._frame_view._target_rect()
     pos = QPointF(target.x() + target.width() / 2, target.y() + target.height() / 2)
@@ -152,7 +198,7 @@ def test_pointer_added_face_participates_in_undo_redo(qtbot, tmp_path: Path) -> 
     """Pointer-added faces share the toolbar add stack: undo removes them."""
     window = _make_window(qtbot, tmp_path)
     window._editor_state.set("editor_mode", "BoundingBox")
-    qtbot.waitUntil(lambda: window._frame_view.source_size != (0, 0), timeout=2000)
+    _wait_for_frame_view_ready(qtbot, window)
 
     target = window._frame_view._target_rect()
     pos = QPointF(target.x() + target.width() / 2, target.y() + target.height() / 2)
@@ -175,7 +221,7 @@ def test_frame_view_right_click_emits_context_menu(qtbot, tmp_path: Path) -> Non
     """Right-clicking an existing face emits the context-menu signal."""
     window = _make_window(qtbot, tmp_path)
     window._editor_state.set("editor_mode", "BoundingBox")
-    qtbot.waitUntil(lambda: window._frame_view.source_size != (0, 0), timeout=2000)
+    _wait_for_frame_view_ready(qtbot, window)
     src_w, src_h = window._frame_view.source_size
     window._editable.add_face(0, (5.0, 5.0, src_w / 2, src_h / 2))
     window.refresh_faces()
@@ -266,7 +312,7 @@ def test_non_nudge_actions_remain_window_scoped(qtbot, tmp_path: Path) -> None: 
 def test_frame_view_takes_keyboard_focus_on_click(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
     """Clicking the frame view should give it keyboard focus."""
     window = _make_window(qtbot, tmp_path)
-    qtbot.waitUntil(lambda: window._frame_view.source_size != (0, 0), timeout=2000)
+    _wait_for_frame_view_ready(qtbot, window)
 
     target = window._frame_view._target_rect()
     pos = QPointF(target.x() + 4, target.y() + 4)
@@ -307,7 +353,7 @@ def test_save_blocks_duplicate_invocation_while_in_flight(qtbot, tmp_path: Path)
 
     window = _make_window(qtbot, tmp_path)
     window._editor_state.set("editor_mode", "BoundingBox")
-    qtbot.waitUntil(lambda: window._frame_view.source_size != (0, 0), timeout=2000)
+    _wait_for_frame_view_ready(qtbot, window)
     window._editable.add_face(0, (5.0, 5.0, 20.0, 20.0))
 
     release = threading.Event()
@@ -331,7 +377,7 @@ def test_save_disables_mutating_actions_during_flight(qtbot, tmp_path: Path) -> 
     import threading
 
     window = _make_window(qtbot, tmp_path)
-    qtbot.waitUntil(lambda: window._frame_view.source_size != (0, 0), timeout=2000)
+    _wait_for_frame_view_ready(qtbot, window)
     window._editable.add_face(0, (5.0, 5.0, 20.0, 20.0))
 
     release = threading.Event()
@@ -360,7 +406,7 @@ def test_save_disables_mutating_actions_during_flight(qtbot, tmp_path: Path) -> 
 def test_save_failure_preserves_dirty_state(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
     """A persist failure leaves dirty state intact and re-enables save."""
     window = _make_window(qtbot, tmp_path)
-    qtbot.waitUntil(lambda: window._frame_view.source_size != (0, 0), timeout=2000)
+    _wait_for_frame_view_ready(qtbot, window)
     window._editable.add_face(0, (5.0, 5.0, 20.0, 20.0))
     window.mark_dirty(True)
 
@@ -382,7 +428,7 @@ def test_save_failure_preserves_dirty_state(qtbot, tmp_path: Path) -> None:  # t
 def test_save_success_clears_dirty_state(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
     """Successful save clears dirty + edited + face_count_changed flags."""
     window = _make_window(qtbot, tmp_path)
-    qtbot.waitUntil(lambda: window._frame_view.source_size != (0, 0), timeout=2000)
+    _wait_for_frame_view_ready(qtbot, window)
     window._editable.add_face(0, (5.0, 5.0, 20.0, 20.0))
     window.mark_dirty(True)
 
@@ -405,7 +451,7 @@ def test_save_shows_busy_progress_bar(qtbot, tmp_path: Path) -> None:  # type:ig
     import threading
 
     window = _make_window(qtbot, tmp_path)
-    qtbot.waitUntil(lambda: window._frame_view.source_size != (0, 0), timeout=2000)
+    _wait_for_frame_view_ready(qtbot, window)
     window._editable.add_face(0, (5.0, 5.0, 20.0, 20.0))
 
     release = threading.Event()
@@ -468,7 +514,7 @@ def test_save_busy_state_painted_before_persistence_completes(qtbot, tmp_path: P
     import threading
 
     window = _make_window(qtbot, tmp_path)
-    qtbot.waitUntil(lambda: window._frame_view.source_size != (0, 0), timeout=2000)
+    _wait_for_frame_view_ready(qtbot, window)
     window._editable.add_face(0, (5.0, 5.0, 20.0, 20.0))
 
     release = threading.Event()

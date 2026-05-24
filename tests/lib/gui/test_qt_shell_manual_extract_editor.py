@@ -34,13 +34,39 @@ def _session_with_frames(folder: Path, count: int = 1) -> ManualSession:
     return ManualSession.create(frames=str(folder))
 
 
+def _wait_for_frame_view_ready(  # type:ignore[no-untyped-def]
+    qtbot, window: ManualToolWindow, *, timeout: int = 3000
+) -> None:
+    """Wait until the frame view has both a source image and a laid-out rect.
+
+    Synthetic mouse tests need both invariants:
+
+    * ``source_size != (0, 0)`` — the source pixmap has been decoded.
+    * ``_target_rect()`` is non-empty — the widget has been resized by the
+      layout system, so widget-coordinate drags translate to source pixels.
+
+    Polling only ``source_size`` is not enough: on a freshly-shown window the
+    source image may load before the layout has assigned the frame view its
+    final geometry, which leaves ``_target_rect().width() == 0`` and makes
+    every synthetic gesture land outside the image.
+    """
+
+    def _ready() -> bool:
+        if window._frame_view.source_size == (0, 0):
+            return False
+        rect = window._frame_view._target_rect()
+        return rect.width() > 0 and rect.height() > 0
+
+    qtbot.waitUntil(_ready, timeout=timeout)
+
+
 def _make_window(qtbot, folder: Path) -> ManualToolWindow:  # type:ignore[no-untyped-def]
     session = _session_with_frames(folder)
     window = ManualToolWindow(session)
     qtbot.addWidget(window)
     window.show()
     qtbot.waitExposed(window)
-    qtbot.waitUntil(lambda: window._frame_view.source_size != (0, 0), timeout=2000)
+    _wait_for_frame_view_ready(qtbot, window)
     return window
 
 

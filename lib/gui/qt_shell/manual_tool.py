@@ -3103,6 +3103,12 @@ class ManualToolWindow(QMainWindow):
             "frame_index", lambda _v: self._refresh_aligner_controls_visibility()
         )
         self._editor_state.subscribe("editor_mode", self._on_editor_mode_changed)
+        # Keep the filter-controls label + threshold-slider visibility in
+        # lock-step with editor-state changes.  ``filter_mode`` already
+        # gets ``_refresh_filter_results`` from the cycle action, but
+        # programmatic flips (tests, future menu items) need this too.
+        self._editor_state.subscribe("filter_mode", lambda _v: self._refresh_filter_results())
+        self._editor_state.subscribe("filter_distance", lambda _v: self._refresh_filter_controls())
         self._build_ui()
         self._connect_signals()
         self._load_session()
@@ -3799,6 +3805,7 @@ class ManualToolWindow(QMainWindow):
             # thumbnail panel as-is so the user still sees the source
             # frames; navigation actions disable via ``_sync_actions``.
             self._sync_actions()
+            self._refresh_filter_controls()
             return
         current_row = self._thumbnail_panel.currentRow()
         if preserve_current and current_row in self._filtered_frame_indices:
@@ -3808,6 +3815,7 @@ class ManualToolWindow(QMainWindow):
             new_row = self._filtered_frame_indices[0]
             self._thumbnail_panel.setCurrentRow(new_row)
         self._sync_actions()
+        self._refresh_filter_controls()
 
     def filtered_frame_indices(self) -> tuple[int, ...]:
         """Return the current filtered frame index list.
@@ -4221,6 +4229,12 @@ class ManualToolWindow(QMainWindow):
         self._aligner_controls = self._build_aligner_controls()
         left_layout.addWidget(self._aligner_controls)
         left_layout.addWidget(self._frame_view, 1)
+        # Filter awareness (#107): a slim row that surfaces filter state and
+        # the Misaligned threshold control.  Always visible (so the user can
+        # see the active filter + match count); the threshold slider inside
+        # only appears for the Misaligned Faces filter.
+        self._filter_controls = self._build_filter_controls()
+        left_layout.addWidget(self._filter_controls)
         left_layout.addWidget(self._transport_bar)
         left_layout.addWidget(self._status_label)
 
@@ -4479,7 +4493,13 @@ class ManualToolWindow(QMainWindow):
         self._progress_bar.setValue(clamped)
 
     def _on_startup_completed(self, has_thumbnails: bool, summary: str) -> None:
-        """Finalize UI state once the startup worker reports success."""
+        """Finalize UI state once the startup worker reports success.
+
+        The worker's ``completed`` signal fires once; after the handler
+        runs there's no further use for the worker.  Drain it explicitly
+        (mirrors the aligner preload + extract-worker patterns) so the
+        QThread doesn't linger past the test's qtbot assertions.
+        """
         self._startup_complete = True
         thumbs_state = (
             "regenerate forced"
@@ -4507,6 +4527,7 @@ class ManualToolWindow(QMainWindow):
         self.refresh_faces()
         self._frame_view.update()
         self._sync_actions()
+        self._teardown_startup_worker()
 
     def _on_startup_failed(self, message: str) -> None:
         """Surface startup failures through status, console, log and dialog."""
@@ -4517,6 +4538,25 @@ class ManualToolWindow(QMainWindow):
         logger.error("Manual Tool startup failed: %s", message)
         self._emit_console(f"Manual Tool startup failed: {message}")
         QMessageBox.critical(self, "Manual Tool Startup", message)
+        self._teardown_startup_worker()
+
+    def _teardown_startup_worker(self) -> None:
+        """Drain + drop the startup worker after its terminal signal fires.
+
+        Mirrors the aligner-preload and extract-worker teardown patterns:
+        after the worker's ``completed`` or ``failed`` signal fires there's
+        no more work for it to do, so we tell the QThread to quit, wait
+        briefly for it to exit, then mark it for Qt deletion and clear
+        ``_startup_worker``.  Without this every Manual Tool test left a
+        QThread alive until widget teardown, which is the closest remaining
+        cross-test signal-leak candidate.
+        """
+        worker = self._startup_worker
+        if worker is None:
+            return
+        worker.stop()
+        worker.deleteLater()
+        self._startup_worker = None
 
     def _hide_progress_bar(self) -> None:
         """Hide and detach the indeterminate startup progress widget.
@@ -4904,6 +4944,83 @@ class ManualToolWindow(QMainWindow):
     def _active_aligner_name(self) -> str:
         """Return the editor-state aligner name, falling back to the service default."""
         return self._editor_state.aligner_name or self._aligner_service.default_aligner()
+
+    def _build_filter_controls(self) -> QWidget:
+        """Return the filter-awareness control row (#107).
+
+        Always visible: shows the active filter + match count.  The
+        Misaligned threshold slider inside is shown only when
+        ``filter_mode == "Misaligned Faces"`` (Tk parity) so the row
+        stays slim for the other five filter modes.
+        """
+        from tools.manual.frame_filter import (
+            MISALIGNED_THRESHOLD_MAX,
+            MISALIGNED_THRESHOLD_MIN,
+        )
+
+        container = QWidget()
+        container.setObjectName("qt-manual-filter-controls")
+        # Pin to its sizeHint so the always-visible filter row doesn't steal
+        # vertical space from the frame view when BoundingBox controls and
+        # the transport bar are also visible.
+        container.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(4, 0, 4, 0)
+        layout.setSpacing(8)
+
+        self._filter_label = QLabel()
+        self._filter_label.setObjectName("qt-manual-filter-label")
+        layout.addWidget(self._filter_label)
+        layout.addStretch(1)
+
+        # Misaligned threshold sub-group — visible only for that filter mode.
+        self._filter_threshold_label = QLabel("Threshold:")
+        self._filter_threshold_label.setObjectName("qt-manual-filter-threshold-label")
+        layout.addWidget(self._filter_threshold_label)
+        self._filter_threshold_slider = QSlider(Qt.Horizontal)
+        self._filter_threshold_slider.setObjectName("qt-manual-filter-threshold-slider")
+        self._filter_threshold_slider.setRange(MISALIGNED_THRESHOLD_MIN, MISALIGNED_THRESHOLD_MAX)
+        self._filter_threshold_slider.setValue(int(self._editor_state.filter_distance))
+        self._filter_threshold_slider.setFixedWidth(120)
+        self._filter_threshold_slider.valueChanged.connect(self._on_filter_threshold_changed)
+        layout.addWidget(self._filter_threshold_slider)
+        self._filter_threshold_value = QLabel(str(self._editor_state.filter_distance))
+        self._filter_threshold_value.setObjectName("qt-manual-filter-threshold-value")
+        layout.addWidget(self._filter_threshold_value)
+
+        self._refresh_filter_controls()
+        return container
+
+    def _refresh_filter_controls(self) -> None:
+        """Mirror the active filter mode + match count into the control row."""
+        label = getattr(self, "_filter_label", None)
+        if label is None:
+            return
+        mode = self._editor_state.filter_mode or "All Frames"
+        total = len(self._filtered_frame_indices)
+        if mode == "All Frames":
+            text = f"Filter: All Frames ({total})"
+        else:
+            text = f"Filter: {mode} ({total} match)"
+        label.setText(text)
+
+        misaligned = mode == "Misaligned Faces"
+        if hasattr(self, "_filter_threshold_slider"):
+            self._filter_threshold_label.setVisible(misaligned)
+            self._filter_threshold_slider.setVisible(misaligned)
+            self._filter_threshold_value.setVisible(misaligned)
+            current = int(self._editor_state.filter_distance)
+            self._filter_threshold_value.setText(str(current))
+            self._filter_threshold_slider.blockSignals(True)
+            try:
+                self._filter_threshold_slider.setValue(current)
+            finally:
+                self._filter_threshold_slider.blockSignals(False)
+
+    def _on_filter_threshold_changed(self, value: int) -> None:
+        """Persist threshold + refresh the filter when the user moves the slider."""
+        self._editor_state.set("filter_distance", int(value))
+        self._refresh_filter_results()
 
     def _build_aligner_controls(self) -> QWidget:
         """Return the Bounding Box aligner control panel (#104).

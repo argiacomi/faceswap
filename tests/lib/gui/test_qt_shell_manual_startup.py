@@ -471,3 +471,55 @@ def test_startup_retry_resets_thumb_progress_seen_flag(qtbot, tmp_path: Path) ->
     # can paint the anchor once more.
     window._start_background_startup()
     assert window._thumb_progress_seen is False
+
+
+# ---------------------------------------------------------------------------
+# Startup-worker lifecycle (#107 follow-up — cross-test signal leak)
+# ---------------------------------------------------------------------------
+
+
+def test_startup_worker_is_torn_down_after_completion(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+    """``_on_startup_completed`` must drain + drop ``_startup_worker``.
+
+    Before this fix every Manual Tool test left the startup ``QThread``
+    alive past the assertion phase (the worker only got stopped at
+    ``closeEvent`` / pytest-qt widget teardown).  That left queued
+    Qt signals available to fire on whichever widget the next test
+    constructed — the closest remaining cross-test leak candidate.
+    """
+    session = _session_with_frames(tmp_path)
+    window = ManualToolWindow(session)
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitExposed(window)
+    qtbot.waitUntil(lambda: window._startup_complete is True, timeout=3000)
+    # Terminal startup signal → ``_teardown_startup_worker`` ran.
+    assert window._startup_worker is None
+
+
+def test_startup_worker_is_torn_down_after_failure(qtbot, tmp_path: Path, monkeypatch) -> None:  # type:ignore[no-untyped-def]
+    """``_on_startup_failed`` also drains + drops the worker.
+
+    Without the drain a failed startup leaves the QThread running until
+    the user closes the window.
+    """
+    from PySide6.QtWidgets import QMessageBox
+
+    # Force the startup task to fail by making the alignments file unreadable.
+    def _broken_open(self) -> object:  # type:ignore[no-untyped-def]
+        raise RuntimeError("simulated open failure")
+
+    from tools.manual.session import ManualAlignmentsHandle
+
+    monkeypatch.setattr(ManualAlignmentsHandle, "exists", property(lambda _self: True))
+    monkeypatch.setattr(ManualAlignmentsHandle, "open", _broken_open)
+    # Swallow the modal dialog the failure path opens.
+    monkeypatch.setattr(QMessageBox, "critical", staticmethod(lambda *args, **kwargs: 0))
+
+    session = _session_with_frames(tmp_path)
+    window = ManualToolWindow(session)
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitExposed(window)
+    qtbot.waitUntil(lambda: window._startup_worker is None, timeout=3000)
+    assert window._startup_complete is False
