@@ -3,9 +3,11 @@
 
 from __future__ import annotations
 
+import gc
 import os
 import shutil
 import tempfile
+import tracemalloc
 
 os.environ["OBJC_DISABLE_CLASS_WARNINGS"] = "YES"
 os.environ["OBJC_DEBUG_DUPLICATE_CLASSES"] = "NO"
@@ -26,6 +28,35 @@ os.environ["FACESWAP_LANDMARK_ENSEMBLE_ARTIFACTS"] = _FACESWAP_TEST_BUNDLE_DIR
 
 
 import pytest  # noqa: E402
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Enable allocation traces for unraisable cleanup warnings.
+
+    A flaky ``tempfile._TemporaryFileCloser`` warning is currently surfacing
+    wherever cyclic GC happens to run, not where the bad wrapper was created.
+    Pytest's warning text explicitly says to enable tracemalloc for the
+    allocation traceback; doing it here keeps the next failure actionable
+    without suppressing or filtering the warning.
+    """
+    if not tracemalloc.is_tracing():
+        tracemalloc.start(25)
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_teardown(
+    item: pytest.Item, nextitem: pytest.Item | None
+) -> object:
+    """Force unraisable cleanup warnings to surface at the originating test.
+
+    Without an explicit collection point, a leaked/broken temporary-file
+    wrapper may not be finalized until a later, unrelated test.  Collecting
+    after each test's teardown keeps the warning associated with the test
+    that created the object while preserving the warning itself.
+    """
+    outcome = yield
+    gc.collect()
+    return outcome
 
 
 @pytest.fixture(autouse=True)
