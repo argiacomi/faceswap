@@ -40,6 +40,19 @@ def _session_with_real_frames(folder: Path, count: int = 2) -> ManualSession:
     return ManualSession.create(frames=str(folder))
 
 
+def _wait_for_startup(qtbot, window: ManualToolWindow, *, timeout: int = 5000) -> None:  # type:ignore[no-untyped-def]
+    """Wait until ManualToolWindow's startup worker has fully drained.
+
+    Extract tests write the same ``alignments.fsa`` that startup refresh may
+    read when ``_on_startup_completed`` calls ``refresh_faces``.  Starting an
+    async save/extract while startup is still finishing can make startup read a
+    partially-written compressed file and raise from the Qt event loop.  The
+    tests are not about startup/save interleaving, so drain startup first.
+    """
+    qtbot.waitUntil(lambda: window._startup_worker is None, timeout=timeout)
+    qtbot.wait(0)
+
+
 def _seed_face(window: ManualToolWindow, frame_index: int, bbox: tuple) -> None:
     """Add an editable face with non-degenerate landmarks for AlignedFace."""
     landmarks = tuple((30.0 + i * 0.5, 40.0 + i * 0.4) for i in range(68))
@@ -62,6 +75,7 @@ def test_extract_uses_editable_state_after_unsaved_add(
 
     window = ManualToolWindow(session)
     qtbot.addWidget(window)
+    _wait_for_startup(qtbot, window)
 
     output_folder = tmp_path / "out"
     monkeypatch.setattr(
@@ -101,6 +115,7 @@ def test_extract_uses_editable_state_after_unsaved_delete(
     session = ManualSession.create(frames=str(tmp_path))
     window_seed = ManualToolWindow(session)
     qtbot.addWidget(window_seed)
+    _wait_for_startup(qtbot, window_seed)
     _seed_face(window_seed, 0, (10.0, 10.0, 60.0, 60.0))
     assert window_seed.save() is True
     qtbot.waitUntil(lambda: window_seed._save_worker is None, timeout=5000)
@@ -113,6 +128,7 @@ def test_extract_uses_editable_state_after_unsaved_delete(
     session2 = ManualSession.create(frames=str(tmp_path))
     window = ManualToolWindow(session2)
     qtbot.addWidget(window)
+    _wait_for_startup(qtbot, window)
     # Editable model is seeded from the alignments file on startup.
     qtbot.waitUntil(lambda: window.editable_alignments.face_count(0) == 1, timeout=3000)
     window.editable_alignments.delete_face(0, 0)
@@ -151,6 +167,7 @@ def test_cancel_button_appears_while_extract_runs(
     # it explicitly for the visibility-state assertions below.
     window.show()
     qtbot.waitExposed(window)
+    _wait_for_startup(qtbot, window)
     _seed_face(window, 0, (10.0, 10.0, 60.0, 60.0))
 
     monkeypatch.setattr(
@@ -214,6 +231,7 @@ def test_cancel_extract_forwards_to_worker_and_disables_button(
     session = ManualSession.create(frames=str(tmp_path))
     window = ManualToolWindow(session)
     qtbot.addWidget(window)
+    _wait_for_startup(qtbot, window)
     _seed_face(window, 0, (10.0, 10.0, 60.0, 60.0))
 
     monkeypatch.setattr(
@@ -343,6 +361,7 @@ def test_close_event_ignores_close_while_extract_thread_alive(
     window.show()
     qtbot.waitExposed(window)
     qtbot.waitUntil(lambda: window._frame_view.source_size != (0, 0), timeout=2000)
+    _wait_for_startup(qtbot, window)
 
     monkeypatch.setattr(
         QFileDialog, "getExistingDirectory", staticmethod(lambda *_a, **_k: str(tmp_path / "out"))
