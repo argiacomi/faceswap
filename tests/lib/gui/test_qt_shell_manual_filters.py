@@ -9,7 +9,7 @@ These tests exercise the GUI-facing contract on top of the GUI-neutral
 * empty filters disable transport/navigation safely and surface status text;
 * the Misaligned threshold control is visible only for that filter and
   re-runs the filtered model when moved;
-* editable face-count changes still need to refresh the active filtered list.
+* editable face-count changes refresh the active filtered list.
 """
 
 from __future__ import annotations
@@ -147,8 +147,6 @@ def test_misaligned_threshold_control_refreshes_filtered_results(
     assert window.filtered_frame_indices() == (2,)
     assert window._filter_threshold_value.text() == "5"
 
-
-@pytest.mark.xfail(reason="#107 gap: editable face-count changes do not yet refresh filters")
 def test_face_count_edit_refreshes_active_filter_results(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
     """Adding a face should immediately update an active count-based filter."""
     window = _make_window(qtbot, tmp_path, count=3)
@@ -159,4 +157,22 @@ def test_face_count_edit_refreshes_active_filter_results(qtbot, tmp_path: Path) 
 
     assert window.filtered_frame_indices() == (0,)
     assert window._transport_bar.slider.isEnabled() is True
+    assert window._filter_label.text() == "Filter: Has Face(s) (1 match)"
+
+
+def test_non_current_face_count_edit_refreshes_active_filter_results(
+    qtbot, tmp_path: Path
+) -> None:  # type:ignore[no-untyped-def]
+    """Adding a face on another frame refreshes filters before the current-frame guard."""
+    window = _make_window(qtbot, tmp_path, count=4)
+    window._thumbnail_panel.setCurrentRow(0)
+    window.editor_state.set("filter_mode", "Has Face(s)")
+    assert window.filtered_frame_indices() == ()
+
+    _seed_face(window, 2)
+
+    assert window.filtered_frame_indices() == (2,)
+    assert window._thumbnail_panel.currentRow() == 2
+    assert window._transport_bar.slider.isEnabled() is True
+    assert window._transport_bar.counter_label.text() == "Frame: 1 / 1"
     assert window._filter_label.text() == "Filter: Has Face(s) (1 match)"

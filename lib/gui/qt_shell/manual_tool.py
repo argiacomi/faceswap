@@ -4674,6 +4674,7 @@ class ManualToolWindow(QMainWindow):
         back to the saved snapshot drops the dirty flag automatically.
         """
         self.mark_dirty(self._editable.can_undo)
+        self._refresh_filter_results()
         if frame_index != self._current_frame_index():
             return
         self.refresh_faces()

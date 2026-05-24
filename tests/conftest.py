@@ -44,9 +44,7 @@ def pytest_configure(config: pytest.Config) -> None:
 
 
 @pytest.hookimpl(hookwrapper=True)
-def pytest_runtest_teardown(
-    item: pytest.Item, nextitem: pytest.Item | None
-) -> object:
+def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> object:
     """Force unraisable cleanup warnings to surface at the originating test.
 
     Without an explicit collection point, a leaked/broken temporary-file
