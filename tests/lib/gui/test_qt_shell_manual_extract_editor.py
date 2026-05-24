@@ -149,10 +149,14 @@ def test_extract_outside_corner_drag_rotates_face(qtbot, tmp_path: Path) -> None
 
     view = window._frame_view
     original_landmarks = window._editable.faces(0)[0].landmarks
-    # The bbox is (40, 40, 20, 20).  Pick a point inside the rotation halo
-    # but outside the bbox: ~(75, 50).  Drag to ~(50, 75) for a ~90° rotation.
-    start = _source_to_widget(view, 75.0, 50.0)
-    end = _source_to_widget(view, 50.0, 75.0)
+    # Rotation hit-testing is a widget-pixel halo, not a fixed source-pixel
+    # band.  Pick points directly from the projected active bbox so the
+    # gesture remains inside the 24px halo regardless of offscreen layout size.
+    widget_bbox = view._active_bbox_widget_rect()  # noqa: SLF001 - test hit geometry
+    assert widget_bbox is not None
+    offset = view._EXTRACT_ROTATION_BAND_PX / 2.0  # noqa: SLF001
+    start = QPointF(widget_bbox.right() + offset, widget_bbox.center().y())
+    end = QPointF(widget_bbox.center().x(), widget_bbox.bottom() + offset)
     _drag(view, start, end)
 
     rotated_landmarks = window._editable.faces(0)[0].landmarks
