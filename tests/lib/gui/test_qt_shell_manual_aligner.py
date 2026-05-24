@@ -274,9 +274,7 @@ def test_bbox_aligner_preload_progress_paints_loading_then_ready(qtbot, tmp_path
     assert "ready" in status.text().lower()
 
 
-def test_bbox_aligner_preload_clears_worker_state_after_completion(
-    qtbot, tmp_path: Path
-) -> None:  # type:ignore[no-untyped-def]
+def test_bbox_aligner_preload_clears_worker_state_after_completion(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
     """Completed explicit preload drains worker state before tests continue."""
     window, _ = _make_window(qtbot, tmp_path)
     clahe = _child(window, QRadioButton, "qt-manual-aligner-normalization-clahe")
@@ -450,3 +448,89 @@ def test_rerun_aligner_with_unstubbed_image_returns_false_when_frame_unloaded(
     # Wipe the frame source.
     window._frame_view.clear_frame("test")
     assert window.rerun_aligner_for_face(0) is False
+
+
+# ---------------------------------------------------------------------------
+# #104 closure — preload worker lifecycle + dirty / undo coverage
+# ---------------------------------------------------------------------------
+
+
+def test_explicit_preload_clears_worker_state_on_completion(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+    """After an explicit aligner preload completes the worker reference is gone."""
+    window, _ = _make_window(qtbot, tmp_path)
+    window._editor_state.set("editor_mode", "BoundingBox")
+    window._editor_state.set("aligner_name", "HRNet")
+
+    window._schedule_aligner_preload()
+    qtbot.waitUntil(lambda: window._aligner_load_worker is None, timeout=3000)
+
+    # The completed worker was deleted and the target was cleared.
+    assert window._aligner_load_worker is None
+    assert window._aligner_load_target is None
+    # The (aligner, normalization) pair has joined the loaded set.
+    assert ("HRNet", "hist") in window._aligner_loaded_targets
+
+
+def test_close_event_after_preload_completes_does_not_leave_thread(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+    """A normal close after preload finishes leaves no dangling worker thread."""
+    from PySide6.QtGui import QCloseEvent
+
+    window, _ = _make_window(qtbot, tmp_path)
+    window._editor_state.set("editor_mode", "BoundingBox")
+    window._editor_state.set("aligner_name", "HRNet")
+    window._schedule_aligner_preload()
+    qtbot.waitUntil(lambda: window._aligner_load_worker is None, timeout=3000)
+
+    event = QCloseEvent()
+    window.closeEvent(event)
+    assert event.isAccepted() is True
+    assert window._aligner_load_worker is None
+
+
+def test_aligner_refresh_marks_dirty_and_is_undoable(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+    """A bbox move + aligner refresh under auto-run is undoable as one logical edit."""
+    import numpy as np
+
+    landmarks_v2 = np.full((68, 2), 11.0, dtype=np.float32)
+    window, service = _make_window(qtbot, tmp_path, service=_stub_service(landmarks=landmarks_v2))
+    window._editor_state.set("editor_mode", "BoundingBox")
+    initial_landmarks = tuple((float(i), float(i)) for i in range(5))
+    window._editable.add_face(0, (10.0, 10.0, 40.0, 40.0), landmarks=initial_landmarks)
+    window._editor_state.set("face_index", 0)
+    window.mark_dirty(False)
+
+    # Move the bbox — the auto-run path replaces landmarks with the stub
+    # ``landmarks_v2`` value.
+    window._on_face_move_requested(0, 5.0, 5.0)
+
+    face = window._editable.faces(0)[0]
+    assert face.landmarks[0] == (11.0, 11.0)
+    assert window._editor_state.edited is True
+
+    # Two undos roll back set_landmarks then move_face — both edits are
+    # individually undoable, so the user can step back to the original.
+    assert window._editable.undo() is True  # undo set_landmarks
+    assert window._editable.undo() is True  # undo move_face
+    restored = window._editable.faces(0)[0]
+    assert restored.bbox == (10.0, 10.0, 40.0, 40.0)
+    assert restored.landmarks == initial_landmarks
+    # Redo replays both edits.
+    assert window._editable.redo() is True
+    assert window._editable.redo() is True
+    final = window._editable.faces(0)[0]
+    assert final.bbox == (15.0, 15.0, 40.0, 40.0)
+    assert final.landmarks[0] == (11.0, 11.0)
+
+
+def test_entering_bbox_mode_does_not_preload_aligner(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+    """Switching to BoundingBox mode shows controls but does NOT start a preload."""
+    window, _ = _make_window(qtbot, tmp_path)
+    window._editor_state.set("editor_mode", "BoundingBox")
+
+    # The aligner controls are visible…
+    assert window._aligner_controls.isVisible() is True
+    # …but no worker has been launched.  Passive preload was deliberately
+    # removed so unrelated GUI tests / mode switches don't trigger
+    # production plugin loading.
+    assert window._aligner_load_worker is None
+    assert window._aligner_load_target is None

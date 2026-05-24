@@ -90,6 +90,17 @@ def test_click_in_bbox_mode_creates_face_at_pointer(qtbot, tmp_path: Path) -> No
     assert window._editable.can_undo
 
 
+def test_entering_bbox_mode_does_not_passively_preload_aligner(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+    """BBox controls becoming visible must not touch production aligner loading."""
+    window = _make_window(qtbot, tmp_path)
+
+    window._editor_state.set("editor_mode", "BoundingBox")
+
+    assert window._aligner_load_worker is None
+    assert window._aligner_load_target is None
+    assert window._aligner_loaded_targets == set()
+
+
 def test_click_in_view_mode_does_not_create_face(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
     """Outside BBox mode an empty-space click must NOT add a face."""
     window = _make_window(qtbot, tmp_path)
@@ -321,7 +332,7 @@ def test_save_failure_preserves_dirty_state(qtbot, tmp_path: Path) -> None:  # t
     window.mark_dirty(True)
 
     def failing_persist(_editable, *, frame_names):  # type:ignore[no-untyped-def]
-        raise RuntimeError("disk full")
+        raise RuntimeError("persist failed")
 
     window._alignments_handle.persist = failing_persist  # type:ignore[assignment]
 
@@ -389,11 +400,11 @@ def test_busy_lock_helper_releases_state_on_exception(qtbot, tmp_path: Path) -> 
     window = _make_window(qtbot, tmp_path)
 
     with (
-        pytest.raises(RuntimeError, match="bad bulk op"),
+        pytest.raises(RuntimeError, match="bulk op failed"),
         window._with_busy_lock("Running bulk op…"),
     ):
         assert window._busy_operation == "Running bulk op…"
-        raise RuntimeError("bad bulk op")
+        raise RuntimeError("bulk op failed")
 
     assert window._busy_operation is None
     assert window._save_in_flight is False

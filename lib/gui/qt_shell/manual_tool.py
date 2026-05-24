@@ -481,6 +481,15 @@ class ManualFrameView(QWidget):
         self._mask_mode_provider: T.Callable[[], bool] | None = None
         self._mask_drag_active: bool = False
         self._mask_drag_invert: bool = False
+        # Brush preview (#101 closure) — when ``_brush_provider`` returns a
+        # ``(radius_source_px, mode)`` tuple while the mask editor is active
+        # *and* the pointer is inside the active face's bbox, the view draws
+        # a circular cursor preview so the user can see brush size + mode
+        # before clicking.  Hidden in any other state.
+        self._brush_provider: T.Callable[[], tuple[float, str] | None] | None = None
+        self._brush_preview_source_point: QPointF | None = None
+        self._brush_preview_radius: float = 0.0
+        self._brush_preview_mode: str = "draw"
 
     # ---- public API ----
     @property
@@ -724,16 +733,39 @@ class ManualFrameView(QWidget):
         self,
         *,
         mask_mode_provider: T.Callable[[], bool],
+        brush_provider: T.Callable[[], tuple[float, str] | None] | None = None,
     ) -> None:
-        """Install Mask editor seam (#101).
+        """Install Mask editor seams (#101).
 
         ``mask_mode_provider`` returns ``True`` while ``editor_mode == "Mask"``.
         When active, press + drag inside the active face's bbox emits
         :attr:`mask_paint_requested` continuously so the host can stamp
         each brush position.  ``Ctrl+drag`` flips Draw/Erase for the
         duration of the gesture (legacy Tk Manual Tool parity).
+
+        ``brush_provider`` (optional) returns ``(radius_source_px, mode)``
+        — when present the frame view draws a circular cursor preview at
+        the pointer while in Mask mode + over an active face's bbox.
+        ``mode`` is ``"draw"`` or ``"erase"``.
         """
         self._mask_mode_provider = mask_mode_provider
+        self._brush_provider = brush_provider
+
+    @property
+    def brush_preview(self) -> dict | None:
+        """Return the visible brush preview state for tests/inspection.
+
+        ``None`` means no preview is currently shown.  When visible, the
+        dict contains ``source_point`` (QPointF), ``radius`` (source px),
+        and ``mode`` (``"draw"`` or ``"erase"``).
+        """
+        if self._brush_preview_source_point is None:
+            return None
+        return {
+            "source_point": QPointF(self._brush_preview_source_point),
+            "radius": float(self._brush_preview_radius),
+            "mode": str(self._brush_preview_mode),
+        }
 
     def edit_drag_preview_bbox(self) -> QRectF | None:
         """Return the in-progress drag bbox in source coordinates, if any.
@@ -858,6 +890,7 @@ class ManualFrameView(QWidget):
             except Exception:  # pragma: no cover - defensive against bad overlay callables
                 logger.exception("Overlay painter raised; continuing")
         self._paint_add_preview(painter, viewport)
+        self._paint_brush_preview(painter, viewport)
 
     # ---- internals ----
     def _set_pixmap(self, pixmap: QPixmap, frame: ManualFrame | None) -> bool:
@@ -925,6 +958,10 @@ class ManualFrameView(QWidget):
 
     def _update_hover_cursor(self, position: QPointF) -> None:
         """Cursor priority: resize handle > bbox body > pannable > default."""
+        # Always refresh the Mask brush preview before falling through to
+        # the cursor-shape ladder.  ``_update_brush_preview`` schedules a
+        # repaint when the preview state changes.
+        self._update_brush_preview(position)
         if self._source.isNull():
             self.setCursor(Qt.ArrowCursor)
             return
@@ -970,6 +1007,77 @@ class ManualFrameView(QWidget):
         if handle in ("n", "s"):
             return Qt.SizeVerCursor
         return Qt.SizeHorCursor
+
+    def _update_brush_preview(self, position: QPointF) -> None:
+        """Track the Mask brush preview state for the pointer position.
+
+        Visibility rules (#101 closure):
+
+        * Hidden when the Mask editor is not active.
+        * Hidden when the brush provider isn't installed or refuses to
+          return a brush spec.
+        * Hidden when no source frame is loaded.
+        * Hidden when no active face exists or the pointer falls outside
+          its source-coordinate bbox.
+        * Hidden during an in-progress mask drag (the painted stroke is
+          already visible feedback).
+
+        Otherwise: records the source-space pointer position, radius and
+        draw/erase mode, and schedules a repaint so the new circle lands.
+        """
+        previous = self._brush_preview_source_point is not None
+        cleared = self._clear_brush_preview_if_no_active_modes()
+        if cleared and previous:
+            self.update()
+            return
+        if cleared:
+            return
+        source_point = self._widget_to_source(position)
+        bbox = self._active_bbox_source_rect()
+        if source_point is None or bbox is None or not bbox.contains(source_point):
+            if previous:
+                self._brush_preview_source_point = None
+                self.update()
+            return
+        assert (
+            self._brush_provider is not None
+        )  # narrowed by _clear_brush_preview_if_no_active_modes
+        spec = self._brush_provider()
+        if spec is None:
+            if previous:
+                self._brush_preview_source_point = None
+                self.update()
+            return
+        radius, mode = spec
+        self._brush_preview_source_point = QPointF(source_point)
+        self._brush_preview_radius = max(0.5, float(radius))
+        self._brush_preview_mode = str(mode)
+        self.update()
+
+    def _clear_brush_preview_if_no_active_modes(self) -> bool:
+        """Wipe brush preview when Mask mode / providers are inactive.
+
+        Returns ``True`` when the preview was cleared (caller may need to
+        request a repaint).
+        """
+        if (
+            self._mask_mode_provider is None
+            or not self._mask_mode_provider()
+            or self._brush_provider is None
+            or self._source.isNull()
+            or self._mask_drag_active
+        ):
+            if self._brush_preview_source_point is not None:
+                self._brush_preview_source_point = None
+            return True
+        return False
+
+    def leaveEvent(self, event: T.Any) -> None:  # noqa:N802 - Qt slot
+        """Hide the brush preview when the pointer leaves the view (#101)."""
+        if self._brush_preview_source_point is not None:
+            self._brush_preview_source_point = None
+            self.update()
+        super().leaveEvent(event)
 
     def _active_bbox_source_rect(self) -> QRectF | None:
         """Resolve the current active face's source-coordinate bbox."""
@@ -1575,6 +1683,29 @@ class ManualFrameView(QWidget):
         self._extract_drag_start_angle = 0.0
         self._extract_drag_scale = 1.0
         self._extract_drag_angle = 0.0
+
+    def _paint_brush_preview(self, painter: QPainter, viewport: FrameViewport) -> None:
+        """Draw a circular brush preview at the pointer in Mask mode (#101).
+
+        Only paints when ``_brush_preview_source_point`` is set — the hover
+        path keeps that state in sync with the pointer position, the
+        active face's bbox, the editor mode and the brush size.  The
+        circle's stroke colour distinguishes Draw (cyan) from Erase
+        (magenta) at a glance.
+        """
+        point = self._brush_preview_source_point
+        if point is None:
+            return
+        widget_point = viewport.source_to_widget(point.x(), point.y())
+        radius_widget = max(1.0, float(self._brush_preview_radius) * float(viewport.zoom))
+        painter.save()
+        colour = QColor("#88d4ff") if self._brush_preview_mode == "draw" else QColor("#ff66cc")
+        pen = QPen(colour)
+        pen.setWidthF(1.6)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        painter.drawEllipse(widget_point, radius_widget, radius_widget)
+        painter.restore()
 
     def _paint_add_preview(self, painter: QPainter, viewport: FrameViewport) -> None:
         """Draw a dashed preview rect for in-progress add or marquee gestures."""
@@ -4074,6 +4205,7 @@ class ManualToolWindow(QMainWindow):
         )
         self._frame_view.install_mask_seams(
             mask_mode_provider=self._is_mask_mode_active,
+            brush_provider=self._current_brush_spec,
         )
         self._frame_view.face_scale_requested.connect(self._on_face_scale_requested)
         self._frame_view.face_rotate_requested.connect(self._on_face_rotate_requested)
@@ -4557,6 +4689,22 @@ class ManualToolWindow(QMainWindow):
     def active_mask_type(self) -> str:
         """Return the selected mask type, falling back to the default."""
         return self._editor_state.mask_type or self.DEFAULT_MASK_TYPE
+
+    def _current_brush_spec(self) -> tuple[float, str] | None:
+        """Return ``(radius_source_px, mode)`` for the frame view's brush preview.
+
+        Returns ``None`` when the Mask editor isn't active or no face is
+        selected — the frame view uses ``None`` to mean "hide the preview".
+        The radius mirrors :meth:`paint_mask_at`'s ``brush_size / 2`` math
+        so the visible circle matches the actual stamp footprint.
+        """
+        if self._editor_state.editor_mode != "Mask":
+            return None
+        if self._active_face_index() is None:
+            return None
+        radius = max(1.0, float(self._editor_state.brush_size) / 2.0)
+        mode = str(self._editor_state.brush_mode or "draw")
+        return (radius, mode)
 
     def paint_mask_at(
         self,
