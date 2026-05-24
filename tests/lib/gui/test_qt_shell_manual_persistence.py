@@ -27,13 +27,23 @@ def _session_with_frames(folder: Path, count: int = 3) -> ManualSession:
     return ManualSession.create(frames=str(folder))
 
 
+def _make_window(qtbot, folder: Path) -> ManualToolWindow:  # type:ignore[no-untyped-def]
+    """Return a ManualToolWindow after its startup worker has drained."""
+    window = ManualToolWindow(_session_with_frames(folder))
+    qtbot.addWidget(window)
+    # Startup completion refreshes the face panel from the alignments file.
+    # Saving before that signal drains can race with Alignments.save(), so the
+    # refresh reads a partially-written compressed stream.
+    qtbot.waitUntil(lambda: window._startup_worker is None, timeout=5000)
+    qtbot.wait(0)
+    return window
+
+
 def test_save_persists_edits_to_alignments_file(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
     """A successful save writes the editable model into the alignments file on disk."""
     from lib.align import Alignments
 
-    session = _session_with_frames(tmp_path)
-    window = ManualToolWindow(session)
-    qtbot.addWidget(window)
+    window = _make_window(qtbot, tmp_path)
     window.editable_alignments.add_face(0, (10.0, 12.0, 30.0, 30.0))
     window.editable_alignments.add_face(1, (5.0, 6.0, 20.0, 22.0))
 
@@ -60,9 +70,7 @@ def test_save_failure_keeps_session_dirty(  # type:ignore[no-untyped-def]
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """If persistence raises, save() returns False and leaves edits in memory."""
-    session = _session_with_frames(tmp_path)
-    window = ManualToolWindow(session)
-    qtbot.addWidget(window)
+    window = _make_window(qtbot, tmp_path)
     window.editable_alignments.add_face(0, (10.0, 12.0, 30.0, 30.0))
     assert window.editor_state.unsaved is True
 
@@ -89,9 +97,7 @@ def test_close_with_unsaved_changes_can_be_cancelled(  # type:ignore[no-untyped-
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Cancelling the unsaved-changes prompt keeps the window open."""
-    session = _session_with_frames(tmp_path)
-    window = ManualToolWindow(session)
-    qtbot.addWidget(window)
+    window = _make_window(qtbot, tmp_path)
     window.mark_dirty(True)
 
     # Override the conftest auto-yes patch so this test exercises the cancel
@@ -114,9 +120,7 @@ def test_close_with_unsaved_changes_accepts_when_confirmed(  # type:ignore[no-un
     tmp_path: Path,
 ) -> None:
     """Confirming the unsaved-changes prompt closes the window (default auto-Yes)."""
-    session = _session_with_frames(tmp_path)
-    window = ManualToolWindow(session)
-    qtbot.addWidget(window)
+    window = _make_window(qtbot, tmp_path)
     window.mark_dirty(True)
 
     event = QCloseEvent()
@@ -126,13 +130,12 @@ def test_close_with_unsaved_changes_accepts_when_confirmed(  # type:ignore[no-un
 
 def test_save_after_persist_refreshes_face_panel(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
     """After persistence the face panel reflects faces stored on disk."""
-    session = _session_with_frames(tmp_path)
-    window = ManualToolWindow(session)
-    qtbot.addWidget(window)
+    window = _make_window(qtbot, tmp_path)
     window.editable_alignments.add_face(0, (10.0, 10.0, 30.0, 30.0))
     window.editable_alignments.add_face(0, (40.0, 10.0, 20.0, 20.0))
 
     assert window.save() is True
+    qtbot.waitUntil(lambda: window._save_worker is None, timeout=5000)
 
     # The face panel reads from the alignments handle; after a successful
     # save both newly-added faces should be visible.
