@@ -27,7 +27,11 @@ def test_log_setup_replaces_faceswap_handlers(tmp_path: Path) -> None:
     replace only its own handlers and leave pytest/external handlers intact.
     """
     root_logger = logging.getLogger()
-    original_handlers = tuple(root_logger.handlers)
+    original_external_handlers = tuple(
+        handler
+        for handler in root_logger.handlers
+        if not getattr(handler, "_faceswap_managed_handler", False)
+    )
 
     try:
         log_setup("INFO", str(tmp_path / "first.log"), "tools")
@@ -39,13 +43,14 @@ def test_log_setup_replaces_faceswap_handlers(tmp_path: Path) -> None:
         assert len(second_handlers) == 3
         assert not set(first_handlers).intersection(second_handlers)
 
-        for handler in original_handlers:
+        for handler in original_external_handlers:
             assert handler in root_logger.handlers
+
     finally:
         for handler in tuple(root_logger.handlers):
             if getattr(handler, "_faceswap_managed_handler", False):
                 root_logger.removeHandler(handler)
                 handler.close()
-        for handler in original_handlers:
+        for handler in original_external_handlers:
             if handler not in root_logger.handlers:
                 root_logger.addHandler(handler)
