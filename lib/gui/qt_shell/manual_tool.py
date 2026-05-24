@@ -3022,14 +3022,20 @@ class ManualToolWindow(QMainWindow):
         self._face_panel = FaceThumbnailPanel()
         self._status_label = QLabel()
         self._metadata_label = QLabel()
-        # Frame-navigation widgets — drive an internal "transport position"
-        # that maps 1:1 onto the thumbnail panel today.  When filter awareness
-        # lands the mapping switches to filtered-frame indices.
+        # Frame-navigation widgets — driven from the *filtered* frame list
+        # (#107).  The transport position is an index into
+        # ``_filtered_frame_indices``; the thumbnail panel still shows every
+        # frame but navigation skips frames the active filter rejects.
         self._transport_bar = ManualTransportBar()
         self._play_timer = QTimer(self)
         self._play_timer.setInterval(int(1000 / 24))
         self._play_timer.setTimerType(Qt.PreciseTimer)
         self._play_timer.timeout.connect(self._advance_during_playback)
+        # Filtered model (#107).  Empty until the thumbnail panel is
+        # populated; ``_refresh_filter_results`` keeps it in lock-step with
+        # ``editor_state.filter_mode`` / ``filter_distance`` and any
+        # editable-model change that affects face count or alignment.
+        self._filtered_frame_indices: tuple[int, ...] = ()
         self._progress_bar: QProgressBar | None = None
         self._console_logger = console_logger
         self._startup_worker: ManualStartupWorker | None = None
@@ -3749,33 +3755,112 @@ class ManualToolWindow(QMainWindow):
         self.statusBar().showMessage("Launched legacy Manual Tool", 5000)
         return True
 
+    # ---- #107 filtered navigation primitives ----
+
+    def _all_frame_indices(self) -> tuple[int, ...]:
+        """Return every known source-frame index (image folder or video).
+
+        The thumbnail panel's row count is the authoritative count once a
+        session is loaded — image-folder rows are ``frame.index`` (0..N-1)
+        and video rows are likewise consecutive indices.  Used as the
+        universe the active filter draws from.
+        """
+        return tuple(range(self._thumbnail_panel.count()))
+
+    def _refresh_filter_results(self, *, preserve_current: bool = True) -> None:
+        """Recompute ``_filtered_frame_indices`` from the active filter.
+
+        Also keeps the transport bar's total in sync and clamps the current
+        thumbnail row to a matching frame when ``preserve_current`` is
+        ``True`` (the default).  When the current frame still matches the
+        filter, it stays put — otherwise the first matching frame is
+        selected.  An empty filter leaves the panel untouched and reports
+        an empty filtered list so navigation actions disable cleanly.
+        """
+        from tools.manual.frame_filter import (
+            DEFAULT_FILTER_MODE,
+            filtered_frame_indices,
+            misaligned_predicate_for_model,
+        )
+
+        mode = self._editor_state.filter_mode or DEFAULT_FILTER_MODE
+        threshold = int(self._editor_state.filter_distance)
+        predicate = misaligned_predicate_for_model(self._editable, threshold)
+        self._filtered_frame_indices = filtered_frame_indices(
+            self._all_frame_indices(),
+            self._editable.face_count,
+            mode,
+            misaligned_predicate=predicate,
+        )
+        total = len(self._filtered_frame_indices)
+        self._transport_bar.set_total(total)
+        if total == 0:
+            # Empty filter — no transport position to clamp.  Leave the
+            # thumbnail panel as-is so the user still sees the source
+            # frames; navigation actions disable via ``_sync_actions``.
+            self._sync_actions()
+            return
+        current_row = self._thumbnail_panel.currentRow()
+        if preserve_current and current_row in self._filtered_frame_indices:
+            position = self._filtered_frame_indices.index(current_row)
+            self._transport_bar.set_position(position)
+        else:
+            new_row = self._filtered_frame_indices[0]
+            self._thumbnail_panel.setCurrentRow(new_row)
+        self._sync_actions()
+
+    def filtered_frame_indices(self) -> tuple[int, ...]:
+        """Return the current filtered frame index list.
+
+        Public read-only accessor — :class:`ManualFaceGrid` (the future
+        cross-frame viewer landing in #108) consumes this so its visible
+        set matches the active filter.
+        """
+        return self._filtered_frame_indices
+
+    def _filtered_position(self) -> int:
+        """Return the current frame's index in ``_filtered_frame_indices``.
+
+        Returns ``-1`` when the current frame isn't in the filtered list
+        (filter rejected it) or no frame is loaded.
+        """
+        row = self._thumbnail_panel.currentRow()
+        if row < 0:
+            return -1
+        try:
+            return self._filtered_frame_indices.index(row)
+        except ValueError:
+            return -1
+
     def goto_first_frame(self) -> None:
-        """Select the first available frame in the thumbnail panel."""
-        if self._thumbnail_panel.count() == 0:
+        """Select the first frame in the active filter (#107)."""
+        if not self._filtered_frame_indices:
+            self.statusBar().showMessage(self._no_filter_match_message(), 3000)
             return
         self._stop_playback()
-        self._thumbnail_panel.setCurrentRow(0)
+        self._thumbnail_panel.setCurrentRow(self._filtered_frame_indices[0])
 
     def goto_last_frame(self) -> None:
-        """Select the last available frame in the thumbnail panel."""
-        count = self._thumbnail_panel.count()
-        if count == 0:
+        """Select the last frame in the active filter (#107)."""
+        if not self._filtered_frame_indices:
+            self.statusBar().showMessage(self._no_filter_match_message(), 3000)
             return
         self._stop_playback()
-        self._thumbnail_panel.setCurrentRow(count - 1)
+        self._thumbnail_panel.setCurrentRow(self._filtered_frame_indices[-1])
 
     def toggle_play(self) -> None:
-        """Toggle playback. Auto-advance fires at 24 fps and stops at the end."""
+        """Toggle playback through the *filtered* frames (#107)."""
         if self._editor_state.is_playing:
             self._stop_playback()
             return
-        if self._thumbnail_panel.count() == 0:
-            self.statusBar().showMessage("Nothing to play", 3000)
+        if not self._filtered_frame_indices:
+            self.statusBar().showMessage(self._no_filter_match_message(), 3000)
             return
-        if self._thumbnail_panel.currentRow() >= self._thumbnail_panel.count() - 1:
-            # At the last frame — rewind to the start so Play does something
+        position = self._filtered_position()
+        if position < 0 or position >= len(self._filtered_frame_indices) - 1:
+            # Rewind to the first filtered frame so Play does something
             # visible instead of being an immediate no-op.
-            self._thumbnail_panel.setCurrentRow(0)
+            self._thumbnail_panel.setCurrentRow(self._filtered_frame_indices[0])
         self._editor_state.set("is_playing", True)
         self._play_timer.start()
         self._sync_play_action_icon()
@@ -3789,13 +3874,20 @@ class ManualToolWindow(QMainWindow):
         self._sync_play_action_icon()
 
     def _advance_during_playback(self) -> None:
-        """QTimer slot: step forward; stop at the filtered-range end."""
-        row = self._thumbnail_panel.currentRow()
-        count = self._thumbnail_panel.count()
-        if count == 0 or row >= count - 1:
+        """QTimer slot: step forward through the filtered list (#107)."""
+        if not self._filtered_frame_indices:
             self._stop_playback()
             return
-        self._thumbnail_panel.setCurrentRow(row + 1)
+        position = self._filtered_position()
+        if position < 0 or position >= len(self._filtered_frame_indices) - 1:
+            self._stop_playback()
+            return
+        self._thumbnail_panel.setCurrentRow(self._filtered_frame_indices[position + 1])
+
+    def _no_filter_match_message(self) -> str:
+        """Compose the empty-filter user message."""
+        mode = self._editor_state.filter_mode or "All Frames"
+        return f"No frames match filter: {mode}"
 
     def _sync_play_action_icon(self) -> None:
         """Switch the Play/Pause toolbar icon to match playback state."""
@@ -3810,17 +3902,40 @@ class ManualToolWindow(QMainWindow):
         action.setText("Pause" if self._editor_state.is_playing else "Play")
 
     def _on_thumbnail_row_changed(self, _row: int) -> None:
-        """Refresh action availability + keep the transport bar in sync."""
+        """Refresh action availability + keep the transport bar in sync.
+
+        The transport bar tracks the *filtered* position so its counter
+        and slider reflect the active filter.  When the current frame
+        isn't in the filtered list (e.g. the user is paused on a frame
+        the filter would normally skip), the slider stays at the closest
+        previously-painted position so it doesn't jitter.
+        """
         self._sync_actions()
-        self._transport_bar.set_position(self._thumbnail_panel.currentRow())
+        if not self._filtered_frame_indices:
+            return
+        row = self._thumbnail_panel.currentRow()
+        try:
+            position = self._filtered_frame_indices.index(row)
+        except ValueError:
+            return
+        self._transport_bar.set_position(position)
 
     def _on_transport_position_changed(self, position: int) -> None:
-        """Apply a user-driven slider / jump-entry change to the thumbnail panel."""
-        if position == self._thumbnail_panel.currentRow():
+        """Apply a user-driven slider / jump-entry change (filtered position).
+
+        ``position`` is an index into ``_filtered_frame_indices``; the
+        actual thumbnail row is the frame index stored at that filtered
+        position.  Out-of-range positions are clamped silently.
+        """
+        if not self._filtered_frame_indices:
+            return
+        if not 0 <= position < len(self._filtered_frame_indices):
+            return
+        target_row = self._filtered_frame_indices[position]
+        if target_row == self._thumbnail_panel.currentRow():
             return
         self._stop_playback()
-        if 0 <= position < self._thumbnail_panel.count():
-            self._thumbnail_panel.setCurrentRow(position)
+        self._thumbnail_panel.setCurrentRow(target_row)
 
     def revert_current_frame(self) -> None:
         """Revert editable edits recorded against the current frame only.
@@ -4005,22 +4120,24 @@ class ManualToolWindow(QMainWindow):
         return True
 
     def cycle_filter_mode(self) -> None:
-        """Advance to the next filter mode in the legacy rotation order."""
-        order = (
-            "All Frames",
-            "Has Face(s)",
-            "No Faces",
-            "Single Face",
-            "Multiple Faces",
-            "Misaligned Faces",
-        )
-        current = self._editor_state.filter_mode or order[0]
+        """Advance to the next filter mode in the legacy rotation order.
+
+        Recomputes the filtered frame list immediately so navigation +
+        transport bar update in lock-step (#107).
+        """
+        from tools.manual.frame_filter import FILTER_MODES
+
+        current = self._editor_state.filter_mode or FILTER_MODES[0]
         try:
-            index = order.index(current)
+            index = FILTER_MODES.index(current)
         except ValueError:
             index = -1
-        self._editor_state.set("filter_mode", order[(index + 1) % len(order)])
-        self.statusBar().showMessage(f"Filter: {self._editor_state.filter_mode}", 5000)
+        new_mode = FILTER_MODES[(index + 1) % len(FILTER_MODES)]
+        self._editor_state.set("filter_mode", new_mode)
+        self._refresh_filter_results()
+        filtered_count = len(self._filtered_frame_indices)
+        suffix = f" ({filtered_count} match)" if filtered_count else " (no matches)"
+        self.statusBar().showMessage(f"Filter: {new_mode}{suffix}", 5000)
 
     def cycle_annotation_display(self) -> None:
         """Cycle annotation overlays in the legacy rotation order."""
@@ -4266,7 +4383,7 @@ class ManualToolWindow(QMainWindow):
             logger.exception("Manual Tool synchronous seed failed")
         if self._session.has_images:
             self._thumbnail_panel.set_frames(self._session.frame_list)
-            self._transport_bar.set_total(len(self._session.frame_list))
+            self._refresh_filter_results(preserve_current=False)
             self._thumbnail_panel.setCurrentRow(0)
         elif self._session.is_video_input:
             # Load video metadata synchronously before the provider starts
@@ -4468,7 +4585,7 @@ class ManualToolWindow(QMainWindow):
             for idx in range(count)
         ]
         self._thumbnail_panel.set_frames(tuple(self._video_frames))
-        self._transport_bar.set_total(len(self._video_frames))
+        self._refresh_filter_results(preserve_current=False)
         self._thumbnail_panel.setCurrentRow(0)
 
     def _on_video_frame_ready(self, index: int, filename: str, image: QImage) -> None:
@@ -5302,18 +5419,24 @@ class ManualToolWindow(QMainWindow):
             self.refresh_faces()
 
     def _previous_frame(self) -> None:
-        """Select previous frame; manual nav always stops playback."""
+        """Select previous frame from the active filter (#107)."""
         self._stop_playback()
-        row = self._thumbnail_panel.currentRow()
-        if row > 0:
-            self._thumbnail_panel.setCurrentRow(row - 1)
+        if not self._filtered_frame_indices:
+            return
+        position = self._filtered_position()
+        if position <= 0:
+            return
+        self._thumbnail_panel.setCurrentRow(self._filtered_frame_indices[position - 1])
 
     def _next_frame(self) -> None:
-        """Select next frame; manual nav always stops playback."""
+        """Select next frame from the active filter (#107)."""
         self._stop_playback()
-        row = self._thumbnail_panel.currentRow()
-        if 0 <= row < self._thumbnail_panel.count() - 1:
-            self._thumbnail_panel.setCurrentRow(row + 1)
+        if not self._filtered_frame_indices:
+            return
+        position = self._filtered_position()
+        if position < 0 or position >= len(self._filtered_frame_indices) - 1:
+            return
+        self._thumbnail_panel.setCurrentRow(self._filtered_frame_indices[position + 1])
 
     _MUTATING_ACTION_KEYS: T.ClassVar[tuple[str, ...]] = (
         "save",
@@ -5328,14 +5451,27 @@ class ManualToolWindow(QMainWindow):
     )
 
     def _sync_actions(self) -> None:
-        """Update action availability from session, selection and dirty state."""
+        """Update action availability from session, selection and dirty state.
+
+        Navigation gates run off the *filtered* frame list (#107): first /
+        previous / next / last / play are disabled when no frame matches
+        the active filter, and enabled bounds follow the filtered position
+        rather than the raw thumbnail row.  ``copy_prev_face`` /
+        ``copy_next_face`` use the same bounds so a filter that hides
+        adjacent frames also hides the copy-from-neighbor affordance.
+        """
         if not self._actions:
             return
-        frame_total = self._thumbnail_panel.count()
-        current_row = self._thumbnail_panel.currentRow()
-        has_frames = frame_total > 0
-        not_first = has_frames and current_row > 0
-        not_last = has_frames and 0 <= current_row < frame_total - 1
+        filtered = self._filtered_frame_indices
+        filtered_total = len(filtered)
+        has_frames = filtered_total > 0
+        if has_frames:
+            filtered_position = self._filtered_position()
+            not_first = filtered_position > 0
+            not_last = 0 <= filtered_position < filtered_total - 1
+        else:
+            not_first = False
+            not_last = False
         frame_index = self._current_frame_index()
         editable_count = self._editable.face_count(frame_index) if frame_index >= 0 else 0
         face_selected = self._editor_state.face_index >= 0 and (
