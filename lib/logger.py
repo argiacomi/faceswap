@@ -31,6 +31,7 @@ for new_level in (("VERBOSE", 15), ("TRACE", 5)):
     logging.addLevelName(level_num, level_name)
     level_map[level_name] = level_num
 
+_FACESWAP_HANDLER_ATTR = "_faceswap_managed_handler"
 
 class FaceswapLogger(logging.Logger):
     """A standard :class:`logging.logger` with additional "verbose" and "trace" levels added. """
@@ -351,6 +352,28 @@ def _set_root_logger(loglevel: int = logging.INFO) -> logging.Logger:
     logging.captureWarnings(True)
     return rootlogger
 
+def _mark_faceswap_handler(handler: logging.Handler) -> logging.Handler:
+    """Tag a handler managed by :func:`log_setup` for safe replacement."""
+    setattr(handler, _FACESWAP_HANDLER_ATTR, True)
+    return handler
+
+
+def _clear_faceswap_handlers(rootlogger: logging.Logger) -> None:
+    """Remove handlers previously installed by :func:`log_setup`.
+
+    Test runs can import modules that call ``log_setup`` more than once.  The
+    previous implementation appended file/stream/crash handlers on every call,
+    causing every later log record to be emitted repeatedly.  Only handlers
+    that we tagged are removed so pytest's capture handler and any embedding
+    application's handlers remain intact.
+    """
+    for handler in tuple(rootlogger.handlers):
+        if not getattr(handler, _FACESWAP_HANDLER_ATTR, False):
+            continue
+        rootlogger.removeHandler(handler)
+        handler.close()
+
+
 
 def log_setup(loglevel, log_file: str, command: str, is_gui: bool = False) -> None:
     """Set up logging for Faceswap.
@@ -374,6 +397,7 @@ def log_setup(loglevel, log_file: str, command: str, is_gui: bool = False) -> No
     numeric_loglevel = get_loglevel(loglevel)
     root_loglevel = min(logging.DEBUG, numeric_loglevel)
     rootlogger = _set_root_logger(loglevel=root_loglevel)
+    _clear_faceswap_handlers(rootlogger)
 
     if command == "setup":
         log_format = FaceswapFormatter("%(asctime)s %(module)-16s %(funcName)-30s %(levelname)-8s "
@@ -388,14 +412,14 @@ def log_setup(loglevel, log_file: str, command: str, is_gui: bool = False) -> No
         f_handler = _file_handler(numeric_loglevel, log_file, log_format, command)
         s_handler.addFilter(TorchWarningsFilter())
 
-    rootlogger.addHandler(f_handler)
-    rootlogger.addHandler(s_handler)
+    rootlogger.addHandler(_mark_faceswap_handler(f_handler))
+    rootlogger.addHandler(_mark_faceswap_handler(s_handler))
 
     if command == "setup":
         return
 
     c_handler = _crash_handler(log_format)
-    rootlogger.addHandler(c_handler)
+    rootlogger.addHandler(_mark_faceswap_handler(c_handler))
     logging.info("Log level set to: %s", loglevel.upper())
 
     try:
