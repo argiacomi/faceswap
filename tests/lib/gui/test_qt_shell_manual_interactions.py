@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pytest
 from PySide6.QtCore import QEvent, QPointF, Qt
 from PySide6.QtGui import QColor, QMouseEvent, QPixmap
@@ -22,6 +23,7 @@ from lib.gui.qt_shell.manual_tool import (
     ManualFrameView,
     ManualToolWindow,
 )
+from tools.manual.aligner_service import ManualAlignerService
 from tools.manual.session import FaceThumbnail, ManualSession
 
 
@@ -34,9 +36,36 @@ def _session_with_frames(folder: Path, count: int = 2) -> ManualSession:
     return ManualSession.create(frames=str(folder))
 
 
+class _InertAlignerBackend:
+    """Small aligner double for interaction tests.
+
+    These tests exercise pointer, context-menu and save behavior; they should
+    not load real aligner plugins just because BoundingBox auto-run is enabled.
+    """
+
+    def align(
+        self,
+        image: np.ndarray,
+        bbox: tuple[float, float, float, float],
+    ) -> np.ndarray:
+        return np.zeros((68, 2), dtype=np.float32)
+
+    def set_normalization(self, method: str) -> None:
+        return None
+
+
+def _inert_aligner_service() -> ManualAlignerService:
+    """Return a deterministic, model-free aligner service for GUI interaction tests."""
+    return ManualAlignerService(
+        available=lambda: ("HRNet",),
+        default=lambda: "HRNet",
+        factory=lambda _aligner, _normalization: _InertAlignerBackend(),
+    )
+
+
 def _make_window(qtbot, folder: Path) -> ManualToolWindow:  # type:ignore[no-untyped-def]
     session = _session_with_frames(folder, count=2)
-    window = ManualToolWindow(session)
+    window = ManualToolWindow(session, aligner_service=_inert_aligner_service())
     qtbot.addWidget(window)
     window.show()
     qtbot.waitExposed(window)
