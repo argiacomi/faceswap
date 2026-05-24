@@ -4,9 +4,10 @@
 from __future__ import annotations
 
 import logging
+import sys
 from pathlib import Path
 
-from lib.logger import log_setup
+from lib.logger import FaceswapFormatter, log_setup
 
 
 def _faceswap_handlers() -> list[logging.Handler]:
@@ -54,3 +55,34 @@ def test_log_setup_replaces_faceswap_handlers(tmp_path: Path) -> None:
         for handler in original_external_handlers:
             if handler not in root_logger.handlers:
                 root_logger.addHandler(handler)
+
+
+def test_log_setup_replaces_legacy_untagged_faceswap_handlers(tmp_path: Path) -> None:
+    """Untagged pre-marker Faceswap handlers should be treated as stale.
+
+    This mirrors full-suite collection order where a legacy test module may
+    have called ``log_setup`` before the explicit handler marker existed.  The
+    cleanup must recognize Faceswap's handler/formatter shape too, otherwise a
+    stale console handler survives and Alignments read/write logs are still
+    printed twice.
+    """
+    root_logger = logging.getLogger()
+    legacy_stream = logging.StreamHandler(sys.stdout)
+    legacy_stream.setFormatter(FaceswapFormatter("%(asctime)s %(levelname)-8s %(message)s"))
+    external_stream = logging.StreamHandler(sys.stdout)
+    external_stream.setFormatter(logging.Formatter("%(message)s"))
+    root_logger.addHandler(legacy_stream)
+    root_logger.addHandler(external_stream)
+
+    try:
+        log_setup("INFO", str(tmp_path / "fresh.log"), "tools")
+
+        assert legacy_stream not in root_logger.handlers
+        assert external_stream in root_logger.handlers
+        assert len(tuple(_faceswap_handlers())) == 3
+    finally:
+        root_logger.removeHandler(external_stream)
+        external_stream.close()
+        for handler in tuple(_faceswap_handlers()):
+            root_logger.removeHandler(handler)
+            handler.close()

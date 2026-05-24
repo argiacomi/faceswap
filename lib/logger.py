@@ -358,17 +358,35 @@ def _mark_faceswap_handler(handler: logging.Handler) -> logging.Handler:
     return handler
 
 
+def _is_faceswap_managed_handler(handler: logging.Handler) -> bool:
+    """Return whether ``handler`` was installed by :func:`log_setup`.
+
+    New handlers are tagged explicitly.  Older test-process handlers from
+    modules that called ``log_setup`` before this marker existed will not have
+    the tag, so also recognize the concrete handler/formatter combinations
+    that ``log_setup`` creates.  This keeps pytest capture handlers and other
+    external handlers intact while still cleaning stale Faceswap console/file
+    handlers that would otherwise duplicate later Alignments logs.
+    """
+    if getattr(handler, _FACESWAP_HANDLER_ATTR, False):
+        return True
+    formatter = getattr(handler, "formatter", None)
+    if not isinstance(formatter, (FaceswapFormatter, ColoredFormatter)):
+        return False
+    return isinstance(handler, (RotatingFileHandler, TqdmHandler, logging.StreamHandler))
+
+
 def _clear_faceswap_handlers(rootlogger: logging.Logger) -> None:
     """Remove handlers previously installed by :func:`log_setup`.
 
     Test runs can import modules that call ``log_setup`` more than once.  The
     previous implementation appended file/stream/crash handlers on every call,
     causing every later log record to be emitted repeatedly.  Only handlers
-    that we tagged are removed so pytest's capture handler and any embedding
-    application's handlers remain intact.
+    installed by Faceswap logging setup are removed so pytest's capture handler
+    and any embedding application's handlers remain intact.
     """
     for handler in tuple(rootlogger.handlers):
-        if not getattr(handler, _FACESWAP_HANDLER_ATTR, False):
+        if not _is_faceswap_managed_handler(handler):
             continue
         rootlogger.removeHandler(handler)
         handler.close()
