@@ -66,46 +66,24 @@ def _inert_aligner_service() -> ManualAlignerService:
 def _wait_for_frame_view_ready(  # type:ignore[no-untyped-def]
     qtbot, window: ManualToolWindow, *, timeout: int = 3000
 ) -> None:
-    """Wait until the frame view has both a source image and a laid-out rect.
-
-    Synthetic mouse tests need both invariants:
-
-    * ``source_size != (0, 0)`` — the source pixmap has been decoded.
-    * ``_target_rect()`` is non-empty — the widget has been resized by the
-      layout system, so widget-coordinate clicks translate to source pixels.
-
-    Polling only ``source_size`` is not enough: on a freshly-shown window the
-    source image may load before the layout has assigned the frame view its
-    final geometry, which leaves ``_target_rect().width() == 0`` and makes
-    every synthetic click land outside the image.
-    """
+    """Wait until the frame view has both a source image and a usable target rect."""
+    # Offscreen splitter layouts can leave the frame view at 0x0 even after
+    # the source pixmap has loaded. Synthetic mouse tests need a stable
+    # widget-space target rect, so force the frame pane to have geometry
+    # before polling `_target_rect()`.
+    window._frame_view.setMinimumSize(240, 160)
+    window._frame_view.updateGeometry()
+    qtbot.wait(0)
 
     def _ready() -> bool:
         if window._frame_view.source_size == (0, 0):
             return False
+        if window._frame_view.width() <= 0 or window._frame_view.height() <= 0:
+            return False
         rect = window._frame_view._target_rect()
         return rect.width() > 0 and rect.height() > 0
 
-    try:
-        qtbot.waitUntil(_ready, timeout=timeout)
-    except Exception:
-        from PySide6.QtCore import QSize
-        print(
-            "FRAME VIEW DIAG: source_size=",
-            window._frame_view.source_size,
-            "widget_size=",
-            (window._frame_view.width(), window._frame_view.height()),
-            "target_rect=",
-            window._frame_view._target_rect(),
-            "window_size=",
-            (window.width(), window.height()),
-        )
-        print("  filter_controls sizeHint=", window._filter_controls.sizeHint())
-        print("  filter_controls actual=", (window._filter_controls.width(), window._filter_controls.height()))
-        print("  aligner_controls sizeHint=", window._aligner_controls.sizeHint(), "visible=", window._aligner_controls.isVisible())
-        print("  aligner_controls actual=", (window._aligner_controls.width(), window._aligner_controls.height()))
-        print("  transport_bar=", (window._transport_bar.width(), window._transport_bar.height()))
-        raise
+    qtbot.waitUntil(_ready, timeout=timeout)
 
 
 def _make_window(qtbot, folder: Path) -> ManualToolWindow:  # type:ignore[no-untyped-def]
@@ -115,6 +93,7 @@ def _make_window(qtbot, folder: Path) -> ManualToolWindow:  # type:ignore[no-unt
     # auto-align.  Keep auto-run disabled so pointer-add is a single undoable
     # edit and these tests cannot touch model/plugin loading paths.
     window._editor_state.set("aligner_auto_run", False)
+    window._frame_view.setMinimumSize(240, 160)
     qtbot.addWidget(window)
     window.show()
     qtbot.waitExposed(window)
