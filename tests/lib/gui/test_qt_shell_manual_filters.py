@@ -147,6 +147,7 @@ def test_misaligned_threshold_control_refreshes_filtered_results(
     assert window.filtered_frame_indices() == (2,)
     assert window._filter_threshold_value.text() == "5"
 
+
 def test_face_count_edit_refreshes_active_filter_results(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
     """Adding a face should immediately update an active count-based filter."""
     window = _make_window(qtbot, tmp_path, count=3)

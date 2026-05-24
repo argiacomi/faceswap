@@ -7,7 +7,8 @@ import gc
 import os
 import shutil
 import tempfile
-import tracemalloc
+
+# import tracemalloc
 
 os.environ["OBJC_DISABLE_CLASS_WARNINGS"] = "YES"
 os.environ["OBJC_DEBUG_DUPLICATE_CLASSES"] = "NO"
@@ -39,8 +40,8 @@ def pytest_configure(config: pytest.Config) -> None:
     allocation traceback; doing it here keeps the next failure actionable
     without suppressing or filtering the warning.
     """
-    if not tracemalloc.is_tracing():
-        tracemalloc.start(25)
+    # if not tracemalloc.is_tracing():
+    #     tracemalloc.start(25)
 
 
 @pytest.hookimpl(hookwrapper=True)
