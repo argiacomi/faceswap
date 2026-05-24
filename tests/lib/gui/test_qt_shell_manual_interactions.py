@@ -40,7 +40,7 @@ class _InertAlignerBackend:
     """Small aligner double for interaction tests.
 
     These tests exercise pointer, context-menu and save behavior; they should
-    not load real aligner plugins just because BoundingBox auto-run is enabled.
+    not load real aligner plugins just because BoundingBox controls are shown.
     """
 
     def align(
@@ -66,6 +66,10 @@ def _inert_aligner_service() -> ManualAlignerService:
 def _make_window(qtbot, folder: Path) -> ManualToolWindow:  # type:ignore[no-untyped-def]
     session = _session_with_frames(folder, count=2)
     window = ManualToolWindow(session, aligner_service=_inert_aligner_service())
+    # Interaction tests are about pointer/context/save behavior, not #104
+    # auto-align.  Keep auto-run disabled so pointer-add is a single undoable
+    # edit and these tests cannot touch model/plugin loading paths.
+    window._editor_state.set("aligner_auto_run", False)
     qtbot.addWidget(window)
     window.show()
     qtbot.waitExposed(window)
