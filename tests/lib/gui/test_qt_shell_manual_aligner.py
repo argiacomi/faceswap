@@ -121,6 +121,21 @@ def _child(window: ManualToolWindow, widget_type: type[_WidgetT], name: str) -> 
     return widget
 
 
+def _wait_for_aligner_preload(qtbot, window: ManualToolWindow, *, timeout: int = 3000) -> None:  # type:ignore[no-untyped-def]
+    """Wait until any explicit aligner preload worker has fully drained.
+
+    Tests that trigger preload via ``set_aligner_normalization`` /
+    ``clahe.click()`` / ``combo.setCurrentIndex(...)`` / mode switches
+    into ``BoundingBox`` must drain the worker before returning so the
+    QThread doesn't outlive the test and bleed signals into the next
+    test's widgets.  ``ManualToolWindow._on_aligner_load_completed`` is
+    the only place that clears ``_aligner_load_worker``, so polling that
+    attribute back to ``None`` is the canonical "preload is done"
+    signal.
+    """
+    qtbot.waitUntil(lambda: window._aligner_load_worker is None, timeout=timeout)
+
+
 # ---------------------------------------------------------------------------
 # Selection + normalization
 # ---------------------------------------------------------------------------
@@ -159,6 +174,7 @@ def test_set_normalization_propagates_to_loaded_backends(qtbot, tmp_path: Path) 
     # ``(aligner, normalization)`` tuple, so the last backend can be the newly
     # cached clahe backend.  The propagation contract is that any already
     # loaded backend received the normalization change before that preload.
+    _wait_for_aligner_preload(qtbot, window)
     assert any("clahe" in backend.normalization_changes for backend in instances)
 
 
@@ -220,12 +236,13 @@ def test_bbox_aligner_selection_persists_across_editor_mode_changes(qtbot, tmp_p
     clahe = _child(window, QRadioButton, "qt-manual-aligner-normalization-clahe")
 
     window._editor_state.set("editor_mode", "BoundingBox")
-    qtbot.waitUntil(lambda: window._aligner_load_worker is None, timeout=2000)
+    _wait_for_aligner_preload(qtbot, window)
     combo.setCurrentIndex(combo.findText("FAN"))
     qtbot.waitUntil(lambda: window._editor_state.aligner_name == "FAN", timeout=2000)
-    qtbot.waitUntil(lambda: window._aligner_load_worker is None, timeout=2000)
+    _wait_for_aligner_preload(qtbot, window)
     clahe.click()
     qtbot.waitUntil(lambda: window._editor_state.aligner_normalization == "clahe", timeout=2000)
+    _wait_for_aligner_preload(qtbot, window)
 
     window._editor_state.set("editor_mode", "Landmarks")
     assert controls.isVisible() is False
@@ -245,7 +262,7 @@ def test_bbox_auto_run_checkbox_updates_state_and_gates_rerun(qtbot, tmp_path: P
     window._editable.add_face(0, (10.0, 10.0, 40.0, 40.0))
     window._editor_state.set("face_index", 0)
     window._editor_state.set("editor_mode", "BoundingBox")
-    qtbot.waitUntil(lambda: window._aligner_load_worker is None, timeout=2000)
+    _wait_for_aligner_preload(qtbot, window)
 
     checkbox.click()
 
@@ -269,7 +286,7 @@ def test_bbox_aligner_preload_progress_paints_loading_then_ready(qtbot, tmp_path
 
     assert progress.isVisible() is True
     assert "Loading aligner" in progress.format()
-    qtbot.waitUntil(lambda: window._aligner_load_worker is None, timeout=2000)
+    _wait_for_aligner_preload(qtbot, window)
     assert progress.isVisible() is False
     assert "ready" in status.text().lower()
 
@@ -281,7 +298,7 @@ def test_bbox_aligner_preload_clears_worker_state_after_completion(qtbot, tmp_pa
 
     window._editor_state.set("editor_mode", "BoundingBox")
     clahe.click()
-    qtbot.waitUntil(lambda: window._aligner_load_worker is None, timeout=2000)
+    _wait_for_aligner_preload(qtbot, window)
 
     assert window._aligner_load_target is None
     assert ("HRNet", "clahe") in window._aligner_loaded_targets
@@ -436,6 +453,11 @@ def test_set_aligner_normalization_updates_editor_state_without_face(
     window, _ = _make_window(qtbot, tmp_path)
     window.set_aligner_normalization("mean")
     assert window._editor_state.aligner_normalization == "mean"
+    # ``set_aligner_normalization`` schedules a preload whenever the BBox
+    # controls are visible.  Even though this test runs outside BoundingBox
+    # mode, drain unconditionally so a future controls-visibility regression
+    # doesn't leak a worker across tests.
+    _wait_for_aligner_preload(qtbot, window)
 
 
 def test_rerun_aligner_with_unstubbed_image_returns_false_when_frame_unloaded(
@@ -462,7 +484,7 @@ def test_explicit_preload_clears_worker_state_on_completion(qtbot, tmp_path: Pat
     window._editor_state.set("aligner_name", "HRNet")
 
     window._schedule_aligner_preload()
-    qtbot.waitUntil(lambda: window._aligner_load_worker is None, timeout=3000)
+    _wait_for_aligner_preload(qtbot, window)
 
     # The completed worker was deleted and the target was cleared.
     assert window._aligner_load_worker is None
@@ -479,7 +501,7 @@ def test_close_event_after_preload_completes_does_not_leave_thread(qtbot, tmp_pa
     window._editor_state.set("editor_mode", "BoundingBox")
     window._editor_state.set("aligner_name", "HRNet")
     window._schedule_aligner_preload()
-    qtbot.waitUntil(lambda: window._aligner_load_worker is None, timeout=3000)
+    _wait_for_aligner_preload(qtbot, window)
 
     event = QCloseEvent()
     window.closeEvent(event)
