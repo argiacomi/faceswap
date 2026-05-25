@@ -14,6 +14,7 @@ import logging
 import os
 import subprocess
 import typing as T
+from dataclasses import dataclass
 
 from PySide6.QtCore import QObject, QPoint, QPointF, QRectF, QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import (
@@ -24,6 +25,7 @@ from PySide6.QtGui import (
     QIcon,
     QImage,
     QIntValidator,
+    QKeyEvent,
     QKeySequence,
     QMouseEvent,
     QPainter,
@@ -34,6 +36,7 @@ from PySide6.QtGui import (
     QWheelEvent,
 )
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QButtonGroup,
     QCheckBox,
     QComboBox,
@@ -73,6 +76,44 @@ from tools.manual.session import (
 logger = logging.getLogger(__name__)
 
 OverlayPainter = T.Callable[[QPainter, "FrameViewport"], None]
+
+_FACE_GRID_SIZES: dict[str, int] = {
+    "Tiny": 48,
+    "Small": 64,
+    "Medium": 96,
+    "Large": 128,
+    "Extra Large": 160,
+}
+
+_FACE_GRID_ENTRY_ROLE = Qt.UserRole
+_FACE_GRID_ACTIVE_FRAME_ROLE = Qt.UserRole + 1
+_FACE_GRID_ACTIVE_FACE_ROLE = Qt.UserRole + 2
+_FACE_GRID_HOVER_ROLE = Qt.UserRole + 3
+
+
+@dataclass(frozen=True)
+class FaceGridEntry:
+    """One visible face in the filtered-session cross-frame grid."""
+
+    frame_index: int
+    frame_name: str
+    face_index: int
+    thumbnail: FaceThumbnail | None
+    bbox: tuple[float, float, float, float]
+    landmarks: tuple[tuple[float, float], ...] = ()
+
+
+@dataclass(frozen=True)
+class FaceGridRenderRequest:
+    """Testable record of one thumbnail render path and overlay state."""
+
+    frame_index: int
+    face_index: int
+    icon_size: int
+    show_mesh: bool
+    show_mask: bool
+    mask_type: str
+    mask_opacity: int
 
 
 class FrameViewport(T.NamedTuple):
@@ -2003,6 +2044,395 @@ class FaceThumbnailPanel(QListWidget):
         self.face_selected.emit(self._faces[row].face_index)
 
 
+class FaceGridThumbnailRenderer:
+    """Compose cross-frame grid thumbnail icons with optional mask/mesh overlays."""
+
+    _MASK_TINT = QColor(255, 80, 80)
+    _MESH_PEN = QColor("#ffb000")
+    _LANDMARK_FILL = QColor("#ffffff")
+
+    def __init__(self, editable: ManualEditableAlignments) -> None:
+        self._editable = editable
+
+    def render(
+        self,
+        entry: FaceGridEntry,
+        *,
+        icon_size: int,
+        show_mesh: bool,
+        show_mask: bool,
+        mask_type: str,
+        mask_opacity: int,
+    ) -> QIcon:
+        """Return an icon for ``entry`` with the requested annotation layers."""
+        base = self._base_pixmap(entry, icon_size)
+        painter = QPainter(base)
+        if show_mask:
+            self._paint_mask(painter, entry, icon_size, mask_type, mask_opacity)
+        if show_mesh:
+            self._paint_mesh(painter, entry, icon_size)
+        painter.end()
+        return QIcon(base)
+
+    def _base_pixmap(self, entry: FaceGridEntry, icon_size: int) -> QPixmap:
+        image = (
+            _decode_jpeg_to_qimage(entry.thumbnail.thumbnail_jpeg)
+            if entry.thumbnail is not None
+            else QImage()
+        )
+        if not image.isNull():
+            return QPixmap.fromImage(
+                image.scaled(
+                    icon_size,
+                    icon_size,
+                    Qt.KeepAspectRatioByExpanding,
+                    Qt.SmoothTransformation,
+                )
+            ).copy(0, 0, icon_size, icon_size)
+        pixmap = QPixmap(icon_size, icon_size)
+        pixmap.fill(QColor("#222"))
+        painter = QPainter(pixmap)
+        painter.setPen(QColor("#888"))
+        painter.drawText(pixmap.rect(), Qt.AlignCenter, "?")
+        painter.end()
+        return pixmap
+
+    def _paint_mask(
+        self,
+        painter: QPainter,
+        entry: FaceGridEntry,
+        icon_size: int,
+        mask_type: str,
+        mask_opacity: int,
+    ) -> None:
+        if not mask_type:
+            return
+        opacity_pct = max(0, min(100, int(mask_opacity)))
+        if opacity_pct == 0:
+            return
+        mask = self._editable.get_mask(entry.frame_index, entry.face_index, mask_type)
+        if mask is None:
+            return
+        try:
+            if mask.size == 0:
+                return
+            height, width = mask.shape[:2]
+            argb = bytearray(width * height * 4)
+            tint = self._MASK_TINT
+            alpha_factor = opacity_pct / 100.0
+            data = mask.tobytes()
+            mv = memoryview(argb)
+            for idx, value in enumerate(data):
+                base = idx * 4
+                if value == 0:
+                    mv[base : base + 4] = b"\x00\x00\x00\x00"
+                    continue
+                mv[base] = tint.blue()
+                mv[base + 1] = tint.green()
+                mv[base + 2] = tint.red()
+                mv[base + 3] = int(min(255, value * alpha_factor))
+            image = QImage(bytes(argb), width, height, width * 4, QImage.Format_ARGB32)
+        except Exception:  # pragma: no cover - defensive thumbnail path
+            return
+        painter.drawImage(QRectF(0.0, 0.0, float(icon_size), float(icon_size)), image)
+
+    def _paint_mesh(self, painter: QPainter, entry: FaceGridEntry, icon_size: int) -> None:
+        if not entry.landmarks:
+            return
+        x, y, width, height = entry.bbox
+        if width <= 0.0 or height <= 0.0:
+            return
+        points = [
+            QPointF(
+                max(0.0, min(float(icon_size), ((lx - x) / width) * icon_size)),
+                max(0.0, min(float(icon_size), ((ly - y) / height) * icon_size)),
+            )
+            for lx, ly in entry.landmarks
+        ]
+        if not points:
+            return
+        painter.save()
+        pen = QPen(self._MESH_PEN)
+        pen.setWidthF(max(1.0, icon_size / 80.0))
+        painter.setPen(pen)
+        for first, second in zip(points, points[1:], strict=False):
+            painter.drawLine(first, second)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(self._LANDMARK_FILL))
+        radius = max(1.0, icon_size / 42.0)
+        for point in points:
+            painter.drawEllipse(point, radius, radius)
+        painter.restore()
+
+
+class CrossFrameFaceGridPanel(QListWidget):
+    """Scrollable, wrapping grid of visible faces across the filtered session."""
+
+    face_activated = Signal(int, int)
+    """Emits ``(frame_index, face_index)`` when a thumbnail is clicked/accepted."""
+    face_hovered = Signal(int, int)
+    """Emits ``(frame_index, face_index)`` when hover moves onto a face."""
+    face_context_menu_requested = Signal(int, int, QPointF)
+    """Emits ``(frame_index, face_index, global_pos)`` for right-click menus."""
+    face_delete_requested = Signal(int, int)
+    """Emits ``(frame_index, face_index)`` when Delete is pressed in the grid."""
+
+    def __init__(
+        self,
+        renderer: FaceGridThumbnailRenderer,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setObjectName("qt-manual-cross-frame-face-grid")
+        self.setFlow(QListView.LeftToRight)
+        self.setViewMode(QListView.IconMode)
+        self.setMovement(QListView.Static)
+        self.setResizeMode(QListView.Adjust)
+        self.setWrapping(True)
+        self.setSelectionMode(QListWidget.SingleSelection)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setMouseTracking(True)
+        self.viewport().setMouseTracking(True)
+        self.setSpacing(6)
+        self.setMinimumHeight(96)
+        self.setUniformItemSizes(True)
+        self._renderer = renderer
+        self._entries: tuple[FaceGridEntry, ...] = ()
+        self._face_size_name = "Medium"
+        self._active: tuple[int, int] | None = None
+        self._hovered: tuple[int, int] | None = None
+        self._show_mesh = False
+        self._show_mask = False
+        self._mask_type = ""
+        self._mask_opacity = 50
+        self._render_requests: tuple[FaceGridRenderRequest, ...] = ()
+        self.itemClicked.connect(self._on_item_clicked)
+        self.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._on_context_menu_requested)
+        self.set_face_size(self._face_size_name)
+
+    @property
+    def entries(self) -> tuple[FaceGridEntry, ...]:
+        """Return the currently visible grid entries."""
+        return self._entries
+
+    def entry_keys(self) -> tuple[tuple[int, int], ...]:
+        """Return ``(frame_index, face_index)`` keys for all real entries."""
+        return tuple((entry.frame_index, entry.face_index) for entry in self._entries)
+
+    def render_requests(self) -> tuple[FaceGridRenderRequest, ...]:
+        """Return the render-state records from the most recent population."""
+        return self._render_requests
+
+    def active_entry(self) -> tuple[int, int] | None:
+        """Return the currently active ``(frame, face)`` pair."""
+        return self._active
+
+    def hovered_entry(self) -> tuple[int, int] | None:
+        """Return the currently hovered ``(frame, face)`` pair."""
+        return self._hovered
+
+    def face_size_name(self) -> str:
+        """Return the active legacy size label."""
+        return self._face_size_name
+
+    def set_face_size(self, size_name: str) -> None:
+        """Apply one legacy thumbnail size and relayout the wrapping grid."""
+        if size_name not in _FACE_GRID_SIZES:
+            size_name = "Medium"
+        self._face_size_name = size_name
+        size = _FACE_GRID_SIZES[size_name]
+        self.setIconSize(QSize(size, size))
+        self.setGridSize(QSize(size + 34, size + 42))
+        for row in range(self.count()):
+            item = self.item(row)
+            if item is not None:
+                item.setSizeHint(self.gridSize())
+
+    def set_overlay_state(
+        self,
+        *,
+        show_mesh: bool,
+        show_mask: bool,
+        mask_type: str,
+        mask_opacity: int,
+    ) -> None:
+        """Set annotation flags used for the next thumbnail render."""
+        self._show_mesh = bool(show_mesh)
+        self._show_mask = bool(show_mask)
+        self._mask_type = str(mask_type)
+        self._mask_opacity = int(mask_opacity)
+
+    def set_entries(self, entries: T.Iterable[FaceGridEntry]) -> None:
+        """Populate the grid with one item per visible face."""
+        current = self._active
+        self._entries = tuple(entries)
+        requests: list[FaceGridRenderRequest] = []
+        self.blockSignals(True)
+        try:
+            self.clear()
+            if not self._entries:
+                item = QListWidgetItem("No faces match current filter")
+                item.setFlags(Qt.NoItemFlags)
+                item.setTextAlignment(Qt.AlignCenter)
+                self.addItem(item)
+                self._render_requests = ()
+                return
+            icon_size = self.iconSize().width()
+            for entry in self._entries:
+                item = QListWidgetItem(f"{entry.frame_index + 1}:{entry.face_index + 1}")
+                item.setData(_FACE_GRID_ENTRY_ROLE, entry)
+                item.setTextAlignment(Qt.AlignCenter)
+                item.setSizeHint(self.gridSize())
+                request = FaceGridRenderRequest(
+                    frame_index=entry.frame_index,
+                    face_index=entry.face_index,
+                    icon_size=icon_size,
+                    show_mesh=self._show_mesh,
+                    show_mask=self._show_mask,
+                    mask_type=self._mask_type,
+                    mask_opacity=self._mask_opacity,
+                )
+                requests.append(request)
+                item.setIcon(
+                    self._renderer.render(
+                        entry,
+                        icon_size=icon_size,
+                        show_mesh=self._show_mesh,
+                        show_mask=self._show_mask,
+                        mask_type=self._mask_type,
+                        mask_opacity=self._mask_opacity,
+                    )
+                )
+                self.addItem(item)
+        finally:
+            self._render_requests = tuple(requests)
+            self.blockSignals(False)
+        if current is not None:
+            self.select_face(*current)
+        self._apply_item_states()
+
+    def item_for(self, frame_index: int, face_index: int) -> QListWidgetItem | None:
+        """Return the item matching ``frame_index`` and ``face_index``."""
+        for row in range(self.count()):
+            item = self.item(row)
+            entry = item.data(_FACE_GRID_ENTRY_ROLE) if item is not None else None
+            if (
+                isinstance(entry, FaceGridEntry)
+                and entry.frame_index == frame_index
+                and entry.face_index == face_index
+            ):
+                return item
+        return None
+
+    def select_face(self, frame_index: int, face_index: int) -> bool:
+        """Select the item matching ``frame_index`` and ``face_index``."""
+        item = self.item_for(frame_index, face_index)
+        if item is None:
+            return False
+        self.setCurrentItem(item)
+        self.scrollToItem(item, QAbstractItemView.PositionAtCenter)
+        return True
+
+    def set_active(self, frame_index: int, face_index: int) -> None:
+        """Mark the active frame/face for visible grid highlighting."""
+        active = (
+            (int(frame_index), int(face_index)) if frame_index >= 0 and face_index >= 0 else None
+        )
+        self._active = active
+        if active is not None:
+            self.select_face(*active)
+        self._apply_item_states()
+
+    def _on_item_clicked(self, item: QListWidgetItem) -> None:
+        entry = item.data(_FACE_GRID_ENTRY_ROLE)
+        if isinstance(entry, FaceGridEntry):
+            self.face_activated.emit(entry.frame_index, entry.face_index)
+
+    def _on_context_menu_requested(self, position: QPoint) -> None:
+        item = self.itemAt(position)
+        entry = item.data(_FACE_GRID_ENTRY_ROLE) if item is not None else None
+        if isinstance(entry, FaceGridEntry):
+            self.face_context_menu_requested.emit(
+                entry.frame_index,
+                entry.face_index,
+                QPointF(self.mapToGlobal(position)),
+            )
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa:N802
+        item = self.itemAt(event.position().toPoint())
+        entry = item.data(_FACE_GRID_ENTRY_ROLE) if item is not None else None
+        hovered = (
+            (entry.frame_index, entry.face_index) if isinstance(entry, FaceGridEntry) else None
+        )
+        if hovered != self._hovered:
+            self._hovered = hovered
+            self._apply_item_states()
+            if hovered is not None:
+                self.face_hovered.emit(*hovered)
+        super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event: T.Any) -> None:  # noqa:N802
+        self._hovered = None
+        self._apply_item_states()
+        super().leaveEvent(event)
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa:N802
+        if event.key() in (Qt.Key_Return, Qt.Key_Enter):
+            entry = self._current_entry()
+            if entry is not None:
+                self.face_activated.emit(entry.frame_index, entry.face_index)
+                event.accept()
+                return
+        if event.key() == Qt.Key_Delete:
+            entry = self._current_entry()
+            if entry is not None:
+                self.face_delete_requested.emit(entry.frame_index, entry.face_index)
+                event.accept()
+                return
+        super().keyPressEvent(event)
+
+    def _current_entry(self) -> FaceGridEntry | None:
+        item = self.currentItem()
+        entry = item.data(_FACE_GRID_ENTRY_ROLE) if item is not None else None
+        return entry if isinstance(entry, FaceGridEntry) else None
+
+    def _apply_item_states(self) -> None:
+        for row in range(self.count()):
+            item = self.item(row)
+            if item is None:
+                continue
+            entry = item.data(_FACE_GRID_ENTRY_ROLE)
+            if not isinstance(entry, FaceGridEntry):
+                continue
+            key = (entry.frame_index, entry.face_index)
+            is_active_face = self._active == key
+            is_active_frame = self._active is not None and self._active[0] == entry.frame_index
+            is_hovered = self._hovered == key
+            item.setData(_FACE_GRID_ACTIVE_FRAME_ROLE, is_active_frame)
+            item.setData(_FACE_GRID_ACTIVE_FACE_ROLE, is_active_face)
+            item.setData(_FACE_GRID_HOVER_ROLE, is_hovered)
+            if is_active_face:
+                item.setSelected(True)
+                item.setBackground(QBrush(QColor("#3f4f5c")))
+                item.setForeground(QBrush(QColor("#ffffff")))
+            elif is_hovered:
+                item.setSelected(False)
+                item.setBackground(QBrush(QColor("#34414a")))
+                item.setForeground(QBrush(QColor("#ffffff")))
+            elif is_active_frame:
+                item.setSelected(False)
+                item.setBackground(QBrush(QColor("#27323a")))
+                item.setForeground(QBrush(QColor("#d7e3ea")))
+            else:
+                item.setSelected(False)
+                item.setBackground(QBrush())
+                item.setForeground(QBrush())
+
+
 class ManualTransportBar(QWidget):
     """Transport controls below the frame view (slider + jump entry + counter).
 
@@ -3016,10 +3446,18 @@ class ManualToolWindow(QMainWindow):
         self._video_provider: VideoFrameProvider | None = None
         self._video_frames: list[ManualFrame] = []
         self._legacy_args = legacy_args or []
+        # One cached alignments handle for the lifetime of this window so we
+        # are not reopening the alignments file on every face refresh.
+        self._alignments_handle = session.alignments_handle()
+        self._editable = ManualEditableAlignments()
+        self._editable.subscribe(self._on_editable_changed)
         self._current_frame: ManualFrame | None = None
         self._frame_view = ManualFrameView()
         self._thumbnail_panel = ManualThumbnailPanel()
         self._face_panel = FaceThumbnailPanel()
+        self._face_grid_renderer = FaceGridThumbnailRenderer(self._editable)
+        self._face_grid_panel = CrossFrameFaceGridPanel(self._face_grid_renderer)
+        self._face_grid_size_combo = QComboBox()
         self._status_label = QLabel()
         self._metadata_label = QLabel()
         # Frame-navigation widgets — driven from the *filtered* frame list
@@ -3067,11 +3505,6 @@ class ManualToolWindow(QMainWindow):
         # When extract is triggered against a dirty session, persistence is
         # scheduled first; this holds the output folder until save completes.
         self._pending_extract_folder: str | None = None
-        # One cached alignments handle for the lifetime of this window so we
-        # are not reopening the alignments file on every face refresh.
-        self._alignments_handle = session.alignments_handle()
-        self._editable = ManualEditableAlignments()
-        self._editable.subscribe(self._on_editable_changed)
         self._overlay = ManualFrameOverlay(
             self._editable,
             frame_index_provider=self._current_frame_index,
@@ -3087,6 +3520,7 @@ class ManualToolWindow(QMainWindow):
             "face_index", lambda value: self._overlay.set_active(int(value))
         )
         self._editor_state.subscribe("face_index", lambda _v: self._frame_view.update())
+        self._editor_state.subscribe("face_index", lambda _v: self._refresh_face_grid_active())
         # When the active face changes, refresh the Mask dropdown so the
         # option list reflects whatever the new face has persisted on disk.
         self._editor_state.subscribe(
@@ -3099,6 +3533,7 @@ class ManualToolWindow(QMainWindow):
         self._editor_state.subscribe(
             "frame_index", lambda _v: self._refresh_mask_controls_visibility()
         )
+        self._editor_state.subscribe("frame_index", lambda _v: self._refresh_face_grid_active())
         self._editor_state.subscribe(
             "frame_index", lambda _v: self._refresh_aligner_controls_visibility()
         )
@@ -3108,7 +3543,12 @@ class ManualToolWindow(QMainWindow):
         # gets ``_refresh_filter_results`` from the cycle action, but
         # programmatic flips (tests, future menu items) need this too.
         self._editor_state.subscribe("filter_mode", lambda _v: self._refresh_filter_results())
-        self._editor_state.subscribe("filter_distance", lambda _v: self._refresh_filter_controls())
+        self._editor_state.subscribe("filter_distance", lambda _v: self._refresh_filter_results())
+        self._editor_state.subscribe("faces_size", self._on_face_grid_size_state_changed)
+        self._editor_state.subscribe("annotation_mode", lambda _v: self._refresh_face_grid())
+        self._editor_state.subscribe("annotation_mode", lambda _v: self._frame_view.update())
+        self._editor_state.subscribe("mask_type", lambda _v: self._refresh_face_grid())
+        self._editor_state.subscribe("mask_opacity", lambda _v: self._refresh_face_grid())
         self._build_ui()
         self._connect_signals()
         self._load_session()
@@ -3144,6 +3584,11 @@ class ManualToolWindow(QMainWindow):
     def face_panel(self) -> FaceThumbnailPanel:
         """Return the per-frame face thumbnail panel widget."""
         return self._face_panel
+
+    @property
+    def face_grid_panel(self) -> CrossFrameFaceGridPanel:
+        """Return the filtered-session cross-frame face grid widget."""
+        return self._face_grid_panel
 
     @property
     def editable_alignments(self) -> ManualEditableAlignments:
@@ -3806,6 +4251,7 @@ class ManualToolWindow(QMainWindow):
             # frames; navigation actions disable via ``_sync_actions``.
             self._sync_actions()
             self._refresh_filter_controls()
+            self._refresh_face_grid()
             return
         current_row = self._thumbnail_panel.currentRow()
         if preserve_current and current_row in self._filtered_frame_indices:
@@ -3816,6 +4262,7 @@ class ManualToolWindow(QMainWindow):
             self._thumbnail_panel.setCurrentRow(new_row)
         self._sync_actions()
         self._refresh_filter_controls()
+        self._refresh_face_grid()
 
     def filtered_frame_indices(self) -> tuple[int, ...]:
         """Return the current filtered frame index list.
@@ -4205,6 +4652,50 @@ class ManualToolWindow(QMainWindow):
             return False
         return True
 
+    def _build_face_grid_panel(self) -> QWidget:
+        """Return the face-strip + filtered-session face grid container."""
+        container = QWidget()
+        container.setObjectName("qt-manual-face-browser-panel")
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(6)
+
+        current_box = QWidget()
+        current_layout = QVBoxLayout(current_box)
+        current_layout.setContentsMargins(0, 0, 0, 0)
+        current_layout.setSpacing(4)
+        current_label = QLabel("Current frame faces")
+        current_label.setObjectName("qt-manual-current-frame-faces-label")
+        current_layout.addWidget(current_label)
+        current_layout.addWidget(self._face_panel, 1)
+        layout.addWidget(current_box, 1)
+
+        grid_box = QWidget()
+        grid_layout = QVBoxLayout(grid_box)
+        grid_layout.setContentsMargins(0, 0, 0, 0)
+        grid_layout.setSpacing(4)
+        controls = QHBoxLayout()
+        controls.setContentsMargins(0, 0, 0, 0)
+        controls.setSpacing(8)
+        session_label = QLabel("Filtered session faces")
+        session_label.setObjectName("qt-manual-filtered-session-faces-label")
+        controls.addWidget(session_label)
+        controls.addStretch(1)
+        controls.addWidget(QLabel("Size:"))
+        self._face_grid_size_combo.setObjectName("qt-manual-face-grid-size")
+        self._face_grid_size_combo.addItems(tuple(_FACE_GRID_SIZES))
+        size_name = self._editor_state.faces_size or "Medium"
+        if size_name not in _FACE_GRID_SIZES:
+            size_name = "Medium"
+        self._face_grid_size_combo.setCurrentText(size_name)
+        self._face_grid_size_combo.currentTextChanged.connect(self._on_face_grid_size_changed)
+        self._face_grid_panel.set_face_size(size_name)
+        controls.addWidget(self._face_grid_size_combo)
+        grid_layout.addLayout(controls)
+        grid_layout.addWidget(self._face_grid_panel, 1)
+        layout.addWidget(grid_box, 2)
+        return container
+
     def _build_ui(self) -> None:
         """Build Manual Tool widgets."""
         self.resize(980, 680)
@@ -4241,11 +4732,12 @@ class ManualToolWindow(QMainWindow):
         splitter = QSplitter(Qt.Vertical)
         splitter.setObjectName("qt-manual-main-splitter")
         splitter.addWidget(left)
-        splitter.addWidget(self._face_panel)
+        splitter.addWidget(self._build_face_grid_panel())
         splitter.addWidget(self._thumbnail_panel)
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 0)
         splitter.setStretchFactor(2, 0)
+        splitter.setSizes([500, 140, 80])
         self.setCentralWidget(splitter)
 
     def _build_toolbar(self) -> None:
@@ -4309,6 +4801,12 @@ class ManualToolWindow(QMainWindow):
         self._thumbnail_panel.currentRowChanged.connect(self._on_thumbnail_row_changed)
         self._transport_bar.position_changed.connect(self._on_transport_position_changed)
         self._face_panel.face_selected.connect(self._on_face_selected)
+        self._face_grid_panel.face_activated.connect(self._on_face_grid_activated)
+        self._face_grid_panel.face_hovered.connect(self._on_face_grid_hovered)
+        self._face_grid_panel.face_context_menu_requested.connect(
+            self._on_face_grid_context_menu_requested
+        )
+        self._face_grid_panel.face_delete_requested.connect(self._delete_face_at)
         self._frame_view.clicked_at.connect(self._on_frame_clicked)
         self._frame_view.face_move_requested.connect(self._on_face_move_requested)
         self._frame_view.face_resize_requested.connect(self._on_face_resize_requested)
@@ -4525,6 +5023,7 @@ class ManualToolWindow(QMainWindow):
         self._emit_console(f"Manual Tool ready — {summary}")
         # The editable model may now hold seeded faces; repaint + refresh.
         self.refresh_faces()
+        self._refresh_face_grid()
         self._frame_view.update()
         self._sync_actions()
         self._teardown_startup_worker()
@@ -4898,6 +5397,7 @@ class ManualToolWindow(QMainWindow):
         )
         if ok:
             self._editor_state.set("edited", True)
+            self._refresh_face_grid()
             self._frame_view.update()
         return ok
 
@@ -5412,7 +5912,13 @@ class ManualToolWindow(QMainWindow):
         """Open a Delete Face context menu for a right-clicked panel item."""
         self._show_face_context_menu(face_index, global_pos)
 
-    def _show_face_context_menu(self, face_index: int, global_pos: QPointF) -> None:
+    def _show_face_context_menu(
+        self,
+        face_index: int,
+        global_pos: QPointF,
+        *,
+        frame_index: int | None = None,
+    ) -> None:
         """Build and show a Delete-Face context menu at ``global_pos``.
 
         Uses :meth:`QMenu.popup` (non-blocking) rather than ``exec`` so a
@@ -5426,9 +5932,14 @@ class ManualToolWindow(QMainWindow):
 
         menu = QMenu(self)
         delete_action = menu.addAction("Delete Face")
-        delete_action.triggered.connect(
-            lambda _checked=False, fi=face_index: self._delete_face_by_index(fi)
-        )
+        if frame_index is None:
+            delete_action.triggered.connect(
+                lambda _checked=False, fi=face_index: self._delete_face_by_index(fi)
+            )
+        else:
+            delete_action.triggered.connect(
+                lambda _checked=False, fr=frame_index, fi=face_index: self._delete_face_at(fr, fi)
+            )
         menu.aboutToHide.connect(menu.deleteLater)
         menu.popup(global_pos.toPoint())
 
@@ -5458,6 +5969,32 @@ class ManualToolWindow(QMainWindow):
         self._frame_view.update()
         self.statusBar().showMessage(f"Deleted face index {face_index}", 5000)
 
+    def _delete_face_at(self, frame_index: int, face_index: int) -> None:
+        """Delete a face on any source frame and refresh filtered-session views."""
+        if frame_index < 0:
+            self.statusBar().showMessage("No frame to edit", 3000)
+            return
+        if not self._editable.delete_face(frame_index, face_index):
+            self.statusBar().showMessage("Could not delete face", 3000)
+            return
+        new_count = self._editable.face_count(frame_index)
+        self._editor_state.set("face_count_changed", True)
+        self._editor_state.set("edited", True)
+        if frame_index == self._current_frame_index():
+            active = self._editor_state.face_index
+            if new_count == 0:
+                self._editor_state.set("face_index", -1)
+            elif active >= new_count or active == face_index:
+                self._editor_state.set("face_index", min(face_index, new_count - 1))
+            self.refresh_faces()
+            self._frame_view.update()
+        self.mark_dirty(True)
+        self._refresh_filter_results()
+        self._refresh_face_grid()
+        self.statusBar().showMessage(
+            f"Deleted face {face_index + 1} on frame {frame_index + 1}", 5000
+        )
+
     def refresh_faces(self) -> None:
         """Rebuild the face panel from the editable model + persisted thumbs.
 
@@ -5471,11 +6008,24 @@ class ManualToolWindow(QMainWindow):
             self._face_panel.set_faces(())
             return
         frame_index = self._current_frame.index
-        editable_faces = self._editable.faces(frame_index)
-        if not editable_faces:
+        entries = self._face_thumbnail_entries_for_frame(frame_index)
+        if not entries:
             self._face_panel.set_faces(())
             return
-        frame_name = self._frame_name_for_index(frame_index) or self._current_frame.name
+        self._face_panel.set_faces(entries)
+
+    def _face_thumbnail_entries_for_frame(self, frame_index: int) -> tuple[FaceThumbnail, ...]:
+        """Return face thumbnail entries for one editable frame index."""
+        editable_faces = self._editable.faces(frame_index)
+        if not editable_faces:
+            return ()
+        frame_name = self._frame_name_for_index(frame_index)
+        if frame_name is None:
+            frame_name = (
+                self._current_frame.name
+                if self._current_frame is not None and self._current_frame.index == frame_index
+                else f"frame_{frame_index:06d}"
+            )
         # Look up persisted thumbnails by frame *name* — the editable model is
         # anchored to the source frame list, but the alignments file may be
         # sparse, so sorted-index lookups (``faces_for_frame``) can attach the
@@ -5497,7 +6047,100 @@ class ManualToolWindow(QMainWindow):
                     thumbnail_jpeg=previous.thumbnail_jpeg if previous else b"",
                 )
             )
-        self._face_panel.set_faces(entries)
+        return tuple(entries)
+
+    def _face_grid_entries(self) -> tuple[FaceGridEntry, ...]:
+        """Build one grid entry per visible face in the active filtered session."""
+        entries: list[FaceGridEntry] = []
+        for frame_index in self.filtered_frame_indices():
+            frame_name = self._frame_name_for_index(frame_index) or f"frame_{frame_index:06d}"
+            thumbs = {
+                thumb.face_index: thumb
+                for thumb in self._face_thumbnail_entries_for_frame(frame_index)
+            }
+            for face in self._editable.faces(frame_index):
+                entries.append(
+                    FaceGridEntry(
+                        frame_index=frame_index,
+                        frame_name=frame_name,
+                        face_index=int(face.face_index),
+                        thumbnail=thumbs.get(int(face.face_index)),
+                        bbox=face.bbox,
+                        landmarks=face.landmarks,
+                    )
+                )
+        return tuple(entries)
+
+    def _refresh_face_grid(self) -> None:
+        """Rebuild the cross-frame face grid from filters, state and annotations."""
+        panel = getattr(self, "_face_grid_panel", None)
+        if panel is None:
+            return
+        panel.set_overlay_state(
+            show_mesh=self._editor_state.annotation_mode == "Mesh",
+            show_mask=self._should_render_mask(),
+            mask_type=self.active_mask_type(),
+            mask_opacity=int(self._editor_state.mask_opacity),
+        )
+        panel.set_entries(self._face_grid_entries())
+        self._refresh_face_grid_active()
+
+    def _refresh_face_grid_active(self) -> None:
+        """Update active frame/face styling without rebuilding thumbnail icons."""
+        panel = getattr(self, "_face_grid_panel", None)
+        if panel is None:
+            return
+        panel.set_active(self._current_frame_index(), int(self._editor_state.face_index))
+
+    def _on_face_grid_activated(self, frame_index: int, face_index: int) -> None:
+        """Navigate to the clicked grid face and make it the active face."""
+        if frame_index < 0:
+            return
+        self._stop_playback()
+        if self._thumbnail_panel.currentRow() != frame_index:
+            self._thumbnail_panel.setCurrentRow(frame_index)
+        self._editor_state.set("face_index", int(face_index))
+        self._face_panel.select_face(int(face_index))
+        self._face_grid_panel.set_active(int(frame_index), int(face_index))
+        self._frame_view.update()
+        self._sync_actions()
+
+    def _on_face_grid_hovered(self, frame_index: int, face_index: int) -> None:
+        """Surface simple hover feedback for cross-frame thumbnails."""
+        self.statusBar().showMessage(
+            f"Frame {frame_index + 1} / Face {face_index + 1}",
+            2000,
+        )
+
+    def _on_face_grid_context_menu_requested(
+        self,
+        frame_index: int,
+        face_index: int,
+        global_pos: QPointF,
+    ) -> None:
+        """Open a Delete Face context menu for a cross-frame grid item."""
+        self._show_face_context_menu(face_index, global_pos, frame_index=frame_index)
+
+    def _on_face_grid_size_changed(self, size_name: str) -> None:
+        """Persist a user-selected face-grid size."""
+        if size_name not in _FACE_GRID_SIZES:
+            return
+        self._editor_state.set("faces_size", size_name)
+
+    def _on_face_grid_size_state_changed(self, size_name: object) -> None:
+        """Apply persisted face-grid size state and relayout immediately."""
+        name = str(size_name or "Medium")
+        if name not in _FACE_GRID_SIZES:
+            name = "Medium"
+        combo = getattr(self, "_face_grid_size_combo", None)
+        if combo is not None and combo.currentText() != name:
+            combo.blockSignals(True)
+            try:
+                combo.setCurrentText(name)
+            finally:
+                combo.blockSignals(False)
+        self._face_grid_panel.set_face_size(name)
+        self._refresh_face_grid()
 
     def _thumbnail_selected(
         self,
@@ -5757,6 +6400,10 @@ class ManualToolWindow(QMainWindow):
 
 __all__ = [
     "MANUAL_ACTIONS",
+    "CrossFrameFaceGridPanel",
+    "FaceGridEntry",
+    "FaceGridRenderRequest",
+    "FaceGridThumbnailRenderer",
     "FaceThumbnailPanel",
     "FrameViewport",
     "ManualAction",
