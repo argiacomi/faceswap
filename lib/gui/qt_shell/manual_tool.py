@@ -10,13 +10,27 @@ legacy fallback launcher without importing ``tkinter`` on the Qt path.
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import os
 import subprocess
 import typing as T
+from collections.abc import Sequence
 from dataclasses import dataclass
 
-from PySide6.QtCore import QObject, QPoint, QPointF, QRectF, QSize, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import (
+    QByteArray,
+    QObject,
+    QPoint,
+    QPointF,
+    QRectF,
+    QSettings,
+    QSize,
+    Qt,
+    QThread,
+    QTimer,
+    Signal,
+)
 from PySide6.QtGui import (
     QAction,
     QBrush,
@@ -196,6 +210,9 @@ class ManualFrameOverlay:
         self._mask_type_provider: T.Callable[[], str] | None = None
         self._mask_opacity_provider: T.Callable[[], int] | None = None
         self._mask_show_provider: T.Callable[[], bool] | None = None
+        self._color_provider: T.Callable[[str], QColor] | None = None
+        self._editor_mode_provider: T.Callable[[], str] | None = None
+        self._annotation_mode_provider: T.Callable[[], str] | None = None
 
     def set_active(self, face_index: int | None) -> None:
         """Mark a face as the active selection for highlight rendering."""
@@ -237,39 +254,91 @@ class ManualFrameOverlay:
         self._mask_opacity_provider = mask_opacity_provider
         self._mask_show_provider = mask_show_provider
 
+    def install_color_provider(self, provider: T.Callable[[str], QColor]) -> None:
+        """Hook editor-aware overlay colors for visual polish (#124)."""
+        self._color_provider = provider
+
+    def install_visibility_providers(
+        self,
+        *,
+        editor_mode_provider: T.Callable[[], str],
+        annotation_mode_provider: T.Callable[[], str],
+    ) -> None:
+        """Hook editor/annotation state so overlays follow the display matrix."""
+        self._editor_mode_provider = editor_mode_provider
+        self._annotation_mode_provider = annotation_mode_provider
+
     def __call__(self, painter: QPainter, viewport: FrameViewport) -> None:
         """Draw the overlay during :meth:`ManualFrameView.paintEvent`."""
         frame_index = self._frame_index_provider()
         faces = self._model.faces(frame_index)
         if not faces:
             return
+        visibility = self.annotation_visibility()
+        if not any(visibility.values()):
+            return
         pen_width = max(1.0, 1.5 * (1.0 / max(viewport.zoom, 0.001)) * viewport.zoom)
         for face in faces:
             is_active = face.face_index == self._active_face
             painter.save()
             rect = viewport.source_rect_to_widget(*face.bbox)
-            color = self._ACTIVE_COLOR if is_active else self._DEFAULT_COLOR
-            pen = QPen(color)
-            pen.setWidthF(pen_width + (1.0 if is_active else 0.0))
-            painter.setPen(pen)
-            painter.setBrush(Qt.NoBrush)
-            painter.drawRect(rect)
-            if face.landmarks:
+            if visibility["bbox"]:
+                color = self._color("active") if is_active else self._color("bbox")
+                pen = QPen(color)
+                pen.setWidthF(pen_width + (1.0 if is_active else 0.0))
+                painter.setPen(pen)
+                painter.setBrush(Qt.NoBrush)
+                painter.drawRect(rect)
+            if visibility["landmarks"] and face.landmarks:
                 painter.setPen(Qt.NoPen)
                 selected = self._selected_landmarks if is_active else frozenset()
                 for lm_index, (lx, ly) in enumerate(face.landmarks):
                     point = viewport.source_to_widget(lx, ly)
                     if lm_index in selected:
-                        painter.setBrush(QBrush(self._LANDMARK_SELECTED_COLOR))
+                        painter.setBrush(QBrush(self._color("landmark_selected")))
                         radius = self._LANDMARK_SELECTED_RADIUS
                     else:
-                        painter.setBrush(QBrush(self._LANDMARK_COLOR))
+                        painter.setBrush(QBrush(self._color("landmark")))
                         radius = self._LANDMARK_RADIUS
                     painter.drawEllipse(point, radius, radius)
             if is_active:
-                self._paint_mask_overlay(painter, viewport, face)
-                self._draw_handles(painter, rect)
+                if visibility["mask"]:
+                    self._paint_mask_overlay(painter, viewport, face)
+                if visibility["handles"]:
+                    self._draw_handles(painter, rect)
             painter.restore()
+
+    def annotation_visibility(self) -> dict[str, bool]:
+        """Return active overlay visibility for bbox, handles, landmarks and mask."""
+        editor_mode = self._editor_mode_provider() if self._editor_mode_provider else "View"
+        annotation_mode = (
+            self._annotation_mode_provider() if self._annotation_mode_provider else "None"
+        )
+        if not annotation_mode:
+            annotation_mode = "None"
+        return {
+            "bbox": editor_mode in {"BoundingBox", "ExtractBox", "Landmarks", "Mask"}
+            or annotation_mode in {"Mesh", "Mask", "Landmarks"},
+            "handles": editor_mode in {"BoundingBox", "ExtractBox"},
+            "landmarks": editor_mode in {"ExtractBox", "Landmarks"}
+            or annotation_mode in {"Mesh", "Landmarks"},
+            "mask": editor_mode == "Mask" or annotation_mode == "Mask",
+        }
+
+    def _color(self, role: str) -> QColor:
+        """Return the configured overlay color for ``role``."""
+        if self._color_provider is not None:
+            color = self._color_provider(role)
+            if color.isValid():
+                return color
+        defaults = {
+            "bbox": self._DEFAULT_COLOR,
+            "active": self._ACTIVE_COLOR,
+            "landmark": self._LANDMARK_COLOR,
+            "landmark_selected": self._LANDMARK_SELECTED_COLOR,
+            "mask": QColor(255, 80, 80),
+        }
+        return defaults.get(role, self._DEFAULT_COLOR)
 
     def _paint_mask_overlay(
         self,
@@ -311,7 +380,7 @@ class ManualFrameOverlay:
             from PySide6.QtGui import QImage
 
             argb = bytearray(width * height * 4)
-            tint_r, tint_g, tint_b = (255, 80, 80)
+            tint = self._color("mask")
             alpha_factor = opacity_pct / 100.0
             mv = memoryview(argb)
             data = mask_array.tobytes()
@@ -322,9 +391,9 @@ class ManualFrameOverlay:
                     continue
                 a = int(min(255, value * alpha_factor))
                 # Qt QImage in Format_ARGB32 is BGRA in memory on little-endian.
-                mv[base] = tint_b
-                mv[base + 1] = tint_g
-                mv[base + 2] = tint_r
+                mv[base] = tint.blue()
+                mv[base + 1] = tint.green()
+                mv[base + 2] = tint.red()
                 mv[base + 3] = a
             image = QImage(bytes(argb), width, height, width * 4, QImage.Format_ARGB32)
         except Exception:  # pragma: no cover - defensive
@@ -622,6 +691,31 @@ class ManualFrameView(QWidget):
         self._offset = QPointF(0.0, 0.0)
         self.update()
         self.view_changed.emit()
+
+    def view_state(self) -> dict[str, object]:
+        """Return a compact zoom/pan state snapshot."""
+        return {
+            "zoom": float(self._zoom),
+            "offset": (float(self._offset.x()), float(self._offset.y())),
+        }
+
+    def restore_view_state(self, state: T.Mapping[str, object]) -> bool:
+        """Restore a previously captured zoom/pan state."""
+        try:
+            zoom = float(state.get("zoom", 1.0))
+            offset_raw = state.get("offset", (0.0, 0.0))
+            if not isinstance(offset_raw, Sequence) or len(offset_raw) != 2:
+                return False
+            ox = float(offset_raw[0])
+            oy = float(offset_raw[1])
+        except (TypeError, ValueError):
+            return False
+        self._zoom = max(self._MIN_ZOOM, min(self._MAX_ZOOM, zoom))
+        self._offset = QPointF(float(ox), float(oy))
+        self._clamp_offset()
+        self.update()
+        self.view_changed.emit()
+        return True
 
     def magnify_to_source_rect(self, source_rect: QRectF) -> bool:
         """Zoom + pan so ``source_rect`` fills the viewport (Landmark magnify).
@@ -3456,6 +3550,17 @@ class ManualSaveWorker(QObject):
 class ManualToolWindow(QMainWindow):
     """Qt-native Manual Tool window with legacy fallback support."""
 
+    _SETTINGS_ORG = "Faceswap"
+    _SETTINGS_APP = "QtManualTool"
+    _WINDOW_STATE_KEY = "manual_tool/window_state"
+    _OVERLAY_COLOR_DEFAULTS: T.ClassVar[dict[str, QColor]] = {
+        "bbox": QColor("#3aa0ff"),
+        "active": QColor("#ffb000"),
+        "landmark": QColor("#ffffff"),
+        "landmark_selected": QColor("#ffb000"),
+        "mask": QColor(255, 80, 80),
+    }
+
     dirty_changed = Signal(bool)
     frame_changed = Signal(int)
     action_triggered = Signal(str)
@@ -3507,8 +3612,11 @@ class ManualToolWindow(QMainWindow):
         self._face_grid_renderer = FaceGridThumbnailRenderer(self._editable)
         self._face_grid_panel = CrossFrameFaceGridPanel(self._face_grid_renderer)
         self._face_grid_size_combo = QComboBox()
+        self._manual_splitter: QSplitter | None = None
         self._status_label = QLabel()
         self._metadata_label = QLabel()
+        self._magnify_restore_state: dict[str, object] | None = None
+        self._overlay_color_overrides: dict[str, dict[str, QColor]] = {}
         # Frame-navigation widgets — driven from the *filtered* frame list
         # (#107).  The transport position is an index into
         # ``_filtered_frame_indices``; the thumbnail panel still shows every
@@ -3563,6 +3671,11 @@ class ManualToolWindow(QMainWindow):
             mask_opacity_provider=lambda: self._editor_state.mask_opacity,
             mask_show_provider=self._should_render_mask,
         )
+        self._overlay.install_color_provider(self._overlay_color)
+        self._overlay.install_visibility_providers(
+            editor_mode_provider=lambda: self._editor_state.editor_mode,
+            annotation_mode_provider=lambda: self._editor_state.annotation_mode,
+        )
         self._editor_state.subscribe("unsaved", self._on_unsaved_changed)
         self._editor_state.subscribe("face_index", lambda _v: self._sync_actions())
         self._editor_state.subscribe(
@@ -3599,6 +3712,7 @@ class ManualToolWindow(QMainWindow):
         self._editor_state.subscribe("mask_type", lambda _v: self._refresh_face_grid())
         self._editor_state.subscribe("mask_opacity", lambda _v: self._refresh_face_grid())
         self._build_ui()
+        self._restore_manual_window_state()
         self._connect_signals()
         self._load_session()
         self._frame_view.add_overlay(self._overlay)
@@ -3662,6 +3776,27 @@ class ManualToolWindow(QMainWindow):
         actions (and assert their enabled state) without scraping the toolbar.
         """
         return dict(self._actions)
+
+    def set_editor_overlay_color(self, editor_mode: str, role: str, color: str | QColor) -> None:
+        """Override one overlay color role for one editor mode (#124)."""
+        if role not in self._OVERLAY_COLOR_DEFAULTS:
+            raise ValueError(f"Unknown overlay color role: {role}")
+        qcolor = color if isinstance(color, QColor) else QColor(str(color))
+        if not qcolor.isValid():
+            raise ValueError(f"Invalid overlay color: {color}")
+        self._overlay_color_overrides.setdefault(str(editor_mode), {})[role] = QColor(qcolor)
+        self._frame_view.update()
+
+    def editor_overlay_color(self, editor_mode: str, role: str) -> QColor:
+        """Return the configured overlay color for ``editor_mode`` and ``role``."""
+        override = self._overlay_color_overrides.get(str(editor_mode), {}).get(role)
+        if override is not None:
+            return QColor(override)
+        return QColor(self._OVERLAY_COLOR_DEFAULTS.get(role, QColor("#3aa0ff")))
+
+    def _overlay_color(self, role: str) -> QColor:
+        """Return overlay color for the current editor mode."""
+        return self.editor_overlay_color(self._editor_state.editor_mode, role)
 
     @property
     def video_provider(self) -> VideoFrameProvider | None:
@@ -3743,7 +3878,69 @@ class ManualToolWindow(QMainWindow):
         if self._startup_worker is not None:
             self._startup_worker.stop()
             self._startup_worker = None
+        self._save_manual_window_state()
         event.accept()
+
+    def _settings(self) -> QSettings:
+        """Return the persistent settings store for Manual Tool UI polish."""
+        return QSettings(self._SETTINGS_ORG, self._SETTINGS_APP)
+
+    def _capture_manual_window_state(self) -> dict[str, object]:
+        """Capture geometry, window state and Manual Tool splitter sizes."""
+        geometry = bytes(self.saveGeometry().toBase64()).decode("ascii")
+        window_state = bytes(self.saveState().toBase64()).decode("ascii")
+        return {
+            "geometry": geometry,
+            "window_state": window_state,
+            "maximized": self.isMaximized(),
+            "fullscreen": self.isFullScreen(),
+            "splitter_sizes": self._manual_splitter.sizes() if self._manual_splitter else [],
+        }
+
+    def _restore_manual_window_state_from(self, state: T.Mapping[str, object]) -> bool:
+        """Restore a state payload captured by :meth:`_capture_manual_window_state`."""
+        restored = False
+        geometry = state.get("geometry")
+        if isinstance(geometry, str) and geometry:
+            restored = bool(self.restoreGeometry(QByteArray.fromBase64(geometry.encode("ascii"))))
+        window_state = state.get("window_state")
+        if isinstance(window_state, str) and window_state:
+            self.restoreState(QByteArray.fromBase64(window_state.encode("ascii")))
+        sizes = state.get("splitter_sizes")
+        if self._manual_splitter is not None and isinstance(sizes, list | tuple):
+            try:
+                int_sizes = [int(value) for value in sizes]
+            except (TypeError, ValueError):
+                int_sizes = []
+            if int_sizes:
+                self._manual_splitter.setSizes(int_sizes)
+                restored = True
+        if bool(state.get("fullscreen")):
+            self.showFullScreen()
+            restored = True
+        elif bool(state.get("maximized")):
+            self.showMaximized()
+            restored = True
+        return restored
+
+    def _save_manual_window_state(self) -> None:
+        """Persist Manual Tool window state."""
+        settings = self._settings()
+        settings.setValue(self._WINDOW_STATE_KEY, json.dumps(self._capture_manual_window_state()))
+        settings.sync()
+
+    def _restore_manual_window_state(self) -> bool:
+        """Restore persisted Manual Tool window state, if present."""
+        raw = self._settings().value(self._WINDOW_STATE_KEY, "")
+        if not isinstance(raw, str) or not raw:
+            return False
+        try:
+            state = json.loads(raw)
+        except json.JSONDecodeError:
+            return False
+        if not isinstance(state, dict):
+            return False
+        return self._restore_manual_window_state_from(state)
 
     def mark_dirty(self, dirty: bool = True) -> None:
         """Set dirty state and update action availability."""
@@ -4399,11 +4596,17 @@ class ManualToolWindow(QMainWindow):
         if action is None:
             return
         theme = QtTheme.default()
-        icon_key = "stop" if self._editor_state.is_playing else "run"
+        icon_key = "pause" if self._editor_state.is_playing else "play"
         icon = icon_for_action(theme, icon_key)
         if not icon.isNull():
             action.setIcon(icon)
-        action.setText("Pause" if self._editor_state.is_playing else "Play")
+        text = "Pause" if self._editor_state.is_playing else "Play"
+        tooltip = (
+            "Pause playback (Space)" if self._editor_state.is_playing else "Play playback (Space)"
+        )
+        action.setText(text)
+        action.setToolTip(tooltip)
+        action.setStatusTip(tooltip)
 
     def _on_thumbnail_row_changed(self, _row: int) -> None:
         """Refresh action availability + keep the transport bar in sync.
@@ -4684,22 +4887,48 @@ class ManualToolWindow(QMainWindow):
 
     def reset_view(self) -> None:
         """Reset the embedded frame view (action handler)."""
+        self._magnify_restore_state = None
         self._frame_view.reset_view()
 
     def magnify_active_face(self) -> bool:
-        """Fit the active face's bbox to the viewport (Landmark editor M).
+        """Toggle fitting the active face's bbox to the viewport (Landmark editor M).
 
         Returns ``False`` and surfaces a status message when no face is
         active — Tk's Magnify is a no-op in that case too, so parity holds.
         """
+        if self._magnify_restore_state is not None:
+            return self._restore_magnified_view()
         bbox = self._active_face_bbox()
         if bbox is None:
             self.statusBar().showMessage("No active face to magnify", 3000)
             return False
+        self._magnify_restore_state = self._frame_view.view_state()
         if not self._frame_view.magnify_to_source_rect(bbox):
+            self._magnify_restore_state = None
             self.statusBar().showMessage("Could not magnify active face", 3000)
             return False
         return True
+
+    def _auto_magnify_active_face(self) -> bool:
+        """Fit the active face when entering detail editors without losing view state."""
+        if self._magnify_restore_state is not None:
+            return True
+        bbox = self._active_face_bbox()
+        if bbox is None:
+            return False
+        self._magnify_restore_state = self._frame_view.view_state()
+        if self._frame_view.magnify_to_source_rect(bbox):
+            return True
+        self._magnify_restore_state = None
+        return False
+
+    def _restore_magnified_view(self) -> bool:
+        """Restore the zoom/pan state captured before magnification."""
+        state = self._magnify_restore_state
+        if state is None:
+            return False
+        self._magnify_restore_state = None
+        return self._frame_view.restore_view_state(state)
 
     def _build_face_grid_panel(self) -> QWidget:
         """Return the face-strip + filtered-session face grid container."""
@@ -4787,14 +5016,16 @@ class ManualToolWindow(QMainWindow):
         splitter.setStretchFactor(1, 0)
         splitter.setStretchFactor(2, 0)
         splitter.setSizes([500, 140, 80])
+        self._manual_splitter = splitter
         self.setCentralWidget(splitter)
 
     def _build_toolbar(self) -> None:
         """Build the Manual Tool action toolbar from :data:`MANUAL_ACTIONS`."""
+        theme = QtTheme.default()
         toolbar = QToolBar("Manual Tool")
         toolbar.setObjectName("qt-manual-toolbar")
+        toolbar.setIconSize(QSize(theme.icon_size, theme.icon_size))
         self.addToolBar(toolbar)
-        theme = QtTheme.default()
         for spec in MANUAL_ACTIONS:
             if spec.separator_before and spec.toolbar_visible:
                 toolbar.addSeparator()
@@ -6202,6 +6433,8 @@ class ManualToolWindow(QMainWindow):
         index = current.data(Qt.UserRole)
         if not isinstance(index, int):
             return
+        if index != self._current_frame_index():
+            self._magnify_restore_state = None
         if self._session.has_images:
             if index >= len(self._session.frame_list):
                 return
@@ -6338,6 +6571,12 @@ class ManualToolWindow(QMainWindow):
         self._sync_actions()
         self._refresh_mask_controls_visibility()
         self._refresh_aligner_controls_visibility()
+        mode = str(self._editor_state.editor_mode)
+        if mode in {"Landmarks", "Mask"}:
+            self._auto_magnify_active_face()
+        else:
+            self._restore_magnified_view()
+        self._frame_view.update()
 
     MASK_DEFAULT_TYPES: T.ClassVar[tuple[str, ...]] = (
         "components",

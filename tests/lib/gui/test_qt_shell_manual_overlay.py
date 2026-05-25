@@ -62,6 +62,49 @@ def test_manual_frame_overlay_set_active_round_trips() -> None:
     assert overlay.active_face is None
 
 
+def test_manual_frame_overlay_annotation_visibility_matrix() -> None:
+    """Overlay visibility follows editor mode plus annotation toggles."""
+    model = ManualEditableAlignments()
+    state = {"editor_mode": "View", "annotation_mode": "None"}
+    overlay = ManualFrameOverlay(model, frame_index_provider=lambda: 0)
+    overlay.install_visibility_providers(
+        editor_mode_provider=lambda: state["editor_mode"],
+        annotation_mode_provider=lambda: state["annotation_mode"],
+    )
+
+    assert overlay.annotation_visibility() == {
+        "bbox": False,
+        "handles": False,
+        "landmarks": False,
+        "mask": False,
+    }
+
+    state["editor_mode"] = "BoundingBox"
+    assert overlay.annotation_visibility() == {
+        "bbox": True,
+        "handles": True,
+        "landmarks": False,
+        "mask": False,
+    }
+
+    state["editor_mode"] = "Landmarks"
+    assert overlay.annotation_visibility() == {
+        "bbox": True,
+        "handles": False,
+        "landmarks": True,
+        "mask": False,
+    }
+
+    state["editor_mode"] = "View"
+    state["annotation_mode"] = "Mask"
+    assert overlay.annotation_visibility() == {
+        "bbox": True,
+        "handles": False,
+        "landmarks": False,
+        "mask": True,
+    }
+
+
 def test_manual_tool_window_registers_overlay(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
     """ManualToolWindow installs its overlay on the frame view."""
     session = _session_with_frames(tmp_path)
@@ -69,6 +112,21 @@ def test_manual_tool_window_registers_overlay(qtbot, tmp_path: Path) -> None:  #
     qtbot.addWidget(window)
     overlays = window.frame_view._overlays  # noqa: SLF001 - intentional inspection
     assert window.frame_overlay in overlays
+
+
+def test_manual_tool_overlay_colors_are_editor_configurable(  # type:ignore[no-untyped-def]
+    qtbot, tmp_path: Path
+) -> None:
+    """Per-editor overlay color overrides feed the frame overlay painter."""
+    session = _session_with_frames(tmp_path)
+    window = ManualToolWindow(session)
+    qtbot.addWidget(window)
+
+    window.editor_state.set("editor_mode", "Landmarks")
+    window.set_editor_overlay_color("Landmarks", "landmark", "#112233")
+
+    assert window.editor_overlay_color("Landmarks", "landmark") == QColor("#112233")
+    assert window.frame_overlay._color("landmark") == QColor("#112233")  # noqa: SLF001
 
 
 def test_add_face_action_appends_to_editable_model(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]

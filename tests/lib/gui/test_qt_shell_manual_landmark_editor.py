@@ -257,6 +257,43 @@ def test_magnify_active_face_zooms_and_pans(qtbot, tmp_path: Path) -> None:  # t
     assert after_zoom > before_zoom
 
 
+def test_magnify_active_face_toggles_back_to_previous_view(  # type:ignore[no-untyped-def]
+    qtbot, tmp_path: Path
+) -> None:
+    """The Landmark magnify command restores the prior zoom/pan on second trigger."""
+    window = _make_window(qtbot, tmp_path)
+    _enter_landmark_mode(window)
+    face_index = _seed_face_with_landmarks(window)
+    window._editor_state.set("face_index", face_index)
+
+    before = window._frame_view.view_state()
+    assert window.magnify_active_face() is True
+    assert window._frame_view.zoom > float(before["zoom"])
+
+    assert window.magnify_active_face() is True
+    restored = window._frame_view.view_state()
+    assert abs(float(restored["zoom"]) - float(before["zoom"])) < 0.001
+    assert restored["offset"] == before["offset"]
+
+
+def test_entering_landmarks_auto_magnifies_and_leaving_restores(  # type:ignore[no-untyped-def]
+    qtbot, tmp_path: Path
+) -> None:
+    """Entering Landmark mode auto-fits the active face and View restores it."""
+    window = _make_window(qtbot, tmp_path)
+    face_index = _seed_face_with_landmarks(window)
+    window._editor_state.set("face_index", face_index)
+
+    before = window._frame_view.view_state()
+    window._editor_state.set("editor_mode", "Landmarks")
+    assert window._frame_view.zoom > float(before["zoom"])
+
+    window._editor_state.set("editor_mode", "View")
+    restored = window._frame_view.view_state()
+    assert abs(float(restored["zoom"]) - float(before["zoom"])) < 0.001
+    assert restored["offset"] == before["offset"]
+
+
 def test_magnify_with_no_active_face_is_noop_and_surfaces_status(  # type:ignore[no-untyped-def]
     qtbot, tmp_path: Path
 ) -> None:

@@ -228,10 +228,15 @@ def test_play_action_icon_reflects_playing_state(qtbot, tmp_path: Path) -> None:
     window = _make_window(qtbot, tmp_path, count=3)
     action = window.actions_by_key["play_pause"]
     assert action.text() == "Play"
+    assert action.toolTip() == "Play playback (Space)"
+    assert action.icon().isNull() is False
     window.toggle_play()
     assert action.text() == "Pause"
+    assert action.toolTip() == "Pause playback (Space)"
+    assert action.icon().isNull() is False
     window.toggle_play()
     assert action.text() == "Play"
+    assert action.toolTip() == "Play playback (Space)"
 
 
 def test_status_label_shows_filtered_position(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]

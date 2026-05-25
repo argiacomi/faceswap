@@ -118,6 +118,24 @@ def test_mask_draw_and_erase_actions_set_brush_mode(qtbot, tmp_path: Path) -> No
     assert window._editor_state.brush_mode == "draw"
 
 
+def test_entering_mask_mode_auto_magnifies_and_leaving_restores(  # type:ignore[no-untyped-def]
+    qtbot, tmp_path: Path
+) -> None:
+    """Entering Mask mode auto-fits the active face and View restores it."""
+    window = _make_window(qtbot, tmp_path)
+    face_index = _seed_face(window)
+    window._editor_state.set("face_index", face_index)
+
+    before = window._frame_view.view_state()
+    _enter_mask_mode(window)
+    assert window._frame_view.zoom > float(before["zoom"])
+
+    window._editor_state.set("editor_mode", "View")
+    restored = window._frame_view.view_state()
+    assert abs(float(restored["zoom"]) - float(before["zoom"])) < 0.001
+    assert restored["offset"] == before["offset"]
+
+
 def test_brush_size_increment_and_decrement_clamp_to_bounds(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
     """``[`` and ``]`` step brush size by the configured amount and clamp."""
     window = _make_window(qtbot, tmp_path)
