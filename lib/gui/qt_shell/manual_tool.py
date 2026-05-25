@@ -32,6 +32,7 @@ from PySide6.QtGui import (
     QPaintEvent,
     QPen,
     QPixmap,
+    QPolygonF,
     QResizeEvent,
     QWheelEvent,
 )
@@ -2137,32 +2138,80 @@ class FaceGridThumbnailRenderer:
         painter.drawImage(QRectF(0.0, 0.0, float(icon_size), float(icon_size)), image)
 
     def _paint_mesh(self, painter: QPainter, entry: FaceGridEntry, icon_size: int) -> None:
-        if not entry.landmarks:
-            return
-        x, y, width, height = entry.bbox
-        if width <= 0.0 or height <= 0.0:
-            return
-        points = [
-            QPointF(
-                max(0.0, min(float(icon_size), ((lx - x) / width) * icon_size)),
-                max(0.0, min(float(icon_size), ((ly - y) / height) * icon_size)),
-            )
-            for lx, ly in entry.landmarks
-        ]
-        if not points:
+        groups = self.mesh_groups_for_entry(entry, icon_size)
+        if not groups["line"] and not groups["polygon"]:
             return
         painter.save()
         pen = QPen(self._MESH_PEN)
         pen.setWidthF(max(1.0, icon_size / 80.0))
         painter.setPen(pen)
-        for first, second in zip(points, points[1:], strict=False):
-            painter.drawLine(first, second)
+        painter.setBrush(Qt.NoBrush)
+        for polygon in groups["polygon"]:
+            painter.drawPolygon(QPolygonF(polygon))
+        for line in groups["line"]:
+            painter.drawPolyline(QPolygonF(line))
         painter.setPen(Qt.NoPen)
         painter.setBrush(QBrush(self._LANDMARK_FILL))
         radius = max(1.0, icon_size / 42.0)
-        for point in points:
-            painter.drawEllipse(point, radius, radius)
+        for group in (*groups["polygon"], *groups["line"]):
+            for point in group:
+                painter.drawEllipse(point, radius, radius)
         painter.restore()
+
+    @classmethod
+    def mesh_groups_for_entry(
+        cls,
+        entry: FaceGridEntry,
+        icon_size: int,
+    ) -> dict[T.Literal["polygon", "line"], tuple[tuple[QPointF, ...], ...]]:
+        """Return Tk-parity mesh groups for ``entry`` scaled to ``icon_size``.
+
+        Tk's face viewer builds F9 mesh annotations from ``AlignedFace`` and
+        ``LANDMARK_PARTS``.  Use the same route for supported landmark shapes
+        so thumbnail mesh overlays are not just a raw landmark polyline.
+        """
+        if not entry.landmarks:
+            return {"polygon": (), "line": ()}
+        try:
+            import numpy as np
+
+            from lib.align import LANDMARK_PARTS, AlignedFace
+
+            landmark_array = np.asarray(entry.landmarks, dtype=np.float32)
+            aligned = AlignedFace(landmark_array, centering="face", size=int(icon_size))
+            groups: dict[T.Literal["polygon", "line"], list[tuple[QPointF, ...]]] = {
+                "polygon": [],
+                "line": [],
+            }
+            for start, end, fill in LANDMARK_PARTS[aligned.landmark_type].values():
+                shape: T.Literal["polygon", "line"] = "polygon" if fill else "line"
+                groups[shape].append(
+                    tuple(
+                        QPointF(float(x), float(y))
+                        for x, y in aligned.landmarks[start:end].tolist()
+                    )
+                )
+            return {key: tuple(value) for key, value in groups.items()}
+        except Exception:  # pragma: no cover - fallback for partial/custom landmarks
+            return cls._bbox_scaled_mesh_groups(entry, icon_size)
+
+    @staticmethod
+    def _bbox_scaled_mesh_groups(
+        entry: FaceGridEntry,
+        icon_size: int,
+    ) -> dict[T.Literal["polygon", "line"], tuple[tuple[QPointF, ...], ...]]:
+        """Fallback mesh grouping for incomplete/custom landmarks."""
+        x, y, width, height = entry.bbox
+        if width <= 0.0 or height <= 0.0:
+            return {"polygon": (), "line": ()}
+        points = tuple(
+            QPointF(
+                max(0.0, min(float(icon_size), ((lx - x) / width) * icon_size)),
+                max(0.0, min(float(icon_size), ((ly - y) / height) * icon_size)),
+            )
+            for lx, ly in entry.landmarks
+        )
+        return {"polygon": (), "line": (points,) if points else ()}
 
 
 class CrossFrameFaceGridPanel(QListWidget):

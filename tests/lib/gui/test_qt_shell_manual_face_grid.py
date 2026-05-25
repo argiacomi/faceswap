@@ -10,7 +10,12 @@ from PySide6.QtCore import QPoint, QPointF, Qt
 from PySide6.QtGui import QColor, QPixmap, QWheelEvent
 from PySide6.QtWidgets import QApplication
 
-from lib.gui.qt_shell.manual_tool import ManualToolWindow
+from lib.align import LANDMARK_PARTS, LandmarkType
+from lib.align.constants import MEAN_FACE
+from lib.gui.qt_shell.manual_tool import (
+    FaceGridThumbnailRenderer,
+    ManualToolWindow,
+)
 from tools.manual.session import ManualSession
 
 
@@ -102,6 +107,39 @@ def test_face_grid_size_control_updates_layout_and_preserves_active(
     assert window.face_grid_panel.active_entry() == (2, 0)
 
 
+def test_face_grid_wraps_to_available_width(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+    """The wrapping layout adapts column count to the viewport width."""
+    window = _make_window(qtbot, tmp_path, count=8)
+    for frame_index in range(8):
+        _seed_face(window, frame_index)
+    panel = window.face_grid_panel
+    window._face_grid_size_combo.setCurrentText("Tiny")
+
+    def _columns_in_first_row() -> int:
+        panel.doItemsLayout()
+        qtbot.wait(0)
+        first_top: int | None = None
+        columns = 0
+        for row in range(panel.count()):
+            item = panel.item(row)
+            if item is None:
+                continue
+            rect = panel.visualItemRect(item)
+            if first_top is None:
+                first_top = rect.top()
+            if rect.top() == first_top:
+                columns += 1
+        return columns
+
+    panel.setFixedSize(panel.gridSize().width() + 24, 240)
+    narrow_columns = _columns_in_first_row()
+    panel.setFixedSize((panel.gridSize().width() * 3) + 24, 240)
+    wide_columns = _columns_in_first_row()
+
+    assert narrow_columns == 1
+    assert wide_columns > narrow_columns
+
+
 def test_face_grid_click_navigates_frame_and_face(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
     """Clicking a grid thumbnail loads its source frame and selects the face."""
     window = _make_window(qtbot, tmp_path, count=4)
@@ -147,7 +185,7 @@ def test_face_grid_active_and_hover_state_are_testable(qtbot, tmp_path: Path) ->
 
 
 def test_face_grid_keyboard_and_mouse_wheel_scroll(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
-    """Focused grid handles list keyboard navigation and mouse-wheel scrolling."""
+    """Focused grid handles list keyboard paging and mouse-wheel scrolling."""
     window = _make_window(qtbot, tmp_path, count=18)
     for frame_index in range(18):
         _seed_face(window, frame_index)
@@ -161,6 +199,18 @@ def test_face_grid_keyboard_and_mouse_wheel_scroll(qtbot, tmp_path: Path) -> Non
     assert panel.currentRow() <= 0
     qtbot.keyClick(panel, Qt.Key_Down)
     assert panel.currentRow() > 0
+    panel.setCurrentRow(0)
+    panel.verticalScrollBar().setValue(0)
+
+    qtbot.keyClick(panel, Qt.Key_PageDown)
+    page_down_row = panel.currentRow()
+    page_down_scroll = panel.verticalScrollBar().value()
+    assert page_down_row > 0 or page_down_scroll > 0
+
+    qtbot.keyClick(panel, Qt.Key_PageUp)
+    assert (
+        panel.currentRow() < page_down_row or panel.verticalScrollBar().value() < page_down_scroll
+    )
 
     panel.verticalScrollBar().setValue(0)
     wheel_event = QWheelEvent(
@@ -175,6 +225,74 @@ def test_face_grid_keyboard_and_mouse_wheel_scroll(qtbot, tmp_path: Path) -> Non
     )
     QApplication.sendEvent(panel.viewport(), wheel_event)
     assert panel.verticalScrollBar().value() > 0
+
+
+def test_face_grid_right_click_menu_delete_path(
+    qtbot,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # type:ignore[no-untyped-def]
+    """Right-clicking a grid thumbnail opens a Delete Face menu wired to deletion."""
+    import PySide6.QtWidgets as qtwidgets
+
+    class _FakeSignal:
+        def __init__(self) -> None:
+            self.callback = None
+
+        def connect(self, callback):  # type:ignore[no-untyped-def]
+            self.callback = callback
+
+        def emit(self) -> None:
+            assert self.callback is not None
+            self.callback()
+
+    class _FakeAction:
+        def __init__(self, text: str) -> None:
+            self.text = text
+            self.triggered = _FakeSignal()
+
+    class _FakeMenu:
+        instances = []
+
+        def __init__(self, parent=None) -> None:  # type:ignore[no-untyped-def]
+            self.parent = parent
+            self.actions: list[_FakeAction] = []
+            self.aboutToHide = _FakeSignal()
+            self.popup_point = None
+            self.__class__.instances.append(self)
+
+        def addAction(self, text: str) -> _FakeAction:  # noqa:N802
+            action = _FakeAction(text)
+            self.actions.append(action)
+            return action
+
+        def popup(self, point) -> None:  # type:ignore[no-untyped-def]
+            self.popup_point = point
+
+        def deleteLater(self) -> None:  # noqa:N802
+            return None
+
+    monkeypatch.setattr(qtwidgets, "QMenu", _FakeMenu)
+    window = _make_window(qtbot, tmp_path, count=4)
+    _seed_face(window, 3)
+    panel = window.face_grid_panel
+    item = panel.item_for(3, 0)
+    assert item is not None
+
+    panel.scrollToItem(item)
+    qtbot.wait(0)
+    panel.customContextMenuRequested.emit(panel.visualItemRect(item).center())
+
+    assert len(_FakeMenu.instances) == 1
+    menu = _FakeMenu.instances[0]
+    assert menu.actions[0].text == "Delete Face"
+    assert menu.popup_point is not None
+
+    menu.actions[0].triggered.emit()
+
+    assert window.editable_alignments.face_count(3) == 0
+    assert window.editor_state.unsaved is True
+    assert window.face_grid_panel.entry_keys() == ()
 
 
 def test_face_grid_delete_removes_non_current_face_and_refreshes(
@@ -200,7 +318,15 @@ def test_face_grid_overlay_render_requests_track_mask_and_mesh(
 ) -> None:  # type:ignore[no-untyped-def]
     """Thumbnail render state carries F9/F10 mesh and mask overlay settings."""
     window = _make_window(qtbot, tmp_path, count=2)
-    _seed_face(window, 0, landmarks=((10.0, 10.0), (18.0, 18.0), (26.0, 10.0)))
+    jaw = tuple(
+        (float(7.0 + index * 1.25), float(26.0 + abs(index - 8) * 0.5)) for index in range(17)
+    )
+    core = tuple(
+        (float(point[0] * 24.0 + 10.0), float(point[1] * 24.0 + 10.0))
+        for point in MEAN_FACE[LandmarkType.LM_2D_51]
+    )
+    landmarks = jaw + core
+    _seed_face(window, 0, landmarks=landmarks)
     mask = np.zeros((32, 32), dtype=np.uint8)
     mask[8:24, 8:24] = 255
     window.editable_alignments._mask_state[(0, 0, "components")] = mask
@@ -218,6 +344,18 @@ def test_face_grid_overlay_render_requests_track_mask_and_mesh(
 
     assert mesh_request.show_mesh is True
     assert mesh_request.show_mask is False
+
+    groups = FaceGridThumbnailRenderer.mesh_groups_for_entry(
+        window.face_grid_panel.entries[0],
+        window.face_grid_panel.iconSize().width(),
+    )
+    legacy_parts = LANDMARK_PARTS[LandmarkType.LM_2D_68]
+    assert len(groups["polygon"]) == sum(
+        1 for _name, (_start, _end, fill) in legacy_parts.items() if fill
+    )
+    assert len(groups["line"]) == sum(
+        1 for _name, (_start, _end, fill) in legacy_parts.items() if not fill
+    )
 
 
 def test_face_grid_refreshes_after_non_current_edit_with_filter(
