@@ -57,8 +57,10 @@ def test_manual_tool_persists_and_restores_window_state(  # type:ignore[no-untyp
     """Manual Tool saves geometry/window state plus the main splitter sizes."""
     settings = _FakeSettings()
     monkeypatch.setattr(ManualToolWindow, "_settings", lambda _self: settings)
+
     window = _make_window(qtbot, tmp_path / "first")
     assert window._manual_splitter is not None  # noqa:SLF001
+
     window._manual_splitter.setSizes([420, 160, 90])  # noqa:SLF001
     expected_sizes = window._manual_splitter.sizes()  # noqa:SLF001
 
@@ -66,12 +68,30 @@ def test_manual_tool_persists_and_restores_window_state(  # type:ignore[no-untyp
 
     raw = settings.values[ManualToolWindow._WINDOW_STATE_KEY]  # noqa:SLF001
     payload = json.loads(raw)
+
     assert payload["splitter_sizes"] == expected_sizes
     assert payload["geometry"]
     assert payload["window_state"]
 
+    # Do not rely on platform-specific restoreGeometry() behavior.
+    # The headless Ubuntu jobs may realize a smaller client area.
+    settings.values.clear()
+
     restored = _make_window(qtbot, tmp_path / "second")
     assert restored._manual_splitter is not None  # noqa:SLF001
+
+    # Make the restore assertion independent of window-manager geometry.
+    restored.resize(window.size())
+    qtbot.wait(0)
+
+    restored._manual_splitter.setSizes([1, 1, 1])  # noqa:SLF001
+    assert restored._manual_splitter.sizes() != expected_sizes  # noqa:SLF001
+
+    state = dict(payload)
+    state["geometry"] = ""
+    state["window_state"] = ""
+
+    assert restored._restore_manual_window_state_from(state)  # noqa:SLF001
     assert restored._manual_splitter.sizes() == expected_sizes  # noqa:SLF001
 
 

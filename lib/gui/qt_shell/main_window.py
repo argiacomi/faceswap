@@ -1069,7 +1069,7 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _restore_splitter(splitter: QSplitter | None, sizes: object) -> None:
         """Restore splitter sizes from saved state."""
-        if splitter is None or not isinstance(sizes, list | tuple):
+        if splitter is None or not isinstance(sizes, (list, tuple)):
             return
         if all(isinstance(size, int) for size in sizes):
             splitter.setSizes(list(sizes))
