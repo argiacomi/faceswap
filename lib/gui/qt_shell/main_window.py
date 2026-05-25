@@ -34,6 +34,7 @@ from lib.gui.qt_shell.console_router import QtConsoleRouter
 from lib.gui.qt_shell.display_controller import DisplayController
 from lib.gui.qt_shell.graph_panel import GraphPanel
 from lib.gui.qt_shell.job_runner import JobRunner
+from lib.gui.qt_shell.manual_tool import ManualToolWindow
 from lib.gui.qt_shell.preview_panel import PreviewPanel
 from lib.gui.qt_shell.settings_dialog import SettingsDialog
 from lib.gui.qt_shell.theme import QtTheme
@@ -163,6 +164,7 @@ class MainWindow(QMainWindow):
         self._suppress_dirty = False
         self._runner = JobRunner(self)
         self._running = False
+        self._native_tool_windows: list[QWidget] = []
         self._command_panel = CommandPanel(self._schema)
         self._console = ConsolePane()
         self._console.set_theme(self._theme)
@@ -592,6 +594,8 @@ class MainWindow(QMainWindow):
         except ValueError as err:
             self._show_error(str(err))
             return
+        if self._try_launch_native_tool(category, command, values):
+            return
         self._project = self._session_service.snapshot_project(self._project, command, values)
         self._console.write_line(f"$ {' '.join(CommandBuilder.quote_args(args))}")
         self._write_context(command, values)
@@ -611,6 +615,48 @@ class MainWindow(QMainWindow):
         self._set_running(True)
         self._start_preview_live_refresh(command, context)
         self.statusBar().showMessage(f"Running {category} {command}")
+
+    def _try_launch_native_tool(
+        self,
+        category: str,
+        command: str,
+        values: T.Mapping[str, object],
+    ) -> bool:
+        """Open a native Qt window for tools that have a Qt implementation.
+
+        Returns ``True`` when a native window has been launched (Run is fully
+        handled here); ``False`` when the caller should fall back to the
+        subprocess JobRunner path.
+        """
+        if category != "tools" or command != "manual":
+            return False
+        try:
+            window = ManualToolWindow.from_command_values(
+                values,
+                builder=self._builder,
+                parent=self,
+                console_logger=self._console.write_line,
+            )
+        except ValueError as err:
+            message = str(err)
+            self._command_panel.set_external_errors((message,))
+            self._console.write_line(f"Manual Tool: {message}")
+            self.statusBar().showMessage(message, 5000)
+            return True
+        self._command_panel.set_external_errors(())
+        self._project = self._session_service.snapshot_project(self._project, command, values)
+        window.setAttribute(Qt.WA_DeleteOnClose, True)
+        window.destroyed.connect(lambda _obj=None, w=window: self._discard_native_tool(w))
+        self._native_tool_windows.append(window)
+        window.show()
+        self._console.write_line("Launched native Qt Manual Tool")
+        self.statusBar().showMessage("Launched native Qt Manual Tool", 5000)
+        return True
+
+    def _discard_native_tool(self, window: QWidget) -> None:
+        """Drop a closed native tool window from the tracked list."""
+        if window in self._native_tool_windows:
+            self._native_tool_windows.remove(window)
 
     def _stop_job(self) -> None:
         """Stop the current QProcess job."""
@@ -1023,7 +1069,7 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _restore_splitter(splitter: QSplitter | None, sizes: object) -> None:
         """Restore splitter sizes from saved state."""
-        if splitter is None or not isinstance(sizes, list | tuple):
+        if splitter is None or not isinstance(sizes, (list, tuple)):
             return
         if all(isinstance(size, int) for size in sizes):
             splitter.setSizes(list(sizes))

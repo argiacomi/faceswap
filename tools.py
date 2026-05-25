@@ -6,6 +6,16 @@ import os
 import sys
 from importlib import import_module
 
+# macOS: LightGBM + PyTorch libomp clash. Set OMP env defaults before any
+# torch/lightgbm import lands. No-op on other platforms. See faceswap.py.
+if sys.platform == "darwin":
+    os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+    os.environ.setdefault("OMP_NUM_THREADS", "1")
+    # Apple's clang libomp respects LIBOMP_NUM_THREADS independently of the
+    # generic OMP_NUM_THREADS; set both to keep every libomp implementation
+    # that might end up in the process single-threaded.
+    os.environ.setdefault("LIBOMP_NUM_THREADS", "1")
+
 # Importing the various tools
 from lib.cli.args import FullHelpArgumentParser
 

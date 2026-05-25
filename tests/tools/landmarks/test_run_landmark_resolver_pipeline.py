@@ -243,12 +243,17 @@ def test_pipeline_runner_dry_run_writes_summaries_contracts_and_progress(tmp_pat
     assert summary["best_weights_path"].endswith("best_weights.json")
     assert summary["scorer_path"].endswith("runtime_resolver_scorer.json")
     assert summary["eval_report_path"].endswith("scorer_policy_report.json")
-    assert summary["selected_runtime_policy"] == "learned_quality_v1"
-    assert summary["selected_production_policy"] == "learned_quality_v1"
+    assert summary["selected_runtime_policy"] == "learned_quality_v1_1"
+    assert summary["selected_production_policy"] == "learned_quality_v1_1"
     assert summary["promoted_scorer_version"] == "continuous_regret_v1_1"
     assert summary["promoted_scorer_target"] == "selection_cost"
-    assert "resolver_scorer_path" in summary["config_fields_changed"]
-    assert "weights_path" in summary["config_fields_changed"]
+    # Path-bearing keys are no longer written into extract.ini — runtime
+    # resolves artifacts from the installed production bundle instead.
+    assert "resolver_scorer_path" not in summary["config_fields_changed"]
+    assert "weights_path" not in summary["config_fields_changed"]
+    assert "setup_path" not in summary["config_fields_changed"]
+    assert "setup_mode" not in summary["config_fields_changed"]
+    assert "resolver_policy" in summary["config_fields_changed"]
     progress_log = Path(summary["progress_log_path"])
     assert progress_log.is_file()
     progress_rows = [
@@ -629,6 +634,28 @@ def test_candidate_search_command_uses_full_manifest_with_splits(
     assert command[command.index("--production-resolver-metadata") + 1] == str(
         paths.production_resolver_metadata
     )
+
+
+@pytest.mark.parametrize(
+    "promoted_scorer_version",
+    ("continuous_regret_v1_1", "learned_quality_v2"),
+)
+def test_candidate_search_command_requires_effective_ensemble(
+    tmp_path: Path,
+    promoted_scorer_version: str,
+) -> None:
+    """Every promoted scorer version this pipeline supports installs a
+    learned_quality_* runtime policy whose ranker has to choose between
+    multiple fusion candidates built from the promoted setup. The pipeline
+    therefore always passes ``--require-effective-ensemble`` to the search
+    so a single-model or collapsed ensemble cannot reach disk as
+    ``best_setup.json`` and leave the ranker with nothing to score."""
+    args = _args(tmp_path, promoted_scorer_version=promoted_scorer_version)
+    paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
+
+    command = _command_candidate_search(args, paths)
+
+    assert "--require-effective-ensemble" in command
 
 
 def test_gt_hard_resolver_metadata_contract_runs_after_hard_validation(
@@ -1082,11 +1109,17 @@ def test_config_preview_and_write_preserves_unmanaged_config_entries(tmp_path: P
 
     assert "preview" in notes[0]
     assert preview["section"] == "align.ensemble"
-    assert preview["updates"]["resolver_policy"] == "learned_quality_v1"
+    assert preview["updates"]["resolver_policy"] == "learned_quality_v1_1"
     assert "production_weights_path" not in preview["updates"]
     assert "coordinate_space" not in preview["updates"]
+    # Path-bearing keys are no longer in the patch.
+    assert "setup_path" not in preview["updates"]
+    assert "weights_path" not in preview["updates"]
+    assert "resolver_scorer_path" not in preview["updates"]
+    assert "setup_mode" not in preview["updates"]
     assert patch.startswith("[align.ensemble]\n")
-    assert "weights_path = " in patch
+    assert "weights_path = " not in patch
+    assert "resolver_scorer_path = " not in patch
 
     args.config_path.write_text(
         "\n".join(
@@ -1125,11 +1158,13 @@ def test_config_preview_and_write_preserves_unmanaged_config_entries(tmp_path: P
     assert parser.get("detect.scrfd", "model") == "10g"
     assert parser.get("align.ensemble", "stale_experimental") == "true"
     assert parser.get("align.ensemble", "use_alignment_resolver") == "True"
-    assert parser.get("align.ensemble", "resolver_policy") == "learned_quality_v1"
-    assert parser.get("align.ensemble", "resolver_scorer_path") == str(
-        paths.exported_scorer_artifact
-    )
-    assert parser.get("align.ensemble", "weights_path") == str(paths.exported_best_weights)
+    assert parser.get("align.ensemble", "resolver_policy") == "learned_quality_v1_1"
+    # Path-bearing keys are not written into extract.ini anymore; the runtime
+    # resolves them from the installed production bundle.
+    assert not parser.has_option("align.ensemble", "resolver_scorer_path")
+    assert not parser.has_option("align.ensemble", "weights_path")
+    assert not parser.has_option("align.ensemble", "setup_path")
+    assert not parser.has_option("align.ensemble", "setup_mode")
 
     config_text = args.config_path.read_text(encoding="utf-8")
     assert "# global comment survives" in config_text
@@ -1165,15 +1200,16 @@ def test_config_write_appends_missing_align_ensemble_section(tmp_path: Path) -> 
     assert "[global]" in config_text
     assert "[detect.scrfd]" in config_text
     assert "[align.ensemble]" in config_text
-    assert "resolver_policy = learned_quality_v1" in config_text
+    assert "resolver_policy = learned_quality_v1_1" in config_text
 
     parser = configparser.ConfigParser()
     parser.optionxform = str
     parser.read(args.config_path, encoding="utf-8")
     assert parser.get("global", "aligner_min_scale") == "0.03"
     assert parser.get("detect.scrfd", "model") == "10g"
-    assert parser.get("align.ensemble", "resolver_policy") == "learned_quality_v1"
-    assert parser.get("align.ensemble", "weights_path") == str(paths.exported_best_weights)
+    assert parser.get("align.ensemble", "resolver_policy") == "learned_quality_v1_1"
+    # Path-bearing keys are no longer written into extract.ini.
+    assert not parser.has_option("align.ensemble", "weights_path")
 
 
 def test_config_write_preserves_inline_comments_on_managed_keys(tmp_path: Path) -> None:
@@ -1185,7 +1221,6 @@ def test_config_write_preserves_inline_comments_on_managed_keys(tmp_path: Path) 
             [
                 "[align.ensemble]",
                 "resolver_policy = stale_policy # keep this comment",
-                "weights_path = old_weights.json ; keep weights comment",
                 "",
             ]
         ),
@@ -1195,8 +1230,7 @@ def test_config_write_preserves_inline_comments_on_managed_keys(tmp_path: Path) 
     _apply_config(args, paths)
 
     config_text = args.config_path.read_text(encoding="utf-8")
-    assert "resolver_policy = learned_quality_v1 # keep this comment" in config_text
-    assert f"weights_path = {paths.exported_best_weights} ; keep weights comment" in config_text
+    assert "resolver_policy = learned_quality_v1_1 # keep this comment" in config_text
 
 
 def test_config_write_requires_artifacts_and_passing_promotion(tmp_path: Path) -> None:
@@ -1394,5 +1428,66 @@ def test_resume_write_config_does_not_skip_config_update(tmp_path: Path) -> None
     assert summary["stages"][0]["name"] == "config_update"
     assert summary["stages"][0]["status"] == "ok"
     config_text = args.config_path.read_text(encoding="utf-8")
-    assert "resolver_policy = learned_quality_v1" in config_text
+    assert "resolver_policy = learned_quality_v1_1" in config_text
     assert "# config comment survives" in config_text
+
+
+# ---------------------------------------------------------------------------
+# Production bundle install (Phase 2)
+# ---------------------------------------------------------------------------
+
+
+def test_apply_config_installs_production_bundle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``--write-config`` installs a bundle so runtime can resolve artifacts.
+
+    Validates the Phase 2 contract: the pipeline copies the promoted setup,
+    weights, and every present scorer artifact into the bundle directory and
+    writes a manifest whose ``active_policy`` matches the runtime policy
+    derived from the promoted scorer version.
+    """
+    from lib.landmarks.ensemble import production_artifacts as pa
+
+    args = _args(tmp_path, write_config=True)
+    paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
+    _touch_pipeline_outputs(paths)
+    args.config_path.write_text("[align.ensemble]\n", encoding="utf-8")
+
+    bundle_root = tmp_path / "fs_cache" / "current"
+    monkeypatch.setenv(pa.BUNDLE_DIR_ENV, str(bundle_root))
+
+    notes = _apply_config(args, paths)
+
+    assert any("installed production landmark-ensemble bundle" in note for note in notes)
+    loaded = pa.load_production_bundle()
+    # continuous_regret_v1_1 is the default promoted_scorer_version in _args.
+    assert loaded.active_policy == "learned_quality_v1_1"
+    assert loaded.setup_path.is_file()
+    # All three scorer sources existed via _touch_pipeline_outputs, so all
+    # three policy slots should be populated.
+    assert set(loaded.scorers) == {
+        "learned_quality_v1",
+        "learned_quality_v1_1",
+        "learned_quality_v2",
+    }
+    assert loaded.scorer_path_for("learned_quality_v1_1").is_file()
+    assert loaded.scorer_path_for(pa.ROLL_AWARE_VETO_POLICY) is None
+
+
+def test_apply_config_without_write_skips_bundle_install(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Preview-only invocations must not touch the production bundle dir."""
+    from lib.landmarks.ensemble import production_artifacts as pa
+
+    args = _args(tmp_path)  # write_config defaults to False
+    paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
+    _touch_pipeline_outputs(paths)
+
+    bundle_root = tmp_path / "fs_cache" / "current"
+    monkeypatch.setenv(pa.BUNDLE_DIR_ENV, str(bundle_root))
+
+    _apply_config(args, paths)
+
+    assert not bundle_root.exists()

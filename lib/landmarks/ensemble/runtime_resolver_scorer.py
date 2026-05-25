@@ -4,10 +4,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import typing as T
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
@@ -20,6 +22,8 @@ from lib.landmarks.ensemble.scorer_target_config import (
     SCORE_SEMANTICS_PREDICTED_RISK,
     TARGET_CANDIDATE_FAILURE_OR_HIGH_GAP,
 )
+
+logger = logging.getLogger(__name__)
 
 CandidateLike = T.Any
 MetricLike = T.Any
@@ -333,14 +337,38 @@ class RuntimeResolverLightGBMScorer:
 
     def _booster(self) -> T.Any:
         if self._booster_cache is not None:
+            logger.debug("[RuntimeResolver] LightGBM booster cache hit")
             return self._booster_cache
+        # On macOS, LightGBM ships libomp.dylib and PyTorch ships its own
+        # libomp.dylib; loading both into the same process triggers
+        # "OMP: System error #22". KMP_DUPLICATE_LIB_OK lets the second
+        # runtime no-op instead of aborting, and pinning OMP_NUM_THREADS
+        # to 1 avoids LightGBM's thread pool fighting with Torch's.
+        import os
+
+        os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+        os.environ.setdefault("OMP_NUM_THREADS", "1")
+        os.environ.setdefault("LIBOMP_NUM_THREADS", "1")
+        logger.debug("[RuntimeResolver] importing lightgbm")
         try:
             import lightgbm as lgb
         except ModuleNotFoundError as err:  # pragma: no cover - depends on runtime env
             raise RuntimeError(
                 "learned_quality_v2 requires lightgbm to load scorer artifacts"
             ) from err
-        booster = lgb.Booster(model_str=self.model_data)
+        logger.debug("[RuntimeResolver] imported lightgbm")
+        logger.debug("[RuntimeResolver] constructing LightGBM Booster")
+        # Force single-threaded Booster construction *and* prediction. The
+        # original crash on macOS was LightGBM bringing up its own OpenMP
+        # runtime in a process where PyTorch's libomp was already loaded;
+        # pinning num_threads=1 here keeps the second runtime from
+        # spawning a thread pool. verbosity=-1 also silences LightGBM's
+        # info logging on the extract path.
+        booster = lgb.Booster(
+            model_str=self.model_data,
+            params={"num_threads": 1, "verbosity": -1},
+        )
+        logger.debug("[RuntimeResolver] constructed LightGBM Booster")
         object.__setattr__(self, "_booster_cache", booster)
         return booster
 
@@ -366,9 +394,32 @@ class RuntimeResolverLightGBMScorer:
         }
 
     def score_feature_map(self, features: T.Mapping[str, float]) -> float:
+        logger.debug("[RuntimeResolver] building LightGBM feature matrix")
         x = feature_matrix([features], self.features)
-        predicted_relevance = float(self._booster().predict(x)[0])
+        logger.debug("[RuntimeResolver] predicting LightGBM x_shape=%s", x.shape)
+        predicted_relevance = float(self._booster().predict(x, num_threads=1)[0])
+        logger.debug("[RuntimeResolver] predicted LightGBM score=%s", predicted_relevance)
         return -predicted_relevance
+
+    def score_feature_maps(self, feature_maps: T.Sequence[T.Mapping[str, float]]) -> list[float]:
+        """Score N feature dicts in one LightGBM predict call.
+
+        ``score_feature_map`` does a 1-row predict per candidate. Each call
+        re-enters ``Booster.predict`` and rebuilds the row matrix, which
+        adds latency that is linear in candidate count and pathological
+        when LightGBM has thread-pool overhead per call. Batching keeps
+        the cost roughly constant.
+        """
+        if not feature_maps:
+            return []
+        logger.debug(
+            "[RuntimeResolver] building LightGBM feature matrix batch=%d", len(feature_maps)
+        )
+        x = feature_matrix(feature_maps, self.features)
+        logger.debug("[RuntimeResolver] predicting LightGBM x_shape=%s", x.shape)
+        predicted = self._booster().predict(x, num_threads=1)
+        logger.debug("[RuntimeResolver] predicted LightGBM batch_size=%d", len(predicted))
+        return [-float(value) for value in predicted]
 
     def score_candidate(
         self,
@@ -379,10 +430,11 @@ class RuntimeResolverLightGBMScorer:
         return self.score_feature_map(candidate_feature_map(candidate, metric, **context))
 
 
-def load_runtime_resolver_scorer(
-    path: str | Path,
+@lru_cache(maxsize=8)
+def _load_runtime_resolver_scorer_cached(
+    path: str,
 ) -> RuntimeResolverScorer | RuntimeResolverLightGBMScorer:
-    """Load a runtime resolver scorer artifact from disk."""
+    """Read and parse a scorer artifact, memoized by resolved path."""
     source = Path(path)
     payload = json.loads(source.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
@@ -390,6 +442,19 @@ def load_runtime_resolver_scorer(
     if str(payload.get("model_type", "")) == MODEL_TYPE_LIGHTGBM_LAMBDARANK:
         return RuntimeResolverLightGBMScorer.from_payload(payload, source_path=str(source))
     return RuntimeResolverScorer.from_payload(payload, source_path=str(source))
+
+
+def load_runtime_resolver_scorer(
+    path: str | Path,
+) -> RuntimeResolverScorer | RuntimeResolverLightGBMScorer:
+    """Load a runtime resolver scorer artifact from disk.
+
+    Scorer artifacts are immutable once promoted, and ``runtime_resolver``
+    can call this once per face during extract. Memoize by resolved path
+    so we read + parse + (for LightGBM) reconstruct the booster once per
+    process; the bounded cache size keeps the working set small.
+    """
+    return _load_runtime_resolver_scorer_cached(str(Path(path).resolve()))
 
 
 def write_runtime_resolver_scorer(
@@ -412,14 +477,43 @@ def candidate_scores(
     metrics: T.Mapping[str, MetricLike],
     **context: T.Any,
 ) -> dict[str, float]:
-    """Score all candidates that have matching metric payloads."""
-    return {
-        str(candidate.name): float(
-            scorer.score_candidate(candidate, metrics[str(candidate.name)], **context)
+    """Score all candidates that have matching metric payloads.
+
+    For the LightGBM (learned_quality_v2) path we build one feature matrix
+    and call ``predict`` once — the old code did N=len(candidates) 1-row
+    predict calls and was the hot spot under load. Linear / logistic v1
+    scorers still go per-candidate so the per-candidate diagnostic logs
+    fire for them.
+    """
+    eligible = [c for c in candidates if str(c.name) in metrics]
+    if isinstance(scorer, RuntimeResolverLightGBMScorer):
+        if not eligible:
+            return {}
+        logger.debug(
+            "[RuntimeResolver] batch scoring %d candidate(s) via %s",
+            len(eligible),
+            type(scorer).__name__,
         )
-        for candidate in candidates
-        if str(candidate.name) in metrics
-    }
+        feature_maps = [
+            candidate_feature_map(candidate, metrics[str(candidate.name)], **context)
+            for candidate in eligible
+        ]
+        scores = scorer.score_feature_maps(feature_maps)
+        batched = {
+            str(candidate.name): float(score)
+            for candidate, score in zip(eligible, scores, strict=True)
+        }
+        logger.debug("[RuntimeResolver] batch score done scores=%s", batched)
+        return batched
+
+    per_candidate: dict[str, float] = {}
+    for candidate in eligible:
+        name = str(candidate.name)
+        logger.debug("[RuntimeResolver] score start candidate=%s", name)
+        score = float(scorer.score_candidate(candidate, metrics[name], **context))
+        logger.debug("[RuntimeResolver] score done candidate=%s score=%s", name, score)
+        per_candidate[name] = score
+    return per_candidate
 
 
 def feature_matrix(

@@ -33,6 +33,12 @@ from lib.landmarks.core.fusion import (
 )
 from lib.landmarks.core.schema import CANONICAL_SCHEMA, LandmarkPrediction
 from lib.landmarks.ensemble.outliers import weighted_median
+from lib.landmarks.ensemble.production_artifacts import (
+    ProductionBundle,
+    ProductionBundleError,
+    ProductionBundleMissing,
+    load_production_bundle,
+)
 from lib.landmarks.ensemble.promoted_setup import (
     PromotedSetup,
     PromotedSetupError,
@@ -46,6 +52,7 @@ from lib.landmarks.ensemble.runtime_resolver import (
     RuntimeResolverError,
     resolve_runtime,
 )
+from lib.landmarks.ensemble.runtime_resolver_scorer import load_runtime_resolver_scorer
 from lib.landmarks.ensemble.strategies import (
     CANONICAL_STRATEGIES,
     canonical_strategy,
@@ -118,16 +125,63 @@ class Ensemble(ExtractPlugin):
             cfg.outlier_threshold() if outlier_threshold is None else outlier_threshold
         )
 
-        raw_setup_path = cfg.setup_path() if setup_path is None else setup_path
+        # Resolve setup_path / scorer_path from the production landmark-ensemble
+        # bundle when kwargs are absent (the new contract). Kwargs still win so
+        # tests can inject paths without installing a bundle. config no longer
+        # carries these paths — the bundle is the single source of truth.
+        effective_use_resolver = bool(
+            cfg.use_alignment_resolver()
+            if use_alignment_resolver is None
+            else use_alignment_resolver
+        )
+        bundle = self._load_bundle_or_none(
+            need_setup=setup_path is None,
+            need_scorer=resolver_scorer_path is None,
+        )
+        # If the resolver is enabled in config but no path kwargs were
+        # supplied and no bundle is installed, the deployment is broken —
+        # we'd otherwise run extraction without the promoted setup/weights
+        # the operator intended, possibly with use_alignment_resolver=True
+        # on a roll_aware_veto policy that doesn't need a scorer (which
+        # would silently degrade to non-production behavior). Fail loudly
+        # so the operator can install or repair the bundle.
+        if (
+            effective_use_resolver
+            and setup_path is None
+            and resolver_scorer_path is None
+            and bundle is None
+        ):
+            raise ProductionBundleMissing(
+                "use_alignment_resolver=True requires an installed production "
+                "landmark-ensemble bundle. Run `tools/landmarks/run_landmark_resolver_pipeline.py"
+                " ... --write-config` to install one, or point FACESWAP_LANDMARK_ENSEMBLE_ARTIFACTS"
+                " at an existing bundle directory."
+            )
+        if setup_path is not None:
+            raw_setup_path: str = str(setup_path)
+            bundle_supplied_setup = False
+        elif bundle is not None:
+            raw_setup_path = str(bundle.setup_path)
+            bundle_supplied_setup = True
+        else:
+            raw_setup_path = ""
+            bundle_supplied_setup = False
         if setup_mode is None:
-            raw_setup_mode = "strict" if setup_path is not None else cfg.setup_mode()
+            # Strict whenever we have a real setup file (kwarg or bundle); the
+            # only "off" path is when no source produced a setup at all.
+            raw_setup_mode = (
+                "strict" if (setup_path is not None or bundle_supplied_setup) else "off"
+            )
         else:
             raw_setup_mode = setup_mode
         raw_fallback_strategy = (
             cfg.fallback_strategy() if fallback_strategy is None else fallback_strategy
         )
         self._setup_path = str(raw_setup_path or "")
-        self._weights_path = str(cfg.weights_path() or "")
+        # weights_path is no longer user-settable; best_setup.json references
+        # best_weights.json relatively and load_promoted_setup resolves it.
+        # The empty default keeps the debug-metadata fallback string-typed.
+        self._weights_path = ""
         self._setup_mode = self._resolve_setup_mode(self._setup_path, raw_setup_mode)
         self._fallback_strategy = self._resolve_fallback_strategy(
             raw_fallback_strategy, configured_strategy
@@ -135,9 +189,13 @@ class Ensemble(ExtractPlugin):
         self._resolver_policy = (
             cfg.resolver_policy() if resolver_policy is None else resolver_policy
         )
-        self._resolver_scorer_path = (
-            cfg.resolver_scorer_path() if resolver_scorer_path is None else resolver_scorer_path
-        )
+        if resolver_scorer_path is not None:
+            self._resolver_scorer_path: str = str(resolver_scorer_path)
+        elif bundle is not None:
+            scorer_path = bundle.scorer_path_for(self._resolver_policy)
+            self._resolver_scorer_path = "" if scorer_path is None else str(scorer_path)
+        else:
+            self._resolver_scorer_path = ""
         self._secondary_hard_case = (
             cfg.secondary_hard_case_strategy()
             if secondary_hard_case_strategy is None
@@ -187,6 +245,7 @@ class Ensemble(ExtractPlugin):
         self._last_matrices: np.ndarray | None = None
         self._last_detector_bboxes: np.ndarray | None = None
         self.last_debug_metadata: list[dict[str, T.Any]] = []
+        self._runtime_scorer: T.Any = None
         self.model: list[LandmarkAdapter]
         logger.debug(
             "[Ensemble] init strategy=%s setup_mode=%s setup_path=%s promoted=%s "
@@ -202,6 +261,26 @@ class Ensemble(ExtractPlugin):
             self._fallback_strategy,
             self._strict,
         )
+
+    @staticmethod
+    def _load_bundle_or_none(*, need_setup: bool, need_scorer: bool) -> ProductionBundle | None:
+        """Return the installed production bundle, or None if not needed/installed.
+
+        Returns ``None`` when callers supplied both ``setup_path`` and
+        ``resolver_scorer_path`` kwargs (nothing to look up), or when no
+        bundle is installed. ``ProductionBundleInvalid`` from a malformed
+        bundle propagates — that is a config error worth surfacing loudly.
+        """
+        if not need_setup and not need_scorer:
+            return None
+        try:
+            return load_production_bundle()
+        except ProductionBundleMissing:
+            return None
+        except ProductionBundleError:
+            # ProductionBundleInvalid and subclasses we don't know about:
+            # let them propagate so init fails fast on a broken bundle.
+            raise
 
     @staticmethod
     def _resolve_setup_mode(setup_path: str, configured_mode: str | None) -> str:
@@ -271,6 +350,21 @@ class Ensemble(ExtractPlugin):
 
     def load_model(self) -> list[LandmarkAdapter]:
         """Load configured adapters."""
+        # Construct the LightGBM Booster BEFORE Torch/MPS adapter loads.
+        # If the booster is built later (inside the ensemble worker, after
+        # Torch/MPS is warm) it can hang on macOS — instead, build it up
+        # front, then hand the preloaded scorer to resolve_runtime so the
+        # live path skips re-construction.
+        if self._use_resolver and self._resolver_policy.startswith("learned_quality"):
+            if not self._resolver_scorer_path:
+                raise ValueError(f"{self._resolver_policy} requires resolver_scorer_path")
+            self._runtime_scorer = load_runtime_resolver_scorer(self._resolver_scorer_path)
+            if hasattr(self._runtime_scorer, "_booster"):
+                logger.debug(
+                    "[Ensemble] warming runtime LightGBM scorer before Torch/MPS adapters"
+                )
+                self._runtime_scorer._booster()
+                logger.debug("[Ensemble] warmed runtime LightGBM scorer")
         adapters = (
             list(self._injected_adapters)
             if self._injected_adapters is not None
@@ -743,9 +837,19 @@ class Ensemble(ExtractPlugin):
                 detector_bbox=detector_bbox,
                 image_crop=image_crop,
                 crop_to_frame_matrix=crop_to_frame_matrix,
+                preloaded_scorer=self._runtime_scorer,
             )
         except RuntimeResolverError as err:
             logger.warning("[Ensemble] runtime resolver hard-failed: %s", err)
+            if self._strict:
+                raise
+            return None
+        except Exception:  # noqa: BLE001 - diagnostic: surface unexpected crashes
+            # Temporary widened catch to surface stack traces when the
+            # runtime resolver silently swallows an unexpected exception
+            # (e.g. lightgbm loading, scorer payload mismatch). Keep
+            # narrowing once the failure mode is identified.
+            logger.exception("[Ensemble] runtime resolver crashed")
             if self._strict:
                 raise
             return None

@@ -858,6 +858,7 @@ class CommandPanel(QWidget):
         self._command_value_cache: dict[str, dict[str, object]] = {}
         self._active_cached_command: str | None = None
         self._scroll: QScrollArea | None = None
+        self._external_errors: tuple[str, ...] = ()
         self._build()
         self._primary_tabs.currentChanged.connect(self._set_primary_tab)
         self._tool_tabs.currentChanged.connect(self._set_tool_tab)
@@ -1029,6 +1030,11 @@ class CommandPanel(QWidget):
     def _set_command_options(self, command: str) -> None:
         """Render fields for the selected command."""
         previous = self._active_cached_command
+        if previous and previous != command:
+            # Stale external errors (e.g. launcher validation from another
+            # command's Run path) should not bleed into a freshly selected
+            # command's validation surface.
+            self._external_errors = ()
         if previous and previous != command and self._renderer.rendered_switches:
             self._command_value_cache[previous] = self._renderer.values()
         options = self._schema.options(command)
@@ -1070,14 +1076,26 @@ class CommandPanel(QWidget):
 
     def _value_changed(self) -> None:
         """Forward renderer changes after refreshing inline validation."""
+        self._external_errors = ()
         self._update_validation()
         self.value_changed.emit()
 
     def _update_validation(self) -> None:
         """Display current validation errors inline."""
         errors = self.validation_errors()
-        self._validation_label.setText("\n".join(errors))
-        self._validation_label.setVisible(bool(errors))
+        combined: tuple[str, ...] = errors + self._external_errors
+        self._validation_label.setText("\n".join(combined))
+        self._validation_label.setVisible(bool(combined))
+
+    def set_external_errors(self, errors: T.Iterable[str]) -> None:
+        """Display caller-supplied validation errors inline beneath the form.
+
+        Native command launchers (e.g. the Qt Manual Tool) can call this to
+        surface user-facing failures in the same panel-level validation area
+        instead of only logging to the process console.
+        """
+        self._external_errors = tuple(message for message in errors if message)
+        self._update_validation()
 
     def _select_tabs_for_command(self, category: str | None, command: str) -> None:
         """Synchronize visible tabs after a project load or programmatic command set."""

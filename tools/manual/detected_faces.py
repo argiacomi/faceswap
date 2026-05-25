@@ -524,6 +524,7 @@ class Filter:
             filter_mode == "All Frames"
             or (filter_mode == "No Faces" and not frame_faces)
             or (filter_mode == "Has Face(s)" and len(frame_faces) > 0)
+            or (filter_mode == "Single Face" and len(frame_faces) == 1)
             or (filter_mode == "Multiple Faces" and len(frame_faces) > 1)
             or (
                 filter_mode == "Misaligned Faces"
@@ -557,6 +558,8 @@ class Filter:
             retval = sum(1 for f_count in face_count_per_index if f_count == 0)
         elif self._globals.var_filter_mode.get() == "Has Face(s)":
             retval = sum(1 for f_count in face_count_per_index if f_count != 0)
+        elif self._globals.var_filter_mode.get() == "Single Face":
+            retval = sum(1 for f_count in face_count_per_index if f_count == 1)
         elif self._globals.var_filter_mode.get() == "Multiple Faces":
             retval = sum(1 for f_count in face_count_per_index if f_count > 1)
         elif self._globals.var_filter_mode.get() == "Misaligned Faces":
@@ -606,6 +609,8 @@ class Filter:
         face_count_per_index = self._detected_faces.face_count_per_index
         if self._globals.var_filter_mode.get() == "No Faces":
             retval = [idx for idx, count in enumerate(face_count_per_index) if count == 0]
+        elif self._globals.var_filter_mode.get() == "Single Face":
+            retval = [idx for idx, count in enumerate(face_count_per_index) if count == 1]
         elif self._globals.var_filter_mode.get() == "Multiple Faces":
             retval = [idx for idx, count in enumerate(face_count_per_index) if count > 1]
         elif self._globals.var_filter_mode.get() == "Has Face(s)":

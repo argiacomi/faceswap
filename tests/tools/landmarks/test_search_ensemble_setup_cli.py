@@ -759,3 +759,354 @@ def test_search_profile_gate_runs_with_cached_context(tmp_path: Path) -> None:
     # outcome (promote / no_promotion) proves the wiring is intact.
     assert exit_code in (0, 1)
     assert (output_dir / "candidate_results.json").is_file()
+
+
+# ---------------------------------------------------------------------------
+# Single-model promotion loophole regression tests
+# ---------------------------------------------------------------------------
+
+
+def _force_single_model_winner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Force a single-model baseline to top the rank so the no-gates branch
+    has to consider it for promotion."""
+    real_run = search_cli.run_candidate_search
+
+    def _ranked(*args: object, **kwargs: object) -> list[search_cli.CandidateResult]:
+        results = list(real_run(*args, **kwargs))  # type: ignore[arg-type]
+        # Push every single-model baseline ahead of the fusion ensembles
+        # so ``results[0]`` would be a baseline without the guard.
+        results.sort(key=lambda result: (0 if result.is_single_model_baseline else 1,))
+        return results
+
+    monkeypatch.setattr(search_cli, "run_candidate_search", _ranked)
+
+
+def test_search_no_gates_blocks_single_model_promotion_without_flag(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When baselines get enumerated for comparison and no promotion gates
+    are configured, the no-gates fallback used to silently promote whichever
+    candidate sat first in the ranked list — including single-model
+    baselines. The guarded fallback must refuse single-model promotion
+    unless ``--allow-single-model-promotion`` was passed."""
+    fixture = _build_fixture(tmp_path)
+    output_dir = tmp_path / "search"
+    _force_single_model_winner(monkeypatch)
+
+    exit_code = search_main(
+        [
+            "--manifest",
+            str(fixture["manifest"]),
+            "--cache-dir",
+            str(fixture["cache"]),
+            "--splits",
+            str(fixture["splits"]),
+            "--models",
+            "hrnet,spiga,orformer",
+            "--model-subsets",
+            "all",
+            "--weight-generators",
+            "inverse_mean_error",
+            "--strategies",
+            "static_weighted",
+            "--output-dir",
+            str(output_dir),
+            "--include-single-model-baselines",
+        ]
+    )
+
+    assert exit_code == 0
+    setup = json.loads((output_dir / "best_setup.json").read_text(encoding="utf-8"))
+    assert len(setup["models"]) > 1, (
+        "no-gates fallback promoted a single-model baseline despite "
+        "--allow-single-model-promotion not being set"
+    )
+
+
+def test_search_no_gates_promotes_single_model_when_flag_set(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``--allow-single-model-promotion`` explicitly opts into single-model
+    promotion, so the no-gates fallback may write a single-model best_setup
+    when a baseline tops the ranking."""
+    fixture = _build_fixture(tmp_path)
+    output_dir = tmp_path / "search"
+    _force_single_model_winner(monkeypatch)
+
+    exit_code = search_main(
+        [
+            "--manifest",
+            str(fixture["manifest"]),
+            "--cache-dir",
+            str(fixture["cache"]),
+            "--splits",
+            str(fixture["splits"]),
+            "--models",
+            "hrnet,spiga,orformer",
+            "--model-subsets",
+            "all",
+            "--weight-generators",
+            "inverse_mean_error",
+            "--strategies",
+            "static_weighted",
+            "--output-dir",
+            str(output_dir),
+            "--include-single-model-baselines",
+            "--allow-single-model-promotion",
+        ]
+    )
+
+    assert exit_code == 0
+    setup = json.loads((output_dir / "best_setup.json").read_text(encoding="utf-8"))
+    assert len(setup["models"]) == 1
+    assert not (output_dir / "no_promotion.json").exists()
+
+
+def test_search_no_gates_writes_no_promotion_when_only_singles_eligible(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If every evaluated candidate is a single-model baseline and the
+    promotion flag is not set, the no-gates fallback writes a
+    ``no_promotion.json`` explaining that single-model promotion is
+    disabled, instead of silently promoting one."""
+    fixture = _build_fixture(tmp_path)
+    output_dir = tmp_path / "search"
+
+    real_run = search_cli.run_candidate_search
+
+    def _singles_only(*args: object, **kwargs: object) -> list[search_cli.CandidateResult]:
+        results = list(real_run(*args, **kwargs))  # type: ignore[arg-type]
+        return [result for result in results if result.is_single_model_baseline]
+
+    monkeypatch.setattr(search_cli, "run_candidate_search", _singles_only)
+
+    exit_code = search_main(
+        [
+            "--manifest",
+            str(fixture["manifest"]),
+            "--cache-dir",
+            str(fixture["cache"]),
+            "--splits",
+            str(fixture["splits"]),
+            "--models",
+            "hrnet,spiga,orformer",
+            "--model-subsets",
+            "all",
+            "--weight-generators",
+            "inverse_mean_error",
+            "--strategies",
+            "static_weighted",
+            "--output-dir",
+            str(output_dir),
+            "--include-single-model-baselines",
+        ]
+    )
+
+    assert exit_code == 1
+    assert not (output_dir / "best_setup.json").exists()
+    payload = json.loads((output_dir / "no_promotion.json").read_text(encoding="utf-8"))
+    assert payload["status"] == "no_promotion"
+    assert "single-model" in payload["reason"]
+
+
+def _candidate_result_stub(
+    *,
+    strategy: str,
+    models: tuple[str, ...],
+    is_single_model_baseline: bool,
+) -> search_cli.CandidateResult:
+    """Minimal CandidateResult for testing the production-policy resolver.
+
+    The resolver only inspects ``candidate.strategy`` /
+    ``candidate.models`` and ``is_single_model_baseline``; the rest of the
+    record is unused, so we provide trivial values for the other fields.
+    Strategies that require an outlier threshold (e.g.
+    ``static_weighted_downweight``) get a default 3.5 so ``Candidate``
+    construction validates.
+    """
+    from lib.landmarks.ensemble.strategies import strategy_uses_threshold
+    from lib.landmarks.search.candidate_search import CandidateMetrics
+    from lib.landmarks.search.candidates import Candidate
+
+    candidate = Candidate(
+        models=models,
+        weight_generator="equal",
+        strategy=strategy,
+        outlier_threshold=3.5 if strategy_uses_threshold(strategy) else None,
+    )
+    metrics = CandidateMetrics(
+        sample_count=1,
+        overall_nme=0.0,
+        failure_rate=0.0,
+        auc=0.0,
+        regression_rate_vs_best_single=0.0,
+        bucket_regression_rate_vs_best_single=0.0,
+    )
+    return search_cli.CandidateResult(
+        candidate=candidate,
+        candidate_id="sha256:test",
+        weights={model: [1.0] * LANDMARK_COUNT for model in models},
+        weights_hash="sha256:weights",
+        score=0.0,
+        objective="default",
+        regression_epsilon_nme=0.0,
+        metrics=metrics,
+        is_single_model_baseline=is_single_model_baseline,
+    )
+
+
+def test_resolve_production_policy_auto_picks_ensemble_strategy() -> None:
+    """``--production-policy auto`` (the new default) anchors the production
+    gate to whichever candidate the search promoted. For an ensemble winner
+    that is the fusion strategy name, so the gate's per-bucket regressions
+    match the artifact that's about to land on disk instead of reporting
+    the unrelated ``bucket_aware_veto`` runtime policy."""
+    winner = _candidate_result_stub(
+        strategy="static_weighted_downweight",
+        models=("hrnet", "spiga", "orformer"),
+        is_single_model_baseline=False,
+    )
+
+    assert (
+        search_cli._resolve_production_policy("auto", winner)
+        == "candidate:static_weighted_downweight"
+    )
+
+
+def test_resolve_production_policy_auto_picks_single_model_for_baseline() -> None:
+    """Single-model baselines fuse via ``plain_average``, but the production
+    gate evaluates per-candidate so the resolver picks the model name
+    instead — ``candidate:plain_average`` would point at the multi-model
+    averaging strategy, not the baseline."""
+    winner = _candidate_result_stub(
+        strategy="plain_average",
+        models=("hrnet",),
+        is_single_model_baseline=True,
+    )
+
+    assert search_cli._resolve_production_policy("auto", winner) == "candidate:hrnet"
+
+
+def test_resolve_production_policy_passes_explicit_policy_through() -> None:
+    """An explicit ``--production-policy`` always wins so users who really
+    want runtime-policy validation keep the old behavior."""
+    winner = _candidate_result_stub(
+        strategy="static_weighted_downweight",
+        models=("hrnet", "spiga"),
+        is_single_model_baseline=False,
+    )
+
+    assert (
+        search_cli._resolve_production_policy("bucket_aware_veto", winner) == "bucket_aware_veto"
+    )
+    assert (
+        search_cli._resolve_production_policy("candidate:weighted_median", winner)
+        == "candidate:weighted_median"
+    )
+
+
+def test_production_gate_failure_does_not_block_artifacts_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A production-gate failure used to make the search return 1 and skip
+    artifact writes, which broke the resolver pipeline at candidate_search
+    even though the downstream ``production_promotion_check`` stage is the
+    authoritative gate. The new default writes ``best_setup.json`` and the
+    production report side-by-side and exits zero; ``--production-gate-blocks``
+    restores the old fail-fast behavior."""
+    fixture = _build_fixture(tmp_path)
+    output_dir = tmp_path / "search"
+
+    def _fake_gate(**_kwargs: object) -> dict[str, object]:
+        report_path = _kwargs["output_dir"] / "production_promotion_report.json"
+        payload = {
+            "status": "fail",
+            "failed_gates": ["bucket_profile_left_mean_regresses_vs_best_single"],
+        }
+        report_path.write_text(json.dumps(payload), encoding="utf-8")
+        return payload
+
+    monkeypatch.setattr(search_cli, "run_production_promotion_gate", _fake_gate)
+
+    exit_code = search_main(
+        [
+            "--manifest",
+            str(fixture["manifest"]),
+            "--cache-dir",
+            str(fixture["cache"]),
+            "--splits",
+            str(fixture["splits"]),
+            "--models",
+            "hrnet,spiga,orformer",
+            "--model-subsets",
+            "all",
+            "--weight-generators",
+            "inverse_mean_error",
+            "--strategies",
+            "static_weighted",
+            "--output-dir",
+            str(output_dir),
+            "--production-manifest",
+            str(fixture["manifest"]),
+            "--production-cache-dir",
+            str(fixture["cache"]),
+        ]
+    )
+
+    assert exit_code == 0
+    assert (output_dir / "best_setup.json").is_file()
+    assert (output_dir / "best_weights.json").is_file()
+    assert (output_dir / "production_promotion_report.json").is_file()
+
+
+def test_production_gate_failure_blocks_when_explicitly_requested(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``--production-gate-blocks`` keeps the old fail-fast contract so
+    standalone users who treat this script's production gate as
+    authoritative can still rely on a non-zero exit."""
+    fixture = _build_fixture(tmp_path)
+    output_dir = tmp_path / "search"
+
+    def _fake_gate(**_kwargs: object) -> dict[str, object]:
+        report_path = _kwargs["output_dir"] / "production_promotion_report.json"
+        payload = {"status": "fail", "failed_gates": ["bucket_x"]}
+        report_path.write_text(json.dumps(payload), encoding="utf-8")
+        return payload
+
+    monkeypatch.setattr(search_cli, "run_production_promotion_gate", _fake_gate)
+
+    exit_code = search_main(
+        [
+            "--manifest",
+            str(fixture["manifest"]),
+            "--cache-dir",
+            str(fixture["cache"]),
+            "--splits",
+            str(fixture["splits"]),
+            "--models",
+            "hrnet,spiga,orformer",
+            "--model-subsets",
+            "all",
+            "--weight-generators",
+            "inverse_mean_error",
+            "--strategies",
+            "static_weighted",
+            "--output-dir",
+            str(output_dir),
+            "--production-manifest",
+            str(fixture["manifest"]),
+            "--production-cache-dir",
+            str(fixture["cache"]),
+            "--production-gate-blocks",
+        ]
+    )
+
+    assert exit_code == 1
+    assert not (output_dir / "best_setup.json").exists()
+    assert (output_dir / "production_promotion_report.json").is_file()

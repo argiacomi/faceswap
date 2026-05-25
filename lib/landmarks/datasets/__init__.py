@@ -1255,6 +1255,7 @@ def _build_audit(
     missing_images: list[str] = []
     missing_landmarks: list[str] = []
     invalid_landmarks: list[dict[str, T.Any]] = []
+    invalid_metric_samples: list[dict[str, T.Any]] = []
     sample_ids = [str(sample.get("sample_id", "")) for sample in manifest_samples]
     duplicate_ids = sorted(
         {sample_id for sample_id in sample_ids if sample_ids.count(sample_id) > 1}
@@ -1266,23 +1267,29 @@ def _build_audit(
         for label in condition_labels:
             condition_counts[label] = condition_counts.get(label, 0) + 1
         dataset_counts[sample_dataset] = dataset_counts.get(sample_dataset, 0) + 1
+
         source_schema = str(sample.get("source_schema", "2d_68"))
         source_schema_counts[source_schema] = source_schema_counts.get(source_schema, 0) + 1
+
         for label in condition_labels:
             selected_by_group.setdefault(label, []).append(list(_source_key_for_entry(sample)))
+
         image = str(sample.get("image", ""))
         if image and not _entry_path(image, output_dir).is_file():
             missing_images.append(image)
+
         landmarks = str(sample.get("landmarks", ""))
         landmark_path = _entry_path(landmarks, output_dir)
         if not landmark_path.is_file():
             missing_landmarks.append(landmarks)
             continue
+
         try:
             shape = tuple(np.load(str(landmark_path)).shape)
         except (OSError, ValueError) as err:
             invalid_landmarks.append({"sample_id": sample.get("sample_id", ""), "error": str(err)})
             continue
+
         shape_key = "x".join(str(part) for part in shape)
         shape_counts[shape_key] = shape_counts.get(shape_key, 0) + 1
         if shape != (68, 2):
@@ -1290,8 +1297,81 @@ def _build_audit(
                 {"sample_id": sample.get("sample_id", ""), "shape": shape_key}
             )
 
+        normalizer_value = sample.get("normalizer")
+        if normalizer_value is None:
+            invalid_metric_samples.append(
+                {
+                    "sample_id": sample.get("sample_id", ""),
+                    "error": "missing normalizer",
+                }
+            )
+        else:
+            try:
+                normalizer = float(normalizer_value)
+            except (TypeError, ValueError):
+                invalid_metric_samples.append(
+                    {
+                        "sample_id": sample.get("sample_id", ""),
+                        "normalizer": normalizer_value,
+                        "error": "non-numeric normalizer",
+                    }
+                )
+            else:
+                if not np.isfinite(normalizer) or normalizer <= 0.0:
+                    invalid_metric_samples.append(
+                        {
+                            "sample_id": sample.get("sample_id", ""),
+                            "normalizer": normalizer,
+                            "error": "normalizer must be finite and > 0",
+                        }
+                    )
+
+        visibility_value = sample.get("visibility")
+        if visibility_value is not None:
+            try:
+                visible = np.asarray(visibility_value, dtype=bool).ravel()
+            except (TypeError, ValueError):
+                invalid_metric_samples.append(
+                    {
+                        "sample_id": sample.get("sample_id", ""),
+                        "visibility": visibility_value,
+                        "error": "invalid visibility mask",
+                    }
+                )
+            else:
+                if visible.size and not bool(np.any(visible)):
+                    invalid_metric_samples.append(
+                        {
+                            "sample_id": sample.get("sample_id", ""),
+                            "error": "visibility mask has no true landmarks",
+                        }
+                    )
+
+        metadata = sample.get("metadata", {})
+        if isinstance(metadata, dict) and "face_bbox" in metadata:
+            try:
+                bbox = np.asarray(metadata["face_bbox"], dtype="float64")
+            except (TypeError, ValueError):
+                invalid_metric_samples.append(
+                    {
+                        "sample_id": sample.get("sample_id", ""),
+                        "face_bbox": metadata.get("face_bbox"),
+                        "error": "non-numeric face_bbox",
+                    }
+                )
+            else:
+                if bbox.shape != (4,) or not np.all(np.isfinite(bbox)):
+                    invalid_metric_samples.append(
+                        {
+                            "sample_id": sample.get("sample_id", ""),
+                            "face_bbox": metadata.get("face_bbox"),
+                            "error": "face_bbox must be four finite values",
+                        }
+                    )
+
     if duplicate_sources is None:
         duplicate_sources = duplicate_source_audit(manifest_samples)
+
     expected_conditions = tuple(
         dict.fromkeys(_normalize_condition_label(group) for group in expected_condition_groups)
     )
@@ -1300,6 +1380,7 @@ def _build_audit(
         for group in expected_conditions
         if condition_counts.get(group, 0) < 1
     }
+
     return {
         "schema_version": 1,
         "dataset": dataset,
@@ -1312,6 +1393,7 @@ def _build_audit(
         "missing_images": missing_images,
         "missing_landmarks": missing_landmarks,
         "invalid_landmarks": invalid_landmarks,
+        "invalid_metric_samples": invalid_metric_samples,
         "duplicate_sample_ids": duplicate_ids,
         "duplicate_source_ids": duplicate_sources,
         "overlap": {

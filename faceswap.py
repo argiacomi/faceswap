@@ -6,6 +6,19 @@ import locale
 import os
 import sys
 
+# macOS: LightGBM ships libomp.dylib and PyTorch ships its own libomp.dylib.
+# Loading both into the same process triggers "OMP: System error #22" the
+# moment LightGBM tries to spin up its thread pool. These env defaults must
+# land before any torch/lightgbm import in any submodule, so set them at
+# process entry. No-op on other platforms.
+if sys.platform == "darwin":
+    os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+    os.environ.setdefault("OMP_NUM_THREADS", "1")
+    # Apple's clang libomp respects LIBOMP_NUM_THREADS independently of the
+    # generic OMP_NUM_THREADS; set both to keep every libomp implementation
+    # that might end up in the process single-threaded.
+    os.environ.setdefault("LIBOMP_NUM_THREADS", "1")
+
 # Translations don't work by default in Windows, so hack in environment variable
 if sys.platform.startswith("win"):
     import ctypes

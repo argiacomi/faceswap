@@ -20,6 +20,10 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from lib.landmarks.ensemble.production_artifacts import (
+    LEARNED_POLICIES,
+    install_production_bundle,
+)
 from lib.landmarks.ensemble.scorer_target_config import (
     SCORER_TARGETS,
     TARGET_CANDIDATE_FAILURE_OR_HIGH_GAP,
@@ -85,7 +89,14 @@ DEFAULT_CONFIG_SECTION = "align.ensemble"
 CONFIG_PREVIEW_FILENAME = "config_update_preview.json"
 CONFIG_PATCH_FILENAME = "config_update_patch.ini"
 SCORER_VERSION_CONTINUOUS_REGRET = "continuous_regret_v1_1"
+SCORER_VERSION_BINARY = "learned_quality_v1"
+SCORER_POLICY_CONTINUOUS_REGRET = "learned_quality_v1_1"
 SCORER_VERSION_LEARNED_QUALITY_V2 = "learned_quality_v2"
+PROMOTED_POLICIES = (
+    SCORER_VERSION_BINARY,
+    SCORER_POLICY_CONTINUOUS_REGRET,
+    SCORER_VERSION_LEARNED_QUALITY_V2,
+)
 PROGRESS_LOG_FILENAME = "pipeline_progress.jsonl"
 VALID_ALIGN_ENSEMBLE_CONFIG_KEYS = frozenset(
     {
@@ -96,11 +107,7 @@ VALID_ALIGN_ENSEMBLE_CONFIG_KEYS = frozenset(
         "reject_outliers",
         "outlier_threshold",
         "min_models",
-        "setup_path",
-        "weights_path",
-        "setup_mode",
         "resolver_policy",
-        "resolver_scorer_path",
         "use_alignment_resolver",
         "hard_case_strategy",
         "secondary_hard_case_strategy",
@@ -709,6 +716,18 @@ def _command_candidate_search(args: argparse.Namespace, paths: PipelinePaths) ->
         "--production-gate-output",
         str(paths.candidate_dir / "production_gate"),
     ]
+    # Every promoted scorer version this pipeline supports
+    # (``continuous_regret_v1_1`` → runtime policy ``learned_quality_v1``,
+    # ``learned_quality_v2`` → ``learned_quality_v2``) installs a learned
+    # quality runtime policy whose ranker has to choose between *multiple*
+    # fusion candidates that ``runtime_resolver.build_candidates`` derives
+    # from the promoted setup. A single-model or collapsed setup
+    # degenerates to one usable candidate and makes the trained ranker
+    # meaningless, so the candidate search must promote a real ensemble.
+    # ``--require-effective-ensemble`` activates the effective-ensemble
+    # gate (which also blocks dominant-model collapse) without enabling
+    # ``--allow-single-model-promotion``.
+    argv.append("--require-effective-ensemble")
     return _append_extra(argv, args.candidate_search_arg)
 
 
@@ -856,6 +875,14 @@ def _command_scorer_eval(args: argparse.Namespace, paths: PipelinePaths) -> list
         str(paths.scorer_eval_dir),
         "--promotion-scope",
         args.promotion_scope,
+        "--promotion-policy",
+        _promoted_runtime_policy(args),
+        "--installed-scorer-dir",
+        str(
+            getattr(
+                args, "installed_scorer_dir", Path(".fs_cache/landmark_ensemble/current/scorers")
+            )
+        ),
     ]
     if args.allow_image_backfill:
         argv.append("--allow-image-backfill")
@@ -1199,9 +1226,8 @@ def _artifact_export_matches(args: argparse.Namespace, paths: PipelinePaths) -> 
     return (
         manifest.get("runtime_resolver_scorer") == str(paths.exported_scorer_artifact)
         and manifest.get("runtime_resolver_scorer_source") == expected_source
-        and manifest.get("runtime_resolver_scorer_version") == args.promoted_scorer_version
-        and str(scorer_payload.get("scorer_version") or scorer_payload.get("version") or "")
-        == args.promoted_scorer_version
+        and str(manifest.get("runtime_resolver_scorer_version") or "")
+        == str(scorer_payload.get("scorer_version") or scorer_payload.get("version") or "")
     )
 
 
@@ -1418,6 +1444,7 @@ def _static_downweight_metrics(report: T.Mapping[str, T.Any]) -> dict[str, T.Any
 
 
 def _validate_v2_promotion_gate(report: T.Mapping[str, T.Any]) -> list[str]:
+    """Validate legacy learned_quality_v2 promotion fields when no installed baseline exists."""
     policy_name = SCORER_VERSION_LEARNED_QUALITY_V2
     status_keys = (
         "learned_quality_v2_gate_status",
@@ -1487,32 +1514,116 @@ def _validate_v2_promotion_gate(report: T.Mapping[str, T.Any]) -> list[str]:
     ]
 
 
+def _installed_baseline_gate(
+    report: T.Mapping[str, T.Any],
+    *,
+    policy_name: str,
+    require_installed_baseline: bool,
+) -> list[str]:
+    if not require_installed_baseline:
+        return [
+            "installed_baseline_promotion=skipped_by_request",
+            f"selected_policy={policy_name}",
+        ]
+
+    gates = report.get("installed_baseline_promotion")
+    if not isinstance(gates, dict):
+        if require_installed_baseline:
+            raise RuntimeError("promotion check failed: missing installed_baseline_promotion")
+        return ["installed_baseline_promotion=skipped_missing_report_payload"]
+
+    gate = gates.get(policy_name)
+    if not isinstance(gate, dict):
+        if require_installed_baseline:
+            raise RuntimeError(
+                f"promotion check failed: missing installed baseline gate for {policy_name!r}"
+            )
+        return [f"installed_baseline_promotion=skipped_missing_policy:{policy_name}"]
+
+    status = str(gate.get("status") or "")
+    if status == "skipped_no_installed_baseline" and not require_installed_baseline:
+        return [f"installed_baseline_promotion={status}", f"selected_policy={policy_name}"]
+    if status != "pass":
+        raise RuntimeError(
+            "promotion check failed against installed current scorer: "
+            f"selected_policy={policy_name!r}, status={status!r}, "
+            f"failed_gates={gate.get('failed_gates', [])}, "
+            f"selected_metrics={gate.get('selected_metrics', {})}, "
+            f"installed_metrics={gate.get('installed_metrics', {})}"
+        )
+    return [
+        "installed_baseline_promotion=pass",
+        f"selected_policy={policy_name}",
+        f"installed_policy={gate.get('installed_policy', '')}",
+    ]
+
+
 def _promotion_check(
     paths: PipelinePaths,
     *,
     promotion_scope: str = "production",
     args: argparse.Namespace | None = None,
 ) -> list[str]:
+    """
+    Validate promotion using installed-baseline reports, with legacy fallback.
+
+    Reports containing installed_baseline_promotion use the installed-current
+    scorer gate. Reports without that payload are legacy reports and must still
+    honor promotion_status/status plus failed_gates.
+
+    Important compatibility rule: args=None does not skip validation. Some unit
+    tests and older callers invoke _promotion_check(paths) directly and still
+    expect failed legacy reports to raise.
+    """
     _require(paths.scorer_report, "scorer evaluation report")
     report = _read_json(paths.scorer_report)
-    status = str(report.get("status") or "")
-    production_status = str(report.get("production_gate_status") or "")
-    production_failed = report.get("production_failed_gates") or []
+
+    if args is not None:
+        policy_name = _promoted_runtime_policy(args)
+    else:
+        policy_name = str(
+            report.get("promotion_policy")
+            or report.get("promoted_policy")
+            or report.get("primary_scorer_policy")
+            or report.get("promoted_scorer_label")
+            or SCORER_POLICY_CONTINUOUS_REGRET
+        )
+
+    gates = report.get("installed_baseline_promotion")
+
+    if isinstance(gates, dict):
+        return _installed_baseline_gate(
+            report,
+            policy_name=policy_name,
+            require_installed_baseline=bool(getattr(args, "require_installed_baseline", True)),
+        )
+
+    raw_status = report.get("promotion_status", report.get("status"))
     failed = report.get("failed_gates") or []
-    if status != "pass":
+    status = str(raw_status) if raw_status is not None else ("fail" if failed else "pass")
+    if status != "pass" or failed:
         raise RuntimeError(
             f"production promotion check failed: status={status!r}, failed_gates={failed}"
         )
+
+    production_failed = report.get("production_failed_gates") or []
+    raw_production_status = report.get("production_gate_status")
+    production_status = (
+        str(raw_production_status)
+        if raw_production_status is not None
+        else ("fail" if production_failed else "pass")
+    )
     if production_status != "pass" or production_failed:
         raise RuntimeError(
             "production promotion check failed: "
             f"production_gate_status={production_status!r}, "
             f"production_failed_gates={production_failed}"
         )
-    if args is not None and args.promoted_scorer_version == SCORER_VERSION_LEARNED_QUALITY_V2:
+
+    promoted_notes: list[str] = []
+    if policy_name == SCORER_VERSION_LEARNED_QUALITY_V2:
         promoted_notes = _validate_v2_promotion_gate(report)
-    else:
-        promoted_notes = []
+
     if promotion_scope == "universal":
         gt_status = str(report.get("gt_hard_gate_status") or "")
         gt_failed = report.get("gt_hard_failed_gates") or []
@@ -1521,6 +1632,7 @@ def _promotion_check(
                 "GT-hard diagnostic gate failed: "
                 f"gt_hard_gate_status={gt_status!r}, gt_hard_failed_gates={gt_failed}"
             )
+
     return ["status=pass", "production_gate_status=pass", *promoted_notes]
 
 
@@ -1629,19 +1741,8 @@ def _validate_stage_outputs(
         )
     if stage in {"build_gt_hard_resolver_metadata", "freeze_resolver_metadata"}:
         _validate_frozen_metadata(paths)
-    if stage == "production_promotion_check":
-        report = _read_json(paths.scorer_report)
-        status = str(report.get("status") or "")
-        production_status = str(report.get("production_gate_status") or "")
-        production_failed = report.get("production_failed_gates") or []
-        if status != "pass" or production_status != "pass" or production_failed:
-            failed = report.get("failed_gates") or []
-            raise PipelineContractError(
-                "stage 'production_promotion_check' expected status=pass and "
-                "production_gate_status=pass but got "
-                f"status={status!r}, production_gate_status={production_status!r}; "
-                f"failed_gates={failed}; production_failed_gates={production_failed}"
-            )
+    if stage == "production_promotion_check" and args is not None:
+        _promotion_check(paths, promotion_scope=args.promotion_scope, args=args)
     validated = [str(path) for path in _outputs_for(stage, paths)]
     logger.debug("Validated outputs for stage=%s outputs=%s", stage, validated)
     return validated
@@ -1689,15 +1790,21 @@ def _copy_scorer_with_promotion_metadata(source: Path, target: Path, *, promoted
 
 
 def _promoted_scorer_source(args: argparse.Namespace, paths: PipelinePaths) -> Path:
-    if args.promoted_scorer_version == SCORER_VERSION_LEARNED_QUALITY_V2:
+    policy = _promoted_runtime_policy(args)
+    if policy == SCORER_VERSION_BINARY:
+        return paths.binary_scorer_artifact
+    if policy == SCORER_VERSION_LEARNED_QUALITY_V2:
         return paths.v2_scorer_artifact
     return paths.scorer_artifact
 
 
 def _promoted_runtime_policy(args: argparse.Namespace) -> str:
+    explicit = str(getattr(args, "promoted_policy", "") or "")
+    if explicit:
+        return explicit
     if args.promoted_scorer_version == SCORER_VERSION_LEARNED_QUALITY_V2:
-        return "learned_quality_v2"
-    return "learned_quality_v1"
+        return SCORER_VERSION_LEARNED_QUALITY_V2
+    return SCORER_POLICY_CONTINUOUS_REGRET
 
 
 def _promoted_scorer_target(args: argparse.Namespace, paths: PipelinePaths) -> str:
@@ -1737,18 +1844,14 @@ def _export_artifacts(args: argparse.Namespace, paths: PipelinePaths) -> dict[st
 def _config_updates(args: argparse.Namespace, paths: PipelinePaths) -> dict[str, str]:
     models = ", ".join(item.strip() for item in str(args.models).split(",") if item.strip())
     updates = {
-        "batch_size": "8",
+        "batch_size": "16",
         "models": models or DEFAULT_MODELS,
         "crop_scale": "1.6",
         "strategy": "static_weighted_downweight",
         "reject_outliers": "False",
         "outlier_threshold": "3.5",
         "min_models": "1",
-        "setup_path": str(paths.exported_best_setup),
-        "weights_path": str(paths.exported_best_weights),
-        "setup_mode": "strict",
         "resolver_policy": _promoted_runtime_policy(args),
-        "resolver_scorer_path": str(paths.exported_scorer_artifact),
         "use_alignment_resolver": "True",
         "hard_case_strategy": "static_weighted_downweight",
         "secondary_hard_case_strategy": "static_weighted_hard_drop",
@@ -1911,6 +2014,35 @@ def _write_config_updates_in_place(
     config_path.write_text(patched, encoding="utf-8")
 
 
+def _install_production_bundle_artifacts(args: argparse.Namespace, paths: PipelinePaths) -> Path:
+    """Install the runtime artifact bundle that the extract plugin reads.
+
+    Replaces the legacy contract where extract.ini carried setup_path /
+    weights_path / resolver_scorer_path. The bundle puts those files in a
+    known location (``.fs_cache/landmark_ensemble/current/`` by default,
+    overridable via FACESWAP_LANDMARK_ENSEMBLE_ARTIFACTS) and a manifest
+    maps resolver_policy → scorer file so changing the policy in config
+    automatically selects the matching scorer.
+    """
+    scorer_sources = {
+        "learned_quality_v1": paths.binary_scorer_artifact,
+        "learned_quality_v1_1": paths.scorer_artifact,
+        "learned_quality_v2": paths.v2_scorer_artifact,
+    }
+    return install_production_bundle(
+        setup_src=paths.exported_best_setup,
+        weights_src=paths.exported_best_weights,
+        scorer_sources={
+            policy: source
+            for policy, source in scorer_sources.items()
+            if policy in LEARNED_POLICIES and source.is_file()
+        },
+        active_policy=_promoted_runtime_policy(args),
+        source_output_root=paths.output_root,
+        created_by="run_landmark_resolver_pipeline.py",
+    )
+
+
 def _apply_config(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
     updates = _config_updates(args, paths)
     _validate_config_artifacts(paths)
@@ -1921,10 +2053,12 @@ def _apply_config(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
     config_path = Path(args.config_path)
     _require(config_path, "config file for --write-config")
     _write_config_updates_in_place(config_path, args.config_section, updates)
+    manifest_file = _install_production_bundle_artifacts(args, paths)
 
     return [
         f"updated {config_path} [{args.config_section}] with finalized ensemble settings "
-        "and preserved unmanaged config entries, comments, and formatting"
+        "and preserved unmanaged config entries, comments, and formatting",
+        f"installed production landmark-ensemble bundle manifest at {manifest_file}",
     ]
 
 
@@ -2309,7 +2443,11 @@ def _summary_payload(
     updates = _config_updates(args, paths)
     report = _read_json(paths.scorer_report)
     promotion_status = str(report.get("promotion_status") or report.get("status") or "")
-    promoted_scorer_version = str(args.promoted_scorer_version)
+    promoted_scorer_version = str(
+        _read_json(_promoted_scorer_source(args, paths)).get("scorer_version")
+        or _read_json(_promoted_scorer_source(args, paths)).get("version")
+        or args.promoted_scorer_version
+    )
     promoted_scorer_target = _promoted_scorer_target(args, paths)
     return {
         "status": "fail"
@@ -2567,6 +2705,31 @@ def _parser() -> argparse.ArgumentParser:
             "Scorer artifact to export into the stable runtime resolver scorer path. "
             "The config resolver_policy is learned_quality_v2 only when this is "
             "learned_quality_v2."
+        ),
+    )
+    parser.add_argument(
+        "--promoted-policy",
+        choices=PROMOTED_POLICIES,
+        default="",
+        help=(
+            "Runtime resolver policy to export/configure. Overrides "
+            "--promoted-scorer-version. Allows explicitly choosing any trained "
+            "learned policy artifact."
+        ),
+    )
+    parser.add_argument(
+        "--installed-scorer-dir",
+        type=Path,
+        default=Path(".fs_cache/landmark_ensemble/current/scorers"),
+        help="Directory containing currently installed production scorer artifacts.",
+    )
+    parser.add_argument(
+        "--require-installed-baseline",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Require the selected policy to beat the installed current scorer baseline. "
+            "Use --no-require-installed-baseline only for first-time bootstrap runs."
         ),
     )
     parser.add_argument("--v2-eval-fraction", type=float, default=0.20)

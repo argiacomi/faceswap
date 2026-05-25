@@ -160,3 +160,149 @@ def test_qt_gui_handles_keyboard_interrupt_via_helper(monkeypatch) -> None:  # t
 
     assert excinfo.value.code == gui_qt.INTERRUPT_EXIT_CODE
     assert interrupted == [process.root]
+
+
+def test_qt_gui_no_exec_does_not_touch_streams_or_root_logger(monkeypatch) -> None:  # type:ignore[no-untyped-def]
+    """Smoke-mode process() must leave sys.stdout/stderr and root handlers untouched."""
+    import logging
+    import sys
+
+    _FakeApp.instance_value = None
+    monkeypatch.setattr(gui_qt, "QApplication", _FakeApp)
+    monkeypatch.setattr(gui_qt, "MainWindow", _FakeWindow)
+
+    original_stdout = sys.stdout
+    original_stderr = sys.stderr
+    original_handlers = list(logging.getLogger().handlers)
+
+    process = gui_qt.Gui(Namespace(no_gui_exec=True, debug=False))
+    # After __init__ alone, no redirection or handler registration should have
+    # occurred — install happens inside process() under try/finally.
+    assert sys.stdout is original_stdout
+    assert sys.stderr is original_stderr
+    assert logging.getLogger().handlers == original_handlers
+
+    process.process()
+
+    # And after the early-return process() call the same invariants must hold.
+    assert sys.stdout is original_stdout
+    assert sys.stderr is original_stderr
+    assert logging.getLogger().handlers == original_handlers
+
+
+def test_qt_gui_reused_qapp_does_not_touch_streams_or_root_logger(monkeypatch) -> None:  # type:ignore[no-untyped-def]
+    """Reused-QApplication process() must leave streams/handlers untouched."""
+    import logging
+    import sys
+
+    existing_app = _FakeApp([])
+    _FakeApp.instance_value = existing_app
+    monkeypatch.setattr(gui_qt, "QApplication", _FakeApp)
+    monkeypatch.setattr(gui_qt, "MainWindow", _FakeWindow)
+    monkeypatch.setattr(gui_qt, "install_signal_handlers", lambda app, window: None)
+
+    original_stdout = sys.stdout
+    original_stderr = sys.stderr
+    original_handlers = list(logging.getLogger().handlers)
+
+    process = gui_qt.Gui(Namespace(no_gui_exec=False, debug=False))
+    process.process()
+
+    # The wrapper returns before installing routers when it doesn't own the
+    # QApplication, so the host process must see no change to its log surface.
+    assert sys.stdout is original_stdout
+    assert sys.stderr is original_stderr
+    assert logging.getLogger().handlers == original_handlers
+    _FakeApp.instance_value = None
+
+
+def test_qt_gui_restores_streams_when_signal_install_fails(monkeypatch) -> None:  # type:ignore[no-untyped-def]
+    """An exception after install must be caught by the same try/finally."""
+    import logging
+    import sys
+
+    _FakeApp.instance_value = None
+    monkeypatch.setattr(gui_qt, "QApplication", _FakeApp)
+    monkeypatch.setattr(gui_qt, "MainWindow", _FakeWindow)
+
+    def boom(_app, _window) -> None:
+        raise RuntimeError("signal install failed")
+
+    monkeypatch.setattr(gui_qt, "install_signal_handlers", boom)
+
+    original_stdout = sys.stdout
+    original_stderr = sys.stderr
+    original_handlers = list(logging.getLogger().handlers)
+
+    process = gui_qt.Gui(Namespace(no_gui_exec=False, debug=False))
+    with pytest.raises(RuntimeError, match="signal install failed"):
+        process.process()
+
+    # Even though the failure happened *after* _install_console_logging, the
+    # finally clause must have torn down the redirection and the handler.
+    assert sys.stdout is original_stdout
+    assert sys.stderr is original_stderr
+    assert logging.getLogger().handlers == original_handlers
+
+
+def test_qt_gui_log_handler_does_not_duplicate_pre_existing_stream_handlers(monkeypatch) -> None:  # type:ignore[no-untyped-def]
+    """A logger.warning must land in each sink exactly once.
+
+    The Tk launcher's ``log_setup`` adds a ``StreamHandler`` bound to
+    ``sys.stdout`` *before* the GUI starts. The Qt shell later installs its own
+    ``QtConsoleLogHandler`` and redirects ``sys.stdout``. ``StreamHandler``
+    captures its target stream at construction time, so the launcher handler
+    keeps writing to the original terminal stream while ``QtConsoleLogHandler``
+    writes directly to the console pane — one emit per sink, never doubled.
+    """
+    import io
+    import logging
+    import sys
+
+    pytest.importorskip("PySide6.QtWidgets")
+    from PySide6.QtWidgets import QApplication
+
+    from lib.gui.qt_shell.main_window import ConsolePane
+    from lib.gui.qt_shell.theme import QtTheme
+
+    QApplication.instance() or QApplication(sys.argv)
+    # Use real ConsolePane (so QtConsoleLogHandler routes through its router)
+    # instead of the lightweight _FakeWindow used elsewhere — duplication only
+    # shows up against the real console pane.
+    console = ConsolePane()
+    console.set_theme(QtTheme.default())
+
+    pre_existing_buffer = io.StringIO()
+    pre_existing_handler = logging.StreamHandler(pre_existing_buffer)
+    pre_existing_handler.setLevel(logging.INFO)
+    pre_existing_handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)-8s %(message)s", "%H:%M:%S")
+    )
+
+    from lib.gui.qt_shell.console_router import (
+        QtConsoleLogHandler,
+        install_console_routers,
+        restore_console_routers,
+    )
+
+    root = logging.getLogger()
+    saved_level = root.level
+    root.setLevel(logging.INFO)
+    root.addHandler(pre_existing_handler)
+    routers = install_console_routers(console)
+    qt_handler = QtConsoleLogHandler(console)
+    root.addHandler(qt_handler)
+    try:
+        logging.getLogger("dup-check").warning("one and only")
+        QApplication.processEvents()  # drain queued router signal
+
+        launcher_text = pre_existing_buffer.getvalue()
+        console_text = console.toPlainText()
+
+        assert launcher_text.count("one and only") == 1
+        assert console_text.count("one and only") == 1
+    finally:
+        root.removeHandler(qt_handler)
+        restore_console_routers(*routers)
+        root.removeHandler(pre_existing_handler)
+        root.setLevel(saved_level)

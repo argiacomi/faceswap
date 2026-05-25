@@ -87,6 +87,20 @@ def _parser() -> argparse.ArgumentParser:
         help="Gate production only, or require both production and GT-hard diagnostics to pass.",
     )
     parser.add_argument(
+        "--promotion-policy",
+        default="",
+        help=(
+            "Explicit policy to gate for promotion. Internal scorer/static gates remain "
+            "diagnostic only."
+        ),
+    )
+    parser.add_argument(
+        "--installed-scorer-dir",
+        type=Path,
+        default=Path(".fs_cache/landmark_ensemble/current/scorers"),
+        help="Directory containing currently installed production scorer artifacts.",
+    )
+    parser.add_argument(
         "--allow-image-backfill",
         action="store_true",
         help="Compute image-aware runtime metadata for non-GT-hard rows without stored metadata.",
@@ -132,6 +146,8 @@ def main(argv: T.Sequence[str] | None = None) -> int:
         risk_floor_for_safe_fallback=args.risk_floor_for_safe_fallback,
         safe_fallback_min_delta=args.safe_fallback_min_delta,
         promotion_scope=args.promotion_scope,
+        promotion_policy=args.promotion_policy,
+        installed_scorer_dir=args.installed_scorer_dir,
         allow_image_backfill=args.allow_image_backfill,
         allow_derived_no_image_gt_hard=args.allow_derived_no_image_gt_hard,
         gt_hard_resolver_metadata=args.gt_hard_resolver_metadata,

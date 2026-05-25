@@ -47,10 +47,9 @@ class Gui:
             resize(1280, 760)
         self._console_routers: tuple[T.Any, T.Any] | None = None
         self._log_handler: QtConsoleLogHandler | None = None
-        if not bool(getattr(arguments, "debug", False)):
-            self._install_console_logging()
-        else:
-            logger.info("Console debug activated. Outputting to main terminal")
+        # Console routing (stdout/stderr swap, root-logger handler) is deferred
+        # to process() so that early-return paths (``--no-gui-exec`` smoke runs,
+        # callers reusing an existing QApplication) don't leak the redirection.
 
     def _install_console_logging(self) -> None:
         """Redirect stdout/stderr and attach a console-aware logging handler.
@@ -84,8 +83,12 @@ class Gui:
         self.root.apply_gui_settings()
         if not self._owns_app:
             return
-        install_signal_handlers(self.app, self.root)
         try:
+            if not bool(getattr(self._arguments, "debug", False)):
+                self._install_console_logging()
+            else:
+                logger.info("Console debug activated. Outputting to main terminal")
+            install_signal_handlers(self.app, self.root)
             self.app.exec()
         except KeyboardInterrupt:
             interrupt_window(self.root)

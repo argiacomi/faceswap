@@ -16,7 +16,7 @@ import numpy as np
 
 from lib.gui.control_helper import ControlPanel
 from lib.gui.utils import get_config, get_images, initialize_config, initialize_images
-from lib.image import SingleFrameLoader, read_image_meta
+from lib.image import SingleFrameLoader
 from lib.infer.align import Align
 from lib.logger import parse_class_init
 from lib.multithreading import MultiThread
@@ -27,6 +27,7 @@ from .detected_faces import DetectedFaces
 from .face_viewer.frame import FacesFrame
 from .frame_viewer.frame import DisplayFrame
 from .globals import TkGlobals
+from .session import ManualSession
 from .thumbnails import ThumbsCreator
 
 if T.TYPE_CHECKING:
@@ -66,14 +67,21 @@ class Manual(tk.Tk):
         logger.debug(parse_class_init(locals()))
         super().__init__()
         arguments = handle_deprecated_cli_opts(arguments)
-        self._validate_non_faces(arguments.frames)
+        try:
+            self._session = ManualSession.from_namespace(arguments)
+        except ValueError as err:
+            logger.error("%s", err)
+            sys.exit(1)
 
         self._initialize_tkinter()
-        self._globals = TkGlobals(arguments.frames)
+        self._globals = TkGlobals(self._session.frames)
 
         extractor = Aligner(self._globals)
         self._detected_faces = DetectedFaces(
-            self._globals, arguments.alignments_path, arguments.frames, extractor
+            self._globals,
+            self._session.alignments_path or "",
+            self._session.frames,
+            extractor,
         )
 
         video_meta_data = self._detected_faces.video_meta_data
@@ -97,7 +105,9 @@ class Manual(tk.Tk):
             self._detected_faces.load_faces()
 
         self._generate_thumbs(
-            arguments.frames, arguments.thumb_regenerate, arguments.single_process
+            self._session.frames,
+            self._session.thumb_regenerate,
+            self._session.single_process,
         )
 
         self._display = DisplayFrame(self._containers.top, self._globals, self._detected_faces)
@@ -111,36 +121,6 @@ class Manual(tk.Tk):
         self.bind("<Key>", self._handle_key_press)
         self._set_initial_layout()
         logger.debug("Initialized %s", self.__class__.__name__)
-
-    @classmethod
-    def _validate_non_faces(cls, frames_folder: str) -> None:
-        """Quick check on the input to make sure that a folder of extracted faces is not being
-        passed in."""
-        if not os.path.isdir(frames_folder):
-            logger.debug("Input '%s' is not a folder", frames_folder)
-            return
-        test_file = next(
-            (
-                fname
-                for fname in os.listdir(frames_folder)
-                if os.path.splitext(fname)[-1].lower() == ".png"
-            ),
-            None,
-        )
-        if not test_file:
-            logger.debug("Input '%s' does not contain any .PNGs", frames_folder)
-            return
-        test_file = os.path.join(frames_folder, test_file)
-        meta = read_image_meta(test_file)
-        logger.debug("Test file: (filename: %s, metadata: %s)", test_file, meta)
-        if "itxt" in meta and "alignments" in meta["itxt"]:
-            logger.error("The input folder '%s' contains extracted faces.", frames_folder)
-            logger.error(
-                "The Manual Tool works with source frames or a video file, not extracted "
-                "faces. Please update your input."
-            )
-            sys.exit(1)
-        logger.debug("Test input file '%s' does not contain Faceswap header data", test_file)
 
     def _wait_for_threads(self, extractor: Aligner, loader: FrameLoader, valid_meta: bool) -> None:
         """The :class:`Aligner` and :class:`FramesLoader` are launched in background threads.
