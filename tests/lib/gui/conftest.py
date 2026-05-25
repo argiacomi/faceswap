@@ -10,13 +10,25 @@ from PySide6.QtWidgets import QMessageBox
 
 
 @pytest.fixture(scope="session", autouse=True)
-def _suppress_manual_tool_startup_logs() -> None:
-    """Silence routine Manual Tool startup INFO logs for Qt GUI tests."""
-    logger = logging.getLogger("lib.gui.qt_shell.manual_tool")
-    original_level = logger.level
-    logger.setLevel(logging.WARNING)
+def _suppress_gui_test_info_logs() -> None:
+    """Silence routine GUI-test INFO logs while preserving warnings/errors.
+
+    Manual Tool GUI tests create and open fixture alignments files as setup for
+    startup/persistence scenarios.  Those fixture writes should not leak
+    ``Reading/Writing alignments`` progress lines into the pytest progress
+    output, but real warnings and errors should still surface.
+    """
+    logger_names = (
+        "lib.gui.qt_shell.manual_tool",
+        "lib.align.alignments",
+    )
+    loggers = tuple(logging.getLogger(name) for name in logger_names)
+    original_levels = tuple(logger.level for logger in loggers)
+    for logger in loggers:
+        logger.setLevel(logging.WARNING)
     yield
-    logger.setLevel(original_level)
+    for logger, level in zip(loggers, original_levels):
+        logger.setLevel(level)
 
 
 @pytest.fixture(autouse=True)
