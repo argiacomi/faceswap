@@ -32,11 +32,11 @@ logger = logging.getLogger(__name__)
 from .thumbnails import _decode_jpeg_to_qimage
 
 _FACE_GRID_SIZES: dict[str, int] = {
-    "Tiny": 48,
+    "Tiny": 32,
     "Small": 64,
     "Medium": 96,
     "Large": 128,
-    "Extra Large": 160,
+    "Extra Large": 192,
 }
 
 _FACE_GRID_ENTRY_ROLE = Qt.UserRole
@@ -151,7 +151,7 @@ class FaceGridThumbnailRenderer:
             for idx, value in enumerate(data):
                 base = idx * 4
                 if value == 0:
-                    mv[base : base + 4] = b"\x00\x00\x00\x00"
+                    mv[base : base + 4] = bytes((0, 0, 0, 0))
                     continue
                 mv[base] = tint.blue()
                 mv[base + 1] = tint.green()
