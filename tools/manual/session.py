@@ -1134,12 +1134,21 @@ class ManualEditableAlignments:
         mask_type: str,
     ) -> T.Any:
         """Return the source-frame to stored-mask affine matrix for a mask."""
+        import cv2
+        import numpy as np
+
         key = (int(frame_index), int(face_index), str(mask_type))
         blob = self._persisted_mask_blobs.get(key)
         if blob is not None:
+            # Persisted MaskAlignmentsFile blobs store the opposite direction:
+            # stored-mask coordinates -> source-frame coordinates. Painting
+            # receives source-frame points, so invert the saved matrix before
+            # transforming brush locations into stored-mask space.
             matrix = getattr(blob, "affine_matrix", None)
             if matrix is not None:
-                return matrix
+                matrix_array = np.asarray(matrix, dtype=np.float32)[:2]
+                if matrix_array.shape == (2, 3):
+                    return cv2.invertAffineTransform(matrix_array)
         faces = self._faces.get(frame_index, [])
         if face_index < 0 or face_index >= len(faces):
             return None
@@ -1423,7 +1432,7 @@ class ManualEditableAlignments:
             # save still produces a valid blob.
             array = np.zeros((size, size), dtype=np.uint8)
         x, y, w, h = bbox
-        affine = cls._bbox_to_mask_affine((x, y, w, h))
+        affine = cls._bbox_to_frame_affine((x, y, w, h))
         # cv2.INTER_LINEAR is 1; we don't import cv2 here to keep this module
         # tkinter/Qt-neutral and import-light.  The legacy Tk path stores the
         # cv2 interpolator constant so we mirror the numeric value directly.
@@ -1452,6 +1461,26 @@ class ManualEditableAlignments:
             [
                 [scale_x, 0.0, -float(x) * scale_x],
                 [0.0, scale_y, -float(y) * scale_y],
+            ],
+            dtype=np.float32,
+        )
+
+    @classmethod
+    def _bbox_to_frame_affine(
+        cls,
+        bbox: tuple[float, float, float, float],
+    ) -> T.Any:
+        """Return stored-mask to source-frame affine for an axis-aligned bbox."""
+        import numpy as np
+
+        x, y, w, h = bbox
+        size = cls.MASK_STORED_SIZE
+        scale_x = float(w) / float(size)
+        scale_y = float(h) / float(size)
+        return np.array(
+            [
+                [scale_x, 0.0, float(x)],
+                [0.0, scale_y, float(y)],
             ],
             dtype=np.float32,
         )

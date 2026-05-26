@@ -230,7 +230,7 @@ def test_mask_paint_uses_persisted_affine_transform(qtbot, tmp_path: Path) -> No
     window._editor_state.set("mask_type", mask_type)
     window._editable._persisted_mask_blobs[(0, face_index, mask_type)] = MaskAlignmentsFile(
         mask=zlib.compress(np.zeros((128, 128), dtype=np.uint8).tobytes()),
-        affine_matrix=np.array([[2.0, 0.0, -20.0], [0.0, 2.0, -20.0]], dtype=np.float32),
+        affine_matrix=np.array([[0.5, 0.0, 10.0], [0.0, 0.5, 10.0]], dtype=np.float32),
         interpolator=1,
         stored_size=128,
         stored_centering="head",
