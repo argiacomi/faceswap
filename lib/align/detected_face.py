@@ -83,11 +83,11 @@ class DetectedFace:  # pylint:disable=too-many-instance-attributes
         """The top most point (in pixels) of the face's bounding box as discovered in
         :mod:`plugins.extract.detect`"""
         self.height = height
-        """The height (in pixels) of the face's bounding box as discovered in
+        """The height of the face's bounding box as discovered in
         :mod:`plugins.extract.detect`"""
         self.mask = {} if mask is None else mask
         """The generated mask(s) for the face as generated in :mod:`plugins.extract.mask`"""
-        self._landmarks_xy = landmarks_xy
+        self._landmarks_xy = self._as_landmarks_array(landmarks_xy)
         self._identity: dict[str, np.ndarray] = {} if identity is None else identity
         self.metadata: dict[str, T.Any] = {} if metadata is None else metadata
         self.thumbnail: np.ndarray | None = None
@@ -154,6 +154,13 @@ class DetectedFace:  # pylint:disable=too-many-instance-attributes
         """Identity mechanism as key, identity embedding as value"""
         return self._identity
 
+    @staticmethod
+    def _as_landmarks_array(landmarks: T.Any) -> np.ndarray | None:
+        """Return landmarks as a float32 numpy array, preserving ``None``."""
+        if landmarks is None:
+            return None
+        return np.asarray(landmarks, dtype=np.float32)
+
     def add_mask(
         self,
         name: str,
@@ -207,7 +214,7 @@ class DetectedFace:  # pylint:disable=too-many-instance-attributes
             The 68 point face landmarks to add for the face
         """
         logger.trace("landmarks shape: '%s'", landmarks.shape)  # type:ignore[attr-defined]
-        self._landmarks_xy = landmarks
+        self._landmarks_xy = self._as_landmarks_array(landmarks)
 
     def add_identity(
         self,
@@ -330,13 +337,13 @@ class DetectedFace:  # pylint:disable=too-many-instance-attributes
         """
         if self.left is None or self.width is None or self.top is None or self.height is None:
             raise AssertionError("Some detected face variables have not been initialized")
-        thumb = None if self.thumbnail is None else self.thumbnail.tolist()
+        thumb = None if self.thumbnail is None else np.asarray(self.thumbnail, dtype=np.uint8)
         alignment = FileAlignments(
             x=self.left,
             w=self.width,
             y=self.top,
             h=self.height,
-            landmarks_xy=self.landmarks_xy.tolist(),
+            landmarks_xy=np.asarray(self.landmarks_xy, dtype=np.float32),
             mask={name: mask.to_dict() for name, mask in self.mask.items()},
             identity=self._identity,
             metadata=self.metadata,
@@ -382,9 +389,9 @@ class DetectedFace:  # pylint:disable=too-many-instance-attributes
         self.height = alignment.h
         self._identity = alignment.identity
         self.metadata = alignment.metadata
-        self._landmarks_xy = alignment.landmarks_xy
+        self._landmarks_xy = self._as_landmarks_array(alignment.landmarks_xy)
         if with_thumb and isinstance(alignment, FileAlignments):
-            self.thumbnail = alignment.thumb
+            self.thumbnail = None if alignment.thumb is None else np.asarray(alignment.thumb, dtype=np.uint8)
 
         # Manual tool and legacy alignments will not have a mask
         self._aligned = None
@@ -425,7 +432,7 @@ class DetectedFace:  # pylint:disable=too-many-instance-attributes
             w=self.width,
             y=self.top,
             h=self.height,
-            landmarks_xy=self.landmarks_xy.tolist(),
+            landmarks_xy=np.asarray(self.landmarks_xy, dtype=np.float32),
             mask={name: mask.to_png_meta() for name, mask in self.mask.items()},
             identity=self._identity,
             metadata=self.metadata,
@@ -445,7 +452,7 @@ class DetectedFace:  # pylint:disable=too-many-instance-attributes
         self.width = alignment.w
         self.top = alignment.y
         self.height = alignment.h
-        self._landmarks_xy = alignment.landmarks_xy
+        self._landmarks_xy = self._as_landmarks_array(alignment.landmarks_xy)
         self.mask = {}
         for name, mask_dict in alignment.mask.items():
             if name in ("components", "extended"):
