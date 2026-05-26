@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import QPointF, QRectF, Qt
 
-from tools.manual.qt.overlays import ManualFrameOverlay
+from tools.manual.qt.frame_viewer.overlays import ManualFrameOverlay
 
 EDITOR_MODE = "BoundingBox"
 

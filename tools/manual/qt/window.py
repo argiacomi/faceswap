@@ -60,15 +60,19 @@ from tools.manual.session import (
 )
 
 from .actions import MANUAL_ACTIONS
-from .face_grid_renderer import _FACE_GRID_SIZES, FaceGridEntry, FaceGridThumbnailRenderer
 from .face_viewer import CrossFrameFaceGridPanel
+from .face_viewer.thumbnails import FaceThumbnailPanel, ManualThumbnailPanel
+from .face_viewer.viewport import (
+    _FACE_GRID_SIZES,
+    FaceGridEntry,
+    FaceGridThumbnailRenderer,
+)
 from .frame_viewer.editor.bounding_box import BoundingBoxWindowEditorMixin
 from .frame_viewer.editor.extract_box import ExtractBoxWindowEditorMixin
 from .frame_viewer.editor.landmarks import LandmarkWindowEditorMixin
 from .frame_viewer.editor.mask import MaskWindowEditorMixin
 from .frame_viewer.frame_view import ManualFrameView
-from .overlays import ManualFrameOverlay
-from .thumbnails import FaceThumbnailPanel, ManualThumbnailPanel
+from .frame_viewer.overlays import ManualFrameOverlay
 from .transport import ManualTransportBar
 from .video import VideoFrameProvider
 from .workers import (

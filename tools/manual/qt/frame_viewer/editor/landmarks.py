@@ -8,7 +8,7 @@ import typing as T
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QMouseEvent
 
-from tools.manual.qt.overlays import ManualFrameOverlay
+from tools.manual.qt.frame_viewer.overlays import ManualFrameOverlay
 
 EDITOR_MODE = "Landmarks"
 

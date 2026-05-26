@@ -7,7 +7,7 @@ import math
 
 from PySide6.QtCore import QPointF, QRectF
 
-from tools.manual.qt.overlays import ManualFrameOverlay
+from tools.manual.qt.frame_viewer.overlays import ManualFrameOverlay
 
 EDITOR_MODE = "ExtractBox"
 
