@@ -159,7 +159,9 @@ class ManualFrameOverlay:
     def annotation_visibility(self) -> dict[str, bool]:
         """Return active overlay visibility for bbox, handles, landmarks and mask."""
         editor_mode = self._editor_mode_provider() if self._editor_mode_provider else "View"
-        annotation_mode = self._annotation_mode_provider() if self._annotation_mode_provider else "None"
+        annotation_mode = (
+            self._annotation_mode_provider() if self._annotation_mode_provider else "None"
+        )
         if not annotation_mode:
             annotation_mode = "None"
         return {
@@ -257,7 +259,10 @@ class ManualFrameOverlay:
         for name, fx, fy in cls.HANDLE_OFFSETS:
             cx = bbox.x() + bbox.width() * fx
             cy = bbox.y() + bbox.height() * fy
-            if cx - half <= widget_point.x() <= cx + half and cy - half <= widget_point.y() <= cy + half:
+            if (
+                cx - half <= widget_point.x() <= cx + half
+                and cy - half <= widget_point.y() <= cy + half
+            ):
                 return name
         return None
 

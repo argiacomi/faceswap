@@ -60,8 +60,8 @@ from tools.manual.session import (
 )
 
 from .actions import MANUAL_ACTIONS
-from .face_grid import CrossFrameFaceGridPanel
 from .face_grid_renderer import _FACE_GRID_SIZES, FaceGridEntry, FaceGridThumbnailRenderer
+from .face_viewer import CrossFrameFaceGridPanel
 from .frame_viewer.editor.bounding_box import BoundingBoxWindowEditorMixin
 from .frame_viewer.editor.extract_box import ExtractBoxWindowEditorMixin
 from .frame_viewer.editor.landmarks import LandmarkWindowEditorMixin

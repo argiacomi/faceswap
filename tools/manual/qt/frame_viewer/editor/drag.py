@@ -6,7 +6,7 @@ from __future__ import annotations
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QPainter, QPen
 
-from tools.manual.qt.types import FrameViewport
+from tools.manual.qt.frame_viewer.viewport import FrameViewport
 
 
 class FrameEditDragMixin:

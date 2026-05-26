@@ -29,7 +29,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from tools.manual.qt.types import FrameViewport, OverlayPainter
 from tools.manual.session import (
     ManualFrame,
 )
@@ -39,6 +38,7 @@ from .editor.drag import FrameEditDragMixin
 from .editor.extract_box import ExtractBoxFrameEditorMixin
 from .editor.landmarks import LandmarkFrameEditorMixin
 from .editor.mask import MaskFrameEditorMixin
+from .viewport import FrameViewport, OverlayPainter
 
 logger = logging.getLogger(__name__)
 

@@ -9,7 +9,7 @@ from PySide6.QtCore import QPointF, Qt
 from PySide6.QtGui import QColor, QMouseEvent, QPainter, QPen
 from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QSlider, QWidget
 
-from tools.manual.qt.types import FrameViewport
+from tools.manual.qt.frame_viewer.viewport import FrameViewport
 
 EDITOR_MODE = "Mask"
 
