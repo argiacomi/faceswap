@@ -75,8 +75,8 @@ class ManualFrameView(
     """``(face_index, scale_factor)`` on Extract Box corner-drag release (#102)."""
     face_rotate_requested = Signal(int, float)
     """``(face_index, angle_radians)`` on Extract Box rotation-zone drag release (#102)."""
-    mask_paint_requested = Signal(int, float, float, bool)
-    """``(face_index, source_x, source_y, invert)`` during a Mask editor stroke (#101).
+    mask_paint_requested = Signal(int, float, float, bool, bool)
+    """``(face_index, source_x, source_y, invert, started)`` during a Mask editor stroke.
 
     Emitted on press *and* every move so painting is continuous; the host
     handler stamps the brush at each emit.  ``invert`` is ``True`` when
@@ -123,6 +123,9 @@ class ManualFrameView(
         self._landmark_provider: T.Callable[[], T.Sequence[tuple[float, float]] | None] | None = (
             None
         )
+        self._landmark_faces_provider: (
+            T.Callable[[], T.Sequence[tuple[int, T.Sequence[tuple[float, float]]]]] | None
+        ) = None
         self._landmark_selection_provider: T.Callable[[], frozenset[int]] | None = None
         self._edit_drag_mode: str | None = None
         # Modes: "move" | "resize" | "add" | "landmark" | "landmark_group"
@@ -149,14 +152,17 @@ class ManualFrameView(
         self._mask_drag_active: bool = False
         self._mask_drag_invert: bool = False
         # Brush preview (#101 closure) — when ``_brush_provider`` returns a
-        # ``(radius_source_px, mode)`` tuple while the mask editor is active
+        # ``(radius_source_px, mode, shape, color)`` tuple while the mask editor is active
         # *and* the pointer is inside the active face's bbox, the view draws
         # a circular cursor preview so the user can see brush size + mode
         # before clicking.  Hidden in any other state.
-        self._brush_provider: T.Callable[[], tuple[float, str] | None] | None = None
+        self._brush_provider: T.Callable[[], tuple[float, str, str, str] | None] | None = None
+        self._mask_roi_provider: T.Callable[[float, float], bool] | None = None
         self._brush_preview_source_point: QPointF | None = None
         self._brush_preview_radius: float = 0.0
         self._brush_preview_mode: str = "draw"
+        self._brush_preview_shape: str = "Circle"
+        self._brush_preview_color: str = "#ffffff"
 
     # ---- public API ----
     @property
@@ -393,6 +399,9 @@ class ManualFrameView(
         landmark_mode_provider: T.Callable[[], bool],
         landmark_provider: T.Callable[[], T.Sequence[tuple[float, float]] | None],
         landmark_selection_provider: T.Callable[[], frozenset[int]],
+        landmark_faces_provider: (
+            T.Callable[[], T.Sequence[tuple[int, T.Sequence[tuple[float, float]]]]] | None
+        ) = None,
     ) -> None:
         """Install Landmark editor seams (#103).
 
@@ -406,6 +415,7 @@ class ManualFrameView(
         self._landmark_mode_provider = landmark_mode_provider
         self._landmark_provider = landmark_provider
         self._landmark_selection_provider = landmark_selection_provider
+        self._landmark_faces_provider = landmark_faces_provider
 
     def install_extract_seams(
         self,
@@ -425,7 +435,8 @@ class ManualFrameView(
         self,
         *,
         mask_mode_provider: T.Callable[[], bool],
-        brush_provider: T.Callable[[], tuple[float, str] | None] | None = None,
+        brush_provider: T.Callable[[], tuple[float, str, str, str] | None] | None = None,
+        mask_roi_provider: T.Callable[[float, float], bool] | None = None,
     ) -> None:
         """Install Mask editor seams (#101).
 
@@ -442,6 +453,7 @@ class ManualFrameView(
         """
         self._mask_mode_provider = mask_mode_provider
         self._brush_provider = brush_provider
+        self._mask_roi_provider = mask_roi_provider
 
     @property
     def brush_preview(self) -> dict | None:
@@ -457,6 +469,8 @@ class ManualFrameView(
             "source_point": QPointF(self._brush_preview_source_point),
             "radius": float(self._brush_preview_radius),
             "mode": str(self._brush_preview_mode),
+            "shape": str(self._brush_preview_shape),
+            "color": str(self._brush_preview_color),
         }
 
     def edit_drag_preview_bbox(self) -> QRectF | None:
@@ -563,7 +577,7 @@ class ManualFrameView(
     def paintEvent(self, _event: QPaintEvent) -> None:  # noqa:N802
         """Draw the source frame at the current zoom+offset, then overlays."""
         painter = QPainter(self)
-        painter.fillRect(self.rect(), QColor("#101418"))
+        painter.fillRect(self.rect(), QColor("#000000"))
         if self._source.isNull():
             painter.setPen(QColor("#cccccc"))
             painter.drawText(self.rect(), Qt.AlignCenter | Qt.TextWordWrap, self._empty_message)

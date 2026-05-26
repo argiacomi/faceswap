@@ -144,6 +144,8 @@ class ManualEditorState:
     # Manual Tool's first-launch values so muscle memory carries over.
     brush_size: int = 12
     brush_mode: str = "draw"
+    brush_shape: str = "Circle"
+    brush_color: str = "#ffffff"
     mask_opacity: int = 50
     mask_type: str = ""
     # Bounding Box editor (#104) — aligner choices live on the editor
@@ -173,6 +175,8 @@ class ManualEditorState:
         "is_playing",
         "brush_size",
         "brush_mode",
+        "brush_shape",
+        "brush_color",
         "mask_opacity",
         "mask_type",
         "aligner_name",
@@ -685,6 +689,156 @@ class ManualEditableAlignments:
             self._notify(frame_index)
         return sum(len(indices) for indices in valid.values())
 
+    def replace_frame_faces(
+        self,
+        frame_index: int,
+        faces: T.Sequence[EditableFace],
+        *,
+        mask_state: T.Mapping[tuple[int, int, str], T.Any] | None = None,
+        persisted_mask_blobs: T.Mapping[tuple[int, int, str], T.Any] | None = None,
+    ) -> int:
+        """Replace one frame's faces and mask metadata as one undoable edit."""
+        frame_index = int(frame_index)
+        previous_faces = list(self._faces.get(frame_index, ()))
+        previous_masks = {
+            key: value.copy() if hasattr(value, "copy") else value
+            for key, value in self._mask_state.items()
+            if key[0] == frame_index
+        }
+        previous_blobs = {
+            key: value
+            for key, value in self._persisted_mask_blobs.items()
+            if key[0] == frame_index
+        }
+        new_faces = [self._normalize(index, face) for index, face in enumerate(faces)]
+        new_masks = dict(mask_state or {})
+        new_blobs = dict(persisted_mask_blobs or {})
+
+        def clear_frame_masks() -> None:
+            for key in tuple(self._mask_state):
+                if key[0] == frame_index:
+                    self._mask_state.pop(key, None)
+            for key in tuple(self._persisted_mask_blobs):
+                if key[0] == frame_index:
+                    self._persisted_mask_blobs.pop(key, None)
+            for key in tuple(self._painted_masks):
+                if key[0] == frame_index:
+                    self._painted_masks.discard(key)
+
+        def do() -> None:
+            self._faces[frame_index] = list(new_faces)
+            self._reindex(frame_index)
+            clear_frame_masks()
+            self._mask_state.update(
+                {
+                    key: value.copy() if hasattr(value, "copy") else value
+                    for key, value in new_masks.items()
+                }
+            )
+            self._persisted_mask_blobs.update(new_blobs)
+
+        def undo() -> None:
+            self._faces[frame_index] = list(previous_faces)
+            self._reindex(frame_index)
+            clear_frame_masks()
+            self._mask_state.update(
+                {
+                    key: value.copy() if hasattr(value, "copy") else value
+                    for key, value in previous_masks.items()
+                }
+            )
+            self._persisted_mask_blobs.update(previous_blobs)
+
+        self._apply(do, undo, frame_index)
+        return len(new_faces)
+
+    def copied_frame_payload(
+        self,
+        source_frame_index: int,
+        target_frame_index: int,
+    ) -> tuple[
+        tuple[EditableFace, ...],
+        dict[tuple[int, int, str], T.Any],
+        dict[tuple[int, int, str], T.Any],
+    ]:
+        """Return deep-ish face and mask payload copied from source to target."""
+        faces = tuple(
+            EditableFace(index, face.bbox, face.landmarks)
+            for index, face in enumerate(self._faces.get(int(source_frame_index), ()))
+        )
+        mask_state: dict[tuple[int, int, str], T.Any] = {}
+        for (_frame, face_index, mask_type), value in self._mask_state.items():
+            if _frame == int(source_frame_index):
+                mask_state[(int(target_frame_index), int(face_index), mask_type)] = (
+                    value.copy() if hasattr(value, "copy") else value
+                )
+        persisted: dict[tuple[int, int, str], T.Any] = {}
+        for (_frame, face_index, mask_type), value in self._persisted_mask_blobs.items():
+            if _frame == int(source_frame_index):
+                persisted[(int(target_frame_index), int(face_index), mask_type)] = value
+        return (faces, mask_state, persisted)
+
+    def restore_frame_from_handle(
+        self,
+        handle: ManualAlignmentsHandle,
+        *,
+        frame_index: int,
+        frame_name: str | None,
+    ) -> bool:
+        """Restore one frame from saved alignments, dropping local edits."""
+        frame_index = int(frame_index)
+        saved_faces: list[EditableFace] = []
+        saved_blobs: dict[tuple[int, int, str], T.Any] = {}
+        if frame_name and handle.exists:
+            alignments = handle.open()
+            entry = alignments.data.get(frame_name)
+            if entry is not None:
+                for face_index, face in enumerate(entry.faces):
+                    raw_landmarks = getattr(face, "landmarks_xy", None)
+                    landmarks: tuple[tuple[float, float], ...] = ()
+                    if raw_landmarks is not None:
+                        try:
+                            landmarks = tuple((float(x), float(y)) for x, y in raw_landmarks)
+                        except (TypeError, ValueError):
+                            landmarks = ()
+                    saved_faces.append(
+                        EditableFace(
+                            face_index=face_index,
+                            bbox=(
+                                float(getattr(face, "x", 0)),
+                                float(getattr(face, "y", 0)),
+                                float(getattr(face, "w", 0)),
+                                float(getattr(face, "h", 0)),
+                            ),
+                            landmarks=landmarks,
+                        )
+                    )
+                    for mask_type, blob in (getattr(face, "mask", None) or {}).items():
+                        saved_blobs[(frame_index, face_index, str(mask_type))] = blob
+        previous_faces = list(self._faces.get(frame_index, ()))
+        previous_blobs = {
+            key: value
+            for key, value in self._persisted_mask_blobs.items()
+            if key[0] == frame_index
+        }
+        previous_masks = {
+            key: value.copy() if hasattr(value, "copy") else value
+            for key, value in self._mask_state.items()
+            if key[0] == frame_index
+        }
+        if previous_faces == saved_faces and previous_blobs == saved_blobs and not previous_masks:
+            return False
+        self.replace_frame_faces(
+            frame_index,
+            saved_faces,
+            persisted_mask_blobs=saved_blobs,
+        )
+        self._undo = [record for record in self._undo if record[2] != frame_index]
+        self._redo = [record for record in self._redo if record[2] != frame_index]
+        self._dirty_frames.discard(frame_index)
+        self._notify(frame_index)
+        return True
+
     def resize_face(
         self,
         frame_index: int,
@@ -768,6 +922,8 @@ class ManualEditableAlignments:
         frame_index: int,
         face_index: int,
         scale: float,
+        *,
+        source_size: tuple[int, int] | None = None,
     ) -> bool:
         """Scale the face's landmarks + bbox uniformly around the bbox centre.
 
@@ -791,11 +947,20 @@ class ManualEditableAlignments:
         x, y, w, h = face.bbox
         new_w = w * scale
         new_h = h * scale
-        if new_w < 1.0 or new_h < 1.0:
+        if new_w < 20.0 or new_h < 20.0:
             return False
         cx = x + w / 2.0
         cy = y + h / 2.0
         new_bbox = (cx - new_w / 2.0, cy - new_h / 2.0, new_w, new_h)
+        if source_size is not None:
+            source_width, source_height = (float(source_size[0]), float(source_size[1]))
+            if (
+                new_bbox[0] < 0.0
+                or new_bbox[1] < 0.0
+                or new_bbox[0] + new_bbox[2] > source_width
+                or new_bbox[1] + new_bbox[3] > source_height
+            ):
+                return False
         new_landmarks: tuple[tuple[float, float], ...]
         if face.landmarks:
             new_landmarks = tuple(
@@ -962,6 +1127,46 @@ class ManualEditableAlignments:
                 types.add(mask_type)
         return tuple(sorted(types))
 
+    def mask_affine_matrix(
+        self,
+        frame_index: int,
+        face_index: int,
+        mask_type: str,
+    ) -> T.Any:
+        """Return the source-frame to stored-mask affine matrix for a mask."""
+        key = (int(frame_index), int(face_index), str(mask_type))
+        blob = self._persisted_mask_blobs.get(key)
+        if blob is not None:
+            matrix = getattr(blob, "affine_matrix", None)
+            if matrix is not None:
+                return matrix
+        faces = self._faces.get(frame_index, [])
+        if face_index < 0 or face_index >= len(faces):
+            return None
+        return self._bbox_to_mask_affine(faces[face_index].bbox)
+
+    def mask_original_roi(
+        self,
+        frame_index: int,
+        face_index: int,
+        mask_type: str,
+    ) -> tuple[tuple[float, float], ...]:
+        """Return the source-frame ROI polygon for ``mask_type``."""
+        import cv2
+        import numpy as np
+
+        matrix = self.mask_affine_matrix(frame_index, face_index, mask_type)
+        if matrix is None:
+            return ()
+        size = self.MASK_STORED_SIZE
+        points = np.array(
+            [[0, 0], [0, size - 1], [size - 1, size - 1], [size - 1, 0]],
+            dtype=np.float32,
+        ).reshape((-1, 1, 2))
+        inverse = cv2.invertAffineTransform(np.asarray(matrix, dtype=np.float32)[:2])
+        roi = cv2.transform(points, inverse).reshape((4, 2))
+        return tuple((float(x), float(y)) for x, y in roi.tolist())
+
     def paint_mask_stroke(
         self,
         frame_index: int,
@@ -971,21 +1176,20 @@ class ManualEditableAlignments:
         source_y: float,
         radius: float,
         value: int,
+        *,
+        previous_source_x: float | None = None,
+        previous_source_y: float | None = None,
+        shape: str = "Circle",
     ) -> bool:
-        """Stamp a circular brush of ``radius`` at ``(source_x, source_y)``.
-
-        Source coordinates are mapped into stored-space (the mask grid's
-        coordinate frame) using a simple axis-aligned projection from the
-        face's bounding box: that's lossier than the legacy affine-matrix
-        approach but sufficient for an editor-side preview and keeps the
-        in-memory model free of additional matrix state.
+        """Paint a brush stroke in stored-mask space using the mask affine.
 
         ``value`` is ``255`` to draw or ``0`` to erase.  Pixels are
         full-on/full-off — feathered brushes are a follow-up.  Returns
-        ``False`` for an invalid face_index, out-of-bbox coordinates, or
+        ``False`` for an invalid face_index, out-of-ROI coordinates, or
         a non-positive radius.  Mutates the mask array in place and
-        records undo/redo via a snapshot of the affected stamp region.
+        records undo/redo via a snapshot of the mask grid.
         """
+        import cv2
         import numpy as np
 
         faces = self._faces.get(frame_index, [])
@@ -993,22 +1197,21 @@ class ManualEditableAlignments:
             return False
         if not (radius > 0.0):
             return False
-        face = faces[face_index]
-        x, y, w, h = face.bbox
-        if w <= 0.0 or h <= 0.0:
+        matrix = self.mask_affine_matrix(frame_index, face_index, mask_type)
+        if matrix is None:
             return False
-        # Source → stored-space mapping (axis-aligned bbox projection).
-        rel_x = (source_x - x) / w
-        rel_y = (source_y - y) / h
-        if not (0.0 <= rel_x <= 1.0 and 0.0 <= rel_y <= 1.0):
+        matrix_array = np.asarray(matrix, dtype=np.float32)[:2]
+        points = [(float(source_x), float(source_y))]
+        if previous_source_x is not None and previous_source_y is not None:
+            points.insert(0, (float(previous_source_x), float(previous_source_y)))
+        transformed = cv2.transform(
+            np.asarray(points, dtype=np.float32).reshape(1, -1, 2), matrix_array
+        )
+        transformed = transformed.reshape((-1, 2))
+        if not self._stored_point_in_bounds(transformed[-1]):
             return False
         size = self.MASK_STORED_SIZE
-        cx = rel_x * size
-        cy = rel_y * size
-        # Stored-space brush radius: scale by the smaller bbox dimension so
-        # the on-screen brush size feels uniform regardless of bbox aspect.
-        scale = size / max(1.0, min(w, h))
-        stored_radius = max(1.0, radius * scale)
+        stored_radius = max(1.0, float(radius) * self._mask_radius_scale(matrix_array))
         key = (int(frame_index), int(face_index), str(mask_type))
         existing = self._mask_state.get(key)
         if existing is None:
@@ -1020,32 +1223,24 @@ class ManualEditableAlignments:
             # persisted blob exists for this combination.
             existing = self._decoded_or_blank_grid(key, size)
             self._mask_state[key] = existing
-        # Carve out the stamp region for undo/redo bookkeeping.
-        r_ceil = int(np.ceil(stored_radius)) + 1
-        x0 = max(0, int(cx) - r_ceil)
-        y0 = max(0, int(cy) - r_ceil)
-        x1 = min(size, int(cx) + r_ceil + 1)
-        y1 = min(size, int(cy) + r_ceil + 1)
-        if x0 >= x1 or y0 >= y1:
-            return False
-        prior_region = existing[y0:y1, x0:x1].copy()
+        prior = existing.copy()
         was_touched = key in self._painted_masks
-        # Apply the circular stamp.
-        yy, xx = np.ogrid[y0:y1, x0:x1]
-        mask = (xx - cx) ** 2 + (yy - cy) ** 2 <= stored_radius * stored_radius
-        if int(value) > 0:
-            existing[y0:y1, x0:x1][mask] = int(value)
-        else:
-            existing[y0:y1, x0:x1][mask] = 0
+        self._paint_mask_shape(
+            existing,
+            transformed,
+            int(round(stored_radius)),
+            255 if int(value) > 0 else 0,
+            str(shape),
+        )
         # Snapshot AFTER paint so redo replays the same write.
-        new_region = existing[y0:y1, x0:x1].copy()
+        new = existing.copy()
 
         def do() -> None:
-            existing[y0:y1, x0:x1] = new_region
+            existing[:, :] = new
             self._painted_masks.add(key)
 
         def undo() -> None:
-            existing[y0:y1, x0:x1] = prior_region
+            existing[:, :] = prior
             self._set_mask_touched(key, was_touched)
 
         self._apply(do, undo, frame_index)
@@ -1122,6 +1317,75 @@ class ManualEditableAlignments:
         key = (int(frame_index), int(face_index), str(mask_type))
         self._mask_state[key] = array
 
+    @staticmethod
+    def _stored_point_in_bounds(point: T.Any) -> bool:
+        """Return whether a transformed stored-space point is paintable."""
+        x, y = float(point[0]), float(point[1])
+        return 0.0 <= x <= ManualEditableAlignments.MASK_STORED_SIZE - 1 and 0.0 <= y <= (
+            ManualEditableAlignments.MASK_STORED_SIZE - 1
+        )
+
+    @staticmethod
+    def _mask_radius_scale(matrix: T.Any) -> float:
+        """Return source-pixel to stored-pixel scale from an affine matrix."""
+        import numpy as np
+
+        matrix_array = np.asarray(matrix, dtype=np.float32)
+        scale_x = float((matrix_array[0, 0] ** 2 + matrix_array[1, 0] ** 2) ** 0.5)
+        scale_y = float((matrix_array[0, 1] ** 2 + matrix_array[1, 1] ** 2) ** 0.5)
+        return max(1.0, (scale_x + scale_y) / 2.0)
+
+    @staticmethod
+    def _paint_mask_shape(
+        image: T.Any,
+        points: T.Any,
+        radius: int,
+        value: int,
+        shape: str,
+    ) -> None:
+        """Paint a circle or rectangle stamp/line into ``image`` in-place."""
+        import cv2
+        import numpy as np
+
+        radius = max(1, int(radius))
+        int_points = np.rint(points).astype("int32")
+        if str(shape).lower() == "rectangle":
+            if len(int_points) == 1:
+                point = int_points[0]
+                cv2.rectangle(
+                    image,
+                    (int(point[0] - radius), int(point[1] - radius)),
+                    (int(point[0] + radius), int(point[1] + radius)),
+                    int(value),
+                    thickness=-1,
+                )
+                return
+            start, end = int_points[0], int_points[-1]
+            distance = max(1, int(np.linalg.norm(end - start)))
+            for step in range(distance + 1):
+                t = step / distance
+                point = np.rint(start + (end - start) * t).astype("int32")
+                cv2.rectangle(
+                    image,
+                    (int(point[0] - radius), int(point[1] - radius)),
+                    (int(point[0] + radius), int(point[1] + radius)),
+                    int(value),
+                    thickness=-1,
+                )
+            return
+        if len(int_points) == 1:
+            point = int_points[0]
+            cv2.circle(image, (int(point[0]), int(point[1])), radius, int(value), thickness=-1)
+            return
+        start, end = int_points[0], int_points[-1]
+        cv2.line(
+            image,
+            (int(start[0]), int(start[1])),
+            (int(end[0]), int(end[1])),
+            int(value),
+            max(1, radius * 2),
+        )
+
     # ---- Mask blob persistence (#101) ----
 
     MASK_STORED_CENTERING: T.ClassVar[str] = "head"
@@ -1159,15 +1423,7 @@ class ManualEditableAlignments:
             # save still produces a valid blob.
             array = np.zeros((size, size), dtype=np.uint8)
         x, y, w, h = bbox
-        scale_x = float(w) / float(size) if size else 0.0
-        scale_y = float(h) / float(size) if size else 0.0
-        affine = np.array(
-            [
-                [scale_x, 0.0, float(x)],
-                [0.0, scale_y, float(y)],
-            ],
-            dtype=np.float32,
-        )
+        affine = cls._bbox_to_mask_affine((x, y, w, h))
         # cv2.INTER_LINEAR is 1; we don't import cv2 here to keep this module
         # tkinter/Qt-neutral and import-light.  The legacy Tk path stores the
         # cv2 interpolator constant so we mirror the numeric value directly.
@@ -1178,6 +1434,26 @@ class ManualEditableAlignments:
             interpolator=interpolator,
             stored_size=size,
             stored_centering=cls.MASK_STORED_CENTERING,
+        )
+
+    @classmethod
+    def _bbox_to_mask_affine(
+        cls,
+        bbox: tuple[float, float, float, float],
+    ) -> T.Any:
+        """Return source-frame to stored-mask affine for an axis-aligned bbox."""
+        import numpy as np
+
+        x, y, w, h = bbox
+        size = cls.MASK_STORED_SIZE
+        scale_x = float(size) / max(1.0, float(w))
+        scale_y = float(size) / max(1.0, float(h))
+        return np.array(
+            [
+                [scale_x, 0.0, -float(x) * scale_x],
+                [0.0, scale_y, -float(y) * scale_y],
+            ],
+            dtype=np.float32,
         )
 
     @classmethod
@@ -1560,6 +1836,9 @@ class ManualEditableAlignments:
         """
         import numpy as np
 
+        for key, blob in self._persisted_mask_blobs.items():
+            if key[0] == int(frame_index) and key[1] == int(face_index):
+                mask_dict.setdefault(key[2], blob)
         touched_for_face = [
             key
             for key in self._painted_masks

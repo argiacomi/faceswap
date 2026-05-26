@@ -92,18 +92,24 @@ MANUAL_ACTIONS: tuple[ManualAction, ...] = (
         "Add Face",
         "add_face_at_center",
         ("Ctrl+N",),
-        None,
+        "new",
         "Add a new face at the center of the current frame (Ctrl+N)",
     ),
     ManualAction(
-        "undo_edit", "Undo", "undo_edit", ("Ctrl+Z",), None, "Undo the last edit (Ctrl+Z)", True
+        "undo_edit",
+        "Undo",
+        "undo_edit",
+        ("Ctrl+Z",),
+        "reload2",
+        "Undo the last edit (Ctrl+Z)",
+        True,
     ),
     ManualAction(
         "redo_edit",
         "Redo",
         "redo_edit",
         ("Ctrl+Shift+Z", "Ctrl+Y"),
-        None,
+        "reload3",
         "Redo the last undone edit (Ctrl+Shift+Z)",
     ),
     ManualAction(
@@ -111,7 +117,7 @@ MANUAL_ACTIONS: tuple[ManualAction, ...] = (
         "Filter",
         "cycle_filter_mode",
         ("F",),
-        None,
+        "context",
         "Cycle the navigation filter mode (F)",
         True,
     ),
@@ -172,15 +178,17 @@ MANUAL_ACTIONS: tuple[ManualAction, ...] = (
         "zoom_in", "Zoom In", "zoom_in", ("=", "+"), "zoom", "Zoom in on the frame view (+)", True
     ),
     ManualAction(
-        "zoom_out", "Zoom Out", "zoom_out", ("-",), None, "Zoom out of the frame view (-)"
+        "zoom_out", "Zoom Out", "zoom_out", ("-",), "zoom", "Zoom out of the frame view (-)"
     ),
-    ManualAction("reset_view", "Reset View", "reset_view", ("0",), None, "Reset zoom and pan (0)"),
+    ManualAction(
+        "reset_view", "Reset View", "reset_view", ("0",), "reload", "Reset zoom and pan (0)"
+    ),
     ManualAction(
         "magnify_active_face",
         "Magnify Active Face",
         "magnify_active_face",
         ("M",),
-        None,
+        "zoom",
         "Fit the active face's bbox to the frame view (M)",
     ),
     ManualAction(
@@ -188,7 +196,7 @@ MANUAL_ACTIONS: tuple[ManualAction, ...] = (
         "Mask: Draw",
         "set_mask_draw_mode",
         ("D",),
-        None,
+        "draw",
         "Switch the Mask editor to Draw mode (D)",
     ),
     ManualAction(
@@ -196,7 +204,7 @@ MANUAL_ACTIONS: tuple[ManualAction, ...] = (
         "Mask: Erase",
         "set_mask_erase_mode",
         ("E",),
-        None,
+        "erase",
         "Switch the Mask editor to Erase mode (E)",
     ),
     ManualAction(
@@ -204,7 +212,7 @@ MANUAL_ACTIONS: tuple[ManualAction, ...] = (
         "Brush Size +",
         "increase_brush_size",
         ("]",),
-        None,
+        "zoom",
         "Increase Mask brush size (])",
     ),
     ManualAction(
@@ -212,7 +220,7 @@ MANUAL_ACTIONS: tuple[ManualAction, ...] = (
         "Brush Size -",
         "decrease_brush_size",
         ("[",),
-        None,
+        "zoom",
         "Decrease Mask brush size ([)",
     ),
     ManualAction(

@@ -179,6 +179,8 @@ class ManualToolWindow(
         self._editor_state.subscribe("mask_opacity", lambda _v: self._refresh_face_grid())
         self._build_ui()
         self._restore_manual_window_state()
+        if hasattr(self, "_hide_default_parity_panels"):
+            self._hide_default_parity_panels()
         self._connect_signals()
         self._load_session()
         self._frame_view.add_overlay(self._overlay)

@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QSlider,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -33,7 +34,7 @@ class ManualTransportBar(QWidget):
 
     Layout::
 
-        [ slider ─────────────────────────────── ] [Frame: 12 / 250] [Go: 12]
+        [ slider ─────────────────────────────── ] [ 12 ] [/ 250]
 
     """
 
@@ -46,9 +47,13 @@ class ManualTransportBar(QWidget):
         self._total = 0
         self._suppress_signal = False
 
-        layout = QHBoxLayout(self)
+        layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 0, 4, 0)
-        layout.setSpacing(8)
+        layout.setSpacing(2)
+
+        scrubber = QHBoxLayout()
+        scrubber.setContentsMargins(0, 0, 0, 0)
+        scrubber.setSpacing(6)
 
         self._slider = QSlider(Qt.Horizontal)
         self._slider.setObjectName("qt-manual-transport-slider")
@@ -56,17 +61,15 @@ class ManualTransportBar(QWidget):
         self._slider.setEnabled(False)
         self._slider.setTracking(True)
         self._slider.valueChanged.connect(self._on_slider_value_changed)
-        layout.addWidget(self._slider, 1)
+        scrubber.addWidget(self._slider, 1)
 
         self._counter = QLabel("Frame: – / 0")
         self._counter.setObjectName("qt-manual-transport-counter")
-        layout.addWidget(self._counter)
+        self._counter.hide()
 
-        self._jump_label = QLabel("Go:")
-        layout.addWidget(self._jump_label)
         self._jump_entry = QLineEdit()
         self._jump_entry.setObjectName("qt-manual-transport-jump")
-        self._jump_entry.setFixedWidth(60)
+        self._jump_entry.setFixedWidth(52)
         # Jump entry is 1-based to match the visible ``Frame: X / N`` counter.
         # Validator range follows: ``[1, total]`` when total > 0, else ``[0, 0]``
         # so the entry stays uneditable when no frames are loaded.
@@ -77,7 +80,12 @@ class ManualTransportBar(QWidget):
         # makes a single Return keystroke emit ``position_changed`` twice
         # (issue #119 task 3).  ``editingFinished`` covers both paths.
         self._jump_entry.editingFinished.connect(self._on_jump_submit)
-        layout.addWidget(self._jump_entry)
+        scrubber.addWidget(self._jump_entry)
+
+        self._max_label = QLabel("/ 0")
+        self._max_label.setObjectName("qt-manual-transport-max-label")
+        scrubber.addWidget(self._max_label)
+        layout.addLayout(scrubber)
 
     @property
     def slider(self) -> QSlider:
@@ -162,10 +170,12 @@ class ManualTransportBar(QWidget):
         """
         if self._total <= 0:
             self._counter.setText("Frame: – / 0")
+            self._max_label.setText("/ 0")
             if not self._jump_entry.hasFocus():
                 self._jump_entry.setText("")
             return
         one_based = position + 1
         self._counter.setText(f"Frame: {one_based} / {self._total}")
+        self._max_label.setText(f"/ {self._total}")
         if not self._jump_entry.hasFocus():
             self._jump_entry.setText(str(one_based))

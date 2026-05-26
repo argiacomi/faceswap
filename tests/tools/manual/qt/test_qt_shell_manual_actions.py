@@ -229,6 +229,24 @@ def test_copy_prev_face_copies_into_editable_model(  # type:ignore[no-untyped-de
     assert window.actions_by_key["save"].isEnabled() is True
 
 
+def test_copy_prev_face_uses_nearest_previous_frame_with_faces(
+    qtbot,
+    tmp_path: Path,
+) -> None:  # type:ignore[no-untyped-def]
+    """Copy previous skips empty adjacent frames like the legacy Manual Tool."""
+    session = _session_with_frames(tmp_path, count=4)
+    window = ManualToolWindow(session)
+    qtbot.addWidget(window)
+    window.editable_alignments.add_face(0, (5.0, 5.0, 30.0, 30.0))
+    window._thumbnail_panel.setCurrentRow(2)
+
+    assert window.copy_prev_face() is True
+
+    faces = window.editable_alignments.faces(2)
+    assert len(faces) == 1
+    assert faces[0].bbox == (5.0, 5.0, 30.0, 30.0)
+
+
 def test_copy_prev_face_noop_when_source_empty(  # type:ignore[no-untyped-def]
     qtbot,
     tmp_path: Path,

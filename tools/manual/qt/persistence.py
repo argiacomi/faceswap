@@ -19,27 +19,61 @@ class PersistenceMixin:
     """Own save, extract, revert and copy orchestration for editable alignments."""
 
     def revert_current_frame(self) -> None:
-        """Revert editable edits recorded against the current frame only."""
+        """Restore the current frame from saved alignments."""
         frame_index = self._current_frame_index()
         if frame_index < 0:
             self.statusBar().showMessage("Nothing to revert", 3000)
             return
-        reverted = self._editable.revert_frame(frame_index)
+        reverted_to_saved = self._editable.restore_frame_from_handle(
+            self._alignments_handle,
+            frame_index=frame_index,
+            frame_name=self._frame_name_for_index(frame_index),
+        )
         self.mark_dirty(self._editable.can_undo)
         if not self._editable.can_undo:
             self._editor_state.set("edited", False)
-        if reverted:
-            self.statusBar().showMessage(f"Reverted {reverted} edit(s) in this frame", 5000)
+        self.refresh_faces()
+        self._frame_view.update()
+        self._refresh_filter_results()
+        self._refresh_face_grid()
+        face_count = self._editable.face_count(frame_index)
+        if face_count == 0:
+            self._editor_state.set("face_index", -1)
+        elif self._editor_state.face_index < 0 or self._editor_state.face_index >= face_count:
+            self._editor_state.set("face_index", 0)
+        if reverted_to_saved:
+            self.statusBar().showMessage("Reverted current frame to saved alignments", 5000)
         else:
             self.statusBar().showMessage("Nothing to revert in this frame", 3000)
 
     def copy_prev_face(self) -> bool:
-        """Copy the editable faces from the previous frame onto the current one."""
-        return self._copy_faces_from(self._current_frame_index() - 1, "previous")
+        """Copy faces from the nearest previous frame that has faces."""
+        current = self._current_frame_index()
+        source = next(
+            (index for index in range(current - 1, -1, -1) if self._editable.face_count(index)),
+            None,
+        )
+        if source is None:
+            self.statusBar().showMessage("No faces in previous frames to copy", 5000)
+            return False
+        return self._copy_faces_from(source, "previous")
 
     def copy_next_face(self) -> bool:
-        """Copy the editable faces from the next frame onto the current one."""
-        return self._copy_faces_from(self._current_frame_index() + 1, "next")
+        """Copy faces from the nearest next frame that has faces."""
+        current = self._current_frame_index()
+        max_index = max(self._editable.known_frame_indices() or (self._session.frame_count - 1,))
+        source = next(
+            (
+                index
+                for index in range(current + 1, max_index + 1)
+                if self._editable.face_count(index)
+            ),
+            None,
+        )
+        if source is None:
+            self.statusBar().showMessage("No faces in next frames to copy", 5000)
+            return False
+        return self._copy_faces_from(source, "next")
 
     def _copy_faces_from(self, source_frame_index: int, direction: str) -> bool:
         """Replace current frame faces with the source frame's editable faces."""
@@ -50,10 +84,16 @@ class PersistenceMixin:
         if not source_faces:
             self.statusBar().showMessage(f"No faces in the {direction} frame to copy", 5000)
             return False
-        for face_index in reversed(range(self._editable.face_count(current_index))):
-            self._editable.delete_face(current_index, face_index)
-        for face in source_faces:
-            self._editable.add_face(current_index, face.bbox, landmarks=face.landmarks)
+        faces, mask_state, persisted = self._editable.copied_frame_payload(
+            source_frame_index,
+            current_index,
+        )
+        self._editable.replace_frame_faces(
+            current_index,
+            faces,
+            mask_state=mask_state,
+            persisted_mask_blobs=persisted,
+        )
         self._editor_state.set("face_count_changed", True)
         self._editor_state.set("edited", True)
         self.mark_dirty(True)

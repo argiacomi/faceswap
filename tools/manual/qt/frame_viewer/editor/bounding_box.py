@@ -19,6 +19,7 @@ class BoundingBoxFrameEditorMixin:
     """Frame-view hit-test, cursor, add, move and resize behavior."""
 
     _ADD_MIN_DRAG = 4.0
+    _MIN_BBOX_SIZE = 20.0
 
     def _update_hover_cursor(self, position: QPointF) -> None:
         """Cursor priority: resize handle > bbox body > pannable > default."""
@@ -124,7 +125,12 @@ class BoundingBoxFrameEditorMixin:
         if "s" in handle:
             h += dy
         rect = QRectF(x, y, w, h).normalized()
-        return QRectF(rect.x(), rect.y(), max(1.0, rect.width()), max(1.0, rect.height()))
+        return QRectF(
+            rect.x(),
+            rect.y(),
+            max(BoundingBoxFrameEditorMixin._MIN_BBOX_SIZE, rect.width()),
+            max(BoundingBoxFrameEditorMixin._MIN_BBOX_SIZE, rect.height()),
+        )
 
     def _emit_add_request(self, anchor: QPointF | None, current: QRectF | None) -> None:
         """Emit ``face_add_requested`` for a committed add gesture.
@@ -141,7 +147,7 @@ class BoundingBoxFrameEditorMixin:
         if current is None or (
             current.width() < self._ADD_MIN_DRAG and current.height() < self._ADD_MIN_DRAG
         ):
-            default_size = max(8.0, min(64.0, min(src_w, src_h) / 6.0))
+            default_size = max(self._MIN_BBOX_SIZE, min(src_w, src_h) / 4.0)
             half = default_size / 2.0
             rect = QRectF(
                 max(0.0, min(src_w - default_size, anchor.x() - half)),

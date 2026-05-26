@@ -75,9 +75,22 @@ class LandmarkFrameEditorMixin:
         ):
             self.landmarks_select_requested.emit(int(face_index), ())
             return
-        landmarks = self._landmark_provider() or ()
-        indices = ManualFrameOverlay.landmarks_in_rect(landmarks, current)
-        self.landmarks_select_requested.emit(int(face_index), indices)
+        face_matches: list[tuple[int, tuple[int, ...]]] = []
+        if self._landmark_faces_provider is not None:
+            for candidate_face_index, landmarks in self._landmark_faces_provider():
+                indices = ManualFrameOverlay.landmarks_in_rect(landmarks, current)
+                if indices:
+                    face_matches.append((int(candidate_face_index), indices))
+        else:
+            landmarks = self._landmark_provider() or ()
+            indices = ManualFrameOverlay.landmarks_in_rect(landmarks, current)
+            if indices:
+                face_matches.append((int(face_index), indices))
+        if len(face_matches) != 1:
+            self.landmarks_select_requested.emit(int(face_index), ())
+            return
+        selected_face, indices = face_matches[0]
+        self.landmarks_select_requested.emit(selected_face, indices)
 
     def _begin_landmark_drag(
         self,
@@ -163,6 +176,17 @@ class LandmarkWindowEditorMixin:
         if face_index >= len(faces):
             return None
         return faces[face_index].landmarks
+
+    def _frame_landmark_faces(self) -> tuple[tuple[int, tuple[tuple[float, float], ...]], ...]:
+        """Return landmark sets for all faces on the current frame."""
+        frame_index = self._current_frame_index()
+        if frame_index < 0:
+            return ()
+        return tuple(
+            (face.face_index, face.landmarks)
+            for face in self._editable.faces(frame_index)
+            if face.landmarks
+        )
 
     def _on_landmark_move_requested(
         self, face_index: int, landmark_index: int, new_x: float, new_y: float

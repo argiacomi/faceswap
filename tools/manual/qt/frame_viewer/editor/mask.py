@@ -7,7 +7,7 @@ import typing as T
 
 from PySide6.QtCore import QPointF, Qt
 from PySide6.QtGui import QColor, QMouseEvent, QPainter, QPen
-from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QSlider, QWidget
+from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QSlider, QToolButton, QWidget
 
 from tools.manual.qt.frame_viewer.viewport import FrameViewport
 
@@ -47,8 +47,18 @@ class MaskFrameEditorMixin:
         if cleared:
             return
         source_point = self._widget_to_source(position)
+        if source_point is None:
+            if previous:
+                self._brush_preview_source_point = None
+                self.update()
+            return
         bbox = self._active_bbox_source_rect()
-        if source_point is None or bbox is None or not bbox.contains(source_point):
+        roi_contains = (
+            self._mask_roi_provider(source_point.x(), source_point.y())
+            if self._mask_roi_provider is not None
+            else bbox is not None and bbox.contains(source_point)
+        )
+        if not roi_contains:
             if previous:
                 self._brush_preview_source_point = None
                 self.update()
@@ -62,10 +72,12 @@ class MaskFrameEditorMixin:
                 self._brush_preview_source_point = None
                 self.update()
             return
-        radius, mode = spec
+        radius, mode, shape, color = spec
         self._brush_preview_source_point = QPointF(source_point)
         self._brush_preview_radius = max(0.5, float(radius))
         self._brush_preview_mode = str(mode)
+        self._brush_preview_shape = str(shape)
+        self._brush_preview_color = str(color)
         self.update()
 
     def _clear_brush_preview_if_no_active_modes(self) -> bool:
@@ -115,9 +127,13 @@ class MaskFrameEditorMixin:
         face_index = self._active_face_provider()
         if face_index is None:
             return False
-        bbox = self._active_bbox_provider() if self._active_bbox_provider else None
-        if bbox is None or not bbox.contains(source_point):
-            return False
+        if self._mask_roi_provider is not None:
+            if not self._mask_roi_provider(source_point.x(), source_point.y()):
+                return False
+        else:
+            bbox = self._active_bbox_provider() if self._active_bbox_provider else None
+            if bbox is None or not bbox.contains(source_point):
+                return False
         self._mask_drag_active = True
         self._mask_drag_invert = bool(event.modifiers() & Qt.ControlModifier)
         self.mask_paint_requested.emit(
@@ -125,6 +141,7 @@ class MaskFrameEditorMixin:
             float(source_point.x()),
             float(source_point.y()),
             bool(self._mask_drag_invert),
+            True,
         )
         return True
 
@@ -143,6 +160,7 @@ class MaskFrameEditorMixin:
             float(source_point.x()),
             float(source_point.y()),
             bool(self._mask_drag_invert),
+            False,
         )
         return True
 
@@ -157,8 +175,7 @@ class MaskFrameEditorMixin:
         Only paints when ``_brush_preview_source_point`` is set — the hover
         path keeps that state in sync with the pointer position, the
         active face's bbox, the editor mode and the brush size.  The
-        circle's stroke colour distinguishes Draw (cyan) from Erase
-        (magenta) at a glance.
+        cursor uses the configured legacy cursor colour and shape.
         """
         point = self._brush_preview_source_point
         if point is None:
@@ -166,12 +183,22 @@ class MaskFrameEditorMixin:
         widget_point = viewport.source_to_widget(point.x(), point.y())
         radius_widget = max(1.0, float(self._brush_preview_radius) * float(viewport.zoom))
         painter.save()
-        colour = QColor("#88d4ff") if self._brush_preview_mode == "draw" else QColor("#ff66cc")
+        colour = QColor(self._brush_preview_color)
+        if not colour.isValid():
+            colour = QColor("#ffffff")
         pen = QPen(colour)
         pen.setWidthF(1.6)
         painter.setPen(pen)
         painter.setBrush(Qt.NoBrush)
-        painter.drawEllipse(widget_point, radius_widget, radius_widget)
+        if self._brush_preview_shape == "Rectangle":
+            painter.drawRect(
+                widget_point.x() - radius_widget,
+                widget_point.y() - radius_widget,
+                radius_widget * 2.0,
+                radius_widget * 2.0,
+            )
+        else:
+            painter.drawEllipse(widget_point, radius_widget, radius_widget)
         painter.restore()
 
 
@@ -197,6 +224,28 @@ class MaskWindowEditorMixin:
         """Return whether the Mask editor (F5) is active."""
         return self._editor_state.editor_mode == "Mask"
 
+    def _active_mask_roi_contains(self, source_x: float, source_y: float) -> bool:
+        """Return whether a source point is inside the active mask ROI."""
+        frame_index = self._current_frame_index()
+        face_index = self._active_face_index()
+        if frame_index < 0 or face_index is None:
+            return False
+        matrix = self._editable.mask_affine_matrix(
+            frame_index, face_index, self.active_mask_type()
+        )
+        if matrix is None:
+            return False
+        try:
+            import cv2
+            import numpy as np
+
+            point = np.asarray([[(float(source_x), float(source_y))]], dtype=np.float32)
+            stored = cv2.transform(point, np.asarray(matrix, dtype=np.float32)[:2]).reshape(2)
+            size = self._editable.MASK_STORED_SIZE
+            return 0.0 <= stored[0] <= size - 1 and 0.0 <= stored[1] <= size - 1
+        except Exception:  # pragma: no cover - defensive hover path
+            return False
+
     def _should_render_mask(self) -> bool:
         """Show mask overlay when the Mask editor is active or annotation toggle on.
 
@@ -211,9 +260,11 @@ class MaskWindowEditorMixin:
         return self._editor_state.editor_mode == "Mask" or "Mask" in annotation_tokens
 
     def _on_mask_paint_requested(
-        self, face_index: int, source_x: float, source_y: float, invert: bool
+        self, face_index: int, source_x: float, source_y: float, invert: bool, started: bool
     ) -> None:
         """Apply a Mask editor brush stamp at ``(source_x, source_y)`` (#101)."""
+        if started:
+            self._mask_last_source_point = None
         self.paint_mask_at(int(face_index), float(source_x), float(source_y), invert=bool(invert))
 
     def set_mask_draw_mode(self) -> bool:
@@ -246,8 +297,8 @@ class MaskWindowEditorMixin:
         """Return the selected mask type, falling back to the default."""
         return self._editor_state.mask_type or self.DEFAULT_MASK_TYPE
 
-    def _current_brush_spec(self) -> tuple[float, str] | None:
-        """Return ``(radius_source_px, mode)`` for the frame view's brush preview.
+    def _current_brush_spec(self) -> tuple[float, str, str, str] | None:
+        """Return brush preview state for the frame view.
 
         Returns ``None`` when the Mask editor isn't active or no face is
         selected — the frame view uses ``None`` to mean "hide the preview".
@@ -260,7 +311,9 @@ class MaskWindowEditorMixin:
             return None
         radius = max(1.0, float(self._editor_state.brush_size) / 2.0)
         mode = str(self._editor_state.brush_mode or "draw")
-        return (radius, mode)
+        shape = str(self._editor_state.brush_shape or "Circle")
+        color = str(self._editor_state.brush_color or "#ffffff")
+        return (radius, mode, shape, color)
 
     def paint_mask_at(
         self,
@@ -285,6 +338,11 @@ class MaskWindowEditorMixin:
             mode = "erase" if mode == "draw" else "draw"
         value = 255 if mode == "draw" else 0
         radius = max(1.0, self._editor_state.brush_size / 2.0)
+        previous = (
+            getattr(self, "_mask_last_source_point", None)
+            if getattr(self._frame_view, "_mask_drag_active", False)
+            else None
+        )
         ok = self._editable.paint_mask_stroke(
             frame_index,
             int(face_index),
@@ -293,12 +351,34 @@ class MaskWindowEditorMixin:
             float(source_y),
             radius,
             value,
+            previous_source_x=None if previous is None else float(previous[0]),
+            previous_source_y=None if previous is None else float(previous[1]),
+            shape=str(self._editor_state.brush_shape or "Circle"),
         )
         if ok:
+            self._mask_last_source_point = (float(source_x), float(source_y))
             self._editor_state.set("edited", True)
             self._refresh_face_grid()
             self._frame_view.update()
         return ok
+
+    def set_mask_cursor_shape(self, shape: str) -> bool:
+        """Set the Mask brush cursor shape."""
+        value = "Rectangle" if str(shape) == "Rectangle" else "Circle"
+        self._editor_state.set("brush_shape", value)
+        self._refresh_mask_cursor_controls()
+        self._frame_view.update()
+        return True
+
+    def set_mask_cursor_color(self, color: str) -> bool:
+        """Set the Mask brush cursor colour."""
+        qcolor = QColor(str(color))
+        if not qcolor.isValid():
+            return False
+        self._editor_state.set("brush_color", qcolor.name())
+        self._refresh_mask_cursor_controls()
+        self._frame_view.update()
+        return True
 
     def _build_mask_controls(self) -> QWidget:
         """Return the Mask-editor control row (mask-type dropdown + opacity).
@@ -331,6 +411,22 @@ class MaskWindowEditorMixin:
         self._mask_opacity_slider.setFixedWidth(140)
         self._mask_opacity_slider.valueChanged.connect(self._on_mask_opacity_changed)
         layout.addWidget(self._mask_opacity_slider)
+        layout.addSpacing(12)
+        layout.addWidget(QLabel("Cursor:"))
+        self._mask_cursor_shape_combo = QComboBox()
+        self._mask_cursor_shape_combo.setObjectName("qt-manual-mask-cursor-shape")
+        self._mask_cursor_shape_combo.addItems(("Circle", "Rectangle"))
+        self._mask_cursor_shape_combo.setCurrentText(str(self._editor_state.brush_shape))
+        self._mask_cursor_shape_combo.currentTextChanged.connect(self._on_cursor_shape_changed)
+        layout.addWidget(self._mask_cursor_shape_combo)
+        self._mask_cursor_color_button = QToolButton()
+        self._mask_cursor_color_button.setObjectName("qt-manual-mask-cursor-color")
+        self._mask_cursor_color_button.setText("Color")
+        self._mask_cursor_color_button.setToolTip("Brush cursor color")
+        self._mask_cursor_color_button.clicked.connect(
+            lambda _checked=False: self.set_mask_cursor_color(self._editor_state.brush_color)
+        )
+        layout.addWidget(self._mask_cursor_color_button)
         layout.addStretch(1)
 
         container.setVisible(self._editor_state.editor_mode == "Mask")
@@ -345,6 +441,7 @@ class MaskWindowEditorMixin:
         controls.setVisible(active)
         if active:
             self._refresh_mask_type_combo()
+            self._refresh_mask_cursor_controls()
 
     def _refresh_mask_type_combo(self) -> None:
         """Populate the mask-type dropdown for the current frame + face.
@@ -393,3 +490,23 @@ class MaskWindowEditorMixin:
         """Push the new opacity onto editor state + repaint the overlay."""
         self._editor_state.set("mask_opacity", int(value))
         self._frame_view.update()
+
+    def _refresh_mask_cursor_controls(self) -> None:
+        """Mirror cursor shape/color state into Mask controls."""
+        combo = getattr(self, "_mask_cursor_shape_combo", None)
+        if combo is not None and combo.currentText() != self._editor_state.brush_shape:
+            combo.blockSignals(True)
+            try:
+                combo.setCurrentText(str(self._editor_state.brush_shape))
+            finally:
+                combo.blockSignals(False)
+        button = getattr(self, "_mask_cursor_color_button", None)
+        if button is not None:
+            color = QColor(str(self._editor_state.brush_color))
+            if not color.isValid():
+                color = QColor("#ffffff")
+            button.setStyleSheet(f"background-color: {color.name()};")
+
+    def _on_cursor_shape_changed(self, shape: str) -> None:
+        """Persist cursor shape combo changes."""
+        self.set_mask_cursor_shape(shape)

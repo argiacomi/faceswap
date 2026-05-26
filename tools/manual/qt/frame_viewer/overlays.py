@@ -363,17 +363,39 @@ class ManualFrameOverlay:
         if opacity_pct == 0:
             return
         try:
+            import cv2
+            import numpy as np
+            from PySide6.QtGui import QImage
+
             mask_array = mask
             if mask_array.size == 0:
                 return
-            height, width = mask_array.shape[:2]
-            from PySide6.QtGui import QImage
+            src_w, src_h = viewport.source_size
+            matrix = self._model.mask_affine_matrix(frame_index, int(face.face_index), mask_type)
+            if matrix is None:
+                return
+            full = cv2.warpAffine(
+                mask_array,
+                np.asarray(matrix, dtype=np.float32)[:2],
+                (int(src_w), int(src_h)),
+                flags=cv2.WARP_INVERSE_MAP | cv2.INTER_LINEAR,
+                borderMode=cv2.BORDER_CONSTANT,
+            )
+            roi = np.zeros((int(src_h), int(src_w)), dtype=np.uint8)
+            roi_points = self._model.mask_original_roi(
+                frame_index, int(face.face_index), mask_type
+            )
+            if roi_points:
+                polygon = np.rint(np.asarray(roi_points, dtype=np.float32)).astype(np.int32)
+                cv2.fillPoly(roi, [polygon], 255)
+                full = np.minimum(full, roi)
+            height, width = full.shape[:2]
 
             argb = bytearray(width * height * 4)
             tint = self._color("mask")
             alpha_factor = opacity_pct / 100.0
             mv = memoryview(argb)
-            data = mask_array.tobytes()
+            data = full.tobytes()
             for i, value in enumerate(data):
                 base = i * 4
                 if value == 0:
@@ -387,10 +409,23 @@ class ManualFrameOverlay:
             image = QImage(bytes(argb), width, height, width * 4, QImage.Format_ARGB32)
         except Exception:
             return
-        rect = viewport.source_rect_to_widget(*face.bbox)
         painter.save()
         painter.setOpacity(1.0)
-        painter.drawImage(rect, image)
+        painter.drawImage(viewport.target_rect, image)
+        roi_points = self._model.mask_original_roi(frame_index, int(face.face_index), mask_type)
+        if roi_points:
+            self._draw_polygon(
+                painter,
+                QPolygonF(tuple(viewport.source_to_widget(x, y) for x, y in roi_points)),
+                self._color("mask"),
+                1.0,
+            )
+            top_left = min(roi_points, key=lambda point: point[0] + point[1])
+            painter.setPen(self._color("mask"))
+            painter.drawText(
+                viewport.source_to_widget(top_left[0], top_left[1]),
+                str(face.face_index),
+            )
         painter.restore()
 
     def _draw_handles(self, painter: QPainter, bbox: QRectF) -> None:

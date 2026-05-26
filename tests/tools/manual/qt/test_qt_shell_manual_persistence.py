@@ -140,3 +140,56 @@ def test_save_after_persist_refreshes_face_panel(qtbot, tmp_path: Path) -> None:
     # The face panel reads from the alignments handle; after a successful
     # save both newly-added faces should be visible.
     assert len(window.face_panel.faces) == 2
+
+
+def test_revert_current_frame_restores_saved_alignments(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+    """Revert reloads the current frame from disk rather than only undoing history."""
+    from lib.align import Alignments
+
+    window = _make_window(qtbot, tmp_path)
+    window.editable_alignments.add_face(0, (10.0, 12.0, 30.0, 30.0))
+    assert window.save() is True
+    qtbot.waitUntil(lambda: window._save_worker is None, timeout=5000)
+
+    window.editable_alignments.resize_face(0, 0, (40.0, 42.0, 20.0, 20.0))
+    assert window.editor_state.unsaved is True
+    window.revert_current_frame()
+
+    assert window.editable_alignments.faces(0)[0].bbox == (10.0, 12.0, 30.0, 30.0)
+    assert window.editor_state.unsaved is False
+    reloaded = Alignments(str(tmp_path), "alignments.fsa")
+    assert int(reloaded.data["frame_000.png"].faces[0].x) == 10
+
+
+def test_save_preserves_unrelated_mask_identity_and_metadata(
+    qtbot,
+    tmp_path: Path,
+) -> None:  # type:ignore[no-untyped-def]
+    """Saving bbox/landmark edits keeps unrelated face payloads intact."""
+    import zlib
+
+    import numpy as np
+
+    from lib.align import Alignments
+    from lib.align.objects import MaskAlignmentsFile
+
+    window = _make_window(qtbot, tmp_path)
+    face_index = window.editable_alignments.add_face(0, (10.0, 12.0, 30.0, 30.0))
+    window.editable_alignments._persisted_mask_blobs[(0, face_index, "custom")] = (
+        MaskAlignmentsFile(
+            mask=zlib.compress(np.zeros((128, 128), dtype=np.uint8).tobytes()),
+            affine_matrix=np.array([[1.0, 0.0, -10.0], [0.0, 1.0, -12.0]], dtype=np.float32),
+            interpolator=1,
+            stored_size=128,
+            stored_centering="head",
+        )
+    )
+
+    assert window.save() is True
+    qtbot.waitUntil(lambda: window._save_worker is None, timeout=5000)
+    window.editable_alignments.resize_face(0, 0, (10.0, 12.0, 30.0, 30.0))
+    assert window.save() is True
+    qtbot.waitUntil(lambda: window._save_worker is None, timeout=5000)
+
+    reloaded = Alignments(str(tmp_path), "alignments.fsa")
+    assert "custom" in reloaded.data["frame_000.png"].faces[0].mask

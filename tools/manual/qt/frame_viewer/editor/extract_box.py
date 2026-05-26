@@ -21,6 +21,7 @@ class ExtractBoxFrameEditorMixin:
     """Frame-view translate/scale/rotate behavior for Extract Box mode."""
 
     _EXTRACT_ROTATION_BAND_PX = 24.0
+    _EXTRACT_MIN_BOX_SIZE = 20.0
 
     def _begin_extract_drag(self, position: QPointF) -> bool:
         """Try to start an Extract Box translate/scale/rotate drag (#102).
@@ -120,8 +121,22 @@ class ExtractBoxFrameEditorMixin:
             source_point.y() - self._extract_drag_center.y(),
         )
         scale = max(0.05, radius / self._extract_drag_start_radius)
-        self._extract_drag_scale = scale
         original = self._edit_drag_original_bbox
+        min_scale = max(
+            self._EXTRACT_MIN_BOX_SIZE / max(1.0, original.width()),
+            self._EXTRACT_MIN_BOX_SIZE / max(1.0, original.height()),
+        )
+        source_width, source_height = self.source_size
+        max_scale = min(
+            (2.0 * self._extract_drag_center.x()) / max(1.0, original.width()),
+            (2.0 * self._extract_drag_center.y()) / max(1.0, original.height()),
+            (2.0 * (source_width - self._extract_drag_center.x())) / max(1.0, original.width()),
+            (2.0 * (source_height - self._extract_drag_center.y())) / max(1.0, original.height()),
+        )
+        if max_scale > 0.0:
+            scale = min(scale, max_scale)
+        scale = max(min_scale, scale)
+        self._extract_drag_scale = scale
         cx = self._extract_drag_center.x()
         cy = self._extract_drag_center.y()
         new_w = original.width() * scale
@@ -158,7 +173,12 @@ class ExtractBoxWindowEditorMixin:
         if frame_index < 0:
             self.statusBar().showMessage("No frame to edit", 3000)
             return
-        if not self._editable.scale_face(frame_index, int(face_index), float(scale)):
+        if not self._editable.scale_face(
+            frame_index,
+            int(face_index),
+            float(scale),
+            source_size=self._frame_view.source_size,
+        ):
             self.statusBar().showMessage("Scale failed (degenerate result)", 3000)
             return
         self._editor_state.set("edited", True)
