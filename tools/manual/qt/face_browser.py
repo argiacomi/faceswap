@@ -232,5 +232,103 @@ class FaceBrowserMixin:
             self._editor_state.set("face_index", -1)
         self._sync_actions()
 
+    def delete_active_face(self) -> None:
+        """Delete the active face from the editable alignment model."""
+        frame_index = self._current_frame_index()
+        if frame_index < 0:
+            return
+        face_index = self._editor_state.face_index
+        if not self._editable.delete_face(frame_index, face_index):
+            self.statusBar().showMessage("No face selected to delete", 5000)
+            return
+        self._editor_state.set("face_count_changed", True)
+        self._editor_state.set("edited", True)
+        self.mark_dirty(True)
+        new_count = self._editable.face_count(frame_index)
+        if new_count == 0:
+            self._editor_state.set("face_index", -1)
+        else:
+            self._editor_state.set("face_index", min(face_index, new_count - 1))
+        self.statusBar().showMessage(f"Deleted face index {face_index}", 5000)
+
+    def add_face_at_center(
+        self,
+        bbox: tuple[float, float, float, float] | None = None,
+    ) -> int | None:
+        """Add a new face. Defaults to a centered fixed-size bbox."""
+        frame_index = self._current_frame_index()
+        if frame_index < 0:
+            return None
+        if bbox is None:
+            src_w, src_h = self._frame_view.source_size
+            if src_w <= 0 or src_h <= 0:
+                self.statusBar().showMessage("Cannot add face: frame not loaded", 5000)
+                return None
+            size = float(min(64, max(8, min(src_w, src_h) // 4)))
+            bbox = (src_w / 2 - size / 2, src_h / 2 - size / 2, size, size)
+        try:
+            new_index = self._editable.add_face(frame_index, bbox)
+        except ValueError as err:
+            self.statusBar().showMessage(str(err), 5000)
+            return None
+        self._editor_state.set("face_count_changed", True)
+        self._editor_state.set("edited", True)
+        self.mark_dirty(True)
+        self._editor_state.set("face_index", new_index)
+        self.statusBar().showMessage(f"Added face index {new_index}", 5000)
+        self._maybe_run_aligner(int(new_index))
+        return new_index
+
+    def nudge_active_face(self, dx: float, dy: float) -> bool:
+        """Translate the active face bbox and landmarks by ``(dx, dy)`` pixels."""
+        frame_index = self._current_frame_index()
+        if frame_index < 0:
+            self.statusBar().showMessage("No frame to edit", 3000)
+            return False
+        face_index = self._editor_state.face_index
+        if face_index < 0:
+            self.statusBar().showMessage("No active face to nudge", 3000)
+            return False
+        if not self._editable.move_face(frame_index, face_index, dx, dy):
+            self.statusBar().showMessage("Nudge failed (no active face)", 3000)
+            return False
+        self._editor_state.set("edited", True)
+        self.mark_dirty(True)
+        self.refresh_faces()
+        self._frame_view.update()
+        return True
+
+    def nudge_up_one(self) -> bool:
+        """Nudge active face up by 1 source pixel."""
+        return self.nudge_active_face(0.0, -1.0)
+
+    def nudge_down_one(self) -> bool:
+        """Nudge active face down by 1 source pixel."""
+        return self.nudge_active_face(0.0, 1.0)
+
+    def nudge_left_one(self) -> bool:
+        """Nudge active face left by 1 source pixel."""
+        return self.nudge_active_face(-1.0, 0.0)
+
+    def nudge_right_one(self) -> bool:
+        """Nudge active face right by 1 source pixel."""
+        return self.nudge_active_face(1.0, 0.0)
+
+    def nudge_up_fast(self) -> bool:
+        """Nudge active face up by 10 source pixels."""
+        return self.nudge_active_face(0.0, -10.0)
+
+    def nudge_down_fast(self) -> bool:
+        """Nudge active face down by 10 source pixels."""
+        return self.nudge_active_face(0.0, 10.0)
+
+    def nudge_left_fast(self) -> bool:
+        """Nudge active face left by 10 source pixels."""
+        return self.nudge_active_face(-10.0, 0.0)
+
+    def nudge_right_fast(self) -> bool:
+        """Nudge active face right by 10 source pixels."""
+        return self.nudge_active_face(10.0, 0.0)
+
 
 __all__ = ["FaceBrowserMixin"]
