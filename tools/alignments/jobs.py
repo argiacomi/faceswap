@@ -555,22 +555,46 @@ class Spatial:
         """Perform spatial filtering"""
         logger.info("[SPATIAL-TEMPORAL FILTERING]")  # Tidy up cli output
         logger.info(
-            "NB: The process only processes the alignments for the first "
-            "face it finds for any given frame. For best results only run this when "
-            "there is only a single face in the alignments file and all false positives "
-            "have been removed"
+            "NB: The process smooths alignments by face index. For best results only run this "
+            "when face ordering is consistent across frames and all false positives have been "
+            "removed"
         )
 
-        self._normalize()
-        self._shape_model()
-        landmarks = self._spatially_filter()
-        landmarks = self._temporally_smooth(landmarks)
-        self._update_alignments(landmarks)
+        smoothed = 0
+        for face_index in range(self._max_face_count()):
+            self._mappings = {}
+            self._normalized = {}
+            self._shapes_model = None
+
+            if not self._normalize(face_index):
+                continue
+
+            self._shape_model()
+            landmarks = self._spatially_filter()
+            landmarks = self._temporally_smooth(landmarks)
+            self._update_alignments(landmarks, face_index)
+            smoothed += 1
+
+        if not smoothed:
+            logger.info("No faces were found to spatially smooth")
+            return
+
         self._alignments.save()
         logger.warning(
             "If you have a face-set corresponding to the alignment file you "
             "processed then you should run the 'Extract' job to regenerate it."
         )
+
+    def _max_face_count(self) -> int:
+        """Return the maximum number of faces found in any frame.
+
+        Returns
+        -------
+        Maximum number of faces in a single frame
+        """
+        retval = max((len(val.faces) for val in self._alignments.data.values()), default=0)
+        logger.debug("Max face count: %s", retval)
+        return retval
 
     # Define shape normalization utility functions
     @staticmethod
@@ -646,15 +670,40 @@ class Spatial:
         logger.debug("Normalized to original: %s", shapes_im_coords)
         return shapes_im_coords
 
-    def _normalize(self) -> None:
-        """Compile all original and normalized alignments"""
-        logger.debug("Normalize")
-        count = sum(1 for val in self._alignments.data.values() if val.faces)
+    def _normalize(self, face_index: int) -> bool:
+        """Compile all original and normalized alignments for a face index
+
+        Parameters
+        ----------
+        face_index
+            The face index to compile landmarks for
+
+        Returns
+        -------
+        ``True`` if the face index has enough landmarks to smooth otherwise ``False``
+        """
+        logger.debug("Normalize face index: %s", face_index)
+        count = sum(
+            1 for val in self._alignments.data.values() if len(val.faces) > face_index
+        )
+        if count < 2:
+            logger.info(
+                "Skipping face index %s. Not enough frames with this face index.",
+                face_index,
+            )
+            return False
 
         sample_lm = next(
-            (val.faces[0].landmarks_xy for val in self._alignments.data.values() if val.faces),
-            68,
+            (
+                val.faces[face_index].landmarks_xy
+                for val in self._alignments.data.values()
+                if len(val.faces) > face_index
+            ),
+            None,
         )
+        if sample_lm is None:
+            return False
+
         assert isinstance(sample_lm, np.ndarray)
         lm_count = sample_lm.shape[0]
         if lm_count != 68:
@@ -663,13 +712,15 @@ class Spatial:
         landmarks_all = np.zeros((lm_count, 2, int(count)))
 
         end = 0
-        for key in tqdm(sorted(self._alignments.data.keys()), desc="Compiling", leave=False):
+        for key in tqdm(
+            sorted(self._alignments.data.keys()),
+            desc=f"Compiling face {face_index}",
+            leave=False,
+        ):
             val = self._alignments.data[key].faces
-            if not val:
+            if len(val) <= face_index:
                 continue
-            # We should only be normalizing a single face, so just take
-            # the first landmarks found
-            landmarks = np.array(val[0].landmarks_xy).reshape((lm_count, 2, 1))
+            landmarks = np.array(val[face_index].landmarks_xy).reshape((lm_count, 2, 1))
             start = end
             end = start + landmarks.shape[2]
             # Store in one big array
@@ -683,13 +734,14 @@ class Spatial:
         self._normalized["scale_factors"] = normalized_shape[1]
         self._normalized["mean_coords"] = normalized_shape[2]
         logger.debug("Normalized: %s", self._normalized)
+        return True
 
     def _shape_model(self) -> None:
         """build 2D shape model"""
         logger.debug("Shape model")
         landmarks_norm = self._normalized["landmarks"]
-        num_components = 20
         normalized_shapes_tbl = np.reshape(landmarks_norm, [68 * 2, landmarks_norm.shape[2]]).T
+        num_components = min(20, normalized_shapes_tbl.shape[0], normalized_shapes_tbl.shape[1])
         self._shapes_model = decomposition.PCA(
             n_components=num_components, whiten=True, random_state=1
         ).fit(normalized_shapes_tbl)
@@ -759,23 +811,28 @@ class Spatial:
         logger.debug("Temporally Smoothed: %s", retval)
         return retval
 
-    def _update_alignments(self, landmarks: np.ndarray) -> None:
+    def _update_alignments(self, landmarks: np.ndarray, face_index: int) -> None:
         """Update smoothed landmarks back to alignments
 
         Parameters
         ----------
         landmarks
             The smoothed landmarks
+        face_index
+            The face index to update
         """
-        logger.debug("Update alignments")
-        for idx, frame in tqdm(self._mappings.items(), desc="Updating", leave=False):
-            logger.trace("Updating: (frame: %s)", frame)  # type:ignore
+        logger.debug("Update alignments for face index: %s", face_index)
+        for idx, frame in tqdm(
+            self._mappings.items(), desc=f"Updating face {face_index}", leave=False
+        ):
+            logger.trace("Updating: (frame: %s, face_index: %s)", frame, face_index)  # type:ignore
             landmarks_update = landmarks[:, :, idx]
             landmarks_xy = landmarks_update.reshape(68, 2)
-            self._alignments.data[frame].faces[0].landmarks_xy = landmarks_xy
+            self._alignments.data[frame].faces[face_index].landmarks_xy = landmarks_xy
             logger.trace(
-                "Updated: (frame: '%s', landmarks: %s)",  # type:ignore
+                "Updated: (frame: '%s', face_index: %s, landmarks: %s)",  # type:ignore
                 frame,
+                face_index,
                 landmarks_xy,
             )
         logger.debug("Updated alignments")
