@@ -178,8 +178,9 @@ class ControlsMixin:
         return self._frame_view.restore_view_state(state)
 
     def _build_filter_controls(self) -> QWidget:
-        """Return the filter-awareness control row."""
+        """Return the compact transport-row filter controls."""
         from tools.manual.frame_filter import (
+            FILTER_MODES,
             MISALIGNED_THRESHOLD_MAX,
             MISALIGNED_THRESHOLD_MIN,
         )
@@ -193,8 +194,14 @@ class ControlsMixin:
 
         self._filter_label = QLabel()
         self._filter_label.setObjectName("qt-manual-filter-label")
-        layout.addWidget(self._filter_label)
-        layout.addStretch(1)
+        self._filter_label.hide()
+
+        self._filter_combo = QComboBox()
+        self._filter_combo.setObjectName("qt-manual-filter-combo")
+        self._filter_combo.addItems(tuple(FILTER_MODES))
+        self._filter_combo.setCurrentText(self._editor_state.filter_mode or FILTER_MODES[0])
+        self._filter_combo.currentTextChanged.connect(self._on_filter_combo_changed)
+        layout.addWidget(self._filter_combo)
 
         self._filter_threshold_label = QLabel("Threshold:")
         self._filter_threshold_label.setObjectName("qt-manual-filter-threshold-label")
@@ -226,6 +233,14 @@ class ControlsMixin:
             text = f"Filter: {mode} ({total} match)"
         label.setText(text)
 
+        combo = getattr(self, "_filter_combo", None)
+        if combo is not None and combo.currentText() != mode:
+            combo.blockSignals(True)
+            try:
+                combo.setCurrentText(mode)
+            finally:
+                combo.blockSignals(False)
+
         misaligned = mode == "Misaligned Faces"
         if hasattr(self, "_filter_threshold_slider"):
             self._filter_threshold_label.setVisible(misaligned)
@@ -242,6 +257,13 @@ class ControlsMixin:
     def _on_filter_threshold_changed(self, value: int) -> None:
         """Persist threshold and refresh the filter when the slider moves."""
         self._editor_state.set("filter_distance", int(value))
+        self._refresh_filter_results()
+
+    def _on_filter_combo_changed(self, mode: str) -> None:
+        """Persist a filter selected from the transport-row selector."""
+        if not mode:
+            return
+        self._editor_state.set("filter_mode", str(mode))
         self._refresh_filter_results()
 
     def available_aligners(self) -> tuple[str, ...]:
@@ -632,6 +654,8 @@ class ControlsMixin:
         mask_action = self._actions.get("toggle_mask_annotation")
         if mask_action is not None:
             mask_action.setChecked(bool(self._editor_state.face_grid_mask_visible))
+        if hasattr(self, "_sync_rail_mode_actions"):
+            self._sync_rail_mode_actions()
 
     def _on_editor_mode_changed(self, _mode: object) -> None:
         """Refresh action availability when the editor mode flips."""

@@ -563,7 +563,7 @@ class ManualFrameView(
     def paintEvent(self, _event: QPaintEvent) -> None:  # noqa:N802
         """Draw the source frame at the current zoom+offset, then overlays."""
         painter = QPainter(self)
-        painter.fillRect(self.rect(), QColor("#101418"))
+        painter.fillRect(self.rect(), QColor("#000000"))
         if self._source.isNull():
             painter.setPen(QColor("#cccccc"))
             painter.drawText(self.rect(), Qt.AlignCenter | Qt.TextWordWrap, self._empty_message)
