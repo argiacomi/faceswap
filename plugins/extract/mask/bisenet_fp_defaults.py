@@ -80,6 +80,16 @@ include_hair = ConfigItem(
     info="Whether to include hair within the face mask.",
 )
 
+include_mouth = ConfigItem(
+    datatype=bool,
+    default=True,
+    group="settings",
+    info="Include the inner mouth region in the generated mask. Disable this to preserve "
+    "the destination mouth interior, teeth, and tongue during conversion while still "
+    "masking the lips/face. Only applies when using 'original' weights; Faceswap "
+    "weights do not expose a separate mouth class.",
+)
+
 include_glasses = ConfigItem(
     datatype=bool,
     default=True,

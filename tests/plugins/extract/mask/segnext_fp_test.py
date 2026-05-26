@@ -41,6 +41,7 @@ def _patch_plugin_config(
     include_hair: bool = False,
     include_ears: bool = False,
     include_glasses: bool = True,
+    include_mouth: bool = True,
 ) -> None:
     """Patch SegNeXt-FP config accessors for constructor-only tests."""
     monkeypatch.setattr("plugins.extract.mask.segnext_fp.cfg.batch_size", lambda: 1)
@@ -51,6 +52,7 @@ def _patch_plugin_config(
     monkeypatch.setattr(
         "plugins.extract.mask.segnext_fp.cfg.include_glasses", lambda: include_glasses
     )
+    monkeypatch.setattr("plugins.extract.mask.segnext_fp.cfg.include_mouth", lambda: include_mouth)
 
 
 def test_plugin_loader_discovers_segnext_fp() -> None:
@@ -115,7 +117,33 @@ def test_process_and_post_process_produce_valid_mask(
     assert output.per_class_probs.shape == (1, 4, 4, 19)
 
 
-@pytest.mark.parametrize("model_name", ["small", "base"])
+def test_segment_indices_include_mouth_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SegNeXt-FP should preserve the historical mouth-included default."""
+    segnext_fp = _import_segnext_module()
+    _patch_plugin_config(monkeypatch)
+
+    plugin = segnext_fp.SegNeXtFP()
+
+    assert 10 in plugin._segment_indices  # pylint:disable=protected-access
+    assert {11, 12}.issubset(plugin._segment_indices)  # pylint:disable=protected-access
+
+
+def test_segment_indices_exclude_only_inner_mouth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Disabling mouth should preserve upper/lower lips."""
+    segnext_fp = _import_segnext_module()
+    _patch_plugin_config(monkeypatch, include_mouth=False)
+
+    plugin = segnext_fp.SegNeXtFP()
+
+    assert 10 not in plugin._segment_indices  # pylint:disable=protected-access
+    assert {11, 12}.issubset(plugin._segment_indices)  # pylint:disable=protected-access
+
+
+@pytest.mark.parametrize("model_name", ["small", "base", "large"])
 def test_registry_entries_validate_as_19_class_checkpoints(
     tmp_path,
     model_name: str,
@@ -166,28 +194,56 @@ def test_sanitize_checkpoint_rejects_150_class_head(tmp_path) -> None:
         )
 
 
-def test_base_model_uses_aiart_checkpoint(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The exposed base option must point at the validated AiArt-Gao 19-class artifact."""
+@pytest.mark.parametrize(
+    ("model_name", "expected_filename", "expected_file_id_attr"),
+    [
+        (
+            "small",
+            "segnext.small.512x512.celebamaskhq.160k.pth",
+            "_E4S_SMALL_FILE_ID",
+        ),
+        (
+            "base",
+            "segnext.base.512x512.celebamaskhq.160k.pth",
+            "_E4S_BASE_FILE_ID",
+        ),
+        (
+            "large",
+            "segnext.large.512x512.celebamaskhq.160k.pth",
+            "_E4S_LARGE_FILE_ID",
+        ),
+    ],
+)
+def test_models_use_e4s_checkpoints(
+    monkeypatch: pytest.MonkeyPatch,
+    model_name: str,
+    expected_filename: str,
+    expected_file_id_attr: str,
+) -> None:
+    """All exposed SegNeXt-FP variants should use e4s2022 CelebAMask-HQ checkpoints."""
     segnext_fp = _import_segnext_module()
-    _patch_plugin_config(monkeypatch, "base")
+    _patch_plugin_config(monkeypatch, model_name)
     plugin = segnext_fp.SegNeXtFP()
 
-    assert plugin._checkpoint.filename == "iter_160000.pth"  # pylint:disable=protected-access
-    assert plugin._checkpoint.url == segnext_fp._AIART_BASE_URL  # pylint:disable=protected-access
-    assert (
-        plugin._checkpoint.sha256
-        == "6cfe7fa84f4f931dbed2f47fd04466f4b1d2acfd7fdc4e512e1f22796d3b5853"
-    )  # pylint:disable=protected-access,line-too-long
-    assert plugin._checkpoint.google_drive_file_id == segnext_fp._AIART_BASE_FILE_ID  # pylint:disable=protected-access
+    expected_file_id = getattr(segnext_fp, expected_file_id_attr)
+
+    assert plugin._checkpoint.filename == expected_filename  # pylint:disable=protected-access
+    assert plugin._checkpoint.url == segnext_fp._E4S_DRIVE_URL.format(  # pylint:disable=protected-access
+        file_id=expected_file_id
+    )
+    assert plugin._checkpoint.google_drive_file_id == expected_file_id  # pylint:disable=protected-access
+    assert plugin._checkpoint.num_classes == 19  # pylint:disable=protected-access
 
 
-def test_base_checkpoint_path_uses_shared_google_drive_helper(
+@pytest.mark.parametrize("model_name", ["small", "base", "large"])
+def test_e4s_checkpoint_path_uses_shared_google_drive_helper(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
+    model_name: str,
 ) -> None:
-    """AiArt-Gao base checkpoints should resolve through the shared Drive helper."""
+    """e4s2022 checkpoints should resolve through the shared Drive helper."""
     segnext_fp = _import_segnext_module()
-    checkpoint = segnext_fp._CHECKPOINTS["base"]  # pylint:disable=protected-access
+    checkpoint = segnext_fp._CHECKPOINTS[model_name]  # pylint:disable=protected-access
     captured: dict[str, object] = {}
     expected_path = tmp_path / ".fs_cache" / checkpoint.filename
 
@@ -213,7 +269,7 @@ def test_base_checkpoint_path_uses_shared_google_drive_helper(
 
     assert result == str(expected_path)
     assert captured == {
-        "file_id": segnext_fp._AIART_BASE_FILE_ID,
+        "file_id": checkpoint.google_drive_file_id,
         "destination": expected_path,
         "expected_sha256": checkpoint.sha256,
         "quiet": False,
@@ -223,7 +279,7 @@ def test_base_checkpoint_path_uses_shared_google_drive_helper(
 def test_config_choices_only_expose_valid_19_class_checkpoints() -> None:
     """The user-facing model choices must stay aligned with validated 19-class checkpoints."""
     segnext_fp = _import_segnext_module()
-    assert list(cfg.model.choices) == ["small", "base"]
+    assert list(cfg.model.choices) == ["small", "base", "large"]
     assert set(cfg.model.choices) == set(segnext_fp._CHECKPOINTS)  # pylint:disable=protected-access
     assert all(
         segnext_fp._CHECKPOINTS[name].num_classes == 19  # pylint:disable=protected-access

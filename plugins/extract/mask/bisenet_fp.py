@@ -46,7 +46,7 @@ class BiSeNetFP(FacePlugin):
         self._storage_centering = "head" if cfg.include_hair() else "face"
         """The mask type/storage centering to use"""
         # Separate storage for face and head masks
-        self.storage_name = f"{self.storage_name}_{self.centering}"
+        self.storage_name: str = f"{self.storage_name}_{self.centering}"
 
         mean = (0.384, 0.314, 0.279) if self._is_faceswap else (0.485, 0.456, 0.406)
         std = (0.324, 0.286, 0.275) if self._is_faceswap else (0.229, 0.224, 0.225)
@@ -90,7 +90,12 @@ class BiSeNetFP(FacePlugin):
         'faceswap' Model segment indices:
         0: background, 1: skin, 2: ears, 3: hair, 4: glasses
         """
-        retval = [1] if self._is_faceswap else [1, 2, 3, 4, 5, 10, 11, 12, 13]
+        retval = [1] if self._is_faceswap else [1, 2, 3, 4, 5, 10]
+
+        if not self._is_faceswap:
+            if cfg.include_mouth():
+                retval.append(11)
+            retval.extend([12, 13])
 
         if cfg.include_glasses():
             retval.append(4 if self._is_faceswap else 6)
@@ -129,7 +134,7 @@ class BiSeNetFP(FacePlugin):
         -------
         The updated images for feeding the model
         """
-        return ((batch - self._mean) / self._std).transpose(0, 3, 1, 2)
+        return T.cast(np.ndarray, ((batch - self._mean) / self._std).transpose(0, 3, 1, 2))
 
     def process(self, batch: np.ndarray) -> np.ndarray:
         """Get the masks from the model
@@ -144,7 +149,7 @@ class BiSeNetFP(FacePlugin):
 
             The predicted masks from the plugin
         """
-        return self.from_torch(batch).transpose(0, 2, 3, 1)
+        return T.cast(np.ndarray, self.from_torch(batch).transpose(0, 2, 3, 1))
 
     def post_process(self, batch: np.ndarray) -> np.ndarray:
         """Process the output from the model
@@ -159,7 +164,7 @@ class BiSeNetFP(FacePlugin):
         The final masks
         """
         pred = batch.argmax(-1).astype("uint8")
-        return np.isin(pred, self._segment_indices).astype("float32")
+        return T.cast(np.ndarray, np.isin(pred, self._segment_indices).astype("float32"))
 
 
 # BiSeNet Face-Parsing Model

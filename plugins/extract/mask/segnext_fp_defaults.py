@@ -16,14 +16,16 @@ HELPTEXT = (
 
 model = ConfigItem(
     datatype=str,
-    default="small",
+    default="base",
     group="settings",
     info="The SegNeXt MSCAN backbone variant.\n"
-    "\n\tsmall - 14M params, 16G FLOPs, 78.19 mIoU on CelebAMask-HQ. Recommended."
-    "\n\tbase - 28M params, 35G FLOPs, 79.83 mIoU on CelebAMask-HQ using the "
-    "AiArt-Gao 19-class checkpoint. Marginally cleaner edges at roughly 2x the "
-    "VRAM and runtime cost.",
-    choices=["small", "base"],
+    "\n\tsmall - MSCAN-S, 14M params, 16G FLOPs, 78.19 mIoU on CelebAMask-HQ. "
+    "Fastest recommended option."
+    "\n\tbase - MSCAN-B, 28M params, 35G FLOPs, 78.97 mIoU on CelebAMask-HQ. "
+    "Balanced quality/runtime option."
+    "\n\tlarge - MSCAN-L, 49M params, 70G FLOPs, 79.34 mIoU on CelebAMask-HQ. "
+    "Best reported e4s quality at the highest VRAM and runtime cost.",
+    choices=["small", "base", "large"],
     gui_radio=True,
 )
 
@@ -60,6 +62,15 @@ include_hair = ConfigItem(
     group="settings",
     info="Whether to include hair within the face mask. When enabled the mask is "
     "stored using head centering, otherwise face centering is used.",
+)
+
+include_mouth = ConfigItem(
+    datatype=bool,
+    default=True,
+    group="settings",
+    info="Include the inner mouth region in the generated mask. Disable this to preserve "
+    "the destination mouth interior, teeth, and tongue during conversion while still "
+    "masking the lips/face.",
 )
 
 include_glasses = ConfigItem(

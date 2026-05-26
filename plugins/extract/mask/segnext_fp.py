@@ -5,10 +5,12 @@ Architecture from https://github.com/e4s2022/SegNeXt-FaceParser (Apache 2.0).
 Implemented as a peer to the existing BiSeNet-FP plugin so users can pick either
 parser when generating per-component face masks.
 
-Faceswap pins two validated 19-class CelebAMask-HQ checkpoints:
+Faceswap pins three validated 19-class CelebAMask-HQ checkpoints from
+``e4s2022/SegNeXt-FaceParser``:
 
-* ``small`` from ``Warlord-K/SegNext-FaceParser`` on Hugging Face
-* ``base`` from ``AiArt-Gao/FaceParsing-SegNeXt`` on Google Drive
+* ``small``: MSCAN-S
+* ``base``: MSCAN-B
+* ``large``: MSCAN-L
 """
 
 from __future__ import annotations
@@ -29,6 +31,7 @@ from . import segnext_fp_defaults as cfg
 from ._output import MaskPluginOutput, softmax_last_axis
 from ._segnext_fp.model import (
     BASE_CONFIG,
+    LARGE_CONFIG,
     SMALL_CONFIG,
     MSCANConfig,
     SegNeXtFaceParser,
@@ -38,12 +41,17 @@ from ._segnext_fp.model import (
 logger = logging.getLogger(__name__)
 # pylint:disable=duplicate-code
 
-_HF_URL = "https://huggingface.co/Warlord-K/SegNext-FaceParser/resolve/main/{filename}"
-_AIART_BASE_URL = (
-    "https://drive.usercontent.google.com/download"
-    "?id=1rp5D48-1renqNCQ3LkJAYK5__QVFN_IV&export=download&confirm=t"
+_E4S_DRIVE_FOLDER_URL = (
+    "https://drive.google.com/drive/folders/12jOIkj3lZhn4sJ5rN8Y4TUAxiEX0hr79?usp=share_link"
 )
-_AIART_BASE_FILE_ID = "1rp5D48-1renqNCQ3LkJAYK5__QVFN_IV"
+_E4S_DRIVE_URL = (
+    "https://drive.usercontent.google.com/download?id={file_id}&export=download&confirm=t"
+)
+
+_E4S_SMALL_FILE_ID = "TODO_E4S_SMALL_FILE_ID"
+_E4S_BASE_FILE_ID = "TODO_E4S_BASE_FILE_ID"
+_E4S_LARGE_FILE_ID = "TODO_E4S_LARGE_FILE_ID"
+
 _EXPECTED_NUM_CLASSES = 19
 _CLASSIFIER_WEIGHT_KEY = "decode_head.conv_seg.weight"
 _CLASSIFIER_BIAS_KEY = "decode_head.conv_seg.bias"
@@ -60,23 +68,33 @@ class _SegNeXtCheckpoint(T.NamedTuple):
     google_drive_file_id: str | None = None
 
 
-# SHA256 hashes are LFS oids retrieved from the Hugging Face tree API
-# (https://huggingface.co/api/models/Warlord-K/SegNext-FaceParser/tree/main) for ``small`` and
-# from the downloaded Google Drive artifact for ``base``. They are the SHA256 of the file
-# contents, validated by ``GetModelFromUrl`` after download.
+# e4s2022 publishes CelebAMask-HQ SegNeXt checkpoints for MSCAN-S/B/L.
+# See: https://github.com/e4s2022/SegNeXt-FaceParser
+#
+# NOTE:
+# The public README links a Google Drive folder, but Faceswap's downloader expects
+# individual file ids. Fill these ids and hashes from the validated files in that folder.
 _CHECKPOINTS = {
     "small": _SegNeXtCheckpoint(
-        filename="segnext.small.best_mIoU_iter_140000.pth",
-        url=_HF_URL.format(filename="segnext.small.best_mIoU_iter_140000.pth"),
-        sha256="0f87738b6b6f5dca82cc63298d3d625f81915a9c1ed3d0a359b8866b2b76b321",
+        filename="segnext.small.512x512.celebamaskhq.160k.pth",
+        url=_E4S_DRIVE_URL.format(file_id=_E4S_SMALL_FILE_ID),
+        sha256="TODO_E4S_SMALL_SHA256",
         config=SMALL_CONFIG,
+        google_drive_file_id=_E4S_SMALL_FILE_ID,
     ),
     "base": _SegNeXtCheckpoint(
-        filename="iter_160000.pth",
-        url=_AIART_BASE_URL,
-        sha256="6cfe7fa84f4f931dbed2f47fd04466f4b1d2acfd7fdc4e512e1f22796d3b5853",
+        filename="segnext.base.512x512.celebamaskhq.160k.pth",
+        url=_E4S_DRIVE_URL.format(file_id=_E4S_BASE_FILE_ID),
+        sha256="TODO_E4S_BASE_SHA256",
         config=BASE_CONFIG,
-        google_drive_file_id=_AIART_BASE_FILE_ID,
+        google_drive_file_id=_E4S_BASE_FILE_ID,
+    ),
+    "large": _SegNeXtCheckpoint(
+        filename="segnext.large.512x512.celebamaskhq.160k.pth",
+        url=_E4S_DRIVE_URL.format(file_id=_E4S_LARGE_FILE_ID),
+        sha256="TODO_E4S_LARGE_SHA256",
+        config=LARGE_CONFIG,
+        google_drive_file_id=_E4S_LARGE_FILE_ID,
     ),
 }
 
@@ -87,7 +105,8 @@ _CHECKPOINTS = {
 #   0: background  1: skin   2: nose    3: eye_g   4: l_eye   5: r_eye   6: l_brow
 #   7: r_brow      8: l_ear  9: r_ear  10: mouth  11: u_lip  12: l_lip  13: hair
 #  14: hat        15: ear_r 16: neck_l 17: neck   18: cloth
-_CLASS_FACE_INTERIOR = (1, 2, 4, 5, 6, 7, 10, 11, 12)  # skin, nose, eyes, brows, lips
+_CLASS_FACE_INTERIOR = (1, 2, 4, 5, 6, 7, 11, 12)  # skin, nose, eyes, brows, lips
+_CLASS_MOUTH = (10,)
 _CLASS_GLASSES = (3,)
 _CLASS_EARS = (8, 9, 15)  # left/right ears + earrings
 _CLASS_HAIR = (13,)
@@ -125,6 +144,8 @@ class SegNeXtFP(FacePlugin):
         Sorted, de-duplicated list of class indices that make up the binary face mask.
         """
         retval: set[int] = set(_CLASS_FACE_INTERIOR)
+        if cfg.include_mouth():
+            retval.update(_CLASS_MOUTH)
         if cfg.include_glasses():
             retval.update(_CLASS_GLASSES)
         if cfg.include_ears():

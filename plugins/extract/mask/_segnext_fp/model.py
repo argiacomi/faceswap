@@ -34,8 +34,8 @@ class MSCANConfig:
     md_r: int
 
 
-# Settings reproduced from local_configs/segnext/{small,base}/segnext.*.celebamaskhq.160k.py
-# in the upstream SegNeXt-FaceParser repo.
+# Settings reproduced from local_configs/segnext/{small,base,large}/
+# segnext.*.512x512.celebamaskhq.160k.py in the upstream SegNeXt-FaceParser repo.
 SMALL_CONFIG = MSCANConfig(
     embed_dims=(64, 128, 320, 512),
     depths=(2, 2, 4, 2),
@@ -46,6 +46,7 @@ SMALL_CONFIG = MSCANConfig(
     ham_channels=256,
     md_r=16,
 )
+
 BASE_CONFIG = MSCANConfig(
     embed_dims=(64, 128, 320, 512),
     depths=(3, 3, 12, 3),
@@ -54,6 +55,17 @@ BASE_CONFIG = MSCANConfig(
     decoder_in_channels=(128, 320, 512),
     decoder_channels=512,
     ham_channels=512,
+    md_r=16,
+)
+
+LARGE_CONFIG = MSCANConfig(
+    embed_dims=(64, 128, 320, 512),
+    depths=(3, 5, 27, 3),
+    mlp_ratios=(8, 8, 4, 4),
+    drop_path_rate=0.3,
+    decoder_in_channels=(128, 320, 512),
+    decoder_channels=1024,
+    ham_channels=1024,
     md_r=16,
 )
 
