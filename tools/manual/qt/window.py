@@ -3,59 +3,36 @@
 
 from __future__ import annotations
 
-# ruff: noqa: F401
 import contextlib
 import json
 import logging
 import os
 import subprocess
 import typing as T
-from collections.abc import Sequence
-from dataclasses import dataclass
 
 from PySide6.QtCore import (
     QByteArray,
-    QObject,
-    QPoint,
     QPointF,
-    QRectF,
     QSettings,
     QSize,
     Qt,
-    QThread,
     QTimer,
     Signal,
 )
 from PySide6.QtGui import (
     QAction,
-    QBrush,
     QCloseEvent,
     QColor,
-    QIcon,
     QImage,
-    QIntValidator,
-    QKeyEvent,
     QKeySequence,
-    QMouseEvent,
-    QPainter,
-    QPaintEvent,
-    QPen,
-    QPixmap,
-    QPolygonF,
-    QResizeEvent,
-    QWheelEvent,
 )
 from PySide6.QtWidgets import (
-    QAbstractItemView,
     QButtonGroup,
     QCheckBox,
     QComboBox,
     QFileDialog,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
-    QListView,
-    QListWidget,
     QListWidgetItem,
     QMainWindow,
     QMessageBox,
@@ -75,7 +52,6 @@ from lib.gui.qt_shell.theme import QtTheme, icon_for_action
 from lib.gui.services.command_builder import CommandBuilder
 from tools.manual.session import (
     FaceThumbnail,
-    ManualAlignmentsHandle,
     ManualEditableAlignments,
     ManualEditorState,
     ManualFrame,
@@ -84,7 +60,11 @@ from tools.manual.session import (
 )
 
 logger = logging.getLogger(__name__)
-from .actions import MANUAL_ACTIONS, ManualAction
+from .actions import MANUAL_ACTIONS
+from .editors.bounding_box import BoundingBoxWindowEditorMixin
+from .editors.extract_box import ExtractBoxWindowEditorMixin
+from .editors.landmarks import LandmarkWindowEditorMixin
+from .editors.mask import MaskWindowEditorMixin
 from .face_grid import CrossFrameFaceGridPanel
 from .face_grid_renderer import _FACE_GRID_SIZES, FaceGridEntry, FaceGridThumbnailRenderer
 from .frame_view import ManualFrameView
@@ -101,7 +81,13 @@ from .workers import (
 )
 
 
-class ManualToolWindow(QMainWindow):
+class ManualToolWindow(
+    BoundingBoxWindowEditorMixin,
+    ExtractBoxWindowEditorMixin,
+    LandmarkWindowEditorMixin,
+    MaskWindowEditorMixin,
+    QMainWindow,
+):
     """Qt-native Manual Tool window with legacy fallback support."""
 
     _SETTINGS_ORG = "Faceswap"
@@ -2038,202 +2024,7 @@ class ManualToolWindow(QMainWindow):
             return None
         return index
 
-    def _active_face_bbox(self) -> QRectF | None:
-        """Return the active face's source-coordinate bbox or ``None``."""
-        face_index = self._active_face_index()
-        if face_index is None:
-            return None
-        frame_index = self._current_frame_index()
-        if frame_index < 0:
-            return None
-        faces = self._editable.faces(frame_index)
-        if face_index >= len(faces):
-            return None
-        x, y, w, h = faces[face_index].bbox
-        return QRectF(x, y, w, h)
-
-    def _on_face_move_requested(self, face_index: int, dx: float, dy: float) -> None:
-        """Apply a pointer-driven bbox translation and refresh views."""
-        frame_index = self._current_frame_index()
-        if frame_index < 0:
-            self.statusBar().showMessage("No frame to edit", 3000)
-            return
-        if not self._editable.move_face(frame_index, face_index, dx, dy):
-            self.statusBar().showMessage("Move failed (no active face)", 3000)
-            return
-        self._editor_state.set("edited", True)
-        self.refresh_faces()
-        self._frame_view.update()
-        # Aligner integration (#104): refresh landmarks from the moved bbox
-        # when the Bounding Box editor + auto-run is on.
-        self._maybe_run_aligner(face_index)
-
-    def _on_face_resize_requested(self, face_index: int, bbox: QRectF) -> None:
-        """Apply a pointer-driven bbox resize and refresh views."""
-        frame_index = self._current_frame_index()
-        if frame_index < 0:
-            self.statusBar().showMessage("No frame to edit", 3000)
-            return
-        new_bbox = (bbox.x(), bbox.y(), bbox.width(), bbox.height())
-        if not self._editable.resize_face(frame_index, face_index, new_bbox):
-            self.statusBar().showMessage("Resize failed (no active face)", 3000)
-            return
-        self._editor_state.set("edited", True)
-        self.refresh_faces()
-        self._frame_view.update()
-        self._maybe_run_aligner(face_index)
-
-    def _is_add_mode_active(self) -> bool:
-        """Return whether empty-space clicks should create a new face."""
-        return self._editor_state.editor_mode == "BoundingBox"
-
-    def _is_landmark_mode_active(self) -> bool:
-        """Return whether the Landmark editor (F4) is active."""
-        return self._editor_state.editor_mode == "Landmarks"
-
-    def _is_extract_mode_active(self) -> bool:
-        """Return whether the Extract Box editor (F3) is active."""
-        return self._editor_state.editor_mode == "ExtractBox"
-
-    def _is_mask_mode_active(self) -> bool:
-        """Return whether the Mask editor (F5) is active."""
-        return self._editor_state.editor_mode == "Mask"
-
-    def _should_render_mask(self) -> bool:
-        """Show mask overlay when the Mask editor is active or annotation toggle on.
-
-        Matches the legacy Tk behaviour where ``F10`` toggles the mask
-        overlay layer in any editor mode and F5 implicitly shows it.
-        """
-        return (
-            self._editor_state.editor_mode == "Mask"
-            or self._editor_state.annotation_mode == "Mask"
-        )
-
-    def _on_mask_paint_requested(
-        self, face_index: int, source_x: float, source_y: float, invert: bool
-    ) -> None:
-        """Apply a Mask editor brush stamp at ``(source_x, source_y)`` (#101)."""
-        self.paint_mask_at(int(face_index), float(source_x), float(source_y), invert=bool(invert))
-
-    def _on_face_scale_requested(self, face_index: int, scale: float) -> None:
-        """Apply an Extract Box corner-drag scale to the active face (#102)."""
-        frame_index = self._current_frame_index()
-        if frame_index < 0:
-            self.statusBar().showMessage("No frame to edit", 3000)
-            return
-        if not self._editable.scale_face(frame_index, int(face_index), float(scale)):
-            self.statusBar().showMessage("Scale failed (degenerate result)", 3000)
-            return
-        self._editor_state.set("edited", True)
-        self.refresh_faces()
-        self._frame_view.update()
-
-    def _on_face_rotate_requested(self, face_index: int, angle: float) -> None:
-        """Apply an Extract Box rotation-zone drag to the active face (#102)."""
-        frame_index = self._current_frame_index()
-        if frame_index < 0:
-            self.statusBar().showMessage("No frame to edit", 3000)
-            return
-        if not self._editable.rotate_face(frame_index, int(face_index), float(angle)):
-            self.statusBar().showMessage("Rotate failed (no active face)", 3000)
-            return
-        self._editor_state.set("edited", True)
-        self.refresh_faces()
-        self._frame_view.update()
-
     # ---- Mask editor (#101) public action handlers ----
-    _BRUSH_MIN: T.ClassVar[int] = 2
-    _BRUSH_MAX: T.ClassVar[int] = 64
-    _BRUSH_STEP: T.ClassVar[int] = 2
-    """Brush size bounds + step (source pixels)."""
-
-    DEFAULT_MASK_TYPE: T.ClassVar[str] = "components"
-    """Mask type to use when the user has not picked one explicitly."""
-
-    def set_mask_draw_mode(self) -> bool:
-        """Switch the Mask editor to Draw mode (action handler, B)."""
-        self._editor_state.set("brush_mode", "draw")
-        self.statusBar().showMessage("Mask: Draw mode", 3000)
-        return True
-
-    def set_mask_erase_mode(self) -> bool:
-        """Switch the Mask editor to Erase mode (action handler, D)."""
-        self._editor_state.set("brush_mode", "erase")
-        self.statusBar().showMessage("Mask: Erase mode", 3000)
-        return True
-
-    def increase_brush_size(self) -> int:
-        """Step brush size up by ``_BRUSH_STEP``, clamped at ``_BRUSH_MAX``."""
-        new_size = min(self._BRUSH_MAX, self._editor_state.brush_size + self._BRUSH_STEP)
-        self._editor_state.set("brush_size", new_size)
-        self.statusBar().showMessage(f"Brush size: {new_size}", 2000)
-        return new_size
-
-    def decrease_brush_size(self) -> int:
-        """Step brush size down by ``_BRUSH_STEP``, clamped at ``_BRUSH_MIN``."""
-        new_size = max(self._BRUSH_MIN, self._editor_state.brush_size - self._BRUSH_STEP)
-        self._editor_state.set("brush_size", new_size)
-        self.statusBar().showMessage(f"Brush size: {new_size}", 2000)
-        return new_size
-
-    def active_mask_type(self) -> str:
-        """Return the selected mask type, falling back to the default."""
-        return self._editor_state.mask_type or self.DEFAULT_MASK_TYPE
-
-    def _current_brush_spec(self) -> tuple[float, str] | None:
-        """Return ``(radius_source_px, mode)`` for the frame view's brush preview.
-
-        Returns ``None`` when the Mask editor isn't active or no face is
-        selected — the frame view uses ``None`` to mean "hide the preview".
-        The radius mirrors :meth:`paint_mask_at`'s ``brush_size / 2`` math
-        so the visible circle matches the actual stamp footprint.
-        """
-        if self._editor_state.editor_mode != "Mask":
-            return None
-        if self._active_face_index() is None:
-            return None
-        radius = max(1.0, float(self._editor_state.brush_size) / 2.0)
-        mode = str(self._editor_state.brush_mode or "draw")
-        return (radius, mode)
-
-    def paint_mask_at(
-        self,
-        face_index: int,
-        source_x: float,
-        source_y: float,
-        *,
-        invert: bool = False,
-    ) -> bool:
-        """Stamp the Mask editor brush at the given source coordinate (#101).
-
-        ``invert`` flips the current draw/erase mode for this single
-        stamp — used by Ctrl+click in the legacy Tk editor.  Returns the
-        result of :meth:`ManualEditableAlignments.paint_mask_stroke`.
-        """
-        frame_index = self._current_frame_index()
-        if frame_index < 0:
-            self.statusBar().showMessage("No frame to edit", 3000)
-            return False
-        mode = self._editor_state.brush_mode
-        if invert:
-            mode = "erase" if mode == "draw" else "draw"
-        value = 255 if mode == "draw" else 0
-        radius = max(1.0, self._editor_state.brush_size / 2.0)
-        ok = self._editable.paint_mask_stroke(
-            frame_index,
-            int(face_index),
-            self.active_mask_type(),
-            float(source_x),
-            float(source_y),
-            radius,
-            value,
-        )
-        if ok:
-            self._editor_state.set("edited", True)
-            self._refresh_face_grid()
-            self._frame_view.update()
-        return ok
 
     # ---- Aligner integration (#104) ----
 
@@ -2655,180 +2446,6 @@ class ManualToolWindow(QMainWindow):
         self._frame_view.update()
         return True
 
-    def _maybe_run_aligner(self, face_index: int) -> None:
-        """Run the aligner after a bbox edit when ``aligner_auto_run`` is on."""
-        if not self._editor_state.aligner_auto_run:
-            return
-        if self._editor_state.editor_mode != "BoundingBox":
-            return
-        self.rerun_aligner_for_face(int(face_index))
-
-    def _face_at_source_point(self, sx: float, sy: float) -> int | None:
-        """Hit-test the editable model at a source-coordinate point."""
-        frame_index = self._current_frame_index()
-        if frame_index < 0:
-            return None
-        return self._editable.hit_test(frame_index, sx, sy)
-
-    def _active_face_landmarks(self) -> tuple[tuple[float, float], ...] | None:
-        """Return the active face's landmark sequence (Landmark editor seam)."""
-        frame_index = self._current_frame_index()
-        face_index = self._editor_state.face_index
-        if frame_index < 0 or face_index < 0:
-            return None
-        faces = self._editable.faces(frame_index)
-        if face_index >= len(faces):
-            return None
-        return faces[face_index].landmarks
-
-    def _on_landmark_move_requested(
-        self, face_index: int, landmark_index: int, new_x: float, new_y: float
-    ) -> None:
-        """Apply a single-point landmark edit and refresh the overlay."""
-        frame_index = self._current_frame_index()
-        if frame_index < 0:
-            self.statusBar().showMessage("No frame to edit", 3000)
-            return
-        if not self._editable.update_landmark(
-            frame_index, int(face_index), int(landmark_index), float(new_x), float(new_y)
-        ):
-            self.statusBar().showMessage("Landmark edit failed", 3000)
-            return
-        self._editor_state.set("edited", True)
-        self.refresh_faces()
-        self._frame_view.update()
-
-    def _on_landmarks_move_requested(
-        self,
-        face_index: int,
-        indices: T.Any,
-        dx: float,
-        dy: float,
-    ) -> None:
-        """Apply a group-move edit across the marquee-selected landmark set."""
-        frame_index = self._current_frame_index()
-        if frame_index < 0:
-            self.statusBar().showMessage("No frame to edit", 3000)
-            return
-        idx_tuple = tuple(indices) if not isinstance(indices, tuple) else indices
-        if not self._editable.move_landmarks(
-            frame_index, int(face_index), idx_tuple, float(dx), float(dy)
-        ):
-            self.statusBar().showMessage("Landmark group move failed", 3000)
-            return
-        self._editor_state.set("edited", True)
-        self.refresh_faces()
-        self._frame_view.update()
-
-    def _on_landmarks_select_requested(self, face_index: int, indices: T.Any) -> None:
-        """Update the overlay's selection set from a marquee release."""
-        if face_index != self._editor_state.face_index:
-            return
-        idx_tuple = tuple(indices) if not isinstance(indices, tuple) else indices
-        self._overlay.set_selected_landmarks(idx_tuple)
-        if not idx_tuple:
-            self.statusBar().showMessage("Landmark selection cleared", 2000)
-        else:
-            self.statusBar().showMessage(f"Selected {len(idx_tuple)} landmark(s)", 2000)
-        self._frame_view.update()
-
-    def _on_face_add_requested(self, bbox: QRectF) -> None:
-        """Create a new face from a pointer-driven add gesture."""
-        new_index = self.add_face_at_center((bbox.x(), bbox.y(), bbox.width(), bbox.height()))
-        if new_index is None:
-            self.statusBar().showMessage("Could not add face", 5000)
-
-    def _on_frame_context_menu_requested(self, face_index: int, global_pos: QPointF) -> None:
-        """Open a Delete Face context menu for a right-clicked frame face."""
-        self._show_face_context_menu(face_index, global_pos)
-
-    def _on_face_panel_context_menu_requested(self, face_index: int, global_pos: QPointF) -> None:
-        """Open a Delete Face context menu for a right-clicked panel item."""
-        self._show_face_context_menu(face_index, global_pos)
-
-    def _show_face_context_menu(
-        self,
-        face_index: int,
-        global_pos: QPointF,
-        *,
-        frame_index: int | None = None,
-    ) -> None:
-        """Build and show a Delete-Face context menu at ``global_pos``.
-
-        Uses :meth:`QMenu.popup` (non-blocking) rather than ``exec`` so a
-        right-click does not freeze the event loop while the menu is open —
-        important for tests and for keeping the rest of the window responsive.
-        The selected action is routed back through ``triggered``.
-        """
-        if self._save_in_flight:
-            return
-        from PySide6.QtWidgets import QMenu
-
-        menu = QMenu(self)
-        delete_action = menu.addAction("Delete Face")
-        if frame_index is None:
-            delete_action.triggered.connect(
-                lambda _checked=False, fi=face_index: self._delete_face_by_index(fi)
-            )
-        else:
-            delete_action.triggered.connect(
-                lambda _checked=False, fr=frame_index, fi=face_index: self._delete_face_at(fr, fi)
-            )
-        menu.aboutToHide.connect(menu.deleteLater)
-        menu.popup(global_pos.toPoint())
-
-    def _delete_face_by_index(self, face_index: int) -> None:
-        """Delete the face with ``face_index`` on the current frame.
-
-        Routes through the editable model so the operation is undoable and the
-        same dirty/refresh side-effects as :meth:`delete_active_face` apply.
-        """
-        frame_index = self._current_frame_index()
-        if frame_index < 0:
-            self.statusBar().showMessage("No frame to edit", 3000)
-            return
-        if not self._editable.delete_face(frame_index, face_index):
-            self.statusBar().showMessage("Could not delete face", 3000)
-            return
-        new_count = self._editable.face_count(frame_index)
-        self._editor_state.set("face_count_changed", True)
-        self._editor_state.set("edited", True)
-        active = self._editor_state.face_index
-        if new_count == 0:
-            self._editor_state.set("face_index", -1)
-        elif active >= new_count:
-            self._editor_state.set("face_index", new_count - 1)
-        self.mark_dirty(True)
-        self.refresh_faces()
-        self._frame_view.update()
-        self.statusBar().showMessage(f"Deleted face index {face_index}", 5000)
-
-    def _delete_face_at(self, frame_index: int, face_index: int) -> None:
-        """Delete a face on any source frame and refresh filtered-session views."""
-        if frame_index < 0:
-            self.statusBar().showMessage("No frame to edit", 3000)
-            return
-        if not self._editable.delete_face(frame_index, face_index):
-            self.statusBar().showMessage("Could not delete face", 3000)
-            return
-        new_count = self._editable.face_count(frame_index)
-        self._editor_state.set("face_count_changed", True)
-        self._editor_state.set("edited", True)
-        if frame_index == self._current_frame_index():
-            active = self._editor_state.face_index
-            if new_count == 0:
-                self._editor_state.set("face_index", -1)
-            elif active >= new_count or active == face_index:
-                self._editor_state.set("face_index", min(face_index, new_count - 1))
-            self.refresh_faces()
-            self._frame_view.update()
-        self.mark_dirty(True)
-        self._refresh_filter_results()
-        self._refresh_face_grid()
-        self.statusBar().showMessage(
-            f"Deleted face {face_index + 1} on frame {frame_index + 1}", 5000
-        )
-
     def refresh_faces(self) -> None:
         """Rebuild the face panel from the editable model + persisted thumbs.
 
@@ -3130,111 +2747,4 @@ class ManualToolWindow(QMainWindow):
             self._auto_magnify_active_face()
         else:
             self._restore_magnified_view()
-        self._frame_view.update()
-
-    MASK_DEFAULT_TYPES: T.ClassVar[tuple[str, ...]] = (
-        "components",
-        "extended",
-        "bisenet-fp_face",
-        "bisenet-fp_head",
-        "vgg-clear",
-        "vgg-obstructed",
-        "unet-dfl",
-        "custom",
-    )
-    """Faceswap-standard mask plugins.  The dropdown always shows these so
-    the user can pick a type to paint *before* any blob exists on disk."""
-
-    def _build_mask_controls(self) -> QWidget:
-        """Return the Mask-editor control row (mask-type dropdown + opacity).
-
-        Hidden by default; surfaced only while ``editor_mode == "Mask"``.
-        The dropdown is populated lazily by
-        :meth:`_refresh_mask_controls_visibility` so the option list always
-        reflects whatever the active face has persisted on disk + the
-        Faceswap-standard set.
-        """
-        container = QWidget()
-        container.setObjectName("qt-manual-mask-controls")
-        layout = QHBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
-
-        layout.addWidget(QLabel("Mask type:"))
-        self._mask_type_combo = QComboBox()
-        self._mask_type_combo.setObjectName("qt-manual-mask-type-combo")
-        self._mask_type_combo.setMinimumWidth(140)
-        self._mask_type_combo.currentTextChanged.connect(self._on_mask_type_combo_changed)
-        layout.addWidget(self._mask_type_combo)
-
-        layout.addSpacing(12)
-        layout.addWidget(QLabel("Opacity:"))
-        self._mask_opacity_slider = QSlider(Qt.Horizontal)
-        self._mask_opacity_slider.setObjectName("qt-manual-mask-opacity")
-        self._mask_opacity_slider.setRange(0, 100)
-        self._mask_opacity_slider.setValue(int(self._editor_state.mask_opacity))
-        self._mask_opacity_slider.setFixedWidth(140)
-        self._mask_opacity_slider.valueChanged.connect(self._on_mask_opacity_changed)
-        layout.addWidget(self._mask_opacity_slider)
-        layout.addStretch(1)
-
-        container.setVisible(self._editor_state.editor_mode == "Mask")
-        return container
-
-    def _refresh_mask_controls_visibility(self) -> None:
-        """Show or hide the Mask control row to match the editor mode."""
-        controls = getattr(self, "_mask_controls", None)
-        if controls is None:
-            return
-        active = self._editor_state.editor_mode == "Mask"
-        controls.setVisible(active)
-        if active:
-            self._refresh_mask_type_combo()
-
-    def _refresh_mask_type_combo(self) -> None:
-        """Populate the mask-type dropdown for the current frame + face.
-
-        Combines:
-        * Faceswap-standard mask plugins (always available so the user can
-          start painting a type that doesn't yet exist on disk).
-        * Any mask type that already exists for the active face in memory
-          or on disk via :meth:`ManualEditableAlignments.known_mask_types`.
-
-        Preserves the user's current selection when possible; falls back
-        to :attr:`DEFAULT_MASK_TYPE` when no mask_type is set yet.
-        """
-        combo = getattr(self, "_mask_type_combo", None)
-        if combo is None:
-            return
-        frame_index = self._current_frame_index()
-        face_index = int(self._editor_state.face_index)
-        existing: tuple[str, ...] = ()
-        if frame_index >= 0 and face_index >= 0:
-            existing = self._editable.known_mask_types(frame_index, face_index)
-        options = sorted({*self.MASK_DEFAULT_TYPES, *existing})
-        if not options:
-            return
-        current = self._editor_state.mask_type or self.DEFAULT_MASK_TYPE
-        if current not in options:
-            current = self.DEFAULT_MASK_TYPE if self.DEFAULT_MASK_TYPE in options else options[0]
-        combo.blockSignals(True)
-        try:
-            combo.clear()
-            combo.addItems(options)
-            combo.setCurrentText(current)
-        finally:
-            combo.blockSignals(False)
-        if self._editor_state.mask_type != current:
-            self._editor_state.set("mask_type", current)
-
-    def _on_mask_type_combo_changed(self, mask_type: str) -> None:
-        """Persist the chosen mask type to editor state + refresh the overlay."""
-        if not mask_type:
-            return
-        self._editor_state.set("mask_type", mask_type)
-        self._frame_view.update()
-
-    def _on_mask_opacity_changed(self, value: int) -> None:
-        """Push the new opacity onto editor state + repaint the overlay."""
-        self._editor_state.set("mask_opacity", int(value))
         self._frame_view.update()

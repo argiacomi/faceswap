@@ -3,84 +3,19 @@
 
 from __future__ import annotations
 
-# ruff: noqa: F401
-import contextlib
-import json
 import logging
-import os
-import subprocess
 import typing as T
-from collections.abc import Sequence
-from dataclasses import dataclass
 
 from PySide6.QtCore import (
-    QByteArray,
     QObject,
-    QPoint,
-    QPointF,
-    QRectF,
-    QSettings,
-    QSize,
-    Qt,
     QThread,
-    QTimer,
     Signal,
 )
-from PySide6.QtGui import (
-    QAction,
-    QBrush,
-    QCloseEvent,
-    QColor,
-    QIcon,
-    QImage,
-    QIntValidator,
-    QKeyEvent,
-    QKeySequence,
-    QMouseEvent,
-    QPainter,
-    QPaintEvent,
-    QPen,
-    QPixmap,
-    QPolygonF,
-    QResizeEvent,
-    QWheelEvent,
-)
-from PySide6.QtWidgets import (
-    QAbstractItemView,
-    QButtonGroup,
-    QCheckBox,
-    QComboBox,
-    QFileDialog,
-    QHBoxLayout,
-    QLabel,
-    QLineEdit,
-    QListView,
-    QListWidget,
-    QListWidgetItem,
-    QMainWindow,
-    QMessageBox,
-    QProgressBar,
-    QRadioButton,
-    QSizePolicy,
-    QSlider,
-    QSplitter,
-    QStatusBar,
-    QToolBar,
-    QToolButton,
-    QVBoxLayout,
-    QWidget,
-)
 
-from lib.gui.qt_shell.theme import QtTheme, icon_for_action
-from lib.gui.services.command_builder import CommandBuilder
 from tools.manual.session import (
-    FaceThumbnail,
     ManualAlignmentsHandle,
     ManualEditableAlignments,
-    ManualEditorState,
-    ManualFrame,
     ManualSession,
-    ManualVideoMetadata,
 )
 
 logger = logging.getLogger(__name__)
