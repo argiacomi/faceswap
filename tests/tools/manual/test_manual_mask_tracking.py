@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import zlib
 
+import cv2
 import numpy as np
 
 from lib.align.objects import AlignmentsEntry, FileAlignments, MaskAlignmentsFile
@@ -108,6 +109,13 @@ def test_paint_redo_save_applies_redone_mask_edit() -> None:
     assert model.redo() is True
     assert _MASK_KEY in model._painted_masks  # noqa: SLF001
 
+    matrix = model.mask_affine_matrix(0, 0, "components")
+    assert matrix is not None
+    stored_point = cv2.transform(
+        np.asarray([[[50.0, 50.0]]], dtype=np.float32),
+        np.asarray(matrix, dtype=np.float32)[:2],
+    ).reshape(2)
+
     alignments = _StubAlignments(blob)
     model.apply_to_alignments(alignments, frame_names=["frame.png"])
 
@@ -115,8 +123,8 @@ def test_paint_redo_save_applies_redone_mask_edit() -> None:
     assert after is not blob
     decoded = ManualEditableAlignments.decode_mask_blob(after)
     assert decoded is not None
-    stamp = int((50.0 / 64.0) * ManualEditableAlignments.MASK_STORED_SIZE)
-    assert int(decoded[stamp, stamp]) == 255
+    stamp_x, stamp_y = np.rint(stored_point).astype("int32")
+    assert int(decoded[int(stamp_y), int(stamp_x)]) == 255
 
 
 def test_clear_redo_save_deletes_redone_mask_edit() -> None:
