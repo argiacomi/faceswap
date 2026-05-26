@@ -29,12 +29,55 @@ def _face() -> np.ndarray:
     return points
 
 
+def _set_nondegenerate_mouth(points: np.ndarray) -> np.ndarray:
+    points = points.copy()
+    points[48:60] = np.asarray(
+        [
+            (70, 130),
+            (78, 124),
+            (88, 121),
+            (100, 120),
+            (112, 121),
+            (122, 124),
+            (130, 130),
+            (122, 136),
+            (112, 140),
+            (100, 141),
+            (88, 140),
+            (78, 136),
+        ],
+        dtype="float32",
+    )
+    points[60:68] = np.asarray(
+        [
+            (82, 130),
+            (90, 127),
+            (100, 126),
+            (110, 127),
+            (118, 130),
+            (110, 134),
+            (100, 135),
+            (90, 134),
+        ],
+        dtype="float32",
+    )
+    return points
+
+
 def test_shape_plausibility_accepts_ordered_68_point_shape() -> None:
     plausibility = evaluate_shape_plausibility(_face())
 
     assert plausibility.severe is False
     assert plausibility.reasons == ()
     assert plausibility.metrics["topology_violation_count"] == 0.0
+
+
+def test_shape_plausibility_accepts_nondegenerate_mouth_polygon() -> None:
+    plausibility = evaluate_shape_plausibility(_set_nondegenerate_mouth(_face()))
+
+    assert plausibility.severe is False
+    assert "inner_mouth_outside_outer_mouth" not in plausibility.reasons
+    assert plausibility.metrics["inner_mouth_outside_fraction"] == 0.0
 
 
 def test_shape_plausibility_vetoes_scrambled_local_topology() -> None:
