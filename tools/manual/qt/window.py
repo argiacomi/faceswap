@@ -27,5 +27,13 @@ class ManualToolWindow(
 ):
     """Qt Manual Tool root window assembled from focused behavior mixins."""
 
+    def _maybe_run_aligner(self, face_index: int, *, aligner_name: str | None = None) -> None:
+        """Run post-commit BBox alignment when the Auto-run control allows it."""
+        if self._editor_state.editor_mode != "BoundingBox":
+            return
+        if not self._editor_state.aligner_auto_run:
+            return
+        self.rerun_aligner_for_face(int(face_index), aligner_name=aligner_name)
+
 
 __all__ = ["ManualToolWindow"]
