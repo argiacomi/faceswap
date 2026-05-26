@@ -3,10 +3,12 @@
 
 from __future__ import annotations
 
-from .window_impl import ManualToolWindow
+from .window_impl import ManualToolWindow as _ManualToolWindowBase
+from .window_state import WindowStateMixin
 
-# Keep the public class surface anchored at tools.manual.qt.window while the
-# implementation lives in the smaller, movable window_impl module.
-ManualToolWindow.__module__ = __name__
+
+class ManualToolWindow(WindowStateMixin, _ManualToolWindowBase):
+    """Qt Manual Tool root window assembled from focused mixins."""
+
 
 __all__ = ["ManualToolWindow"]
