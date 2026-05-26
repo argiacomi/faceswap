@@ -111,6 +111,7 @@ class VideoFrameProvider(QObject):
         self._worker.load_failed.connect(self.load_failed)
         self._start_init.connect(self._worker.initialize)
         self._request.connect(self._worker.fetch)
+        self._thread.finished.connect(self._worker.deleteLater)
         self._thread.start()
 
     def start(self) -> None:
@@ -121,9 +122,9 @@ class VideoFrameProvider(QObject):
         """Ask the worker thread to decode and emit the given frame index."""
         self._request.emit(int(index))
 
-    def shutdown(self) -> None:
-        """Stop the worker thread and release resources."""
+    def shutdown(self, *, wait_ms: int = 2000) -> bool:
+        """Stop the worker thread and report whether it exited."""
         if not self._thread.isRunning():
-            return
+            return True
         self._thread.quit()
-        self._thread.wait(2000)
+        return bool(self._thread.wait(int(wait_ms)))
