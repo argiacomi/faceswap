@@ -74,6 +74,7 @@ class ManualToolWindow(
         self.setWindowTitle("Faceswap Manual Tool")
         self._session = session
         self._editor_state = session.create_editor_state()
+        self._editor_state.mask_opacity = 40
         if aligner_service is None:
             from tools.manual.aligner_service import ManualAlignerService
 
