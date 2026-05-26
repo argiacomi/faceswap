@@ -375,6 +375,7 @@ class LayoutMixin:
             landmark_mode_provider=self._is_landmark_mode_active,
             landmark_provider=self._active_face_landmarks,
             landmark_selection_provider=lambda: self._overlay.selected_landmarks,
+            landmark_faces_provider=self._frame_landmark_faces,
         )
         self._frame_view.install_extract_seams(
             extract_mode_provider=self._is_extract_mode_active,
@@ -382,6 +383,7 @@ class LayoutMixin:
         self._frame_view.install_mask_seams(
             mask_mode_provider=self._is_mask_mode_active,
             brush_provider=self._current_brush_spec,
+            mask_roi_provider=self._active_mask_roi_contains,
         )
         self._frame_view.face_scale_requested.connect(self._on_face_scale_requested)
         self._frame_view.face_rotate_requested.connect(self._on_face_rotate_requested)

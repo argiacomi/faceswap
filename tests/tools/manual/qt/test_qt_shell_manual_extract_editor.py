@@ -166,6 +166,47 @@ def test_extract_corner_drag_scales_face(qtbot, tmp_path: Path) -> None:  # type
     assert face.bbox[2] > 20.0  # original width was 20
 
 
+def test_extract_corner_drag_keeps_legacy_minimum_size(
+    qtbot,
+    tmp_path: Path,
+) -> None:  # type:ignore[no-untyped-def]
+    """Inward corner drags do not shrink below the Tk minimum box size."""
+    window = _make_window(qtbot, tmp_path)
+    _enter_extract_mode(window)
+    face_index = _seed_face(window)
+    window._editor_state.set("face_index", face_index)
+
+    view = window._frame_view
+    _drag(view, _source_to_widget(view, 60.0, 60.0), _source_to_widget(view, 50.5, 50.5))
+
+    face = window._editable.faces(0)[0]
+    assert face.bbox == (40.0, 40.0, 20.0, 20.0)
+
+
+def test_extract_corner_drag_clamps_to_source_bounds(
+    qtbot,
+    tmp_path: Path,
+) -> None:  # type:ignore[no-untyped-def]
+    """Outward corner scale cannot move the extract box outside the source image."""
+    window = _make_window(qtbot, tmp_path)
+    _enter_extract_mode(window)
+    face_index = window._editable.add_face(
+        0,
+        (10.0, 10.0, 40.0, 40.0),
+        landmarks=((20.0, 20.0), (40.0, 20.0), (30.0, 40.0)),
+    )
+    window._editor_state.set("face_index", face_index)
+
+    view = window._frame_view
+    _drag(view, _source_to_widget(view, 50.0, 50.0), _source_to_widget(view, 100.0, 100.0))
+
+    face = window._editable.faces(0)[0]
+    assert face.bbox[0] >= 0.0
+    assert face.bbox[1] >= 0.0
+    assert face.bbox[0] + face.bbox[2] <= view.source_size[0]
+    assert face.bbox[1] + face.bbox[3] <= view.source_size[1]
+
+
 def test_extract_outside_corner_drag_rotates_face(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
     """Outside-corner drag in Extract Box mode rotates landmarks around the centre."""
     window = _make_window(qtbot, tmp_path)

@@ -174,6 +174,28 @@ def test_marquee_selects_landmarks_inside_rect(qtbot, tmp_path: Path) -> None:  
     assert 3 not in selected
 
 
+def test_marquee_crossing_multiple_faces_clears_selection(
+    qtbot,
+    tmp_path: Path,
+) -> None:  # type:ignore[no-untyped-def]
+    """A marquee containing landmarks from multiple faces is rejected like Tk."""
+    window = _make_window(qtbot, tmp_path)
+    _enter_landmark_mode(window)
+    face_index = _seed_face_with_landmarks(window)
+    window._editable.add_face(
+        0,
+        (100.0, 100.0, 60.0, 60.0),
+        landmarks=((110.0, 110.0), (120.0, 120.0)),
+    )
+    window._editor_state.set("face_index", face_index)
+    window._overlay.set_selected_landmarks((0, 1))
+
+    view = window._frame_view
+    _drag(view, _source_to_widget(view, 45.0, 45.0), _source_to_widget(view, 125.0, 125.0))
+
+    assert window._overlay.selected_landmarks == frozenset()
+
+
 def test_group_move_translates_only_selected_landmarks(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
     """After a marquee selection, dragging a selected point moves the group."""
     window = _make_window(qtbot, tmp_path)

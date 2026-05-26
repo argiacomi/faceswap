@@ -181,6 +181,66 @@ def test_mask_drag_paints_into_editable_model(qtbot, tmp_path: Path) -> None:  #
     assert window._editor_state.edited is True
 
 
+def test_mask_drag_paints_continuous_line_between_events(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+    """Drag painting connects press and move points in stored mask space."""
+    window = _make_window(qtbot, tmp_path)
+    _enter_mask_mode(window)
+    face_index = _seed_face(window)
+    window._editor_state.set("face_index", face_index)
+    window._editor_state.set("brush_size", 2)
+
+    view = window._frame_view
+    _drag(
+        view,
+        _source_to_widget(view, 50.0, 50.0),
+        _source_to_widget(view, 150.0, 150.0),
+    )
+    mask = window._editable.get_mask(0, face_index, window.active_mask_type())
+    # Diagonal midpoint is only painted when the two events are joined by a stroke.
+    assert mask[64, 64] == 255
+
+
+def test_rectangle_mask_brush_stamps_square(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+    """Rectangle cursor shape paints a square stamp instead of a circular one."""
+    window = _make_window(qtbot, tmp_path)
+    _enter_mask_mode(window)
+    face_index = _seed_face(window)
+    window._editor_state.set("face_index", face_index)
+    window.set_mask_cursor_shape("Rectangle")
+
+    assert window.paint_mask_at(face_index, 100.0, 100.0) is True
+    mask = window._editable.get_mask(0, face_index, window.active_mask_type())
+    assert mask[64, 64] == 255
+    # Corner of the square stamp is outside the equivalent circle.
+    assert mask[58, 58] == 255
+
+
+def test_mask_paint_uses_persisted_affine_transform(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+    """Painting existing masks uses their stored affine, not bbox projection."""
+    import zlib
+
+    import numpy as np
+
+    from lib.align.objects import MaskAlignmentsFile
+
+    window = _make_window(qtbot, tmp_path)
+    face_index = _seed_face(window)
+    window._editor_state.set("face_index", face_index)
+    mask_type = "vgg-clear"
+    window._editor_state.set("mask_type", mask_type)
+    window._editable._persisted_mask_blobs[(0, face_index, mask_type)] = MaskAlignmentsFile(
+        mask=zlib.compress(np.zeros((128, 128), dtype=np.uint8).tobytes()),
+        affine_matrix=np.array([[2.0, 0.0, -20.0], [0.0, 2.0, -20.0]], dtype=np.float32),
+        interpolator=1,
+        stored_size=128,
+        stored_centering="head",
+    )
+
+    assert window.paint_mask_at(face_index, 42.0, 42.0) is True
+    mask = window._editable.get_mask(0, face_index, mask_type)
+    assert mask[64, 64] == 255
+
+
 def test_ctrl_drag_inverts_mode_for_one_gesture(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
     """Ctrl+drag while in Draw mode erases (invert mode flag)."""
     window = _make_window(qtbot, tmp_path)
@@ -415,6 +475,8 @@ def test_brush_preview_visible_over_active_face_in_mask_mode(qtbot, tmp_path: Pa
     preview = window._frame_view.brush_preview
     assert preview is not None
     assert preview["mode"] == "draw"
+    assert preview["shape"] == "Circle"
+    assert preview["color"] == "#ffffff"
     # Half the brush size (12 / 2 = 6 source pixels by default).
     assert preview["radius"] == pytest.approx(window._editor_state.brush_size / 2.0)
     # The recorded source point matches the supplied source coord (subject to
@@ -474,6 +536,22 @@ def test_brush_preview_mode_reflects_draw_vs_erase(qtbot, tmp_path: Path) -> Non
     window.set_mask_draw_mode()
     _hover_at(window, 100.0, 100.0)
     assert window._frame_view.brush_preview["mode"] == "draw"
+
+
+def test_brush_preview_reflects_cursor_shape_and_color(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+    """Cursor shape/color controls drive the brush preview."""
+    window = _make_window(qtbot, tmp_path)
+    face_index = _seed_face(window)
+    window._editor_state.set("face_index", face_index)
+    _enter_mask_mode(window)
+
+    assert window.set_mask_cursor_shape("Rectangle") is True
+    assert window.set_mask_cursor_color("#00ff00") is True
+    _hover_at(window, 100.0, 100.0)
+
+    preview = window._frame_view.brush_preview
+    assert preview["shape"] == "Rectangle"
+    assert preview["color"] == "#00ff00"
 
 
 def test_brush_preview_cleared_on_leave_event(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]

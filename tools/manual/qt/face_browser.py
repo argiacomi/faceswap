@@ -300,7 +300,7 @@ class FaceBrowserMixin:
             if src_w <= 0 or src_h <= 0:
                 self.statusBar().showMessage("Cannot add face: frame not loaded", 5000)
                 return None
-            size = float(min(64, max(8, min(src_w, src_h) // 4)))
+            size = float(max(20.0, min(src_w, src_h) / 4.0))
             bbox = (src_w / 2 - size / 2, src_h / 2 - size / 2, size, size)
         try:
             new_index = self._editable.add_face(frame_index, bbox)
