@@ -78,6 +78,12 @@ class FrameEditDragMixin:
             self._edit_drag_current_bbox = self._resize_bbox(
                 self._edit_drag_original_bbox, self._edit_drag_handle or "", dx, dy
             )
+        if mode in {"move", "resize"} and self._face_live_update_callback is not None:
+            face_index = self._active_face_provider() if self._active_face_provider else None
+            if face_index is not None and self._edit_drag_current_bbox is not None:
+                self._face_live_update_callback(
+                    int(face_index), QRectF(self._edit_drag_current_bbox)
+                )
         self.update()
 
     def _commit_edit_drag(self) -> None:
@@ -127,6 +133,10 @@ class FrameEditDragMixin:
             self.update()
             return
         if face_index is None or original is None or current is None:
+            self.update()
+            return
+        if mode in {"move", "resize"} and self._face_live_update_callback is not None:
+            self._face_live_commit_callback and self._face_live_commit_callback(int(face_index))
             self.update()
             return
         if mode == "move":

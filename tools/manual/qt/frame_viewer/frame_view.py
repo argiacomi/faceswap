@@ -117,6 +117,9 @@ class ManualFrameView(
         # pure-pan behavior.
         self._add_mode_provider: T.Callable[[], bool] | None = None
         self._face_hit_provider: T.Callable[[float, float], int | None] | None = None
+        self._face_add_callback: T.Callable[[QRectF], int | None] | None = None
+        self._face_live_update_callback: T.Callable[[int, QRectF], None] | None = None
+        self._face_live_commit_callback: T.Callable[[int], None] | None = None
         self._hovered_face_index: int | None = None
         # Landmark editor seams (#103) — when installed, landmark-mode pointer
         # gestures hit-test individual points and emit landmark_*_requested.
@@ -374,6 +377,9 @@ class ManualFrameView(
         active_bbox_provider: T.Callable[[], QRectF | None],
         add_mode_provider: T.Callable[[], bool] | None = None,
         face_hit_provider: T.Callable[[float, float], int | None] | None = None,
+        face_add_callback: T.Callable[[QRectF], int | None] | None = None,
+        face_live_update_callback: T.Callable[[int, QRectF], None] | None = None,
+        face_live_commit_callback: T.Callable[[int], None] | None = None,
     ) -> None:
         """Install editor callbacks so pointer drags drive face move/resize.
 
@@ -395,6 +401,9 @@ class ManualFrameView(
         self._active_bbox_provider = active_bbox_provider
         self._add_mode_provider = add_mode_provider
         self._face_hit_provider = face_hit_provider
+        self._face_add_callback = face_add_callback
+        self._face_live_update_callback = face_live_update_callback
+        self._face_live_commit_callback = face_live_commit_callback
 
     def install_landmark_seams(
         self,

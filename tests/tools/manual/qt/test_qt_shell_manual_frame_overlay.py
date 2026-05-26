@@ -3,7 +3,11 @@
 
 from __future__ import annotations
 
+from PySide6.QtCore import QRectF
+from PySide6.QtGui import QImage, QPainter
+
 from tools.manual.qt.frame_viewer.overlays import ManualFrameOverlay
+from tools.manual.qt.frame_viewer.viewport import FrameViewport
 from tools.manual.session import ManualEditableAlignments
 
 
@@ -83,3 +87,29 @@ def test_qt_manual_frame_overlay_uses_landmark_parts_for_mesh() -> None:
     assert groups["polygon"]
     assert groups["line"]
     assert all(len(group) > 1 for group in groups["polygon"] + groups["line"])
+
+
+def test_bbox_mode_draws_handles_for_all_visible_faces() -> None:
+    """BBox mode exposes anchors on every visible face, not only the active one."""
+    editable = ManualEditableAlignments()
+    editable.add_face(0, (10.0, 10.0, 20.0, 20.0))
+    editable.add_face(0, (40.0, 10.0, 20.0, 20.0))
+    overlay = ManualFrameOverlay(editable, frame_index_provider=lambda: 0)
+    overlay.set_active(0)
+    overlay.install_visibility_providers(
+        editor_mode_provider=lambda: "BoundingBox",
+        annotation_mode_provider=lambda: "",
+    )
+    calls: list[QRectF] = []
+    overlay._draw_handles = lambda _painter, rect: calls.append(QRectF(rect))  # type:ignore[method-assign] # noqa:SLF001
+    image = QImage(80, 40, QImage.Format_ARGB32)
+    painter = QPainter(image)
+    try:
+        overlay(
+            painter,
+            FrameViewport(source_size=(80, 40), target_rect=QRectF(0, 0, 80, 40), zoom=1.0),
+        )
+    finally:
+        painter.end()
+
+    assert len(calls) == 2

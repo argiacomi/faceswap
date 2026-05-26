@@ -370,6 +370,9 @@ class LayoutMixin:
             active_bbox_provider=self._active_face_bbox,
             add_mode_provider=self._is_add_mode_active,
             face_hit_provider=self._face_at_source_point,
+            face_add_callback=self._on_live_face_add_requested,
+            face_live_update_callback=self._on_live_face_bbox_requested,
+            face_live_commit_callback=self._on_live_face_bbox_committed,
         )
         self._frame_view.install_landmark_seams(
             landmark_mode_provider=self._is_landmark_mode_active,

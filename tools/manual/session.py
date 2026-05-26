@@ -887,6 +887,92 @@ class ManualEditableAlignments:
         self._apply(do, undo, frame_index)
         return True
 
+    def update_face_bbox_live(
+        self,
+        frame_index: int,
+        face_index: int,
+        bbox: tuple[float, float, float, float],
+    ) -> bool:
+        """Replace a face bbox during an in-progress drag without recording undo."""
+        faces = self._faces.get(frame_index, [])
+        if face_index < 0 or face_index >= len(faces):
+            return False
+        new_x, new_y, new_w, new_h = self._validate_bbox(bbox)
+        previous = faces[face_index]
+        prev_x, prev_y, prev_w, prev_h = previous.bbox
+        if new_x == prev_x and new_y == prev_y and new_w == prev_w and new_h == prev_h:
+            return True
+        if previous.landmarks and new_w == prev_w and new_h == prev_h:
+            dx = new_x - prev_x
+            dy = new_y - prev_y
+            landmarks = tuple((lx + dx, ly + dy) for lx, ly in previous.landmarks)
+        elif prev_w > 0 and prev_h > 0 and previous.landmarks:
+            scale_x = new_w / prev_w
+            scale_y = new_h / prev_h
+            landmarks = tuple(
+                (
+                    new_x + (lx - prev_x) * scale_x,
+                    new_y + (ly - prev_y) * scale_y,
+                )
+                for lx, ly in previous.landmarks
+            )
+        else:
+            landmarks = previous.landmarks
+        faces[face_index] = EditableFace(
+            face_index=face_index,
+            bbox=(new_x, new_y, new_w, new_h),
+            landmarks=landmarks,
+        )
+        self._dirty_frames.add(frame_index)
+        self._notify(frame_index)
+        return True
+
+    def set_landmarks_live(
+        self,
+        frame_index: int,
+        face_index: int,
+        landmarks: T.Sequence[tuple[float, float]],
+    ) -> bool:
+        """Replace landmarks during a live drag without recording undo."""
+        faces = self._faces.get(frame_index, [])
+        if face_index < 0 or face_index >= len(faces):
+            return False
+        previous = faces[face_index]
+        faces[face_index] = EditableFace(
+            face_index=previous.face_index,
+            bbox=previous.bbox,
+            landmarks=tuple((float(x), float(y)) for x, y in landmarks),
+        )
+        self._dirty_frames.add(frame_index)
+        self._notify(frame_index)
+        return True
+
+    def record_face_update(
+        self,
+        frame_index: int,
+        face_index: int,
+        previous: EditableFace,
+    ) -> bool:
+        """Record one undo entry for a live-updated face."""
+        faces = self._faces.get(frame_index, [])
+        if face_index < 0 or face_index >= len(faces):
+            return False
+        final = faces[face_index]
+        if final == previous:
+            return True
+
+        def do() -> None:
+            self._faces[frame_index][face_index] = final
+
+        def undo() -> None:
+            self._faces[frame_index][face_index] = previous
+
+        self._undo.append((do, undo, frame_index))
+        self._redo.clear()
+        self._dirty_frames.add(frame_index)
+        self._notify(frame_index)
+        return True
+
     def move_face(
         self,
         frame_index: int,

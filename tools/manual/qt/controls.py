@@ -553,7 +553,7 @@ class ControlsMixin:
         if kind == "failed":
             logger.error("Manual Tool aligner: %s", message)
 
-    def rerun_aligner_for_face(self, face_index: int) -> bool:
+    def rerun_aligner_for_face(self, face_index: int, *, live: bool = False) -> bool:
         """Rerun the configured aligner against one face on the current frame."""
         frame_index = self._current_frame_index()
         if frame_index < 0:
@@ -581,7 +581,8 @@ class ControlsMixin:
             self._emit_console(f"Manual Tool aligner failed: {err}")
             return False
         new_points = [(float(point[0]), float(point[1])) for point in landmarks]
-        if not self._editable.set_landmarks(frame_index, face_index, new_points):
+        setter = self._editable.set_landmarks_live if live else self._editable.set_landmarks
+        if not setter(frame_index, face_index, new_points):
             return False
         self._editor_state.set("edited", True)
         self.refresh_faces()
@@ -672,6 +673,8 @@ class ControlsMixin:
 
     def _clear_frame_temp_state(self) -> None:
         """Clear frame-view temporary state owned by the active editor."""
+        self._live_bbox_added_face = None
+        self._live_bbox_original_face = None
         self._overlay.set_selected_landmarks(())
         self._overlay.set_hovered_landmark(None, None)
         self._frame_view.clear_editor_temporary_state()

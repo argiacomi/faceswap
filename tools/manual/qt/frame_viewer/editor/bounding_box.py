@@ -6,6 +6,7 @@ from __future__ import annotations
 from PySide6.QtCore import QPointF, QRectF, Qt
 
 from tools.manual.qt.frame_viewer.overlays import ManualFrameOverlay
+from tools.manual.session import EditableFace
 
 EDITOR_MODE = "BoundingBox"
 
@@ -163,14 +164,7 @@ class BoundingBoxFrameEditorMixin:
         if current is None or (
             current.width() < self._ADD_MIN_DRAG and current.height() < self._ADD_MIN_DRAG
         ):
-            default_size = max(self._MIN_BBOX_SIZE, min(src_w, src_h) / 4.0)
-            half = default_size / 2.0
-            rect = QRectF(
-                max(0.0, min(src_w - default_size, anchor.x() - half)),
-                max(0.0, min(src_h - default_size, anchor.y() - half)),
-                default_size,
-                default_size,
-            )
+            rect = self._default_add_rect(anchor)
         else:
             rect = QRectF(current).normalized()
             rect = QRectF(
@@ -187,6 +181,18 @@ class BoundingBoxFrameEditorMixin:
             return False
         if source_point is None or not self._target_rect().contains(position):
             return False
+        if self._face_add_callback is not None:
+            rect = self._default_add_rect(source_point)
+            face_index = self._face_add_callback(rect)
+            if face_index is None:
+                return False
+            self._edit_drag_mode = "move"
+            self._edit_drag_handle = None
+            self._edit_drag_source_anchor = QPointF(source_point)
+            self._edit_drag_original_bbox = QRectF(rect)
+            self._edit_drag_current_bbox = QRectF(rect)
+            self.setCursor(Qt.SizeAllCursor)
+            return True
         self._edit_drag_mode = "add"
         self._edit_drag_handle = None
         self._edit_drag_source_anchor = QPointF(source_point)
@@ -196,6 +202,18 @@ class BoundingBoxFrameEditorMixin:
         self._edit_drag_current_bbox = QRectF(source_point.x(), source_point.y(), 0.0, 0.0)
         self.setCursor(Qt.CrossCursor)
         return True
+
+    def _default_add_rect(self, anchor: QPointF) -> QRectF:
+        """Return the legacy default add bbox centred on ``anchor``."""
+        src_w, src_h = self.source_size
+        default_size = max(self._MIN_BBOX_SIZE, min(src_w, src_h) / 4.0)
+        half = default_size / 2.0
+        return QRectF(
+            max(0.0, min(src_w - default_size, anchor.x() - half)),
+            max(0.0, min(src_h - default_size, anchor.y() - half)),
+            default_size,
+            default_size,
+        )
 
     def _emit_context_menu(self, source_point: QPointF | None, global_position: QPointF) -> bool:
         """Hit-test the right-click and emit ``face_context_menu_requested``.
@@ -284,6 +302,53 @@ class BoundingBoxWindowEditorMixin:
         new_index = self.add_face_at_center((bbox.x(), bbox.y(), bbox.width(), bbox.height()))
         if new_index is None:
             self.statusBar().showMessage("Could not add face", 5000)
+
+    def _on_live_face_add_requested(self, bbox: QRectF) -> int | None:
+        """Create a BBox face immediately on mouse press for live dragging."""
+        new_index = self.add_face_at_center((bbox.x(), bbox.y(), bbox.width(), bbox.height()))
+        if new_index is not None:
+            self._live_bbox_added_face = int(new_index)
+            self._live_bbox_original_face = None
+        return new_index
+
+    def _on_live_face_bbox_requested(self, face_index: int, bbox: QRectF) -> None:
+        """Apply a live BBox move/resize and rerun the aligner before release."""
+        frame_index = self._current_frame_index()
+        if frame_index < 0:
+            return
+        if (
+            getattr(self, "_live_bbox_added_face", None) != int(face_index)
+            and getattr(self, "_live_bbox_original_face", None) is None
+        ):
+            faces = self._editable.faces(frame_index)
+            if 0 <= int(face_index) < len(faces):
+                self._live_bbox_original_face = faces[int(face_index)]
+        if not self._editable.update_face_bbox_live(
+            frame_index,
+            int(face_index),
+            (bbox.x(), bbox.y(), bbox.width(), bbox.height()),
+        ):
+            return
+        self._editor_state.set("edited", True)
+        self.mark_dirty(True)
+        if self._editor_state.aligner_auto_run and self._editor_state.editor_mode == "BoundingBox":
+            self.rerun_aligner_for_face(int(face_index), live=True)
+        self.refresh_faces()
+        self._refresh_face_grid()
+        self._frame_view.update()
+
+    def _on_live_face_bbox_committed(self, face_index: int) -> None:
+        """Coalesce a live BBox drag into one undo entry."""
+        frame_index = self._current_frame_index()
+        added_face = getattr(self, "_live_bbox_added_face", None)
+        original = getattr(self, "_live_bbox_original_face", None)
+        self._live_bbox_added_face = None
+        self._live_bbox_original_face = None
+        if frame_index < 0 or added_face == int(face_index) or original is None:
+            return
+        if isinstance(original, EditableFace):
+            self._editable.record_face_update(frame_index, int(face_index), original)
+            self._sync_actions()
 
     def _on_frame_context_menu_requested(self, face_index: int, global_pos: QPointF) -> None:
         """Open a Delete Face context menu for a right-clicked frame face."""

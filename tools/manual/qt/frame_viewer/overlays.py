@@ -156,14 +156,19 @@ class ManualFrameOverlay:
                     is_active,
                     int(face.face_index),
                 )
-            if is_active:
-                if visibility["mask"]:
-                    self._paint_mask_overlay(painter, viewport, face)
-                if visibility["handles"]:
-                    handle_rect = (
-                        extract_polygon.boundingRect() if extract_polygon is not None else rect
-                    )
-                    self._draw_handles(painter, handle_rect)
+            if is_active and visibility["mask"]:
+                self._paint_mask_overlay(painter, viewport, face)
+            if visibility["handles"] and (
+                is_active
+                or (
+                    self._editor_mode_provider is not None
+                    and self._editor_mode_provider() == "BoundingBox"
+                )
+            ):
+                handle_rect = (
+                    extract_polygon.boundingRect() if extract_polygon is not None else rect
+                )
+                self._draw_handles(painter, handle_rect)
             painter.restore()
 
     def annotation_visibility(self) -> dict[str, bool]:

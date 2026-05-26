@@ -13,8 +13,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QRectF
-from PySide6.QtGui import QColor, QPixmap
+import pytest
+from PySide6.QtCore import QEvent, QPointF, QRectF, Qt
+from PySide6.QtGui import QColor, QMouseEvent, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -135,6 +136,34 @@ def _wait_for_aligner_preload(qtbot, window: ManualToolWindow, *, timeout: int =
     signal.
     """
     qtbot.waitUntil(lambda: window._aligner_load_worker is None, timeout=timeout)
+
+
+def _source_to_widget(window: ManualToolWindow, sx: float, sy: float) -> QPointF:
+    view = window._frame_view
+    target = view._target_rect()
+    src_w, src_h = view.source_size
+    return QPointF(
+        target.x() + target.width() * (sx / src_w),
+        target.y() + target.height() * (sy / src_h),
+    )
+
+
+def _mouse_event(
+    event_type: QEvent.Type,
+    window: ManualToolWindow,
+    pos: QPointF,
+    button: Qt.MouseButton,
+    buttons: Qt.MouseButton,
+) -> QMouseEvent:
+    view = window._frame_view
+    return QMouseEvent(
+        event_type,
+        pos,
+        QPointF(view.mapToGlobal(pos.toPoint())),
+        button,
+        buttons,
+        Qt.NoModifier,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -398,6 +427,97 @@ def test_bbox_move_and_resize_use_selected_aligner_and_normalization(
     bboxes = [call[1] for backend in align_calls for call in backend.align_calls]
     assert bboxes[-2] == (15.0, 17.0, 40.0, 40.0)
     assert bboxes[-1] == (8.0, 8.0, 50.0, 50.0)
+
+
+def test_bbox_drag_motion_regenerates_landmarks_before_release(
+    qtbot,
+    tmp_path: Path,
+) -> None:  # type:ignore[no-untyped-def]
+    """Frame-level BBox drag mutates bbox and landmarks on mouse move."""
+    canned = np.tile([[31.0, 32.0]], (68, 1)).astype(np.float32)
+    window, service = _make_window(qtbot, tmp_path, service=_stub_service(landmarks=canned))
+    window._editable.add_face(0, (10.0, 10.0, 40.0, 40.0))
+    window._editor_state.set("face_index", 0)
+    window._editor_state.set("editor_mode", "BoundingBox")
+    start = _source_to_widget(window, 20.0, 20.0)
+    end = _source_to_widget(window, 30.0, 25.0)
+
+    window._frame_view.mousePressEvent(
+        _mouse_event(QEvent.Type.MouseButtonPress, window, start, Qt.LeftButton, Qt.LeftButton)
+    )
+    window._frame_view.mouseMoveEvent(
+        _mouse_event(QEvent.Type.MouseMove, window, end, Qt.NoButton, Qt.LeftButton)
+    )
+
+    face = window._editable.faces(0)[0]
+    assert face.bbox == pytest.approx((20.0, 15.0, 40.0, 40.0))
+    assert face.landmarks[0] == (31.0, 32.0)
+    instances = service._test_instances  # type:ignore[attr-defined]
+    assert instances[-1].align_calls[-1][1] == (20.0, 15.0, 40.0, 40.0)
+    window._frame_view.mouseReleaseEvent(
+        _mouse_event(QEvent.Type.MouseButtonRelease, window, end, Qt.LeftButton, Qt.NoButton)
+    )
+
+
+def test_bbox_resize_motion_regenerates_landmarks_before_release(
+    qtbot,
+    tmp_path: Path,
+) -> None:  # type:ignore[no-untyped-def]
+    """Frame-level BBox resize updates model and aligner during mouse move."""
+    canned = np.tile([[41.0, 42.0]], (68, 1)).astype(np.float32)
+    window, service = _make_window(qtbot, tmp_path, service=_stub_service(landmarks=canned))
+    window._editable.add_face(0, (10.0, 10.0, 40.0, 40.0))
+    window._editor_state.set("face_index", 0)
+    window._editor_state.set("editor_mode", "BoundingBox")
+    start = _source_to_widget(window, 50.0, 50.0)
+    end = _source_to_widget(window, 65.0, 60.0)
+
+    window._frame_view.mousePressEvent(
+        _mouse_event(QEvent.Type.MouseButtonPress, window, start, Qt.LeftButton, Qt.LeftButton)
+    )
+    window._frame_view.mouseMoveEvent(
+        _mouse_event(QEvent.Type.MouseMove, window, end, Qt.NoButton, Qt.LeftButton)
+    )
+
+    face = window._editable.faces(0)[0]
+    assert face.bbox == pytest.approx((10.0, 10.0, 55.0, 50.0))
+    assert face.landmarks[0] == (41.0, 42.0)
+    instances = service._test_instances  # type:ignore[attr-defined]
+    assert instances[-1].align_calls[-1][1] == (10.0, 10.0, 55.0, 50.0)
+    window._frame_view.mouseReleaseEvent(
+        _mouse_event(QEvent.Type.MouseButtonRelease, window, end, Qt.LeftButton, Qt.NoButton)
+    )
+
+
+def test_bbox_add_creates_face_on_press_and_same_drag_moves_it(
+    qtbot,
+    tmp_path: Path,
+) -> None:  # type:ignore[no-untyped-def]
+    """Empty-space BBox press creates immediately and drag continues as move."""
+    canned = np.tile([[51.0, 52.0]], (68, 1)).astype(np.float32)
+    window, service = _make_window(qtbot, tmp_path, service=_stub_service(landmarks=canned))
+    window._editor_state.set("editor_mode", "BoundingBox")
+    start = _source_to_widget(window, 70.0, 70.0)
+    end = _source_to_widget(window, 80.0, 75.0)
+
+    window._frame_view.mousePressEvent(
+        _mouse_event(QEvent.Type.MouseButtonPress, window, start, Qt.LeftButton, Qt.LeftButton)
+    )
+    assert window._editable.face_count(0) == 1
+    created = window._editable.faces(0)[0]
+    assert created.landmarks[0] == (51.0, 52.0)
+    window._frame_view.mouseMoveEvent(
+        _mouse_event(QEvent.Type.MouseMove, window, end, Qt.NoButton, Qt.LeftButton)
+    )
+
+    moved = window._editable.faces(0)[0]
+    assert moved.bbox[0] > created.bbox[0]
+    assert moved.bbox[1] > created.bbox[1]
+    instances = service._test_instances  # type:ignore[attr-defined]
+    assert instances[-1].align_calls[-1][1] == moved.bbox
+    window._frame_view.mouseReleaseEvent(
+        _mouse_event(QEvent.Type.MouseButtonRelease, window, end, Qt.LeftButton, Qt.NoButton)
+    )
 
 
 def test_bbox_pointer_add_uses_add_then_aligner_regeneration_path(

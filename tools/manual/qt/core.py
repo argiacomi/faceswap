@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 
 from lib.gui.services.command_builder import CommandBuilder
 from tools.manual.session import (
+    EditableFace,
     ManualEditableAlignments,
     ManualEditorState,
     ManualFrame,
@@ -132,6 +133,8 @@ class ManualToolWindow(
         self._save_worker: ManualSaveWorker | None = None
         self._save_busy_stack: contextlib.ExitStack | None = None
         self._pending_extract_folder: str | None = None
+        self._live_bbox_added_face: int | None = None
+        self._live_bbox_original_face: EditableFace | None = None
         self._overlay = ManualFrameOverlay(
             self._editable,
             frame_index_provider=self._current_frame_index,
