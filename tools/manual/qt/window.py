@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Qt Manual Tool implementation module."""
+"""Root window composition for the Qt Manual Tool."""
 
 from __future__ import annotations
 
@@ -59,15 +59,14 @@ from tools.manual.session import (
     ManualVideoMetadata,
 )
 
-logger = logging.getLogger(__name__)
 from .actions import MANUAL_ACTIONS
-from .editors.bounding_box import BoundingBoxWindowEditorMixin
-from .editors.extract_box import ExtractBoxWindowEditorMixin
-from .editors.landmarks import LandmarkWindowEditorMixin
-from .editors.mask import MaskWindowEditorMixin
 from .face_grid import CrossFrameFaceGridPanel
 from .face_grid_renderer import _FACE_GRID_SIZES, FaceGridEntry, FaceGridThumbnailRenderer
-from .frame_view import ManualFrameView
+from .frame_viewer.editor.bounding_box import BoundingBoxWindowEditorMixin
+from .frame_viewer.editor.extract_box import ExtractBoxWindowEditorMixin
+from .frame_viewer.editor.landmarks import LandmarkWindowEditorMixin
+from .frame_viewer.editor.mask import MaskWindowEditorMixin
+from .frame_viewer.frame_view import ManualFrameView
 from .overlays import ManualFrameOverlay
 from .thumbnails import FaceThumbnailPanel, ManualThumbnailPanel
 from .transport import ManualTransportBar
@@ -79,6 +78,8 @@ from .workers import (
     ManualStartupWorker,
     _ManualStartupTask,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class ManualToolWindow(

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Qt Manual Tool implementation module."""
+"""Overlay painters for Qt Manual Tool frame annotations."""
 
 from __future__ import annotations
 

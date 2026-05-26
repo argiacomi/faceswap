@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Qt Manual Tool implementation module."""
+"""Cross-frame face grid widget for the Qt Manual Tool."""
 
 from __future__ import annotations
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Qt Manual Tool implementation module."""
+"""Generic frame display widget for the Qt Manual Tool."""
 
 from __future__ import annotations
 
@@ -29,17 +29,18 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from tools.manual.qt.types import FrameViewport, OverlayPainter
 from tools.manual.session import (
     ManualFrame,
 )
 
+from .editor.bounding_box import BoundingBoxFrameEditorMixin
+from .editor.drag import FrameEditDragMixin
+from .editor.extract_box import ExtractBoxFrameEditorMixin
+from .editor.landmarks import LandmarkFrameEditorMixin
+from .editor.mask import MaskFrameEditorMixin
+
 logger = logging.getLogger(__name__)
-from .editors.bounding_box import BoundingBoxFrameEditorMixin
-from .editors.drag import FrameEditDragMixin
-from .editors.extract_box import ExtractBoxFrameEditorMixin
-from .editors.landmarks import LandmarkFrameEditorMixin
-from .editors.mask import MaskFrameEditorMixin
-from .types import FrameViewport, OverlayPainter
 
 
 class ManualFrameView(

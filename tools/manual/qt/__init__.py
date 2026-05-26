@@ -6,7 +6,7 @@ from __future__ import annotations
 from .actions import MANUAL_ACTIONS, ManualAction
 from .face_grid import CrossFrameFaceGridPanel
 from .face_grid_renderer import FaceGridEntry, FaceGridRenderRequest, FaceGridThumbnailRenderer
-from .frame_view import ManualFrameView
+from .frame_viewer.frame_view import ManualFrameView
 from .overlays import FrameViewport, ManualFrameOverlay
 from .thumbnails import FaceThumbnailPanel, ManualThumbnailPanel, _decode_jpeg_to_qimage
 from .transport import ManualTransportBar

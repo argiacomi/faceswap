@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Qt Manual Tool implementation module."""
+"""Thumbnail renderer for the Qt Manual Tool face grid."""
 
 from __future__ import annotations
 

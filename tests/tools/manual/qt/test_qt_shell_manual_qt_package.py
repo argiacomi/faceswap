@@ -12,7 +12,7 @@ from tools.manual import qt
 def test_qt_manual_tool_public_exports_live_under_tools_manual_qt() -> None:
     """Public Manual Tool Qt classes are exported from the Manual Tool package."""
     assert qt.ManualToolWindow.__module__ == "tools.manual.qt.window"
-    assert qt.ManualFrameView.__module__ == "tools.manual.qt.frame_view"
+    assert qt.ManualFrameView.__module__ == "tools.manual.qt.frame_viewer.frame_view"
     assert qt.ManualFrameOverlay.__module__ == "tools.manual.qt.overlays"
     assert qt.CrossFrameFaceGridPanel.__module__ == "tools.manual.qt.face_grid"
     assert qt.FaceGridThumbnailRenderer.__module__ == "tools.manual.qt.face_grid_renderer"
@@ -24,14 +24,15 @@ def test_qt_manual_tool_focused_modules_import_cleanly() -> None:
     """Focused Qt Manual Tool modules import without relying on the old lib path."""
     module_names = (
         "tools.manual.qt.actions",
-        "tools.manual.qt.editors.bounding_box",
-        "tools.manual.qt.editors.extract_box",
-        "tools.manual.qt.editors.landmarks",
-        "tools.manual.qt.editors.mask",
         "tools.manual.qt.face_grid",
         "tools.manual.qt.face_grid_renderer",
         "tools.manual.qt.filter_controls",
-        "tools.manual.qt.frame_view",
+        "tools.manual.qt.frame_viewer.editor.bounding_box",
+        "tools.manual.qt.frame_viewer.editor.drag",
+        "tools.manual.qt.frame_viewer.editor.extract_box",
+        "tools.manual.qt.frame_viewer.editor.landmarks",
+        "tools.manual.qt.frame_viewer.editor.mask",
+        "tools.manual.qt.frame_viewer.frame_view",
         "tools.manual.qt.overlays",
         "tools.manual.qt.thumbnails",
         "tools.manual.qt.transport",
@@ -41,6 +42,28 @@ def test_qt_manual_tool_focused_modules_import_cleanly() -> None:
     )
     for module_name in module_names:
         assert importlib.import_module(module_name).__name__ == module_name
+
+
+def test_qt_manual_tool_editor_logic_stays_in_editor_modules() -> None:
+    """Frame/window modules expose seams while editor modules own editor behavior."""
+    from tools.manual.qt.frame_viewer import frame_view
+    from tools.manual.qt.frame_viewer.editor import (
+        bounding_box,
+        drag,
+        extract_box,
+        landmarks,
+        mask,
+    )
+
+    assert "_begin_edit_drag" not in frame_view.ManualFrameView.__dict__
+    assert "_begin_edit_drag" in bounding_box.BoundingBoxFrameEditorMixin.__dict__
+    assert "_resize_bbox" in bounding_box.BoundingBoxFrameEditorMixin.__dict__
+    assert "_begin_extract_drag" in extract_box.ExtractBoxFrameEditorMixin.__dict__
+    assert "_begin_landmark_drag" in landmarks.LandmarkFrameEditorMixin.__dict__
+    assert "_begin_mask_drag" in mask.MaskFrameEditorMixin.__dict__
+    assert "_update_edit_drag" in drag.FrameEditDragMixin.__dict__
+    assert "_on_face_move_requested" not in qt.ManualToolWindow.__dict__
+    assert "_on_face_move_requested" in bounding_box.BoundingBoxWindowEditorMixin.__dict__
 
 
 def test_legacy_lib_qt_shell_manual_tool_module_is_removed() -> None:

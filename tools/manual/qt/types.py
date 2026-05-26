@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Qt Manual Tool implementation module."""
+"""Shared dataclasses and type aliases for the Qt Manual Tool."""
 
 from __future__ import annotations
 

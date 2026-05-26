@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Qt Manual Tool implementation module."""
+"""Background worker tasks for the Qt Manual Tool."""
 
 from __future__ import annotations
 
