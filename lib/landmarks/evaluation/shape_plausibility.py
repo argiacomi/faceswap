@@ -58,10 +58,46 @@ def _canonical_68() -> np.ndarray:
     points[27:31, 1] = [0.35, 0.44, 0.52, 0.61]
     points[31:36, 0] = np.linspace(0.41, 0.61, 5)
     points[31:36, 1] = [0.66, 0.68, 0.69, 0.68, 0.66]
-    points[36:42] = [(0.25, 0.40), (0.31, 0.36), (0.38, 0.36), (0.44, 0.41), (0.38, 0.44), (0.31, 0.44)]
-    points[42:48] = [(0.64, 0.42), (0.71, 0.38), (0.78, 0.38), (0.84, 0.43), (0.78, 0.46), (0.71, 0.46)]
-    points[48:60] = [(0.32, 0.78), (0.40, 0.73), (0.48, 0.72), (0.54, 0.74), (0.60, 0.72), (0.69, 0.74), (0.76, 0.79), (0.69, 0.85), (0.60, 0.88), (0.52, 0.89), (0.44, 0.88), (0.38, 0.84)]
-    points[60:68] = [(0.38, 0.79), (0.48, 0.77), (0.54, 0.78), (0.60, 0.77), (0.70, 0.80), (0.60, 0.81), (0.53, 0.82), (0.47, 0.81)]
+    points[36:42] = [
+        (0.25, 0.40),
+        (0.31, 0.36),
+        (0.38, 0.36),
+        (0.44, 0.41),
+        (0.38, 0.44),
+        (0.31, 0.44),
+    ]
+    points[42:48] = [
+        (0.64, 0.42),
+        (0.71, 0.38),
+        (0.78, 0.38),
+        (0.84, 0.43),
+        (0.78, 0.46),
+        (0.71, 0.46),
+    ]
+    points[48:60] = [
+        (0.32, 0.78),
+        (0.40, 0.73),
+        (0.48, 0.72),
+        (0.54, 0.74),
+        (0.60, 0.72),
+        (0.69, 0.74),
+        (0.76, 0.79),
+        (0.69, 0.85),
+        (0.60, 0.88),
+        (0.52, 0.89),
+        (0.44, 0.88),
+        (0.38, 0.84),
+    ]
+    points[60:68] = [
+        (0.38, 0.79),
+        (0.48, 0.77),
+        (0.54, 0.78),
+        (0.60, 0.77),
+        (0.70, 0.80),
+        (0.60, 0.81),
+        (0.53, 0.82),
+        (0.47, 0.81),
+    ]
     return points
 
 
@@ -154,7 +190,9 @@ def _similarity_fit_error(points: np.ndarray) -> float:
         u_matrix, _singular, vt_matrix = np.linalg.svd(source_unit.T @ target_unit)
     except np.linalg.LinAlgError:
         return float("inf")
-    return float(np.mean(np.linalg.norm(source_unit @ (u_matrix @ vt_matrix) - target_unit, axis=1)))
+    return float(
+        np.mean(np.linalg.norm(source_unit @ (u_matrix @ vt_matrix) - target_unit, axis=1))
+    )
 
 
 def _derolled(points: np.ndarray) -> tuple[np.ndarray, float] | None:
@@ -175,17 +213,23 @@ def _derolled(points: np.ndarray) -> tuple[np.ndarray, float] | None:
 def evaluate_shape_plausibility(landmarks: T.Any) -> ShapePlausibility:
     points = np.asarray(landmarks, dtype="float64")
     if points.ndim != 2 or points.shape[0] < 68 or points.shape[1] < 2:
-        return ShapePlausibility(1.0, True, ("invalid_landmark_shape",), {"topology_violation_count": 1.0})
+        return ShapePlausibility(
+            1.0, True, ("invalid_landmark_shape",), {"topology_violation_count": 1.0}
+        )
     points = points[:68, :2]
     if not np.all(np.isfinite(points)):
-        return ShapePlausibility(1.0, True, ("non_finite_landmarks",), {"topology_violation_count": 1.0})
+        return ShapePlausibility(
+            1.0, True, ("non_finite_landmarks",), {"topology_violation_count": 1.0}
+        )
 
     width = float(np.max(points[:, 0]) - np.min(points[:, 0]))
     height = float(np.max(points[:, 1]) - np.min(points[:, 1]))
     bbox_diag = math.hypot(width, height)
     derolled = _derolled(points)
     if bbox_diag <= 1e-6 or derolled is None:
-        return ShapePlausibility(1.0, True, ("degenerate_face_scale",), {"topology_violation_count": 1.0})
+        return ShapePlausibility(
+            1.0, True, ("degenerate_face_scale",), {"topology_violation_count": 1.0}
+        )
 
     derolled_points, interocular = derolled
     scale = max(interocular, bbox_diag * 0.35, 1e-6)
@@ -221,7 +265,10 @@ def evaluate_shape_plausibility(landmarks: T.Any) -> ShapePlausibility:
 
     mean_shape_fit_error = _similarity_fit_error(points)
     topology_violation_count = (
-        long_edge_count + intersection_count + int(inner_outside_fraction > 0.25) + local_order_violations
+        long_edge_count
+        + intersection_count
+        + int(inner_outside_fraction > 0.25)
+        + local_order_violations
     )
 
     reasons: list[str] = []
@@ -245,7 +292,8 @@ def evaluate_shape_plausibility(landmarks: T.Any) -> ShapePlausibility:
         + min(intersection_count / 2.0, 2.0) * 0.25
         + min(inner_outside_fraction / 0.5, 2.0) * 0.15
         + min(local_order_violations / 3.0, 2.0) * 0.10
-        + min((mean_shape_fit_error if math.isfinite(mean_shape_fit_error) else 1.0) / 0.13, 2.0) * 0.15
+        + min((mean_shape_fit_error if math.isfinite(mean_shape_fit_error) else 1.0) / 0.13, 2.0)
+        * 0.15
     )
     severe = bool(
         max_edge_length_ratio > 1.35

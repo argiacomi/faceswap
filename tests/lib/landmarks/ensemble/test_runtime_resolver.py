@@ -183,6 +183,8 @@ def test_runtime_resolver_metadata_contains_requested_debug_fields(monkeypatch) 
         "runtime_bucket_features",
         "candidate_priority",
         "vetoed",
+        "normal_vetoed",
+        "fatal_shape_vetoed",
         "veto_reasons",
         "roll_estimate",
         "yaw_estimate",
@@ -220,6 +222,8 @@ def test_runtime_resolver_shape_plausibility_vetoes_scrambled_candidate(monkeypa
 
     assert result.selected_candidate != "spiga"
     assert "spiga" in result.metadata["geometry_vetoed"]
+    assert "spiga" in result.metadata["fatal_shape_vetoed"]
+    assert "spiga" not in result.metadata["normal_vetoed"]
     assert "shape_edge_length_extreme" in result.metadata["veto_reasons"]["spiga"]
     assert result.metadata["shape_veto_reasons"]["spiga"] == ("edge_length_extreme",)
     assert result.metadata["max_edge_length_ratio"]["spiga"] > 1.0
@@ -450,6 +454,14 @@ def test_all_candidates_vetoed_uses_deterministic_hard_case_fallback(
     assert result.metadata["scorer_safe_fallback_used"] is False
     assert result.metadata["replacement_candidate"] == "static_weighted_downweight"
     assert result.metadata["all_candidates_vetoed_count"] == 8
+    assert set(result.metadata["normal_vetoed"]) >= {
+        "hrnet",
+        "spiga",
+        "orformer",
+        "plain_average",
+        "static_weighted_downweight",
+    }
+    assert result.metadata["fatal_shape_vetoed"] == []
     assert set(result.metadata["vetoed_candidates"]) >= {
         "hrnet",
         "spiga",
@@ -485,6 +497,58 @@ def test_all_candidates_vetoed_fallback_skips_nonfinite_candidates() -> None:
     )
 
     assert selected == "static_weighted_hard_drop"
+
+
+def test_all_candidates_vetoed_fallback_prefers_nonfatal_shape_candidates() -> None:
+    """All-vetoed fallback skips fatal shape failures before final emergency pass."""
+    finite = _face()
+
+    selected = runtime_resolver._all_candidates_vetoed_fallback(  # noqa: SLF001
+        [
+            CandidateRecord(
+                name="static_weighted_downweight",
+                landmarks=finite,
+                is_fusion=True,
+                contributing_models=("hrnet", "spiga"),
+            ),
+            CandidateRecord(
+                name="static_weighted_hard_drop",
+                landmarks=finite,
+                is_fusion=True,
+                contributing_models=("hrnet", "spiga"),
+            ),
+        ],
+        RuntimeResolverConfig(),
+        fatal_shape_vetoed={"static_weighted_downweight"},
+    )
+
+    assert selected == "static_weighted_hard_drop"
+
+
+def test_all_candidates_vetoed_fallback_uses_existing_rules_when_all_fatal() -> None:
+    """If all finite candidates are fatal shape failures, preserve emergency ordering."""
+    finite = _face()
+
+    selected = runtime_resolver._all_candidates_vetoed_fallback(  # noqa: SLF001
+        [
+            CandidateRecord(
+                name="static_weighted_downweight",
+                landmarks=finite,
+                is_fusion=True,
+                contributing_models=("hrnet", "spiga"),
+            ),
+            CandidateRecord(
+                name="static_weighted_hard_drop",
+                landmarks=finite,
+                is_fusion=True,
+                contributing_models=("hrnet", "spiga"),
+            ),
+        ],
+        RuntimeResolverConfig(),
+        fatal_shape_vetoed={"static_weighted_downweight", "static_weighted_hard_drop"},
+    )
+
+    assert selected == "static_weighted_downweight"
 
 
 def test_runtime_resolver_rejects_normalized_landmarks_with_frame_bbox() -> None:

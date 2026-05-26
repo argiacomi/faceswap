@@ -802,9 +802,17 @@ def _finite_candidate_names(candidates: T.Sequence[CandidateRecord]) -> set[str]
 def _all_candidates_vetoed_fallback(
     candidates: T.Sequence[CandidateRecord],
     config: RuntimeResolverConfig,
+    *,
+    fatal_shape_vetoed: T.AbstractSet[str] | None = None,
 ) -> str:
-    """Return deterministic safe fallback when every candidate was vetoed."""
-    available = _finite_candidate_names(candidates)
+    """Return deterministic safe fallback when every candidate was vetoed.
+
+    Fatal shape failures are excluded on the first pass. If every finite candidate
+    is a fatal shape failure, keep the historical finite-candidate ordering as the
+    last-resort emergency behavior.
+    """
+    finite_available = _finite_candidate_names(candidates)
+    fatal_names = set(fatal_shape_vetoed or ())
     fallback_order = (
         config.hard_case_strategy,
         config.secondary_hard_case_strategy,
@@ -817,16 +825,25 @@ def _all_candidates_vetoed_fallback(
         "spiga",
         "orformer",
     )
-    for name in dict.fromkeys(fallback_order):
-        if name in available:
+    for pass_name, available in (
+        ("nonfatal_shape", finite_available - fatal_names),
+        ("finite", finite_available),
+    ):
+        for name in dict.fromkeys(fallback_order):
+            if name not in available:
+                continue
             logger.debug(
-                "[RuntimeResolver] all candidates vetoed; emergency fallback selected %s",
+                "[RuntimeResolver] all candidates vetoed; emergency fallback selected %s pass=%s",
                 name,
+                pass_name,
             )
             _trace(
-                "[RuntimeResolver] all-veto fallback order=%s finite_candidates=%s",
+                "[RuntimeResolver] all-veto fallback order=%s finite_candidates=%s "
+                "fatal_shape_vetoed=%s pass=%s",
                 fallback_order,
-                sorted(available),
+                sorted(finite_available),
+                sorted(fatal_names),
+                pass_name,
             )
             return name
     raise RuntimeResolverError("all runtime candidates were vetoed and none had finite landmarks")
@@ -1688,13 +1705,18 @@ def resolve_runtime(
         consensus_roll=roll_estimate,
     )
     geometry_vetoed = {name for name, metric in metrics.items() if metric.geometry_veto_reasons}
+    fatal_shape_vetoed = {name for name, metric in metrics.items() if metric.shape_veto_reasons}
     vetoed = roll_vetoed | geometry_vetoed
+    normal_vetoed = vetoed - fatal_shape_vetoed
     survivors = available - vetoed
     logger.debug(
-        "[RuntimeResolver] veto summary bucket=%s survivors=%s roll_vetoed=%s geometry_vetoed=%s",
+        "[RuntimeResolver] veto summary bucket=%s survivors=%s roll_vetoed=%s "
+        "normal_vetoed=%s fatal_shape_vetoed=%s geometry_vetoed=%s",
         bucket,
         sorted(survivors),
         sorted(roll_vetoed & available),
+        sorted(normal_vetoed & available),
+        sorted(fatal_shape_vetoed & available),
         {
             name: list(metrics[name].geometry_veto_reasons)
             for name in sorted(geometry_vetoed & available)
@@ -1791,7 +1813,11 @@ def resolve_runtime(
         hard_slice_fallback_used = False
         safe_fallback_used = False
         if not survivors:
-            selected = _all_candidates_vetoed_fallback(candidates, config)
+            selected = _all_candidates_vetoed_fallback(
+                candidates,
+                config,
+                fatal_shape_vetoed=fatal_shape_vetoed,
+            )
             rejected_candidate = ""
         else:
             selectable = survivors
@@ -1895,7 +1921,11 @@ def resolve_runtime(
         selected = (
             _available_by_priority(priority, survivors)
             if survivors
-            else _all_candidates_vetoed_fallback(candidates, config)
+            else _all_candidates_vetoed_fallback(
+                candidates,
+                config,
+                fatal_shape_vetoed=fatal_shape_vetoed,
+            )
         )
         by_name = {candidate.name: candidate for candidate in candidates}
         selectable = survivors if survivors else _finite_candidate_names(candidates)
@@ -1937,6 +1967,8 @@ def resolve_runtime(
         **runtime_bucket.features,
         "candidate_priority": priority,
         "vetoed": sorted(vetoed & available),
+        "normal_vetoed": sorted(normal_vetoed & available),
+        "fatal_shape_vetoed": sorted(fatal_shape_vetoed & available),
         "veto_reasons": {
             name: list(metric.geometry_veto_reasons)
             for name, metric in metrics.items()
