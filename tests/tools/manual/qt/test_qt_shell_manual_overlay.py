@@ -63,7 +63,7 @@ def test_manual_frame_overlay_set_active_round_trips() -> None:
 
 
 def test_manual_frame_overlay_annotation_visibility_matrix() -> None:
-    """Overlay visibility follows editor mode plus annotation toggles."""
+    """Overlay visibility follows legacy editor mode defaults."""
     model = ManualEditableAlignments()
     state = {"editor_mode": "View", "annotation_mode": "None"}
     overlay = ManualFrameOverlay(model, frame_index_provider=lambda: 0)
@@ -73,35 +73,52 @@ def test_manual_frame_overlay_annotation_visibility_matrix() -> None:
     )
 
     assert overlay.annotation_visibility() == {
-        "bbox": False,
+        "bbox": True,
+        "extract": True,
         "handles": False,
-        "landmarks": False,
+        "landmarks": True,
         "mask": False,
+        "mesh": True,
     }
 
     state["editor_mode"] = "BoundingBox"
     assert overlay.annotation_visibility() == {
         "bbox": True,
+        "extract": False,
         "handles": True,
         "landmarks": False,
         "mask": False,
+        "mesh": True,
+    }
+
+    state["editor_mode"] = "ExtractBox"
+    assert overlay.annotation_visibility() == {
+        "bbox": False,
+        "extract": True,
+        "handles": True,
+        "landmarks": False,
+        "mask": False,
+        "mesh": True,
     }
 
     state["editor_mode"] = "Landmarks"
     assert overlay.annotation_visibility() == {
-        "bbox": True,
+        "bbox": False,
+        "extract": True,
         "handles": False,
         "landmarks": True,
         "mask": False,
+        "mesh": True,
     }
 
-    state["editor_mode"] = "View"
-    state["annotation_mode"] = "Mask"
+    state["editor_mode"] = "Mask"
     assert overlay.annotation_visibility() == {
-        "bbox": True,
+        "bbox": False,
+        "extract": False,
         "handles": False,
         "landmarks": False,
         "mask": True,
+        "mesh": False,
     }
 
 
@@ -201,12 +218,10 @@ def test_frame_click_selects_face_under_pointer(qtbot, tmp_path: Path) -> None: 
     session = _session_with_frames(tmp_path)
     window = ManualToolWindow(session)
     qtbot.addWidget(window)
-    # Two bounding boxes; clicking inside the second selects face_index 1.
     window.editable_alignments.add_face(0, (0.0, 0.0, 30.0, 30.0))
     window.editable_alignments.add_face(0, (40.0, 0.0, 20.0, 20.0))
 
     window._on_frame_clicked(QPointF(45.0, 10.0))  # noqa: SLF001
-    # Editor state should reflect the hit-tested face index from the model.
     assert window.editor_state.face_index == 1
 
 
@@ -262,18 +277,17 @@ def test_revert_only_reverts_current_frame_edits(  # type:ignore[no-untyped-def]
     session = _session_with_frames(tmp_path, count=3)
     window = ManualToolWindow(session)
     qtbot.addWidget(window)
-    window.add_face_at_center()  # frame 0
-    window._next_frame()  # noqa: SLF001 - move to frame 1.
-    window.add_face_at_center()  # frame 1
-    window._next_frame()  # noqa: SLF001 - back to frame 2 via wrap? confirm.
+    window.add_face_at_center()
+    window._next_frame()  # noqa: SLF001
+    window.add_face_at_center()
+    window._next_frame()  # noqa: SLF001
 
-    # Move back to frame 1 and revert only it.
-    window._previous_frame()  # noqa: SLF001 - row 1
+    window._previous_frame()  # noqa: SLF001
 
     window.revert_current_frame()
     assert window.editable_alignments.face_count(0) == 1, "frame 0 must be preserved"
     assert window.editable_alignments.face_count(1) == 0
-    assert window.editor_state.unsaved is True  # frame 0 still dirty
+    assert window.editor_state.unsaved is True
 
 
 def test_delete_last_face_clears_active_face(  # type:ignore[no-untyped-def]
@@ -305,7 +319,6 @@ def test_face_panel_reflects_editable_model_pre_save(  # type:ignore[no-untyped-
     window.editable_alignments.add_face(0, (10.0, 10.0, 30.0, 30.0))
     window.editable_alignments.add_face(0, (50.0, 10.0, 20.0, 20.0))
 
-    # No persistence yet, but the panel should already show 2 entries.
     assert len(window.face_panel.faces) == 2
     assert [face.face_index for face in window.face_panel.faces] == [0, 1]
 
@@ -325,18 +338,16 @@ def test_overlay_active_face_tracks_editor_state(qtbot, tmp_path: Path) -> None:
 
 def test_manual_frame_overlay_handle_at_hits_eight_handles() -> None:
     """All eight resize handles are addressable around a bbox."""
-    rect = QRectF(100.0, 50.0, 200.0, 100.0)  # x,y,w,h
-    # Anchor points (corner + midpoints) should all hit.
+    rect = QRectF(100.0, 50.0, 200.0, 100.0)
     hits = {
-        ManualFrameOverlay.handle_at(rect, QPointF(100.0, 50.0)),  # nw
-        ManualFrameOverlay.handle_at(rect, QPointF(200.0, 50.0)),  # n
-        ManualFrameOverlay.handle_at(rect, QPointF(300.0, 50.0)),  # ne
-        ManualFrameOverlay.handle_at(rect, QPointF(300.0, 100.0)),  # e
-        ManualFrameOverlay.handle_at(rect, QPointF(300.0, 150.0)),  # se
-        ManualFrameOverlay.handle_at(rect, QPointF(200.0, 150.0)),  # s
-        ManualFrameOverlay.handle_at(rect, QPointF(100.0, 150.0)),  # sw
-        ManualFrameOverlay.handle_at(rect, QPointF(100.0, 100.0)),  # w
+        ManualFrameOverlay.handle_at(rect, QPointF(100.0, 50.0)),
+        ManualFrameOverlay.handle_at(rect, QPointF(200.0, 50.0)),
+        ManualFrameOverlay.handle_at(rect, QPointF(300.0, 50.0)),
+        ManualFrameOverlay.handle_at(rect, QPointF(300.0, 100.0)),
+        ManualFrameOverlay.handle_at(rect, QPointF(300.0, 150.0)),
+        ManualFrameOverlay.handle_at(rect, QPointF(200.0, 150.0)),
+        ManualFrameOverlay.handle_at(rect, QPointF(100.0, 150.0)),
+        ManualFrameOverlay.handle_at(rect, QPointF(100.0, 100.0)),
     }
     assert hits == {"nw", "n", "ne", "e", "se", "s", "sw", "w"}
-    # A point well inside the bbox but away from any handle returns None.
     assert ManualFrameOverlay.handle_at(rect, QPointF(200.0, 100.0)) is None
