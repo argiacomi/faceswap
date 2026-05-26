@@ -90,8 +90,9 @@ class Ensemble(FacePlugin):
             "source_models": self._source_names,
             "weights": weights.tolist(),
         }
+        binary = (combined >= 0.5).astype("float32")
         return MaskPluginOutput(
-            combined.astype("float32", copy=False),
+            binary,
             source_id=self.storage_name,
             per_class_probs=_binary_probs(combined),
             metadata=metadata,

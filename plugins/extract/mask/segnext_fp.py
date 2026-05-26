@@ -241,6 +241,7 @@ def _resolve_checkpoint_path(checkpoint: _SegNeXtCheckpoint) -> str:
         GetModelFromUrl(checkpoint.filename, checkpoint.url, checkpoint.sha256).model_path,
     )
 
+
 def _adapt_checkpoint_classes(
     state_dict: T.Mapping[str, torch.Tensor],
     expected_num_classes: int,

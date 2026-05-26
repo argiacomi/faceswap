@@ -252,7 +252,7 @@ def test_e4s_checkpoint_path_uses_shared_google_drive_helper(
         destination: Path,
         *,
         expected_sha256: str | None = None,
-        quiet: bool = False,
+        quiet: bool = True,
     ) -> Path:
         captured["file_id"] = file_id
         captured["destination"] = destination
@@ -272,7 +272,7 @@ def test_e4s_checkpoint_path_uses_shared_google_drive_helper(
         "file_id": checkpoint.google_drive_file_id,
         "destination": expected_path,
         "expected_sha256": checkpoint.sha256,
-        "quiet": False,
+        "quiet": True,
     }
 
 
