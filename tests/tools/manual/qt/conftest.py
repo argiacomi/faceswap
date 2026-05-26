@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Shared pytest fixtures for Qt GUI tests."""
+"""Shared pytest fixtures for Qt Manual Tool tests."""
 
 from __future__ import annotations
 
@@ -10,14 +10,8 @@ from PySide6.QtWidgets import QMessageBox
 
 
 @pytest.fixture(scope="session", autouse=True)
-def _suppress_gui_test_info_logs() -> None:
-    """Silence routine GUI-test INFO logs while preserving warnings/errors.
-
-    Manual Tool GUI tests create and open fixture alignments files as setup for
-    startup/persistence scenarios.  Those fixture writes should not leak
-    ``Reading/Writing alignments`` progress lines into the pytest progress
-    output, but real warnings and errors should still surface.
-    """
+def _suppress_manual_qt_info_logs() -> None:
+    """Silence routine Manual Tool INFO logs while preserving warnings/errors."""
     logger_names = (
         "tools.manual.qt",
         "lib.align.alignments",

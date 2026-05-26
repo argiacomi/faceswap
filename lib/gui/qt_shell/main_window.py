@@ -34,7 +34,6 @@ from lib.gui.qt_shell.console_router import QtConsoleRouter
 from lib.gui.qt_shell.display_controller import DisplayController
 from lib.gui.qt_shell.graph_panel import GraphPanel
 from lib.gui.qt_shell.job_runner import JobRunner
-from lib.gui.qt_shell.manual_tool import ManualToolWindow
 from lib.gui.qt_shell.preview_panel import PreviewPanel
 from lib.gui.qt_shell.settings_dialog import SettingsDialog
 from lib.gui.qt_shell.theme import QtTheme
@@ -52,6 +51,7 @@ from lib.gui.services.project_store import ProjectStore
 from lib.gui.services.recent_files_store import RecentFilesStore
 from lib.serializer import get_serializer
 from lib.utils import PROJECT_ROOT
+from tools.manual.qt import ManualToolWindow
 
 
 class FreeSplitter(QSplitter):

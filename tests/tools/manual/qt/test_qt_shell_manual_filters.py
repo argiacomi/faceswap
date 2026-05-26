@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 from PySide6.QtGui import QColor, QPixmap
 
-from lib.gui.qt_shell.manual_tool import ManualToolWindow
+from tools.manual.qt import ManualToolWindow
 from tools.manual.session import ManualSession
 
 

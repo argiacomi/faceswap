@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 from PySide6.QtGui import QColor, QPixmap
 
-from lib.gui.qt_shell.manual_tool import (
+from tools.manual.qt import (
     ManualStartupWorker,
     ManualToolWindow,
     _ManualStartupTask,
@@ -213,7 +213,7 @@ def test_manual_tool_window_shows_failure_dialog_on_startup_error(  # type:ignor
     """A startup failure ends in an error status, log entry and console line."""
     session = _session_with_frames(tmp_path)
     captured: list[str] = []
-    caplog.set_level(logging.ERROR, logger="lib.gui.qt_shell.manual_tool")
+    caplog.set_level(logging.ERROR, logger="tools.manual.qt")
     window = ManualToolWindow(session, console_logger=captured.append)
     qtbot.addWidget(window)
     # Force the worker into the failure path. Triggering the slot directly is
@@ -297,7 +297,7 @@ def test_manual_startup_worker_stop_quits_thread(qtbot, tmp_path: Path) -> None:
 
 def test_manual_startup_progress_bar_reports_determinate_percent(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
     """Each startup stage advances the progress bar to its mapped percent."""
-    from lib.gui.qt_shell.manual_tool import ManualToolWindow, _ManualStartupTask
+    from tools.manual.qt import ManualToolWindow, _ManualStartupTask
 
     session = _session_with_frames(tmp_path)
     window = ManualToolWindow(session)
@@ -319,7 +319,7 @@ def test_manual_startup_progress_bar_reports_determinate_percent(qtbot, tmp_path
 
 def test_manual_startup_task_stage_percent_is_monotonic() -> None:
     """Stage percentages must monotonically advance toward 100."""
-    from lib.gui.qt_shell.manual_tool import _ManualStartupTask
+    from tools.manual.qt import _ManualStartupTask
 
     percentages = [
         _ManualStartupTask.STAGE_PERCENT["open"],

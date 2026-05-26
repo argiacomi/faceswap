@@ -10,7 +10,7 @@ from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
 from PySide6.QtGui import QColor, QMouseEvent, QPainter, QPixmap, QWheelEvent
 from PySide6.QtTest import QTest
 
-from lib.gui.qt_shell.manual_tool import FrameViewport, ManualFrameView, ManualToolWindow
+from tools.manual.qt import FrameViewport, ManualFrameView, ManualToolWindow
 from tools.manual.session import ManualFrame, ManualSession
 
 

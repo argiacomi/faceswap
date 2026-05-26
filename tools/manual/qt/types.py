@@ -1,0 +1,155 @@
+#!/usr/bin/env python3
+"""Qt Manual Tool implementation module."""
+
+from __future__ import annotations
+
+# ruff: noqa: F401
+import contextlib
+import json
+import logging
+import os
+import subprocess
+import typing as T
+from collections.abc import Sequence
+from dataclasses import dataclass
+
+from PySide6.QtCore import (
+    QByteArray,
+    QObject,
+    QPoint,
+    QPointF,
+    QRectF,
+    QSettings,
+    QSize,
+    Qt,
+    QThread,
+    QTimer,
+    Signal,
+)
+from PySide6.QtGui import (
+    QAction,
+    QBrush,
+    QCloseEvent,
+    QColor,
+    QIcon,
+    QImage,
+    QIntValidator,
+    QKeyEvent,
+    QKeySequence,
+    QMouseEvent,
+    QPainter,
+    QPaintEvent,
+    QPen,
+    QPixmap,
+    QPolygonF,
+    QResizeEvent,
+    QWheelEvent,
+)
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QButtonGroup,
+    QCheckBox,
+    QComboBox,
+    QFileDialog,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QListView,
+    QListWidget,
+    QListWidgetItem,
+    QMainWindow,
+    QMessageBox,
+    QProgressBar,
+    QRadioButton,
+    QSizePolicy,
+    QSlider,
+    QSplitter,
+    QStatusBar,
+    QToolBar,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
+)
+
+from lib.gui.qt_shell.theme import QtTheme, icon_for_action
+from lib.gui.services.command_builder import CommandBuilder
+from tools.manual.session import (
+    FaceThumbnail,
+    ManualAlignmentsHandle,
+    ManualEditableAlignments,
+    ManualEditorState,
+    ManualFrame,
+    ManualSession,
+    ManualVideoMetadata,
+)
+
+logger = logging.getLogger(__name__)
+
+OverlayPainter = T.Callable[[QPainter, "FrameViewport"], None]
+
+_FACE_GRID_SIZES: dict[str, int] = {
+    "Tiny": 48,
+    "Small": 64,
+    "Medium": 96,
+    "Large": 128,
+    "Extra Large": 160,
+}
+
+_FACE_GRID_ENTRY_ROLE = Qt.UserRole
+_FACE_GRID_ACTIVE_FRAME_ROLE = Qt.UserRole + 1
+_FACE_GRID_ACTIVE_FACE_ROLE = Qt.UserRole + 2
+_FACE_GRID_HOVER_ROLE = Qt.UserRole + 3
+
+
+@dataclass(frozen=True)
+class FaceGridEntry:
+    """One visible face in the filtered-session cross-frame grid."""
+
+    frame_index: int
+    frame_name: str
+    face_index: int
+    thumbnail: FaceThumbnail | None
+    bbox: tuple[float, float, float, float]
+    landmarks: tuple[tuple[float, float], ...] = ()
+
+
+@dataclass(frozen=True)
+class FaceGridRenderRequest:
+    """Testable record of one thumbnail render path and overlay state."""
+
+    frame_index: int
+    face_index: int
+    icon_size: int
+    show_mesh: bool
+    show_mask: bool
+    mask_type: str
+    mask_opacity: int
+
+
+class FrameViewport(T.NamedTuple):
+    """Snapshot of a frame view geometry passed to overlay painters."""
+
+    source_size: tuple[int, int]
+    """(width, height) of the source frame in pixels."""
+    target_rect: QRectF
+    """Destination rectangle in widget coordinates where the frame is drawn."""
+    zoom: float
+    """Effective zoom factor relative to the fit-to-widget baseline."""
+
+    def source_to_widget(self, sx: float, sy: float) -> QPointF:
+        """Translate a source-image point into widget-coordinate space."""
+        src_w, src_h = self.source_size
+        if src_w <= 0 or src_h <= 0:
+            return QPointF(self.target_rect.x(), self.target_rect.y())
+        rx = sx / src_w
+        ry = sy / src_h
+        return QPointF(
+            self.target_rect.x() + rx * self.target_rect.width(),
+            self.target_rect.y() + ry * self.target_rect.height(),
+        )
+
+    def source_rect_to_widget(self, x: float, y: float, w: float, h: float) -> QRectF:
+        """Translate a source-image rect into widget-coordinate space."""
+        top_left = self.source_to_widget(x, y)
+        bottom_right = self.source_to_widget(x + w, y + h)
+        return QRectF(top_left, bottom_right)

@@ -18,12 +18,12 @@ import pytest
 from PySide6.QtCore import QEvent, QPointF, Qt
 from PySide6.QtGui import QColor, QMouseEvent, QPixmap
 
-from lib.gui.qt_shell.manual_tool import (
+from tools.manual.aligner_service import ManualAlignerService
+from tools.manual.qt import (
     FaceThumbnailPanel,
     ManualFrameView,
     ManualToolWindow,
 )
-from tools.manual.aligner_service import ManualAlignerService
 from tools.manual.session import FaceThumbnail, ManualSession
 
 

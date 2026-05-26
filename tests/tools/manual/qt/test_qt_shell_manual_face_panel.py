@@ -6,7 +6,7 @@ from __future__ import annotations
 from PySide6.QtCore import QBuffer, QIODevice, Qt
 from PySide6.QtGui import QColor, QImage, QKeyEvent
 
-from lib.gui.qt_shell.manual_tool import FaceThumbnailPanel, _decode_jpeg_to_qimage
+from tools.manual.qt import FaceThumbnailPanel, _decode_jpeg_to_qimage
 from tools.manual.session import FaceThumbnail
 
 
@@ -187,7 +187,7 @@ def test_manual_tool_window_updates_editor_face_index_on_panel_selection(  # typ
     from PySide6.QtGui import QColor as _QColor
     from PySide6.QtGui import QPixmap as _QPixmap
 
-    from lib.gui.qt_shell.manual_tool import ManualToolWindow
+    from tools.manual.qt import ManualToolWindow
     from tools.manual.session import ManualSession
 
     folder = Path(tmp_path)

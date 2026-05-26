@@ -13,7 +13,7 @@ import pytest
 from PySide6.QtGui import QCloseEvent, QColor, QPixmap
 from PySide6.QtWidgets import QMessageBox
 
-from lib.gui.qt_shell.manual_tool import ManualToolWindow
+from tools.manual.qt import ManualToolWindow
 from tools.manual.session import ManualSession
 
 

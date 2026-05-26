@@ -18,7 +18,7 @@ from pathlib import Path
 from PySide6.QtCore import QEvent, QPointF, Qt
 from PySide6.QtGui import QColor, QMouseEvent, QPixmap
 
-from lib.gui.qt_shell.manual_tool import (
+from tools.manual.qt import (
     ManualFrameView,
     ManualToolWindow,
 )

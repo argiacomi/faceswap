@@ -75,8 +75,8 @@ def test_manual_window_from_command_values_raises_for_missing_frames(
     tmp_path: Path,
 ) -> None:
     """The native window builder surfaces session validation errors as ValueError."""
-    from lib.gui.qt_shell.manual_tool import ManualToolWindow
     from lib.gui.services.command_builder import CommandBuilder
+    from tools.manual.qt import ManualToolWindow
 
     builder = CommandBuilder(base_path=str(tmp_path))
     with pytest.raises(ValueError, match="does not exist"):
@@ -91,8 +91,8 @@ def test_manual_window_from_command_values_succeeds_for_image_folder(
     tmp_path: Path,
 ) -> None:
     """A valid image folder produces a native window with the shared session."""
-    from lib.gui.qt_shell.manual_tool import ManualToolWindow
     from lib.gui.services.command_builder import CommandBuilder
+    from tools.manual.qt import ManualToolWindow
 
     (tmp_path / "frame.png").write_bytes(b"png")
     builder = CommandBuilder(base_path=str(tmp_path))

@@ -8,7 +8,7 @@ from pathlib import Path
 from PySide6.QtCore import QPointF, QRectF
 from PySide6.QtGui import QColor, QPixmap
 
-from lib.gui.qt_shell.manual_tool import (
+from tools.manual.qt import (
     FrameViewport,
     ManualFrameOverlay,
     ManualToolWindow,

@@ -16,7 +16,7 @@ import pytest
 from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtWidgets import QFileDialog
 
-from lib.gui.qt_shell.manual_tool import ManualToolWindow
+from tools.manual.qt import ManualToolWindow
 from tools.manual.session import ManualSession
 
 
@@ -192,7 +192,7 @@ def test_cancel_button_appears_while_extract_runs(
         enabled_during_run.append(bool(button is not None and button.isEnabled()))
         real_start(self)  # noqa: F821 - bound below
 
-    from lib.gui.qt_shell import manual_tool as mt
+    from tools.manual import qt as mt
 
     real_start = mt.ManualExtractFacesWorker.start
     monkeypatch.setattr(
@@ -243,7 +243,7 @@ def test_cancel_extract_forwards_to_worker_and_disables_button(
     qtbot.waitUntil(lambda: window._save_worker is None, timeout=5000)
 
     cancel_calls: list[int] = []
-    from lib.gui.qt_shell import manual_tool as mt
+    from tools.manual import qt as mt
 
     real_cancel = mt.ManualExtractFacesWorker.cancel
 
@@ -280,7 +280,7 @@ def test_extract_worker_stop_returns_true_when_thread_already_finished(
     qtbot, tmp_path: Path
 ) -> None:  # type:ignore[no-untyped-def]
     """A no-op stop on a worker whose thread already exited returns True."""
-    from lib.gui.qt_shell.manual_tool import ManualExtractFacesWorker
+    from tools.manual.qt import ManualExtractFacesWorker
 
     session = _session_with_real_frames(tmp_path, count=1)
     worker = ManualExtractFacesWorker(
@@ -302,7 +302,7 @@ def test_extract_worker_stop_returns_false_when_thread_refuses_to_exit(
     """A worker whose thread is stuck mid-frame reports stop() == False."""
     import threading
 
-    from lib.gui.qt_shell.manual_tool import ManualExtractFacesWorker
+    from tools.manual.qt import ManualExtractFacesWorker
 
     session = _session_with_real_frames(tmp_path, count=1)
     release = threading.Event()
@@ -315,7 +315,7 @@ def test_extract_worker_stop_returns_false_when_thread_refuses_to_exit(
         release.wait(timeout=5.0)
         self.completed.emit(object())
 
-    monkeypatch.setattr("lib.gui.qt_shell.manual_tool._ManualExtractFacesTask.run", slow_run)
+    monkeypatch.setattr("tools.manual.qt._ManualExtractFacesTask.run", slow_run)
     worker = ManualExtractFacesWorker(
         session.alignments_handle(),
         session,
@@ -350,9 +350,9 @@ def test_close_event_ignores_close_while_extract_thread_alive(
         release.wait(timeout=5.0)
         self.completed.emit(object())
 
-    monkeypatch.setattr("lib.gui.qt_shell.manual_tool._ManualExtractFacesTask.run", slow_run)
+    monkeypatch.setattr("tools.manual.qt._ManualExtractFacesTask.run", slow_run)
     # Shorten the worker's stop wait so the test doesn't sit for 3 s.
-    from lib.gui.qt_shell.manual_tool import ManualExtractFacesWorker
+    from tools.manual.qt import ManualExtractFacesWorker
 
     monkeypatch.setattr(ManualExtractFacesWorker, "_STOP_WAIT_MS", 100)
 

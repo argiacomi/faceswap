@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from PySide6.QtGui import QColor, QPixmap
 
-from lib.gui.qt_shell.manual_tool import MANUAL_ACTIONS, ManualToolWindow
+from tools.manual.qt import MANUAL_ACTIONS, ManualToolWindow
 from tools.manual.session import FaceThumbnail, ManualSession
 
 

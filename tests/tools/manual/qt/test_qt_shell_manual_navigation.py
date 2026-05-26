@@ -17,7 +17,7 @@ from pathlib import Path
 
 from PySide6.QtGui import QColor, QPixmap
 
-from lib.gui.qt_shell.manual_tool import ManualToolWindow, ManualTransportBar
+from tools.manual.qt import ManualToolWindow, ManualTransportBar
 from tools.manual.session import ManualSession
 
 

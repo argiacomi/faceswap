@@ -9,7 +9,7 @@ from pathlib import Path
 from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtWidgets import QToolBar
 
-from lib.gui.qt_shell.manual_tool import ManualToolWindow
+from tools.manual.qt import ManualToolWindow
 from tools.manual.session import ManualSession
 
 

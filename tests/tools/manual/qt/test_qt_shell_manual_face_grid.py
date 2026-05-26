@@ -12,7 +12,7 @@ from PySide6.QtWidgets import QApplication
 
 from lib.align import LANDMARK_PARTS, LandmarkType
 from lib.align.constants import MEAN_FACE
-from lib.gui.qt_shell.manual_tool import (
+from tools.manual.qt import (
     FaceGridThumbnailRenderer,
     ManualToolWindow,
 )

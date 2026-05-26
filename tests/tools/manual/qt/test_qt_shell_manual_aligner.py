@@ -24,12 +24,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from lib.gui.qt_shell.manual_tool import ManualToolWindow
 from tools.manual.aligner_service import (
     NORMALIZATION_CHOICES,
     AlignerStatus,
     ManualAlignerService,
 )
+from tools.manual.qt import ManualToolWindow
 from tools.manual.session import ManualSession
 
 
