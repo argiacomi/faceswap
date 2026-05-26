@@ -73,9 +73,9 @@ class FaceGridRenderRequest:
 class FaceGridThumbnailRenderer:
     """Compose cross-frame grid thumbnail icons with optional mask/mesh overlays."""
 
-    _MASK_TINT = QColor(255, 80, 80)
-    _MESH_PEN = QColor("#ffb000")
-    _LANDMARK_FILL = QColor("#ffffff")
+    _MASK_TINT = QColor("#ff0000")
+    _MESH_PEN = QColor("#00ffff")
+    _LANDMARK_FILL = QColor("#ff00ff")
 
     def __init__(self, editable: ManualEditableAlignments) -> None:
         self._editable = editable
