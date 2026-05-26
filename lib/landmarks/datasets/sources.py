@@ -260,6 +260,7 @@ def download(
             google_drive_file_id,
             destination,
             expected_sha256=expected_sha256,
+            quiet=True,
         )
 
     if url is None:

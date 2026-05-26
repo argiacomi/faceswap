@@ -66,6 +66,7 @@ class _SegNeXtCheckpoint(T.NamedTuple):
     config: MSCANConfig
     num_classes: int = _EXPECTED_NUM_CLASSES
     google_drive_file_id: str | None = None
+    allow_150_to_19_slice: bool = False
 
 
 # e4s2022 publishes CelebAMask-HQ SegNeXt checkpoints for MSCAN-S/B/L.
@@ -88,6 +89,7 @@ _CHECKPOINTS = {
         sha256="996e6339a28f5ef1a4c1b5ce324c0c8203c71ee6abb259b0a255d387af504cee",
         config=BASE_CONFIG,
         google_drive_file_id=_E4S_BASE_FILE_ID,
+        allow_150_to_19_slice=True,
     ),
     "large": _SegNeXtCheckpoint(
         filename="segnext.large.512x512.celebamaskhq.160k.pth",
@@ -95,6 +97,7 @@ _CHECKPOINTS = {
         sha256="b15d77541e101bf6b117e3b00139f9f14d86017ac7564e3bb81d1a3f5703ead1",
         config=LARGE_CONFIG,
         google_drive_file_id=_E4S_LARGE_FILE_ID,
+        allow_150_to_19_slice=True,
     ),
 }
 
@@ -171,6 +174,7 @@ class SegNeXtFP(FacePlugin):
             upstream_path,
             self._checkpoint.sha256,
             expected_num_classes=self._checkpoint.num_classes,
+            allow_150_to_19_slice=self._checkpoint.allow_150_to_19_slice,
         )
         model = SegNeXtFaceParser(
             self._checkpoint.config, num_classes=self._checkpoint.num_classes
@@ -228,6 +232,7 @@ def _resolve_checkpoint_path(checkpoint: _SegNeXtCheckpoint) -> str:
                 checkpoint.google_drive_file_id,
                 cache_path,
                 expected_sha256=checkpoint.sha256,
+                quiet=True,
             )
         )
 
@@ -236,8 +241,74 @@ def _resolve_checkpoint_path(checkpoint: _SegNeXtCheckpoint) -> str:
         GetModelFromUrl(checkpoint.filename, checkpoint.url, checkpoint.sha256).model_path,
     )
 
+def _adapt_checkpoint_classes(
+    state_dict: T.Mapping[str, torch.Tensor],
+    expected_num_classes: int,
+    *,
+    allow_150_to_19_slice: bool,
+) -> dict[str, torch.Tensor]:
+    """Return a state dict whose classifier head matches CelebAMask-HQ classes.
 
-def _sanitize_checkpoint(upstream_path: str, sha256: str, expected_num_classes: int) -> str:
+    e4s base/large CelebAMaskHQ checkpoints were trained/evaluated with a
+    150-channel decode head even though the dataset labels occupy 0..18. For
+    those known checkpoints, keep the first 19 channels and discard the unused
+    extra classifier channels.
+    """
+    _validate_checkpoint_has_classifier(state_dict)
+
+    weight = state_dict[_CLASSIFIER_WEIGHT_KEY]
+    bias = state_dict[_CLASSIFIER_BIAS_KEY]
+    weight_classes = int(weight.shape[0])
+    bias_classes = int(bias.shape[0])
+
+    if weight_classes != bias_classes:
+        raise FaceswapError(
+            "SegNeXt-FP checkpoint class-count mismatch: expected "
+            f"{expected_num_classes} CelebAMask-HQ classes, got inconsistent "
+            f"classifier shapes (weight={weight_classes}, bias={bias_classes}). "
+            "The selected model/checkpoint pair is incompatible."
+        )
+
+    if weight_classes == expected_num_classes:
+        return dict(state_dict)
+
+    if (
+        allow_150_to_19_slice
+        and weight_classes == 150
+        and expected_num_classes == _EXPECTED_NUM_CLASSES
+    ):
+        logger.warning(
+            "SegNeXt-FP checkpoint has a 150-class classifier head. "
+            "Treating it as a known e4s CelebAMask-HQ base/large checkpoint "
+            "and slicing decode_head.conv_seg to the first 19 face classes."
+        )
+        adapted = dict(state_dict)
+        adapted[_CLASSIFIER_WEIGHT_KEY] = weight[:expected_num_classes].clone()
+        adapted[_CLASSIFIER_BIAS_KEY] = bias[:expected_num_classes].clone()
+        return adapted
+
+    raise FaceswapError(
+        "SegNeXt-FP checkpoint class-count mismatch: expected "
+        f"{expected_num_classes} CelebAMask-HQ classes, got "
+        f"{weight_classes}. The selected model/checkpoint pair is incompatible."
+    )
+
+
+def _validate_checkpoint_has_classifier(state_dict: T.Mapping[str, torch.Tensor]) -> None:
+    """Validate that a checkpoint exposes the expected classifier tensors."""
+    if _CLASSIFIER_WEIGHT_KEY not in state_dict or _CLASSIFIER_BIAS_KEY not in state_dict:
+        raise FaceswapError(
+            "SegNeXt-FP checkpoint is missing decode_head.conv_seg weights. "
+            "The selected model/checkpoint pair is incompatible."
+        )
+
+
+def _sanitize_checkpoint(
+    upstream_path: str,
+    sha256: str,
+    expected_num_classes: int,
+    allow_150_to_19_slice: bool = False,
+) -> str:
     """Return a path to a tensor-only state-dict copy of an mmseg checkpoint.
 
     Parameters
@@ -275,7 +346,11 @@ def _sanitize_checkpoint(upstream_path: str, sha256: str, expected_num_classes: 
 
     state_dict = _load_state_dict(upstream_path, weights_only=False)
     cleaned = filter_state_dict(state_dict)
-    _validate_checkpoint_classes(cleaned, expected_num_classes)
+    cleaned = _adapt_checkpoint_classes(
+        cleaned,
+        expected_num_classes,
+        allow_150_to_19_slice=allow_150_to_19_slice,
+    )
     tmp_path = f"{cleaned_path}.part"
     torch.save(cleaned, tmp_path)
     os.replace(tmp_path, cleaned_path)
