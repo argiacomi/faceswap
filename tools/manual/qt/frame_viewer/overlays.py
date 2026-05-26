@@ -154,9 +154,10 @@ class ManualFrameOverlay:
         )
         if not annotation_mode:
             annotation_mode = "None"
-        explicit_mesh = annotation_mode == "Mesh"
-        explicit_mask = annotation_mode == "Mask"
-        explicit_landmarks = annotation_mode == "Landmarks"
+        annotation_tokens = {part.strip() for part in annotation_mode.split(",") if part.strip()}
+        explicit_mesh = "Mesh" in annotation_tokens
+        explicit_mask = "Mask" in annotation_tokens
+        explicit_landmarks = "Landmarks" in annotation_tokens
         if editor_mode == "View":
             return {
                 "bbox": True,

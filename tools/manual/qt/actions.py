@@ -153,12 +153,20 @@ MANUAL_ACTIONS: tuple[ManualAction, ...] = (
     ),
     ManualAction(
         "cycle_annotation",
-        "Annotation",
-        "cycle_annotation_display",
+        "Mesh",
+        "toggle_mesh_annotation",
         ("F9",),
         None,
-        "Cycle annotation display (F9)",
+        "Toggle face-grid Mesh overlay (F9)",
         True,
+    ),
+    ManualAction(
+        "toggle_mask_annotation",
+        "Mask Overlay",
+        "toggle_mask_annotation",
+        ("F10",),
+        None,
+        "Toggle face-grid Mask overlay (F10)",
     ),
     ManualAction(
         "zoom_in", "Zoom In", "zoom_in", ("=", "+"), "zoom", "Zoom in on the frame view (+)", True

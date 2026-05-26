@@ -6,9 +6,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QPoint, QPointF, Qt
-from PySide6.QtGui import QColor, QPixmap, QWheelEvent
-from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import QEvent, QItemSelectionModel, QPoint, QPointF, Qt
+from PySide6.QtGui import QColor, QKeyEvent, QPixmap, QWheelEvent
+from PySide6.QtWidgets import QApplication, QToolButton
 
 from lib.align import LANDMARK_PARTS, LandmarkType
 from lib.align.constants import MEAN_FACE
@@ -356,6 +356,77 @@ def test_face_grid_overlay_render_requests_track_mask_and_mesh(
     assert len(groups["line"]) == sum(
         1 for _name, (_start, _end, fill) in legacy_parts.items() if not fill
     )
+
+
+def test_face_grid_mini_rail_toggles_mesh_and_mask_independently(
+    qtbot,
+    tmp_path: Path,
+) -> None:  # type:ignore[no-untyped-def]
+    """F9/F10 and the mini rail expose independent thumbnail annotation toggles."""
+    window = _make_window(qtbot, tmp_path, count=2)
+    _seed_face(window, 0)
+    mesh_button = window.findChild(QToolButton, "qt-manual-face-grid-mesh-toggle")
+    mask_button = window.findChild(QToolButton, "qt-manual-face-grid-mask-toggle")
+
+    assert mesh_button is not None
+    assert mask_button is not None
+
+    window.toggle_mesh_annotation()
+    mesh_request = window.face_grid_panel.render_requests()[0]
+    assert mesh_button.isChecked() is True
+    assert mask_button.isChecked() is False
+    assert mesh_request.show_mesh is True
+    assert mesh_request.show_mask is False
+
+    window.toggle_mask_annotation()
+    both_request = window.face_grid_panel.render_requests()[0]
+    assert mesh_button.isChecked() is True
+    assert mask_button.isChecked() is True
+    assert both_request.show_mesh is True
+    assert both_request.show_mask is True
+
+    window.toggle_mesh_annotation()
+    mask_only_request = window.face_grid_panel.render_requests()[0]
+    assert mesh_button.isChecked() is False
+    assert mask_button.isChecked() is True
+    assert mask_only_request.show_mesh is False
+    assert mask_only_request.show_mask is True
+
+
+def test_face_grid_delete_key_removes_multi_selection_across_frames(
+    qtbot,
+    tmp_path: Path,
+) -> None:  # type:ignore[no-untyped-def]
+    """Extended grid selection deletes all selected faces as one undoable edit."""
+    window = _make_window(qtbot, tmp_path, count=4)
+    _seed_face(window, 0)
+    _seed_face(window, 1)
+    _seed_face(window, 1)
+    _seed_face(window, 3)
+    panel = window.face_grid_panel
+    selected = (panel.item_for(0, 0), panel.item_for(1, 1), panel.item_for(3, 0))
+    assert all(item is not None for item in selected)
+    panel.setCurrentItem(selected[0])
+    for item in selected:
+        panel.selectionModel().select(
+            panel.indexFromItem(item),
+            QItemSelectionModel.Select,
+        )
+    assert panel.selected_entry_keys() == ((0, 0), (1, 1), (3, 0))
+    panel.setFocus(Qt.OtherFocusReason)
+
+    panel.keyPressEvent(QKeyEvent(QEvent.KeyPress, Qt.Key_Delete, Qt.NoModifier))
+
+    assert window.editable_alignments.face_count(0) == 0
+    assert window.editable_alignments.face_count(1) == 1
+    assert window.editable_alignments.face_count(3) == 0
+    assert window.face_grid_panel.entry_keys() == ((1, 0),)
+    assert window.editor_state.unsaved is True
+
+    assert window.undo_edit() is True
+    assert window.editable_alignments.face_count(0) == 1
+    assert window.editable_alignments.face_count(1) == 2
+    assert window.editable_alignments.face_count(3) == 1
 
 
 def test_face_grid_refreshes_after_non_current_edit_with_filter(

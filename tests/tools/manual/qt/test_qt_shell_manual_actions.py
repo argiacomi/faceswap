@@ -52,6 +52,7 @@ def test_manual_action_registry_covers_required_editor_commands() -> None:
         "delete_face",
         "cycle_filter",
         "cycle_annotation",
+        "toggle_mask_annotation",
         "set_view_mode",
         "set_boundingbox_mode",
         "set_extractbox_mode",
@@ -82,6 +83,7 @@ def test_manual_action_shortcuts_match_legacy_bindings() -> None:
     assert "F2" in by_key["set_boundingbox_mode"].shortcut
     assert "F5" in by_key["set_mask_mode"].shortcut
     assert "F9" in by_key["cycle_annotation"].shortcut
+    assert "F10" in by_key["toggle_mask_annotation"].shortcut
 
 
 def test_window_registers_actions_with_shortcuts(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
@@ -266,9 +268,11 @@ def test_action_triggered_signal_fires_on_trigger(qtbot, tmp_path: Path) -> None
 
     window.actions_by_key["set_landmarks_mode"].trigger()
     window.actions_by_key["cycle_annotation"].trigger()
+    window.actions_by_key["toggle_mask_annotation"].trigger()
 
     assert "set_landmarks_mode" in captured
     assert "cycle_annotation" in captured
+    assert "toggle_mask_annotation" in captured
 
 
 def test_legacy_action_requires_legacy_args(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]

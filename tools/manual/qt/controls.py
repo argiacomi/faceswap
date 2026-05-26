@@ -96,6 +96,18 @@ class ControlsMixin:
         self._editor_state.set("annotation_mode", order[(index + 1) % len(order)])
         self.statusBar().showMessage(f"Annotation: {self._editor_state.annotation_mode}", 5000)
 
+    def toggle_mesh_annotation(self) -> None:
+        """Toggle the face-grid Mesh overlay independently (F9)."""
+        enabled = not bool(self._editor_state.face_grid_mesh_visible)
+        self._editor_state.set("face_grid_mesh_visible", enabled)
+        self.statusBar().showMessage(f"Face grid Mesh: {'on' if enabled else 'off'}", 3000)
+
+    def toggle_mask_annotation(self) -> None:
+        """Toggle the face-grid Mask overlay independently (F10)."""
+        enabled = not bool(self._editor_state.face_grid_mask_visible)
+        self._editor_state.set("face_grid_mask_visible", enabled)
+        self.statusBar().showMessage(f"Face grid Mask: {'on' if enabled else 'off'}", 3000)
+
     def set_editor_view(self) -> None:
         """Activate the View editor mode."""
         self._editor_state.set("editor_mode", "View")
@@ -594,6 +606,7 @@ class ControlsMixin:
             "redo_edit": self._editable.can_redo,
             "cycle_filter": has_frames,
             "cycle_annotation": has_frames,
+            "toggle_mask_annotation": has_frames,
             "set_view_mode": editor_mode != "View",
             "set_boundingbox_mode": editor_mode != "BoundingBox",
             "set_extractbox_mode": editor_mode != "ExtractBox",
@@ -613,6 +626,12 @@ class ControlsMixin:
             action = self._actions.get(key)
             if action is not None:
                 action.setEnabled(enabled)
+        mesh_action = self._actions.get("cycle_annotation")
+        if mesh_action is not None:
+            mesh_action.setChecked(bool(self._editor_state.face_grid_mesh_visible))
+        mask_action = self._actions.get("toggle_mask_annotation")
+        if mask_action is not None:
+            mask_action.setChecked(bool(self._editor_state.face_grid_mask_visible))
 
     def _on_editor_mode_changed(self, _mode: object) -> None:
         """Refresh action availability when the editor mode flips."""

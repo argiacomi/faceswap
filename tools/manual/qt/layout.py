@@ -40,6 +40,33 @@ class LayoutMixin:
         self._face_panel.setObjectName("qt-manual-current-frame-face-panel")
         self._face_panel.hide()
 
+        rail = QWidget()
+        rail.setObjectName("qt-manual-face-grid-mini-rail")
+        rail_layout = QVBoxLayout(rail)
+        rail_layout.setContentsMargins(0, 0, 0, 0)
+        rail_layout.setSpacing(4)
+        for button, text, tooltip in (
+            (self._face_grid_mesh_button, "M", "Toggle thumbnail Mesh overlay (F9)"),
+            (self._face_grid_mask_button, "K", "Toggle thumbnail Mask overlay (F10)"),
+        ):
+            button.setText(text)
+            button.setCheckable(True)
+            button.setAutoRaise(False)
+            button.setToolButtonStyle(Qt.ToolButtonTextOnly)
+            button.setToolTip(tooltip)
+            button.setFixedSize(28, 28)
+            rail_layout.addWidget(button)
+        self._face_grid_mesh_button.setObjectName("qt-manual-face-grid-mesh-toggle")
+        self._face_grid_mask_button.setObjectName("qt-manual-face-grid-mask-toggle")
+        self._face_grid_mesh_button.toggled.connect(
+            lambda checked: self._editor_state.set("face_grid_mesh_visible", bool(checked))
+        )
+        self._face_grid_mask_button.toggled.connect(
+            lambda checked: self._editor_state.set("face_grid_mask_visible", bool(checked))
+        )
+        rail_layout.addStretch(1)
+        layout.addWidget(rail)
+
         grid_box = QWidget()
         grid_layout = QVBoxLayout(grid_box)
         grid_layout.setContentsMargins(0, 0, 0, 0)
@@ -131,6 +158,8 @@ class LayoutMixin:
                 icon = icon_for_action(theme, spec.icon)
                 if not icon.isNull():
                     action.setIcon(icon)
+            if spec.key in {"cycle_annotation", "toggle_mask_annotation"}:
+                action.setCheckable(True)
             shortcuts = [QKeySequence(text) for text in spec.shortcut]
             if shortcuts:
                 action.setShortcuts(shortcuts)
@@ -169,6 +198,7 @@ class LayoutMixin:
             self._on_face_grid_context_menu_requested
         )
         self._face_grid_panel.face_delete_requested.connect(self._delete_face_at)
+        self._face_grid_panel.faces_delete_requested.connect(self._delete_faces_at)
         self._frame_view.clicked_at.connect(self._on_frame_clicked)
         self._frame_view.face_move_requested.connect(self._on_face_move_requested)
         self._frame_view.face_resize_requested.connect(self._on_face_resize_requested)

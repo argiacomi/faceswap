@@ -51,6 +51,8 @@ class CrossFrameFaceGridPanel(QListWidget):
     """Emits ``(frame_index, face_index, global_pos)`` for right-click menus."""
     face_delete_requested = Signal(int, int)
     """Emits ``(frame_index, face_index)`` when Delete is pressed in the grid."""
+    faces_delete_requested = Signal(object)
+    """Emits ordered ``((frame_index, face_index), ...)`` for multi-delete."""
 
     def __init__(
         self,
@@ -64,7 +66,7 @@ class CrossFrameFaceGridPanel(QListWidget):
         self.setMovement(QListView.Static)
         self.setResizeMode(QListView.Adjust)
         self.setWrapping(True)
-        self.setSelectionMode(QListWidget.SingleSelection)
+        self.setSelectionMode(QListWidget.ExtendedSelection)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
@@ -109,6 +111,15 @@ class CrossFrameFaceGridPanel(QListWidget):
     def hovered_entry(self) -> tuple[int, int] | None:
         """Return the currently hovered ``(frame, face)`` pair."""
         return self._hovered
+
+    def selected_entry_keys(self) -> tuple[tuple[int, int], ...]:
+        """Return selected real entries in visible grid order."""
+        selected = set()
+        for item in self.selectedItems():
+            entry = item.data(_FACE_GRID_ENTRY_ROLE)
+            if isinstance(entry, FaceGridEntry):
+                selected.add((entry.frame_index, entry.face_index))
+        return tuple(key for key in self.entry_keys() if key in selected)
 
     def face_size_name(self) -> str:
         """Return the active legacy size label."""
@@ -263,6 +274,11 @@ class CrossFrameFaceGridPanel(QListWidget):
                 event.accept()
                 return
         if event.key() == Qt.Key_Delete:
+            selected = self.selected_entry_keys()
+            if selected:
+                self.faces_delete_requested.emit(selected)
+                event.accept()
+                return
             entry = self._current_entry()
             if entry is not None:
                 self.face_delete_requested.emit(entry.frame_index, entry.face_index)
@@ -295,14 +311,11 @@ class CrossFrameFaceGridPanel(QListWidget):
                 item.setBackground(QBrush(QColor("#3f4f5c")))
                 item.setForeground(QBrush(QColor("#ffffff")))
             elif is_hovered:
-                item.setSelected(False)
                 item.setBackground(QBrush(QColor("#34414a")))
                 item.setForeground(QBrush(QColor("#ffffff")))
             elif is_active_frame:
-                item.setSelected(False)
                 item.setBackground(QBrush(QColor("#27323a")))
                 item.setForeground(QBrush(QColor("#d7e3ea")))
             else:
-                item.setSelected(False)
                 item.setBackground(QBrush())
                 item.setForeground(QBrush())

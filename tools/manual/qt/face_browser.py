@@ -84,14 +84,50 @@ class FaceBrowserMixin:
         panel = getattr(self, "_face_grid_panel", None)
         if panel is None:
             return
+        annotation_tokens = {
+            part.strip()
+            for part in str(self._editor_state.annotation_mode or "").split(",")
+            if part.strip()
+        }
         panel.set_overlay_state(
-            show_mesh=self._editor_state.annotation_mode == "Mesh",
-            show_mask=self._should_render_mask(),
+            show_mesh=bool(self._editor_state.face_grid_mesh_visible)
+            or "Mesh" in annotation_tokens,
+            show_mask=bool(self._editor_state.face_grid_mask_visible)
+            or self._should_render_mask(),
             mask_type=self.active_mask_type(),
             mask_opacity=int(self._editor_state.mask_opacity),
         )
         panel.set_entries(self._face_grid_entries())
         self._refresh_face_grid_active()
+
+    def _on_face_grid_overlay_toggled(self, _value: object) -> None:
+        """Mirror independent mini-rail overlay toggles into buttons and thumbnails."""
+        for button, enabled in (
+            (
+                getattr(self, "_face_grid_mesh_button", None),
+                self._editor_state.face_grid_mesh_visible,
+            ),
+            (
+                getattr(self, "_face_grid_mask_button", None),
+                self._editor_state.face_grid_mask_visible,
+            ),
+        ):
+            if button is None or button.isChecked() == bool(enabled):
+                continue
+            button.blockSignals(True)
+            try:
+                button.setChecked(bool(enabled))
+            finally:
+                button.blockSignals(False)
+        mesh_action = self._actions.get("cycle_annotation")
+        if mesh_action is not None:
+            mesh_action.setCheckable(True)
+            mesh_action.setChecked(bool(self._editor_state.face_grid_mesh_visible))
+        mask_action = self._actions.get("toggle_mask_annotation")
+        if mask_action is not None:
+            mask_action.setCheckable(True)
+            mask_action.setChecked(bool(self._editor_state.face_grid_mask_visible))
+        self._refresh_face_grid()
 
     def _refresh_face_grid_active(self) -> None:
         """Update active frame/face styling without rebuilding thumbnail icons."""

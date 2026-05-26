@@ -104,6 +104,8 @@ class ManualToolWindow(
         self._face_panel = FaceThumbnailPanel()
         self._face_grid_renderer = FaceGridThumbnailRenderer(self._editable)
         self._face_grid_panel = CrossFrameFaceGridPanel(self._face_grid_renderer)
+        self._face_grid_mesh_button = QToolButton()
+        self._face_grid_mask_button = QToolButton()
         self._face_grid_size_combo = QComboBox()
         self._manual_splitter: QSplitter | None = None
         self._status_label = QLabel()
@@ -171,6 +173,8 @@ class ManualToolWindow(
         self._editor_state.subscribe("faces_size", self._on_face_grid_size_state_changed)
         self._editor_state.subscribe("annotation_mode", lambda _v: self._refresh_face_grid())
         self._editor_state.subscribe("annotation_mode", lambda _v: self._frame_view.update())
+        self._editor_state.subscribe("face_grid_mesh_visible", self._on_face_grid_overlay_toggled)
+        self._editor_state.subscribe("face_grid_mask_visible", self._on_face_grid_overlay_toggled)
         self._editor_state.subscribe("mask_type", lambda _v: self._refresh_face_grid())
         self._editor_state.subscribe("mask_opacity", lambda _v: self._refresh_face_grid())
         self._build_ui()

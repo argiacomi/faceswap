@@ -137,6 +137,8 @@ class ManualEditorState:
     face_count_changed: bool = False
     editor_mode: str = "View"
     annotation_mode: str = ""
+    face_grid_mesh_visible: bool = False
+    face_grid_mask_visible: bool = False
     is_playing: bool = False
     # Mask editor (#101) — brush + display state.  Defaults match the Tk
     # Manual Tool's first-launch values so muscle memory carries over.
@@ -166,6 +168,8 @@ class ManualEditorState:
         "face_count_changed",
         "editor_mode",
         "annotation_mode",
+        "face_grid_mesh_visible",
+        "face_grid_mask_visible",
         "is_playing",
         "brush_size",
         "brush_mode",
@@ -630,6 +634,56 @@ class ManualEditableAlignments:
 
         self._apply(do, undo, frame_index)
         return True
+
+    def delete_faces(self, selections: T.Iterable[tuple[int, int]]) -> int:
+        """Delete multiple ``(frame_index, face_index)`` pairs as one undoable edit.
+
+        Deletions are applied in descending face-index order per frame so
+        reindexing cannot shift a later removal target.  The undo closure
+        restores the exact pre-delete face lists for every touched frame.
+        """
+        by_frame: dict[int, set[int]] = {}
+        for frame_index, face_index in selections:
+            by_frame.setdefault(int(frame_index), set()).add(int(face_index))
+        valid: dict[int, tuple[int, ...]] = {}
+        before: dict[int, list[EditableFace]] = {}
+        for frame_index, face_indices in by_frame.items():
+            faces = self._faces.get(frame_index, [])
+            indices = tuple(
+                sorted(
+                    (index for index in face_indices if 0 <= index < len(faces)),
+                    reverse=True,
+                )
+            )
+            if not indices:
+                continue
+            valid[frame_index] = indices
+            before[frame_index] = list(faces)
+        if not valid:
+            return 0
+
+        def do() -> None:
+            for frame_index, indices in valid.items():
+                faces = self._faces.setdefault(frame_index, [])
+                for face_index in indices:
+                    if 0 <= face_index < len(faces):
+                        faces.pop(face_index)
+                self._reindex(frame_index)
+
+        def undo() -> None:
+            for frame_index, faces in before.items():
+                self._faces[frame_index] = list(faces)
+                self._reindex(frame_index)
+
+        first_frame = min(valid)
+        do()
+        undo_frames = tuple(valid)
+        self._undo.append((lambda: do(), lambda: undo(), first_frame))
+        self._redo.clear()
+        self._dirty_frames.update(undo_frames)
+        for frame_index in undo_frames:
+            self._notify(frame_index)
+        return sum(len(indices) for indices in valid.values())
 
     def resize_face(
         self,

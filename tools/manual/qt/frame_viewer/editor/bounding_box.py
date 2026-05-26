@@ -353,3 +353,34 @@ class BoundingBoxWindowEditorMixin:
         self.statusBar().showMessage(
             f"Deleted face {face_index + 1} on frame {frame_index + 1}", 5000
         )
+
+    def _delete_faces_at(self, selections: object) -> None:
+        """Delete multiple grid-selected faces across frames as one edit."""
+        pairs: tuple[tuple[int, int], ...] = tuple(
+            (int(frame_index), int(face_index))
+            for frame_index, face_index in selections  # type:ignore[misc]
+        )
+        if not pairs:
+            return
+        deleted = self._editable.delete_faces(pairs)
+        if deleted <= 0:
+            self.statusBar().showMessage("Could not delete selected faces", 3000)
+            return
+        self._editor_state.set("face_count_changed", True)
+        self._editor_state.set("edited", True)
+        current_frame = self._current_frame_index()
+        if any(frame_index == current_frame for frame_index, _face_index in pairs):
+            new_count = self._editable.face_count(current_frame)
+            if new_count == 0:
+                self._editor_state.set("face_index", -1)
+            else:
+                self._editor_state.set(
+                    "face_index",
+                    min(max(0, int(self._editor_state.face_index)), new_count - 1),
+                )
+            self.refresh_faces()
+            self._frame_view.update()
+        self.mark_dirty(True)
+        self._refresh_filter_results()
+        self._refresh_face_grid()
+        self.statusBar().showMessage(f"Deleted {deleted} selected face(s)", 5000)

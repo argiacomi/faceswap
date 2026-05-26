@@ -140,6 +140,9 @@ def test_brush_size_increment_and_decrement_clamp_to_bounds(qtbot, tmp_path: Pat
     """``[`` and ``]`` step brush size by the configured amount and clamp."""
     window = _make_window(qtbot, tmp_path)
     _enter_mask_mode(window)
+    assert window._BRUSH_MIN == 1
+    assert window._BRUSH_MAX == 100
+    assert window._BRUSH_STEP == 2
     initial = window._editor_state.brush_size
     new_size = window.increase_brush_size()
     assert new_size == initial + window._BRUSH_STEP

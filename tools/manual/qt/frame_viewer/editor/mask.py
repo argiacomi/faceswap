@@ -178,8 +178,8 @@ class MaskFrameEditorMixin:
 class MaskWindowEditorMixin:
     """Root-window adapter methods for Mask editor state and model updates."""
 
-    _BRUSH_MIN: T.ClassVar[int] = 2
-    _BRUSH_MAX: T.ClassVar[int] = 64
+    _BRUSH_MIN: T.ClassVar[int] = 1
+    _BRUSH_MAX: T.ClassVar[int] = 100
     _BRUSH_STEP: T.ClassVar[int] = 2
     DEFAULT_MASK_TYPE: T.ClassVar[str] = "components"
     MASK_DEFAULT_TYPES: T.ClassVar[tuple[str, ...]] = (
@@ -203,10 +203,12 @@ class MaskWindowEditorMixin:
         Matches the legacy Tk behaviour where ``F10`` toggles the mask
         overlay layer in any editor mode and F5 implicitly shows it.
         """
-        return (
-            self._editor_state.editor_mode == "Mask"
-            or self._editor_state.annotation_mode == "Mask"
-        )
+        annotation_tokens = {
+            part.strip()
+            for part in str(self._editor_state.annotation_mode or "").split(",")
+            if part.strip()
+        }
+        return self._editor_state.editor_mode == "Mask" or "Mask" in annotation_tokens
 
     def _on_mask_paint_requested(
         self, face_index: int, source_x: float, source_y: float, invert: bool
