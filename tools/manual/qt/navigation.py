@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from bisect import bisect_left, bisect_right
+
 from lib.gui.qt_shell.theme import QtTheme, icon_for_action
 
 
@@ -13,7 +15,12 @@ class NavigationMixin:
         """Return every known source-frame index."""
         return tuple(range(self._thumbnail_panel.count()))
 
-    def _refresh_filter_results(self, *, preserve_current: bool = True) -> None:
+    def _refresh_filter_results(
+        self,
+        *,
+        preserve_current: bool = True,
+        navigate_on_filter_miss: bool = True,
+    ) -> None:
         """Recompute ``_filtered_frame_indices`` from the active filter."""
         from tools.manual.frame_filter import (
             DEFAULT_FILTER_MODE,
@@ -41,6 +48,8 @@ class NavigationMixin:
         if preserve_current and current_row in self._filtered_frame_indices:
             position = self._filtered_frame_indices.index(current_row)
             self._transport_bar.set_position(position)
+        elif not navigate_on_filter_miss:
+            self._sync_transport_to_nearest_filtered_position()
         else:
             new_row = self._filtered_frame_indices[0]
             self._thumbnail_panel.setCurrentRow(new_row)
@@ -61,6 +70,49 @@ class NavigationMixin:
             return self._filtered_frame_indices.index(row)
         except ValueError:
             return -1
+
+    def _next_filtered_row(self) -> int | None:
+        """Return the next matching source-frame row after the current row."""
+        if not self._filtered_frame_indices:
+            return None
+        position = self._filtered_position()
+        if 0 <= position < len(self._filtered_frame_indices) - 1:
+            return self._filtered_frame_indices[position + 1]
+        if position >= 0:
+            return None
+        row = self._thumbnail_panel.currentRow()
+        insert_at = bisect_right(self._filtered_frame_indices, row)
+        if insert_at >= len(self._filtered_frame_indices):
+            return None
+        return self._filtered_frame_indices[insert_at]
+
+    def _previous_filtered_row(self) -> int | None:
+        """Return the previous matching source-frame row before the current row."""
+        if not self._filtered_frame_indices:
+            return None
+        position = self._filtered_position()
+        if position > 0:
+            return self._filtered_frame_indices[position - 1]
+        if position == 0:
+            return None
+        row = self._thumbnail_panel.currentRow()
+        insert_at = bisect_left(self._filtered_frame_indices, row)
+        if insert_at <= 0:
+            return None
+        return self._filtered_frame_indices[insert_at - 1]
+
+    def _sync_transport_to_nearest_filtered_position(self) -> None:
+        """Keep transport range current when the selected row is outside the filter."""
+        if not self._filtered_frame_indices:
+            return
+        position = self._filtered_position()
+        if position >= 0:
+            self._transport_bar.set_position(position)
+            return
+        row = self._thumbnail_panel.currentRow()
+        insert_at = bisect_left(self._filtered_frame_indices, row)
+        nearest = min(insert_at, len(self._filtered_frame_indices) - 1)
+        self._transport_bar.set_position(max(0, nearest))
 
     def goto_first_frame(self) -> None:
         """Select the first frame in the active filter."""
@@ -83,20 +135,20 @@ class NavigationMixin:
         self._stop_playback()
         if not self._filtered_frame_indices:
             return
-        position = self._filtered_position()
-        if position <= 0:
+        row = self._previous_filtered_row()
+        if row is None:
             return
-        self._thumbnail_panel.setCurrentRow(self._filtered_frame_indices[position - 1])
+        self._thumbnail_panel.setCurrentRow(row)
 
     def _next_frame(self) -> None:
         """Select next frame from the active filter."""
         self._stop_playback()
         if not self._filtered_frame_indices:
             return
-        position = self._filtered_position()
-        if position < 0 or position >= len(self._filtered_frame_indices) - 1:
+        row = self._next_filtered_row()
+        if row is None:
             return
-        self._thumbnail_panel.setCurrentRow(self._filtered_frame_indices[position + 1])
+        self._thumbnail_panel.setCurrentRow(row)
 
     def toggle_play(self) -> None:
         """Toggle playback through the filtered frames."""
@@ -107,8 +159,10 @@ class NavigationMixin:
             self.statusBar().showMessage(self._no_filter_match_message(), 3000)
             return
         position = self._filtered_position()
-        if position < 0 or position >= len(self._filtered_frame_indices) - 1:
+        if position >= len(self._filtered_frame_indices) - 1:
             self._thumbnail_panel.setCurrentRow(self._filtered_frame_indices[0])
+        elif position < 0 and self._next_filtered_row() is None:
+            return
         self._editor_state.set("is_playing", True)
         self._play_timer.start()
         self._sync_play_action_icon()
@@ -126,11 +180,11 @@ class NavigationMixin:
         if not self._filtered_frame_indices:
             self._stop_playback()
             return
-        position = self._filtered_position()
-        if position < 0 or position >= len(self._filtered_frame_indices) - 1:
+        row = self._next_filtered_row()
+        if row is None:
             self._stop_playback()
             return
-        self._thumbnail_panel.setCurrentRow(self._filtered_frame_indices[position + 1])
+        self._thumbnail_panel.setCurrentRow(row)
 
     def _no_filter_match_message(self) -> str:
         """Compose the empty-filter user message."""
@@ -164,6 +218,7 @@ class NavigationMixin:
         try:
             position = self._filtered_frame_indices.index(row)
         except ValueError:
+            self._sync_transport_to_nearest_filtered_position()
             return
         self._transport_bar.set_position(position)
 

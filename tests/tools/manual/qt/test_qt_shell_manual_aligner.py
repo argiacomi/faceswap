@@ -506,6 +506,9 @@ def test_bbox_add_creates_face_on_press_and_same_drag_moves_it(
     assert window._editable.face_count(0) == 1
     created = window._editable.faces(0)[0]
     assert created.landmarks[0] == (51.0, 52.0)
+    assert window._editor_state.face_index == 0
+    rendered = window._frame_view.grab()
+    assert rendered.isNull() is False
     window._frame_view.mouseMoveEvent(
         _mouse_event(QEvent.Type.MouseMove, window, end, Qt.NoButton, Qt.LeftButton)
     )

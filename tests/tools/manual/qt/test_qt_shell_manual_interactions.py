@@ -17,6 +17,7 @@ import numpy as np
 import pytest
 from PySide6.QtCore import QEvent, QPointF, Qt
 from PySide6.QtGui import QColor, QMouseEvent, QPixmap
+from PySide6.QtWidgets import QApplication
 
 from tools.manual.aligner_service import ManualAlignerService
 from tools.manual.qt import (
@@ -123,6 +124,35 @@ def _press_release(view: ManualFrameView, pos: QPointF, button: Qt.MouseButton) 
             Qt.NoButton,
             Qt.NoModifier,
         )
+    )
+
+
+def _source_to_widget(window: ManualToolWindow, sx: float, sy: float) -> QPointF:
+    """Map a source-image point into the frame-view widget."""
+    view = window._frame_view
+    target = view._target_rect()
+    src_w, src_h = view.source_size
+    return QPointF(
+        target.x() + target.width() * (sx / src_w),
+        target.y() + target.height() * (sy / src_h),
+    )
+
+
+def _mouse_event(
+    event_type: QEvent.Type,
+    view: ManualFrameView,
+    pos: QPointF,
+    button: Qt.MouseButton,
+    buttons: Qt.MouseButton,
+) -> QMouseEvent:
+    """Build a frame-view-local mouse event."""
+    return QMouseEvent(
+        event_type,
+        pos,
+        QPointF(view.mapToGlobal(pos.toPoint())),
+        button,
+        buttons,
+        Qt.NoModifier,
     )
 
 
@@ -298,6 +328,132 @@ def test_frame_view_takes_keyboard_focus_on_click(qtbot, tmp_path: Path) -> None
     _press_release(window._frame_view, pos, Qt.LeftButton)
 
     assert window._frame_view.focusPolicy() == Qt.StrongFocus
+
+
+# ---------------------------------------------------------------------------
+# #133 — Frame interaction stops playback before editing
+# ---------------------------------------------------------------------------
+
+
+def test_frame_view_left_click_stops_playback(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+    """A direct frame click freezes playback before selection/edit dispatch."""
+    window = _make_window(qtbot, tmp_path)
+    _wait_for_frame_view_ready(qtbot, window)
+    window.toggle_play()
+    assert window._play_timer.isActive() is True
+
+    target = window._frame_view._target_rect()
+    pos = QPointF(target.center())
+    _press_release(window._frame_view, pos, Qt.LeftButton)
+
+    assert window._editor_state.is_playing is False
+    assert window._play_timer.isActive() is False
+
+
+def test_bbox_drag_stops_playback_and_does_not_advance_mid_drag(
+    qtbot,
+    tmp_path: Path,
+) -> None:  # type:ignore[no-untyped-def]
+    """Starting a BBox drag stops the timer before it can advance rows."""
+    window = _make_window(qtbot, tmp_path)
+    window._editable.add_face(0, (10.0, 10.0, 40.0, 40.0))
+    window.refresh_faces()
+    window._editor_state.set("face_index", 0)
+    window._editor_state.set("editor_mode", "BoundingBox")
+    start = _source_to_widget(window, 20.0, 20.0)
+
+    window.toggle_play()
+    assert window._play_timer.isActive() is True
+    window._frame_view.mousePressEvent(
+        _mouse_event(
+            QEvent.Type.MouseButtonPress,
+            window._frame_view,
+            start,
+            Qt.LeftButton,
+            Qt.LeftButton,
+        )
+    )
+    qtbot.wait(80)
+
+    assert window._editor_state.is_playing is False
+    assert window._play_timer.isActive() is False
+    assert window._thumbnail_panel.currentRow() == 0
+    window._frame_view.mouseReleaseEvent(
+        _mouse_event(
+            QEvent.Type.MouseButtonRelease,
+            window._frame_view,
+            start,
+            Qt.LeftButton,
+            Qt.NoButton,
+        )
+    )
+
+
+def test_mask_paint_stops_playback_and_keeps_frame_mid_stroke(
+    qtbot,
+    tmp_path: Path,
+) -> None:  # type:ignore[no-untyped-def]
+    """Mask paint press stops playback before the paint stroke starts."""
+    window = _make_window(qtbot, tmp_path)
+    window._editable.add_face(0, (10.0, 10.0, 40.0, 40.0))
+    window.refresh_faces()
+    window._editor_state.set("face_index", 0)
+    window._editor_state.set("editor_mode", "Mask")
+    start = _source_to_widget(window, 20.0, 20.0)
+
+    window.toggle_play()
+    assert window._play_timer.isActive() is True
+    window._frame_view.mousePressEvent(
+        _mouse_event(
+            QEvent.Type.MouseButtonPress,
+            window._frame_view,
+            start,
+            Qt.LeftButton,
+            Qt.LeftButton,
+        )
+    )
+    qtbot.wait(80)
+
+    assert window._editor_state.is_playing is False
+    assert window._play_timer.isActive() is False
+    assert window._thumbnail_panel.currentRow() == 0
+    window._frame_view.mouseReleaseEvent(
+        _mouse_event(
+            QEvent.Type.MouseButtonRelease,
+            window._frame_view,
+            start,
+            Qt.LeftButton,
+            Qt.NoButton,
+        )
+    )
+
+
+def test_frame_view_right_click_stops_playback(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+    """Right-click context-menu interaction also freezes playback first."""
+    window = _make_window(qtbot, tmp_path)
+    window._editable.add_face(0, (10.0, 10.0, 40.0, 40.0))
+    window.refresh_faces()
+    window._editor_state.set("face_index", 0)
+    window._editor_state.set("editor_mode", "BoundingBox")
+    pos = _source_to_widget(window, 20.0, 20.0)
+
+    window.toggle_play()
+    assert window._play_timer.isActive() is True
+    window._frame_view.mousePressEvent(
+        _mouse_event(
+            QEvent.Type.MouseButtonPress,
+            window._frame_view,
+            pos,
+            Qt.RightButton,
+            Qt.RightButton,
+        )
+    )
+
+    assert window._editor_state.is_playing is False
+    assert window._play_timer.isActive() is False
+    popup = QApplication.activePopupWidget()
+    if popup is not None:
+        popup.close()
 
 
 # ---------------------------------------------------------------------------

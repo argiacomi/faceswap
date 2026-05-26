@@ -57,6 +57,8 @@ class ManualFrameView(
     frame_loaded = Signal(ManualFrame)
     clicked_at = Signal(QPointF)
     """Emitted with source-image coordinates when the view is left-clicked."""
+    frame_interaction_started = Signal()
+    """Emitted before handling pointer or wheel input on a loaded frame."""
     face_move_requested = Signal(int, float, float)
     """Emitted at the end of a bbox drag: (face_index, dx, dy) in source pixels."""
     face_resize_requested = Signal(int, QRectF)
@@ -364,6 +366,7 @@ class ManualFrameView(
         if self._source.isNull():
             event.ignore()
             return
+        self.frame_interaction_started.emit()
         if event.angleDelta().y() > 0:
             self.zoom_in()
         else:
@@ -529,6 +532,7 @@ class ManualFrameView(
         if self._source.isNull():
             super().mousePressEvent(event)
             return
+        self.frame_interaction_started.emit()
         position = event.position()
         source_point = self._widget_to_source(position)
         if event.button() == Qt.RightButton:

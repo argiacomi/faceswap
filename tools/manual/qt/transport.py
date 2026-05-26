@@ -107,7 +107,11 @@ class ManualTransportBar(QWidget):
         self._total = max(0, int(total))
         last = max(0, self._total - 1)
         self._slider.setEnabled(self._total > 0)
-        self._slider.setRange(0, last)
+        self._suppress_signal = True
+        try:
+            self._slider.setRange(0, last)
+        finally:
+            self._suppress_signal = False
         self._jump_entry.setEnabled(self._total > 0)
         validator = self._jump_entry.validator()
         if isinstance(validator, QIntValidator):

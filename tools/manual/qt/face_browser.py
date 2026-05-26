@@ -255,7 +255,10 @@ class FaceBrowserMixin:
     def _on_editable_changed(self, frame_index: int) -> None:
         """React to any change in the editable alignment model."""
         self.mark_dirty(self._editable.can_undo)
-        self._refresh_filter_results()
+        self._refresh_filter_results(
+            preserve_current=True,
+            navigate_on_filter_miss=False,
+        )
         if frame_index != self._current_frame_index():
             return
         self.refresh_faces()

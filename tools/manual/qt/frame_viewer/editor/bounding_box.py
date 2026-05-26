@@ -176,13 +176,13 @@ class BoundingBoxFrameEditorMixin:
         self.face_add_requested.emit(rect)
 
     def _begin_add_drag(self, position: QPointF, source_point: QPointF | None) -> bool:
-        """Try to start an add drag if the add-mode provider returns True."""
+        """Create a default bbox immediately, then let the same gesture move it."""
         if self._add_mode_provider is None or not self._add_mode_provider():
             return False
         if source_point is None or not self._target_rect().contains(position):
             return False
+        rect = self._default_add_rect(source_point)
         if self._face_add_callback is not None:
-            rect = self._default_add_rect(source_point)
             face_index = self._face_add_callback(rect)
             if face_index is None:
                 return False
@@ -193,14 +193,11 @@ class BoundingBoxFrameEditorMixin:
             self._edit_drag_current_bbox = QRectF(rect)
             self.setCursor(Qt.SizeAllCursor)
             return True
-        self._edit_drag_mode = "add"
-        self._edit_drag_handle = None
-        self._edit_drag_source_anchor = QPointF(source_point)
-        # ``original_bbox`` is unused for add but the helpers guard on it; use
-        # a zero-sized placeholder anchored at the click point.
-        self._edit_drag_original_bbox = QRectF(source_point.x(), source_point.y(), 0.0, 0.0)
-        self._edit_drag_current_bbox = QRectF(source_point.x(), source_point.y(), 0.0, 0.0)
-        self.setCursor(Qt.CrossCursor)
+        self.face_add_requested.emit(rect)
+        if self._begin_edit_drag(position):
+            self.setCursor(Qt.SizeAllCursor)
+            return True
+        self.setCursor(Qt.SizeAllCursor)
         return True
 
     def _default_add_rect(self, anchor: QPointF) -> QRectF:
@@ -435,7 +432,7 @@ class BoundingBoxWindowEditorMixin:
             self.refresh_faces()
             self._frame_view.update()
         self.mark_dirty(True)
-        self._refresh_filter_results()
+        self._refresh_filter_results(preserve_current=True, navigate_on_filter_miss=False)
         self._refresh_face_grid()
         self.statusBar().showMessage(
             f"Deleted face {face_index + 1} on frame {frame_index + 1}", 5000
@@ -468,6 +465,6 @@ class BoundingBoxWindowEditorMixin:
             self.refresh_faces()
             self._frame_view.update()
         self.mark_dirty(True)
-        self._refresh_filter_results()
+        self._refresh_filter_results(preserve_current=True, navigate_on_filter_miss=False)
         self._refresh_face_grid()
         self.statusBar().showMessage(f"Deleted {deleted} selected face(s)", 5000)

@@ -597,9 +597,8 @@ class ControlsMixin:
         filtered_total = len(filtered)
         has_frames = filtered_total > 0
         if has_frames:
-            filtered_position = self._filtered_position()
-            not_first = filtered_position > 0
-            not_last = 0 <= filtered_position < filtered_total - 1
+            not_first = self._previous_filtered_row() is not None
+            not_last = self._next_filtered_row() is not None
         else:
             not_first = False
             not_last = False

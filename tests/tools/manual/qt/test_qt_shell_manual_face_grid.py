@@ -433,7 +433,7 @@ def test_face_grid_refreshes_after_non_current_edit_with_filter(
     qtbot,
     tmp_path: Path,
 ) -> None:  # type:ignore[no-untyped-def]
-    """Non-current edits refresh both filtered navigation and grid contents."""
+    """Non-current edits refresh filtered results and grid contents without navigating."""
     window = _make_window(qtbot, tmp_path, count=4)
     window._thumbnail_panel.setCurrentRow(0)
     window.editor_state.set("filter_mode", "Has Face(s)")
@@ -442,5 +442,5 @@ def test_face_grid_refreshes_after_non_current_edit_with_filter(
     _seed_face(window, 2)
 
     assert window.filtered_frame_indices() == (2,)
-    assert window._thumbnail_panel.currentRow() == 2
+    assert window._thumbnail_panel.currentRow() == 0
     assert window.face_grid_panel.entry_keys() == ((2, 0),)

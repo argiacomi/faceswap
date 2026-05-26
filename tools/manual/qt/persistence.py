@@ -34,7 +34,7 @@ class PersistenceMixin:
             self._editor_state.set("edited", False)
         self.refresh_faces()
         self._frame_view.update()
-        self._refresh_filter_results()
+        self._refresh_filter_results(preserve_current=True, navigate_on_filter_miss=False)
         self._refresh_face_grid()
         face_count = self._editable.face_count(frame_index)
         if face_count == 0:

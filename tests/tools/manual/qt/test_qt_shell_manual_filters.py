@@ -161,10 +161,10 @@ def test_face_count_edit_refreshes_active_filter_results(qtbot, tmp_path: Path) 
     assert window._filter_label.text() == "Filter: Has Face(s) (1 match)"
 
 
-def test_non_current_face_count_edit_refreshes_active_filter_results(
+def test_non_current_face_count_edit_refreshes_without_navigating_current_frame(
     qtbot, tmp_path: Path
 ) -> None:  # type:ignore[no-untyped-def]
-    """Adding a face on another frame refreshes filters before the current-frame guard."""
+    """Adding a face on another frame refreshes filters but leaves the row alone."""
     window = _make_window(qtbot, tmp_path, count=4)
     window._thumbnail_panel.setCurrentRow(0)
     window.editor_state.set("filter_mode", "Has Face(s)")
@@ -173,7 +173,63 @@ def test_non_current_face_count_edit_refreshes_active_filter_results(
     _seed_face(window, 2)
 
     assert window.filtered_frame_indices() == (2,)
-    assert window._thumbnail_panel.currentRow() == 2
+    assert window._thumbnail_panel.currentRow() == 0
     assert window._transport_bar.slider.isEnabled() is True
     assert window._transport_bar.counter_label.text() == "Frame: 1 / 1"
     assert window._filter_label.text() == "Filter: Has Face(s) (1 match)"
+
+
+def test_no_faces_filter_add_keeps_current_frame_until_next(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+    """Adding a face under No Faces updates matches without jumping away."""
+    window = _make_window(qtbot, tmp_path, count=3)
+    window._thumbnail_panel.setCurrentRow(0)
+    window.editor_state.set("filter_mode", "No Faces")
+
+    _seed_face(window, 0)
+
+    assert window.filtered_frame_indices() == (1, 2)
+    assert window._thumbnail_panel.currentRow() == 0
+
+    window._next_frame()
+    assert window._thumbnail_panel.currentRow() == 1
+
+
+def test_has_faces_filter_delete_keeps_current_frame_until_previous(
+    qtbot,
+    tmp_path: Path,
+) -> None:  # type:ignore[no-untyped-def]
+    """Deleting the only face under Has Face(s) preserves the current row."""
+    window = _make_window(qtbot, tmp_path, count=3)
+    _seed_face(window, 0)
+    _seed_face(window, 2)
+    window._thumbnail_panel.setCurrentRow(2)
+    window.editor_state.set("filter_mode", "Has Face(s)")
+    window.editor_state.set("face_index", 0)
+
+    window.delete_active_face()
+
+    assert window.filtered_frame_indices() == (0,)
+    assert window._thumbnail_panel.currentRow() == 2
+
+    window._previous_frame()
+    assert window._thumbnail_panel.currentRow() == 0
+
+
+def test_single_face_filter_second_face_keeps_current_frame_until_next(
+    qtbot,
+    tmp_path: Path,
+) -> None:  # type:ignore[no-untyped-def]
+    """Adding a second face under Single Face does not navigate immediately."""
+    window = _make_window(qtbot, tmp_path, count=3)
+    _seed_face(window, 0)
+    _seed_face(window, 2)
+    window._thumbnail_panel.setCurrentRow(0)
+    window.editor_state.set("filter_mode", "Single Face")
+
+    _seed_face(window, 0)
+
+    assert window.filtered_frame_indices() == (2,)
+    assert window._thumbnail_panel.currentRow() == 0
+
+    window._next_frame()
+    assert window._thumbnail_panel.currentRow() == 2

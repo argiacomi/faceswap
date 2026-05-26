@@ -354,6 +354,7 @@ class LayoutMixin:
         )
         self._face_grid_panel.face_delete_requested.connect(self._delete_face_at)
         self._face_grid_panel.faces_delete_requested.connect(self._delete_faces_at)
+        self._frame_view.frame_interaction_started.connect(self._stop_playback)
         self._frame_view.clicked_at.connect(self._on_frame_clicked)
         self._frame_view.face_move_requested.connect(self._on_face_move_requested)
         self._frame_view.face_resize_requested.connect(self._on_face_resize_requested)
