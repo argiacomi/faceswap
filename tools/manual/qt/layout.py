@@ -30,35 +30,27 @@ class LayoutMixin:
     """Own root-window widget layout construction."""
 
     def _build_face_grid_panel(self) -> QWidget:
-        """Return the face-strip + filtered-session face grid container."""
+        """Return the default bottom face-grid container."""
         container = QWidget()
         container.setObjectName("qt-manual-face-browser-panel")
         layout = QHBoxLayout(container)
         layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(6)
+        layout.setSpacing(4)
 
-        current_box = QWidget()
-        current_layout = QVBoxLayout(current_box)
-        current_layout.setContentsMargins(0, 0, 0, 0)
-        current_layout.setSpacing(4)
-        current_label = QLabel("Current frame faces")
-        current_label.setObjectName("qt-manual-current-frame-faces-label")
-        current_layout.addWidget(current_label)
-        current_layout.addWidget(self._face_panel, 1)
-        layout.addWidget(current_box, 1)
+        self._face_panel.setObjectName("qt-manual-current-frame-face-panel")
+        self._face_panel.hide()
 
         grid_box = QWidget()
         grid_layout = QVBoxLayout(grid_box)
         grid_layout.setContentsMargins(0, 0, 0, 0)
-        grid_layout.setSpacing(4)
+        grid_layout.setSpacing(2)
         controls = QHBoxLayout()
         controls.setContentsMargins(0, 0, 0, 0)
-        controls.setSpacing(8)
-        session_label = QLabel("Filtered session faces")
-        session_label.setObjectName("qt-manual-filtered-session-faces-label")
-        controls.addWidget(session_label)
+        controls.setSpacing(6)
         controls.addStretch(1)
-        controls.addWidget(QLabel("Size:"))
+        size_label = QLabel("Size:")
+        size_label.setObjectName("qt-manual-face-grid-size-label")
+        controls.addWidget(size_label)
         self._face_grid_size_combo.setObjectName("qt-manual-face-grid-size")
         self._face_grid_size_combo.addItems(tuple(_FACE_GRID_SIZES))
         size_name = self._editor_state.faces_size or "Medium"
@@ -70,7 +62,7 @@ class LayoutMixin:
         controls.addWidget(self._face_grid_size_combo)
         grid_layout.addLayout(controls)
         grid_layout.addWidget(self._face_grid_panel, 1)
-        layout.addWidget(grid_box, 2)
+        layout.addWidget(grid_box, 1)
         return container
 
     def _build_ui(self) -> None:
@@ -78,6 +70,7 @@ class LayoutMixin:
         self.resize(980, 680)
         self._build_toolbar()
         status = QStatusBar()
+        status.setObjectName("qt-manual-status-bar")
         self.setStatusBar(status)
         left = QWidget()
         left_layout = QVBoxLayout(left)
@@ -85,26 +78,30 @@ class LayoutMixin:
         left_layout.setSpacing(8)
         self._metadata_label.setObjectName("qt-manual-session-metadata")
         self._metadata_label.setWordWrap(True)
+        self._metadata_label.hide()
         left_layout.addWidget(self._metadata_label)
         self._mask_controls = self._build_mask_controls()
+        self._mask_controls.hide()
         left_layout.addWidget(self._mask_controls)
         self._aligner_controls = self._build_aligner_controls()
+        self._aligner_controls.hide()
         left_layout.addWidget(self._aligner_controls)
         left_layout.addWidget(self._frame_view, 1)
         self._filter_controls = self._build_filter_controls()
         left_layout.addWidget(self._filter_controls)
         left_layout.addWidget(self._transport_bar)
+        self._status_label.hide()
         left_layout.addWidget(self._status_label)
 
         splitter = QSplitter(Qt.Vertical)
         splitter.setObjectName("qt-manual-main-splitter")
         splitter.addWidget(left)
         splitter.addWidget(self._build_face_grid_panel())
-        splitter.addWidget(self._thumbnail_panel)
-        splitter.setStretchFactor(0, 3)
-        splitter.setStretchFactor(1, 0)
-        splitter.setStretchFactor(2, 0)
-        splitter.setSizes([500, 140, 80])
+        self._thumbnail_panel.setObjectName("qt-manual-hidden-frame-thumbnail-panel")
+        self._thumbnail_panel.hide()
+        splitter.setStretchFactor(0, 4)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([540, 140])
         self._manual_splitter = splitter
         self.setCentralWidget(splitter)
 
@@ -114,6 +111,7 @@ class LayoutMixin:
         toolbar = QToolBar("Manual Tool")
         toolbar.setObjectName("qt-manual-toolbar")
         toolbar.setIconSize(QSize(theme.icon_size, theme.icon_size))
+        toolbar.hide()
         self.addToolBar(toolbar)
         for spec in MANUAL_ACTIONS:
             if spec.separator_before and spec.toolbar_visible:
