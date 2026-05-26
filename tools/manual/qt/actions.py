@@ -3,24 +3,11 @@
 
 from __future__ import annotations
 
-import logging
 import typing as T
-
-logger = logging.getLogger(__name__)
 
 
 class ManualAction(T.NamedTuple):
-    """Static metadata for one Manual Tool editor action.
-
-    The legacy Tk Manual Tool wires editor commands through Tk widgets and key
-    bindings; the Qt shell mirrors the same surface through a registry so each
-    action has a single source of truth for label, icon, shortcut, tooltip and
-    availability semantics.  ``handler`` is the unbound method name on
-    :class:`ManualToolWindow` that performs the action when triggered.
-
-    Icons reuse the existing Qt theme icon cache where available.  Actions
-    whose ``icon`` does not yet resolve are documented inline below.
-    """
+    """Static metadata for one Manual Tool editor action."""
 
     key: str
     label: str
@@ -30,351 +17,46 @@ class ManualAction(T.NamedTuple):
     tooltip: str = ""
     separator_before: bool = False
     toolbar_visible: bool = True
-    """When ``False``, the action is registered for its shortcut but not added
-    to the toolbar — used by keyboard-only commands (nudge arrows, etc.)."""
     focus_scope: str = "window"
-    """Where the shortcut listens. ``"window"`` (default) fires from anywhere
-    in the Manual Tool. ``"frame_view"`` parents the action to the frame view
-    with :data:`Qt.WidgetWithChildrenShortcut` so the panel can claim arrow
-    keys for its own navigation when focused."""
 
 
-# Manual Tool action registry. The first six actions cover the legacy file/
-# navigation surface. The remaining entries register editor operations
-# (add/delete/copy/revert), the filter cycle, the F1-F5 editor modes, the
-# F9/F10 annotation toggles and the legacy-tool fallback.  Icons marked
-# "(missing)" in the comments fall back to a null QIcon — replace them with
-# real PNGs in lib/gui/.cache/icons/ when art lands.
 MANUAL_ACTIONS: tuple[ManualAction, ...] = (
-    ManualAction(
-        key="save",
-        label="Save",
-        handler="save",
-        shortcut=("Ctrl+S",),
-        icon="save",
-        tooltip="Save edits to the alignments file (Ctrl+S)",
-    ),
-    ManualAction(
-        key="revert_frame",
-        label="Revert Frame",
-        handler="revert_current_frame",
-        shortcut=("R",),
-        icon="reload",
-        tooltip="Revert edits in the current frame (R)",
-        separator_before=True,
-    ),
-    ManualAction(
-        key="first_frame",
-        label="First Frame",
-        handler="goto_first_frame",
-        shortcut=("Home",),
-        icon="beginning",
-        tooltip="Jump to the first frame (Home)",
-        separator_before=True,
-    ),
-    ManualAction(
-        key="previous_frame",
-        label="Previous",
-        handler="_previous_frame",
-        shortcut=("Z",),
-        icon="prev",
-        tooltip="Previous frame (Z)",
-    ),
-    ManualAction(
-        key="next_frame",
-        label="Next",
-        handler="_next_frame",
-        shortcut=("X",),
-        icon="next",
-        tooltip="Next frame (X)",
-    ),
-    ManualAction(
-        key="last_frame",
-        label="Last Frame",
-        handler="goto_last_frame",
-        shortcut=("End",),
-        icon="end",
-        tooltip="Jump to the last frame (End)",
-    ),
-    ManualAction(
-        key="play_pause",
-        label="Play / Pause",
-        handler="toggle_play",
-        shortcut=("Space",),
-        icon="play",
-        tooltip="Play / pause playback (Space)",
-    ),
-    ManualAction(
-        key="copy_prev_face",
-        label="Copy From Previous",
-        handler="copy_prev_face",
-        shortcut=("C",),
-        icon="copy_prev",
-        tooltip="Copy alignment from the previous frame (C)",
-        separator_before=True,
-    ),
-    ManualAction(
-        key="copy_next_face",
-        label="Copy From Next",
-        handler="copy_next_face",
-        shortcut=("V",),
-        icon="copy_next",
-        tooltip="Copy alignment from the next frame (V)",
-    ),
-    ManualAction(
-        key="delete_face",
-        label="Delete Face",
-        handler="delete_active_face",
-        shortcut=("Delete", "Backspace"),
-        icon="clear",  # No dedicated trash icon yet; reusing the "clear" glyph.
-        tooltip="Delete the active face (Delete)",
-    ),
-    ManualAction(
-        key="add_face",
-        label="Add Face",
-        handler="add_face_at_center",
-        shortcut=("Ctrl+N",),
-        icon=None,  # (missing) — no dedicated add-face icon in the cache.
-        tooltip="Add a new face at the center of the current frame (Ctrl+N)",
-    ),
-    ManualAction(
-        key="undo_edit",
-        label="Undo",
-        handler="undo_edit",
-        shortcut=("Ctrl+Z",),
-        icon=None,  # (missing) — no dedicated undo icon in the cache.
-        tooltip="Undo the last edit (Ctrl+Z)",
-        separator_before=True,
-    ),
-    ManualAction(
-        key="redo_edit",
-        label="Redo",
-        handler="redo_edit",
-        shortcut=("Ctrl+Shift+Z", "Ctrl+Y"),
-        icon=None,  # (missing) — no dedicated redo icon in the cache.
-        tooltip="Redo the last undone edit (Ctrl+Shift+Z)",
-    ),
-    ManualAction(
-        key="cycle_filter",
-        label="Filter",
-        handler="cycle_filter_mode",
-        shortcut=("F",),
-        icon=None,  # (missing) — no filter icon in the cache.
-        tooltip="Cycle the navigation filter mode (F)",
-        separator_before=True,
-    ),
-    ManualAction(
-        key="set_view_mode",
-        label="View",
-        handler="set_editor_view",
-        shortcut=("F1",),
-        icon="view",
-        tooltip="Switch to View editor (F1)",
-        separator_before=True,
-    ),
-    ManualAction(
-        key="set_boundingbox_mode",
-        label="Bounding Box",
-        handler="set_editor_boundingbox",
-        shortcut=("F2",),
-        icon="boundingbox",
-        tooltip="Switch to Bounding Box editor (F2)",
-    ),
-    ManualAction(
-        key="set_extractbox_mode",
-        label="Extract Box",
-        handler="set_editor_extractbox",
-        shortcut=("F3",),
-        icon="extractbox",
-        tooltip="Switch to Extract Box editor (F3)",
-    ),
-    ManualAction(
-        key="set_landmarks_mode",
-        label="Landmarks",
-        handler="set_editor_landmarks",
-        shortcut=("F4",),
-        icon="landmarks",
-        tooltip="Switch to Landmarks editor (F4)",
-    ),
-    ManualAction(
-        key="set_mask_mode",
-        label="Mask",
-        handler="set_editor_mask",
-        shortcut=("F5",),
-        icon="mask",
-        tooltip="Switch to Mask editor (F5)",
-    ),
-    ManualAction(
-        key="cycle_annotation",
-        label="Annotation",
-        handler="cycle_annotation_display",
-        shortcut=("F9",),
-        icon=None,  # (missing) — no annotation icon in the cache.
-        tooltip="Cycle annotation display (F9)",
-        separator_before=True,
-    ),
-    ManualAction(
-        key="zoom_in",
-        label="Zoom In",
-        handler="zoom_in",
-        shortcut=("=", "+"),
-        icon="zoom",
-        tooltip="Zoom in on the frame view (+)",
-        separator_before=True,
-    ),
-    ManualAction(
-        key="zoom_out",
-        label="Zoom Out",
-        handler="zoom_out",
-        shortcut=("-",),
-        icon=None,  # (missing) — no dedicated zoom-out icon.
-        tooltip="Zoom out of the frame view (-)",
-    ),
-    ManualAction(
-        key="reset_view",
-        label="Reset View",
-        handler="reset_view",
-        shortcut=("0",),
-        icon=None,  # (missing) — reuse default until art lands.
-        tooltip="Reset zoom and pan (0)",
-    ),
-    ManualAction(
-        key="magnify_active_face",
-        label="Magnify Active Face",
-        handler="magnify_active_face",
-        shortcut=("M",),
-        icon=None,
-        tooltip="Fit the active face's bbox to the frame view (M)",
-    ),
-    # Mask editor (F5, #101) — Draw / Erase actions + brush size shortcuts.
-    ManualAction(
-        key="mask_draw",
-        label="Mask: Draw",
-        handler="set_mask_draw_mode",
-        shortcut=("B",),
-        icon=None,
-        tooltip="Switch the Mask editor to Draw mode (B)",
-    ),
-    ManualAction(
-        key="mask_erase",
-        label="Mask: Erase",
-        handler="set_mask_erase_mode",
-        shortcut=("D",),
-        icon=None,
-        tooltip="Switch the Mask editor to Erase mode (D)",
-    ),
-    ManualAction(
-        key="brush_size_increase",
-        label="Brush Size +",
-        handler="increase_brush_size",
-        shortcut=("]",),
-        icon=None,
-        tooltip="Increase Mask brush size (])",
-    ),
-    ManualAction(
-        key="brush_size_decrease",
-        label="Brush Size -",
-        handler="decrease_brush_size",
-        shortcut=("[",),
-        icon=None,
-        tooltip="Decrease Mask brush size ([)",
-    ),
-    ManualAction(
-        key="nudge_up",
-        label="Nudge Up",
-        handler="nudge_up_one",
-        shortcut=("Up",),
-        icon=None,
-        tooltip="Nudge the active face up one source pixel (Up)",
-        toolbar_visible=False,
-        focus_scope="frame_view",
-    ),
-    ManualAction(
-        key="nudge_down",
-        label="Nudge Down",
-        handler="nudge_down_one",
-        shortcut=("Down",),
-        icon=None,
-        tooltip="Nudge the active face down one source pixel (Down)",
-        toolbar_visible=False,
-        focus_scope="frame_view",
-    ),
-    ManualAction(
-        key="nudge_left",
-        label="Nudge Left",
-        handler="nudge_left_one",
-        shortcut=("Left",),
-        icon=None,
-        tooltip="Nudge the active face left one source pixel (Left)",
-        toolbar_visible=False,
-        focus_scope="frame_view",
-    ),
-    ManualAction(
-        key="nudge_right",
-        label="Nudge Right",
-        handler="nudge_right_one",
-        shortcut=("Right",),
-        icon=None,
-        tooltip="Nudge the active face right one source pixel (Right)",
-        toolbar_visible=False,
-        focus_scope="frame_view",
-    ),
-    ManualAction(
-        key="nudge_up_fast",
-        label="Nudge Up (10px)",
-        handler="nudge_up_fast",
-        shortcut=("Shift+Up",),
-        icon=None,
-        tooltip="Nudge the active face up ten source pixels (Shift+Up)",
-        toolbar_visible=False,
-        focus_scope="frame_view",
-    ),
-    ManualAction(
-        key="nudge_down_fast",
-        label="Nudge Down (10px)",
-        handler="nudge_down_fast",
-        shortcut=("Shift+Down",),
-        icon=None,
-        tooltip="Nudge the active face down ten source pixels (Shift+Down)",
-        toolbar_visible=False,
-        focus_scope="frame_view",
-    ),
-    ManualAction(
-        key="nudge_left_fast",
-        label="Nudge Left (10px)",
-        handler="nudge_left_fast",
-        shortcut=("Shift+Left",),
-        icon=None,
-        tooltip="Nudge the active face left ten source pixels (Shift+Left)",
-        toolbar_visible=False,
-        focus_scope="frame_view",
-    ),
-    ManualAction(
-        key="nudge_right_fast",
-        label="Nudge Right (10px)",
-        handler="nudge_right_fast",
-        shortcut=("Shift+Right",),
-        icon=None,
-        tooltip="Nudge the active face right ten source pixels (Shift+Right)",
-        toolbar_visible=False,
-        focus_scope="frame_view",
-    ),
-    ManualAction(
-        key="extract_faces",
-        label="Extract Faces",
-        handler="extract_faces",
-        shortcut=("Ctrl+E",),
-        icon="task_save_as",
-        tooltip="Extract aligned faces to a folder (Ctrl+E)",
-        separator_before=True,
-    ),
-    ManualAction(
-        key="legacy_tool",
-        label="Open Legacy Tool",
-        handler="launch_legacy",
-        shortcut=(),
-        icon=None,  # (missing) — no dedicated legacy icon.
-        tooltip="Launch the legacy Tk Manual Tool",
-        separator_before=True,
-    ),
+    ManualAction("save", "Save", "save", ("Ctrl+S",), "save", "Save edits to the alignments file (Ctrl+S)"),
+    ManualAction("revert_frame", "Revert Frame", "revert_current_frame", ("R",), "reload", "Revert edits in the current frame (R)", True),
+    ManualAction("first_frame", "First Frame", "goto_first_frame", ("Home",), "beginning", "Jump to the first frame (Home)", True),
+    ManualAction("previous_frame", "Previous", "_previous_frame", ("Z",), "prev", "Previous frame (Z)"),
+    ManualAction("next_frame", "Next", "_next_frame", ("X",), "next", "Next frame (X)"),
+    ManualAction("last_frame", "Last Frame", "goto_last_frame", ("End",), "end", "Jump to the last frame (End)"),
+    ManualAction("play_pause", "Play / Pause", "toggle_play", ("Space",), "play", "Play / pause playback (Space)"),
+    ManualAction("copy_prev_face", "Copy From Previous", "copy_prev_face", ("C",), "copy_prev", "Copy alignment from the previous frame (C)", True),
+    ManualAction("copy_next_face", "Copy From Next", "copy_next_face", ("V",), "copy_next", "Copy alignment from the next frame (V)"),
+    ManualAction("delete_face", "Delete Face", "delete_active_face", ("Delete", "Backspace"), "clear", "Delete the active face (Delete)"),
+    ManualAction("add_face", "Add Face", "add_face_at_center", ("Ctrl+N",), None, "Add a new face at the center of the current frame (Ctrl+N)"),
+    ManualAction("undo_edit", "Undo", "undo_edit", ("Ctrl+Z",), None, "Undo the last edit (Ctrl+Z)", True),
+    ManualAction("redo_edit", "Redo", "redo_edit", ("Ctrl+Shift+Z", "Ctrl+Y"), None, "Redo the last undone edit (Ctrl+Shift+Z)"),
+    ManualAction("cycle_filter", "Filter", "cycle_filter_mode", ("F",), None, "Cycle the navigation filter mode (F)", True),
+    ManualAction("set_view_mode", "View", "set_editor_view", ("F1",), "view", "Switch to View editor (F1)", True),
+    ManualAction("set_boundingbox_mode", "Bounding Box", "set_editor_boundingbox", ("F2",), "boundingbox", "Switch to Bounding Box editor (F2)"),
+    ManualAction("set_extractbox_mode", "Extract Box", "set_editor_extractbox", ("F3",), "extractbox", "Switch to Extract Box editor (F3)"),
+    ManualAction("set_landmarks_mode", "Landmarks", "set_editor_landmarks", ("F4",), "landmarks", "Switch to Landmarks editor (F4)"),
+    ManualAction("set_mask_mode", "Mask", "set_editor_mask", ("F5",), "mask", "Switch to Mask editor (F5)"),
+    ManualAction("cycle_annotation", "Annotation", "cycle_annotation_display", ("F9",), None, "Cycle annotation display (F9)", True),
+    ManualAction("zoom_in", "Zoom In", "zoom_in", ("=", "+"), "zoom", "Zoom in on the frame view (+)", True),
+    ManualAction("zoom_out", "Zoom Out", "zoom_out", ("-",), None, "Zoom out of the frame view (-)"),
+    ManualAction("reset_view", "Reset View", "reset_view", ("0",), None, "Reset zoom and pan (0)"),
+    ManualAction("magnify_active_face", "Magnify Active Face", "magnify_active_face", ("M",), None, "Fit the active face's bbox to the frame view (M)"),
+    ManualAction("mask_draw", "Mask: Draw", "set_mask_draw_mode", ("D",), None, "Switch the Mask editor to Draw mode (D)"),
+    ManualAction("mask_erase", "Mask: Erase", "set_mask_erase_mode", ("E",), None, "Switch the Mask editor to Erase mode (E)"),
+    ManualAction("brush_size_increase", "Brush Size +", "increase_brush_size", ("]",), None, "Increase Mask brush size (])"),
+    ManualAction("brush_size_decrease", "Brush Size -", "decrease_brush_size", ("[",), None, "Decrease Mask brush size ([)"),
+    ManualAction("nudge_up", "Nudge Up", "nudge_up_one", ("Up",), None, "Nudge the active face up one source pixel (Up)", False, False, "frame_view"),
+    ManualAction("nudge_down", "Nudge Down", "nudge_down_one", ("Down",), None, "Nudge the active face down one source pixel (Down)", False, False, "frame_view"),
+    ManualAction("nudge_left", "Nudge Left", "nudge_left_one", ("Left",), None, "Nudge the active face left one source pixel (Left)", False, False, "frame_view"),
+    ManualAction("nudge_right", "Nudge Right", "nudge_right_one", ("Right",), None, "Nudge the active face right one source pixel (Right)", False, False, "frame_view"),
+    ManualAction("nudge_up_fast", "Nudge Up (10px)", "nudge_up_fast", ("Shift+Up",), None, "Nudge the active face up ten source pixels (Shift+Up)", False, False, "frame_view"),
+    ManualAction("nudge_down_fast", "Nudge Down (10px)", "nudge_down_fast", ("Shift+Down",), None, "Nudge the active face down ten source pixels (Shift+Down)", False, False, "frame_view"),
+    ManualAction("nudge_left_fast", "Nudge Left (10px)", "nudge_left_fast", ("Shift+Left",), None, "Nudge the active face left ten source pixels (Shift+Left)", False, False, "frame_view"),
+    ManualAction("nudge_right_fast", "Nudge Right (10px)", "nudge_right_fast", ("Shift+Right",), None, "Nudge the active face right ten source pixels (Shift+Right)", False, False, "frame_view"),
+    ManualAction("extract_faces", "Extract Faces", "extract_faces", ("Ctrl+E",), "task_save_as", "Extract aligned faces to a folder (Ctrl+E)", True),
+    ManualAction("legacy_tool", "Open Legacy Tool", "launch_legacy", (), None, "Launch the legacy Tk Manual Tool", True),
 )
