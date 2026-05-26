@@ -19,6 +19,7 @@ from lib.landmarks.ensemble.promoted_setup import write_best_setup
 from lib.landmarks.ensemble.runtime_resolver import CandidateMetrics, CandidateRecord
 from lib.landmarks.ensemble.runtime_resolver_scorer import (
     RuntimeResolverScorer,
+    candidate_feature_map,
     load_runtime_resolver_scorer,
     write_runtime_resolver_scorer,
 )
@@ -245,6 +246,60 @@ def test_rows_for_context_rejects_missing_nme() -> None:
 
     with pytest.raises(ValueError, match="missing NME for candidate 'failure'"):
         scorer_data.rows_for_context(context)
+
+
+def test_candidate_feature_map_includes_shape_plausibility_fields() -> None:
+    candidate = CandidateRecord(
+        name="spiga",
+        landmarks=_face(),
+        is_fusion=False,
+        contributing_models=("spiga",),
+    )
+    metric = CandidateMetrics(
+        roll_degrees=0.0,
+        yaw_degrees=0.0,
+        pitch_degrees=0.0,
+        shape_plausibility_score=1.25,
+        shape_veto_reasons=("edge_length_extreme",),
+        max_edge_length_ratio=1.6,
+        mean_shape_fit_error=0.14,
+        topology_violation_count=3,
+    )
+
+    features = candidate_feature_map(candidate, metric)
+
+    assert features["shape_plausibility_score"] == pytest.approx(1.25)
+    assert features["max_edge_length_ratio"] == pytest.approx(1.6)
+    assert features["mean_shape_fit_error"] == pytest.approx(0.14)
+    assert features["topology_violation_count"] == pytest.approx(3.0)
+    assert features["shape_veto_reason=edge_length_extreme"] == 1.0
+
+
+def test_candidate_table_rows_include_shape_plausibility_diagnostics() -> None:
+    context = _candidate_context(
+        nme_by_candidate={
+            "oracle": 0.01,
+            "zero": 0.01,
+            "small": 0.015,
+            "large": 0.05,
+            "failure": 0.02,
+        }
+    )
+    metric = context.metrics["oracle"]
+    metric.shape_plausibility_score = 1.25
+    metric.shape_veto_reasons = ("edge_length_extreme",)
+    metric.max_edge_length_ratio = 1.6
+    metric.mean_shape_fit_error = 0.14
+    metric.topology_violation_count = 3
+
+    rows = scorer_data.candidate_table_rows_for_context(context)
+    oracle = next(row for row in rows if row["candidate"] == "oracle")
+
+    assert oracle["shape_plausibility_score"] == pytest.approx(1.25)
+    assert oracle["shape_veto_reasons"] == "edge_length_extreme"
+    assert oracle["max_edge_length_ratio"] == pytest.approx(1.6)
+    assert oracle["mean_shape_fit_error"] == pytest.approx(0.14)
+    assert oracle["topology_violation_count"] == 3
 
 
 def test_train_runtime_resolver_scorer_writes_artifact_and_rows(tmp_path: Path) -> None:

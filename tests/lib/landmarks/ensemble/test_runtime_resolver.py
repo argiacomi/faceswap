@@ -188,9 +188,41 @@ def test_runtime_resolver_metadata_contains_requested_debug_fields(monkeypatch) 
         "yaw_estimate",
         "cloud_area_ratio",
         "landmark_consensus_distance",
+        "shape_plausibility_score",
+        "shape_veto_reasons",
+        "max_edge_length_ratio",
+        "mean_shape_fit_error",
+        "topology_violation_count",
         "model_predictions_available",
     ):
         assert key in result.metadata
+
+
+def test_runtime_resolver_shape_plausibility_vetoes_scrambled_candidate(monkeypatch) -> None:
+    """68-point topology failures veto a candidate before bucket-priority selection."""
+    monkeypatch.setattr(
+        runtime_resolver,
+        "infer_runtime_bucket",
+        lambda **kwargs: RuntimeBucketResult(bucket="large_yaw_left", features={}),
+    )
+    base = _face()
+    scrambled = base.copy()
+    scrambled[37] = base[8]
+
+    result = resolve_runtime(
+        [
+            ModelPrediction("hrnet", base),
+            ModelPrediction("spiga", scrambled),
+        ],
+        RuntimeResolverConfig(weights={"hrnet": [0.5] * 68, "spiga": [0.5] * 68}),
+        detector_bbox=(35.0, 65.0, 165.0, 155.0),
+    )
+
+    assert result.selected_candidate != "spiga"
+    assert "spiga" in result.metadata["geometry_vetoed"]
+    assert "shape_edge_length_extreme" in result.metadata["veto_reasons"]["spiga"]
+    assert result.metadata["shape_veto_reasons"]["spiga"] == ("edge_length_extreme",)
+    assert result.metadata["max_edge_length_ratio"]["spiga"] > 1.0
 
 
 def test_learned_quality_policy_scores_geometry_valid_candidates(

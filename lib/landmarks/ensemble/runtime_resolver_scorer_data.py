@@ -806,6 +806,11 @@ def candidate_table_rows_for_context(
                 ),
                 "roi_center_consensus_distance": metric.roi_center_consensus_distance,
                 "landmark_consensus_distance": metric.landmark_consensus_distance,
+                "shape_plausibility_score": metric.shape_plausibility_score,
+                "shape_veto_reasons": "|".join(metric.shape_veto_reasons),
+                "max_edge_length_ratio": metric.max_edge_length_ratio,
+                "mean_shape_fit_error": metric.mean_shape_fit_error,
+                "topology_violation_count": metric.topology_violation_count,
                 "roll": metric.roll_degrees,
                 "yaw": metric.yaw_degrees,
                 "roll_delta_to_consensus": (

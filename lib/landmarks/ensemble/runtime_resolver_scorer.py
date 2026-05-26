@@ -75,6 +75,7 @@ def candidate_feature_map(
     name = str(getattr(candidate, "name", ""))
     is_fusion = bool(getattr(candidate, "is_fusion", False))
     veto_reasons = tuple(getattr(metric, "geometry_veto_reasons", ()) or ())
+    shape_veto_reasons = tuple(getattr(metric, "shape_veto_reasons", ()) or ())
     model_available: dict[str, bool] = {}
     if isinstance(model_predictions_available, Mapping):
         model_available = {
@@ -102,6 +103,11 @@ def candidate_feature_map(
         "landmark_consensus_distance": _float(
             getattr(metric, "landmark_consensus_distance", None)
         ),
+        "shape_plausibility_score": _float(getattr(metric, "shape_plausibility_score", None)),
+        "max_edge_length_ratio": _float(getattr(metric, "max_edge_length_ratio", None)),
+        "mean_shape_fit_error": _float(getattr(metric, "mean_shape_fit_error", None)),
+        "topology_violation_count": _float(getattr(metric, "topology_violation_count", None)),
+        "shape_veto_reason_count": float(len(shape_veto_reasons)),
         "roll_degrees": _float(roll),
         "yaw_degrees": _float(yaw),
         "roll_delta_to_consensus": abs(_float(roll) - _float(roll_estimate)),
@@ -122,6 +128,8 @@ def candidate_feature_map(
             features[f"model_predictions_available={model}"] = 1.0
     for reason in veto_reasons:
         features[f"geometry_veto_reason={reason}"] = 1.0
+    for reason in shape_veto_reasons:
+        features[f"shape_veto_reason={reason}"] = 1.0
     if candidate_extra_features is not None:
         features.update(candidate_extra_features.get(name, {}))
     return features

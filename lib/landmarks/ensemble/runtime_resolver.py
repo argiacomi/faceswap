@@ -34,6 +34,7 @@ from lib.landmarks.ensemble.strategies import (
     strategy_uses_threshold,
 )
 from lib.landmarks.evaluation.geometry_signals import AlignmentSummary, alignment_summary
+from lib.landmarks.evaluation.shape_plausibility import evaluate_shape_plausibility
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,8 @@ DEFAULT_MAX_CLOUD_AREA_RATIO: float = 3.00
 DEFAULT_MIN_HULL_AREA_RATIO: float = 0.035
 DEFAULT_MAX_HULL_AREA_RATIO: float = 2.25
 DEFAULT_MAX_POINTS_OUTSIDE_EXPANDED_BBOX_FRACTION: float = 0.35
+DEFAULT_MAX_SHAPE_PLAUSIBILITY_SCORE: float = 1.10
+HARD_POSE_MAX_SHAPE_PLAUSIBILITY_SCORE: float = 1.35
 DEFAULT_MAX_ROI_CENTER_CONSENSUS_DISTANCE: float = 0.22
 DEFAULT_MAX_LANDMARK_CONSENSUS_DISTANCE: float = 0.16
 IMAGE_YAW_SIDE_THRESHOLD: float = 0.08
@@ -215,6 +218,11 @@ class CandidateMetrics:
     roi_center_consensus_distance: float | None = None
     landmark_consensus_distance: float | None = None
     geometry_veto_reasons: tuple[str, ...] = ()
+    shape_plausibility_score: float | None = None
+    shape_veto_reasons: tuple[str, ...] = ()
+    max_edge_length_ratio: float | None = None
+    mean_shape_fit_error: float | None = None
+    topology_violation_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -470,6 +478,7 @@ def _metric_for_candidate(
     candidate_bbox = _landmark_bbox(candidate.landmarks)
     candidate_area = _bbox_area(candidate_bbox)
     hull_area = _convex_hull_area(candidate.landmarks)
+    plausibility = evaluate_shape_plausibility(candidate.landmarks)
     return CandidateMetrics(
         roll_degrees=None if summary is None else float(summary.roll),
         yaw_degrees=None if summary is None else float(summary.yaw),
@@ -488,6 +497,11 @@ def _metric_for_candidate(
         eye_mouth_order_valid_after_deroll=_eye_mouth_order_valid_after_deroll(
             candidate.landmarks
         ),
+        shape_plausibility_score=plausibility.score,
+        shape_veto_reasons=plausibility.reasons if plausibility.severe else (),
+        max_edge_length_ratio=plausibility.metrics.get("max_edge_length_ratio"),
+        mean_shape_fit_error=plausibility.metrics.get("mean_shape_fit_error"),
+        topology_violation_count=int(plausibility.metrics.get("topology_violation_count", 0.0)),
     )
 
 
@@ -633,6 +647,18 @@ def _shape_reasons(bucket: str, name: str, metric: CandidateMetrics) -> tuple[st
         > DEFAULT_MAX_POINTS_OUTSIDE_EXPANDED_BBOX_FRACTION
     ):
         reasons.append("too_many_points_outside_expanded_bbox")
+    shape_threshold = (
+        HARD_POSE_MAX_SHAPE_PLAUSIBILITY_SCORE
+        if bucket not in {"frontal", "intermediate", "no_pose"}
+        else DEFAULT_MAX_SHAPE_PLAUSIBILITY_SCORE
+    )
+    if (
+        metric.shape_plausibility_score is not None
+        and metric.shape_plausibility_score > shape_threshold
+    ):
+        reasons.append("face_shape_plausibility_low")
+    for reason in metric.shape_veto_reasons:
+        reasons.append(f"shape_{reason}")
     # Keep eye/mouth ordering and consensus-distance diagnostics in metadata only.
     # Offline v5 showed these are unsafe as hard vetoes: when a bad majority forms
     # the consensus, the good single-model candidate becomes the apparent outlier.
@@ -847,7 +873,7 @@ def _roll_vetoes(
 def _metrics_payload(
     metrics: T.Mapping[str, CandidateMetrics],
     attr: str,
-) -> dict[str, float | bool | None]:
+) -> dict[str, T.Any]:
     return {name: getattr(metric, attr) for name, metric in metrics.items()}
 
 
@@ -1687,6 +1713,11 @@ def resolve_runtime(
                 ),
                 "landmark_consensus_distance": metric.landmark_consensus_distance,
                 "roi_center_consensus_distance": metric.roi_center_consensus_distance,
+                "shape_plausibility_score": metric.shape_plausibility_score,
+                "shape_veto_reasons": metric.shape_veto_reasons,
+                "max_edge_length_ratio": metric.max_edge_length_ratio,
+                "mean_shape_fit_error": metric.mean_shape_fit_error,
+                "topology_violation_count": metric.topology_violation_count,
                 "geometry_veto_reasons": metric.geometry_veto_reasons,
             }
             for name, metric in metrics.items()
@@ -1929,6 +1960,11 @@ def resolve_runtime(
         "roi_center_consensus_distance": _metrics_payload(
             metrics, "roi_center_consensus_distance"
         ),
+        "shape_plausibility_score": _metrics_payload(metrics, "shape_plausibility_score"),
+        "shape_veto_reasons": _metrics_payload(metrics, "shape_veto_reasons"),
+        "max_edge_length_ratio": _metrics_payload(metrics, "max_edge_length_ratio"),
+        "mean_shape_fit_error": _metrics_payload(metrics, "mean_shape_fit_error"),
+        "topology_violation_count": _metrics_payload(metrics, "topology_violation_count"),
         "model_predictions_available": {prediction.model: True for prediction in predictions},
         "roll_vetoed": sorted(roll_vetoed & available),
         "geometry_vetoed": sorted(geometry_vetoed & available),
