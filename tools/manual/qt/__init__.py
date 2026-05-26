@@ -13,8 +13,7 @@ from .face_viewer import (
     ManualThumbnailPanel,
     _decode_jpeg_to_qimage,
 )
-from .frame_viewer.frame_view import ManualFrameView
-from .overlays import FrameViewport, ManualFrameOverlay
+from .frame_viewer import FrameViewport, ManualFrameOverlay, ManualFrameView
 from .transport import ManualTransportBar
 from .video import VideoFrameProvider
 from .window import ManualToolWindow
