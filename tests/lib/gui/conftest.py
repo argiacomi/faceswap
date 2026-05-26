@@ -27,7 +27,7 @@ def _suppress_gui_test_info_logs() -> None:
     for logger in loggers:
         logger.setLevel(logging.WARNING)
     yield
-    for logger, level in zip(loggers, original_levels):
+    for logger, level in zip(loggers, original_levels, strict=True):
         logger.setLevel(level)
 
 
