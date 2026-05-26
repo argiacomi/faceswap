@@ -391,7 +391,9 @@ class DetectedFace:  # pylint:disable=too-many-instance-attributes
         self.metadata = alignment.metadata
         self._landmarks_xy = self._as_landmarks_array(alignment.landmarks_xy)
         if with_thumb and isinstance(alignment, FileAlignments):
-            self.thumbnail = None if alignment.thumb is None else np.asarray(alignment.thumb, dtype=np.uint8)
+            self.thumbnail = (
+                None if alignment.thumb is None else np.asarray(alignment.thumb, dtype=np.uint8)
+            )
 
         # Manual tool and legacy alignments will not have a mask
         self._aligned = None

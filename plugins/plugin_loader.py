@@ -222,11 +222,11 @@ class PluginLoader:
             Append "none" to the list of returned plugins. Default: False
         extend_plugin
             Some plugins have configuration options that mean that multiple 'pseudo-plugins'
-            can be generated based on their settings. An example of this is the bisenet-fp mask
-            which, whilst selected as 'bisenet-fp' can be stored as 'bisenet-fp-face' and
-            'bisenet-fp-head' depending on whether hair has been included in the mask or not.
-            ``True`` will generate each pseudo-plugin, ``False`` will generate the original
-            plugin name. Default: ``False``
+            can be generated based on their settings. Examples are the bisenet-fp and segnext-fp
+            mask plugins which, whilst selected by their plugin name, are stored as
+            ``<name>-face`` and ``<name>-head`` depending on whether hair has been included in
+            the mask or not. ``True`` will generate each pseudo-plugin, ``False`` will generate
+            the original plugin name. Default: ``False``
 
         Returns
         -------
@@ -239,7 +239,7 @@ class PluginLoader:
             )
         plugins = [x.split(".")[-2].replace("_", "-") for x in cls.extract_plugins[extractor_type]]
         if extend_plugin and extractor_type == "mask":
-            extendable = ["bisenet-fp", "custom"]
+            extendable = ["bisenet-fp", "segnext-fp", "custom"]
             for plugin in extendable:
                 if plugin not in plugins:
                     continue

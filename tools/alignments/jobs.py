@@ -683,9 +683,7 @@ class Spatial:
         ``True`` if the face index has enough landmarks to smooth otherwise ``False``
         """
         logger.debug("Normalize face index: %s", face_index)
-        count = sum(
-            1 for val in self._alignments.data.values() if len(val.faces) > face_index
-        )
+        count = sum(1 for val in self._alignments.data.values() if len(val.faces) > face_index)
         if count < 2:
             logger.info(
                 "Skipping face index %s. Not enough frames with this face index.",
