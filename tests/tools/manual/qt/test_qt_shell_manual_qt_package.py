@@ -14,8 +14,10 @@ def test_qt_manual_tool_public_exports_live_under_tools_manual_qt() -> None:
     assert qt.ManualToolWindow.__module__ == "tools.manual.qt.window"
     assert qt.ManualFrameView.__module__ == "tools.manual.qt.frame_viewer.frame_view"
     assert qt.ManualFrameOverlay.__module__ == "tools.manual.qt.overlays"
-    assert qt.CrossFrameFaceGridPanel.__module__ == "tools.manual.qt.face_grid"
-    assert qt.FaceGridThumbnailRenderer.__module__ == "tools.manual.qt.face_grid_renderer"
+    assert qt.CrossFrameFaceGridPanel.__module__ == "tools.manual.qt.face_viewer.frame"
+    assert qt.FaceGridThumbnailRenderer.__module__ == "tools.manual.qt.face_viewer.viewport"
+    assert qt.FaceThumbnailPanel.__module__ == "tools.manual.qt.face_viewer.thumbnails"
+    assert qt.ManualThumbnailPanel.__module__ == "tools.manual.qt.face_viewer.thumbnails"
     assert qt.ManualTransportBar.__module__ == "tools.manual.qt.transport"
     assert qt.ManualStartupWorker.__module__ == "tools.manual.qt.workers"
 
@@ -24,8 +26,10 @@ def test_qt_manual_tool_focused_modules_import_cleanly() -> None:
     """Focused Qt Manual Tool modules import without relying on the old lib path."""
     module_names = (
         "tools.manual.qt.actions",
-        "tools.manual.qt.face_grid",
-        "tools.manual.qt.face_grid_renderer",
+        "tools.manual.qt.face_viewer",
+        "tools.manual.qt.face_viewer.frame",
+        "tools.manual.qt.face_viewer.thumbnails",
+        "tools.manual.qt.face_viewer.viewport",
         "tools.manual.qt.filter_controls",
         "tools.manual.qt.frame_viewer.editor.bounding_box",
         "tools.manual.qt.frame_viewer.editor.drag",
@@ -34,7 +38,6 @@ def test_qt_manual_tool_focused_modules_import_cleanly() -> None:
         "tools.manual.qt.frame_viewer.editor.mask",
         "tools.manual.qt.frame_viewer.frame_view",
         "tools.manual.qt.overlays",
-        "tools.manual.qt.thumbnails",
         "tools.manual.qt.transport",
         "tools.manual.qt.video",
         "tools.manual.qt.window",
@@ -42,6 +45,18 @@ def test_qt_manual_tool_focused_modules_import_cleanly() -> None:
     )
     for module_name in module_names:
         assert importlib.import_module(module_name).__name__ == module_name
+
+
+def test_qt_manual_tool_face_viewer_logic_stays_in_face_viewer_modules() -> None:
+    """Face-viewer modules own face-grid widgets, renderers and thumbnails."""
+    from tools.manual.qt.face_viewer import frame, thumbnails, viewport
+
+    assert qt.CrossFrameFaceGridPanel is frame.CrossFrameFaceGridPanel
+    assert qt.FaceGridThumbnailRenderer is viewport.FaceGridThumbnailRenderer
+    assert qt.FaceThumbnailPanel is thumbnails.FaceThumbnailPanel
+    assert qt.ManualThumbnailPanel is thumbnails.ManualThumbnailPanel
+    assert qt.FaceGridEntry is viewport.FaceGridEntry
+    assert qt.FaceGridRenderRequest is viewport.FaceGridRenderRequest
 
 
 def test_qt_manual_tool_editor_logic_stays_in_editor_modules() -> None:
