@@ -642,7 +642,7 @@ class ActionsFrame(ttk.Frame):  # pylint:disable=too-many-ancestors
                 child.configure(style="actions_deselected.TButton")
                 child.state(["!pressed", "!focus"])
                 options[child]["tk_var"].set(False)
-            elif group is None and child_group is None:
+            elif child == button and group is None and child_group is None:
                 if child.cget("style") == "actions_selected.TButton":
                     child.configure(style="actions_deselected.TButton")
                     child.state(["!pressed", "!focus"])

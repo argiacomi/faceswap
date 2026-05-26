@@ -40,6 +40,9 @@ class Mask(Editor):
         The _detected_faces data for this manual session
     """
 
+    _LASSO_PREVIEW_TAG: T.ClassVar[str] = "mask_lasso_preview"
+    _LASSO_LINE_WIDTH: T.ClassVar[int] = 2
+
     def __init__(self, canvas: tk.Canvas, detected_faces: detected_faces.DetectedFaces) -> None:
         self._meta: dict[str, T.Any] = {}
         self._tk_faces: list[ImageTk.PhotoImage] = []
@@ -87,6 +90,11 @@ class Mask(Editor):
         return "draw" if not action else action[0]
 
     @property
+    def _is_lasso(self) -> bool:
+        """``True`` if the lasso fill tool is active."""
+        return self._actions["lasso"]["tk_var"].get()
+
+    @property
     def _cursor_color(self) -> str:
         """The hex code for the selected cursor color"""
         return self._control_vars["brush"]["CursorColor"].get()
@@ -97,13 +105,14 @@ class Mask(Editor):
         return self._control_vars["display"]["CursorShape"].get()
 
     def _add_actions(self) -> None:
-        """Add the optional action buttons to the viewer. Current actions are Draw, Erase
-        and Zoom."""
+        """Add the optional action buttons to the viewer. Current actions are Draw, Erase,
+        Lasso and Zoom."""
         self._add_action(
             "magnify", "zoom", _("Magnify/De-magnify the View"), group=None, hotkey="M"
         )
         self._add_action("draw", "draw", _("Draw Tool"), group="paint", hotkey="D")
         self._add_action("erase", "erase", _("Erase Tool"), group="paint", hotkey="E")
+        self._add_action("lasso", "lasso", _("Lasso Fill Tool"), group=None, hotkey="L")
         self._actions["magnify"]["tk_var"].trace(
             "w", lambda *e: self._globals.var_full_update.set(True)
         )
@@ -189,15 +198,21 @@ class Mask(Editor):
 
     def hide_annotation(self, tag=None) -> None:
         """Clear the mask :attr:`_meta` dict when hiding the annotation."""
+        self._clear_lasso_preview()
         super().hide_annotation()
         self._meta = {}
 
     def update_annotation(self) -> None:
         """Update the mask annotation with the latest mask."""
         position = self._globals.frame_index
-        if position != self._meta.get("position", -1):
-            # Reset meta information when moving to a new frame
+        frame_updated = self._det_faces.is_frame_updated(position)
+        meta_frame_updated = self._meta.get("frame_updated")
+        if position != self._meta.get("position", -1) or (
+            meta_frame_updated is not None and frame_updated != meta_frame_updated
+        ):
+            # Reset meta information when moving to a new frame or after reverting edits.
             self._meta = {"position": position}
+        self._meta["frame_updated"] = frame_updated
         key = self.__class__.__name__
         mask_type = self._control_vars["display"]["MaskType"].get().lower()
         color = self._control_color[1:]
@@ -500,6 +515,13 @@ class Mask(Editor):
         tags = self._canvas.gettags(item_id)
         face_idx = int(next(tag for tag in tags if tag.startswith("face_")).split("_")[-1])
 
+        if self._is_lasso:
+            self._canvas.config(cursor="crosshair")
+            self._canvas.itemconfig(self._mouse_location[0], state="hidden")
+            self._mouse_location[1] = face_idx
+            self._canvas.update_idletasks()
+            return
+
         radius = self._brush_radius
         coords = (
             event.x - radius,
@@ -548,19 +570,26 @@ class Mask(Editor):
         """
         face_idx = self._mouse_location[1]
         if face_idx is None:
+            self._clear_lasso_preview()
             self._drag_data = {}
             self._drag_callback = None
         else:
-            self._drag_data["starting_location"] = np.array((event.x, event.y))
             self._drag_data["control_click"] = control_click
             self._drag_data["color"] = np.array(
                 tuple(int(self._control_color[1:][i : i + 2], 16) for i in (0, 2, 4))
             )
             self._drag_data["opacity"] = self._opacity
-            self._get_cursor_shape_mark(
-                self._meta["mask"][face_idx], np.array(((event.x, event.y),)), face_idx
-            )
-            self._drag_callback = self._paint
+            if self._is_lasso:
+                self._drag_data["face_idx"] = face_idx
+                self._drag_data["lasso_points"] = [np.array((event.x, event.y))]
+                self._update_lasso_preview()
+                self._drag_callback = self._lasso_drag
+            else:
+                self._drag_data["starting_location"] = np.array((event.x, event.y))
+                self._get_cursor_shape_mark(
+                    self._meta["mask"][face_idx], np.array(((event.x, event.y),)), face_idx
+                )
+                self._drag_callback = self._paint
 
     def _paint(self, event: tk.Event) -> None:
         """Paint or erase from Mask and update cursor on click and drag.
@@ -589,6 +618,21 @@ class Mask(Editor):
         )
         self._drag_data["starting_location"] = np.array((event.x, event.y))
         self._update_cursor(event)
+
+    def _lasso_drag(self, event: tk.Event) -> None:
+        """Record a lasso polygon point during a click and drag action.
+
+        Parameters
+        ----------
+        event
+            The tkinter mouse event.
+        """
+        points = self._drag_data["lasso_points"]
+        new_point = np.array((event.x, event.y))
+        if np.linalg.norm(new_point - points[-1]) < 2:
+            return
+        points.append(new_point)
+        self._update_lasso_preview()
 
     def _transform_points(
         self, face_index: int, points: npt.NDArray[np.float32]
@@ -632,6 +676,12 @@ class Mask(Editor):
         """
         if not self._drag_data:
             return
+        if "lasso_points" in self._drag_data:
+            self._drag_stop_lasso()
+            self._clear_lasso_preview()
+            self._drag_data = {}
+            self._update_cursor(event)
+            return
         face_idx = self._mouse_location[1]
         location = np.array(((event.x, event.y),))
         if np.array_equal(self._drag_data["starting_location"], location[0]):
@@ -639,6 +689,48 @@ class Mask(Editor):
         self._mask_to_alignments(face_idx)
         self._drag_data = {}
         self._update_cursor(event)
+
+    def _drag_stop_lasso(self) -> None:
+        """Fill the lasso polygon into the current mask."""
+        points = np.asarray(self._drag_data["lasso_points"], dtype=np.float32)
+        if len(points) < 3:
+            return
+
+        face_idx = self._drag_data["face_idx"]
+        t_points, _ = self._transform_points(face_idx, points)
+        polygon = np.asarray(t_points, dtype=np.int32).reshape((-1, 1, 2))
+        color = 0 if self._edit_mode == "erase" else 255
+        color = abs(color - 255) if self._drag_data["control_click"] else color
+
+        cv2.fillPoly(self._meta["mask"][face_idx], [polygon], color)
+        self._update_mask_image(
+            "mask", face_idx, self._drag_data["color"], self._drag_data["opacity"]
+        )
+        self._mask_to_alignments(face_idx)
+
+    def _update_lasso_preview(self) -> None:
+        """Draw the current lasso path as a fixed-width canvas overlay."""
+        points = self._drag_data["lasso_points"]
+        preview_points = points + [points[0]] if len(points) >= 3 else points
+        coords = np.asarray(preview_points, dtype=np.int32).flatten().tolist()
+        if len(coords) == 2:
+            coords.extend(coords)
+
+        if self._canvas.find_withtag(self._LASSO_PREVIEW_TAG):
+            self._canvas.coords(self._LASSO_PREVIEW_TAG, *coords)
+            self._canvas.itemconfig(self._LASSO_PREVIEW_TAG, fill=self._cursor_color)
+        else:
+            self._canvas.create_line(
+                *coords,
+                fill=self._cursor_color,
+                width=self._LASSO_LINE_WIDTH,
+                tags=(self._LASSO_PREVIEW_TAG, self.__class__.__name__),
+            )
+        self._canvas.tag_raise(self._LASSO_PREVIEW_TAG)
+
+    def _clear_lasso_preview(self) -> None:
+        """Remove any transient lasso path from the canvas."""
+        self._canvas.delete(self._LASSO_PREVIEW_TAG)
 
     def _get_cursor_shape_mark(
         self,
