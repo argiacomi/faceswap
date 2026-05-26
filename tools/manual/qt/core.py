@@ -6,9 +6,17 @@ from __future__ import annotations
 import contextlib
 import typing as T
 
-from PySide6.QtCore import QTimer, Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QColor
-from PySide6.QtWidgets import QComboBox, QLabel, QMainWindow, QProgressBar, QSplitter, QToolButton, QWidget
+from PySide6.QtWidgets import (
+    QComboBox,
+    QLabel,
+    QMainWindow,
+    QProgressBar,
+    QSplitter,
+    QToolButton,
+    QWidget,
+)
 
 from lib.gui.services.command_builder import CommandBuilder
 from tools.manual.session import (

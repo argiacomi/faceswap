@@ -140,7 +140,9 @@ class ManualFrameOverlay:
                 if visibility["mask"]:
                     self._paint_mask_overlay(painter, viewport, face)
                 if visibility["handles"]:
-                    handle_rect = extract_polygon.boundingRect() if extract_polygon is not None else rect
+                    handle_rect = (
+                        extract_polygon.boundingRect() if extract_polygon is not None else rect
+                    )
                     self._draw_handles(painter, handle_rect)
             painter.restore()
 
@@ -170,7 +172,7 @@ class ManualFrameOverlay:
                 "extract": False,
                 "handles": True,
                 "landmarks": explicit_landmarks,
-                "mesh": True or explicit_mesh,
+                "mesh": True,
                 "mask": explicit_mask,
             }
         if editor_mode == "ExtractBox":
@@ -179,7 +181,7 @@ class ManualFrameOverlay:
                 "extract": True,
                 "handles": True,
                 "landmarks": explicit_landmarks,
-                "mesh": True or explicit_mesh,
+                "mesh": True,
                 "mask": explicit_mask,
             }
         if editor_mode == "Landmarks":
@@ -188,7 +190,7 @@ class ManualFrameOverlay:
                 "extract": True,
                 "handles": False,
                 "landmarks": True,
-                "mesh": True or explicit_mesh,
+                "mesh": True,
                 "mask": explicit_mask,
             }
         if editor_mode == "Mask":
@@ -280,9 +282,13 @@ class ManualFrameOverlay:
         painter.setPen(pen)
         painter.setBrush(Qt.NoBrush)
         for group in groups["polygon"]:
-            painter.drawPolygon(QPolygonF(tuple(viewport.source_to_widget(x, y) for x, y in group)))
+            painter.drawPolygon(
+                QPolygonF(tuple(viewport.source_to_widget(x, y) for x, y in group))
+            )
         for group in groups["line"]:
-            painter.drawPolyline(QPolygonF(tuple(viewport.source_to_widget(x, y) for x, y in group)))
+            painter.drawPolyline(
+                QPolygonF(tuple(viewport.source_to_widget(x, y) for x, y in group))
+            )
 
     @classmethod
     def landmark_part_groups(
