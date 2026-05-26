@@ -48,9 +48,9 @@ _E4S_DRIVE_URL = (
     "https://drive.usercontent.google.com/download?id={file_id}&export=download&confirm=t"
 )
 
-_E4S_SMALL_FILE_ID = "TODO_E4S_SMALL_FILE_ID"
-_E4S_BASE_FILE_ID = "TODO_E4S_BASE_FILE_ID"
-_E4S_LARGE_FILE_ID = "TODO_E4S_LARGE_FILE_ID"
+_E4S_SMALL_FILE_ID = "1FJDN1edNpUyx8Bv5Eo7JutAvbL9zFfn4"
+_E4S_BASE_FILE_ID = "1YL4VuCBhhl-sjI3oPZOJhxTf9rIJRxD5"
+_E4S_LARGE_FILE_ID = "1cYbwLSJDX0nnooR9JPQkA5qYHH3b9d3B"
 
 _EXPECTED_NUM_CLASSES = 19
 _CLASSIFIER_WEIGHT_KEY = "decode_head.conv_seg.weight"
