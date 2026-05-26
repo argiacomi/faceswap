@@ -336,18 +336,18 @@ def test_overlay_active_face_tracks_editor_state(qtbot, tmp_path: Path) -> None:
     assert window.frame_overlay.active_face == 0
 
 
-def test_manual_frame_overlay_handle_at_hits_eight_handles() -> None:
-    """All eight resize handles are addressable around a bbox."""
+def test_manual_frame_overlay_handle_at_hits_legacy_corner_handles() -> None:
+    """Only the four legacy corner resize handles are addressable around a bbox."""
     rect = QRectF(100.0, 50.0, 200.0, 100.0)
     hits = {
         ManualFrameOverlay.handle_at(rect, QPointF(100.0, 50.0)),
-        ManualFrameOverlay.handle_at(rect, QPointF(200.0, 50.0)),
         ManualFrameOverlay.handle_at(rect, QPointF(300.0, 50.0)),
-        ManualFrameOverlay.handle_at(rect, QPointF(300.0, 100.0)),
         ManualFrameOverlay.handle_at(rect, QPointF(300.0, 150.0)),
-        ManualFrameOverlay.handle_at(rect, QPointF(200.0, 150.0)),
         ManualFrameOverlay.handle_at(rect, QPointF(100.0, 150.0)),
-        ManualFrameOverlay.handle_at(rect, QPointF(100.0, 100.0)),
     }
-    assert hits == {"nw", "n", "ne", "e", "se", "s", "sw", "w"}
+    assert hits == {"nw", "ne", "se", "sw"}
+    assert ManualFrameOverlay.handle_at(rect, QPointF(200.0, 50.0)) is None
+    assert ManualFrameOverlay.handle_at(rect, QPointF(300.0, 100.0)) is None
+    assert ManualFrameOverlay.handle_at(rect, QPointF(200.0, 150.0)) is None
+    assert ManualFrameOverlay.handle_at(rect, QPointF(100.0, 100.0)) is None
     assert ManualFrameOverlay.handle_at(rect, QPointF(200.0, 100.0)) is None

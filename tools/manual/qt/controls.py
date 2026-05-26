@@ -553,7 +553,13 @@ class ControlsMixin:
         if kind == "failed":
             logger.error("Manual Tool aligner: %s", message)
 
-    def rerun_aligner_for_face(self, face_index: int, *, live: bool = False) -> bool:
+    def rerun_aligner_for_face(
+        self,
+        face_index: int,
+        *,
+        live: bool = False,
+        aligner_name: str | None = None,
+    ) -> bool:
         """Rerun the configured aligner against one face on the current frame."""
         frame_index = self._current_frame_index()
         if frame_index < 0:
@@ -572,7 +578,7 @@ class ControlsMixin:
             landmarks = self._aligner_service.align(
                 image,
                 face.bbox,
-                aligner=self._active_aligner_name() or None,
+                aligner=aligner_name or self._active_aligner_name() or None,
                 normalization=self._editor_state.aligner_normalization,
             )
         except Exception as err:  # noqa: BLE001 - surface to user; model untouched
@@ -674,6 +680,8 @@ class ControlsMixin:
         """Clear frame-view temporary state owned by the active editor."""
         self._live_bbox_added_face = None
         self._live_bbox_original_face = None
+        self._live_bbox_add_undo_start = None
+        self._live_bbox_add_previous_faces = ()
         self._overlay.set_selected_landmarks(())
         self._overlay.set_hovered_landmark(None, None)
         self._frame_view.clear_editor_temporary_state()

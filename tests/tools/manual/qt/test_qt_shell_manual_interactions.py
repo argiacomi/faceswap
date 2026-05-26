@@ -178,6 +178,20 @@ def test_click_in_bbox_mode_creates_face_at_pointer(qtbot, tmp_path: Path) -> No
     assert window._editable.can_undo
 
 
+def test_bbox_add_centers_default_box_without_source_clamp(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+    """A BBox click near the frame edge centers the default square on the click."""
+    window = _make_window(qtbot, tmp_path)
+    window._editor_state.set("editor_mode", "BoundingBox")
+    _wait_for_frame_view_ready(qtbot, window)
+
+    pos = _source_to_widget(window, 5.0, 5.0)
+
+    _press_release(window._frame_view, pos, Qt.LeftButton)
+
+    face = window._editable.faces(0)[0]
+    assert face.bbox == (-5.0, -5.0, 20.0, 20.0)
+
+
 def test_entering_bbox_mode_does_not_passively_preload_aligner(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
     """BBox controls becoming visible must not touch production aligner loading."""
     window = _make_window(qtbot, tmp_path)
@@ -328,6 +342,33 @@ def test_frame_view_takes_keyboard_focus_on_click(qtbot, tmp_path: Path) -> None
     _press_release(window._frame_view, pos, Qt.LeftButton)
 
     assert window._frame_view.focusPolicy() == Qt.StrongFocus
+
+
+def test_bbox_hover_cursor_uses_non_active_visible_face_handles(
+    qtbot,
+    tmp_path: Path,
+) -> None:  # type:ignore[no-untyped-def]
+    """BBox hover hit-testing follows every visible handle, not only active face."""
+    window = _make_window(qtbot, tmp_path)
+    window._editable.add_face(0, (10.0, 10.0, 30.0, 30.0))
+    window._editable.add_face(0, (70.0, 10.0, 30.0, 30.0))
+    window.refresh_faces()
+    window._editor_state.set("face_index", 0)
+    window._editor_state.set("editor_mode", "BoundingBox")
+    pos = _source_to_widget(window, 100.0, 40.0)
+
+    window._frame_view.mouseMoveEvent(
+        _mouse_event(
+            QEvent.Type.MouseMove,
+            window._frame_view,
+            pos,
+            Qt.NoButton,
+            Qt.NoButton,
+        )
+    )
+
+    assert window._frame_view.hovered_face_index == 1
+    assert window._frame_view.cursor().shape() == Qt.SizeFDiagCursor
 
 
 # ---------------------------------------------------------------------------

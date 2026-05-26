@@ -297,6 +297,8 @@ class FaceBrowserMixin:
     def add_face_at_center(
         self,
         bbox: tuple[float, float, float, float] | None = None,
+        *,
+        aligner_name: str | None = None,
     ) -> int | None:
         """Add a new face. Defaults to a centered fixed-size bbox."""
         frame_index = self._current_frame_index()
@@ -319,7 +321,7 @@ class FaceBrowserMixin:
         self.mark_dirty(True)
         self._editor_state.set("face_index", new_index)
         self.statusBar().showMessage(f"Added face index {new_index}", 5000)
-        self._maybe_run_aligner(int(new_index))
+        self._maybe_run_aligner(int(new_index), aligner_name=aligner_name)
         return new_index
 
     def nudge_active_face(self, dx: float, dy: float) -> bool:

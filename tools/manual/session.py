@@ -505,6 +505,11 @@ class ManualEditableAlignments:
         """Return whether the redo stack has any replayable operations."""
         return bool(self._redo)
 
+    @property
+    def undo_depth(self) -> int:
+        """Return the current undo stack depth."""
+        return len(self._undo)
+
     # ---- mutation API ----
     def seed_from_handle(
         self,
@@ -967,6 +972,37 @@ class ManualEditableAlignments:
         def undo() -> None:
             self._faces[frame_index][face_index] = previous
 
+        self._undo.append((do, undo, frame_index))
+        self._redo.clear()
+        self._dirty_frames.add(frame_index)
+        self._notify(frame_index)
+        return True
+
+    def replace_undo_since(
+        self,
+        undo_start: int,
+        frame_index: int,
+        previous_faces: T.Sequence[EditableFace],
+    ) -> bool:
+        """Squash live edits since ``undo_start`` into one frame-level undo entry."""
+        start = max(0, min(int(undo_start), len(self._undo)))
+        final_faces = list(self._faces.get(frame_index, ()))
+        previous = [self._normalize(index, face) for index, face in enumerate(previous_faces)]
+        if final_faces == previous:
+            del self._undo[start:]
+            self._redo.clear()
+            self._notify(frame_index)
+            return True
+
+        def do() -> None:
+            self._faces[frame_index] = list(final_faces)
+            self._reindex(frame_index)
+
+        def undo() -> None:
+            self._faces[frame_index] = list(previous)
+            self._reindex(frame_index)
+
+        del self._undo[start:]
         self._undo.append((do, undo, frame_index))
         self._redo.clear()
         self._dirty_frames.add(frame_index)

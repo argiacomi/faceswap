@@ -57,10 +57,12 @@ class ExtractBoxFrameEditorMixin:
             source_bbox.x() + source_bbox.width() / 2.0,
             source_bbox.y() + source_bbox.height() / 2.0,
         )
-        handle = ManualFrameOverlay.handle_at(widget_bbox, position, tolerance=2.0)
-        # Scale uses only corner handles (nw/ne/sw/se).  Mid-edge handles
-        # also map to scale here (uniform scale by closest corner) so the
-        # whole 8-handle ring is responsive.
+        handle = ManualFrameOverlay.handle_at(
+            widget_bbox,
+            position,
+            tolerance=self._HANDLE_GRAB_TOLERANCE,
+        )
+        # Scale uses the legacy corner handles (nw/ne/sw/se).
         if handle is not None:
             radius = math.hypot(
                 source_point.x() - centre_source.x(),
@@ -70,6 +72,7 @@ class ExtractBoxFrameEditorMixin:
                 return False
             self._edit_drag_mode = "extract_scale"
             self._edit_drag_handle = handle
+            self._edit_drag_face_index = int(face_index)
             self._extract_drag_center = centre_source
             self._extract_drag_start_radius = radius
             self._extract_drag_scale = 1.0
@@ -80,6 +83,7 @@ class ExtractBoxFrameEditorMixin:
         if widget_bbox.contains(position):
             self._edit_drag_mode = "extract_translate"
             self._edit_drag_handle = None
+            self._edit_drag_face_index = int(face_index)
             self._edit_drag_source_anchor = source_point
             self._edit_drag_original_bbox = QRectF(source_bbox)
             self._edit_drag_current_bbox = QRectF(source_bbox)
@@ -99,6 +103,7 @@ class ExtractBoxFrameEditorMixin:
         )
         self._edit_drag_mode = "extract_rotate"
         self._edit_drag_handle = None
+        self._edit_drag_face_index = int(face_index)
         self._extract_drag_center = centre_source
         self._extract_drag_start_angle = start_angle
         self._extract_drag_angle = 0.0

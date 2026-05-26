@@ -112,6 +112,8 @@ class ManualFrameView(
         # signals on commit. Without these the view falls back to pure pan.
         self._active_bbox_provider: T.Callable[[], QRectF | None] | None = None
         self._active_face_provider: T.Callable[[], int | None] | None = None
+        self._face_bboxes_provider: T.Callable[[], T.Sequence[tuple[int, QRectF]]] | None = None
+        self._face_select_callback: T.Callable[[int], None] | None = None
         # ``add_mode_provider`` returns ``True`` when an empty-space click/drag
         # should create a new face (BoundingBox editor). ``face_hit_provider``
         # maps a source point to an existing face_index for right-click context
@@ -139,6 +141,7 @@ class ManualFrameView(
         # Modes: "move" | "resize" | "add" | "landmark" | "landmark_group"
         # | "landmark_marquee"
         self._edit_drag_handle: str | None = None
+        self._edit_drag_face_index: int | None = None
         self._edit_drag_source_anchor: QPointF | None = None
         self._edit_drag_original_bbox: QRectF | None = None
         self._edit_drag_current_bbox: QRectF | None = None
@@ -380,6 +383,8 @@ class ManualFrameView(
         active_bbox_provider: T.Callable[[], QRectF | None],
         add_mode_provider: T.Callable[[], bool] | None = None,
         face_hit_provider: T.Callable[[float, float], int | None] | None = None,
+        face_bboxes_provider: T.Callable[[], T.Sequence[tuple[int, QRectF]]] | None = None,
+        face_select_callback: T.Callable[[int], None] | None = None,
         face_add_callback: T.Callable[[QRectF], int | None] | None = None,
         face_live_update_callback: T.Callable[[int, QRectF], None] | None = None,
         face_live_commit_callback: T.Callable[[int], None] | None = None,
@@ -404,6 +409,8 @@ class ManualFrameView(
         self._active_bbox_provider = active_bbox_provider
         self._add_mode_provider = add_mode_provider
         self._face_hit_provider = face_hit_provider
+        self._face_bboxes_provider = face_bboxes_provider
+        self._face_select_callback = face_select_callback
         self._face_add_callback = face_add_callback
         self._face_live_update_callback = face_live_update_callback
         self._face_live_commit_callback = face_live_commit_callback
@@ -720,6 +727,10 @@ class ManualFrameView(
         source = self._active_bbox_source_rect()
         if source is None or self._source.isNull():
             return None
+        return self._source_bbox_to_widget_rect(source)
+
+    def _source_bbox_to_widget_rect(self, source: QRectF) -> QRectF:
+        """Project a source-coordinate bbox into widget coordinates."""
         viewport = FrameViewport(
             source_size=(self._source.width(), self._source.height()),
             target_rect=self._target_rect(),

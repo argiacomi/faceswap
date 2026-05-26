@@ -509,6 +509,8 @@ def test_bbox_add_creates_face_on_press_and_same_drag_moves_it(
     assert window._editor_state.face_index == 0
     rendered = window._frame_view.grab()
     assert rendered.isNull() is False
+    instances = service._test_instances  # type:ignore[attr-defined]
+    assert instances[-1].aligner == "cv2-dnn"
     window._frame_view.mouseMoveEvent(
         _mouse_event(QEvent.Type.MouseMove, window, end, Qt.NoButton, Qt.LeftButton)
     )
@@ -516,11 +518,103 @@ def test_bbox_add_creates_face_on_press_and_same_drag_moves_it(
     moved = window._editable.faces(0)[0]
     assert moved.bbox[0] > created.bbox[0]
     assert moved.bbox[1] > created.bbox[1]
-    instances = service._test_instances  # type:ignore[attr-defined]
+    assert instances[-1].aligner == "HRNet"
     assert instances[-1].align_calls[-1][1] == moved.bbox
     window._frame_view.mouseReleaseEvent(
         _mouse_event(QEvent.Type.MouseButtonRelease, window, end, Qt.LeftButton, Qt.NoButton)
     )
+
+
+def test_bbox_non_active_handle_selects_and_drags_without_adding(
+    qtbot,
+    tmp_path: Path,
+) -> None:  # type:ignore[no-untyped-def]
+    """A visible non-active corner handle starts a resize instead of adding a box."""
+    window, _ = _make_window(qtbot, tmp_path)
+    window._editable.add_face(0, (10.0, 10.0, 30.0, 30.0))
+    window._editable.add_face(0, (70.0, 10.0, 30.0, 30.0))
+    window._editor_state.set("face_index", 0)
+    window._editor_state.set("editor_mode", "BoundingBox")
+    start = _source_to_widget(window, 100.0, 40.0)
+    end = _source_to_widget(window, 110.0, 48.0)
+
+    window._frame_view.mousePressEvent(
+        _mouse_event(QEvent.Type.MouseButtonPress, window, start, Qt.LeftButton, Qt.LeftButton)
+    )
+    window._frame_view.mouseMoveEvent(
+        _mouse_event(QEvent.Type.MouseMove, window, end, Qt.NoButton, Qt.LeftButton)
+    )
+
+    faces = window._editable.faces(0)
+    assert len(faces) == 2
+    assert window._editor_state.face_index == 1
+    assert faces[0].bbox == (10.0, 10.0, 30.0, 30.0)
+    assert faces[1].bbox[2] > 30.0
+    assert faces[1].bbox[3] > 30.0
+    window._frame_view.mouseReleaseEvent(
+        _mouse_event(QEvent.Type.MouseButtonRelease, window, end, Qt.LeftButton, Qt.NoButton)
+    )
+
+
+def test_bbox_resize_clamps_corner_without_flipping(
+    qtbot,
+    tmp_path: Path,
+) -> None:  # type:ignore[no-untyped-def]
+    """Dragging a corner through the opposite side clamps at the display-pixel minimum."""
+    window, _ = _make_window(qtbot, tmp_path)
+    window._editable.add_face(0, (20.0, 20.0, 40.0, 40.0))
+    window._editor_state.set("face_index", 0)
+    window._editor_state.set("editor_mode", "BoundingBox")
+    start = _source_to_widget(window, 20.0, 20.0)
+    end = _source_to_widget(window, 90.0, 90.0)
+    min_w, min_h = window._frame_view._display_min_bbox_size_source()
+    expected_w = float(max(1, int(round(min_w))))
+    expected_h = float(max(1, int(round(min_h))))
+
+    window._frame_view.mousePressEvent(
+        _mouse_event(QEvent.Type.MouseButtonPress, window, start, Qt.LeftButton, Qt.LeftButton)
+    )
+    window._frame_view.mouseMoveEvent(
+        _mouse_event(QEvent.Type.MouseMove, window, end, Qt.NoButton, Qt.LeftButton)
+    )
+
+    face = window._editable.faces(0)[0]
+    assert face.bbox == pytest.approx(
+        (
+            float(int(round(60.0 - min_w))),
+            float(int(round(60.0 - min_h))),
+            expected_w,
+            expected_h,
+        )
+    )
+    window._frame_view.mouseReleaseEvent(
+        _mouse_event(QEvent.Type.MouseButtonRelease, window, end, Qt.LeftButton, Qt.NoButton)
+    )
+
+
+def test_bbox_add_then_drag_undo_removes_face_in_one_step(
+    qtbot,
+    tmp_path: Path,
+) -> None:  # type:ignore[no-untyped-def]
+    """Immediate add plus same-gesture live movement is one undoable operation."""
+    window, _ = _make_window(qtbot, tmp_path)
+    window._editor_state.set("editor_mode", "BoundingBox")
+    start = _source_to_widget(window, 70.0, 70.0)
+    end = _source_to_widget(window, 82.0, 76.0)
+
+    window._frame_view.mousePressEvent(
+        _mouse_event(QEvent.Type.MouseButtonPress, window, start, Qt.LeftButton, Qt.LeftButton)
+    )
+    window._frame_view.mouseMoveEvent(
+        _mouse_event(QEvent.Type.MouseMove, window, end, Qt.NoButton, Qt.LeftButton)
+    )
+    window._frame_view.mouseReleaseEvent(
+        _mouse_event(QEvent.Type.MouseButtonRelease, window, end, Qt.LeftButton, Qt.NoButton)
+    )
+
+    assert window._editable.face_count(0) == 1
+    assert window._editable.undo() is True
+    assert window._editable.face_count(0) == 0
 
 
 def test_bbox_pointer_add_uses_add_then_aligner_regeneration_path(
@@ -538,6 +632,7 @@ def test_bbox_pointer_add_uses_add_then_aligner_regeneration_path(
     assert face.bbox == (30.0, 30.0, 40.0, 40.0)
     assert face.landmarks[0] == (13.0, 14.0)
     instances = service._test_instances  # type:ignore[attr-defined]
+    assert instances[-1].aligner == "cv2-dnn"
     assert instances[-1].align_calls[-1][1] == (30.0, 30.0, 40.0, 40.0)
 
 

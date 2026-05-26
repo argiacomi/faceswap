@@ -42,13 +42,9 @@ class ManualFrameOverlay:
     _HANDLE_EDGE = QColor("#11191c")
     HANDLE_OFFSETS: T.ClassVar[tuple[tuple[str, float, float], ...]] = (
         ("nw", 0.0, 0.0),
-        ("n", 0.5, 0.0),
         ("ne", 1.0, 0.0),
-        ("e", 1.0, 0.5),
         ("se", 1.0, 1.0),
-        ("s", 0.5, 1.0),
         ("sw", 0.0, 1.0),
-        ("w", 0.0, 0.5),
     )
 
     def __init__(
@@ -476,7 +472,7 @@ class ManualFrameOverlay:
         painter.restore()
 
     def _draw_handles(self, painter: QPainter, bbox: QRectF) -> None:
-        """Draw eight square resize handles around ``bbox``."""
+        """Draw legacy corner resize handles around ``bbox``."""
         painter.save()
         edge_pen = QPen(self._HANDLE_EDGE)
         edge_pen.setWidthF(1.0)

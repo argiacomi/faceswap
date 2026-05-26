@@ -21,6 +21,7 @@ class BoundingBoxFrameEditorMixin:
 
     _ADD_MIN_DRAG = 4.0
     _MIN_BBOX_SIZE = 20.0
+    _HANDLE_GRAB_TOLERANCE = 5.5
 
     def _update_hover_cursor(self, position: QPointF) -> None:
         """Cursor priority: resize handle > bbox body > pannable > default."""
@@ -47,11 +48,26 @@ class BoundingBoxFrameEditorMixin:
                 return
             self.setCursor(Qt.ArrowCursor)
             return
+        in_bbox_mode = bool(self._add_mode_provider and self._add_mode_provider())
         in_extract_mode = bool(self._extract_mode_provider and self._extract_mode_provider())
+        if in_bbox_mode:
+            hit = self._bbox_hit_at(position)
+            if hit is not None:
+                face_index, _source_bbox, _widget_bbox, handle = hit
+                self._hovered_face_index = int(face_index)
+                if handle is not None:
+                    self.setCursor(self._cursor_for_handle(handle))
+                else:
+                    self.setCursor(Qt.SizeAllCursor)
+                return
         # Hover an active-face resize handle?
         widget_bbox = self._active_bbox_widget_rect()
         if widget_bbox is not None:
-            handle = ManualFrameOverlay.handle_at(widget_bbox, position, tolerance=2.0)
+            handle = ManualFrameOverlay.handle_at(
+                widget_bbox,
+                position,
+                tolerance=self._HANDLE_GRAB_TOLERANCE,
+            )
             if handle is not None:
                 # Extract Box scale-on-corner reuses the diag/ver/hor sizing
                 # cursors so the user sees the same shape they would for a
@@ -91,20 +107,33 @@ class BoundingBoxFrameEditorMixin:
         return Qt.SizeHorCursor
 
     def _begin_edit_drag(self, position: QPointF) -> bool:
-        """Try to start a move/resize drag on the active face. Returns True on hit."""
+        """Try to start a move/resize drag on a visible bbox. Returns True on hit."""
         if self._active_face_provider is None:
-            return False
-        face_index = self._active_face_provider()
-        if face_index is None:
-            return False
-        widget_bbox = self._active_bbox_widget_rect()
-        source_bbox = self._active_bbox_source_rect()
-        if widget_bbox is None or source_bbox is None:
             return False
         source_point = self._widget_to_source(position)
         if source_point is None:
             return False
-        handle = ManualFrameOverlay.handle_at(widget_bbox, position, tolerance=2.0)
+        in_bbox_mode = bool(self._add_mode_provider and self._add_mode_provider())
+        if in_bbox_mode:
+            hit = self._bbox_hit_at(position)
+            if hit is None:
+                return False
+            face_index, source_bbox, widget_bbox, handle = hit
+            if self._face_select_callback is not None:
+                self._face_select_callback(int(face_index))
+        else:
+            face_index = self._active_face_provider()
+            if face_index is None:
+                return False
+            widget_bbox = self._active_bbox_widget_rect()
+            source_bbox = self._active_bbox_source_rect()
+            if widget_bbox is None or source_bbox is None:
+                return False
+            handle = ManualFrameOverlay.handle_at(
+                widget_bbox,
+                position,
+                tolerance=self._HANDLE_GRAB_TOLERANCE,
+            )
         if handle is not None:
             self._edit_drag_mode = "resize"
             self._edit_drag_handle = handle
@@ -113,41 +142,32 @@ class BoundingBoxFrameEditorMixin:
             self._edit_drag_handle = None
         else:
             return False
+        self._edit_drag_face_index = int(face_index)
         self._edit_drag_source_anchor = source_point
         self._edit_drag_original_bbox = QRectF(source_bbox)
         self._edit_drag_current_bbox = QRectF(source_bbox)
         return True
 
-    @staticmethod
-    def _resize_bbox(original: QRectF, handle: str, dx: float, dy: float) -> QRectF:
+    def _resize_bbox(self, original: QRectF, handle: str, dx: float, dy: float) -> QRectF:
         """Compute the new bbox for a resize drag in source coordinates.
 
-        Enforces a minimum 1px dimension so the bbox can't collapse, and lets
-        opposing handles cross (the user expects the box to flip rather than
-        get stuck) by normalising via :meth:`QRectF.normalized`.
+        Legacy drags only one corner, clamps it 20 display pixels away from
+        the opposite corner, and never flips the rectangle through itself.
         """
-        x = original.x()
-        y = original.y()
-        w = original.width()
-        h = original.height()
-        # West edges move x; east edges move width; analogous for vertical.
+        min_w, min_h = self._display_min_bbox_size_source()
+        left = original.left()
+        top = original.top()
+        right = original.right()
+        bottom = original.bottom()
         if "w" in handle:
-            x += dx
-            w -= dx
+            left = min(right - min_w, left + dx)
         if "e" in handle:
-            w += dx
+            right = max(left + min_w, right + dx)
         if "n" in handle:
-            y += dy
-            h -= dy
+            top = min(bottom - min_h, top + dy)
         if "s" in handle:
-            h += dy
-        rect = QRectF(x, y, w, h).normalized()
-        return QRectF(
-            rect.x(),
-            rect.y(),
-            max(BoundingBoxFrameEditorMixin._MIN_BBOX_SIZE, rect.width()),
-            max(BoundingBoxFrameEditorMixin._MIN_BBOX_SIZE, rect.height()),
-        )
+            bottom = max(top + min_h, bottom + dy)
+        return QRectF(left, top, right - left, bottom - top)
 
     def _emit_add_request(self, anchor: QPointF | None, current: QRectF | None) -> None:
         """Emit ``face_add_requested`` for a committed add gesture.
@@ -188,6 +208,7 @@ class BoundingBoxFrameEditorMixin:
                 return False
             self._edit_drag_mode = "move"
             self._edit_drag_handle = None
+            self._edit_drag_face_index = int(face_index)
             self._edit_drag_source_anchor = QPointF(source_point)
             self._edit_drag_original_bbox = QRectF(rect)
             self._edit_drag_current_bbox = QRectF(rect)
@@ -205,12 +226,49 @@ class BoundingBoxFrameEditorMixin:
         src_w, src_h = self.source_size
         default_size = max(self._MIN_BBOX_SIZE, min(src_w, src_h) / 4.0)
         half = default_size / 2.0
-        return QRectF(
-            max(0.0, min(src_w - default_size, anchor.x() - half)),
-            max(0.0, min(src_h - default_size, anchor.y() - half)),
-            default_size,
-            default_size,
+        return QRectF(anchor.x() - half, anchor.y() - half, default_size, default_size)
+
+    def _display_min_bbox_size_source(self) -> tuple[float, float]:
+        """Return the legacy 20-display-pixel resize minimum in source pixels."""
+        target = self._target_rect()
+        src_w, src_h = self.source_size
+        if target.width() <= 0.0 or target.height() <= 0.0 or src_w <= 0 or src_h <= 0:
+            return (self._MIN_BBOX_SIZE, self._MIN_BBOX_SIZE)
+        return (
+            max(1.0, self._MIN_BBOX_SIZE * src_w / target.width()),
+            max(1.0, self._MIN_BBOX_SIZE * src_h / target.height()),
         )
+
+    def _visible_bbox_records(self) -> tuple[tuple[int, QRectF, QRectF], ...]:
+        """Return visible ``(face_index, source_bbox, widget_bbox)`` records."""
+        records: list[tuple[int, QRectF, QRectF]] = []
+        if self._face_bboxes_provider is not None:
+            for face_index, bbox in self._face_bboxes_provider():
+                source = QRectF(bbox)
+                records.append((int(face_index), source, self._source_bbox_to_widget_rect(source)))
+            return tuple(records)
+        face_index = self._active_face_provider() if self._active_face_provider else None
+        source = self._active_bbox_source_rect()
+        widget = self._active_bbox_widget_rect()
+        if face_index is not None and source is not None and widget is not None:
+            records.append((int(face_index), QRectF(source), QRectF(widget)))
+        return tuple(records)
+
+    def _bbox_hit_at(self, position: QPointF) -> tuple[int, QRectF, QRectF, str | None] | None:
+        """Hit-test all visible bbox handles first, then bbox bodies."""
+        records = self._visible_bbox_records()
+        for face_index, source_bbox, widget_bbox in reversed(records):
+            handle = ManualFrameOverlay.handle_at(
+                widget_bbox,
+                position,
+                tolerance=self._HANDLE_GRAB_TOLERANCE,
+            )
+            if handle is not None:
+                return (face_index, source_bbox, widget_bbox, handle)
+        for face_index, source_bbox, widget_bbox in reversed(records):
+            if widget_bbox.contains(position):
+                return (face_index, source_bbox, widget_bbox, None)
+        return None
 
     def _emit_context_menu(self, source_point: QPointF | None, global_position: QPointF) -> bool:
         """Hit-test the right-click and emit ``face_context_menu_requested``.
@@ -266,7 +324,7 @@ class BoundingBoxWindowEditorMixin:
         if frame_index < 0:
             self.statusBar().showMessage("No frame to edit", 3000)
             return
-        new_bbox = (bbox.x(), bbox.y(), bbox.width(), bbox.height())
+        new_bbox = self._rounded_bbox_tuple(bbox)
         if not self._editable.resize_face(frame_index, face_index, new_bbox):
             self.statusBar().showMessage("Resize failed (no active face)", 3000)
             return
@@ -279,13 +337,30 @@ class BoundingBoxWindowEditorMixin:
         """Return whether empty-space clicks should create a new face."""
         return self._editor_state.editor_mode == "BoundingBox"
 
-    def _maybe_run_aligner(self, face_index: int) -> None:
+    def _maybe_run_aligner(self, face_index: int, *, aligner_name: str | None = None) -> None:
         """Run the aligner after a bbox edit when ``aligner_auto_run`` is on."""
         if not self._editor_state.aligner_auto_run:
             return
         if self._editor_state.editor_mode != "BoundingBox":
             return
-        self.rerun_aligner_for_face(int(face_index))
+        self.rerun_aligner_for_face(int(face_index), aligner_name=aligner_name)
+
+    def _visible_face_bboxes(self) -> tuple[tuple[int, QRectF], ...]:
+        """Return every current-frame face bbox for frame-view hit testing."""
+        frame_index = self._current_frame_index()
+        if frame_index < 0:
+            return ()
+        return tuple(
+            (int(face.face_index), QRectF(*face.bbox))
+            for face in self._editable.faces(frame_index)
+        )
+
+    def _select_frame_face(self, face_index: int) -> None:
+        """Select a face from a direct frame-view hit test."""
+        self._face_panel.select_face(int(face_index))
+        self._editor_state.set("face_index", int(face_index))
+        self._refresh_face_grid_active()
+        self._sync_actions()
 
     def _face_at_source_point(self, sx: float, sy: float) -> int | None:
         """Hit-test the editable model at a source-coordinate point."""
@@ -296,13 +371,23 @@ class BoundingBoxWindowEditorMixin:
 
     def _on_face_add_requested(self, bbox: QRectF) -> None:
         """Create a new face from a pointer-driven add gesture."""
-        new_index = self.add_face_at_center((bbox.x(), bbox.y(), bbox.width(), bbox.height()))
+        new_index = self.add_face_at_center(
+            (bbox.x(), bbox.y(), bbox.width(), bbox.height()),
+            aligner_name="cv2-dnn",
+        )
         if new_index is None:
             self.statusBar().showMessage("Could not add face", 5000)
 
     def _on_live_face_add_requested(self, bbox: QRectF) -> int | None:
         """Create a BBox face immediately on mouse press for live dragging."""
-        new_index = self.add_face_at_center((bbox.x(), bbox.y(), bbox.width(), bbox.height()))
+        frame_index = self._current_frame_index()
+        if frame_index >= 0:
+            self._live_bbox_add_undo_start = self._editable.undo_depth
+            self._live_bbox_add_previous_faces = self._editable.faces(frame_index)
+        new_index = self.add_face_at_center(
+            (bbox.x(), bbox.y(), bbox.width(), bbox.height()),
+            aligner_name="cv2-dnn",
+        )
         if new_index is not None:
             self._live_bbox_added_face = int(new_index)
             self._live_bbox_original_face = None
@@ -323,7 +408,7 @@ class BoundingBoxWindowEditorMixin:
         if not self._editable.update_face_bbox_live(
             frame_index,
             int(face_index),
-            (bbox.x(), bbox.y(), bbox.width(), bbox.height()),
+            self._rounded_bbox_tuple(bbox),
         ):
             return
         self._editor_state.set("edited", True)
@@ -331,6 +416,8 @@ class BoundingBoxWindowEditorMixin:
         if self._editor_state.aligner_auto_run and self._editor_state.editor_mode == "BoundingBox":
             self.rerun_aligner_for_face(int(face_index), live=True)
         self.refresh_faces()
+        self._face_panel.select_face(int(face_index))
+        self._editor_state.set("face_index", int(face_index))
         self._refresh_face_grid()
         self._frame_view.update()
 
@@ -339,13 +426,44 @@ class BoundingBoxWindowEditorMixin:
         frame_index = self._current_frame_index()
         added_face = getattr(self, "_live_bbox_added_face", None)
         original = getattr(self, "_live_bbox_original_face", None)
+        add_undo_start = getattr(self, "_live_bbox_add_undo_start", None)
+        add_previous_faces = getattr(self, "_live_bbox_add_previous_faces", ())
         self._live_bbox_added_face = None
         self._live_bbox_original_face = None
-        if frame_index < 0 or added_face == int(face_index) or original is None:
+        self._live_bbox_add_undo_start = None
+        self._live_bbox_add_previous_faces = ()
+        if frame_index < 0:
+            return
+        if added_face == int(face_index):
+            if add_undo_start is not None:
+                self._editable.replace_undo_since(
+                    int(add_undo_start),
+                    frame_index,
+                    add_previous_faces,
+                )
+                self._sync_actions()
+            self.refresh_faces()
+            self._refresh_face_grid()
+            self._frame_view.update()
+            return
+        if original is None:
             return
         if isinstance(original, EditableFace):
             self._editable.record_face_update(frame_index, int(face_index), original)
             self._sync_actions()
+            self.refresh_faces()
+            self._refresh_face_grid()
+            self._frame_view.update()
+
+    @staticmethod
+    def _rounded_bbox_tuple(bbox: QRectF) -> tuple[float, float, float, float]:
+        """Return a legacy-style integer source bbox tuple."""
+        return (
+            float(int(round(bbox.x()))),
+            float(int(round(bbox.y()))),
+            float(max(1, int(round(bbox.width())))),
+            float(max(1, int(round(bbox.height())))),
+        )
 
     def _on_frame_context_menu_requested(self, face_index: int, global_pos: QPointF) -> None:
         """Open a Delete Face context menu for a right-clicked frame face."""

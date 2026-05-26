@@ -135,6 +135,8 @@ class ManualToolWindow(
         self._pending_extract_folder: str | None = None
         self._live_bbox_added_face: int | None = None
         self._live_bbox_original_face: EditableFace | None = None
+        self._live_bbox_add_undo_start: int | None = None
+        self._live_bbox_add_previous_faces: tuple[EditableFace, ...] = ()
         self._overlay = ManualFrameOverlay(
             self._editable,
             frame_index_provider=self._current_frame_index,

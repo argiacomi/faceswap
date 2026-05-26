@@ -371,6 +371,8 @@ class LayoutMixin:
             active_bbox_provider=self._active_face_bbox,
             add_mode_provider=self._is_add_mode_active,
             face_hit_provider=self._face_at_source_point,
+            face_bboxes_provider=self._visible_face_bboxes,
+            face_select_callback=self._select_frame_face,
             face_add_callback=self._on_live_face_add_requested,
             face_live_update_callback=self._on_live_face_bbox_requested,
             face_live_commit_callback=self._on_live_face_bbox_committed,

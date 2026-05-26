@@ -79,7 +79,13 @@ class FrameEditDragMixin:
                 self._edit_drag_original_bbox, self._edit_drag_handle or "", dx, dy
             )
         if mode in {"move", "resize"} and self._face_live_update_callback is not None:
-            face_index = self._active_face_provider() if self._active_face_provider else None
+            face_index = (
+                self._edit_drag_face_index
+                if self._edit_drag_face_index is not None
+                else self._active_face_provider()
+                if self._active_face_provider
+                else None
+            )
             if face_index is not None and self._edit_drag_current_bbox is not None:
                 self._face_live_update_callback(
                     int(face_index), QRectF(self._edit_drag_current_bbox)
@@ -96,7 +102,13 @@ class FrameEditDragMixin:
         landmark_indices = self._landmark_drag_indices
         extract_scale = self._extract_drag_scale
         extract_angle = self._extract_drag_angle
-        face_index = self._active_face_provider() if self._active_face_provider else None
+        face_index = (
+            self._edit_drag_face_index
+            if self._edit_drag_face_index is not None
+            else self._active_face_provider()
+            if self._active_face_provider
+            else None
+        )
         self._reset_edit_drag()
         if mode == "add":
             self._emit_add_request(anchor, current)
@@ -162,6 +174,7 @@ class FrameEditDragMixin:
         """Clear all in-progress edit-drag state without emitting signals."""
         self._edit_drag_mode = None
         self._edit_drag_handle = None
+        self._edit_drag_face_index = None
         self._edit_drag_source_anchor = None
         self._edit_drag_original_bbox = None
         self._edit_drag_current_bbox = None
