@@ -67,11 +67,13 @@ class ManualFrameOverlay:
         self._color_provider: T.Callable[[str], QColor] | None = None
         self._editor_mode_provider: T.Callable[[], str] | None = None
         self._annotation_mode_provider: T.Callable[[], str] | None = None
+        self._hovered_landmark: tuple[int, int] | None = None
 
     def set_active(self, face_index: int | None) -> None:
         """Mark a face as the active selection for highlight rendering."""
         self._active_face = face_index
         self._selected_landmarks = frozenset()
+        self._hovered_landmark = None
 
     @property
     def active_face(self) -> int | None:
@@ -81,6 +83,18 @@ class ManualFrameOverlay:
     def set_selected_landmarks(self, indices: T.Iterable[int]) -> None:
         """Set the landmark selection set used to render highlight points."""
         self._selected_landmarks = frozenset(int(i) for i in indices)
+
+    def set_hovered_landmark(self, face_index: int | None, landmark_index: int | None) -> None:
+        """Set the landmark currently under the pointer for hover rendering."""
+        if face_index is None or landmark_index is None:
+            self._hovered_landmark = None
+            return
+        self._hovered_landmark = (int(face_index), int(landmark_index))
+
+    @property
+    def hovered_landmark(self) -> tuple[int, int] | None:
+        """Return the current ``(face_index, landmark_index)`` hover target."""
+        return self._hovered_landmark
 
     @property
     def selected_landmarks(self) -> frozenset[int]:
@@ -135,7 +149,13 @@ class ManualFrameOverlay:
             if visibility["mesh"] and face.landmarks:
                 self._draw_mesh(painter, viewport, face.landmarks, pen_width)
             if visibility["landmarks"] and face.landmarks:
-                self._draw_landmarks(painter, viewport, face.landmarks, is_active)
+                self._draw_landmarks(
+                    painter,
+                    viewport,
+                    face.landmarks,
+                    is_active,
+                    int(face.face_index),
+                )
             if is_active:
                 if visibility["mask"]:
                     self._paint_mask_overlay(painter, viewport, face)
@@ -255,18 +275,40 @@ class ManualFrameOverlay:
         viewport: FrameViewport,
         landmarks: T.Sequence[tuple[float, float]],
         is_active: bool,
+        face_index: int,
     ) -> None:
         painter.setPen(Qt.NoPen)
         selected = self._selected_landmarks if is_active else frozenset()
         for lm_index, (lx, ly) in enumerate(landmarks):
             point = viewport.source_to_widget(lx, ly)
-            if lm_index in selected:
+            is_hovered = self._hovered_landmark == (face_index, lm_index)
+            if is_hovered:
+                painter.setBrush(QBrush(QColor("#fff2a8")))
+                painter.drawEllipse(
+                    point,
+                    self._LANDMARK_SELECTED_RADIUS + 2.5,
+                    self._LANDMARK_SELECTED_RADIUS + 2.5,
+                )
+                painter.setBrush(QBrush(self._color("landmark_selected")))
+                radius = self._LANDMARK_SELECTED_RADIUS
+            elif lm_index in selected:
                 painter.setBrush(QBrush(self._color("landmark_selected")))
                 radius = self._LANDMARK_SELECTED_RADIUS
             else:
                 painter.setBrush(QBrush(self._color("landmark")))
                 radius = self._LANDMARK_RADIUS
             painter.drawEllipse(point, radius, radius)
+            if is_hovered:
+                label = str(lm_index)
+                metrics = painter.fontMetrics()
+                label_rect = metrics.boundingRect(label).adjusted(-3, -2, 3, 2)
+                label_rect.moveTopLeft(point.toPoint() + QPointF(8.0, -8.0).toPoint())
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(QBrush(QColor(20, 20, 20, 210)))
+                painter.drawRect(label_rect)
+                painter.setPen(QPen(QColor("#ffffff")))
+                painter.drawText(label_rect, Qt.AlignCenter, label)
+                painter.setPen(Qt.NoPen)
 
     def _draw_mesh(
         self,

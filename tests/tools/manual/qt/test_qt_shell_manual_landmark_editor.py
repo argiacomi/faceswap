@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from PySide6.QtCore import QEvent, QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QMouseEvent, QPixmap
 
@@ -152,6 +153,25 @@ def test_single_landmark_drag_updates_editable_model(qtbot, tmp_path: Path) -> N
     assert window._editor_state.edited is True
 
 
+def test_landmark_hover_uses_large_anchor_label_and_hidden_cursor(
+    qtbot,
+    tmp_path: Path,
+) -> None:  # type:ignore[no-untyped-def]
+    """Hover near a point highlights it, labels it, and hides the native cursor."""
+    window = _make_window(qtbot, tmp_path)
+    _enter_landmark_mode(window)
+    face_index = _seed_face_with_landmarks(window)
+    window._editor_state.set("face_index", face_index)
+
+    # Point is 6 source pixels away from landmark 0: outside the visible
+    # dot but inside the larger invisible grab/hover anchor.
+    window._frame_view._update_hover_cursor(_source_to_widget(window._frame_view, 56.0, 50.0))
+
+    assert window._frame_view.landmark_hover == {"face_index": face_index, "landmark_index": 0}
+    assert window._overlay.hovered_landmark == (face_index, 0)
+    assert window._frame_view.cursor().shape() == Qt.BlankCursor
+
+
 def test_marquee_selects_landmarks_inside_rect(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
     """An empty-space drag inside the bbox selects every landmark inside the rect."""
     window = _make_window(qtbot, tmp_path)
@@ -162,8 +182,8 @@ def test_marquee_selects_landmarks_inside_rect(qtbot, tmp_path: Path) -> None:  
     view = window._frame_view
     # Start in empty space (inside bbox but away from any landmark), end past
     # landmarks 0 and 1 only.
-    start = _source_to_widget(view, 45.0, 45.0)
-    end = _source_to_widget(view, 65.0, 65.0)
+    start = _source_to_widget(view, 45.0, 90.0)
+    end = _source_to_widget(view, 65.0, 45.0)
     _drag(view, start, end)
 
     selected = window._overlay.selected_landmarks
@@ -185,13 +205,13 @@ def test_marquee_crossing_multiple_faces_clears_selection(
     window._editable.add_face(
         0,
         (100.0, 100.0, 60.0, 60.0),
-        landmarks=((110.0, 110.0), (120.0, 120.0)),
+        landmarks=((110.0, 80.0), (120.0, 85.0)),
     )
     window._editor_state.set("face_index", face_index)
     window._overlay.set_selected_landmarks((0, 1))
 
     view = window._frame_view
-    _drag(view, _source_to_widget(view, 45.0, 45.0), _source_to_widget(view, 125.0, 125.0))
+    _drag(view, _source_to_widget(view, 45.0, 95.0), _source_to_widget(view, 125.0, 45.0))
 
     assert window._overlay.selected_landmarks == frozenset()
 
@@ -220,6 +240,54 @@ def test_group_move_translates_only_selected_landmarks(qtbot, tmp_path: Path) ->
     assert abs(landmarks[1][1] - 65.0) < 0.5
     assert landmarks[2] == (70.0, 70.0)
     assert landmarks[3] == (80.0, 80.0)
+
+
+def test_zoomed_landmark_drag_uses_inverse_view_transform(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+    """After auto-magnify, widget drags still land in source coordinates."""
+    window = _make_window(qtbot, tmp_path)
+    face_index = _seed_face_with_landmarks(window)
+    window._editor_state.set("face_index", face_index)
+    _enter_landmark_mode(window)
+    assert window._frame_view.zoom > 1.0
+
+    view = window._frame_view
+    _drag(view, _source_to_widget(view, 50.0, 50.0), _source_to_widget(view, 58.0, 57.0))
+
+    landmarks = window._editable.faces(0)[0].landmarks
+    assert landmarks[0][0] == pytest.approx(58.0, abs=0.5)
+    assert landmarks[0][1] == pytest.approx(57.0, abs=0.5)
+
+
+def test_editor_mode_and_frame_switch_clear_landmark_temp_state(
+    qtbot,
+    tmp_path: Path,
+) -> None:  # type:ignore[no-untyped-def]
+    """Selections, hover labels and drags clear when editor/frame changes."""
+    session = _session_with_frames(tmp_path, count=2)
+    window = ManualToolWindow(session)
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitExposed(window)
+    qtbot.waitUntil(lambda: window._frame_view.source_size != (0, 0), timeout=2000)
+    face_index = _seed_face_with_landmarks(window)
+    window._editor_state.set("face_index", face_index)
+    _enter_landmark_mode(window)
+    window._overlay.set_selected_landmarks((0, 1))
+    window._frame_view._update_hover_cursor(_source_to_widget(window._frame_view, 56.0, 50.0))
+    assert window._overlay.selected_landmarks
+    assert window._overlay.hovered_landmark == (face_index, 0)
+
+    window._editor_state.set("editor_mode", "View")
+
+    assert window._overlay.selected_landmarks == frozenset()
+    assert window._overlay.hovered_landmark is None
+    assert window._frame_view.landmark_hover is None
+
+    window._overlay.set_selected_landmarks((0, 1))
+    window._editor_state.set("editor_mode", "Landmarks")
+    window._thumbnail_panel.setCurrentRow(1)
+    assert window._overlay.selected_landmarks == frozenset()
+    assert window._overlay.hovered_landmark is None
 
 
 def test_landmark_edit_participates_in_undo_history(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]

@@ -15,14 +15,16 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QEvent, QPointF, Qt
-from PySide6.QtGui import QColor, QMouseEvent, QPixmap
+from PySide6.QtCore import QEvent, QPointF, QRectF, Qt
+from PySide6.QtGui import QColor, QImage, QMouseEvent, QPainter, QPixmap
 
 from tools.manual.qt import (
+    ManualFrameOverlay,
     ManualFrameView,
     ManualToolWindow,
 )
-from tools.manual.session import ManualSession
+from tools.manual.qt.frame_viewer.viewport import FrameViewport
+from tools.manual.session import ManualEditableAlignments, ManualSession
 
 
 def _session_with_frames(folder: Path, count: int = 1) -> ManualSession:
@@ -486,6 +488,19 @@ def test_brush_preview_visible_over_active_face_in_mask_mode(qtbot, tmp_path: Pa
     assert point.y() == pytest.approx(100.0, abs=0.5)
 
 
+def test_mask_brush_cursor_hides_native_cursor_over_roi(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+    """Brush preview over the active ROI hides the native cursor."""
+    window = _make_window(qtbot, tmp_path)
+    face_index = _seed_face(window)
+    window._editor_state.set("face_index", face_index)
+    _enter_mask_mode(window)
+
+    _hover_at(window, 100.0, 100.0)
+
+    assert window._frame_view.brush_preview is not None
+    assert window._frame_view.cursor().shape() == Qt.BlankCursor
+
+
 def test_brush_preview_hidden_outside_bbox_in_mask_mode(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
     """Hovering outside the active face's bbox hides the preview."""
     window = _make_window(qtbot, tmp_path)
@@ -498,6 +513,46 @@ def test_brush_preview_hidden_outside_bbox_in_mask_mode(qtbot, tmp_path: Path) -
     # Move outside the bbox (face was seeded at (40, 40, 120, 120) so 10/10 is outside).
     _hover_at(window, 10.0, 10.0)
     assert window._frame_view.brush_preview is None
+
+
+def test_mask_overlay_clips_to_roi_and_uses_selected_mask_type() -> None:
+    """Frame overlay renders only the selected mask type clipped to the ROI."""
+    import numpy as np
+
+    model = ManualEditableAlignments()
+    face_index = model.add_face(0, (20.0, 20.0, 40.0, 40.0))
+    model.paint_mask_stroke(0, face_index, "components", 30.0, 30.0, 10.0, 255)
+    model.paint_mask_stroke(0, face_index, "extended", 40.0, 40.0, 10.0, 255)
+    overlay = ManualFrameOverlay(model, frame_index_provider=lambda: 0)
+    overlay.set_active(face_index)
+    overlay.install_mask_render_seam(
+        mask_type_provider=lambda: "extended",
+        mask_opacity_provider=lambda: 100,
+        mask_show_provider=lambda: True,
+    )
+    overlay.install_visibility_providers(
+        editor_mode_provider=lambda: "Mask",
+        annotation_mode_provider=lambda: "",
+    )
+    image = QImage(100, 100, QImage.Format_ARGB32)
+    image.fill(QColor(0, 0, 0, 0))
+    painter = QPainter(image)
+    try:
+        overlay(
+            painter,
+            FrameViewport(source_size=(100, 100), target_rect=QRectF(0, 0, 100, 100), zoom=1.0),
+        )
+    finally:
+        painter.end()
+
+    selected_pixel = image.pixelColor(40, 40)
+    unselected_pixel = image.pixelColor(30, 30)
+    outside_roi_pixel = image.pixelColor(80, 80)
+    assert selected_pixel.alpha() > 0
+    assert unselected_pixel.alpha() == 0
+    assert outside_roi_pixel.alpha() == 0
+    assert np.any(model.get_mask(0, face_index, "components"))
+    assert np.any(model.get_mask(0, face_index, "extended"))
 
 
 def test_brush_preview_hidden_when_no_active_face(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]

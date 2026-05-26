@@ -6,9 +6,10 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from PySide6.QtCore import QPointF
 from PySide6.QtGui import QColor, QPixmap
 
-from tools.manual.qt import MANUAL_ACTIONS, ManualToolWindow
+from tools.manual.qt import MANUAL_ACTIONS, ManualFrameView, ManualToolWindow
 from tools.manual.session import FaceThumbnail, ManualSession
 
 
@@ -28,6 +29,15 @@ def _face_fixture(face_index: int) -> FaceThumbnail:
         frame_name="frame_000.png",
         face_index=face_index,
         thumbnail_jpeg=b"",
+    )
+
+
+def _source_to_widget(view: ManualFrameView, sx: float, sy: float) -> QPointF:
+    target = view._target_rect()  # noqa: SLF001 - test projection helper
+    src_w, src_h = view.source_size
+    return QPointF(
+        target.x() + target.width() * (sx / src_w),
+        target.y() + target.height() * (sy / src_h),
     )
 
 
@@ -170,6 +180,33 @@ def test_delete_face_action_requires_face_selection(qtbot, tmp_path: Path) -> No
 
     window.editable_alignments.add_face(0, (10.0, 10.0, 30.0, 30.0))
     assert delete_action.isEnabled() is True
+
+
+@pytest.mark.parametrize("mode", ("BoundingBox", "ExtractBox"))
+def test_delete_key_path_deletes_hovered_frame_face_in_edit_modes(
+    qtbot,
+    tmp_path: Path,
+    mode: str,
+) -> None:  # type:ignore[no-untyped-def]
+    """Delete targets the hovered frame face in BBox and Extract Box modes."""
+    session = _session_with_frames(tmp_path)
+    window = ManualToolWindow(session)
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitUntil(lambda: window._frame_view.source_size != (0, 0), timeout=2000)
+    first = window.editable_alignments.add_face(0, (5.0, 5.0, 20.0, 20.0))
+    second = window.editable_alignments.add_face(0, (25.0, 5.0, 20.0, 20.0))
+    window.editor_state.set("face_index", first)
+    window.editor_state.set("editor_mode", mode)
+
+    window._frame_view._update_hover_cursor(_source_to_widget(window._frame_view, 30.0, 10.0))
+    assert window._frame_view.hovered_face_index == second
+
+    window.actions_by_key["delete_face"].trigger()
+
+    faces = window.editable_alignments.faces(0)
+    assert len(faces) == 1
+    assert faces[0].bbox == (5.0, 5.0, 20.0, 20.0)
 
 
 def test_editor_mode_actions_toggle_other_modes(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]

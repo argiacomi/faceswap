@@ -22,6 +22,44 @@ class LandmarkFrameEditorMixin:
     """Frame-view point, group and marquee behavior for Landmark mode."""
 
     _LANDMARK_HIT_TOLERANCE = 4.0
+    _LANDMARK_GRAB_TOLERANCE = 8.0
+
+    def _set_landmark_hover(self, landmark_index: int | None) -> None:
+        """Persist Landmark editor hover state and notify the overlay."""
+        if self._landmark_hover_index == landmark_index:
+            return
+        self._landmark_hover_index = landmark_index
+        face_index = self._active_face_provider() if self._active_face_provider else None
+        if self._landmark_hover_callback is not None:
+            self._landmark_hover_callback(
+                None if landmark_index is None else face_index,
+                landmark_index,
+            )
+        self.update()
+
+    def _update_landmark_hover(self, source_point: QPointF | None) -> bool:
+        """Update hover target for Landmark mode and return whether a point is hit."""
+        if (
+            self._landmark_mode_provider is None
+            or self._landmark_provider is None
+            or self._active_face_provider is None
+            or not self._landmark_mode_provider()
+            or source_point is None
+        ):
+            self._set_landmark_hover(None)
+            return False
+        face_index = self._active_face_provider()
+        landmarks = self._landmark_provider() if face_index is not None else None
+        if not landmarks:
+            self._set_landmark_hover(None)
+            return False
+        hit_index = ManualFrameOverlay.landmark_at(
+            landmarks,
+            (source_point.x(), source_point.y()),
+            tolerance=self._LANDMARK_GRAB_TOLERANCE,
+        )
+        self._set_landmark_hover(hit_index)
+        return hit_index is not None
 
     def _emit_landmark_move(
         self,
@@ -129,7 +167,7 @@ class LandmarkFrameEditorMixin:
         hit_index = ManualFrameOverlay.landmark_at(
             landmarks,
             (source_point.x(), source_point.y()),
-            tolerance=self._LANDMARK_HIT_TOLERANCE,
+            tolerance=self._LANDMARK_GRAB_TOLERANCE,
         )
         if hit_index is not None:
             selection = self._landmark_selection_provider()

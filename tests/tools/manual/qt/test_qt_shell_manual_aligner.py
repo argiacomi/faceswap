@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
+from PySide6.QtCore import QRectF
 from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -355,8 +356,6 @@ def test_successful_aligner_refresh_is_dirty_and_undoable(qtbot, tmp_path: Path)
 
 def test_bbox_resize_triggers_aligner_when_auto_run_enabled(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
     """Resizing a bbox in BoundingBox mode reruns the aligner with the new bbox."""
-    from PySide6.QtCore import QRectF
-
     window, service = _make_window(qtbot, tmp_path)
     window._editable.add_face(0, (10.0, 10.0, 40.0, 40.0))
     window._editor_state.set("face_index", 0)
@@ -365,6 +364,58 @@ def test_bbox_resize_triggers_aligner_when_auto_run_enabled(qtbot, tmp_path: Pat
     window._on_face_resize_requested(0, QRectF(8.0, 8.0, 50.0, 50.0))
     instances = service._test_instances  # type:ignore[attr-defined]
     assert instances[-1].align_calls[-1][1] == (8.0, 8.0, 50.0, 50.0)
+
+
+def test_bbox_move_and_resize_use_selected_aligner_and_normalization(
+    qtbot,
+    tmp_path: Path,
+) -> None:  # type:ignore[no-untyped-def]
+    """BBox edits rerun landmarks through the selected aligner backend."""
+    instances: list[_StubBackend] = []
+    window, _ = _make_window(
+        qtbot,
+        tmp_path,
+        service=_stub_service(
+            instances=instances,
+            available=("HRNet", "FAN"),
+            default="HRNet",
+        ),
+    )
+    window._editable.add_face(0, (10.0, 10.0, 40.0, 40.0))
+    window._editor_state.set("face_index", 0)
+    window._editor_state.set("editor_mode", "BoundingBox")
+    window.set_aligner_name("FAN")
+    window.set_aligner_normalization("clahe")
+    _wait_for_aligner_preload(qtbot, window)
+
+    window._on_face_move_requested(0, 5.0, 7.0)
+    window._on_face_resize_requested(0, QRectF(8.0, 8.0, 50.0, 50.0))
+
+    align_calls = [backend for backend in instances if backend.align_calls]
+    assert align_calls
+    assert all(backend.aligner == "FAN" for backend in align_calls)
+    assert all(backend.normalization == "clahe" for backend in align_calls)
+    bboxes = [call[1] for backend in align_calls for call in backend.align_calls]
+    assert bboxes[-2] == (15.0, 17.0, 40.0, 40.0)
+    assert bboxes[-1] == (8.0, 8.0, 50.0, 50.0)
+
+
+def test_bbox_pointer_add_uses_add_then_aligner_regeneration_path(
+    qtbot,
+    tmp_path: Path,
+) -> None:  # type:ignore[no-untyped-def]
+    """Frame-view BBox add creates the face then regenerates landmarks."""
+    canned = np.tile([[13.0, 14.0]], (68, 1)).astype(np.float32)
+    window, service = _make_window(qtbot, tmp_path, service=_stub_service(landmarks=canned))
+    window._editor_state.set("editor_mode", "BoundingBox")
+
+    window._on_face_add_requested(QRectF(30.0, 30.0, 40.0, 40.0))
+
+    face = window._editable.faces(0)[0]
+    assert face.bbox == (30.0, 30.0, 40.0, 40.0)
+    assert face.landmarks[0] == (13.0, 14.0)
+    instances = service._test_instances  # type:ignore[attr-defined]
+    assert instances[-1].align_calls[-1][1] == (30.0, 30.0, 40.0, 40.0)
 
 
 def test_bbox_move_skips_aligner_outside_bbox_mode(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]

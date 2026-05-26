@@ -117,6 +117,7 @@ class ManualFrameView(
         # pure-pan behavior.
         self._add_mode_provider: T.Callable[[], bool] | None = None
         self._face_hit_provider: T.Callable[[float, float], int | None] | None = None
+        self._hovered_face_index: int | None = None
         # Landmark editor seams (#103) — when installed, landmark-mode pointer
         # gestures hit-test individual points and emit landmark_*_requested.
         self._landmark_mode_provider: T.Callable[[], bool] | None = None
@@ -127,6 +128,8 @@ class ManualFrameView(
             T.Callable[[], T.Sequence[tuple[int, T.Sequence[tuple[float, float]]]]] | None
         ) = None
         self._landmark_selection_provider: T.Callable[[], frozenset[int]] | None = None
+        self._landmark_hover_callback: T.Callable[[int | None, int | None], None] | None = None
+        self._landmark_hover_index: int | None = None
         self._edit_drag_mode: str | None = None
         # Modes: "move" | "resize" | "add" | "landmark" | "landmark_group"
         # | "landmark_marquee"
@@ -402,6 +405,7 @@ class ManualFrameView(
         landmark_faces_provider: (
             T.Callable[[], T.Sequence[tuple[int, T.Sequence[tuple[float, float]]]]] | None
         ) = None,
+        landmark_hover_callback: T.Callable[[int | None, int | None], None] | None = None,
     ) -> None:
         """Install Landmark editor seams (#103).
 
@@ -416,6 +420,7 @@ class ManualFrameView(
         self._landmark_provider = landmark_provider
         self._landmark_selection_provider = landmark_selection_provider
         self._landmark_faces_provider = landmark_faces_provider
+        self._landmark_hover_callback = landmark_hover_callback
 
     def install_extract_seams(
         self,
@@ -472,6 +477,33 @@ class ManualFrameView(
             "shape": str(self._brush_preview_shape),
             "color": str(self._brush_preview_color),
         }
+
+    @property
+    def hovered_face_index(self) -> int | None:
+        """Return the face currently under the frame-view pointer."""
+        return self._hovered_face_index
+
+    @property
+    def landmark_hover(self) -> dict | None:
+        """Return Landmark editor hover state for tests/inspection."""
+        if self._landmark_hover_index is None:
+            return None
+        face_index = self._active_face_provider() if self._active_face_provider else None
+        if face_index is None:
+            return None
+        return {"face_index": int(face_index), "landmark_index": int(self._landmark_hover_index)}
+
+    def clear_editor_temporary_state(self) -> None:
+        """Clear mode-owned drag, hover and preview state."""
+        if self._edit_drag_mode is not None:
+            self._reset_edit_drag()
+        self._mask_drag_active = False
+        self._mask_drag_invert = False
+        self._brush_preview_source_point = None
+        self._hovered_face_index = None
+        self._set_landmark_hover(None)
+        self.setCursor(Qt.ArrowCursor)
+        self.update()
 
     def edit_drag_preview_bbox(self) -> QRectF | None:
         """Return the in-progress drag bbox in source coordinates, if any.

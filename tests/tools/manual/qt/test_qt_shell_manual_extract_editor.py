@@ -15,6 +15,7 @@ from __future__ import annotations
 import math
 from pathlib import Path
 
+import pytest
 from PySide6.QtCore import QEvent, QPointF, Qt
 from PySide6.QtGui import QColor, QMouseEvent, QPixmap
 
@@ -143,6 +144,29 @@ def test_extract_translate_drag_moves_face(qtbot, tmp_path: Path) -> None:  # ty
     assert window._editor_state.edited is True
 
 
+def test_extract_translate_preserves_full_landmark_alignment(
+    qtbot,
+    tmp_path: Path,
+) -> None:  # type:ignore[no-untyped-def]
+    """Translate moves every landmark by the same source delta as the bbox."""
+    window = _make_window(qtbot, tmp_path)
+    _enter_extract_mode(window)
+    landmarks = tuple((40.0 + float(i), 50.0 + float(i % 7)) for i in range(68))
+    face_index = window._editable.add_face(
+        0,
+        (35.0, 45.0, 80.0, 70.0),
+        landmarks=landmarks,
+    )
+    window._editor_state.set("face_index", face_index)
+
+    view = window._frame_view
+    _drag(view, _source_to_widget(view, 60.0, 60.0), _source_to_widget(view, 72.0, 69.0))
+
+    face = window._editable.faces(0)[0]
+    assert face.bbox == pytest.approx((47.0, 54.0, 80.0, 70.0))
+    assert face.landmarks == tuple((x + 12.0, y + 9.0) for x, y in landmarks)
+
+
 def test_extract_corner_drag_scales_face(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
     """Corner drag in Extract Box mode scales landmarks + bbox around the centre."""
     window = _make_window(qtbot, tmp_path)
@@ -230,6 +254,76 @@ def test_extract_outside_corner_drag_rotates_face(qtbot, tmp_path: Path) -> None
     # Verify rotation actually occurred (landmarks moved).
     assert rotated_landmarks != original_landmarks
     assert window._editor_state.edited is True
+
+
+def test_extract_rotation_angle_convention_is_source_y_down(
+    qtbot,
+    tmp_path: Path,
+) -> None:  # type:ignore[no-untyped-def]
+    """A +pi/2 Extract rotation maps east of centre to south of centre."""
+    window = _make_window(qtbot, tmp_path)
+    _enter_extract_mode(window)
+    face_index = _seed_face(window)
+    window._editor_state.set("face_index", face_index)
+
+    window._on_face_rotate_requested(face_index, math.pi / 2.0)
+
+    landmarks = window._editable.faces(0)[0].landmarks
+    assert landmarks[1][0] == pytest.approx(50.0, abs=0.001)
+    assert landmarks[1][1] == pytest.approx(55.0, abs=0.001)
+
+
+def test_extract_rotation_drag_updates_continuous_preview_angle(
+    qtbot,
+    tmp_path: Path,
+) -> None:  # type:ignore[no-untyped-def]
+    """During a rotation drag, move events continuously update the pending angle."""
+    window = _make_window(qtbot, tmp_path)
+    _enter_extract_mode(window)
+    face_index = _seed_face(window)
+    window._editor_state.set("face_index", face_index)
+    view = window._frame_view
+    widget_bbox = view._active_bbox_widget_rect()  # noqa: SLF001 - hit geometry
+    assert widget_bbox is not None
+    offset = view._EXTRACT_ROTATION_BAND_PX / 2.0  # noqa: SLF001
+    start = QPointF(widget_bbox.right() + offset, widget_bbox.center().y())
+    middle = QPointF(widget_bbox.center().x(), widget_bbox.bottom() + offset)
+    global_start = view.mapToGlobal(start.toPoint())
+    global_middle = view.mapToGlobal(middle.toPoint())
+
+    view.mousePressEvent(
+        QMouseEvent(
+            QEvent.Type.MouseButtonPress,
+            start,
+            QPointF(global_start),
+            Qt.LeftButton,
+            Qt.LeftButton,
+            Qt.NoModifier,
+        )
+    )
+    view.mouseMoveEvent(
+        QMouseEvent(
+            QEvent.Type.MouseMove,
+            middle,
+            QPointF(global_middle),
+            Qt.NoButton,
+            Qt.LeftButton,
+            Qt.NoModifier,
+        )
+    )
+
+    assert view._edit_drag_mode == "extract_rotate"  # noqa: SLF001
+    assert view._extract_drag_angle == pytest.approx(math.pi / 2.0, abs=0.25)  # noqa: SLF001
+    view.mouseReleaseEvent(
+        QMouseEvent(
+            QEvent.Type.MouseButtonRelease,
+            middle,
+            QPointF(global_middle),
+            Qt.LeftButton,
+            Qt.NoButton,
+            Qt.NoModifier,
+        )
+    )
 
 
 def test_extract_no_active_face_fall_through(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]

@@ -376,6 +376,7 @@ class LayoutMixin:
             landmark_provider=self._active_face_landmarks,
             landmark_selection_provider=lambda: self._overlay.selected_landmarks,
             landmark_faces_provider=self._frame_landmark_faces,
+            landmark_hover_callback=self._overlay.set_hovered_landmark,
         )
         self._frame_view.install_extract_seams(
             extract_mode_provider=self._is_extract_mode_active,

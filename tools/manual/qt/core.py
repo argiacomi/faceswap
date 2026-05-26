@@ -160,6 +160,7 @@ class ManualToolWindow(
             "face_index", lambda _v: self._refresh_aligner_controls_visibility()
         )
         self._editor_state.subscribe("frame_index", lambda _v: self._sync_actions())
+        self._editor_state.subscribe("frame_index", lambda _v: self._clear_frame_temp_state())
         self._editor_state.subscribe(
             "frame_index", lambda _v: self._refresh_mask_controls_visibility()
         )

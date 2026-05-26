@@ -273,7 +273,11 @@ class FaceBrowserMixin:
         frame_index = self._current_frame_index()
         if frame_index < 0:
             return
-        face_index = self._editor_state.face_index
+        hovered = getattr(self._frame_view, "hovered_face_index", None)
+        if self._editor_state.editor_mode in {"BoundingBox", "ExtractBox"} and hovered is not None:
+            face_index = int(hovered)
+        else:
+            face_index = self._editor_state.face_index
         if not self._editable.delete_face(frame_index, face_index):
             self.statusBar().showMessage("No face selected to delete", 5000)
             return

@@ -29,6 +29,22 @@ class BoundingBoxFrameEditorMixin:
         self._update_brush_preview(position)
         if self._source.isNull():
             self.setCursor(Qt.ArrowCursor)
+            self._hovered_face_index = None
+            self._set_landmark_hover(None)
+            return
+        source_point = self._widget_to_source(position)
+        if self._face_hit_provider is not None and source_point is not None:
+            self._hovered_face_index = self._face_hit_provider(source_point.x(), source_point.y())
+        else:
+            self._hovered_face_index = None
+        if self._update_landmark_hover(source_point):
+            self.setCursor(Qt.BlankCursor)
+            return
+        if self._mask_mode_provider is not None and self._mask_mode_provider():
+            if self._brush_preview_source_point is not None:
+                self.setCursor(Qt.BlankCursor)
+                return
+            self.setCursor(Qt.ArrowCursor)
             return
         in_extract_mode = bool(self._extract_mode_provider and self._extract_mode_provider())
         # Hover an active-face resize handle?

@@ -659,6 +659,7 @@ class ControlsMixin:
 
     def _on_editor_mode_changed(self, _mode: object) -> None:
         """Refresh action availability when the editor mode flips."""
+        self._clear_frame_temp_state()
         self._sync_actions()
         self._refresh_mask_controls_visibility()
         self._refresh_aligner_controls_visibility()
@@ -668,6 +669,12 @@ class ControlsMixin:
         else:
             self._restore_magnified_view()
         self._frame_view.update()
+
+    def _clear_frame_temp_state(self) -> None:
+        """Clear frame-view temporary state owned by the active editor."""
+        self._overlay.set_selected_landmarks(())
+        self._overlay.set_hovered_landmark(None, None)
+        self._frame_view.clear_editor_temporary_state()
 
 
 __all__ = ["ControlsMixin"]
