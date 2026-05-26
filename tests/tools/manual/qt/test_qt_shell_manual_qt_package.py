@@ -13,7 +13,8 @@ def test_qt_manual_tool_public_exports_live_under_tools_manual_qt() -> None:
     """Public Manual Tool Qt classes are exported from the Manual Tool package."""
     assert qt.ManualToolWindow.__module__ == "tools.manual.qt.window"
     assert qt.ManualFrameView.__module__ == "tools.manual.qt.frame_viewer.frame_view"
-    assert qt.ManualFrameOverlay.__module__ == "tools.manual.qt.overlays"
+    assert qt.ManualFrameOverlay.__module__ == "tools.manual.qt.frame_viewer.overlays"
+    assert qt.FrameViewport.__module__ == "tools.manual.qt.frame_viewer.viewport"
     assert qt.CrossFrameFaceGridPanel.__module__ == "tools.manual.qt.face_viewer.frame"
     assert qt.FaceGridThumbnailRenderer.__module__ == "tools.manual.qt.face_viewer.viewport"
     assert qt.FaceThumbnailPanel.__module__ == "tools.manual.qt.face_viewer.thumbnails"
@@ -31,13 +32,15 @@ def test_qt_manual_tool_focused_modules_import_cleanly() -> None:
         "tools.manual.qt.face_viewer.thumbnails",
         "tools.manual.qt.face_viewer.viewport",
         "tools.manual.qt.filter_controls",
+        "tools.manual.qt.frame_viewer",
         "tools.manual.qt.frame_viewer.editor.bounding_box",
         "tools.manual.qt.frame_viewer.editor.drag",
         "tools.manual.qt.frame_viewer.editor.extract_box",
         "tools.manual.qt.frame_viewer.editor.landmarks",
         "tools.manual.qt.frame_viewer.editor.mask",
         "tools.manual.qt.frame_viewer.frame_view",
-        "tools.manual.qt.overlays",
+        "tools.manual.qt.frame_viewer.overlays",
+        "tools.manual.qt.frame_viewer.viewport",
         "tools.manual.qt.transport",
         "tools.manual.qt.video",
         "tools.manual.qt.window",
@@ -57,6 +60,19 @@ def test_qt_manual_tool_face_viewer_logic_stays_in_face_viewer_modules() -> None
     assert qt.ManualThumbnailPanel is thumbnails.ManualThumbnailPanel
     assert qt.FaceGridEntry is viewport.FaceGridEntry
     assert qt.FaceGridRenderRequest is viewport.FaceGridRenderRequest
+
+
+def test_qt_manual_tool_frame_viewer_logic_stays_in_frame_viewer_modules() -> None:
+    """Frame-viewer modules own frame display, overlay and viewport types."""
+    from tools.manual.qt import frame_viewer
+    from tools.manual.qt.frame_viewer import frame_view, overlays, viewport
+
+    assert qt.ManualFrameView is frame_view.ManualFrameView
+    assert qt.ManualFrameOverlay is overlays.ManualFrameOverlay
+    assert qt.FrameViewport is viewport.FrameViewport
+    assert frame_viewer.ManualFrameView is frame_view.ManualFrameView
+    assert frame_viewer.ManualFrameOverlay is overlays.ManualFrameOverlay
+    assert frame_viewer.FrameViewport is viewport.FrameViewport
 
 
 def test_qt_manual_tool_editor_logic_stays_in_editor_modules() -> None:
