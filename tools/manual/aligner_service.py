@@ -135,10 +135,10 @@ class _PluginAlignerBackend:
 
         pipeline = self._ensure_pipeline()
         face = DetectedFace(
-            x=int(round(bbox[0])),
-            y=int(round(bbox[1])),
-            w=int(round(bbox[2])),
-            h=int(round(bbox[3])),
+            left=int(round(bbox[0])),
+            width=int(round(bbox[2])),
+            top=int(round(bbox[1])),
+            height=int(round(bbox[3])),
         )
         # filename can be a placeholder — the pipeline keys results by
         # filename but we only consume the single returned face below.
