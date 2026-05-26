@@ -16,6 +16,7 @@ from PySide6.QtGui import (
     QColor,
     QPainter,
     QPen,
+    QPolygonF,
 )
 
 from tools.manual.session import ManualEditableAlignments
@@ -26,18 +27,14 @@ logger = logging.getLogger(__name__)
 
 
 class ManualFrameOverlay:
-    """Stateful painter for editable bounding boxes + landmarks.
+    """Stateful painter for editable frame annotations."""
 
-    The overlay is registered with :meth:`ManualFrameView.add_overlay` and
-    draws one rectangle per editable face returned by the bound
-    :class:`ManualEditableAlignments`.  The active face is rendered with a
-    contrasting accent and a halo so editor surfaces can share hit targets.
-    """
-
-    _DEFAULT_COLOR = QColor("#3aa0ff")
-    _ACTIVE_COLOR = QColor("#ffb000")
-    _LANDMARK_COLOR = QColor("#ffffff")
-    _LANDMARK_SELECTED_COLOR = QColor("#ffb000")
+    _BBOX_COLOR = QColor("#0000ff")
+    _EXTRACT_COLOR = QColor("#00ff00")
+    _LANDMARK_COLOR = QColor("#ff00ff")
+    _LANDMARK_SELECTED_COLOR = QColor("#ff00ff")
+    _MESH_COLOR = QColor("#00ffff")
+    _MASK_COLOR = QColor("#ff0000")
     _LANDMARK_RADIUS = 2.0
     _LANDMARK_SELECTED_RADIUS = 3.5
     _HANDLE_SIZE = 7.0
@@ -130,47 +127,86 @@ class ManualFrameOverlay:
             is_active = face.face_index == self._active_face
             painter.save()
             rect = viewport.source_rect_to_widget(*face.bbox)
+            extract_polygon = self._extract_polygon_for(face.landmarks, viewport)
             if visibility["bbox"]:
-                color = self._color("active") if is_active else self._color("bbox")
-                pen = QPen(color)
-                pen.setWidthF(pen_width + (1.0 if is_active else 0.0))
-                painter.setPen(pen)
-                painter.setBrush(Qt.NoBrush)
-                painter.drawRect(rect)
+                self._draw_rect(painter, rect, self._color("bbox"), pen_width)
+            if visibility["extract"] and extract_polygon is not None:
+                self._draw_polygon(painter, extract_polygon, self._color("extract"), pen_width)
+            if visibility["mesh"] and face.landmarks:
+                self._draw_mesh(painter, viewport, face.landmarks, pen_width)
             if visibility["landmarks"] and face.landmarks:
-                painter.setPen(Qt.NoPen)
-                selected = self._selected_landmarks if is_active else frozenset()
-                for lm_index, (lx, ly) in enumerate(face.landmarks):
-                    point = viewport.source_to_widget(lx, ly)
-                    if lm_index in selected:
-                        painter.setBrush(QBrush(self._color("landmark_selected")))
-                        radius = self._LANDMARK_SELECTED_RADIUS
-                    else:
-                        painter.setBrush(QBrush(self._color("landmark")))
-                        radius = self._LANDMARK_RADIUS
-                    painter.drawEllipse(point, radius, radius)
+                self._draw_landmarks(painter, viewport, face.landmarks, is_active)
             if is_active:
                 if visibility["mask"]:
                     self._paint_mask_overlay(painter, viewport, face)
                 if visibility["handles"]:
-                    self._draw_handles(painter, rect)
+                    handle_rect = extract_polygon.boundingRect() if extract_polygon is not None else rect
+                    self._draw_handles(painter, handle_rect)
             painter.restore()
 
     def annotation_visibility(self) -> dict[str, bool]:
-        """Return active overlay visibility for bbox, handles, landmarks and mask."""
+        """Return active legacy overlay visibility flags."""
         editor_mode = self._editor_mode_provider() if self._editor_mode_provider else "View"
         annotation_mode = (
             self._annotation_mode_provider() if self._annotation_mode_provider else "None"
         )
         if not annotation_mode:
             annotation_mode = "None"
+        explicit_mesh = annotation_mode == "Mesh"
+        explicit_mask = annotation_mode == "Mask"
+        explicit_landmarks = annotation_mode == "Landmarks"
+        if editor_mode == "View":
+            return {
+                "bbox": True,
+                "extract": True,
+                "handles": False,
+                "landmarks": True,
+                "mesh": True,
+                "mask": explicit_mask,
+            }
+        if editor_mode == "BoundingBox":
+            return {
+                "bbox": True,
+                "extract": False,
+                "handles": True,
+                "landmarks": explicit_landmarks,
+                "mesh": True or explicit_mesh,
+                "mask": explicit_mask,
+            }
+        if editor_mode == "ExtractBox":
+            return {
+                "bbox": False,
+                "extract": True,
+                "handles": True,
+                "landmarks": explicit_landmarks,
+                "mesh": True or explicit_mesh,
+                "mask": explicit_mask,
+            }
+        if editor_mode == "Landmarks":
+            return {
+                "bbox": False,
+                "extract": True,
+                "handles": False,
+                "landmarks": True,
+                "mesh": True or explicit_mesh,
+                "mask": explicit_mask,
+            }
+        if editor_mode == "Mask":
+            return {
+                "bbox": False,
+                "extract": False,
+                "handles": False,
+                "landmarks": False,
+                "mesh": explicit_mesh,
+                "mask": True,
+            }
         return {
-            "bbox": editor_mode in {"BoundingBox", "ExtractBox", "Landmarks", "Mask"}
-            or annotation_mode in {"Mesh", "Mask", "Landmarks"},
-            "handles": editor_mode in {"BoundingBox", "ExtractBox"},
-            "landmarks": editor_mode in {"ExtractBox", "Landmarks"}
-            or annotation_mode in {"Mesh", "Landmarks"},
-            "mask": editor_mode == "Mask" or annotation_mode == "Mask",
+            "bbox": explicit_mesh or explicit_landmarks,
+            "extract": False,
+            "handles": False,
+            "landmarks": explicit_landmarks,
+            "mesh": explicit_mesh,
+            "mask": explicit_mask,
         }
 
     def _color(self, role: str) -> QColor:
@@ -180,13 +216,125 @@ class ManualFrameOverlay:
             if color.isValid():
                 return color
         defaults = {
-            "bbox": self._DEFAULT_COLOR,
-            "active": self._ACTIVE_COLOR,
+            "bbox": self._BBOX_COLOR,
+            "extract": self._EXTRACT_COLOR,
             "landmark": self._LANDMARK_COLOR,
             "landmark_selected": self._LANDMARK_SELECTED_COLOR,
-            "mask": QColor(255, 80, 80),
+            "mesh": self._MESH_COLOR,
+            "mask": self._MASK_COLOR,
         }
-        return defaults.get(role, self._DEFAULT_COLOR)
+        return defaults.get(role, self._BBOX_COLOR)
+
+    @staticmethod
+    def _draw_rect(painter: QPainter, rect: QRectF, color: QColor, pen_width: float) -> None:
+        pen = QPen(color)
+        pen.setWidthF(pen_width)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRect(rect)
+
+    @staticmethod
+    def _draw_polygon(
+        painter: QPainter,
+        polygon: QPolygonF,
+        color: QColor,
+        pen_width: float,
+    ) -> None:
+        pen = QPen(color)
+        pen.setWidthF(pen_width)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        painter.drawPolygon(polygon)
+
+    def _draw_landmarks(
+        self,
+        painter: QPainter,
+        viewport: FrameViewport,
+        landmarks: T.Sequence[tuple[float, float]],
+        is_active: bool,
+    ) -> None:
+        painter.setPen(Qt.NoPen)
+        selected = self._selected_landmarks if is_active else frozenset()
+        for lm_index, (lx, ly) in enumerate(landmarks):
+            point = viewport.source_to_widget(lx, ly)
+            if lm_index in selected:
+                painter.setBrush(QBrush(self._color("landmark_selected")))
+                radius = self._LANDMARK_SELECTED_RADIUS
+            else:
+                painter.setBrush(QBrush(self._color("landmark")))
+                radius = self._LANDMARK_RADIUS
+            painter.drawEllipse(point, radius, radius)
+
+    def _draw_mesh(
+        self,
+        painter: QPainter,
+        viewport: FrameViewport,
+        landmarks: T.Sequence[tuple[float, float]],
+        pen_width: float,
+    ) -> None:
+        groups = self.landmark_part_groups(landmarks)
+        if not groups["polygon"] and not groups["line"]:
+            return
+        pen = QPen(self._color("mesh"))
+        pen.setWidthF(max(1.0, pen_width))
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        for group in groups["polygon"]:
+            painter.drawPolygon(QPolygonF(tuple(viewport.source_to_widget(x, y) for x, y in group)))
+        for group in groups["line"]:
+            painter.drawPolyline(QPolygonF(tuple(viewport.source_to_widget(x, y) for x, y in group)))
+
+    @classmethod
+    def landmark_part_groups(
+        cls,
+        landmarks: T.Sequence[tuple[float, float]],
+    ) -> dict[T.Literal["polygon", "line"], tuple[tuple[tuple[float, float], ...], ...]]:
+        """Return Tk-parity LANDMARK_PARTS groups for ``landmarks``."""
+        if not landmarks:
+            return {"polygon": (), "line": ()}
+        try:
+            import numpy as np
+
+            from lib.align import LANDMARK_PARTS, LandmarkType
+
+            landmark_array = np.asarray(landmarks, dtype=np.float32)
+            landmark_type = LandmarkType.from_shape(landmark_array.shape)
+            groups: dict[T.Literal["polygon", "line"], list[tuple[tuple[float, float], ...]]] = {
+                "polygon": [],
+                "line": [],
+            }
+            for start, end, fill in LANDMARK_PARTS[landmark_type].values():
+                key: T.Literal["polygon", "line"] = "polygon" if fill else "line"
+                groups[key].append(
+                    tuple((float(x), float(y)) for x, y in landmark_array[start:end].tolist())
+                )
+            return {key: tuple(value) for key, value in groups.items()}
+        except Exception:
+            return {"polygon": (), "line": (tuple(landmarks),)}
+
+    @staticmethod
+    def _extract_polygon_for(
+        landmarks: T.Sequence[tuple[float, float]],
+        viewport: FrameViewport,
+    ) -> QPolygonF | None:
+        """Return the legacy aligned-face extract-box polygon in widget coordinates."""
+        if not landmarks:
+            return None
+        try:
+            import numpy as np
+
+            from lib.align import AlignedFace
+
+            aligned = AlignedFace(np.asarray(landmarks, dtype=np.float32), centering="face")
+            roi = getattr(aligned, "original_roi", None)
+            if roi is None:
+                return None
+            points = tuple(viewport.source_to_widget(float(x), float(y)) for x, y in roi.tolist())
+            if len(points) < 3:
+                return None
+            return QPolygonF(points)
+        except Exception:
+            return None
 
     def _paint_mask_overlay(self, painter: QPainter, viewport: FrameViewport, face: T.Any) -> None:
         """Render the active face's mask as a colour-tinted alpha layer."""
@@ -230,7 +378,7 @@ class ManualFrameOverlay:
                 mv[base + 2] = tint.red()
                 mv[base + 3] = a
             image = QImage(bytes(argb), width, height, width * 4, QImage.Format_ARGB32)
-        except Exception:  # pragma: no cover - defensive
+        except Exception:
             return
         rect = viewport.source_rect_to_widget(*face.bbox)
         painter.save()
@@ -239,7 +387,7 @@ class ManualFrameOverlay:
         painter.restore()
 
     def _draw_handles(self, painter: QPainter, bbox: QRectF) -> None:
-        """Draw eight square resize handles around the active bbox."""
+        """Draw eight square resize handles around ``bbox``."""
         painter.save()
         edge_pen = QPen(self._HANDLE_EDGE)
         edge_pen.setWidthF(1.0)
