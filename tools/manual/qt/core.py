@@ -48,11 +48,12 @@ class ManualToolWindow(
     """Qt-native Manual Tool window base with shared state and construction."""
 
     _OVERLAY_COLOR_DEFAULTS: T.ClassVar[dict[str, QColor]] = {
-        "bbox": QColor("#3aa0ff"),
-        "active": QColor("#ffb000"),
-        "landmark": QColor("#ffffff"),
-        "landmark_selected": QColor("#ffb000"),
-        "mask": QColor(255, 80, 80),
+        "bbox": QColor("#0000ff"),
+        "extract": QColor("#00ff00"),
+        "landmark": QColor("#ff00ff"),
+        "landmark_selected": QColor("#ff00ff"),
+        "mesh": QColor("#00ffff"),
+        "mask": QColor("#ff0000"),
     }
 
     dirty_changed = Signal(bool)
