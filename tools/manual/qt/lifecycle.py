@@ -19,6 +19,65 @@ class LifecycleMixin:
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa:N802
         """Prompt before closing when the editor has unsaved changes."""
+        if self._play_timer.isActive():
+            self._play_timer.stop()
+        if self._extract_worker is not None:
+            stopped = self._extract_worker.stop()
+            if not stopped:
+                self.statusBar().showMessage(
+                    "Extraction still running. Please wait for it to finish, then close again.",
+                    7000,
+                )
+                event.ignore()
+                return
+            self._extract_worker.deleteLater()
+            self._extract_worker = None
+        if self._save_worker is not None:
+            stopped = self._save_worker.stop()
+            if not stopped:
+                self.statusBar().showMessage(
+                    "Save still running. Please wait for it to finish, then close again.",
+                    7000,
+                )
+                event.ignore()
+                return
+            self._save_worker.deleteLater()
+            self._save_worker = None
+            self._drain_save_busy_stack()
+        if self._aligner_load_worker is not None:
+            stopped = self._aligner_load_worker.stop()
+            if not stopped:
+                self.statusBar().showMessage(
+                    "Aligner is still loading. Please wait, then close again.",
+                    7000,
+                )
+                event.ignore()
+                return
+            self._aligner_load_worker.deleteLater()
+            self._aligner_load_worker = None
+            self._aligner_load_target = None
+        if self._video_provider is not None:
+            stopped = self._video_provider.shutdown()
+            if not stopped:
+                self.statusBar().showMessage(
+                    "Video frame loading is still running. Please wait, then close again.",
+                    7000,
+                )
+                event.ignore()
+                return
+            self._video_provider.deleteLater()
+            self._video_provider = None
+        if self._startup_worker is not None:
+            stopped = self._startup_worker.stop()
+            if not stopped:
+                self.statusBar().showMessage(
+                    "Manual Tool startup is still running. Please wait, then close again.",
+                    7000,
+                )
+                event.ignore()
+                return
+            self._startup_worker.deleteLater()
+            self._startup_worker = None
         if self._editor_state.unsaved:
             answer = QMessageBox.question(
                 self,
@@ -30,39 +89,6 @@ class LifecycleMixin:
             if answer != QMessageBox.Yes:
                 event.ignore()
                 return
-        if self._play_timer.isActive():
-            self._play_timer.stop()
-        if self._extract_worker is not None:
-            stopped = self._extract_worker.stop()
-            if not stopped:
-                self.statusBar().showMessage(
-                    "Extraction still running — please wait for it to finish, then close again.",
-                    7000,
-                )
-                event.ignore()
-                return
-            self._extract_worker = None
-        if self._save_worker is not None:
-            self._save_worker.stop()
-            self._save_worker = None
-            self._drain_save_busy_stack()
-        if self._aligner_load_worker is not None:
-            stopped = self._aligner_load_worker.stop()
-            if not stopped:
-                self.statusBar().showMessage(
-                    "Aligner is still loading — please wait, then close again.",
-                    7000,
-                )
-                event.ignore()
-                return
-            self._aligner_load_worker = None
-            self._aligner_load_target = None
-        if self._video_provider is not None:
-            self._video_provider.shutdown()
-            self._video_provider = None
-        if self._startup_worker is not None:
-            self._startup_worker.stop()
-            self._startup_worker = None
         self._save_manual_window_state()
         event.accept()
 
