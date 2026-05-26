@@ -71,7 +71,7 @@ class CrossFrameFaceGridPanel(QListWidget):
         self.setFocusPolicy(Qt.StrongFocus)
         self.setMouseTracking(True)
         self.viewport().setMouseTracking(True)
-        self.setSpacing(6)
+        self.setSpacing(1)
         self.setMinimumHeight(96)
         self.setUniformItemSizes(True)
         self._renderer = renderer
@@ -121,7 +121,7 @@ class CrossFrameFaceGridPanel(QListWidget):
         self._face_size_name = size_name
         size = _FACE_GRID_SIZES[size_name]
         self.setIconSize(QSize(size, size))
-        self.setGridSize(QSize(size + 34, size + 42))
+        self.setGridSize(QSize(size + 4, size + 4))
         for row in range(self.count()):
             item = self.item(row)
             if item is not None:
@@ -158,9 +158,9 @@ class CrossFrameFaceGridPanel(QListWidget):
                 return
             icon_size = self.iconSize().width()
             for entry in self._entries:
-                item = QListWidgetItem(f"{entry.frame_index + 1}:{entry.face_index + 1}")
+                item = QListWidgetItem()
+                item.setToolTip(f"Frame {entry.frame_index + 1} / Face {entry.face_index + 1}")
                 item.setData(_FACE_GRID_ENTRY_ROLE, entry)
-                item.setTextAlignment(Qt.AlignCenter)
                 item.setSizeHint(self.gridSize())
                 request = FaceGridRenderRequest(
                     frame_index=entry.frame_index,
