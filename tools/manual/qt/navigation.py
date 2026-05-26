@@ -78,6 +78,26 @@ class NavigationMixin:
         self._stop_playback()
         self._thumbnail_panel.setCurrentRow(self._filtered_frame_indices[-1])
 
+    def _previous_frame(self) -> None:
+        """Select previous frame from the active filter."""
+        self._stop_playback()
+        if not self._filtered_frame_indices:
+            return
+        position = self._filtered_position()
+        if position <= 0:
+            return
+        self._thumbnail_panel.setCurrentRow(self._filtered_frame_indices[position - 1])
+
+    def _next_frame(self) -> None:
+        """Select next frame from the active filter."""
+        self._stop_playback()
+        if not self._filtered_frame_indices:
+            return
+        position = self._filtered_position()
+        if position < 0 or position >= len(self._filtered_frame_indices) - 1:
+            return
+        self._thumbnail_panel.setCurrentRow(self._filtered_frame_indices[position + 1])
+
     def toggle_play(self) -> None:
         """Toggle playback through the filtered frames."""
         if self._editor_state.is_playing:
