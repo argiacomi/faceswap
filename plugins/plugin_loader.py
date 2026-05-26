@@ -139,7 +139,9 @@ class PluginLoader:
         -------
         A training model plugin
         """
-        return PluginLoader._import("train.model", name, disable_logging)
+        return T.cast(
+            "type[ModelBase]", PluginLoader._import("train.model", name, disable_logging)
+        )
 
     @staticmethod
     def get_trainer(name: str, disable_logging: bool = False) -> type[TrainerBase]:
@@ -157,7 +159,9 @@ class PluginLoader:
         -------
         A training trainer plugin
         """
-        return PluginLoader._import("train.trainer", name, disable_logging)
+        return T.cast(
+            "type[TrainerBase]", PluginLoader._import("train.trainer", name, disable_logging)
+        )
 
     @staticmethod
     def get_converter(category: str, name: str, disable_logging: bool = False) -> Callable:
@@ -179,7 +183,9 @@ class PluginLoader:
         -------
         A converter sub plugin
         """
-        return PluginLoader._import(f"convert.{category}", name, disable_logging)
+        return T.cast(
+            "Callable", PluginLoader._import(f"convert.{category}", name, disable_logging)
+        )
 
     @staticmethod
     def _import(attr: str, name: str, disable_logging: bool):
@@ -239,7 +245,7 @@ class PluginLoader:
             )
         plugins = [x.split(".")[-2].replace("_", "-") for x in cls.extract_plugins[extractor_type]]
         if extend_plugin and extractor_type == "mask":
-            extendable = ["bisenet-fp", "segnext-fp", "custom"]
+            extendable = ["bisenet-fp", "segnext-fp", "ensemble", "custom"]
             for plugin in extendable:
                 if plugin not in plugins:
                     continue

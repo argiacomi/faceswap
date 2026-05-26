@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
+from plugins.extract.mask._output import MaskPluginOutput
 from plugins.extract.mask.bisenet_fp import BiSeNetFP
 
 
@@ -57,3 +59,22 @@ def test_faceswap_weights_do_not_select_mouth_class(
     plugin = BiSeNetFP()
 
     assert plugin._segment_indices == [1]  # pylint:disable=protected-access
+
+
+def test_post_process_exposes_per_class_probabilities(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """BiSeNet-FP should keep ndarray behavior while exposing class probabilities."""
+    _patch_plugin_config(monkeypatch, weights="faceswap", include_mouth=True)
+    plugin = BiSeNetFP()
+    logits: np.ndarray = np.zeros((1, 2, 2, 5), dtype=np.float32)
+    logits[..., 1] = 10.0
+
+    output = plugin.post_process(logits)
+
+    assert isinstance(output, MaskPluginOutput)
+    assert output.shape == (1, 2, 2)
+    assert np.all(output == 1.0)
+    assert output.source_id == "bisenet-fp_face"
+    assert output.per_class_probs is not None
+    assert output.per_class_probs.shape == (1, 2, 2, 5)

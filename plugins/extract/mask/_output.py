@@ -8,7 +8,7 @@ value as a plain array require no changes.
 
 Schema version history
 ----------------------
-1 (current)  binary_mask + optional per_class_probs + source_id + version
+1 (current)  binary_mask + optional per_class_probs + source_id + metadata + version
 """
 
 from __future__ import annotations
@@ -48,10 +48,14 @@ class MaskPluginOutput(np.ndarray):
         SegNeXt-FP) the values are softmaxed class probabilities.  For
         EasyPortrait they are the joint portrait x face probabilities from the two
         ONNX heads.  ``None`` for HandYolov9c.
+    metadata
+        Optional debug metadata for the direct plugin output. This is intentionally
+        lightweight and is not propagated to derived ndarray views.
     """
 
     per_class_probs: npt.NDArray[np.float32] | None
     source_id: str
+    metadata: dict[str, T.Any]
     version: int
 
     def __new__(
@@ -60,10 +64,12 @@ class MaskPluginOutput(np.ndarray):
         source_id: str,
         version: int = SCHEMA_VERSION,
         per_class_probs: npt.NDArray[np.float32] | None = None,
+        metadata: dict[str, T.Any] | None = None,
     ) -> MaskPluginOutput:
         obj = np.asarray(binary_mask).view(cls)
         obj.per_class_probs = per_class_probs
         obj.source_id = source_id
+        obj.metadata = {} if metadata is None else metadata
         obj.version = version
         return T.cast(MaskPluginOutput, obj)
 
@@ -77,6 +83,7 @@ class MaskPluginOutput(np.ndarray):
         # direct return value of post_process().
         self.per_class_probs = None
         self.source_id = getattr(obj, "source_id", "")
+        self.metadata = {}
         self.version = getattr(obj, "version", SCHEMA_VERSION)
 
 

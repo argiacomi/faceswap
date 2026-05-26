@@ -19,6 +19,7 @@ from lib.utils import GetModel, get_module_objects
 from plugins.extract.base import FacePlugin
 
 from . import bisenet_fp_defaults as cfg
+from ._output import MaskPluginOutput, softmax_last_axis
 
 if T.TYPE_CHECKING:
     from torch import Tensor
@@ -29,6 +30,9 @@ logger = logging.getLogger(__name__)
 
 class BiSeNetFP(FacePlugin):
     """Neural network to process face image into a segmentation mask of the face"""
+
+    supports_per_class_probs = True
+    """Whether this plugin exposes per-class probabilities in its post-process output."""
 
     def __init__(self) -> None:
         super().__init__(
@@ -151,7 +155,7 @@ class BiSeNetFP(FacePlugin):
         """
         return T.cast(np.ndarray, self.from_torch(batch).transpose(0, 2, 3, 1))
 
-    def post_process(self, batch: np.ndarray) -> np.ndarray:
+    def post_process(self, batch: np.ndarray) -> MaskPluginOutput:
         """Process the output from the model
 
         Parameters
@@ -164,7 +168,12 @@ class BiSeNetFP(FacePlugin):
         The final masks
         """
         pred = batch.argmax(-1).astype("uint8")
-        return T.cast(np.ndarray, np.isin(pred, self._segment_indices).astype("float32"))
+        binary = np.isin(pred, self._segment_indices).astype("float32")
+        return MaskPluginOutput(
+            binary,
+            source_id=self.storage_name,
+            per_class_probs=softmax_last_axis(batch),
+        )
 
 
 # BiSeNet Face-Parsing Model

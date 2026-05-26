@@ -115,6 +115,9 @@ _CLASS_HAIR = (13,)
 class SegNeXtFP(FacePlugin):
     """SegNeXt face-parser mask plugin - drop-in alternative to BiSeNet-FP."""
 
+    supports_per_class_probs = True
+    """Whether this plugin exposes per-class probabilities in its post-process output."""
+
     def __init__(self) -> None:
         super().__init__(
             input_size=512,

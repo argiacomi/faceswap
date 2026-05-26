@@ -563,6 +563,8 @@ class Loss(GlobalSection):
             "to bisenet-fp_face with cleaner edges and a better hair/skin boundary."
             "\n\t segnext-fp_head: SegNeXt face parser, head-centered. Drop-in alternative "
             "to bisenet-fp_head with cleaner edges and a better hair/skin boundary."
+            "\n\t ensemble_face: Confidence-weighted ensemble mask, face-centered."
+            "\n\t ensemble_head: Confidence-weighted ensemble mask, head-centered."
             "\n\t components: Mask designed to provide facial segmentation based on the "
             "positioning of landmark locations. A convex hull is constructed around the "
             "exterior of the landmarks to create a mask."
