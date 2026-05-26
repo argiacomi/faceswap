@@ -314,8 +314,6 @@ class BoundingBoxWindowEditorMixin:
         self._editor_state.set("edited", True)
         self.refresh_faces()
         self._frame_view.update()
-        # Aligner integration (#104): refresh landmarks from the moved bbox
-        # when the Bounding Box editor + auto-run is on.
         self._maybe_run_aligner(face_index)
 
     def _on_face_resize_requested(self, face_index: int, bbox: QRectF) -> None:
@@ -338,9 +336,7 @@ class BoundingBoxWindowEditorMixin:
         return self._editor_state.editor_mode == "BoundingBox"
 
     def _maybe_run_aligner(self, face_index: int, *, aligner_name: str | None = None) -> None:
-        """Run the aligner after a bbox edit when ``aligner_auto_run`` is on."""
-        if not self._editor_state.aligner_auto_run:
-            return
+        """Run the aligner after a Bounding Box edit."""
         if self._editor_state.editor_mode != "BoundingBox":
             return
         self.rerun_aligner_for_face(int(face_index), aligner_name=aligner_name)
@@ -413,7 +409,7 @@ class BoundingBoxWindowEditorMixin:
             return
         self._editor_state.set("edited", True)
         self.mark_dirty(True)
-        if self._editor_state.aligner_auto_run and self._editor_state.editor_mode == "BoundingBox":
+        if self._editor_state.editor_mode == "BoundingBox":
             self.rerun_aligner_for_face(int(face_index), live=True)
         self.refresh_faces()
         self._face_panel.select_face(int(face_index))
