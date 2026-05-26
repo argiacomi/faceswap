@@ -4,11 +4,17 @@
 from __future__ import annotations
 
 from .actions import MANUAL_ACTIONS, ManualAction
-from .face_grid import CrossFrameFaceGridPanel
-from .face_grid_renderer import FaceGridEntry, FaceGridRenderRequest, FaceGridThumbnailRenderer
+from .face_viewer import (
+    CrossFrameFaceGridPanel,
+    FaceGridEntry,
+    FaceGridRenderRequest,
+    FaceGridThumbnailRenderer,
+    FaceThumbnailPanel,
+    ManualThumbnailPanel,
+    _decode_jpeg_to_qimage,
+)
 from .frame_viewer.frame_view import ManualFrameView
 from .overlays import FrameViewport, ManualFrameOverlay
-from .thumbnails import FaceThumbnailPanel, ManualThumbnailPanel, _decode_jpeg_to_qimage
 from .transport import ManualTransportBar
 from .video import VideoFrameProvider
 from .window import ManualToolWindow
