@@ -162,11 +162,16 @@ class ManualStartupWorker(QObject):
         """Begin background processing on the worker thread."""
         self._task.kick_off()
 
-    def stop(self) -> None:
-        """Stop the worker thread and wait for it to exit."""
-        if self._thread.isRunning():
-            self._thread.quit()
-            self._thread.wait(2000)
+    _STOP_WAIT_MS = 2000
+    """How long ``stop()`` waits for the QThread to exit before giving up."""
+
+    def stop(self, *, wait_ms: int | None = None) -> bool:
+        """Stop the worker thread and report whether it exited."""
+        if not self._thread.isRunning():
+            return True
+        self._thread.quit()
+        timeout = self._STOP_WAIT_MS if wait_ms is None else int(wait_ms)
+        return bool(self._thread.wait(timeout))
 
 
 class _ManualExtractFacesTask(QObject):
@@ -466,8 +471,13 @@ class ManualSaveWorker(QObject):
         """Begin background persistence on the worker thread."""
         self._task.kick_off()
 
-    def stop(self) -> None:
-        """Stop the worker thread (after any in-flight persist completes)."""
-        if self._thread.isRunning():
-            self._thread.quit()
-            self._thread.wait(3000)
+    _STOP_WAIT_MS = 3000
+    """How long ``stop()`` waits for the QThread to exit before giving up."""
+
+    def stop(self, *, wait_ms: int | None = None) -> bool:
+        """Stop the worker thread after any in-flight persist completes."""
+        if not self._thread.isRunning():
+            return True
+        self._thread.quit()
+        timeout = self._STOP_WAIT_MS if wait_ms is None else int(wait_ms)
+        return bool(self._thread.wait(timeout))
