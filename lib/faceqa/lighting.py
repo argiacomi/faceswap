@@ -48,7 +48,9 @@ class LightingFeatures(T.TypedDict):
 
 def _safe_ratio(numerator: float, denominator: float) -> float:
     """Return ``numerator / denominator`` clamped to avoid division by zero."""
-    return numerator / max(denominator, 1.0)
+    if numerator < 1.0 and denominator < 1.0:
+        return 1.0
+    return max(numerator, 1.0) / max(denominator, 1.0)
 
 
 def compute_lighting_features(image: np.ndarray | None) -> LightingFeatures | None:
