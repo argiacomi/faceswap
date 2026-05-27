@@ -160,6 +160,10 @@ class Viewport:
         self._objects.update()
         self._update_viewport(refresh_annotations)
         self._active_frame.reload_annotations()
+        self._canvas.tag_raise("viewport_mesh", "viewport_image")
+        self._canvas.tag_raise("active_mesh_polygon", "viewport_image")
+        self._canvas.tag_raise("active_mesh_line", "viewport_image")
+        self._canvas.tag_raise("active_highlighter")
 
     def _update_viewport(self, refresh_annotations: bool) -> None:
         """Update the viewport

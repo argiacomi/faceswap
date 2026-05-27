@@ -43,7 +43,7 @@ jobs:
                       backend: apple-silicon
         steps:
             - name: Check out repository
-              uses: actions/checkout@v5
+              uses: actions/checkout@v6
 
             - name: Cleanup space
               if: runner.os == 'Linux' && matrix.backend == 'rocm'
@@ -135,7 +135,7 @@ jobs:
                 backend: [cpu]
         steps:
             - name: Check out repository
-              uses: actions/checkout@v5
+              uses: actions/checkout@v6
 
             - name: Install Linux GUI dependencies
               run: |
@@ -210,7 +210,7 @@ jobs:
                 backend: [cpu]
         steps:
             - name: Check out repository
-              uses: actions/checkout@v5
+              uses: actions/checkout@v6
 
             - name: Set up Python ${{ matrix.python-version }}
               uses: actions/setup-python@v6
