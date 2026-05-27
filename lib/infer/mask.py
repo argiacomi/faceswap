@@ -10,7 +10,7 @@ import cv2
 import numpy as np
 
 from lib.logger import parse_class_init
-from lib.utils import get_module_objects
+from lib.utils import FaceswapError, get_module_objects
 from plugins.extract import extract_config as cfg
 
 from .handler import ExtractHandlerFace
@@ -133,19 +133,19 @@ class Mask(ExtractHandlerFace):
         masks[needs_crop] *= roi_masks[needs_crop]
 
     def post_process(self, batch: ExtractBatch) -> None:
-        """Perform mask post processing.
-
-        Obtains the final output from the mask plugins and masks any part of the face patch that
-        goes out of bounds
-
-        Parameters
-        ----------
-        batch
-            The incoming ExtractBatch to use for post-processing
-        """
+        """Perform mask post processing."""
         masks = batch.data
         if self._overridden["post_process"]:
             masks = self.plugin.post_process(masks)
+
+        expected = len(batch)
+        actual = masks.shape[0] if isinstance(masks, np.ndarray) and masks.ndim else 0
+        if actual != expected:
+            raise FaceswapError(
+                f"[{self.plugin.name}.post_process] Expected {expected} masks, "
+                f"got {actual}. Output shape: {getattr(masks, 'shape', None)}"
+            )
+
         self._crop_out_of_bounds(masks, batch.matrices)
 
         if self._storage_size == 0:

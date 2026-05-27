@@ -235,7 +235,6 @@ class ExtractBatchAligned:
             else Batch3D.solve_pnp(self.landmarks_normalized)
         )
 
-        rot_trans = Batch3D.solve_pnp(self.landmarks_normalized)
         self._cache_rotation = rot_trans[0]
         self._cache_translation = T.cast("npt.NDArray[np.float32]", rot_trans[1])
         return self._cache_translation
@@ -907,12 +906,7 @@ class FrameFaces:  # pylint:disable=too-many-instance-attributes
                     if self.landmarks is None or not self.landmarks.size
                     else self.landmarks[idx]
                 ),
-                mask={
-                    k: Mask(storage_size=m.storage_size, storage_centering=m.centering).add(
-                        m.masks[idx], m.matrices[idx]
-                    )
-                    for k, m in self.masks.items()
-                },
+                mask={k: self._to_detected_mask(k, m, idx) for k, m in self.masks.items()},
                 identity={k: i[idx] for k, i in self.identities.items() if i.size},
                 metadata=(self.aligned.metadata[idx] if idx < len(self.aligned.metadata) else {}),
             )
@@ -975,6 +969,19 @@ class FrameFaces:  # pylint:disable=too-many-instance-attributes
     def image_size(self) -> tuple[int, int]:
         """The (`height`, `width`) of the stored :attr:`image`"""
         return self.image_shape[:2]
+
+    def _to_detected_mask(self, key: str, mask_batch: ExtractBatchMask, idx: int) -> Mask:
+        if idx >= mask_batch.masks.shape[0] or idx >= mask_batch.matrices.shape[0]:
+            raise ValueError(
+                f"Malformed mask data for '{self.filename}', mask '{key}', face {idx}: "
+                f"{len(self.bboxes)} bbox(es), "
+                f"{mask_batch.masks.shape[0]} mask(s), "
+                f"{mask_batch.matrices.shape[0]} matrix/matrices"
+            )
+        return Mask(
+            storage_size=mask_batch.storage_size,
+            storage_centering=mask_batch.centering,
+        ).add(mask_batch.masks[idx], mask_batch.matrices[idx])
 
     def _get_image_shape(self) -> tuple[int, int, int]:
         """Obtain the shape of the original image. Either the given image's shape or the value
