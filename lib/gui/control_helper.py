@@ -1,25 +1,24 @@
 #!/usr/bin/env python3
 """ Helper functions and classes for GUI controls """
 from __future__ import annotations
+
 import gettext
 import logging
 import re
 import tkinter as tk
 import types
-
-from tkinter import colorchooser, ttk
-from itertools import zip_longest
-from functools import partial
-from typing import Any, cast, get_args, Literal, Self, TYPE_CHECKING
-
 from _tkinter import Tcl_Obj, TclError
+from functools import partial
+from itertools import zip_longest
+from tkinter import colorchooser, ttk
+from typing import TYPE_CHECKING, Any, Literal, Self, cast, get_args
 
 from lib.logger import parse_class_init
 from lib.utils import get_module_objects
 
+from . import gui_config as cfg
 from .custom_widgets import ContextMenu, MultiOption, ToggledFrame, Tooltip
 from .utils import FileHandler, get_config, get_images
-from . import gui_config as cfg
 
 if TYPE_CHECKING:
     from lib.config import ConfigItem
@@ -98,7 +97,7 @@ def set_slider_rounding(value, var, d_type, round_to, min_max):
     if isinstance(round_to, list):
         # Lock to nearest item
         var.set(min(round_to, key=lambda x: abs(x-float(value))))
-    elif d_type == float:
+    elif d_type is float:
         var.set(round(float(value), round_to))
     else:
         steps = range(min_max[0], min_max[1] + round_to, round_to)
@@ -106,7 +105,7 @@ def set_slider_rounding(value, var, d_type, round_to, min_max):
         var.set(value)
 
 
-class ControlPanelOption():
+class ControlPanelOption:
     """ A class to hold a control panel option. A list of these is expected to be passed to the
     ControlPanel object.
 
@@ -142,6 +141,8 @@ class ControlPanelOption():
         For slider controls. Sets the min and max values. Default: ``None``
     sysbrowser : dict[Literal["filetypes", "browser", "command", "destination", "action_option"], str | list[str]] | None, optional
         Adds Filesystem browser buttons to ttk.Entry options. Default: ``None``
+    button_command : callable | None, optional
+        Adds a command button to the control panel. Default: ``None``
     helptext : str | None, optional
         Sets the tooltip text. Default: ``None``
     track_modified : bool, optional
@@ -167,12 +168,14 @@ class ControlPanelOption():
                                           "command",
                                           "destination",
                                           "action_option"], str | list[str]] | None = None,
+                 button_command: Any | None = None,
                  helptext: str | None = None,
                  track_modified: bool = False,
                  command: str | None = None) -> None:
         logger.debug(parse_class_init(locals()))
         self.dtype = dtype
         self.sysbrowser = sysbrowser
+        self.button_command = button_command
         self._command = command
         self._track_modified = track_modified
         self._options = {"title": title,
@@ -356,14 +359,17 @@ class ControlPanelOption():
         logger.debug("Setting inital value for %s to %s", self.name, value)
         self._options["initial_value"] = value
 
-    def get_control(self) -> Literal["radio", "multi", "colorchooser", "scale"] | type[
+    def get_control(self) -> Literal["radio", "multi", "button", "colorchooser", "scale"] | type[
             ttk.Combobox] | type[ttk.Checkbutton] | type[tk.Entry]:
         """ Set the correct control type based on the datatype or for this option """
         control: Literal["radio",
                          "multi",
+                         "button",
                          "colorchooser",
                          "scale"] | type[ttk.Combobox] | type[ttk.Checkbutton] | type[tk.Entry]
-        if self.choices and self.is_radio:
+        if self.button_command is not None:
+            control = "button"
+        elif self.choices and self.is_radio:
             control = "radio"
         elif self.choices and self.is_multi_option:
             control = "multi"
@@ -475,7 +481,7 @@ class ControlPanelOption():
             A GUI ControlPanelOption instance
         """
         initial_value = option.value
-        if option.datatype == list and isinstance(initial_value, list):
+        if option.datatype is list and isinstance(initial_value, list):
             # Split multi-select lists into space separated strings for tk variables
             initial_value = " ".join(initial_value)
 
@@ -491,7 +497,7 @@ class ControlPanelOption():
             initial_value=initial_value,
             choices=option.choices,
             is_radio=option.gui_radio,
-            is_multi_option=option.datatype == list,
+            is_multi_option=option.datatype is list,
             rounding=option.rounding,
             min_max=option.min_max,
             helptext=option.helptext)
@@ -728,7 +734,7 @@ class ControlPanel(ttk.Frame):  # pylint:disable=too-many-ancestors,too-many-ins
         return self._sub_group_frames[subgroup]
 
 
-class AutoFillContainer():
+class AutoFillContainer:
     """ A container object that auto-fills columns.
 
     Parameters
@@ -1029,7 +1035,7 @@ class AutoFillContainer():
                 self.pack_widget_clones(widget_dict["children"], old_children, new_children)
 
 
-class ControlBuilder():
+class ControlBuilder:
     """
     Builds and returns a frame containing a tkinter control with label
     This should only be called from the ControlPanel class
@@ -1101,7 +1107,7 @@ class ControlBuilder():
     def build_control(self):
         """ Build the correct control type for the option passed through """
         logger.debug("Build config option control")
-        if self.option.control not in (ttk.Checkbutton, "radio", "multi", "colorchooser"):
+        if self.option.control not in (ttk.Checkbutton, "radio", "multi", "colorchooser", "button"):
             self.build_control_label()
         self.build_one_control()
         logger.debug("Built option control")
@@ -1125,6 +1131,8 @@ class ControlBuilder():
         logger.debug("Build control: '%s')", self.option.name)
         if self.option.control == "scale":
             ctl = self.slider_control()
+        elif self.option.control == "button":
+            ctl = self._button_control()
         elif self.option.control in ("radio", "multi"):
             ctl = self._multi_option_control(self.option.control)
         elif self.option.control == "colorchooser":
@@ -1142,6 +1150,17 @@ class ControlBuilder():
                 _get_tooltip(ctl, **tooltip_kwargs)
 
         logger.debug("Built control: '%s'", self.option.name)
+
+    def _button_control(self):
+        """ Clickable command button. """
+        logger.debug("Add button control to Options Frame: (widget: '%s')", self.option.name)
+        ctl = ttk.Button(self.frame,
+                         text=self.option.title,
+                         command=self.option.button_command,
+                         style=f"{self._style}Group.TButton")
+        _add_command(ctl.cget("command"), self.option.button_command)
+        logger.debug("Added button control to Options Frame: %s", self.option.name)
+        return ctl
 
     def _multi_option_control(self, option_type):
         """ Create a group of buttons for single or multi-select
@@ -1259,9 +1278,7 @@ class ControlBuilder():
         value: str
             The slider text entry value to validate
         """
-        if value.isdigit() or value == "":
-            return True
-        return False
+        return bool(value.isdigit() or value == "")
 
     @staticmethod
     def slider_check_float(value):
@@ -1373,7 +1390,7 @@ class ControlBuilder():
         return ctl
 
 
-class FileBrowser():
+class FileBrowser:
     """ Add FileBrowser buttons to control and handle routing """
     def __init__(self, opt_name, tk_var, control_frame, sysbrowser_dict, style):
         logger.debug("Initializing: %s: (tk_var: %s, control_frame: %s, sysbrowser_dict: %s, "

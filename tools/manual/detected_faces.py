@@ -938,6 +938,31 @@ class FaceUpdate:
         self._tk_edited.set(True)
         self._globals.var_full_update.set(True)
 
+    def delete_mask(self, frame_index: int, face_index: int, mask_type: str) -> bool:
+        """Delete the given mask type from a face.
+
+        Parameters
+        ----------
+        frame_index
+            The frame that the face is being set for
+        face_index
+            The face index within the frame
+        mask_type
+            The name of the mask that is to be deleted
+        """
+        if frame_index < 0 or frame_index >= len(self._frame_faces):
+            return False
+        if face_index < 0 or face_index >= len(self._frame_faces[frame_index]):
+            return False
+        if mask_type not in self._frame_faces[frame_index][face_index].mask:
+            return False
+
+        face = self._faces_at_frame_index(frame_index)[face_index]
+        del face.mask[mask_type]
+        self._tk_edited.set(True)
+        self._globals.var_full_update.set(True)
+        return True
+
     def copy(self, frame_index: int, direction: T.Literal["prev", "next"]) -> None:
         """Copy the alignments from the previous or next frame that has alignments
         to the current frame.

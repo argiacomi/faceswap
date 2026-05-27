@@ -6,6 +6,7 @@ from __future__ import annotations
 import gettext
 import tkinter as tk
 import typing as T
+from tkinter import messagebox
 
 import cv2
 import numpy as np
@@ -57,6 +58,7 @@ class Mask(Editor):
         key_bindings = {
             "[": lambda *e, i=False: self._adjust_brush_radius(increase=i),
             "]": lambda *e, i=True: self._adjust_brush_radius(increase=i),
+            "<Control-Delete>": self._delete_mask,
         }
         super().__init__(
             canvas, detected_faces, control_text=control_text, key_bindings=key_bindings
@@ -170,6 +172,15 @@ class Mask(Editor):
                 helptext=_("Select a shape for masking cursor."),
             )
         )
+        self._add_control(
+            ControlPanelOption(
+                "Delete Mask",
+                str,
+                group="Actions",
+                button_command=self._delete_mask,
+                helptext=_("Delete the selected mask entry from the target face. (Ctrl+Delete)"),
+            )
+        )
 
     def _set_tk_mask_change_callback(self) -> tk.StringVar:
         """Add a trace to change the displayed mask on a mask type change."""
@@ -195,6 +206,74 @@ class Mask(Editor):
         self._meta = {"position": self._globals.frame_index}
         self._mask_type = mask_type
         self._globals.var_full_update.set(True)
+
+    def _delete_mask(self, *_args: T.Any) -> None:
+        """Delete the selected mask type from the target face after confirmation."""
+        frame_index = self._globals.frame_index
+        face_index = self._delete_mask_face_index()
+        if face_index is None:
+            messagebox.showinfo(
+                _("Delete Mask"),
+                _("No target face is selected for mask deletion."),
+                parent=self._canvas.winfo_toplevel(),
+            )
+            return
+
+        mask_type = self._control_vars["display"]["MaskType"].get().lower()
+        if not self._face_has_mask(frame_index, face_index, mask_type):
+            messagebox.showinfo(
+                _("Delete Mask"),
+                _("Face {} does not have a '{}' mask.").format(face_index, mask_type),
+                parent=self._canvas.winfo_toplevel(),
+            )
+            return
+
+        message = _(
+            "Delete '{}' mask from face {}?\n"
+            "This will cause missing-mask generation to process this face again."
+        ).format(mask_type, face_index)
+        confirmed = messagebox.askyesno(
+            _("Delete Mask"),
+            message,
+            default="no",
+            icon="warning",
+            parent=self._canvas.winfo_toplevel(),
+        )
+        if not confirmed:
+            return
+
+        self._clear_lasso_preview()
+        self._meta = {"position": frame_index}
+        deleted = self._det_faces.update.delete_mask(frame_index, face_index, mask_type)
+        if not deleted:
+            self._globals.var_full_update.set(True)
+
+    def _delete_mask_face_index(self) -> int | None:
+        """Return the face index targeted by the Delete Mask command."""
+        faces = self._current_frame_faces()
+        if not faces:
+            return None
+
+        hover_face = self._mouse_location[1]
+        if type(hover_face) is int and 0 <= hover_face < len(faces):  # noqa: E721
+            return hover_face
+
+        active_face = self._globals.face_index
+        if 0 <= active_face < len(faces):
+            return active_face
+        return None
+
+    def _face_has_mask(self, frame_index: int, face_index: int, mask_type: str) -> bool:
+        """Return whether the target face currently has the selected mask key."""
+        faces = self._current_frame_faces(frame_index)
+        return bool(faces and 0 <= face_index < len(faces) and mask_type in faces[face_index].mask)
+
+    def _current_frame_faces(self, frame_index: int | None = None) -> list[align.DetectedFace]:
+        """Return faces for the requested frame, or an empty list when unavailable."""
+        frame_index = self._globals.frame_index if frame_index is None else frame_index
+        if frame_index < 0 or frame_index >= len(self._det_faces.current_faces):
+            return []
+        return self._det_faces.current_faces[frame_index]
 
     def hide_annotation(self, tag=None) -> None:
         """Clear the mask :attr:`_meta` dict when hiding the annotation."""
