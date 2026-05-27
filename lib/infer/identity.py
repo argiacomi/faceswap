@@ -406,12 +406,14 @@ class FilterLoader:
         retval: dict[str, npt.NDArray[np.float32]] = {}
         for file_name, image in images.items():
             logger.debug("[IdentityFilter] Putting to extractor: '%s'", file_name)
-            retval[file_name] = np.array(
+            identities = np.array(
                 [
                     f.identity[self._runner.handler.storage_name]
                     for f in pipeline.put(file_name, image, passthrough=True).detected_faces
-                ]
-            ).squeeze(0)
+                ],
+                dtype="float32",
+            )
+            retval[file_name] = identities[0] if identities.shape[0] == 1 else identities
 
         logger.debug(
             "[IdentityFilter] Identity from extraction: %s",
@@ -445,7 +447,11 @@ class FilterLoader:
                 is_aligned=True,
                 frame_size=meta.source.source_frame_dims,
             )
-            retval[fname] = out.identities[self._runner.handler.plugin.storage_name].squeeze(0)
+            identities = np.asarray(
+                out.identities[self._runner.handler.plugin.storage_name],
+                dtype="float32",
+            )
+            retval[fname] = identities[0] if identities.shape[0] == 1 else identities
 
         logger.debug(
             "[IdentityFilter] Identity from plugin: %s",

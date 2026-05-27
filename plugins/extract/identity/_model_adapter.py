@@ -264,9 +264,7 @@ ADAFACE = IdentityModelAdapter(
         commercial_use=True,
         notes="CVLFace AdaFace iResNet101 WebFace12M, Kim et al., CVPR 2022.",
     ),
-    loader=_make_cvlface_loader(
-        "minchul/cvlface_adaface_ir101_webface12m", model_label="AdaFace"
-    ),
+    loader=_make_cvlface_loader("minchul/cvlface_adaface_ir101_webface12m", model_label="AdaFace"),
 )
 
 ARCFACE = IdentityModelAdapter(
@@ -280,9 +278,7 @@ ARCFACE = IdentityModelAdapter(
         commercial_use=False,
         notes="CVLFace ArcFace iResNet101 WebFace4M, Deng et al., CVPR 2019.",
     ),
-    loader=_make_cvlface_loader(
-        "minchul/cvlface_arcface_ir101_webface4m", model_label="ArcFace"
-    ),
+    loader=_make_cvlface_loader("minchul/cvlface_arcface_ir101_webface4m", model_label="ArcFace"),
 )
 
 
