@@ -755,6 +755,179 @@ def test_readiness_report_exposes_expression_coverage_in_json() -> None:
     assert "Bin coverage" in markdown
 
 
+def test_compute_coverage_lighting_bins_and_entropy() -> None:
+    """Lighting coverage should report counts, entropy and missing bins."""
+    records = [
+        FaceQARecord(
+            frame=f"f{i}.png",
+            face_index=0,
+            mean_luminance=128.0,
+            contrast=10.0,
+            left_right_ratio=1.0,
+            top_bottom_ratio=1.0,
+            color_warmth=0.0,
+        )
+        for i in range(3)
+    ] + [
+        FaceQARecord(
+            frame="dark.png",
+            face_index=0,
+            mean_luminance=30.0,
+            contrast=5.0,
+            left_right_ratio=1.0,
+            top_bottom_ratio=1.0,
+            color_warmth=0.0,
+        ),
+        FaceQARecord(
+            frame="side.png",
+            face_index=0,
+            mean_luminance=120.0,
+            contrast=10.0,
+            left_right_ratio=2.0,
+            top_bottom_ratio=1.0,
+            color_warmth=0.0,
+        ),
+        FaceQARecord(frame="unknown.png", face_index=0),
+    ]
+
+    report = compute_coverage(records)
+    lighting = report.lighting_coverage
+
+    assert lighting["total_bins"] == 8
+    assert lighting["counts"]["flat_frontal"] == 3
+    assert lighting["counts"]["dark"] == 1
+    assert lighting["counts"]["side_lit"] == 1
+    assert lighting["occupied_lighting_bins"] == 3
+    assert lighting["empty_lighting_bins"] == 5
+    assert lighting["classified_faces"] == 5
+    assert lighting["unknown_faces"] == 1
+    assert lighting["lighting_bin_coverage_pct"] == round(3 / 8 * 100, 2)
+    expected_entropy = -((3 / 5) * np.log2(3 / 5) + 2 * (1 / 5) * np.log2(1 / 5))
+    assert abs(lighting["lighting_entropy"] - round(expected_entropy, 4)) < 1e-3
+    assert "overexposed" in lighting["missing_bins"]
+    assert "flat_frontal" not in lighting["missing_bins"]
+
+
+def test_compute_coverage_lighting_handles_empty_distribution() -> None:
+    """Lighting coverage should not divide by zero with no classified records."""
+    report = compute_coverage([FaceQARecord(frame="f.png", face_index=0)])
+    lighting = report.lighting_coverage
+
+    assert lighting["classified_faces"] == 0
+    assert lighting["unknown_faces"] == 1
+    assert lighting["occupied_lighting_bins"] == 0
+    assert lighting["lighting_entropy"] == 0.0
+    assert lighting["lighting_bin_coverage_pct"] == 0.0
+
+
+def test_readiness_report_warns_on_sparse_lighting_coverage() -> None:
+    """Readiness warnings should flag sparse lighting coverage and low entropy."""
+    records = [
+        FaceQARecord(
+            frame=f"f{i}.png",
+            face_index=0,
+            mean_luminance=128.0,
+            contrast=10.0,
+            left_right_ratio=1.0,
+            top_bottom_ratio=1.0,
+            color_warmth=0.0,
+        )
+        for i in range(10)
+    ]
+
+    report = generate_readiness_report(compute_coverage(records))
+
+    assert any("Sparse lighting coverage" in warning for warning in report.warnings)
+    assert any("Low lighting entropy" in warning for warning in report.warnings)
+
+
+def test_readiness_report_recommends_missing_lighting_conditions() -> None:
+    """Recommendations should call out missing lighting buckets by name."""
+    records = [
+        FaceQARecord(
+            frame=f"f{i}.png",
+            face_index=0,
+            mean_luminance=128.0,
+            contrast=10.0,
+            left_right_ratio=1.0,
+            top_bottom_ratio=1.0,
+            color_warmth=0.0,
+        )
+        for i in range(10)
+    ]
+
+    report = generate_readiness_report(compute_coverage(records))
+
+    assert any(
+        "Collect missing lighting conditions" in recommendation
+        and "side-lit frames" in recommendation
+        and "low-light frames" in recommendation
+        for recommendation in report.recommendations
+    )
+
+
+def test_readiness_report_exposes_lighting_coverage_in_json() -> None:
+    """Lighting coverage should round-trip through JSON output."""
+    records = [
+        FaceQARecord(
+            frame="a.png",
+            face_index=0,
+            mean_luminance=128.0,
+            contrast=10.0,
+            left_right_ratio=1.0,
+            top_bottom_ratio=1.0,
+            color_warmth=0.0,
+        ),
+        FaceQARecord(
+            frame="b.png",
+            face_index=0,
+            mean_luminance=30.0,
+            contrast=5.0,
+            left_right_ratio=1.0,
+            top_bottom_ratio=1.0,
+            color_warmth=0.0,
+        ),
+    ]
+
+    report = generate_readiness_report(compute_coverage(records))
+    payload = json.loads(report.to_json())
+
+    assert "lighting_coverage" in payload
+    assert payload["lighting_coverage"]["counts"]["flat_frontal"] == 1
+    assert payload["lighting_coverage"]["counts"]["dark"] == 1
+    assert payload["lighting_coverage"]["occupied_lighting_bins"] == 2
+    assert "missing_bins" in payload["lighting_coverage"]
+    markdown = report.to_markdown()
+    assert "## Lighting Coverage" in markdown
+    assert "Bin coverage" in markdown
+
+
+def test_records_from_alignments_derives_lighting_from_thumbnail(tmp_path) -> None:
+    """Lighting features should be derived from the stored thumbnail."""
+    import cv2
+
+    face = _face()
+    image = np.full((32, 32, 3), 90, dtype=np.uint8)
+    image[:, 16:] = 200
+    encoded = cv2.imencode(".jpg", image)[1]
+    face.thumb = np.asarray(encoded, dtype=np.uint8)
+
+    alignments = tmp_path / "alignments.fsa"
+    get_serializer("compressed").save(
+        str(alignments),
+        {
+            "__meta__": {"version": 2.4},
+            "__data__": {"frame_000001.png": AlignmentsEntry(faces=[face]).to_dict()},
+        },
+    )
+
+    records = records_from_alignments(alignments)
+
+    assert records[0].mean_luminance is not None
+    assert records[0].left_right_ratio is not None
+    assert records[0].saturation is not None
+
+
 def test_sidecar_path() -> None:
     """Default FaceQA sidecar path should be derived from alignments stem."""
     assert sidecar_path("/tmp/project/alignments.fsa") == "/tmp/project/alignments_faceset_qa.json"

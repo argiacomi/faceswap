@@ -28,6 +28,20 @@ EXPRESSION_COVERAGE_WARN_PCT = 60.0
 EXPRESSION_ENTROPY_WARN_BITS = 1.5
 EXPRESSION_BUCKET_WARN_PCT = 5.0
 MISSING_EXPRESSION_BIN_REPORT_LIMIT = 6
+LIGHTING_COVERAGE_WARN_PCT = 50.0
+LIGHTING_ENTROPY_WARN_BITS = 1.5
+MISSING_LIGHTING_BIN_REPORT_LIMIT = 6
+
+LIGHTING_GUIDANCE: dict[str, str] = {
+    "dark": "low-light frames",
+    "overexposed": "very bright / overexposed frames",
+    "side_lit": "side-lit frames (strong left/right asymmetry)",
+    "top_lit": "frames with strong overhead or under-lighting",
+    "high_contrast": "high-contrast frames",
+    "warm": "warm-toned frames",
+    "cool": "cool-toned frames",
+    "flat_frontal": "flat / frontal-lit frames",
+}
 
 EXPRESSION_GUIDANCE: dict[str, str] = {
     "neutral": "neutral / resting face frames",
@@ -57,6 +71,7 @@ class ReadinessReport:
     source_counts: dict[str, int] = field(default_factory=dict)
     joint_pose_coverage: dict[str, T.Any] = field(default_factory=dict)
     expression_coverage: dict[str, T.Any] = field(default_factory=dict)
+    lighting_coverage: dict[str, T.Any] = field(default_factory=dict)
     underrepresented_buckets: list[dict[str, str | float]] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     recommendations: list[str] = field(default_factory=list)
@@ -78,6 +93,7 @@ class ReadinessReport:
             "source_counts": self.source_counts,
             "joint_pose_coverage": self.joint_pose_coverage,
             "expression_coverage": self.expression_coverage,
+            "lighting_coverage": self.lighting_coverage,
             "underrepresented_buckets": self.underrepresented_buckets,
             "warnings": self.warnings,
             "recommendations": self.recommendations,
@@ -160,6 +176,32 @@ class ReadinessReport:
                     )
                 lines.append(f"- **Missing expression regions**: {preview}")
 
+        lighting = self.lighting_coverage
+        if lighting:
+            occupied = lighting.get("occupied_lighting_bins", 0)
+            total_bins = lighting.get("total_bins", 0)
+            bin_pct = float(lighting.get("lighting_bin_coverage_pct", 0.0))
+            entropy = float(lighting.get("lighting_entropy", 0.0))
+            lines.extend(
+                [
+                    "",
+                    "## Lighting Coverage",
+                    "",
+                    f"- **Occupied bins**: {occupied} of {total_bins}",
+                    f"- **Empty bins**: {lighting.get('empty_lighting_bins', 0)}",
+                    f"- **Bin coverage**: {bin_pct:.1f}%",
+                    f"- **Lighting entropy (bits)**: {entropy:.3f}",
+                ]
+            )
+            missing_bins = list(lighting.get("missing_bins", []))
+            if missing_bins:
+                preview = ", ".join(missing_bins[:MISSING_LIGHTING_BIN_REPORT_LIMIT])
+                if len(missing_bins) > MISSING_LIGHTING_BIN_REPORT_LIMIT:
+                    preview += (
+                        f", … (+{len(missing_bins) - MISSING_LIGHTING_BIN_REPORT_LIMIT} more)"
+                    )
+                lines.append(f"- **Missing lighting conditions**: {preview}")
+
         if self.metric_summary:
             lines.extend(["", "## Metric Summary", ""])
             lines.extend(["| Metric | Min | Median | Max |", "|--------|----:|-------:|----:|"])
@@ -202,7 +244,16 @@ def _underrepresented(
             "right_extreme",
         },
         "pitch": {"down_extreme", "down", "neutral", "up", "up_extreme"},
-        "lighting": {"dark", "normal", "bright"},
+        "lighting": {
+            "dark",
+            "overexposed",
+            "side_lit",
+            "top_lit",
+            "high_contrast",
+            "warm",
+            "cool",
+            "flat_frontal",
+        },
         "expression": {
             "neutral",
             "slight_open",
@@ -320,6 +371,22 @@ def _build_warnings(
                 f"Low expression entropy: {entropy:.2f} bits — "
                 "facial expressions are concentrated in a few states."
             )
+    lighting = coverage.lighting_coverage
+    if lighting and lighting.get("classified_faces", 0):
+        bin_pct = float(lighting.get("lighting_bin_coverage_pct", 0.0))
+        if bin_pct < LIGHTING_COVERAGE_WARN_PCT:
+            warnings.append(
+                "Sparse lighting coverage: only "
+                f"{bin_pct:.1f}% of lighting bins are populated "
+                f"({lighting.get('occupied_lighting_bins', 0)} of "
+                f"{lighting.get('total_bins', 0)})."
+            )
+        entropy = float(lighting.get("lighting_entropy", 0.0))
+        if entropy < LIGHTING_ENTROPY_WARN_BITS:
+            warnings.append(
+                f"Low lighting entropy: {entropy:.2f} bits — "
+                "lighting conditions are concentrated in a narrow range."
+            )
     return warnings
 
 
@@ -368,13 +435,9 @@ def _build_recommendations(
         recommendations.append(
             "Add frames at these pitch angles: " + ", ".join(pitch_buckets) + "."
         )
-    lighting_buckets = [
+    lighting_under = [
         str(item["bucket"]) for item in underrepresented if item["dimension"] == "lighting"
     ]
-    if lighting_buckets:
-        recommendations.append(
-            "Add frames with varied lighting: " + ", ".join(lighting_buckets) + "."
-        )
     joint = coverage.joint_pose_coverage
     missing_cells = list(joint.get("missing_cells", [])) if joint else []
     if missing_cells and joint.get("classified_faces", 0):
@@ -386,6 +449,8 @@ def _build_recommendations(
         )
     expression_recs = _expression_recommendations(coverage, underrepresented)
     recommendations.extend(expression_recs)
+    lighting_recs = _lighting_recommendations(coverage, lighting_under)
+    recommendations.extend(lighting_recs)
 
     if not recommendations:
         recommendations.append("Faceset coverage looks adequate for an initial training run.")
@@ -418,6 +483,26 @@ def _expression_recommendations(
     return recommendations
 
 
+def _lighting_recommendations(
+    coverage: FacesetCoverageReport,
+    under_lighting: list[str],
+) -> list[str]:
+    """Build targeted recommendations for lighting coverage gaps."""
+    lighting = coverage.lighting_coverage
+    if not lighting or not lighting.get("classified_faces", 0):
+        return []
+    recommendations: list[str] = []
+    missing_bins = [str(item) for item in lighting.get("missing_bins", [])]
+    under_unique = [name for name in under_lighting if name not in missing_bins]
+    if missing_bins:
+        guidance = [LIGHTING_GUIDANCE.get(name, name) for name in missing_bins]
+        recommendations.append("Collect missing lighting conditions: " + "; ".join(guidance) + ".")
+    if under_unique:
+        guidance = [LIGHTING_GUIDANCE.get(name, name) for name in under_unique]
+        recommendations.append("Increase under-represented lighting: " + "; ".join(guidance) + ".")
+    return recommendations
+
+
 def generate_readiness_report(
     coverage: FacesetCoverageReport,
     *,
@@ -442,6 +527,7 @@ def generate_readiness_report(
         source_counts=coverage.source_counts,
         joint_pose_coverage=coverage.joint_pose_coverage,
         expression_coverage=coverage.expression_coverage,
+        lighting_coverage=coverage.lighting_coverage,
         underrepresented_buckets=underrepresented,
         warnings=warnings,
         recommendations=recommendations,

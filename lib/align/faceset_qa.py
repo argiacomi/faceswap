@@ -72,12 +72,18 @@ class FaceQARecord(DataclassDict):
 
     blur_score: float | None = None
     blur_fft_score: float | None = None
-    exposure_mean: float | None = None
     black_pixel_ratio: float | None = None
     color_gray: float | None = None
     color_luma: float | None = None
     color_green: float | None = None
     color_orange: float | None = None
+    mean_luminance: float | None = None
+    luminance_variance: float | None = None
+    contrast: float | None = None
+    left_right_ratio: float | None = None
+    top_bottom_ratio: float | None = None
+    saturation: float | None = None
+    color_warmth: float | None = None
     resolution: list[int] = field(default_factory=list)
 
     occlusion_score: float | None = None

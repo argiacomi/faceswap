@@ -14,11 +14,10 @@ import numpy as np
 from lib.align import AlignedFace, DetectedFace
 from lib.align.faceset_qa import FaceQAFile, FaceQARecord, build_index
 from lib.align.objects import AlignmentsEntry, FileAlignments
-from lib.faceqa.expression import (
-    EXPRESSION_BUCKETS,
-    bucket_for_features,
-    compute_expression_features,
-)
+from lib.faceqa.expression import EXPRESSION_BUCKETS, compute_expression_features
+from lib.faceqa.expression import bucket_for_features as expression_bucket_for_features
+from lib.faceqa.lighting import LIGHTING_BUCKETS, compute_lighting_features
+from lib.faceqa.lighting import bucket_for_features as lighting_bucket_for_features
 from lib.serializer import get_serializer
 from lib.utils import get_module_objects
 
@@ -33,7 +32,6 @@ ROLL_RISK_THRESHOLDS = (10.0, 25.0)
 BLUR_THRESHOLDS = (6.0, 3.0, 1.0)
 RESOLUTION_THRESHOLDS = (256, 128, 64)
 OCCLUSION_THRESHOLDS = (0.05, 0.20, 0.50)
-LIGHTING_THRESHOLDS = (50.0, 200.0, 235.0)
 DISTANCE_THRESHOLDS = (0.10, 0.20, 0.40)
 POSE_LIMITS = {"yaw": (-120.0, 120.0), "pitch": (-90.0, 90.0), "roll": (-90.0, 90.0)}
 POSE_HIGH_CONFIDENCE_DELTA = 10.0
@@ -56,6 +54,7 @@ class FacesetCoverageReport:
     source_counts: dict[str, int] = field(default_factory=dict)
     joint_pose_coverage: dict[str, T.Any] = field(default_factory=dict)
     expression_coverage: dict[str, T.Any] = field(default_factory=dict)
+    lighting_coverage: dict[str, T.Any] = field(default_factory=dict)
     sidecar_used: bool = False
 
     def coverage_dict(self) -> dict[str, dict[str, T.Any]]:
@@ -155,7 +154,7 @@ def _populate_expression(record: FaceQARecord, face: FileAlignments) -> None:
     record.eye_closure = features["eye_closure"]
     record.brow_raise_proxy = features["brow_raise_proxy"]
     record.expression_asymmetry = features["expression_asymmetry"]
-    record.expression_bucket = bucket_for_features(features)
+    record.expression_bucket = expression_bucket_for_features(features)
 
 
 def _populate_aligned_metrics(record: FaceQARecord, face: FileAlignments) -> None:
@@ -177,10 +176,18 @@ def _populate_thumb_metrics(record: FaceQARecord, face: FileAlignments) -> None:
     if image is None:
         return
     record.blur_score = _estimate_blur(image)
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if image.ndim == 3 else image
-    record.exposure_mean = float(np.mean(gray))
     if image.ndim == 3:
         record.black_pixel_ratio = float(np.ndarray.all(image == [0, 0, 0], axis=2).mean())
+    features = compute_lighting_features(image)
+    if features is None:
+        return
+    record.mean_luminance = features["mean_luminance"]
+    record.luminance_variance = features["luminance_variance"]
+    record.contrast = features["contrast"]
+    record.left_right_ratio = features["left_right_ratio"]
+    record.top_bottom_ratio = features["top_bottom_ratio"]
+    record.saturation = features["saturation"]
+    record.color_warmth = features["color_warmth"]
 
 
 def _populate_metadata(record: FaceQARecord, metadata: dict[str, T.Any]) -> None:
@@ -592,15 +599,19 @@ def _occlusion_bucket(record: FaceQARecord) -> str:
 
 
 def _lighting_bucket(record: FaceQARecord) -> str:
-    if record.exposure_mean is None:
+    if record.mean_luminance is None:
         return "unknown"
-    if record.exposure_mean < LIGHTING_THRESHOLDS[0]:
-        return "dark"
-    if record.exposure_mean < LIGHTING_THRESHOLDS[1]:
-        return "normal"
-    if record.exposure_mean < LIGHTING_THRESHOLDS[2]:
-        return "bright"
-    return "overexposed"
+    return lighting_bucket_for_features(
+        {
+            "mean_luminance": record.mean_luminance,
+            "luminance_variance": record.luminance_variance or 0.0,
+            "contrast": record.contrast or 0.0,
+            "left_right_ratio": record.left_right_ratio or 1.0,
+            "top_bottom_ratio": record.top_bottom_ratio or 1.0,
+            "saturation": record.saturation or 0.0,
+            "color_warmth": record.color_warmth or 0.0,
+        }
+    )
 
 
 def _expression_bucket(record: FaceQARecord) -> str:
@@ -657,7 +668,7 @@ _DIMENSION_BUCKETS: dict[str, list[str]] = {
     "resolution": ["high", "medium", "low", "tiny", "unknown"],
     "misalignment": ["typical", "elevated", "high", "extreme", "unknown"],
     "occlusion": ["none", "mild", "moderate", "severe", "unknown"],
-    "lighting": ["dark", "normal", "bright", "overexposed", "unknown"],
+    "lighting": [*LIGHTING_BUCKETS, "unknown"],
     "duplicates": ["keep", "prune_candidate", "review", "clustered", "unknown"],
     "identity": [
         "inlier",
@@ -772,7 +783,13 @@ def _metric_summary(records: list[FaceQARecord]) -> dict[str, dict[str, float | 
         "pose_max_abs_delta": [record.pose_max_abs_delta for record in records],
         "blur_score": [record.blur_score for record in records],
         "average_distance": [record.average_distance for record in records],
-        "exposure_mean": [record.exposure_mean for record in records],
+        "mean_luminance": [record.mean_luminance for record in records],
+        "luminance_variance": [record.luminance_variance for record in records],
+        "contrast": [record.contrast for record in records],
+        "left_right_ratio": [record.left_right_ratio for record in records],
+        "top_bottom_ratio": [record.top_bottom_ratio for record in records],
+        "saturation": [record.saturation for record in records],
+        "color_warmth": [record.color_warmth for record in records],
         "mouth_openness": [record.mouth_openness for record in records],
         "mouth_width_ratio": [record.mouth_width_ratio for record in records],
         "smile_proxy": [record.smile_proxy for record in records],
@@ -791,6 +808,48 @@ def _summarize(values: list[float | None]) -> dict[str, float | None]:
         "min": float(np.min(numeric)),
         "median": float(np.median(numeric)),
         "max": float(np.max(numeric)),
+    }
+
+
+def _lighting_coverage(records: list[FaceQARecord]) -> dict[str, T.Any]:
+    """Return lighting bucket coverage with entropy and occupancy metrics."""
+    counts: dict[str, int] = {bucket: 0 for bucket in LIGHTING_BUCKETS}
+    unknown = 0
+    for record in records:
+        bucket = _lighting_bucket(record)
+        if bucket == "unknown":
+            unknown += 1
+            continue
+        counts[bucket] = counts.get(bucket, 0) + 1
+    classified = sum(counts.values())
+    total_bins = len(LIGHTING_BUCKETS)
+    occupied = sum(1 for value in counts.values() if value > 0)
+    percentages = (
+        {bucket: round(value / classified * 100, 2) for bucket, value in counts.items()}
+        if classified
+        else {bucket: 0.0 for bucket in counts}
+    )
+    if classified:
+        probabilities = np.array(
+            [value / classified for value in counts.values() if value > 0],
+            dtype="float64",
+        )
+        entropy = float(-np.sum(probabilities * np.log2(probabilities)))
+    else:
+        entropy = 0.0
+    bin_coverage_pct = round(occupied / total_bins * 100, 2) if total_bins else 0.0
+    missing_bins = [bucket for bucket, value in counts.items() if value == 0]
+    return {
+        "counts": counts,
+        "percentages": percentages,
+        "total_bins": total_bins,
+        "occupied_lighting_bins": occupied,
+        "empty_lighting_bins": total_bins - occupied,
+        "lighting_bin_coverage_pct": bin_coverage_pct,
+        "lighting_entropy": round(entropy, 4),
+        "classified_faces": classified,
+        "unknown_faces": unknown,
+        "missing_bins": missing_bins,
     }
 
 
@@ -908,6 +967,7 @@ def compute_coverage(
         mask_qa_distribution=_mask_qa_distribution(records_list),
         joint_pose_coverage=_joint_pose_coverage(records_list),
         expression_coverage=_expression_coverage(records_list),
+        lighting_coverage=_lighting_coverage(records_list),
         source_counts={
             "alignments": total,
             "sidecar": sum(
