@@ -34,19 +34,20 @@ class InsightFace(FacePlugin):
 
     def __init__(self) -> None:
         self._model_type = T.cast(str, cfg.model_type())
+        self._force_cpu = bool(cfg.cpu())
         if self._model_type not in self._SUPPORTED:
             raise FaceswapError(
                 f"Unsupported InsightFace model_type '{self._model_type}'. "
                 f"Select from {list(self._SUPPORTED)}."
             )
-        adapter = insightface_adapter(self._model_type)
+        adapter = insightface_adapter(self._model_type, force_cpu=self._force_cpu)
         super().__init__(
             input_size=adapter.input_size,
             batch_size=cfg.batch_size(),
             is_rgb=False,
             dtype="float32",
             scale=(0, 255),
-            force_cpu=cfg.cpu(),
+            force_cpu=self._force_cpu,
             centering="face",
         )
         self._adapter = adapter
