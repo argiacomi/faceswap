@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for AdaFace and InsightFace identity plugins."""
+"""Tests for AdaFace, ArcFace and InsightFace identity plugins."""
 
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ from plugins.extract.identity._model_adapter import (
     normalize_embeddings,
 )
 from plugins.extract.identity.adaface import AdaFace
+from plugins.extract.identity.arcface import ArcFace
 from plugins.extract.identity.insightface import InsightFace
 from plugins.plugin_loader import PluginLoader
 
@@ -54,27 +55,36 @@ def _adapter(name: str, loader: T.Callable[[], _StubModel]) -> IdentityModelAdap
 
 
 def test_identity_plugins_are_selectable() -> None:
-    """AdaFace and InsightFace are exposed as identity extract plugins."""
+    """AdaFace, ArcFace and InsightFace are exposed as identity extract plugins."""
     plugins = PluginLoader.get_available_extractors("identity")
 
     assert "adaface" in plugins
+    assert "arcface" in plugins
     assert "insightface" in plugins
     assert "insightface-antelopev2" not in plugins
     assert "insightface-buffalo-l" not in plugins
     assert "insightface-buffalo-sc" not in plugins
 
 
-def test_adaface_uses_stable_storage_key_and_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
-    """AdaFace uses the plugin storage key and delegates loading to its adapter."""
+@pytest.mark.parametrize(
+    ("plugin_cls", "storage_name"),
+    [(AdaFace, "adaface"), (ArcFace, "arcface")],
+)
+def test_cvlface_plugins_use_stable_storage_key_and_adapter(
+    monkeypatch: pytest.MonkeyPatch,
+    plugin_cls: type[AdaFace] | type[ArcFace],
+    storage_name: str,
+) -> None:
+    """CVLFace-backed plugins use stable storage keys and delegate loading to adapters."""
     stub = _StubModel()
     monkeypatch.setattr(IdentityModelAdapter, "load", lambda self: stub)
 
-    plugin = AdaFace()
+    plugin = plugin_cls()
     batch: npt.NDArray[np.float32] = np.zeros(
         (2, plugin.input_size, plugin.input_size, 3), dtype=np.float32
     )
 
-    assert plugin.storage_name == "adaface"
+    assert plugin.storage_name == storage_name
     assert plugin.load_model() is stub
     plugin.model = stub
     out = plugin.process(batch)
