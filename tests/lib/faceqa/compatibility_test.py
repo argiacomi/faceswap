@@ -190,3 +190,58 @@ def test_compatibility_round_trips_through_json_and_markdown() -> None:
 
 def test_compatibility_weights_sum_to_one() -> None:
     assert abs(sum(COMPATIBILITY_WEIGHTS.values()) - 1.0) < 1e-9
+
+
+def test_broad_source_is_not_penalized_for_extra_coverage() -> None:
+    """A source that covers more buckets than the target needs should still score high.
+
+    This is the regression that motivated switching from proportion-matching to
+    absolute source-sample adequacy: a source with plenty of frontal samples
+    plus equal profile samples used to score ~50 against an all-frontal target.
+    """
+    frontal_source = compute_coverage(_records(count=40, yaw=0.0, pitch=0.0))
+    broad_source = compute_coverage(
+        _records(count=40, yaw=0.0, pitch=0.0)
+        + _records(count=40, yaw=-45.0, pitch=0.0)
+        + _records(count=40, yaw=45.0, pitch=20.0)
+    )
+    target = compute_coverage(_records(count=40, yaw=0.0, pitch=0.0))
+
+    narrow = compute_compatibility(frontal_source, target)
+    broad = compute_compatibility(broad_source, target)
+
+    # Both sources have plenty of frontal samples → both should score near 100
+    # on pose. The proportion-matching design previously regressed the broad
+    # source to ~50; the absolute-sample design keeps it at full credit.
+    assert narrow.pose_compatibility_score >= 99.0
+    assert broad.pose_compatibility_score >= 99.0
+
+
+def test_source_needs_enough_samples_per_target_demanded_bucket() -> None:
+    """Source must reach the per-bucket sample minimum for full credit."""
+    # Source has only 2 frontal samples (below the 5-sample threshold).
+    sparse_source = compute_coverage(_records(count=2, yaw=0.0, pitch=0.0))
+    # Target has 40 frontal frames.
+    target = compute_coverage(_records(count=40, yaw=0.0, pitch=0.0))
+
+    report = compute_compatibility(sparse_source, target)
+
+    # Coverage factor should be 2/5 = 0.4 → pose score ~40, well below full.
+    assert report.pose_compatibility_score < 60.0
+    pose_dim = report.dimensions["pose"]
+    assert any(
+        gap.source_count == 2 and gap.required_source_count >= 5 for gap in pose_dim.deficiencies
+    )
+
+
+def test_gap_phrasing_reports_sample_counts() -> None:
+    """Gap phrases should communicate raw source/required counts."""
+    source = compute_coverage(_records(count=60, yaw=0.0, pitch=0.0, expression="neutral"))
+    target = compute_coverage(_records(count=40, yaw=-45.0, pitch=0.0, expression="smile"))
+
+    report = compute_compatibility(source, target)
+
+    assert any("samples required" in gap for gap in report.coverage_gaps)
+    assert any(
+        "not present in source" in gap or "barely present" in gap for gap in report.coverage_gaps
+    )

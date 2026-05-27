@@ -23,11 +23,18 @@ COMPATIBILITY_WEIGHTS: dict[str, float] = {
 # Numerical tolerance for proportion comparisons.
 PROPORTION_EPSILON = 1e-9
 
+# Minimum source samples per target-demanded bucket before that bucket is considered
+# fully supported. A bucket with N source samples gets coverage credit equal to
+# ``min(1.0, N / MIN_SOURCE_SAMPLES_PER_TARGET_BUCKET)``. This evaluates source
+# *adequacy* for target demand without penalizing a broader source distribution.
+MIN_SOURCE_SAMPLES_PER_TARGET_BUCKET = 5
+
 # When listing coverage gaps in the human report, only emit buckets where the
 # target proportion exceeds this threshold (so trivial blips don't generate noise).
 GAP_MIN_TARGET_PROPORTION = 0.02
 
-# A bucket is "deficient" when source coverage is below this fraction of target demand.
+# A target-demanded bucket is "deficient" when its source coverage factor is below
+# this ratio of full support.
 GAP_DEFICIT_RATIO = 0.5
 
 # Maximum number of bucket gaps to emit per dimension.
@@ -82,14 +89,18 @@ class BucketGap:
     bucket: str
     target_proportion: float
     source_proportion: float
-    deficit: float
+    source_count: int
+    required_source_count: int
+    coverage_factor: float
 
     def to_dict(self) -> dict[str, T.Any]:
         return {
             "bucket": self.bucket,
             "target_proportion": self.target_proportion,
             "source_proportion": self.source_proportion,
-            "deficit": self.deficit,
+            "source_count": self.source_count,
+            "required_source_count": self.required_source_count,
+            "coverage_factor": self.coverage_factor,
         }
 
 
@@ -196,15 +207,17 @@ class CompatibilityReport:
             lines.extend(["", f"### {dim.name.title()} deficiencies", ""])
             lines.extend(
                 [
-                    "| Bucket | Target % | Source % | Deficit |",
-                    "|--------|--------:|--------:|--------:|",
+                    "| Bucket | Target % | Source % | Source N | Required N | Coverage |",
+                    "|--------|--------:|--------:|---------:|-----------:|---------:|",
                 ]
             )
             for gap in dim.deficiencies:
                 lines.append(
                     "| "
                     f"{gap.bucket} | {gap.target_proportion * 100:.1f} | "
-                    f"{gap.source_proportion * 100:.1f} | {gap.deficit * 100:.1f} |"
+                    f"{gap.source_proportion * 100:.1f} | "
+                    f"{gap.source_count} | {gap.required_source_count} | "
+                    f"{gap.coverage_factor * 100:.0f}% |"
                 )
         lines.append("")
         return "\n".join(lines)
@@ -217,10 +230,19 @@ def _proportions(counts: dict[str, int], total: int) -> dict[str, float]:
 
 
 def _coverage_score(
+    *,
     target_props: dict[str, float],
+    source_counts: dict[str, int],
     source_props: dict[str, float],
+    required_samples: int = MIN_SOURCE_SAMPLES_PER_TARGET_BUCKET,
 ) -> tuple[float, list[BucketGap]]:
-    """Return a 0-100 compatibility score plus the list of deficient buckets."""
+    """Return a 0-100 compatibility score plus the list of deficient buckets.
+
+    Scoring evaluates *source adequacy* for each target-demanded bucket. A
+    bucket earns full credit once the source contains ``required_samples`` faces
+    in that bucket, with a smooth linear ramp below that threshold. This avoids
+    penalizing a broad source for covering more buckets than the target needs.
+    """
     if not target_props or sum(target_props.values()) <= 0:
         # No target demand → vacuously compatible.
         return 100.0, []
@@ -229,8 +251,12 @@ def _coverage_score(
     for bucket, target_prop in target_props.items():
         if target_prop <= 0:
             continue
+        source_count = int(source_counts.get(bucket, 0))
         source_prop = source_props.get(bucket, 0.0)
-        coverage_factor = min(1.0, source_prop / max(target_prop, PROPORTION_EPSILON))
+        if required_samples > 0:
+            coverage_factor = min(1.0, source_count / required_samples)
+        else:
+            coverage_factor = 0.0
         score += target_prop * coverage_factor
         if target_prop >= GAP_MIN_TARGET_PROPORTION and coverage_factor < GAP_DEFICIT_RATIO:
             gaps.append(
@@ -238,10 +264,12 @@ def _coverage_score(
                     bucket=bucket,
                     target_proportion=round(target_prop, 4),
                     source_proportion=round(source_prop, 4),
-                    deficit=round(target_prop - source_prop, 4),
+                    source_count=source_count,
+                    required_source_count=required_samples,
+                    coverage_factor=round(coverage_factor, 4),
                 )
             )
-    gaps.sort(key=lambda gap: gap.deficit, reverse=True)
+    gaps.sort(key=lambda gap: gap.target_proportion - gap.coverage_factor, reverse=True)
     return round(100.0 * score, 2), gaps[:MAX_GAPS_PER_DIMENSION]
 
 
@@ -272,7 +300,11 @@ def _dimension_from_distributions(
     source_props = {
         b: source_counts.get(b, 0) / source_total if source_total else 0.0 for b in bucket_universe
     }
-    score, gaps = _coverage_score(target_props, source_props)
+    score, gaps = _coverage_score(
+        target_props=target_props,
+        source_counts={b: source_counts.get(b, 0) for b in bucket_universe},
+        source_props=source_props,
+    )
     if target_total == 0:
         # No target demand → undefined; we don't claim full marks blindly.
         score = 0.0 if source_total == 0 else 100.0
@@ -325,15 +357,15 @@ def _confidence(
 
 def _phrase_gap(dimension: str, bucket: str, gap: BucketGap) -> str:
     label = _BUCKET_PHRASINGS.get(dimension, {}).get(bucket, bucket)
-    if gap.source_proportion <= PROPORTION_EPSILON:
+    if gap.source_count == 0:
         adverb = "not present in source"
-    elif gap.source_proportion < gap.target_proportion * 0.25:
+    elif gap.coverage_factor < 0.25:
         adverb = "barely present in source"
     else:
         adverb = "underrepresented in source"
     return (
         f"Target contains {label} ({gap.target_proportion * 100:.0f}% of target) {adverb} "
-        f"({gap.source_proportion * 100:.0f}% of source)."
+        f"({gap.source_count} of {gap.required_source_count} samples required)."
     )
 
 
