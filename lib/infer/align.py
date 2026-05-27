@@ -27,6 +27,12 @@ if T.TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _logger_trace(message: str, *args: T.Any) -> None:
+    """Log a trace message when the project logger supports it."""
+    log_trace = T.cast(T.Callable[..., None], getattr(logger, "trace", logger.debug))
+    log_trace(message, *args)
+
+
 class Align(ExtractHandler):
     """Responsible for handling align plugins within the extract pipeline
 
@@ -68,7 +74,7 @@ class Align(ExtractHandler):
 
     def __repr__(self) -> str:
         """Pretty print for logging"""
-        retval = super().__repr__()[:-1]
+        retval = str(super().__repr__())[:-1]
         retval += (
             f", re_feeds={self._re_feed._re_feeds}, re_align={self._re_align.enabled}, "
             f"normalization={repr(self._normalize.name)}, filters={self._filters.enabled})"
@@ -337,14 +343,14 @@ class Align(ExtractHandler):
         batch_size = feed.shape[0]
         if is_final:  # Re-feeds performed on final pass only
             batch_size //= self._re_feed.total_feeds
-        results = []
+        results: list[np.ndarray] = []
         chunks = self._re_feed.total_feeds if is_final else 1
         for idx in range(chunks):
             start = idx * batch_size
-            results.append(self._predict(feed[start : start + batch_size]))
+            results.append(T.cast(np.ndarray, self._predict(feed[start : start + batch_size])))
 
-        retval = np.array(results)
-        return retval.reshape((feed.shape[0], *retval.shape[2:]))
+        retval = np.asarray(results)
+        return T.cast(np.ndarray, retval.reshape((feed.shape[0], *retval.shape[2:])))
 
     def process(self, batch: ExtractBatch) -> None:
         """Perform inference to get results from the aligner
@@ -444,12 +450,60 @@ class Align(ExtractHandler):
         batch.aligned.metadata = [
             self._plugin_metadata_item(
                 metadata_key,
-                metadata[index * total_feeds],
+                self._merge_feed_metadata(
+                    metadata_key,
+                    metadata[index * total_feeds : (index + 1) * total_feeds],
+                ),
                 batch,
                 index,
             )
             for index in range(face_count)
         ]
+
+    @staticmethod
+    def _merge_feed_metadata(
+        metadata_key: str,
+        items: list[dict[str, T.Any]],
+    ) -> dict[str, T.Any]:
+        """Return per-face metadata for predictions merged from multiple re-feeds."""
+        if not items:
+            return {}
+        first = dict(items[0]) if isinstance(items[0], dict) else {"value": items[0]}
+        if metadata_key != "spiga":
+            return first
+
+        pose = Align._merge_spiga_feed_pose(items)
+        if pose is not None:
+            first["pose"] = pose
+        return first
+
+    @staticmethod
+    def _merge_spiga_feed_pose(items: list[dict[str, T.Any]]) -> dict[str, T.Any] | None:
+        """Average valid SPIGA pose values across re-feeds."""
+        poses = [item.get("pose") for item in items if isinstance(item, dict)]
+        valid_poses = [
+            pose
+            for pose in poses
+            if isinstance(pose, dict)
+            and all(Align._is_finite_number(pose.get(key)) for key in ("yaw", "pitch", "roll"))
+        ]
+        if not valid_poses:
+            return None
+
+        merged = dict(valid_poses[0])
+        for key in ("yaw", "pitch", "roll"):
+            merged[key] = float(np.mean([float(pose[key]) for pose in valid_poses]))
+        merged["merged_feeds"] = len(valid_poses)
+        merged["merge_strategy"] = "mean"
+        return merged
+
+    @staticmethod
+    def _is_finite_number(value: T.Any) -> bool:
+        """Return whether value can be safely averaged as a finite float."""
+        try:
+            return bool(np.isfinite(float(value)))
+        except (TypeError, ValueError):
+            return False
 
     def _plugin_metadata_key(self) -> str:
         """Return the alignment metadata namespace for the active plugin."""
@@ -487,19 +541,22 @@ class Align(ExtractHandler):
         if index >= rotations.shape[0]:
             return
         rotation = rotations[index : index + 1]
-        derived = {
-            "source": "faceswap_landmarks",
-            "units": "degrees",
+        derived_angles = {
             "yaw": float(Batch3D.yaw(rotation)[0]),
             "pitch": float(Batch3D.pitch(rotation)[0]),
             "roll": float(Batch3D.roll(rotation)[0]),
         }
-        delta = {}
+        derived: dict[str, T.Any] = {
+            "source": "faceswap_landmarks",
+            "units": "degrees",
+            **derived_angles,
+        }
+        delta: dict[str, float] = {}
         for key in ("yaw", "pitch", "roll"):
             if key not in pose:
                 continue
             try:
-                delta[key] = float(float(pose[key]) - derived[key])
+                delta[key] = float(float(pose[key]) - derived_angles[key])
             except (TypeError, ValueError):
                 continue
         pose["derived"] = derived
@@ -650,7 +707,7 @@ class ReAlign:
         self._default_crop_matrices = self._get_default_matrix()
         """A transform matrix that crops the default (center) image patch out of the expanded image
         patch"""
-        self._matrices = np.empty((0, 3, 3), dtype="float32")
+        self._matrices: npt.NDArray[np.float32] = np.empty((0, 3, 3), dtype="float32")
         self._images = np.zeros(
             (plugin.batch_size, self._expanded_size, self._expanded_size, 3),
             dtype=plugin.dtype,
@@ -750,7 +807,7 @@ class ReAlign:
         landmarks: npt.NDArray[np.float32],
         bboxes: npt.NDArray[np.int32],
         roi_matrices: npt.NDArray[np.float32],
-    ) -> np.ndarray:
+    ) -> npt.NDArray[np.float32]:
         """Obtain the (N, 3, 3) transformation matrix to align the landmarks in normalized space
         and add to :attr:`_matrices`
 
@@ -801,7 +858,7 @@ class ReAlign:
             "float32"
         )
         # Return the matrix that creates the expanded image sub-crop
-        return patch_mat @ mats @ np.linalg.inv(roi_matrices)
+        return T.cast(np.ndarray, patch_mat @ mats @ np.linalg.inv(roi_matrices))
 
     def _scale_images(self) -> None:
         """Scale all of the images stored in :attr:`_images` to the correct numeric range"""
@@ -981,8 +1038,8 @@ class ReFeed:
         mats[:, 1:, :2, 2] += d_shift
         mats = mats.reshape(-1, 3, 3)
         if not with_roi:
-            logger.trace(
-                "re-feed. matrices: %s",  # type: ignore[attr-defined]
+            _logger_trace(
+                "re-feed. matrices: %s",
                 format_array(mats),
             )
             return mats
@@ -991,8 +1048,8 @@ class ReFeed:
         roi = np.stack(
             [tl_br[:, 0, 0], tl_br[:, 0, 1], tl_br[:, 1, 0], tl_br[:, 1, 1]], axis=1
         ).astype(np.int32)
-        logger.trace(
-            "re-feed. matrices: %s, roi: %s",  # type: ignore[attr-defined]
+        _logger_trace(
+            "re-feed. matrices: %s, roi: %s",
             format_array(mats),
             format_array(roi),
         )
