@@ -239,7 +239,7 @@ class HRNet(ExtractPlugin):
         pnt_y = coords[..., 1].astype(np.int32)
         mask = (pnt_x > 1) & (pnt_x < resolution) & (pnt_y > 1) & (pnt_y < resolution)
         pnt_x = np.clip(pnt_x, 2, resolution - 1)
-        pnt_y = np.clip(pnt_x, 2, resolution - 1)
+        pnt_y = np.clip(pnt_y, 2, resolution - 1)
         idx_batch = np.arange(batch_size)[:, None]
         idx_pnt = np.arange(num_points)[None, :]
         delta_x = (
