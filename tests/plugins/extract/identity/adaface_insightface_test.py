@@ -13,9 +13,9 @@ from lib.align.detected_face import DetectedFace
 from lib.infer.identity import Identity
 from lib.infer.objects import ExtractBatch
 from lib.utils import FaceswapError
+from plugins.extract.identity import insightface as insightface_plugin
 from plugins.extract.identity import insightface_defaults
 from plugins.extract.identity._model_adapter import (
-    INSIGHTFACE,
     IdentityModelAdapter,
     ModelProvenance,
     normalize_embeddings,
@@ -89,14 +89,25 @@ def test_insightface_config_selects_adapter(
     """The single InsightFace plugin selects the backend through config."""
     stub = _StubModel()
     adapter = _adapter(f"insightface-{model_type}", lambda: stub)
+    seen: dict[str, T.Any] = {}
+
+    def fake_insightface_adapter(
+        selected_model_type: str, *, force_cpu: bool = False
+    ) -> IdentityModelAdapter:
+        seen["model_type"] = selected_model_type
+        seen["force_cpu"] = force_cpu
+        return adapter
+
     monkeypatch.setattr(insightface_defaults, "model_type", lambda: model_type)
-    monkeypatch.setitem(INSIGHTFACE, model_type, adapter)
+    monkeypatch.setattr(insightface_defaults, "cpu", lambda: False)
+    monkeypatch.setattr(insightface_plugin, "insightface_adapter", fake_insightface_adapter)
 
     plugin = InsightFace()
     batch: npt.NDArray[np.float32] = np.zeros(
         (3, plugin.input_size, plugin.input_size, 3), dtype=np.float32
     )
 
+    assert seen == {"model_type": model_type, "force_cpu": False}
     assert plugin.storage_name == "insightface"
     assert plugin.model_type == model_type
     assert plugin.load_model() is stub
@@ -106,6 +117,28 @@ def test_insightface_config_selects_adapter(
     assert out.shape == (3, 4)
     assert stub.calls == [(3, 112, 112, 3)]
     assert stub.dtypes == [np.dtype("uint8")]
+
+
+def test_insightface_passes_force_cpu_to_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The InsightFace CPU setting is passed into the adapter loader."""
+    stub = _StubModel()
+    adapter = _adapter("insightface-buffalo_l", lambda: stub)
+    seen: dict[str, T.Any] = {}
+
+    def fake_insightface_adapter(
+        selected_model_type: str, *, force_cpu: bool = False
+    ) -> IdentityModelAdapter:
+        seen["model_type"] = selected_model_type
+        seen["force_cpu"] = force_cpu
+        return adapter
+
+    monkeypatch.setattr(insightface_defaults, "model_type", lambda: "buffalo_l")
+    monkeypatch.setattr(insightface_defaults, "cpu", lambda: True)
+    monkeypatch.setattr(insightface_plugin, "insightface_adapter", fake_insightface_adapter)
+
+    InsightFace()
+
+    assert seen == {"model_type": "buffalo_l", "force_cpu": True}
 
 
 def test_insightface_invalid_model_type_fails_clearly(
