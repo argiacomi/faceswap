@@ -19,6 +19,7 @@ import torch
 if T.TYPE_CHECKING:
     from lib.training.data import BatchMeta
     from lib.training.loss import BatchLoss, LossCollator
+    from lib.training.optimizer import Optimizer
     from plugins.train.model._base import ModelBase
 
 logger = logging.getLogger(__name__)
@@ -122,7 +123,11 @@ class TrainerBase(abc.ABC):
 
     @abc.abstractmethod
     def train_batch(
-        self, inputs: list[torch.Tensor], targets: list[torch.Tensor], meta: BatchMeta
+        self,
+        inputs: list[torch.Tensor],
+        targets: list[torch.Tensor],
+        optimizer: Optimizer,
+        meta: BatchMeta,
     ) -> list[BatchLoss]:
         """Override to run a single forward and backwards pass through the model for a single batch
 
@@ -133,6 +138,8 @@ class TrainerBase(abc.ABC):
         targets
             List of len (num_outputs) of target images in shape (batch_size, num_inputs, height,
             width, 3) at all model output sizes as float32 0.0 - 1.0 range
+        optimizer
+            The configured Optimizer to use
         meta
             The meta information for the batch
 

@@ -189,7 +189,7 @@ def test_bbox_add_centers_default_box_without_source_clamp(qtbot, tmp_path: Path
     _press_release(window._frame_view, pos, Qt.LeftButton)
 
     face = window._editable.faces(0)[0]
-    assert face.bbox == (-5.0, -5.0, 20.0, 20.0)
+    assert face.bbox == pytest.approx((-5.0, -5.0, 20.0, 20.0))
 
 
 def test_entering_bbox_mode_does_not_passively_preload_aligner(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]

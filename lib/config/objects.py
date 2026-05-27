@@ -1,5 +1,5 @@
 #! /usr/env/bin/python3
-"""Dataclass objects for holding and validating Faceswap Config items"""
+"""Dataclass objects for holding and validating Faceswap Config item"""
 
 from __future__ import annotations
 
@@ -45,17 +45,17 @@ class ConfigItem(Generic[T]):  # pylint:disable=too-many-instance-attributes
 
     Parameters
     ----------
-    datatype : type
+    datatype
         A python type class. This limits the type of data that can be provided in the .ini file
         and ensures that the value is returned to faceswap is correct. Valid datatypes are:
         `int`, `float`, `str`, `bool` or `list`. Note that `list` items must all be strings.
-    default : Any
+    default
         The default value for this option. It must be of the same type as :attr:`datatype`.
-    group : str
+    group
         The group that this config item exists within in the config section
-    info : str
+    info
         A description of what this option does.
-    choices : list[str] | Literal["colorchooser"], optional
+    choices
         If this option's datatype is a `str` then valid selections can be defined here, empty list
         for any value. If the option's datatype is a `list`, then this option must be populated
         with the valid selections. This validates the option and also enables a combobox / radio
@@ -63,18 +63,18 @@ class ConfigItem(Generic[T]):  # pylint:disable=too-many-instance-attributes
         literal "colorchooser" to present a color choosing interface in the GUI. Ignored for all
         other datatypes
         Default: [] (empty list: no options)
-    gui_radio : bool, optional
+    gui_radio
         If :attr:`choices` are defined, this indicates that the GUI should use radio buttons rather
         than a combobox to display this option. Default: ``False``
-    min_max : tuple[int | float, int | float] | None, optional
+    min_max
         For `int` and `float` :attr:`datatype` this is required otherwise it is ignored. Should be
         a tuple of min and max accepted values of the same datatype as the option value. This is
         used for controlling the GUI slider range. Values are not enforced. Default: ``None``
-    rounding : int | None, optional
+    rounding
         For `int` and `float :attr:datatypes this is required to be > 0 otherwise it is ignored.
         Used for the GUI slider. For `float`, this is the number of decimal places to display. For
         `int` this is the step size. Default: `-1` (ignored)
-    fixed : bool, optional
+    fixed
         [train only]. Training configurations are fixed when the model is created, and then
         reloaded from the state file. Marking an item as fixed=``False`` indicates that this value
         can be changed for existing models, and will override the value saved in the state file
@@ -82,43 +82,42 @@ class ConfigItem(Generic[T]):  # pylint:disable=too-many-instance-attributes
     """
 
     datatype: type[T]
-    """ type : A python type class. The datatype of the config value. One of `int`, `float`, `str`,
-    `bool` or `list`. `list` will only contain `str` items """
+    """A python type class. The datatype of the config value. One of `int`, `float`, `str`, `bool`
+    or `list`. `list` will only contain `str` items"""
     default: T
-    """ Any : The default value for this option. It is of the same type as :attr:`datatype` """
+    """The default value for this option. It is of the same type as :attr:`datatype`"""
     group: str
-    """ str : The group that this config option belongs to """
+    """The group that this config option belongs to"""
     info: str
-    """ str : A description of what this option does """
+    """A description of what this option does"""
     choices: list[str] | Literal["colorchooser"] = field(default_factory=list)
-    """ list[str]  | Literal["colorchooser"]: If this option's datatype is a `str` then valid
-    selections may be defined here, Empty list if any value is valid. If the datatype is a `list`
-    then valid choices will be populated here. If the default value is a hex color code, then the
-    literal "colorchooser" will display a color choosing interface in the GUI. """
+    """If this option's datatype is a `str` then valid selections may be defined here, Empty list
+    if any value is valid. If the datatype is a `list` then valid choices will be populated here.
+    If the default value is a hex color code, then the literal "colorchooser" will display a color
+    choosing interface in the GUI."""
     gui_radio: bool = False
-    """ bool : indicates that the GUI should use radio buttons rather than a combobox to display
-    this option if :attr:`choices` is populated """
+    """indicates that the GUI should use radio buttons rather than a combobox to display this
+    option if :attr:`choices` is populated"""
     min_max: tuple[T, T] | None = None
-    """ tuple[int | float, int | float] | None : For `int` and `float` :attr:`datatype` this will
-    be populated otherwise it will be ``None``. Used for controlling the GUI slider range. Values
-    are not enforced. """
+    """For `int` and `float` :attr:`datatype` this will be populated otherwise it will be ``None``.
+    Used for controlling the GUI slider range. Values are not enforced."""
     rounding: int = -1
-    """ int : For `int` and `float` :attr:`datatypes` this will be > 0 otherwise it will be `-1`.
-    Used for the GUI slider. For `float`, this is the number of decimal places to display. For
-    `int` this is the step size. """
+    """For `int` and `float` :attr:`datatypes` this will be > 0 otherwise it will be `-1`. Used for
+    the GUI slider. For `float`, this is the number of decimal places to display. For `int` this is
+    the step size."""
     fixed: bool = True
-    """ bool : Only used for train.model configurations. Options marked as fixed=``False``
-    indicates that this value can be changed for existing models, otherwise the option set when the
-    model commenced training is fixed and cannot be changed. Default: ``True`` """
+    """Only used for train.model configurations. Options marked as fixed=``False`` indicates that
+    this value can be changed for existing models, otherwise the option set when the model
+    commenced training is fixed and cannot be changed. Default: ``True``"""
     _value: T = field(init=False)
-    """ Any : The value of the config item of type :attr:`datatype`"""
+    """The value of the config item of type :attr:`datatype`"""
     _name: str = field(init=False)
-    """ str: The option name for this object. Set when the config is first loaded """
+    """The option name for this object. Set when the config is first loaded"""
 
     @property
     def helptext(self) -> str:
-        """str | Description of the config option with additional formating and helptext added
-        from the item parameters"""
+        """Description of the config option with additional formatting and helptext added from the
+        item parameters"""
         retval = f"{self.info}\n"
         if not self.fixed:
             retval += _("\nThis option can be updated for existing models.\n")
@@ -133,20 +132,20 @@ class ConfigItem(Generic[T]):  # pylint:disable=too-many-instance-attributes
             retval += _("\nChoose from: True, False")
         elif self.datatype is int:
             assert self.min_max is not None
-            cmin, cmax = self.min_max
-            retval += _("\nSelect an integer between {} and {}").format(cmin, cmax)
+            c_min, c_max = self.min_max
+            retval += _("\nSelect an integer between {} and {}").format(c_min, c_max)
         elif self.datatype is float:
             assert self.min_max is not None
-            cmin, cmax = self.min_max
-            retval += _("\nSelect a decimal number between {} and {}").format(cmin, cmax)
+            c_min, c_max = self.min_max
+            retval += _("\nSelect a decimal number between {} and {}").format(c_min, c_max)
         default = ", ".join(self.default) if isinstance(self.default, list) else self.default
         retval += _("\n[Default: {}]").format(default)
         return retval
 
     @property
     def value(self) -> T:
-        """Any : The config value for this item loaded from the config .ini file. String values
-        will always be lowercase, regardless of what is loaded from Config"""
+        """The config value for this item loaded from the config .ini file. String values will
+        always be lowercase, regardless of what is loaded from Config"""
         retval = self._value
         if isinstance(self._value, str):
             retval = cast(T, self._value.lower())
@@ -156,14 +155,14 @@ class ConfigItem(Generic[T]):  # pylint:disable=too-many-instance-attributes
 
     @property
     def ini_value(self) -> str:
-        """str : The current value of the ConfigItem as a string for writing to a .ini file"""
+        """The current value of the ConfigItem as a string for writing to a .ini file"""
         if isinstance(self._value, list):
             return ", ".join(str(x) for x in self._value)
         return str(self._value)
 
     @property
     def name(self) -> str:
-        """str: The name associated with this option"""
+        """The name associated with this option"""
         return self._name
 
     def _validate_type(
@@ -176,17 +175,16 @@ class ConfigItem(Generic[T]):  # pylint:disable=too-many-instance-attributes
 
         Parameters
         ----------
-        expected_type : Any
+        expected_type
             The expected data type for the given attribute
-        attr : Any
+        attr
             The attribute to test for correctness
-        depth : int, optional
+        depth
             The current recursion depth
 
         Returns
         -------
-        bool
-            ``True`` if the given attribute is a valid datatype
+        ``True`` if the given attribute is a valid datatype
 
         Raises
         ------
@@ -300,7 +298,7 @@ class ConfigItem(Generic[T]):  # pylint:disable=too-many-instance-attributes
             If any float or int options have not been configured correctly
         """
         # NOTE: Have to include datatype filter in next check to exclude bools
-        if self.datatype in (float, int) and isinstance(self.default, float | int):
+        if self.datatype in (float, int) and isinstance(self.default, (float, int)):
             if self.rounding <= 0:
                 raise ValueError(
                     f"Config Item rounding must be a positive number for "
@@ -337,9 +335,8 @@ class ConfigItem(Generic[T]):  # pylint:disable=too-many-instance-attributes
 
         Returns
         -------
-        Any
-            The config value for this item loaded from the config .ini file. String values will
-            always be lowecase, regardless of what is loaded from Config"""
+        The config value for this item loaded from the config .ini file. String values will always
+        be lowercase, regardless of what is loaded from Config"""
         return self.value
 
     def _parse_list(self, value: str | list[str]) -> list[str]:
@@ -347,13 +344,12 @@ class ConfigItem(Generic[T]):  # pylint:disable=too-many-instance-attributes
 
         Parameters
         ----------
-        value : str | list[str]
+        value
             The inbound value to be converted to a list
 
         Returns
         -------
-        list[str]
-            List of strings representing the inbound values.
+        List of strings representing the inbound values.
         """
         if not value:
             return []
@@ -369,13 +365,11 @@ class ConfigItem(Generic[T]):  # pylint:disable=too-many-instance-attributes
 
         Parameters
         ----------
-        str | list[str]
-            The inbound config value to validate
+        The inbound config value to validate
 
         Returns
         -------
-        bool
-            ``True`` if the selected value is a valid choice
+        ``True`` if the selected value is a valid choice
         """
         assert isinstance(self.choices, list)
         choices = [x.lower() for x in self.choices]
@@ -412,7 +406,7 @@ class ConfigItem(Generic[T]):  # pylint:disable=too-many-instance-attributes
 
         Parameters
         ----------
-        value : Any
+        value
             The value to set this item to. Must be of type :attr:`datatype`
 
         Raises
@@ -457,7 +451,7 @@ class ConfigItem(Generic[T]):  # pylint:disable=too-many-instance-attributes
 
         Parameters
         ----------
-        name : str
+        name
             The name to assign to this option
         """
         logger.debug("Setting name to '%s'", name)
@@ -469,9 +463,8 @@ class ConfigItem(Generic[T]):  # pylint:disable=too-many-instance-attributes
 
         Returns
         -------
-        Any
-            The config value for this item loaded from the config .ini file. String values will
-            always be lowecase, regardless of what is loaded from Config"""
+        The config value for this item loaded from the config .ini file. String values will always
+        be lowercase, regardless of what is loaded from Config"""
         return self.value
 
 
@@ -482,9 +475,9 @@ class ConfigSection:
 
     Parameters
     ----------
-    helptext : str
+    helptext
         The helptext to be displayed for the configuration section
-    options : dict[str, :class:`ConfigItem`]
+    options
         Dictionary of configuration option name to the options for the section
     """
 
@@ -492,14 +485,24 @@ class ConfigSection:
     options: dict[str, ConfigItem]
 
 
+class ConfigReprMeta(type):
+    """A custom repr for printing currently selected config values"""
+
+    def __repr__(cls) -> str:
+        params = ", ".join(
+            f"{k}={repr(v.value)}" for k, v in cls.__dict__.items() if isinstance(v, ConfigItem)
+        )
+        return f"{cls.__name__}({params})"
+
+
 @dataclass
-class GlobalSection:
+class GlobalSection(metaclass=ConfigReprMeta):
     """A dataclass for holding and identifying global sub-sections for plugin groups. Any global
     subsections must inherit from this.
 
     Parameters
     ----------
-    helptext : str
+    helptext
         The helptext to be displayed for the global configuration section
     """
 

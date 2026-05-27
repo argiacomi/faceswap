@@ -559,12 +559,6 @@ class Loss(GlobalSection):
             "refined control over the area to be masked (configurable in mask settings). "
             "Use this version of bisenet-fp if your model is trained with 'head' "
             "centering."
-            "\n\t segnext-fp_face: SegNeXt face parser, face-centered. Drop-in alternative "
-            "to bisenet-fp_face with cleaner edges and a better hair/skin boundary."
-            "\n\t segnext-fp_head: SegNeXt face parser, head-centered. Drop-in alternative "
-            "to bisenet-fp_head with cleaner edges and a better hair/skin boundary."
-            "\n\t ensemble_face: Confidence-weighted ensemble mask, face-centered."
-            "\n\t ensemble_head: Confidence-weighted ensemble mask, head-centered."
             "\n\t components: Mask designed to provide facial segmentation based on the "
             "positioning of landmark locations. A convex hull is constructed around the "
             "exterior of the landmarks to create a mask."
@@ -838,43 +832,6 @@ class Optimizer(GlobalSection):
         rounding=1,
         fixed=False,
     )
-    use_ema = ConfigItem(
-        datatype=bool,
-        default=False,
-        group=_("exponential moving average"),
-        info=_(
-            "Enable exponential moving average (EMA). EMA consists of computing an "
-            "exponential moving average of the weights of the model (as the weight values "
-            "change after each training batch), and periodically overwriting the weights "
-            "with their moving average"
-        ),
-        fixed=True,
-    )
-    ema_momentum = ConfigItem(
-        datatype=float,
-        default=0.99,
-        group=_("exponential moving average"),
-        info=_(
-            "Only used if use_ema is enabled. This is the momentum to use when computing "
-            "the EMA of the model's weights: new_average = ema_momentum * old_average + "
-            "(1 - ema_momentum) * current_variable_value."
-        ),
-        min_max=(0.0, 1.0),
-        rounding=4,
-        fixed=True,
-    )
-    ema_frequency = ConfigItem(
-        datatype=int,
-        default=100,
-        group=_("exponential moving average"),
-        info=_(
-            "Only used if use_ema is enabled. Set the number of iterations, to overwrite "
-            "the model variable by its moving average. "
-        ),
-        min_max=(10, 10000),
-        rounding=10,
-        fixed=True,
-    )
     ada_beta_1 = ConfigItem(
         datatype=float,
         default=0.9,
@@ -923,7 +880,7 @@ def load_config(config_file: str | None = None) -> None:
 
     Parameters
     ----------
-    config_file : str | None, optional
+    config_file
         Path to a custom .ini configuration file to load. Default: ``None`` (use default
         configuration file)
     """

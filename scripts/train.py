@@ -106,8 +106,7 @@ class Train:
             sys.exit(1)
         if num_images < 250:
             logger.warning(
-                "Side %s contains fewer than 250 images. Results are likely to be poor.",
-                side,
+                "Side %s contains fewer than 250 images. Results are likely to be poor.", side
             )
             logger.warning(msg)
 
@@ -348,10 +347,8 @@ class Train:
         retval = Trainer(
             PluginLoader.get_trainer(trainer)(model, config),
             self._args.preview or self._args.write_image or self._args.redirect_gui,
-            timelapse_folders=[
-                self._args.timelapse_input_a,
-                self._args.timelapse_input_b,
-            ],
+            warmup_steps=self._args.warmup,
+            timelapse_folders=[self._args.timelapse_input_a, self._args.timelapse_input_b],
             timelapse_output=self._args.timelapse_output,
         )
         logger.debug("[Train] Loaded Trainer")
@@ -426,8 +423,7 @@ class Train:
             logger.info("  Using live preview")
         if sys.stdout.isatty():
             logger.info(
-                "  Press '%s' to save and quit",
-                "Stop" if self._args.redirect_gui else "ENTER",
+                "  Press '%s' to save and quit", "Stop" if self._args.redirect_gui else "ENTER"
             )
         if not self._args.redirect_gui and sys.stdout.isatty():
             logger.info("  Press 'S' to save model weights immediately")

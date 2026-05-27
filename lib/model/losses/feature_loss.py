@@ -146,6 +146,8 @@ class _LPIPSTrunkNet(nn.Module):
 
         if self._eval_mode:
             net.eval()
+            for p in net.parameters():
+                p.requires_grad = False
         return net
 
     @classmethod
@@ -154,9 +156,9 @@ class _LPIPSTrunkNet(nn.Module):
 
         Parameters
         ----------
-        inputs: :class:`keras.KerasTensor`
+        inputs
             An output tensor from the trunk model
-        epsilon: float, optional
+        epsilon
             Epsilon to apply to the normalization operation. Default: `1e-10`
         """
         norm_factor = torch.sqrt(torch.sum(torch.square(inputs), dim=1, keepdim=True))
@@ -236,6 +238,8 @@ class _LPIPSLinearNet(nn.Module):
 
         if self._eval_mode:
             net.eval()
+            for p in net.parameters():
+                p.requires_grad = False
         return net
 
     def forward(self, inputs: list[torch.Tensor]) -> list[torch.Tensor]:

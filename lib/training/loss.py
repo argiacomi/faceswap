@@ -41,8 +41,7 @@ class BatchLoss:
         """The total single weighted loss scalar for all items in the batch for backprop"""
         if self._total is None:
             total = T.cast(
-                torch.Tensor,
-                sum(sum(y.mean() for y in x.values()) for x in self.weighted),
+                torch.Tensor, sum(sum(y.mean() for y in x.values()) for x in self.weighted)
             )
             if self.mask is not None:
                 total += self.mask.mean()
@@ -63,7 +62,7 @@ class BatchLoss:
         return self
 
 
-class LossCollator(nn.Module):
+class LossCollator(nn.Module):  # pylint:disable=too-many-instance-attributes
     """Compiles the chosen loss functions and calculates the values in the training loop
 
     Parameters
@@ -72,6 +71,8 @@ class LossCollator(nn.Module):
         List of lost function names from configuration file to collate for loss calculation
     weights
         List of weights, corresponding to the the list of functions, to apply to each loss function
+    color_order
+        The color order that the model is training in
     use_mask
         ``True`` if loss should be masked as `penalize mask loss` has been selected
     eye_multiplier
@@ -88,6 +89,7 @@ class LossCollator(nn.Module):
         self,
         functions: list[str],
         weights: list[float],
+        color_order: T.Literal["bgr", "rgb"],
         use_mask: bool,
         eye_multiplier: float,
         mouth_multiplier: float,
@@ -96,6 +98,7 @@ class LossCollator(nn.Module):
     ) -> None:
         logger.debug(parse_class_init(locals()))
         super().__init__()
+        self._color_order: T.Literal["bgr", "rgb"] = color_order
         self._use_mask = use_mask
         self._eye_multiplier = eye_multiplier
         self._mouth_multiplier = mouth_multiplier
@@ -114,15 +117,13 @@ class LossCollator(nn.Module):
 
     def __repr__(self) -> str:
         """Pretty print for logging"""
-        params = {
-            "functions": list(self._functions),
-            "weights": list(self._weights.values()),
-        }
+        params = {"functions": list(self._functions), "weights": list(self._weights.values())}
         params |= {
             k[1:]: v
             for k, v in self.__dict__.items()
             if k
             in (
+                "_color_order",
                 "_use_mask",
                 "_eye_multiplier",
                 "_mouth_multiplier",
@@ -133,9 +134,8 @@ class LossCollator(nn.Module):
         s_params = ", ".join(f"{k}={repr(v)}" for k, v in params.items())
         return f"{self.__class__.__name__}({s_params})"
 
-    @classmethod
     def _configure_functions(
-        cls, names: list[str], weights: list[float]
+        self, names: list[str], weights: list[float]
     ) -> tuple[nn.ModuleDict, dict[str, float]]:
         """Configure the selected loss functions and send to the correct device
 
@@ -170,7 +170,7 @@ class LossCollator(nn.Module):
         for name, weight in zip(names, weights, strict=False):
             if name is None or name == "none" or weight <= 0.0:
                 continue
-            functions[name] = get_loss_function(name)
+            functions[name] = get_loss_function(name, self._color_order)
             weight_dict[name] = weight
 
         logger.debug(
@@ -324,10 +324,7 @@ class LossCollator(nn.Module):
         return retval
 
     def forward(
-        self,
-        y_true_all: list[torch.Tensor],
-        y_pred_all: list[torch.Tensor],
-        meta: BatchMeta,
+        self, y_true_all: list[torch.Tensor], y_pred_all: list[torch.Tensor], meta: BatchMeta
     ) -> BatchLoss:
         """Call the loss functions, reduce to batch dimension, apply masks and weighting and obtain
         the weighted and unweighted per function values and the weighted total loss scalar

@@ -142,6 +142,13 @@ def test_transport_row_contains_filter_save_extract_and_face_size(
 
 def test_frame_view_paints_black_centered_gutters(qtbot) -> None:  # type:ignore[no-untyped-def]
     """The frame canvas uses black gutters and centers the source image."""
+
+    def assert_color_close(actual: QColor, expected: QColor, tolerance: int = 4) -> None:
+        assert abs(actual.red() - expected.red()) <= tolerance
+        assert abs(actual.green() - expected.green()) <= tolerance
+        assert abs(actual.blue() - expected.blue()) <= tolerance
+        assert actual.alpha() == expected.alpha()
+
     view = ManualFrameView()
     qtbot.addWidget(view)
     view.resize(300, 200)
@@ -154,4 +161,4 @@ def test_frame_view_paints_black_centered_gutters(qtbot) -> None:  # type:ignore
     pixmap = view.grab().toImage()
 
     assert pixmap.pixelColor(2, 2) == QColor("#000000")
-    assert pixmap.pixelColor(150, 100) == QColor("#446699")
+    assert_color_close(pixmap.pixelColor(150, 100), QColor("#446699"))

@@ -64,10 +64,7 @@ class Mask:  # pylint:disable=too-many-instance-attributes
         self._blur_passes: int = 0
         self._blur_kernel: float | int = 0
         self._threshold = 0.0
-        self._dilation: tuple[T.Literal["erode", "dilate"], np.ndarray | None] = (
-            "erode",
-            None,
-        )
+        self._dilation: tuple[T.Literal["erode", "dilate"], np.ndarray | None] = ("erode", None)
         self._sub_crop_size = 0
         self._sub_crop_slices: dict[T.Literal["in", "out"], list[slice]] = {}
 
@@ -101,10 +98,7 @@ class Mask:  # pylint:disable=too-many-instance-attributes
             ).blurred
         if self._sub_crop_size:  # Crop the mask to the given centering
             out = np.zeros((self._sub_crop_size, self._sub_crop_size, 1), dtype=mask.dtype)
-            slice_in, slice_out = (
-                self._sub_crop_slices["in"],
-                self._sub_crop_slices["out"],
-            )
+            slice_in, slice_out = self._sub_crop_slices["in"], self._sub_crop_slices["out"]
             out[slice_out[0], slice_out[1], :] = mask[slice_in[0], slice_in[1], :]
             mask = out
         logger.trace("mask shape: %s", mask.shape)  # type:ignore[attr-defined]
@@ -248,8 +242,7 @@ class Mask:  # pylint:disable=too-many-instance-attributes
             dims = (self.stored_size, self.stored_size)
             interpolation = cv2.INTER_AREA if self.stored_size < size else cv2.INTER_LINEAR
             new_mask = T.cast(
-                "npt.NDArray[np.uint8]",
-                cv2.resize(mask, dims, interpolation=interpolation),
+                "npt.NDArray[np.uint8]", cv2.resize(mask, dims, interpolation=interpolation)
             )
         self._mask = compress(new_mask.tobytes())
 
@@ -268,10 +261,7 @@ class Mask:  # pylint:disable=too-many-instance-attributes
 
         action: T.Literal["erode", "dilate"] = "erode" if amount < 0 else "dilate"
         kernel = int(round(self.stored_size * abs(amount / 100.0), 0))
-        self._dilation = (
-            action,
-            cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel, kernel)),
-        )
+        self._dilation = (action, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel, kernel)))
 
         logger.trace(
             "action: '%s', amount: %s, kernel: %s, ",  # type:ignore[attr-defined]
@@ -349,17 +339,10 @@ class Mask:  # pylint:disable=too-many-instance-attributes
             return
 
         center = get_adjusted_center(
-            self.stored_size,
-            source_offset,
-            target_offset,
-            self.stored_centering,
-            y_offset,
+            self.stored_size, source_offset, target_offset, self.stored_centering, y_offset
         )
         crop_size = get_sub_crop_size(
-            self.stored_centering,
-            centering,
-            self.stored_size,
-            coverage_ratio=coverage_ratio,
+            self.stored_centering, centering, self.stored_size, coverage_ratio=coverage_ratio
         )
         roi = np.array([center - crop_size // 2, center + crop_size // 2]).ravel()
 
@@ -370,12 +353,10 @@ class Mask:  # pylint:disable=too-many-instance-attributes
         ]
         self._sub_crop_slices["out"] = [
             slice(
-                max(roi[1] * -1, 0),
-                crop_size - min(crop_size, max(0, roi[3] - self.stored_size)),
+                max(roi[1] * -1, 0), crop_size - min(crop_size, max(0, roi[3] - self.stored_size))
             ),
             slice(
-                max(roi[0] * -1, 0),
-                crop_size - min(crop_size, max(0, roi[2] - self.stored_size)),
+                max(roi[0] * -1, 0), crop_size - min(crop_size, max(0, roi[2] - self.stored_size))
             ),
         ]
 
@@ -538,7 +519,7 @@ class LandmarksMask:
         blur_type: T.Literal["gaussian", "normalized"] | None = "gaussian",
         blur_passes: int = 1,
     ) -> None:
-        logger.debug(parse_class_init(locals()))
+        logger.trace(parse_class_init(locals()))  # type:ignore[attr-defined]
         self._area = area
         self._landmark_type = landmark_type
         self._landmarks = landmarks
@@ -817,9 +798,7 @@ class BlurMask:
         return {"gaussian": cv2.GaussianBlur, "normalized": cv2.blur}
 
     @property
-    def _kwarg_requirements(
-        self,
-    ) -> dict[T.Literal["gaussian", "normalized"], list[str]]:
+    def _kwarg_requirements(self) -> dict[T.Literal["gaussian", "normalized"], list[str]]:
         """:attr:`_blur_type` mapped to cv2 Function required keyword arguments."""
         return {"gaussian": ["ksize", "sigmaX"], "normalized": ["ksize"]}
 
