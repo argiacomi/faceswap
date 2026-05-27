@@ -12,7 +12,7 @@ from lib.utils import get_module_objects
 from plugins.extract.base import FacePlugin
 
 from . import adaface_defaults as cfg
-from ._model_adapter import ADAFACE, LoadedIdentityModel, metadata, normalize_embeddings
+from ._model_adapter import LoadedIdentityModel, adaface_adapter, metadata, normalize_embeddings
 
 logger = logging.getLogger(__name__)
 
@@ -25,16 +25,18 @@ class AdaFace(FacePlugin):
     """
 
     def __init__(self) -> None:
+        self._force_cpu = bool(cfg.cpu())
+        adapter = adaface_adapter(force_cpu=self._force_cpu)
         super().__init__(
-            input_size=ADAFACE.input_size,
+            input_size=adapter.input_size,
             batch_size=cfg.batch_size(),
             is_rgb=False,
             dtype="float32",
             scale=(0, 255),
-            force_cpu=cfg.cpu(),
+            force_cpu=self._force_cpu,
             centering="face",
         )
-        self._adapter = ADAFACE
+        self._adapter = adapter
         self.model: LoadedIdentityModel
         logger.debug("Initialized %s", self.__class__.__name__)
 
