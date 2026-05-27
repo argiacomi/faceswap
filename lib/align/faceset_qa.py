@@ -54,9 +54,20 @@ class FaceQARecord(DataclassDict):
     roll: float | None = None
     pose_source: str | None = None
     pose_model: str | None = None
+    pose_confidence: str | None = None
     pose_delta_yaw: float | None = None
     pose_delta_pitch: float | None = None
     pose_delta_roll: float | None = None
+    pose_max_abs_delta: float | None = None
+    alignment_yaw: float | None = None
+    alignment_pitch: float | None = None
+    alignment_roll: float | None = None
+    spiga_yaw: float | None = None
+    spiga_pitch: float | None = None
+    spiga_roll: float | None = None
+    spiga_pose_source: str | None = None
+    spiga_pose_model: str | None = None
+    spiga_pose_error: str | None = None
     average_distance: float | None = None
 
     blur_score: float | None = None

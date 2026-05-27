@@ -19,6 +19,8 @@ LOW_RES_WARN_RATIO = 0.20
 MISALIGNMENT_WARN_RATIO = 0.10
 DUPLICATE_WARN_RATIO = 0.50
 OUTLIER_WARN_RATIO = 0.30
+POSE_FALLBACK_WARN_RATIO = 0.40
+LOW_CONFIDENCE_POSE_WARN_RATIO = 0.20
 
 
 @dataclass
@@ -186,6 +188,17 @@ def _build_warnings(
             "Misalignment risk: "
             f"{misalignment_ratio:.1%} of faces are far from the average face geometry."
         )
+    fallback_pose_ratio = _ratio(coverage, "pose_sources", {"alignment"})
+    if fallback_pose_ratio > POSE_FALLBACK_WARN_RATIO:
+        warnings.append(
+            f"Pose fallback risk: {fallback_pose_ratio:.1%} of faces use alignment-derived pose."
+        )
+    low_confidence_pose_ratio = _ratio(coverage, "pose_confidence", {"low"})
+    if low_confidence_pose_ratio > LOW_CONFIDENCE_POSE_WARN_RATIO:
+        warnings.append(
+            "SPIGA/alignment pose disagreement: "
+            f"{low_confidence_pose_ratio:.1%} of faces have low-confidence SPIGA pose."
+        )
     for entry in underrepresented:
         warnings.append(
             "Under-represented bucket: "
@@ -219,6 +232,14 @@ def _build_recommendations(
         recommendations.append("Add higher-resolution source footage for stronger face detail.")
     if _ratio(coverage, "misalignment", {"high", "extreme"}) > MISALIGNMENT_WARN_RATIO:
         recommendations.append("Review high-distance alignments for bad landmarks or false faces.")
+    if _ratio(coverage, "pose_sources", {"alignment"}) > POSE_FALLBACK_WARN_RATIO:
+        recommendations.append(
+            "Review faces without SPIGA pose backfill; missing thumbnails can force alignment pose."
+        )
+    if _ratio(coverage, "pose_confidence", {"low"}) > LOW_CONFIDENCE_POSE_WARN_RATIO:
+        recommendations.append(
+            "Review low-confidence pose samples where SPIGA and alignment pose disagree."
+        )
 
     pose_buckets = [
         str(item["bucket"]) for item in underrepresented if item["dimension"] == "pose"

@@ -19,6 +19,9 @@ from lib.utils import get_module_objects
 
 logger = logging.getLogger(__name__)
 
+if T.TYPE_CHECKING:
+    from collections.abc import Callable
+
 POSE_YAW_THRESHOLDS = (15.0, 30.0, 60.0)
 ROLL_RISK_THRESHOLDS = (10.0, 25.0)
 BLUR_THRESHOLDS = (6.0, 3.0, 1.0)
@@ -26,6 +29,9 @@ RESOLUTION_THRESHOLDS = (256, 128, 64)
 OCCLUSION_THRESHOLDS = (0.05, 0.20, 0.50)
 LIGHTING_THRESHOLDS = (50.0, 200.0, 235.0)
 DISTANCE_THRESHOLDS = (0.10, 0.20, 0.40)
+POSE_LIMITS = {"yaw": (-120.0, 120.0), "pitch": (-90.0, 90.0), "roll": (-90.0, 90.0)}
+POSE_HIGH_CONFIDENCE_DELTA = 10.0
+POSE_MEDIUM_CONFIDENCE_DELTA = 25.0
 
 
 @dataclass
@@ -70,6 +76,8 @@ def records_from_alignments(
     path: str | Path,
     *,
     qa_file: FaceQAFile | None = None,
+    pose_backfiller: Callable[[FaceQARecord, FileAlignments], dict[str, T.Any] | None]
+    | None = None,
 ) -> list[FaceQARecord]:
     """Return FaceQA records derived from alignments and optional sidecar data."""
     sidecar_index = build_index(qa_file) if qa_file is not None else {}
@@ -77,9 +85,16 @@ def records_from_alignments(
     for frame, idx, face in load_alignments_records(path):
         record = _record_from_alignment(frame, idx, face)
         sidecar_record = sidecar_index.get((frame, idx))
-        records.append(_merge_records(record, sidecar_record))
+        record = _merge_records(record, sidecar_record)
+        if pose_backfiller is not None and not _valid_spiga_pose(record):
+            _apply_backfilled_pose(record, pose_backfiller(record, face))
+        _select_pose(record)
+        records.append(record)
     if qa_file is not None and not records:
-        return list(qa_file.faces)
+        records = list(qa_file.faces)
+        for record in records:
+            _select_pose(record)
+        return records
     return records
 
 
@@ -87,7 +102,7 @@ def _merge_records(base: FaceQARecord, override: FaceQARecord | None) -> FaceQAR
     """Fill missing sidecar values with alignment-derived values."""
     if override is None:
         return base
-    merged = FaceQARecord.from_dict(override.to_dict())
+    merged = T.cast(FaceQARecord, FaceQARecord.from_dict(override.to_dict()))
     for key, value in base.to_dict().items():
         current = getattr(merged, key)
         if current is None or current == []:
@@ -119,9 +134,9 @@ def _populate_aligned_metrics(record: FaceQARecord, face: FileAlignments) -> Non
     except Exception:  # pylint:disable=broad-except
         logger.debug("Could not derive aligned metrics for %s:%s", record.frame, record.face_index)
         return
-    record.yaw = float(aligned.pose.yaw)
-    record.pitch = float(aligned.pose.pitch)
-    record.roll = float(aligned.pose.roll)
+    record.alignment_yaw = float(aligned.pose.yaw)
+    record.alignment_pitch = float(aligned.pose.pitch)
+    record.alignment_roll = float(aligned.pose.roll)
     record.average_distance = float(aligned.average_distance)
 
 
@@ -148,20 +163,21 @@ def _populate_metadata(record: FaceQARecord, metadata: dict[str, T.Any]) -> None
 
 
 def _populate_pose_metadata(record: FaceQARecord, metadata: dict[str, T.Any]) -> None:
-    """Prefer native persisted pose metadata over landmark-derived pose."""
+    """Populate native SPIGA pose metadata when present."""
     pose = _extract_pose_metadata(metadata)
     if pose is None:
         return
-    record.yaw = _float_or_none(pose.get("yaw"))
-    record.pitch = _float_or_none(pose.get("pitch"))
-    record.roll = _float_or_none(pose.get("roll"))
-    record.pose_source = str(pose.get("source") or "metadata")
-    record.pose_model = None if pose.get("model") is None else str(pose.get("model"))
+    record.spiga_yaw = _float_or_none(pose.get("yaw"))
+    record.spiga_pitch = _float_or_none(pose.get("pitch"))
+    record.spiga_roll = _float_or_none(pose.get("roll"))
+    record.spiga_pose_source = str(pose.get("source") or "spiga")
+    record.spiga_pose_model = None if pose.get("model") is None else str(pose.get("model"))
     delta = pose.get("delta")
     if isinstance(delta, dict):
         record.pose_delta_yaw = _float_or_none(delta.get("yaw"))
         record.pose_delta_pitch = _float_or_none(delta.get("pitch"))
         record.pose_delta_roll = _float_or_none(delta.get("roll"))
+        _set_pose_max_delta(record)
 
 
 def _extract_pose_metadata(metadata: dict[str, T.Any]) -> dict[str, T.Any] | None:
@@ -193,11 +209,124 @@ def _float_or_none(value: T.Any) -> float | None:
         return None
 
 
+def _pose_values(record: FaceQARecord, prefix: str) -> dict[str, float | None]:
+    """Return yaw/pitch/roll values for one candidate prefix."""
+    return {
+        "yaw": getattr(record, f"{prefix}_yaw"),
+        "pitch": getattr(record, f"{prefix}_pitch"),
+        "roll": getattr(record, f"{prefix}_roll"),
+    }
+
+
+def _valid_pose_values(values: dict[str, float | None]) -> bool:
+    """Return whether pose values are numeric, finite, and in sane ranges."""
+    for key, value in values.items():
+        if value is None:
+            return False
+        if not np.isfinite(value):
+            return False
+        low, high = POSE_LIMITS[key]
+        if not low <= value <= high:
+            return False
+    return True
+
+
+def _valid_spiga_pose(record: FaceQARecord) -> bool:
+    """Return whether the record already has a valid SPIGA pose candidate."""
+    if _valid_pose_values(_pose_values(record, "spiga")):
+        return True
+    if record.pose_source in ("spiga", "spiga_backfill"):
+        return _valid_pose_values({"yaw": record.yaw, "pitch": record.pitch, "roll": record.roll})
+    return False
+
+
+def _apply_backfilled_pose(record: FaceQARecord, pose: dict[str, T.Any] | None) -> None:
+    """Store a backfilled SPIGA pose candidate on a record."""
+    if pose is None:
+        return
+    record.spiga_yaw = _float_or_none(pose.get("yaw"))
+    record.spiga_pitch = _float_or_none(pose.get("pitch"))
+    record.spiga_roll = _float_or_none(pose.get("roll"))
+    record.spiga_pose_source = str(pose.get("source") or "spiga_backfill")
+    record.spiga_pose_model = None if pose.get("model") is None else str(pose.get("model"))
+
+
+def _set_pose_deltas(record: FaceQARecord) -> None:
+    """Populate SPIGA-minus-alignment pose deltas when both candidates exist."""
+    spiga = _pose_values(record, "spiga")
+    alignment = _pose_values(record, "alignment")
+    if not _valid_pose_values(spiga) or not _valid_pose_values(alignment):
+        return
+    record.pose_delta_yaw = spiga["yaw"] - alignment["yaw"]  # type:ignore[operator]
+    record.pose_delta_pitch = spiga["pitch"] - alignment["pitch"]  # type:ignore[operator]
+    record.pose_delta_roll = spiga["roll"] - alignment["roll"]  # type:ignore[operator]
+    _set_pose_max_delta(record)
+
+
+def _set_pose_max_delta(record: FaceQARecord) -> None:
+    """Populate maximum absolute pose disagreement."""
+    deltas = [record.pose_delta_yaw, record.pose_delta_pitch, record.pose_delta_roll]
+    numeric = [abs(delta) for delta in deltas if delta is not None]
+    record.pose_max_abs_delta = max(numeric) if numeric else None
+
+
+def _pose_confidence(record: FaceQARecord, source: str) -> str:
+    """Return confidence for the selected pose source."""
+    if source == "alignment":
+        return "fallback"
+    if record.pose_max_abs_delta is None:
+        return "unknown"
+    if record.pose_max_abs_delta <= POSE_HIGH_CONFIDENCE_DELTA:
+        return "high"
+    if record.pose_max_abs_delta <= POSE_MEDIUM_CONFIDENCE_DELTA:
+        return "medium"
+    return "low"
+
+
+def _select_pose(record: FaceQARecord) -> None:
+    """Select the coverage pose using SPIGA-first deterministic rules."""
+    # Backward compatibility: previous sidecars stored selected SPIGA pose directly.
+    if record.spiga_yaw is None and record.pose_source in ("spiga", "spiga_backfill"):
+        record.spiga_yaw = record.yaw
+        record.spiga_pitch = record.pitch
+        record.spiga_roll = record.roll
+        record.spiga_pose_source = record.pose_source
+        record.spiga_pose_model = record.pose_model
+
+    _set_pose_deltas(record)
+    spiga = _pose_values(record, "spiga")
+    if _valid_pose_values(spiga):
+        record.yaw = spiga["yaw"]
+        record.pitch = spiga["pitch"]
+        record.roll = spiga["roll"]
+        record.pose_source = record.spiga_pose_source or "spiga"
+        record.pose_model = record.spiga_pose_model or "spiga"
+        record.pose_confidence = _pose_confidence(record, record.pose_source)
+        return
+
+    alignment = _pose_values(record, "alignment")
+    if _valid_pose_values(alignment):
+        record.yaw = alignment["yaw"]
+        record.pitch = alignment["pitch"]
+        record.roll = alignment["roll"]
+        record.pose_source = "alignment"
+        record.pose_model = "aligned_face"
+        record.pose_confidence = "fallback"
+        return
+
+    record.yaw = None
+    record.pitch = None
+    record.roll = None
+    record.pose_source = "unknown"
+    record.pose_model = None
+    record.pose_confidence = "unknown"
+
+
 def _decode_thumb(thumb: np.ndarray | None) -> np.ndarray | None:
     """Decode an alignments thumbnail if present."""
     if thumb is None:
         return None
-    arr = np.asarray(thumb, dtype=np.uint8)
+    arr: np.ndarray = np.asarray(thumb, dtype=np.uint8)
     if arr.ndim != 3:
         decoded = cv2.imdecode(arr.reshape(-1), cv2.IMREAD_COLOR)
         return T.cast(np.ndarray | None, decoded)
@@ -209,6 +338,65 @@ def _estimate_blur(image: np.ndarray) -> float:
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if image.ndim == 3 else image
     blur_map = T.cast(np.ndarray, cv2.Laplacian(gray, cv2.CV_32F))
     return float(np.var(blur_map) / np.sqrt(gray.shape[0] * gray.shape[1]))
+
+
+class SpigaPoseBackfiller:
+    """Backfill native SPIGA pose from stored aligned face thumbnails."""
+
+    def __init__(self) -> None:
+        self._plugin: T.Any = None
+        self._disabled_reason: str | None = None
+
+    def __call__(self, record: FaceQARecord, face: FileAlignments) -> dict[str, T.Any] | None:
+        """Return SPIGA pose metadata for a face, or ``None`` when unavailable."""
+        del record
+        if self._disabled_reason is not None:
+            return None
+        image = _decode_thumb(face.thumb)
+        if image is None:
+            return None
+        plugin = self._load_plugin()
+        if plugin is None:
+            return None
+        feed = cv2.resize(
+            image, (plugin.input_size, plugin.input_size), interpolation=cv2.INTER_CUBIC
+        )
+        feed = feed.astype("float32", copy=False) / 255.0
+        try:
+            raw = plugin.process(feed[None])
+            plugin.post_process(raw)
+        except Exception as err:  # pylint:disable=broad-except
+            self._disabled_reason = str(err)
+            logger.warning("SPIGA pose backfill failed; falling back to alignment pose: %s", err)
+            return None
+        metadata = getattr(plugin, "last_debug_metadata", [])
+        if not metadata:
+            return None
+        pose = metadata[0].get("pose") if isinstance(metadata[0], dict) else None
+        if not isinstance(pose, dict):
+            return None
+        pose = dict(pose)
+        pose["source"] = "spiga_backfill"
+        pose.setdefault("model", "spiga")
+        return pose
+
+    def _load_plugin(self) -> T.Any | None:
+        """Load SPIGA lazily only when a face has an available crop."""
+        if self._plugin is not None:
+            return self._plugin
+        try:
+            from plugins.extract.align.spiga import SPIGA  # pylint:disable=import-outside-toplevel
+
+            plugin = SPIGA()
+            plugin.model = plugin.load_model()
+        except Exception as err:  # pylint:disable=broad-except
+            self._disabled_reason = str(err)
+            logger.warning(
+                "SPIGA pose backfill unavailable; falling back to alignment pose: %s", err
+            )
+            return None
+        self._plugin = plugin
+        return self._plugin
 
 
 def _mask_ref(face: FileAlignments) -> str | None:
@@ -229,6 +417,14 @@ def _pose_bucket(record: FaceQARecord) -> str:
     if abs_yaw <= POSE_YAW_THRESHOLDS[2]:
         return "profile"
     return "extreme"
+
+
+def _pose_source_bucket(record: FaceQARecord) -> str:
+    return record.pose_source if record.pose_source is not None else "unknown"
+
+
+def _pose_confidence_bucket(record: FaceQARecord) -> str:
+    return record.pose_confidence if record.pose_confidence is not None else "unknown"
 
 
 def _roll_bucket(record: FaceQARecord) -> str:
@@ -335,6 +531,8 @@ def _mask_qa_bucket(record: FaceQARecord) -> str:
 
 _DIMENSION_BUCKETS: dict[str, list[str]] = {
     "pose": ["frontal", "slight", "profile", "extreme", "unknown"],
+    "pose_sources": ["spiga", "spiga_backfill", "alignment", "unknown"],
+    "pose_confidence": ["high", "medium", "low", "fallback", "unknown"],
     "roll": ["stable", "tilted", "risky", "unknown"],
     "blur": ["sharp", "acceptable", "blurry", "unusable", "unknown"],
     "resolution": ["high", "medium", "low", "tiny", "unknown"],
@@ -358,6 +556,8 @@ _DIMENSION_BUCKETS: dict[str, list[str]] = {
 
 _BUCKET_FNS = {
     "pose": _pose_bucket,
+    "pose_sources": _pose_source_bucket,
+    "pose_confidence": _pose_confidence_bucket,
     "roll": _roll_bucket,
     "blur": _blur_bucket,
     "resolution": _resolution_bucket,
@@ -448,6 +648,7 @@ def _metric_summary(records: list[FaceQARecord]) -> dict[str, dict[str, float | 
         "yaw": [record.yaw for record in records],
         "pitch": [record.pitch for record in records],
         "roll": [record.roll for record in records],
+        "pose_max_abs_delta": [record.pose_max_abs_delta for record in records],
         "blur_score": [record.blur_score for record in records],
         "average_distance": [record.average_distance for record in records],
         "exposure_mean": [record.exposure_mean for record in records],
