@@ -84,36 +84,100 @@ def _onnxruntime_providers(
     return providers, ctx_id
 
 
-def _load_onnx_adaface() -> LoadedIdentityModel:
-    """Load AdaFace ONNX weights from Hugging Face."""
-    try:
-        ort = import_module("onnxruntime")
-    except ImportError as exc:
-        raise ImportError(
-            "AdaFace identity extraction requires 'onnxruntime'. Install a CPU or GPU "
-            "onnxruntime package suitable for your Faceswap backend."
-        ) from exc
-    try:
-        from huggingface_hub import hf_hub_download  # pylint:disable=import-outside-toplevel
-    except ImportError as exc:
-        raise ImportError(
-            "AdaFace identity extraction requires 'huggingface_hub' to download weights."
-        ) from exc
+def _make_cvlface_loader(
+    repo_id: str, *, model_label: str, force_cpu: bool = False
+) -> T.Callable[[], LoadedIdentityModel]:
+    """Return a loader for a CVLFace Transformers/safetensors recognition model."""
 
-    weights = hf_hub_download(
-        repo_id="mk-minchul/AdaFace", filename="adaface_ir101_webface12m.onnx"
-    )
-    session = ort.InferenceSession(weights, providers=["CPUExecutionProvider"])
-    input_name = session.get_inputs()[0].name
+    def _load() -> LoadedIdentityModel:
+        try:
+            torch = import_module("torch")
+            transformers = import_module("transformers")
+            torch_utils = import_module("lib.torch_utils")
+        except ImportError as exc:
+            raise ImportError(
+                f"{model_label} identity extraction requires 'torch' and 'transformers'."
+            ) from exc
 
-    class _AdaFaceOnnx:
-        def embed(self, faces: np.ndarray) -> np.ndarray:
-            x = faces.astype(np.float32) / 127.5 - 1.0
-            x = np.transpose(x, (0, 3, 1, 2))
-            outputs = session.run(None, {input_name: x})
-            return T.cast(np.ndarray, np.asarray(outputs[0], dtype=np.float32))
+        device = torch_utils.get_device(cpu=force_cpu)
+        auto_model = transformers.AutoModel
+        model = auto_model.from_pretrained(repo_id, trust_remote_code=True)
+        model.to(device)
+        model.eval()
+        logger.info("%s CVLFace model loaded on %s from %s", model_label, device, repo_id)
 
-    return _AdaFaceOnnx()
+        def _extract_tensor(output: T.Any) -> T.Any:
+            """Extract the embedding tensor from common Transformers/custom-code outputs."""
+            if hasattr(torch, "is_tensor") and torch.is_tensor(output):
+                return output
+            if isinstance(output, dict):
+                for key in ("embeddings", "embedding", "features", "logits", "last_hidden_state"):
+                    if key in output:
+                        return _extract_tensor(output[key])
+                for value in output.values():
+                    try:
+                        return _extract_tensor(value)
+                    except TypeError:
+                        continue
+            if isinstance(output, (list, tuple)):
+                for value in output:
+                    try:
+                        return _extract_tensor(value)
+                    except TypeError:
+                        continue
+            for attr in ("embeddings", "embedding", "features", "logits", "last_hidden_state"):
+                if hasattr(output, attr):
+                    return _extract_tensor(getattr(output, attr))
+            raise TypeError(f"Unsupported {model_label} model output type: {type(output)!r}")
+
+        class _CVLFace:
+            def __init__(self) -> None:
+                self._device = device
+                self._model = model
+
+            def _prepare(self, faces: np.ndarray) -> T.Any:
+                # CVLFace model cards expect RGB images normalized with mean/std 0.5.
+                rgb = np.ascontiguousarray(faces[..., ::-1])
+                inputs = torch.from_numpy(rgb).to(dtype=torch.float32).mul_(1.0 / 255.0)
+                inputs = inputs.permute(0, 3, 1, 2).sub_(0.5).div_(0.5)
+                if self._device.type == "cuda":
+                    inputs = inputs.pin_memory().to(self._device, non_blocking=True)
+                else:
+                    inputs = inputs.to(self._device)
+                return inputs.contiguous()
+
+            def _run(self, faces: np.ndarray) -> np.ndarray:
+                if len(faces) == 0:
+                    return np.zeros((0, 512), dtype=np.float32)
+                with torch.inference_mode():
+                    output = self._model(self._prepare(faces))
+                    embeddings = _extract_tensor(output)
+                    if embeddings.ndim == 1:
+                        embeddings = embeddings.unsqueeze(0)
+                    if embeddings.ndim > 2:
+                        embeddings = embeddings.reshape(embeddings.shape[0], -1)
+                    embeddings = embeddings.to("cpu", dtype=torch.float32).numpy()
+                return T.cast(np.ndarray, np.ascontiguousarray(embeddings, dtype=np.float32))
+
+            def embed(self, faces: np.ndarray) -> np.ndarray:
+                try:
+                    return self._run(faces)
+                except RuntimeError:
+                    if self._device.type == "cpu":
+                        raise
+                    logger.warning(
+                        "%s failed on %s. Falling back to CPU.",
+                        model_label,
+                        self._device,
+                        exc_info=True,
+                    )
+                    self._device = torch.device("cpu")
+                    self._model.to(self._device)
+                    return self._run(faces)
+
+        return _CVLFace()
+
+    return _load
 
 
 def _make_insightface_loader(
@@ -195,12 +259,30 @@ ADAFACE = IdentityModelAdapter(
     input_size=112,
     normalized=True,
     provenance=ModelProvenance(
-        source="mk-minchul/AdaFace",
+        source="minchul/cvlface_adaface_ir101_webface12m",
         license="MIT",
         commercial_use=True,
-        notes="AdaFace iResNet101 WebFace12M, Kim et al., CVPR 2022.",
+        notes="CVLFace AdaFace iResNet101 WebFace12M, Kim et al., CVPR 2022.",
     ),
-    loader=_load_onnx_adaface,
+    loader=_make_cvlface_loader(
+        "minchul/cvlface_adaface_ir101_webface12m", model_label="AdaFace"
+    ),
+)
+
+ARCFACE = IdentityModelAdapter(
+    name="arcface",
+    embedding_dim=512,
+    input_size=112,
+    normalized=True,
+    provenance=ModelProvenance(
+        source="minchul/cvlface_arcface_ir101_webface4m",
+        license="non-commercial",
+        commercial_use=False,
+        notes="CVLFace ArcFace iResNet101 WebFace4M, Deng et al., CVPR 2019.",
+    ),
+    loader=_make_cvlface_loader(
+        "minchul/cvlface_arcface_ir101_webface4m", model_label="ArcFace"
+    ),
 )
 
 
@@ -245,6 +327,36 @@ INSIGHTFACE: dict[str, IdentityModelAdapter] = {
         loader=_make_insightface_loader("buffalo_sc"),
     ),
 }
+
+
+def cvlface_adapter(
+    adapter: IdentityModelAdapter, *, repo_id: str, model_label: str, force_cpu: bool = False
+) -> IdentityModelAdapter:
+    """Return a CVLFace adapter with the requested runtime device policy."""
+    return replace(
+        adapter,
+        loader=_make_cvlface_loader(repo_id, model_label=model_label, force_cpu=force_cpu),
+    )
+
+
+def adaface_adapter(*, force_cpu: bool = False) -> IdentityModelAdapter:
+    """Return the configured AdaFace adapter."""
+    return cvlface_adapter(
+        ADAFACE,
+        repo_id="minchul/cvlface_adaface_ir101_webface12m",
+        model_label="AdaFace",
+        force_cpu=force_cpu,
+    )
+
+
+def arcface_adapter(*, force_cpu: bool = False) -> IdentityModelAdapter:
+    """Return the configured ArcFace adapter."""
+    return cvlface_adapter(
+        ARCFACE,
+        repo_id="minchul/cvlface_arcface_ir101_webface4m",
+        model_label="ArcFace",
+        force_cpu=force_cpu,
+    )
 
 
 def insightface_adapter(model_type: str, *, force_cpu: bool = False) -> IdentityModelAdapter:
