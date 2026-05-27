@@ -23,6 +23,7 @@ if T.TYPE_CHECKING:
     from collections.abc import Callable
 
 POSE_YAW_THRESHOLDS = (15.0, 30.0, 60.0)
+POSE_PITCH_THRESHOLDS = (15.0, 30.0)
 ROLL_RISK_THRESHOLDS = (10.0, 25.0)
 BLUR_THRESHOLDS = (6.0, 3.0, 1.0)
 RESOLUTION_THRESHOLDS = (256, 128, 64)
@@ -48,6 +49,7 @@ class FacesetCoverageReport:
     identity_outlier_ratio: float | None = None
     mask_qa_distribution: dict[str, int] = field(default_factory=dict)
     source_counts: dict[str, int] = field(default_factory=dict)
+    joint_pose_coverage: dict[str, T.Any] = field(default_factory=dict)
     sidecar_used: bool = False
 
     def coverage_dict(self) -> dict[str, dict[str, T.Any]]:
@@ -461,16 +463,33 @@ def _mask_ref(face: FileAlignments) -> str | None:
 
 
 def _pose_bucket(record: FaceQARecord) -> str:
+    """Return a signed yaw bucket. Negative yaw is left, positive is right."""
     if record.yaw is None:
         return "unknown"
-    abs_yaw = abs(record.yaw)
+    yaw = record.yaw
+    abs_yaw = abs(yaw)
     if abs_yaw <= POSE_YAW_THRESHOLDS[0]:
         return "frontal"
+    side = "left" if yaw < 0 else "right"
     if abs_yaw <= POSE_YAW_THRESHOLDS[1]:
-        return "slight"
+        return f"{side}_slight"
     if abs_yaw <= POSE_YAW_THRESHOLDS[2]:
-        return "profile"
-    return "extreme"
+        return f"{side}_profile"
+    return f"{side}_extreme"
+
+
+def _pitch_bucket(record: FaceQARecord) -> str:
+    """Return a signed pitch bucket. Negative pitch is down, positive is up."""
+    if record.pitch is None:
+        return "unknown"
+    pitch = record.pitch
+    abs_pitch = abs(pitch)
+    if abs_pitch <= POSE_PITCH_THRESHOLDS[0]:
+        return "neutral"
+    direction = "down" if pitch < 0 else "up"
+    if abs_pitch <= POSE_PITCH_THRESHOLDS[1]:
+        return direction
+    return f"{direction}_extreme"
 
 
 def _pose_source_bucket(record: FaceQARecord) -> str:
@@ -583,8 +602,26 @@ def _mask_qa_bucket(record: FaceQARecord) -> str:
     return record.mask_qa_ref if record.mask_qa_ref is not None else "unknown"
 
 
+YAW_BUCKETS: tuple[str, ...] = (
+    "left_extreme",
+    "left_profile",
+    "left_slight",
+    "frontal",
+    "right_slight",
+    "right_profile",
+    "right_extreme",
+)
+PITCH_BUCKETS: tuple[str, ...] = (
+    "down_extreme",
+    "down",
+    "neutral",
+    "up",
+    "up_extreme",
+)
+
 _DIMENSION_BUCKETS: dict[str, list[str]] = {
-    "pose": ["frontal", "slight", "profile", "extreme", "unknown"],
+    "pose": [*YAW_BUCKETS, "unknown"],
+    "pitch": [*PITCH_BUCKETS, "unknown"],
     "pose_sources": ["spiga", "spiga_backfill", "alignment", "unknown"],
     "pose_confidence": ["high", "medium", "low", "fallback", "unknown"],
     "roll": ["stable", "tilted", "risky", "unknown"],
@@ -610,6 +647,7 @@ _DIMENSION_BUCKETS: dict[str, list[str]] = {
 
 _BUCKET_FNS = {
     "pose": _pose_bucket,
+    "pitch": _pitch_bucket,
     "pose_sources": _pose_source_bucket,
     "pose_confidence": _pose_confidence_bucket,
     "roll": _roll_bucket,
@@ -722,6 +760,56 @@ def _summarize(values: list[float | None]) -> dict[str, float | None]:
     }
 
 
+def _joint_cell_label(yaw_bucket: str, pitch_bucket: str) -> str:
+    """Return a stable joint pose cell label."""
+    return f"{yaw_bucket}+{pitch_bucket}"
+
+
+def _joint_pose_coverage(records: list[FaceQARecord]) -> dict[str, T.Any]:
+    """Return yaw x pitch joint cell coverage with entropy and occupancy."""
+    cells = [_joint_cell_label(y, p) for y in YAW_BUCKETS for p in PITCH_BUCKETS]
+    counts: dict[str, int] = {cell: 0 for cell in cells}
+    unknown = 0
+    for record in records:
+        yaw_bucket = _pose_bucket(record)
+        pitch_bucket = _pitch_bucket(record)
+        if yaw_bucket == "unknown" or pitch_bucket == "unknown":
+            unknown += 1
+            continue
+        counts[_joint_cell_label(yaw_bucket, pitch_bucket)] += 1
+    classified = sum(counts.values())
+    total_cells = len(cells)
+    occupied_cells = sum(1 for value in counts.values() if value > 0)
+    empty_cells = total_cells - occupied_cells
+    percentages = (
+        {cell: round(value / classified * 100, 2) for cell, value in counts.items()}
+        if classified
+        else {cell: 0.0 for cell in counts}
+    )
+    if classified:
+        probabilities = np.array(
+            [value / classified for value in counts.values() if value > 0],
+            dtype="float64",
+        )
+        entropy = float(-np.sum(probabilities * np.log2(probabilities)))
+    else:
+        entropy = 0.0
+    bin_coverage_pct = round(occupied_cells / total_cells * 100, 2) if total_cells else 0.0
+    missing_cells = [cell for cell, value in counts.items() if value == 0]
+    return {
+        "counts": counts,
+        "percentages": percentages,
+        "total_cells": total_cells,
+        "occupied_pose_cells": occupied_cells,
+        "empty_pose_cells": empty_cells,
+        "pose_bin_coverage_pct": bin_coverage_pct,
+        "pose_entropy": round(entropy, 4),
+        "classified_faces": classified,
+        "unknown_faces": unknown,
+        "missing_cells": missing_cells,
+    }
+
+
 def compute_coverage(
     records: T.Sequence[FaceQARecord],
     *,
@@ -742,6 +830,7 @@ def compute_coverage(
         duplicate_ratio=_compute_duplicate_ratio(records_list) if total else None,
         identity_outlier_ratio=_compute_identity_outlier_ratio(records_list) if total else None,
         mask_qa_distribution=_mask_qa_distribution(records_list),
+        joint_pose_coverage=_joint_pose_coverage(records_list),
         source_counts={
             "alignments": total,
             "sidecar": sum(

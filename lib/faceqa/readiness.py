@@ -21,6 +21,9 @@ DUPLICATE_WARN_RATIO = 0.50
 OUTLIER_WARN_RATIO = 0.30
 POSE_FALLBACK_WARN_RATIO = 0.40
 LOW_CONFIDENCE_POSE_WARN_RATIO = 0.20
+JOINT_POSE_COVERAGE_WARN_PCT = 50.0
+JOINT_POSE_ENTROPY_WARN_BITS = 3.0
+MISSING_POSE_CELL_REPORT_LIMIT = 8
 
 
 @dataclass
@@ -39,6 +42,7 @@ class ReadinessReport:
     identity_outlier_ratio: float | None = None
     mask_qa_distribution: dict[str, int] = field(default_factory=dict)
     source_counts: dict[str, int] = field(default_factory=dict)
+    joint_pose_coverage: dict[str, T.Any] = field(default_factory=dict)
     underrepresented_buckets: list[dict[str, str | float]] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     recommendations: list[str] = field(default_factory=list)
@@ -58,6 +62,7 @@ class ReadinessReport:
             "identity_outlier_ratio": self.identity_outlier_ratio,
             "mask_qa_distribution": self.mask_qa_distribution,
             "source_counts": self.source_counts,
+            "joint_pose_coverage": self.joint_pose_coverage,
             "underrepresented_buckets": self.underrepresented_buckets,
             "warnings": self.warnings,
             "recommendations": self.recommendations,
@@ -93,6 +98,27 @@ class ReadinessReport:
                 pct = float(percentages.get(bucket, 0.0))
                 lines.append(f"| {bucket} | {count} | {pct:.1f} |")
 
+        joint = self.joint_pose_coverage
+        if joint:
+            lines.extend(
+                [
+                    "",
+                    "## Joint Pose Coverage (signed yaw x pitch)",
+                    "",
+                    f"- **Occupied cells**: {joint.get('occupied_pose_cells', 0)} "
+                    f"of {joint.get('total_cells', 0)}",
+                    f"- **Empty cells**: {joint.get('empty_pose_cells', 0)}",
+                    f"- **Bin coverage**: {float(joint.get('pose_bin_coverage_pct', 0.0)):.1f}%",
+                    f"- **Pose entropy (bits)**: {float(joint.get('pose_entropy', 0.0)):.3f}",
+                ]
+            )
+            missing = list(joint.get("missing_cells", []))
+            if missing:
+                preview = ", ".join(missing[:MISSING_POSE_CELL_REPORT_LIMIT])
+                if len(missing) > MISSING_POSE_CELL_REPORT_LIMIT:
+                    preview += f", … (+{len(missing) - MISSING_POSE_CELL_REPORT_LIMIT} more)"
+                lines.append(f"- **Missing pose regions**: {preview}")
+
         if self.metric_summary:
             lines.extend(["", "## Metric Summary", ""])
             lines.extend(["| Metric | Min | Median | Max |", "|--------|----:|-------:|----:|"])
@@ -125,7 +151,16 @@ def _underrepresented(
 ) -> list[dict[str, str | float]]:
     """Return non-risk coverage buckets below the configured threshold."""
     included = {
-        "pose": {"frontal", "slight", "profile", "extreme"},
+        "pose": {
+            "left_extreme",
+            "left_profile",
+            "left_slight",
+            "frontal",
+            "right_slight",
+            "right_profile",
+            "right_extreme",
+        },
+        "pitch": {"down_extreme", "down", "neutral", "up", "up_extreme"},
         "lighting": {"dark", "normal", "bright"},
         "expression": None,
     }
@@ -205,6 +240,22 @@ def _build_warnings(
             f"{entry['dimension']}/{entry['bucket']} at {entry['percentage']:.1f}% "
             f"(threshold: {min_bucket_pct:.1f}%)."
         )
+    joint = coverage.joint_pose_coverage
+    if joint:
+        bin_pct = float(joint.get("pose_bin_coverage_pct", 0.0))
+        if bin_pct < JOINT_POSE_COVERAGE_WARN_PCT:
+            warnings.append(
+                "Sparse pose coverage: only "
+                f"{bin_pct:.1f}% of yaw/pitch cells are populated "
+                f"({joint.get('occupied_pose_cells', 0)} of "
+                f"{joint.get('total_cells', 0)})."
+            )
+        entropy = float(joint.get("pose_entropy", 0.0))
+        if joint.get("classified_faces", 0) and entropy < JOINT_POSE_ENTROPY_WARN_BITS:
+            warnings.append(
+                f"Low pose entropy: {entropy:.2f} bits over occupied cells — "
+                "pose distribution is concentrated in a few regions."
+            )
     return warnings
 
 
@@ -245,8 +296,13 @@ def _build_recommendations(
         str(item["bucket"]) for item in underrepresented if item["dimension"] == "pose"
     ]
     if pose_buckets:
+        recommendations.append("Balance yaw coverage: " + ", ".join(pose_buckets) + ".")
+    pitch_buckets = [
+        str(item["bucket"]) for item in underrepresented if item["dimension"] == "pitch"
+    ]
+    if pitch_buckets:
         recommendations.append(
-            "Collect more frames for these poses: " + ", ".join(pose_buckets) + "."
+            "Add frames at these pitch angles: " + ", ".join(pitch_buckets) + "."
         )
     lighting_buckets = [
         str(item["bucket"]) for item in underrepresented if item["dimension"] == "lighting"
@@ -254,6 +310,15 @@ def _build_recommendations(
     if lighting_buckets:
         recommendations.append(
             "Add frames with varied lighting: " + ", ".join(lighting_buckets) + "."
+        )
+    joint = coverage.joint_pose_coverage
+    missing_cells = list(joint.get("missing_cells", [])) if joint else []
+    if missing_cells and joint.get("classified_faces", 0):
+        preview = missing_cells[:MISSING_POSE_CELL_REPORT_LIMIT]
+        remainder = len(missing_cells) - len(preview)
+        suffix = f" (+{remainder} more)" if remainder > 0 else ""
+        recommendations.append(
+            "Collect frames for missing yaw/pitch regions: " + ", ".join(preview) + suffix + "."
         )
 
     if not recommendations:
@@ -283,6 +348,7 @@ def generate_readiness_report(
         identity_outlier_ratio=coverage.identity_outlier_ratio,
         mask_qa_distribution=coverage.mask_qa_distribution,
         source_counts=coverage.source_counts,
+        joint_pose_coverage=coverage.joint_pose_coverage,
         underrepresented_buckets=underrepresented,
         warnings=warnings,
         recommendations=recommendations,

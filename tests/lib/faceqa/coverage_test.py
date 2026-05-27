@@ -430,6 +430,192 @@ def test_faceqa_coverage_tool_does_not_recompute_existing_spiga_pose(
     assert not (tmp_path / "alignments_faceset_qa.json").exists()
 
 
+def test_compute_coverage_signed_pose_and_pitch_buckets() -> None:
+    """Signed yaw and pitch coverage should partition records by side and tilt."""
+    records = [
+        FaceQARecord(frame="left_extreme.png", face_index=0, yaw=-75.0, pitch=-40.0),
+        FaceQARecord(frame="left_profile.png", face_index=0, yaw=-45.0, pitch=-20.0),
+        FaceQARecord(frame="left_slight.png", face_index=0, yaw=-20.0, pitch=-5.0),
+        FaceQARecord(frame="frontal.png", face_index=0, yaw=0.0, pitch=0.0),
+        FaceQARecord(frame="right_slight.png", face_index=0, yaw=20.0, pitch=20.0),
+        FaceQARecord(frame="right_profile.png", face_index=0, yaw=45.0, pitch=35.0),
+        FaceQARecord(frame="right_extreme.png", face_index=0, yaw=75.0, pitch=10.0),
+    ]
+
+    report = compute_coverage(records)
+
+    pose = report.bucket_counts["pose"]
+    assert pose["left_extreme"] == 1
+    assert pose["left_profile"] == 1
+    assert pose["left_slight"] == 1
+    assert pose["frontal"] == 1
+    assert pose["right_slight"] == 1
+    assert pose["right_profile"] == 1
+    assert pose["right_extreme"] == 1
+    pitch_counts = report.bucket_counts["pitch"]
+    assert pitch_counts["down_extreme"] == 1
+    assert pitch_counts["down"] == 1
+    assert pitch_counts["neutral"] == 3
+    assert pitch_counts["up"] == 1
+    assert pitch_counts["up_extreme"] == 1
+    assert "signed_yaw" not in report.bucket_counts
+    assert "slight" not in pose
+    assert "profile" not in pose
+    assert "extreme" not in pose
+
+
+def test_compute_coverage_joint_pose_coverage_counts_and_entropy() -> None:
+    """Joint coverage should track occupied/empty cells and pose entropy."""
+    records = [
+        FaceQARecord(frame="a.png", face_index=0, yaw=0.0, pitch=0.0),
+        FaceQARecord(frame="b.png", face_index=0, yaw=0.0, pitch=0.0),
+        FaceQARecord(frame="c.png", face_index=0, yaw=45.0, pitch=20.0),
+        FaceQARecord(frame="d.png", face_index=0, yaw=-45.0, pitch=-20.0),
+        FaceQARecord(frame="e.png", face_index=0, yaw=None),
+    ]
+
+    report = compute_coverage(records)
+
+    joint = report.joint_pose_coverage
+    assert joint["total_cells"] == 7 * 5
+    assert joint["occupied_pose_cells"] == 3
+    assert joint["empty_pose_cells"] == 32
+    assert joint["classified_faces"] == 4
+    assert joint["unknown_faces"] == 1
+    assert joint["counts"]["frontal+neutral"] == 2
+    assert joint["counts"]["right_profile+up"] == 1
+    assert joint["counts"]["left_profile+down"] == 1
+    assert joint["pose_bin_coverage_pct"] == round(3 / 35 * 100, 2)
+    expected_entropy = -(0.5 * np.log2(0.5) + 0.25 * np.log2(0.25) * 2)
+    assert abs(joint["pose_entropy"] - round(expected_entropy, 4)) < 1e-3
+    assert "left_extreme+up_extreme" in joint["missing_cells"]
+    assert "frontal+neutral" not in joint["missing_cells"]
+
+
+def test_compute_coverage_joint_pose_coverage_empty_records() -> None:
+    """Joint coverage handles records with no pose data without dividing by zero."""
+    records = [FaceQARecord(frame="f.png", face_index=0)]
+
+    report = compute_coverage(records)
+
+    joint = report.joint_pose_coverage
+    assert joint["classified_faces"] == 0
+    assert joint["unknown_faces"] == 1
+    assert joint["occupied_pose_cells"] == 0
+    assert joint["empty_pose_cells"] == joint["total_cells"]
+    assert joint["pose_entropy"] == 0.0
+    assert joint["pose_bin_coverage_pct"] == 0.0
+
+
+def test_readiness_report_exposes_joint_pose_coverage_in_json() -> None:
+    """Joint pose coverage should round-trip through the JSON report."""
+    records = [
+        FaceQARecord(frame="a.png", face_index=0, yaw=0.0, pitch=0.0),
+        FaceQARecord(frame="b.png", face_index=0, yaw=-45.0, pitch=20.0),
+    ]
+
+    report = generate_readiness_report(compute_coverage(records))
+    payload = json.loads(report.to_json())
+
+    assert "joint_pose_coverage" in payload
+    joint = payload["joint_pose_coverage"]
+    assert joint["counts"]["frontal+neutral"] == 1
+    assert joint["counts"]["left_profile+up"] == 1
+    assert joint["occupied_pose_cells"] == 2
+    assert joint["empty_pose_cells"] == joint["total_cells"] - 2
+    assert "missing_cells" in joint
+
+
+def test_readiness_report_recommends_missing_pose_regions() -> None:
+    """Recommendations should mention specific missing yaw/pitch cells."""
+    records = [
+        FaceQARecord(frame="a.png", face_index=0, yaw=0.0, pitch=0.0),
+        FaceQARecord(frame="b.png", face_index=0, yaw=0.0, pitch=0.0),
+        FaceQARecord(frame="c.png", face_index=0, yaw=0.0, pitch=0.0),
+    ]
+
+    report = generate_readiness_report(compute_coverage(records))
+
+    assert any(
+        "missing yaw/pitch regions" in recommendation for recommendation in report.recommendations
+    )
+    assert any("Sparse pose coverage" in warning for warning in report.warnings)
+    assert any("Low pose entropy" in warning for warning in report.warnings)
+
+
+def test_readiness_report_recommends_balanced_yaw_and_pitch() -> None:
+    """Under-represented yaw/pitch buckets should drive recommendations."""
+    records = [
+        FaceQARecord(frame=f"a{i}.png", face_index=0, yaw=0.0, pitch=0.0) for i in range(20)
+    ]
+    records.append(FaceQARecord(frame="r.png", face_index=0, yaw=70.0, pitch=40.0))
+
+    report = generate_readiness_report(compute_coverage(records))
+
+    assert any(
+        "Balance yaw coverage" in recommendation for recommendation in report.recommendations
+    )
+    assert any("pitch angles" in recommendation for recommendation in report.recommendations)
+
+
+def test_faceqa_coverage_tool_writes_joint_pose_metrics(tmp_path, monkeypatch) -> None:
+    """The coverage tool should write joint pose metrics into the JSON report."""
+    alignments = tmp_path / "alignments.fsa"
+    get_serializer("compressed").save(
+        str(alignments),
+        {
+            "__meta__": {"version": 2.4},
+            "__data__": {
+                "frame_000001.png": AlignmentsEntry(faces=[_face()]).to_dict(),
+            },
+        },
+    )
+    output_json = tmp_path / "coverage.json"
+    output_md = tmp_path / "coverage.md"
+    args = Namespace(
+        alignments=str(alignments),
+        frames_dir=str(tmp_path),
+        sidecar=None,
+        output_json=str(output_json),
+        output_markdown=str(output_md),
+        exclude_duplicates=False,
+        exclude_outliers=False,
+        min_bucket_pct=5.0,
+    )
+    monkeypatch.setattr(
+        Faceqa_Coverage,
+        "_pose_backfiller",
+        lambda _: lambda __, ___: None,
+    )
+
+    Faceqa_Coverage(args).process()
+
+    payload = json.loads(output_json.read_text(encoding="utf-8"))
+    assert "signed_yaw" not in payload["coverage"]
+    pose_buckets = payload["coverage"]["pose"]["counts"]
+    assert set(pose_buckets).issuperset(
+        {
+            "left_extreme",
+            "left_profile",
+            "left_slight",
+            "frontal",
+            "right_slight",
+            "right_profile",
+            "right_extreme",
+            "unknown",
+        }
+    )
+    assert "pitch" in payload["coverage"]
+    joint = payload["joint_pose_coverage"]
+    assert joint["total_cells"] == 35
+    assert "pose_entropy" in joint
+    assert "missing_cells" in joint
+    markdown = output_md.read_text(encoding="utf-8")
+    assert "## Pose" in markdown
+    assert "## Pitch" in markdown
+    assert "## Joint Pose Coverage" in markdown
+
+
 def test_sidecar_path() -> None:
     """Default FaceQA sidecar path should be derived from alignments stem."""
     assert sidecar_path("/tmp/project/alignments.fsa") == "/tmp/project/alignments_faceset_qa.json"
