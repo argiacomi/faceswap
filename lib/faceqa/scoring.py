@@ -61,6 +61,7 @@ class ComponentScore:
     weight: float
     classified_faces: int = 0
     total_bins: int = 0
+    signal_coverage: float = 1.0
 
     def to_dict(self) -> dict[str, T.Any]:
         return {
@@ -72,6 +73,7 @@ class ComponentScore:
             "weight": self.weight,
             "classified_faces": self.classified_faces,
             "total_bins": self.total_bins,
+            "signal_coverage": self.signal_coverage,
         }
 
 
@@ -207,6 +209,29 @@ def _ratio(coverage: FacesetCoverageReport, dimension: str, buckets: set[str]) -
     return sum(counts.get(bucket, 0) for bucket in buckets) / total
 
 
+def _quality_signal_coverage(coverage: FacesetCoverageReport) -> float:
+    """Return the fraction of expected quality signals that have any data.
+
+    Quality penalties default to zero when their underlying signals are missing,
+    so a faceset with no duplicate/identity/occlusion data could otherwise score
+    "high quality" purely from absence of evidence. Reporting this ratio lets us
+    discount confidence rather than inflate the score itself.
+    """
+    bucket_dimensions = ("blur", "resolution", "misalignment", "occlusion")
+    available = 0
+    for dimension in bucket_dimensions:
+        counts = coverage.bucket_counts.get(dimension, {})
+        non_unknown = sum(value for key, value in counts.items() if key != "unknown")
+        if non_unknown > 0:
+            available += 1
+    if coverage.identity_outlier_ratio is not None:
+        available += 1
+    if coverage.duplicate_ratio is not None:
+        available += 1
+    expected = len(bucket_dimensions) + 2
+    return round(available / expected, 4) if expected else 0.0
+
+
 def _quality_component(coverage: FacesetCoverageReport) -> ComponentScore:
     if coverage.total_faces == 0:
         return ComponentScore(
@@ -218,6 +243,7 @@ def _quality_component(coverage: FacesetCoverageReport) -> ComponentScore:
             weight=COMPONENT_WEIGHTS["quality"],
             classified_faces=0,
             total_bins=0,
+            signal_coverage=0.0,
         )
     ratios = {
         "blur_unusable": _ratio(coverage, "blur", {"unusable"}),
@@ -238,6 +264,7 @@ def _quality_component(coverage: FacesetCoverageReport) -> ComponentScore:
         weight=COMPONENT_WEIGHTS["quality"],
         classified_faces=coverage.total_faces,
         total_bins=0,
+        signal_coverage=_quality_signal_coverage(coverage),
     )
 
 
@@ -333,7 +360,8 @@ def compute_readiness_scores(coverage: FacesetCoverageReport) -> ReadinessScores
     }
     overall = sum(comp.score * comp.weight for comp in components.values())
     overall_score = round(overall, 2)
-    confidence = _confidence(coverage)
+    quality_signal_coverage = components["quality"].signal_coverage
+    confidence = round(_confidence(coverage) * quality_signal_coverage, 2)
     strengths = _component_summary_lines(components, STRENGTH_SCORE_THRESHOLD, high=True)
     risks = _component_summary_lines(components, RISK_SCORE_THRESHOLD, high=False)
     expected_risks = _expected_training_risks(coverage, components)

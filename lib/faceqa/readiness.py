@@ -139,8 +139,8 @@ class ReadinessReport:
                 lines.extend(
                     [
                         "",
-                        "| Component | Score | Weight | Entropy | Occupied | Min-Samples |",
-                        "|-----------|------:|------:|--------:|---------:|------------:|",
+                        "| Component | Score | Weight | Entropy | Occupied | Min-Samples | Signals |",
+                        "|-----------|------:|------:|--------:|---------:|------------:|--------:|",
                     ]
                 )
                 for component in components.values():
@@ -151,7 +151,8 @@ class ReadinessReport:
                         f"{float(component.get('weight', 0.0)):.2f} | "
                         f"{float(component.get('entropy_coverage', 0.0)):.2f} | "
                         f"{float(component.get('occupied_coverage', 0.0)):.2f} | "
-                        f"{float(component.get('min_sample_coverage', 0.0)):.2f} |"
+                        f"{float(component.get('min_sample_coverage', 0.0)):.2f} | "
+                        f"{float(component.get('signal_coverage', 1.0)):.2f} |"
                     )
             strengths = list(scores.get("strengths", []))
             if strengths:

@@ -218,3 +218,100 @@ def test_component_weights_sum_to_one() -> None:
 def test_strength_threshold_higher_than_risk_threshold() -> None:
     """Sanity check: strength threshold must exceed risk threshold."""
     assert STRENGTH_SCORE_THRESHOLD > RISK_SCORE_THRESHOLD
+
+
+def test_quality_signal_coverage_low_when_signals_missing() -> None:
+    """Quality signal_coverage should drop when underlying signals are absent."""
+    records = [
+        FaceQARecord(
+            frame=f"f{i}.png",
+            face_index=0,
+            yaw=0.0,
+            pitch=0.0,
+            expression_bucket="neutral",
+            mean_luminance=128.0,
+            contrast=10.0,
+            left_right_ratio=1.0,
+            top_bottom_ratio=1.0,
+            color_warmth=0.0,
+        )
+        for i in range(20)
+    ]
+
+    scores = compute_readiness_scores(compute_coverage(records))
+    quality = scores.components["quality"]
+
+    # No blur/resolution/distance/occlusion/identity/duplicate data was provided.
+    assert quality.signal_coverage == 0.0
+    # The bare score is still high (no penalties applied) — but the surface
+    # confidence reflects the absent evidence rather than inflating readiness.
+    assert quality.score >= 90.0
+    assert scores.confidence == 0.0
+
+
+def test_quality_signal_coverage_full_when_all_signals_present() -> None:
+    """Providing every quality signal should yield full signal coverage."""
+    records = [
+        FaceQARecord(
+            frame=f"f{i}.png",
+            face_index=0,
+            blur_score=5.0,
+            resolution=[256, 256],
+            average_distance=0.05,
+            occlusion_score=0.0,
+            duplicate_keep_recommendation="keep",
+            identity_quality_flag="inlier",
+        )
+        for i in range(20)
+    ]
+
+    scores = compute_readiness_scores(compute_coverage(records))
+
+    assert scores.components["quality"].signal_coverage == 1.0
+    assert scores.confidence > 0.0
+
+
+def test_confidence_scales_with_quality_signal_coverage() -> None:
+    """Adding more quality signals to the same dataset should raise confidence."""
+    base_kwargs = {
+        "yaw": 0.0,
+        "pitch": 0.0,
+        "expression_bucket": "neutral",
+        "mean_luminance": 128.0,
+        "contrast": 10.0,
+        "left_right_ratio": 1.0,
+        "top_bottom_ratio": 1.0,
+        "color_warmth": 0.0,
+    }
+    minimal = [FaceQARecord(frame=f"f{i}.png", face_index=0, **base_kwargs) for i in range(40)]
+    enriched = [
+        FaceQARecord(
+            frame=f"f{i}.png",
+            face_index=0,
+            blur_score=5.0,
+            resolution=[256, 256],
+            average_distance=0.05,
+            occlusion_score=0.0,
+            duplicate_keep_recommendation="keep",
+            identity_quality_flag="inlier",
+            **base_kwargs,
+        )
+        for i in range(40)
+    ]
+
+    minimal_confidence = compute_readiness_scores(compute_coverage(minimal)).confidence
+    enriched_confidence = compute_readiness_scores(compute_coverage(enriched)).confidence
+
+    assert enriched_confidence > minimal_confidence
+
+
+def test_signal_coverage_round_trips_through_json() -> None:
+    """ReadinessReport JSON should include signal_coverage per component."""
+    records = [FaceQARecord(frame="f.png", face_index=0, blur_score=5.0, resolution=[256, 256])]
+    report = generate_readiness_report(compute_coverage(records))
+    payload = json.loads(report.to_json())
+
+    quality = payload["readiness_scores"]["components"]["quality"]
+    assert "signal_coverage" in quality
+    assert 0.0 <= quality["signal_coverage"] <= 1.0
+    assert "Signals" in report.to_markdown()
