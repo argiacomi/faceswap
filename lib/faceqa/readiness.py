@@ -24,6 +24,19 @@ LOW_CONFIDENCE_POSE_WARN_RATIO = 0.20
 JOINT_POSE_COVERAGE_WARN_PCT = 50.0
 JOINT_POSE_ENTROPY_WARN_BITS = 3.0
 MISSING_POSE_CELL_REPORT_LIMIT = 8
+EXPRESSION_COVERAGE_WARN_PCT = 60.0
+EXPRESSION_ENTROPY_WARN_BITS = 1.5
+EXPRESSION_BUCKET_WARN_PCT = 5.0
+MISSING_EXPRESSION_BIN_REPORT_LIMIT = 6
+
+EXPRESSION_GUIDANCE: dict[str, str] = {
+    "neutral": "neutral / resting face frames",
+    "slight_open": "frames with slightly parted lips",
+    "talking_open": "open-mouth or talking frames",
+    "smile": "smiling frames",
+    "eyes_closed": "blinking or eyes-closed frames",
+    "expressive": "expressive / asymmetric frames (raised brows, smirks)",
+}
 
 
 @dataclass
@@ -43,6 +56,7 @@ class ReadinessReport:
     mask_qa_distribution: dict[str, int] = field(default_factory=dict)
     source_counts: dict[str, int] = field(default_factory=dict)
     joint_pose_coverage: dict[str, T.Any] = field(default_factory=dict)
+    expression_coverage: dict[str, T.Any] = field(default_factory=dict)
     underrepresented_buckets: list[dict[str, str | float]] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     recommendations: list[str] = field(default_factory=list)
@@ -63,6 +77,7 @@ class ReadinessReport:
             "mask_qa_distribution": self.mask_qa_distribution,
             "source_counts": self.source_counts,
             "joint_pose_coverage": self.joint_pose_coverage,
+            "expression_coverage": self.expression_coverage,
             "underrepresented_buckets": self.underrepresented_buckets,
             "warnings": self.warnings,
             "recommendations": self.recommendations,
@@ -119,6 +134,32 @@ class ReadinessReport:
                     preview += f", … (+{len(missing) - MISSING_POSE_CELL_REPORT_LIMIT} more)"
                 lines.append(f"- **Missing pose regions**: {preview}")
 
+        expression = self.expression_coverage
+        if expression:
+            occupied = expression.get("occupied_expression_bins", 0)
+            total_bins = expression.get("total_bins", 0)
+            bin_pct = float(expression.get("expression_bin_coverage_pct", 0.0))
+            entropy = float(expression.get("expression_entropy", 0.0))
+            lines.extend(
+                [
+                    "",
+                    "## Expression Coverage",
+                    "",
+                    f"- **Occupied bins**: {occupied} of {total_bins}",
+                    f"- **Empty bins**: {expression.get('empty_expression_bins', 0)}",
+                    f"- **Bin coverage**: {bin_pct:.1f}%",
+                    f"- **Expression entropy (bits)**: {entropy:.3f}",
+                ]
+            )
+            missing_bins = list(expression.get("missing_bins", []))
+            if missing_bins:
+                preview = ", ".join(missing_bins[:MISSING_EXPRESSION_BIN_REPORT_LIMIT])
+                if len(missing_bins) > MISSING_EXPRESSION_BIN_REPORT_LIMIT:
+                    preview += (
+                        f", … (+{len(missing_bins) - MISSING_EXPRESSION_BIN_REPORT_LIMIT} more)"
+                    )
+                lines.append(f"- **Missing expression regions**: {preview}")
+
         if self.metric_summary:
             lines.extend(["", "## Metric Summary", ""])
             lines.extend(["| Metric | Min | Median | Max |", "|--------|----:|-------:|----:|"])
@@ -162,7 +203,14 @@ def _underrepresented(
         },
         "pitch": {"down_extreme", "down", "neutral", "up", "up_extreme"},
         "lighting": {"dark", "normal", "bright"},
-        "expression": None,
+        "expression": {
+            "neutral",
+            "slight_open",
+            "talking_open",
+            "smile",
+            "eyes_closed",
+            "expressive",
+        },
     }
     result: list[dict[str, str | float]] = []
     for dimension, buckets in coverage.bucket_percentages.items():
@@ -256,6 +304,22 @@ def _build_warnings(
                 f"Low pose entropy: {entropy:.2f} bits over occupied cells — "
                 "pose distribution is concentrated in a few regions."
             )
+    expression = coverage.expression_coverage
+    if expression and expression.get("classified_faces", 0):
+        bin_pct = float(expression.get("expression_bin_coverage_pct", 0.0))
+        if bin_pct < EXPRESSION_COVERAGE_WARN_PCT:
+            warnings.append(
+                "Sparse expression coverage: only "
+                f"{bin_pct:.1f}% of expression bins are populated "
+                f"({expression.get('occupied_expression_bins', 0)} of "
+                f"{expression.get('total_bins', 0)})."
+            )
+        entropy = float(expression.get("expression_entropy", 0.0))
+        if entropy < EXPRESSION_ENTROPY_WARN_BITS:
+            warnings.append(
+                f"Low expression entropy: {entropy:.2f} bits — "
+                "facial expressions are concentrated in a few states."
+            )
     return warnings
 
 
@@ -285,7 +349,7 @@ def _build_recommendations(
         recommendations.append("Review high-distance alignments for bad landmarks or false faces.")
     if _ratio(coverage, "pose_sources", {"alignment"}) > POSE_FALLBACK_WARN_RATIO:
         recommendations.append(
-            "Review faces without SPIGA pose backfill; missing thumbnails can force alignment pose."
+            "Review faces without SPIGA pose backfill; missing or unreadable source frames can force alignment pose."
         )
     if _ratio(coverage, "pose_confidence", {"low"}) > LOW_CONFIDENCE_POSE_WARN_RATIO:
         recommendations.append(
@@ -320,9 +384,37 @@ def _build_recommendations(
         recommendations.append(
             "Collect frames for missing yaw/pitch regions: " + ", ".join(preview) + suffix + "."
         )
+    expression_recs = _expression_recommendations(coverage, underrepresented)
+    recommendations.extend(expression_recs)
 
     if not recommendations:
         recommendations.append("Faceset coverage looks adequate for an initial training run.")
+    return recommendations
+
+
+def _expression_recommendations(
+    coverage: FacesetCoverageReport,
+    underrepresented: list[dict[str, str | float]],
+) -> list[str]:
+    """Build targeted recommendations for expression coverage gaps."""
+    expression = coverage.expression_coverage
+    if not expression or not expression.get("classified_faces", 0):
+        return []
+    recommendations: list[str] = []
+    missing_bins = [str(item) for item in expression.get("missing_bins", [])]
+    under_expression = [
+        str(item["bucket"])
+        for item in underrepresented
+        if item["dimension"] == "expression" and str(item["bucket"]) not in missing_bins
+    ]
+    if missing_bins:
+        guidance = [EXPRESSION_GUIDANCE.get(name, name) for name in missing_bins]
+        recommendations.append("Collect missing expression frames: " + "; ".join(guidance) + ".")
+    if under_expression:
+        guidance = [EXPRESSION_GUIDANCE.get(name, name) for name in under_expression]
+        recommendations.append(
+            "Increase under-represented expressions: " + "; ".join(guidance) + "."
+        )
     return recommendations
 
 
@@ -349,6 +441,7 @@ def generate_readiness_report(
         mask_qa_distribution=coverage.mask_qa_distribution,
         source_counts=coverage.source_counts,
         joint_pose_coverage=coverage.joint_pose_coverage,
+        expression_coverage=coverage.expression_coverage,
         underrepresented_buckets=underrepresented,
         warnings=warnings,
         recommendations=recommendations,

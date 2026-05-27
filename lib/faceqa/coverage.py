@@ -14,6 +14,11 @@ import numpy as np
 from lib.align import AlignedFace, DetectedFace
 from lib.align.faceset_qa import FaceQAFile, FaceQARecord, build_index
 from lib.align.objects import AlignmentsEntry, FileAlignments
+from lib.faceqa.expression import (
+    EXPRESSION_BUCKETS,
+    bucket_for_features,
+    compute_expression_features,
+)
 from lib.serializer import get_serializer
 from lib.utils import get_module_objects
 
@@ -50,6 +55,7 @@ class FacesetCoverageReport:
     mask_qa_distribution: dict[str, int] = field(default_factory=dict)
     source_counts: dict[str, int] = field(default_factory=dict)
     joint_pose_coverage: dict[str, T.Any] = field(default_factory=dict)
+    expression_coverage: dict[str, T.Any] = field(default_factory=dict)
     sidecar_used: bool = False
 
     def coverage_dict(self) -> dict[str, dict[str, T.Any]]:
@@ -92,6 +98,7 @@ def records_from_alignments(
         if pose_backfiller is not None and not _valid_spiga_pose(record):
             _apply_backfilled_pose(record, pose_backfiller(record, face))
         _select_pose(record)
+        _populate_expression(record, face)
         records.append(record)
     if qa_file is not None and not records:
         records = list(qa_file.faces)
@@ -127,7 +134,29 @@ def _record_from_alignment(frame: str, idx: int, face: FileAlignments) -> FaceQA
     _populate_thumb_metrics(record, face)
     _populate_pose_metadata(record, face.metadata)
     _populate_metadata(record, face.metadata)
+    _populate_expression(record, face)
     return record
+
+
+def _populate_expression(record: FaceQARecord, face: FileAlignments) -> None:
+    """Derive expression features and bucket from face landmarks."""
+    features = compute_expression_features(face.landmarks_xy)
+    if features is None:
+        record.mouth_openness = None
+        record.mouth_width_ratio = None
+        record.smile_proxy = None
+        record.eye_closure = None
+        record.brow_raise_proxy = None
+        record.expression_asymmetry = None
+        record.expression_bucket = None
+        return
+    record.mouth_openness = features["mouth_openness"]
+    record.mouth_width_ratio = features["mouth_width_ratio"]
+    record.smile_proxy = features["smile_proxy"]
+    record.eye_closure = features["eye_closure"]
+    record.brow_raise_proxy = features["brow_raise_proxy"]
+    record.expression_asymmetry = features["expression_asymmetry"]
+    record.expression_bucket = bucket_for_features(features)
 
 
 def _populate_aligned_metrics(record: FaceQARecord, face: FileAlignments) -> None:
@@ -642,7 +671,7 @@ _DIMENSION_BUCKETS: dict[str, list[str]] = {
         "unknown",
     ],
     "mask_qa": ["unknown"],
-    "expression": [],
+    "expression": [*EXPRESSION_BUCKETS, "unknown"],
 }
 
 _BUCKET_FNS = {
@@ -745,6 +774,12 @@ def _metric_summary(records: list[FaceQARecord]) -> dict[str, dict[str, float | 
         "blur_score": [record.blur_score for record in records],
         "average_distance": [record.average_distance for record in records],
         "exposure_mean": [record.exposure_mean for record in records],
+        "mouth_openness": [record.mouth_openness for record in records],
+        "mouth_width_ratio": [record.mouth_width_ratio for record in records],
+        "smile_proxy": [record.smile_proxy for record in records],
+        "eye_closure": [record.eye_closure for record in records],
+        "brow_raise_proxy": [record.brow_raise_proxy for record in records],
+        "expression_asymmetry": [record.expression_asymmetry for record in records],
     }
     return {name: _summarize(values) for name, values in fields_.items()}
 
@@ -757,6 +792,48 @@ def _summarize(values: list[float | None]) -> dict[str, float | None]:
         "min": float(np.min(numeric)),
         "median": float(np.median(numeric)),
         "max": float(np.max(numeric)),
+    }
+
+
+def _expression_coverage(records: list[FaceQARecord]) -> dict[str, T.Any]:
+    """Return expression bucket coverage with entropy and occupancy metrics."""
+    counts: dict[str, int] = {bucket: 0 for bucket in EXPRESSION_BUCKETS}
+    unknown = 0
+    for record in records:
+        bucket = _expression_bucket(record)
+        if bucket == "unknown":
+            unknown += 1
+            continue
+        counts[bucket] = counts.get(bucket, 0) + 1
+    classified = sum(counts.values())
+    total_bins = len(EXPRESSION_BUCKETS)
+    occupied = sum(1 for value in counts.values() if value > 0)
+    percentages = (
+        {bucket: round(value / classified * 100, 2) for bucket, value in counts.items()}
+        if classified
+        else {bucket: 0.0 for bucket in counts}
+    )
+    if classified:
+        probabilities = np.array(
+            [value / classified for value in counts.values() if value > 0],
+            dtype="float64",
+        )
+        entropy = float(-np.sum(probabilities * np.log2(probabilities)))
+    else:
+        entropy = 0.0
+    bin_coverage_pct = round(occupied / total_bins * 100, 2) if total_bins else 0.0
+    missing_bins = [bucket for bucket, value in counts.items() if value == 0]
+    return {
+        "counts": counts,
+        "percentages": percentages,
+        "total_bins": total_bins,
+        "occupied_expression_bins": occupied,
+        "empty_expression_bins": total_bins - occupied,
+        "expression_bin_coverage_pct": bin_coverage_pct,
+        "expression_entropy": round(entropy, 4),
+        "classified_faces": classified,
+        "unknown_faces": unknown,
+        "missing_bins": missing_bins,
     }
 
 
@@ -831,6 +908,7 @@ def compute_coverage(
         identity_outlier_ratio=_compute_identity_outlier_ratio(records_list) if total else None,
         mask_qa_distribution=_mask_qa_distribution(records_list),
         joint_pose_coverage=_joint_pose_coverage(records_list),
+        expression_coverage=_expression_coverage(records_list),
         source_counts={
             "alignments": total,
             "sidecar": sum(

@@ -616,6 +616,145 @@ def test_faceqa_coverage_tool_writes_joint_pose_metrics(tmp_path, monkeypatch) -
     assert "## Joint Pose Coverage" in markdown
 
 
+def test_compute_coverage_expression_bins_and_entropy() -> None:
+    """Expression coverage should report counts, entropy, and empty bins."""
+    records = [
+        FaceQARecord(frame=f"n{i}.png", face_index=0, expression_bucket="neutral")
+        for i in range(4)
+    ] + [
+        FaceQARecord(frame="s.png", face_index=0, expression_bucket="smile"),
+        FaceQARecord(frame="t.png", face_index=0, expression_bucket="talking_open"),
+        FaceQARecord(frame="u.png", face_index=0, expression_bucket=None),
+    ]
+
+    report = compute_coverage(records)
+    expression = report.expression_coverage
+
+    assert expression["total_bins"] == 6
+    assert expression["counts"]["neutral"] == 4
+    assert expression["counts"]["smile"] == 1
+    assert expression["counts"]["talking_open"] == 1
+    assert expression["occupied_expression_bins"] == 3
+    assert expression["empty_expression_bins"] == 3
+    assert expression["classified_faces"] == 6
+    assert expression["unknown_faces"] == 1
+    assert expression["expression_bin_coverage_pct"] == round(3 / 6 * 100, 2)
+    expected_entropy = -((4 / 6) * np.log2(4 / 6) + 2 * (1 / 6) * np.log2(1 / 6))
+    assert abs(expression["expression_entropy"] - round(expected_entropy, 4)) < 1e-3
+    assert "eyes_closed" in expression["missing_bins"]
+    assert "neutral" not in expression["missing_bins"]
+
+
+def test_compute_coverage_expression_handles_empty_distribution() -> None:
+    """Expression coverage should not divide by zero when nothing classifies."""
+    report = compute_coverage([FaceQARecord(frame="f.png", face_index=0)])
+    expression = report.expression_coverage
+
+    assert expression["classified_faces"] == 0
+    assert expression["unknown_faces"] == 1
+    assert expression["occupied_expression_bins"] == 0
+    assert expression["expression_entropy"] == 0.0
+    assert expression["expression_bin_coverage_pct"] == 0.0
+
+
+def test_records_from_alignments_derives_expression_from_landmarks(tmp_path) -> None:
+    """records_from_alignments should derive expression features from landmarks."""
+    from tests.lib.faceqa.expression_test import _neutral_landmarks
+
+    face = FileAlignments(x=0, y=0, w=80, h=90, landmarks_xy=_neutral_landmarks())
+    alignments = tmp_path / "alignments.fsa"
+    get_serializer("compressed").save(
+        str(alignments),
+        {
+            "__meta__": {"version": 2.4},
+            "__data__": {"frame_000001.png": AlignmentsEntry(faces=[face]).to_dict()},
+        },
+    )
+
+    records = records_from_alignments(alignments)
+
+    assert records[0].expression_bucket == "neutral"
+    assert records[0].mouth_openness is not None
+    assert records[0].mouth_width_ratio is not None
+    assert records[0].smile_proxy is not None
+    assert records[0].eye_closure is not None
+    assert records[0].brow_raise_proxy is not None
+    assert records[0].expression_asymmetry is not None
+
+
+def test_records_from_alignments_overrides_sidecar_expression(tmp_path) -> None:
+    """Landmark-derived expression should supersede sidecar expression labels."""
+    from lib.align.faceset_qa import FaceQAFile
+    from tests.lib.faceqa.expression_test import _neutral_landmarks
+
+    face = FileAlignments(x=0, y=0, w=80, h=90, landmarks_xy=_neutral_landmarks())
+    alignments = tmp_path / "alignments.fsa"
+    get_serializer("compressed").save(
+        str(alignments),
+        {
+            "__meta__": {"version": 2.4},
+            "__data__": {"frame_000001.png": AlignmentsEntry(faces=[face]).to_dict()},
+        },
+    )
+    qa_file = FaceQAFile(
+        faces=[FaceQARecord(frame="frame_000001.png", face_index=0, expression_bucket="smile")]
+    )
+
+    records = records_from_alignments(alignments, qa_file=qa_file)
+
+    assert records[0].expression_bucket == "neutral"
+
+
+def test_readiness_report_warns_on_sparse_expression_coverage() -> None:
+    """Readiness warnings should flag sparse expression coverage and low entropy."""
+    records = [
+        FaceQARecord(frame=f"n{i}.png", face_index=0, expression_bucket="neutral")
+        for i in range(10)
+    ]
+
+    report = generate_readiness_report(compute_coverage(records))
+
+    assert any("Sparse expression coverage" in warning for warning in report.warnings)
+    assert any("Low expression entropy" in warning for warning in report.warnings)
+
+
+def test_readiness_report_recommends_missing_expression_regions() -> None:
+    """Recommendations should call out missing expression buckets by name."""
+    records = [
+        FaceQARecord(frame=f"n{i}.png", face_index=0, expression_bucket="neutral")
+        for i in range(10)
+    ]
+
+    report = generate_readiness_report(compute_coverage(records))
+
+    assert any(
+        "Collect missing expression frames" in recommendation
+        and "smiling frames" in recommendation
+        and "open-mouth" in recommendation
+        for recommendation in report.recommendations
+    )
+
+
+def test_readiness_report_exposes_expression_coverage_in_json() -> None:
+    """Expression coverage should round-trip through JSON output."""
+    records = [
+        FaceQARecord(frame="a.png", face_index=0, expression_bucket="neutral"),
+        FaceQARecord(frame="b.png", face_index=0, expression_bucket="smile"),
+    ]
+
+    report = generate_readiness_report(compute_coverage(records))
+    payload = json.loads(report.to_json())
+
+    assert "expression_coverage" in payload
+    assert payload["expression_coverage"]["counts"]["neutral"] == 1
+    assert payload["expression_coverage"]["counts"]["smile"] == 1
+    assert payload["expression_coverage"]["occupied_expression_bins"] == 2
+    assert "missing_bins" in payload["expression_coverage"]
+    markdown = report.to_markdown()
+    assert "## Expression Coverage" in markdown
+    assert "Bin coverage" in markdown
+
+
 def test_sidecar_path() -> None:
     """Default FaceQA sidecar path should be derived from alignments stem."""
     assert sidecar_path("/tmp/project/alignments.fsa") == "/tmp/project/alignments_faceset_qa.json"

@@ -82,6 +82,12 @@ class FaceQARecord(DataclassDict):
 
     occlusion_score: float | None = None
     expression_bucket: str | None = None
+    mouth_openness: float | None = None
+    mouth_width_ratio: float | None = None
+    smile_proxy: float | None = None
+    eye_closure: float | None = None
+    brow_raise_proxy: float | None = None
+    expression_asymmetry: float | None = None
 
     mask_qa_ref: str | None = None
 
