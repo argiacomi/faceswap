@@ -102,7 +102,22 @@ class Identity(ExtractHandlerFace):
         if self._overridden["post_process"]:
             identity = self.plugin.post_process(identity)
         batch.identities[self.storage_name] = identity
+        self._add_identity_metadata(batch)
         self._filter(batch)
+
+    def _add_identity_metadata(self, batch: ExtractBatch) -> None:
+        """Store optional identity model provenance in per-face metadata."""
+        metadata = getattr(self.plugin, "identity_metadata", None)
+        if not metadata:
+            return
+        for idx in range(batch.bboxes.shape[0]):
+            while len(batch.aligned.metadata) <= idx:
+                batch.aligned.metadata.append({})
+            identity_meta = batch.aligned.metadata[idx].get("identity")
+            if not isinstance(identity_meta, dict):
+                identity_meta = {}
+                batch.aligned.metadata[idx]["identity"] = identity_meta
+            identity_meta[self.storage_name] = dict(metadata)
 
     def add_filter_identities(self, identities: npt.NDArray[np.float32], is_filter: bool) -> None:
         """Add the given identities to the identity filter
