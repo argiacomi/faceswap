@@ -141,10 +141,12 @@ class HoverBox:
         if frame_id is None or face_idx is None:
             return
 
-        if multi_select and frame_id == self._globals.frame_index:
-            self._globals.toggle_selected_face_index(face_idx)
-        else:
-            self._globals.set_selected_face_indices((face_idx,))
+        if multi_select:
+            self._globals.toggle_selected_face(frame_id, face_idx)
+            self._globals.var_update_active_viewport.set(True)
+            return
+
+        self._globals.set_selected_faces(((frame_id, face_idx),))
         self._globals.set_face_index(face_idx)
         self._globals.var_update_active_viewport.set(True)
 
@@ -162,7 +164,6 @@ class HoverBox:
             return
         self._navigation.stop_playback()
         self._globals.var_transport_index.set(transport_id)
-        self._globals.set_selected_face_indices((face_idx,))
         self._globals.var_update_active_viewport.set(True)
         self._viewport.move_active_to_top()
         self.on_hover(None)
@@ -450,7 +451,8 @@ class ActiveFrame:
             coords = [*top_left, *[x + self._size for x in top_left]]
             tk_face = self._viewport.get_tk_face(self.frame_index, face_idx, det_face)
             self._canvas.itemconfig(image_id, image=tk_face.photo)
-            self._show_box(box_id, coords, face_idx in self._globals.selected_face_indices)
+            is_selected = (self.frame_index, face_idx) in self._globals.selected_faces
+            self._show_box(box_id, coords, is_selected)
             self._show_mesh(mesh_ids, face_idx, det_face, top_left)
         self._last_execution["size"] = self._viewport.face_size
 

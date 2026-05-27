@@ -452,22 +452,23 @@ class ExtractBox(Editor):
         self._right_click_menu.popup(event)
 
     def _delete_current_face(self, *args):  # pylint:disable=unused-argument
-        """Called by the right click delete event. Deletes the face that the mouse is currently
-        over.
+        """Called by the right click delete event. Deletes the selected or hovered face(s).
 
         Parameters
         ----------
         args: tuple (unused)
             The event parameter is passed in by the hot key binding, so args is required
         """
-        selected_faces = self._globals.selected_face_indices
-        if not selected_faces and (
-            self._mouse_location is None or self._mouse_location[0] != "box"
-        ):
+        selected_faces = self._globals.selected_faces
+        if selected_faces:
+            self._det_faces.update.delete_many_frames(selected_faces)
             return
-        face_indices = selected_faces if selected_faces else (self._mouse_location[1],)
-        self._det_faces.update.delete_many(self._globals.frame_index, face_indices)
-        self._globals.clear_selected_face_indices()
+
+        if self._mouse_location is None or self._mouse_location[0] != "box":
+            return
+
+        self._det_faces.update.delete_many(self._globals.frame_index, (self._mouse_location[1],))
+        self._globals.clear_selected_faces()
 
 
 __all__ = get_module_objects(__name__)

@@ -111,7 +111,7 @@ class TkGlobals:
             int(round(504 * get_config().scaling_factor)),
         )
         self._current_frame = CurrentFrame()
-        self._selected_face_indices: set[int] = set()
+        self._selected_faces: set[tuple[int, int]] = set()
         logger.debug("Initialized %s", self.__class__.__name__)
 
     @classmethod
@@ -218,9 +218,18 @@ class TkGlobals:
         return self._tk_vars.is_zoomed.get()
 
     @property
+    def selected_faces(self) -> tuple[tuple[int, int], ...]:
+        """tuple[tuple[int, int], ...]: The frame/face pairs selected for bulk actions."""
+        return tuple(sorted(self._selected_faces))
+
+    @property
     def selected_face_indices(self) -> tuple[int, ...]:
-        """tuple[int, ...]: The face indices currently selected for bulk actions."""
-        return tuple(sorted(self._selected_face_indices))
+        """tuple[int, ...]: The selected face indices for the current frame.
+
+        This keeps existing current-frame callers working while multi-frame selection is stored as
+        ``(frame_index, face_index)`` pairs.
+        """
+        return self.selected_face_indices_for_frame(self.frame_index)
 
     @staticmethod
     def _check_input(frames_location: str) -> bool:
@@ -260,28 +269,57 @@ class TkGlobals:
         )
         self._tk_vars.face_index.set(index)
 
-    def set_selected_face_indices(self, indices: T.Iterable[int]) -> None:
-        """Set the face indices selected for bulk actions."""
-        self._selected_face_indices = {int(index) for index in indices}
+    def selected_face_indices_for_frame(self, frame_index: int) -> tuple[int, ...]:
+        """Return selected face indices for one frame."""
+        return tuple(
+            face_index
+            for selected_frame, face_index in sorted(self._selected_faces)
+            if selected_frame == frame_index
+        )
+
+    def set_selected_faces(self, faces: T.Iterable[tuple[int, int]]) -> None:
+        """Set the frame/face pairs selected for bulk actions."""
+        self._selected_faces = {
+            (int(frame_index), int(face_index)) for frame_index, face_index in faces
+        }
         logger.trace(  # type:ignore[attr-defined]
-            "Selected face indices set to: %s", self.selected_face_indices
+            "Selected faces set to: %s", self.selected_faces
+        )
+
+    def set_selected_face_indices(self, indices: T.Iterable[int]) -> None:
+        """Set the selected face indices for the current frame.
+
+        Compatibility wrapper for current-frame callers.
+        """
+        self.set_selected_faces((self.frame_index, int(index)) for index in indices)
+
+    def toggle_selected_face(self, frame_index: int, face_index: int) -> None:
+        """Toggle one frame/face pair in the bulk-action selection."""
+        selected_face = (int(frame_index), int(face_index))
+        if selected_face in self._selected_faces:
+            self._selected_faces.remove(selected_face)
+        else:
+            self._selected_faces.add(selected_face)
+        logger.trace(  # type:ignore[attr-defined]
+            "Selected faces toggled to: %s", self.selected_faces
         )
 
     def toggle_selected_face_index(self, index: int) -> None:
-        """Toggle one face index in the bulk-action selection."""
-        if index in self._selected_face_indices:
-            self._selected_face_indices.remove(index)
-        else:
-            self._selected_face_indices.add(index)
-        logger.trace(  # type:ignore[attr-defined]
-            "Selected face indices toggled to: %s", self.selected_face_indices
-        )
+        """Toggle one face index for the current frame in the bulk-action selection."""
+        self.toggle_selected_face(self.frame_index, index)
+
+    def clear_selected_faces(self) -> None:
+        """Clear all frame/face pairs selected for bulk actions."""
+        if self._selected_faces:
+            logger.trace("Clearing selected faces")  # type:ignore[attr-defined]
+        self._selected_faces.clear()
 
     def clear_selected_face_indices(self) -> None:
-        """Clear the face indices selected for bulk actions."""
-        if self._selected_face_indices:
-            logger.trace("Clearing selected face indices")  # type:ignore[attr-defined]
-        self._selected_face_indices.clear()
+        """Clear all frame/face pairs selected for bulk actions.
+
+        Compatibility wrapper for current-frame callers.
+        """
+        self.clear_selected_faces()
 
     def set_frame_count(self, count: int) -> None:
         """Set the count of total number of frames to :attr:`frame_count` when the
@@ -318,7 +356,6 @@ class TkGlobals:
             int(round(image.shape[1] * scale)),
             int(round(image.shape[0] * scale)),
         )
-        self.clear_selected_face_indices()
         logger.trace(self._current_frame)  # type:ignore[attr-defined]
 
     def set_frame_display_dims(self, width: int, height: int) -> None:

@@ -209,8 +209,8 @@ class Mask(Editor):
     def _delete_mask(self, *_args: T.Any) -> None:
         """Delete the selected mask type from the target face(s)."""
         frame_index = self._globals.frame_index
-        face_indices = self._delete_mask_face_indices()
-        if not face_indices:
+        targets = self._delete_mask_targets()
+        if not targets:
             return
 
         mask_type = self._control_vars["display"]["MaskType"].get().lower()
@@ -218,11 +218,13 @@ class Mask(Editor):
         self._meta = {"position": frame_index}
 
         deleted = False
-        for face_index in face_indices:
-            if self._det_faces.update.delete_mask(frame_index, face_index, mask_type):
-                self._hide_mask_annotation(face_index)
+        for target_frame_index, face_index in targets:
+            if self._det_faces.update.delete_mask(target_frame_index, face_index, mask_type):
+                if target_frame_index == frame_index:
+                    self._hide_mask_annotation(face_index)
                 deleted = True
         if deleted:
+            self._globals.clear_selected_faces()
             self._globals.var_full_update.set(True)
 
     def _hide_mask_annotation(self, face_index: int) -> None:
@@ -235,19 +237,27 @@ class Mask(Editor):
         ):
             self._canvas.itemconfig(tag, state="hidden")
 
-    def _delete_mask_face_indices(self) -> tuple[int, ...]:
-        """Return the face indices targeted by the Delete Mask command."""
-        faces = self._current_frame_faces()
+    def _delete_mask_targets(self) -> tuple[tuple[int, int], ...]:
+        """Return the frame/face pairs targeted by the Delete Mask command."""
         selected_faces = tuple(
-            face_index
-            for face_index in self._globals.selected_face_indices
-            if 0 <= face_index < len(faces)
+            (frame_index, face_index)
+            for frame_index, face_index in self._globals.selected_faces
+            if 0 <= frame_index < len(self._det_faces.current_faces)
+            and 0 <= face_index < len(self._det_faces.current_faces[frame_index])
         )
         if selected_faces:
             return selected_faces
 
         face_index = self._delete_mask_face_index()
-        return () if face_index is None else (face_index,)
+        return () if face_index is None else ((self._globals.frame_index, face_index),)
+
+    def _delete_mask_face_indices(self) -> tuple[int, ...]:
+        """Return the current-frame face indices targeted by the Delete Mask command."""
+        return tuple(
+            face_index
+            for frame_index, face_index in self._delete_mask_targets()
+            if frame_index == self._globals.frame_index
+        )
 
     def _delete_mask_face_index(self) -> int | None:
         """Return the face index targeted by the Delete Mask command."""

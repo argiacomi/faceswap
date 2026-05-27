@@ -36,6 +36,8 @@ class Viewport:
         The variable that indicates that a face has been edited
     """
 
+    _SELECTED_BOX_COLOR = "#ffcc00"
+
     def __init__(self, canvas: FacesViewer, tk_edited_variable: tk.BooleanVar) -> None:
         logger.debug(parse_class_init(locals()))
         self._canvas = canvas
@@ -44,6 +46,7 @@ class Viewport:
         self._tk_selected_editor = canvas._display_frame.tk_selected_action
         self._landmarks: dict[str, dict[T.Literal["polygon", "line"], list[np.ndarray]]] = {}
         self._tk_faces: dict[str, TKFace] = {}
+        self._selected_boxes: dict[tuple[int, int], int] = {}
         self._objects = VisibleObjects(self)
         self._hoverbox = HoverBox(self)
         self._active_frame = ActiveFrame(self, tk_edited_variable)
@@ -145,6 +148,7 @@ class Viewport:
         """Reset all the cached objects on a face size change."""
         self._landmarks = {}
         self._tk_faces = {}
+        self._clear_selected_boxes()
 
     def update(self, refresh_annotations: bool = False) -> None:
         """Update the viewport.
@@ -160,6 +164,8 @@ class Viewport:
         self._objects.update()
         self._update_viewport(refresh_annotations)
         self._active_frame.reload_annotations()
+        self._update_selected_highlighters()
+        self._canvas.tag_raise("viewport_selected_highlighter", "viewport_image")
         self._canvas.tag_raise("viewport_mesh", "viewport_image")
         self._canvas.tag_raise("active_mesh_polygon", "viewport_image")
         self._canvas.tag_raise("active_mesh_line", "viewport_image")
@@ -217,6 +223,61 @@ class Viewport:
                         frame_idx, face_idx, face, [pnt_x, pnt_y], refresh=True
                     )
                     self._locate_mesh(mesh_ids, landmarks)
+
+    def _update_selected_highlighters(self) -> None:
+        """Display selected-face highlights for any selected visible faces."""
+        if not self._grid.is_valid or not self._canvas._globals.selected_faces:
+            self._hide_selected_boxes()
+            return
+
+        visible: set[tuple[int, int]] = set()
+        for frame_idx, face_idx, pnt_x, pnt_y in self._objects.visible_grid.transpose(
+            1, 2, 0
+        ).reshape(-1, 4):
+            if frame_idx == -1:
+                continue
+            key = (int(frame_idx), int(face_idx))
+            if key not in self._canvas._globals.selected_faces:
+                continue
+
+            visible.add(key)
+            box_id = self._selected_boxes.get(key)
+            if box_id is None:
+                box_id = self._canvas.create_rectangle(
+                    0.0,
+                    0.0,
+                    float(self.face_size),
+                    float(self.face_size),
+                    outline=self._SELECTED_BOX_COLOR,
+                    width=4,
+                    state="hidden",
+                    tags=["viewport", "viewport_selected_highlighter"],
+                )
+                self._selected_boxes[key] = box_id
+
+            coords = (
+                int(pnt_x),
+                int(pnt_y),
+                int(pnt_x + self.face_size),
+                int(pnt_y + self.face_size),
+            )
+            self._canvas.coords(box_id, *coords)
+            self._canvas.itemconfig(box_id, state="normal")
+
+        for key, box_id in self._selected_boxes.items():
+            if key not in visible:
+                self._canvas.itemconfig(box_id, state="hidden")
+
+    def _hide_selected_boxes(self) -> None:
+        """Hide all viewport selected-face highlight boxes."""
+        for box_id in self._selected_boxes.values():
+            self._canvas.itemconfig(box_id, state="hidden")
+
+    def _clear_selected_boxes(self) -> None:
+        """Delete all viewport selected-face highlight boxes."""
+        for box_id in self._selected_boxes.values():
+            self._canvas.delete(box_id)
+        self._selected_boxes = {}
 
     def _discard_tk_faces(self) -> None:
         """Remove any :class:`TKFace` objects from the cache that are not currently displayed."""

@@ -773,6 +773,42 @@ class FaceUpdate:
         self._tk_face_count_changed.set(True)
         self._globals.var_full_update.set(True)
 
+    def delete_many_frames(self, faces: T.Iterable[tuple[int, int]]) -> None:
+        """Delete multiple faces across one or more frames.
+
+        Parameters
+        ----------
+        faces
+            ``(frame_index, face_index)`` pairs to delete.
+        """
+        grouped: dict[int, set[int]] = {}
+        for frame_index, face_index in faces:
+            frame_index = int(frame_index)
+            face_index = int(face_index)
+            if frame_index < 0 or frame_index >= len(self._frame_faces):
+                continue
+            if 0 <= face_index < len(self._frame_faces[frame_index]):
+                grouped.setdefault(frame_index, set()).add(face_index)
+
+        if not grouped:
+            logger.debug("No valid frame/face pairs to delete.")
+            return
+
+        logger.debug("Deleting faces across frames: %s", grouped)
+        for frame_index, face_indices in grouped.items():
+            faces_ = self._faces_at_frame_index(frame_index)
+            for face_index in sorted(face_indices, reverse=True):
+                del faces_[face_index]
+
+        current_frame = self._globals.frame_index
+        if current_frame in grouped:
+            faces_ = self._frame_faces[current_frame]
+            self._globals.set_face_index(min(self._globals.face_index, max(0, len(faces_) - 1)))
+
+        self._globals.clear_selected_faces()
+        self._tk_face_count_changed.set(True)
+        self._globals.var_full_update.set(True)
+
     def bounding_box(
         self,
         frame_index: int,
