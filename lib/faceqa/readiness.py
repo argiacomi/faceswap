@@ -8,6 +8,7 @@ import typing as T
 from dataclasses import dataclass, field
 
 from lib.faceqa.coverage import FacesetCoverageReport
+from lib.faceqa.scoring import ReadinessScores, compute_readiness_scores
 from lib.utils import get_module_objects
 
 SCHEMA_VERSION = 1
@@ -72,6 +73,7 @@ class ReadinessReport:
     joint_pose_coverage: dict[str, T.Any] = field(default_factory=dict)
     expression_coverage: dict[str, T.Any] = field(default_factory=dict)
     lighting_coverage: dict[str, T.Any] = field(default_factory=dict)
+    readiness_scores: dict[str, T.Any] = field(default_factory=dict)
     underrepresented_buckets: list[dict[str, str | float]] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     recommendations: list[str] = field(default_factory=list)
@@ -94,6 +96,7 @@ class ReadinessReport:
             "joint_pose_coverage": self.joint_pose_coverage,
             "expression_coverage": self.expression_coverage,
             "lighting_coverage": self.lighting_coverage,
+            "readiness_scores": self.readiness_scores,
             "underrepresented_buckets": self.underrepresented_buckets,
             "warnings": self.warnings,
             "recommendations": self.recommendations,
@@ -117,6 +120,51 @@ class ReadinessReport:
             lines.append(f"- **Duplicate ratio**: {self.duplicate_ratio:.1%}")
         if self.identity_outlier_ratio is not None:
             lines.append(f"- **Identity outlier ratio**: {self.identity_outlier_ratio:.1%}")
+
+        scores = self.readiness_scores
+        if scores:
+            overall = float(scores.get("overall_readiness_score", 0.0))
+            confidence = float(scores.get("confidence", 0.0))
+            lines.extend(
+                [
+                    "",
+                    "## Readiness Score",
+                    "",
+                    f"- **Overall readiness**: {overall:.1f} / 100",
+                    f"- **Confidence**: {confidence:.1f} / 100",
+                ]
+            )
+            components = scores.get("components", {}) or {}
+            if components:
+                lines.extend(
+                    [
+                        "",
+                        "| Component | Score | Weight | Entropy | Occupied | Min-Samples |",
+                        "|-----------|------:|------:|--------:|---------:|------------:|",
+                    ]
+                )
+                for component in components.values():
+                    lines.append(
+                        "| "
+                        f"{component.get('name', '')} | "
+                        f"{float(component.get('score', 0.0)):.1f} | "
+                        f"{float(component.get('weight', 0.0)):.2f} | "
+                        f"{float(component.get('entropy_coverage', 0.0)):.2f} | "
+                        f"{float(component.get('occupied_coverage', 0.0)):.2f} | "
+                        f"{float(component.get('min_sample_coverage', 0.0)):.2f} |"
+                    )
+            strengths = list(scores.get("strengths", []))
+            if strengths:
+                lines.extend(["", "### Strengths", ""])
+                lines.extend(f"- {item}" for item in strengths)
+            risks = list(scores.get("risks", []))
+            if risks:
+                lines.extend(["", "### Highest-risk components", ""])
+                lines.extend(f"- {item}" for item in risks)
+            expected = list(scores.get("expected_training_risks", []))
+            if expected:
+                lines.extend(["", "### Expected training risks", ""])
+                lines.extend(f"- {item}" for item in expected)
 
         for dimension, payload in self.coverage.items():
             counts = payload.get("counts", {})
@@ -514,6 +562,7 @@ def generate_readiness_report(
     underrepresented = _underrepresented(coverage, min_bucket_pct)
     warnings = _build_warnings(coverage, underrepresented, min_bucket_pct)
     recommendations = _build_recommendations(coverage, underrepresented)
+    scores: ReadinessScores = compute_readiness_scores(coverage)
     return ReadinessReport(
         alignments=alignments,
         sidecar=sidecar,
@@ -528,6 +577,7 @@ def generate_readiness_report(
         joint_pose_coverage=coverage.joint_pose_coverage,
         expression_coverage=coverage.expression_coverage,
         lighting_coverage=coverage.lighting_coverage,
+        readiness_scores=scores.to_dict(),
         underrepresented_buckets=underrepresented,
         warnings=warnings,
         recommendations=recommendations,
