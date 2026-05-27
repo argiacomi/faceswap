@@ -247,6 +247,19 @@ class Mask(Editor):
         deleted = self._det_faces.update.delete_mask(frame_index, face_index, mask_type)
         if not deleted:
             self._globals.var_full_update.set(True)
+            return
+
+        self._hide_mask_annotation(face_index)
+
+    def _hide_mask_annotation(self, face_index: int) -> None:
+        """Hide stale mask overlay canvas items for a deleted or missing mask."""
+        for tag in (
+            f"Mask_face_{face_index}",
+            f"mask_face_{face_index}",
+            f"mask_roi_face_{face_index}",
+            f"mask_text_face_{face_index}",
+        ):
+            self._canvas.itemconfig(tag, state="hidden")
 
     def _delete_mask_face_index(self) -> int | None:
         """Return the face index targeted by the Delete Mask command."""
@@ -302,6 +315,7 @@ class Mask(Editor):
             face_idx = self._globals.face_index if self._globals.is_zoomed else idx
             mask = face.mask.get(mask_type, None)
             if mask is None:
+                self._hide_mask_annotation(face_idx)
                 continue
             self._set_face_meta_data(mask, face_idx)
             self._update_mask_image(key.lower(), face_idx, rgb_color, opacity)
