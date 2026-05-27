@@ -10,7 +10,7 @@ import numpy as np
 
 from lib.align.faceset_qa import FaceQAFile, FaceQARecord, load, sidecar_path
 from lib.align.objects import AlignmentsEntry, FileAlignments
-from lib.faceqa.coverage import compute_coverage, records_from_alignments
+from lib.faceqa.coverage import SpigaPoseBackfiller, compute_coverage, records_from_alignments
 from lib.faceqa.readiness import generate_readiness_report
 from lib.serializer import get_serializer
 from tools.faceqa_coverage.faceqa_coverage import Faceqa_Coverage
@@ -83,7 +83,7 @@ def test_sidecar_load_ignores_unknown_fields(tmp_path) -> None:
     assert qa_file.faces[0].yaw == 10.0
 
 
-def test_faceqa_coverage_tool_writes_reports_from_alignments(tmp_path) -> None:
+def test_faceqa_coverage_tool_writes_reports_from_alignments(tmp_path, monkeypatch) -> None:
     """The tool should write JSON and Markdown reports from alignments alone."""
     alignments = tmp_path / "alignments.fsa"
     get_serializer("compressed").save(
@@ -99,12 +99,18 @@ def test_faceqa_coverage_tool_writes_reports_from_alignments(tmp_path) -> None:
     output_md = tmp_path / "coverage.md"
     args = Namespace(
         alignments=str(alignments),
+        frames_dir=str(tmp_path),
         sidecar=None,
         output_json=str(output_json),
         output_markdown=str(output_md),
         exclude_duplicates=False,
         exclude_outliers=False,
         min_bucket_pct=5.0,
+    )
+    monkeypatch.setattr(
+        Faceqa_Coverage,
+        "_pose_backfiller",
+        lambda _: lambda __, ___: None,
     )
 
     Faceqa_Coverage(args).process()
@@ -200,6 +206,56 @@ def test_records_from_alignments_backfills_missing_spiga_pose(tmp_path) -> None:
     assert records[0].pose_model == "spiga"
 
 
+def test_spiga_pose_backfiller_uses_source_frame_alignment_not_thumbnail() -> None:
+    """SPIGA backfill should reconstruct aligned faces from source frames."""
+
+    class _Frames:
+        loaded: list[str] = []
+
+        def load_image(self, frame: str) -> np.ndarray:
+            self.loaded.append(frame)
+            image: np.ndarray = np.zeros((200, 200, 3), dtype=np.uint8)
+            image[:, :, 1] = 255
+            return image
+
+    class _Plugin:
+        input_size = 64
+
+        def __init__(self) -> None:
+            self.feed: np.ndarray | None = None
+            self.last_debug_metadata: list[dict[str, object]] = []
+
+        def process(self, batch: np.ndarray) -> np.ndarray:
+            self.feed = batch
+            return np.zeros((1, 71, 2), dtype=np.float32)
+
+        def post_process(self, _: np.ndarray) -> np.ndarray:
+            self.last_debug_metadata = [
+                {"pose": {"yaw": 11.0, "pitch": -2.0, "roll": 3.0, "model": "spiga"}}
+            ]
+            return np.zeros((1, 68, 2), dtype=np.float32)
+
+    frames = _Frames()
+    plugin = _Plugin()
+    backfiller = SpigaPoseBackfiller(frames)
+    backfiller._plugin = plugin  # pylint:disable=protected-access
+    face = _face()
+    face.thumb = None
+
+    pose = backfiller(FaceQARecord(frame="frame_000001.png", face_index=0), face)
+
+    assert frames.loaded == ["frame_000001.png"]
+    assert plugin.feed is not None
+    assert plugin.feed.shape == (1, 64, 64, 3)
+    assert pose == {
+        "yaw": 11.0,
+        "pitch": -2.0,
+        "roll": 3.0,
+        "model": "spiga",
+        "source": "spiga_backfill",
+    }
+
+
 def test_records_from_alignments_uses_alignment_when_spiga_pose_invalid(tmp_path) -> None:
     """Invalid SPIGA pose candidates should not become selected coverage pose."""
     face = _face()
@@ -285,6 +341,7 @@ def test_faceqa_coverage_tool_persists_backfilled_spiga_pose(tmp_path, monkeypat
     output_md = tmp_path / "coverage.md"
     args = Namespace(
         alignments=str(alignments),
+        frames_dir=str(tmp_path),
         sidecar=None,
         output_json=str(output_json),
         output_markdown=str(output_md),
@@ -346,6 +403,7 @@ def test_faceqa_coverage_tool_does_not_recompute_existing_spiga_pose(
     output_md = tmp_path / "coverage.md"
     args = Namespace(
         alignments=str(alignments),
+        frames_dir=str(tmp_path),
         sidecar=None,
         output_json=str(output_json),
         output_markdown=str(output_md),

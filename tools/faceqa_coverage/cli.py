@@ -6,7 +6,7 @@ from __future__ import annotations
 import gettext
 import typing as T
 
-from lib.cli.actions import FileFullPaths, SaveFileFullPaths, Slider
+from lib.cli.actions import DirOrFileFullPaths, FileFullPaths, SaveFileFullPaths, Slider
 from lib.cli.args import FaceSwapArgs
 from lib.utils import get_module_objects
 
@@ -54,6 +54,19 @@ class Faceqa_CoverageArgs(FaceSwapArgs):  # pylint:disable=invalid-name
                 "help": _(
                     "Optional FaceQA sidecar JSON. If omitted, the tool looks for "
                     "<alignments_stem>_faceset_qa.json beside the alignments file."
+                ),
+            },
+            {
+                "opts": ("-f", "--frames-dir", "--source-images"),
+                "action": DirOrFileFullPaths,
+                "type": str,
+                "dest": "frames_dir",
+                "group": _("data"),
+                "required": True,
+                "filetypes": "video",
+                "help": _(
+                    "Directory or source video containing the original frames/images that "
+                    "faces were extracted from. Required for SPIGA pose backfill."
                 ),
             },
             {

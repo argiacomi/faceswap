@@ -15,12 +15,13 @@ from lib.align.objects import FileAlignments
 from lib.faceqa.coverage import SpigaPoseBackfiller, compute_coverage, records_from_alignments
 from lib.faceqa.readiness import generate_readiness_report
 from lib.utils import FaceswapError, get_module_objects
+from tools.alignments.media import Frames
 
 logger = logging.getLogger(__name__)
 
 
 class Faceqa_Coverage:  # pylint:disable=invalid-name
-    """Run a read-only FaceQA coverage audit."""
+    """Run a FaceQA coverage audit."""
 
     def __init__(self, arguments: Namespace) -> None:
         logger.debug("Initializing %s: (arguments: %s)", self.__class__.__name__, arguments)
@@ -104,7 +105,7 @@ class Faceqa_Coverage:  # pylint:disable=invalid-name
 
     def _pose_backfiller(self) -> SpigaPoseBackfiller:
         """Return the pose backfiller used for automatic FaceQA pose selection."""
-        return SpigaPoseBackfiller()
+        return SpigaPoseBackfiller(Frames(self._args.frames_dir))
 
     def _output_paths(self, alignments: Path) -> tuple[Path, Path]:
         """Return report output paths, creating parent folders as needed."""

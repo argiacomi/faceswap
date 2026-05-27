@@ -11,7 +11,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from lib.align import AlignedFace
+from lib.align import AlignedFace, DetectedFace
 from lib.align.faceset_qa import FaceQAFile, FaceQARecord, build_index
 from lib.align.objects import AlignmentsEntry, FileAlignments
 from lib.serializer import get_serializer
@@ -32,6 +32,7 @@ DISTANCE_THRESHOLDS = (0.10, 0.20, 0.40)
 POSE_LIMITS = {"yaw": (-120.0, 120.0), "pitch": (-90.0, 90.0), "roll": (-90.0, 90.0)}
 POSE_HIGH_CONFIDENCE_DELTA = 10.0
 POSE_MEDIUM_CONFIDENCE_DELTA = 25.0
+SPIGA_BACKFILL_INPUT_SIZE = 256
 
 
 @dataclass
@@ -341,27 +342,32 @@ def _estimate_blur(image: np.ndarray) -> float:
 
 
 class SpigaPoseBackfiller:
-    """Backfill native SPIGA pose from stored aligned face thumbnails."""
+    """Backfill native SPIGA pose from source frames and stored alignments."""
 
-    def __init__(self) -> None:
+    def __init__(self, frames_loader: T.Any) -> None:
+        self._frames_loader = frames_loader
         self._plugin: T.Any = None
         self._disabled_reason: str | None = None
+        self._last_frame: str | None = None
+        self._last_image: np.ndarray | None = None
 
     def __call__(self, record: FaceQARecord, face: FileAlignments) -> dict[str, T.Any] | None:
         """Return SPIGA pose metadata for a face, or ``None`` when unavailable."""
-        del record
         if self._disabled_reason is not None:
             return None
-        image = _decode_thumb(face.thumb)
-        if image is None:
+        aligned_face = self._aligned_face(record, face, self._input_size())
+        if aligned_face is None:
             return None
         plugin = self._load_plugin()
         if plugin is None:
             return None
-        feed = cv2.resize(
-            image, (plugin.input_size, plugin.input_size), interpolation=cv2.INTER_CUBIC
-        )
-        feed = feed.astype("float32", copy=False) / 255.0
+        if aligned_face.shape[:2] != (plugin.input_size, plugin.input_size):
+            aligned_face = cv2.resize(
+                aligned_face,
+                (plugin.input_size, plugin.input_size),
+                interpolation=cv2.INTER_CUBIC,
+            )
+        feed = aligned_face.astype("float32", copy=False) / 255.0
         try:
             raw = plugin.process(feed[None])
             plugin.post_process(raw)
@@ -380,8 +386,56 @@ class SpigaPoseBackfiller:
         pose.setdefault("model", "spiga")
         return pose
 
+    def _aligned_face(
+        self,
+        record: FaceQARecord,
+        face: FileAlignments,
+        size: int,
+    ) -> np.ndarray | None:
+        """Load the source frame and reconstruct the aligned face crop for SPIGA."""
+        image = self._load_frame(record.frame)
+        if image is None:
+            return None
+        try:
+            face_obj = DetectedFace()
+            face_obj.from_alignment(face, image=image)
+            face_obj.load_aligned(image, size=size, centering="head")
+        except Exception as err:  # pylint:disable=broad-except
+            logger.warning(
+                "Could not reconstruct aligned face for SPIGA pose backfill "
+                "(frame: %s, face: %s): %s",
+                record.frame,
+                record.face_index,
+                err,
+            )
+            return None
+        return T.cast(np.ndarray, face_obj.aligned.face)
+
+    def _load_frame(self, frame: str) -> np.ndarray | None:
+        """Load a source frame by alignment frame name."""
+        if frame == self._last_frame and self._last_image is not None:
+            return self._last_image
+        try:
+            image = T.cast(np.ndarray, self._frames_loader.load_image(frame))
+        except Exception as err:  # pylint:disable=broad-except
+            logger.warning(
+                "Could not load source frame for SPIGA pose backfill '%s': %s", frame, err
+            )
+            return None
+        self._last_frame = frame
+        self._last_image = image
+        return image
+
+    def _input_size(self) -> int:
+        """Return the SPIGA input size without forcing model loading."""
+        return (
+            SPIGA_BACKFILL_INPUT_SIZE
+            if self._plugin is None
+            else int(getattr(self._plugin, "input_size", SPIGA_BACKFILL_INPUT_SIZE))
+        )
+
     def _load_plugin(self) -> T.Any | None:
-        """Load SPIGA lazily only when a face has an available crop."""
+        """Load SPIGA lazily only when a frame-backed crop is needed."""
         if self._plugin is not None:
             return self._plugin
         try:
@@ -597,9 +651,10 @@ def _percentages(counts: dict[str, dict[str, int]], total: int) -> dict[str, dic
 def _compute_duplicate_ratio(records: list[FaceQARecord]) -> float | None:
     if not any(record.duplicate_keep_recommendation is not None for record in records):
         return None
-    return sum(
-        record.duplicate_keep_recommendation == "prune_candidate" for record in records
-    ) / len(records)
+    return float(
+        sum(record.duplicate_keep_recommendation == "prune_candidate" for record in records)
+        / len(records)
+    )
 
 
 def _is_identity_outlier(record: FaceQARecord) -> bool:
