@@ -134,7 +134,6 @@ def _record_from_alignment(frame: str, idx: int, face: FileAlignments) -> FaceQA
     _populate_thumb_metrics(record, face)
     _populate_pose_metadata(record, face.metadata)
     _populate_metadata(record, face.metadata)
-    _populate_expression(record, face)
     return record
 
 
