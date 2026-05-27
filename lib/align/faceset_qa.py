@@ -52,6 +52,11 @@ class FaceQARecord(DataclassDict):
     yaw: float | None = None
     pitch: float | None = None
     roll: float | None = None
+    pose_source: str | None = None
+    pose_model: str | None = None
+    pose_delta_yaw: float | None = None
+    pose_delta_pitch: float | None = None
+    pose_delta_roll: float | None = None
     average_distance: float | None = None
 
     blur_score: float | None = None

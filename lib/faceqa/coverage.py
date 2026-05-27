@@ -107,6 +107,7 @@ def _record_from_alignment(frame: str, idx: int, face: FileAlignments) -> FaceQA
         record.identity_model = ",".join(sorted(face.identity))
     _populate_aligned_metrics(record, face)
     _populate_thumb_metrics(record, face)
+    _populate_pose_metadata(record, face.metadata)
     _populate_metadata(record, face.metadata)
     return record
 
@@ -144,6 +145,52 @@ def _populate_metadata(record: FaceQARecord, metadata: dict[str, T.Any]) -> None
     for key in FaceQARecord.__dataclass_fields__:  # pylint:disable=no-member
         if getattr(record, key) in (None, []) and key in payload:
             setattr(record, key, payload[key])
+
+
+def _populate_pose_metadata(record: FaceQARecord, metadata: dict[str, T.Any]) -> None:
+    """Prefer native persisted pose metadata over landmark-derived pose."""
+    pose = _extract_pose_metadata(metadata)
+    if pose is None:
+        return
+    record.yaw = _float_or_none(pose.get("yaw"))
+    record.pitch = _float_or_none(pose.get("pitch"))
+    record.roll = _float_or_none(pose.get("roll"))
+    record.pose_source = str(pose.get("source") or "metadata")
+    record.pose_model = None if pose.get("model") is None else str(pose.get("model"))
+    delta = pose.get("delta")
+    if isinstance(delta, dict):
+        record.pose_delta_yaw = _float_or_none(delta.get("yaw"))
+        record.pose_delta_pitch = _float_or_none(delta.get("pitch"))
+        record.pose_delta_roll = _float_or_none(delta.get("roll"))
+
+
+def _extract_pose_metadata(metadata: dict[str, T.Any]) -> dict[str, T.Any] | None:
+    """Return native pose metadata from known alignment metadata envelopes."""
+    for namespace in ("spiga", "faceqa"):
+        payload = metadata.get(namespace)
+        if isinstance(payload, dict) and isinstance(payload.get("pose"), dict):
+            return T.cast(dict[str, T.Any], payload["pose"])
+    pose = metadata.get("pose")
+    if isinstance(pose, dict):
+        return T.cast(dict[str, T.Any], pose)
+    ensemble = metadata.get("landmark_ensemble")
+    if isinstance(ensemble, dict):
+        adapter_pose = ensemble.get("adapter_pose")
+        if isinstance(adapter_pose, dict):
+            spiga_pose = adapter_pose.get("spiga")
+            if isinstance(spiga_pose, dict):
+                return T.cast(dict[str, T.Any], spiga_pose)
+    return None
+
+
+def _float_or_none(value: T.Any) -> float | None:
+    """Return a float for numeric metadata values."""
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _decode_thumb(thumb: np.ndarray | None) -> np.ndarray | None:

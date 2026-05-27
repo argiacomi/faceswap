@@ -10,7 +10,7 @@ import numpy as np
 
 from lib.align.faceset_qa import FaceQAFile, FaceQARecord, load, sidecar_path
 from lib.align.objects import AlignmentsEntry, FileAlignments
-from lib.faceqa.coverage import compute_coverage
+from lib.faceqa.coverage import compute_coverage, records_from_alignments
 from lib.serializer import get_serializer
 from tools.faceqa_coverage.faceqa_coverage import Faceqa_Coverage
 
@@ -115,6 +115,40 @@ def test_faceqa_coverage_tool_writes_reports_from_alignments(tmp_path) -> None:
     assert "pose" in payload["coverage"]
     assert "blur" in payload["coverage"]
     assert output_md.read_text(encoding="utf-8").startswith("# FaceQA Coverage Report")
+
+
+def test_records_from_alignments_prefers_spiga_pose_metadata(tmp_path) -> None:
+    """FaceQA should prefer native SPIGA pose over landmark-derived pose."""
+    face = _face()
+    face.metadata = {
+        "spiga": {
+            "pose": {
+                "yaw": 42.0,
+                "pitch": -8.0,
+                "roll": 3.0,
+                "source": "spiga",
+                "model": "spiga",
+                "delta": {"yaw": 2.0, "pitch": -1.0, "roll": 0.5},
+            }
+        }
+    }
+    alignments = tmp_path / "alignments.fsa"
+    get_serializer("compressed").save(
+        str(alignments),
+        {
+            "__meta__": {"version": 2.4},
+            "__data__": {"frame_000001.png": AlignmentsEntry(faces=[face]).to_dict()},
+        },
+    )
+
+    records = records_from_alignments(alignments)
+
+    assert records[0].yaw == 42.0
+    assert records[0].pitch == -8.0
+    assert records[0].roll == 3.0
+    assert records[0].pose_source == "spiga"
+    assert records[0].pose_model == "spiga"
+    assert records[0].pose_delta_yaw == 2.0
 
 
 def test_sidecar_path() -> None:

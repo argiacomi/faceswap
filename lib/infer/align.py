@@ -424,8 +424,12 @@ class Align(ExtractHandler):
         metadata = getattr(self.plugin, "last_debug_metadata", None)
         if not isinstance(metadata, list) or not metadata:
             return
+        metadata_key = self._plugin_metadata_key()
         if len(metadata) == face_count:
-            batch.aligned.metadata = [{"landmark_ensemble": item} for item in metadata]
+            batch.aligned.metadata = [
+                self._plugin_metadata_item(metadata_key, item, batch, index)
+                for index, item in enumerate(metadata)
+            ]
             return
         total_feeds = self._re_feed.total_feeds
         if total_feeds <= 1 or len(metadata) != feed_count:
@@ -438,8 +442,71 @@ class Align(ExtractHandler):
             )
             return
         batch.aligned.metadata = [
-            {"landmark_ensemble": metadata[index * total_feeds]} for index in range(face_count)
+            self._plugin_metadata_item(
+                metadata_key,
+                metadata[index * total_feeds],
+                batch,
+                index,
+            )
+            for index in range(face_count)
         ]
+
+    def _plugin_metadata_key(self) -> str:
+        """Return the alignment metadata namespace for the active plugin."""
+        name = self.plugin.name.lower()
+        return "landmark_ensemble" if name == "ensemble" else name
+
+    def _plugin_metadata_item(
+        self,
+        metadata_key: str,
+        item: dict[str, T.Any],
+        batch: ExtractBatch,
+        index: int,
+    ) -> dict[str, dict[str, T.Any]]:
+        """Return one namespaced metadata item, enriched when possible."""
+        payload = dict(item) if isinstance(item, dict) else {"value": item}
+        if metadata_key == "spiga":
+            self._add_spiga_pose_validation(payload, batch, index)
+        return {metadata_key: payload}
+
+    @staticmethod
+    def _add_spiga_pose_validation(
+        payload: dict[str, T.Any],
+        batch: ExtractBatch,
+        index: int,
+    ) -> None:
+        """Compare native SPIGA pose to Faceswap's landmark-derived pose."""
+        pose = payload.get("pose")
+        if not isinstance(pose, dict):
+            return
+        try:
+            rotations = batch.aligned.rotation
+        except Exception:  # pylint:disable=broad-except
+            logger.debug("Could not derive pose validation for SPIGA metadata", exc_info=True)
+            return
+        if index >= rotations.shape[0]:
+            return
+        rotation = rotations[index : index + 1]
+        derived = {
+            "source": "faceswap_landmarks",
+            "units": "degrees",
+            "yaw": float(Batch3D.yaw(rotation)[0]),
+            "pitch": float(Batch3D.pitch(rotation)[0]),
+            "roll": float(Batch3D.roll(rotation)[0]),
+        }
+        delta = {}
+        for key in ("yaw", "pitch", "roll"):
+            if key not in pose:
+                continue
+            try:
+                delta[key] = float(float(pose[key]) - derived[key])
+            except (TypeError, ValueError):
+                continue
+        pose["derived"] = derived
+        pose["delta"] = delta
+        pose["validation"] = {
+            "max_abs_delta": max((abs(value) for value in delta.values()), default=0.0)
+        }
 
     def set_normalize_method(
         self, method: T.Literal["none", "clahe", "hist", "mean"] | None

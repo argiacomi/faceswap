@@ -708,6 +708,16 @@ class Ensemble(ExtractPlugin):
         }
 
     @staticmethod
+    def _adapter_pose_metadata(items: T.Sequence[LandmarkPrediction]) -> dict[str, T.Any]:
+        """Return native adapter pose metadata keyed by model name."""
+        poses: dict[str, T.Any] = {}
+        for item in items:
+            pose = item.metadata.get("pose")
+            if isinstance(pose, dict):
+                poses[item.model_name] = dict(pose)
+        return poses
+
+    @staticmethod
     def _prediction_availability(
         adapters: T.Sequence[LandmarkAdapter], errors: T.Sequence[str]
     ) -> dict[str, bool]:
@@ -739,6 +749,7 @@ class Ensemble(ExtractPlugin):
             "veto_reasons": list(veto_reasons),
             "roll_estimate": self._roll_estimate(points),
             "consensus_distances": self._consensus_distances(items),
+            "adapter_pose": self._adapter_pose_metadata(items),
             "geometry_valid": bool(geometry_valid),
             "model_predictions_available": self._prediction_availability(adapters, errors),
             "detector_bbox": list(detector_bbox) if detector_bbox is not None else None,

@@ -274,12 +274,16 @@ class FaceswapAlignerAdapter(LandmarkAdapter):
             raise ValueError(
                 f"wrapped aligner '{self.config.name}' returned unexpected shape {points.shape}"
             )
+        plugin_metadata = getattr(self.plugin, "last_debug_metadata", [])
         predictions = []
         for idx, landmark_points in enumerate(points):
             matrix = None if matrices is None else matrices[idx]
+            metadata = {"wrapped_plugin": type(self.plugin).__name__}
+            if isinstance(plugin_metadata, list) and idx < len(plugin_metadata):
+                metadata.update(plugin_metadata[idx])
             prediction = self.normalize_prediction(
                 landmark_points,
-                metadata={"wrapped_plugin": type(self.plugin).__name__},
+                metadata=metadata,
             )
             predictions.append(self.to_frame_prediction(prediction, matrix=matrix))
         return predictions

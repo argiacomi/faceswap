@@ -194,6 +194,8 @@ _LDM_IDS_98 = [
     196,
     197,
 ]
+_POSE_ROWS = 3
+_POSE_FIELDS = ("yaw", "pitch", "roll")
 
 
 @dataclass(frozen=True)
@@ -235,6 +237,7 @@ _MODEL_CONFIG = {
         ldm_ids=_LDM_IDS_98,
     ),
 }
+_LANDMARK_COUNTS = frozenset(config.num_landmarks for config in _MODEL_CONFIG.values())
 
 
 class SPIGA(ExtractPlugin):
@@ -253,6 +256,7 @@ class SPIGA(ExtractPlugin):
         self._model_config = _MODEL_CONFIG[cfg.model()]
         self.model: SPIGAFaceswapModel
         self.realign_centering = "legacy"
+        self.last_debug_metadata: list[dict[str, T.Any]] = []
 
     def load_model(self) -> SPIGAFaceswapModel:
         """Load the SPIGA model.
@@ -334,7 +338,33 @@ class SPIGA(ExtractPlugin):
         -------
         The final landmarks in 0-1 space
         """
-        return batch.astype("float32", copy=False)
+        landmarks, pose = self._split_pose_output(batch)
+        self.last_debug_metadata = (
+            [{"pose": _pose_metadata(row)} for row in pose] if pose is not None else []
+        )
+        return landmarks.astype("float32", copy=False)
+
+    def _split_pose_output(self, batch: np.ndarray) -> tuple[np.ndarray, np.ndarray | None]:
+        """Return landmark predictions and optional native SPIGA pose rows."""
+        landmark_count = self._landmark_count_from_output(batch)
+        if batch.shape[1] < landmark_count + _POSE_ROWS:
+            return batch, None
+        landmarks = batch[:, :landmark_count]
+        pose = batch[:, landmark_count : landmark_count + _POSE_ROWS, 0]
+        return landmarks, pose.astype("float32", copy=False)
+
+    def _landmark_count_from_output(self, batch: np.ndarray) -> int:
+        """Return the landmark count expected in a model output batch."""
+        model_config = getattr(self, "_model_config", None)
+        if model_config is not None:
+            return int(model_config.num_landmarks)
+
+        count = int(batch.shape[1])
+        if count in _LANDMARK_COUNTS:
+            return count
+        if count - _POSE_ROWS in _LANDMARK_COUNTS:
+            return count - _POSE_ROWS
+        return count
 
 
 class SPIGAFaceswapModel(nn.Module):
@@ -375,12 +405,40 @@ class SPIGAFaceswapModel(nn.Module):
         return super().load_state_dict(weights, strict=strict, assign=assign)
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
-        """Return only landmark predictions, discarding SPIGA's head-pose output."""
+        """Return landmark predictions with native SPIGA pose appended as rows."""
         batch_size = inputs.shape[0]
         model3d = self.model3d.unsqueeze(0).expand(batch_size, -1, -1)
         cam_matrix = self.cam_matrix.unsqueeze(0).expand(batch_size, -1, -1)
         outputs = self.spiga([inputs, model3d, cam_matrix])
-        return outputs["Landmarks"][-1]
+        landmarks = outputs["Landmarks"][-1]
+        pose = _pose_rows_from_raw(outputs["Pose"])
+        return torch.cat((landmarks, pose), dim=1)
+
+
+def _pose_rows_from_raw(raw_pose: torch.Tensor) -> torch.Tensor:
+    """Return yaw/pitch/roll pose rows from SPIGA's raw pose tensor."""
+    euler = raw_pose[:, :3]
+    yaw = 90.0 - euler[:, 0]
+    pitch = -euler[:, 1]
+    roll = -(euler[:, 2] + 90.0)
+    pose = torch.stack((yaw, pitch, roll), dim=1)
+    rows = torch.zeros(
+        (raw_pose.shape[0], _POSE_ROWS, 2), device=raw_pose.device, dtype=raw_pose.dtype
+    )
+    rows[:, :, 0] = pose
+    return rows
+
+
+def _pose_metadata(pose: np.ndarray) -> dict[str, T.Any]:
+    """Return serialized pose metadata for one SPIGA prediction."""
+    values = {field: float(value) for field, value in zip(_POSE_FIELDS, pose, strict=True)}
+    return {
+        **values,
+        "source": "spiga",
+        "model": "spiga",
+        "units": "degrees",
+        "coordinate_convention": "faceswap",
+    }
 
 
 def _load_world_shape(db_landmarks: list[int]) -> np.ndarray:
