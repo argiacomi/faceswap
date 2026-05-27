@@ -7,7 +7,8 @@ from lib.config import ConfigItem
 HELPTEXT = (
     "AdaFace iResNet101 identity recognition (Kim et al., CVPR 2022).\n"
     "Produces 512-dim L2-normalized embeddings. Weights are loaded from the "
-    "mk-minchul/AdaFace Hugging Face repository. Model code and weights are MIT licensed."
+    "minchul/cvlface_adaface_ir101_webface12m Hugging Face repository. "
+    "Model code and weights are MIT licensed."
 )
 
 
@@ -24,6 +25,6 @@ cpu = ConfigItem(
     datatype=bool,
     default=False,
     group="settings",
-    info="Force CPU inference for this plugin. AdaFace uses onnxruntime; install the runtime "
-    "package that matches your backend.",
+    info="Force CPU inference for this plugin. AdaFace uses PyTorch/Transformers CVLFace "
+    "weights and otherwise prefers the best available Torch backend.",
 )
