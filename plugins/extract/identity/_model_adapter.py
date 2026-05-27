@@ -5,8 +5,12 @@ from __future__ import annotations
 
 import glob
 import logging
+import os
 import os.path as osp
+import sys
+import threading
 import typing as T
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from importlib import import_module
 
@@ -17,6 +21,7 @@ from lib.utils import get_module_objects
 logger = logging.getLogger(__name__)
 
 OnnxProvider = str | tuple[str, dict[str, T.Any]]
+_CVLFACE_LOAD_LOCK = threading.Lock()
 
 
 class LoadedIdentityModel(T.Protocol):
@@ -84,6 +89,54 @@ def _onnxruntime_providers(
     return providers, ctx_id
 
 
+def _download_cvlface_snapshot(repo_id: str, model_label: str) -> str:
+    """Download the full CVLFace custom-code snapshot required by Transformers."""
+    try:
+        hub = import_module("huggingface_hub")
+    except ImportError as exc:
+        raise ImportError(
+            f"{model_label} identity extraction requires 'huggingface_hub' to download "
+            "CVLFace model code and weights."
+        ) from exc
+
+    # The CVLFace wrappers import a repo-local top-level ``models`` package and load
+    # ``pretrained_model/model.pt`` with a relative path. Pull the repo code and weights
+    # into a local snapshot so we can add the snapshot root to sys.path while loading.
+    return T.cast(
+        str,
+        hub.snapshot_download(
+            repo_id=repo_id,
+            allow_patterns=[
+                "config.json",
+                "wrapper.py",
+                "models/**",
+                "pretrained_model/**",
+                "model.safetensors",
+            ],
+        ),
+    )
+
+
+@contextmanager
+def _cvlface_repo_context(model_dir: str) -> T.Iterator[None]:
+    """Temporarily make a CVLFace snapshot importable as a local Python package."""
+    cwd = os.getcwd()
+    added_path = False
+    if model_dir not in sys.path:
+        sys.path.insert(0, model_dir)
+        added_path = True
+    try:
+        os.chdir(model_dir)
+        yield
+    finally:
+        os.chdir(cwd)
+        if added_path:
+            try:
+                sys.path.remove(model_dir)
+            except ValueError:
+                pass
+
+
 def _make_cvlface_loader(
     repo_id: str, *, model_label: str, force_cpu: bool = False
 ) -> T.Callable[[], LoadedIdentityModel]:
@@ -100,8 +153,12 @@ def _make_cvlface_loader(
             ) from exc
 
         device = torch_utils.get_device(cpu=force_cpu)
+        model_dir = _download_cvlface_snapshot(repo_id, model_label)
         auto_model = transformers.AutoModel
-        model = auto_model.from_pretrained(repo_id, trust_remote_code=True)
+        with _CVLFACE_LOAD_LOCK, _cvlface_repo_context(model_dir):
+            model = auto_model.from_pretrained(
+                model_dir, trust_remote_code=True, local_files_only=True
+            )
         model.to(device)
         model.eval()
         logger.info("%s CVLFace model loaded on %s from %s", model_label, device, repo_id)
