@@ -839,7 +839,7 @@ class ContextMenu:  # pylint:disable=too-few-public-methods
         )
         self._canvas = canvas
         self._detected_faces = detected_faces
-        self._menu = RightClickMenu(["Delete Face"], [self._delete_face])
+        self._menu = RightClickMenu(["Delete Face(s)"], [self._delete_face])
         self._frame_index = None
         self._face_index = None
         self._canvas.bind(
@@ -870,13 +870,21 @@ class ContextMenu:  # pylint:disable=too-few-public-methods
 
     def _delete_face(self):
         """Delete the selected face on a right click mouse delete action."""
+        selected_faces = self._canvas._globals.selected_face_indices
+        delete_indices = (
+            selected_faces
+            if self._frame_index == self._canvas._globals.frame_index and selected_faces
+            else (self._face_index,)
+        )
         logger.trace(
             "Right click delete received. frame_id: %s, "  # type:ignore[attr-defined]
-            "face_id: %s",
+            "face_id: %s, selected_face_ids: %s",
             self._frame_index,
             self._face_index,
+            selected_faces,
         )
-        self._detected_faces.update.delete(self._frame_index, self._face_index)
+        self._detected_faces.update.delete_many(self._frame_index, delete_indices)
+        self._canvas._globals.clear_selected_face_indices()
         self._frame_index = self._face_index = None
 
 

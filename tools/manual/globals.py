@@ -7,6 +7,7 @@ import logging
 import os
 import sys
 import tkinter as tk
+import typing as T
 from dataclasses import dataclass, field
 
 import cv2
@@ -110,6 +111,7 @@ class TkGlobals:
             int(round(504 * get_config().scaling_factor)),
         )
         self._current_frame = CurrentFrame()
+        self._selected_face_indices: set[int] = set()
         logger.debug("Initialized %s", self.__class__.__name__)
 
     @classmethod
@@ -215,6 +217,11 @@ class TkGlobals:
         is displaying a full frame."""
         return self._tk_vars.is_zoomed.get()
 
+    @property
+    def selected_face_indices(self) -> tuple[int, ...]:
+        """tuple[int, ...]: The face indices currently selected for bulk actions."""
+        return tuple(sorted(self._selected_face_indices))
+
     @staticmethod
     def _check_input(frames_location: str) -> bool:
         """Check whether the input is a video
@@ -253,6 +260,29 @@ class TkGlobals:
         )
         self._tk_vars.face_index.set(index)
 
+    def set_selected_face_indices(self, indices: T.Iterable[int]) -> None:
+        """Set the face indices selected for bulk actions."""
+        self._selected_face_indices = {int(index) for index in indices}
+        logger.trace(  # type:ignore[attr-defined]
+            "Selected face indices set to: %s", self.selected_face_indices
+        )
+
+    def toggle_selected_face_index(self, index: int) -> None:
+        """Toggle one face index in the bulk-action selection."""
+        if index in self._selected_face_indices:
+            self._selected_face_indices.remove(index)
+        else:
+            self._selected_face_indices.add(index)
+        logger.trace(  # type:ignore[attr-defined]
+            "Selected face indices toggled to: %s", self.selected_face_indices
+        )
+
+    def clear_selected_face_indices(self) -> None:
+        """Clear the face indices selected for bulk actions."""
+        if self._selected_face_indices:
+            logger.trace("Clearing selected face indices")  # type:ignore[attr-defined]
+        self._selected_face_indices.clear()
+
     def set_frame_count(self, count: int) -> None:
         """Set the count of total number of frames to :attr:`frame_count` when the
         :class:`FramesLoader` has completed loading.
@@ -288,6 +318,7 @@ class TkGlobals:
             int(round(image.shape[1] * scale)),
             int(round(image.shape[0] * scale)),
         )
+        self.clear_selected_face_indices()
         logger.trace(self._current_frame)  # type:ignore[attr-defined]
 
     def set_frame_display_dims(self, width: int, height: int) -> None:

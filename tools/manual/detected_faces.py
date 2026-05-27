@@ -735,9 +735,41 @@ class FaceUpdate:
         face_index
             The face index within the frame
         """
-        logger.debug("Deleting face at frame index: %s face index: %s", frame_index, face_index)
+        self.delete_many(frame_index, (face_index,))
+
+    def delete_many(self, frame_index: int, face_indices: T.Iterable[int]) -> None:
+        """Delete multiple faces from one frame.
+
+        Parameters
+        ----------
+        frame_index
+            The frame that the faces are being set for
+        face_indices
+            The face indices within the frame
+        """
+        if frame_index < 0 or frame_index >= len(self._frame_faces):
+            return
+        faces = self._frame_faces[frame_index]
+        valid_indices = sorted(
+            {int(face_index) for face_index in face_indices if 0 <= int(face_index) < len(faces)},
+            reverse=True,
+        )
+        if not valid_indices:
+            logger.debug(
+                "No valid faces to delete. frame_index: %s face_indices: %s",
+                frame_index,
+                face_indices,
+            )
+            return
+
+        logger.debug(
+            "Deleting faces at frame index: %s face indices: %s", frame_index, valid_indices
+        )
         faces = self._faces_at_frame_index(frame_index)
-        del faces[face_index]
+        for face_index in valid_indices:
+            del faces[face_index]
+        self._globals.set_face_index(min(self._globals.face_index, max(0, len(faces) - 1)))
+        self._globals.clear_selected_face_indices()
         self._tk_face_count_changed.set(True)
         self._globals.var_full_update.set(True)
 

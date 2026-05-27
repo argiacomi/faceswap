@@ -6,7 +6,6 @@ from __future__ import annotations
 import gettext
 import tkinter as tk
 import typing as T
-from tkinter import messagebox
 
 import cv2
 import numpy as np
@@ -208,48 +207,23 @@ class Mask(Editor):
         self._globals.var_full_update.set(True)
 
     def _delete_mask(self, *_args: T.Any) -> None:
-        """Delete the selected mask type from the target face after confirmation."""
+        """Delete the selected mask type from the target face(s)."""
         frame_index = self._globals.frame_index
-        face_index = self._delete_mask_face_index()
-        if face_index is None:
-            messagebox.showinfo(
-                _("Delete Mask"),
-                _("No target face is selected for mask deletion."),
-                parent=self._canvas.winfo_toplevel(),
-            )
+        face_indices = self._delete_mask_face_indices()
+        if not face_indices:
             return
 
         mask_type = self._control_vars["display"]["MaskType"].get().lower()
-        if not self._face_has_mask(frame_index, face_index, mask_type):
-            messagebox.showinfo(
-                _("Delete Mask"),
-                _("Face {} does not have a '{}' mask.").format(face_index, mask_type),
-                parent=self._canvas.winfo_toplevel(),
-            )
-            return
-
-        message = _(
-            "Delete '{}' mask from face {}?\n"
-            "This will cause missing-mask generation to process this face again."
-        ).format(mask_type, face_index)
-        confirmed = messagebox.askyesno(
-            _("Delete Mask"),
-            message,
-            default="no",
-            icon="warning",
-            parent=self._canvas.winfo_toplevel(),
-        )
-        if not confirmed:
-            return
-
         self._clear_lasso_preview()
         self._meta = {"position": frame_index}
-        deleted = self._det_faces.update.delete_mask(frame_index, face_index, mask_type)
-        if not deleted:
-            self._globals.var_full_update.set(True)
-            return
 
-        self._hide_mask_annotation(face_index)
+        deleted = False
+        for face_index in face_indices:
+            if self._det_faces.update.delete_mask(frame_index, face_index, mask_type):
+                self._hide_mask_annotation(face_index)
+                deleted = True
+        if deleted:
+            self._globals.var_full_update.set(True)
 
     def _hide_mask_annotation(self, face_index: int) -> None:
         """Hide stale mask overlay canvas items for a deleted or missing mask."""
@@ -260,6 +234,20 @@ class Mask(Editor):
             f"mask_text_face_{face_index}",
         ):
             self._canvas.itemconfig(tag, state="hidden")
+
+    def _delete_mask_face_indices(self) -> tuple[int, ...]:
+        """Return the face indices targeted by the Delete Mask command."""
+        faces = self._current_frame_faces()
+        selected_faces = tuple(
+            face_index
+            for face_index in self._globals.selected_face_indices
+            if 0 <= face_index < len(faces)
+        )
+        if selected_faces:
+            return selected_faces
+
+        face_index = self._delete_mask_face_index()
+        return () if face_index is None else (face_index,)
 
     def _delete_mask_face_index(self) -> int | None:
         """Return the face index targeted by the Delete Mask command."""
@@ -275,11 +263,6 @@ class Mask(Editor):
         if 0 <= active_face < len(faces):
             return active_face
         return None
-
-    def _face_has_mask(self, frame_index: int, face_index: int, mask_type: str) -> bool:
-        """Return whether the target face currently has the selected mask key."""
-        faces = self._current_frame_faces(frame_index)
-        return bool(faces and 0 <= face_index < len(faces) and mask_type in faces[face_index].mask)
 
     def _current_frame_faces(self, frame_index: int | None = None) -> list[align.DetectedFace]:
         """Return faces for the requested frame, or an empty list when unavailable."""

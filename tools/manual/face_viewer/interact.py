@@ -56,7 +56,8 @@ class HoverBox:
         self._current_face_index = None
         self._canvas.bind("<Leave>", lambda e: self._clear())
         self._canvas.bind("<Motion>", self.on_hover)
-        self._canvas.bind("<ButtonPress-1>", lambda e: self._select_frame())
+        self._canvas.bind("<ButtonPress-1>", lambda e: self._select_frame(multi_select=False))
+        self._canvas.bind("<Shift-ButtonPress-1>", lambda e: self._select_frame(multi_select=True))
         logger.debug("Initialized: %s", self.__class__.__name__)
 
     @property
@@ -90,11 +91,7 @@ class HoverBox:
         if frame_idx == self._current_frame_index and face_idx == self._current_face_index:
             return
 
-        is_zoomed = self._globals.is_zoomed
-        if -1 in face or (
-            frame_idx == self._globals.frame_index
-            and (not is_zoomed or (is_zoomed and face_idx == self._globals.face_index))
-        ):
+        if -1 in face:
             self._clear()
             self._canvas.config(cursor="")
             self._current_frame_index = None
@@ -126,21 +123,34 @@ class HoverBox:
         self._canvas.itemconfig(self._box, state="normal")
         self._canvas.tag_raise(self._box)
 
-    def _select_frame(self) -> None:
+    def _select_frame(self, multi_select: bool) -> None:
         """Select the face and the subsequent frame (in the editor view) when a face is clicked
         on in the :class:`Viewport`."""
         frame_id = self._current_frame_index
+        face_idx = self._current_face_index
         is_zoomed = self._globals.is_zoomed
         logger.debug(
-            "Face clicked. Global frame index: %s, Current frame_id: %s, is_zoomed: %s",
+            "Face clicked. Global frame index: %s, Current frame_id: %s, "
+            "face_idx: %s, is_zoomed: %s, multi_select: %s",
             self._globals.frame_index,
             frame_id,
+            face_idx,
             is_zoomed,
+            multi_select,
         )
-        if frame_id is None or (frame_id == self._globals.frame_index and not is_zoomed):
+        if frame_id is None or face_idx is None:
             return
-        face_idx = self._current_face_index if is_zoomed else 0
+
+        if multi_select and frame_id == self._globals.frame_index:
+            self._globals.toggle_selected_face_index(face_idx)
+        else:
+            self._globals.set_selected_face_indices((face_idx,))
         self._globals.set_face_index(face_idx)
+        self._globals.var_update_active_viewport.set(True)
+
+        if frame_id == self._globals.frame_index and not is_zoomed:
+            return
+
         transport_id = self._grid.transport_index_from_frame(frame_id)
         logger.trace(
             "frame_index: %s, transport_id: %s, face_idx: %s",
@@ -152,6 +162,8 @@ class HoverBox:
             return
         self._navigation.stop_playback()
         self._globals.var_transport_index.set(transport_id)
+        self._globals.set_selected_face_indices((face_idx,))
+        self._globals.var_update_active_viewport.set(True)
         self._viewport.move_active_to_top()
         self.on_hover(None)
 
@@ -195,6 +207,8 @@ class ActiveFrame:
     tk_edited_variable: :class:`tkinter.BooleanVar`
         The tkinter callback variable indicating that a face has been edited
     """
+
+    _SELECTED_BOX_COLOR = "#ffcc00"
 
     def __init__(self, viewport: Viewport, tk_edited_variable: tk.BooleanVar) -> None:
         logger.debug(parse_class_init(locals()))
@@ -295,22 +309,47 @@ class ActiveFrame:
 
     def _set_active_objects(self) -> None:
         """Collect the objects that exist in the currently active frame from the main grid."""
-        if self._grid.is_valid:
-            rows, cols = np.where(self._objects.visible_grid[0] == self.frame_index)
-            logger.trace(
-                "Setting active objects: (rows: %s, "  # type:ignore[attr-defined]
-                "columns: %s)",
-                rows,
-                cols,
-            )
-            self._assets.images = self._objects.images[rows, cols].tolist()
-            self._assets.meshes = self._objects.meshes[rows, cols].tolist()
-            self._assets.faces = self._objects.visible_faces[rows, cols].tolist()
-        else:
+        if not self._grid.is_valid:
             logger.trace("No valid grid. Clearing active objects")  # type:ignore[attr-defined]
             self._assets.images = []
             self._assets.meshes = []
             self._assets.faces = []
+            return
+
+        rows, cols = np.where(self._objects.visible_grid[0] == self.frame_index)
+        logger.trace(
+            "Setting active objects: (rows: %s, "  # type:ignore[attr-defined]
+            "columns: %s)",
+            rows,
+            cols,
+        )
+
+        viewport_shape = self._objects.visible_grid.shape[1:]
+        objects_ready = (
+            self._objects.images.size
+            and self._objects.meshes.size
+            and self._objects.visible_faces.size
+            and self._objects.images.shape == viewport_shape
+            and self._objects.meshes.shape == viewport_shape
+            and self._objects.visible_faces.shape == viewport_shape
+        )
+        if not objects_ready:
+            logger.trace(
+                "Viewport objects are not ready. Clearing active objects: "
+                "visible_grid: %s, images: %s, meshes: %s, faces: %s",
+                viewport_shape,
+                self._objects.images.shape,
+                self._objects.meshes.shape,
+                self._objects.visible_faces.shape,
+            )
+            self._assets.images = []
+            self._assets.meshes = []
+            self._assets.faces = []
+            return
+
+        self._assets.images = self._objects.images[rows, cols].tolist()
+        self._assets.meshes = self._objects.meshes[rows, cols].tolist()
+        self._assets.faces = self._objects.visible_faces[rows, cols].tolist()
 
     def _check_active_in_view(self) -> None:
         """If the frame has changed, there are faces in the frame, but they don't appear in the
@@ -411,11 +450,11 @@ class ActiveFrame:
             coords = [*top_left, *[x + self._size for x in top_left]]
             tk_face = self._viewport.get_tk_face(self.frame_index, face_idx, det_face)
             self._canvas.itemconfig(image_id, image=tk_face.photo)
-            self._show_box(box_id, coords)
+            self._show_box(box_id, coords, face_idx in self._globals.selected_face_indices)
             self._show_mesh(mesh_ids, face_idx, det_face, top_left)
         self._last_execution["size"] = self._viewport.face_size
 
-    def _show_box(self, item_id: int, coordinates: list[float]) -> None:
+    def _show_box(self, item_id: int, coordinates: list[float], is_selected: bool) -> None:
         """Display the highlight box around the given coordinates.
 
         Parameters
@@ -424,9 +463,16 @@ class ActiveFrame:
             The tkinter canvas object identifier for the highlight box
         coordinates: list[float]
             The (x, y, x1, y1) coordinates of the top left corner of the box
+        is_selected
+            ``True`` if the face is selected for a bulk action
         """
         self._canvas.coords(item_id, *coordinates)
-        self._canvas.itemconfig(item_id, state="normal")
+        kwargs = (
+            {"outline": self._SELECTED_BOX_COLOR, "width": 4}
+            if is_selected
+            else {"outline": self._canvas.control_colors["ExtractBox"], "width": 2}
+        )
+        self._canvas.itemconfig(item_id, state="normal", **kwargs)
 
     def _show_mesh(
         self,

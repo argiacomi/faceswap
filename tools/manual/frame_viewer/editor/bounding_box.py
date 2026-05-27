@@ -34,7 +34,7 @@ class BoundingBox(Editor):
     def __init__(self, canvas, detected_faces):
         self._tk_aligner = None
         self._right_click_menu = RightClickMenu(
-            [_("Delete Face")], [self._delete_current_face], ["Del"]
+            [_("Delete Face(s)")], [self._delete_current_face], ["Del"]
         )
         control_text = _(
             "Bounding Box Editor\nEdit the bounding box being fed into the aligner "
@@ -460,14 +460,23 @@ class BoundingBox(Editor):
         args: tuple (unused)
             The event parameter is passed in by the hot key binding, so args is required
         """
-        if self._mouse_location is None or self._mouse_location[0] != "box":
+        selected_faces = self._globals.selected_face_indices
+        if not selected_faces and (
+            self._mouse_location is None or self._mouse_location[0] != "box"
+        ):
             logger.debug(
                 "Delete called without valid location. _mouse_location: %s",
                 self._mouse_location,
             )
             return
-        logger.debug("Deleting face. _mouse_location: %s", self._mouse_location)
-        self._det_faces.update.delete(self._globals.frame_index, int(self._mouse_location[1]))
+        face_indices = selected_faces if selected_faces else (int(self._mouse_location[1]),)
+        logger.debug(
+            "Deleting face(s). _mouse_location: %s, selected_faces: %s",
+            self._mouse_location,
+            selected_faces,
+        )
+        self._det_faces.update.delete_many(self._globals.frame_index, face_indices)
+        self._globals.clear_selected_face_indices()
 
 
 __all__ = get_module_objects(__name__)
