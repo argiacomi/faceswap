@@ -74,6 +74,12 @@ ignore_missing_imports = true
 testpaths = ["tests"]
 pythonpath = ["."]
 filterwarnings = ["ignore::DeprecationWarning:keras.*:"]
+markers = [
+    "slow: tests that are too expensive to run on every commit (heavy model matrices, exhaustive parametrizations)",
+    "e2e: end-to-end tests that shell out through extract/sort/alignments/train/convert (run nightly or on demand)",
+    "gui: tests that require a Qt or Tk display and exercise GUI widgets/event loops",
+    "regression: targeted regression tests for previously fixed bugs (kept on the fast tier unless they are also slow)",
+]
 
 [tool.pyright]
 reportUnsupportedDunderAll = false

@@ -44,17 +44,50 @@ def pytest_configure(config: pytest.Config) -> None:
     #     tracemalloc.start(25)
 
 
+# Path fragments that auto-classify collected tests into tier markers. Keeping
+# the routing here avoids sprinkling ``pytestmark`` boilerplate across hundreds
+# of files and gives one obvious place to retune the fast/slow split.
+_GUI_PATH_FRAGMENTS = (
+    f"tests{os.sep}lib{os.sep}gui{os.sep}",
+    f"tests{os.sep}tools{os.sep}manual{os.sep}qt{os.sep}",
+    f"tests{os.sep}tools{os.sep}preview{os.sep}",
+)
+_SLOW_PATH_FRAGMENTS = (
+    # Heavy phaze-a parametrizations (bottleneck x latent_norm matrix, decoder
+    # contract variants, etc.) belong to the slow tier; the per-commit run
+    # still exercises representative model construction / state coverage via
+    # the non-matrix tests in test_phaze_a.py.
+    f"tests{os.sep}plugins{os.sep}train{os.sep}test_phaze_a_decoder_contracts.py",
+    f"tests{os.sep}plugins{os.sep}train{os.sep}test_phaze_a_refinement_tail.py",
+    f"tests{os.sep}plugins{os.sep}train{os.sep}test_phaze_a_decoder_norm.py",
+    f"tests{os.sep}plugins{os.sep}train{os.sep}test_phaze_a_residual_scale.py",
+    f"tests{os.sep}plugins{os.sep}train{os.sep}test_phaze_a_activation_config.py",
+    f"tests{os.sep}plugins{os.sep}train{os.sep}test_phaze_a_antialias.py",
+)
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Apply the ``gui`` and ``slow`` tier markers based on file location."""
+    for item in items:
+        path = str(item.fspath)
+        if any(fragment in path for fragment in _GUI_PATH_FRAGMENTS):
+            item.add_marker(pytest.mark.gui)
+        if any(fragment in path for fragment in _SLOW_PATH_FRAGMENTS):
+            item.add_marker(pytest.mark.slow)
+
+
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> object:
     """Force unraisable cleanup warnings to surface at the originating test.
 
-    Without an explicit collection point, a leaked/broken temporary-file
-    wrapper may not be finalized until a later, unrelated test.  Collecting
-    after each test's teardown keeps the warning associated with the test
-    that created the object while preserving the warning itself.
+    Only Qt/Tk GUI tests need an explicit ``gc.collect()`` after teardown:
+    those suites create cyclic widget graphs whose temporary-file finalisers
+    otherwise fire in unrelated later tests.  Pure-Python unit tests do not
+    pay the cost of a full collection after every test.
     """
     outcome = yield
-    gc.collect()
+    if item.get_closest_marker("gui") is not None:
+        gc.collect()
     return outcome
 
 

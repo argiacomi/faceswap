@@ -1,0 +1,76 @@
+name: ci/full-suite
+
+# Full coverage tier: the slow/e2e tests pulled out of the per-commit CI in
+# `pytest.yml`.  Runs nightly and on demand.  Kept on a single
+# ubuntu + python combo on purpose - the broader OS/python matrix runs the
+# fast tier; this is a coverage net, not a smoke fan-out.
+
+on:
+    schedule:
+        # 07:30 UTC daily (off-peak for the runner pool)
+        - cron: '30 7 * * *'
+    workflow_dispatch:
+
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    full_suite:
+        name: full (ubuntu-latest, cpu 3.12)
+        runs-on: ubuntu-latest
+        defaults:
+            run:
+                shell: bash -el {0}
+        env:
+            KERAS_BACKEND: torch
+            KERAS_TORCH_DEVICE: CPU
+            FACESWAP_BACKEND: cpu
+        steps:
+            - name: Check out repository
+              uses: actions/checkout@v6
+
+            - name: Install Linux GUI dependencies
+              run: |
+                  sudo apt-get update
+                  sudo apt-get install -y \
+                    python3-tk \
+                    xvfb \
+                    xauth \
+                    x11-utils \
+                    libegl1 \
+                    libgl1 \
+                    libdbus-1-3 \
+                    libxkbcommon-x11-0 \
+                    libxcb-cursor0 \
+                    libxcb-icccm4 \
+                    libxcb-image0 \
+                    libxcb-keysyms1 \
+                    libxcb-randr0 \
+                    libxcb-render-util0 \
+                    libxcb-xinerama0 \
+                    libxcb-xfixes0
+
+            - name: Set up Conda
+              uses: conda-incubator/setup-miniconda@v2
+              with:
+                  python-version: '3.12'
+                  miniconda-version: latest
+                  auto-update-conda: true
+                  activate-environment: faceswap
+
+            - name: Install dependencies
+              run: |
+                  python setup.py --installer --dev --cpu
+                  python -m pip install --upgrade pip
+                  python -m pip install wheel pytest-xvfb types-attrs types-cryptography types-pyOpenSSL
+
+            - name: Slow unit tests
+              env:
+                  QT_QPA_PLATFORM: xcb
+              run: xvfb-run -a python -m pytest -q tests/ -m "slow"
+
+            - name: End-to-end tests
+              env:
+                  QT_QPA_PLATFORM: xcb
+              run: xvfb-run -a python tests/simple_tests.py

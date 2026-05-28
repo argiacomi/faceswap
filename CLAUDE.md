@@ -52,15 +52,38 @@ Mypy may be allowed to fail in CI. Inspect and report relevant new errors.
 
 ### Unit tests
 
+Per-commit / fast tier (no `slow` or `e2e` markers - matches the CI default):
+
 ```bash
-mamba run -n faceswap env KERAS_BACKEND=torch KERAS_TORCH_DEVICE=CPU FACESWAP_BACKEND=cpu rtk pytest -v tests/
+mamba run -n faceswap env KERAS_BACKEND=torch KERAS_TORCH_DEVICE=CPU FACESWAP_BACKEND=cpu rtk pytest -q tests/ -m "not slow and not e2e"
 ```
+
+Full local coverage (includes the heavyweight model / landmark matrices and GUI suites):
+
+```bash
+mamba run -n faceswap env KERAS_BACKEND=torch KERAS_TORCH_DEVICE=CPU FACESWAP_BACKEND=cpu rtk pytest -q tests/
+```
+
+Just the slow tier:
+
+```bash
+mamba run -n faceswap env KERAS_BACKEND=torch KERAS_TORCH_DEVICE=CPU FACESWAP_BACKEND=cpu rtk pytest -q tests/ -m slow
+```
+
+Test tier markers (declared in `pyproject.toml`):
+
+- `slow`: heavy model / landmark / parametrized matrices - excluded from per-commit CI.
+- `e2e`: end-to-end shell-out coverage in `tests/simple_tests.py` - runs nightly via `.github/workflows/pytest-full.yml`.
+- `gui`: Qt or Tk display-dependent tests - auto-applied to `tests/lib/gui/`, `tests/tools/manual/qt/`, and `tests/tools/preview/`.
+- `regression`: targeted regression tests; stay on the fast tier unless additionally marked `slow`.
 
 ### End-to-end smoke tests
 
 ```bash
 mamba run -n faceswap env KERAS_BACKEND=torch KERAS_TORCH_DEVICE=CPU FACESWAP_BACKEND=cpu rtk python tests/simple_tests.py
 ```
+
+The smoke script is no longer part of the per-commit CI matrix.  Trigger it on demand via the `ci/full-suite` workflow (`workflow_dispatch`) or run it locally before merging changes that touch extract / sort / alignments / train / convert flows.
 
 If a full test run is too expensive, run targeted tests and state exactly what was and was not run.
 

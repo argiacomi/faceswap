@@ -3,84 +3,39 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from types import SimpleNamespace
-
 import pytest
 
 pytest.importorskip("PySide6.QtWidgets")
 
-from PySide6.QtCore import Qt  # noqa:E402
 from PySide6.QtWidgets import (  # noqa:E402
     QCheckBox,
     QComboBox,
-    QLabel,
     QLineEdit,
     QPushButton,
     QSlider,
-    QTreeWidget,
 )
 
-from lib.gui.qt_shell.command_panel import OptionsFormRenderer  # noqa:E402
 from lib.gui.qt_shell.settings_dialog import SettingsDialog  # noqa:E402
-
-
-@dataclass
-class FakeOption:
-    """Small ConfigItem-compatible fake."""
-
-    datatype: type
-    default: object
-    value: object
-    group: str = "General"
-    choices: list[str] | str | None = None
-    gui_radio: bool = False
-    min_max: tuple[int | float, int | float] | None = None
-    rounding: int = -1
-    helptext: str = "Option help"
-
-    def __post_init__(self) -> None:
-        if self.choices is None:
-            self.choices = []
-
-    def set(self, value: object) -> None:
-        """Set the fake option value."""
-        if self.datatype is list and isinstance(value, str):
-            self.value = value.split()
-        else:
-            self.value = value
-
-
-class FakeConfig(SimpleNamespace):
-    """Small FaceswapConfig-compatible fake."""
-
-    def __init__(self, sections):  # type:ignore[no-untyped-def]
-        super().__init__(sections=sections, saves=0)
-
-    def save_config(self) -> None:
-        """Record config saves."""
-        self.saves += 1
-
-
-class FakeSerializer:
-    """Preset serializer test double."""
-
-    def __init__(self) -> None:
-        self.saved: tuple[str, dict[str, object]] | None = None
-        self.to_load: dict[str, object] = {}
-
-    def save(self, filename: str, data: dict[str, object]) -> None:
-        """Record saved preset data."""
-        self.saved = (filename, data)
-
-    def load(self, _filename: str) -> dict[str, object]:
-        """Return configured preset data."""
-        return self.to_load
-
-
-def _section(helptext: str, **options: FakeOption) -> SimpleNamespace:
-    """Return fake config section."""
-    return SimpleNamespace(helptext=helptext, options=options)
+from tests.lib.gui._settings_fakes import (  # noqa:E402
+    FakeConfig,
+    FakeOption,
+    FakeSerializer,
+)
+from tests.lib.gui._settings_fakes import (
+    find_item as _find_item,
+)
+from tests.lib.gui._settings_fakes import (
+    label as _label,
+)
+from tests.lib.gui._settings_fakes import (
+    renderer as _renderer,
+)
+from tests.lib.gui._settings_fakes import (
+    section as _section,
+)
+from tests.lib.gui._settings_fakes import (
+    tree as _tree,
+)
 
 
 def _config_provider():
@@ -125,46 +80,6 @@ def _config_provider():
             }
         ),
     }
-
-
-def _tree(dialog: SettingsDialog) -> QTreeWidget:
-    """Return the dialog tree widget."""
-    tree = dialog.findChild(QTreeWidget, "qt-shell-settings-tree")
-    assert tree is not None
-    return tree
-
-
-def _label(dialog: SettingsDialog, name: str) -> QLabel:
-    """Return a named label."""
-    label = dialog.findChild(QLabel, f"qt-shell-settings-{name}")
-    assert label is not None
-    return label
-
-
-def _renderer(dialog: SettingsDialog) -> OptionsFormRenderer:
-    """Return the visible settings option renderer."""
-    renderer = dialog.findChild(OptionsFormRenderer, "qt-shell-settings-options")
-    assert renderer is not None
-    return renderer
-
-
-def _find_item(tree: QTreeWidget, identifier: str):  # type:ignore[no-untyped-def]
-    """Return a tree item for a settings identifier."""
-
-    def walk(item):  # type:ignore[no-untyped-def]
-        if item.data(0, Qt.UserRole) == identifier:
-            return item
-        for index in range(item.childCount()):
-            found = walk(item.child(index))
-            if found is not None:
-                return found
-        return None
-
-    for index in range(tree.topLevelItemCount()):
-        found = walk(tree.topLevelItem(index))
-        if found is not None:
-            return found
-    return None
 
 
 def test_settings_dialog_orders_categories_like_tk(qtbot) -> None:  # type:ignore[no-untyped-def]

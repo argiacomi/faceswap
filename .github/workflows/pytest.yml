@@ -103,22 +103,13 @@ jobs:
             - name: SysInfo
               run: python -m lib.system.sysinfo
 
-            - name: Unit tests
+            - name: Unit tests (fast tier)
               if: matrix.backend == 'cpu'
               run: |
                   if [[ "$RUNNER_OS" == "Linux" ]]; then
-                    QT_QPA_PLATFORM=xcb xvfb-run -a python -m pytest -v tests/
+                    QT_QPA_PLATFORM=xcb xvfb-run -a python -m pytest -q tests/ -m "not slow and not e2e"
                   else
-                    python -m pytest -v tests/
-                  fi
-
-            - name: End-to-end tests
-              if: matrix.backend == 'cpu'
-              run: |
-                  if [[ "$RUNNER_OS" == "Linux" ]]; then
-                    QT_QPA_PLATFORM=xcb xvfb-run -a python tests/simple_tests.py
-                  else
-                    python tests/simple_tests.py
+                    python -m pytest -q tests/ -m "not slow and not e2e"
                   fi
 
     build_linux:
@@ -186,15 +177,10 @@ jobs:
             - name: SysInfo
               run: python -m lib.system.sysinfo
 
-            - name: Unit tests
+            - name: Unit tests (fast tier)
               env:
                   QT_QPA_PLATFORM: xcb
-              run: xvfb-run -a python -m pytest -v tests/
-
-            - name: End-to-end tests
-              env:
-                  QT_QPA_PLATFORM: xcb
-              run: xvfb-run -a python tests/simple_tests.py
+              run: xvfb-run -a python -m pytest -q tests/ -m "not slow and not e2e"
 
     build_windows:
         name: pip (windows-latest, ${{ matrix.backend }} ${{ matrix.python-version }})
@@ -240,8 +226,5 @@ jobs:
             - name: SysInfo
               run: python -m lib.system.sysinfo
 
-            - name: Unit tests
-              run: python -m pytest -v tests/
-
-            - name: End-to-end tests
-              run: python tests/simple_tests.py
+            - name: Unit tests (fast tier)
+              run: python -m pytest -q tests/ -m "not slow and not e2e"

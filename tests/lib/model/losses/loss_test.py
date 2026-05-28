@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""Tests for Faceswap Losses.
+"""Output-shape / dtype contract tests for ``lib.model.losses.loss``.
 
-Adapted from Keras tests.
+The generic per-loss contract is enforced via :func:`assert_loss_contract`.
+Specialised behaviour belongs in dedicated tests next to each loss.
 """
 
-import numpy as np
 import pytest
-import torch
 
 from lib.model.losses.loss import (
     FocalFrequencyLoss,
@@ -16,6 +15,7 @@ from lib.model.losses.loss import (
     LInfNorm,
 )
 from lib.utils import get_backend
+from tests.lib.model.losses._contract import assert_loss_contract
 
 _PARAMS = (
     (FocalFrequencyLoss, 1.0),
@@ -24,16 +24,9 @@ _PARAMS = (
     (LaplacianPyramidLoss, 1.0),
     (LInfNorm, 1.0),
 )
-_IDS = [f"{x[0].__name__}[{get_backend().upper()}]" for x in _PARAMS]
+_IDS = [f"{loss.__name__}[{get_backend().upper()}]" for loss, _ in _PARAMS]
 
 
-@pytest.mark.parametrize(["loss_func", "max_target"], _PARAMS, ids=_IDS)
+@pytest.mark.parametrize(("loss_func", "max_target"), _PARAMS, ids=_IDS)
 def test_loss_output(loss_func, max_target):
-    """Basic dtype and value tests for loss functions."""
-    y_a = torch.Tensor(np.random.random((2, 3, 32, 32))).cpu()
-    y_b = torch.Tensor(np.random.random((2, 3, 32, 32))).cpu()
-    metric = loss_func().cpu()
-    objective_output = metric(y_a, y_b)
-    output = objective_output.detach().numpy()
-    assert output.dtype == "float32" and not np.any(np.isnan(output))
-    assert output.mean() <= max_target
+    assert_loss_contract(loss_func, max_value=max_target)

@@ -17,35 +17,62 @@ from plugins.train.model.phaze_a import _bottleneck
 _BACKEND_ID = [get_backend().upper()]
 
 
-@pytest.mark.parametrize("dummy", [None], ids=_BACKEND_ID)
-@pytest.mark.parametrize(
-    ("bottleneck", "expected_shape"),
-    [
-        ("flatten", (2, 128)),
-        ("dense", (2, 16)),
-        ("average_pooling", (2, 8)),
-        ("max_pooling", (2, 8)),
-    ],
-    ids=["flatten", "dense", "average_pooling", "max_pooling"],
+_BOTTLENECK_SHAPES = (
+    ("flatten", (2, 128)),
+    ("dense", (2, 16)),
+    ("average_pooling", (2, 8)),
+    ("max_pooling", (2, 8)),
 )
-@pytest.mark.parametrize(
-    "normalization",
-    ["none", "layer", "rms", "group", "instance"],
-    ids=["none", "layer", "rms", "group", "instance"],
-)
-def test_bottleneck_builds_all_modes_with_post_latent_normalization(
-    dummy, bottleneck, expected_shape, normalization
-) -> None:
-    """Each bottleneck mode should construct and execute with every latent norm option."""
-    del dummy
+_LATENT_NORM_MODES = ("none", "layer", "rms", "group", "instance")
+
+# Representative per-commit smoke: each bottleneck builds + predicts with the
+# default ("layer") latent normalization.  The exhaustive bottleneck x latent
+# norm matrix below is gated behind the ``slow`` marker so per-commit CI does
+# not pay for it.
+_REPRESENTATIVE = [(bn, shape, "layer") for bn, shape in _BOTTLENECK_SHAPES]
+_FULL_MATRIX = [
+    (bn, shape, norm)
+    for bn, shape in _BOTTLENECK_SHAPES
+    for norm in _LATENT_NORM_MODES
+    if norm != "layer"
+]
+
+
+def _run_bottleneck_predict(bottleneck: str, expected_shape, normalization: str) -> None:
     inputs = Input(shape=(4, 4, 8))
     outputs = _bottleneck(inputs, bottleneck, 16, normalization)
     model = Model(inputs, outputs)
-
     data = np.random.random((2, 4, 4, 8)).astype("float32")
-    result = model.predict(data, verbose=0)
+    assert model.predict(data, verbose=0).shape == expected_shape
 
-    assert result.shape == expected_shape
+
+@pytest.mark.parametrize("dummy", [None], ids=_BACKEND_ID)
+@pytest.mark.parametrize(
+    ("bottleneck", "expected_shape", "normalization"),
+    _REPRESENTATIVE,
+    ids=[f"{bn}-layer" for bn, _, _ in _REPRESENTATIVE],
+)
+def test_bottleneck_builds_all_modes_with_default_latent_normalization(
+    dummy, bottleneck, expected_shape, normalization
+) -> None:
+    """Every bottleneck mode should construct and predict with the default latent norm."""
+    del dummy
+    _run_bottleneck_predict(bottleneck, expected_shape, normalization)
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("dummy", [None], ids=_BACKEND_ID)
+@pytest.mark.parametrize(
+    ("bottleneck", "expected_shape", "normalization"),
+    _FULL_MATRIX,
+    ids=[f"{bn}-{norm}" for bn, _, norm in _FULL_MATRIX],
+)
+def test_bottleneck_full_normalization_matrix(
+    dummy, bottleneck, expected_shape, normalization
+) -> None:
+    """Full bottleneck x latent norm matrix.  Slow tier only."""
+    del dummy
+    _run_bottleneck_predict(bottleneck, expected_shape, normalization)
 
 
 @pytest.mark.parametrize(

@@ -14,31 +14,21 @@ from PySide6.QtWidgets import (
 )
 
 from lib.gui.services.command_builder import CommandBuilder
+from tests.lib.gui._qt_helpers import option_spec as _option_spec
 
 
 def _command_panel(*options):  # type:ignore[no-untyped-def]
-    """Return a CommandPanel backed by a single extract command."""
+    """Return a CommandPanel backed by a single extract command.
+
+    Wraps the shared ``tests.lib.gui._qt_helpers.command_panel`` helper but
+    omits the ``qtbot.addWidget`` call, because some legacy tests in this file
+    add the widget themselves.  New tests should call the shared helper
+    directly.
+    """
     from lib.gui.qt_shell.command_panel import CommandPanel
     from lib.gui.qt_shell.command_schema import CommandSchema, CommandSpec
 
-    return CommandPanel(
-        CommandSchema(
-            (
-                CommandSpec(
-                    "faceswap",
-                    "extract",
-                    tuple(options),
-                ),
-            )
-        )
-    )
-
-
-def _option_spec(*args, **kwargs):  # type:ignore[no-untyped-def]
-    """Return an OptionSpec without importing Qt shell schema at module import time."""
-    from lib.gui.qt_shell.command_schema import OptionSpec
-
-    return OptionSpec(*args, **kwargs)
+    return CommandPanel(CommandSchema((CommandSpec("faceswap", "extract", tuple(options)),)))
 
 
 def test_radio_option_extracts_and_restores_value(qtbot) -> None:  # type:ignore[no-untyped-def]

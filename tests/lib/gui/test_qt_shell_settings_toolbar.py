@@ -9,41 +9,13 @@ import pytest
 
 pytest.importorskip("PySide6.QtWidgets")
 
-from PySide6.QtWidgets import QMainWindow, QToolBar  # noqa:E402
+from tests.lib.gui._qt_helpers import main_window, toolbar  # noqa:E402
 
 
-def _main_window(qtbot, monkeypatch, tmp_path: Path):  # type:ignore[no-untyped-def]
-    """Return a MainWindow with a deterministic schema."""
-    monkeypatch.setenv("HOME", str(tmp_path))
-
-    from lib.gui.qt_shell.command_schema import CommandSchema, CommandSpec, OptionSpec
-    from lib.gui.qt_shell.main_window import MainWindow
-
-    schema = CommandSchema(
-        (
-            CommandSpec("faceswap", "extract", (OptionSpec("Input", "-i"),)),
-            CommandSpec("faceswap", "train", (OptionSpec("Model", "-m"),)),
-            CommandSpec("faceswap", "convert", (OptionSpec("Output", "-o"),)),
-        )
-    )
-    window = MainWindow(schema)
-    qtbot.addWidget(window)
-    return window
-
-
-def _toolbar(window: QMainWindow) -> QToolBar:
-    """Return the main toolbar."""
-    toolbar = window.findChild(QToolBar, "qt-shell-toolbar")
-    assert toolbar is not None, "Main toolbar not found"
-    return toolbar
-
-
-def test_toolbar_exposes_three_settings_actions(qtbot, monkeypatch, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_toolbar_exposes_three_settings_actions(qtbot, monkeypatch, tmp_path: Path) -> None:
     """The taskbar must include Extract, Train, and Convert settings actions."""
-    window = _main_window(qtbot, monkeypatch, tmp_path)
-    toolbar = _toolbar(window)
-
-    object_names = [action.objectName() for action in toolbar.actions()]
+    window = main_window(qtbot, monkeypatch, tmp_path)
+    object_names = [action.objectName() for action in toolbar(window).actions()]
 
     for name in ("extract", "train", "convert"):
         assert f"qt-shell-toolbar-settings-{name}" in object_names
@@ -51,11 +23,12 @@ def test_toolbar_exposes_three_settings_actions(qtbot, monkeypatch, tmp_path: Pa
 
 def test_toolbar_settings_actions_use_tk_parity_tooltips(
     qtbot, monkeypatch, tmp_path: Path
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """Tooltips should match Tk's 'Configure {Name} settings...' wording."""
-    window = _main_window(qtbot, monkeypatch, tmp_path)
-    toolbar = _toolbar(window)
-    actions = {action.objectName(): action for action in toolbar.actions()}
+    actions = {
+        action.objectName(): action
+        for action in toolbar(main_window(qtbot, monkeypatch, tmp_path)).actions()
+    }
 
     assert actions["qt-shell-toolbar-settings-extract"].toolTip() == (
         "Configure Extract settings..."
@@ -68,12 +41,10 @@ def test_toolbar_settings_actions_use_tk_parity_tooltips(
 
 def test_toolbar_settings_actions_appear_after_task_group(
     qtbot, monkeypatch, tmp_path: Path
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """Settings buttons must follow the task button group in toolbar order."""
-    window = _main_window(qtbot, monkeypatch, tmp_path)
-    toolbar = _toolbar(window)
-
-    names = [action.objectName() for action in toolbar.actions() if action.objectName()]
+    window = main_window(qtbot, monkeypatch, tmp_path)
+    names = [a.objectName() for a in toolbar(window).actions() if a.objectName()]
     settings_idx = names.index("qt-shell-toolbar-settings-extract")
     task_last_idx = names.index("qt-shell-toolbar-task-reload")
 
@@ -88,7 +59,7 @@ def test_toolbar_settings_actions_appear_after_task_group(
 @pytest.mark.parametrize("name", ("extract", "train", "convert"))
 def test_toolbar_settings_actions_route_to_dialog(
     qtbot, monkeypatch, tmp_path: Path, name: str
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """Triggering a settings button should open the dialog for that section."""
     import lib.gui.qt_shell.main_window as main_window_module
 
@@ -115,10 +86,11 @@ def test_toolbar_settings_actions_route_to_dialog(
             self.selected.append(section)
 
     monkeypatch.setattr(main_window_module, "SettingsDialog", _DialogDouble)
-    window = _main_window(qtbot, monkeypatch, tmp_path)
-    toolbar = _toolbar(window)
+    window = main_window(qtbot, monkeypatch, tmp_path)
     action = next(
-        a for a in toolbar.actions() if a.objectName() == f"qt-shell-toolbar-settings-{name}"
+        a
+        for a in toolbar(window).actions()
+        if a.objectName() == f"qt-shell-toolbar-settings-{name}"
     )
 
     action.trigger()
@@ -128,11 +100,10 @@ def test_toolbar_settings_actions_route_to_dialog(
     assert created[0].show_count == 1
 
 
-def test_toolbar_project_group_matches_tk_parity(qtbot, monkeypatch, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_toolbar_project_group_matches_tk_parity(qtbot, monkeypatch, tmp_path: Path) -> None:
     """The project-group portion of the toolbar must match Tk's button set."""
-    window = _main_window(qtbot, monkeypatch, tmp_path)
-    toolbar = _toolbar(window)
-    names = [action.objectName() for action in toolbar.actions() if action.objectName()]
+    window = main_window(qtbot, monkeypatch, tmp_path)
+    names = [a.objectName() for a in toolbar(window).actions() if a.objectName()]
 
     project_group = [
         "qt-shell-toolbar-new",
@@ -147,12 +118,10 @@ def test_toolbar_project_group_matches_tk_parity(qtbot, monkeypatch, tmp_path: P
         )
 
 
-def test_toolbar_actions_carry_icons(qtbot, monkeypatch, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_toolbar_actions_carry_icons(qtbot, monkeypatch, tmp_path: Path) -> None:
     """Every toolbar action should expose a non-null icon for visual Tk parity."""
-    window = _main_window(qtbot, monkeypatch, tmp_path)
-    toolbar = _toolbar(window)
-
-    actions_with_object_names = [a for a in toolbar.actions() if a.objectName()]
+    window = main_window(qtbot, monkeypatch, tmp_path)
+    actions_with_object_names = [a for a in toolbar(window).actions() if a.objectName()]
     assert actions_with_object_names, "Toolbar should expose object-named actions"
     missing = [a.objectName() for a in actions_with_object_names if a.icon().isNull()]
     assert not missing, f"Toolbar actions missing icons: {missing}"
