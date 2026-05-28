@@ -558,8 +558,15 @@ class VideoReader:
             return
 
         next_key_index = np.searchsorted(self._info.keyframes, self._current_index, side="right")
-        next_keyframe = self._info.keyframes[next_key_index]
+        if next_key_index >= len(self._info.keyframes):
+            logger.trace(  # type:ignore[attr-defined]
+                "[%s] No later keyframe. Continuing decode from current frame: %s",
+                self.__class__.__name__,
+                self._current_index,
+            )
+            return
 
+        next_keyframe = self._info.keyframes[next_key_index]
         if next_keyframe > index:
             logger.trace(  # type:ignore[attr-defined]
                 "[%s] Next keyframe is past target. Not seeking: %s",
