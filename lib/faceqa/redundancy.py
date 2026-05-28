@@ -268,9 +268,8 @@ def _frame_index(frame: str) -> int | None:
 def _quality_score_for(record: FaceQARecord) -> float:
     """Return a deterministic quality score for representative selection.
 
-    Uses the same flavour of weighted-blend signals as the duplicate pipeline
-    so a redundancy representative ranks consistently with the duplicate
-    representative.
+    Combines Sort-style signals (blur, side length, pose, mean-face distance,
+    black-pixel ratio) into a single 0-1 score. Higher is better.
     """
     blur = record.blur_score or 0.0
     side = 0.0
@@ -698,6 +697,15 @@ def _decide_single_member(
         )
     if compared < 4:
         return REVIEW, "few comparable metrics — review", protection_budget_remaining
+    if not member_features.has_identity:
+        # Identity is the guardrail against pruning faces that look similar
+        # but actually belong to a different subject. Without it, we cannot
+        # confidently prune non-obvious redundancy.
+        return (
+            REVIEW,
+            "missing identity embedding guardrail — review before pruning",
+            protection_budget_remaining,
+        )
     if member_in_surplus_bucket:
         return (
             PRUNE,
@@ -723,17 +731,17 @@ def _protection_budget_for_cluster(
 ) -> int:
     """Return how many additional keeps the cluster gets beyond the representative.
 
-    Surplus buckets get budget 0 (representative-only keep). Protected fragile
-    buckets get up to ``min_effective_bucket_count - 1`` extra keeps so a small
-    handful of diverse-enough fragile-bucket alternates can survive."""
+    Protection takes priority over surplus: if the representative sits in *any*
+    fragile bucket the cluster gets the full protection budget, even when its
+    other dimensions are surplus. Otherwise surplus and neutral buckets get
+    budget 0 (representative-only keep).
+    """
     if not members:
         return 0
     rep_record = record_list[representative_index]
-    if _record_is_in_surplus_bucket(rep_record, surplus):
-        return 0
-    if not _record_is_in_protected_bucket(rep_record, protected):
-        return 0
-    return max(0, config.min_effective_bucket_count - 1)
+    if _record_is_in_protected_bucket(rep_record, protected):
+        return max(0, config.min_effective_bucket_count - 1)
+    return 0
 
 
 # ---------------------------------------------------------------------------

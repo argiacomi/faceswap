@@ -74,14 +74,22 @@ _MANIFEST_FIELDS: tuple[str, ...] = (
 
 
 def write_manifests(report: RedundancyReport, output_dir: str | Path) -> dict[str, Path]:
-    """Write keep + prune CSV/JSONL manifests. Returns the artefact paths."""
+    """Write per-recommendation CSV/JSONL manifests.
+
+    Each recommendation gets its own manifest pair so consumers cannot
+    accidentally train on records that the pipeline routed to ``review`` for
+    safety reasons (identity outliers, missing metrics, borderline calls).
+    """
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
     artefacts: dict[str, Path] = {}
-    keep_records = [r for r in report.records if r.recommendation in (KEEP, REVIEW)]
+    keep_records = [r for r in report.records if r.recommendation == KEEP]
+    review_records = [r for r in report.records if r.recommendation == REVIEW]
     prune_records = [r for r in report.records if r.recommendation == PRUNE]
     artefacts["keep_csv"] = _write_csv(out / "keep.csv", keep_records)
     artefacts["keep_jsonl"] = _write_jsonl(out / "keep.jsonl", keep_records)
+    artefacts["review_csv"] = _write_csv(out / "review.csv", review_records)
+    artefacts["review_jsonl"] = _write_jsonl(out / "review.jsonl", review_records)
     artefacts["prune_csv"] = _write_csv(out / "prune_candidates.csv", prune_records)
     artefacts["prune_jsonl"] = _write_jsonl(out / "prune_candidates.jsonl", prune_records)
     return artefacts
@@ -244,8 +252,6 @@ def render_contact_sheets(
     output_dir: str | Path,
 ) -> list[Path]:
     """Render one contact sheet per multi-face redundancy cluster."""
-    suffix = "png"
-    extension = ".png"
     faces_dir_p = Path(faces_dir)
     output_dir_p = _ensure_dir(Path(output_dir))
     clusters: dict[int, list[RedundancyRecord]] = {}
@@ -277,11 +283,8 @@ def render_contact_sheets(
             rows.append(np.hstack(row_tiles))
         sheet = np.vstack(rows)
         sheet = _annotate_sheet_header(sheet, cluster_id, records)
-        path = output_dir_p / f"cluster_{cluster_id:04d}{extension}"
-        if suffix == "jpg":
-            cv2.imwrite(str(path), sheet, [cv2.IMWRITE_JPEG_QUALITY, 95])
-        else:
-            cv2.imwrite(str(path), sheet)
+        path = output_dir_p / f"cluster_{cluster_id:04d}.png"
+        cv2.imwrite(str(path), sheet)
         written.append(path)
     return written
 

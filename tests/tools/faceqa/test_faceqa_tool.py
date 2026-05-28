@@ -164,6 +164,26 @@ def test_prune_output_dir_requires_faces_dir(tmp_path, monkeypatch) -> None:
         raise AssertionError("Expected FaceswapError when --faces-dir is missing")
 
 
+def test_coverage_mode_without_frames_dir_does_not_invoke_backfill(tmp_path) -> None:
+    """Coverage mode must run without --frames-dir (skip SPIGA backfill cleanly)."""
+    alignments = tmp_path / "alignments.fsa"
+    _save_alignments(alignments, {"frame_000001.png": [_face()]})
+    args = _base_args(
+        alignments=str(alignments),
+        # frames_dir intentionally omitted — the dispatcher should skip
+        # constructing the SpigaPoseBackfiller rather than crashing on
+        # Frames(None).
+        frames_dir=None,
+        output_json=str(tmp_path / "coverage.json"),
+        output_markdown=str(tmp_path / "coverage.md"),
+    )
+
+    Faceqa(args).process()
+
+    payload = json.loads((tmp_path / "coverage.json").read_text(encoding="utf-8"))
+    assert payload["total_faces"] == 1
+
+
 def test_unknown_mode_raises(tmp_path) -> None:
     args = _base_args(mode="duplicates", alignments=str(tmp_path / "nope.fsa"))
     try:

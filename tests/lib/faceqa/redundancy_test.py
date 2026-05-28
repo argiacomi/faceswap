@@ -388,6 +388,95 @@ def test_lighting_bucket_is_populated_on_records() -> None:
     assert by_frame["frame_000003.png"] == "flat_frontal"
 
 
+def test_missing_identity_routes_non_obvious_redundancy_to_review() -> None:
+    """Faces without an identity embedding must route non-obvious redundancy to review."""
+    from lib.faceqa.redundancy import (
+        _AGGRESSIVENESS_PRESETS,
+        _decide_single_member,
+        _features_for,
+    )
+
+    config = _AGGRESSIVENESS_PRESETS["balanced"]
+    rep_record = _record("frame_000001.png")
+    member_record = _record(
+        "frame_000010.png",
+        yaw=10.0,
+        identity_model=None,
+        identity_quality_flag=None,
+    )
+    member_features = _features_for(member_record)
+
+    # Distance just above the obvious threshold so the hard-floor prune rule
+    # does not fire and we exercise the non-obvious redundancy path.
+    decision, reason, _budget = _decide_single_member(
+        member_features=member_features,
+        distance=config.obvious_duplicate_threshold + 0.05,
+        compared=10,
+        temporal_confidence=1.0,
+        config=config,
+        member_record=member_record,
+        rep_record=rep_record,
+        protection_budget_remaining=0,
+        member_in_surplus_bucket=False,
+    )
+
+    assert decision == REVIEW
+    assert "identity" in reason.lower()
+
+
+def test_protected_bucket_keeps_budget_even_when_other_dim_is_surplus() -> None:
+    """A protected fragile bucket must keep its budget even if another dim is surplus."""
+    from lib.faceqa.redundancy import (
+        _AGGRESSIVENESS_PRESETS,
+        _protection_budget_for_cluster,
+    )
+
+    rep = _record("frame_000001.png", yaw=70.0)
+    cluster = [0, 1, 2]
+    protected = {("pose", "right_extreme")}
+    surplus = {("lighting", "flat_frontal")}
+    config = _AGGRESSIVENESS_PRESETS["balanced"]
+
+    budget = _protection_budget_for_cluster(
+        members=cluster,
+        representative_index=0,
+        record_list=[rep, rep, rep],
+        protected=protected,
+        surplus=surplus,
+        config=config,
+    )
+
+    assert budget == config.min_effective_bucket_count - 1
+
+
+def test_write_manifests_does_not_mix_review_into_keep(tmp_path) -> None:
+    """``keep.csv`` must contain only KEEP records; REVIEW gets its own manifest."""
+    import json
+
+    from lib.faceqa.redundancy_outputs import write_manifests
+
+    records = _near_identical_run(6, yaw=0.0, expression_bucket="neutral") + [
+        _record(
+            "frame_999999.png",
+            yaw=0.0,
+            expression_bucket="neutral",
+            identity_quality_flag="outlier",
+        )
+    ]
+    report = compute_redundancy(records, aggressiveness="balanced")
+
+    artefacts = write_manifests(report, tmp_path / "manifests")
+
+    keep_payload = [json.loads(line) for line in artefacts["keep_jsonl"].read_text().splitlines()]
+    review_payload = [
+        json.loads(line) for line in artefacts["review_jsonl"].read_text().splitlines()
+    ]
+    assert all(rec["recommendation"] == KEEP for rec in keep_payload)
+    assert review_payload, "expected at least one REVIEW record (identity outlier)"
+    assert all(rec["recommendation"] == REVIEW for rec in review_payload)
+    assert all(rec["frame"] != "frame_999999.png" for rec in keep_payload)
+
+
 def test_classify_buckets_is_coverage_aware() -> None:
     """The classifier should use min_bucket_pct and surplus_margin, not just a fixed floor."""
     from lib.faceqa.redundancy import (

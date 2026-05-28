@@ -75,15 +75,19 @@ class Faceqa:  # pylint:disable=invalid-name
 
         backfill_added = False
         pose_backfiller = self._pose_backfiller()
+        track_pose_backfill: (
+            T.Callable[[FaceQARecord, FileAlignments], dict[str, T.Any] | None] | None
+        ) = None
+        if pose_backfiller is not None:
 
-        def track_pose_backfill(
-            record: FaceQARecord, face: FileAlignments
-        ) -> dict[str, T.Any] | None:
-            nonlocal backfill_added
-            pose: dict[str, T.Any] | None = pose_backfiller(record, face)
-            if pose is not None:
-                backfill_added = True
-            return pose
+            def track_pose_backfill(
+                record: FaceQARecord, face: FileAlignments
+            ) -> dict[str, T.Any] | None:
+                nonlocal backfill_added
+                pose: dict[str, T.Any] | None = pose_backfiller(record, face)
+                if pose is not None:
+                    backfill_added = True
+                return pose
 
         records = records_from_alignments(
             alignments,
@@ -239,8 +243,11 @@ class Faceqa:  # pylint:disable=invalid-name
             return path
         return Path(sidecar_path(str(alignments)))
 
-    def _pose_backfiller(self) -> SpigaPoseBackfiller:
-        return SpigaPoseBackfiller(Frames(getattr(self._args, "frames_dir", None)))
+    def _pose_backfiller(self) -> SpigaPoseBackfiller | None:
+        frames_dir = getattr(self._args, "frames_dir", None)
+        if not frames_dir:
+            return None
+        return SpigaPoseBackfiller(Frames(frames_dir))
 
     def _coverage_output_paths(self, alignments: Path) -> tuple[Path, Path]:
         output_json = Path(
