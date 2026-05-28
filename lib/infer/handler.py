@@ -204,7 +204,8 @@ class ExtractHandler(abc.ABC):
             raise FaceswapError(OOM_MESSAGE) from err
         if is_padded and retval.dtype == "object":
             out = np.empty(retval.shape, dtype="object")
-            out[:] = [x[:feed_size] for x in retval]
+            for idx, value in enumerate(retval):
+                out[idx] = value[:feed_size]
             retval = out
         elif is_padded:
             retval = retval[:feed_size]
