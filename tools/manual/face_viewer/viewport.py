@@ -165,11 +165,14 @@ class Viewport:
         self._update_viewport(refresh_annotations)
         self._active_frame.reload_annotations()
         self._update_selected_highlighters()
-        self._canvas.tag_raise("viewport_selected_highlighter", "viewport_image")
-        self._canvas.tag_raise("viewport_mesh", "viewport_image")
-        self._canvas.tag_raise("active_mesh_polygon", "viewport_image")
-        self._canvas.tag_raise("active_mesh_line", "viewport_image")
-        self._canvas.tag_raise("active_highlighter")
+
+        if self._canvas.find_withtag("viewport_image"):
+            self._canvas.tag_raise("viewport_selected_highlighter", "viewport_image")
+            self._canvas.tag_raise("viewport_mesh", "viewport_image")
+            self._canvas.tag_raise("active_mesh_polygon", "viewport_image")
+            self._canvas.tag_raise("active_mesh_line", "viewport_image")
+        if self._canvas.find_withtag("active_highlighter"):
+            self._canvas.tag_raise("active_highlighter")
 
     def _update_viewport(self, refresh_annotations: bool) -> None:
         """Update the viewport
