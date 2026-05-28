@@ -98,8 +98,12 @@ class TestFacesDisplay:
             MagicMock,  # type:ignore
             mocker.MagicMock(return_value=(128, 128)),
         )
-        f_display._faces_source = np.zeros((_PREVIEW_FACE_SIZE, _PREVIEW_FACE_SIZE, 3), dtype=np.uint8)
-        f_display._faces_dest = np.zeros((_PREVIEW_FACE_SIZE, _PREVIEW_FACE_SIZE, 3), dtype=np.uint8)
+        f_display._faces_source = np.zeros(
+            (_PREVIEW_FACE_SIZE, _PREVIEW_FACE_SIZE, 3), dtype=np.uint8
+        )
+        f_display._faces_dest = np.zeros(
+            (_PREVIEW_FACE_SIZE, _PREVIEW_FACE_SIZE, 3), dtype=np.uint8
+        )
 
         class MockPhotoImage:
             """Mock PIL ImageTk image to avoid creating a real Tk interpreter."""
@@ -131,7 +135,9 @@ class TestFacesDisplay:
         f_display.set_display_dimensions((800, 600))
 
         tall_image = np.zeros((_PREVIEW_FACE_SIZE * 2, _PREVIEW_FACE_SIZE, 3), dtype=np.uint8)
-        wide_image = np.zeros((_PREVIEW_FACE_SIZE, _PREVIEW_FACE_SIZE * 4, 3), dtype=np.uint8)
+        wide_image = np.zeros(
+            (_PREVIEW_FACE_SIZE, _PREVIEW_FACE_SIZE * 4, 3), dtype=np.uint8
+        )
 
         assert f_display._get_scale_size(tall_image) == (300, 600)
         assert f_display._get_scale_size(wide_image) == (800, 200)
@@ -168,7 +174,9 @@ class TestFacesDisplay:
         """Frame extraction refreshes sources only when requested, and destinations every time."""
         f_display = self.get_faces_display_instance()
         f_display.source = [mocker.MagicMock() for _ in range(3)]
-        f_display.destination = [np.random.rand(_PREVIEW_FACE_SIZE, _PREVIEW_FACE_SIZE, 3) for _ in range(3)]
+        f_display.destination = [
+            np.random.rand(_PREVIEW_FACE_SIZE, _PREVIEW_FACE_SIZE, 3) for _ in range(3)
+        ]
         f_display._crop_source_faces = T.cast(MagicMock, mocker.MagicMock())  # type:ignore
         f_display._crop_destination_faces = T.cast(MagicMock, mocker.MagicMock())  # type:ignore
 
