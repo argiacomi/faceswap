@@ -11,7 +11,6 @@ pytest.importorskip("PySide6.QtWidgets")
 
 from tests.lib.gui._qt_helpers import main_window, toolbar  # noqa:E402
 
-
 _PROJECT_GROUP = [
     "qt-shell-toolbar-new",
     "qt-shell-toolbar-open",

@@ -135,9 +135,7 @@ class TestFacesDisplay:
         f_display.set_display_dimensions((800, 600))
 
         tall_image = np.zeros((_PREVIEW_FACE_SIZE * 2, _PREVIEW_FACE_SIZE, 3), dtype=np.uint8)
-        wide_image = np.zeros(
-            (_PREVIEW_FACE_SIZE, _PREVIEW_FACE_SIZE * 4, 3), dtype=np.uint8
-        )
+        wide_image = np.zeros((_PREVIEW_FACE_SIZE, _PREVIEW_FACE_SIZE * 4, 3), dtype=np.uint8)
 
         assert f_display._get_scale_size(tall_image) == (300, 600)
         assert f_display._get_scale_size(wide_image) == (800, 200)
@@ -229,7 +227,9 @@ class TestFacesDisplay:
         assert f_display._faces.src.shape == (columns, face_size, face_size, 3)
         assert f_display._faces.dst.shape == (columns, face_size, face_size, 3)
 
-    def test_header_text_builds_one_label_per_column(self, mocker: pytest_mock.MockerFixture) -> None:
+    def test_header_text_builds_one_label_per_column(
+        self, mocker: pytest_mock.MockerFixture
+    ) -> None:
         """Header text renders a label area that matches the face grid width."""
         f_display = self.get_faces_display_instance()
         f_display.source = [None for _ in range(_PREVIEW_COLUMNS)]  # type:ignore
@@ -250,7 +250,9 @@ class TestFacesDisplay:
             3,
         )
 
-    def test_draw_rect_clips_and_returns_uint8_image(self, mocker: pytest_mock.MockerFixture) -> None:
+    def test_draw_rect_clips_and_returns_uint8_image(
+        self, mocker: pytest_mock.MockerFixture
+    ) -> None:
         """The face-border helper preserves the image contract expected by the preview rows."""
         f_display = self.get_faces_display_instance()
         cv2_mock = mocker.patch("tools.preview.viewer.cv2")
