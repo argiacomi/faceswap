@@ -132,6 +132,14 @@ class ExtractHandler(abc.ABC):
         assert plugin_type in ("detect", "align", "mask", "identity")
         return plugin_type
 
+    @staticmethod
+    def _trim_padded_plugin_metadata(plugin: ExtractPlugin, feed_size: int) -> None:
+        """Trim plugin metadata rows that came from compile-time batch padding."""
+        metadata = getattr(plugin, "last_debug_metadata", None)
+        if not isinstance(metadata, list) or len(metadata) <= feed_size:
+            return
+        plugin.last_debug_metadata = metadata[:feed_size]
+
     def _is_overridden(
         self, method_name: T.Literal["pre_process", "process", "post_process"]
     ) -> bool:
@@ -187,6 +195,7 @@ class ExtractHandler(abc.ABC):
         feed_size = feed.shape[0]
         is_padded = self.do_compile and feed_size < self.plugin.batch_size
         batch_feed = feed
+
         if is_padded:  # Prevent model re-compile on undersized batch
             batch_feed = np.empty((self.plugin.batch_size, *feed.shape[1:]), dtype=feed.dtype)
             logger.debug(
@@ -196,12 +205,22 @@ class ExtractHandler(abc.ABC):
                 batch_feed.shape,
             )
             batch_feed[:feed_size] = feed
+
+            # Do not leave padded rows as uninitialized memory. Some plugins normalize
+            # in-place over the full batch, so garbage padding can produce NaN/Inf
+            # warnings and bogus downstream metadata.
+            if feed_size:
+                batch_feed[feed_size:] = feed[feed_size - 1 : feed_size]
+            else:
+                batch_feed.fill(0)
+
         try:
             retval = self.plugin.process(batch_feed)
         except RuntimeError as err:
             if not is_accelerator_oom_error(err):
                 raise
             raise FaceswapError(OOM_MESSAGE) from err
+
         if is_padded and retval.dtype == "object":
             out = np.empty(retval.shape, dtype="object")
             for idx, value in enumerate(retval):
@@ -209,6 +228,10 @@ class ExtractHandler(abc.ABC):
             retval = out
         elif is_padded:
             retval = retval[:feed_size]
+
+        if is_padded:
+            self._trim_padded_plugin_metadata(self.plugin, feed_size)
+
         return retval
 
     def _format_images(self, images: npt.NDArray[np.uint8]) -> np.ndarray:
