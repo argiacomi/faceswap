@@ -722,7 +722,14 @@ class Profiler:
 
     def _check_for_torch(self, plugin: ExtractPlugin) -> bool:
         """Check whether the given runner uses PyTorch. We wait until the plugin is initialized
-        then recurse through it's :attr:`model` property looking for Torch Modules
+        then recurse through it's :attr:`model` property looking for Torch Modules.
+
+        Plugins that wrap their actual Torch modules behind composite adapters (for example
+        :class:`plugins.extract.align.ensemble.Ensemble`) may expose a
+        ``profile_torch_modules(loaded_model)`` hook that returns the inventory of Torch
+        modules the profiler should consider. This hook takes precedence over the generic
+        :func:`get_torch_modules` walk, which intentionally refuses to cross plugin-module
+        boundaries and therefore cannot see modules hidden behind adapter wrappers.
 
         Parameters
         ----------
@@ -740,7 +747,16 @@ class Profiler:
             plugin.name,
             model.__class__.__name__,
         )
-        modules = get_torch_modules(model)
+        hook = getattr(plugin, "profile_torch_modules", None)
+        if callable(hook):
+            modules = hook(model)
+            logger.debug(
+                "[Profiler] '%s' reported %d torch module(s) via profile_torch_modules hook",
+                plugin.name,
+                len(modules),
+            )
+        else:
+            modules = get_torch_modules(model)
         if not modules:
             return False
 

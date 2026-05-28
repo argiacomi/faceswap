@@ -399,6 +399,30 @@ class Ensemble(ExtractPlugin):
         )
         return loaded
 
+    @staticmethod
+    def profile_torch_modules(loaded: list[LandmarkAdapter]) -> list[T.Any]:
+        """Return Torch modules from the active adapters for the extract profiler.
+
+        ``Ensemble.load_model()`` returns a list of :class:`LandmarkAdapter` wrappers, so the
+        profiler's generic ``get_torch_modules`` walk cannot see the Torch modules hidden
+        behind each adapter's wrapped Faceswap plugin (it intentionally refuses to cross
+        plugin-module boundaries). This hook scans each adapter's ``plugin.model`` so the
+        profiler treats the ensemble as Torch-backed whenever at least one enabled adapter
+        wraps a Torch aligner, and skips it cleanly when every adapter is static.
+        """
+        # Lazy import to keep the plugin's import surface free of profiler internals.
+        # pylint:disable=import-outside-toplevel
+        from lib.infer.plugin_utils import get_torch_modules
+
+        modules: list[T.Any] = []
+        for adapter in loaded:
+            wrapped = getattr(adapter, "plugin", None)
+            if wrapped is None:
+                continue
+            target = getattr(wrapped, "model", None) or wrapped
+            modules.extend(get_torch_modules(target))
+        return modules
+
     def _filter_promoted_adapters(
         self, adapters: T.Sequence[LandmarkAdapter]
     ) -> list[LandmarkAdapter]:
