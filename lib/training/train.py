@@ -12,10 +12,9 @@ import warnings
 import cv2
 import numpy as np
 import torch
-from torch.cuda import OutOfMemoryError
 
 from lib.logger import format_array, parse_class_init
-from lib.torch_utils import get_device
+from lib.torch_utils import get_device, is_accelerator_oom_error
 from lib.training.data import PreviewLoader, TrainLoader, get_label
 from lib.training.preview import Samples
 from lib.training.tensorboard import TorchTensorBoard
@@ -338,7 +337,9 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
                 meta.to(self._device),
             )
             retval = [x.to_cpu() for x in loss]
-        except OutOfMemoryError as err:
+        except RuntimeError as err:
+            if not is_accelerator_oom_error(err):
+                raise
             msg = (
                 "You do not have enough GPU memory available to train the selected model at "
                 "the selected settings. You can try a number of things:"

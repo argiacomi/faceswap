@@ -11,7 +11,6 @@ from threading import Event, Lock
 from time import perf_counter
 
 import numpy as np
-import torch
 from tqdm import tqdm
 
 from lib.logger import parse_class_init
@@ -22,7 +21,9 @@ from lib.torch_utils import (
     accelerator_max_memory_reserved,
     accelerator_reset_peak_memory_stats,
     accelerator_synchronize,
+    accelerator_synchronize_in_worker,
     accelerator_total_memory,
+    is_accelerator_oom_error,
 )
 from lib.utils import get_module_objects
 from plugins.extract import extract_config as cfg
@@ -168,7 +169,9 @@ class ModelProfile:
                 self.iterations[idx] = iters
                 self.vram[0, idx] = accelerator_max_memory_allocated()
                 self.vram[1, idx] = accelerator_max_memory_reserved()
-            except torch.OutOfMemoryError:
+            except RuntimeError as err:
+                if not is_accelerator_oom_error(err):
+                    raise
                 logger.debug("Exiting benchmark early as out of VRAM")
                 break
             prog_bar.set_description(f"Batch size {batch_size}")
@@ -572,7 +575,10 @@ class PipelineProfile:
         while perf_counter() - start < seconds:
             plugin.process(inputs)
             iters += 1
-        accelerator_synchronize()
+        # On MPS the main thread synchronizes once after all workers signal ready, to avoid
+        # racing on the shared Metal command queue. Worker threads skip the sync there.
+        if accelerator_synchronize_in_worker():
+            accelerator_synchronize()
         return iters
 
     def _plugin_runner(self, plugin: ExtractPlugin, matrix_id: int, channels_last: bool) -> None:
@@ -609,7 +615,9 @@ class PipelineProfile:
                 self._data.update_iterations(iters, matrix_id)
                 self._events.set_ready(matrix_id)
 
-            except torch.OutOfMemoryError:
+            except RuntimeError as err:
+                if not is_accelerator_oom_error(err):
+                    raise
                 logger.debug("[PipelineProfile] Exiting benchmark early as out of VRAM")
                 self._events.set_ready(matrix_id)
                 if self._events.stop.is_set():
@@ -642,6 +650,9 @@ class PipelineProfile:
         prog_length = 5
         for thread in self._threads:
             thread.start()
+        # MPS shares a single Metal command queue, so worker threads must not call
+        # ``synchronize()``. Centralize the sync on the main thread instead.
+        main_thread_sync = not accelerator_synchronize_in_worker()
 
         while True:
             if self._error_state.has_error:
@@ -655,6 +666,8 @@ class PipelineProfile:
             prog_bar.update()
             self._events.start.set()
             self._events.wait_ready()
+            if main_thread_sync:
+                accelerator_synchronize()
             prog_bar.update()
             self._events.start.clear()
 
@@ -663,6 +676,8 @@ class PipelineProfile:
             self._events.continue_.set()
             prog_bar.update()
             self._events.wait_ready()
+            if main_thread_sync:
+                accelerator_synchronize()
             prog_bar.update()
             self._events.continue_.clear()
             self._data.collect_vram()

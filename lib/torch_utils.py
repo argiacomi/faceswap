@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import typing as T
 
 import numpy as np
@@ -46,6 +47,13 @@ def get_device(cpu: bool = False) -> torch.device:
 
 AcceleratorType = T.Literal["cuda", "mps"]
 
+# MPS exposes no peak-memory API, so we maintain peak high-water marks ourselves.
+# ``reset`` snapshots the current values; subsequent ``max_*`` calls take the max of the
+# snapshot and the live reading. The lock guards concurrent updates from worker threads.
+_MPS_PEAK_LOCK = threading.Lock()
+_mps_peak_allocated: int = 0
+_mps_peak_driver: int = 0
+
 
 def get_accelerator_type() -> AcceleratorType | None:
     """Return the active Torch accelerator type, if any."""
@@ -74,6 +82,18 @@ def accelerator_synchronize() -> None:
         torch.mps.synchronize()
 
 
+def accelerator_synchronize_in_worker() -> bool:
+    """Whether worker threads should call :func:`accelerator_synchronize` directly.
+
+    CUDA's per-thread streams make synchronizing from any thread safe. MPS shares a single
+    Metal command queue, and concurrent calls to ``torch.mps.synchronize()`` from worker
+    threads race against ``addScheduledHandler`` on the in-flight command buffer and trigger
+    Metal assertions. Pipelines that want to synchronize on MPS must do so from the main
+    thread after all workers have finished dispatching.
+    """
+    return get_accelerator_type() != "mps"
+
+
 def accelerator_total_memory() -> int:
     """Return total memory available to the active accelerator in bytes.
 
@@ -85,46 +105,89 @@ def accelerator_total_memory() -> int:
     if accelerator == "mps":
         # ``recommended_max_memory`` reflects the Metal driver's working-set ceiling for the
         # current process, which is the closest analogue to CUDA's total device VRAM for
-        # batch-size profiling on Apple Silicon.
-        return int(torch.mps.recommended_max_memory())
+        # batch-size profiling on Apple Silicon. Fall back to 75% of system RAM if running on
+        # a PyTorch build that predates the API.
+        if hasattr(torch.mps, "recommended_max_memory"):
+            return int(torch.mps.recommended_max_memory())
+        try:
+            import psutil  # noqa: PLC0415
+        except ImportError:
+            return 0
+        logger.warning(
+            "torch.mps.recommended_max_memory() unavailable; estimating MPS limit as 75%% of "
+            "system RAM"
+        )
+        return int(psutil.virtual_memory().total * 0.75)
     return 0
 
 
 def accelerator_reset_peak_memory_stats() -> None:
     """Reset peak memory stats on the active accelerator.
 
-    No-op on MPS (no peak-tracking API) and without an accelerator.
+    On MPS, captures the current allocator/driver state as the new baseline for our manual
+    peak tracking (PyTorch MPS has no built-in peak API).
     """
-    if get_accelerator_type() == "cuda":
+    global _mps_peak_allocated, _mps_peak_driver
+    accelerator = get_accelerator_type()
+    if accelerator == "cuda":
         torch.cuda.reset_peak_memory_stats()
+    elif accelerator == "mps":
+        with _MPS_PEAK_LOCK:
+            _mps_peak_allocated = int(torch.mps.current_allocated_memory())
+            _mps_peak_driver = int(torch.mps.driver_allocated_memory())
 
 
 def accelerator_max_memory_allocated() -> int:
     """Return peak allocated memory in bytes since the last reset.
 
-    On MPS, returns the current allocator footprint, since MPS exposes no peak-tracking API.
-    Returns ``0`` without an accelerator.
+    On MPS the peak is tracked manually across calls — call sites that need an accurate
+    peak should poll this during the benchmark window, not just at the end. Returns ``0``
+    without an accelerator.
     """
+    global _mps_peak_allocated
     accelerator = get_accelerator_type()
     if accelerator == "cuda":
         return int(torch.cuda.max_memory_allocated())
     if accelerator == "mps":
-        return int(torch.mps.current_allocated_memory())
+        current = int(torch.mps.current_allocated_memory())
+        with _MPS_PEAK_LOCK:
+            _mps_peak_allocated = max(_mps_peak_allocated, current)
+            return _mps_peak_allocated
     return 0
 
 
 def accelerator_max_memory_reserved() -> int:
     """Return peak reserved memory in bytes since the last reset.
 
-    On MPS, returns the driver's current allocation, which is the closest analogue to CUDA's
-    reserved-memory metric. Returns ``0`` without an accelerator.
+    On MPS this uses ``driver_allocated_memory`` (the closest analogue to CUDA's reserved
+    pool) with manual peak tracking. Returns ``0`` without an accelerator.
     """
+    global _mps_peak_driver
     accelerator = get_accelerator_type()
     if accelerator == "cuda":
         return int(torch.cuda.max_memory_reserved())
     if accelerator == "mps":
-        return int(torch.mps.driver_allocated_memory())
+        current = int(torch.mps.driver_allocated_memory())
+        with _MPS_PEAK_LOCK:
+            _mps_peak_driver = max(_mps_peak_driver, current)
+            return _mps_peak_driver
     return 0
+
+
+def is_accelerator_oom_error(exc: BaseException) -> bool:
+    """Return ``True`` if *exc* indicates an accelerator out-of-memory condition.
+
+    CUDA raises :class:`torch.cuda.OutOfMemoryError` (aliased to :class:`torch.OutOfMemoryError`
+    in modern PyTorch). MPS may raise that too, but on older builds it often surfaces as a
+    plain :class:`RuntimeError` whose message contains both "mps" and "out of memory" — so
+    string-match as a fallback for the MPS path.
+    """
+    if isinstance(exc, torch.OutOfMemoryError):
+        return True
+    if get_accelerator_type() == "mps" and isinstance(exc, RuntimeError):
+        msg = str(exc).lower()
+        return "mps" in msg and "out of memory" in msg
+    return False
 
 
 class ColorSpaceConvert(nn.Module):

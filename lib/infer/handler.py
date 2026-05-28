@@ -8,7 +8,6 @@ import logging
 import typing as T
 
 import numpy as np
-from torch.cuda import OutOfMemoryError
 
 from lib.align.aligned_utils import (
     batch_adjust_matrices,
@@ -20,6 +19,7 @@ from lib.align.aligned_utils import (
 )
 from lib.align.constants import EXTRACT_RATIOS, LandmarkType
 from lib.logger import parse_class_init
+from lib.torch_utils import is_accelerator_oom_error
 from lib.utils import FaceswapError, get_module_objects
 from plugins.extract.base import ExtractPlugin
 from plugins.extract.extract_config import load_config
@@ -194,7 +194,9 @@ class ExtractHandler(abc.ABC):
             batch_feed[:feed_size] = feed
         try:
             retval = self.plugin.process(batch_feed)
-        except OutOfMemoryError as err:
+        except RuntimeError as err:
+            if not is_accelerator_oom_error(err):
+                raise
             raise FaceswapError(OOM_MESSAGE) from err
         if is_padded and retval.dtype == "object":
             out = np.empty(retval.shape, dtype="object")
