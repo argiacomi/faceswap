@@ -222,7 +222,10 @@ def _make_cvlface_loader(
         auto_model = transformers.AutoModel
         with _CVLFACE_LOAD_LOCK, _cvlface_repo_context(model_dir):
             model = auto_model.from_pretrained(
-                model_dir, trust_remote_code=True, local_files_only=True
+                model_dir,
+                trust_remote_code=True,
+                local_files_only=True,
+                low_cpu_mem_usage=False,
             )
         model.to(device)
         model.eval()
