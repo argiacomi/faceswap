@@ -14,6 +14,8 @@ from lib.cli.args_extract_convert import ExtractArgs
 from lib.infer.compile_modes import (
     CompilePolicy,
     compile_module,
+    get_compile_backend_summary,
+    reset_compile_backend_summaries,
     resolve_compile_policy,
 )
 from lib.infer.plugin_utils import _COMPILE_LOGGED, compile_models
@@ -195,8 +197,9 @@ def test_compile_models_falls_back_to_eager_when_compiled_warmup_fails(caplog) -
 
 
 def test_compile_models_logs_failed_eager_fallback_when_rewarmup_fails(caplog) -> None:
-    """A failed eager re-warmup must not be reported as a successful compile fallback."""
+    """A failed eager re-warmup must be recorded as a failed fallback."""
     _COMPILE_LOGGED.clear()
+    reset_compile_backend_summaries()
     module = _CompileModule([None])
     policy = CompilePolicy("default", "default", "apple_silicon", experimental=True)
 
@@ -210,6 +213,11 @@ def test_compile_models_logs_failed_eager_fallback_when_rewarmup_fails(caplog) -
     assert "First compiled execution warmup failed" in caplog.text
     assert "Compile fallback failed: eager warmup also failed" in caplog.text
     assert "Compile fallback complete" not in caplog.text
+    summary = get_compile_backend_summary("apple_silicon")
+    assert summary is not None
+    assert "runtime_eager_fallback_failed" in summary.fallback_statuses
+    assert "failed" in summary.final_execution_modes
+    assert "Compiled execution failed and eager fallback warmup also failed" in summary.errors
 
 
 def test_compile_models_skips_orformer_on_mps(caplog) -> None:
