@@ -1083,7 +1083,20 @@ class FaceUpdate:
         face_index
             The face index within the frame
         """
-        face = self._frame_faces[frame_index][face_index]
+        if frame_index < 0 or frame_index >= len(self._frame_faces):
+            logger.debug("Skipping post-edit trigger for missing frame index: %s", frame_index)
+            return
+        faces = self._frame_faces[frame_index]
+        if not 0 <= face_index < len(faces):
+            logger.debug(
+                "Skipping post-edit trigger for stale face index: frame=%s face=%s available=%s",
+                frame_index,
+                face_index,
+                len(faces),
+            )
+            return
+
+        face = faces[face_index]
         face.load_aligned(None, force=True)  # Update average distance
         if face.mask:
             face.mask = {}

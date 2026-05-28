@@ -368,8 +368,23 @@ class ActiveFrame:
     def move_to_top(self) -> None:
         """Move the currently selected frame's faces to the top of the viewport if they are moving
         off the bottom of the viewer."""
+        if not self._assets.images:
+            logger.trace("No active images. Returning")  # type:ignore[attr-defined]
+            return
+
         height = self._canvas.bbox("backdrop")[3]
-        bot = int(self._canvas.coords(self._assets.images[-1])[1] + self._size)
+        bottom_coords = self._canvas.coords(self._assets.images[-1])
+        top_coords = self._canvas.coords(self._assets.images[0])
+        if len(bottom_coords) < 2 or len(top_coords) < 2:
+            logger.debug(
+                "Active face viewer assets missing coordinates. Skipping move_to_top. "
+                "top=%s bottom=%s",
+                top_coords,
+                bottom_coords,
+            )
+            return
+
+        bot = int(bottom_coords[1] + self._size)
 
         y_top, y_bot = (int(round(pnt * height)) for pnt in self._canvas.yview())
 
@@ -377,7 +392,7 @@ class ActiveFrame:
             logger.trace("Active faces in frame. Returning")  # type:ignore[attr-defined]
             return
 
-        top = int(self._canvas.coords(self._assets.images[0])[1])
+        top = int(top_coords[1])
         if y_top == top:
             logger.trace("Top face already on top row. Returning")  # type:ignore[attr-defined]
             return

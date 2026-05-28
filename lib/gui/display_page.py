@@ -46,7 +46,19 @@ class DisplayPage(ttk.Frame):  # pylint:disable=too-many-ancestors
     @property
     def _tab_is_active(self):
         """bool: ``True`` if the tab currently has focus otherwise ``False``"""
-        return self._parent.tab(self._parent.select(), "text").lower() == self.tabname.lower()
+        try:
+            return self._parent.tab(self._parent.select(), "text").lower() == self.tabname.lower()
+        except tk.TclError:
+            return False
+
+    def _has_valid_subnotebook(self) -> bool:
+        """Return whether the backing subnotebook widget still exists in Tcl."""
+        if self.subnotebook is None:
+            return False
+        try:
+            return bool(self.subnotebook.winfo_exists())
+        except tk.TclError:
+            return False
 
     def add_optional_vars(self, varsdict):
         """Add page specific variables"""
@@ -108,6 +120,9 @@ class DisplayPage(ttk.Frame):  # pylint:disable=too-many-ancestors
     def subnotebook_add_page(self, tabtitle, widget=None):
         """Add a page to the sub notebook"""
         logger.debug("Adding subnotebook page: %s", tabtitle)
+        if not self._has_valid_subnotebook():
+            logger.debug("Subnotebook is invalid. Recreating before adding page: %s", tabtitle)
+            self.subnotebook_show()
         frame = widget if widget else ttk.Frame(self.subnotebook)
         frame.pack(padx=5, pady=5, fill=tk.BOTH, expand=True)
         self.subnotebook.add(frame, text=tabtitle)
@@ -116,6 +131,9 @@ class DisplayPage(ttk.Frame):  # pylint:disable=too-many-ancestors
 
     def subnotebook_configure(self):
         """Configure notebook to display or hide tabs"""
+        if not self._has_valid_subnotebook():
+            logger.debug("Subnotebook is invalid. Skipping configure")
+            return
         if len(self.subnotebook.children) == 1:
             logger.debug("Setting single page style")
             self.subnotebook.configure(style="single.TNotebook")
@@ -126,7 +144,10 @@ class DisplayPage(ttk.Frame):  # pylint:disable=too-many-ancestors
     def subnotebook_hide(self):
         """Hide the subnotebook. Used for hiding
         Optional displays"""
-        if self.subnotebook and self.subnotebook.winfo_ismapped():
+        if not self._has_valid_subnotebook():
+            self.subnotebook = None
+            return
+        if self.subnotebook.winfo_ismapped():
             logger.debug("Hiding subnotebook")
             self.subnotebook.pack_forget()
             self.subnotebook.destroy()
@@ -135,19 +156,25 @@ class DisplayPage(ttk.Frame):  # pylint:disable=too-many-ancestors
     def subnotebook_show(self):
         """Show subnotebook. Used for displaying
         Optional displays"""
-        if not self.subnotebook:
+        if not self._has_valid_subnotebook():
             logger.debug("Showing subnotebook")
             self.subnotebook = self.add_subnotebook()
 
     def subnotebook_get_widgets(self):
         """Return each widget that sits within each
         subnotebook frame"""
+        if not self._has_valid_subnotebook():
+            logger.debug("Subnotebook is invalid. Returning no widgets")
+            return
         logger.debug("Getting subnotebook widgets")
         for child in self.subnotebook.winfo_children():
             yield from child.winfo_children()
 
     def subnotebook_get_titles_ids(self):
         """Return tabs ids and titles"""
+        if not self._has_valid_subnotebook():
+            logger.debug("Subnotebook is invalid. Returning no tab ids")
+            return {}
         tabs = {}
         for tab_id in range(0, self.subnotebook.index("end")):
             tabs[self.subnotebook.tab(tab_id, "text")] = tab_id
@@ -156,9 +183,18 @@ class DisplayPage(ttk.Frame):  # pylint:disable=too-many-ancestors
 
     def subnotebook_page_from_id(self, tab_id):
         """Return subnotebook tab widget from it's ID"""
+        if not self._has_valid_subnotebook():
+            logger.debug("Subnotebook is invalid. No page for id: %s", tab_id)
+            return None
         tab_name = self.subnotebook.tabs()[tab_id].split(".")[-1]
         logger.debug(tab_name)
         return self.subnotebook.children[tab_name]
+
+    def close(self):
+        """Called when the parent notebook is shutting down."""
+        for child in self.winfo_children():
+            logger.debug("Destroying child: %s", child)
+            child.destroy()
 
 
 class DisplayOptionalPage(DisplayPage):  # pylint:disable=too-many-ancestors
