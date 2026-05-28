@@ -10,7 +10,7 @@ import os.path as osp
 import sys
 import threading
 import typing as T
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, replace
 from importlib import import_module
 
@@ -131,10 +131,8 @@ def _cvlface_repo_context(model_dir: str) -> T.Iterator[None]:
     finally:
         os.chdir(cwd)
         if added_path:
-            try:
+            with suppress(ValueError):
                 sys.path.remove(model_dir)
-            except ValueError:
-                pass
 
 
 def _make_cvlface_loader(
