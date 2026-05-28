@@ -9,6 +9,7 @@ import os
 import os.path as osp
 import sys
 import threading
+import types
 import typing as T
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, replace
@@ -136,18 +137,65 @@ def _download_cvlface_snapshot(repo_id: str, model_label: str) -> str:
         )
 
 
+def _pop_modules(prefix: str) -> dict[str, types.ModuleType]:
+    """Remove and return loaded modules matching a top-level package prefix."""
+    modules: dict[str, types.ModuleType] = {}
+    for name in tuple(sys.modules):
+        if name == prefix or name.startswith(f"{prefix}."):
+            module = sys.modules.pop(name, None)
+            if isinstance(module, types.ModuleType):
+                modules[name] = module
+    return modules
+
+
+@contextmanager
+def _cvlface_dependency_context() -> T.Iterator[None]:
+    """Provide lightweight optional dependencies required only by CVLFace imports."""
+    try:
+        import_module("fvcore.nn")
+        yield
+        return
+    except ImportError:
+        pass
+
+    fvcore = types.ModuleType("fvcore")
+    fvcore_nn = types.ModuleType("fvcore.nn")
+
+    def _flop_count(*_args: T.Any, **_kwargs: T.Any) -> tuple[dict[str, float], dict[str, float]]:
+        return {}, {}
+
+    fvcore_nn.flop_count = _flop_count  # type:ignore[attr-defined]
+    fvcore.nn = fvcore_nn  # type:ignore[attr-defined]
+    previous = {name: sys.modules.get(name) for name in ("fvcore", "fvcore.nn")}
+    sys.modules["fvcore"] = fvcore
+    sys.modules["fvcore.nn"] = fvcore_nn
+    logger.debug("Using lightweight fvcore.nn.flop_count stub for CVLFace model loading")
+    try:
+        yield
+    finally:
+        for name, module in previous.items():
+            if module is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = module
+
+
 @contextmanager
 def _cvlface_repo_context(model_dir: str) -> T.Iterator[None]:
-    """Temporarily make a CVLFace snapshot importable as a local Python package."""
+    """Temporarily make one CVLFace snapshot importable as a local Python package."""
     cwd = os.getcwd()
     added_path = False
+    old_models = _pop_modules("models")
     if model_dir not in sys.path:
         sys.path.insert(0, model_dir)
         added_path = True
     try:
         os.chdir(model_dir)
-        yield
+        with _cvlface_dependency_context():
+            yield
     finally:
+        _pop_modules("models")
+        sys.modules.update(old_models)
         os.chdir(cwd)
         if added_path:
             with suppress(ValueError):
