@@ -89,6 +89,24 @@ def _onnxruntime_providers(
     return providers, ctx_id
 
 
+@contextmanager
+def _quiet_hf_transfer_logs() -> T.Iterator[None]:
+    """Suppress noisy HTTP transfer INFO logs while preserving warnings/errors."""
+    loggers = [
+        logging.getLogger(name)
+        for name in ("httpx", "httpcore", "huggingface_hub", "huggingface_hub.file_download")
+    ]
+    levels = {log: log.level for log in loggers}
+    try:
+        for log in loggers:
+            if log.getEffectiveLevel() < logging.WARNING:
+                log.setLevel(logging.WARNING)
+        yield
+    finally:
+        for log, level in levels.items():
+            log.setLevel(level)
+
+
 def _download_cvlface_snapshot(repo_id: str, model_label: str) -> str:
     """Download the full CVLFace custom-code snapshot required by Transformers."""
     try:
@@ -102,19 +120,20 @@ def _download_cvlface_snapshot(repo_id: str, model_label: str) -> str:
     # The CVLFace wrappers import a repo-local top-level ``models`` package and load
     # ``pretrained_model/model.pt`` with a relative path. Pull the repo code and weights
     # into a local snapshot so we can add the snapshot root to sys.path while loading.
-    return T.cast(
-        str,
-        hub.snapshot_download(
-            repo_id=repo_id,
-            allow_patterns=[
-                "config.json",
-                "wrapper.py",
-                "models/**",
-                "pretrained_model/**",
-                "model.safetensors",
-            ],
-        ),
-    )
+    with _quiet_hf_transfer_logs():
+        return T.cast(
+            str,
+            hub.snapshot_download(
+                repo_id=repo_id,
+                allow_patterns=[
+                    "config.json",
+                    "wrapper.py",
+                    "models/**",
+                    "pretrained_model/**",
+                    "model.safetensors",
+                ],
+            ),
+        )
 
 
 @contextmanager
