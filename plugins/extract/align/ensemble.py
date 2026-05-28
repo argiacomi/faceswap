@@ -546,22 +546,38 @@ class Ensemble(ExtractPlugin):
         raise ValueError("Ensemble adapters have not been loaded")
 
     def _matrices_for_batch(self, batch_size: int) -> np.ndarray:
-        """Return crop-to-frame matrices, falling back to identity for warmup calls.
-
-        Identity matrices give correct results only for warmup (single tiny synthetic
-        batch). For real work they silently produce frame-pixel landmarks scaled by an
-        identity, which downstream ``frame_to_normalized_crop`` then mis-normalizes.
-        We log loudly so the regression is visible when a runner change ever skips
-        ``pre_process``.
-        """
+        """Return crop-to-frame matrices, falling back to identity for warmup or padding."""
         matrices = np.repeat(np.eye(3, dtype="float32")[None], batch_size, axis=0)
         if self._last_matrices is None:
-            logger.warning(
+            log = logger.debug if batch_size == self.batch_size else logger.warning
+            log(
                 "[Ensemble] No cached crop matrices available; falling back to identity "
                 "for batch_size=%s. Outputs will be wrong unless this is a warmup batch.",
                 batch_size,
             )
             return matrices
+
+        cached_count = self._last_matrices.shape[0]
+        copy_count = min(cached_count, batch_size)
+        matrices[:copy_count] = self._last_matrices[:copy_count]
+        if cached_count < batch_size:
+            log = logger.debug if batch_size == self.batch_size else logger.warning
+            log(
+                "[Ensemble] Cached crop matrices (%s) shorter than batch (%s); "
+                "remaining %s faces use identity matrices and will be mis-normalized.",
+                cached_count,
+                batch_size,
+                batch_size - copy_count,
+            )
+        elif cached_count != batch_size:
+            logger.debug(
+                "[Ensemble] adjusted cached crop matrices for batch padding: "
+                "cached=%s batch=%s copied=%s",
+                cached_count,
+                batch_size,
+                copy_count,
+            )
+        return matrices
 
         cached_count = self._last_matrices.shape[0]
         copy_count = min(cached_count, batch_size)
