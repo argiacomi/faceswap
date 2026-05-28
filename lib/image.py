@@ -310,7 +310,16 @@ def read_image_meta(filename):
             elif field == b"iTXt":
                 keyword, value = in_file.read(length).split(b"\0", 1)
                 if keyword == b"faceswap":
-                    retval["itxt"] = literal_eval(value[4:].decode("utf-8", errors="replace"))
+                    decoded = value[4:].decode("utf-8", errors="replace")
+                    try:
+                        retval["itxt"] = literal_eval(decoded)
+                    except (SyntaxError, ValueError) as err:
+                        logger.warning(
+                            "Malformed faceswap metadata found in '%s'. Metadata will be "
+                            "ignored. Original error: %s",
+                            filename,
+                            err,
+                        )
                     break
                 logger.trace(
                     "Skipping iTXt chunk: '%s'",  # type:ignore[attr-defined]
@@ -651,7 +660,15 @@ def png_read_meta(image: bytes) -> PNGHeader | dict[str, T.Any]:
         pointer += 8
         keyword, value = image[pointer : pointer + length].split(b"\0", 1)
         if keyword == b"faceswap":
-            retval = PNGHeader.from_dict(literal_eval(value[4:].decode("utf-8", errors="ignore")))
+            decoded = value[4:].decode("utf-8", errors="ignore")
+            try:
+                retval = PNGHeader.from_dict(literal_eval(decoded))
+            except (SyntaxError, ValueError) as err:
+                logger.warning(
+                    "Malformed faceswap PNG metadata encountered. Metadata will be "
+                    "ignored. Original error: %s",
+                    err,
+                )
             break
         logger.trace(
             "Skipping iTXt chunk: '%s'",  # type:ignore[attr-defined]
@@ -1235,6 +1252,9 @@ class FacesLoader(ImagesLoader):
                 )
                 continue
             image_read = read_image(filename, raise_error=False, with_metadata=True)
+            if image_read is None:
+                logger.warning("Face not loaded: '%s'", filename)
+                continue
             retval = filename, *image_read
             if retval[1] is None:
                 logger.warning("Face not loaded: '%s'", filename)
