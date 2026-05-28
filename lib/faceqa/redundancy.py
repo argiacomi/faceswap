@@ -635,9 +635,12 @@ def _decide_single_member(
 ) -> tuple[str, str, int]:
     """Return ``(recommendation, reason, budget_after)`` for one cluster member.
 
-    Order of decisions follows the issue:
+    Order of decisions:
     - missing metrics → review
     - identity outlier → review
+    - **missing identity embedding** → review (guardrail: without identity
+      verification we cannot confidently keep or prune *any* member, even
+      when it looks like an alternate or sits in a protected bucket).
     - meaningful pose/expression/lighting variation → keep (alternate)
     - **obvious duplicate** (hard redundancy floor) → prune, even when the
       bucket is fragile; protection budget never rescues exact duplicates.
@@ -651,6 +654,15 @@ def _decide_single_member(
         return (
             REVIEW,
             "identity outlier — review for mismatched subject",
+            protection_budget_remaining,
+        )
+    if not member_features.has_identity:
+        # Identity is the cross-subject guardrail. Without it we cannot
+        # confidently keep an alternate, spend protection budget on it, or
+        # prune it as redundant — every non-obvious outcome routes to review.
+        return (
+            REVIEW,
+            "missing identity embedding guardrail — review before keep or prune",
             protection_budget_remaining,
         )
     bucket_keys_member = _bucket_keys_for(member_record)
@@ -697,15 +709,6 @@ def _decide_single_member(
         )
     if compared < 4:
         return REVIEW, "few comparable metrics — review", protection_budget_remaining
-    if not member_features.has_identity:
-        # Identity is the guardrail against pruning faces that look similar
-        # but actually belong to a different subject. Without it, we cannot
-        # confidently prune non-obvious redundancy.
-        return (
-            REVIEW,
-            "missing identity embedding guardrail — review before pruning",
-            protection_budget_remaining,
-        )
     if member_in_surplus_bucket:
         return (
             PRUNE,

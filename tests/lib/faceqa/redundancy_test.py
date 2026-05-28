@@ -388,6 +388,69 @@ def test_lighting_bucket_is_populated_on_records() -> None:
     assert by_frame["frame_000003.png"] == "flat_frontal"
 
 
+def _decide_with_missing_identity(
+    *,
+    distance: float,
+    temporal_confidence: float = 1.0,
+    protection_budget_remaining: int = 0,
+    member_record_overrides: dict | None = None,
+) -> tuple[str, str, int]:
+    """Helper: invoke ``_decide_single_member`` with a missing-identity member."""
+    from lib.faceqa.redundancy import (
+        _AGGRESSIVENESS_PRESETS,
+        _decide_single_member,
+        _features_for,
+    )
+
+    config = _AGGRESSIVENESS_PRESETS["balanced"]
+    rep_record = _record("frame_000001.png")
+    member_kwargs = dict(identity_model=None, identity_quality_flag=None)
+    if member_record_overrides:
+        member_kwargs.update(member_record_overrides)
+    member_record = _record("frame_000010.png", **member_kwargs)
+    member_features = _features_for(member_record)
+    return _decide_single_member(
+        member_features=member_features,
+        distance=distance,
+        compared=10,
+        temporal_confidence=temporal_confidence,
+        config=config,
+        member_record=member_record,
+        rep_record=rep_record,
+        protection_budget_remaining=protection_budget_remaining,
+        member_in_surplus_bucket=False,
+    )
+
+
+def test_missing_identity_overrides_meaningful_variation_keep() -> None:
+    """A bucket-variation keep must not bypass the missing-identity guardrail."""
+    decision, reason, _budget = _decide_with_missing_identity(
+        distance=0.20,
+        member_record_overrides={"yaw": 70.0, "expression_bucket": "smile"},
+    )
+    assert decision == REVIEW
+    assert "identity" in reason.lower()
+
+
+def test_missing_identity_overrides_protection_budget_keep() -> None:
+    """Protection budget must not rescue a missing-identity member."""
+    decision, reason, budget_after = _decide_with_missing_identity(
+        distance=0.20,
+        protection_budget_remaining=3,
+    )
+    assert decision == REVIEW
+    assert "identity" in reason.lower()
+    # Budget must not be spent on a review decision.
+    assert budget_after == 3
+
+
+def test_missing_identity_overrides_obvious_duplicate_prune() -> None:
+    """Even obvious duplicates with no identity verification route to review."""
+    decision, reason, _budget = _decide_with_missing_identity(distance=0.01)
+    assert decision == REVIEW
+    assert "identity" in reason.lower()
+
+
 def test_missing_identity_routes_non_obvious_redundancy_to_review() -> None:
     """Faces without an identity embedding must route non-obvious redundancy to review."""
     from lib.faceqa.redundancy import (
