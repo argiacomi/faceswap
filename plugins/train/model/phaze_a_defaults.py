@@ -259,6 +259,19 @@ enc_load_weights = ConfigItem(
     fixed=True,
 )
 
+enc_activation = ConfigItem(
+    datatype=str,
+    default="leakyrelu",
+    group="encoder",
+    info="Activation to use for the custom Faceswap encoder path only."
+    "\n\tleakyrelu - Preserve the legacy custom encoder activation"
+    "\n\tswish - Use Swish/SiLU for the custom Faceswap encoder path."
+    "\n\tThis does not modify activations inside pretrained Keras or CLIP encoders.",
+    choices=["leakyrelu", "swish"],
+    gui_radio=True,
+    fixed=True,
+)
+
 # Bottleneck
 bottleneck_type = ConfigItem(
     datatype=str,
@@ -269,28 +282,33 @@ bottleneck_type = ConfigItem(
     "\n\tdense: Use a Dense layer for the bottleneck (the traditional Faceswap method). "
     "You can set the size of the Dense layer with the 'bottleneck_size' parameter."
     "\n\tmax_pooling: Use a Global Max Pooling 2D layer for the bottleneck."
-    "\n\flatten: Don't use a bottleneck at all. Some encoders output in a size that make "
-    "a bottleneck unnecessary. This option flattens the output from the encoder, with no "
-    "further operations",
+    "\n\flatten: Skip pooling/dense projection and flatten the encoder output directly into "
+    "the latent representation.",
     gui_radio=True,
     choices=["average_pooling", "dense", "max_pooling", "flatten"],
     fixed=True,
 )
 
-bottleneck_norm = ConfigItem(
+latent_norm = ConfigItem(
     datatype=str,
     default="none",
     group="bottleneck",
-    info="Apply a normalization layer after encoder output and prior to the bottleneck."
+    info="Apply a normalization layer to the latent representation after the bottleneck stage."
     "\n\tnone - Do not apply a normalization layer"
-    "\n\tinstance - Apply Instance Normalization"
     "\n\tlayer - Apply Layer Normalization (Ba et al., 2016)"
     "\n\trms - Apply Root Mean Squared Layer Normalization (Zhang et al., 2019). A "
-    "simplified version of Layer Normalization with reduced overhead.",
+    "simplified version of Layer Normalization with reduced overhead."
+    "\n\tgroup - Apply Group Normalization"
+    "\n\tinstance - Apply Instance Normalization",
     gui_radio=True,
-    choices=["none", "instance", "layer", "rms"],
+    choices=["none", "layer", "rms", "group", "instance"],
     fixed=True,
 )
+
+
+def bottleneck_norm() -> str:
+    """Backward-compatible accessor for older internal references."""
+    return latent_norm()
 
 bottleneck_size = ConfigItem(
     datatype=int,
@@ -391,6 +409,19 @@ fc_dropout = ConfigItem(
     rounding=2,
     min_max=(0.0, 0.99),
     fixed=False,
+)
+
+fc_activation = ConfigItem(
+    datatype=str,
+    default="leakyrelu",
+    group="hidden layers",
+    info="Activation to use for Phaze-A-owned fully connected upsampling stages only."
+    "\n\tleakyrelu - Preserve the legacy FC upsampling activation"
+    "\n\tswish - Use Swish/SiLU for FC-owned upsampling stages."
+    "\n\tThis does not modify G-Block activations.",
+    choices=["leakyrelu", "swish"],
+    gui_radio=True,
+    fixed=True,
 )
 
 fc_upsampler = ConfigItem(
@@ -566,6 +597,94 @@ dec_norm = ConfigItem(
     "simplified version of Layer Normalization with reduced overhead.",
     gui_radio=True,
     choices=["none", "batch", "group", "instance", "layer", "rms"],
+    fixed=True,
+)
+
+dec_activation = ConfigItem(
+    datatype=str,
+    default="leakyrelu",
+    group="decoder",
+    info="Activation to use for Phaze-A decoder-owned layers."
+    "\n\tleakyrelu - Preserve the legacy decoder activation"
+    "\n\tswish - Use Swish/SiLU throughout decoder-owned activation sites.",
+    choices=["leakyrelu", "swish"],
+    gui_radio=True,
+    fixed=True,
+)
+
+dec_res_block_norm = ConfigItem(
+    datatype=str,
+    default="none",
+    group="decoder",
+    info="Normalization to apply inside decoder residual blocks only."
+    "\n\tnone - Keep the legacy residual block path with no added normalization"
+    "\n\tgroup - Apply Group Normalization"
+    "\n\tinstance - Apply Instance Normalization"
+    "\n\tlayer - Apply Layer Normalization (Ba et al., 2016)"
+    "\n\trms - Apply Root Mean Squared Layer Normalization (Zhang et al., 2019). A "
+    "simplified version of Layer Normalization with reduced overhead.",
+    gui_radio=True,
+    choices=["none", "group", "instance", "layer", "rms"],
+    fixed=True,
+)
+
+dec_residual_scale = ConfigItem(
+    datatype=float,
+    default=1.0,
+    group="decoder",
+    info="Scale factor for decoder residual branches only. Residual blocks are combined as "
+    "`inputs + scale * F(inputs)`."
+    "\n\t1.0 - Preserve legacy decoder residual behavior"
+    "\n\t0.1-0.99 - Reduce the residual branch contribution without scaling the skip "
+    "connection.",
+    min_max=(0.1, 1.0),
+    rounding=2,
+    fixed=True,
+)
+
+dec_antialias = ConfigItem(
+    datatype=str,
+    default="none",
+    group="decoder",
+    info="Apply a fixed anti-alias blur after learned decoder upscales."
+    "\n\tnone - Disable decoder anti-alias blur"
+    "\n\tlight - Apply a non-trainable [1, 2, 1] x [1, 2, 1] / 16 blur after each learned "
+    "decoder upscale.",
+    choices=["none", "light"],
+    gui_radio=True,
+    fixed=True,
+)
+
+refinement_tail = ConfigItem(
+    datatype=str,
+    default="none",
+    group="decoder",
+    info="Optional light refinement tail immediately before `face_out`."
+    "\n\tnone - Disable the refinement tail"
+    "\n\tlight - Add a small decoder-only refinement tail before the face output.",
+    choices=["none", "light"],
+    gui_radio=True,
+    fixed=True,
+)
+
+refinement_blocks = ConfigItem(
+    datatype=int,
+    default=1,
+    group="decoder",
+    info="The number of residual refinement blocks to apply when the refinement tail is enabled.",
+    min_max=(1, 2),
+    rounding=1,
+    fixed=True,
+)
+
+refinement_filters = ConfigItem(
+    datatype=int,
+    default=64,
+    group="decoder",
+    info="The maximum channel count for the refinement tail. Runtime use is capped to the "
+    "smaller of this value, `dec_min_filters`, and 64.",
+    min_max=(8, 64),
+    rounding=8,
     fixed=True,
 )
 

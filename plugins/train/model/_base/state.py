@@ -307,6 +307,15 @@ class State:  # pylint:disable=too-many-instance-attributes
                 updated = True
                 logger.info("Updated state config from legacy '%s' to '%s: %s'", old, new, old)
 
+        if "bottleneck_norm" in self._config and "latent_norm" not in self._config:
+            self._config["latent_norm"] = self._config["bottleneck_norm"]
+            del self._config["bottleneck_norm"]
+            updated = True
+            logger.info(
+                "Updated state config from legacy 'bottleneck_norm' to 'latent_norm': '%s'",
+                self._config["latent_norm"],
+            )
+
         # Update Clip layer names from dots to underscores
         mixed_precision = self._mixed_precision_layers
         if any("." in name for name in mixed_precision):

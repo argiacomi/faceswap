@@ -9,7 +9,7 @@
   "enc_scaling": 58,
   "enc_load_weights": true,
   "bottleneck_type": "flatten",
-  "bottleneck_norm": "none",
+  "latent_norm": "none",
   "bottleneck_size": 1024,
   "bottleneck_in_encoder": true,
   "fc_depth": 1,

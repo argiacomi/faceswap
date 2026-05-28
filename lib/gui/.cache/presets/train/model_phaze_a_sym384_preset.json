@@ -9,7 +9,7 @@
   "enc_scaling": 100,
   "enc_load_weights": true,
   "bottleneck_type": "max_pooling",
-  "bottleneck_norm": "none",
+  "latent_norm": "none",
   "bottleneck_size": 1280,
   "bottleneck_in_encoder": true,
   "fc_depth": 1,

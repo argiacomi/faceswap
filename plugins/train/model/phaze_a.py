@@ -11,9 +11,11 @@ from dataclasses import dataclass
 import keras
 import numpy as np
 from keras import applications as kapp
+from keras import initializers
 from keras import layers as kl
 
 from lib.logger import parse_class_init
+from lib.model.layers import ReflectionPadding2D, Swish
 from lib.model.networks import TypeModelsViT, ViT
 from lib.model.nn_blocks import (
     Conv2D,
@@ -32,6 +34,7 @@ from lib.model.normalization import (
     RMSNormalization,
 )
 from lib.utils import FaceswapError, get_keras_version
+from plugins.train import train_config as train_cfg
 from plugins.train.train_config import Loss as cfg_loss
 
 from . import phaze_a_defaults as cfg
@@ -41,6 +44,194 @@ if T.TYPE_CHECKING:
     from keras import KerasTensor
 
 logger = logging.getLogger(__name__)
+
+
+def _get_activation(
+    name: str | None,
+    *,
+    alpha: float = 0.1,
+    layer_name: str | None = None,
+) -> keras.layers.Layer | None:
+    """Obtain an activation layer for Phaze-A controlled paths."""
+    activation = None if name in (None, "none") else name.lower()
+    kwargs = {} if layer_name is None else {"name": layer_name}
+    if activation is None:
+        return None
+    if activation == "leakyrelu":
+        return kl.LeakyReLU(negative_slope=alpha, **kwargs)
+    if activation in ("swish", "silu"):
+        return Swish(**kwargs)
+    raise ValueError(f"Unsupported activation '{name}'. Choose from: leakyrelu, swish, silu")
+
+
+def _apply_activation(
+    inputs: KerasTensor,
+    activation: str | None,
+    *,
+    alpha: float = 0.1,
+    layer_name: str | None = None,
+) -> KerasTensor:
+    """Apply an activation layer when one is configured."""
+    layer = _get_activation(activation, alpha=alpha, layer_name=layer_name)
+    return inputs if layer is None else layer(inputs)
+
+
+def _get_norm_layer(
+    name: str | None,
+    *,
+    axis: int | None = -1,
+    layer_name: str | None = None,
+) -> keras.layers.Layer | None:
+    """Obtain a normalization layer for Phaze-A controlled paths."""
+    norm = None if name in (None, "none") else name.lower()
+    kwargs = {} if layer_name is None else {"name": layer_name}
+    if norm is None:
+        return None
+    if norm == "group":
+        return GroupNormalization(axis=axis if axis is not None else -1, **kwargs)
+    if norm == "instance":
+        return InstanceNormalization(axis=axis, **kwargs)
+    if norm == "layer":
+        return kl.LayerNormalization(axis=axis if axis is not None else -1, **kwargs)
+    if norm == "rms":
+        return RMSNormalization(axis=axis if axis is not None else -1, **kwargs)
+    raise ValueError(
+        f"Unsupported normalization '{name}'. Choose from: group, instance, layer, rms"
+    )
+
+
+def _apply_norm(
+    inputs: KerasTensor,
+    normalization: str | None,
+    *,
+    axis: int | None = -1,
+    layer_name: str | None = None,
+) -> KerasTensor:
+    """Apply a normalization layer when one is configured."""
+    layer = _get_norm_layer(normalization, axis=axis, layer_name=layer_name)
+    return inputs if layer is None else layer(inputs)
+
+
+def _decoder_antialias(inputs: KerasTensor, *, name: str) -> KerasTensor:
+    """Apply an optional fixed anti-alias blur after learned decoder upscales."""
+    mode = cfg.dec_antialias()
+    if mode == "none":
+        return inputs
+    if mode != "light":
+        raise ValueError(f"Unsupported decoder anti-alias mode '{mode}'. Choose from: none, light")
+
+    channels = inputs.shape[-1]
+    if channels is None:
+        raise ValueError("Decoder anti-alias requires a known channel dimension")
+
+    kernel = (
+        np.array([[1.0, 2.0, 1.0], [2.0, 4.0, 2.0], [1.0, 2.0, 1.0]], dtype="float32") / 16.0
+    )
+    kernel = np.repeat(kernel[:, :, np.newaxis, np.newaxis], int(channels), axis=2)
+    layer = kl.DepthwiseConv2D(
+        3,
+        padding="same",
+        use_bias=False,
+        trainable=False,
+        depthwise_initializer=initializers.Constant(kernel),
+        name=name,
+    )
+    return layer(inputs)
+
+
+def _decoder_refinement_tail(inputs: KerasTensor, *, side: str) -> KerasTensor:
+    """Apply an optional light refinement tail before the face output."""
+    mode = cfg.refinement_tail()
+    if mode == "none":
+        return inputs
+    if mode != "light":
+        raise ValueError(f"Unsupported refinement tail mode '{mode}'. Choose from: none, light")
+
+    blocks = cfg.refinement_blocks()
+    if blocks not in (1, 2):
+        raise ValueError(f"Refinement tail blocks must be 1 or 2. Received: {blocks}")
+
+    channels = inputs.shape[-1]
+    if channels is None:
+        raise ValueError("Refinement tail requires a known channel dimension")
+
+    filters = min(cfg.refinement_filters(), cfg.dec_min_filters(), 64)
+    var_x = inputs
+    if int(channels) != filters:
+        var_x = Conv2DBlock(
+            filters,
+            kernel_size=1,
+            strides=1,
+            activation=cfg.dec_activation(),
+            name=f"decoder_{side}_refinement_proj",
+        )(var_x)
+
+    for idx in range(blocks):
+        var_x = _decoder_residual_block(
+            var_x,
+            filters,
+            norm=cfg.dec_res_block_norm(),
+            activation=cfg.dec_activation(),
+            residual_scale=cfg.dec_residual_scale(),
+            name=f"decoder_{side}_refinement_{idx}",
+        )
+    return var_x
+
+
+def _decoder_residual_block(
+    inputs: KerasTensor,
+    filters: int,
+    *,
+    norm: str,
+    activation: str,
+    residual_scale: float,
+    name: str,
+) -> KerasTensor:
+    """Apply a decoder residual block while preserving legacy defaults."""
+    if not 0 < residual_scale <= 1.0:
+        raise ValueError(
+            "Decoder residual scale must be greater than 0 and less than or "
+            f"equal to 1.0. Received: {residual_scale}"
+        )
+
+    normalized = "none" if norm is None else norm.lower()
+    activated = activation.lower()
+    if normalized == "none" and activated == "leakyrelu" and residual_scale == 1.0:
+        return ResidualBlock(filters)(inputs)
+
+    use_reflect_padding = train_cfg.reflect_padding()
+    padding = "valid" if use_reflect_padding else "same"
+    var_x = inputs
+
+    if use_reflect_padding:
+        var_x = ReflectionPadding2D(
+            stride=1, kernel_size=3, name=f"{name}_reflectionpadding2d_0"
+        )(var_x)
+
+    var_x = Conv2D(filters, kernel_size=3, padding=padding, name=f"{name}_conv2d_0")(var_x)
+    var_x = _apply_activation(var_x, activated, alpha=0.2, layer_name=f"{name}_{activated}_1")
+    var_x = _apply_norm(var_x, normalized, layer_name=f"{name}_{normalized}_0")
+
+    if use_reflect_padding:
+        var_x = ReflectionPadding2D(
+            stride=1, kernel_size=3, name=f"{name}_reflectionpadding2d_1"
+        )(var_x)
+
+    conv_kwargs: dict[str, initializers.Initializer] = {}
+    if not train_cfg.conv_aware_init():
+        conv_kwargs["kernel_initializer"] = initializers.VarianceScaling(
+            scale=0.2, mode="fan_in", distribution="uniform"
+        )
+    var_x = Conv2D(
+        filters, kernel_size=3, padding=padding, name=f"{name}_conv2d_1", **conv_kwargs
+    )(var_x)
+    var_x = _apply_norm(var_x, normalized, layer_name=f"{name}_{normalized}_1")
+
+    if residual_scale != 1.0:
+        var_x = kl.Lambda(lambda tensor: tensor * residual_scale, name=f"{name}_scale")(var_x)
+
+    var_x = kl.Add(name=f"{name}_add")([var_x, inputs])
+    return _apply_activation(var_x, activated, alpha=0.2, layer_name=f"{name}_{activated}_3")
 
 
 @dataclass
@@ -209,6 +400,12 @@ class Model(ModelBase):
 
         self.input_shape: tuple[int, int, int] = self._get_input_shape()
         self.color_order = _MODEL_MAPPING[cfg.enc_architecture()].color_order
+        logger.info(
+            "Phaze-A latent bottleneck: type=%s, latent_norm=%s, location=%s",
+            cfg.bottleneck_type(),
+            cfg.latent_norm(),
+            "encoder" if cfg.bottleneck_in_encoder() else "fully_connected",
+        )
 
     @property
     def freeze_layers(self) -> list[str]:
@@ -572,35 +769,28 @@ def _bottleneck(
     size: int
         The number of nodes for the dense layer (if selected)
     normalization: str
-        The normalization method to use prior to the bottleneck layer
+        The normalization method to use on the latent representation after the bottleneck stage
 
     Returns
     -------
     :class:`keras.KerasTensor`
         The output from the bottleneck
     """
-    norm = None if normalization == "none" else normalization
-    norms = {
-        "layer": kl.LayerNormalization,
-        "rms": RMSNormalization,
-        "instance": InstanceNormalization,
-    }
     bottlenecks = {
         "average_pooling": kl.GlobalAveragePooling2D(),
         "dense": kl.Dense(size),
         "max_pooling": kl.GlobalMaxPooling2D(),
     }
     var_x = inputs
-    if norm:
-        var_x = norms[norm]()(var_x)
     if bottleneck == "dense" and var_x.ndim > 2:  # Flatten non-1D inputs for dense
         var_x = kl.Flatten()(var_x)
     if bottleneck != "flatten":
         var_x = bottlenecks[bottleneck](var_x)
     if var_x.ndim > 2:
-        # Flatten prior to fc layers
+        # Flatten the latent representation for downstream fully connected layers.
         var_x = kl.Flatten()(var_x)
-    return var_x
+    axis = None if normalization == "instance" and var_x.ndim == 2 else -1
+    return _apply_norm(var_x, normalization, axis=axis)
 
 
 def _get_upscale_layer(
@@ -829,7 +1019,7 @@ class Encoder:
                 var_x,
                 cfg.bottleneck_type(),
                 cfg.bottleneck_size(),
-                cfg.bottleneck_norm(),
+                cfg.latent_norm(),
             )
 
         return keras.models.Model(input_, var_x, name="encoder")
@@ -872,6 +1062,7 @@ class _EncoderFaceswap:
         self._min_filters = cfg.fs_original_min_filters()
         self._max_filters = cfg.fs_original_max_filters()
         self._is_alt = cfg.fs_original_use_alt()
+        self._activation = cfg.enc_activation()
         self._relu_alpha = 0.2 if self._is_alt else 0.1
         self._kernel_size = 3 if self._is_alt else 5
         self._strides = 1 if self._is_alt else 2
@@ -897,6 +1088,7 @@ class _EncoderFaceswap:
                 filters,
                 kernel_size=1,
                 strides=self._strides,
+                activation=self._activation,
                 relu_alpha=self._relu_alpha,
             )(var_x)
 
@@ -906,6 +1098,7 @@ class _EncoderFaceswap:
                 filters,
                 kernel_size=self._kernel_size,
                 strides=self._strides,
+                activation=self._activation,
                 relu_alpha=self._relu_alpha,
                 name=f"{name}_convblk_{i}",
             )(var_x)
@@ -916,6 +1109,7 @@ class _EncoderFaceswap:
                     kernel_size=4,
                     strides=self._strides,
                     padding="valid",
+                    activation=self._activation,
                     relu_alpha=self._relu_alpha,
                     name=f"{name}_convblk_{i}_1",
                 )(var_x)
@@ -924,6 +1118,7 @@ class _EncoderFaceswap:
                     filters,
                     kernel_size=self._kernel_size,
                     strides=self._strides,
+                    activation=self._activation,
                     relu_alpha=self._relu_alpha,
                     name=f"{name}_convblk_{i}_1",
                 )(var_x)
@@ -1046,10 +1241,12 @@ class FullyConnected:
             var_x = upscaler(var_x)
         else:
             for _ in range(num_upsamples):
-                upscaler = _get_upscale_layer(upsampler, upsample_filts, activation="leakyrelu")
+                upscaler = _get_upscale_layer(
+                    upsampler, upsample_filts, activation=cfg.fc_activation()
+                )
                 var_x = upscaler(var_x)
         if upsampler == "upsample2d":
-            var_x = kl.LeakyReLU(negative_slope=0.1)(var_x)
+            var_x = _apply_activation(var_x, cfg.fc_activation(), alpha=0.1)
         return var_x
 
     def __call__(self) -> keras.models.Model:
@@ -1075,7 +1272,7 @@ class FullyConnected:
                 var_x,
                 cfg.bottleneck_type(),
                 cfg.bottleneck_size(),
-                cfg.bottleneck_norm(),
+                cfg.latent_norm(),
             )
 
         dropout = getattr(cfg, f"{self._prefix}_dropout")()
@@ -1167,6 +1364,7 @@ class UpscaleBlocks:
         self,
         inputs: KerasTensor,
         filters: int,
+        block_idx: int,
         skip_residual: bool = False,
         is_mask: bool = False,
     ) -> KerasTensor:
@@ -1204,23 +1402,35 @@ class UpscaleBlocks:
                 cfg.dec_upscale_method(),
             ),
             filters,
-            activation="leakyrelu",
+            activation=cfg.dec_activation(),
             upsamples=2,
             interpolation="bilinear",
         )
 
         var_x = upscaler(inputs)
+        var_x = _decoder_antialias(
+            var_x, name=f"decoder_{self._side}_upscale_{block_idx}_antialias"
+        )
         if not is_mask and cfg.dec_gaussian():
             var_x = kl.GaussianNoise(1.0)(var_x)
         if not is_mask and cfg.dec_res_blocks() and not skip_residual:
             var_x = self._normalization(var_x)
-            var_x = kl.LeakyReLU(negative_slope=0.2)(var_x)
-            for _ in range(cfg.dec_res_blocks()):
-                var_x = ResidualBlock(filters)(var_x)
+            var_x = _apply_activation(var_x, cfg.dec_activation(), alpha=0.2)
+            for res_idx in range(cfg.dec_res_blocks()):
+                var_x = _decoder_residual_block(
+                    var_x,
+                    filters,
+                    norm=cfg.dec_res_block_norm(),
+                    activation=cfg.dec_activation(),
+                    residual_scale=cfg.dec_residual_scale(),
+                    name=(
+                        f"decoder_{self._side}_upscale_{block_idx}_residual_{res_idx}"
+                    ),
+                )
         else:
             var_x = self._normalization(var_x)
             if not self._is_dny:
-                var_x = kl.LeakyReLU(negative_slope=0.1)(var_x)
+                var_x = _apply_activation(var_x, cfg.dec_activation(), alpha=0.1)
         return var_x
 
     def _normalization(self, inputs: KerasTensor) -> KerasTensor:
@@ -1236,18 +1446,10 @@ class UpscaleBlocks:
         :class:`keras.KerasTensor`
             The tensor with any normalization applied
         """
-        dec_norm: str | None = cfg.dec_norm()
-        dec_norm = None if dec_norm == "none" else dec_norm
-        if not dec_norm:
-            return inputs
-        norms = {
-            "batch": kl.BatchNormalization,
-            "group": GroupNormalization,
-            "instance": InstanceNormalization,
-            "layer": kl.LayerNormalization,
-            "rms": RMSNormalization,
-        }
-        return norms[dec_norm]()(inputs)
+        dec_norm = cfg.dec_norm()
+        if dec_norm == "batch":
+            return kl.BatchNormalization()(inputs)
+        return _apply_norm(inputs, dec_norm)
 
     def _dny_entry(self, inputs: KerasTensor) -> KerasTensor:
         """Entry convolutions for using the upscale_dny method.
@@ -1267,6 +1469,7 @@ class UpscaleBlocks:
             kernel_size=4,
             strides=1,
             padding="same",
+            activation=cfg.dec_activation(),
             relu_alpha=0.2,
         )(inputs)
         var_x = Conv2DBlock(
@@ -1274,6 +1477,7 @@ class UpscaleBlocks:
             kernel_size=3,
             strides=1,
             padding="same",
+            activation=cfg.dec_activation(),
             relu_alpha=0.2,
         )(var_x)
         return var_x
@@ -1339,9 +1543,10 @@ class UpscaleBlocks:
 
         for idx, filts in enumerate(filters):
             skip_res = idx == len(filters) - 1 and cfg.dec_skip_last_residual()
-            var_x = self._upscale_block(var_x, filts, skip_residual=skip_res)
+            block_idx = start_idx + idx
+            var_x = self._upscale_block(var_x, filts, block_idx, skip_residual=skip_res)
             if cfg_loss.learn_mask():
-                var_y = self._upscale_block(var_y, filts, is_mask=True)
+                var_y = self._upscale_block(var_y, filts, block_idx, is_mask=True)
         retval = [var_x, var_y] if cfg_loss.learn_mask() else var_x
         return retval
 
@@ -1471,6 +1676,7 @@ class Decoder:
         else:
             var_x = upscales
 
+        var_x = _decoder_refinement_tail(var_x, side=self._side)
         outputs = [Conv2DOutput(3, cfg.dec_output_kernel(), name="face_out")(var_x)]
         if cfg_loss.learn_mask():
             outputs.append(Conv2DOutput(1, cfg.dec_output_kernel(), name="mask_out")(var_y))
