@@ -71,6 +71,16 @@ batch_size = ConfigItem(
     min_max=(1, 128),
 )
 
+nms_threshold = ConfigItem(
+    datatype=float,
+    default=0.4,
+    group="settings",
+    info="The IoU threshold used for Non-Maximum Suppression. Lower values remove more "
+    "overlapping detections; higher values keep more nearby boxes.",
+    rounding=2,
+    min_max=(0.1, 0.9),
+)
+
 scrfd_postprocess = ConfigItem(
     datatype=str,
     default="auto",

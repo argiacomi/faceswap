@@ -18,7 +18,11 @@ except (ImportError, RuntimeError):
 
 
 def _custom_nms(boxes: torch.Tensor, scores: torch.Tensor, iou_threshold: float) -> torch.Tensor:
-    """Fallback NMS implementation that works without TorchVision."""
+    """Fallback NMS implementation that works without TorchVision.
+
+    Uses the standard continuous-coordinate IoU formula (no +1 term) to match
+    :func:`torchvision.ops.nms` so all torch_nms paths agree.
+    """
     if boxes.numel() == 0:
         return torch.empty((0,), dtype=torch.long, device=boxes.device)
 
@@ -26,7 +30,7 @@ def _custom_nms(boxes: torch.Tensor, scores: torch.Tensor, iou_threshold: float)
     y_1 = boxes[:, 1]
     x_2 = boxes[:, 2]
     y_2 = boxes[:, 3]
-    areas = (x_2 - x_1 + 1) * (y_2 - y_1 + 1)
+    areas = (x_2 - x_1) * (y_2 - y_1)
     order = torch.argsort(scores, descending=True)
     keep: list[int] = []
 
@@ -42,8 +46,8 @@ def _custom_nms(boxes: torch.Tensor, scores: torch.Tensor, iou_threshold: float)
         xx_2 = torch.minimum(x_2[idx], x_2.index_select(0, remaining))
         yy_2 = torch.minimum(y_2[idx], y_2.index_select(0, remaining))
 
-        width = torch.clamp(xx_2 - xx_1 + 1, min=0.0)
-        height = torch.clamp(yy_2 - yy_1 + 1, min=0.0)
+        width = torch.clamp(xx_2 - xx_1, min=0.0)
+        height = torch.clamp(yy_2 - yy_1, min=0.0)
         intersection = width * height
         overlap = intersection / (areas[idx] + areas.index_select(0, remaining) - intersection)
         order = remaining[overlap <= iou_threshold]

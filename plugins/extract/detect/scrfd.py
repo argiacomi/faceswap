@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import tempfile
 import typing as T
 from time import perf_counter_ns
 from urllib import request
@@ -35,6 +36,9 @@ if T.TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+_DOWNLOAD_TIMEOUT_SECONDS = 60
+_DOWNLOAD_CHUNK_BYTES = 1024 * 1024
 
 _MODEL_CONFIG: dict[str, dict[str, T.Any]] = {
     "10g": {
@@ -88,12 +92,12 @@ class SCRFD(ExtractPlugin):
         self._model_config = _MODEL_CONFIG[model_name]
         self.model: SCRFDModel
         self._confidence = cfg.confidence() / 100
-        self._nms_threshold = 0.4
+        self._nms_threshold = float(cfg.nms_threshold())
         self._model_path = self._get_weights_path()
         self._feature_strides = [8, 16, 32]
         self._num_anchors = 2
         self._center_cache: dict[tuple[int, int, int], npt.NDArray[np.float32]] = {}
-        self._center_cache_torch: dict[tuple[int, int, int, str], torch.Tensor] = {}
+        self._center_cache_torch: dict[tuple[int, int, int, str, int | None], torch.Tensor] = {}
         self._postprocess_mode = T.cast(
             T.Literal["auto", "torch", "numpy"], cfg.scrfd_postprocess()
         )
@@ -112,21 +116,35 @@ class SCRFD(ExtractPlugin):
 
         os.makedirs(cache_dir, exist_ok=True)
         url = self._model_config["url"]
-        download_path = f"{model_path}.part"
         # TODO: Move SCRFD into lib.utils.GetModel when these weights are hosted in the
         # faceswap-models registry. GetModel currently only handles that release layout.
         logger.info("Downloading SCRFD model from: %s", url)
+        # Use a per-process tempfile so concurrent extract invocations cannot stomp on
+        # each other's partial download. os.replace is atomic, so the last writer wins
+        # without leaving a truncated final file.
+        fd, download_path = tempfile.mkstemp(
+            prefix=f"{self._model_config['filename']}.",
+            suffix=".part",
+            dir=cache_dir,
+        )
+        os.close(fd)
         success = False
         try:
-            request.urlretrieve(url, download_path)  # noqa:S310 - checksum validated model URL
+            with (
+                request.urlopen(  # noqa:S310 - checksum validated model URL
+                    url, timeout=_DOWNLOAD_TIMEOUT_SECONDS
+                ) as response,
+                open(download_path, "wb") as out_file,
+            ):
+                for chunk in iter(lambda: response.read(_DOWNLOAD_CHUNK_BYTES), b""):
+                    out_file.write(chunk)
+            if not self._validate_weights(download_path):
+                raise FaceswapError(f"Downloaded SCRFD model failed checksum validation: {url}")
+            os.replace(download_path, model_path)
             success = True
         finally:
             if not success and os.path.exists(download_path):
                 os.remove(download_path)
-        if not self._validate_weights(download_path):
-            os.remove(download_path)
-            raise FaceswapError(f"Downloaded SCRFD model failed checksum validation: {url}")
-        os.replace(download_path, model_path)
         return model_path
 
     def _validate_weights(self, model_path: str) -> bool:
@@ -143,8 +161,14 @@ class SCRFD(ExtractPlugin):
         return T.cast(SCRFDModel, self.load_torch_model(model, self._model_path))
 
     def pre_process(self, batch: np.ndarray) -> np.ndarray:
-        """Compile the detection image(s) for prediction."""
-        if self.device.type != "cpu":
+        """Prepare the detection feed for the selected post-processing path.
+
+        The torch path normalizes on-device inside :meth:`_from_torch_raw` so
+        we ship raw uint8 NHWC across the worker boundary to keep the host
+        copy compact. The numpy path needs a CPU blob, so we build it here in
+        the pre-process worker stage to overlap with model inference.
+        """
+        if self._should_use_torch_path():
             return batch
         return self._blob_pre_process(batch)
 
@@ -163,8 +187,6 @@ class SCRFD(ExtractPlugin):
         """Run model to get predictions."""
         if self._should_use_torch_path():
             return self._from_torch_raw(batch)
-        if batch.ndim == 4 and batch.shape[-1] == 3:
-            batch = self._blob_pre_process(batch)
         return self.from_torch(batch)
 
     @property
@@ -181,10 +203,11 @@ class SCRFD(ExtractPlugin):
         return self.device.type != "cpu"
 
     def _from_torch_raw(self, batch: np.ndarray) -> np.ndarray:
-        """Run the Torch model while keeping output tensors on-device."""
-        if not isinstance(self.model, nn.Module):
-            return self.from_torch(batch)
+        """Run the Torch model while keeping output tensors on-device.
 
+        Always receives raw BGR uint8 NHWC from :meth:`pre_process`; normalizes,
+        reorders to RGB and converts to channels-last float32 on-device.
+        """
         with torch.inference_mode():
             feed = torch.from_numpy(batch)
             feed = (
@@ -192,26 +215,13 @@ class SCRFD(ExtractPlugin):
                 if self.device.type == "cuda"
                 else feed.to(self.device)
             )
-
-            if feed.ndim == 4 and feed.shape[-1] == 3:
-                # Keep detector feeds compact on the host, then normalize and reorder on-device.
-                feed = feed.permute(0, 3, 1, 2)
-                feed = feed[:, [2, 1, 0]].to(dtype=torch.float32)
-                feed.sub_(127.5).mul_(1.0 / 128.0)
-                feed = feed.contiguous(memory_format=torch.channels_last)
-            else:
-                if feed.dtype != torch.float32:
-                    feed = feed.to(dtype=torch.float32)
-                feed = feed.to(memory_format=torch.channels_last)
+            feed = feed.permute(0, 3, 1, 2)
+            feed = feed[:, [2, 1, 0]].to(dtype=torch.float32)
+            feed.sub_(127.5).mul_(1.0 / 128.0)
+            feed = feed.contiguous(memory_format=torch.channels_last)
             output = self.model(feed)
 
-        if isinstance(output, torch.Tensor):
-            retval = np.empty((1,), dtype="object")
-            retval[0] = output
-            return retval
-
-        tensors = list(output)
-        return self._object_array(tensors)
+        return self._object_array(list(output))
 
     @staticmethod
     def _object_array(values: T.Sequence[T.Any]) -> np.ndarray:
@@ -264,7 +274,9 @@ class SCRFD(ExtractPlugin):
         self, height: int, width: int, stride: int, device: torch.device
     ) -> torch.Tensor:
         """Return cached SCRFD anchor centers on the requested device."""
-        key = (height, width, stride, str(device))
+        # Key on (type, index) so equivalent devices share an entry instead of
+        # caching both ``cuda`` and ``cuda:0``.
+        key = (height, width, stride, device.type, device.index)
         if key not in self._center_cache_torch:
             centers = torch.from_numpy(self._anchor_centers(height, width, stride)).to(
                 device=device,
@@ -275,9 +287,13 @@ class SCRFD(ExtractPlugin):
         return self._center_cache_torch[key]
 
     def _nms(self, boxes: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
-        """Perform Non-Maximum Suppression and return kept boxes."""
+        """Perform Non-Maximum Suppression and return kept boxes.
+
+        Uses the continuous-coordinate IoU formula (no +1 term) so this path
+        agrees with :func:`torchvision.ops.nms` and the torch fallback.
+        """
         x_1, y_1, x_2, y_2, scores = boxes.T
-        areas = (x_2 - x_1 + 1) * (y_2 - y_1 + 1)
+        areas = (x_2 - x_1) * (y_2 - y_1)
         order = scores.argsort()[::-1]
         keep: list[int] = []
         while order.size > 0:
@@ -287,8 +303,8 @@ class SCRFD(ExtractPlugin):
             yy_1 = np.maximum(y_1[idx], y_1[order[1:]])
             xx_2 = np.minimum(x_2[idx], x_2[order[1:]])
             yy_2 = np.minimum(y_2[idx], y_2[order[1:]])
-            width = np.maximum(0.0, xx_2 - xx_1 + 1)
-            height = np.maximum(0.0, yy_2 - yy_1 + 1)
+            width = np.maximum(0.0, xx_2 - xx_1)
+            height = np.maximum(0.0, yy_2 - yy_1)
             intersection = width * height
             overlap = intersection / (areas[idx] + areas[order[1:]] - intersection)
             order = order[np.where(overlap <= self._nms_threshold)[0] + 1]
@@ -329,25 +345,43 @@ class SCRFD(ExtractPlugin):
     def _as_torch_prediction(self, prediction: T.Any) -> torch.Tensor:
         """Normalize a prediction item into a float32 Torch tensor on the plugin device."""
         if isinstance(prediction, torch.Tensor):
-            return prediction.to(device=self.device, dtype=torch.float32)
+            tensor = prediction
+            if tensor.device != self.device:
+                tensor = tensor.to(self.device)
+            if tensor.dtype != torch.float32:
+                tensor = tensor.to(dtype=torch.float32)
+            return tensor
         return torch.as_tensor(prediction, device=self.device, dtype=torch.float32)
+
+    def _sync_for_profile(self) -> None:
+        """Synchronize the current CUDA stream so profile timestamps reflect actual work."""
+        if self.device.type == "cuda" and torch.cuda.is_available():
+            torch.cuda.synchronize(self.device)
 
     def _torch_post_process(self, batch: np.ndarray) -> np.ndarray:
         """Process SCRFD output while keeping decode, threshold and NMS on-device."""
         final_boxes: list[np.ndarray] = []
-        batch_size = batch[0].shape[0]
         self._last_profile_events = []
+
+        # Normalize each per-stride output tensor once across the whole batch instead of
+        # re-converting per image.
+        num_strides = len(self._feature_strides)
+        scores_per_stride = [self._as_torch_prediction(batch[idx]) for idx in range(num_strides)]
+        bboxes_per_stride = [
+            self._as_torch_prediction(batch[num_strides + idx]) for idx in range(num_strides)
+        ]
+        batch_size = scores_per_stride[0].shape[0]
+
         for img_idx in range(batch_size):
             image_scores: list[torch.Tensor] = []
             image_boxes: list[torch.Tensor] = []
             for out_idx, stride in enumerate(self._feature_strides):
-                scores = self._as_torch_prediction(batch[out_idx][img_idx]).reshape(-1)
-                bbox_preds = self._as_torch_prediction(
-                    batch[out_idx + len(self._feature_strides)][img_idx]
-                ).reshape((-1, 4))
-                bbox_preds = bbox_preds * stride
+                scores = scores_per_stride[out_idx][img_idx].reshape(-1)
+                bbox_preds = bboxes_per_stride[out_idx][img_idx].reshape((-1, 4)) * stride
+                self._sync_for_profile()
                 indices_start = perf_counter_ns()
                 indices = torch.nonzero(scores >= self._confidence, as_tuple=False).squeeze(1)
+                self._sync_for_profile()
                 indices_end = perf_counter_ns()
                 self._record_profile_event(
                     "scrfd_threshold",
@@ -362,12 +396,14 @@ class SCRFD(ExtractPlugin):
                 height = self.input_size // stride
                 width = self.input_size // stride
                 centers = self._anchor_centers_torch(height, width, stride, scores.device)
+                self._sync_for_profile()
                 decode_start = perf_counter_ns()
                 selected_scores = scores.index_select(0, indices)
                 selected_boxes = self._distance_to_bbox_torch(
                     centers.index_select(0, indices),
                     bbox_preds.index_select(0, indices),
                 )
+                self._sync_for_profile()
                 decode_end = perf_counter_ns()
                 self._record_profile_event(
                     "scrfd_decode",
@@ -386,8 +422,10 @@ class SCRFD(ExtractPlugin):
 
             scores = torch.cat(image_scores)
             boxes = torch.cat(image_boxes)
+            self._sync_for_profile()
             nms_start = perf_counter_ns()
             keep = torch_nms(boxes, scores, self._nms_threshold)
+            self._sync_for_profile()
             nms_end = perf_counter_ns()
             self._record_profile_event(
                 "scrfd_nms",
@@ -397,24 +435,23 @@ class SCRFD(ExtractPlugin):
                 bytes_in=(self._tensor_bytes(boxes) + self._tensor_bytes(scores)),
             )
 
+            kept_boxes = boxes.index_select(0, keep)
+            kept_bytes = self._tensor_bytes(kept_boxes)
             copy_start = perf_counter_ns()
-            final = boxes.index_select(0, keep).to("cpu", dtype=torch.float32).numpy()
+            final = kept_boxes.to("cpu", dtype=torch.float32).numpy()
             copy_end = perf_counter_ns()
             self._record_profile_event(
                 "scrfd_copy_back",
                 copy_start,
                 copy_end,
                 frame_index=img_idx,
-                bytes_in=self._tensor_bytes(boxes.index_select(0, keep)),
+                bytes_in=kept_bytes,
                 bytes_out=int(final.nbytes),
                 transfer_direction="device_to_host",
             )
             final_boxes.append(final)
 
-        retval = np.empty(len(final_boxes), dtype=object)
-        for idx, box in enumerate(final_boxes):
-            retval[idx] = box
-        return retval
+        return self._object_array(final_boxes)
 
     def post_process(self, batch: np.ndarray) -> np.ndarray:
         """Process SCRFD output to bounding boxes at model input size."""
@@ -449,10 +486,7 @@ class SCRFD(ExtractPlugin):
             detections = np.hstack((boxes, scores[:, None])).astype("float32", copy=False)
             final_boxes.append(self._nms(detections)[:, :4])
 
-        retval = np.empty(len(final_boxes), dtype=object)
-        for idx, box in enumerate(final_boxes):
-            retval[idx] = box
-        return retval
+        return self._object_array(final_boxes)
 
 
 class ConvModule(nn.Module):
