@@ -365,8 +365,9 @@ class _State:  # pylint:disable=too-few-public-methods
     formats the content into a human readable format."""
 
     def __init__(self) -> None:
-        self._model_dir = self._get_arg("-m", "--model-dir")
-        self._trainer = self._get_arg("-t", "--trainer")
+        is_training = self._is_training
+        self._model_dir = self._get_arg("-m", "--model-dir") if is_training else None
+        self._trainer = self._get_arg("-t", "--trainer") if is_training else None
         self.state_file = self._get_state_file()
 
     @property
