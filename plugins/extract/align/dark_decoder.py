@@ -25,12 +25,21 @@ class Dark:
         The size of the heatmap
     """
 
-    def __init__(self, num_points: int, size: int, blur_kernel: int = 11):
+    def __init__(
+        self,
+        num_points: int,
+        size: int,
+        blur_kernel: int = 11,
+        max_offset: float = 1.0,
+        min_hessian_det: float = 1e-6,
+    ):
         logger.debug(parse_class_init(locals()))
         self._num_points = num_points
         self._size = size
         self._blur_kernel = blur_kernel
         self._border = (blur_kernel - 1) // 2
+        self._max_offset = np.float32(max_offset)
+        self._min_hessian_det = np.float32(min_hessian_det)
 
     def get_max_preds(self, batch_heatmaps: np.ndarray) -> np.ndarray:
         """get predictions from score maps
@@ -129,6 +138,8 @@ class Dark:
         The refined coordinates
         """
         batch = heatmap.shape[0]
+        coords = coords.astype(np.float32, copy=True)
+        base_coords = coords.copy()
         px = np.clip(coords[..., 0], 2, self._size - 3).astype(np.int32)
         py = np.clip(coords[..., 1], 2, self._size - 3).astype(np.int32)
 
@@ -163,16 +174,63 @@ class Dark:
         dxy = dxy.reshape(batch, self._num_points)
 
         det = dxx * dyy - dxy**2
-        inv_det = 1.0 / (det + 1e-8)
+        stable = (
+            np.isfinite(dx)
+            & np.isfinite(dy)
+            & np.isfinite(dxx)
+            & np.isfinite(dyy)
+            & np.isfinite(dxy)
+            & np.isfinite(det)
+            & (np.abs(det) >= self._min_hessian_det)
+        )
+        offset_x = np.zeros_like(det, dtype=np.float32)
+        offset_y = np.zeros_like(det, dtype=np.float32)
 
-        offset_x = -inv_det * (dyy * dx - dxy * dy)
-        offset_y = -inv_det * (-dxy * dx + dxx * dy)
-        coords[..., 0] += offset_x
-        coords[..., 1] += offset_y
+        unstable_points = int(stable.size - np.count_nonzero(stable))
+        nonfinite_offsets = 0
+        clipped_offsets = 0
+        if np.any(stable):
+            raw_offset_x = -((dyy[stable] * dx[stable] - dxy[stable] * dy[stable]) / det[stable])
+            raw_offset_y = -((-dxy[stable] * dx[stable] + dxx[stable] * dy[stable]) / det[stable])
+            finite_offsets = np.isfinite(raw_offset_x) & np.isfinite(raw_offset_y)
+            nonfinite_offsets = int(finite_offsets.size - np.count_nonzero(finite_offsets))
+            if np.any(finite_offsets):
+                clipped_offsets = int(
+                    np.count_nonzero(
+                        (np.abs(raw_offset_x[finite_offsets]) > self._max_offset)
+                        | (np.abs(raw_offset_y[finite_offsets]) > self._max_offset)
+                    )
+                )
+                offset_x[stable] = np.where(
+                    finite_offsets,
+                    np.clip(raw_offset_x, -self._max_offset, self._max_offset),
+                    0.0,
+                )
+                offset_y[stable] = np.where(
+                    finite_offsets,
+                    np.clip(raw_offset_y, -self._max_offset, self._max_offset),
+                    0.0,
+                )
 
-        return coords
+        coords[..., 0] = base_coords[..., 0] + offset_x
+        coords[..., 1] = base_coords[..., 1] + offset_y
+        unclipped = coords.copy()
+        np.clip(coords, 0.0, float(self._size - 1), out=coords)
+        clipped_coords = int(np.count_nonzero(coords != unclipped))
 
-    def __call__(self, heatmap: np.ndarray):
+        if unstable_points or nonfinite_offsets or clipped_offsets or clipped_coords:
+            logger.debug(
+                "[Dark] bounded Taylor refinement: unstable=%s nonfinite=%s "
+                "offset_clipped=%s coord_clipped=%s",
+                unstable_points,
+                nonfinite_offsets,
+                clipped_offsets,
+                clipped_coords,
+            )
+
+        return coords.astype(np.float32, copy=False)
+
+    def __call__(self, heatmap: np.ndarray) -> np.ndarray:
         coords = self.get_max_preds(heatmap)
 
         # post-processing
@@ -180,7 +238,7 @@ class Dark:
         heatmap = np.maximum(heatmap, 1e-10)
         heatmap = np.log(heatmap)
         coords = self.taylor(heatmap, coords)
-        return coords
+        return coords.astype(np.float32, copy=False)
 
 
 get_module_objects(__name__)
