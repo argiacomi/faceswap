@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""FaceQA coverage tool package."""
+"""FaceQA tool package: coverage, duplicates, and source-target compatibility."""
 
-from .faceqa_coverage import Faceqa_Coverage
+from .faceqa import Faceqa
 
-__all__ = ["Faceqa_Coverage"]
+__all__ = ["Faceqa"]

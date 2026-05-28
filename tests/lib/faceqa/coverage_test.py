@@ -13,7 +13,7 @@ from lib.align.objects import AlignmentsEntry, FileAlignments
 from lib.faceqa.coverage import SpigaPoseBackfiller, compute_coverage, records_from_alignments
 from lib.faceqa.readiness import generate_readiness_report
 from lib.serializer import get_serializer
-from tools.faceqa_coverage.faceqa_coverage import Faceqa_Coverage
+from tools.faceqa.faceqa import Faceqa
 
 
 def _face(width: int = 80, height: int = 90) -> FileAlignments:
@@ -98,6 +98,7 @@ def test_faceqa_coverage_tool_writes_reports_from_alignments(tmp_path, monkeypat
     output_json = tmp_path / "coverage.json"
     output_md = tmp_path / "coverage.md"
     args = Namespace(
+        mode="coverage",
         alignments=str(alignments),
         frames_dir=str(tmp_path),
         sidecar=None,
@@ -108,12 +109,12 @@ def test_faceqa_coverage_tool_writes_reports_from_alignments(tmp_path, monkeypat
         min_bucket_pct=5.0,
     )
     monkeypatch.setattr(
-        Faceqa_Coverage,
+        Faceqa,
         "_pose_backfiller",
         lambda _: lambda __, ___: None,
     )
 
-    Faceqa_Coverage(args).process()
+    Faceqa(args).process()
 
     payload = json.loads(output_json.read_text(encoding="utf-8"))
     assert payload["schema_version"] == 1
@@ -340,6 +341,7 @@ def test_faceqa_coverage_tool_persists_backfilled_spiga_pose(tmp_path, monkeypat
     output_json = tmp_path / "coverage.json"
     output_md = tmp_path / "coverage.md"
     args = Namespace(
+        mode="coverage",
         alignments=str(alignments),
         frames_dir=str(tmp_path),
         sidecar=None,
@@ -360,12 +362,12 @@ def test_faceqa_coverage_tool_persists_backfilled_spiga_pose(tmp_path, monkeypat
         }
 
     monkeypatch.setattr(
-        Faceqa_Coverage,
+        Faceqa,
         "_pose_backfiller",
         lambda _: backfill,
     )
 
-    Faceqa_Coverage(args).process()
+    Faceqa(args).process()
 
     qa_file = load(sidecar_path(str(alignments)))
     assert qa_file is not None
@@ -402,6 +404,7 @@ def test_faceqa_coverage_tool_does_not_recompute_existing_spiga_pose(
     output_json = tmp_path / "coverage.json"
     output_md = tmp_path / "coverage.md"
     args = Namespace(
+        mode="coverage",
         alignments=str(alignments),
         frames_dir=str(tmp_path),
         sidecar=None,
@@ -419,12 +422,12 @@ def test_faceqa_coverage_tool_does_not_recompute_existing_spiga_pose(
         return {"yaw": 0.0, "pitch": 0.0, "roll": 0.0}
 
     monkeypatch.setattr(
-        Faceqa_Coverage,
+        Faceqa,
         "_pose_backfiller",
         lambda _: backfill,
     )
 
-    Faceqa_Coverage(args).process()
+    Faceqa(args).process()
 
     assert calls == 0
     assert not (tmp_path / "alignments_faceset_qa.json").exists()
@@ -573,6 +576,7 @@ def test_faceqa_coverage_tool_writes_joint_pose_metrics(tmp_path, monkeypatch) -
     output_json = tmp_path / "coverage.json"
     output_md = tmp_path / "coverage.md"
     args = Namespace(
+        mode="coverage",
         alignments=str(alignments),
         frames_dir=str(tmp_path),
         sidecar=None,
@@ -583,12 +587,12 @@ def test_faceqa_coverage_tool_writes_joint_pose_metrics(tmp_path, monkeypatch) -
         min_bucket_pct=5.0,
     )
     monkeypatch.setattr(
-        Faceqa_Coverage,
+        Faceqa,
         "_pose_backfiller",
         lambda _: lambda __, ___: None,
     )
 
-    Faceqa_Coverage(args).process()
+    Faceqa(args).process()
 
     payload = json.loads(output_json.read_text(encoding="utf-8"))
     assert "signed_yaw" not in payload["coverage"]

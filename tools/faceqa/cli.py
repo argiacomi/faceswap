@@ -1,47 +1,64 @@
 #!/usr/bin/env python3
-"""Command line arguments for the FaceQA coverage audit tool."""
+"""Command line arguments for the unified FaceQA tool."""
 
 from __future__ import annotations
 
 import gettext
 import typing as T
 
-from lib.cli.actions import DirOrFileFullPaths, FileFullPaths, SaveFileFullPaths, Slider
+from lib.cli.actions import (
+    DirFullPaths,
+    DirOrFileFullPaths,
+    FileFullPaths,
+    SaveFileFullPaths,
+    Slider,
+)
 from lib.cli.args import FaceSwapArgs
 from lib.utils import get_module_objects
 
-_LANG = gettext.translation("tools.faceqa_coverage.cli", localedir="locales", fallback=True)
+_LANG = gettext.translation("tools.faceqa.cli", localedir="locales", fallback=True)
 _ = _LANG.gettext
 
-_HELPTEXT = _("Audit an extracted faceset for FaceQA coverage and training readiness.")
+_HELPTEXT = _(
+    "Unified FaceQA tool: coverage audit, duplicate clustering, and source-target "
+    "compatibility scoring."
+)
 
 
-class Faceqa_CoverageArgs(FaceSwapArgs):  # pylint:disable=invalid-name
-    """FaceQA coverage CLI arguments."""
+class FaceqaArgs(FaceSwapArgs):  # pylint:disable=invalid-name
+    """Unified FaceQA CLI arguments."""
 
     @staticmethod
     def get_info() -> str:
-        """Return command information."""
         return _(
-            "FaceQA Coverage tool\n"
-            "Reads an alignments file and optional FaceQA sidecar, then writes "
-            "JSON and Markdown reports describing quality, pose, resolution, "
-            "identity, duplicate, mask, and readiness risks."
+            "FaceQA tool\n"
+            "Supports three modes selected via --mode:\n"
+            "  coverage       Audit faceset coverage / readiness from alignments.\n"
+            "  duplicates     Detect duplicate clusters, recommend keep/review/prune.\n"
+            "  compatibility  Score whether a source faceset can support a target."
         )
 
     @staticmethod
     def get_argument_list() -> list[dict[str, T.Any]]:
-        """Return the tool argument list."""
         return [
+            {
+                "opts": ("--mode",),
+                "type": str,
+                "dest": "mode",
+                "choices": ("coverage", "duplicates", "compatibility"),
+                "default": "coverage",
+                "group": _("mode"),
+                "help": _("Which FaceQA workflow to run."),
+            },
             {
                 "opts": ("-a", "--alignments"),
                 "action": FileFullPaths,
                 "type": str,
                 "dest": "alignments",
                 "group": _("data"),
-                "required": True,
+                "default": None,
                 "filetypes": "alignments",
-                "help": _("Path to the alignments (.fsa) file to audit."),
+                "help": _("Alignments (.fsa) for coverage and duplicates modes."),
             },
             {
                 "opts": ("-s", "--sidecar"),
@@ -51,10 +68,7 @@ class Faceqa_CoverageArgs(FaceSwapArgs):  # pylint:disable=invalid-name
                 "group": _("data"),
                 "default": None,
                 "filetypes": "json",
-                "help": _(
-                    "Optional FaceQA sidecar JSON. If omitted, the tool looks for "
-                    "<alignments_stem>_faceset_qa.json beside the alignments file."
-                ),
+                "help": _("Optional FaceQA sidecar JSON."),
             },
             {
                 "opts": ("-f", "--frames-dir", "--source-images"),
@@ -62,12 +76,18 @@ class Faceqa_CoverageArgs(FaceSwapArgs):  # pylint:disable=invalid-name
                 "type": str,
                 "dest": "frames_dir",
                 "group": _("data"),
-                "required": True,
+                "default": None,
                 "filetypes": "video",
-                "help": _(
-                    "Directory or source video containing the original frames/images that "
-                    "faces were extracted from. Required for SPIGA pose backfill."
-                ),
+                "help": _("Source frames or video for SPIGA pose backfill."),
+            },
+            {
+                "opts": ("--faces-dir",),
+                "action": DirFullPaths,
+                "type": str,
+                "dest": "faces_dir",
+                "group": _("data"),
+                "default": None,
+                "help": _("Aligned-face directory used by --mode duplicates."),
             },
             {
                 "opts": ("-o", "--output-json"),
@@ -77,10 +97,7 @@ class Faceqa_CoverageArgs(FaceSwapArgs):  # pylint:disable=invalid-name
                 "group": _("output"),
                 "default": None,
                 "filetypes": "json",
-                "help": _(
-                    "Path for the machine-readable JSON report. Defaults to "
-                    "<alignments_stem>_faceqa_coverage.json."
-                ),
+                "help": _("JSON coverage report path."),
             },
             {
                 "opts": ("-m", "--output-markdown"),
@@ -90,10 +107,24 @@ class Faceqa_CoverageArgs(FaceSwapArgs):  # pylint:disable=invalid-name
                 "group": _("output"),
                 "default": None,
                 "filetypes": "markdown",
-                "help": _(
-                    "Path for the human-readable Markdown report. Defaults to "
-                    "<alignments_stem>_faceqa_coverage.md."
-                ),
+                "help": _("Markdown coverage report path."),
+            },
+            {
+                "opts": ("--output-dir",),
+                "action": DirFullPaths,
+                "type": str,
+                "dest": "output_dir",
+                "group": _("output"),
+                "default": None,
+                "help": _("Output directory for duplicates and compatibility modes."),
+            },
+            {
+                "opts": ("--output-prefix",),
+                "type": str,
+                "dest": "output_prefix",
+                "group": _("output"),
+                "default": "source_target_compatibility",
+                "help": _("Filename stem for compatibility report artefacts."),
             },
             {
                 "opts": ("--exclude-duplicates",),
@@ -101,10 +132,7 @@ class Faceqa_CoverageArgs(FaceSwapArgs):  # pylint:disable=invalid-name
                 "dest": "exclude_duplicates",
                 "default": False,
                 "group": _("filters"),
-                "help": _(
-                    "Exclude duplicate prune candidates from usable_faces. "
-                    "Bucket counts still cover the full faceset."
-                ),
+                "help": _("Exclude duplicate prune candidates from usable_faces."),
             },
             {
                 "opts": ("--exclude-outliers",),
@@ -112,10 +140,7 @@ class Faceqa_CoverageArgs(FaceSwapArgs):  # pylint:disable=invalid-name
                 "dest": "exclude_outliers",
                 "default": False,
                 "group": _("filters"),
-                "help": _(
-                    "Exclude identity outliers and rejects from usable_faces. "
-                    "Bucket counts still cover the full faceset."
-                ),
+                "help": _("Exclude identity outliers and rejects from usable_faces."),
             },
             {
                 "opts": ("-p", "--min-bucket-pct"),
@@ -126,10 +151,137 @@ class Faceqa_CoverageArgs(FaceSwapArgs):  # pylint:disable=invalid-name
                 "min_max": (0.0, 50.0),
                 "rounding": 1,
                 "group": _("thresholds"),
-                "help": _(
-                    "Bucket percentage below which coverage buckets are flagged "
-                    "as under-represented."
-                ),
+                "help": _("Bucket %% below which coverage buckets are flagged."),
+            },
+            {
+                "opts": ("--identity-model",),
+                "type": str,
+                "dest": "identity_model",
+                "group": _("duplicates"),
+                "default": None,
+                "help": _("Identity embedding model key (auto-detected when omitted)."),
+            },
+            {
+                "opts": ("--similarity-threshold",),
+                "action": Slider,
+                "type": float,
+                "dest": "similarity_threshold",
+                "default": 0.85,
+                "min_max": (0.5, 0.999),
+                "rounding": 3,
+                "group": _("duplicates"),
+                "help": _("Cosine threshold for grouping duplicates."),
+            },
+            {
+                "opts": ("--temporal-window",),
+                "type": int,
+                "dest": "temporal_window",
+                "default": -1,
+                "group": _("duplicates"),
+                "help": _("Temporal frame window for duplicate pairing (-1 = disabled)."),
+            },
+            {
+                "opts": ("--duplicates-report",),
+                "action": FileFullPaths,
+                "type": str,
+                "dest": "duplicates_report",
+                "group": _("duplicates"),
+                "default": None,
+                "filetypes": "json",
+                "help": _("Reuse an existing duplicate report JSON instead of recomputing."),
+            },
+            {
+                "opts": ("--symlink",),
+                "action": "store_true",
+                "dest": "symlink",
+                "default": False,
+                "group": _("duplicates"),
+                "help": _("Symlink aligned faces into sorted folders rather than copy."),
+            },
+            {
+                "opts": ("--contact-sheet-tile-size",),
+                "type": int,
+                "dest": "contact_sheet_tile_size",
+                "default": 384,
+                "group": _("duplicates"),
+                "help": _("Per-face tile size for contact sheets."),
+            },
+            {
+                "opts": ("--contact-sheet-cols",),
+                "type": int,
+                "dest": "contact_sheet_cols",
+                "default": 4,
+                "group": _("duplicates"),
+                "help": _("Tile columns per contact sheet."),
+            },
+            {
+                "opts": ("--contact-sheet-format",),
+                "type": str,
+                "dest": "contact_sheet_format",
+                "default": "png",
+                "choices": ("png", "jpg", "jpeg"),
+                "group": _("duplicates"),
+                "help": _("Output format for contact sheets."),
+            },
+            {
+                "opts": ("--source-alignments",),
+                "action": FileFullPaths,
+                "type": str,
+                "dest": "source_alignments",
+                "group": _("compatibility"),
+                "default": None,
+                "filetypes": "alignments",
+                "help": _("Source faceset alignments for --mode compatibility."),
+            },
+            {
+                "opts": ("--target-alignments",),
+                "action": FileFullPaths,
+                "type": str,
+                "dest": "target_alignments",
+                "group": _("compatibility"),
+                "default": None,
+                "filetypes": "alignments",
+                "help": _("Target faceset alignments for --mode compatibility."),
+            },
+            {
+                "opts": ("--source-sidecar",),
+                "action": FileFullPaths,
+                "type": str,
+                "dest": "source_sidecar",
+                "group": _("compatibility"),
+                "default": None,
+                "filetypes": "json",
+                "help": _("Optional source FaceQA sidecar JSON."),
+            },
+            {
+                "opts": ("--target-sidecar",),
+                "action": FileFullPaths,
+                "type": str,
+                "dest": "target_sidecar",
+                "group": _("compatibility"),
+                "default": None,
+                "filetypes": "json",
+                "help": _("Optional target FaceQA sidecar JSON."),
+            },
+            {
+                "opts": ("--source-frames-dir",),
+                "action": DirOrFileFullPaths,
+                "type": str,
+                "dest": "source_frames_dir",
+                "group": _("compatibility"),
+                "default": None,
+                "filetypes": "video",
+                "help": _("Optional source frames directory for SPIGA pose backfill."),
+            },
+            {
+                "opts": ("--target-frames-dir",),
+                "action": DirOrFileFullPaths,
+                "type": str,
+                "dest": "target_frames_dir",
+                "group": _("compatibility"),
+                "default": None,
+                "filetypes": "video",
+                "help": _("Optional target frames directory for SPIGA pose backfill."),
             },
         ]
 
