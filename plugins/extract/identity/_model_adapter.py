@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import glob
+import importlib.util
 import logging
 import os
 import os.path as osp
@@ -202,6 +203,24 @@ def _cvlface_repo_context(model_dir: str) -> T.Iterator[None]:
                 sys.path.remove(model_dir)
 
 
+def _load_cvlface_wrapper(model_dir: str, model_label: str) -> T.Any:
+    """Load a CVLFace wrapper directly, bypassing Transformers model finalization."""
+    wrapper_path = osp.join(model_dir, "wrapper.py")
+    module_name = f"_faceswap_cvlface_{model_label.lower()}_{abs(hash(model_dir))}"
+    spec = importlib.util.spec_from_file_location(module_name, wrapper_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Unable to load {model_label} wrapper from {wrapper_path}")
+
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+        config = module.ModelConfig()
+        return module.CVLFaceRecognitionModel(config)
+    finally:
+        sys.modules.pop(module_name, None)
+
+
 def _make_cvlface_loader(
     repo_id: str, *, model_label: str, force_cpu: bool = False
 ) -> T.Callable[[], LoadedIdentityModel]:
@@ -210,7 +229,7 @@ def _make_cvlface_loader(
     def _load() -> LoadedIdentityModel:
         try:
             torch = import_module("torch")
-            transformers = import_module("transformers")
+            import_module("transformers")
             torch_utils = import_module("lib.torch_utils")
         except ImportError as exc:
             raise ImportError(
@@ -219,14 +238,8 @@ def _make_cvlface_loader(
 
         device = torch_utils.get_device(cpu=force_cpu)
         model_dir = _download_cvlface_snapshot(repo_id, model_label)
-        auto_model = transformers.AutoModel
         with _CVLFACE_LOAD_LOCK, _cvlface_repo_context(model_dir):
-            model = auto_model.from_pretrained(
-                model_dir,
-                trust_remote_code=True,
-                local_files_only=True,
-                low_cpu_mem_usage=False,
-            )
+            model = _load_cvlface_wrapper(model_dir, model_label)
         model.to(device)
         model.eval()
         logger.info("%s CVLFace model loaded on %s from %s", model_label, device, repo_id)
