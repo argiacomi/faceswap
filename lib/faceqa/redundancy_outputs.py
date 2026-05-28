@@ -1,60 +1,115 @@
 #!/usr/bin/env python3
-"""File-organisation and visual outputs for the FaceQA duplicate pipeline.
+"""File-organisation and visual outputs for the FaceQA redundancy pipeline.
 
-Given a :class:`lib.faceqa.duplicates.DuplicateReport` and a directory of aligned
-faces, this module organises the faces into ``keep`` / ``review`` /
-``prune_candidate`` folders, writes a per-cluster mapping log, and renders
-inspectable contact sheets for every multi-face cluster.
+Given a :class:`lib.faceqa.redundancy.RedundancyReport` and a directory of
+aligned faces, this module organises the faces into ``keep`` / ``review`` /
+``prune_candidate`` folders, writes a mapping log + CSV / JSONL keep and
+prune manifests, and renders one contact sheet per multi-face redundancy
+cluster.
 """
 
 from __future__ import annotations
 
+import csv
+import json
 import logging
 import shutil
 import typing as T
 from dataclasses import dataclass
-from math import floor
 from pathlib import Path
 
 import cv2
 import numpy as np
 
-from lib.faceqa.duplicates import KEEP, PRUNE, REVIEW, DuplicateRecord, DuplicateReport
+from lib.faceqa.redundancy import KEEP, PRUNE, REVIEW, RedundancyRecord, RedundancyReport
 from lib.utils import get_module_objects
 
 logger = logging.getLogger(__name__)
 
 
-DEFAULT_TILE_SIZE = 384
-DEFAULT_SCREEN_WIDTH = 1920
-DEFAULT_CONTACT_COLS = floor(DEFAULT_SCREEN_WIDTH / DEFAULT_TILE_SIZE)
-DEFAULT_FORMAT = "png"
-SUPPORTED_FORMATS: tuple[str, ...] = ("png", "jpg", "jpeg")
-JPEG_QUALITY_DEFAULT = 95
+CONTACT_SHEET_TILE_SIZE = 384
+CONTACT_SHEET_COLS = 4
+CONTACT_SHEET_FORMAT = "png"
 
 
 @dataclass
-class DuplicateLayout:
-    """Paths produced when laying out the duplicate-pipeline outputs."""
+class RedundancyLayout:
+    """Paths produced when laying out redundancy outputs."""
 
-    sorted_keep_dir: Path
-    sorted_review_dir: Path
-    sorted_prune_dir: Path
+    keep_dir: Path
+    review_dir: Path
+    prune_dir: Path
     contact_sheets_dir: Path
     mapping_log: Path
 
     def to_dict(self) -> dict[str, str]:
         return {
-            "keep_dir": str(self.sorted_keep_dir),
-            "review_dir": str(self.sorted_review_dir),
-            "prune_candidate_dir": str(self.sorted_prune_dir),
+            "keep_dir": str(self.keep_dir),
+            "review_dir": str(self.review_dir),
+            "prune_candidate_dir": str(self.prune_dir),
             "contact_sheets_dir": str(self.contact_sheets_dir),
             "mapping_log": str(self.mapping_log),
         }
 
 
-def _face_filename(record: DuplicateRecord, *, faces_dir: Path) -> Path | None:
-    """Return the on-disk aligned-face path for a record, or None if missing."""
+_MANIFEST_FIELDS: tuple[str, ...] = (
+    "frame",
+    "face_index",
+    "cluster_id",
+    "cluster_size",
+    "representative",
+    "recommendation",
+    "quality_score",
+    "redundancy_distance_to_representative",
+    "temporal_distance_to_representative",
+    "temporal_confidence",
+    "pose_bucket",
+    "pitch_bucket",
+    "expression_bucket",
+    "lighting_bucket",
+    "reason",
+    "identity_outlier",
+    "has_identity",
+)
+
+
+def write_manifests(report: RedundancyReport, output_dir: str | Path) -> dict[str, Path]:
+    """Write keep + prune CSV/JSONL manifests. Returns the artefact paths."""
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    artefacts: dict[str, Path] = {}
+    keep_records = [r for r in report.records if r.recommendation in (KEEP, REVIEW)]
+    prune_records = [r for r in report.records if r.recommendation == PRUNE]
+    artefacts["keep_csv"] = _write_csv(out / "keep.csv", keep_records)
+    artefacts["keep_jsonl"] = _write_jsonl(out / "keep.jsonl", keep_records)
+    artefacts["prune_csv"] = _write_csv(out / "prune_candidates.csv", prune_records)
+    artefacts["prune_jsonl"] = _write_jsonl(out / "prune_candidates.jsonl", prune_records)
+    return artefacts
+
+
+def _write_csv(path: Path, records: list[RedundancyRecord]) -> Path:
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=_MANIFEST_FIELDS)
+        writer.writeheader()
+        for record in records:
+            payload = record.to_dict()
+            writer.writerow({field_: payload.get(field_) for field_ in _MANIFEST_FIELDS})
+    return path
+
+
+def _write_jsonl(path: Path, records: list[RedundancyRecord]) -> Path:
+    with path.open("w", encoding="utf-8") as handle:
+        for record in records:
+            handle.write(json.dumps(record.to_dict()) + "\n")
+    return path
+
+
+# ---------------------------------------------------------------------------
+# Sorted folders
+# ---------------------------------------------------------------------------
+
+
+def _face_filename(record: RedundancyRecord, *, faces_dir: Path) -> Path | None:
     stem = Path(record.frame).stem
     for suffix in (".png", ".jpg", ".jpeg"):
         candidate = faces_dir / f"{stem}_{record.face_index}{suffix}"
@@ -68,42 +123,31 @@ def _ensure_dir(path: Path) -> Path:
     return path
 
 
-def _resolve_format(format_: str) -> tuple[str, str]:
-    """Return ``(suffix, opencv_extension)`` for a contact-sheet format."""
-    normalised = format_.lower().lstrip(".")
-    if normalised not in SUPPORTED_FORMATS:
-        raise ValueError(f"Unsupported contact-sheet format: {format_}")
-    suffix = "jpg" if normalised in ("jpg", "jpeg") else "png"
-    return suffix, "." + suffix
-
-
 def write_sorted_folders(
-    report: DuplicateReport,
+    report: RedundancyReport,
     *,
     faces_dir: str | Path,
     output_dir: str | Path,
-    symlink: bool = False,
-) -> DuplicateLayout:
-    """Copy or symlink aligned faces into recommendation-named output folders.
+) -> RedundancyLayout:
+    """Copy aligned faces into recommendation-named output folders.
 
-    Default behaviour preserves originals: aligned-face files are *copied*
-    into ``keep``, ``review`` and ``prune_candidate`` subfolders of
-    ``output_dir``. Passing ``symlink=True`` switches to relative symlinks
-    (still non-destructive). Returns the resolved :class:`DuplicateLayout`.
+    Originals are preserved (no source files are moved or deleted) and the
+    per-face copy decisions are emitted to ``duplicate_mapping.csv`` for
+    repeatability.
     """
     faces_dir_p = Path(faces_dir)
     out = Path(output_dir)
-    layout = DuplicateLayout(
-        sorted_keep_dir=_ensure_dir(out / "keep"),
-        sorted_review_dir=_ensure_dir(out / "review"),
-        sorted_prune_dir=_ensure_dir(out / "prune_candidate"),
+    layout = RedundancyLayout(
+        keep_dir=_ensure_dir(out / "keep"),
+        review_dir=_ensure_dir(out / "review"),
+        prune_dir=_ensure_dir(out / "prune_candidate"),
         contact_sheets_dir=_ensure_dir(out / "contact_sheets"),
-        mapping_log=out / "duplicate_mapping.csv",
+        mapping_log=out / "redundancy_mapping.csv",
     )
     rec_to_dir = {
-        KEEP: layout.sorted_keep_dir,
-        REVIEW: layout.sorted_review_dir,
-        PRUNE: layout.sorted_prune_dir,
+        KEEP: layout.keep_dir,
+        REVIEW: layout.review_dir,
+        PRUNE: layout.prune_dir,
     }
     mapping_lines = ["source,destination,recommendation,cluster_id,representative"]
     for record in report.records:
@@ -116,12 +160,7 @@ def write_sorted_folders(
             )
             continue
         destination = target_dir / source.name
-        if symlink:
-            if destination.exists() or destination.is_symlink():
-                destination.unlink()
-            destination.symlink_to(source.resolve())
-        else:
-            shutil.copy2(source, destination)
+        shutil.copy2(source, destination)
         mapping_lines.append(
             f"{source},{destination},{record.recommendation},"
             f"{record.cluster_id},{record.representative}"
@@ -144,7 +183,6 @@ _REC_COLOURS: dict[str, tuple[int, int, int]] = {
 
 
 def _read_face(path: Path, size: int) -> np.ndarray:
-    """Read a face from disk and centre-crop / pad to ``size`` × ``size``."""
     image = cv2.imread(str(path), cv2.IMREAD_COLOR)
     if image is None:
         return np.full((size, size, 3), 50, dtype=np.uint8)
@@ -160,12 +198,11 @@ def _read_face(path: Path, size: int) -> np.ndarray:
 
 
 def _tile_for_record(
-    record: DuplicateRecord,
+    record: RedundancyRecord,
     *,
     faces_dir: Path,
     tile_size: int,
 ) -> np.ndarray:
-    """Render one face tile with labels and a recommendation-coloured border."""
     source = _face_filename(record, faces_dir=faces_dir)
     image = (
         _read_face(source, tile_size)
@@ -190,7 +227,9 @@ def _tile_for_record(
         name = name[:25] + "…"
     line1 = f"{name}#{record.face_index} c{record.cluster_id}"
     role = "REP" if record.representative else record.recommendation.upper()
-    line2 = f"{role} q={record.quality_score:.2f} sim={record.similarity_to_representative:.2f}"
+    distance = record.redundancy_distance_to_representative
+    distance_label = "n/a" if distance is None else f"{distance:.2f}"
+    line2 = f"{role} q={record.quality_score:.2f} d={distance_label}"
     cv2.putText(
         panel, line1, (8, panel_height // 2 - 4), _FONT, 0.5, (240, 240, 240), 1, cv2.LINE_AA
     )
@@ -198,39 +237,24 @@ def _tile_for_record(
     return T.cast(np.ndarray, np.vstack([image, panel]))
 
 
-def _save_image(path: Path, image: np.ndarray, *, format_suffix: str, jpeg_quality: int) -> None:
-    if format_suffix == "jpg":
-        cv2.imwrite(str(path), image, [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality])
-    else:
-        cv2.imwrite(str(path), image)
-
-
 def render_contact_sheets(
-    report: DuplicateReport,
+    report: RedundancyReport,
     *,
     faces_dir: str | Path,
     output_dir: str | Path,
-    tile_size: int = DEFAULT_TILE_SIZE,
-    columns: int = DEFAULT_CONTACT_COLS,
-    format_: str = DEFAULT_FORMAT,
-    jpeg_quality: int = JPEG_QUALITY_DEFAULT,
 ) -> list[Path]:
-    """Render one contact sheet per multi-face cluster. Returns the file paths."""
-    if tile_size < 64:
-        raise ValueError("tile_size must be at least 64 px")
-    if columns < 1:
-        raise ValueError("columns must be at least 1")
-    suffix, extension = _resolve_format(format_)
+    """Render one contact sheet per multi-face redundancy cluster."""
+    suffix = "png"
+    extension = ".png"
     faces_dir_p = Path(faces_dir)
     output_dir_p = _ensure_dir(Path(output_dir))
-    clusters: dict[int, list[DuplicateRecord]] = {}
+    clusters: dict[int, list[RedundancyRecord]] = {}
     for record in report.records:
         if record.cluster_size <= 1:
             continue
         clusters.setdefault(record.cluster_id, []).append(record)
     written: list[Path] = []
     for cluster_id, records in sorted(clusters.items()):
-        # Representative first then by score desc / frame.
         records.sort(
             key=lambda r: (
                 0 if r.representative else 1,
@@ -240,21 +264,24 @@ def render_contact_sheets(
             )
         )
         tiles = [
-            _tile_for_record(record, faces_dir=faces_dir_p, tile_size=tile_size)
+            _tile_for_record(record, faces_dir=faces_dir_p, tile_size=CONTACT_SHEET_TILE_SIZE)
             for record in records
         ]
         rows = []
-        for start in range(0, len(tiles), columns):
-            row_tiles = tiles[start : start + columns]
-            if len(row_tiles) < columns:
+        for start in range(0, len(tiles), CONTACT_SHEET_COLS):
+            row_tiles = tiles[start : start + CONTACT_SHEET_COLS]
+            if len(row_tiles) < CONTACT_SHEET_COLS:
                 pad = np.full_like(row_tiles[0], 20)
-                while len(row_tiles) < columns:
+                while len(row_tiles) < CONTACT_SHEET_COLS:
                     row_tiles.append(pad)
             rows.append(np.hstack(row_tiles))
         sheet = np.vstack(rows)
         sheet = _annotate_sheet_header(sheet, cluster_id, records)
         path = output_dir_p / f"cluster_{cluster_id:04d}{extension}"
-        _save_image(path, sheet, format_suffix=suffix, jpeg_quality=jpeg_quality)
+        if suffix == "jpg":
+            cv2.imwrite(str(path), sheet, [cv2.IMWRITE_JPEG_QUALITY, 95])
+        else:
+            cv2.imwrite(str(path), sheet)
         written.append(path)
     return written
 
@@ -262,11 +289,11 @@ def render_contact_sheets(
 def _annotate_sheet_header(
     sheet: np.ndarray,
     cluster_id: int,
-    records: list[DuplicateRecord],
+    records: list[RedundancyRecord],
 ) -> np.ndarray:
     header_height = 64
     width = sheet.shape[1]
-    header = np.full((header_height, width, 3), 12, dtype=np.uint8)
+    header: np.ndarray = np.full((header_height, width, 3), 12, dtype=np.uint8)
     rep = next((r for r in records if r.representative), records[0])
     title = (
         f"Cluster {cluster_id}  |  size={len(records)}  "

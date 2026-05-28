@@ -337,11 +337,17 @@ def _features_for(record: FaceQARecord) -> RepresentationFeatures:
     # (we don't recompute them here to avoid drifting from the canonical impl).
     pose_bucket = None
     pitch_bucket = None
-    from lib.faceqa.coverage import _pitch_bucket, _pose_bucket  # local to avoid cycle
+    lighting_bucket = None
+    from lib.faceqa.coverage import (
+        _lighting_bucket,
+        _pitch_bucket,
+        _pose_bucket,
+    )
 
     try:
         pose_bucket = _pose_bucket(record)
         pitch_bucket = _pitch_bucket(record)
+        lighting_bucket = _lighting_bucket(record)
     except Exception:  # pylint:disable=broad-except
         logger.debug("Could not compute bucket views for %s:%s", record.frame, record.face_index)
 
@@ -374,7 +380,7 @@ def _features_for(record: FaceQARecord) -> RepresentationFeatures:
         saturation=_norm_luma(record.saturation),
         average_distance=_norm_unit(record.average_distance),
         expression_bucket=record.expression_bucket,
-        lighting_bucket=None,  # populated below via coverage
+        lighting_bucket=lighting_bucket,
         pose_bucket=pose_bucket,
         pitch_bucket=pitch_bucket,
         frame_index=_frame_index(record.frame),
@@ -551,19 +557,40 @@ def _effective_coverage(
     return result
 
 
-def _protected_buckets(
+def _classify_buckets(
     effective: dict[str, EffectiveCoverageDimension],
     config: AggressivenessConfig,
-) -> set[tuple[str, str]]:
-    """Return (dimension, bucket) pairs below the minimum effective threshold."""
+    *,
+    total_faces: int,
+    min_bucket_pct: float,
+) -> tuple[set[tuple[str, str]], set[tuple[str, str]]]:
+    """Return ``(protected, surplus)`` (dimension, bucket) sets.
+
+    A bucket is *protected* when its effective coverage (distinct redundancy
+    clusters) sits at or below the readiness floor implied by ``min_bucket_pct``,
+    or — when there is no coverage signal — at or below the aggressiveness
+    preset's minimum effective bucket count.
+
+    A bucket is *surplus* when its effective coverage is safely above the
+    readiness floor by at least ``coverage_surplus_margin``. Surplus buckets
+    skip protection budget entirely and prune more aggressively.
+    """
     protected: set[tuple[str, str]] = set()
+    surplus: set[tuple[str, str]] = set()
+    pct_floor = max(0.0, float(min_bucket_pct)) / 100.0
+    pct_count = max(0.0, pct_floor * total_faces)
+    fallback_floor = float(config.min_effective_bucket_count)
+    fragile_floor = max(pct_count, fallback_floor) if pct_count > 0 else fallback_floor
+    surplus_threshold = fragile_floor * config.coverage_surplus_margin
     for dimension, dim in effective.items():
         for bucket, count in dim.effective_counts.items():
             if bucket == "unknown":
                 continue
-            if count <= config.min_effective_bucket_count:
+            if count <= fragile_floor:
                 protected.add((dimension, bucket))
-    return protected
+            elif count >= surplus_threshold:
+                surplus.add((dimension, bucket))
+    return protected, surplus
 
 
 def _bucket_keys_for(record: FaceQARecord) -> dict[str, str]:
@@ -578,6 +605,23 @@ def _record_is_in_protected_bucket(
     return any((dim, bucket) in protected for dim, bucket in keys.items())
 
 
+def _record_is_in_surplus_bucket(
+    record: FaceQARecord,
+    surplus: set[tuple[str, str]],
+) -> bool:
+    keys = _bucket_keys_for(record)
+    return any((dim, bucket) in surplus for dim, bucket in keys.items())
+
+
+def _representative_safety_reason(features: RepresentationFeatures) -> str | None:
+    """Return a review reason if a representative cannot safely default to keep."""
+    if features.identity_outlier:
+        return "identity outlier — review even when selected as representative"
+    if not features.has_metrics:
+        return "missing representation metrics — review even when singleton"
+    return None
+
+
 def _decide_single_member(
     *,
     member_features: RepresentationFeatures,
@@ -588,17 +632,19 @@ def _decide_single_member(
     member_record: FaceQARecord,
     rep_record: FaceQARecord,
     protection_budget_remaining: int,
+    member_in_surplus_bucket: bool,
 ) -> tuple[str, str, int]:
     """Return ``(recommendation, reason, budget_after)`` for one cluster member.
 
-    Decisions follow the issue's spec:
+    Order of decisions follows the issue:
     - missing metrics → review
     - identity outlier → review
     - meaningful pose/expression/lighting variation → keep (alternate)
-    - obvious duplicate (or low-distance + close temporal) → prune
-    - protected fragile bucket with budget → keep (limited representatives)
-    - distant temporal with similar representation → review
-    - otherwise → prune
+    - **obvious duplicate** (hard redundancy floor) → prune, even when the
+      bucket is fragile; protection budget never rescues exact duplicates.
+    - protected fragile bucket with budget remaining → keep
+    - visually similar but temporally distant → review
+    - otherwise → prune (more aggressive when bucket is in surplus)
     """
     if not member_features.has_metrics:
         return REVIEW, "missing representation metrics — review", protection_budget_remaining
@@ -621,6 +667,22 @@ def _decide_single_member(
             "adds meaningful pose/expression/lighting variation",
             protection_budget_remaining,
         )
+    # Hard redundancy floor: obvious duplicates always prune, regardless of
+    # bucket protection. Temporal-far obvious duplicates still route to review
+    # because we cannot confidently call them duplicates.
+    if distance <= config.obvious_duplicate_threshold:
+        if temporal_confidence < 0.7:
+            return (
+                REVIEW,
+                "obvious-similarity match but temporally distant — "
+                f"temporal_confidence={temporal_confidence:.2f}",
+                protection_budget_remaining,
+            )
+        return (
+            PRUNE,
+            f"obvious duplicate of representative (distance={distance:.2f})",
+            protection_budget_remaining,
+        )
     if protection_budget_remaining > 0:
         return (
             KEEP,
@@ -628,22 +690,20 @@ def _decide_single_member(
             protection_budget_remaining - 1,
         )
     if temporal_confidence < 0.7:
-        # Visually similar but temporally distant: skip the obvious-duplicate
-        # PRUNE rule and route to review per the issue spec.
         return (
             REVIEW,
             "visually similar but temporally distant — "
             f"temporal_confidence={temporal_confidence:.2f}",
             protection_budget_remaining,
         )
-    if distance <= config.obvious_duplicate_threshold:
-        return (
-            PRUNE,
-            f"obvious duplicate of representative (distance={distance:.2f})",
-            protection_budget_remaining,
-        )
     if compared < 4:
         return REVIEW, "few comparable metrics — review", protection_budget_remaining
+    if member_in_surplus_bucket:
+        return (
+            PRUNE,
+            f"redundant within surplus coverage bucket (distance={distance:.2f})",
+            protection_budget_remaining,
+        )
     return (
         PRUNE,
         f"redundant with representative (distance={distance:.2f}, "
@@ -658,19 +718,20 @@ def _protection_budget_for_cluster(
     representative_index: int,
     record_list: list[FaceQARecord],
     protected: set[tuple[str, str]],
+    surplus: set[tuple[str, str]],
     config: AggressivenessConfig,
 ) -> int:
-    """Return how many additional keeps (beyond the representative) the cluster gets.
+    """Return how many additional keeps the cluster gets beyond the representative.
 
-    A cluster contributes 1 to effective coverage. If that bucket is below the
-    protection floor, allow up to ``min_effective_bucket_count - 1`` extra keeps
-    so a small handful of fragile-bucket faces survive. Non-protected clusters
-    get a budget of 0 (representative-only keep)."""
+    Surplus buckets get budget 0 (representative-only keep). Protected fragile
+    buckets get up to ``min_effective_bucket_count - 1`` extra keeps so a small
+    handful of diverse-enough fragile-bucket alternates can survive."""
     if not members:
         return 0
     rep_record = record_list[representative_index]
-    is_protected = _record_is_in_protected_bucket(rep_record, protected)
-    if not is_protected:
+    if _record_is_in_surplus_bucket(rep_record, surplus):
+        return 0
+    if not _record_is_in_protected_bucket(rep_record, protected):
         return 0
     return max(0, config.min_effective_bucket_count - 1)
 
@@ -685,6 +746,7 @@ def compute_redundancy(
     *,
     aggressiveness: str = "balanced",
     coverage: FacesetCoverageReport | None = None,
+    min_bucket_pct: float = 5.0,
 ) -> RedundancyReport:
     """Compute coverage-aware representation redundancy clusters and recs."""
     if aggressiveness not in _AGGRESSIVENESS_PRESETS:
@@ -714,7 +776,12 @@ def compute_redundancy(
                 # Only ensure we did not under-count anything that shows in the
                 # canonical coverage report; we never overwrite our own data.
                 dim.raw_counts.setdefault(bucket, raw_value)
-    protected = _protected_buckets(effective, config)
+    protected, surplus = _classify_buckets(
+        effective,
+        config,
+        total_faces=n,
+        min_bucket_pct=min_bucket_pct,
+    )
 
     output_records: list[RedundancyRecord] = []
     for cluster_id, members in enumerate(components):
@@ -722,6 +789,16 @@ def compute_redundancy(
         rep_features = features[rep_index]
         rep_record = record_list[rep_index]
         rep_buckets = _bucket_keys_for(rep_record)
+        safety_reason = _representative_safety_reason(rep_features)
+        if safety_reason is not None:
+            rep_recommendation = REVIEW
+            rep_reason = safety_reason
+        elif len(members) > 1:
+            rep_recommendation = KEEP
+            rep_reason = "representative of redundancy cluster"
+        else:
+            rep_recommendation = KEEP
+            rep_reason = "unique representation (singleton cluster)"
         output_records.append(
             RedundancyRecord(
                 frame=rep_record.frame,
@@ -729,7 +806,7 @@ def compute_redundancy(
                 cluster_id=cluster_id,
                 cluster_size=len(members),
                 representative=True,
-                recommendation=KEEP,
+                recommendation=rep_recommendation,
                 quality_score=rep_features.quality_score,
                 redundancy_distance_to_representative=0.0,
                 temporal_distance_to_representative=0,
@@ -738,11 +815,7 @@ def compute_redundancy(
                 pitch_bucket=rep_buckets["pitch"],
                 expression_bucket=rep_buckets["expression"],
                 lighting_bucket=rep_buckets["lighting"],
-                reason=(
-                    "representative of redundancy cluster"
-                    if len(members) > 1
-                    else "unique representation (singleton cluster)"
-                ),
+                reason=rep_reason,
                 identity_outlier=rep_features.identity_outlier,
                 has_identity=rep_features.has_identity,
             )
@@ -754,6 +827,7 @@ def compute_redundancy(
             representative_index=rep_index,
             record_list=record_list,
             protected=protected,
+            surplus=surplus,
             config=config,
         )
         non_rep_members = [m for m in members if m != rep_index]
@@ -773,6 +847,7 @@ def compute_redundancy(
                 member_record=member_record,
                 rep_record=rep_record,
                 protection_budget_remaining=budget,
+                member_in_surplus_bucket=_record_is_in_surplus_bucket(member_record, surplus),
             )
             output_records.append(
                 RedundancyRecord(

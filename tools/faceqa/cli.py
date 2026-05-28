@@ -20,8 +20,8 @@ _LANG = gettext.translation("tools.faceqa.cli", localedir="locales", fallback=Tr
 _ = _LANG.gettext
 
 _HELPTEXT = _(
-    "Unified FaceQA tool: coverage audit, duplicate clustering, and source-target "
-    "compatibility scoring."
+    "Unified FaceQA tool: coverage audit (with optional coverage-aware pruning "
+    "suggestions) and source-target compatibility scoring."
 )
 
 
@@ -32,9 +32,10 @@ class FaceqaArgs(FaceSwapArgs):  # pylint:disable=invalid-name
     def get_info() -> str:
         return _(
             "FaceQA tool\n"
-            "Supports three modes selected via --mode:\n"
+            "Supports two modes selected via --mode:\n"
             "  coverage       Audit faceset coverage / readiness from alignments.\n"
-            "  duplicates     Detect duplicate clusters, recommend keep/review/prune.\n"
+            "                 Pass --suggest-pruning to add coverage-aware\n"
+            "                 representation-redundancy recommendations.\n"
             "  compatibility  Score whether a source faceset can support a target."
         )
 
@@ -45,11 +46,14 @@ class FaceqaArgs(FaceSwapArgs):  # pylint:disable=invalid-name
                 "opts": ("--mode",),
                 "type": str,
                 "dest": "mode",
-                "choices": ("coverage", "duplicates", "compatibility"),
+                "choices": ("coverage", "compatibility"),
                 "default": "coverage",
                 "group": _("mode"),
                 "help": _("Which FaceQA workflow to run."),
             },
+            # ----------------------------------------------------------------
+            # Coverage-mode inputs
+            # ----------------------------------------------------------------
             {
                 "opts": ("-a", "--alignments"),
                 "action": FileFullPaths,
@@ -58,7 +62,7 @@ class FaceqaArgs(FaceSwapArgs):  # pylint:disable=invalid-name
                 "group": _("data"),
                 "default": None,
                 "filetypes": "alignments",
-                "help": _("Alignments (.fsa) for coverage and duplicates modes."),
+                "help": _("Alignments (.fsa) for --mode coverage."),
             },
             {
                 "opts": ("-s", "--sidecar"),
@@ -87,8 +91,14 @@ class FaceqaArgs(FaceSwapArgs):  # pylint:disable=invalid-name
                 "dest": "faces_dir",
                 "group": _("data"),
                 "default": None,
-                "help": _("Aligned-face directory used by --mode duplicates."),
+                "help": _(
+                    "Aligned-face directory. Required only when "
+                    "--suggest-pruning is used with --prune-output-dir."
+                ),
             },
+            # ----------------------------------------------------------------
+            # Coverage-mode output
+            # ----------------------------------------------------------------
             {
                 "opts": ("-o", "--output-json"),
                 "action": SaveFileFullPaths,
@@ -109,23 +119,9 @@ class FaceqaArgs(FaceSwapArgs):  # pylint:disable=invalid-name
                 "filetypes": "markdown",
                 "help": _("Markdown coverage report path."),
             },
-            {
-                "opts": ("--output-dir",),
-                "action": DirFullPaths,
-                "type": str,
-                "dest": "output_dir",
-                "group": _("output"),
-                "default": None,
-                "help": _("Output directory for duplicates and compatibility modes."),
-            },
-            {
-                "opts": ("--output-prefix",),
-                "type": str,
-                "dest": "output_prefix",
-                "group": _("output"),
-                "default": "source_target_compatibility",
-                "help": _("Filename stem for compatibility report artifacts."),
-            },
+            # ----------------------------------------------------------------
+            # Coverage filters and thresholds
+            # ----------------------------------------------------------------
             {
                 "opts": ("--exclude-duplicates",),
                 "action": "store_true",
@@ -151,8 +147,15 @@ class FaceqaArgs(FaceSwapArgs):  # pylint:disable=invalid-name
                 "min_max": (0.0, 50.0),
                 "rounding": 1,
                 "group": _("thresholds"),
-                "help": _("Bucket %% below which coverage buckets are flagged."),
+                "help": _(
+                    "Bucket %% below which coverage buckets are flagged "
+                    "as under-represented. Also drives the protection floor "
+                    "used by --suggest-pruning."
+                ),
             },
+            # ----------------------------------------------------------------
+            # Pruning suggestions
+            # ----------------------------------------------------------------
             {
                 "opts": ("--suggest-pruning",),
                 "action": "store_true",
@@ -161,7 +164,8 @@ class FaceqaArgs(FaceSwapArgs):  # pylint:disable=invalid-name
                 "group": _("pruning"),
                 "help": _(
                     "Run coverage-aware representation redundancy and emit "
-                    "keep/review/prune_candidate recommendations alongside coverage."
+                    "keep/review/prune_candidate recommendations alongside "
+                    "coverage."
                 ),
             },
             {
@@ -177,64 +181,22 @@ class FaceqaArgs(FaceSwapArgs):  # pylint:disable=invalid-name
                 ),
             },
             {
-                "opts": ("--identity-model",),
+                "opts": ("--prune-output-dir",),
+                "action": DirFullPaths,
                 "type": str,
-                "dest": "identity_model",
-                "group": _("duplicates"),
+                "dest": "prune_output_dir",
+                "group": _("pruning"),
                 "default": None,
-                "help": _("Identity embedding model key (auto-detected when omitted)."),
+                "help": _(
+                    "Directory to write sorted folders (keep/review/"
+                    "prune_candidate), CSV/JSONL manifests, and contact "
+                    "sheets when --suggest-pruning is enabled. Requires "
+                    "--faces-dir."
+                ),
             },
-            {
-                "opts": ("--similarity-threshold",),
-                "action": Slider,
-                "type": float,
-                "dest": "similarity_threshold",
-                "default": 0.85,
-                "min_max": (0.5, 0.999),
-                "rounding": 3,
-                "group": _("duplicates"),
-                "help": _("Cosine threshold for grouping duplicates."),
-            },
-            {
-                "opts": ("--temporal-window",),
-                "action": Slider,
-                "type": int,
-                "dest": "temporal_window",
-                "default": -1,
-                "min_max": (-1, 1000),
-                "rounding": 1,
-                "group": _("duplicates"),
-                "help": _("Temporal frame window for duplicate pairing (-1 = disabled)."),
-            },
-            {
-                "opts": ("--duplicates-report",),
-                "action": FileFullPaths,
-                "type": str,
-                "dest": "duplicates_report",
-                "group": _("duplicates"),
-                "default": None,
-                "filetypes": "json",
-                "help": _("Reuse an existing duplicate report JSON instead of recomputing."),
-            },
-            {
-                "opts": ("--symlink",),
-                "action": "store_true",
-                "dest": "symlink",
-                "default": False,
-                "group": _("duplicates"),
-                "help": _("Symlink aligned faces into sorted folders rather than copy."),
-            },
-            {
-                "opts": ("--contact-sheet-tile-size",),
-                "action": Slider,
-                "type": int,
-                "dest": "contact_sheet_tile_size",
-                "default": 256,
-                "min_max": (64, 1024),
-                "rounding": 32,
-                "group": _("duplicates"),
-                "help": _("Per-face tile size for contact sheets."),
-            },
+            # ----------------------------------------------------------------
+            # Compatibility-mode options
+            # ----------------------------------------------------------------
             {
                 "opts": ("--source-alignments",),
                 "action": FileFullPaths,
@@ -276,24 +238,16 @@ class FaceqaArgs(FaceSwapArgs):  # pylint:disable=invalid-name
                 "help": _("Optional target FaceQA sidecar JSON."),
             },
             {
-                "opts": ("--source-frames-dir",),
-                "action": DirOrFileFullPaths,
+                "opts": ("--compatibility-output-dir",),
+                "action": DirFullPaths,
                 "type": str,
-                "dest": "source_frames_dir",
+                "dest": "compatibility_output_dir",
                 "group": _("compatibility"),
                 "default": None,
-                "filetypes": "video",
-                "help": _("Optional source frames directory for SPIGA pose backfill."),
-            },
-            {
-                "opts": ("--target-frames-dir",),
-                "action": DirOrFileFullPaths,
-                "type": str,
-                "dest": "target_frames_dir",
-                "group": _("compatibility"),
-                "default": None,
-                "filetypes": "video",
-                "help": _("Optional target frames directory for SPIGA pose backfill."),
+                "help": _(
+                    "Output directory for compatibility JSON/Markdown "
+                    "reports. Defaults to the source alignments directory."
+                ),
             },
         ]
 

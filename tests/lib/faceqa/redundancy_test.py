@@ -15,6 +15,7 @@ from lib.faceqa.redundancy import (
     AGGRESSIVENESS_LEVELS,
     KEEP,
     PRUNE,
+    REVIEW,
     compute_redundancy,
 )
 
@@ -294,3 +295,127 @@ def test_empty_records_returns_empty_report() -> None:
     assert report.total_faces == 0
     assert report.records == []
     assert report.effective_coverage == {}
+
+
+# ---------------------------------------------------------------------------
+# Reviewer feedback regressions (see PR review of #176)
+# ---------------------------------------------------------------------------
+
+
+def test_singleton_identity_outlier_routes_to_review_not_keep() -> None:
+    """A singleton identity outlier must not default to keep just because it is a singleton."""
+    records = [
+        _record(
+            "frame_000001.png",
+            yaw=-65.0,
+            expression_bucket="expressive",
+            identity_quality_flag="outlier",
+        ),
+    ]
+
+    report = compute_redundancy(records)
+
+    outlier = report.records[0]
+    assert outlier.identity_outlier is True
+    assert outlier.recommendation == REVIEW
+
+
+def test_representative_identity_outlier_routes_to_review() -> None:
+    """An identity outlier promoted to representative still routes to review."""
+    records = (
+        # Two non-outlier members with lower quality (smaller resolution).
+        [
+            _record(
+                "frame_000001.png",
+                blur_score=3.0,
+                resolution=[96, 96],
+                yaw=0.0,
+            ),
+            _record(
+                "frame_000002.png",
+                blur_score=3.0,
+                resolution=[96, 96],
+                yaw=0.0,
+            ),
+        ]
+        # High-quality outlier; will rank highest by quality_score and become rep.
+        + [
+            _record(
+                "frame_000003.png",
+                blur_score=12.0,
+                resolution=[512, 512],
+                yaw=0.0,
+                identity_quality_flag="outlier",
+            ),
+        ]
+    )
+
+    report = compute_redundancy(records)
+
+    rep = next(r for r in report.records if r.representative)
+    assert rep.frame == "frame_000003.png"
+    assert rep.identity_outlier is True
+    assert rep.recommendation == REVIEW
+
+
+def test_obvious_duplicate_prunes_even_in_protected_bucket() -> None:
+    """Protection budget must not rescue exact duplicates from pruning."""
+    # Only fragile-bucket faces present — every cluster's bucket is protected.
+    records = _near_identical_run(8, yaw=70.0, expression_bucket="smile")
+
+    report = compute_redundancy(records, aggressiveness="balanced")
+
+    pruned = [r for r in report.records if r.recommendation == PRUNE]
+    assert pruned, "expected at least one prune candidate even in protected bucket"
+    assert all("obvious duplicate" in r.reason for r in pruned), (
+        "obvious-duplicate prunes should fire before protection budget"
+    )
+
+
+def test_lighting_bucket_is_populated_on_records() -> None:
+    """Records must expose lighting_bucket rather than leaving the slot empty."""
+    records = [
+        _record("frame_000001.png", mean_luminance=30.0),  # dark
+        _record("frame_000002.png", mean_luminance=240.0),  # overexposed
+        _record("frame_000003.png", mean_luminance=128.0),  # flat_frontal
+    ]
+
+    report = compute_redundancy(records)
+    by_frame = {r.frame: r.lighting_bucket for r in report.records}
+
+    assert by_frame["frame_000001.png"] == "dark"
+    assert by_frame["frame_000002.png"] == "overexposed"
+    assert by_frame["frame_000003.png"] == "flat_frontal"
+
+
+def test_classify_buckets_is_coverage_aware() -> None:
+    """The classifier should use min_bucket_pct and surplus_margin, not just a fixed floor."""
+    from lib.faceqa.redundancy import (
+        _AGGRESSIVENESS_PRESETS,
+        EffectiveCoverageDimension,
+        _classify_buckets,
+    )
+
+    effective = {
+        "pose": EffectiveCoverageDimension(
+            dimension="pose",
+            raw_counts={"frontal": 100, "right_extreme": 4},
+            effective_counts={"frontal": 50, "right_extreme": 4},
+            redundancy_ratios={"frontal": 2.0, "right_extreme": 1.0},
+        )
+    }
+    config = _AGGRESSIVENESS_PRESETS["balanced"]
+    # 1000 total faces × 5% = 50 → surplus threshold = 50 × 1.5 = 75.
+    # frontal at 50 sits at floor → protected (count <= floor).
+    # right_extreme at 4 is also below floor → protected.
+    protected, surplus = _classify_buckets(effective, config, total_faces=1000, min_bucket_pct=5.0)
+    assert ("pose", "frontal") in protected
+    assert ("pose", "right_extreme") in protected
+    assert surplus == set()
+
+    # Lower the floor so frontal becomes surplus while right_extreme stays fragile.
+    # 1000 × 0.5% = 5 → surplus threshold = 5 × 1.5 = 7.5.
+    # frontal=50 >> 7.5 → surplus. right_extreme=4 < 5 → protected.
+    protected, surplus = _classify_buckets(effective, config, total_faces=1000, min_bucket_pct=0.5)
+    assert ("pose", "right_extreme") in protected
+    assert ("pose", "frontal") in surplus

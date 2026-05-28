@@ -11,19 +11,13 @@ import numpy as np
 
 from lib.align.objects import AlignmentsEntry, FileAlignments
 from lib.serializer import get_serializer
+from lib.utils import FaceswapError
 from tools.faceqa.faceqa import Faceqa
 
 
-def _face_with_embedding(
-    *,
-    embedding: np.ndarray,
-    width: int = 256,
-    height: int = 256,
-) -> FileAlignments:
+def _face() -> FileAlignments:
     landmarks: np.ndarray = np.zeros((68, 2), dtype="float32")
-    face = FileAlignments(x=0, y=0, w=width, h=height, landmarks_xy=landmarks)
-    face.identity = {"insightface": embedding.astype(np.float32)}
-    return face
+    return FileAlignments(x=0, y=0, w=80, h=90, landmarks_xy=landmarks)
 
 
 def _save_alignments(path, frames: dict[str, list[FileAlignments]]) -> None:
@@ -42,136 +36,136 @@ def _write_face_image(path) -> None:
     cv2.imwrite(str(path), np.full((96, 96, 3), 80, dtype=np.uint8))
 
 
-def _duplicates_args(
-    *,
-    alignments,
-    faces_dir,
-    output_dir,
-    duplicates_report=None,
-) -> Namespace:
-    return Namespace(
-        mode="duplicates",
-        alignments=str(alignments),
-        faces_dir=str(faces_dir),
-        output_dir=str(output_dir),
+def _base_args(**overrides) -> Namespace:
+    defaults = dict(
+        mode="coverage",
+        alignments=None,
         sidecar=None,
         frames_dir=None,
+        faces_dir=None,
         output_json=None,
         output_markdown=None,
-        output_prefix="source_target_compatibility",
         exclude_duplicates=False,
         exclude_outliers=False,
         min_bucket_pct=5.0,
-        identity_model=None,
-        similarity_threshold=0.85,
-        temporal_window=-1,
-        duplicates_report=duplicates_report,
-        symlink=False,
-        contact_sheet_tile_size=128,
+        suggest_pruning=False,
+        prune_aggressiveness="balanced",
+        prune_output_dir=None,
         source_alignments=None,
         target_alignments=None,
         source_sidecar=None,
         target_sidecar=None,
-        source_frames_dir=None,
-        target_frames_dir=None,
+        compatibility_output_dir=None,
     )
+    defaults.update(overrides)
+    return Namespace(**defaults)
 
 
-def test_faceqa_duplicates_mode_produces_full_output_tree(tmp_path) -> None:
-    """The duplicates mode should write JSON, manifests, sorted folders and contact sheets."""
-    embedding = np.array([1.0, 0.0, 0.0, 0.0], dtype="float32")
+def test_coverage_mode_runs_without_pruning(tmp_path, monkeypatch) -> None:
+    alignments = tmp_path / "alignments.fsa"
+    _save_alignments(alignments, {"frame_000001.png": [_face()]})
+    args = _base_args(
+        alignments=str(alignments),
+        frames_dir=str(tmp_path),
+        output_json=str(tmp_path / "coverage.json"),
+        output_markdown=str(tmp_path / "coverage.md"),
+    )
+    monkeypatch.setattr(Faceqa, "_pose_backfiller", lambda _: lambda __, ___: None)
+
+    Faceqa(args).process()
+
+    payload = json.loads((tmp_path / "coverage.json").read_text(encoding="utf-8"))
+    assert payload["total_faces"] == 1
+    # Without --suggest-pruning the block stays empty.
+    assert payload["pruning_suggestions"] == {}
+
+
+def test_coverage_mode_with_suggest_pruning_emits_redundancy(tmp_path, monkeypatch) -> None:
     alignments = tmp_path / "alignments.fsa"
     _save_alignments(
         alignments,
-        {
-            "frame_000001.png": [
-                _face_with_embedding(embedding=embedding, width=512, height=512),
-            ],
-            "frame_000002.png": [
-                _face_with_embedding(embedding=embedding + 0.01, width=64, height=64),
-            ],
-            "frame_000050.png": [
-                _face_with_embedding(embedding=np.array([0.0, 1.0, 0.0, 0.0], dtype="float32")),
-            ],
-        },
+        {f"frame_{i:06d}.png": [_face()] for i in range(1, 6)},
     )
-    faces_dir = tmp_path / "faces"
-    faces_dir.mkdir()
-    for name in ("frame_000001_0.png", "frame_000002_0.png", "frame_000050_0.png"):
-        _write_face_image(faces_dir / name)
-    output_dir = tmp_path / "out"
+    args = _base_args(
+        alignments=str(alignments),
+        frames_dir=str(tmp_path),
+        suggest_pruning=True,
+        prune_aggressiveness="balanced",
+        output_json=str(tmp_path / "coverage.json"),
+        output_markdown=str(tmp_path / "coverage.md"),
+    )
+    monkeypatch.setattr(Faceqa, "_pose_backfiller", lambda _: lambda __, ___: None)
 
-    Faceqa(
-        _duplicates_args(alignments=alignments, faces_dir=faces_dir, output_dir=output_dir)
-    ).process()
+    Faceqa(args).process()
 
-    json_report = output_dir / "faceqa_duplicates.json"
-    assert json_report.is_file()
-    payload = json.loads(json_report.read_text(encoding="utf-8"))
-    assert payload["total_faces"] == 3
-    assert payload["records"], "expected per-face records"
-
-    assert (output_dir / "keep").is_dir()
-    assert (output_dir / "review").is_dir()
-    assert (output_dir / "prune_candidate").is_dir()
-    assert (output_dir / "keep.csv").is_file()
-    assert (output_dir / "keep.jsonl").is_file()
-    assert (output_dir / "prune_candidates.csv").is_file()
-    assert (output_dir / "prune_candidates.jsonl").is_file()
-    contact_sheets = list((output_dir / "contact_sheets").iterdir())
-    assert contact_sheets, "expected at least one contact sheet for the multi-face cluster"
+    payload = json.loads((tmp_path / "coverage.json").read_text(encoding="utf-8"))
+    pruning = payload["pruning_suggestions"]
+    assert pruning["aggressiveness"] == "balanced"
+    assert pruning["total_faces"] == 5
+    assert {"keep_count", "review_count", "prune_candidate_count"}.issubset(pruning)
+    md = (tmp_path / "coverage.md").read_text(encoding="utf-8")
+    assert "## Pruning Suggestions" in md
 
 
-def test_faceqa_duplicates_mode_reuses_existing_report(tmp_path) -> None:
-    """Supplying --duplicates-report skips clustering and consumes the report directly."""
-    embedding = np.array([1.0, 0.0, 0.0, 0.0], dtype="float32")
+def test_prune_output_dir_emits_sorted_folders_and_contact_sheets(tmp_path, monkeypatch) -> None:
     alignments = tmp_path / "alignments.fsa"
     _save_alignments(
         alignments,
-        {
-            "frame_000001.png": [_face_with_embedding(embedding=embedding)],
-            "frame_000002.png": [_face_with_embedding(embedding=embedding + 0.01)],
-        },
+        {f"frame_{i:06d}.png": [_face()] for i in range(1, 6)},
     )
     faces_dir = tmp_path / "faces"
     faces_dir.mkdir()
-    _write_face_image(faces_dir / "frame_000001_0.png")
-    _write_face_image(faces_dir / "frame_000002_0.png")
-
-    first_output = tmp_path / "first"
-    Faceqa(
-        _duplicates_args(alignments=alignments, faces_dir=faces_dir, output_dir=first_output)
-    ).process()
-    report_path = first_output / "faceqa_duplicates.json"
-    assert report_path.is_file()
-
-    # Now re-run with the existing report as input → no recompute.
-    second_output = tmp_path / "second"
-    Faceqa(
-        _duplicates_args(
-            alignments=alignments,
-            faces_dir=faces_dir,
-            output_dir=second_output,
-            duplicates_report=str(report_path),
-        )
-    ).process()
-    # The second run does NOT need to write a new JSON, but the sorted folders
-    # and manifests should match what the first run produced.
-    assert (second_output / "keep").is_dir()
-    assert (second_output / "prune_candidate").is_dir()
-    assert (second_output / "keep.csv").is_file()
-
-
-def test_faceqa_dispatch_rejects_unknown_mode(tmp_path) -> None:
-    """An unknown --mode should raise FaceswapError, not silently no-op."""
-    from lib.utils import FaceswapError
-
-    args = _duplicates_args(
-        alignments=tmp_path / "missing.fsa",
-        faces_dir=tmp_path,
-        output_dir=tmp_path,
+    for i in range(1, 6):
+        _write_face_image(faces_dir / f"frame_{i:06d}_0.png")
+    prune_dir = tmp_path / "prune"
+    args = _base_args(
+        alignments=str(alignments),
+        frames_dir=str(tmp_path),
+        faces_dir=str(faces_dir),
+        suggest_pruning=True,
+        prune_output_dir=str(prune_dir),
+        output_json=str(tmp_path / "coverage.json"),
+        output_markdown=str(tmp_path / "coverage.md"),
     )
-    args.mode = "nope"
+    monkeypatch.setattr(Faceqa, "_pose_backfiller", lambda _: lambda __, ___: None)
+
+    Faceqa(args).process()
+
+    assert (prune_dir / "faceqa_redundancy.json").is_file()
+    assert (prune_dir / "keep.csv").is_file()
+    assert (prune_dir / "keep.jsonl").is_file()
+    assert (prune_dir / "prune_candidates.csv").is_file()
+    assert (prune_dir / "prune_candidates.jsonl").is_file()
+    assert (prune_dir / "keep").is_dir()
+    assert (prune_dir / "review").is_dir()
+    assert (prune_dir / "prune_candidate").is_dir()
+    assert (prune_dir / "redundancy_mapping.csv").is_file()
+    contact_sheets = list((prune_dir / "contact_sheets").iterdir())
+    # Multiple identical faces should cluster into one multi-face cluster → one sheet.
+    assert len(contact_sheets) >= 1
+
+
+def test_prune_output_dir_requires_faces_dir(tmp_path, monkeypatch) -> None:
+    alignments = tmp_path / "alignments.fsa"
+    _save_alignments(alignments, {"frame_000001.png": [_face()]})
+    args = _base_args(
+        alignments=str(alignments),
+        frames_dir=str(tmp_path),
+        suggest_pruning=True,
+        prune_output_dir=str(tmp_path / "prune"),
+    )
+    monkeypatch.setattr(Faceqa, "_pose_backfiller", lambda _: lambda __, ___: None)
+
+    try:
+        Faceqa(args).process()
+    except FaceswapError as err:
+        assert "--faces-dir" in str(err)
+    else:
+        raise AssertionError("Expected FaceswapError when --faces-dir is missing")
+
+
+def test_unknown_mode_raises(tmp_path) -> None:
+    args = _base_args(mode="duplicates", alignments=str(tmp_path / "nope.fsa"))
     try:
         Faceqa(args).process()
     except FaceswapError as err:
