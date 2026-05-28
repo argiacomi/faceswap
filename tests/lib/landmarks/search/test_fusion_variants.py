@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""Tests for :mod:`lib.landmarks.core.fusion_variants` (Ticket 3)."""
+"""Smoke + error contract for :mod:`lib.landmarks.core.fusion_variants`.
+
+Exhaustive registry coverage (canonical names, alias resolution, threshold
+requirements) lives in ``ensemble_strategies_test.py``.  Underlying fusion
+math is covered by the ``plain_average``/``static_weighted``/``weighted_median``
+unit tests.  This file only verifies that ``fuse_variant`` and
+``fuse_candidate`` shape-route through the right strategy and raise on
+ill-formed input.
+"""
 
 from __future__ import annotations
 
@@ -11,32 +19,11 @@ from lib.landmarks.core.schema import LandmarkPrediction
 from lib.landmarks.search.candidate_search import Candidate
 
 
-def _truth_face() -> np.ndarray:
-    points = np.zeros((68, 2), dtype="float32")
-    points[0:17, 0] = np.linspace(40, 160, 17)
-    points[0:17, 1] = 120 + 30 * np.sin(np.linspace(0, np.pi, 17))
-    points[17:22, 0] = np.linspace(50, 90, 5)
-    points[17:22, 1] = 70
-    points[22:27, 0] = np.linspace(110, 150, 5)
-    points[22:27, 1] = 70
-    points[27:36, 0] = 100
-    points[27:36, 1] = np.linspace(75, 110, 9)
-    points[36:42, 0] = np.linspace(60, 80, 6)
-    points[36:42, 1] = 85
-    points[42:48, 0] = np.linspace(120, 140, 6)
-    points[42:48, 1] = 85
-    points[48:60, 0] = np.linspace(70, 130, 12)
-    points[48:60, 1] = 130
-    points[60:68, 0] = np.linspace(80, 120, 8)
-    points[60:68, 1] = 130
-    return points
-
-
 def _predictions() -> list[LandmarkPrediction]:
-    truth = _truth_face()
+    base = np.full((68, 2), 0.5, dtype="float32")
     return [
-        LandmarkPrediction(truth, source="hrnet"),
-        LandmarkPrediction(truth + 0.5, source="spiga"),
+        LandmarkPrediction(base, source="hrnet"),
+        LandmarkPrediction(base + 0.5, source="spiga"),
     ]
 
 
@@ -81,9 +68,9 @@ def test_fuse_candidate_uses_candidate_strategy_and_threshold() -> None:
         bbox_source="manifest",
         crop_scale=1.6,
     )
-    truth = _truth_face()
+    base = np.full((68, 2), 0.5, dtype="float32")
     weights = {model: [0.5] * 68 for model in candidate.models}
-    fused = fuse_candidate(candidate, [truth, truth + 0.5], weights=weights)
+    fused = fuse_candidate(candidate, [base, base + 0.5], weights=weights)
     assert fused.shape == (68, 2)
 
 
@@ -98,6 +85,5 @@ def test_fuse_candidate_plain_average_skips_weights_requirement() -> None:
         bbox_source="manifest",
         crop_scale=1.6,
     )
-    truth = _truth_face()
-    fused = fuse_candidate(candidate, [truth], weights={})
+    fused = fuse_candidate(candidate, [np.full((68, 2), 0.5, dtype="float32")], weights={})
     assert fused.shape == (68, 2)

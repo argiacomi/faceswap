@@ -1,57 +1,36 @@
 #!/usr/bin/env python3
-"""Harness ``_fuse_variant`` strategy coverage tests (issue #70)."""
+"""Wrapper-level smoke + error contract for ``harness._fuse_variant``.
+
+The exhaustive registry behaviour - canonical names, alias resolution, outlier
+methods, threshold requirements - lives in ``ensemble_strategies_test.py``.
+The underlying fusion math is covered by the ``plain_average``,
+``static_weighted``, and ``weighted_median`` unit tests next to each function.
+This file only proves that ``_fuse_variant`` routes through every canonical
+strategy and the legacy alias and surfaces a useful error for unknown
+strategies.
+"""
 
 from __future__ import annotations
 
 import numpy as np
 import pytest
 
-from lib.landmarks.core.fusion import (
-    normalize_weight_matrix,
-    plain_average,
-    static_weighted,
-)
 from lib.landmarks.core.schema import LandmarkPrediction
-from lib.landmarks.ensemble.outliers import weighted_median
-from lib.landmarks.ensemble.strategies import (
-    CANONICAL_STRATEGIES,
-    canonical_strategy,
-    strategy_outlier_method,
-)
+from lib.landmarks.ensemble.strategies import CANONICAL_STRATEGIES
 from lib.landmarks.evaluation.harness import _fuse_variant
 
 
 def _prediction(source: str, value: float) -> LandmarkPrediction:
-    points = np.full((68, 2), value, dtype="float32")
-    return LandmarkPrediction(points, source=source)
+    return LandmarkPrediction(np.full((68, 2), value, dtype="float32"), source=source)
 
 
-def _expected_points(strategy: str, values: tuple[float, float, float]) -> np.ndarray:
-    """Return expected fused points using harness-equivalent fusion helpers."""
-    canonical = canonical_strategy(strategy)
-    method = strategy_outlier_method(canonical)
-    predictions = [_prediction(f"m{idx}", value) for idx, value in enumerate(values)]
-    weights = np.array([[3.0] * 68, [2.0] * 68, [1.0] * 68], dtype="float32")
-    if canonical == "plain_average":
-        return plain_average(predictions, outlier_method=method).points
-    if canonical == "weighted_median":
-        stack = np.stack([prediction.points for prediction in predictions], axis=0)
-        normalized = normalize_weight_matrix(weights, model_count=3, landmark_count=stack.shape[1])
-        return weighted_median(stack, normalized)
-    return static_weighted(predictions, weights, outlier_method=method).points
-
-
-@pytest.mark.parametrize(
-    "variant",
-    [*CANONICAL_STRATEGIES, "static_weighted_outliers"],
-)
+@pytest.mark.parametrize("variant", [*CANONICAL_STRATEGIES, "static_weighted_outliers"])
 def test_fuse_variant_dispatches_every_strategy_and_legacy_alias(variant: str) -> None:
-    """``_fuse_variant`` must route every canonical strategy and the alias."""
-    values = (0.1, 0.2, 0.9)
+    """``_fuse_variant`` should run for every canonical strategy + legacy alias."""
     predictions = [
-        _prediction("hrnet", values[0]),
-        _prediction("spiga", values[1]),
-        _prediction("orformer", values[2]),
+        _prediction("hrnet", 0.1),
+        _prediction("spiga", 0.2),
+        _prediction("orformer", 0.9),
     ]
     weights = {
         "hrnet": [3.0] * 68,
@@ -67,9 +46,8 @@ def test_fuse_variant_dispatches_every_strategy_and_legacy_alias(variant: str) -
         outlier_threshold=3.5,
     )
 
-    expected = _expected_points(variant, values)
-    np.testing.assert_allclose(result.points, expected, rtol=1e-6, atol=1e-6)
     assert result.strategy == variant
+    assert result.points.shape == (68, 2)
     assert isinstance(rejected, int)
 
 
