@@ -22,6 +22,8 @@ imports are deferred to function scope.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 
@@ -318,6 +320,7 @@ def test_post_process_passes_through_float32() -> None:
     from plugins.extract.align.spiga import SPIGA
 
     plugin = object.__new__(SPIGA)
+    plugin._model_config = SimpleNamespace(num_landmarks=98)
     arr = np.random.default_rng(0).uniform(0.0, 1.0, (3, 98, 2)).astype(np.float32)
     result = plugin.post_process(arr)
     assert result.dtype == np.float32
@@ -328,6 +331,7 @@ def test_post_process_converts_float64_to_float32() -> None:
     from plugins.extract.align.spiga import SPIGA
 
     plugin = object.__new__(SPIGA)
+    plugin._model_config = SimpleNamespace(num_landmarks=68)
     arr = np.random.default_rng(0).uniform(0.0, 1.0, (2, 68, 2))  # float64
     result = plugin.post_process(arr)
     assert result.dtype == np.float32

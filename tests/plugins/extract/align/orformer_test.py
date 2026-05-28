@@ -30,6 +30,21 @@ def _checkpoint(member: str, filename: str, payload: bytes) -> orformer.ORFormer
     )
 
 
+def _list_part_files(cache_dir: str, filename: str) -> list[str]:
+    """Return leftover ``tempfile.mkstemp``-style extract artefacts for ``filename``.
+
+    Matches names like ``filename.<random>.part`` while ignoring a literal
+    ``filename.part`` (which the new extract path does not produce and may be
+    left in place from an older release).
+    """
+    prefix = f"{filename}."
+    return [
+        entry
+        for entry in os.listdir(cache_dir)
+        if entry.startswith(prefix) and entry.endswith(".part") and entry != f"{filename}.part"
+    ]
+
+
 def test_extract_checkpoint_writes_and_validates(
     tmp_path: pytest.TempdirFactory,
 ) -> None:
@@ -39,35 +54,84 @@ def test_extract_checkpoint_writes_and_validates(
     archive_path = _build_archive(cache_dir, {"weights/HGNet/300W/best_model.pt": payload})
     checkpoint = _checkpoint("weights/HGNet/300W/best_model.pt", "hgnet.pt", payload)
 
-    output_path = orformer._extract_checkpoint(archive_path, cache_dir, checkpoint)
+    with zipfile.ZipFile(archive_path) as archive:
+        output_path = orformer._extract_checkpoint(archive, cache_dir, checkpoint)
 
     assert output_path == os.path.join(cache_dir, "hgnet.pt")
     assert os.path.exists(output_path)
     with open(output_path, "rb") as infile:
         assert infile.read() == payload
-    assert not os.path.exists(f"{output_path}.part")
+    assert _list_part_files(cache_dir, "hgnet.pt") == []
 
 
-def test_extract_checkpoint_skips_when_cached(tmp_path: pytest.TempdirFactory, mocker) -> None:
-    """A correctly hashed cached file is reused without touching the archive."""
+def test_get_checkpoint_paths_skips_when_cached(tmp_path: pytest.TempdirFactory, mocker) -> None:
+    """``_get_checkpoint_paths`` reuses a correctly hashed cached file without opening the archive."""
     cache_dir = str(tmp_path)
-    payload = b"orformer-state" * 32
-    archive_path = _build_archive(cache_dir, {"weights/ORFormer/WFLW/best_model.pt": payload})
-    checkpoint = _checkpoint("weights/ORFormer/WFLW/best_model.pt", "orformer.pt", payload)
+    hgnet_payload = b"hgnet-cached" * 16
+    orformer_payload = b"orformer-cached" * 16
+    archive_path = _build_archive(
+        cache_dir,
+        {
+            "weights/HGNet/WFLW/best_model.pt": hgnet_payload,
+            "weights/ORFormer/WFLW/best_model.pt": orformer_payload,
+        },
+    )
+    hgnet_checkpoint = _checkpoint("weights/HGNet/WFLW/best_model.pt", "hgnet.pt", hgnet_payload)
+    orformer_checkpoint = _checkpoint(
+        "weights/ORFormer/WFLW/best_model.pt", "orformer.pt", orformer_payload
+    )
 
-    cached_path = os.path.join(cache_dir, "orformer.pt")
-    with open(cached_path, "wb") as outfile:
-        outfile.write(payload)
+    with open(os.path.join(cache_dir, "hgnet.pt"), "wb") as outfile:
+        outfile.write(hgnet_payload)
+    with open(os.path.join(cache_dir, "orformer.pt"), "wb") as outfile:
+        outfile.write(orformer_payload)
 
+    model_config = orformer.ORFormerModelConfig(
+        num_landmarks=98,
+        num_edges=15,
+        edge_info=lambda: [],
+        hgnet=hgnet_checkpoint,
+        orformer=orformer_checkpoint,
+    )
+    mocker.patch.object(
+        orformer.GetModelFromUrl,
+        "__init__",
+        lambda self, *_args, **_kwargs: None,
+    )
+    mocker.patch.object(
+        orformer.GetModelFromUrl, "model_path", property(lambda self: archive_path)
+    )
     spy = mocker.spy(zipfile, "ZipFile")
-    output_path = orformer._extract_checkpoint(archive_path, cache_dir, checkpoint)
 
-    assert output_path == cached_path
+    resolved = orformer._get_checkpoint_paths(model_config)
+
+    assert resolved == {
+        "hgnet": os.path.join(cache_dir, "hgnet.pt"),
+        "orformer": os.path.join(cache_dir, "orformer.pt"),
+    }
     assert spy.call_count == 0
 
 
+def test_checkpoint_is_valid_uses_sentinel(tmp_path: pytest.TempdirFactory, mocker) -> None:
+    """``_checkpoint_is_valid`` short-circuits via the sentinel on the second call."""
+    cache_dir = str(tmp_path)
+    payload = b"sentinel-test" * 16
+    target = os.path.join(cache_dir, "blob.pt")
+    with open(target, "wb") as outfile:
+        outfile.write(payload)
+    expected = hashlib.sha256(payload).hexdigest()
+
+    spy = mocker.spy(orformer, "_hash_file")
+    assert orformer._checkpoint_is_valid(target, expected)
+    assert spy.call_count == 1
+
+    # Second call must use the sentinel and not re-hash.
+    assert orformer._checkpoint_is_valid(target, expected)
+    assert spy.call_count == 1
+
+
 def test_extract_checkpoint_replaces_bad_cache(tmp_path: pytest.TempdirFactory) -> None:
-    """A cached file with a wrong hash is replaced with the correct extracted payload."""
+    """Extraction overwrites a wrong-hash cache file with the correct payload."""
     cache_dir = str(tmp_path)
     payload = b"good-payload-bytes" * 8
     archive_path = _build_archive(cache_dir, {"weights/HGNet/WFLW/best_model.pt": payload})
@@ -77,35 +141,42 @@ def test_extract_checkpoint_replaces_bad_cache(tmp_path: pytest.TempdirFactory) 
     with open(cached_path, "wb") as outfile:
         outfile.write(b"bad-payload")
 
-    output_path = orformer._extract_checkpoint(archive_path, cache_dir, checkpoint)
+    with zipfile.ZipFile(archive_path) as archive:
+        orformer._extract_checkpoint(archive, cache_dir, checkpoint)
 
-    with open(output_path, "rb") as infile:
+    with open(cached_path, "rb") as infile:
         assert infile.read() == payload
+    assert _list_part_files(cache_dir, "hgnet.pt") == []
 
 
-def test_extract_checkpoint_cleans_stale_part(tmp_path: pytest.TempdirFactory) -> None:
-    """A leftover .part file from a prior interrupted extract is removed first."""
+def test_extract_checkpoint_uses_per_process_tempfile(
+    tmp_path: pytest.TempdirFactory,
+) -> None:
+    """A pre-existing static ``<output>.part`` is irrelevant: extraction uses a tempfile."""
     cache_dir = str(tmp_path)
     payload = b"clean-extract" * 16
     archive_path = _build_archive(cache_dir, {"weights/HGNet/300W/best_model.pt": payload})
     checkpoint = _checkpoint("weights/HGNet/300W/best_model.pt", "hgnet.pt", payload)
 
     output_path = os.path.join(cache_dir, "hgnet.pt")
-    partial_path = f"{output_path}.part"
-    with open(partial_path, "wb") as outfile:
-        outfile.write(b"leftover")
+    static_part = f"{output_path}.part"
+    with open(static_part, "wb") as outfile:
+        outfile.write(b"leftover from old version")
 
-    orformer._extract_checkpoint(archive_path, cache_dir, checkpoint)
+    with zipfile.ZipFile(archive_path) as archive:
+        orformer._extract_checkpoint(archive, cache_dir, checkpoint)
 
-    assert not os.path.exists(partial_path)
     with open(output_path, "rb") as infile:
         assert infile.read() == payload
+    # The per-process tempfile must be cleaned up; the static ``.part`` is intentionally untouched.
+    assert _list_part_files(cache_dir, "hgnet.pt") == []
+    assert os.path.exists(static_part)
 
 
-def test_extract_checkpoint_hash_mismatch_raises(
+def test_extract_checkpoint_hash_mismatch_raises_and_cleans_up(
     tmp_path: pytest.TempdirFactory,
 ) -> None:
-    """A SHA256 mismatch on the extracted payload raises and removes the .part file."""
+    """A SHA256 mismatch raises and removes the tempfile rather than the final path."""
     cache_dir = str(tmp_path)
     payload = b"actual-payload"
     archive_path = _build_archive(cache_dir, {"weights/HGNet/WFLW/best_model.pt": payload})
@@ -115,12 +186,15 @@ def test_extract_checkpoint_hash_mismatch_raises(
         sha256=hashlib.sha256(b"different-payload").hexdigest(),
     )
 
-    with pytest.raises(RuntimeError, match="hash mismatch"):
-        orformer._extract_checkpoint(archive_path, cache_dir, checkpoint)
+    with (
+        zipfile.ZipFile(archive_path) as archive,
+        pytest.raises(RuntimeError, match="hash mismatch"),
+    ):
+        orformer._extract_checkpoint(archive, cache_dir, checkpoint)
 
     output_path = os.path.join(cache_dir, "hgnet.pt")
     assert not os.path.exists(output_path)
-    assert not os.path.exists(f"{output_path}.part")
+    assert _list_part_files(cache_dir, "hgnet.pt") == []
 
 
 def test_hash_file_matches_hashlib(tmp_path: pytest.TempdirFactory) -> None:

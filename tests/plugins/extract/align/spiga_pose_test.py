@@ -87,6 +87,7 @@ def test_spiga_post_process_strips_pose_and_stores_metadata() -> None:
 def test_uninitialized_spiga_post_process_passes_plain_landmarks() -> None:
     """Post-process remains compatible with object.__new__ test doubles."""
     plugin = object.__new__(SPIGA)
+    plugin._model_config = SimpleNamespace(num_landmarks=98)
     arr = np.random.default_rng(0).uniform(0.0, 1.0, (3, 98, 2)).astype(np.float32)
 
     result = plugin.post_process(arr)
