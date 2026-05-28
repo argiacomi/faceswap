@@ -294,10 +294,23 @@ def _make_cvlface_loader(
                 self._model = model
 
             def _prepare(self, faces: np.ndarray) -> T.Any:
-                # CVLFace model cards expect RGB images normalized with mean/std 0.5.
-                rgb = np.ascontiguousarray(faces[..., ::-1])
-                inputs = torch.from_numpy(rgb).to(dtype=torch.float32).mul_(1.0 / 255.0)
-                inputs = inputs.permute(0, 3, 1, 2).sub_(0.5).div_(0.5)
+                """Return RGB NCHW float32 tensor normalized to [-1, 1]."""
+                if faces.ndim != 4:
+                    raise ValueError(
+                        f"{model_label} expects a 4D face batch, received shape {faces.shape}."
+                    )
+                if faces.shape[1] == 3:
+                    rgb = np.ascontiguousarray(faces[:, [2, 1, 0], :, :])
+                    inputs = torch.from_numpy(rgb).to(dtype=torch.float32)
+                elif faces.shape[-1] == 3:
+                    rgb = np.ascontiguousarray(faces[..., ::-1])
+                    inputs = torch.from_numpy(rgb).to(dtype=torch.float32).permute(0, 3, 1, 2)
+                else:
+                    raise ValueError(
+                        f"{model_label} expected BGR face batch in NCHW or NHWC layout, "
+                        f"received shape {faces.shape}."
+                    )
+                inputs = inputs.mul_(1.0 / 255.0).sub_(0.5).div_(0.5)
                 if self._device.type == "cuda":
                     inputs = inputs.pin_memory().to(self._device, non_blocking=True)
                 else:
@@ -408,7 +421,7 @@ def _make_insightface_loader(
                 recognition = _load_recognition(providers)
                 recognition.prepare(ctx_id=ctx_id)
 
-        logger.debug(
+        logger.info(
             "InsightFace %s recognition providers: %s",
             model_type,
             recognition.session.get_providers(),
