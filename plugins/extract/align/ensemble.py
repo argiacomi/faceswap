@@ -517,8 +517,13 @@ class Ensemble(ExtractPlugin):
             return
         bboxes = np.asarray(detector_bboxes, dtype="float32")
         if bboxes.shape[0] != self._last_matrices.shape[0]:
-            logger.debug(
-                "[Ensemble] Ignoring detector bboxes with shape %s for crop matrices %s",
+            # Mismatched row counts indicate a runner contract violation. Without bboxes
+            # ``_bbox_for_face`` returns None for the rest of this batch, which disables
+            # bbox-driven veto and normalized-coord reconstruction inside the runtime
+            # resolver — silent feature degradation, so warn rather than debug.
+            logger.warning(
+                "[Ensemble] Ignoring detector bboxes with shape %s for crop matrices %s; "
+                "bbox-dependent resolver features will be unavailable for this batch.",
                 bboxes.shape,
                 self._last_matrices.shape,
             )
@@ -541,15 +546,35 @@ class Ensemble(ExtractPlugin):
         raise ValueError("Ensemble adapters have not been loaded")
 
     def _matrices_for_batch(self, batch_size: int) -> np.ndarray:
-        """Return crop-to-frame matrices, falling back to identity for warmup calls."""
+        """Return crop-to-frame matrices, falling back to identity for warmup calls.
+
+        Identity matrices give correct results only for warmup (single tiny synthetic
+        batch). For real work they silently produce frame-pixel landmarks scaled by an
+        identity, which downstream ``frame_to_normalized_crop`` then mis-normalizes.
+        We log loudly so the regression is visible when a runner change ever skips
+        ``pre_process``.
+        """
         matrices = np.repeat(np.eye(3, dtype="float32")[None], batch_size, axis=0)
         if self._last_matrices is None:
+            logger.warning(
+                "[Ensemble] No cached crop matrices available; falling back to identity "
+                "for batch_size=%s. Outputs will be wrong unless this is a warmup batch.",
+                batch_size,
+            )
             return matrices
 
         cached_count = self._last_matrices.shape[0]
         copy_count = min(cached_count, batch_size)
         matrices[:copy_count] = self._last_matrices[:copy_count]
-        if cached_count != batch_size:
+        if cached_count < batch_size:
+            logger.warning(
+                "[Ensemble] Cached crop matrices (%s) shorter than batch (%s); "
+                "remaining %s faces use identity matrices and will be mis-normalized.",
+                cached_count,
+                batch_size,
+                batch_size - copy_count,
+            )
+        elif cached_count != batch_size:
             logger.debug(
                 "[Ensemble] adjusted cached crop matrices for batch padding: "
                 "cached=%s batch=%s copied=%s",
@@ -663,7 +688,18 @@ class Ensemble(ExtractPlugin):
             try:
                 predictions = adapter.predict_batch(batch, matrices=matrices)
             except Exception as err:  # pylint:disable=broad-except
-                logger.warning("[Ensemble] Adapter '%s' failed: %s", adapter.config.name, err)
+                # Adapter implementations can fail for many reasons (model load, CUDA OOM,
+                # input shape, missing checkpoint, programming bugs). Under strict=False
+                # the ensemble degrades gracefully; under strict=True the failure must
+                # surface so regressions aren't masked as silent two-of-three fuses.
+                logger.warning(
+                    "[Ensemble] Adapter '%s' failed: %s",
+                    adapter.config.name,
+                    err,
+                    exc_info=True,
+                )
+                if self._strict:
+                    raise
                 errors.append(f"{adapter.config.name}: {err}")
                 continue
             if len(predictions) != batch.shape[0]:

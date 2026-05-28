@@ -16,7 +16,7 @@ import numpy as np
 import torch
 from torch import nn
 
-from lib.utils import GetModelFromUrl, get_module_objects
+from lib.utils import FaceswapError, GetModelFromUrl, get_module_objects
 from plugins.extract.base import ExtractPlugin
 
 from . import spiga_defaults as cfg
@@ -237,7 +237,6 @@ _MODEL_CONFIG = {
         ldm_ids=_LDM_IDS_98,
     ),
 }
-_LANDMARK_COUNTS = frozenset(config.num_landmarks for config in _MODEL_CONFIG.values())
 
 
 class SPIGA(ExtractPlugin):
@@ -253,7 +252,12 @@ class SPIGA(ExtractPlugin):
         )
         self._target_dist = cfg.crop_scale()
         self._focal_ratio = 1.5  # Upstream SPIGA camera focal-length ratio.
-        self._model_config = _MODEL_CONFIG[cfg.model()]
+        model_name = cfg.model()
+        if model_name not in _MODEL_CONFIG:
+            raise FaceswapError(
+                f"Unsupported SPIGA model: {model_name!r}. Select from {list(_MODEL_CONFIG)}."
+            )
+        self._model_config = _MODEL_CONFIG[model_name]
         self.model: SPIGAFaceswapModel
         self.realign_centering = "legacy"
         self.last_debug_metadata: list[dict[str, T.Any]] = []
@@ -346,25 +350,12 @@ class SPIGA(ExtractPlugin):
 
     def _split_pose_output(self, batch: np.ndarray) -> tuple[np.ndarray, np.ndarray | None]:
         """Return landmark predictions and optional native SPIGA pose rows."""
-        landmark_count = self._landmark_count_from_output(batch)
+        landmark_count = int(self._model_config.num_landmarks)
         if batch.shape[1] < landmark_count + _POSE_ROWS:
             return batch, None
         landmarks = batch[:, :landmark_count]
         pose = batch[:, landmark_count : landmark_count + _POSE_ROWS, 0]
         return landmarks, pose.astype("float32", copy=False)
-
-    def _landmark_count_from_output(self, batch: np.ndarray) -> int:
-        """Return the landmark count expected in a model output batch."""
-        model_config = getattr(self, "_model_config", None)
-        if model_config is not None:
-            return int(model_config.num_landmarks)
-
-        count = int(batch.shape[1])
-        if count in _LANDMARK_COUNTS:
-            return count
-        if count - _POSE_ROWS in _LANDMARK_COUNTS:
-            return count - _POSE_ROWS
-        return count
 
 
 class SPIGAFaceswapModel(nn.Module):
@@ -454,11 +445,11 @@ def _load_world_shape(db_landmarks: list[int]) -> np.ndarray:
     mean_face_3d = np.genfromtxt(
         filename, delimiter="|", dtype=(float, float, float), usecols=(1, 2, 3)
     ).tolist()
+    # Build the value→index map once instead of paying O(N) ``list.index`` per landmark.
+    idx_for = {value: i for i, value in enumerate(db_landmarks)}
     world_all: list[list[float] | None] = [None] * len(mean_face_3d)
     for idx, elem in enumerate(mean_face_3d):
-        pt3d = [elem[2], -elem[0], -elem[1]]
-        lnd_idx = db_landmarks.index(posit_landmarks[idx])
-        world_all[lnd_idx] = pt3d
+        world_all[idx_for[posit_landmarks[idx]]] = [elem[2], -elem[0], -elem[1]]
     assert all(item is not None for item in world_all)
     return np.array(world_all, dtype=np.float32)
 
