@@ -29,6 +29,7 @@ from lib.align.objects import AlignmentsEntry, FileAlignments, PNGHeader, PNGSou
 from lib.align.pose import Batch3D, get_camera_matrix, get_xyz_2d
 from lib.image import ImagesLoader, ImagesSaver, encode_image
 from lib.infer import Align, Detect, File, Identity, Mask, Profiler
+from lib.infer.compile_modes import CompilePolicy, resolve_compile_policy
 from lib.infer.identity import FilterLoader
 from lib.infer.objects import FrameFaces, frame_faces_to_alignment
 from lib.logger import parse_class_init
@@ -94,6 +95,7 @@ class Extract:
             arguments, additional={"K": ("to skip saving faces", True, None)}
         )
         args = self._validate_compatible_args(args)
+        args.compile = resolve_compile_policy(args.compile, warn_on_legacy=True)
         input_locations = self._get_input_locations(args.input_dir, args.batch_mode)
         self._validate_batch_mode(args.batch_mode, input_locations, args)
         self._configure_torch(args.compile)
@@ -269,19 +271,20 @@ class Extract:
             args.alignments_path = None
 
     @classmethod
-    def _configure_torch(cls, compile_models: bool) -> None:
+    def _configure_torch(cls, compile_models: CompilePolicy | str | bool) -> None:
         """Set various Torch switches for inference optimization
 
         Parameters
         ----------
         compile_models
-            ``True`` if model compilation has been requested
+            The requested compile mode or resolved compile policy
         """
+        compile_policy = resolve_compile_policy(compile_models)
         torch.backends.cudnn.benchmark = True
         torch.use_deterministic_algorithms(False)
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
-        if not compile_models:
+        if not compile_policy:
             return
         # pylint:disable=protected-access
         torch._dynamo.config.cache_size_limit = 512

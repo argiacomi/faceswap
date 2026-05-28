@@ -7,7 +7,7 @@ import logging
 import typing as T
 from collections.abc import Iterable, Mapping
 from threading import Event, Lock
-from time import sleep
+from time import perf_counter, sleep
 
 import cv2
 import numpy as np
@@ -15,6 +15,16 @@ import torch
 
 from lib.torch_utils import accelerator_empty_cache
 from lib.utils import get_module_objects
+
+from .compile_modes import (
+    CompilePolicy,
+    CompileResult,
+    compile_module,
+    is_compiled_module,
+    record_compile_outcome,
+    reset_compiled_module,
+    resolve_compile_policy,
+)
 
 if T.TYPE_CHECKING:
     from plugins.extract.base import ExtractPlugin
@@ -175,9 +185,45 @@ def warmup_plugin(
 
 _COMPILE_LOCK = Lock()
 _COMPILE_LOGGED = Event()
+_MPS_COMPILE_SKIP_PLUGINS = {
+    "ORFormer": (
+        "Skipping torch.compile on Apple Silicon for ORFormer due to known "
+        "TorchInductor/MPS codegen instability during first compiled execution."
+    ),
+    "SPIGA": (
+        "Skipping torch.compile on Apple Silicon for SPIGA due to known MPS shape-guard "
+        "instability during first compiled execution."
+    ),
+}
 
 
-def compile_models(plugin: ExtractPlugin, modules: list[torch.nn.Module]) -> None:
+def _elapsed_ms(start: float) -> float:
+    """Return elapsed wall-clock milliseconds since ``start``."""
+    return (perf_counter() - start) * 1000.0
+
+
+def _unique_modules(modules: list[torch.nn.Module]) -> tuple[list[torch.nn.Module], int]:
+    """Return modules with duplicate references removed while preserving order."""
+    retval: list[torch.nn.Module] = []
+    seen: set[int] = set()
+    duplicates = 0
+    for module in modules:
+        module_id = id(module)
+        if module_id in seen:
+            duplicates += 1
+            continue
+        seen.add(module_id)
+        retval.append(module)
+    return retval, duplicates
+
+
+
+
+def compile_models(
+    plugin: ExtractPlugin,
+    modules: list[torch.nn.Module],
+    compile_mode: CompilePolicy | str | bool,
+) -> None:
     """Compile any Torch modules in the plugin's `model` attribute
 
     Parameters
@@ -186,36 +232,197 @@ def compile_models(plugin: ExtractPlugin, modules: list[torch.nn.Module]) -> Non
         The plugin containing Torch modules to be compiled
     modules
         The list of Torch modules contained within the plugin's `model` attribute
+    compile_mode
+        The requested or resolved compile mode for the current backend
     """
+    policy = resolve_compile_policy(compile_mode)
+    modules, duplicate_refs = _unique_modules(modules)
+    module_names = ", ".join(mod.__class__.__name__ for mod in modules)
     with _COMPILE_LOCK:
         if not _COMPILE_LOGGED.is_set():
             _COMPILE_LOGGED.set()
             sleep(0.5)  # Let other plugins log their output first
             logger.info("Compiling PyTorch models...")
-        channels_last = warmup_plugin(plugin, 1)  # Make sure we don't trace on wrong channel order
+        logger.info(
+            "[%s] Compile start: modules=%s backend=%s requested_mode=%s "
+            "effective_mode=%s duplicate_refs=%s",
+            plugin.name,
+            module_names or "none",
+            policy.backend,
+            policy.requested,
+            policy.effective,
+            duplicate_refs,
+        )
+        skip_reason = _MPS_COMPILE_SKIP_PLUGINS.get(plugin.name)
+        if policy.backend == "apple_silicon" and skip_reason and policy.enabled:
+            logger.warning("[%s] %s", plugin.name, skip_reason)
+            record_compile_outcome(
+                policy,
+                CompileResult(
+                    compiled=False,
+                    fallback_status="backend_skip",
+                    fullgraph=None,
+                    compile_time_ms=0.0,
+                    final_execution_mode="eager",
+                    error_summary=skip_reason,
+                ),
+            )
+            eager_start = perf_counter()
+            warmup_plugin(plugin, plugin.batch_size)
+            logger.info(
+                "[%s] Compile skipped: eager_warmup_elapsed_ms=%.2f batch_size=%s backend=%s",
+                plugin.name,
+                _elapsed_ms(eager_start),
+                plugin.batch_size,
+                policy.backend,
+            )
+            return
+        if policy.requested != policy.effective:
+            logger.warning(
+                "[%s] Compile mode '%s' downgraded to '%s' on backend '%s'. %s",
+                plugin.name,
+                policy.requested,
+                policy.effective,
+                policy.backend,
+                policy.reason,
+            )
+        elif policy.experimental:
+            logger.warning(
+                "[%s] Compile mode '%s' on backend '%s' is experimental. %s",
+                plugin.name,
+                policy.effective,
+                policy.backend,
+                policy.reason,
+            )
+
+        total_start = perf_counter()
+        channel_warmup_start = perf_counter()
+        channels_last = warmup_plugin(plugin, 1)
+        channel_warmup_ms = _elapsed_ms(channel_warmup_start)
+        logger.info(
+            "[%s] Channel-order warmup complete: channels_last=%s batch_size=%s elapsed_ms=%.2f",
+            plugin.name,
+            channels_last,
+            plugin.batch_size,
+            channel_warmup_ms,
+        )
         for mod in modules:
-            logger.verbose(
-                "Compiling %s (%s)...",  # type:ignore[attr-defined]
+            if is_compiled_module(mod):
+                logger.warning(
+                    "[%s/%s] Skipping compile for already-compiled module",
+                    plugin.name,
+                    mod.__class__.__name__,
+                )
+                continue
+            logger.verbose(  # type:ignore[attr-defined]
+                "Compiling %s (%s) with mode '%s'...",
                 plugin.name,
                 mod.__class__.__name__,
+                policy.effective,
             )
-            mod.compile(
-                fullgraph=True,
-                dynamic=False,  # We handle dynamic BS in code
-                options={
-                    "triton.cudagraphs": True,  # Required to stop worker speed back to eager
-                    "triton.cudagraph_trees": False,  # Optimize for static shapes
-                    "triton.cudagraph_support_input_mutation": True,
-                    "shape_padding": True,  # Pad tensors for Tensor core usage
-                    "epilogue_fusion": True,
-                    "coordinate_descent_tuning": True,  # Can sometimes find better kernels
-                    "max_autotune": True,
-                    "max_autotune_report_choices_stats": False,
-                },
+            result = compile_module(mod, policy)
+            if not result.compiled:
+                logger.warning(
+                    "[%s/%s] backend=%s mode=%s fullgraph=%s dynamic=%s fallback=%s "
+                    "compile_wrap_time_ms=%.2f final_execution_mode=%s error=%s",
+                    plugin.name,
+                    mod.__class__.__name__,
+                    policy.backend,
+                    policy.effective,
+                    "n/a",
+                    policy.dynamic,
+                    result.fallback_status,
+                    result.compile_time_ms,
+                    result.final_execution_mode,
+                    result.error_summary or "n/a",
+                )
+                continue
+            logger.info(
+                "[%s/%s] backend=%s mode=%s fullgraph=%s dynamic=%s fallback=%s "
+                "compile_wrap_time_ms=%.2f final_execution_mode=%s",
+                plugin.name,
+                mod.__class__.__name__,
+                policy.backend,
+                policy.effective,
+                result.fullgraph,
+                policy.dynamic,
+                result.fallback_status,
+                result.compile_time_ms,
+                result.final_execution_mode,
             )
         # Send the warmup batch here as we need to keep the lock when tracing
-        warmup_plugin(plugin, plugin.batch_size, channels_last=channels_last)
-    accelerator_empty_cache()  # Need to clear cache or we may run out of VRAM
+        compiled_warmup_start = perf_counter()
+        compiled_ready = warmup_plugin(plugin, plugin.batch_size, channels_last=channels_last)
+        compiled_warmup_ms = _elapsed_ms(compiled_warmup_start)
+        if compiled_ready is None:
+            error_summary = (
+                "First compiled execution warmup failed; reverting compiled "
+                "modules to eager execution"
+            )
+            logger.warning(
+                "[%s] First compiled execution warmup failed: elapsed_ms=%.2f batch_size=%s "
+                "backend=%s. Reverting to eager execution.",
+                plugin.name,
+                compiled_warmup_ms,
+                plugin.batch_size,
+                policy.backend,
+            )
+            for mod in modules:
+                reset_compiled_module(mod)
+            record_compile_outcome(
+                policy,
+                CompileResult(
+                    compiled=False,
+                    fallback_status="runtime_eager_fallback",
+                    fullgraph=None,
+                    compile_time_ms=compiled_warmup_ms,
+                    final_execution_mode="eager",
+                    error_summary=error_summary,
+                ),
+            )
+            eager_warmup_start = perf_counter()
+            eager_ready = warmup_plugin(
+                plugin, plugin.batch_size, channels_last=channels_last,
+            )
+            eager_warmup_ms = _elapsed_ms(eager_warmup_start)
+            if eager_ready is None:
+                logger.error(
+                    "[%s] Compile fallback failed: eager warmup also failed. "
+                    "elapsed_ms=%.2f batch_size=%s backend=%s",
+                    plugin.name,
+                    eager_warmup_ms,
+                    plugin.batch_size,
+                    policy.backend,
+                )
+                return
+            logger.info(
+                "[%s] Compile fallback complete: eager_warmup_elapsed_ms=%.2f "
+                "total_compile_ready_ms=%.2f backend=%s",
+                plugin.name,
+                eager_warmup_ms,
+                _elapsed_ms(total_start),
+                policy.backend,
+            )
+            return
+        logger.info(
+            "[%s] First compiled execution warmup complete: elapsed_ms=%.2f batch_size=%s "
+            "backend=%s",
+            plugin.name,
+            compiled_warmup_ms,
+            plugin.batch_size,
+            policy.backend,
+        )
+        logger.info(
+            "[%s] Compile ready: modules=%s final_batch_size=%s backend=%s "
+            "total_compile_ready_ms=%.2f",
+            plugin.name,
+            len(modules),
+            plugin.batch_size,
+            policy.backend,
+            _elapsed_ms(total_start),
+        )
+    if policy.backend in ("nvidia", "rocm"):
+        accelerator_empty_cache()  # Need to clear cache or we may run out of VRAM
 
 
 __all__ = get_module_objects(__name__)

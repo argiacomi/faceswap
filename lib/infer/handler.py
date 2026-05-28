@@ -25,6 +25,7 @@ from plugins.extract.base import ExtractPlugin
 from plugins.extract.extract_config import load_config
 from plugins.plugin_loader import PluginLoader
 
+from .compile_modes import CompilePolicy, resolve_compile_policy
 from .plugin_utils import compile_models, get_torch_modules, warmup_plugin
 from .runner import ExtractRunner
 
@@ -74,15 +75,18 @@ class ExtractHandler(abc.ABC):
     """The processors which should have thread's launched for this handler"""
 
     def __init__(
-        self, plugin: str, compile_model: bool = False, config_file: str | None = None
+        self,
+        plugin: str,
+        compile_model: CompilePolicy | str | bool = False,
+        config_file: str | None = None,
     ) -> None:
         self.plugin_type: T.Literal["detect", "align", "mask", "identity", "file"] = (
             self._get_plugin_type()
         )
         """The type of plugin that this handler manages"""
         self._config_file = config_file
-        self.do_compile = compile_model
-        """``True`` if any managed Torch modules are to be compiled"""
+        self.do_compile = resolve_compile_policy(compile_model)
+        """The backend-safe compile policy for any managed Torch modules"""
         self.plugin_name = plugin
         """The name of the plugin that is being handled"""
         load_config(config_file)
@@ -161,7 +165,7 @@ class ExtractHandler(abc.ABC):
             warmup_plugin(self.plugin, self.plugin.batch_size)
             return
         logger.debug("[%s.load] Compiling plugin", self.plugin.name)
-        compile_models(self.plugin, torch_modules)
+        compile_models(self.plugin, torch_modules, self.do_compile)
 
     def _predict(self, feed: np.ndarray) -> np.ndarray:
         """Obtain a prediction from the plugin
@@ -313,7 +317,10 @@ class ExtractHandlerFace(ExtractHandler, abc.ABC):
     """Stores whether a warning has been issued for non-68 point landmarks for this plugin type"""
 
     def __init__(
-        self, plugin: str, compile_model: bool = False, config_file: str | None = None
+        self,
+        plugin: str,
+        compile_model: CompilePolicy | str | bool = False,
+        config_file: str | None = None,
     ) -> None:
         super().__init__(plugin, compile_model=compile_model, config_file=config_file)
         self.plugin: FacePlugin
@@ -472,7 +479,7 @@ class FileHandler(ExtractHandler):
     def __init__(self) -> None:  # pylint:disable=super-init-not-called
         # Don't call super as we are not compatible
         logger.debug(parse_class_init(locals()))
-        self.do_compile = False
+        self.do_compile = resolve_compile_policy(False)
         self.plugin_type = "file"
         self.plugin_name = "file"
         self.plugin = self.Plugin  # type:ignore[assignment]

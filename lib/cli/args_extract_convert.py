@@ -5,6 +5,7 @@ import gettext
 import typing as T
 from argparse import SUPPRESS
 
+from lib.infer.compile_modes import compile_mode_choices, parse_compile_mode
 from lib.utils import get_backend, get_module_objects
 from plugins.plugin_loader import PluginLoader
 
@@ -19,6 +20,24 @@ from .actions import (
     Slider,
 )
 from .args import FaceSwapArgs
+
+
+def _benchmark_backends() -> tuple[str, ...]:
+    """Return the set of backends that support the extract benchmark profiler.
+
+    Apple Silicon is included only when ``torch.mps`` is confirmed available so that the option
+    is hidden automatically on systems where MPS cannot be initialised.
+    """
+    backends: list[str] = ["nvidia", "rocm"]
+    try:
+        import torch  # pylint:disable=import-outside-toplevel
+
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            backends.append("apple_silicon")
+    except (ImportError, AttributeError):
+        pass
+    return tuple(backends)
+
 
 # LOCALES
 _LANG = gettext.translation("lib.cli.args_extract_convert", localedir="locales", fallback=True)
@@ -117,7 +136,7 @@ class ExtractArgs(ExtractConvertArgs):
             default_aligner = "cv2-dnn"
         else:
             default_detector = "scrfd"
-            default_aligner = "orformer"
+            default_aligner = "spiga"
 
         argument_list: list[dict[str, T.Any]] = []
         argument_list.append(
@@ -559,13 +578,20 @@ class ExtractArgs(ExtractConvertArgs):
         argument_list.append(
             {
                 "opts": ("-c", "--compile"),
-                "action": "store_true",
-                "default": False,
+                "type": parse_compile_mode,
+                "choices": compile_mode_choices(),
+                "nargs": "?",
+                "const": "default",
+                "default": "off",
+                "metavar": "MODE",
                 "group": _("settings"),
                 "help": _(
-                    "Compile any PyTorch models. This will lead to slower start up time, but "
-                    "faster processing. For large amounts of data this is worth enabling. For "
-                    "smaller extractions it is not."
+                    "Compile PyTorch models using a controlled backend-safe mode. Pass with no "
+                    "value to use 'default'. Legacy bool-style values remain accepted for "
+                    "compatibility (`--compile`, `--compile true`, `--compile false`). "
+                    "Available modes: 'off', 'default', 'reduce-overhead', 'max-autotune', "
+                    "'max-autotune-no-cudagraphs'. Faster modes can increase startup time "
+                    "and are backend-dependent."
                 ),
             }
         )
@@ -574,6 +600,7 @@ class ExtractArgs(ExtractConvertArgs):
                 "opts": ("-k", "--benchmark"),
                 "action": "store_true",
                 "default": False,
+                "backend": _benchmark_backends(),
                 "group": _("settings"),
                 "help": _(
                     "Benchmark the chosen extract plugins for optimal batch sizes. The "
