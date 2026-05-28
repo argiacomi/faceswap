@@ -935,3 +935,52 @@ def test_records_from_alignments_derives_lighting_from_thumbnail(tmp_path) -> No
 def test_sidecar_path() -> None:
     """Default FaceQA sidecar path should be derived from alignments stem."""
     assert sidecar_path("/tmp/project/alignments.fsa") == "/tmp/project/alignments_faceset_qa.json"
+
+
+def test_faceqa_coverage_tool_suggest_pruning_emits_redundancy(tmp_path, monkeypatch) -> None:
+    """The coverage tool with --suggest-pruning should embed redundancy output."""
+    face = _face()
+    alignments = tmp_path / "alignments.fsa"
+    get_serializer("compressed").save(
+        str(alignments),
+        {
+            "__meta__": {"version": 2.4},
+            "__data__": {
+                "frame_000001.png": AlignmentsEntry(faces=[_face()]).to_dict(),
+                "frame_000002.png": AlignmentsEntry(faces=[_face()]).to_dict(),
+                "frame_000003.png": AlignmentsEntry(faces=[face]).to_dict(),
+            },
+        },
+    )
+    output_json = tmp_path / "coverage.json"
+    output_md = tmp_path / "coverage.md"
+    args = Namespace(
+        mode="coverage",
+        alignments=str(alignments),
+        frames_dir=str(tmp_path),
+        sidecar=None,
+        output_json=str(output_json),
+        output_markdown=str(output_md),
+        exclude_duplicates=False,
+        exclude_outliers=False,
+        min_bucket_pct=5.0,
+        suggest_pruning=True,
+        prune_aggressiveness="balanced",
+    )
+    monkeypatch.setattr(
+        Faceqa,
+        "_pose_backfiller",
+        lambda _: lambda __, ___: None,
+    )
+
+    Faceqa(args).process()
+
+    payload = json.loads(output_json.read_text(encoding="utf-8"))
+    assert "pruning_suggestions" in payload
+    pruning = payload["pruning_suggestions"]
+    assert pruning["aggressiveness"] == "balanced"
+    assert pruning["total_faces"] == 3
+    assert {"keep_count", "review_count", "prune_candidate_count"}.issubset(pruning)
+    markdown = output_md.read_text(encoding="utf-8")
+    assert "## Pruning Suggestions" in markdown
+    assert "Aggressiveness" in markdown

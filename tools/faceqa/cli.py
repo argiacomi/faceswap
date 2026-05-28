@@ -154,6 +154,29 @@ class FaceqaArgs(FaceSwapArgs):  # pylint:disable=invalid-name
                 "help": _("Bucket %% below which coverage buckets are flagged."),
             },
             {
+                "opts": ("--suggest-pruning",),
+                "action": "store_true",
+                "dest": "suggest_pruning",
+                "default": False,
+                "group": _("pruning"),
+                "help": _(
+                    "Run coverage-aware representation redundancy and emit "
+                    "keep/review/prune_candidate recommendations alongside coverage."
+                ),
+            },
+            {
+                "opts": ("--prune-aggressiveness",),
+                "type": str,
+                "dest": "prune_aggressiveness",
+                "default": "balanced",
+                "choices": ("conservative", "balanced", "aggressive"),
+                "group": _("pruning"),
+                "help": _(
+                    "Pruning aggressiveness preset. Conservative prunes only "
+                    "obvious duplicates; aggressive prunes wider redundancy."
+                ),
+            },
+            {
                 "opts": ("--identity-model",),
                 "type": str,
                 "dest": "identity_model",

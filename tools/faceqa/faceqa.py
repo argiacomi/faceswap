@@ -111,6 +111,23 @@ class Faceqa:  # pylint:disable=invalid-name
             min_bucket_pct=float(getattr(self._args, "min_bucket_pct", 5.0)),
         )
 
+        if bool(getattr(self._args, "suggest_pruning", False)):
+            from lib.faceqa.redundancy import compute_redundancy
+
+            redundancy = compute_redundancy(
+                records,
+                coverage=coverage,
+                aggressiveness=str(getattr(self._args, "prune_aggressiveness", "balanced")),
+            )
+            report.pruning_suggestions = redundancy.to_dict()
+            logger.info(
+                "Pruning suggestions (%s): keep=%d, review=%d, prune_candidate=%d.",
+                redundancy.aggressiveness,
+                redundancy.keep_count,
+                redundancy.review_count,
+                redundancy.prune_candidate_count,
+            )
+
         output_json, output_markdown = self._coverage_output_paths(alignments)
         output_json.write_text(report.to_json(indent=2) + "\n", encoding="utf-8")
         output_markdown.write_text(report.to_markdown(), encoding="utf-8")

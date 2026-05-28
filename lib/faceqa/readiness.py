@@ -74,6 +74,7 @@ class ReadinessReport:
     expression_coverage: dict[str, T.Any] = field(default_factory=dict)
     lighting_coverage: dict[str, T.Any] = field(default_factory=dict)
     readiness_scores: dict[str, T.Any] = field(default_factory=dict)
+    pruning_suggestions: dict[str, T.Any] = field(default_factory=dict)
     underrepresented_buckets: list[dict[str, str | float]] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     recommendations: list[str] = field(default_factory=list)
@@ -97,6 +98,7 @@ class ReadinessReport:
             "expression_coverage": self.expression_coverage,
             "lighting_coverage": self.lighting_coverage,
             "readiness_scores": self.readiness_scores,
+            "pruning_suggestions": self.pruning_suggestions,
             "underrepresented_buckets": self.underrepresented_buckets,
             "warnings": self.warnings,
             "recommendations": self.recommendations,
@@ -166,6 +168,46 @@ class ReadinessReport:
             if expected:
                 lines.extend(["", "### Expected training risks", ""])
                 lines.extend(f"- {item}" for item in expected)
+
+        pruning = self.pruning_suggestions
+        if pruning:
+            lines.extend(
+                [
+                    "",
+                    "## Pruning Suggestions",
+                    "",
+                    f"- **Aggressiveness**: {pruning.get('aggressiveness', 'balanced')}",
+                    f"- **Total faces**: {pruning.get('total_faces', 0)}",
+                    f"- **Redundancy clusters**: {pruning.get('cluster_count', 0)} "
+                    f"({pruning.get('multi_face_clusters', 0)} multi-face)",
+                    f"- **Keep**: {pruning.get('keep_count', 0)}",
+                    f"- **Review**: {pruning.get('review_count', 0)}",
+                    f"- **Prune candidates**: {pruning.get('prune_candidate_count', 0)}",
+                ]
+            )
+            protected = list(pruning.get("protected_buckets", []))
+            if protected:
+                lines.append(f"- **Protected buckets**: {', '.join(protected)}")
+            effective = pruning.get("effective_coverage", {}) or {}
+            if effective:
+                lines.extend(
+                    [
+                        "",
+                        "| Dimension | Bucket | Raw | Effective | Redundancy x |",
+                        "|-----------|--------|----:|----------:|-------------:|",
+                    ]
+                )
+                for dim_name, dim_payload in effective.items():
+                    raw_counts = dim_payload.get("raw_counts", {}) or {}
+                    eff_counts = dim_payload.get("effective_counts", {}) or {}
+                    ratios = dim_payload.get("redundancy_ratios", {}) or {}
+                    for bucket in sorted(set(raw_counts) | set(eff_counts)):
+                        lines.append(
+                            "| "
+                            f"{dim_name} | {bucket} | {int(raw_counts.get(bucket, 0))} | "
+                            f"{int(eff_counts.get(bucket, 0))} | "
+                            f"{float(ratios.get(bucket, 1.0)):.2f} |"
+                        )
 
         for dimension, payload in self.coverage.items():
             counts = payload.get("counts", {})
