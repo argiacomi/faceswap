@@ -111,16 +111,16 @@ def get_torch_modules(
 
     if isinstance(obj, Mapping):
         # Mapping before iterable as a mapping is also an iterable
-        for v in obj.values():
-            retval = get_torch_modules(v, mod, seen=seen, results=retval)
+        for val in obj.values():
+            retval = get_torch_modules(val, mod, seen=seen, results=retval)
 
     if isinstance(obj, Iterable):
-        for v in obj:
-            retval = get_torch_modules(v, mod, seen=seen, results=retval)
+        for val in obj:
+            retval = get_torch_modules(val, mod, seen=seen, results=retval)
 
     if hasattr(obj, "__dict__"):
-        for v in obj.__dict__.values():
-            retval = get_torch_modules(v, mod, seen=seen, results=retval)
+        for val in obj.__dict__.values():
+            retval = get_torch_modules(val, mod, seen=seen, results=retval)
     return retval
 
 
@@ -215,8 +215,6 @@ def _unique_modules(modules: list[torch.nn.Module]) -> tuple[list[torch.nn.Modul
         seen.add(module_id)
         retval.append(module)
     return retval, duplicates
-
-
 
 
 def compile_models(
@@ -386,6 +384,7 @@ def compile_models(
             )
             eager_warmup_ms = _elapsed_ms(eager_warmup_start)
             if eager_ready is None:
+                eager_error = "Compiled execution failed and eager fallback warmup also failed"
                 logger.error(
                     "[%s] Compile fallback failed: eager warmup also failed. "
                     "elapsed_ms=%.2f batch_size=%s backend=%s",
@@ -393,6 +392,17 @@ def compile_models(
                     eager_warmup_ms,
                     plugin.batch_size,
                     policy.backend,
+                )
+                record_compile_outcome(
+                    policy,
+                    CompileResult(
+                        compiled=False,
+                        fallback_status="runtime_eager_fallback_failed",
+                        fullgraph=None,
+                        compile_time_ms=eager_warmup_ms,
+                        final_execution_mode="failed",
+                        error_summary=eager_error,
+                    ),
                 )
                 return
             logger.info(
