@@ -65,6 +65,8 @@ class Detect(ExtractHandler):
         self._max_size = max_size / 100.0
         """The user selected shortest frame dim multiplier to accept for maximum size"""
         self._filter_counts = 0
+        self._scaled_image_cache: dict[tuple[int, str], npt.NDArray[np.uint8]] = {}
+        """Reusable detector input buffers keyed by batch size and dtype."""
 
     def __repr__(self) -> str:
         """Pretty print for logging"""
@@ -129,18 +131,26 @@ class Detect(ExtractHandler):
         -------
         The scaled images
         """
-        retval = np.zeros(
-            (len(images), self.plugin.input_size, self.plugin.input_size, 3),
-            dtype=images[0].dtype,
-        )
+        cache_key = (len(images), np.dtype(images[0].dtype).str)
+        if cache_key not in self._scaled_image_cache:
+            self._scaled_image_cache[cache_key] = np.empty(
+                (len(images), self.plugin.input_size, self.plugin.input_size, 3),
+                dtype=images[0].dtype,
+            )
+        retval = self._scaled_image_cache[cache_key]
         interpolators = np.where(matrices[:, 0, 0] < 1.0, cv2.INTER_AREA, cv2.INTER_CUBIC)
         dims = (self.plugin.input_size, self.plugin.input_size)
         warp_mats = matrices[:, :2]
         for idx, (image, mat, interpolator) in enumerate(
             zip(images, warp_mats, interpolators, strict=False)
         ):
-            image = image[..., 2::-1] if self.plugin.is_rgb else image
-            cv2.warpAffine(image, mat, dims, dst=retval[idx], flags=interpolator)
+            cv2.warpAffine(
+                (image[..., 2::-1] if self.plugin.is_rgb else image),
+                mat,
+                dims,
+                dst=retval[idx],
+                flags=interpolator,
+            )
         logger.trace("Resized batch shape: %s", retval.shape)  # type:ignore[attr-defined]
         return retval
 
