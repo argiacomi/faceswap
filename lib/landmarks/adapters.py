@@ -237,7 +237,8 @@ class FaceswapAlignerAdapter(LandmarkAdapter):
             batch = batch * (out_high - out_low) + out_low
             if dtype != np.dtype("float32"):
                 batch = batch.astype(dtype, copy=False)
-        return np.ascontiguousarray(batch)
+        # Wrapped plugins may normalize in place, so do not share the Ensemble crop batch.
+        return np.ascontiguousarray(batch).copy()
 
     def predict(self, image: np.ndarray, *, face: object | None = None) -> LandmarkPrediction:
         """Predict one prepared crop with the wrapped Faceswap plugin."""
@@ -290,7 +291,7 @@ class FaceswapAlignerAdapter(LandmarkAdapter):
 
 
 def schema_from_plugin(plugin: object) -> str:
-    """Infer an adapter schema from known model configuration attributes."""
+    """Infer a prediction schema from known model configuration attributes."""
     model_config = getattr(plugin, "_model_config", None)
     count = getattr(model_config, "num_landmarks", 68)
     return f"2d_{count}"
