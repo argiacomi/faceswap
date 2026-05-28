@@ -45,7 +45,7 @@ class InsightFace(FacePlugin):
             input_size=adapter.input_size,
             batch_size=cfg.batch_size(),
             is_rgb=False,
-            dtype="float32",
+            dtype=np.uint8,
             scale=(0, 255),
             force_cpu=self._force_cpu,
             centering="face",
@@ -72,7 +72,7 @@ class InsightFace(FacePlugin):
 
     def process(self, batch: np.ndarray) -> np.ndarray:
         """Return InsightFace embeddings for aligned BGR face crops."""
-        return self.model.embed(batch.astype(np.uint8))
+        return self.model.embed(batch)
 
     def post_process(self, batch: np.ndarray) -> np.ndarray:
         """Ensure stored InsightFace embeddings are stable float32 unit vectors."""

@@ -238,7 +238,7 @@ def _load_cvlface_wrapper(model_dir: str, model_label: str) -> T.Any:
 
 
 def _make_cvlface_loader(
-    repo_id: str, *, model_label: str, force_cpu: bool = False
+    repo_id: str, *, model_label: str, embedding_dim: int, force_cpu: bool = False
 ) -> T.Callable[[], LoadedIdentityModel]:
     """Return a loader for a CVLFace Transformers/safetensors recognition model."""
 
@@ -299,12 +299,15 @@ def _make_cvlface_loader(
                     raise ValueError(
                         f"{model_label} expects a 4D face batch, received shape {faces.shape}."
                     )
-                if faces.shape[1] == 3:
-                    rgb = np.ascontiguousarray(faces[:, [2, 1, 0], :, :])
-                    inputs = torch.from_numpy(rgb).to(dtype=torch.float32)
-                elif faces.shape[-1] == 3:
+                # Prefer NHWC since the framework hands aligned faces in that layout; only
+                # treat (N, 3, H, W) as NCHW when the trailing axis cannot plausibly be a
+                # colour channel.
+                if faces.shape[-1] == 3:
                     rgb = np.ascontiguousarray(faces[..., ::-1])
                     inputs = torch.from_numpy(rgb).to(dtype=torch.float32).permute(0, 3, 1, 2)
+                elif faces.shape[1] == 3:
+                    rgb = np.ascontiguousarray(faces[:, ::-1, :, :])
+                    inputs = torch.from_numpy(rgb).to(dtype=torch.float32)
                 else:
                     raise ValueError(
                         f"{model_label} expected BGR face batch in NCHW or NHWC layout, "
@@ -319,7 +322,7 @@ def _make_cvlface_loader(
 
             def _run(self, faces: np.ndarray) -> np.ndarray:
                 if len(faces) == 0:
-                    return np.zeros((0, 512), dtype=np.float32)
+                    return np.zeros((0, embedding_dim), dtype=np.float32)
                 with torch.inference_mode():
                     output = self._model(self._prepare(faces))
                     embeddings = _extract_tensor(output)
@@ -363,7 +366,7 @@ def _make_cvlface_loader(
 
 
 def _make_insightface_loader(
-    model_type: str, *, force_cpu: bool = False
+    model_type: str, *, embedding_dim: int, force_cpu: bool = False
 ) -> T.Callable[[], LoadedIdentityModel]:
     """Return a loader for one InsightFace recognition pack."""
 
@@ -429,13 +432,12 @@ def _make_insightface_loader(
 
         class _InsightFace:
             def embed(self, faces: np.ndarray) -> np.ndarray:
-                outputs = [
-                    np.asarray(recognition.get_feat(face), dtype=np.float32).reshape(-1)
-                    for face in faces
-                ]
-                if not outputs:
-                    return np.zeros((0, 512), dtype=np.float32)
-                return T.cast(np.ndarray, np.stack(outputs, axis=0))
+                if len(faces) == 0:
+                    return np.zeros((0, embedding_dim), dtype=np.float32)
+                # ``get_feat`` accepts a list of faces and runs one batched ONNX call,
+                # which avoids paying per-image kernel launch + provider dispatch.
+                output = np.asarray(recognition.get_feat(list(faces)), dtype=np.float32)
+                return T.cast(np.ndarray, output.reshape(len(faces), -1))
 
         return _InsightFace()
 
@@ -453,7 +455,9 @@ ADAFACE = IdentityModelAdapter(
         commercial_use=True,
         notes="CVLFace AdaFace iResNet101 WebFace12M, Kim et al., CVPR 2022.",
     ),
-    loader=_make_cvlface_loader("minchul/cvlface_adaface_ir101_webface12m", model_label="AdaFace"),
+    loader=_make_cvlface_loader(
+        "minchul/cvlface_adaface_ir101_webface12m", model_label="AdaFace", embedding_dim=512
+    ),
 )
 
 ARCFACE = IdentityModelAdapter(
@@ -467,7 +471,9 @@ ARCFACE = IdentityModelAdapter(
         commercial_use=False,
         notes="CVLFace ArcFace iResNet101 WebFace4M, Deng et al., CVPR 2019.",
     ),
-    loader=_make_cvlface_loader("minchul/cvlface_arcface_ir101_webface4m", model_label="ArcFace"),
+    loader=_make_cvlface_loader(
+        "minchul/cvlface_arcface_ir101_webface4m", model_label="ArcFace", embedding_dim=512
+    ),
 )
 
 
@@ -483,7 +489,7 @@ INSIGHTFACE: dict[str, IdentityModelAdapter] = {
             commercial_use=False,
             notes="InsightFace antelopev2 ArcFace R100 pack. Check upstream terms before use.",
         ),
-        loader=_make_insightface_loader("antelopev2"),
+        loader=_make_insightface_loader("antelopev2", embedding_dim=512),
     ),
     "buffalo_l": IdentityModelAdapter(
         name="insightface-buffalo-l",
@@ -496,7 +502,7 @@ INSIGHTFACE: dict[str, IdentityModelAdapter] = {
             commercial_use=False,
             notes="InsightFace buffalo_l ResNet50@WebFace600K pack. Check upstream terms before use.",
         ),
-        loader=_make_insightface_loader("buffalo_l"),
+        loader=_make_insightface_loader("buffalo_l", embedding_dim=512),
     ),
     "buffalo_sc": IdentityModelAdapter(
         name="insightface-buffalo-sc",
@@ -509,7 +515,7 @@ INSIGHTFACE: dict[str, IdentityModelAdapter] = {
             commercial_use=False,
             notes="InsightFace buffalo_sc MobileFaceNet pack. Check upstream terms before use.",
         ),
-        loader=_make_insightface_loader("buffalo_sc"),
+        loader=_make_insightface_loader("buffalo_sc", embedding_dim=512),
     ),
 }
 
@@ -520,7 +526,12 @@ def cvlface_adapter(
     """Return a CVLFace adapter with the requested runtime device policy."""
     return replace(
         adapter,
-        loader=_make_cvlface_loader(repo_id, model_label=model_label, force_cpu=force_cpu),
+        loader=_make_cvlface_loader(
+            repo_id,
+            model_label=model_label,
+            embedding_dim=adapter.embedding_dim,
+            force_cpu=force_cpu,
+        ),
     )
 
 
@@ -552,7 +563,12 @@ def insightface_adapter(model_type: str, *, force_cpu: bool = False) -> Identity
             f"Select from {sorted(INSIGHTFACE)}."
         )
     adapter = INSIGHTFACE[model_type]
-    return replace(adapter, loader=_make_insightface_loader(model_type, force_cpu=force_cpu))
+    return replace(
+        adapter,
+        loader=_make_insightface_loader(
+            model_type, embedding_dim=adapter.embedding_dim, force_cpu=force_cpu
+        ),
+    )
 
 
 def metadata(

@@ -31,7 +31,7 @@ class ArcFace(FacePlugin):
             input_size=adapter.input_size,
             batch_size=cfg.batch_size(),
             is_rgb=False,
-            dtype="float32",
+            dtype=np.uint8,
             scale=(0, 255),
             force_cpu=self._force_cpu,
             centering="face",
@@ -51,7 +51,7 @@ class ArcFace(FacePlugin):
 
     def process(self, batch: np.ndarray) -> np.ndarray:
         """Return ArcFace embeddings for aligned BGR face crops."""
-        return self.model.embed(batch.astype(np.uint8))
+        return self.model.embed(batch)
 
     def post_process(self, batch: np.ndarray) -> np.ndarray:
         """Ensure stored ArcFace embeddings are stable float32 unit vectors."""

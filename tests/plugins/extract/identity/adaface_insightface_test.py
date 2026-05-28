@@ -80,8 +80,10 @@ def test_cvlface_plugins_use_stable_storage_key_and_adapter(
     monkeypatch.setattr(IdentityModelAdapter, "load", lambda self: stub)
 
     plugin = plugin_cls()
-    batch: npt.NDArray[np.float32] = np.zeros(
-        (2, plugin.input_size, plugin.input_size, 3), dtype=np.float32
+    # The framework hands aligned faces to identity plugins in the plugin's declared
+    # dtype (uint8). process is expected to forward the batch as-is.
+    batch: npt.NDArray[np.uint8] = np.zeros(
+        (2, plugin.input_size, plugin.input_size, 3), dtype=np.uint8
     )
 
     assert plugin.storage_name == storage_name
@@ -113,8 +115,8 @@ def test_insightface_config_selects_adapter(
     monkeypatch.setattr(insightface_plugin, "insightface_adapter", fake_insightface_adapter)
 
     plugin = InsightFace()
-    batch: npt.NDArray[np.float32] = np.zeros(
-        (3, plugin.input_size, plugin.input_size, 3), dtype=np.float32
+    batch: npt.NDArray[np.uint8] = np.zeros(
+        (3, plugin.input_size, plugin.input_size, 3), dtype=np.uint8
     )
 
     assert seen == {"model_type": model_type, "force_cpu": False}
