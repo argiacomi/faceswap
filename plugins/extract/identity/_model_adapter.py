@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import glob
 import importlib.util
+import io
 import logging
 import os
 import os.path as osp
@@ -12,7 +13,7 @@ import sys
 import threading
 import types
 import typing as T
-from contextlib import contextmanager, suppress
+from contextlib import contextmanager, redirect_stderr, redirect_stdout, suppress
 from dataclasses import dataclass, replace
 from importlib import import_module
 
@@ -66,6 +67,21 @@ def normalize_embeddings(embeddings: np.ndarray) -> np.ndarray:
     norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
     norms = np.where(norms == 0.0, 1.0, norms)
     return T.cast(np.ndarray, np.ascontiguousarray(embeddings / norms, dtype=np.float32))
+
+
+@contextmanager
+def _third_party_output_to_debug(label: str) -> T.Iterator[None]:
+    """Capture noisy dependency stdout/stderr and replay it through Faceswap DEBUG."""
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    try:
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            yield
+    finally:
+        for stream_name, stream in (("stdout", stdout), ("stderr", stderr)):
+            for line in stream.getvalue().splitlines():
+                if line.strip():
+                    logger.debug("[%s %s] %s", label, stream_name, line)
 
 
 def _onnxruntime_providers(
@@ -238,7 +254,9 @@ def _make_cvlface_loader(
 
         device = torch_utils.get_device(cpu=force_cpu)
         model_dir = _download_cvlface_snapshot(repo_id, model_label)
-        with _CVLFACE_LOAD_LOCK, _cvlface_repo_context(model_dir):
+        with _CVLFACE_LOAD_LOCK, _cvlface_repo_context(model_dir), _third_party_output_to_debug(
+            f"{model_label} CVLFace"
+        ):
             model = _load_cvlface_wrapper(model_dir, model_label)
         model.to(device)
         model.eval()
@@ -334,6 +352,11 @@ def _make_insightface_loader(
                 "'onnxruntime' package."
             ) from exc
 
+        # ONNX Runtime writes CoreML partition warnings directly to stderr. Keep them out
+        # of normal Faceswap logs; real model-load failures still raise exceptions below.
+        with suppress(Exception):
+            ort.set_default_logger_severity(3)  # ERROR
+
         providers, ctx_id = _onnxruntime_providers(ort, force_cpu=force_cpu)
         model_dir = insightface_utils.ensure_available("models", model_type)
         onnx_files = sorted(glob.glob(osp.join(model_dir, "*.onnx")))
@@ -353,8 +376,9 @@ def _make_insightface_loader(
             )
 
         try:
-            recognition = _load_recognition(providers)
-            recognition.prepare(ctx_id=ctx_id)
+            with _third_party_output_to_debug(f"InsightFace {model_type}"):
+                recognition = _load_recognition(providers)
+                recognition.prepare(ctx_id=ctx_id)
         except Exception:  # pylint:disable=broad-except
             if force_cpu or providers == ["CPUExecutionProvider"]:
                 raise
@@ -367,8 +391,9 @@ def _make_insightface_loader(
             )
             providers = ["CPUExecutionProvider"]
             ctx_id = -1
-            recognition = _load_recognition(providers)
-            recognition.prepare(ctx_id=ctx_id)
+            with _third_party_output_to_debug(f"InsightFace {model_type} CPU fallback"):
+                recognition = _load_recognition(providers)
+                recognition.prepare(ctx_id=ctx_id)
 
         logger.info(
             "InsightFace %s recognition providers: %s",
