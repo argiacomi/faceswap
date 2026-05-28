@@ -26,10 +26,21 @@ if T.TYPE_CHECKING:
     import numpy.typing as npt
     from av.container import InputContainer, OutputContainer
 
+
+class _LibavNoiseFilter(logging.Filter):
+    """Suppress noisy libav warnings that do not indicate decode failure."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        return "No accelerated colorspace conversion found from" not in message
+
+
 logger = logging.getLogger(__name__)
 av.logging.set_level(av.logging.VERBOSE)
-logging.getLogger("libav").setLevel(logger.getEffectiveLevel())
 
+libav_logger = logging.getLogger("libav")
+libav_logger.setLevel(logger.getEffectiveLevel())
+libav_logger.addFilter(_LibavNoiseFilter())
 
 VIDEO_EXTENSIONS = [
     ".avi",

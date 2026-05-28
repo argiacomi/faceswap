@@ -321,10 +321,9 @@ def compile_models(
             result = compile_module(mod, policy)
             if not result.compiled:
                 logger.warning(
-                    "[%s/%s] backend=%s mode=%s fullgraph=%s dynamic=%s fallback=%s "
+                    "[%s] backend=%s mode=%s fullgraph=%s dynamic=%s fallback=%s "
                     "compile_wrap_time_ms=%.2f final_execution_mode=%s error=%s",
                     plugin.name,
-                    mod.__class__.__name__,
                     policy.backend,
                     policy.effective,
                     "n/a",
@@ -336,10 +335,9 @@ def compile_models(
                 )
                 continue
             logger.info(
-                "[%s/%s] backend=%s mode=%s fullgraph=%s dynamic=%s fallback=%s "
+                "[%s] backend=%s mode=%s fullgraph=%s dynamic=%s fallback=%s "
                 "compile_wrap_time_ms=%.2f final_execution_mode=%s",
                 plugin.name,
-                mod.__class__.__name__,
                 policy.backend,
                 policy.effective,
                 result.fullgraph,
