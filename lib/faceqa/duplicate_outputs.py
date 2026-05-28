@@ -13,6 +13,7 @@ import logging
 import shutil
 import typing as T
 from dataclasses import dataclass
+from math import floor
 from pathlib import Path
 
 import cv2
@@ -25,7 +26,8 @@ logger = logging.getLogger(__name__)
 
 
 DEFAULT_TILE_SIZE = 384
-DEFAULT_CONTACT_COLS = 4
+DEFAULT_SCREEN_WIDTH = 1920
+DEFAULT_CONTACT_COLS = floor(DEFAULT_SCREEN_WIDTH / DEFAULT_TILE_SIZE)
 DEFAULT_FORMAT = "png"
 SUPPORTED_FORMATS: tuple[str, ...] = ("png", "jpg", "jpeg")
 JPEG_QUALITY_DEFAULT = 95

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import typing as T
 from argparse import Namespace
 from pathlib import Path
@@ -20,7 +21,7 @@ from lib.faceqa.coverage import (
     records_from_alignments,
 )
 from lib.faceqa.duplicate_outputs import (
-    DEFAULT_CONTACT_COLS,
+    DEFAULT_SCREEN_WIDTH,
     DEFAULT_TILE_SIZE,
     render_contact_sheets,
     write_sorted_folders,
@@ -143,13 +144,15 @@ class Faceqa:  # pylint:disable=invalid-name
             symlink=bool(getattr(self._args, "symlink", False)),
         )
         write_manifests(report, output_dir)
+        tile_size = int(getattr(self._args, "contact_sheet_tile_size", DEFAULT_TILE_SIZE))
+        columns = math.floor(DEFAULT_SCREEN_WIDTH / tile_size)
         sheets = render_contact_sheets(
             report,
             faces_dir=faces_dir,
             output_dir=layout.contact_sheets_dir,
-            tile_size=int(getattr(self._args, "contact_sheet_tile_size", DEFAULT_TILE_SIZE)),
-            columns=int(getattr(self._args, "contact_sheet_cols", DEFAULT_CONTACT_COLS)),
-            format_=str(getattr(self._args, "contact_sheet_format", "png")),
+            tile_size=tile_size,
+            columns=columns,
+            format_="png",
         )
         logger.info(
             "Duplicate pipeline complete: %d faces in %d clusters (%d multi-face).",

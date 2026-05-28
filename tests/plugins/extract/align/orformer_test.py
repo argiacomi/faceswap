@@ -31,7 +31,7 @@ def _checkpoint(member: str, filename: str, payload: bytes) -> orformer.ORFormer
 
 
 def _list_part_files(cache_dir: str, filename: str) -> list[str]:
-    """Return leftover ``tempfile.mkstemp``-style extract artefacts for ``filename``.
+    """Return leftover ``tempfile.mkstemp``-style extract artifacts for ``filename``.
 
     Matches names like ``filename.<random>.part`` while ignoring a literal
     ``filename.part`` (which the new extract path does not produce and may be

@@ -68,8 +68,6 @@ def _duplicates_args(
         duplicates_report=duplicates_report,
         symlink=False,
         contact_sheet_tile_size=128,
-        contact_sheet_cols=2,
-        contact_sheet_format="png",
         source_alignments=None,
         target_alignments=None,
         source_sidecar=None,

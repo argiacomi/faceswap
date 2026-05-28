@@ -721,7 +721,7 @@ class VQVAE(nn.Module):
 def _validate_orformer_checkpoint(result: T.Any) -> None:
     """Raise if the VQ-VAE checkpoint has unapproved missing or unexpected keys.
 
-    Allowlisted mismatches are training-only artefacts that are expected and safe
+    Allowlisted mismatches are training-only artifacts that are expected and safe
     to ignore at inference time.  Any key outside the allowlists indicates real
     checkpoint drift and must not be silently skipped.
     """

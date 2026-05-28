@@ -578,7 +578,7 @@ dec_upscales_in_fc = ConfigItem(
     info="It is possible to place some of the upscales at the end of the fully connected "
     "model. For models with split decoders, but a shared fully connected layer, this "
     "would have the effect of saving some VRAM but possibly at the cost of introducing "
-    "artefacts. For models with a shared decoder but split fully connected layers, this "
+    "artifacts. For models with a shared decoder but split fully connected layers, this "
     "would have the effect of increasing VRAM usage by processing some of the upscales "
     "for each side rather than together.",
     fixed=True,

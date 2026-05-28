@@ -501,14 +501,14 @@ def write_manifests(report: DuplicateReport, output_dir: str | Path) -> dict[str
     """
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
-    artefacts: dict[str, Path] = {}
+    artifacts: dict[str, Path] = {}
     keep_records = [r for r in report.records if r.recommendation in (KEEP, REVIEW)]
     prune_records = [r for r in report.records if r.recommendation == PRUNE]
-    artefacts["keep_csv"] = _write_csv(out / "keep.csv", keep_records)
-    artefacts["keep_jsonl"] = _write_jsonl(out / "keep.jsonl", keep_records)
-    artefacts["prune_csv"] = _write_csv(out / "prune_candidates.csv", prune_records)
-    artefacts["prune_jsonl"] = _write_jsonl(out / "prune_candidates.jsonl", prune_records)
-    return artefacts
+    artifacts["keep_csv"] = _write_csv(out / "keep.csv", keep_records)
+    artifacts["keep_jsonl"] = _write_jsonl(out / "keep.jsonl", keep_records)
+    artifacts["prune_csv"] = _write_csv(out / "prune_candidates.csv", prune_records)
+    artifacts["prune_jsonl"] = _write_jsonl(out / "prune_candidates.jsonl", prune_records)
+    return artifacts
 
 
 def _write_csv(path: Path, records: list[DuplicateRecord]) -> Path:
