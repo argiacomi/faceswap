@@ -44,6 +44,89 @@ def get_device(cpu: bool = False) -> torch.device:
     return torch.device("cpu")
 
 
+AcceleratorType = T.Literal["cuda", "mps"]
+
+
+def get_accelerator_type() -> AcceleratorType | None:
+    """Return the active Torch accelerator type, if any."""
+    if torch.cuda.is_available():
+        return "cuda"
+    if torch.backends.mps.is_available():
+        return "mps"
+    return None
+
+
+def accelerator_empty_cache() -> None:
+    """Empty the active accelerator's allocator cache. No-op without an accelerator."""
+    accelerator = get_accelerator_type()
+    if accelerator == "cuda":
+        torch.cuda.empty_cache()
+    elif accelerator == "mps":
+        torch.mps.empty_cache()
+
+
+def accelerator_synchronize() -> None:
+    """Synchronize the active accelerator. No-op without an accelerator."""
+    accelerator = get_accelerator_type()
+    if accelerator == "cuda":
+        torch.cuda.synchronize()
+    elif accelerator == "mps":
+        torch.mps.synchronize()
+
+
+def accelerator_total_memory() -> int:
+    """Return total memory available to the active accelerator in bytes.
+
+    Returns ``0`` if no accelerator is available.
+    """
+    accelerator = get_accelerator_type()
+    if accelerator == "cuda":
+        return int(torch.cuda.get_device_properties(torch.cuda.current_device()).total_memory)
+    if accelerator == "mps":
+        # ``recommended_max_memory`` reflects the Metal driver's working-set ceiling for the
+        # current process, which is the closest analogue to CUDA's total device VRAM for
+        # batch-size profiling on Apple Silicon.
+        return int(torch.mps.recommended_max_memory())
+    return 0
+
+
+def accelerator_reset_peak_memory_stats() -> None:
+    """Reset peak memory stats on the active accelerator.
+
+    No-op on MPS (no peak-tracking API) and without an accelerator.
+    """
+    if get_accelerator_type() == "cuda":
+        torch.cuda.reset_peak_memory_stats()
+
+
+def accelerator_max_memory_allocated() -> int:
+    """Return peak allocated memory in bytes since the last reset.
+
+    On MPS, returns the current allocator footprint, since MPS exposes no peak-tracking API.
+    Returns ``0`` without an accelerator.
+    """
+    accelerator = get_accelerator_type()
+    if accelerator == "cuda":
+        return int(torch.cuda.max_memory_allocated())
+    if accelerator == "mps":
+        return int(torch.mps.current_allocated_memory())
+    return 0
+
+
+def accelerator_max_memory_reserved() -> int:
+    """Return peak reserved memory in bytes since the last reset.
+
+    On MPS, returns the driver's current allocation, which is the closest analogue to CUDA's
+    reserved-memory metric. Returns ``0`` without an accelerator.
+    """
+    accelerator = get_accelerator_type()
+    if accelerator == "cuda":
+        return int(torch.cuda.max_memory_reserved())
+    if accelerator == "mps":
+        return int(torch.mps.driver_allocated_memory())
+    return 0
+
+
 class ColorSpaceConvert(nn.Module):
     """Transforms inputs between different color spaces on the GPU. Images expected in (N,C,H,W)
     order

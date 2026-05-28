@@ -14,6 +14,7 @@ from torch.optim.lr_scheduler import ExponentialLR
 from lib.logger import parse_class_init
 from lib.model import optimizers
 from lib.model.autoclip import AutoClipper
+from lib.torch_utils import get_accelerator_type
 from lib.utils import get_module_objects
 
 from .lr_finder import LearningRateFinder
@@ -175,7 +176,7 @@ class Optimizer:
         logger.debug(parse_class_init(locals()))
         self._mixed_precision = mixed_precision
         self._accumulation_steps = config.gradient_accumulation()
-        self._scaler = None if not mixed_precision else torch.amp.grad_scaler.GradScaler()
+        self._scaler = self._build_grad_scaler(mixed_precision)
         self._clip = (
             None
             if config.gradient_clipping() == "none"
@@ -197,6 +198,22 @@ class Optimizer:
 
         self._accumulation_count = 0
         self._session_steps = 0
+
+    @staticmethod
+    def _build_grad_scaler(mixed_precision: bool) -> torch.amp.GradScaler | None:
+        """Return a ``GradScaler`` bound to the active accelerator, or ``None`` on CPU.
+
+        ``torch.amp.GradScaler`` accepts a device-type string (``"cuda"`` or ``"mps"``) since
+        PyTorch 2.x; passing the active accelerator avoids the default-to-CUDA warning and keeps
+        loss scaling functional on Apple Silicon. On CPU there is nothing to scale, so return
+        ``None`` and let the optimizer's existing ``is None`` checks short-circuit.
+        """
+        if not mixed_precision:
+            return None
+        accelerator = get_accelerator_type()
+        if accelerator is None:
+            return None
+        return torch.amp.GradScaler(accelerator)
 
     @classmethod
     def _get_optimizer_kwargs(cls, config: type[OptConfig]) -> dict[str, T.Any]:

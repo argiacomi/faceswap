@@ -13,6 +13,7 @@ import cv2
 import numpy as np
 import torch
 
+from lib.torch_utils import accelerator_empty_cache
 from lib.utils import get_module_objects
 
 if T.TYPE_CHECKING:
@@ -214,7 +215,7 @@ def compile_models(plugin: ExtractPlugin, modules: list[torch.nn.Module]) -> Non
             )
         # Send the warmup batch here as we need to keep the lock when tracing
         warmup_plugin(plugin, plugin.batch_size, channels_last=channels_last)
-    torch.cuda.empty_cache()  # Need to clear cache or we may run out of VRAM
+    accelerator_empty_cache()  # Need to clear cache or we may run out of VRAM
 
 
 __all__ = get_module_objects(__name__)

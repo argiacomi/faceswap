@@ -33,6 +33,7 @@ from lib.infer.identity import FilterLoader
 from lib.infer.objects import FrameFaces, frame_faces_to_alignment
 from lib.logger import parse_class_init
 from lib.multithreading import FSThread
+from lib.torch_utils import get_accelerator_type
 from lib.utils import (
     IMAGE_EXTENSIONS,
     get_folder,
@@ -367,7 +368,13 @@ class Extract:
                         self._face_filter.add_identity_plugin(retval)
 
             if retval is not None and profile:
-                Profiler(retval)()
+                if get_accelerator_type() is not None:
+                    Profiler(retval)()
+                else:
+                    logger.warning(
+                        "Skipping --benchmark: profiler requires a Torch accelerator (CUDA or "
+                        "MPS) and none is available on this system."
+                    )
 
             retval = File()() if retval is None else retval
 

@@ -134,7 +134,7 @@ class TrainLoader:  # pylint:disable=too-many-instance-attributes
             num_workers=num_workers,
             prefetch_factor=trn_cfg.Loader.pre_fetch(),
             collate_fn=collate_fn,
-            pin_memory=True,
+            pin_memory=torch.cuda.is_available(),
             drop_last=True,
         )
         logger.debug("[TrainLoader] Set loader: %s", retval)
@@ -273,7 +273,7 @@ class PreviewLoader:
             batch_size=self._batch_size,
             sampler=self._sampler(preview_set),
             num_workers=1,  # Previews don't need speed
-            pin_memory=True,
+            pin_memory=torch.cuda.is_available(),
             drop_last=True,
         )
         logger.debug("[PreviewLoader] Set loader : %s", retval)

@@ -16,6 +16,14 @@ from tqdm import tqdm
 
 from lib.logger import parse_class_init
 from lib.multithreading import FSThread
+from lib.torch_utils import (
+    accelerator_empty_cache,
+    accelerator_max_memory_allocated,
+    accelerator_max_memory_reserved,
+    accelerator_reset_peak_memory_stats,
+    accelerator_synchronize,
+    accelerator_total_memory,
+)
 from lib.utils import get_module_objects
 from plugins.extract import extract_config as cfg
 
@@ -74,7 +82,7 @@ class ModelProfile:
         self.iterations = np.zeros((num_tests,), dtype=np.int64) - 1
         self.vram = np.zeros((2, num_tests), dtype=np.int64) - 1
 
-        torch.cuda.empty_cache()
+        accelerator_empty_cache()
         plugin.batch_size = 1
         plugin.model = plugin.load_model()
 
@@ -117,7 +125,7 @@ class ModelProfile:
         while perf_counter() - start < seconds:
             self.plugin.process(inputs)
             iters += 1
-        torch.cuda.synchronize()
+        accelerator_synchronize()
         return iters
 
     def _output_stats(self) -> None:
@@ -151,16 +159,16 @@ class ModelProfile:
         for idx, batch_size in enumerate(prog_bar):
             inputs = random_input_from_plugin(self.plugin, batch_size, self.channels_last)
             try:
-                torch.cuda.empty_cache()
+                accelerator_empty_cache()
                 self._predict(inputs, 2)  # warmup
-                torch.cuda.reset_peak_memory_stats()
+                accelerator_reset_peak_memory_stats()
 
                 iters = self._predict(inputs, self._run_time)
 
                 self.iterations[idx] = iters
-                self.vram[0, idx] = torch.cuda.max_memory_allocated()
-                self.vram[1, idx] = torch.cuda.max_memory_reserved()
-            except torch.cuda.OutOfMemoryError:
+                self.vram[0, idx] = accelerator_max_memory_allocated()
+                self.vram[1, idx] = accelerator_max_memory_reserved()
+            except torch.OutOfMemoryError:
                 logger.debug("Exiting benchmark early as out of VRAM")
                 break
             prog_bar.set_description(f"Batch size {batch_size}")
@@ -253,7 +261,7 @@ class DataTracker:  # pylint:disable=too-many-instance-attributes
         max_vram
             The maximum amount of total VRAM to allow Cuda to reserve when profiling
         """
-        self.vram_limit = torch.cuda.get_device_properties().total_memory * max_vram
+        self.vram_limit = accelerator_total_memory() * max_vram
         self._all_batch_sizes = np.ones((1, size), dtype=np.int64)
         self._success = np.array([True], dtype=bool)
         self._batch_size_adjust = np.zeros((size,), dtype=np.int64) - 1
@@ -301,7 +309,7 @@ class DataTracker:  # pylint:disable=too-many-instance-attributes
 
     def collect_vram(self) -> None:
         """Store the currently allocated and reserved Cuda VRAM stats"""
-        self.vram.append((torch.cuda.max_memory_allocated(), torch.cuda.max_memory_reserved()))
+        self.vram.append((accelerator_max_memory_allocated(), accelerator_max_memory_reserved()))
         logger.debug("[%s] VRAM collected: %s", self._name, self.vram[-1])
 
     def get_samples(
@@ -564,7 +572,7 @@ class PipelineProfile:
         while perf_counter() - start < seconds:
             plugin.process(inputs)
             iters += 1
-        torch.cuda.synchronize()
+        accelerator_synchronize()
         return iters
 
     def _plugin_runner(self, plugin: ExtractPlugin, matrix_id: int, channels_last: bool) -> None:
@@ -601,7 +609,7 @@ class PipelineProfile:
                 self._data.update_iterations(iters, matrix_id)
                 self._events.set_ready(matrix_id)
 
-            except torch.cuda.OutOfMemoryError:
+            except torch.OutOfMemoryError:
                 logger.debug("[PipelineProfile] Exiting benchmark early as out of VRAM")
                 self._events.set_ready(matrix_id)
                 if self._events.stop.is_set():
@@ -641,7 +649,7 @@ class PipelineProfile:
 
             msg = f"[{self._current_index}] Batches {tuple(self._data.batch_sizes[-1].tolist())}"
             prog_bar = tqdm(desc=f"Benchmarking Pipeline {msg}", total=prog_length, leave=False)
-            torch.cuda.empty_cache()
+            accelerator_empty_cache()
 
             # Warmup
             prog_bar.update()
@@ -651,7 +659,7 @@ class PipelineProfile:
             self._events.start.clear()
 
             # Benchmark
-            torch.cuda.reset_peak_memory_stats()
+            accelerator_reset_peak_memory_stats()
             self._events.continue_.set()
             prog_bar.update()
             self._events.wait_ready()
@@ -839,7 +847,7 @@ class Profiler:
         )
         pipeline_benchmarks()
         self._update_config_file(plugins)
-        torch.cuda.empty_cache()
+        accelerator_empty_cache()
         logger.debug("[Profiler] Starting plugin threads")
         for runner in self._chain:
             runner.start()
