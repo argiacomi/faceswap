@@ -380,7 +380,9 @@ def compile_models(
             )
             eager_warmup_start = perf_counter()
             eager_ready = warmup_plugin(
-                plugin, plugin.batch_size, channels_last=channels_last,
+                plugin,
+                plugin.batch_size,
+                channels_last=channels_last,
             )
             eager_warmup_ms = _elapsed_ms(eager_warmup_start)
             if eager_ready is None:

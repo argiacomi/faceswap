@@ -58,9 +58,7 @@ def test_decoder_antialias_light_adds_fixed_non_trainable_blur(
     patch_config, upscale_method: str
 ) -> None:
     """Light anti-alias mode should add a normalized non-trainable blur after learned upscales."""
-    _patch_decoder_config(
-        patch_config, dec_antialias="light", dec_upscale_method=upscale_method
-    )
+    _patch_decoder_config(patch_config, dec_antialias="light", dec_upscale_method=upscale_method)
 
     inputs = Input(shape=(4, 4, 8))
     outputs = UpscaleBlocks("a")._upscale_block(inputs, 8, 0)  # pylint:disable=protected-access
@@ -101,12 +99,8 @@ def test_decoder_antialias_precedes_face_out(patch_config) -> None:
 
     decoder = Decoder("a", (4, 4, 8))()
     names = [layer.name for layer in decoder.layers]
-    antialias_idx = [
-        idx for idx, name in enumerate(names) if name.endswith("_antialias")
-    ]
-    face_out_idx = [
-        idx for idx, name in enumerate(names) if name.startswith("face_out")
-    ]
+    antialias_idx = [idx for idx, name in enumerate(names) if name.endswith("_antialias")]
+    face_out_idx = [idx for idx, name in enumerate(names) if name.startswith("face_out")]
 
     assert antialias_idx
     assert face_out_idx

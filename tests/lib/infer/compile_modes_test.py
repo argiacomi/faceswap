@@ -58,9 +58,7 @@ class _SpigaPlugin(_Plugin):
 def _compile_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     option = next(
-        opt
-        for opt in ExtractArgs.get_optional_arguments()
-        if "--compile" in opt["opts"]
+        opt for opt in ExtractArgs.get_optional_arguments() if "--compile" in opt["opts"]
     )
     kwargs = {key: val for key, val in option.items() if key not in ("opts", "group")}
     parser.add_argument(*option["opts"], **kwargs)
@@ -133,9 +131,7 @@ def test_fullgraph_failure_retries_without_fullgraph() -> None:
 
 def test_compile_failure_falls_back_to_eager() -> None:
     """A second compile failure should fall back to eager execution."""
-    module = _CompileModule(
-        [RuntimeError("fullgraph failed"), RuntimeError("retry failed")]
-    )
+    module = _CompileModule([RuntimeError("fullgraph failed"), RuntimeError("retry failed")])
     policy = resolve_compile_policy("default", backend="nvidia")
 
     result = compile_module(module, policy)

@@ -98,9 +98,7 @@ def test_invalid_decoder_residual_scale_fails_clearly(residual_scale: float) -> 
     """Decoder residual scales outside the supported range should fail clearly."""
     inputs = Input(shape=(4, 4, 1))
 
-    with pytest.raises(
-        ValueError, match="Decoder residual scale must be greater than 0"
-    ):
+    with pytest.raises(ValueError, match="Decoder residual scale must be greater than 0"):
         _decoder_residual_block(
             inputs,
             1,

@@ -56,9 +56,7 @@ def test_get_norm_layer_accepts_supported_options(
     [("leakyrelu", kl.LeakyReLU), ("swish", Swish), ("silu", Swish)],
     ids=["leakyrelu", "swish", "silu"],
 )
-def test_get_activation_accepts_supported_options(
-    name: str, expected: type[kl.Layer]
-) -> None:
+def test_get_activation_accepts_supported_options(name: str, expected: type[kl.Layer]) -> None:
     """Supported activations should resolve to layers."""
     layer = _get_activation(name, layer_name=f"activation_{name}")
 

@@ -130,9 +130,7 @@ def parse_compile_mode(value: str) -> CompileMode:
     if normalized in COMPILE_MODES:
         return T.cast(CompileMode, normalized)
     modes = ", ".join(COMPILE_MODES)
-    raise argparse.ArgumentTypeError(
-        f"Invalid compile mode '{value}'. Choose from: {modes}"
-    )
+    raise argparse.ArgumentTypeError(f"Invalid compile mode '{value}'. Choose from: {modes}")
 
 
 def resolve_compile_policy(
@@ -149,9 +147,7 @@ def resolve_compile_policy(
     requested = _normalize_requested_mode(value, warn_on_legacy=warn_on_legacy)
 
     if resolved_backend == "cpu":
-        reason = (
-            "" if requested == "off" else "PyTorch compile is disabled on CPU backends"
-        )
+        reason = "" if requested == "off" else "PyTorch compile is disabled on CPU backends"
         return CompilePolicy(requested, "off", resolved_backend, reason=reason)
 
     if resolved_backend == "apple_silicon":
@@ -169,8 +165,7 @@ def resolve_compile_policy(
             requested,
             "reduce-overhead",
             resolved_backend,
-            reason="ROCm compile support is currently limited to default and "
-            "reduce-overhead",
+            reason="ROCm compile support is currently limited to default and reduce-overhead",
         )
 
     return CompilePolicy(requested, requested, resolved_backend)

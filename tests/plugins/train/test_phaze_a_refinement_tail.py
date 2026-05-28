@@ -59,9 +59,7 @@ def test_refinement_tail_none_adds_no_tail_layers(patch_config) -> None:
 
 
 @pytest.mark.parametrize("blocks", [1, 2], ids=["one_block", "two_blocks"])
-def test_refinement_tail_light_inserts_before_face_out(
-    patch_config, blocks: int
-) -> None:
+def test_refinement_tail_light_inserts_before_face_out(patch_config, blocks: int) -> None:
     """The refinement tail should be inserted immediately before the face output path."""
     _patch_decoder_config(
         patch_config,
@@ -73,17 +71,12 @@ def test_refinement_tail_light_inserts_before_face_out(
     decoder = Decoder("a", (4, 4, 8))()
     names = [layer.name for layer in decoder.layers]
     refinement_idx = [idx for idx, name in enumerate(names) if "refinement" in name]
-    face_out_idx = [
-        idx for idx, name in enumerate(names) if name.startswith("face_out")
-    ]
+    face_out_idx = [idx for idx, name in enumerate(names) if name.startswith("face_out")]
 
     assert refinement_idx
     assert face_out_idx
     assert max(refinement_idx) < min(face_out_idx)
-    assert (
-        sum("_refinement_" in name and name.endswith("_add") for name in names)
-        == blocks
-    )
+    assert sum("_refinement_" in name and name.endswith("_add") for name in names) == blocks
 
 
 def test_refinement_tail_preserves_output_shape(patch_config) -> None:
@@ -109,9 +102,7 @@ def test_refinement_filters_are_capped_to_dec_min_and_sixty_four(patch_config) -
     )
 
     decoder = Decoder("a", (4, 4, 96))()
-    projection = next(
-        layer for layer in decoder.layers if "refinement_proj" in layer.name
-    )
+    projection = next(layer for layer in decoder.layers if "refinement_proj" in layer.name)
 
     assert isinstance(projection, kl.Conv2D)
     assert projection.filters == 64

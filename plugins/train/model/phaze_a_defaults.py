@@ -310,6 +310,7 @@ def bottleneck_norm() -> str:
     """Backward-compatible accessor for older internal references."""
     return latent_norm()
 
+
 bottleneck_size = ConfigItem(
     datatype=int,
     default=1024,

@@ -34,9 +34,7 @@ def _sample_float_image(
     *, batch: int = 1, channels: int = 3, height: int = 12, width: int = 10
 ) -> torch.Tensor:
     """Create a deterministic BCHW float32 image batch."""
-    image = _sample_uint8_image(
-        batch=batch, channels=channels, height=height, width=width
-    )
+    image = _sample_uint8_image(batch=batch, channels=channels, height=height, width=width)
     return image.to(dtype=torch.float32) / 255.0
 
 
@@ -76,9 +74,7 @@ def test_torch_normalize_matches_manual_formula() -> None:
     mean = (0.1, 0.2, 0.3)
     std = (0.5, 0.25, 0.125)
     result = torch_normalize(image, mean, std)
-    expected = (image - torch.tensor(mean).view(1, 3, 1, 1)) / torch.tensor(std).view(
-        1, 3, 1, 1
-    )
+    expected = (image - torch.tensor(mean).view(1, 3, 1, 1)) / torch.tensor(std).view(1, 3, 1, 1)
     assert result.dtype == torch.float32
     assert torch.allclose(result, expected)
 
@@ -141,9 +137,7 @@ def test_resize_falls_back_to_opencv_when_device_path_is_disabled() -> None:
     """Resize should route through the OpenCV fallback when device support is disabled."""
     image = _sample_float_image()
     with (
-        patch(
-            "lib.infer.torch_preprocess._resize_supported_on_device", return_value=False
-        ),
+        patch("lib.infer.torch_preprocess._resize_supported_on_device", return_value=False),
         patch(
             "lib.infer.torch_preprocess._resize_with_opencv", wraps=_resize_with_opencv
         ) as mock_resize,
@@ -158,9 +152,7 @@ def test_affine_warp_falls_back_to_opencv_when_device_path_is_disabled() -> None
     image = _sample_float_image(height=14, width=14)
     matrix = torch.tensor([[1.0, 0.0, 2.0], [0.0, 1.0, 3.0]], dtype=torch.float32)
     with (
-        patch(
-            "lib.infer.torch_preprocess._warp_supported_on_device", return_value=False
-        ),
+        patch("lib.infer.torch_preprocess._warp_supported_on_device", return_value=False),
         patch(
             "lib.infer.torch_preprocess._warp_with_opencv", wraps=_warp_with_opencv
         ) as mock_warp,

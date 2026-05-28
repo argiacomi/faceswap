@@ -41,13 +41,9 @@ def _validate_output_size(size: tuple[int, int]) -> tuple[int, int]:
 def _validate_image(image: torch.Tensor, func_name: str) -> torch.Tensor:
     """Validate the canonical BCHW image contract."""
     if image.ndim != 4:
-        raise ValueError(
-            f"{func_name} expects a BCHW tensor, got shape {tuple(image.shape)}"
-        )
+        raise ValueError(f"{func_name} expects a BCHW tensor, got shape {tuple(image.shape)}")
     if image.dtype not in _SUPPORTED_IMAGE_DTYPES:
-        raise ValueError(
-            f"{func_name} expects uint8 or float32 input, got {image.dtype}"
-        )
+        raise ValueError(f"{func_name} expects uint8 or float32 input, got {image.dtype}")
     return image
 
 
@@ -55,14 +51,10 @@ def _validate_boxes(boxes: torch.Tensor, *, allow_many: bool) -> torch.Tensor:
     """Validate crop boxes in ``[x1, y1, x2, y2]`` frame coordinates."""
     if boxes.ndim == 1:
         if boxes.shape[0] != 4:
-            raise ValueError(
-                f"Expected crop box with 4 values, got shape {tuple(boxes.shape)}"
-            )
+            raise ValueError(f"Expected crop box with 4 values, got shape {tuple(boxes.shape)}")
         boxes = boxes.unsqueeze(0)
     elif boxes.ndim != 2 or boxes.shape[1] != 4:
-        raise ValueError(
-            f"Expected crop boxes with shape (N, 4), got {tuple(boxes.shape)}"
-        )
+        raise ValueError(f"Expected crop boxes with shape (N, 4), got {tuple(boxes.shape)}")
 
     if not allow_many and boxes.shape[0] != 1:
         raise ValueError("torch_face_crop expects exactly one crop box")
@@ -116,9 +108,7 @@ def _opencv_interpolation(mode: str) -> int:
     """Map a public interpolation mode to the OpenCV enum."""
     if mode not in _INTERPOLATION_MODES:
         supported = ", ".join(sorted(_INTERPOLATION_MODES))
-        raise ValueError(
-            f"Unsupported interpolation mode '{mode}'. Expected one of {supported}"
-        )
+        raise ValueError(f"Unsupported interpolation mode '{mode}'. Expected one of {supported}")
     return _INTERPOLATION_MODES[mode]
 
 
@@ -149,9 +139,7 @@ def _resize_with_opencv(
         dtype=images.dtype,
     )
     for idx, sample in enumerate(images):
-        out = cv2.resize(
-            sample, (target_width, target_height), interpolation=interpolation
-        )
+        out = cv2.resize(sample, (target_width, target_height), interpolation=interpolation)
         if out.ndim == 2:
             out = out[..., None]
         resized[idx] = out
@@ -175,9 +163,7 @@ def _warp_with_opencv(
         dtype=images.dtype,
     )
     for idx, (sample, mat) in enumerate(zip(images, mats, strict=False)):
-        out = cv2.warpAffine(
-            sample, mat, (target_width, target_height), flags=interpolation
-        )
+        out = cv2.warpAffine(sample, mat, (target_width, target_height), flags=interpolation)
         if out.ndim == 2:
             out = out[..., None]
         warped[idx] = out
@@ -223,12 +209,8 @@ def _affine_grid_from_matrices(
     coords = torch.stack((xs, ys, torch.ones_like(xs)), dim=-1)
     coords = coords.unsqueeze(0).expand(matrices.shape[0], -1, -1, -1)
     source = torch.einsum("bij,bhwj->bhwi", inverse, coords)
-    grid_x = _normalize_grid_coords(
-        source[..., 0], input_width, align_corners=align_corners
-    )
-    grid_y = _normalize_grid_coords(
-        source[..., 1], input_height, align_corners=align_corners
-    )
+    grid_x = _normalize_grid_coords(source[..., 0], input_width, align_corners=align_corners)
+    grid_y = _normalize_grid_coords(source[..., 1], input_height, align_corners=align_corners)
     return torch.stack((grid_x, grid_y), dim=-1)
 
 
@@ -270,14 +252,10 @@ def _normalize_matrices(
     return matrix
 
 
-def _boxes_to_matrices(
-    boxes: torch.Tensor, output_size: tuple[int, int]
-) -> torch.Tensor:
+def _boxes_to_matrices(boxes: torch.Tensor, output_size: tuple[int, int]) -> torch.Tensor:
     """Convert crop boxes into OpenCV-style affine warp matrices."""
     output_height, output_width = _validate_output_size(output_size)
-    matrices = torch.zeros(
-        (boxes.shape[0], 2, 3), dtype=torch.float32, device=boxes.device
-    )
+    matrices = torch.zeros((boxes.shape[0], 2, 3), dtype=torch.float32, device=boxes.device)
     matrices[:, 0, 0] = float(output_width) / (boxes[:, 2] - boxes[:, 0])
     matrices[:, 1, 1] = float(output_height) / (boxes[:, 3] - boxes[:, 1])
     matrices[:, 0, 2] = -boxes[:, 0] * matrices[:, 0, 0]
@@ -300,9 +278,7 @@ def torch_resize(
     if not _resize_supported_on_device(image.device.type, mode):
         if image.device.type == "mps":
             _record_mps_fallback(f"torch_resize:{mode}")
-        logger.debug(
-            "Falling back to OpenCV resize for device=%s mode=%s", image.device, mode
-        )
+        logger.debug("Falling back to OpenCV resize for device=%s mode=%s", image.device, mode)
         return _resize_with_opencv(image, target_size, mode=mode)
 
     restored_dtype = image.dtype
@@ -330,12 +306,8 @@ def torch_normalize(
             f"mean/std length must match channel count {image.shape[1]}, got {len(mean)} and {len(std)}"
         )
 
-    mean_tensor = torch.tensor(mean, dtype=torch.float32, device=image.device).view(
-        1, -1, 1, 1
-    )
-    std_tensor = torch.tensor(std, dtype=torch.float32, device=image.device).view(
-        1, -1, 1, 1
-    )
+    mean_tensor = torch.tensor(mean, dtype=torch.float32, device=image.device).view(1, -1, 1, 1)
+    std_tensor = torch.tensor(std, dtype=torch.float32, device=image.device).view(1, -1, 1, 1)
     if torch.any(std_tensor == 0):
         raise ValueError("std values must be non-zero")
     return (image - mean_tensor) / std_tensor
@@ -349,9 +321,7 @@ def torch_affine_warp(
     """Warp a BCHW image tensor using OpenCV-style affine matrices."""
     image = _validate_image(image, "torch_affine_warp")
     target_size = _validate_output_size(output_size)
-    matrices = _normalize_matrices(
-        matrix, batch_size=image.shape[0], device=image.device
-    )
+    matrices = _normalize_matrices(matrix, batch_size=image.shape[0], device=image.device)
 
     if not _warp_supported_on_device(image.device.type):
         if image.device.type == "mps":

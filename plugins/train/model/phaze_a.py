@@ -124,9 +124,7 @@ def _decoder_antialias(inputs: KerasTensor, *, name: str) -> KerasTensor:
     if channels is None:
         raise ValueError("Decoder anti-alias requires a known channel dimension")
 
-    kernel = (
-        np.array([[1.0, 2.0, 1.0], [2.0, 4.0, 2.0], [1.0, 2.0, 1.0]], dtype="float32") / 16.0
-    )
+    kernel = np.array([[1.0, 2.0, 1.0], [2.0, 4.0, 2.0], [1.0, 2.0, 1.0]], dtype="float32") / 16.0
     kernel = np.repeat(kernel[:, :, np.newaxis, np.newaxis], int(channels), axis=2)
     layer = kl.DepthwiseConv2D(
         3,
@@ -204,18 +202,18 @@ def _decoder_residual_block(
     var_x = inputs
 
     if use_reflect_padding:
-        var_x = ReflectionPadding2D(
-            stride=1, kernel_size=3, name=f"{name}_reflectionpadding2d_0"
-        )(var_x)
+        var_x = ReflectionPadding2D(stride=1, kernel_size=3, name=f"{name}_reflectionpadding2d_0")(
+            var_x
+        )
 
     var_x = Conv2D(filters, kernel_size=3, padding=padding, name=f"{name}_conv2d_0")(var_x)
     var_x = _apply_activation(var_x, activated, alpha=0.2, layer_name=f"{name}_{activated}_1")
     var_x = _apply_norm(var_x, normalized, layer_name=f"{name}_{normalized}_0")
 
     if use_reflect_padding:
-        var_x = ReflectionPadding2D(
-            stride=1, kernel_size=3, name=f"{name}_reflectionpadding2d_1"
-        )(var_x)
+        var_x = ReflectionPadding2D(stride=1, kernel_size=3, name=f"{name}_reflectionpadding2d_1")(
+            var_x
+        )
 
     conv_kwargs: dict[str, initializers.Initializer] = {}
     if not train_cfg.conv_aware_init():
@@ -1423,9 +1421,7 @@ class UpscaleBlocks:
                     norm=cfg.dec_res_block_norm(),
                     activation=cfg.dec_activation(),
                     residual_scale=cfg.dec_residual_scale(),
-                    name=(
-                        f"decoder_{self._side}_upscale_{block_idx}_residual_{res_idx}"
-                    ),
+                    name=(f"decoder_{self._side}_upscale_{block_idx}_residual_{res_idx}"),
                 )
         else:
             var_x = self._normalization(var_x)
