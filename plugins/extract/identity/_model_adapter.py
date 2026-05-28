@@ -254,8 +254,10 @@ def _make_cvlface_loader(
 
         device = torch_utils.get_device(cpu=force_cpu)
         model_dir = _download_cvlface_snapshot(repo_id, model_label)
-        with _CVLFACE_LOAD_LOCK, _cvlface_repo_context(model_dir), _third_party_output_to_debug(
-            f"{model_label} CVLFace"
+        with (
+            _CVLFACE_LOAD_LOCK,
+            _cvlface_repo_context(model_dir),
+            _third_party_output_to_debug(f"{model_label} CVLFace"),
         ):
             model = _load_cvlface_wrapper(model_dir, model_label)
         model.to(device)
@@ -318,18 +320,29 @@ def _make_cvlface_loader(
             def embed(self, faces: np.ndarray) -> np.ndarray:
                 try:
                     return self._run(faces)
-                except RuntimeError:
+                except RuntimeError as gpu_err:
                     if self._device.type == "cpu":
+                        raise
+                    # Try CPU once. If it also fails the issue is not device-specific
+                    # (e.g. a warmup probe with a deliberately wrong channel layout) — restore
+                    # the accelerator so real inference still uses it.
+                    original_device = self._device
+                    cpu = torch.device("cpu")
+                    self._model.to(cpu)
+                    self._device = cpu
+                    try:
+                        result = self._run(faces)
+                    except RuntimeError:
+                        self._model.to(original_device)
+                        self._device = original_device
                         raise
                     logger.warning(
                         "%s failed on %s. Falling back to CPU.",
                         model_label,
-                        self._device,
-                        exc_info=True,
+                        original_device,
+                        exc_info=gpu_err,
                     )
-                    self._device = torch.device("cpu")
-                    self._model.to(self._device)
-                    return self._run(faces)
+                    return result
 
         return _CVLFace()
 
@@ -395,7 +408,7 @@ def _make_insightface_loader(
                 recognition = _load_recognition(providers)
                 recognition.prepare(ctx_id=ctx_id)
 
-        logger.info(
+        logger.debug(
             "InsightFace %s recognition providers: %s",
             model_type,
             recognition.session.get_providers(),
