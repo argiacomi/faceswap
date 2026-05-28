@@ -184,9 +184,17 @@ class SCRFD(ExtractPlugin):
         )
 
     def process(self, batch: np.ndarray) -> np.ndarray:
-        """Run model to get predictions."""
+        """Run model to get predictions.
+
+        ``pre_process`` already routes inputs to the right layout for each post-process
+        mode, but ``process`` is also reachable directly from compile-warmup paths and
+        legacy callers that may hand us a raw uint8 BGR NHWC batch. Detect that shape
+        and apply the same CPU blob conversion so the legacy NumPy path keeps working.
+        """
         if self._should_use_torch_path():
             return self._from_torch_raw(batch)
+        if batch.ndim == 4 and batch.shape[-1] == 3:
+            batch = self._blob_pre_process(batch)
         return self.from_torch(batch)
 
     @property
@@ -205,8 +213,10 @@ class SCRFD(ExtractPlugin):
     def _from_torch_raw(self, batch: np.ndarray) -> np.ndarray:
         """Run the Torch model while keeping output tensors on-device.
 
-        Always receives raw BGR uint8 NHWC from :meth:`pre_process`; normalizes,
-        reorders to RGB and converts to channels-last float32 on-device.
+        Normally receives raw BGR uint8 NHWC from :meth:`pre_process` and normalizes /
+        reorders to RGB channels-last float32 on-device. Also accepts already-normalized
+        float32 NCHW blobs (legacy callers, profiler warmup before ``pre_process`` is
+        plumbed in) and forwards them after a channels-last conversion.
         """
         with torch.inference_mode():
             feed = torch.from_numpy(batch)
@@ -215,10 +225,17 @@ class SCRFD(ExtractPlugin):
                 if self.device.type == "cuda"
                 else feed.to(self.device)
             )
-            feed = feed.permute(0, 3, 1, 2)
-            feed = feed[:, [2, 1, 0]].to(dtype=torch.float32)
-            feed.sub_(127.5).mul_(1.0 / 128.0)
-            feed = feed.contiguous(memory_format=torch.channels_last)
+            if feed.ndim == 4 and feed.shape[-1] == 3:
+                # Compact uint8 BGR NHWC: normalize, swap to RGB, switch to channels-last.
+                feed = feed.permute(0, 3, 1, 2)
+                feed = feed[:, [2, 1, 0]].to(dtype=torch.float32)
+                feed.sub_(127.5).mul_(1.0 / 128.0)
+                feed = feed.contiguous(memory_format=torch.channels_last)
+            else:
+                # Legacy normalized float32 NCHW: only ensure dtype + memory format.
+                if feed.dtype != torch.float32:
+                    feed = feed.to(dtype=torch.float32)
+                feed = feed.contiguous(memory_format=torch.channels_last)
             output = self.model(feed)
 
         return self._object_array(list(output))
