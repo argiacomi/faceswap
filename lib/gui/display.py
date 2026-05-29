@@ -41,6 +41,13 @@ class DisplayNotebook(ttk.Notebook):  # pylint:disable=too-many-ancestors
         self._wrapper_var = tk_vars.display
         self._running_task = tk_vars.running_task
 
+        # Re-entrancy + idempotency guards (issue #188). Tkinter variable traces
+        # can fire duplicate / re-entrant events; without these guards the
+        # extract/convert preview tab can crash on Tcl-side duplicate widget
+        # names ("window name "!previewextract2" already exists in parent").
+        self._displayed_command: str | None = None
+        self._updating_displaybook: bool = False
+
         self._set_wrapper_var_trace()
         self._add_static_tabs()
         # pylint:disable=unnecessary-comprehension
@@ -140,37 +147,101 @@ class DisplayNotebook(ttk.Notebook):  # pylint:disable=too-many-ancestors
         logger.debug("Built convert tabs")
 
     def _remove_tabs(self):
-        """Remove all optional displayed command specific tabs from the notebook."""
+        """Remove all optional displayed command specific tabs from the notebook.
+
+        Hardened against Python/Tcl state divergence (issue #188): if the
+        Python ``self.children`` lookup fails to resolve a tab path (which
+        can happen when a previous tab teardown was interrupted), the tab
+        path is still ``forget``-ed from the notebook AND destroyed via Tcl
+        as a fallback so a stale widget cannot survive into the next
+        rebuild and cause a duplicate window-name error.
+        """
         for child in self.tabs():
             if child in self._static_tabs:
                 continue
             logger.debug("removing child: %s", child)
             child_name = child.split(".")[-1]
-            child_object = self.children.get(child_name)  # returns the OptionalDisplayPage object
+            child_object = self.children.get(child_name)
             if child_object is not None:
-                child_object.close()  # Call the OptionalDisplayPage close() method
+                try:
+                    child_object.close()
+                except Exception:  # pylint:disable=broad-except
+                    logger.debug("close() raised for '%s'; continuing teardown", child)
             if child in self.tabs():
-                self.forget(child)
+                try:
+                    self.forget(child)
+                except tk.TclError:
+                    logger.debug("forget() failed for '%s'; widget already gone", child)
             if child_object is not None:
-                child_object.destroy()
+                try:
+                    child_object.destroy()
+                except tk.TclError:
+                    logger.debug("destroy() failed for '%s'; widget already gone", child)
+            else:
+                # Tcl-side fallback: the Python lookup failed, but Tcl may
+                # still know about the widget. Issue a destroy on the Tcl
+                # path so the next rebuild does not collide with a stale
+                # widget name.
+                try:
+                    self.tk.call("destroy", child)
+                    logger.debug("Tcl-fallback destroy succeeded for '%s'", child)
+                except tk.TclError:
+                    logger.debug(
+                        "Tcl-fallback destroy failed for '%s'; widget already gone", child
+                    )
 
     def _update_displaybook(self, *args):  # pylint:disable=unused-argument
         """Callback to be executed when the global tkinter variable `display`
         (:attr:`wrapper_var`) is updated when a Faceswap task is executed.
 
-        Currently only updates when a core faceswap task (extract, train or convert) is executed.
+        Currently only updates when a core faceswap task (extract, train or
+        convert) is executed.
+
+        Re-entrancy + idempotency guards (issue #188):
+
+        * If a previous rebuild is still running (``_updating_displaybook``),
+          drop the duplicate trace event. Tk variable traces can re-fire on
+          parent/child paths and would otherwise construct a second
+          ``PreviewExtract`` while the first is still partially live, raising
+          ``window name "!previewextract2" already exists in parent``.
+        * If the requested command matches the currently displayed command,
+          skip the teardown+rebuild entirely. The previous behaviour
+          unconditionally tore down and rebuilt every tab on every trace
+          fire — there is nothing to do here when nothing changed.
 
         Parameters
         ----------
         args: tuple
             Required for tkinter callback events, but unused.
-
         """
-        command = self._wrapper_var.get()
-        self._remove_tabs()
-        if not command or command not in ("extract", "train", "convert"):
+        raw_command = self._wrapper_var.get()
+        command: str | None = (
+            raw_command if raw_command in ("extract", "train", "convert") else None
+        )
+
+        if self._updating_displaybook:
+            logger.debug(
+                "Display update already running. Ignoring duplicate trace (command=%s).",
+                command,
+            )
             return
-        self._command_display(command)
+
+        if command == self._displayed_command:
+            logger.debug("Display command unchanged. Skipping rebuild: %s", command)
+            return
+
+        self._updating_displaybook = True
+        try:
+            self._remove_tabs()
+            self._displayed_command = None
+
+            if command is None:
+                return
+
+            self._command_display(command)
+            self._displayed_command = command
+        finally:
+            self._updating_displaybook = False
 
     def _on_tab_change(self, event):  # pylint:disable=unused-argument
         """Event trigger for tab change events.

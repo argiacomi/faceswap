@@ -87,3 +87,121 @@ def test_display_notebook_remove_tabs_destroys_optional_page_widgets() -> None:
     child_object.close.assert_called_once_with()
     notebook.forget.assert_called_once_with(".preview1")
     child_object.destroy.assert_called_once_with()
+
+
+def test_display_notebook_skips_rebuild_when_command_unchanged() -> None:
+    """Setting the display var to the already-displayed command must be a no-op (#188).
+
+    Re-entrant trace events were unconditionally tearing down + rebuilding the
+    preview tab on every fire, which is how the duplicate-window-name crash
+    appeared on extract/convert.
+    """
+    notebook = DisplayNotebook.__new__(DisplayNotebook)
+    notebook._displayed_command = "extract"
+    notebook._updating_displaybook = False
+    notebook._wrapper_var = MagicMock()
+    notebook._wrapper_var.get = MagicMock(return_value="extract")
+    notebook._remove_tabs = MagicMock()
+    notebook._command_display = MagicMock()
+
+    DisplayNotebook._update_displaybook(notebook)
+
+    notebook._remove_tabs.assert_not_called()
+    notebook._command_display.assert_not_called()
+    assert notebook._displayed_command == "extract"
+
+
+def test_display_notebook_ignores_reentrant_update() -> None:
+    """A re-entrant trace must not invoke teardown + rebuild a second time (#188)."""
+    notebook = DisplayNotebook.__new__(DisplayNotebook)
+    notebook._displayed_command = None
+    notebook._updating_displaybook = True  # simulate an in-flight rebuild
+    notebook._wrapper_var = MagicMock()
+    notebook._wrapper_var.get = MagicMock(return_value="extract")
+    notebook._remove_tabs = MagicMock()
+    notebook._command_display = MagicMock()
+
+    DisplayNotebook._update_displaybook(notebook)
+
+    notebook._remove_tabs.assert_not_called()
+    notebook._command_display.assert_not_called()
+    # The guard must NOT mutate displayed_command on the re-entrant path —
+    # the in-flight rebuild owns that field.
+    assert notebook._displayed_command is None
+
+
+def test_display_notebook_rebuild_updates_displayed_command_on_change() -> None:
+    """A genuine command transition tears down, rebuilds, and records the new state."""
+    notebook = DisplayNotebook.__new__(DisplayNotebook)
+    notebook._displayed_command = "train"
+    notebook._updating_displaybook = False
+    notebook._wrapper_var = MagicMock()
+    notebook._wrapper_var.get = MagicMock(return_value="extract")
+    notebook._remove_tabs = MagicMock()
+    notebook._command_display = MagicMock()
+
+    DisplayNotebook._update_displaybook(notebook)
+
+    notebook._remove_tabs.assert_called_once_with()
+    notebook._command_display.assert_called_once_with("extract")
+    assert notebook._displayed_command == "extract"
+    assert notebook._updating_displaybook is False
+
+
+def test_display_notebook_rebuild_clears_state_for_unknown_command() -> None:
+    """An unknown / empty command tears down optional tabs and clears the
+    displayed-command marker so a subsequent extract/train/convert request
+    runs a full rebuild rather than being skipped by the unchanged-command
+    guard."""
+    notebook = DisplayNotebook.__new__(DisplayNotebook)
+    notebook._displayed_command = "extract"
+    notebook._updating_displaybook = False
+    notebook._wrapper_var = MagicMock()
+    notebook._wrapper_var.get = MagicMock(return_value="")
+    notebook._remove_tabs = MagicMock()
+    notebook._command_display = MagicMock()
+
+    DisplayNotebook._update_displaybook(notebook)
+
+    notebook._remove_tabs.assert_called_once_with()
+    notebook._command_display.assert_not_called()
+    assert notebook._displayed_command is None
+
+
+def test_display_notebook_remove_tabs_tcl_destroy_fallback() -> None:
+    """If the Python child lookup misses, fall back to a Tcl ``destroy`` so a
+    stale widget cannot survive into the next rebuild (#188)."""
+    notebook = DisplayNotebook.__new__(DisplayNotebook)
+    notebook._static_tabs = [".analysis"]
+    notebook.tabs = lambda: [".analysis", ".previewextract2"]
+    # Empty children dict → Python lookup misses the optional tab.
+    notebook.children = {}
+    notebook.forget = MagicMock()
+    fake_tk = MagicMock()
+    notebook.tk = fake_tk
+
+    DisplayNotebook._remove_tabs(notebook)
+
+    notebook.forget.assert_called_once_with(".previewextract2")
+    fake_tk.call.assert_called_once_with("destroy", ".previewextract2")
+
+
+def test_display_notebook_remove_tabs_swallows_tcl_errors() -> None:
+    """``forget``/``destroy`` raising TclError during teardown must not propagate
+    — once the widget is gone, the rebuild path must still proceed."""
+    import tkinter as tk
+
+    notebook = DisplayNotebook.__new__(DisplayNotebook)
+    notebook._static_tabs = []
+    notebook.tabs = lambda: [".previewextract2"]
+    notebook.children = {}
+    notebook.forget = MagicMock(side_effect=tk.TclError("already destroyed"))
+    fake_tk = MagicMock()
+    fake_tk.call = MagicMock(side_effect=tk.TclError("already destroyed"))
+    notebook.tk = fake_tk
+
+    # Should not raise — both fallbacks tolerate the widget being already gone.
+    DisplayNotebook._remove_tabs(notebook)
+
+    notebook.forget.assert_called_once()
+    fake_tk.call.assert_called_once_with("destroy", ".previewextract2")

@@ -201,13 +201,21 @@ class DisplayOptionalPage(DisplayPage):  # pylint:disable=too-many-ancestors
     """Parent Context Sensitive Display Tab"""
 
     def __init__(self, parent, tab_name, helptext, wait_time, command=None):
-        super().__init__(parent, tab_name, helptext)
-
+        # Lifecycle fields are populated BEFORE ``super().__init__()`` so a
+        # partially-initialized optional page can still be safely torn down
+        # if the parent notebook tears it down mid-construction (issue #188).
+        # ``close()`` walks ``_after_ids``/``_update_after_id``, and the
+        # parent's _remove_tabs() teardown can fire at any point during
+        # ``DisplayPage.__init__`` if a duplicate display trace was already
+        # in flight. With these slots present from the start, that teardown
+        # path is safe rather than ``AttributeError``-prone.
         self._waittime = wait_time
         self._after_ids: list[str] = []
         self._update_after_id: str | None = None
         self.command = command
         self.display_item = None
+
+        super().__init__(parent, tab_name, helptext)
 
         self.set_info_text()
         self.add_options()
