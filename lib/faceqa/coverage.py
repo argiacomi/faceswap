@@ -1436,20 +1436,33 @@ def _pitch_bucket(record: FaceQARecord) -> str:
 
 
 def _lighting_bucket(record: FaceQARecord) -> str:
-    """Return the lighting bucket label for a record (``unknown`` if missing)."""
-    features = {
-        "mean_luminance": record.mean_luminance,
-        "luminance_variance": record.luminance_variance,
-        "contrast": record.contrast,
-        "left_right_ratio": record.left_right_ratio,
-        "top_bottom_ratio": record.top_bottom_ratio,
-        "saturation": record.saturation,
-        "color_warmth": record.color_warmth,
-    }
-    if any(value is None for value in features.values()):
+    """Return the lighting bucket label for a record (``unknown`` if missing).
+
+    Only the fields actually consulted by :func:`lighting_bucket_for_features`
+    are required (mean_luminance, contrast, left_right_ratio,
+    top_bottom_ratio, color_warmth); the optional ``luminance_variance`` /
+    ``saturation`` slots default to ``0.0`` so legacy records that only carry
+    the bucket-discriminating features still classify.
+    """
+    required = (
+        record.mean_luminance,
+        record.left_right_ratio,
+        record.top_bottom_ratio,
+        record.contrast,
+        record.color_warmth,
+    )
+    if any(value is None for value in required):
         return "unknown"
-    typed_features = T.cast("LightingFeatures", features)
-    label = lighting_bucket_for_features(typed_features)
+    features: LightingFeatures = {
+        "mean_luminance": float(T.cast(float, record.mean_luminance)),
+        "luminance_variance": float(record.luminance_variance or 0.0),
+        "contrast": float(T.cast(float, record.contrast)),
+        "left_right_ratio": float(T.cast(float, record.left_right_ratio)),
+        "top_bottom_ratio": float(T.cast(float, record.top_bottom_ratio)),
+        "saturation": float(record.saturation or 0.0),
+        "color_warmth": float(T.cast(float, record.color_warmth)),
+    }
+    label = lighting_bucket_for_features(features)
     return label if label else "unknown"
 
 
@@ -1580,9 +1593,36 @@ _BUCKET_DIMENSIONS: tuple[tuple[str, T.Callable[[FaceQARecord], str]], ...] = (
 )
 
 
+# Canonical label sets per bucket dimension. Pre-populating counts so empty
+# buckets surface as 0 (not absent) lets readiness highlight underrepresented
+# slots without having to know which buckets are theoretically possible.
+_BUCKET_LABELS: dict[str, tuple[str, ...]] = {
+    "pose": tuple(YAW_BUCKETS) + ("unknown",),
+    "pitch": tuple(PITCH_BUCKETS) + ("unknown",),
+    "lighting": tuple(LIGHTING_BUCKETS) + ("unknown",),
+    "expression": tuple(EXPRESSION_BUCKETS) + ("unknown",),
+    "blur": ("good", "ok", "mediocre", "unusable", "unknown"),
+    "resolution": ("good", "ok", "low", "tiny", "unknown"),
+    "misalignment": ("low", "medium", "high", "extreme", "unknown"),
+    "occlusion": ("minimal", "mild", "moderate", "severe", "unknown"),
+    "identity": ("inlier", "borderline", "outlier", "reject", "review", "unknown"),
+    "mask_qa": ("present", "missing"),
+    "pose_sources": ("spiga", "spiga_backfill", "alignment", "unknown"),
+    "pose_confidence": ("high", "medium", "low", "fallback", "unknown"),
+}
+
+
 def _count_buckets(records: list[FaceQARecord]) -> dict[str, dict[str, int]]:
-    """Return ``{dimension: {bucket: count}}`` for every coverage dimension."""
-    counts: dict[str, dict[str, int]] = {dim: {} for dim, _fn in _BUCKET_DIMENSIONS}
+    """Return ``{dimension: {bucket: count}}`` for every coverage dimension.
+
+    Every canonical bucket per dimension is initialised to 0 so empty
+    buckets are visible to readiness/redundancy without them having to
+    know the full label set up front.
+    """
+    counts: dict[str, dict[str, int]] = {
+        dim: {bucket: 0 for bucket in _BUCKET_LABELS.get(dim, ())}
+        for dim, _fn in _BUCKET_DIMENSIONS
+    }
     for record in records:
         for dim, fn in _BUCKET_DIMENSIONS:
             label = fn(record)
@@ -1604,8 +1644,23 @@ def _percentages(
 
 
 def _compute_duplicate_ratio(records: list[FaceQARecord]) -> float | None:
-    """Return the ratio of records flagged as duplicate prune candidates."""
+    """Return the ratio of records flagged as duplicate prune candidates.
+
+    Returns ``None`` when no record carries any duplicate annotation so the
+    quality signal_coverage and confidence layers can distinguish "no
+    duplicate evidence" from "evidence + zero duplicates".
+    """
     if not records:
+        return None
+    annotated = sum(
+        1
+        for record in records
+        if record.duplicate_keep_recommendation is not None
+        or record.duplicate_representative is not None
+        or record.duplicate_cluster is not None
+        or record.duplicate_cluster_id is not None
+    )
+    if annotated == 0:
         return None
     flagged = sum(
         1
@@ -1617,7 +1672,17 @@ def _compute_duplicate_ratio(records: list[FaceQARecord]) -> float | None:
 
 
 def _compute_identity_outlier_ratio(records: list[FaceQARecord]) -> float | None:
+    """Return the identity-outlier ratio, or ``None`` when no records carry an
+    identity classification (distinguishes absence of evidence from a
+    zero-outlier finding)."""
     if not records:
+        return None
+    annotated = sum(
+        1
+        for r in records
+        if r.identity_quality_flag is not None or r.identity_final_decision is not None
+    )
+    if annotated == 0:
         return None
     return sum(1 for r in records if _is_identity_outlier(r)) / len(records)
 

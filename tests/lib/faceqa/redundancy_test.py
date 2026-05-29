@@ -512,12 +512,13 @@ def test_protected_bucket_keeps_budget_even_when_other_dim_is_surplus() -> None:
     assert budget == config.min_effective_bucket_count - 1
 
 
-def test_write_manifests_does_not_mix_review_into_keep(tmp_path) -> None:
-    """``keep.csv`` must contain only KEEP records; REVIEW gets its own manifest."""
-    import json
+def test_review_records_not_mixed_into_keep() -> None:
+    """REVIEW records (e.g. identity outliers) must not contaminate KEEP.
 
-    from lib.faceqa.redundancy_outputs import write_manifests
-
+    write_manifests has been removed; the assertion now runs directly against
+    ``RedundancyReport.records`` since the coverage JSON is the single source
+    of truth for keep / review / prune membership.
+    """
     records = _near_identical_run(6, yaw=0.0, expression_bucket="neutral") + [
         _record(
             "frame_999999.png",
@@ -528,16 +529,13 @@ def test_write_manifests_does_not_mix_review_into_keep(tmp_path) -> None:
     ]
     report = compute_redundancy(records, aggressiveness="balanced")
 
-    artefacts = write_manifests(report, tmp_path / "manifests")
+    keep_records = [r for r in report.records if r.recommendation == KEEP]
+    review_records = [r for r in report.records if r.recommendation == REVIEW]
 
-    keep_payload = [json.loads(line) for line in artefacts["keep_jsonl"].read_text().splitlines()]
-    review_payload = [
-        json.loads(line) for line in artefacts["review_jsonl"].read_text().splitlines()
-    ]
-    assert all(rec["recommendation"] == KEEP for rec in keep_payload)
-    assert review_payload, "expected at least one REVIEW record (identity outlier)"
-    assert all(rec["recommendation"] == REVIEW for rec in review_payload)
-    assert all(rec["frame"] != "frame_999999.png" for rec in keep_payload)
+    assert review_records, "expected at least one REVIEW record (identity outlier)"
+    assert all(r.recommendation == KEEP for r in keep_records)
+    assert all(r.recommendation == REVIEW for r in review_records)
+    assert all(r.frame != "frame_999999.png" for r in keep_records)
 
 
 def test_classify_buckets_is_coverage_aware() -> None:

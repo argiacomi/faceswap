@@ -95,28 +95,30 @@ def test_faceqa_coverage_tool_writes_reports_from_alignments(tmp_path, monkeypat
             },
         },
     )
-    output_json = tmp_path / "coverage.json"
-    output_md = tmp_path / "coverage.md"
+    output_dir = tmp_path
     args = Namespace(
         mode="coverage",
         alignments=str(alignments),
         frames_dir=str(tmp_path),
-        sidecar=None,
-        output_json=str(output_json),
-        output_markdown=str(output_md),
+        faces_dir=None,
+        output_dir=str(output_dir),
         exclude_duplicates=False,
         exclude_outliers=False,
         min_bucket_pct=5.0,
+        suggest_pruning=False,
+        sort_prune=False,
+        contact_sheets=False,
+        keep_originals=True,
+        prune_aggressiveness="balanced",
     )
-    monkeypatch.setattr(
-        Faceqa,
-        "_pose_backfiller",
-        lambda _: lambda __, ___: None,
-    )
+    monkeypatch.setattr(Faceqa, "_pose_backfiller", lambda _: lambda __, ___: None)
+    monkeypatch.setattr(Faceqa, "_metrics_backfiller", lambda _: None)
 
     Faceqa(args).process()
 
-    payload = json.loads(output_json.read_text(encoding="utf-8"))
+    coverage_json = output_dir / "alignments_faceqa_coverage.json"
+    coverage_md = output_dir / "alignments_faceqa_coverage.md"
+    payload = json.loads(coverage_json.read_text(encoding="utf-8"))
     assert payload["schema_version"] == 1
     assert payload["alignments"] == str(alignments)
     assert payload["total_faces"] == 1
@@ -124,10 +126,13 @@ def test_faceqa_coverage_tool_writes_reports_from_alignments(tmp_path, monkeypat
     assert "pose_sources" in payload["coverage"]
     assert "pose_confidence" in payload["coverage"]
     assert "blur" in payload["coverage"]
-    markdown = output_md.read_text(encoding="utf-8")
+    markdown = coverage_md.read_text(encoding="utf-8")
     assert markdown.startswith("# FaceQA Coverage Report")
-    assert "## Pose Sources" in markdown
-    assert "## Pose Confidence" in markdown
+    # The verdict-first markdown collapses pose source/confidence into the
+    # per-dimension coverage section.
+    assert "## Coverage by Dimension" in markdown
+    assert "Pose Sources" in markdown
+    assert "Pose Confidence" in markdown
 
 
 def test_records_from_alignments_prefers_spiga_pose_metadata(tmp_path) -> None:
@@ -338,18 +343,20 @@ def test_faceqa_coverage_tool_persists_backfilled_spiga_pose(tmp_path, monkeypat
             },
         },
     )
-    output_json = tmp_path / "coverage.json"
-    output_md = tmp_path / "coverage.md"
     args = Namespace(
         mode="coverage",
         alignments=str(alignments),
         frames_dir=str(tmp_path),
-        sidecar=None,
-        output_json=str(output_json),
-        output_markdown=str(output_md),
+        faces_dir=None,
+        output_dir=str(tmp_path),
         exclude_duplicates=False,
         exclude_outliers=False,
         min_bucket_pct=5.0,
+        suggest_pruning=False,
+        sort_prune=False,
+        contact_sheets=False,
+        keep_originals=True,
+        prune_aggressiveness="balanced",
     )
 
     def backfill(_: FaceQARecord, __: FileAlignments) -> dict[str, object]:
@@ -361,19 +368,19 @@ def test_faceqa_coverage_tool_persists_backfilled_spiga_pose(tmp_path, monkeypat
             "model": "spiga",
         }
 
-    monkeypatch.setattr(
-        Faceqa,
-        "_pose_backfiller",
-        lambda _: backfill,
-    )
+    monkeypatch.setattr(Faceqa, "_pose_backfiller", lambda _: backfill)
+    monkeypatch.setattr(Faceqa, "_metrics_backfiller", lambda _: None)
 
     Faceqa(args).process()
 
-    qa_file = load(sidecar_path(str(alignments)))
-    assert qa_file is not None
-    assert qa_file.faces[0].spiga_pose_source == "spiga_backfill"
-    assert qa_file.faces[0].pose_source == "spiga_backfill"
-    assert qa_file.faces[0].yaw == 21.0
+    # SPIGA pose backfill must persist into face.metadata["faceqa"]["pose"]
+    # inside the alignments file (the sidecar is gone).
+    from lib.faceqa.coverage import load_alignments_envelope
+
+    _raw, entries = load_alignments_envelope(alignments)
+    persisted_pose = entries["frame_000001.png"].faces[0].metadata["faceqa"]["pose"]
+    assert persisted_pose["source"] == "spiga_backfill"
+    assert persisted_pose["yaw"] == 21.0
 
 
 def test_faceqa_coverage_tool_does_not_recompute_existing_spiga_pose(
@@ -573,28 +580,29 @@ def test_faceqa_coverage_tool_writes_joint_pose_metrics(tmp_path, monkeypatch) -
             },
         },
     )
-    output_json = tmp_path / "coverage.json"
-    output_md = tmp_path / "coverage.md"
     args = Namespace(
         mode="coverage",
         alignments=str(alignments),
         frames_dir=str(tmp_path),
-        sidecar=None,
-        output_json=str(output_json),
-        output_markdown=str(output_md),
+        faces_dir=None,
+        output_dir=str(tmp_path),
         exclude_duplicates=False,
         exclude_outliers=False,
         min_bucket_pct=5.0,
+        suggest_pruning=False,
+        sort_prune=False,
+        contact_sheets=False,
+        keep_originals=True,
+        prune_aggressiveness="balanced",
     )
-    monkeypatch.setattr(
-        Faceqa,
-        "_pose_backfiller",
-        lambda _: lambda __, ___: None,
-    )
+    monkeypatch.setattr(Faceqa, "_pose_backfiller", lambda _: lambda __, ___: None)
+    monkeypatch.setattr(Faceqa, "_metrics_backfiller", lambda _: None)
 
     Faceqa(args).process()
 
-    payload = json.loads(output_json.read_text(encoding="utf-8"))
+    payload = json.loads(
+        (tmp_path / "alignments_faceqa_coverage.json").read_text(encoding="utf-8")
+    )
     assert "signed_yaw" not in payload["coverage"]
     pose_buckets = payload["coverage"]["pose"]["counts"]
     assert set(pose_buckets).issuperset(
@@ -614,9 +622,9 @@ def test_faceqa_coverage_tool_writes_joint_pose_metrics(tmp_path, monkeypatch) -
     assert joint["total_cells"] == 35
     assert "pose_entropy" in joint
     assert "missing_cells" in joint
-    markdown = output_md.read_text(encoding="utf-8")
-    assert "## Pose" in markdown
-    assert "## Pitch" in markdown
+    markdown = (tmp_path / "alignments_faceqa_coverage.md").read_text(encoding="utf-8")
+    assert "### Pose" in markdown
+    assert "### Pitch" in markdown
     assert "## Joint Pose Coverage" in markdown
 
 
@@ -686,12 +694,15 @@ def test_records_from_alignments_derives_expression_from_landmarks(tmp_path) -> 
     assert records[0].expression_asymmetry is not None
 
 
-def test_records_from_alignments_overrides_sidecar_expression(tmp_path) -> None:
-    """Landmark-derived expression should supersede sidecar expression labels."""
-    from lib.align.faceset_qa import FaceQAFile
+def test_records_from_alignments_overrides_metadata_expression(tmp_path) -> None:
+    """Landmark-derived expression should supersede persisted FaceQA metadata."""
     from tests.lib.faceqa.expression_test import _neutral_landmarks
 
     face = FileAlignments(x=0, y=0, w=80, h=90, landmarks_xy=_neutral_landmarks())
+    # Persist a stale expression label inside face.metadata["faceqa"] as if a
+    # prior FaceQA pass had recorded one. Landmark-derived expression must
+    # supersede it on every fresh records_from_alignments call.
+    face.metadata = {"faceqa": {"expression_bucket": "smile"}}
     alignments = tmp_path / "alignments.fsa"
     get_serializer("compressed").save(
         str(alignments),
@@ -700,11 +711,8 @@ def test_records_from_alignments_overrides_sidecar_expression(tmp_path) -> None:
             "__data__": {"frame_000001.png": AlignmentsEntry(faces=[face]).to_dict()},
         },
     )
-    qa_file = FaceQAFile(
-        faces=[FaceQARecord(frame="frame_000001.png", face_index=0, expression_bucket="smile")]
-    )
 
-    records = records_from_alignments(alignments, qa_file=qa_file)
+    records = records_from_alignments(alignments)
 
     assert records[0].expression_bucket == "neutral"
 
@@ -952,35 +960,34 @@ def test_faceqa_coverage_tool_suggest_pruning_emits_redundancy(tmp_path, monkeyp
             },
         },
     )
-    output_json = tmp_path / "coverage.json"
-    output_md = tmp_path / "coverage.md"
     args = Namespace(
         mode="coverage",
         alignments=str(alignments),
         frames_dir=str(tmp_path),
-        sidecar=None,
-        output_json=str(output_json),
-        output_markdown=str(output_md),
+        faces_dir=None,
+        output_dir=str(tmp_path),
         exclude_duplicates=False,
         exclude_outliers=False,
         min_bucket_pct=5.0,
         suggest_pruning=True,
+        sort_prune=False,
+        contact_sheets=False,
+        keep_originals=True,
         prune_aggressiveness="balanced",
     )
-    monkeypatch.setattr(
-        Faceqa,
-        "_pose_backfiller",
-        lambda _: lambda __, ___: None,
-    )
+    monkeypatch.setattr(Faceqa, "_pose_backfiller", lambda _: lambda __, ___: None)
+    monkeypatch.setattr(Faceqa, "_metrics_backfiller", lambda _: None)
 
     Faceqa(args).process()
 
-    payload = json.loads(output_json.read_text(encoding="utf-8"))
+    payload = json.loads(
+        (tmp_path / "alignments_faceqa_coverage.json").read_text(encoding="utf-8")
+    )
     assert "pruning_suggestions" in payload
     pruning = payload["pruning_suggestions"]
     assert pruning["aggressiveness"] == "balanced"
     assert pruning["total_faces"] == 3
     assert {"keep_count", "review_count", "prune_candidate_count"}.issubset(pruning)
-    markdown = output_md.read_text(encoding="utf-8")
+    markdown = (tmp_path / "alignments_faceqa_coverage.md").read_text(encoding="utf-8")
     assert "## Pruning Suggestions" in markdown
     assert "Aggressiveness" in markdown
