@@ -315,23 +315,26 @@ class Batch3D:
         ```
         """
         core_lms = np.ascontiguousarray(landmarks[:, _CORE_LMS])
-        retval = (
-            np.array(
-                [
-                    cv2.solvePnP(
-                        _MEAN_FACE3D,
-                        lms,
-                        cls._camera_matrix,
-                        _DISTORTION_COEFFICIENTS,
-                        flags=cv2.SOLVEPNP_ITERATIVE,
-                    )[1:]
-                    for lms in core_lms
-                ]
+        # Preallocate the (N, 2, 3, 1) buffer rather than materialising a
+        # Python list of ``(rotation, translation)`` per face then
+        # ``np.array``-ing + dtype-converting it. Writing the solvePnP
+        # rotation / translation rows straight into the float32 buffer
+        # skips the intermediate Python list + dtype-conversion copy.
+        n = core_lms.shape[0]
+        buf = np.empty((n, 2, 3, 1), dtype=np.float32)
+        for idx, lms in enumerate(core_lms):
+            _, rotation, translation = cv2.solvePnP(
+                _MEAN_FACE3D,
+                lms,
+                cls._camera_matrix,
+                _DISTORTION_COEFFICIENTS,
+                flags=cv2.SOLVEPNP_ITERATIVE,
             )
-            .astype("float32")
-            .swapaxes(0, 1)
-        )
-        return retval
+            buf[idx, 0] = rotation
+            buf[idx, 1] = translation
+        # The legacy form returned ``swapaxes(0, 1)`` — preserve the
+        # ``(2, N, 3, 1)`` output shape so callers don't shift.
+        return buf.swapaxes(0, 1)
 
     @classmethod
     def rodrigues(cls, vectors: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:

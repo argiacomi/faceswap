@@ -343,7 +343,12 @@ class DetectedFace:  # pylint:disable=too-many-instance-attributes
             w=self.width,
             y=self.top,
             h=self.height,
-            landmarks_xy=np.asarray(self.landmarks_xy, dtype=np.float32),
+            # ``_as_landmarks_array`` (the only setter for ``_landmarks_xy``)
+            # already returns a float32 ndarray, so the previous
+            # ``np.asarray(..., dtype=np.float32)`` was a redundant copy on
+            # every alignments serialization. The property itself is the
+            # authoritative shape.
+            landmarks_xy=self.landmarks_xy,
             mask={name: mask.to_dict() for name, mask in self.mask.items()},
             identity=self._identity,
             metadata=self.metadata,
@@ -437,7 +442,8 @@ class DetectedFace:  # pylint:disable=too-many-instance-attributes
             w=self.width,
             y=self.top,
             h=self.height,
-            landmarks_xy=np.asarray(self.landmarks_xy, dtype=np.float32),
+            # See note in ``to_alignment`` — the cast is redundant.
+            landmarks_xy=self.landmarks_xy,
             mask={name: mask.to_png_meta() for name, mask in self.mask.items()},
             identity=self._identity,
             metadata=self.metadata,
