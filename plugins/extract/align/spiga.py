@@ -407,14 +407,18 @@ class SPIGAFaceswapModel(nn.Module):
 
 
 def _pose_rows_from_raw(raw_pose: torch.Tensor) -> torch.Tensor:
-    """Return yaw/pitch/roll pose rows from SPIGA's raw pose tensor."""
+    """Return user-facing yaw/pitch/roll pose rows from SPIGA raw pose tensor."""
     euler = raw_pose[:, :3]
-    yaw = 90.0 - euler[:, 0]
+
+    yaw = -euler[:, 0]
     pitch = -euler[:, 1]
-    roll = -(euler[:, 2] + 90.0)
+    roll = -euler[:, 2]
+
     pose = torch.stack((yaw, pitch, roll), dim=1)
     rows = torch.zeros(
-        (raw_pose.shape[0], _POSE_ROWS, 2), device=raw_pose.device, dtype=raw_pose.dtype
+        (raw_pose.shape[0], _POSE_ROWS, 2),
+        device=raw_pose.device,
+        dtype=raw_pose.dtype,
     )
     rows[:, :, 0] = pose
     return rows

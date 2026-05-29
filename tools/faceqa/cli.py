@@ -57,12 +57,12 @@ class FaceqaArgs(FaceSwapArgs):  # pylint:disable=invalid-name
             The argparse command line options for processing by argparse.
         """
         frames_dir = _(
-            " Source frames/images or video (-r / --frames-dir) are required for "
+            " Source frames/images or video (-r / --frames-folder) are required for "
             "coverage so FaceQA can reconstruct aligned crops, backfill SPIGA pose, "
             "and fill missing identity embeddings before reporting."
         )
         faces_dir = _(
-            " Pass a faces folder (-c / --faces-dir) ONLY with --suggest-pruning plus "
+            " Pass a faces folder (-c / --faces-folder) ONLY with --suggest-pruning plus "
             "--sort-prune or --contact-sheets; coverage and pruning computation do not "
             "need extracted faces."
         )
@@ -110,7 +110,7 @@ class FaceqaArgs(FaceSwapArgs):  # pylint:disable=invalid-name
         )
         argument_list.append(
             {
-                "opts": ("-c", "-faces_folder"),
+                "opts": ("-c", "--faces_folder"),
                 "action": DirFullPaths,
                 "dest": "faces_dir",
                 "group": ("data"),
@@ -123,7 +123,7 @@ class FaceqaArgs(FaceSwapArgs):  # pylint:disable=invalid-name
         )
         argument_list.append(
             {
-                "opts": ("-r", "-frames_folder"),
+                "opts": ("-r", "--frames_folder"),
                 "action": DirOrFileFullPaths,
                 "dest": "frames_dir",
                 "required": False,
