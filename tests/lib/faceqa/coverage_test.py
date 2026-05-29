@@ -7,6 +7,7 @@ import json
 from argparse import Namespace
 
 import numpy as np
+import pytest
 
 from lib.align.objects import AlignmentsEntry, FileAlignments
 from lib.faceqa.coverage import SpigaPoseBackfiller, compute_coverage, records_from_alignments
@@ -186,7 +187,13 @@ def test_records_from_alignments_backfills_missing_spiga_pose(tmp_path) -> None:
 
 
 def test_spiga_pose_backfiller_uses_source_frame_alignment_not_thumbnail() -> None:
-    """SPIGA backfill should reconstruct aligned faces from source frames."""
+    """SPIGA backfill must crop the raw source frame, not a head-aligned crop (#190).
+
+    The previous backfill path used ``DetectedFace.load_aligned(centering="head")``
+    which removed / distorted pose cues SPIGA expects. The fix reproduces
+    the normal extractor crop semantics: a detector-style square ROI from
+    the raw frame, resized into ``(plugin.input_size, plugin.input_size, 3)``.
+    """
 
     class _Frames:
         loaded: list[str] = []
@@ -197,12 +204,22 @@ def test_spiga_pose_backfiller_uses_source_frame_alignment_not_thumbnail() -> No
             image[:, :, 1] = 255
             return image
 
+    pre_process_calls: list[np.ndarray] = []
+
     class _Plugin:
         input_size = 64
+        is_rgb = False
 
         def __init__(self) -> None:
             self.feed: np.ndarray | None = None
             self.last_debug_metadata: list[dict[str, object]] = []
+
+        def pre_process(self, batch: np.ndarray) -> np.ndarray:
+            pre_process_calls.append(batch.copy())
+            # Mirror SPIGA's actual square-ROI shape: (B, l, t, r, b) int32.
+            # For (x=0, y=0, w=80, h=90) the centre is (40, 45) and the
+            # side (max(80,90) * 1.2 [default target_dist]) ≈ 108, half ≈ 54.
+            return np.array([[40 - 54, 45 - 54, 40 + 54, 45 + 54]], dtype=np.int32)
 
         def process(self, batch: np.ndarray) -> np.ndarray:
             self.feed = batch
@@ -226,6 +243,10 @@ def test_spiga_pose_backfiller_uses_source_frame_alignment_not_thumbnail() -> No
     assert frames.loaded == ["frame_000001.png"]
     assert plugin.feed is not None
     assert plugin.feed.shape == (1, 64, 64, 3)
+    # pre_process is called with the detector bbox derived from the stored
+    # alignment rectangle, NOT a head-aligned crop.
+    assert len(pre_process_calls) == 1
+    np.testing.assert_array_equal(pre_process_calls[0], [[0, 0, 80, 90]])
     assert pose == {
         "yaw": 11.0,
         "pitch": -2.0,
@@ -233,6 +254,117 @@ def test_spiga_pose_backfiller_uses_source_frame_alignment_not_thumbnail() -> No
         "model": "spiga",
         "source": "spiga_backfill",
     }
+
+
+def test_spiga_pose_backfiller_does_not_use_load_aligned(monkeypatch) -> None:
+    """The detector-style crop path must not call ``DetectedFace.load_aligned`` (#190).
+
+    Regression for the head-normalised crop path: if the backfiller starts
+    calling ``DetectedFace.load_aligned(... centering='head')`` again, pose
+    cues SPIGA expects from the raw frame will be distorted and pose
+    metrics will drift from the native extractor path.
+    """
+    from lib.align import DetectedFace
+    from lib.faceqa.coverage import SpigaPoseBackfiller
+
+    load_aligned_calls: list[tuple] = []
+    original_load_aligned = DetectedFace.load_aligned
+
+    def _spy(self, image, *, size, centering):  # noqa: ANN001
+        load_aligned_calls.append((size, centering))
+        return original_load_aligned(self, image, size=size, centering=centering)
+
+    monkeypatch.setattr(DetectedFace, "load_aligned", _spy)
+
+    class _Frames:
+        def load_image(self, frame: str) -> np.ndarray:
+            return np.zeros((200, 200, 3), dtype=np.uint8)
+
+    class _Plugin:
+        input_size = 64
+        is_rgb = False
+
+        def __init__(self) -> None:
+            self.last_debug_metadata: list[dict[str, object]] = []
+
+        def pre_process(self, batch: np.ndarray) -> np.ndarray:
+            return np.array([[10, 10, 74, 74]], dtype=np.int32)
+
+        def process(self, batch: np.ndarray) -> np.ndarray:
+            return np.zeros((1, 71, 2), dtype=np.float32)
+
+        def post_process(self, _: np.ndarray) -> np.ndarray:
+            self.last_debug_metadata = [
+                {"pose": {"yaw": 0.0, "pitch": 0.0, "roll": 0.0, "model": "spiga"}}
+            ]
+            return np.zeros((1, 68, 2), dtype=np.float32)
+
+    backfiller = SpigaPoseBackfiller(_Frames())
+    backfiller._plugin = _Plugin()  # pylint:disable=protected-access
+    face = _face()
+    face.thumb = None
+
+    pose = backfiller(FaceQARecord(frame="frame_000001.png", face_index=0), face)
+
+    assert pose is not None
+    assert pose["source"] == "spiga_backfill"
+    assert load_aligned_calls == []
+
+
+def test_spiga_pose_backfiller_clamps_off_frame_roi() -> None:
+    """An ROI partly off-frame must clamp + map into the input canvas (#190).
+
+    Mirrors :class:`lib.infer.align.Aligner._get_destinations`: partial
+    off-frame regions are resized into the destination box derived from
+    the clamp delta. The remainder of the canvas stays at zeros (padding),
+    matching the normal extractor's behaviour.
+    """
+    from lib.faceqa.coverage import SpigaPoseBackfiller
+
+    class _Frames:
+        def load_image(self, frame: str) -> np.ndarray:
+            # Fill the whole frame with a sentinel value so the canvas
+            # contains the same pixel inside the destination box.
+            return np.full((200, 200, 3), 200, dtype=np.uint8)
+
+    class _Plugin:
+        input_size = 64
+        is_rgb = False
+
+        def __init__(self) -> None:
+            self.feed: np.ndarray | None = None
+            self.last_debug_metadata: list[dict[str, object]] = []
+
+        def pre_process(self, batch: np.ndarray) -> np.ndarray:
+            # Square ROI of side 128 that extends 32px off the left+top.
+            return np.array([[-32, -32, 96, 96]], dtype=np.int32)
+
+        def process(self, batch: np.ndarray) -> np.ndarray:
+            self.feed = batch
+            return np.zeros((1, 71, 2), dtype=np.float32)
+
+        def post_process(self, _: np.ndarray) -> np.ndarray:
+            self.last_debug_metadata = [
+                {"pose": {"yaw": 0.0, "pitch": 0.0, "roll": 0.0, "model": "spiga"}}
+            ]
+            return np.zeros((1, 68, 2), dtype=np.float32)
+
+    backfiller = SpigaPoseBackfiller(_Frames())
+    backfiller._plugin = _Plugin()  # pylint:disable=protected-access
+    face = _face()
+    face.thumb = None
+
+    backfiller(FaceQARecord(frame="frame_000001.png", face_index=0), face)
+
+    plugin = backfiller._plugin  # pylint:disable=protected-access
+    assert plugin.feed is not None
+    assert plugin.feed.shape == (1, 64, 64, 3)
+    # The off-frame top-left quadrant is zero-padded; the in-frame quadrant
+    # carries the sentinel pixel value (normalized by /255 in the feed).
+    feed = plugin.feed[0]
+    # scale = 64 / 128 = 0.5 → off-frame 32px maps to 16px in canvas.
+    assert np.all(feed[:16, :16] == 0.0)
+    assert np.all(feed[16:, 16:] == pytest.approx(200.0 / 255.0))
 
 
 def test_records_from_alignments_uses_alignment_when_spiga_pose_invalid(tmp_path) -> None:

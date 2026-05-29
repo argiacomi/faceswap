@@ -58,8 +58,6 @@ PITCH_BUCKETS: tuple[str, ...] = (
 )
 POSE_HIGH_CONFIDENCE_DELTA = 10.0
 POSE_MEDIUM_CONFIDENCE_DELTA = 25.0
-SPIGA_BACKFILL_INPUT_SIZE = 256
-
 DEFAULT_IDENTITY_BACKFILL_MODEL = "arcface"
 MIN_IDENTITY_QUALITY_FACES = 3
 IDENTITY_REJECT_THRESHOLD = 0.15
@@ -616,22 +614,23 @@ class SpigaPoseBackfiller:
         self._last_image: np.ndarray | None = None
 
     def __call__(self, record: FaceQARecord, face: FileAlignments) -> dict[str, T.Any] | None:
-        """Return SPIGA pose metadata for a face, or ``None`` when unavailable."""
+        """Return SPIGA pose metadata for a face, or ``None`` when unavailable.
+
+        The crop fed to SPIGA mirrors the normal extractor path: a
+        detector-style square ROI carved out of the RAW source frame, not a
+        head-normalized aligned crop. See :meth:`_detector_style_crop` for
+        the exact reproduction of :class:`lib.infer.align.Aligner`'s ROI
+        math (issue #190).
+        """
         if self._disabled_reason is not None:
-            return None
-        aligned_face = self._aligned_face(record, face, self._input_size())
-        if aligned_face is None:
             return None
         plugin = self._load_plugin()
         if plugin is None:
             return None
-        if aligned_face.shape[:2] != (plugin.input_size, plugin.input_size):
-            aligned_face = cv2.resize(
-                aligned_face,
-                (plugin.input_size, plugin.input_size),
-                interpolation=cv2.INTER_CUBIC,
-            )
-        feed = aligned_face.astype("float32", copy=False) / 255.0
+        detector_crop = self._detector_style_crop(record, face, plugin)
+        if detector_crop is None:
+            return None
+        feed = detector_crop.astype("float32", copy=False) / 255.0
         try:
             raw = plugin.process(feed[None])
             plugin.post_process(raw)
@@ -650,30 +649,109 @@ class SpigaPoseBackfiller:
         pose.setdefault("model", "spiga")
         return pose
 
-    def _aligned_face(
+    def _detector_style_crop(
         self,
         record: FaceQARecord,
         face: FileAlignments,
-        size: int,
+        plugin: T.Any,
     ) -> np.ndarray | None:
-        """Load the source frame and reconstruct the aligned face crop for SPIGA."""
+        """Reproduce SPIGA's detector-bbox crop path against the raw frame.
+
+        Mirrors :class:`lib.infer.align.Aligner`'s pre-process path so the
+        backfilled SPIGA input matches what the normal extractor would have
+        produced (issue #190). The fix replaces the previous head-normalized
+        aligned crop (which removed / distorted pose cues) with:
+
+        1. A detector bbox derived from the stored alignment rectangle
+           ``(face.x, face.y, face.x + face.w, face.y + face.h)``.
+        2. ``plugin.pre_process(bbox)`` builds the square ROI using SPIGA's
+           own ``target_dist`` / centering math — calling the plugin
+           preserves any future SPIGA-config tuning automatically.
+        3. ROI clamped to frame bounds; the destination region inside the
+           SPIGA-input canvas is computed from the clamp delta so partial
+           off-frame faces map correctly without stretching.
+        4. Raw frame crop is resized into the destination box on a
+           ``(input_size, input_size, 3)`` zero canvas. Padding is zeros,
+           matching the extractor's :meth:`_crop_and_resize` behaviour.
+        5. Colour order respects ``plugin.is_rgb``; OpenCV frames are BGR
+           by default which is what SPIGA expects.
+        """
         image = self._load_frame(record.frame)
         if image is None:
             return None
+        height, width = image.shape[:2]
+
+        # Detector-style bbox from the stored alignment rectangle.
+        bbox = np.array(
+            [
+                [
+                    int(face.x),
+                    int(face.y),
+                    int(face.x + face.w),
+                    int(face.y + face.h),
+                ]
+            ],
+            dtype=np.int32,
+        )
         try:
-            face_obj = DetectedFace()
-            face_obj.from_alignment(face, image=image)
-            face_obj.load_aligned(image, size=size, centering="head")
+            roi = plugin.pre_process(bbox)
         except Exception as err:  # pylint:disable=broad-except
             logger.warning(
-                "Could not reconstruct aligned face for SPIGA pose backfill "
-                "(frame: %s, face: %s): %s",
+                "SPIGA pre_process failed during backfill (frame: %s, face: %s): %s",
                 record.frame,
                 record.face_index,
                 err,
             )
             return None
-        return T.cast(np.ndarray, face_obj.aligned.face)
+        if roi is None or len(roi) == 0:
+            return None
+        original = np.asarray(roi[0], dtype=np.int32)
+        if original.shape != (4,):
+            return None
+        side = int(original[2] - original[0])
+        if side <= 0 or int(original[3] - original[1]) != side:
+            # SPIGA's pre_process is meant to return a square; if it didn't
+            # we can't safely reconstruct the crop.
+            return None
+
+        # Clamp the ROI to the frame so we never read out-of-bounds pixels.
+        clamp_l = max(0, int(original[0]))
+        clamp_t = max(0, int(original[1]))
+        clamp_r = min(width, int(original[2]))
+        clamp_b = min(height, int(original[3]))
+        if clamp_r <= clamp_l or clamp_b <= clamp_t:
+            return None
+
+        input_size = int(plugin.input_size)
+        scale = input_size / side
+
+        # Map the clamped ROI back into the SPIGA-input canvas, mirroring
+        # ``lib.infer.align.Aligner._get_destinations`` so partial off-frame
+        # faces produce the same destination box the extractor would.
+        dest_l = int(round((clamp_l - int(original[0])) * scale))
+        dest_t = int(round((clamp_t - int(original[1])) * scale))
+        dest_r = int(round((clamp_r - int(original[0])) * scale))
+        dest_b = int(round((clamp_b - int(original[1])) * scale))
+        dest_l = max(0, min(input_size, dest_l))
+        dest_t = max(0, min(input_size, dest_t))
+        dest_r = max(0, min(input_size, dest_r))
+        dest_b = max(0, min(input_size, dest_b))
+        if dest_r <= dest_l or dest_b <= dest_t:
+            return None
+
+        src = image[clamp_t:clamp_b, clamp_l:clamp_r]
+        if src.size == 0:
+            return None
+        interpolation = cv2.INTER_CUBIC if scale > 1.0 else cv2.INTER_AREA
+        canvas = np.zeros((input_size, input_size, 3), dtype=image.dtype)
+        resized = cv2.resize(src, (dest_r - dest_l, dest_b - dest_t), interpolation=interpolation)
+        canvas[dest_t:dest_b, dest_l:dest_r] = resized
+
+        # OpenCV produces BGR; SPIGA's ``is_rgb`` is False so this is already
+        # correct. Honour the plugin's preference for future-proofing.
+        if getattr(plugin, "is_rgb", False):
+            canvas = canvas[..., ::-1].copy()
+        return T.cast(np.ndarray, canvas)
 
     def _load_frame(self, frame: str) -> np.ndarray | None:
         """Load a source frame by alignment frame name."""
@@ -689,14 +767,6 @@ class SpigaPoseBackfiller:
         self._last_frame = frame
         self._last_image = image
         return image
-
-    def _input_size(self) -> int:
-        """Return the SPIGA input size without forcing model loading."""
-        return (
-            SPIGA_BACKFILL_INPUT_SIZE
-            if self._plugin is None
-            else int(getattr(self._plugin, "input_size", SPIGA_BACKFILL_INPUT_SIZE))
-        )
 
     def _load_plugin(self) -> T.Any | None:
         """Load SPIGA lazily only when a frame-backed crop is needed."""
