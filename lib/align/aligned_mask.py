@@ -366,9 +366,7 @@ class Mask:  # pylint:disable=too-many-instance-attributes
             slice(max(roi[0], 0), max(roi[2], 0)),
         ]
         self._sub_crop_slices["out"] = [
-            slice(
-                max(roi[1] * -1, 0), crop_size - min(crop_size, max(0, roi[3] - self.stored_size))
-            ),
+            slice(max(-roi[1], 0), crop_size - min(crop_size, max(0, roi[3] - self.stored_size))),
             slice(
                 max(roi[0] * -1, 0), crop_size - min(crop_size, max(0, roi[2] - self.stored_size))
             ),
@@ -631,13 +629,16 @@ class LandmarksMask:
         The landmarks with the upper eyebrow points adjusted
         """
         assert self._landmark_type == LandmarkType.LM_2D_68
-        # mid points between the side of face and eye point
-        ml_pnt = (landmarks[36] + landmarks[0]) // 2
-        mr_pnt = (landmarks[16] + landmarks[45]) // 2
+        # mid points between the side of face and eye point. Using float
+        # midpoints (``* 0.5``) preserves sub-pixel precision that the prior
+        # integer floor-divide silently dropped before downstream consumers
+        # got a chance to round.
+        ml_pnt = (landmarks[36] + landmarks[0]) * 0.5
+        mr_pnt = (landmarks[16] + landmarks[45]) * 0.5
 
         # mid points between the mid points and eye
-        ql_pnt = (landmarks[36] + ml_pnt) // 2
-        qr_pnt = (landmarks[45] + mr_pnt) // 2
+        ql_pnt = (landmarks[36] + ml_pnt) * 0.5
+        qr_pnt = (landmarks[45] + mr_pnt) * 0.5
 
         # Top of the eye arrays
         bot_l = np.array((ql_pnt, landmarks[36], landmarks[37], landmarks[38], landmarks[39]))
@@ -649,9 +650,10 @@ class LandmarksMask:
 
         retval = landmarks.copy()
 
-        # Adjust eyebrow arrays
-        retval[17:22] = top_l + ((top_l - bot_l) // 2)
-        retval[22:27] = top_r + ((top_r - bot_r) // 2)
+        # Adjust eyebrow arrays. ``* 0.5`` mirrors the float midpoint math
+        # above so the eyebrow extension keeps sub-pixel precision.
+        retval[17:22] = top_l + (top_l - bot_l) * 0.5
+        retval[22:27] = top_r + (top_r - bot_r) * 0.5
         return retval
 
     def _get_points(self) -> list[npt.NDArray[np.int32]]:

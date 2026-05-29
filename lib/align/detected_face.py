@@ -98,24 +98,25 @@ class DetectedFace:  # pylint:disable=too-many-instance-attributes
 
     def __repr__(self) -> str:
         """Pretty print for logging"""
+        wanted = (
+            "image",
+            "left",
+            "width",
+            "top",
+            "height",
+            "bottom",
+            "_landmarks_xy",
+            "mask",
+        )
+        # Single-pass filter + normalise (drop leading underscore, render
+        # ndarrays via ``format_array``) — fused from the two back-to-back
+        # dict comprehensions the previous implementation used.
         params = {
-            k: v
-            for k, v in self.__dict__.items()
-            if k
-            in (
-                "image",
-                "left",
-                "width",
-                "top",
-                "height",
-                "bottom",
-                "_landmarks_xy",
-                "mask",
+            (k[1:] if k.startswith("_") else k): (
+                format_array(v) if isinstance(v, np.ndarray) else v
             )
-        }
-        params = {
-            k[1:] if k.startswith("_") else k: format_array(v) if isinstance(v, np.ndarray) else v
-            for k, v in params.items()
+            for k, v in self.__dict__.items()
+            if k in wanted
         }
         s_params = ", ".join(f"{k}={v}" for k, v in params.items())
         return f"{self.__class__.__name__}({s_params})"
@@ -300,7 +301,6 @@ class DetectedFace:  # pylint:disable=too-many-instance-attributes
             this detected face. Use to free up non-required memory usage. Default: ``False``
         """
         if delete_masks:
-            del self.mask
             self.mask = {}
 
         valid = [msk for msk in masks if msk is not None]

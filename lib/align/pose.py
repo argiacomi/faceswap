@@ -256,29 +256,35 @@ class PoseEstimate:
         The x, y offset of the new center from the old center.
         """
         legacy = np.array([0.0, 0.0], dtype="float32")
-        offset: dict[CenteringType, npt.NDArray[np.float32]] = {}
+        offset: dict[CenteringType, npt.NDArray[np.float32]] = {"legacy": legacy}
         if self._landmarks_type not in (LandmarkType.LM_2D_68, LandmarkType.LM_2D_98):
-            offset["legacy"] = legacy
-            offset["face"] = np.array([0.0, 0.0], dtype="float32")
-            offset["head"] = np.array([0.0, 0.0], dtype="float32")
-        else:
-            for key, points in _CENTER_OFFSETS.items():
-                if key == "legacy":
-                    offset[key] = legacy
-                    continue
-                center = (
-                    cv2.projectPoints(
-                        np.array([points]).astype("float32"),
-                        self._rotation,
-                        self._translation,
-                        self._camera_matrix,
-                        _DISTORTION_COEFFICIENTS,
-                    )[0]
-                    .squeeze()
-                    .astype("float32")
-                )
-                logger.trace("center %s: %s", key, center)  # type:ignore[attr-defined]
-                offset[key] = center - np.array([0.5, 0.5], dtype="float32")
+            offset["face"] = legacy.copy()
+            offset["head"] = legacy.copy()
+            logger.trace("offset: %s", offset)  # type:ignore[attr-defined]
+            return offset
+
+        # ``_CENTER_OFFSETS`` keys are CenteringType; iterate only the
+        # non-legacy entries since legacy was pre-populated above.
+        center_origin = np.array([0.5, 0.5], dtype="float32")
+        for key, points in _CENTER_OFFSETS.items():
+            if key == "legacy":
+                continue
+            # ``points`` is already float32 — drop the ``np.array([points])
+            # .astype("float32")`` intermediate by leveraging ``points[None]``
+            # which adds the leading batch axis without a copy.
+            center = (
+                cv2.projectPoints(
+                    points[None],
+                    self._rotation,
+                    self._translation,
+                    self._camera_matrix,
+                    _DISTORTION_COEFFICIENTS,
+                )[0]
+                .squeeze()
+                .astype("float32")
+            )
+            logger.trace("center %s: %s", key, center)  # type:ignore[attr-defined]
+            offset[key] = center - center_origin
         logger.trace("offset: %s", offset)  # type:ignore[attr-defined]
         return offset
 

@@ -32,15 +32,18 @@ class Thumbnails:
     def __init__(self, alignments: align.alignments.Alignments) -> None:
         logger.debug(parse_class_init(locals()))
         self._alignments_dict = alignments.data
-        self._frame_list = list(sorted(self._alignments_dict))
+        self._frame_list = sorted(self._alignments_dict)
         logger.debug("Initialized %s", self.__class__.__name__)
 
     @property
     def has_thumbnails(self) -> bool:
         """``True`` if all faces in the alignments file contain thumbnail images otherwise
         ``False``."""
+        # ``np.any`` on a bool here was just hiding the simple truthiness
+        # check from typing — ``face.thumb is not None`` is unambiguous and
+        # avoids the cast.
         retval = all(
-            np.any(T.cast(np.ndarray, face.thumb is not None))
+            face.thumb is not None
             for frame in self._alignments_dict.values()
             for face in frame.faces
         )

@@ -108,14 +108,18 @@ class Alignments:  # pylint:disable=too-many-public-methods
     def mask_summary(self) -> dict[str, int]:
         """The mask type names stored in the alignments :attr:`data` as key with the number of
         faces which possess the mask type as value."""
-        masks: dict[str, int] = {}
+        from collections import Counter as _Counter
+
+        counts: _Counter[str] = _Counter()
         for val in self._data.values():
             for face in val.faces:
                 if not face.mask:
-                    masks["none"] = masks.get("none", 0) + 1
-                for key in face.mask:
-                    masks[key] = masks.get(key, 0) + 1
-        return masks
+                    counts["none"] += 1
+                # ``face.mask`` is a ``dict[str, Mask]`` — pass ``.keys()``
+                # so ``Counter`` treats every mask type as a +1 increment
+                # rather than interpreting the dict's values as counts.
+                counts.update(face.mask.keys())
+        return dict(counts)
 
     @property
     def video_meta_data(
@@ -190,7 +194,7 @@ class Alignments:  # pylint:disable=too-many-public-methods
         keyframes
             A list of frame indices corresponding to the key frames in the input video
         """
-        sample_filename = next(fname for fname in self.data)
+        sample_filename = next(iter(self.data))
         basename = sample_filename[: sample_filename.rfind("_")]
         ext = os.path.splitext(sample_filename)[-1]
         logger.debug(
@@ -448,7 +452,7 @@ class Alignments:  # pylint:disable=too-many-public-methods
                 filter_list,
             )
 
-            for face_idx in reversed(sorted(filter_list)):
+            for face_idx in sorted(filter_list, reverse=True):
                 logger.verbose(  # type:ignore[attr-defined]
                     "Filtering out face: (filename: %s, index: %s)",
                     source_frame,
@@ -512,10 +516,8 @@ class Alignments:  # pylint:disable=too-many-public-methods
         filename
             The filename/folder of the original source images/video for the current alignments
         """
-        updates = [
-            updater.is_updated for updater in (VideoExtension(self._data, self.version, filename),)
-        ]
-        if any(updates):
+        # Single-updater path — no need for the list+any() wrapper.
+        if VideoExtension(self._data, self.version, filename).is_updated:
             self._io.update_version()
             self.save()
 
@@ -573,11 +575,14 @@ class _IO:
         """
         logger.debug("Getting location: (folder: '%s', filename: '%s')", folder, filename)
         assert self._serializer is not None
-        no_ext_name, extension = os.path.splitext(filename)
-        if extension[1:] == self._serializer.file_extension:
+        from pathlib import Path as _Path
+
+        path = _Path(filename)
+        expected_ext = f".{self._serializer.file_extension}"
+        if path.suffix == expected_ext:
             logger.debug("Valid Alignments filename provided: '%s'", filename)
         else:
-            filename = f"{no_ext_name}.{self._serializer.file_extension}"
+            filename = str(path.with_suffix(expected_ext))
             logger.debug(
                 "File extension set from serializer: '%s'",
                 self._serializer.file_extension,
@@ -617,9 +622,10 @@ class _IO:
                 IdentityAndVideoMeta(alignments_dict, self._version),
             )
         ]
-        if any(updates):
+        did_update = any(updates)
+        if did_update:
             self.update_version()
-        return any(updates)
+        return did_update
 
     def load(self) -> dict[str, AlignmentsEntry]:
         """Load the alignments data from the serialized alignments :attr:`file`.
@@ -691,9 +697,7 @@ class _IO:
         split = os.path.splitext(src)
         dst = f"{split[0]}_bk_{now}{split[1]}"
         idx = 1
-        while True:
-            if not os.path.exists(dst):
-                break
+        while os.path.exists(dst):
             logger.debug("Backup file %s exists. Incrementing", dst)
             dst = f"{split[0]}_{now}({idx}){split[1]}"
             idx += 1

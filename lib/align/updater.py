@@ -120,7 +120,7 @@ class VideoExtension(_Updater):
         if self._extension.lower() not in VIDEO_EXTENSIONS:
             return False
 
-        exts = set(os.path.splitext(k)[-1] for k in self._alignments)
+        exts = {os.path.splitext(k)[-1] for k in self._alignments}
         if len(exts) != 1:
             logger.debug("Alignments file has multiple key extensions. Skipping")
             return False
@@ -256,14 +256,17 @@ class NumpyToList(_Updater):
         update_count = 0
         for val in self._alignments.values():
             for alignment in val["faces"]:
-                test1 = alignment["landmarks_xy"]
-                test2 = alignment["thumb"]
-                if isinstance(test1, np.ndarray) or isinstance(test2, np.ndarray):
+                landmarks = alignment["landmarks_xy"]
+                # Older alignments could be missing the ``thumb`` key; use
+                # ``.get`` so the cast loop doesn't raise ``KeyError`` for
+                # those legacy files.
+                thumb = alignment.get("thumb")
+                if isinstance(landmarks, np.ndarray) or isinstance(thumb, np.ndarray):
                     update_count += 1
-                if isinstance(test1, np.ndarray):
-                    alignment["landmarks_xy"] = test1.tolist()
-                if isinstance(test2, np.ndarray):
-                    alignment["thumb"] = test2.tolist()
+                if isinstance(landmarks, np.ndarray):
+                    alignment["landmarks_xy"] = landmarks.tolist()
+                if isinstance(thumb, np.ndarray):
+                    alignment["thumb"] = thumb.tolist()
         return update_count
 
 
