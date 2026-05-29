@@ -1287,3 +1287,81 @@ def test_backfill_identity_invokes_progress_callback_per_face(tmp_path, monkeypa
 
     assert report.total_faces == 2
     assert ticks == [1, 1]
+
+
+def test_compute_identity_quality_ticks_per_record_even_when_unclassified(tmp_path) -> None:
+    """compute_identity_quality must tick once per record so the GUI bar
+    reaches the declared total even when some faces lack a usable vector
+    or the classifier never runs the centroid math for them (P2 follow-up
+    to #187).
+    """
+    import numpy as _np
+
+    from lib.faceqa.coverage import compute_identity_quality
+
+    # Three faces carry vectors; two do not. Total records = 5.
+    seeded = _np.ones(512, dtype="float32")
+    faces = [
+        _face(),  # frame_000001.png face 0 — has vector
+        _face(),  # frame_000002.png face 0 — has vector
+        _face(),  # frame_000003.png face 0 — has vector
+        _face(),  # frame_000004.png face 0 — no vector
+        _face(),  # frame_000005.png face 0 — no vector
+    ]
+    for face in faces[:3]:
+        face.identity = {"insightface": seeded}
+    alignments = tmp_path / "alignments.fsa"
+    get_serializer("compressed").save(
+        str(alignments),
+        {
+            "__meta__": {"version": 2.4},
+            "__data__": {
+                f"frame_{i:06d}.png": AlignmentsEntry(faces=[faces[i - 1]]).to_dict()
+                for i in range(1, 6)
+            },
+        },
+    )
+
+    records = records_from_alignments(alignments)
+    ticks: list[int] = []
+    report = compute_identity_quality(records, alignments, progress_callback=ticks.append)
+
+    assert len(records) == 5
+    assert ticks == [1] * 5
+    assert report.vectors_available == 3
+
+
+def test_blank_message_filter_does_not_mutate_shared_record() -> None:
+    """``_BlankMessageFilter`` must format a copy so downstream handlers see
+    the original record (P2 follow-up to #189). Regression for the
+    formatter-side mutation that ``FaceswapFormatter`` applies to
+    ``record.msg`` / ``record.args`` / ``record.message`` for captured
+    ``py.warnings``.
+    """
+    import logging as _logging
+
+    from lib.logger import FaceswapFormatter, _BlankMessageFilter
+
+    formatter = FaceswapFormatter("%(message)s")
+    filt = _BlankMessageFilter(formatter)
+
+    record = _logging.LogRecord(
+        name="py.warnings",
+        level=_logging.WARNING,
+        pathname=__file__,
+        lineno=1,
+        msg="real\nwarning\nwith\nnewlines\nwarnings.warn(",
+        args=(),
+        exc_info=None,
+        func="fn",
+    )
+    original_msg = record.msg
+    original_args = record.args
+
+    filt.filter(record)
+
+    # The shared LogRecord must NOT have been rewritten by the filter's
+    # internal format pass.
+    assert record.msg == original_msg
+    assert record.args == original_args
+    assert not hasattr(record, "message") or record.message == record.getMessage()

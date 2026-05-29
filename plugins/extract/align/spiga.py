@@ -409,16 +409,21 @@ class SPIGAFaceswapModel(nn.Module):
 def _pose_rows_from_raw(raw_pose: torch.Tensor) -> torch.Tensor:
     """Return user-facing yaw/pitch/roll pose rows from SPIGA raw pose tensor.
 
-    Converts SPIGA's raw euler convention into Faceswap's signed
-    yaw/pitch/roll degrees. The 90deg offsets on yaw and roll match how
-    SPIGA's world model is oriented relative to Faceswap's pose convention
-    (see ``_raw_pose_from_faceswap`` in the test suite for the inverse).
+    Converts SPIGA's raw euler output into Faceswap's signed
+    yaw/pitch/roll degrees with a plain sign flip per axis. The 90deg
+    yaw / roll offsets that appear in
+    ``_spiga/inference/pose_proj.euler_to_rotation_matrix`` ("Change
+    coordinates system") are an internal projection-frame transform
+    used before building the 3D rotation matrix; they are NOT part of
+    the user-facing pose. Applying them here would push a frontal
+    face to ~95 deg yaw / -88 deg roll in serialized FaceQA metadata.
     """
     euler = raw_pose[:, :3]
 
-    yaw = 90.0 - euler[:, 0]
+    # Sign-flip per axis only. Do not apply projection-frame offsets.
+    yaw = -euler[:, 0]
     pitch = -euler[:, 1]
-    roll = -(euler[:, 2] + 90.0)
+    roll = -euler[:, 2]
 
     pose = torch.stack((yaw, pitch, roll), dim=1)
     rows = torch.zeros(

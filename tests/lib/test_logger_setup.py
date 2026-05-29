@@ -320,3 +320,20 @@ def test_configure_tool_logging_is_idempotent(tmp_path: Path) -> None:
             if getattr(handler, "_faceswap_managed_handler", False):
                 rootlogger.removeHandler(handler)
                 handler.close()
+
+
+def test_external_policy_drops_pil_info_on_stream() -> None:
+    """PIL INFO records must be silenced on stream (P3 follow-up to #189).
+
+    Previously ``PIL`` had only ``max_stream_level=WARNING``, which is a
+    ceiling, not a floor — the stream handler's INFO floor still let
+    ``PIL.Image`` INFO boilerplate through.
+    """
+    handler, buf = _make_stream_handler()
+    _apply_external_logger_policy(logging.getLogger(), handler)
+
+    handler.handle(_make_record("PIL.Image", logging.INFO, "STREAM open"))
+    handler.handle(_make_record("numexpr.utils", logging.INFO, "Using NumExpr"))
+
+    assert "STREAM open" not in buf.getvalue()
+    assert "Using NumExpr" not in buf.getvalue()

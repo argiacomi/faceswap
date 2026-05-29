@@ -262,9 +262,13 @@ class Faceqa:  # pylint:disable=invalid-name
                 "and redundancy clustering."
             )
 
-        missing = max(0, status.missing_faces)
+        # ``backfill_identity`` ticks once per face it considers, including
+        # already-present + skipped, so the tqdm total must be the FULL
+        # alignment face count — not just the missing count — or the bar
+        # exceeds 100% on real facesets (only a fraction of faces lack
+        # embeddings).
         with _faceqa_progress(
-            total=missing or status.total_faces,
+            total=status.total_faces,
             desc="FaceQA identity backfill",
             unit="face",
         ) as tick:

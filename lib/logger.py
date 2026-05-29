@@ -57,9 +57,12 @@ EXTERNAL_LOGGER_POLICY: dict[str, dict[str, T.Any]] = {
     "matplotlib.font_manager": {"lower_info_to_debug": True},
     # libav (via PyAV) emits per-frame INFO that drowns extract/convert output.
     "libav": {"lower_info_to_debug": True, "max_stream_level": "WARNING"},
-    # Pillow / numexpr boilerplate has no console value.
-    "PIL": {"max_stream_level": "WARNING"},
-    "numexpr": {"max_stream_level": "WARNING"},
+    # Pillow / numexpr boilerplate has no console value. Both downgrades
+    # (drop INFO) and the WARNING ceiling are needed: lowering alone leaves
+    # noisy WARNING-tier debug intact, and capping alone still lets INFO
+    # through the stream handler's INFO floor.
+    "PIL": {"lower_info_to_debug": True, "max_stream_level": "WARNING"},
+    "numexpr": {"lower_info_to_debug": True, "max_stream_level": "WARNING"},
     # Specific Torch inductor warnings that always appear on supported GPUs
     # and add nothing for users.
     "torch._inductor": {
@@ -144,9 +147,19 @@ class _BlankMessageFilter(logging.Filter):
 
     Without this, captured warnings (where the warning text contains only a
     blank line) and external noise can produce empty stream/tqdm lines that
-    pollute progress bars and GUI status parsing. The filter is bound to
-    the stream handler only — file/crash handlers still receive every
-    record so post-mortem grepping is unaffected.
+    pollute progress bars and GUI status parsing.
+
+    Critically, the filter formats a COPY of the record. ``FaceswapFormatter``
+    still mutates incoming ``LogRecord`` instances (it rewrites captured
+    ``py.warnings`` text into ``record.msg`` and escapes newlines on
+    ``record.message``). Because handlers downstream of the stream handler
+    (the crash buffer + file logger in non-setup mode are installed earlier,
+    but ad-hoc embedding apps may add their own handlers later) see the
+    SAME record object, formatting the original here would leak those
+    mutations across handlers — defeating the "file/crash handlers continue
+    to receive original records" guarantee. ``logging.makeLogRecord`` rebuilds
+    a fresh record from a shallow copy of ``record.__dict__`` so the
+    formatter's mutations stay local to this filter.
     """
 
     def __init__(self, formatter: logging.Formatter) -> None:
@@ -155,7 +168,8 @@ class _BlankMessageFilter(logging.Filter):
 
     def filter(self, record: logging.LogRecord) -> bool:
         try:
-            formatted = self._formatter.format(record)
+            isolated = logging.makeLogRecord(record.__dict__.copy())
+            formatted = self._formatter.format(isolated)
         except Exception:  # pylint:disable=broad-except
             # Never silently swallow a record because formatting blew up.
             return True

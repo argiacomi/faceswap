@@ -16,17 +16,25 @@ from plugins.extract.align.spiga import SPIGA, _pose_rows_from_raw
 
 
 def _raw_pose_from_faceswap(yaw: float, pitch: float, roll: float) -> list[float]:
-    """Return SPIGA raw euler values that should map to Faceswap pose values."""
-    return [90.0 - yaw, -pitch, -roll - 90.0, 0.0, 0.0, 0.0]
+    """Return SPIGA raw euler values that should map to Faceswap pose values.
+
+    The 90deg yaw / roll offsets that appear inside SPIGA's
+    ``pose_proj.euler_to_rotation_matrix`` are NOT part of the
+    user-facing pose convention — they are an internal projection-frame
+    transform applied only when building a rotation matrix. The
+    serialized FaceQA pose is just a per-axis sign flip of the raw
+    SPIGA euler values.
+    """
+    return [-yaw, -pitch, -roll, 0.0, 0.0, 0.0]
 
 
 def test_pose_rows_convert_spiga_euler_to_faceswap_degrees() -> None:
-    """SPIGA raw euler output is converted into yaw/pitch/roll rows."""
+    """SPIGA raw euler output is converted into yaw/pitch/roll rows by sign flip."""
     raw_pose = torch.tensor([[80.0, -5.0, -100.0, 1.0, 2.0, 3.0]], dtype=torch.float32)
 
     rows = _pose_rows_from_raw(raw_pose).detach().cpu().numpy()
 
-    np.testing.assert_allclose(rows[0, :, 0], np.array([10.0, 5.0, 10.0], dtype="float32"))
+    np.testing.assert_allclose(rows[0, :, 0], np.array([-80.0, 5.0, 100.0], dtype="float32"))
     np.testing.assert_allclose(rows[0, :, 1], np.zeros(3, dtype="float32"))
 
 

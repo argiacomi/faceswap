@@ -715,10 +715,14 @@ class SpigaPoseBackfiller:
             return None
 
         # Clamp the ROI to the frame so we never read out-of-bounds pixels.
-        clamp_l = max(0, int(original[0]))
-        clamp_t = max(0, int(original[1]))
-        clamp_r = min(width, int(original[2]))
-        clamp_b = min(height, int(original[3]))
+        # Match :meth:`lib.infer.align.Aligner._clamp_roi`: every coord is
+        # clipped to ``dim - 1`` (not ``dim``). The destination-box math
+        # downstream depends on this so partial off-frame faces produce the
+        # same destination shape the extractor would (issue #190 follow-up).
+        clamp_l = int(np.clip(int(original[0]), 0, width - 1))
+        clamp_t = int(np.clip(int(original[1]), 0, height - 1))
+        clamp_r = int(np.clip(int(original[2]), 0, width - 1))
+        clamp_b = int(np.clip(int(original[3]), 0, height - 1))
         if clamp_r <= clamp_l or clamp_b <= clamp_t:
             return None
 
@@ -1356,13 +1360,20 @@ def compute_identity_quality(
         return report
     centroid = centroid / centroid_norm
 
-    records_by_key = {(record.frame, record.face_index): record for record in records}
-    for key, vector in vectors_by_key.items():
-        record = records_by_key.get(key)
-        face = faces_by_key.get(key)
-        if record is None:
+    classified_keys = set(vectors_by_key)
+    # The dispatcher binds this tqdm to ``len(records)`` so the bar tracks
+    # the FACE count — including unclassified records that have no vector.
+    # Walk records in their declared order, tick per record, and only run
+    # the dot-product / decision math when a vector exists. This guarantees
+    # the bar reaches 100% even when some faces lack a usable embedding.
+    for record in records:
+        if progress_callback is not None:
+            progress_callback(1)
+        key = (record.frame, record.face_index)
+        if key not in classified_keys:
             continue
-
+        vector = vectors_by_key[key]
+        face = faces_by_key.get(key)
         score = float(np.dot(vector, centroid))
         quality_flag, final_decision = _identity_decision(score)
         report.classified += 1
@@ -1393,9 +1404,6 @@ def compute_identity_quality(
                     "final_decision": final_decision,
                 },
             )
-
-        if progress_callback is not None:
-            progress_callback(1)
 
     return report
 
