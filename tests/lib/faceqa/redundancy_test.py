@@ -621,3 +621,61 @@ def test_representation_distance_downweights_fallback_lighting() -> None:
     fallback_distance = fallback_pair[0]
 
     assert fallback_distance < frame_distance
+
+
+def test_identity_guardrail_requires_classified_decision() -> None:
+    """Raw embedding presence is NOT enough to satisfy the identity guardrail.
+
+    Regression: previously ``has_identity`` was true whenever any
+    ``face.identity[...]`` vector existed (via ``identity_model is not None``).
+    A face with an unsupported vector or a vector for a model that
+    ``compute_identity_quality`` could not classify would silently bypass the
+    missing-identity guardrail. The contract is now that a record must carry
+    an explicit decision (``identity_final_decision``) or classified flag
+    (``identity_quality_flag``) for the guardrail to consider it covered.
+    """
+    from lib.faceqa.redundancy import _has_identity_guardrail
+
+    # Vector exists (identity_model set) but the classifier never ran.
+    raw_only = _record(
+        "frame_000001.png",
+        identity_model="insightface",
+        identity_quality_flag=None,
+    )
+    raw_only.identity_final_decision = None
+    assert _has_identity_guardrail(raw_only) is False
+
+    # Quality classification populated.
+    flagged = _record("frame_000002.png", identity_quality_flag="inlier")
+    assert _has_identity_guardrail(flagged) is True
+
+    # Final decision populated (e.g. via verifier pipeline).
+    decided = _record(
+        "frame_000003.png",
+        identity_model="insightface",
+        identity_quality_flag=None,
+    )
+    decided.identity_final_decision = "review"
+    assert _has_identity_guardrail(decided) is True
+
+    # Truly empty: no model, no flag, no decision → guardrail missing.
+    empty = _record(
+        "frame_000004.png",
+        identity_model=None,
+        identity_quality_flag=None,
+    )
+    assert _has_identity_guardrail(empty) is False
+
+
+def test_compute_redundancy_invokes_progress_callback_per_pair() -> None:
+    """compute_redundancy ticks the progress callback ``n * (n - 1) // 2`` times (issue #187)."""
+    records = _near_identical_run(5, yaw=0.0, expression_bucket="neutral")
+    ticks: list[int] = []
+
+    report = compute_redundancy(records, progress_callback=ticks.append)
+
+    expected_pairs = len(records) * (len(records) - 1) // 2
+    assert len(ticks) == expected_pairs
+    assert all(t == 1 for t in ticks)
+    # Sanity: clustering still produced a meaningful report.
+    assert len(report.records) == 5

@@ -16,7 +16,10 @@ from __future__ import annotations
 import logging
 import typing as T
 from argparse import Namespace
+from contextlib import contextmanager
 from pathlib import Path
+
+from tqdm import tqdm
 
 from lib.align.objects import FileAlignments
 from lib.faceqa.compatibility import compute_compatibility
@@ -43,6 +46,28 @@ from lib.utils import FaceswapError, get_module_objects
 from tools.alignments.media import Frames
 
 logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def _faceqa_progress(*, total: int, desc: str, unit: str):
+    """Yield a ``tqdm.update`` callable for one FaceQA stage.
+
+    Wrapping every stage in this helper means:
+
+    * The GUI ``ProgressParser`` consumes determinate FaceQA progress without
+      any GUI-specific protocol code (see issue #187).
+    * Stages with zero work (e.g. identity backfill when coverage is already
+      complete) skip the bar entirely so the CLI output stays tidy.
+    * A FaceQA stage failure does not leak an open ``tqdm`` instance.
+    """
+    if total <= 0:
+        yield lambda _n=1: None
+        return
+    bar = tqdm(total=total, desc=desc, unit=unit, leave=False)
+    try:
+        yield bar.update
+    finally:
+        bar.close()
 
 
 class Faceqa:  # pylint:disable=invalid-name
@@ -120,11 +145,14 @@ class Faceqa:  # pylint:disable=invalid-name
             pose_backfill_callback = _track_pose_backfill
 
         metrics_backfiller = self._metrics_backfiller()
-        records = records_from_alignments(
-            entries,
-            pose_backfiller=pose_backfill_callback,
-            metrics_backfiller=metrics_backfiller,
-        )
+        total_faces = sum(len(entry.faces) for entry in entries.values())
+        with _faceqa_progress(total=total_faces, desc="FaceQA metrics", unit="face") as tick:
+            records = records_from_alignments(
+                entries,
+                pose_backfiller=pose_backfill_callback,
+                metrics_backfiller=metrics_backfiller,
+                progress_callback=tick,
+            )
 
         if metrics_backfiller is not None and metrics_backfiller.disabled_reason:
             logger.warning(
@@ -133,7 +161,10 @@ class Faceqa:  # pylint:disable=invalid-name
                 metrics_backfiller.disabled_reason,
             )
 
-        identity_quality = compute_identity_quality(records, entries)
+        with _faceqa_progress(
+            total=total_faces, desc="FaceQA identity quality", unit="face"
+        ) as tick:
+            identity_quality = compute_identity_quality(records, entries, progress_callback=tick)
         if identity_quality.disabled_reason:
             logger.info(
                 "Identity quality classification skipped: %s", identity_quality.disabled_reason
@@ -176,12 +207,15 @@ class Faceqa:  # pylint:disable=invalid-name
         output_dir = self._output_dir(alignments)
 
         if suggest_pruning:
-            redundancy = compute_redundancy(
-                records,
-                coverage=coverage,
-                aggressiveness=str(getattr(self._args, "prune_aggressiveness", "balanced")),
-                min_bucket_pct=min_bucket_pct,
-            )
+            pair_count = len(records) * (len(records) - 1) // 2
+            with _faceqa_progress(total=pair_count, desc="FaceQA redundancy", unit="pair") as tick:
+                redundancy = compute_redundancy(
+                    records,
+                    coverage=coverage,
+                    aggressiveness=str(getattr(self._args, "prune_aggressiveness", "balanced")),
+                    min_bucket_pct=min_bucket_pct,
+                    progress_callback=tick,
+                )
             report.pruning_suggestions = redundancy.to_dict()
             logger.info(
                 "Pruning suggestions (%s): keep=%d, review=%d, prune_candidate=%d.",
@@ -228,11 +262,18 @@ class Faceqa:  # pylint:disable=invalid-name
                 "and redundancy clustering."
             )
 
-        report = backfill_identity(
-            alignments,
-            frames_loader=Frames(frames_dir),
-            model=status.model,
-        )
+        missing = max(0, status.missing_faces)
+        with _faceqa_progress(
+            total=missing or status.total_faces,
+            desc="FaceQA identity backfill",
+            unit="face",
+        ) as tick:
+            report = backfill_identity(
+                alignments,
+                frames_loader=Frames(frames_dir),
+                model=status.model,
+                progress_callback=tick,
+            )
         if report.disabled_reason:
             logger.warning(
                 "Identity backfill disabled (%s); coverage/pruning will rely on "
@@ -277,16 +318,25 @@ class Faceqa:  # pylint:disable=invalid-name
         pruning_dir.mkdir(parents=True, exist_ok=True)
 
         if sort_prune:
-            keep_originals = bool(getattr(self._args, "keep_originals", True))
-            # When keep=True (default, safe): copy into pruning/ under output_dir.
-            # When keep=False (destructive): move originals into bucket subdirs of faces_dir.
+            # Default sort-prune is MOVE (destructive: originals are
+            # relocated into bucket subdirs of faces_dir). ``--keep`` opts
+            # into COPY mode (non-destructive: faces are duplicated into
+            # pruning/ under output_dir and the source folder is untouched).
+            # ``keep_originals`` thus defaults to ``False`` when missing.
+            keep_originals = bool(getattr(self._args, "keep_originals", False))
             target_root = pruning_dir if keep_originals else faces_dir
-            write_sorted_folders(
-                redundancy,
-                faces_dir=faces_dir,
-                output_dir=target_root,
-                copy=keep_originals,
-            )
+            with _faceqa_progress(
+                total=len(redundancy.records),
+                desc="FaceQA sort-prune",
+                unit="face",
+            ) as tick:
+                write_sorted_folders(
+                    redundancy,
+                    faces_dir=faces_dir,
+                    output_dir=target_root,
+                    copy=keep_originals,
+                    progress_callback=tick,
+                )
             logger.info(
                 "Sort-prune: %s aligned faces into '%s' (keep=%s).",
                 "copied" if keep_originals else "moved",
@@ -296,11 +346,22 @@ class Faceqa:  # pylint:disable=invalid-name
 
         if contact_sheets:
             sheets_dir = pruning_dir / "contact_sheets"
-            sheets = render_contact_sheets(
-                redundancy,
-                faces_dir=faces_dir,
-                output_dir=sheets_dir,
+            multi_face_clusters = sum(
+                1
+                for record in redundancy.records
+                if record.representative and record.cluster_size > 1
             )
+            with _faceqa_progress(
+                total=multi_face_clusters,
+                desc="FaceQA contact sheets",
+                unit="sheet",
+            ) as tick:
+                sheets = render_contact_sheets(
+                    redundancy,
+                    faces_dir=faces_dir,
+                    output_dir=sheets_dir,
+                    progress_callback=tick,
+                )
             logger.info(
                 "Contact sheets: rendered %d cluster sheet(s) under '%s'.",
                 len(sheets),
@@ -314,8 +375,12 @@ class Faceqa:  # pylint:disable=invalid-name
     def _run_compatibility(self) -> None:
         source = self._require_alignments("source_alignments")
         target = self._require_alignments("target_alignments")
-        source_coverage = self._coverage_for_compatibility(source)
-        target_coverage = self._coverage_for_compatibility(target)
+        source_coverage = self._coverage_for_compatibility(
+            source, desc="FaceQA compatibility source"
+        )
+        target_coverage = self._coverage_for_compatibility(
+            target, desc="FaceQA compatibility target"
+        )
         report = compute_compatibility(
             source_coverage,
             target_coverage,
@@ -343,8 +408,16 @@ class Faceqa:  # pylint:disable=invalid-name
     def _coverage_for_compatibility(
         self,
         alignments: Path,
+        *,
+        desc: str = "FaceQA compatibility",
     ) -> FacesetCoverageReport:
-        records = records_from_alignments(alignments)
+        raw_envelope, entries = load_alignments_envelope(alignments)
+        total_faces = sum(len(entry.faces) for entry in entries.values())
+        with _faceqa_progress(total=total_faces, desc=desc, unit="face") as tick:
+            records = records_from_alignments(entries, progress_callback=tick)
+        # Compatibility is read-only on alignments; raw_envelope is intentionally
+        # discarded since no enrichment was triggered for this faceset.
+        del raw_envelope
         return compute_coverage(
             records,
             exclude_duplicates=bool(getattr(self._args, "exclude_duplicates", False)),

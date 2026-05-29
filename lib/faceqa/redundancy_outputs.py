@@ -75,6 +75,7 @@ def write_sorted_folders(
     faces_dir: str | Path,
     output_dir: str | Path,
     copy: bool = True,
+    progress_callback: T.Callable[[int], None] | None = None,
 ) -> RedundancyLayout:
     """Sort aligned faces into ``keep``/``review``/``prune_candidate`` folders.
 
@@ -111,6 +112,8 @@ def write_sorted_folders(
                 f"{record.recommendation},{record.cluster_id},{record.representative},"
                 f"{operation}"
             )
+            if progress_callback is not None:
+                progress_callback(1)
             continue
         destination = target_dir / source.name
         if copy:
@@ -121,6 +124,8 @@ def write_sorted_folders(
             f"{source},{destination},{record.recommendation},"
             f"{record.cluster_id},{record.representative},{operation}"
         )
+        if progress_callback is not None:
+            progress_callback(1)
     layout.mapping_log.write_text("\n".join(mapping_lines) + "\n", encoding="utf-8")
     return layout
 
@@ -198,8 +203,13 @@ def render_contact_sheets(
     *,
     faces_dir: str | Path,
     output_dir: str | Path,
+    progress_callback: T.Callable[[int], None] | None = None,
 ) -> list[Path]:
-    """Render one contact sheet per multi-face redundancy cluster."""
+    """Render one contact sheet per multi-face redundancy cluster.
+
+    ``progress_callback`` (when supplied) is invoked with ``1`` after each
+    cluster sheet is written.
+    """
     faces_dir_p = Path(faces_dir)
     output_dir_p = _ensure_dir(Path(output_dir))
     clusters: dict[int, list[RedundancyRecord]] = {}
@@ -234,6 +244,8 @@ def render_contact_sheets(
         path = output_dir_p / f"cluster_{cluster_id:04d}.png"
         cv2.imwrite(str(path), sheet)
         written.append(path)
+        if progress_callback is not None:
+            progress_callback(1)
     return written
 
 

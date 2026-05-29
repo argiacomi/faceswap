@@ -161,6 +161,7 @@ def records_from_alignments(
     | None = None,
     metrics_backfiller: Callable[[FileAlignments, str, int], dict[str, T.Any] | None]
     | None = None,
+    progress_callback: Callable[[int], None] | None = None,
 ) -> list[FaceQARecord]:
     """Return FaceQA records derived from alignments + embedded ``face.metadata['faceqa']``.
 
@@ -172,6 +173,10 @@ def records_from_alignments(
     so blur / lighting / black-pixel metrics carry the authoritative
     ``frame_aligned_crop`` provenance. When absent, FaceQA falls back to the
     stored thumbnail (``thumbnail_fallback`` provenance).
+
+    ``progress_callback`` (when supplied) is invoked with ``1`` after each
+    face is processed so the FaceQA dispatcher can drive a ``tqdm`` bar the
+    GUI process wrapper consumes.
     """
     if isinstance(source, dict):
         entries = source
@@ -190,6 +195,8 @@ def records_from_alignments(
             _select_pose(record)
             _populate_expression(record, face)
             records.append(record)
+            if progress_callback is not None:
+                progress_callback(1)
     return records
 
 
@@ -1048,6 +1055,7 @@ def backfill_identity(
     frames_loader: T.Any,
     model: str | None = None,
     save: bool = True,
+    progress_callback: Callable[[int], None] | None = None,
 ) -> IdentityBackfillReport:
     """Backfill missing identity embeddings across an entire alignments file.
 
@@ -1098,6 +1106,8 @@ def backfill_identity(
             existing = face.identity.get(report.model)
             if existing is not None and np.asarray(existing).ravel().size > 0:
                 report.already_present += 1
+                if progress_callback is not None:
+                    progress_callback(1)
                 continue
             prior_image = backfiller._last_image  # noqa: SLF001
             vector = backfiller(face, frame, idx)
@@ -1109,9 +1119,13 @@ def backfill_identity(
                     report.skipped_no_frame += 1
                 else:
                     report.skipped_failed += 1
+                if progress_callback is not None:
+                    progress_callback(1)
                 continue
             report.backfilled += 1
             any_backfilled = True
+            if progress_callback is not None:
+                progress_callback(1)
         if report.disabled_reason is not None:
             break
 
@@ -1221,6 +1235,7 @@ def compute_identity_quality(
     source: str | Path | dict[str, AlignmentsEntry],
     *,
     model: str | None = None,
+    progress_callback: Callable[[int], None] | None = None,
 ) -> IdentityQualityReport:
     """Derive identity availability/outlier decisions before coverage.
 
@@ -1308,6 +1323,9 @@ def compute_identity_quality(
                     "final_decision": final_decision,
                 },
             )
+
+        if progress_callback is not None:
+            progress_callback(1)
 
     return report
 

@@ -535,8 +535,15 @@ def _temporal_confidence(
 def _build_redundancy_clusters(
     features: list[RepresentationFeatures],
     config: AggressivenessConfig,
+    *,
+    progress_callback: T.Callable[[int], None] | None = None,
 ) -> tuple[list[list[int]], dict[tuple[int, int], tuple[float, int, float, int | None]]]:
-    """Union-find clusters by redundancy edges plus per-pair edge data."""
+    """Union-find clusters by redundancy edges plus per-pair edge data.
+
+    ``progress_callback`` (when supplied) receives ``1`` after each pairwise
+    comparison so the dispatcher can drive a determinate ``tqdm`` bar over
+    the ``n * (n - 1) // 2`` comparisons performed here.
+    """
     n = len(features)
     parent = list(range(n))
 
@@ -563,13 +570,13 @@ def _build_redundancy_clusters(
                 features[i].frame_index, features[j].frame_index, config
             )
             edges[(i, j)] = (distance, compared, t_conf, frame_distance)
-            if compared < 3:
-                # Not enough signal to cluster confidently; leave separate.
-                continue
-            obvious = distance <= config.obvious_duplicate_threshold
-            redundant = distance <= config.representation_distance_threshold and t_conf >= 0.8
-            if obvious or redundant:
-                union(i, j)
+            if compared >= 3:
+                obvious = distance <= config.obvious_duplicate_threshold
+                redundant = distance <= config.representation_distance_threshold and t_conf >= 0.8
+                if obvious or redundant:
+                    union(i, j)
+            if progress_callback is not None:
+                progress_callback(1)
     clusters_by_root: dict[int, list[int]] = {}
     for idx in range(n):
         root = find(idx)
@@ -834,8 +841,14 @@ def compute_redundancy(
     aggressiveness: str = "balanced",
     coverage: FacesetCoverageReport | None = None,
     min_bucket_pct: float = 5.0,
+    progress_callback: T.Callable[[int], None] | None = None,
 ) -> RedundancyReport:
-    """Compute coverage-aware representation redundancy clusters and recs."""
+    """Compute coverage-aware representation redundancy clusters and recs.
+
+    ``progress_callback`` is forwarded into the pairwise-clustering loop so
+    the dispatcher can drive a determinate ``tqdm`` bar; the total tick count
+    matches ``n * (n - 1) // 2`` pairwise comparisons.
+    """
     if aggressiveness not in _AGGRESSIVENESS_PRESETS:
         raise ValueError(
             f"Unknown aggressiveness '{aggressiveness}'. "
@@ -848,7 +861,9 @@ def compute_redundancy(
         return RedundancyReport(aggressiveness=aggressiveness)
 
     features = [_features_for(record) for record in record_list]
-    components, edges = _build_redundancy_clusters(features, config)
+    components, edges = _build_redundancy_clusters(
+        features, config, progress_callback=progress_callback
+    )
     cluster_of: dict[int, int] = {}
     for cluster_id, members in enumerate(components):
         for member in members:

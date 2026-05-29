@@ -1082,3 +1082,76 @@ def test_existing_frame_provenance_short_circuits_backfiller(tmp_path) -> None:
     records = records_from_alignments(alignments, metrics_backfiller=fail_backfiller)
     assert records[0].blur_score == 7.5
     assert records[0].image_metrics_provenance == IMAGE_METRICS_PROVENANCE_FRAME
+
+
+def test_records_from_alignments_invokes_progress_callback_per_face(tmp_path) -> None:
+    """progress_callback fires exactly once per face (GUI tqdm contract — issue #187)."""
+    from lib.faceqa.coverage import records_from_alignments
+
+    alignments = tmp_path / "alignments.fsa"
+    get_serializer("compressed").save(
+        str(alignments),
+        {
+            "__meta__": {"version": 2.4},
+            "__data__": {
+                f"frame_{i:06d}.png": AlignmentsEntry(faces=[_face()]).to_dict()
+                for i in range(1, 6)
+            },
+        },
+    )
+
+    ticks: list[int] = []
+    records = records_from_alignments(alignments, progress_callback=ticks.append)
+
+    assert len(records) == 5
+    assert ticks == [1] * 5
+
+
+def test_backfill_identity_invokes_progress_callback_per_face(tmp_path, monkeypatch) -> None:
+    """backfill_identity ticks once per face attempt (already-present, success, skip)."""
+    from lib.faceqa.coverage import IdentityBackfiller, backfill_identity
+
+    # Two faces: one already has the embedding, one needs backfilling.
+    seeded = _face()
+    seeded.identity = {"insightface": np.ones(512, dtype="float32")}
+    missing = _face()
+    alignments = tmp_path / "alignments.fsa"
+    get_serializer("compressed").save(
+        str(alignments),
+        {
+            "__meta__": {"version": 2.4},
+            "__data__": {
+                "frame_000001.png": AlignmentsEntry(faces=[seeded]).to_dict(),
+                "frame_000002.png": AlignmentsEntry(faces=[missing]).to_dict(),
+            },
+        },
+    )
+
+    class _Plugin:
+        input_size = 64
+        centering = "face"
+
+        def load_model(self):
+            return object()
+
+        def process(self, batch):
+            return np.ones((batch.shape[0], 512), dtype=np.float32)
+
+        def post_process(self, raw):
+            return raw / np.linalg.norm(raw, axis=1, keepdims=True)
+
+    class _Frames:
+        def load_image(self, frame):
+            return np.full((128, 128, 3), 90, dtype=np.uint8)
+
+    def fake_loader(self, _model_name):
+        self._plugin = _Plugin()
+        return self._plugin
+
+    monkeypatch.setattr(IdentityBackfiller, "_load_plugin", fake_loader)
+
+    ticks: list[int] = []
+    report = backfill_identity(alignments, frames_loader=_Frames(), progress_callback=ticks.append)
+
+    assert report.total_faces == 2
+    assert ticks == [1, 1]
