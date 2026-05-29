@@ -32,6 +32,13 @@ if T.TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# Hoisted from ``_padding_from_coverage`` so the ``T.get_args`` runtime
+# reflection isn't repeated for every aligned face. Tuple-of-literals
+# matches ``CenteringType`` and is iterated to build the per-centering
+# padding map.
+_CENTERINGS: tuple[CenteringType, ...] = ("legacy", "face", "head")
+
+
 @dataclass
 class _FaceCache:  # pylint:disable=too-many-instance-attributes
     """Cache for storing items related to a single aligned face.
@@ -75,8 +82,19 @@ class _FaceCache:  # pylint:disable=too-many-instance-attributes
     original_roi: np.ndarray | None = None
     landmarks: np.ndarray | None = None
     landmarks_normalized: np.ndarray | None = None
-    average_distance: float = 0.0
-    relative_eye_mouth_position: float = 0.0
+    # The previous ``= 0.0`` defaults could not distinguish a never-computed
+    # value from a legitimately-zero result (perfectly mean face, or
+    # eye/mouth aligned at the same y). Using ``None`` sentinels + explicit
+    # ``is None`` guards in the property bodies fixes that recompute risk.
+    average_distance: float | None = None
+    relative_eye_mouth_position: float | None = None
+    # Cache for the shared ``cv2.transform(np.expand_dims(landmarks))``
+    # result used by both ``pose`` and ``normalized_landmarks``.
+    legacy_transformed_landmarks: np.ndarray | None = None
+    # Cache for ``cv2.invertAffineTransform`` so ``transform_points(invert=True)``
+    # doesn't redo the inversion on every call.
+    inverse_adjusted_matrix: np.ndarray | None = None
+    inverse_adjusted_matrix_y_offset: float | None = None
     adjusted_matrix: np.ndarray | None = None
     interpolators: tuple[int, int] = (0, 0)
     cropped_roi: dict[CenteringType, np.ndarray] = field(default_factory=dict)
@@ -227,12 +245,7 @@ class AlignedFace:  # pylint:disable=too-many-instance-attributes
         """The estimated pose in 3D space."""
         with self._cache.lock("pose"):
             if self._cache.pose is None:
-                lms = np.nan_to_num(
-                    cv2.transform(
-                        np.expand_dims(self._frame_landmarks, axis=1),
-                        self._matrices["legacy"],
-                    ).squeeze()
-                )
+                lms = np.nan_to_num(self._legacy_transformed_landmarks())
                 self._cache.pose = PoseEstimate(lms, self._landmark_type)
         return self._cache.pose
 
@@ -293,11 +306,26 @@ class AlignedFace:  # pylint:disable=too-many-instance-attributes
         """The 68 point facial landmarks normalized to 0.0 - 1.0 as aligned by Umeyama."""
         with self._cache.lock("landmarks_normalized"):
             if self._cache.landmarks_normalized is None:
-                lms = np.expand_dims(self._frame_landmarks, axis=1)
-                lms = cv2.transform(lms, self._matrices["legacy"]).squeeze()
+                lms = self._legacy_transformed_landmarks()
                 logger.trace("normalized landmarks: %s", lms)  # type:ignore[attr-defined]
                 self._cache.landmarks_normalized = lms
         return self._cache.landmarks_normalized
+
+    def _legacy_transformed_landmarks(self) -> np.ndarray:
+        """Return ``cv2.transform(landmarks, legacy_matrix)`` with caching.
+
+        ``pose`` and ``normalized_landmarks`` both consume the same
+        legacy-space transformed landmarks. Caching the result here means
+        the ``cv2.transform`` pass runs once per AlignedFace instead of
+        twice (once per property).
+        """
+        if self._cache.legacy_transformed_landmarks is None:
+            lms = cv2.transform(
+                np.expand_dims(self._frame_landmarks, axis=1),
+                self._matrices["legacy"],
+            ).squeeze()
+            self._cache.legacy_transformed_landmarks = lms
+        return self._cache.legacy_transformed_landmarks
 
     @property
     def interpolators(self) -> tuple[int, int]:
@@ -314,7 +342,7 @@ class AlignedFace:  # pylint:disable=too-many-instance-attributes
         """The average distance of the core landmarks (18-67) from the mean face that was used for
         aligning the image."""
         with self._cache.lock("average_distance"):
-            if not self._cache.average_distance:
+            if self._cache.average_distance is None:
                 if self._landmark_type not in (
                     LandmarkType.LM_2D_68,
                     LandmarkType.LM_2D_98,
@@ -336,7 +364,7 @@ class AlignedFace:  # pylint:disable=too-many-instance-attributes
         mouth point. Positive values indicate that eyes/eyebrows are aligned above the mouth,
         negative values indicate that eyes/eyebrows are misaligned below the mouth."""
         with self._cache.lock("relative_eye_mouth_position"):
-            if not self._cache.relative_eye_mouth_position:
+            if self._cache.relative_eye_mouth_position is None:
                 if self._landmark_type not in (
                     LandmarkType.LM_2D_68,
                     LandmarkType.LM_2D_98,
@@ -380,7 +408,7 @@ class AlignedFace:  # pylint:disable=too-many-instance-attributes
             _type: round(
                 size * (EXTRACT_RATIOS[_type] + coverage_ratio - 1) / (2 * coverage_ratio)
             )
-            for _type in T.get_args(T.Literal["legacy", "face", "head"])
+            for _type in _CENTERINGS
         }
         logger.trace(retval)  # type:ignore[attr-defined]
         return retval
@@ -422,7 +450,8 @@ class AlignedFace:  # pylint:disable=too-many-instance-attributes
         if self.y_offset:
             mat = mat.copy()
             mat[1, 2] += self.y_offset * (self._size - self.padding * 2)
-        mat = cv2.invertAffineTransform(mat) if invert else mat
+        if invert:
+            mat = self._inverse_adjusted_matrix(mat)
         retval = cv2.transform(retval, mat).squeeze()
         logger.trace(  # type:ignore[attr-defined]
             "invert: %s, Original points: %s, transformed points: %s",
@@ -431,6 +460,25 @@ class AlignedFace:  # pylint:disable=too-many-instance-attributes
             retval,
         )
         return retval
+
+    def _inverse_adjusted_matrix(self, mat: np.ndarray) -> np.ndarray:
+        """Cached inverse of the adjusted matrix.
+
+        ``cv2.invertAffineTransform`` is a non-trivial cost when
+        ``transform_points(invert=True)`` is called for every original
+        ROI / mask query. Keys on the ``y_offset`` (the only thing that
+        can change the source matrix once the adjusted matrix itself is
+        cached) so the cached inverse is invalidated when the source
+        shifts.
+        """
+        cache = self._cache
+        if (
+            cache.inverse_adjusted_matrix is None
+            or cache.inverse_adjusted_matrix_y_offset != float(self.y_offset)
+        ):
+            cache.inverse_adjusted_matrix = cv2.invertAffineTransform(mat)
+            cache.inverse_adjusted_matrix_y_offset = float(self.y_offset)
+        return cache.inverse_adjusted_matrix
 
     def extract_face(self, image: np.ndarray | None) -> np.ndarray | None:
         """Extract the face from a source image and populate :attr:`face`. If an image is not

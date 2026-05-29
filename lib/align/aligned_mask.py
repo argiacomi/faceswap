@@ -107,12 +107,25 @@ class Mask:  # pylint:disable=too-many-instance-attributes
     @property
     def stored_mask(self) -> np.ndarray:
         """The mask at the size of :attr:`stored_size` as it is stored (i.e. with no blurring/
-        centering applied)."""
+        centering applied).
+
+        ``decompress`` + ``np.frombuffer`` runs on every access otherwise.
+        The decompressed array is cached on the instance and invalidated by
+        ``replace_mask`` (the writer for ``add``) and ``from_dict``.
+        """
         assert self._mask is not None
+        cached = getattr(self, "_decompressed_mask_cache", None)
+        if cached is not None:
+            return cached
         dims = (self.stored_size, self.stored_size, 1)
         mask = np.frombuffer(decompress(self._mask), dtype=np.uint8).reshape(dims)
         logger.trace("stored mask shape: %s", mask.shape)  # type:ignore[attr-defined]
+        self._decompressed_mask_cache = mask
         return mask
+
+    def _invalidate_stored_mask_cache(self) -> None:
+        """Drop the decompressed-mask cache after a writer mutates ``self._mask``."""
+        self._decompressed_mask_cache = None
 
     @property
     def original_roi(self) -> np.ndarray:
@@ -245,6 +258,7 @@ class Mask:  # pylint:disable=too-many-instance-attributes
                 "npt.NDArray[np.uint8]", cv2.resize(mask, dims, interpolation=interpolation)
             )
         self._mask = compress(new_mask.tobytes())
+        self._invalidate_stored_mask_cache()
 
     def set_dilation(self, amount: float) -> None:
         """Set the internal dilation object for returned masks
@@ -469,6 +483,7 @@ class Mask:  # pylint:disable=too-many-instance-attributes
         self._interpolator = mask.interpolator
         self.stored_size = mask.stored_size
         self.stored_centering = mask.stored_centering
+        self._invalidate_stored_mask_cache()
         logger.trace(mask)  # type:ignore[attr-defined]
         return self
 
@@ -690,8 +705,9 @@ class LandmarksMask:
             points = self._get_points()
             mask = np.zeros((self._size, self._size, 1), dtype=np.uint8)
             for pts in points:
-                lms = np.rint(pts).astype("int")
-                cv2.fillConvexPoly(mask, cv2.convexHull(lms), [255], lineType=cv2.LINE_AA)
+                # ``_get_points`` already emits int32 arrays; the previous
+                # ``np.rint(...).astype("int")`` was a no-op round + a copy.
+                cv2.fillConvexPoly(mask, cv2.convexHull(pts), [255], lineType=cv2.LINE_AA)
             self._original_mask = mask
 
         mask = self._original_mask.copy()
