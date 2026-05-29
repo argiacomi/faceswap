@@ -26,6 +26,7 @@ from lib.faceqa.compatibility import compute_compatibility
 from lib.faceqa.coverage import (
     FacesetCoverageReport,
     SpigaPoseBackfiller,
+    backfill_identity,
     compute_coverage,
     records_from_alignments,
 )
@@ -113,6 +114,21 @@ class Faceqa:  # pylint:disable=invalid-name
         )
 
         if bool(getattr(self._args, "suggest_pruning", False)):
+            self._run_identity_backfill(alignments)
+            # The backfill may have mutated alignments on disk; reload records
+            # so the redundancy guardrail sees the freshly-populated identity
+            # vectors.
+            records = records_from_alignments(
+                alignments,
+                qa_file=qa_file,
+                pose_backfiller=track_pose_backfill,
+            )
+            coverage = compute_coverage(
+                records,
+                exclude_duplicates=bool(getattr(self._args, "exclude_duplicates", False)),
+                exclude_outliers=bool(getattr(self._args, "exclude_outliers", False)),
+                sidecar_used=qa_file is not None,
+            )
             redundancy = compute_redundancy(
                 records,
                 coverage=coverage,
@@ -139,6 +155,44 @@ class Faceqa:  # pylint:disable=invalid-name
         )
         logger.info("Wrote JSON: %s", output_json)
         logger.info("Wrote Markdown: %s", output_markdown)
+
+    def _run_identity_backfill(self, alignments: Path) -> None:
+        """Backfill missing identity embeddings before redundancy clustering.
+
+        Identity is the redundancy layer's cross-subject guardrail. Pruning
+        cannot run safely without it, so when ``--suggest-pruning`` is set we
+        require ``--frames-dir`` and run the backfill mandatorily.
+        """
+        frames_dir = getattr(self._args, "frames_dir", None)
+        if not frames_dir:
+            raise FaceswapError(
+                "--suggest-pruning requires --frames-dir so missing identity "
+                "embeddings can be backfilled from the source frames before "
+                "redundancy clustering."
+            )
+        report = backfill_identity(
+            alignments,
+            frames_loader=Frames(frames_dir),
+        )
+        if report.disabled_reason:
+            logger.warning(
+                "Identity backfill disabled (%s); pruning will rely on the "
+                "existing identity coverage only.",
+                report.disabled_reason,
+            )
+            return
+        logger.info(
+            "Identity backfill (%s): %d faces, %d already present, "
+            "%d backfilled, %d skipped (frame: %d, failed: %d), persisted=%s.",
+            report.model,
+            report.total_faces,
+            report.already_present,
+            report.backfilled,
+            report.skipped_no_frame + report.skipped_failed,
+            report.skipped_no_frame,
+            report.skipped_failed,
+            report.persisted,
+        )
 
     def _maybe_write_prune_outputs(self, redundancy: RedundancyReport) -> None:
         prune_dir_value = getattr(self._args, "prune_output_dir", None)

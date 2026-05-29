@@ -184,6 +184,26 @@ def test_coverage_mode_without_frames_dir_does_not_invoke_backfill(tmp_path) -> 
     assert payload["total_faces"] == 1
 
 
+def test_suggest_pruning_requires_frames_dir(tmp_path, monkeypatch) -> None:
+    """--suggest-pruning without --frames-dir must error rather than skip backfill."""
+    alignments = tmp_path / "alignments.fsa"
+    _save_alignments(alignments, {"frame_000001.png": [_face()]})
+    args = _base_args(
+        alignments=str(alignments),
+        suggest_pruning=True,
+        # frames_dir intentionally None.
+        output_json=str(tmp_path / "coverage.json"),
+        output_markdown=str(tmp_path / "coverage.md"),
+    )
+
+    try:
+        Faceqa(args).process()
+    except FaceswapError as err:
+        assert "--frames-dir" in str(err)
+    else:
+        raise AssertionError("Expected FaceswapError when --frames-dir missing")
+
+
 def test_unknown_mode_raises(tmp_path) -> None:
     args = _base_args(mode="duplicates", alignments=str(tmp_path / "nope.fsa"))
     try:

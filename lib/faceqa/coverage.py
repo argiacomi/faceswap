@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import importlib
 import logging
 import typing as T
 from dataclasses import dataclass, field
@@ -488,6 +489,290 @@ class SpigaPoseBackfiller:
             return None
         self._plugin = plugin
         return self._plugin
+
+
+# ---------------------------------------------------------------------------
+# Identity backfilling — analogous to SpigaPoseBackfiller above.
+#
+# Identity vectors live on FileAlignments.identity (dict[str, np.ndarray]).
+# When the pruning/redundancy pipeline asks "does this face have an identity
+# guardrail?", we want a yes wherever possible. The identity backfiller picks
+# the majority identity model already present on the faceset (same shape as
+# the redundancy layer's has_identity check), loads that plugin lazily, and
+# fills in any missing vectors from the source frames.
+# ---------------------------------------------------------------------------
+
+
+# Map of identity ``storage_name`` (the key used inside ``face.identity``) to
+# ``(module_path, class_name)`` for the in-tree identity plugins. New plugins
+# can be registered here; the value must be a no-argument constructor.
+_IDENTITY_PLUGIN_REGISTRY: dict[str, tuple[str, str]] = {
+    "insightface": ("plugins.extract.identity.insightface", "InsightFace"),
+    "adaface": ("plugins.extract.identity.adaface", "AdaFace"),
+    "arcface": ("plugins.extract.identity.arcface", "ArcFace"),
+    "vggface2": ("plugins.extract.identity.vggface2", "VGGFace2"),
+}
+
+
+@dataclass
+class IdentityBackfillReport:
+    """Summary of an identity backfill pass."""
+
+    model: str | None = None
+    total_faces: int = 0
+    already_present: int = 0
+    backfilled: int = 0
+    skipped_no_frame: int = 0
+    skipped_failed: int = 0
+    disabled_reason: str | None = None
+    persisted: bool = False
+
+    def to_dict(self) -> dict[str, T.Any]:
+        return {
+            "model": self.model,
+            "total_faces": self.total_faces,
+            "already_present": self.already_present,
+            "backfilled": self.backfilled,
+            "skipped_no_frame": self.skipped_no_frame,
+            "skipped_failed": self.skipped_failed,
+            "disabled_reason": self.disabled_reason,
+            "persisted": self.persisted,
+        }
+
+
+def majority_identity_model(
+    faces: T.Iterable[FileAlignments],
+    *,
+    candidates: T.Iterable[str] | None = None,
+) -> tuple[str | None, dict[str, int]]:
+    """Pick the identity model with the broadest coverage on the faceset.
+
+    Mirrors how the redundancy layer thinks about identity: the model that
+    most faces already use is the most natural backfill target. Returns the
+    chosen model name (or ``None`` when no vectors exist) plus the per-model
+    counts for logging.
+    """
+    counts: dict[str, int] = {}
+    allowed = set(candidates) if candidates is not None else None
+    for face in faces:
+        for key, vec in face.identity.items():
+            if allowed is not None and key not in allowed:
+                continue
+            if vec is None:
+                continue
+            arr = np.asarray(vec).ravel()
+            if arr.size == 0:
+                continue
+            counts[key] = counts.get(key, 0) + 1
+    if not counts:
+        return None, counts
+    winning = max(counts.items(), key=lambda item: (item[1], item[0]))[0]
+    return winning, counts
+
+
+class IdentityBackfiller:
+    """Backfill missing identity embeddings from source frames.
+
+    Mirrors :class:`SpigaPoseBackfiller`: lazy plugin load, last-frame image
+    caching, mutates the face object in place (writes the new vector into
+    ``face.identity``), and self-disables on the first hard error.
+    """
+
+    def __init__(self, frames_loader: T.Any, *, model: str | None = None) -> None:
+        self._frames_loader = frames_loader
+        self._model_name = model
+        self._plugin: T.Any = None
+        self._disabled_reason: str | None = None
+        self._last_frame: str | None = None
+        self._last_image: np.ndarray | None = None
+
+    @property
+    def disabled_reason(self) -> str | None:
+        return self._disabled_reason
+
+    def set_model(self, model: str) -> None:
+        """Set the identity model name to backfill against."""
+        self._model_name = model
+        self._plugin = None
+
+    def __call__(
+        self,
+        face: FileAlignments,
+        frame: str,
+        face_index: int,
+    ) -> np.ndarray | None:
+        """Compute and store the embedding for ``face``.
+
+        Returns the new vector (also written into ``face.identity[model_name]``)
+        or ``None`` if the backfill could not produce one.
+        """
+        if self._disabled_reason is not None or self._model_name is None:
+            return None
+        plugin = self._load_plugin(self._model_name)
+        if plugin is None:
+            return None
+        aligned = self._aligned_face(face, frame, face_index, plugin.input_size, plugin.centering)
+        if aligned is None:
+            return None
+        feed = aligned[None]  # add batch dim; identity plugins expect uint8 BGR
+        try:
+            raw = plugin.process(feed)
+            normalised = plugin.post_process(raw)
+        except Exception as err:  # pylint:disable=broad-except
+            self._disabled_reason = str(err)
+            logger.warning("Identity backfill failed; disabling further attempts: %s", err)
+            return None
+        vector: np.ndarray = np.asarray(normalised, dtype=np.float32).reshape(-1)
+        if vector.size == 0:
+            return None
+        face.identity[self._model_name] = vector
+        return vector
+
+    def _aligned_face(
+        self,
+        face: FileAlignments,
+        frame: str,
+        face_index: int,
+        size: int,
+        centering: str,
+    ) -> np.ndarray | None:
+        image = self._load_frame(frame)
+        if image is None:
+            return None
+        try:
+            face_obj = DetectedFace()
+            face_obj.from_alignment(face, image=image)
+            face_obj.load_aligned(image, size=size, centering=centering)
+        except Exception as err:  # pylint:disable=broad-except
+            logger.warning(
+                "Could not reconstruct aligned face for identity backfill "
+                "(frame: %s, face: %s): %s",
+                frame,
+                face_index,
+                err,
+            )
+            return None
+        aligned = T.cast(np.ndarray, face_obj.aligned.face)
+        if aligned.shape[:2] != (size, size):
+            aligned = cv2.resize(aligned, (size, size), interpolation=cv2.INTER_CUBIC)
+        return aligned
+
+    def _load_frame(self, frame: str) -> np.ndarray | None:
+        if frame == self._last_frame and self._last_image is not None:
+            return self._last_image
+        try:
+            image = T.cast(np.ndarray, self._frames_loader.load_image(frame))
+        except Exception as err:  # pylint:disable=broad-except
+            logger.warning(
+                "Could not load source frame for identity backfill '%s': %s", frame, err
+            )
+            return None
+        self._last_frame = frame
+        self._last_image = image
+        return image
+
+    def _load_plugin(self, model_name: str) -> T.Any | None:
+        if self._plugin is not None:
+            return self._plugin
+        spec = _IDENTITY_PLUGIN_REGISTRY.get(model_name)
+        if spec is None:
+            self._disabled_reason = f"identity backfill unsupported for model '{model_name}'"
+            logger.warning(self._disabled_reason)
+            return None
+        module_path, class_name = spec
+        try:
+            module = importlib.import_module(module_path)
+            plugin = getattr(module, class_name)()
+            plugin.model = plugin.load_model()
+        except Exception as err:  # pylint:disable=broad-except
+            self._disabled_reason = f"identity backfill plugin '{model_name}' unavailable: {err}"
+            logger.warning(self._disabled_reason)
+            return None
+        self._plugin = plugin
+        return plugin
+
+
+def backfill_identity(
+    alignments_path: str | Path,
+    *,
+    frames_loader: T.Any,
+    model: str | None = None,
+    save: bool = True,
+) -> IdentityBackfillReport:
+    """Backfill missing identity embeddings across an entire alignments file.
+
+    Selects the majority identity model (unless ``model`` overrides it), runs
+    :class:`IdentityBackfiller` against each face missing a vector under the
+    chosen key, and — when ``save`` is true and at least one face was filled —
+    writes the mutated alignments back to ``alignments_path``.
+    """
+    path = Path(alignments_path)
+    serializer = get_serializer("compressed")
+    raw = serializer.load(str(path))
+    data_block = raw.get("__data__")
+    data: dict[str, T.Any] = data_block if isinstance(data_block, dict) else raw
+
+    entries: dict[str, AlignmentsEntry] = {
+        frame: AlignmentsEntry.from_dict(value) for frame, value in data.items()
+    }
+    all_faces: list[FileAlignments] = [face for entry in entries.values() for face in entry.faces]
+    report = IdentityBackfillReport(total_faces=len(all_faces))
+
+    if model is None:
+        chosen, counts = majority_identity_model(all_faces, candidates=_IDENTITY_PLUGIN_REGISTRY)
+        if chosen is None:
+            chosen, counts = majority_identity_model(all_faces)
+            if chosen is None:
+                report.disabled_reason = "no identity embeddings present in alignments"
+                return report
+            report.model = chosen
+            report.disabled_reason = (
+                f"identity backfill unsupported for model '{chosen}' "
+                f"(coverage: {counts.get(chosen, 0)} faces)"
+            )
+            return report
+        logger.info("Identity backfill model selected: '%s' (coverage: %s)", chosen, counts)
+        report.model = chosen
+    else:
+        if model not in _IDENTITY_PLUGIN_REGISTRY:
+            report.model = model
+            report.disabled_reason = f"identity backfill unsupported for model '{model}'"
+            return report
+        report.model = model
+
+    backfiller = IdentityBackfiller(frames_loader, model=report.model)
+    any_backfilled = False
+    for frame, entry in entries.items():
+        for idx, face in enumerate(entry.faces):
+            existing = face.identity.get(report.model)
+            if existing is not None and np.asarray(existing).ravel().size > 0:
+                report.already_present += 1
+                continue
+            prior_image = backfiller._last_image  # noqa: SLF001
+            vector = backfiller(face, frame, idx)
+            if vector is None:
+                if backfiller.disabled_reason is not None:
+                    report.disabled_reason = backfiller.disabled_reason
+                    break
+                if backfiller._last_image is None and prior_image is None:  # noqa: SLF001
+                    report.skipped_no_frame += 1
+                else:
+                    report.skipped_failed += 1
+                continue
+            report.backfilled += 1
+            any_backfilled = True
+        if report.disabled_reason is not None:
+            break
+
+    if any_backfilled and save and report.disabled_reason is None:
+        new_data = {frame: entry.to_dict() for frame, entry in entries.items()}
+        if isinstance(data_block, dict):
+            raw["__data__"] = new_data
+            serializer.save(str(path), raw)
+        else:
+            serializer.save(str(path), new_data)
+        report.persisted = True
+    return report
 
 
 def _mask_ref(face: FileAlignments) -> str | None:
