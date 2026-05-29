@@ -86,6 +86,8 @@ class FacesetCoverageReport:
     joint_pose_coverage: dict[str, T.Any] = field(default_factory=dict)
     expression_coverage: dict[str, T.Any] = field(default_factory=dict)
     lighting_coverage: dict[str, T.Any] = field(default_factory=dict)
+    image_metrics_provenance: dict[str, int] = field(default_factory=dict)
+    """Number of records grouped by image_metrics provenance tag."""
     sidecar_used: bool = False
 
     def coverage_dict(self) -> dict[str, dict[str, T.Any]]:
@@ -158,12 +160,19 @@ def records_from_alignments(
     *,
     pose_backfiller: Callable[[FaceQARecord, FileAlignments], dict[str, T.Any] | None]
     | None = None,
+    metrics_backfiller: Callable[[FileAlignments, str, int], dict[str, T.Any] | None]
+    | None = None,
 ) -> list[FaceQARecord]:
     """Return FaceQA records derived from alignments + embedded ``face.metadata['faceqa']``.
 
     ``source`` accepts either an alignments file path or a pre-loaded
     ``entries`` dict (as returned by :func:`load_alignments_envelope`) so the
     FaceQA dispatcher can backfill in-memory and persist once at the end.
+
+    ``metrics_backfiller`` reconstructs the aligned crop from the source frame
+    so blur / lighting / black-pixel metrics carry the authoritative
+    ``frame_aligned_crop`` provenance. When absent, FaceQA falls back to the
+    stored thumbnail (``thumbnail_fallback`` provenance).
     """
     if isinstance(source, dict):
         entries = source
@@ -173,6 +182,7 @@ def records_from_alignments(
     for frame, entry in entries.items():
         for idx, face in enumerate(entry.faces):
             record = _record_from_alignment(frame, idx, face)
+            _populate_image_metrics(record, face, metrics_backfiller=metrics_backfiller)
             if pose_backfiller is not None and not _valid_spiga_pose(record):
                 pose = pose_backfiller(record, face)
                 if pose is not None:
@@ -195,7 +205,6 @@ def _record_from_alignment(frame: str, idx: int, face: FileAlignments) -> FaceQA
     if face.identity:
         record.identity_model = ",".join(sorted(face.identity))
     _populate_aligned_metrics(record, face)
-    _populate_thumb_metrics(record, face)
     _populate_pose_metadata(record, face.metadata)
     _populate_metadata(record, face.metadata)
     return record
@@ -235,24 +244,83 @@ def _populate_aligned_metrics(record: FaceQARecord, face: FileAlignments) -> Non
     record.average_distance = float(aligned.average_distance)
 
 
-def _populate_thumb_metrics(record: FaceQARecord, face: FileAlignments) -> None:
-    """Populate cheap image quality metrics from stored alignments thumbnails."""
+# Provenance tags written to face.metadata["faceqa"]["image_metrics"]["provenance"].
+# Frame-derived metrics are authoritative; thumbnail-derived metrics carry
+# reduced trust and are surfaced separately in coverage so readiness can
+# warn / down-weight them.
+IMAGE_METRICS_PROVENANCE_FRAME = "frame_aligned_crop"
+IMAGE_METRICS_PROVENANCE_THUMBNAIL = "thumbnail_fallback"
+IMAGE_METRICS_PROVENANCE_FACES = "faces_fallback"
+
+
+def _compute_image_metrics(image: np.ndarray) -> dict[str, T.Any] | None:
+    """Compute blur / black-pixel / lighting metrics from a BGR uint8 crop."""
+    if image is None or image.size == 0:
+        return None
+    metrics: dict[str, T.Any] = {"blur_score": _estimate_blur(image)}
+    if image.ndim == 3:
+        metrics["black_pixel_ratio"] = float(np.all(image == [0, 0, 0], axis=2).mean())
+    features = compute_lighting_features(image)
+    if features is not None:
+        for key in (
+            "mean_luminance",
+            "luminance_variance",
+            "contrast",
+            "left_right_ratio",
+            "top_bottom_ratio",
+            "saturation",
+            "color_warmth",
+        ):
+            metrics[key] = features[key]
+    return metrics
+
+
+def _apply_image_metrics(record: FaceQARecord, payload: dict[str, T.Any]) -> None:
+    """Copy metric values from an image_metrics payload onto a record."""
+    for key, value in payload.items():
+        if key == "provenance":
+            continue
+        if hasattr(record, key) and getattr(record, key) in (None, []):
+            setattr(record, key, value)
+
+
+def _populate_image_metrics(
+    record: FaceQARecord,
+    face: FileAlignments,
+    *,
+    metrics_backfiller: Callable[[FileAlignments, str, int], dict[str, T.Any] | None]
+    | None = None,
+) -> None:
+    """Resolve image metrics for one face, preferring frame-derived values.
+
+    Priority order:
+
+    1. ``face.metadata['faceqa']['image_metrics']`` if previously written.
+    2. ``metrics_backfiller`` (frame-derived; sets provenance ``frame_aligned_crop``).
+    3. Stored alignments thumbnail (provenance ``thumbnail_fallback``).
+    """
+    existing = face.metadata.get("faceqa", {}).get("image_metrics")
+    if isinstance(existing, dict) and len(existing) > 0:
+        _apply_image_metrics(record, existing)
+        return
+
+    if metrics_backfiller is not None:
+        payload = metrics_backfiller(face, record.frame, record.face_index)
+        if isinstance(payload, dict) and len(payload) > 0:
+            payload.setdefault("provenance", IMAGE_METRICS_PROVENANCE_FRAME)
+            _write_faceqa_metadata(face, "image_metrics", payload)
+            _apply_image_metrics(record, payload)
+            return
+
     image = _decode_thumb(face.thumb)
     if image is None:
         return
-    record.blur_score = _estimate_blur(image)
-    if image.ndim == 3:
-        record.black_pixel_ratio = float(np.ndarray.all(image == [0, 0, 0], axis=2).mean())
-    features = compute_lighting_features(image)
-    if features is None:
+    metrics = _compute_image_metrics(image)
+    if metrics is None:
         return
-    record.mean_luminance = features["mean_luminance"]
-    record.luminance_variance = features["luminance_variance"]
-    record.contrast = features["contrast"]
-    record.left_right_ratio = features["left_right_ratio"]
-    record.top_bottom_ratio = features["top_bottom_ratio"]
-    record.saturation = features["saturation"]
-    record.color_warmth = features["color_warmth"]
+    metrics["provenance"] = IMAGE_METRICS_PROVENANCE_THUMBNAIL
+    _write_faceqa_metadata(face, "image_metrics", metrics)
+    _apply_image_metrics(record, metrics)
 
 
 _IDENTITY_ENVELOPE_FIELDS: tuple[tuple[str, str], ...] = (
@@ -843,6 +911,78 @@ class IdentityBackfiller:
         return plugin
 
 
+class FrameImageMetricsBackfiller:
+    """Compute blur / black-pixel / lighting from the SOURCE FRAME crop.
+
+    Mirrors :class:`SpigaPoseBackfiller`: lazy caching of the last loaded
+    frame so consecutive faces in one frame reuse the decode; self-disable on
+    the first hard error so per-frame loops do not cascade; writes the
+    resulting metrics block (with provenance ``frame_aligned_crop``) into
+    ``face.metadata['faceqa']['image_metrics']``.
+    """
+
+    DEFAULT_INPUT_SIZE = 256
+
+    def __init__(self, frames_loader: T.Any, *, input_size: int = DEFAULT_INPUT_SIZE) -> None:
+        self._frames_loader = frames_loader
+        self._input_size = int(input_size)
+        self._disabled_reason: str | None = None
+        self._last_frame: str | None = None
+        self._last_image: np.ndarray | None = None
+
+    @property
+    def disabled_reason(self) -> str | None:
+        return self._disabled_reason
+
+    def __call__(
+        self,
+        face: FileAlignments,
+        frame: str,
+        face_index: int,
+    ) -> dict[str, T.Any] | None:
+        if self._disabled_reason is not None:
+            return None
+        image = self._load_frame(frame)
+        if image is None:
+            return None
+        try:
+            face_obj = DetectedFace()
+            face_obj.from_alignment(face, image=image)
+            face_obj.load_aligned(image, size=self._input_size, centering="face")
+            aligned = T.cast(np.ndarray, face_obj.aligned.face)
+        except Exception as err:  # pylint:disable=broad-except
+            logger.warning(
+                "Could not reconstruct aligned face for image-metrics backfill "
+                "(frame: %s, face: %s): %s",
+                frame,
+                face_index,
+                err,
+            )
+            return None
+        metrics = _compute_image_metrics(aligned)
+        if metrics is None:
+            return None
+        metrics["provenance"] = IMAGE_METRICS_PROVENANCE_FRAME
+        return metrics
+
+    def _load_frame(self, frame: str) -> np.ndarray | None:
+        if frame == self._last_frame and self._last_image is not None:
+            return self._last_image
+        try:
+            image = T.cast(np.ndarray, self._frames_loader.load_image(frame))
+        except Exception as err:  # pylint:disable=broad-except
+            logger.warning(
+                "Could not load source frame for image-metrics backfill '%s': %s",
+                frame,
+                err,
+            )
+            self._disabled_reason = str(err)
+            return None
+        self._last_frame = frame
+        self._last_image = image
+        return image
+
+
 def backfill_identity(
     alignments_path: str | Path,
     *,
@@ -992,7 +1132,8 @@ def _normalise_identity_vector(vector: T.Any) -> np.ndarray | None:
     norm = float(np.linalg.norm(arr))
     if norm <= 0.0:
         return None
-    return arr / norm
+    normalised: np.ndarray = arr / norm
+    return normalised
 
 
 def _identity_decision(score: float) -> tuple[str, str]:
@@ -1311,6 +1452,195 @@ def _lighting_bucket(record: FaceQARecord) -> str:
     return label if label else "unknown"
 
 
+def _mask_ref(face: FileAlignments) -> str | None:
+    """Return a stable mask QA reference for a face.
+
+    The FaceQA quality model only needs to know *whether* any mask is on file
+    and which keys are available; downstream consumers (mask_qa_distribution)
+    treat ``None`` as missing.
+    """
+    if not face.mask:
+        return None
+    return ",".join(sorted(face.mask))
+
+
+def _mask_qa_bucket(record: FaceQARecord) -> str:
+    """Return the mask-availability bucket label for a face."""
+    if not record.mask_qa_ref:
+        return "missing"
+    return "present"
+
+
+def _is_identity_outlier(record: FaceQARecord) -> bool:
+    """Return whether a record is classified as an identity outlier/reject."""
+    flag = record.identity_quality_flag
+    decision = record.identity_final_decision
+    if flag in ("outlier", "reject"):
+        return True
+    return decision in ("outlier", "reject")
+
+
+def _expression_bucket(record: FaceQARecord) -> str:
+    """Return the expression bucket label (``unknown`` when missing)."""
+    return record.expression_bucket or "unknown"
+
+
+def _blur_bucket(record: FaceQARecord) -> str:
+    """Return the blur bucket label for a record."""
+    score = record.blur_score
+    if score is None or not np.isfinite(score):
+        return "unknown"
+    good, ok_, mediocre = BLUR_THRESHOLDS
+    if score >= good:
+        return "good"
+    if score >= ok_:
+        return "ok"
+    if score >= mediocre:
+        return "mediocre"
+    return "unusable"
+
+
+def _resolution_bucket(record: FaceQARecord) -> str:
+    """Return the resolution bucket label for a record."""
+    if not record.resolution:
+        return "unknown"
+    width = record.resolution[0] if record.resolution else 0
+    height = record.resolution[1] if len(record.resolution) > 1 else width
+    min_side = min(int(width), int(height))
+    good, ok_, low = RESOLUTION_THRESHOLDS
+    if min_side >= good:
+        return "good"
+    if min_side >= ok_:
+        return "ok"
+    if min_side >= low:
+        return "low"
+    return "tiny"
+
+
+def _misalignment_bucket(record: FaceQARecord) -> str:
+    """Return the landmark-misalignment bucket label for a record."""
+    distance = record.average_distance
+    if distance is None or not np.isfinite(distance):
+        return "unknown"
+    low, medium, high = DISTANCE_THRESHOLDS
+    if distance <= low:
+        return "low"
+    if distance <= medium:
+        return "medium"
+    if distance <= high:
+        return "high"
+    return "extreme"
+
+
+def _occlusion_bucket(record: FaceQARecord) -> str:
+    """Return the occlusion bucket label for a record."""
+    score = record.occlusion_score
+    if score is None or not np.isfinite(score):
+        return "unknown"
+    minimal, mild, moderate = OCCLUSION_THRESHOLDS
+    if score <= minimal:
+        return "minimal"
+    if score <= mild:
+        return "mild"
+    if score <= moderate:
+        return "moderate"
+    return "severe"
+
+
+def _identity_bucket(record: FaceQARecord) -> str:
+    """Return the identity-classification bucket label for a record."""
+    flag = record.identity_quality_flag or record.identity_final_decision
+    if flag in ("inlier", "borderline", "outlier", "reject", "review"):
+        return str(flag)
+    return "unknown"
+
+
+def _pose_source_bucket(record: FaceQARecord) -> str:
+    return record.pose_source or "unknown"
+
+
+def _pose_confidence_bucket(record: FaceQARecord) -> str:
+    return record.pose_confidence or "unknown"
+
+
+_BUCKET_DIMENSIONS: tuple[tuple[str, T.Callable[[FaceQARecord], str]], ...] = (
+    ("pose", _pose_bucket),
+    ("pitch", _pitch_bucket),
+    ("lighting", _lighting_bucket),
+    ("expression", _expression_bucket),
+    ("blur", _blur_bucket),
+    ("resolution", _resolution_bucket),
+    ("misalignment", _misalignment_bucket),
+    ("occlusion", _occlusion_bucket),
+    ("identity", _identity_bucket),
+    ("mask_qa", _mask_qa_bucket),
+    ("pose_sources", _pose_source_bucket),
+    ("pose_confidence", _pose_confidence_bucket),
+)
+
+
+def _count_buckets(records: list[FaceQARecord]) -> dict[str, dict[str, int]]:
+    """Return ``{dimension: {bucket: count}}`` for every coverage dimension."""
+    counts: dict[str, dict[str, int]] = {dim: {} for dim, _fn in _BUCKET_DIMENSIONS}
+    for record in records:
+        for dim, fn in _BUCKET_DIMENSIONS:
+            label = fn(record)
+            counts[dim][label] = counts[dim].get(label, 0) + 1
+    return counts
+
+
+def _percentages(
+    counts: dict[str, dict[str, int]],
+    total: int,
+) -> dict[str, dict[str, float]]:
+    """Convert raw counts into bucket percentages (rounded to 2dp)."""
+    if total <= 0:
+        return {dim: {bucket: 0.0 for bucket in dim_counts} for dim, dim_counts in counts.items()}
+    return {
+        dim: {bucket: round(count * 100.0 / total, 2) for bucket, count in dim_counts.items()}
+        for dim, dim_counts in counts.items()
+    }
+
+
+def _compute_duplicate_ratio(records: list[FaceQARecord]) -> float | None:
+    """Return the ratio of records flagged as duplicate prune candidates."""
+    if not records:
+        return None
+    flagged = sum(
+        1
+        for record in records
+        if record.duplicate_keep_recommendation in ("prune_candidate", "review")
+        or record.duplicate_representative is False
+    )
+    return flagged / len(records)
+
+
+def _compute_identity_outlier_ratio(records: list[FaceQARecord]) -> float | None:
+    if not records:
+        return None
+    return sum(1 for r in records if _is_identity_outlier(r)) / len(records)
+
+
+def _compute_identity_embedding_coverage_ratio(
+    records: list[FaceQARecord],
+) -> float | None:
+    if not records:
+        return None
+    return sum(1 for r in records if r.identity_model) / len(records)
+
+
+def _compute_identity_decision_coverage_ratio(
+    records: list[FaceQARecord],
+) -> float | None:
+    if not records:
+        return None
+    return sum(
+        1
+        for r in records
+        if r.identity_quality_flag is not None or r.identity_final_decision is not None
+    ) / len(records)
+
+
 def _joint_cell_label(yaw_bucket: str, pitch_bucket: str) -> str:
     """Return a stable joint pose cell label."""
     return f"{yaw_bucket}+{pitch_bucket}"
@@ -1361,14 +1691,43 @@ def _joint_pose_coverage(records: list[FaceQARecord]) -> dict[str, T.Any]:
     }
 
 
+def _summarise_image_metrics_provenance(
+    records: T.Sequence[FaceQARecord],
+    entries: dict[str, AlignmentsEntry] | None,
+) -> dict[str, int]:
+    """Return ``{provenance: count}`` for image_metrics across the faceset."""
+    summary: dict[str, int] = {}
+    if entries is None:
+        # Without entries we cannot inspect face.metadata; bail with empty dict.
+        return summary
+    for entry in entries.values():
+        for face in entry.faces:
+            envelope = face.metadata.get("faceqa", {}).get("image_metrics")
+            if isinstance(envelope, dict):
+                tag = str(envelope.get("provenance") or "unknown")
+            else:
+                tag = "missing"
+            summary[tag] = summary.get(tag, 0) + 1
+    if not summary:
+        # Records present but no metadata block at all.
+        summary = {"missing": len(records)}
+    return summary
+
+
 def compute_coverage(
     records: T.Sequence[FaceQARecord],
     *,
     exclude_duplicates: bool = False,
     exclude_outliers: bool = False,
     sidecar_used: bool = False,
+    entries: dict[str, AlignmentsEntry] | None = None,
 ) -> FacesetCoverageReport:
-    """Compute coverage metrics from FaceQA records."""
+    """Compute coverage metrics from FaceQA records.
+
+    ``entries`` (when supplied by the dispatcher) lets the coverage report
+    surface the per-face image_metrics provenance summary so readiness can
+    flag thumbnail-fallback coverage.
+    """
     records_list = list(records)
     total = len(records_list)
     counts = _count_buckets(records_list)
@@ -1401,6 +1760,7 @@ def compute_coverage(
             else 0,
         },
         sidecar_used=sidecar_used,
+        image_metrics_provenance=_summarise_image_metrics_provenance(records_list, entries),
     )
 
 

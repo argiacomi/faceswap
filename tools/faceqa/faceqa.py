@@ -23,6 +23,7 @@ from lib.align.objects import FileAlignments
 from lib.faceqa.compatibility import compute_compatibility
 from lib.faceqa.coverage import (
     FacesetCoverageReport,
+    FrameImageMetricsBackfiller,
     SpigaPoseBackfiller,
     backfill_identity,
     compute_coverage,
@@ -118,10 +119,19 @@ class Faceqa:  # pylint:disable=invalid-name
 
             pose_backfill_callback = _track_pose_backfill
 
+        metrics_backfiller = self._metrics_backfiller()
         records = records_from_alignments(
             entries,
             pose_backfiller=pose_backfill_callback,
+            metrics_backfiller=metrics_backfiller,
         )
+
+        if metrics_backfiller is not None and metrics_backfiller.disabled_reason:
+            logger.warning(
+                "Frame image-metrics backfill disabled mid-run (%s); remaining "
+                "faces fall back to alignments thumbnails for blur/lighting.",
+                metrics_backfiller.disabled_reason,
+            )
 
         identity_quality = compute_identity_quality(records, entries)
         if identity_quality.disabled_reason:
@@ -141,10 +151,12 @@ class Faceqa:  # pylint:disable=invalid-name
                 identity_quality.reject,
             )
 
-        if pose_backfill_added or identity_quality.updated:
+        # The image-metrics backfiller mutates face.metadata in records_from_alignments;
+        # persist whenever anything wrote into face.metadata['faceqa'] this pass.
+        if pose_backfill_added or identity_quality.updated or metrics_backfiller is not None:
             save_alignments_envelope(alignments, raw_envelope, entries)
             logger.info(
-                "Persisted FaceQA enrichment (pose/identity) into alignments '%s'.",
+                "Persisted FaceQA enrichment (pose/identity/image_metrics) into alignments '%s'.",
                 alignments,
             )
 
@@ -153,6 +165,7 @@ class Faceqa:  # pylint:disable=invalid-name
             exclude_duplicates=bool(getattr(self._args, "exclude_duplicates", False)),
             exclude_outliers=bool(getattr(self._args, "exclude_outliers", False)),
             sidecar_used=False,
+            entries=entries,
         )
 
         report = generate_readiness_report(
@@ -361,6 +374,12 @@ class Faceqa:  # pylint:disable=invalid-name
         if not frames_dir:
             return None
         return SpigaPoseBackfiller(Frames(frames_dir))
+
+    def _metrics_backfiller(self) -> FrameImageMetricsBackfiller | None:
+        frames_dir = getattr(self._args, "frames_dir", None)
+        if not frames_dir:
+            return None
+        return FrameImageMetricsBackfiller(Frames(frames_dir))
 
     def _output_dir(self, alignments: Path) -> Path:
         """Resolve the single FaceQA output directory."""
