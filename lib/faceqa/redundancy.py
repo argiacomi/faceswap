@@ -24,8 +24,8 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from lib.align.faceset_qa import FaceQARecord
 from lib.faceqa.coverage import FacesetCoverageReport
+from lib.faceqa.record import FaceQARecord
 from lib.utils import get_module_objects
 
 logger = logging.getLogger(__name__)
@@ -266,11 +266,22 @@ def _frame_index(frame: str) -> int | None:
     return int(matches[-1])
 
 
+def _record_image_metric_scale(record: FaceQARecord) -> float:
+    """Return representative-quality weight scale for image-derived metrics."""
+    return (
+        1.0
+        if record.image_metrics_provenance == _FRAME_PROVENANCE
+        else _FALLBACK_PROVENANCE_WEIGHT_SCALE
+    )
+
+
 def _quality_score_for(record: FaceQARecord) -> float:
     """Return a deterministic quality score for representative selection.
 
-    Combines Sort-style signals (blur, side length, pose, mean-face distance,
-    black-pixel ratio) into a single 0-1 score. Higher is better.
+    Combines Sort-style signals into a single 0-1 score. Image-derived quality
+    terms (blur and black-pixel ratio) are down-weighted when they came from a
+    fallback thumbnail rather than an authoritative frame crop, so stale or
+    low-resolution fallback metrics do not over-select a representative.
     """
     blur = record.blur_score or 0.0
     side = 0.0
@@ -284,6 +295,7 @@ def _quality_score_for(record: FaceQARecord) -> float:
     roll = abs(record.roll or 0.0)
     distance = record.average_distance or 0.0
     black = record.black_pixel_ratio or 0.0
+    image_scale = _record_image_metric_scale(record)
     blur_term = math.tanh(blur / 6.0)
     res_term = math.tanh(side / 512.0)
     pose_term = 1.0 - math.tanh((yaw + pitch + roll) / 90.0)
@@ -291,18 +303,34 @@ def _quality_score_for(record: FaceQARecord) -> float:
     black_term = 1.0 - math.tanh(black * 4.0)
     weights = (1.0, 0.8, 0.6, 0.6, 0.4)
     score = (
-        weights[0] * blur_term
+        weights[0] * image_scale * blur_term
         + weights[1] * res_term
         + weights[2] * pose_term
         + weights[3] * distance_term
-        + weights[4] * black_term
+        + weights[4] * image_scale * black_term
     )
     return round(score / sum(weights), 6)
 
 
+_IDENTITY_GUARDRAIL_DECISIONS: frozenset[str] = frozenset(
+    {"inlier", "borderline", "review", "outlier", "reject"}
+)
+_IDENTITY_GUARDRAIL_FLAGS: frozenset[str] = frozenset(
+    {"inlier", "borderline", "outlier", "reject"}
+)
+
+
+def _has_identity_guardrail(record: FaceQARecord) -> bool:
+    """Return whether identity was actually classified for guardrail use."""
+    return (
+        record.identity_final_decision in _IDENTITY_GUARDRAIL_DECISIONS
+        or record.identity_quality_flag in _IDENTITY_GUARDRAIL_FLAGS
+    )
+
+
 def _features_for(record: FaceQARecord) -> RepresentationFeatures:
     """Return the normalised representation feature vector for one record."""
-    has_identity = record.identity_model is not None or record.identity_score is not None
+    has_identity = _has_identity_guardrail(record)
     identity_outlier = record.identity_quality_flag in {"outlier", "reject"} or (
         record.identity_final_decision in {"outlier", "reject"}
     )
@@ -468,10 +496,9 @@ def _representation_distance(
         vb = getattr(b, attr)
         if va is None or vb is None or va == "unknown" or vb == "unknown":
             continue
-        effective_weight = weight * _provenance_scale(a, b, attr)
-        bucket_total += effective_weight
+        bucket_total += weight
         if va != vb:
-            bucket_penalty += effective_weight
+            bucket_penalty += weight * _provenance_scale(a, b, attr)
     distance = math.sqrt(numerator / denominator)
     if bucket_total > 0:
         # Up-weight visually-different buckets even if continuous features look similar.

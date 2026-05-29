@@ -56,17 +56,14 @@ class FaceqaArgs(FaceSwapArgs):  # pylint:disable=invalid-name
             The argparse command line options for processing by argparse.
         """
         frames_dir = _(
-            " Source frames folder/video (-r) is required for coverage so FaceQA can "
-            "reconstruct aligned crops, backfill SPIGA pose, and fill missing identity "
-            "embeddings before reporting."
+            " Original frames/images (-r) required for FaceQA backfill "
+            "of any missing pose or identity data before coverage is reported."
         )
         faces_dir = _(
-            " Pass a faces folder (-c) ONLY when --sort-prune or --contact-sheets is set; "
-            "neither coverage nor --suggest-pruning computation needs it."
+            " Faces folder (-c) only required when when --sort-prune or --contact-sheets are set."
         )
         output_dir = _(
-            " Use the output directory (-o) for the coverage report, contact sheets, and any "
-            "sorted pruning folders."
+            " Output directory (-o) for coverage/compatibility reports and pruning artifacts."
         )
 
         argument_list: list[dict[str, T.Any]] = []
@@ -76,9 +73,9 @@ class FaceqaArgs(FaceSwapArgs):  # pylint:disable=invalid-name
                 "action": Radio,
                 "type": str,
                 "dest": "mode",
-                "group": _("processing"),
                 "choices": ("coverage", "compatibility"),
                 "default": "coverage",
+                "group": _("processing"),
                 "help": _(
                     "R|Choose which FaceQA workflow to run."
                     "\nL|'coverage': Audit faceset coverage/readiness from an alignments "
@@ -106,110 +103,49 @@ class FaceqaArgs(FaceSwapArgs):  # pylint:disable=invalid-name
         )
         argument_list.append(
             {
-                "opts": ("-c", "-faces_folder"),
-                "action": DirFullPaths,
-                "dest": "faces_dir",
-                "group": ("data"),
-                "help": ("Directory containing extracted faces."),
+                "opts": ("-r", "-frames_folder", "--frames-dir"),
+                "action": DirOrFileFullPaths,
+                "type": str,
+                "dest": "frames_dir",
+                "filetypes": "video",
+                "group": _("data"),
+                "default": None,
+                "help": _(
+                    "Directory containing source frames, or a source video file, that "
+                    "the faces were extracted from. Required for 'coverage' mode so "
+                    "SPIGA pose and missing identity embeddings can be backfilled "
+                    "before reporting."
+                ),
             }
         )
         argument_list.append(
             {
-                "opts": ("-r", "-frames_folder"),
-                "action": DirOrFileFullPaths,
-                "dest": "frames_dir",
-                "required": False,
-                "filetypes": "video",
+                "opts": ("-c", "-faces_folder", "--faces-dir"),
+                "action": DirFullPaths,
+                "type": str,
+                "dest": "faces_dir",
                 "group": _("data"),
-                "help": _("Directory containing source frames that faces were extracted from."),
+                "default": None,
+                "help": _(
+                    "Directory containing extracted/aligned faces. Not required for "
+                    "coverage metrics; only used when --suggest-pruning writes sorted "
+                    "folders or contact sheets."
+                ),
             }
         )
         argument_list.append(
             {
                 "opts": ("-o", "--output-dir"),
                 "action": DirFullPaths,
-                "dest": "output_dir",
-                "group": _("Data"),
-                "help": _(
-                    "Output directory. Location to save FaceQA reports, manifests, sorted "
-                    "folders, and contact sheets. Defaults to the relevant alignments "
-                    "directory when omitted."
-                ),
-            }
-        )
-        argument_list.append(
-            {
-                "opts": ("--suggest-pruning",),
-                "action": "store_true",
-                "dest": "suggest_pruning",
-                "group": _("pruning"),
-                "default": False,
-                "help": _(
-                    "Compute coverage-aware representation redundancy and embed "
-                    "keep/review/prune_candidate recommendations inside the coverage "
-                    "report. Pure computation — no extra files are written. Use "
-                    "--sort-prune or --contact-sheets for the visual / file artefacts."
-                ),
-            }
-        )
-        argument_list.append(
-            {
-                "opts": ("--sort-prune",),
-                "action": "store_true",
-                "dest": "sort_prune",
-                "group": _("pruning"),
-                "default": False,
-                "help": _(
-                    "After --suggest-pruning, sort extracted faces into "
-                    "keep/review/prune_candidate folders under the output directory "
-                    "(or move them inside the faces folder when --keep is disabled). "
-                    "Requires --faces-dir."
-                ),
-            }
-        )
-        argument_list.append(
-            {
-                "opts": ("--contact-sheets",),
-                "action": "store_true",
-                "dest": "contact_sheets",
-                "group": _("pruning"),
-                "default": False,
-                "help": _(
-                    "After --suggest-pruning, render one contact sheet per redundancy "
-                    "cluster into the output directory. Requires --faces-dir."
-                ),
-            }
-        )
-        argument_list.append(
-            {
-                "opts": ("--no-keep",),
-                "action": "store_false",
-                "dest": "keep_originals",
-                "group": _("pruning"),
-                "default": True,
-                "help": _(
-                    "Used with --sort-prune: MOVE original extracted faces from "
-                    "--faces-dir into keep/review/prune_candidate subfolders "
-                    "instead of copying them into --output-dir. Destructive — "
-                    "originals are relocated, not duplicated."
-                ),
-            }
-        )
-        argument_list.append(
-            {
-                "opts": ("--prune-aggressiveness",),
-                "action": Radio,
                 "type": str,
-                "dest": "prune_aggressiveness",
-                "group": _("pruning"),
-                "default": "balanced",
-                "choices": ("conservative", "balanced", "aggressive"),
+                "dest": "output_dir",
+                "group": _("output"),
+                "default": None,
                 "help": _(
-                    "R|Pruning aggressiveness preset."
-                    "\nL|'conservative': Prune only obvious redundant surplus."
-                    "\nL|'balanced': Default coverage-aware pruning policy."
-                    "\nL|'aggressive': Prune wider representation redundancy while "
-                    "preserving effective coverage."
+                    "Single output directory for FaceQA JSON/Markdown reports and, "
+                    "when --suggest-pruning is enabled, pruning manifests, sorted "
+                    "folders and contact sheets. Defaults to the relevant alignments "
+                    "directory when omitted."
                 ),
             }
         )
@@ -219,7 +155,7 @@ class FaceqaArgs(FaceSwapArgs):  # pylint:disable=invalid-name
                 "action": "store_true",
                 "dest": "exclude_duplicates",
                 "default": False,
-                "group": _("coverage"),
+                "group": _("filters"),
                 "help": _(
                     "Exclude duplicate prune candidates from usable_faces after "
                     "coverage-aware pruning recommendations have been generated."
@@ -232,7 +168,7 @@ class FaceqaArgs(FaceSwapArgs):  # pylint:disable=invalid-name
                 "action": "store_true",
                 "dest": "exclude_outliers",
                 "default": False,
-                "group": _("coverage"),
+                "group": _("filters"),
                 "help": _("Exclude identity outliers and rejects from usable_faces."),
             }
         )
@@ -250,6 +186,39 @@ class FaceqaArgs(FaceSwapArgs):  # pylint:disable=invalid-name
                     "Bucket %% below which coverage buckets are flagged as "
                     "under-represented. Also drives the coverage protection floor "
                     "used by --suggest-pruning."
+                ),
+            }
+        )
+        argument_list.append(
+            {
+                "opts": ("--suggest-pruning",),
+                "action": "store_true",
+                "dest": "suggest_pruning",
+                "default": False,
+                "group": _("pruning"),
+                "help": _(
+                    "Run coverage-aware representation redundancy and emit "
+                    "keep/review/prune_candidate recommendations alongside the "
+                    "coverage report. Sorted folders/contact sheets are written only "
+                    "when a faces folder (-c) is supplied."
+                ),
+            }
+        )
+        argument_list.append(
+            {
+                "opts": ("--prune-aggressiveness",),
+                "action": Radio,
+                "type": str,
+                "dest": "prune_aggressiveness",
+                "default": "balanced",
+                "choices": ("conservative", "balanced", "aggressive"),
+                "group": _("pruning"),
+                "help": _(
+                    "R|Pruning aggressiveness preset."
+                    "\nL|'conservative': Prune only obvious redundant surplus."
+                    "\nL|'balanced': Default coverage-aware pruning policy."
+                    "\nL|'aggressive': Prune wider representation redundancy while "
+                    "preserving effective coverage."
                 ),
             }
         )

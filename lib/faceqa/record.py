@@ -1,22 +1,27 @@
 #!/usr/bin/env python3
-"""Faceset QA sidecar schema and I/O helpers."""
+"""In-memory FaceQA record dataclass.
+
+FaceQA enrichment persists into ``face.metadata['faceqa']``
+directly - so the record dataclass moves to a neutral home
+in the FaceQA package.
+"""
 
 from __future__ import annotations
 
-import os
-import typing as T
-from dataclasses import dataclass, field, fields
-from datetime import datetime, timezone
+from dataclasses import dataclass, field
 
-from lib.serializer import get_serializer
+from lib.align.objects import DataclassDict
 from lib.utils import get_module_objects
-
-from .objects import DataclassDict
 
 
 @dataclass(repr=False)
 class FaceQARecord(DataclassDict):
-    """Quality-assessment metadata for one extracted face."""
+    """In-memory quality-assessment record for one extracted face.
+
+    The record is built per FaceQA pass from the alignments file plus the
+    FaceQA metadata envelope in ``face.metadata['faceqa']``; it is the unit
+    consumed by coverage, redundancy, readiness, and compatibility.
+    """
 
     frame: str = ""
     face_index: int = 0
@@ -101,60 +106,6 @@ class FaceQARecord(DataclassDict):
     reviewed_state: str | None = None
     manual_decision: str | None = None
     manual_decision_reason: str | None = None
-
-
-@dataclass(repr=False)
-class FaceQAFile(DataclassDict):
-    """Root object for a ``*_faceset_qa.json`` sidecar file."""
-
-    schema_version: int = 1
-    generated_by: str = "faceswap"
-    generated_at: str = ""
-    faces: list[FaceQARecord] = field(default_factory=list)
-
-
-def sidecar_path(alignments_path: str) -> str:
-    """Return the default FaceQA sidecar path for an alignments file."""
-    stem, _ = os.path.splitext(alignments_path)
-    return f"{stem}_faceset_qa.json"
-
-
-def _known_fields(cls: type[DataclassDict]) -> set[str]:
-    """Return dataclass field names for tolerant sidecar loading."""
-    return {field_.name for field_ in fields(cls)}
-
-
-def load(path: str) -> FaceQAFile | None:
-    """Load a FaceQA sidecar, returning ``None`` when the file is absent.
-
-    Additive fields from newer sidecars are ignored so this initial consumer can
-    read reports produced by newer FaceQA tooling without crashing.
-    """
-    if not os.path.isfile(path):
-        return None
-
-    raw: dict[str, T.Any] = get_serializer("json").load(path)
-    root_fields = _known_fields(FaceQAFile)
-    record_fields = _known_fields(FaceQARecord)
-    root = {key: val for key, val in raw.items() if key in root_fields and key != "faces"}
-    faces = [
-        FaceQARecord.from_dict({key: val for key, val in item.items() if key in record_fields})
-        for item in raw.get("faces", [])
-        if isinstance(item, dict)
-    ]
-    return FaceQAFile(faces=faces, **root)
-
-
-def save(path: str, qa_file: FaceQAFile, *, timestamp: bool = True) -> None:
-    """Write a FaceQA sidecar."""
-    if timestamp:
-        qa_file.generated_at = datetime.now(timezone.utc).isoformat()
-    get_serializer("json").save(path, qa_file.to_dict())
-
-
-def build_index(qa_file: FaceQAFile) -> dict[tuple[str, int], FaceQARecord]:
-    """Return sidecar records keyed by ``(frame, face_index)``."""
-    return {(record.frame, record.face_index): record for record in qa_file.faces}
 
 
 __all__ = get_module_objects(__name__)

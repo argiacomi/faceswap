@@ -13,12 +13,12 @@ import cv2
 import numpy as np
 
 from lib.align import AlignedFace, DetectedFace
-from lib.align.faceset_qa import FaceQARecord
 from lib.align.objects import AlignmentsEntry, FileAlignments
 from lib.faceqa.expression import EXPRESSION_BUCKETS, compute_expression_features
 from lib.faceqa.expression import bucket_for_features as expression_bucket_for_features
 from lib.faceqa.lighting import LIGHTING_BUCKETS, LightingFeatures, compute_lighting_features
 from lib.faceqa.lighting import bucket_for_features as lighting_bucket_for_features
+from lib.faceqa.record import FaceQARecord
 from lib.serializer import get_serializer
 from lib.utils import get_module_objects
 
@@ -88,7 +88,6 @@ class FacesetCoverageReport:
     lighting_coverage: dict[str, T.Any] = field(default_factory=dict)
     image_metrics_provenance: dict[str, int] = field(default_factory=dict)
     """Number of records grouped by image_metrics provenance tag."""
-    sidecar_used: bool = False
 
     def coverage_dict(self) -> dict[str, dict[str, T.Any]]:
         """Return per-dimension counts and percentages."""
@@ -254,6 +253,29 @@ IMAGE_METRICS_PROVENANCE_THUMBNAIL = "thumbnail_fallback"
 # never had a backfill path; readers can no longer rely on it. Add the
 # constant + implementation together when extracted-face fallback is wired in.
 
+# These top-level record fields are populated exclusively by _populate_image_metrics.
+# Generic faceqa metadata loading must not copy stale top-level metric values first,
+# otherwise an authoritative frame-derived payload can be blocked by old fallback data.
+_IMAGE_METRIC_RECORD_FIELDS: frozenset[str] = frozenset(
+    {
+        "blur_score",
+        "blur_fft_score",
+        "black_pixel_ratio",
+        "color_gray",
+        "color_luma",
+        "color_green",
+        "color_orange",
+        "mean_luminance",
+        "luminance_variance",
+        "contrast",
+        "left_right_ratio",
+        "top_bottom_ratio",
+        "saturation",
+        "color_warmth",
+        "image_metrics_provenance",
+    }
+)
+
 
 def _compute_image_metrics(image: np.ndarray) -> dict[str, T.Any] | None:
     """Compute blur / black-pixel / lighting metrics from a BGR uint8 crop."""
@@ -277,20 +299,26 @@ def _compute_image_metrics(image: np.ndarray) -> dict[str, T.Any] | None:
     return metrics
 
 
-def _apply_image_metrics(record: FaceQARecord, payload: dict[str, T.Any]) -> None:
+def _apply_image_metrics(
+    record: FaceQARecord,
+    payload: dict[str, T.Any],
+    *,
+    overwrite: bool = False,
+) -> None:
     """Copy metric values from an image_metrics payload onto a record.
 
-    The ``provenance`` tag is intentionally also written onto the record (as
-    ``image_metrics_provenance``) so the redundancy layer can down-weight
-    fallback-derived lighting / framing features rather than treating them
-    as authoritative.
+    ``overwrite=True`` is reserved for authoritative frame-derived metrics. It
+    lets a new frame crop replace stale top-level/fallback values that may have
+    been persisted by older FaceQA runs.
     """
     for key, value in payload.items():
         if key == "provenance":
-            if getattr(record, "image_metrics_provenance", None) is None and value is not None:
+            if value is not None and (overwrite or record.image_metrics_provenance is None):
                 record.image_metrics_provenance = str(value)
             continue
-        if hasattr(record, key) and getattr(record, key) in (None, []):
+        if not hasattr(record, key):
+            continue
+        if overwrite or getattr(record, key) in (None, []):
             setattr(record, key, value)
 
 
@@ -327,7 +355,7 @@ def _populate_image_metrics(
         and existing_provenance == IMAGE_METRICS_PROVENANCE_FRAME
         and len(existing) > 1
     ):
-        _apply_image_metrics(record, existing)
+        _apply_image_metrics(record, existing, overwrite=True)
         return
 
     if metrics_backfiller is not None:
@@ -335,7 +363,7 @@ def _populate_image_metrics(
         if isinstance(payload, dict) and len(payload) > 0:
             payload.setdefault("provenance", IMAGE_METRICS_PROVENANCE_FRAME)
             _write_faceqa_metadata(face, "image_metrics", payload)
-            _apply_image_metrics(record, payload)
+            _apply_image_metrics(record, payload, overwrite=True)
             return
 
     if isinstance(existing, dict) and len(existing) > 1:
@@ -377,6 +405,8 @@ def _populate_metadata(record: FaceQARecord, metadata: dict[str, T.Any]) -> None
     if not isinstance(payload, dict):
         return
     for key in FaceQARecord.__dataclass_fields__:  # pylint:disable=no-member
+        if key in _IMAGE_METRIC_RECORD_FIELDS:
+            continue
         if getattr(record, key) in (None, []) and key in payload:
             setattr(record, key, payload[key])
     identity_payload = payload.get("identity")
@@ -513,7 +543,7 @@ def _pose_confidence(record: FaceQARecord, source: str) -> str:
 
 def _select_pose(record: FaceQARecord) -> None:
     """Select the coverage pose using SPIGA-first deterministic rules."""
-    # Backward compatibility: previous sidecars stored selected SPIGA pose directly.
+
     if record.spiga_yaw is None and record.pose_source in ("spiga", "spiga_backfill"):
         record.spiga_yaw = record.yaw
         record.spiga_pitch = record.pitch
@@ -1814,7 +1844,6 @@ def compute_coverage(
     *,
     exclude_duplicates: bool = False,
     exclude_outliers: bool = False,
-    sidecar_used: bool = False,
     entries: dict[str, AlignmentsEntry] | None = None,
 ) -> FacesetCoverageReport:
     """Compute coverage metrics from FaceQA records.
@@ -1841,20 +1870,7 @@ def compute_coverage(
         joint_pose_coverage=_joint_pose_coverage(records_list),
         expression_coverage=_expression_coverage(records_list),
         lighting_coverage=_lighting_coverage(records_list),
-        source_counts={
-            "alignments": total,
-            "sidecar": sum(
-                any(
-                    value not in (None, [], "")
-                    for key, value in record.to_dict().items()
-                    if key not in ("frame", "face_index")
-                )
-                for record in records_list
-            )
-            if sidecar_used
-            else 0,
-        },
-        sidecar_used=sidecar_used,
+        source_counts={"alignments": total},
         image_metrics_provenance=_summarise_image_metrics_provenance(records_list, entries),
     )
 

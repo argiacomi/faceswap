@@ -5,12 +5,12 @@ from __future__ import annotations
 
 import json
 
-from lib.align.faceset_qa import FaceQARecord
 from lib.faceqa.compatibility import (
     COMPATIBILITY_WEIGHTS,
     compute_compatibility,
 )
 from lib.faceqa.coverage import compute_coverage
+from lib.faceqa.record import FaceQARecord
 
 
 def _records(

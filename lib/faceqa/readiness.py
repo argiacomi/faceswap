@@ -59,7 +59,6 @@ class ReadinessReport:
     """Human and machine-readable readiness assessment."""
 
     alignments: str = ""
-    sidecar: str | None = None
     schema_version: int = SCHEMA_VERSION
     report_type: str = REPORT_TYPE
     total_faces: int = 0
@@ -68,6 +67,9 @@ class ReadinessReport:
     metric_summary: dict[str, dict[str, float | None]] = field(default_factory=dict)
     duplicate_ratio: float | None = None
     identity_outlier_ratio: float | None = None
+    identity_embedding_coverage_ratio: float | None = None
+    identity_decision_coverage_ratio: float | None = None
+    identity_unknown_ratio: float | None = None
     mask_qa_distribution: dict[str, int] = field(default_factory=dict)
     source_counts: dict[str, int] = field(default_factory=dict)
     joint_pose_coverage: dict[str, T.Any] = field(default_factory=dict)
@@ -86,13 +88,15 @@ class ReadinessReport:
             "schema_version": self.schema_version,
             "report_type": self.report_type,
             "alignments": self.alignments,
-            "sidecar": self.sidecar,
             "total_faces": self.total_faces,
             "usable_faces": self.usable_faces,
             "coverage": self.coverage,
             "metric_summary": self.metric_summary,
             "duplicate_ratio": self.duplicate_ratio,
             "identity_outlier_ratio": self.identity_outlier_ratio,
+            "identity_embedding_coverage_ratio": self.identity_embedding_coverage_ratio,
+            "identity_decision_coverage_ratio": self.identity_decision_coverage_ratio,
+            "identity_unknown_ratio": self.identity_unknown_ratio,
             "mask_qa_distribution": self.mask_qa_distribution,
             "source_counts": self.source_counts,
             "joint_pose_coverage": self.joint_pose_coverage,
@@ -135,6 +139,11 @@ class ReadinessReport:
 
         provenance_summary = _format_provenance_summary(self.image_metrics_provenance)
         identity_summary = _format_identity_summary(self.coverage)
+        identity_ratio_summary = _format_identity_ratio_summary(
+            embedding_ratio=self.identity_embedding_coverage_ratio,
+            decision_ratio=self.identity_decision_coverage_ratio,
+            unknown_ratio=self.identity_unknown_ratio,
+        )
 
         lines = [
             "# FaceQA Coverage Report",
@@ -152,7 +161,9 @@ class ReadinessReport:
         if self.identity_outlier_ratio is not None:
             lines.append(f"- **Identity outlier ratio**: {self.identity_outlier_ratio:.1%}")
         if identity_summary:
-            lines.append(f"- **Identity coverage**: {identity_summary}")
+            lines.append(f"- **Identity buckets**: {identity_summary}")
+        if identity_ratio_summary:
+            lines.append(f"- **Identity signal coverage**: {identity_ratio_summary}")
         if provenance_summary:
             lines.append(f"- **Image metrics provenance**: {provenance_summary}")
         if self.pruning_suggestions:
@@ -420,6 +431,28 @@ def _format_identity_summary(coverage: dict[str, dict[str, T.Any]]) -> str:
         if counts.get(bucket):
             parts.append(f"{bucket}={counts[bucket]}")
     return ", ".join(parts)
+
+
+def _format_identity_ratio_summary(
+    *,
+    embedding_ratio: float | None,
+    decision_ratio: float | None,
+    unknown_ratio: float | None,
+) -> str:
+    """Return compact identity signal coverage ratios for the summary block."""
+    parts: list[str] = []
+    if embedding_ratio is not None:
+        parts.append(f"embeddings {_fmt_pct(embedding_ratio)}")
+    if decision_ratio is not None:
+        parts.append(f"decisions {_fmt_pct(decision_ratio)}")
+    if unknown_ratio is not None:
+        parts.append(f"unknown {_fmt_pct(unknown_ratio)}")
+    return ", ".join(parts)
+
+
+def _fmt_pct(value: float) -> str:
+    """Format a ratio as a whole-percent string."""
+    return f"{max(0.0, min(1.0, float(value))):.0%}"
 
 
 def _provenance_trust(tag: str) -> str:
@@ -717,7 +750,6 @@ def generate_readiness_report(
     coverage: FacesetCoverageReport,
     *,
     alignments: str = "",
-    sidecar: str | None = None,
     min_bucket_pct: float = DEFAULT_MIN_BUCKET_PCT,
 ) -> ReadinessReport:
     """Generate a readiness report from precomputed coverage."""
@@ -727,13 +759,15 @@ def generate_readiness_report(
     scores: ReadinessScores = compute_readiness_scores(coverage)
     return ReadinessReport(
         alignments=alignments,
-        sidecar=sidecar,
         total_faces=coverage.total_faces,
         usable_faces=coverage.usable_faces,
         coverage=coverage.coverage_dict(),
         metric_summary=coverage.metric_summary,
         duplicate_ratio=coverage.duplicate_ratio,
         identity_outlier_ratio=coverage.identity_outlier_ratio,
+        identity_embedding_coverage_ratio=coverage.identity_embedding_coverage_ratio,
+        identity_decision_coverage_ratio=coverage.identity_decision_coverage_ratio,
+        identity_unknown_ratio=coverage.identity_unknown_ratio,
         mask_qa_distribution=coverage.mask_qa_distribution,
         source_counts=coverage.source_counts,
         joint_pose_coverage=coverage.joint_pose_coverage,

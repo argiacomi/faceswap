@@ -5,9 +5,9 @@ from __future__ import annotations
 
 import json
 
-from lib.align.faceset_qa import FaceQARecord
 from lib.faceqa.coverage import compute_coverage
 from lib.faceqa.readiness import generate_readiness_report
+from lib.faceqa.record import FaceQARecord
 from lib.faceqa.scoring import (
     COMPONENT_WEIGHTS,
     MIN_SAMPLES_PER_BIN,

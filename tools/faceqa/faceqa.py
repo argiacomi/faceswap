@@ -18,7 +18,6 @@ import typing as T
 from argparse import Namespace
 from pathlib import Path
 
-from lib.align.faceset_qa import FaceQARecord
 from lib.align.objects import FileAlignments
 from lib.faceqa.compatibility import compute_compatibility
 from lib.faceqa.coverage import (
@@ -34,6 +33,7 @@ from lib.faceqa.coverage import (
     save_alignments_envelope,
 )
 from lib.faceqa.readiness import generate_readiness_report
+from lib.faceqa.record import FaceQARecord
 from lib.faceqa.redundancy import RedundancyReport, compute_redundancy
 from lib.faceqa.redundancy_outputs import (
     render_contact_sheets,
@@ -164,14 +164,12 @@ class Faceqa:  # pylint:disable=invalid-name
             records,
             exclude_duplicates=bool(getattr(self._args, "exclude_duplicates", False)),
             exclude_outliers=bool(getattr(self._args, "exclude_outliers", False)),
-            sidecar_used=False,
             entries=entries,
         )
 
         report = generate_readiness_report(
             coverage,
             alignments=str(alignments),
-            sidecar=None,
             min_bucket_pct=min_bucket_pct,
         )
 
@@ -351,7 +349,6 @@ class Faceqa:  # pylint:disable=invalid-name
             records,
             exclude_duplicates=bool(getattr(self._args, "exclude_duplicates", False)),
             exclude_outliers=bool(getattr(self._args, "exclude_outliers", False)),
-            sidecar_used=False,
         )
 
     # ------------------------------------------------------------------

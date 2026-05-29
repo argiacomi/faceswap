@@ -8,10 +8,10 @@ from argparse import Namespace
 
 import numpy as np
 
-from lib.align.faceset_qa import FaceQAFile, FaceQARecord, load, sidecar_path
 from lib.align.objects import AlignmentsEntry, FileAlignments
 from lib.faceqa.coverage import SpigaPoseBackfiller, compute_coverage, records_from_alignments
 from lib.faceqa.readiness import generate_readiness_report
+from lib.faceqa.record import FaceQARecord
 from lib.serializer import get_serializer
 from tools.faceqa.faceqa import Faceqa
 
@@ -54,33 +54,6 @@ def test_compute_coverage_uses_sidecar_risk_metadata() -> None:
     assert report.bucket_counts["misalignment"]["extreme"] == 1
     assert report.duplicate_ratio == 1.0
     assert report.identity_outlier_ratio == 1.0
-
-
-def test_sidecar_load_ignores_unknown_fields(tmp_path) -> None:
-    """Future additive sidecar fields should not break this reader."""
-    path = tmp_path / "alignments_faceset_qa.json"
-    path.write_text(
-        json.dumps(
-            {
-                "schema_version": 1,
-                "future_root": True,
-                "faces": [
-                    {
-                        "frame": "frame.png",
-                        "face_index": 0,
-                        "yaw": 10.0,
-                        "future_face_field": "ignored",
-                    }
-                ],
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    qa_file = load(str(path))
-
-    assert isinstance(qa_file, FaceQAFile)
-    assert qa_file.faces[0].yaw == 10.0
 
 
 def test_faceqa_coverage_tool_writes_reports_from_alignments(tmp_path, monkeypatch) -> None:
@@ -938,11 +911,6 @@ def test_records_from_alignments_derives_lighting_from_thumbnail(tmp_path) -> No
     assert records[0].mean_luminance is not None
     assert records[0].left_right_ratio is not None
     assert records[0].saturation is not None
-
-
-def test_sidecar_path() -> None:
-    """Default FaceQA sidecar path should be derived from alignments stem."""
-    assert sidecar_path("/tmp/project/alignments.fsa") == "/tmp/project/alignments_faceset_qa.json"
 
 
 def test_faceqa_coverage_tool_suggest_pruning_emits_redundancy(tmp_path, monkeypatch) -> None:
