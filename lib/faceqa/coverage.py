@@ -1335,8 +1335,20 @@ def compute_identity_quality(
 
     selected_model, _counts = _identity_model_for_faces(faces_by_key.values(), model=model)
     report = IdentityQualityReport(total_faces=len(records), model=selected_model)
+
+    def _tick_all_records() -> None:
+        """Tick the progress callback once per record so an early-return path
+        still drains the GUI tqdm bar to ``len(records)`` (P2 follow-up to
+        #187). Without this every disabled-classifier path could leave the
+        bar short of its declared total."""
+        if progress_callback is None:
+            return
+        for _r in records:
+            progress_callback(1)
+
     if selected_model is None:
         report.disabled_reason = "no identity model available"
+        _tick_all_records()
         return report
 
     vectors_by_key: dict[tuple[str, int], np.ndarray] = {}
@@ -1350,6 +1362,7 @@ def compute_identity_quality(
             f"not enough identity vectors to classify outliers "
             f"({len(vectors_by_key)}/{MIN_IDENTITY_QUALITY_FACES})"
         )
+        _tick_all_records()
         return report
 
     matrix = np.stack(list(vectors_by_key.values())).astype(np.float32, copy=False)
@@ -1357,6 +1370,7 @@ def compute_identity_quality(
     centroid_norm = float(np.linalg.norm(centroid))
     if centroid_norm <= 0.0 or not np.all(np.isfinite(centroid)):
         report.disabled_reason = "identity centroid is invalid"
+        _tick_all_records()
         return report
     centroid = centroid / centroid_norm
 

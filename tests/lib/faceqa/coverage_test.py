@@ -1365,3 +1365,126 @@ def test_blank_message_filter_does_not_mutate_shared_record() -> None:
     assert record.msg == original_msg
     assert record.args == original_args
     assert not hasattr(record, "message") or record.message == record.getMessage()
+
+
+def _save_identity_alignments(path, frames):
+    """Persist a small alignments envelope for identity-quality tests."""
+    get_serializer("compressed").save(
+        str(path),
+        {
+            "__meta__": {"version": 2.4},
+            "__data__": {
+                frame: AlignmentsEntry(faces=faces_list).to_dict()
+                for frame, faces_list in frames.items()
+            },
+        },
+    )
+
+
+def test_identity_quality_ticks_all_records_when_no_model_available(tmp_path) -> None:
+    """Early return on missing model must still drain the progress bar (P2 follow-up)."""
+    from lib.faceqa.coverage import compute_identity_quality
+
+    # No face carries an identity vector → ``_identity_model_for_faces``
+    # returns ``(None, {})`` only if NOTHING is available. The runner
+    # falls back to DEFAULT_IDENTITY_BACKFILL_MODEL, so to genuinely
+    # exercise the no-model path we override the helper.
+    faces = [_face(), _face(), _face()]
+    alignments = tmp_path / "alignments.fsa"
+    _save_identity_alignments(
+        alignments,
+        {f"frame_{i:06d}.png": [faces[i - 1]] for i in range(1, 4)},
+    )
+
+    records = records_from_alignments(alignments)
+    ticks: list[int] = []
+
+    import lib.faceqa.coverage as coverage_mod
+
+    def _no_model(faces_iter, *, model=None):  # noqa: ANN001
+        return None, {}
+
+    original = coverage_mod._identity_model_for_faces
+    coverage_mod._identity_model_for_faces = _no_model
+    try:
+        report = compute_identity_quality(records, alignments, progress_callback=ticks.append)
+    finally:
+        coverage_mod._identity_model_for_faces = original
+
+    assert report.disabled_reason == "no identity model available"
+    assert len(records) == 3
+    assert ticks == [1] * 3
+
+
+def test_identity_quality_ticks_all_records_when_too_few_vectors(tmp_path) -> None:
+    """Early return on insufficient vectors must drain the bar (P2 follow-up)."""
+    import numpy as _np
+
+    from lib.faceqa.coverage import MIN_IDENTITY_QUALITY_FACES, compute_identity_quality
+
+    # Five records but only 2 vectors (< MIN_IDENTITY_QUALITY_FACES=3).
+    vector = _np.ones(512, dtype="float32")
+    faces = []
+    for has_vector in (True, True, False, False, False):
+        face = _face()
+        if has_vector:
+            face.identity = {"insightface": vector}
+        faces.append(face)
+    alignments = tmp_path / "alignments.fsa"
+    _save_identity_alignments(
+        alignments,
+        {f"frame_{i:06d}.png": [faces[i - 1]] for i in range(1, 6)},
+    )
+
+    records = records_from_alignments(alignments)
+    ticks: list[int] = []
+
+    report = compute_identity_quality(records, alignments, progress_callback=ticks.append)
+
+    assert report.vectors_available < MIN_IDENTITY_QUALITY_FACES
+    assert report.disabled_reason is not None
+    assert "not enough identity vectors" in report.disabled_reason
+    assert len(records) == 5
+    assert ticks == [1] * 5
+
+
+def test_identity_quality_ticks_all_records_when_centroid_invalid(tmp_path) -> None:
+    """Invalid centroid (zero norm) must drain the bar (P2 follow-up).
+
+    Vectors are normalised before the centroid math, so cancellation has
+    to happen in unit-norm space. Four axis-aligned vectors ``[+e0, -e0,
+    +e1, -e1]`` cancel to the zero centroid; two extra unclassified
+    records prove the tick count tracks records, not vectors.
+    """
+    import numpy as _np
+
+    from lib.faceqa.coverage import compute_identity_quality
+
+    def _basis(idx: int, sign: int) -> _np.ndarray:
+        vec = _np.zeros(512, dtype="float32")
+        vec[idx] = float(sign)
+        return vec
+
+    cancelling_vectors = [_basis(0, +1), _basis(0, -1), _basis(1, +1), _basis(1, -1)]
+    faces = []
+    for vec in cancelling_vectors:
+        face = _face()
+        face.identity = {"insightface": vec}
+        faces.append(face)
+    # Two extra unclassified faces.
+    faces.append(_face())
+    faces.append(_face())
+    alignments = tmp_path / "alignments.fsa"
+    _save_identity_alignments(
+        alignments,
+        {f"frame_{i:06d}.png": [faces[i - 1]] for i in range(1, 7)},
+    )
+
+    records = records_from_alignments(alignments)
+    ticks: list[int] = []
+
+    report = compute_identity_quality(records, alignments, progress_callback=ticks.append)
+
+    assert report.disabled_reason == "identity centroid is invalid"
+    assert len(records) == 6
+    assert ticks == [1] * 6
