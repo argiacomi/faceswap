@@ -70,7 +70,7 @@ def test_stale_top_level_image_metrics_are_overridden_by_frame_metrics(tmp_path)
 
 
 def test_fallback_provenance_downweights_representative_quality() -> None:
-    """Fallback-derived blur/black-pixel terms should not dominate representative choice."""
+    """Fallback-derived blur terms should not dominate representative choice."""
     records = [
         FaceQARecord(
             frame="frame_000001.png",
@@ -79,7 +79,6 @@ def test_fallback_provenance_downweights_representative_quality() -> None:
             pitch=0.0,
             roll=0.0,
             blur_score=20.0,
-            black_pixel_ratio=0.0,
             average_distance=0.0,
             resolution=[96, 96],
             image_metrics_provenance=IMAGE_METRICS_PROVENANCE_THUMBNAIL,
@@ -92,7 +91,6 @@ def test_fallback_provenance_downweights_representative_quality() -> None:
             pitch=0.0,
             roll=0.0,
             blur_score=10.0,
-            black_pixel_ratio=0.0,
             average_distance=0.0,
             resolution=[96, 96],
             image_metrics_provenance=IMAGE_METRICS_PROVENANCE_FRAME,
@@ -108,7 +106,7 @@ def test_fallback_provenance_downweights_representative_quality() -> None:
 
 
 def test_fallback_lighting_bucket_penalty_is_reduced() -> None:
-    """Fallback-only lighting bucket mismatch contributes less than frame-derived mismatch."""
+    """Fallback lighting differences should not force a prune recommendation."""
     common = dict(
         yaw=0.0,
         pitch=0.0,
@@ -119,7 +117,7 @@ def test_fallback_lighting_bucket_penalty_is_reduced() -> None:
         expression_bucket="neutral",
         identity_final_decision="inlier",
     )
-    frame_records = [
+    records = [
         FaceQARecord(
             frame="frame_000001.png",
             face_index=0,
@@ -129,7 +127,7 @@ def test_fallback_lighting_bucket_penalty_is_reduced() -> None:
             top_bottom_ratio=1.0,
             color_warmth=0.0,
             saturation=50.0,
-            image_metrics_provenance=IMAGE_METRICS_PROVENANCE_FRAME,
+            image_metrics_provenance=IMAGE_METRICS_PROVENANCE_THUMBNAIL,
             **common,
         ),
         FaceQARecord(
@@ -141,28 +139,16 @@ def test_fallback_lighting_bucket_penalty_is_reduced() -> None:
             top_bottom_ratio=1.0,
             color_warmth=0.0,
             saturation=50.0,
-            image_metrics_provenance=IMAGE_METRICS_PROVENANCE_FRAME,
+            image_metrics_provenance=IMAGE_METRICS_PROVENANCE_THUMBNAIL,
             **common,
         ),
     ]
-    fallback_records = [
-        FaceQARecord(
-            **{**record.to_dict(), "image_metrics_provenance": IMAGE_METRICS_PROVENANCE_THUMBNAIL}
-        )
-        for record in frame_records
-    ]
 
-    frame_report = compute_redundancy(frame_records, aggressiveness="aggressive")
-    fallback_report = compute_redundancy(fallback_records, aggressiveness="aggressive")
-    frame_recommendations = {record.frame: record.recommendation for record in frame_report.records}
-    fallback_recommendations = {
-        record.frame: record.recommendation for record in fallback_report.records
-    }
+    report = compute_redundancy(records, aggressiveness="aggressive")
+    recommendations = {record.frame: record.recommendation for record in report.records}
 
-    assert frame_report.cluster_count == 1
-    assert fallback_report.cluster_count == 1
-    assert frame_recommendations["frame_000002.png"] == "keep"
-    assert fallback_recommendations["frame_000002.png"] == "prune_candidate"
+    assert report.cluster_count == 1
+    assert recommendations["frame_000002.png"] == "keep"
 
 
 def test_unclassified_identity_embeddings_route_to_review() -> None:
