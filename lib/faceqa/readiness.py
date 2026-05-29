@@ -427,7 +427,6 @@ def _provenance_trust(tag: str) -> str:
     mapping = {
         "frame_aligned_crop": "authoritative",
         "thumbnail_fallback": "reduced (decoded thumbnail)",
-        "faces_fallback": "reduced (extracted face image)",
         "missing": "unknown",
     }
     return mapping.get(tag, "unknown")

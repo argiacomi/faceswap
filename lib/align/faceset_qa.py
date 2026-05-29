@@ -84,6 +84,7 @@ class FaceQARecord(DataclassDict):
     top_bottom_ratio: float | None = None
     saturation: float | None = None
     color_warmth: float | None = None
+    image_metrics_provenance: str | None = None
     resolution: list[int] = field(default_factory=list)
 
     occlusion_score: float | None = None

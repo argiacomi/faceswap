@@ -153,6 +153,7 @@ class RepresentationFeatures:
     has_identity: bool
     identity_outlier: bool
     has_metrics: bool
+    image_metrics_provenance: str | None
 
 
 @dataclass
@@ -387,7 +388,50 @@ def _features_for(record: FaceQARecord) -> RepresentationFeatures:
         has_identity=has_identity,
         identity_outlier=bool(identity_outlier),
         has_metrics=has_metrics,
+        image_metrics_provenance=getattr(record, "image_metrics_provenance", None),
     )
+
+
+# Image-derived features whose trust depends on whether the metrics came from
+# the source frame crop (authoritative) or a fallback (thumbnail / face image).
+# When either side of the pair is fallback-derived, these features contribute
+# at reduced weight so the redundancy distance is not dominated by stale or
+# resolution-degraded lighting / framing numbers.
+_IMAGE_DERIVED_FEATURES: frozenset[str] = frozenset(
+    {
+        "luminance",
+        "contrast",
+        "left_right_ratio",
+        "top_bottom_ratio",
+        "color_warmth",
+        "saturation",
+    }
+)
+_IMAGE_DERIVED_BUCKETS: frozenset[str] = frozenset({"lighting_bucket"})
+_FALLBACK_PROVENANCE_WEIGHT_SCALE: float = 0.5
+_FRAME_PROVENANCE = "frame_aligned_crop"
+
+
+def _provenance_scale(
+    a: RepresentationFeatures,
+    b: RepresentationFeatures,
+    attr: str,
+) -> float:
+    """Return the weight scale for one feature given the pair's provenance.
+
+    Frame-derived metrics on both sides keep the full weight. If either side
+    used a thumbnail/face fallback, image-derived features (lighting /
+    framing) are halved so the distance still moves but is not dominated by
+    a source the user shouldn't fully trust.
+    """
+    if attr not in _IMAGE_DERIVED_FEATURES and attr not in _IMAGE_DERIVED_BUCKETS:
+        return 1.0
+    if (
+        a.image_metrics_provenance == _FRAME_PROVENANCE
+        and b.image_metrics_provenance == _FRAME_PROVENANCE
+    ):
+        return 1.0
+    return _FALLBACK_PROVENANCE_WEIGHT_SCALE
 
 
 def _representation_distance(
@@ -398,6 +442,9 @@ def _representation_distance(
 
     Missing features contribute zero to both the numerator and the denominator;
     the caller treats low ``compared_dimensions`` as low confidence (review).
+    Image-derived features (lighting / framing) are scaled down when either
+    face's image metrics came from a non-frame fallback, so the original
+    "d=0.39 from stale lighting" pathology can't slip through.
     """
     numerator = 0.0
     denominator = 0.0
@@ -408,8 +455,9 @@ def _representation_distance(
         if va is None or vb is None:
             continue
         diff = float(va) - float(vb)
-        numerator += weight * (diff * diff)
-        denominator += weight
+        effective_weight = weight * _provenance_scale(a, b, attr)
+        numerator += effective_weight * (diff * diff)
+        denominator += effective_weight
         compared += 1
     if denominator == 0.0:
         return math.inf, 0
@@ -420,9 +468,10 @@ def _representation_distance(
         vb = getattr(b, attr)
         if va is None or vb is None or va == "unknown" or vb == "unknown":
             continue
-        bucket_total += weight
+        effective_weight = weight * _provenance_scale(a, b, attr)
+        bucket_total += effective_weight
         if va != vb:
-            bucket_penalty += weight
+            bucket_penalty += effective_weight
     distance = math.sqrt(numerator / denominator)
     if bucket_total > 0:
         # Up-weight visually-different buckets even if continuous features look similar.

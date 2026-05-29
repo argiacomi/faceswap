@@ -42,6 +42,7 @@ def _record(
     resolution: list[int] | None = None,
     identity_model: str | None = "insightface",
     identity_quality_flag: str | None = "inlier",
+    image_metrics_provenance: str | None = None,
 ) -> FaceQARecord:
     return FaceQARecord(
         frame=frame,
@@ -64,6 +65,7 @@ def _record(
         resolution=resolution if resolution is not None else [256, 256],
         identity_model=identity_model,
         identity_quality_flag=identity_quality_flag,
+        image_metrics_provenance=image_metrics_provenance,
     )
 
 
@@ -569,3 +571,53 @@ def test_classify_buckets_is_coverage_aware() -> None:
     protected, surplus = _classify_buckets(effective, config, total_faces=1000, min_bucket_pct=0.5)
     assert ("pose", "right_extreme") in protected
     assert ("pose", "frontal") in surplus
+
+
+def test_representation_distance_downweights_fallback_lighting() -> None:
+    """Fallback provenance must scale image-derived feature weight, not full trust."""
+    from lib.faceqa.redundancy import _features_for, _representation_distance
+
+    base = _record(
+        "frame_000001.png",
+        yaw=0.0,
+        pitch=0.0,
+        mean_luminance=128.0,
+        contrast=10.0,
+        left_right_ratio=1.0,
+        top_bottom_ratio=1.0,
+        color_warmth=0.0,
+        image_metrics_provenance="frame_aligned_crop",
+    )
+    # Same pose / expression; only the lighting differs sharply.
+    bright = _record(
+        "frame_000002.png",
+        yaw=0.0,
+        pitch=0.0,
+        mean_luminance=230.0,  # large lighting delta
+        contrast=10.0,
+        left_right_ratio=1.0,
+        top_bottom_ratio=1.0,
+        color_warmth=0.0,
+        image_metrics_provenance="frame_aligned_crop",
+    )
+
+    frame_pair = _representation_distance(_features_for(base), _features_for(bright))
+    frame_distance = frame_pair[0]
+
+    # Now mark the bright face as thumbnail-derived: the same lighting delta
+    # should contribute less to the distance.
+    bright_fallback = _record(
+        "frame_000003.png",
+        yaw=0.0,
+        pitch=0.0,
+        mean_luminance=230.0,
+        contrast=10.0,
+        left_right_ratio=1.0,
+        top_bottom_ratio=1.0,
+        color_warmth=0.0,
+        image_metrics_provenance="thumbnail_fallback",
+    )
+    fallback_pair = _representation_distance(_features_for(base), _features_for(bright_fallback))
+    fallback_distance = fallback_pair[0]
+
+    assert fallback_distance < frame_distance

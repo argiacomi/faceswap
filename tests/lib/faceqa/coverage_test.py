@@ -991,3 +991,83 @@ def test_faceqa_coverage_tool_suggest_pruning_emits_redundancy(tmp_path, monkeyp
     markdown = (tmp_path / "alignments_faceqa_coverage.md").read_text(encoding="utf-8")
     assert "## Pruning Suggestions" in markdown
     assert "Aggressiveness" in markdown
+
+
+def test_stale_thumbnail_provenance_is_upgraded_to_frame(tmp_path) -> None:
+    """A persisted thumbnail_fallback block must not block a frame upgrade.
+
+    Regression: previously ``_populate_image_metrics`` returned immediately on
+    any existing image_metrics block, so a re-run with frames available could
+    not overwrite stale thumbnail-derived metrics.
+    """
+    from lib.faceqa.coverage import (
+        IMAGE_METRICS_PROVENANCE_FRAME,
+        IMAGE_METRICS_PROVENANCE_THUMBNAIL,
+        records_from_alignments,
+    )
+
+    face = _face()
+    face.metadata = {
+        "faceqa": {
+            "image_metrics": {
+                "provenance": IMAGE_METRICS_PROVENANCE_THUMBNAIL,
+                "blur_score": 1.0,
+                "mean_luminance": 50.0,
+            }
+        }
+    }
+    alignments = tmp_path / "alignments.fsa"
+    get_serializer("compressed").save(
+        str(alignments),
+        {
+            "__meta__": {"version": 2.4},
+            "__data__": {"frame_000001.png": AlignmentsEntry(faces=[face]).to_dict()},
+        },
+    )
+
+    captured: list[tuple[str, int]] = []
+
+    def fake_backfiller(face_obj, frame, idx):  # noqa: ANN001
+        captured.append((frame, idx))
+        return {"blur_score": 99.0, "mean_luminance": 180.0}
+
+    records = records_from_alignments(alignments, metrics_backfiller=fake_backfiller)
+
+    assert captured == [("frame_000001.png", 0)]
+    assert records[0].blur_score == 99.0
+    assert records[0].mean_luminance == 180.0
+    assert records[0].image_metrics_provenance == IMAGE_METRICS_PROVENANCE_FRAME
+
+
+def test_existing_frame_provenance_short_circuits_backfiller(tmp_path) -> None:
+    """A persisted frame_aligned_crop block IS authoritative — no re-decode."""
+    from lib.faceqa.coverage import (
+        IMAGE_METRICS_PROVENANCE_FRAME,
+        records_from_alignments,
+    )
+
+    face = _face()
+    face.metadata = {
+        "faceqa": {
+            "image_metrics": {
+                "provenance": IMAGE_METRICS_PROVENANCE_FRAME,
+                "blur_score": 7.5,
+                "mean_luminance": 128.0,
+            }
+        }
+    }
+    alignments = tmp_path / "alignments.fsa"
+    get_serializer("compressed").save(
+        str(alignments),
+        {
+            "__meta__": {"version": 2.4},
+            "__data__": {"frame_000001.png": AlignmentsEntry(faces=[face]).to_dict()},
+        },
+    )
+
+    def fail_backfiller(face_obj, frame, idx):  # noqa: ANN001
+        raise AssertionError(f"backfiller must not be called: {frame}#{idx}")
+
+    records = records_from_alignments(alignments, metrics_backfiller=fail_backfiller)
+    assert records[0].blur_score == 7.5
+    assert records[0].image_metrics_provenance == IMAGE_METRICS_PROVENANCE_FRAME

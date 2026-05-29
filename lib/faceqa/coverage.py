@@ -250,7 +250,9 @@ def _populate_aligned_metrics(record: FaceQARecord, face: FileAlignments) -> Non
 # warn / down-weight them.
 IMAGE_METRICS_PROVENANCE_FRAME = "frame_aligned_crop"
 IMAGE_METRICS_PROVENANCE_THUMBNAIL = "thumbnail_fallback"
-IMAGE_METRICS_PROVENANCE_FACES = "faces_fallback"
+# NOTE: a "faces_fallback" provenance was previously declared as a constant but
+# never had a backfill path; readers can no longer rely on it. Add the
+# constant + implementation together when extracted-face fallback is wired in.
 
 
 def _compute_image_metrics(image: np.ndarray) -> dict[str, T.Any] | None:
@@ -276,9 +278,17 @@ def _compute_image_metrics(image: np.ndarray) -> dict[str, T.Any] | None:
 
 
 def _apply_image_metrics(record: FaceQARecord, payload: dict[str, T.Any]) -> None:
-    """Copy metric values from an image_metrics payload onto a record."""
+    """Copy metric values from an image_metrics payload onto a record.
+
+    The ``provenance`` tag is intentionally also written onto the record (as
+    ``image_metrics_provenance``) so the redundancy layer can down-weight
+    fallback-derived lighting / framing features rather than treating them
+    as authoritative.
+    """
     for key, value in payload.items():
         if key == "provenance":
+            if getattr(record, "image_metrics_provenance", None) is None and value is not None:
+                record.image_metrics_provenance = str(value)
             continue
         if hasattr(record, key) and getattr(record, key) in (None, []):
             setattr(record, key, value)
@@ -293,14 +303,30 @@ def _populate_image_metrics(
 ) -> None:
     """Resolve image metrics for one face, preferring frame-derived values.
 
-    Priority order:
+    Frame-derived metrics are authoritative. Existing thumbnail-fallback metrics
+    from a prior run must NOT block a frame upgrade when ``metrics_backfiller``
+    is available; the metric source policy is frames > thumbnail, irrespective
+    of which one ran first chronologically.
 
-    1. ``face.metadata['faceqa']['image_metrics']`` if previously written.
-    2. ``metrics_backfiller`` (frame-derived; sets provenance ``frame_aligned_crop``).
-    3. Stored alignments thumbnail (provenance ``thumbnail_fallback``).
+    Resolution order:
+
+    1. Existing ``face.metadata['faceqa']['image_metrics']`` IF its provenance
+       is already ``frame_aligned_crop`` — that's the authoritative source and
+       there's nothing to upgrade.
+    2. ``metrics_backfiller`` (frame-derived; provenance ``frame_aligned_crop``).
+       When this succeeds it overwrites any stale thumbnail-fallback block.
+    3. Existing non-frame metadata as a fallback (preserves whatever a prior
+       thumbnail run wrote when the backfiller is unavailable or fails).
+    4. Decoded alignments thumbnail (provenance ``thumbnail_fallback``).
     """
     existing = face.metadata.get("faceqa", {}).get("image_metrics")
-    if isinstance(existing, dict) and len(existing) > 0:
+    existing_provenance = existing.get("provenance") if isinstance(existing, dict) else None
+
+    if (
+        isinstance(existing, dict)
+        and existing_provenance == IMAGE_METRICS_PROVENANCE_FRAME
+        and len(existing) > 1
+    ):
         _apply_image_metrics(record, existing)
         return
 
@@ -311,6 +337,10 @@ def _populate_image_metrics(
             _write_faceqa_metadata(face, "image_metrics", payload)
             _apply_image_metrics(record, payload)
             return
+
+    if isinstance(existing, dict) and len(existing) > 1:
+        _apply_image_metrics(record, existing)
+        return
 
     image = _decode_thumb(face.thumb)
     if image is None:
@@ -354,11 +384,10 @@ def _populate_metadata(record: FaceQARecord, metadata: dict[str, T.Any]) -> None
         for src_key, dst_key in _IDENTITY_ENVELOPE_FIELDS:
             if getattr(record, dst_key) in (None, []) and src_key in identity_payload:
                 setattr(record, dst_key, identity_payload[src_key])
-    image_metrics = payload.get("image_metrics")
-    if isinstance(image_metrics, dict):
-        for key, value in image_metrics.items():
-            if hasattr(record, key) and getattr(record, key) in (None, []):
-                setattr(record, key, value)
+    # NOTE: ``image_metrics`` is intentionally NOT walked here — _populate_image_metrics
+    # is the single owner of those fields. Without that exclusion a persisted
+    # thumbnail_fallback block would race with a frame backfill and lock in
+    # stale values before the frame upgrade ran.
 
 
 def _populate_pose_metadata(record: FaceQARecord, metadata: dict[str, T.Any]) -> None:
