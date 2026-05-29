@@ -154,9 +154,15 @@ def test_fallback_lighting_bucket_penalty_is_reduced() -> None:
 
     frame_report = compute_redundancy(frame_records, aggressiveness="aggressive")
     fallback_report = compute_redundancy(fallback_records, aggressiveness="aggressive")
+    frame_recommendations = {record.frame: record.recommendation for record in frame_report.records}
+    fallback_recommendations = {
+        record.frame: record.recommendation for record in fallback_report.records
+    }
 
-    assert frame_report.cluster_count == 2
+    assert frame_report.cluster_count == 1
     assert fallback_report.cluster_count == 1
+    assert frame_recommendations["frame_000002.png"] == "keep"
+    assert fallback_recommendations["frame_000002.png"] == "prune_candidate"
 
 
 def test_unclassified_identity_embeddings_route_to_review() -> None:
