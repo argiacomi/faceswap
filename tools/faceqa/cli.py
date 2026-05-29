@@ -79,7 +79,6 @@ class FaceqaArgs(FaceSwapArgs):  # pylint:disable=invalid-name
                 "action": Radio,
                 "type": str,
                 "dest": "mode",
-                "group": _("processing"),
                 "choices": ("coverage", "compatibility"),
                 "default": "coverage",
                 "help": _(
@@ -111,7 +110,7 @@ class FaceqaArgs(FaceSwapArgs):  # pylint:disable=invalid-name
         )
         argument_list.append(
             {
-                "opts": ("-c", "-faces_folder", "--faces-dir"),
+                "opts": ("-c", "-faces_folder"),
                 "action": DirFullPaths,
                 "dest": "faces_dir",
                 "group": ("data"),
@@ -124,7 +123,7 @@ class FaceqaArgs(FaceSwapArgs):  # pylint:disable=invalid-name
         )
         argument_list.append(
             {
-                "opts": ("-r", "-frames_folder", "--frames-dir"),
+                "opts": ("-r", "-frames_folder"),
                 "action": DirOrFileFullPaths,
                 "dest": "frames_dir",
                 "required": False,

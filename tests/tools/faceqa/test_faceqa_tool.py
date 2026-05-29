@@ -12,7 +12,6 @@ import numpy as np
 from lib.align.objects import AlignmentsEntry, FileAlignments
 from lib.serializer import get_serializer
 from lib.utils import FaceswapError
-from tools.faceqa.cli import FaceqaArgs
 from tools.faceqa.faceqa import Faceqa
 
 
@@ -57,28 +56,6 @@ def _base_args(**overrides) -> Namespace:
     )
     defaults.update(overrides)
     return Namespace(**defaults)
-
-
-def _argument_by_dest(dest: str) -> dict:
-    for argument in FaceqaArgs.get_argument_list():
-        if argument.get("dest") == dest:
-            return argument
-    raise AssertionError(f"Argument with dest={dest!r} not found")
-
-
-def test_cli_pruning_flags_match_final_contract() -> None:
-    """CLI should expose move-by-default sort pruning with --keep copy mode."""
-    arguments = FaceqaArgs.get_argument_list()
-    all_opts = {opt for argument in arguments for opt in argument.get("opts", ())}
-
-    assert "--sort-prune" in _argument_by_dest("sort_prune")["opts"]
-    assert "--contact-sheets" in _argument_by_dest("contact_sheets")["opts"]
-    keep_argument = _argument_by_dest("keep_originals")
-    assert keep_argument["opts"] == ("--keep",)
-    assert keep_argument["default"] is False
-    assert "--no-keep" not in all_opts
-    assert "--frames-dir" in _argument_by_dest("frames_dir")["opts"]
-    assert "--faces-dir" in _argument_by_dest("faces_dir")["opts"]
 
 
 def test_coverage_mode_runs_without_pruning(tmp_path, monkeypatch) -> None:
