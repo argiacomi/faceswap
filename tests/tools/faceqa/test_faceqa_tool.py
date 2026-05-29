@@ -12,6 +12,7 @@ import numpy as np
 from lib.align.objects import AlignmentsEntry, FileAlignments
 from lib.serializer import get_serializer
 from lib.utils import FaceswapError
+from tools.faceqa.cli import FaceqaArgs
 from tools.faceqa.faceqa import Faceqa
 
 
@@ -49,13 +50,35 @@ def _base_args(**overrides) -> Namespace:
         suggest_pruning=False,
         sort_prune=False,
         contact_sheets=False,
-        keep_originals=True,
+        keep_originals=False,
         prune_aggressiveness="balanced",
         source_alignments=None,
         target_alignments=None,
     )
     defaults.update(overrides)
     return Namespace(**defaults)
+
+
+def _argument_by_dest(dest: str) -> dict:
+    for argument in FaceqaArgs.get_argument_list():
+        if argument.get("dest") == dest:
+            return argument
+    raise AssertionError(f"Argument with dest={dest!r} not found")
+
+
+def test_cli_pruning_flags_match_final_contract() -> None:
+    """CLI should expose move-by-default sort pruning with --keep copy mode."""
+    arguments = FaceqaArgs.get_argument_list()
+    all_opts = {opt for argument in arguments for opt in argument.get("opts", ())}
+
+    assert "--sort-prune" in _argument_by_dest("sort_prune")["opts"]
+    assert "--contact-sheets" in _argument_by_dest("contact_sheets")["opts"]
+    keep_argument = _argument_by_dest("keep_originals")
+    assert keep_argument["opts"] == ("--keep",)
+    assert keep_argument["default"] is False
+    assert "--no-keep" not in all_opts
+    assert "--frames-dir" in _argument_by_dest("frames_dir")["opts"]
+    assert "--faces-dir" in _argument_by_dest("faces_dir")["opts"]
 
 
 def test_coverage_mode_runs_without_pruning(tmp_path, monkeypatch) -> None:
@@ -108,8 +131,8 @@ def test_coverage_mode_with_suggest_pruning_emits_redundancy(tmp_path, monkeypat
     assert "## Pruning Suggestions" in md
 
 
-def test_sort_prune_and_contact_sheets_emit_artefacts(tmp_path, monkeypatch) -> None:
-    """``--suggest-pruning --sort-prune --contact-sheets`` writes folders + sheets."""
+def test_sort_prune_and_contact_sheets_move_by_default(tmp_path, monkeypatch) -> None:
+    """Default sort-prune moves originals into buckets inside --faces-dir."""
     alignments = tmp_path / "alignments.fsa"
     _save_alignments(
         alignments,
@@ -134,31 +157,67 @@ def test_sort_prune_and_contact_sheets_emit_artefacts(tmp_path, monkeypatch) -> 
 
     Faceqa(args).process()
 
-    # The keep / review / prune_candidate buckets land under output_dir/pruning/.
+    # Default sort-prune is destructive: originals move into bucket folders
+    # inside the faces directory.
+    assert (faces_dir / "keep").is_dir()
+    assert (faces_dir / "review").is_dir()
+    assert (faces_dir / "prune_candidate").is_dir()
+    assert (faces_dir / "redundancy_mapping.csv").is_file()
+    assert not any(faces_dir.glob("frame_*.png"))
+
+    # Contact sheets remain review artifacts under output_dir/pruning/.
+    pruning_dir = output_dir / "pruning"
+    contact_sheets = list((pruning_dir / "contact_sheets").iterdir())
+    assert len(contact_sheets) >= 1
+
+    # The old per-bucket CSV/JSONL manifests and the standalone
+    # faceqa_redundancy.json file are gone — the coverage JSON now carries
+    # the recommendations.
+    assert not (faces_dir / "faceqa_redundancy.json").exists()
+    assert not (faces_dir / "keep.csv").exists()
+    assert not (faces_dir / "keep.jsonl").exists()
+    assert not (faces_dir / "prune_candidates.csv").exists()
+    assert not (faces_dir / "prune_candidates.jsonl").exists()
+
+    coverage_payload = json.loads(
+        (output_dir / "alignments_faceqa_coverage.json").read_text(encoding="utf-8")
+    )
+    assert coverage_payload["pruning_suggestions"]["total_faces"] == 5
+
+
+def test_sort_prune_keep_copies_to_output_dir(tmp_path, monkeypatch) -> None:
+    """--keep should preserve originals and copy sorted buckets under output_dir."""
+    alignments = tmp_path / "alignments.fsa"
+    _save_alignments(
+        alignments,
+        {f"frame_{i:06d}.png": [_face()] for i in range(1, 4)},
+    )
+    faces_dir = tmp_path / "faces"
+    faces_dir.mkdir()
+    originals = [faces_dir / f"frame_{i:06d}_0.png" for i in range(1, 4)]
+    for path in originals:
+        _write_face_image(path)
+    output_dir = tmp_path / "out"
+    args = _base_args(
+        alignments=str(alignments),
+        frames_dir=str(tmp_path),
+        faces_dir=str(faces_dir),
+        suggest_pruning=True,
+        sort_prune=True,
+        keep_originals=True,
+        output_dir=str(output_dir),
+    )
+    monkeypatch.setattr(Faceqa, "_pose_backfiller", lambda _: lambda __, ___: None)
+    monkeypatch.setattr(Faceqa, "_metrics_backfiller", lambda _: None)
+
+    Faceqa(args).process()
+
     pruning_dir = output_dir / "pruning"
     assert (pruning_dir / "keep").is_dir()
     assert (pruning_dir / "review").is_dir()
     assert (pruning_dir / "prune_candidate").is_dir()
     assert (pruning_dir / "redundancy_mapping.csv").is_file()
-
-    # The old per-bucket CSV/JSONL manifests and the standalone
-    # faceqa_redundancy.json file are gone — the coverage JSON now carries
-    # the recommendations.
-    assert not (pruning_dir / "faceqa_redundancy.json").exists()
-    assert not (pruning_dir / "keep.csv").exists()
-    assert not (pruning_dir / "keep.jsonl").exists()
-    assert not (pruning_dir / "prune_candidates.csv").exists()
-    assert not (pruning_dir / "prune_candidates.jsonl").exists()
-
-    contact_sheets = list((pruning_dir / "contact_sheets").iterdir())
-    # Multiple identical faces should cluster into one multi-face cluster → ≥1 sheet.
-    assert len(contact_sheets) >= 1
-
-    # The coverage JSON in output_dir carries the pruning recommendations.
-    coverage_payload = json.loads(
-        (output_dir / "alignments_faceqa_coverage.json").read_text(encoding="utf-8")
-    )
-    assert coverage_payload["pruning_suggestions"]["total_faces"] == 5
+    assert all(path.exists() for path in originals)
 
 
 def test_sort_prune_requires_faces_dir(tmp_path, monkeypatch) -> None:
