@@ -346,8 +346,10 @@ class AlignedFace:  # pylint:disable=too-many-instance-attributes
                     lms = self.normalized_landmarks
                     if self._landmark_type != LandmarkType.LM_2D_68:
                         lms = points_to_68(lms)
-                    lowest_eyes = np.max(self.normalized_landmarks[np.r_[17:27, 36:48], 1])
-                    highest_mouth = np.min(self.normalized_landmarks[48:68, 1])
+                    # Index the CONVERTED 68-point landmarks, not the
+                    # original ``normalized_landmarks`` which may be 98-point.
+                    lowest_eyes = np.max(lms[np.r_[17:27, 36:48], 1])
+                    highest_mouth = np.min(lms[48:68, 1])
                     position = highest_mouth - lowest_eyes
                     logger.trace(  # type:ignore[attr-defined]
                         "lowest_eyes: %s, highest_mouth: %s, relative_eye_mouth_position: %s",

@@ -283,8 +283,11 @@ class Alignments:  # pylint:disable=too-many-public-methods
         if not frame_name:
             retval = False
         else:
-            frame_data = self._data.get(frame_name, AlignmentsEntry)
-            retval = bool(len(frame_data.faces) > 1)
+            # Default must be an INSTANCE — the class object has no ``.faces``
+            # populated, so a missing frame would raise ``AttributeError``
+            # instead of returning ``False``.
+            frame_data = self._data.get(frame_name, AlignmentsEntry())
+            retval = len(frame_data.faces) > 1
         logger.trace("'%s': %s", frame_name, retval)  # type:ignore[attr-defined]
         return retval
 

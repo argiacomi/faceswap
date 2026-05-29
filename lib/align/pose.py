@@ -88,7 +88,6 @@ def get_camera_matrix(focal_length: int = 4) -> np.ndarray:
     -------
     An estimated camera matrix
     """
-    focal_length = 4
     camera_matrix = np.array(
         [[focal_length, 0, 0.5], [0, focal_length, 0.5], [0, 0, 1]], dtype="double"
     )

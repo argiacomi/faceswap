@@ -492,7 +492,7 @@ def batch_sub_crop(
 
     flat = images.reshape(batch_size, height * width, channels)
     gathered = np.take_along_axis(flat, lin_idx.reshape(batch_size, -1)[..., None], axis=1)
-    return gathered.reshape(batch_size, out_size, out_size, 3)
+    return gathered.reshape(batch_size, out_size, out_size, channels)
 
 
 ImageDTypeT = T.TypeVar("ImageDTypeT", np.uint8, np.float32)

@@ -405,7 +405,10 @@ class DetectedFace:  # pylint:disable=too-many-instance-attributes
                     continue  # Skip legacy stored LM based masks
                 self.mask[name] = aligned_mask.Mask()
                 self.mask[name].from_dict(mask)
-        if image is not None and image.any():
+        # ``image.any()`` runs a full-frame reduction and silently skips
+        # all-black frames; ``image.size`` only guards against an
+        # empty/uninitialised array which is the actual intent here.
+        if image is not None and image.size:
             self._image_to_face(image)
         logger.trace(
             "Created from alignment: (left: %s, width: %s, "  # type:ignore[attr-defined]
