@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import logging
 import sys
 import tempfile
 import time
@@ -89,8 +90,18 @@ def _format_duration(seconds: float) -> str:
     return f"{int(hours)}h {int(minutes)}m {remainder:.0f}s"
 
 
+_PROGRESS_LOGGER = logging.getLogger("tools.landmarks.search_ensemble_setup.progress")
+
+
 def _progress(message: str) -> None:
-    print(f"[{time.strftime('%H:%M:%S')}] {message}", file=sys.stderr, flush=True)
+    """Route landmark search-ensemble progress through the shared logger.
+
+    Previously this wrote directly to ``sys.stderr``, which clashed with the
+    GUI status-bar / tqdm parsers (issue #189). Logging at INFO keeps the
+    same operator-visible cadence while letting the central
+    :data:`lib.logger.EXTERNAL_LOGGER_POLICY` decide where it lands.
+    """
+    _PROGRESS_LOGGER.info("[%s] %s", time.strftime("%H:%M:%S"), message)
 
 
 def _stage(name: str, fn: T.Callable[[], T.Any]) -> T.Any:

@@ -315,7 +315,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--region-failure-threshold", type=float, default=0.05)
     parser.add_argument("--output-dir", required=True)
     args = parser.parse_args(argv)
-    logging.basicConfig(level=logging.INFO)
+    from lib.logger import configure_tool_logging
+
+    configure_tool_logging("INFO")
 
     payload = evaluate_manifest(
         args.manifest,

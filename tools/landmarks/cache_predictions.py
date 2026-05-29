@@ -607,10 +607,9 @@ def main(argv: list[str] | None = None) -> int:
         choices=("DEBUG", "INFO", "WARNING", "ERROR"),
     )
     args = parser.parse_args(argv)
-    logging.basicConfig(
-        level=getattr(logging, args.log_level),
-        format="%(levelname)s:%(name)s:%(message)s",
-    )
+    from lib.logger import configure_tool_logging
+
+    configure_tool_logging(args.log_level)
     if args.batch_size <= 0:
         raise SystemExit("--batch-size must be greater than zero")
     if args.gt_roi_scale <= 0:

@@ -271,10 +271,9 @@ def main(argv: list[str] | None = None) -> int:
     """CLI entrypoint."""
     parser = _build_arg_parser()
     args = parser.parse_args(argv)
-    logging.basicConfig(
-        level=getattr(logging, args.log_level),
-        format="%(levelname)s:%(name)s:%(message)s",
-    )
+    from lib.logger import configure_tool_logging
+
+    configure_tool_logging(args.log_level)
     _validate_args(args)
     scenarios = _parse_csv(args.scenarios)
 

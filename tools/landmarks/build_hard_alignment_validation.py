@@ -214,7 +214,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--aligned-size", type=int, default=512)
     parser.add_argument("--region-failure-threshold", type=float, default=0.05)
     args = parser.parse_args(argv)
-    logging.basicConfig(level=logging.INFO)
+    from lib.logger import configure_tool_logging
+
+    configure_tool_logging("INFO")
 
     thresholds = HardSliceThresholds(
         frontal_degrees=args.frontal_degrees,

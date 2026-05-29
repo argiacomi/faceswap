@@ -23,7 +23,6 @@ if str(_REPO_ROOT) not in sys.path:
 from lib.align.alignments import Alignments
 from lib.align.objects import FileAlignments
 from lib.landmarks.ensemble.runtime_resolver import RUNTIME_BUCKETS
-from lib.logger import get_loglevel
 
 logger = logging.getLogger(__name__)
 LandmarkEnsembleMetadataExtractor = T.Callable[[Path, FileAlignments, str, int], dict[str, T.Any]]
@@ -933,10 +932,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point."""
     args = _parse_args(argv)
-    logging.basicConfig(
-        level=get_loglevel(args.log_level),
-        format="%(levelname)s:%(name)s:%(message)s",
-    )
+    from lib.logger import configure_tool_logging
+
+    configure_tool_logging(args.log_level)
     if args.extract_landmark_ensemble_metadata and args.landmark_ensemble_setup_path is None:
         raise SystemExit(
             "--landmark-ensemble-setup-path is required with --extract-landmark-ensemble-metadata"

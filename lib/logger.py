@@ -1,20 +1,20 @@
 #!/usr/bin/python
 """Logging Functions for Faceswap."""
+
 # NOTE: Don't import non stdlib packages. This module is accessed by setup.py
 from __future__ import annotations
 
 import collections
 import logging
-from logging.handlers import RotatingFileHandler
 import os
 import platform
 import re
 import sys
-import typing as T
 import time
 import traceback
-
+import typing as T
 from datetime import datetime
+from logging.handlers import RotatingFileHandler
 
 from lib.utils import get_module_objects
 
@@ -33,8 +33,188 @@ for new_level in (("VERBOSE", 15), ("TRACE", 5)):
 
 _FACESWAP_HANDLER_ATTR = "_faceswap_managed_handler"
 
+
+# ---------------------------------------------------------------------------
+# External logger policy (issue #189)
+#
+# Noisy upstream libraries (matplotlib font discovery, libav transcoding
+# noise, Torch inductor warnings, PIL/numexpr boilerplate) leaked INFO and
+# WARNING lines onto the Faceswap console. The previous approach mutated
+# LogRecord.levelno inside FaceswapFormatter, but a single record flows
+# through multiple handlers (file, stream, crash) — formatter-side mutation
+# can leak across handlers depending on handler order.
+#
+# The policy below is applied via HANDLER-BOUND filters from log_setup() so:
+#   * Stream output is suppressed / down-weighted as configured.
+#   * File and crash handlers continue to receive the original records, so
+#     post-mortem analysis still has the full noise stream available.
+# ---------------------------------------------------------------------------
+
+EXTERNAL_LOGGER_POLICY: dict[str, dict[str, T.Any]] = {
+    # Matplotlib font discovery spams INFO during first-import; downgrade so
+    # the console only sees its WARNING+. File log is untouched.
+    "matplotlib": {"lower_info_to_debug": True, "max_stream_level": "WARNING"},
+    "matplotlib.font_manager": {"lower_info_to_debug": True},
+    # libav (via PyAV) emits per-frame INFO that drowns extract/convert output.
+    "libav": {"lower_info_to_debug": True, "max_stream_level": "WARNING"},
+    # Pillow / numexpr boilerplate has no console value.
+    "PIL": {"max_stream_level": "WARNING"},
+    "numexpr": {"max_stream_level": "WARNING"},
+    # Specific Torch inductor warnings that always appear on supported GPUs
+    # and add nothing for users.
+    "torch._inductor": {
+        "suppress_stream_patterns": (("torch._inductor.utils", "is_big_gpu", None),),
+    },
+    # Captured py.warnings noise originating from torch._inductor.
+    "py.warnings": {
+        "suppress_stream_patterns": (("py.warnings", None, "/torch/_inductor"),),
+    },
+}
+
+
+class _ExternalLevelDowngradeFilter(logging.Filter):
+    """Stream-only filter that drops external INFO records configured to be
+    demoted to DEBUG.
+
+    Replaces ``FaceswapFormatter._lower_external``. As a filter, the demotion
+    is bound to a single handler — the file and crash handlers still see the
+    original INFO record. Drop-on-match (rather than mutate the levelno) is
+    used here because the stream handler is configured at INFO+, so mutating
+    levelno to DEBUG would still pass its level threshold.
+    """
+
+    def __init__(self, lower_info_prefixes: tuple[str, ...]) -> None:
+        super().__init__()
+        self._prefixes = lower_info_prefixes
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.levelno != logging.INFO:
+            return True
+        return not record.name.startswith(self._prefixes)
+
+
+class _StreamMaxLevelFilter(logging.Filter):
+    """Drop records whose level exceeds the configured per-logger ceiling.
+
+    Counterpart to ``handler.setLevel()`` which only sets a floor. Used to
+    silence chatty WARNINGs from PIL/numexpr/matplotlib/libav on the
+    console while keeping the file log complete.
+    """
+
+    def __init__(self, max_levels: dict[str, int]) -> None:
+        super().__init__()
+        # Sort longest-prefix-first so ``matplotlib.font_manager`` wins
+        # over the more general ``matplotlib`` prefix.
+        self._max_levels = sorted(max_levels.items(), key=lambda kv: -len(kv[0]))
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        for prefix, ceiling in self._max_levels:
+            if record.name == prefix or record.name.startswith(prefix + "."):
+                return record.levelno <= ceiling
+        return True
+
+
+class _StreamPatternSuppressionFilter(logging.Filter):
+    """Drop records that match a configured ``(name, funcname, substring)``.
+
+    Each pattern is a 3-tuple where ``funcname`` / ``substring`` may be
+    ``None`` to skip the corresponding check. Subsumes the legacy hard-coded
+    ``TorchWarningsFilter`` so its behaviour is now declared in
+    ``EXTERNAL_LOGGER_POLICY`` rather than embedded in a class.
+    """
+
+    def __init__(self, patterns: tuple[tuple, ...]) -> None:
+        super().__init__()
+        self._patterns = patterns
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        for name, funcname, substring in self._patterns:
+            if record.name != name:
+                continue
+            if funcname is not None and record.funcName != funcname:
+                continue
+            if substring is not None and substring not in record.getMessage():
+                continue
+            return False
+        return True
+
+
+class _BlankMessageFilter(logging.Filter):
+    """Drop records whose FORMATTED output is empty / whitespace-only.
+
+    Without this, captured warnings (where the warning text contains only a
+    blank line) and external noise can produce empty stream/tqdm lines that
+    pollute progress bars and GUI status parsing. The filter is bound to
+    the stream handler only — file/crash handlers still receive every
+    record so post-mortem grepping is unaffected.
+    """
+
+    def __init__(self, formatter: logging.Formatter) -> None:
+        super().__init__()
+        self._formatter = formatter
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            formatted = self._formatter.format(record)
+        except Exception:  # pylint:disable=broad-except
+            # Never silently swallow a record because formatting blew up.
+            return True
+        return bool(formatted) and bool(formatted.strip())
+
+
+def _apply_external_logger_policy(
+    rootlogger: logging.Logger,
+    stream_handler: logging.Handler,
+) -> None:
+    """Install the configured external-logger policy on the stream handler.
+
+    Called from :func:`log_setup` after the stream handler is constructed
+    and (for non-setup modes) before the file/crash handlers are attached
+    so the stream filters do not affect persisted log capture.
+    """
+    lower_info_prefixes: list[str] = []
+    max_levels: dict[str, int] = {}
+    patterns: list[tuple] = []
+
+    for logger_name, policy in EXTERNAL_LOGGER_POLICY.items():
+        if policy.get("lower_info_to_debug"):
+            # Anchor at the logger's full name plus the dotted-child prefix
+            # so child loggers (e.g. ``matplotlib.font_manager``) also match.
+            lower_info_prefixes.append(logger_name + ".")
+            lower_info_prefixes.append(logger_name)
+        max_level = policy.get("max_stream_level")
+        if isinstance(max_level, str):
+            max_levels[logger_name] = logging.getLevelNamesMapping()[max_level.upper()]
+        for pattern in policy.get("suppress_stream_patterns", ()):
+            # Normalise to a 3-tuple ``(name, funcname, substring)``.
+            if len(pattern) == 2:
+                name, funcname = pattern
+                substring = None
+            elif len(pattern) == 3:
+                name, funcname, substring = pattern
+            else:
+                raise ValueError(
+                    f"Invalid suppress_stream_patterns entry for {logger_name!r}: {pattern!r}"
+                )
+            patterns.append((name, funcname, substring))
+
+    if lower_info_prefixes:
+        stream_handler.addFilter(_ExternalLevelDowngradeFilter(tuple(lower_info_prefixes)))
+    if max_levels:
+        stream_handler.addFilter(_StreamMaxLevelFilter(max_levels))
+    if patterns:
+        stream_handler.addFilter(_StreamPatternSuppressionFilter(tuple(patterns)))
+
+    # Trust the stream handler's formatter to define what "blank" means here
+    # so the filter sees exactly the bytes that would otherwise be written.
+    formatter = stream_handler.formatter
+    if formatter is not None:
+        stream_handler.addFilter(_BlankMessageFilter(formatter))
+
+
 class FaceswapLogger(logging.Logger):
-    """A standard :class:`logging.logger` with additional "verbose" and "trace" levels added. """
+    """A standard :class:`logging.logger` with additional "verbose" and "trace" levels added."""
+
     def verbose(self, msg: str, *args, **kwargs) -> None:
         # pylint:disable=wrong-spelling-in-docstring
         """Create a log message at severity level 15.
@@ -85,14 +265,17 @@ class ColoredFormatter(logging.Formatter):
     kwargs
         Standard :class:`logging.Formatter` keyword arguments
     """
+
     def __init__(self, fmt: str, pad_newlines: bool = False, **kwargs) -> None:
         super().__init__(fmt, **kwargs)
         self._use_color = self._get_color_compatibility()
-        self._level_colors = {"CRITICAL": "\033[31m",  # red
-                              "ERROR": "\033[31m",  # red
-                              "WARNING": "\033[33m",  # yellow
-                              "INFO": "\033[32m",  # green
-                              "VERBOSE": "\033[34m"}  # blue
+        self._level_colors = {
+            "CRITICAL": "\033[31m",  # red
+            "ERROR": "\033[31m",  # red
+            "WARNING": "\033[33m",  # yellow
+            "INFO": "\033[32m",  # green
+            "VERBOSE": "\033[34m",
+        }  # blue
         self._default_color = "\033[0m"
         self._newline_padding = self._get_newline_padding(pad_newlines, fmt)
 
@@ -133,7 +316,7 @@ class ColoredFormatter(logging.Formatter):
         if not pad_newlines:
             return 0
         msg_idx = fmt.find("%(message)") + 1
-        filtered = fmt[:msg_idx - 1]
+        filtered = fmt[: msg_idx - 1]
         spaces = filtered.count(" ")
         pads = [int(pad.replace("s", "")) for pad in re.findall(r"\ds", filtered)]
         if "asctime" in filtered:
@@ -173,10 +356,12 @@ class ColoredFormatter(logging.Formatter):
         formatted = super().format(record)
         levelname = record.levelname
         if self._use_color and levelname in self._level_colors:
-            formatted = re.sub(levelname,
-                               f"{self._level_colors[levelname]}{levelname}{self._default_color}",
-                               formatted,
-                               1)
+            formatted = re.sub(
+                levelname,
+                f"{self._level_colors[levelname]}{levelname}{self._default_color}",
+                formatted,
+                1,
+            )
         if self._newline_padding:
             formatted = formatted.replace("\n", f"\n{' ' * self._newline_padding}")
         return formatted
@@ -189,27 +374,6 @@ class FaceswapFormatter(logging.Formatter):
 
     Rewrites some upstream warning messages to debug level to avoid spamming the console.
     """
-
-    @classmethod
-    def _lower_external(cls, record: logging.LogRecord) -> logging.LogRecord:
-        """Some external libs log at a higher level than we would really like, so lower their
-        log level.
-
-        Specifically: Matplotlib font properties and libav output
-
-        Parameters
-        ----------
-        record
-            The log record to check for rewriting
-
-        Returns
-        ----------
-        The log rewritten or untouched record
-        """
-        if record.levelno == logging.INFO and record.name.startswith(("libav.",  "matplotlib.")):
-            record.levelno = 10
-            record.levelname = "DEBUG"
-        return record
 
     @classmethod
     def _format_warnings(cls, record: logging.LogRecord) -> logging.LogRecord:
@@ -247,11 +411,15 @@ class FaceswapFormatter(logging.Formatter):
         -------
         The formatted log message
         """
-        record = self._lower_external(record)
         record = self._format_warnings(record)
         record.message = record.getMessage()
-        # strip newlines
-        if record.levelno < 30 and ("\n" in record.message or "\r" in record.message):
+        # Strip embedded newlines from the message body itself. Tracebacks
+        # / stack frames are appended below as ``exc_text`` / ``stack_info``
+        # so they survive untouched — only the body line is collapsed.
+        # Previously only DEBUG/VERBOSE/INFO were scrubbed; WARNING/ERROR
+        # are now scrubbed too so external warnings cannot emit blank
+        # stream lines (issue #189).
+        if "\n" in record.message or "\r" in record.message:
             record.message = record.message.replace("\n", "\\n").replace("\r", "\\r")
 
         if self.usesTime():
@@ -274,36 +442,28 @@ class FaceswapFormatter(logging.Formatter):
 
 
 class TorchWarningsFilter:
-    """Filter compilation warnings from Torch out of the console, but allow them to exist in the
-    log"""
+    """Legacy alias for the Torch console-suppression policy.
+
+    Retained for backwards-compatibility with any embedding application
+    that previously imported this class directly. New code should not
+    install it manually — the same suppression is now declared in
+    :data:`EXTERNAL_LOGGER_POLICY` and applied automatically by
+    :func:`log_setup` via stream-only handler filters.
+    """
+
     def filter(self, record: logging.LogRecord) -> bool:
-        """ Filter specific Torch compile warnings from the console
-
-        Parameters
-        ----------
-        record
-            The incoming log record to check for filtering
-
-        Returns
-        -------
-        ``True`` if the record should be displayed
-        """
         if record.levelno != logging.WARNING:
             return True
-
         if record.name == "torch._inductor.utils" and record.funcName == "is_big_gpu":
-            # PyTorch: Not enough SMs to use max_autotune_gemm mode
             return False
-
         if record.name != "py.warnings":
             return True
-
         return "/torch/_inductor" not in record.getMessage()
 
 
 class RollingBuffer(collections.deque):
     """File-like that keeps a certain number of lines of text in memory for writing out to the
-    crash log. """
+    crash log."""
 
     def write(self, buffer: str) -> None:
         """Splits lines from the incoming buffer and writes them out to the rolling buffer.
@@ -319,19 +479,24 @@ class RollingBuffer(collections.deque):
 
 class TqdmHandler(logging.StreamHandler):
     """Overrides :class:`logging.StreamHandler` to use :func:`tqdm.tqdm.write` rather than writing
-    to :func:`sys.stderr` so that log messages do not mess up tqdm progress bars. """
+    to :func:`sys.stderr` so that log messages do not mess up tqdm progress bars."""
 
     def emit(self, record: logging.LogRecord) -> None:
         """Format the incoming message and pass to :func:`tqdm.tqdm.write`.
 
-        Parameters
-        ----------
-        record
-            The incoming log record to be formatted for entry into the logger.
+        Empty / whitespace-only formatted messages are dropped before
+        reaching ``tqdm.write`` so captured warnings / external noise
+        cannot inject blank lines that pollute progress bars or GUI
+        status parsing (issue #189). The stream-handler-bound
+        ``_BlankMessageFilter`` provides the same guarantee, but the
+        belt-and-braces check here keeps the contract intact if this
+        handler is ever wired up outside :func:`log_setup`.
         """
-        # tqdm is imported here as it won't be installed when setup.py is running
         from tqdm import tqdm  # pylint:disable=import-outside-toplevel
+
         msg = self.format(record)
+        if not msg or not msg.strip():
+            return
         tqdm.write(msg)
 
 
@@ -351,6 +516,7 @@ def _set_root_logger(loglevel: int = logging.INFO) -> logging.Logger:
     rootlogger.setLevel(loglevel)
     logging.captureWarnings(True)
     return rootlogger
+
 
 def _mark_faceswap_handler(handler: logging.Handler) -> logging.Handler:
     """Tag a handler managed by :func:`log_setup` for safe replacement."""
@@ -392,7 +558,6 @@ def _clear_faceswap_handlers(rootlogger: logging.Logger) -> None:
         handler.close()
 
 
-
 def log_setup(loglevel, log_file: str, command: str, is_gui: bool = False) -> None:
     """Set up logging for Faceswap.
 
@@ -411,24 +576,31 @@ def log_setup(loglevel, log_file: str, command: str, is_gui: bool = False) -> No
     is_gui
         Whether Faceswap is running in the GUI or not. Dictates where the stream handler should
         output messages to. Default: ``False``
-     """
+    """
     numeric_loglevel = get_loglevel(loglevel)
     root_loglevel = min(logging.DEBUG, numeric_loglevel)
     rootlogger = _set_root_logger(loglevel=root_loglevel)
     _clear_faceswap_handlers(rootlogger)
 
     if command == "setup":
-        log_format = FaceswapFormatter("%(asctime)s %(module)-16s %(funcName)-30s %(levelname)-8s "
-                                       "%(message)s", datefmt="%m/%d/%Y %H:%M:%S")
+        log_format = FaceswapFormatter(
+            "%(asctime)s %(module)-16s %(funcName)-30s %(levelname)-8s %(message)s",
+            datefmt="%m/%d/%Y %H:%M:%S",
+        )
         s_handler = _stream_setup_handler(numeric_loglevel)
         f_handler = _file_handler(root_loglevel, log_file, log_format, command)
     else:
-        log_format = FaceswapFormatter("%(asctime)s %(processName)-15s %(threadName)-30s "
-                                       "%(module)-15s %(funcName)-30s %(levelname)-8s %(message)s",
-                                       datefmt="%m/%d/%Y %H:%M:%S")
+        log_format = FaceswapFormatter(
+            "%(asctime)s %(processName)-15s %(threadName)-30s "
+            "%(module)-15s %(funcName)-30s %(levelname)-8s %(message)s",
+            datefmt="%m/%d/%Y %H:%M:%S",
+        )
         s_handler = _stream_handler(numeric_loglevel, is_gui)
         f_handler = _file_handler(numeric_loglevel, log_file, log_format, command)
-        s_handler.addFilter(TorchWarningsFilter())
+
+    # Install handler-bound external-logger policy on the stream handler
+    # so file/crash logs keep the full noise stream for post-mortem use.
+    _apply_external_logger_policy(rootlogger, s_handler)
 
     rootlogger.addHandler(_mark_faceswap_handler(f_handler))
     rootlogger.addHandler(_mark_faceswap_handler(s_handler))
@@ -453,10 +625,9 @@ def log_setup(loglevel, log_file: str, command: str, is_gui: bool = False) -> No
             logger.propagate = True
 
 
-def _file_handler(loglevel,
-                  log_file: str,
-                  log_format: FaceswapFormatter,
-                  command: str) -> RotatingFileHandler:
+def _file_handler(
+    loglevel, log_file: str, log_format: FaceswapFormatter, command: str
+) -> RotatingFileHandler:
     """Add a rotating file handler for the current Faceswap session. 1 backup is always kept.
 
     Parameters
@@ -509,8 +680,9 @@ def _stream_handler(loglevel: int, is_gui: bool) -> logging.StreamHandler | Tqdm
     """
     # Don't set stdout to lower than verbose
     loglevel = max(loglevel, 15)
-    log_format = FaceswapFormatter("%(asctime)s %(levelname)-8s %(message)s",
-                                   datefmt="%m/%d/%Y %H:%M:%S")
+    log_format = FaceswapFormatter(
+        "%(asctime)s %(levelname)-8s %(message)s", datefmt="%m/%d/%Y %H:%M:%S"
+    )
 
     if is_gui:
         # tqdm.write inserts extra lines in the GUI, so use standard output as
@@ -564,6 +736,49 @@ def _crash_handler(log_format: FaceswapFormatter) -> logging.StreamHandler:
     return log_crash
 
 
+def configure_tool_logging(
+    loglevel: str | int = "INFO",
+    *,
+    stream: T.TextIO | None = None,
+) -> None:
+    """Configure stream-only logging for ad-hoc Faceswap CLI tools.
+
+    Replaces standalone ``logging.basicConfig()`` calls in
+    ``tools/landmarks/*.py`` (issue #189). The helper:
+
+    * Installs a single :class:`TqdmHandler` (stream goes to stderr by
+      default so stdout stays clean for piped tool output) tagged as a
+      managed Faceswap handler, so a later :func:`log_setup` call replaces
+      it without leaving a duplicate behind.
+    * Applies :data:`EXTERNAL_LOGGER_POLICY` and the blank-message guard
+      so tool output behaves the same way the main app's stream does.
+    * Idempotent — repeated calls do not stack handlers; the previous
+      managed handlers are cleared first, matching :func:`log_setup`.
+
+    Parameters
+    ----------
+    loglevel
+        A standard logging level name (``"TRACE"``, ``"DEBUG"``, ``"INFO"``,
+        ``"VERBOSE"``, ``"WARNING"``, ``"ERROR"``) or numeric level.
+    stream
+        Where the handler writes. Defaults to :data:`sys.stderr` so this
+        helper composes with tool stdout (which often carries the
+        machine-readable output the tool was invoked to produce).
+    """
+    numeric = int(loglevel) if isinstance(loglevel, int) else get_loglevel(str(loglevel))
+    rootlogger = _set_root_logger(loglevel=min(logging.DEBUG, numeric))
+    _clear_faceswap_handlers(rootlogger)
+    log_format = FaceswapFormatter(
+        "%(asctime)s %(levelname)-8s %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+    handler: logging.Handler = TqdmHandler(stream or sys.stderr)
+    handler.setFormatter(log_format)
+    handler.setLevel(max(numeric, 15))
+    _apply_external_logger_policy(rootlogger, handler)
+    rootlogger.addHandler(_mark_faceswap_handler(handler))
+
+
 def get_loglevel(loglevel: str) -> int:
     """Check whether a valid log level has been supplied, and return the numeric log level that
     corresponds to the given string level.
@@ -598,8 +813,10 @@ def crash_log() -> str:
     try:
         from lib.system.sysinfo import sysinfo  # pylint:disable=import-outside-toplevel
     except Exception:  # pylint:disable=broad-except
-        sysinfo = ("\n\nThere was an error importing System Information from lib.sysinfo. This is "
-                   f"probably a bug which should be fixed:\n{traceback.format_exc()}")
+        sysinfo = (
+            "\n\nThere was an error importing System Information from lib.sysinfo. This is "
+            f"probably a bug which should be fixed:\n{traceback.format_exc()}"
+        )
     with open(filename, "wb") as outfile:
         outfile.writelines(freeze_log)
         outfile.write(original_traceback)
@@ -674,8 +891,9 @@ def parse_class_init(locals_dict: dict[str, T.Any]) -> str:
     -------
     The locals information suitable for logging
     """
-    delimit = {k: _process_value(v)
-               for k, v in locals_dict.items() if k not in ("self", "__class__")}
+    delimit = {
+        k: _process_value(v) for k, v in locals_dict.items() if k not in ("self", "__class__")
+    }
     dsp = ", ".join(f"{k}={v}" for k, v in delimit.items())
     dsp = f"({dsp})" if dsp else ""
     return f"Initializing {locals_dict['self'].__class__.__name__}{dsp}"

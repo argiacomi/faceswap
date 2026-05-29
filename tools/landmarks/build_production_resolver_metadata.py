@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import logging
 import sys
 import typing as T
 from pathlib import Path
@@ -51,7 +50,9 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: T.Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    logging.basicConfig(level=getattr(logging, str(args.log_level).upper()))
+    from lib.logger import configure_tool_logging
+
+    configure_tool_logging(args.log_level)
     build_gt_hard_resolver_metadata(
         manifest=args.manifest,
         cache_dir=args.cache_dir,

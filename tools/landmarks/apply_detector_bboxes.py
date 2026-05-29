@@ -377,9 +377,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    logging.basicConfig(
-        level=getattr(logging, args.log_level), format="%(levelname)s:%(name)s:%(message)s"
-    )
+    from lib.logger import configure_tool_logging
+
+    configure_tool_logging(args.log_level)
     if args.min_iou < 0.0 or args.min_iou > 1.0:
         raise SystemExit("--min-iou must be between 0 and 1")
     summary = apply_detector_bboxes(args)

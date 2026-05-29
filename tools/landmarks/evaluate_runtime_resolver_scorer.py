@@ -123,7 +123,9 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: T.Sequence[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
-    logging.basicConfig(level=getattr(logging, str(args.log_level).upper()))
+    from lib.logger import configure_tool_logging
+
+    configure_tool_logging(args.log_level)
     weights = load_weights(args.weights)
     candidates = parse_candidates(args.candidates, weights)
     report = evaluate_runtime_resolver_scorer(

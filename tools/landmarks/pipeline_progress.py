@@ -42,12 +42,18 @@ def logging_level(value: str | int) -> int:
 
 
 def configure_logging(level: str | int) -> None:
-    """Configure root logging with TRACE support."""
+    """Configure root logging with TRACE support.
+
+    Delegates to :func:`lib.logger.configure_tool_logging` so the landmark
+    tools share the main Faceswap external-logger policy (matplotlib /
+    libav INFO suppression, torch inductor warnings, blank-line elision)
+    instead of installing an unmanaged root handler via
+    ``logging.basicConfig()`` (issue #189).
+    """
     install_trace_level()
-    logging.basicConfig(
-        level=logging_level(level),
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
+    from lib.logger import configure_tool_logging  # local import: avoid bootstrapping cost
+
+    configure_tool_logging(logging_level(level))
 
 
 @dataclass(frozen=True)
@@ -139,19 +145,44 @@ class PipelineProgress:
         if self.enabled:
             self._render_bar(index=index, stage=stage, status=status)
 
+    _BAR: T.ClassVar[T.Any] = None
+
     def _render_bar(self, *, index: int, stage: str, status: str) -> None:
+        """Render landmark pipeline progress via :mod:`tqdm`.
+
+        Previously this method wrote a hand-rolled bar directly to
+        ``sys.stderr``, which clashed with GUI status parsing and could
+        intermix with other tqdm bars (issue #189). The bar is now an
+        owned ``tqdm`` instance:
+
+        * Lazily constructed on first render so import-time tqdm
+          isn't required when no progress is actually emitted.
+        * Updated in absolute terms (``bar.n = completed``) so it tracks
+          the externally-supplied stage index, not delta increments.
+        * Closed on the final or failed event so the bar doesn't leak
+          across pipeline runs.
+
+        ``set_postfix_str`` carries the current stage + status text in
+        the same tqdm description payload the GUI ``ProgressParser``
+        already consumes for ordinary Faceswap stages.
+        """
         if self.total <= 0:
             return
         completed = min(max(index, 0), self.total)
-        width = 28
-        filled = int(width * completed / self.total)
-        bar = "#" * filled + "-" * (width - filled)
-        percent = int(100 * completed / self.total)
-        line = f"\r[{bar}] {percent:3d}% {completed}/{self.total} {stage} {status}"
-        sys.stderr.write(line[:120])
+        if self._BAR is None:
+            from tqdm import tqdm  # pylint:disable=import-outside-toplevel
+
+            self._BAR = tqdm(
+                total=self.total,
+                desc="landmark pipeline",
+                unit="stage",
+                leave=False,
+            )
+        self._BAR.n = completed
+        self._BAR.set_postfix_str(f"{stage} {status}", refresh=True)
         if completed >= self.total or status == "failed":
-            sys.stderr.write("\n")
-        sys.stderr.flush()
+            self._BAR.close()
+            self._BAR = None
 
 
 __all__ = [
