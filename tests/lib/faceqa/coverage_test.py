@@ -33,8 +33,8 @@ def test_compute_coverage_counts_unknown_fields() -> None:
     assert report.bucket_counts["resolution"]["unknown"] == 1
 
 
-def test_compute_coverage_uses_sidecar_risk_metadata() -> None:
-    """Duplicate and identity sidecar fields should affect usable counts."""
+def test_compute_coverage_uses_embedded_faceqa_risk_metadata() -> None:
+    """Duplicate and identity embedded FaceQA fields should affect usable counts."""
     records = [
         FaceQARecord(
             frame="frame.png",
@@ -305,7 +305,7 @@ def test_readiness_report_warns_for_pose_fallback_and_disagreement() -> None:
 
 
 def test_faceqa_coverage_tool_persists_backfilled_spiga_pose(tmp_path, monkeypatch) -> None:
-    """The coverage tool should persist backfilled SPIGA pose to the sidecar."""
+    """The coverage tool should persist backfilled SPIGA pose into alignments metadata."""
     alignments = tmp_path / "alignments.fsa"
     get_serializer("compressed").save(
         str(alignments),
@@ -347,7 +347,7 @@ def test_faceqa_coverage_tool_persists_backfilled_spiga_pose(tmp_path, monkeypat
     Faceqa(args).process()
 
     # SPIGA pose backfill must persist into face.metadata["faceqa"]["pose"]
-    # inside the alignments file (the sidecar is gone).
+    # inside the alignments file.
     from lib.faceqa.coverage import load_alignments_envelope
 
     _raw, entries = load_alignments_envelope(alignments)
@@ -381,18 +381,20 @@ def test_faceqa_coverage_tool_does_not_recompute_existing_spiga_pose(
             "__data__": {"frame_000001.png": AlignmentsEntry(faces=[face]).to_dict()},
         },
     )
-    output_json = tmp_path / "coverage.json"
-    output_md = tmp_path / "coverage.md"
     args = Namespace(
         mode="coverage",
         alignments=str(alignments),
         frames_dir=str(tmp_path),
-        sidecar=None,
-        output_json=str(output_json),
-        output_markdown=str(output_md),
+        faces_dir=None,
+        output_dir=str(tmp_path),
         exclude_duplicates=False,
         exclude_outliers=False,
         min_bucket_pct=5.0,
+        suggest_pruning=False,
+        sort_prune=False,
+        contact_sheets=False,
+        keep_originals=True,
+        prune_aggressiveness="balanced",
     )
     calls = 0
 
@@ -959,6 +961,47 @@ def test_faceqa_coverage_tool_suggest_pruning_emits_redundancy(tmp_path, monkeyp
     markdown = (tmp_path / "alignments_faceqa_coverage.md").read_text(encoding="utf-8")
     assert "## Pruning Suggestions" in markdown
     assert "Aggressiveness" in markdown
+
+
+def test_stale_top_level_faceqa_image_metrics_are_upgraded_to_frame(tmp_path) -> None:
+    """Stale top-level FaceQA blur/lighting fields should not block frame metrics."""
+    from lib.faceqa.coverage import (
+        IMAGE_METRICS_PROVENANCE_FRAME,
+        IMAGE_METRICS_PROVENANCE_THUMBNAIL,
+        records_from_alignments,
+    )
+
+    face = _face()
+    face.metadata = {
+        "faceqa": {
+            "blur_score": 1.0,
+            "mean_luminance": 50.0,
+            "contrast": 5.0,
+            "image_metrics_provenance": IMAGE_METRICS_PROVENANCE_THUMBNAIL,
+        }
+    }
+    alignments = tmp_path / "alignments.fsa"
+    get_serializer("compressed").save(
+        str(alignments),
+        {
+            "__meta__": {"version": 2.4},
+            "__data__": {"frame_000001.png": AlignmentsEntry(faces=[face]).to_dict()},
+        },
+    )
+
+    captured: list[tuple[str, int]] = []
+
+    def fake_backfiller(face_obj, frame, idx):  # noqa: ANN001
+        captured.append((frame, idx))
+        return {"blur_score": 99.0, "mean_luminance": 180.0, "contrast": 44.0}
+
+    records = records_from_alignments(alignments, metrics_backfiller=fake_backfiller)
+
+    assert captured == [("frame_000001.png", 0)]
+    assert records[0].blur_score == 99.0
+    assert records[0].mean_luminance == 180.0
+    assert records[0].contrast == 44.0
+    assert records[0].image_metrics_provenance == IMAGE_METRICS_PROVENANCE_FRAME
 
 
 def test_stale_thumbnail_provenance_is_upgraded_to_frame(tmp_path) -> None:
