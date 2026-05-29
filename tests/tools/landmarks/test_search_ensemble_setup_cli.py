@@ -586,9 +586,19 @@ def test_search_geometry_objective_reranks_by_geometry_score(
 
 def test_search_geometry_objective_auto_enables_geometry_metrics(
     tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Selecting the geometry objective auto-enables geometry evaluation."""
+    """Selecting the geometry objective auto-enables geometry evaluation.
+
+    Stage progress in ``search_ensemble_setup._progress`` routes through
+    the central Faceswap logger (issue #189) rather than ``sys.stderr``,
+    so this asserts on ``caplog`` records instead of captured stderr.
+    The progress logger is at INFO; ``caplog`` defaults to WARNING so we
+    raise it explicitly for the ``progress`` namespace.
+    """
+    import logging as _logging
+
+    caplog.set_level(_logging.INFO, logger="tools.landmarks.search_ensemble_setup.progress")
     fixture = _build_fixture(tmp_path)
     output_dir = tmp_path / "search"
 
@@ -618,10 +628,10 @@ def test_search_geometry_objective_auto_enables_geometry_metrics(
     assert rc == 0
     assert (output_dir / "best_setup.json").is_file()
     assert (output_dir / "candidate_results.json").is_file()
-    captured = capsys.readouterr()
-    assert "START geometry_evaluate_candidates" in captured.err
-    assert "Re-ranking" in captured.err
-    assert "alignment_geometry_v1" in captured.err
+    log_text = "\n".join(record.getMessage() for record in caplog.records)
+    assert "START geometry_evaluate_candidates" in log_text
+    assert "Re-ranking" in log_text
+    assert "alignment_geometry_v1" in log_text
 
 
 def test_search_geometry_objective_allows_nme_fallback_when_opted_in(
