@@ -17,7 +17,7 @@ from lib.align.faceset_qa import FaceQARecord
 from lib.align.objects import AlignmentsEntry, FileAlignments
 from lib.faceqa.expression import EXPRESSION_BUCKETS, compute_expression_features
 from lib.faceqa.expression import bucket_for_features as expression_bucket_for_features
-from lib.faceqa.lighting import LIGHTING_BUCKETS, compute_lighting_features
+from lib.faceqa.lighting import LIGHTING_BUCKETS, LightingFeatures, compute_lighting_features
 from lib.faceqa.lighting import bucket_for_features as lighting_bucket_for_features
 from lib.serializer import get_serializer
 from lib.utils import get_module_objects
@@ -1448,7 +1448,8 @@ def _lighting_bucket(record: FaceQARecord) -> str:
     }
     if any(value is None for value in features.values()):
         return "unknown"
-    label = lighting_bucket_for_features(features)
+    typed_features = T.cast("LightingFeatures", features)
+    label = lighting_bucket_for_features(typed_features)
     return label if label else "unknown"
 
 

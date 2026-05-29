@@ -75,6 +75,7 @@ class ReadinessReport:
     lighting_coverage: dict[str, T.Any] = field(default_factory=dict)
     readiness_scores: dict[str, T.Any] = field(default_factory=dict)
     pruning_suggestions: dict[str, T.Any] = field(default_factory=dict)
+    image_metrics_provenance: dict[str, int] = field(default_factory=dict)
     underrepresented_buckets: list[dict[str, str | float]] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     recommendations: list[str] = field(default_factory=list)
@@ -99,6 +100,7 @@ class ReadinessReport:
             "lighting_coverage": self.lighting_coverage,
             "readiness_scores": self.readiness_scores,
             "pruning_suggestions": self.pruning_suggestions,
+            "image_metrics_provenance": self.image_metrics_provenance,
             "underrepresented_buckets": self.underrepresented_buckets,
             "warnings": self.warnings,
             "recommendations": self.recommendations,
@@ -109,30 +111,75 @@ class ReadinessReport:
         return json.dumps(self.to_dict(), indent=indent)
 
     def to_markdown(self) -> str:
-        """Return a Markdown audit summary."""
+        """Return a Markdown audit summary organised verdict-first.
+
+        Structure:
+
+        1. Header + at-a-glance summary (counts, readiness verdict, identity
+           model, prune verdict if computed, provenance highlights).
+        2. Warnings then recommendations — the actionable parts come before
+           the deep diagnostic tables so users can act without scrolling.
+        3. Readiness scores (overall + per-component table + strengths/risks).
+        4. Image-metrics provenance (frame-derived is authoritative;
+           thumbnail-fallback rows are flagged).
+        5. Pruning suggestions, only when ``--suggest-pruning`` ran.
+        6. Coverage buckets per dimension, highlighting any below
+           ``min_bucket_pct``.
+        7. Joint pose / expression / lighting diagnostics.
+        8. Metric summary table.
+        """
+        scores = self.readiness_scores
+        overall_score = float(scores.get("overall_readiness_score", 0.0)) if scores else 0.0
+        confidence = float(scores.get("confidence", 0.0)) if scores else 0.0
+        verdict = _verdict_label(overall_score, len(self.warnings))
+
+        provenance_summary = _format_provenance_summary(self.image_metrics_provenance)
+        identity_summary = _format_identity_summary(self.coverage)
+
         lines = [
             "# FaceQA Coverage Report",
             "",
+            f"**Verdict**: {verdict}  —  readiness {overall_score:.1f}/100 "
+            f"(confidence {confidence:.1f}/100)",
+            "",
+            "## Summary",
+            "",
             f"- **Alignments**: `{self.alignments}`",
-            f"- **Sidecar**: `{self.sidecar}`" if self.sidecar else "- **Sidecar**: not used",
-            f"- **Total faces**: {self.total_faces}",
-            f"- **Usable faces**: {self.usable_faces}",
+            f"- **Total faces**: {self.total_faces}  (usable: {self.usable_faces})",
         ]
         if self.duplicate_ratio is not None:
             lines.append(f"- **Duplicate ratio**: {self.duplicate_ratio:.1%}")
         if self.identity_outlier_ratio is not None:
             lines.append(f"- **Identity outlier ratio**: {self.identity_outlier_ratio:.1%}")
+        if identity_summary:
+            lines.append(f"- **Identity coverage**: {identity_summary}")
+        if provenance_summary:
+            lines.append(f"- **Image metrics provenance**: {provenance_summary}")
+        if self.pruning_suggestions:
+            pruning = self.pruning_suggestions
+            lines.append(
+                f"- **Pruning recommendations** "
+                f"({pruning.get('aggressiveness', 'balanced')}): keep "
+                f"{pruning.get('keep_count', 0)} / review "
+                f"{pruning.get('review_count', 0)} / prune "
+                f"{pruning.get('prune_candidate_count', 0)}"
+            )
 
-        scores = self.readiness_scores
+        if self.warnings:
+            lines.extend(["", "## Warnings", ""])
+            lines.extend(f"- {warning}" for warning in self.warnings)
+
+        if self.recommendations:
+            lines.extend(["", "## Recommendations", ""])
+            lines.extend(f"- {recommendation}" for recommendation in self.recommendations)
+
         if scores:
-            overall = float(scores.get("overall_readiness_score", 0.0))
-            confidence = float(scores.get("confidence", 0.0))
             lines.extend(
                 [
                     "",
-                    "## Readiness Score",
+                    "## Readiness Scores",
                     "",
-                    f"- **Overall readiness**: {overall:.1f} / 100",
+                    f"- **Overall readiness**: {overall_score:.1f} / 100",
                     f"- **Confidence**: {confidence:.1f} / 100",
                 ]
             )
@@ -169,8 +216,28 @@ class ReadinessReport:
                 lines.extend(["", "### Expected training risks", ""])
                 lines.extend(f"- {item}" for item in expected)
 
-        pruning = self.pruning_suggestions
-        if pruning:
+        if self.image_metrics_provenance:
+            lines.extend(
+                [
+                    "",
+                    "## Image-metrics Provenance",
+                    "",
+                    "Blur, lighting, and black-pixel metrics are most trustworthy "
+                    "when computed from the SOURCE FRAME (the reconstructed aligned "
+                    "crop). Rows below that fell back to the stored thumbnail or "
+                    "have no metrics carry reduced confidence; see warnings.",
+                    "",
+                    "| Source | Faces | Trust |",
+                    "|--------|------:|-------|",
+                ]
+            )
+            for tag, count in sorted(
+                self.image_metrics_provenance.items(), key=lambda item: -item[1]
+            ):
+                lines.append(f"| {tag} | {count} | {_provenance_trust(tag)} |")
+
+        if self.pruning_suggestions:
+            pruning = self.pruning_suggestions
             lines.extend(
                 [
                     "",
@@ -209,16 +276,24 @@ class ReadinessReport:
                             f"{float(ratios.get(bucket, 1.0)):.2f} |"
                         )
 
+        # Underrepresented buckets get an early-warning indicator inside the per-
+        # dimension tables to make low-coverage spots jump out at a glance.
+        underrep_set: set[tuple[str, str]] = {
+            (str(item["dimension"]), str(item["bucket"])) for item in self.underrepresented_buckets
+        }
+        if self.coverage:
+            lines.extend(["", "## Coverage by Dimension", ""])
         for dimension, payload in self.coverage.items():
             counts = payload.get("counts", {})
             percentages = payload.get("percentages", {})
             if not counts:
                 continue
-            lines.extend(["", f"## {dimension.replace('_', ' ').title()}", ""])
+            lines.extend(["", f"### {dimension.replace('_', ' ').title()}", ""])
             lines.extend(["| Bucket | Count | % |", "|--------|------:|--:|"])
             for bucket, count in counts.items():
                 pct = float(percentages.get(bucket, 0.0))
-                lines.append(f"| {bucket} | {count} | {pct:.1f} |")
+                marker = " ⚠️" if (dimension, bucket) in underrep_set else ""
+                lines.append(f"| {bucket}{marker} | {count} | {pct:.1f} |")
 
         joint = self.joint_pose_coverage
         if joint:
@@ -303,16 +378,59 @@ class ReadinessReport:
                     f"{_fmt(values.get('median'))} | {_fmt(values.get('max'))} |"
                 )
 
-        if self.warnings:
-            lines.extend(["", "## Warnings", ""])
-            lines.extend(f"- {warning}" for warning in self.warnings)
-
-        if self.recommendations:
-            lines.extend(["", "## Recommendations", ""])
-            lines.extend(f"- {recommendation}" for recommendation in self.recommendations)
-
         lines.append("")
         return "\n".join(lines)
+
+
+def _verdict_label(overall_score: float, warning_count: int) -> str:
+    """Return a one-word verdict label for the report header."""
+    if overall_score >= 80 and warning_count == 0:
+        return "PASS"
+    if overall_score >= 60 and warning_count <= 3:
+        return "NEEDS REVIEW"
+    return "FAIL"
+
+
+def _format_provenance_summary(provenance: dict[str, int]) -> str:
+    """One-line image-metrics provenance summary for the header block."""
+    if not provenance:
+        return ""
+    total = sum(provenance.values()) or 1
+    frame = provenance.get("frame_aligned_crop", 0)
+    thumb = provenance.get("thumbnail_fallback", 0)
+    other = total - frame - thumb
+    chunks = [f"frame {frame / total:.0%}"]
+    if thumb:
+        chunks.append(f"thumb {thumb / total:.0%}")
+    if other:
+        chunks.append(f"other {other / total:.0%}")
+    return ", ".join(chunks)
+
+
+def _format_identity_summary(coverage: dict[str, dict[str, T.Any]]) -> str:
+    """Compact identity-bucket summary derived from coverage counts."""
+    identity = coverage.get("identity")
+    if not isinstance(identity, dict):
+        return ""
+    counts = identity.get("counts") or {}
+    if not counts:
+        return ""
+    parts = []
+    for bucket in ("inlier", "borderline", "outlier", "reject", "review", "unknown"):
+        if counts.get(bucket):
+            parts.append(f"{bucket}={counts[bucket]}")
+    return ", ".join(parts)
+
+
+def _provenance_trust(tag: str) -> str:
+    """Return the trust label for a metrics-provenance tag."""
+    mapping = {
+        "frame_aligned_crop": "authoritative",
+        "thumbnail_fallback": "reduced (decoded thumbnail)",
+        "faces_fallback": "reduced (extracted face image)",
+        "missing": "unknown",
+    }
+    return mapping.get(tag, "unknown")
 
 
 def _fmt(value: float | None) -> str:
@@ -372,7 +490,9 @@ def _ratio(coverage: FacesetCoverageReport, dimension: str, buckets: set[str]) -
     if coverage.total_faces == 0:
         return 0.0
     counts = coverage.bucket_counts.get(dimension, {})
-    return sum(counts.get(bucket, 0) for bucket in buckets) / coverage.total_faces
+    matched = sum(counts.get(bucket, 0) for bucket in buckets)
+    ratio: float = float(matched) / float(coverage.total_faces)
+    return ratio
 
 
 def _build_warnings(
@@ -621,6 +741,7 @@ def generate_readiness_report(
         expression_coverage=coverage.expression_coverage,
         lighting_coverage=coverage.lighting_coverage,
         readiness_scores=scores.to_dict(),
+        image_metrics_provenance=dict(coverage.image_metrics_provenance),
         underrepresented_buckets=underrepresented,
         warnings=warnings,
         recommendations=recommendations,
