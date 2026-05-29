@@ -56,15 +56,17 @@ class FaceqaArgs(FaceSwapArgs):  # pylint:disable=invalid-name
             The argparse command line options for processing by argparse.
         """
         frames_dir = _(
-            " Must pass a frames folder/source video file (-r) so FaceQA can backfill "
-            "SPIGA pose and missing identity embeddings before coverage is reported."
+            " Source frames folder/video (-r) is required for coverage so FaceQA can "
+            "reconstruct aligned crops, backfill SPIGA pose, and fill missing identity "
+            "embeddings before reporting."
         )
         faces_dir = _(
-            " Pass a faces folder (-c) only when writing pruning sorted folders or contact sheets."
+            " Pass a faces folder (-c) ONLY when --sort-prune or --contact-sheets is set; "
+            "neither coverage nor --suggest-pruning computation needs it."
         )
         output_dir = _(
-            " Use the output directory (-o) for coverage/compatibility reports and any "
-            "pruning artifacts."
+            " Use the output directory (-o) for the coverage report, contact sheets, and any "
+            "sorted pruning folders."
         )
 
         argument_list: list[dict[str, T.Any]] = []
@@ -99,21 +101,6 @@ class FaceqaArgs(FaceSwapArgs):  # pylint:disable=invalid-name
                 "help": _(
                     "Alignments (.fsa) for 'coverage' mode. Required when "
                     "--mode coverage is selected."
-                ),
-            }
-        )
-        argument_list.append(
-            {
-                "opts": ("-s", "--sidecar"),
-                "action": FileFullPaths,
-                "type": str,
-                "dest": "sidecar",
-                "group": _("data"),
-                "default": None,
-                "filetypes": "json",
-                "help": _(
-                    "Optional FaceQA sidecar JSON for 'coverage' mode. When omitted, "
-                    "FaceQA derives metrics from alignments and source frames."
                 ),
             }
         )
@@ -158,10 +145,53 @@ class FaceqaArgs(FaceSwapArgs):  # pylint:disable=invalid-name
                 "group": _("pruning"),
                 "default": False,
                 "help": _(
-                    "Run coverage-aware representation redundancy and emit "
-                    "keep/review/prune_candidate recommendations alongside the "
-                    "coverage report. Sorted folders/contact sheets are written only "
-                    "when a faces folder (-c) is supplied."
+                    "Compute coverage-aware representation redundancy and embed "
+                    "keep/review/prune_candidate recommendations inside the coverage "
+                    "report. Pure computation — no extra files are written. Use "
+                    "--sort-prune or --contact-sheets for the visual / file artefacts."
+                ),
+            }
+        )
+        argument_list.append(
+            {
+                "opts": ("--sort-prune",),
+                "action": "store_true",
+                "dest": "sort_prune",
+                "group": _("pruning"),
+                "default": False,
+                "help": _(
+                    "After --suggest-pruning, sort extracted faces into "
+                    "keep/review/prune_candidate folders under the output directory "
+                    "(or move them inside the faces folder when --keep is disabled). "
+                    "Requires --faces-dir."
+                ),
+            }
+        )
+        argument_list.append(
+            {
+                "opts": ("--contact-sheets",),
+                "action": "store_true",
+                "dest": "contact_sheets",
+                "group": _("pruning"),
+                "default": False,
+                "help": _(
+                    "After --suggest-pruning, render one contact sheet per redundancy "
+                    "cluster into the output directory. Requires --faces-dir."
+                ),
+            }
+        )
+        argument_list.append(
+            {
+                "opts": ("--no-keep",),
+                "action": "store_false",
+                "dest": "keep_originals",
+                "group": _("pruning"),
+                "default": True,
+                "help": _(
+                    "Used with --sort-prune: MOVE original extracted faces from "
+                    "--faces-dir into keep/review/prune_candidate subfolders "
+                    "instead of copying them into --output-dir. Destructive — "
+                    "originals are relocated, not duplicated."
                 ),
             }
         )
@@ -251,30 +281,6 @@ class FaceqaArgs(FaceSwapArgs):  # pylint:disable=invalid-name
                     "Target faceset alignments for 'compatibility' mode. Required "
                     "when --mode compatibility is selected."
                 ),
-            }
-        )
-        argument_list.append(
-            {
-                "opts": ("--source-sidecar",),
-                "action": FileFullPaths,
-                "type": str,
-                "dest": "source_sidecar",
-                "group": _("compatibility"),
-                "default": None,
-                "filetypes": "json",
-                "help": _("Optional source FaceQA sidecar JSON for 'compatibility' mode."),
-            }
-        )
-        argument_list.append(
-            {
-                "opts": ("--target-sidecar",),
-                "action": FileFullPaths,
-                "type": str,
-                "dest": "target_sidecar",
-                "group": _("compatibility"),
-                "default": None,
-                "filetypes": "json",
-                "help": _("Optional target FaceQA sidecar JSON for 'compatibility' mode."),
             }
         )
         return argument_list

@@ -13,7 +13,7 @@ import cv2
 import numpy as np
 
 from lib.align import AlignedFace, DetectedFace
-from lib.align.faceset_qa import FaceQAFile, FaceQARecord, build_index
+from lib.align.faceset_qa import FaceQARecord
 from lib.align.objects import AlignmentsEntry, FileAlignments
 from lib.faceqa.expression import EXPRESSION_BUCKETS, compute_expression_features
 from lib.faceqa.expression import bucket_for_features as expression_bucket_for_features
@@ -35,6 +35,27 @@ RESOLUTION_THRESHOLDS = (256, 128, 64)
 OCCLUSION_THRESHOLDS = (0.05, 0.20, 0.50)
 DISTANCE_THRESHOLDS = (0.10, 0.20, 0.40)
 POSE_LIMITS = {"yaw": (-120.0, 120.0), "pitch": (-90.0, 90.0), "roll": (-90.0, 90.0)}
+
+# Bucket labels emitted by ``_pose_bucket`` / ``_pitch_bucket``. Coverage,
+# readiness, and pruning all read these labels (in particular scoring.py needs
+# them as module-level constants to size joint pose grids without re-deriving
+# them from the threshold tuples).
+YAW_BUCKETS: tuple[str, ...] = (
+    "left_extreme",
+    "left_profile",
+    "left_slight",
+    "frontal",
+    "right_slight",
+    "right_profile",
+    "right_extreme",
+)
+PITCH_BUCKETS: tuple[str, ...] = (
+    "down_extreme",
+    "down",
+    "neutral",
+    "up",
+    "up_extreme",
+)
 POSE_HIGH_CONFIDENCE_DELTA = 10.0
 POSE_MEDIUM_CONFIDENCE_DELTA = 25.0
 SPIGA_BACKFILL_INPUT_SIZE = 256
@@ -80,53 +101,87 @@ class FacesetCoverageReport:
 
 def load_alignments_records(path: str | Path) -> list[tuple[str, int, FileAlignments]]:
     """Load face records from an alignments file without mutating it."""
-    alignments_path = Path(path)
-    raw = get_serializer("compressed").load(str(alignments_path))
-    data = raw.get("__data__", raw)
+    _, entries = load_alignments_envelope(path)
     records: list[tuple[str, int, FileAlignments]] = []
-    for frame, value in data.items():
-        entry = AlignmentsEntry.from_dict(value)
+    for frame, entry in entries.items():
         records.extend((frame, idx, face) for idx, face in enumerate(entry.faces))
     return records
 
 
-def records_from_alignments(
+def load_alignments_envelope(
     path: str | Path,
+) -> tuple[dict[str, T.Any], dict[str, AlignmentsEntry]]:
+    """Return ``(raw_envelope, entries_by_frame)`` for a FaceQA enrichment pass.
+
+    The raw envelope retains any ``__meta__`` block so callers can mutate the
+    returned ``entries`` (for example to backfill SPIGA pose or identity
+    quality into ``face.metadata['faceqa']``) and persist them back via
+    :func:`save_alignments_envelope` without losing alignments-file metadata.
+    """
+    serializer = get_serializer("compressed")
+    raw = serializer.load(str(path))
+    raw_dict: dict[str, T.Any] = raw if isinstance(raw, dict) else {"__data__": raw}
+    data_block = raw_dict.get("__data__")
+    data: dict[str, T.Any] = data_block if isinstance(data_block, dict) else raw_dict
+    entries: dict[str, AlignmentsEntry] = {
+        frame: AlignmentsEntry.from_dict(value) for frame, value in data.items()
+    }
+    return raw_dict, entries
+
+
+def save_alignments_envelope(
+    path: str | Path,
+    raw: dict[str, T.Any],
+    entries: dict[str, AlignmentsEntry],
+) -> None:
+    """Persist mutated FaceQA-enriched entries back into the alignments file."""
+    serializer = get_serializer("compressed")
+    new_data = {frame: entry.to_dict() for frame, entry in entries.items()}
+    if isinstance(raw.get("__data__"), dict):
+        raw["__data__"] = new_data
+        serializer.save(str(path), raw)
+    else:
+        serializer.save(str(path), new_data)
+
+
+def _write_faceqa_metadata(face: FileAlignments, key: str, value: T.Any) -> None:
+    """Write ``face.metadata['faceqa'][key] = value`` (create envelope if needed)."""
+    envelope = face.metadata.get("faceqa")
+    if not isinstance(envelope, dict):
+        envelope = {}
+        face.metadata["faceqa"] = envelope
+    envelope[key] = value
+
+
+def records_from_alignments(
+    source: str | Path | dict[str, AlignmentsEntry],
     *,
-    qa_file: FaceQAFile | None = None,
     pose_backfiller: Callable[[FaceQARecord, FileAlignments], dict[str, T.Any] | None]
     | None = None,
 ) -> list[FaceQARecord]:
-    """Return FaceQA records derived from alignments and optional sidecar data."""
-    sidecar_index = build_index(qa_file) if qa_file is not None else {}
+    """Return FaceQA records derived from alignments + embedded ``face.metadata['faceqa']``.
+
+    ``source`` accepts either an alignments file path or a pre-loaded
+    ``entries`` dict (as returned by :func:`load_alignments_envelope`) so the
+    FaceQA dispatcher can backfill in-memory and persist once at the end.
+    """
+    if isinstance(source, dict):
+        entries = source
+    else:
+        _, entries = load_alignments_envelope(source)
     records: list[FaceQARecord] = []
-    for frame, idx, face in load_alignments_records(path):
-        record = _record_from_alignment(frame, idx, face)
-        sidecar_record = sidecar_index.get((frame, idx))
-        record = _merge_records(record, sidecar_record)
-        if pose_backfiller is not None and not _valid_spiga_pose(record):
-            _apply_backfilled_pose(record, pose_backfiller(record, face))
-        _select_pose(record)
-        _populate_expression(record, face)
-        records.append(record)
-    if qa_file is not None and not records:
-        records = list(qa_file.faces)
-        for record in records:
+    for frame, entry in entries.items():
+        for idx, face in enumerate(entry.faces):
+            record = _record_from_alignment(frame, idx, face)
+            if pose_backfiller is not None and not _valid_spiga_pose(record):
+                pose = pose_backfiller(record, face)
+                if pose is not None:
+                    _apply_backfilled_pose(record, pose)
+                    _write_faceqa_metadata(face, "pose", pose)
             _select_pose(record)
-        return records
+            _populate_expression(record, face)
+            records.append(record)
     return records
-
-
-def _merge_records(base: FaceQARecord, override: FaceQARecord | None) -> FaceQARecord:
-    """Fill missing sidecar values with alignment-derived values."""
-    if override is None:
-        return base
-    merged = T.cast(FaceQARecord, FaceQARecord.from_dict(override.to_dict()))
-    for key, value in base.to_dict().items():
-        current = getattr(merged, key)
-        if current is None or current == []:
-            setattr(merged, key, value)
-    return merged
 
 
 def _record_from_alignment(frame: str, idx: int, face: FileAlignments) -> FaceQARecord:
@@ -200,6 +255,24 @@ def _populate_thumb_metrics(record: FaceQARecord, face: FileAlignments) -> None:
     record.color_warmth = features["color_warmth"]
 
 
+_IDENTITY_ENVELOPE_FIELDS: tuple[tuple[str, str], ...] = (
+    ("model", "identity_model"),
+    ("score", "identity_score"),
+    ("quality_flag", "identity_quality_flag"),
+    ("final_decision", "identity_final_decision"),
+    ("primary_model", "identity_primary_model"),
+    ("verifier_model", "identity_verifier_model"),
+    ("primary_score", "identity_primary_score"),
+    ("verifier_score", "identity_verifier_score"),
+    ("agreement", "identity_agreement"),
+    ("decision_reason", "identity_decision_reason"),
+    ("verifier_trigger", "identity_verifier_trigger"),
+    ("threshold_used", "identity_threshold_used"),
+    ("consensus", "identity_consensus"),
+    ("cluster", "identity_cluster"),
+)
+
+
 def _populate_metadata(record: FaceQARecord, metadata: dict[str, T.Any]) -> None:
     """Copy known FaceQA fields from per-face metadata when present."""
     payload = metadata.get("faceqa", metadata)
@@ -208,6 +281,16 @@ def _populate_metadata(record: FaceQARecord, metadata: dict[str, T.Any]) -> None
     for key in FaceQARecord.__dataclass_fields__:  # pylint:disable=no-member
         if getattr(record, key) in (None, []) and key in payload:
             setattr(record, key, payload[key])
+    identity_payload = payload.get("identity")
+    if isinstance(identity_payload, dict):
+        for src_key, dst_key in _IDENTITY_ENVELOPE_FIELDS:
+            if getattr(record, dst_key) in (None, []) and src_key in identity_payload:
+                setattr(record, dst_key, identity_payload[src_key])
+    image_metrics = payload.get("image_metrics")
+    if isinstance(image_metrics, dict):
+        for key, value in image_metrics.items():
+            if hasattr(record, key) and getattr(record, key) in (None, []):
+                setattr(record, key, value)
 
 
 def _populate_pose_metadata(record: FaceQARecord, metadata: dict[str, T.Any]) -> None:
@@ -933,41 +1016,45 @@ def _set_record_value(record: FaceQARecord, field_name: str, value: T.Any) -> bo
     return True
 
 
-def _identity_vectors_from_alignments(
-    alignments_path: str | Path,
-    model: str,
-) -> dict[tuple[str, int], np.ndarray]:
-    """Return normalized identity vectors keyed by ``(frame, face_index)``."""
-    vectors: dict[tuple[str, int], np.ndarray] = {}
-    for frame, idx, face in load_alignments_records(alignments_path):
-        vector = _normalise_identity_vector(face.identity.get(model))
-        if vector is not None:
-            vectors[(frame, idx)] = vector
-    return vectors
-
-
 def compute_identity_quality(
     records: list[FaceQARecord],
-    alignments_path: str | Path,
+    source: str | Path | dict[str, AlignmentsEntry],
     *,
     model: str | None = None,
 ) -> IdentityQualityReport:
     """Derive identity availability/outlier decisions before coverage.
 
-    Identity backfill writes vectors into alignments. This function reads those
-    vectors, compares them to the faceset centroid for the selected model, and
-    mutates matching FaceQA records so ``compute_coverage()`` can report
-    identity buckets and ``identity_outlier_ratio`` from the enriched records.
+    Reads identity embeddings from ``face.identity[model]`` on each alignment,
+    classifies each face against the faceset centroid, mutates the matching
+    FaceQA record so :func:`compute_coverage` can report identity buckets and
+    ``identity_outlier_ratio``, and persists the decision into
+    ``face.metadata['faceqa']['identity']`` so subsequent FaceQA passes can
+    read the decision back without re-running the centroid math.
+
+    ``source`` may be an alignments file path or a pre-loaded ``entries`` dict;
+    the dict variant lets the FaceQA dispatcher avoid a redundant disk read.
     """
-    report = IdentityQualityReport(total_faces=len(records))
-    faces = [face for _frame, _idx, face in load_alignments_records(alignments_path)]
-    selected_model, _counts = _identity_model_for_faces(faces, model=model)
-    report.model = selected_model
+    if isinstance(source, dict):
+        entries = source
+    else:
+        _, entries = load_alignments_envelope(source)
+
+    faces_by_key: dict[tuple[str, int], FileAlignments] = {}
+    for frame, entry in entries.items():
+        for idx, face in enumerate(entry.faces):
+            faces_by_key[(frame, idx)] = face
+
+    selected_model, _counts = _identity_model_for_faces(faces_by_key.values(), model=model)
+    report = IdentityQualityReport(total_faces=len(records), model=selected_model)
     if selected_model is None:
         report.disabled_reason = "no identity model available"
         return report
 
-    vectors_by_key = _identity_vectors_from_alignments(alignments_path, selected_model)
+    vectors_by_key: dict[tuple[str, int], np.ndarray] = {}
+    for key, face in faces_by_key.items():
+        vector = _normalise_identity_vector(face.identity.get(selected_model))
+        if vector is not None:
+            vectors_by_key[key] = vector
     report.vectors_available = len(vectors_by_key)
     if len(vectors_by_key) < MIN_IDENTITY_QUALITY_FACES:
         report.disabled_reason = (
@@ -987,6 +1074,7 @@ def compute_identity_quality(
     records_by_key = {(record.frame, record.face_index): record for record in records}
     for key, vector in vectors_by_key.items():
         record = records_by_key.get(key)
+        face = faces_by_key.get(key)
         if record is None:
             continue
 
@@ -1009,289 +1097,19 @@ def compute_identity_quality(
         changed |= _set_record_value(record, "identity_final_decision", final_decision)
         report.updated = report.updated or changed
 
+        if face is not None:
+            _write_faceqa_metadata(
+                face,
+                "identity",
+                {
+                    "model": selected_model,
+                    "score": score,
+                    "quality_flag": quality_flag,
+                    "final_decision": final_decision,
+                },
+            )
+
     return report
-
-
-def _mask_ref(face: FileAlignments) -> str | None:
-    """Return a compact mask QA key from available mask metadata."""
-    if not face.mask:
-        return None
-    return ",".join(sorted(face.mask))
-
-
-def _pose_bucket(record: FaceQARecord) -> str:
-    """Return a signed yaw bucket. Negative yaw is left, positive is right."""
-    if record.yaw is None:
-        return "unknown"
-    yaw = record.yaw
-    abs_yaw = abs(yaw)
-    if abs_yaw <= POSE_YAW_THRESHOLDS[0]:
-        return "frontal"
-    side = "left" if yaw < 0 else "right"
-    if abs_yaw <= POSE_YAW_THRESHOLDS[1]:
-        return f"{side}_slight"
-    if abs_yaw <= POSE_YAW_THRESHOLDS[2]:
-        return f"{side}_profile"
-    return f"{side}_extreme"
-
-
-def _pitch_bucket(record: FaceQARecord) -> str:
-    """Return a signed pitch bucket. Negative pitch is down, positive is up."""
-    if record.pitch is None:
-        return "unknown"
-    pitch = record.pitch
-    abs_pitch = abs(pitch)
-    if abs_pitch <= POSE_PITCH_THRESHOLDS[0]:
-        return "neutral"
-    direction = "down" if pitch < 0 else "up"
-    if abs_pitch <= POSE_PITCH_THRESHOLDS[1]:
-        return direction
-    return f"{direction}_extreme"
-
-
-def _pose_source_bucket(record: FaceQARecord) -> str:
-    return record.pose_source if record.pose_source is not None else "unknown"
-
-
-def _pose_confidence_bucket(record: FaceQARecord) -> str:
-    return record.pose_confidence if record.pose_confidence is not None else "unknown"
-
-
-def _roll_bucket(record: FaceQARecord) -> str:
-    if record.roll is None:
-        return "unknown"
-    abs_roll = abs(record.roll)
-    if abs_roll <= ROLL_RISK_THRESHOLDS[0]:
-        return "stable"
-    if abs_roll <= ROLL_RISK_THRESHOLDS[1]:
-        return "tilted"
-    return "risky"
-
-
-def _blur_bucket(record: FaceQARecord) -> str:
-    if record.blur_score is None:
-        return "unknown"
-    if record.blur_score >= BLUR_THRESHOLDS[0]:
-        return "sharp"
-    if record.blur_score >= BLUR_THRESHOLDS[1]:
-        return "acceptable"
-    if record.blur_score >= BLUR_THRESHOLDS[2]:
-        return "blurry"
-    return "unusable"
-
-
-def _resolution_bucket(record: FaceQARecord) -> str:
-    if len(record.resolution) < 2:
-        return "unknown"
-    try:
-        side = min(int(record.resolution[0]), int(record.resolution[1]))
-    except (TypeError, ValueError):
-        return "unknown"
-    if side >= RESOLUTION_THRESHOLDS[0]:
-        return "high"
-    if side >= RESOLUTION_THRESHOLDS[1]:
-        return "medium"
-    if side >= RESOLUTION_THRESHOLDS[2]:
-        return "low"
-    return "tiny"
-
-
-def _distance_bucket(record: FaceQARecord) -> str:
-    if record.average_distance is None:
-        return "unknown"
-    if record.average_distance <= DISTANCE_THRESHOLDS[0]:
-        return "typical"
-    if record.average_distance <= DISTANCE_THRESHOLDS[1]:
-        return "elevated"
-    if record.average_distance <= DISTANCE_THRESHOLDS[2]:
-        return "high"
-    return "extreme"
-
-
-def _occlusion_bucket(record: FaceQARecord) -> str:
-    if record.occlusion_score is None:
-        return "unknown"
-    if record.occlusion_score < OCCLUSION_THRESHOLDS[0]:
-        return "none"
-    if record.occlusion_score < OCCLUSION_THRESHOLDS[1]:
-        return "mild"
-    if record.occlusion_score < OCCLUSION_THRESHOLDS[2]:
-        return "moderate"
-    return "severe"
-
-
-def _lighting_bucket(record: FaceQARecord) -> str:
-    if record.mean_luminance is None:
-        return "unknown"
-    return lighting_bucket_for_features(
-        {
-            "mean_luminance": record.mean_luminance,
-            "luminance_variance": record.luminance_variance or 0.0,
-            "contrast": record.contrast or 0.0,
-            "left_right_ratio": record.left_right_ratio or 1.0,
-            "top_bottom_ratio": record.top_bottom_ratio or 1.0,
-            "saturation": record.saturation or 0.0,
-            "color_warmth": record.color_warmth or 0.0,
-        }
-    )
-
-
-def _expression_bucket(record: FaceQARecord) -> str:
-    return str(record.expression_bucket) if record.expression_bucket is not None else "unknown"
-
-
-def _duplicate_bucket(record: FaceQARecord) -> str:
-    recommendation = record.duplicate_keep_recommendation
-    if recommendation is not None:
-        return str(recommendation)
-    if record.duplicate_cluster is not None or record.duplicate_cluster_id is not None:
-        return "clustered"
-    return "unknown"
-
-
-def _identity_bucket(record: FaceQARecord) -> str:
-    if record.identity_final_decision is not None:
-        return str(record.identity_final_decision)
-    if record.identity_quality_flag is not None:
-        return str(record.identity_quality_flag)
-    if record.identity_model is not None or record.identity_score is not None:
-        return "available"
-    return "unknown"
-
-
-def _mask_qa_bucket(record: FaceQARecord) -> str:
-    return record.mask_qa_ref if record.mask_qa_ref is not None else "unknown"
-
-
-YAW_BUCKETS: tuple[str, ...] = (
-    "left_extreme",
-    "left_profile",
-    "left_slight",
-    "frontal",
-    "right_slight",
-    "right_profile",
-    "right_extreme",
-)
-PITCH_BUCKETS: tuple[str, ...] = (
-    "down_extreme",
-    "down",
-    "neutral",
-    "up",
-    "up_extreme",
-)
-
-_DIMENSION_BUCKETS: dict[str, list[str]] = {
-    "pose": [*YAW_BUCKETS, "unknown"],
-    "pitch": [*PITCH_BUCKETS, "unknown"],
-    "pose_sources": ["spiga", "spiga_backfill", "alignment", "unknown"],
-    "pose_confidence": ["high", "medium", "low", "fallback", "unknown"],
-    "roll": ["stable", "tilted", "risky", "unknown"],
-    "blur": ["sharp", "acceptable", "blurry", "unusable", "unknown"],
-    "resolution": ["high", "medium", "low", "tiny", "unknown"],
-    "misalignment": ["typical", "elevated", "high", "extreme", "unknown"],
-    "occlusion": ["none", "mild", "moderate", "severe", "unknown"],
-    "lighting": [*LIGHTING_BUCKETS, "unknown"],
-    "duplicates": ["keep", "prune_candidate", "review", "clustered", "unknown"],
-    "identity": [
-        "inlier",
-        "primary",
-        "borderline",
-        "outlier",
-        "reject",
-        "review",
-        "available",
-        "unknown",
-    ],
-    "mask_qa": ["unknown"],
-    "expression": [*EXPRESSION_BUCKETS, "unknown"],
-}
-
-_BUCKET_FNS = {
-    "pose": _pose_bucket,
-    "pitch": _pitch_bucket,
-    "pose_sources": _pose_source_bucket,
-    "pose_confidence": _pose_confidence_bucket,
-    "roll": _roll_bucket,
-    "blur": _blur_bucket,
-    "resolution": _resolution_bucket,
-    "misalignment": _distance_bucket,
-    "occlusion": _occlusion_bucket,
-    "lighting": _lighting_bucket,
-    "duplicates": _duplicate_bucket,
-    "identity": _identity_bucket,
-    "mask_qa": _mask_qa_bucket,
-    "expression": _expression_bucket,
-}
-
-
-def _count_buckets(records: list[FaceQARecord]) -> dict[str, dict[str, int]]:
-    counts: dict[str, dict[str, int]] = {}
-    for dimension, bucket_fn in _BUCKET_FNS.items():
-        dimension_counts = {bucket: 0 for bucket in _DIMENSION_BUCKETS.get(dimension, [])}
-        for record in records:
-            try:
-                bucket = bucket_fn(record)
-            except Exception:  # pylint:disable=broad-except
-                bucket = "unknown"
-            dimension_counts[bucket] = dimension_counts.get(bucket, 0) + 1
-        counts[dimension] = dimension_counts
-    return counts
-
-
-def _percentages(counts: dict[str, dict[str, int]], total: int) -> dict[str, dict[str, float]]:
-    if total == 0:
-        return {dimension: {key: 0.0 for key in buckets} for dimension, buckets in counts.items()}
-    return {
-        dimension: {key: round(value / total * 100, 2) for key, value in buckets.items()}
-        for dimension, buckets in counts.items()
-    }
-
-
-def _compute_duplicate_ratio(records: list[FaceQARecord]) -> float | None:
-    if not any(record.duplicate_keep_recommendation is not None for record in records):
-        return None
-    return float(
-        sum(record.duplicate_keep_recommendation == "prune_candidate" for record in records)
-        / len(records)
-    )
-
-
-def _is_identity_outlier(record: FaceQARecord) -> bool:
-    if record.identity_final_decision is not None:
-        return record.identity_final_decision in ("outlier", "reject")
-    if record.identity_quality_flag is not None:
-        return record.identity_quality_flag in ("outlier", "reject")
-    return any(flag in ("identity_outlier", "outlier", "reject") for flag in record.quality_flags)
-
-
-def _compute_identity_outlier_ratio(records: list[FaceQARecord]) -> float | None:
-    has_identity_meta = any(
-        record.identity_quality_flag is not None
-        or record.identity_final_decision is not None
-        or bool(record.quality_flags)
-        for record in records
-    )
-    if not has_identity_meta:
-        return None
-    return sum(_is_identity_outlier(record) for record in records) / len(records)
-
-
-def _compute_identity_embedding_coverage_ratio(records: list[FaceQARecord]) -> float | None:
-    if not records:
-        return None
-    return sum(
-        record.identity_model is not None or record.identity_score is not None
-        for record in records
-    ) / len(records)
-
-
-def _compute_identity_decision_coverage_ratio(records: list[FaceQARecord]) -> float | None:
-    if not records:
-        return None
-    return sum(
-        record.identity_quality_flag is not None or record.identity_final_decision is not None
-        for record in records
-    ) / len(records)
 
 
 def _compute_identity_unknown_ratio(
@@ -1442,6 +1260,55 @@ def _expression_coverage(records: list[FaceQARecord]) -> dict[str, T.Any]:
         "unknown_faces": unknown,
         "missing_bins": missing_bins,
     }
+
+
+def _pose_bucket(record: FaceQARecord) -> str:
+    """Return the yaw bucket label for a record (``unknown`` if missing)."""
+    yaw = record.yaw
+    if yaw is None or not np.isfinite(yaw):
+        return "unknown"
+    mag = abs(float(yaw))
+    low, mid, high = POSE_YAW_THRESHOLDS
+    if mag <= low:
+        return "frontal"
+    sign = "left" if yaw < 0 else "right"
+    if mag <= mid:
+        return f"{sign}_slight"
+    if mag <= high:
+        return f"{sign}_profile"
+    return f"{sign}_extreme"
+
+
+def _pitch_bucket(record: FaceQARecord) -> str:
+    """Return the pitch bucket label for a record (``unknown`` if missing)."""
+    pitch = record.pitch
+    if pitch is None or not np.isfinite(pitch):
+        return "unknown"
+    mag = abs(float(pitch))
+    low, high = POSE_PITCH_THRESHOLDS
+    if mag <= low:
+        return "neutral"
+    sign = "down" if pitch < 0 else "up"
+    if mag <= high:
+        return sign
+    return f"{sign}_extreme"
+
+
+def _lighting_bucket(record: FaceQARecord) -> str:
+    """Return the lighting bucket label for a record (``unknown`` if missing)."""
+    features = {
+        "mean_luminance": record.mean_luminance,
+        "luminance_variance": record.luminance_variance,
+        "contrast": record.contrast,
+        "left_right_ratio": record.left_right_ratio,
+        "top_bottom_ratio": record.top_bottom_ratio,
+        "saturation": record.saturation,
+        "color_warmth": record.color_warmth,
+    }
+    if any(value is None for value in features.values()):
+        return "unknown"
+    label = lighting_bucket_for_features(features)
+    return label if label else "unknown"
 
 
 def _joint_cell_label(yaw_bucket: str, pitch_bucket: str) -> str:

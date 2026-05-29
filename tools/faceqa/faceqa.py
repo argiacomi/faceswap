@@ -18,9 +18,7 @@ import typing as T
 from argparse import Namespace
 from pathlib import Path
 
-from lib.align.faceset_qa import FaceQAFile, FaceQARecord, sidecar_path
-from lib.align.faceset_qa import load as load_sidecar
-from lib.align.faceset_qa import save as save_sidecar
+from lib.align.faceset_qa import FaceQARecord
 from lib.align.objects import FileAlignments
 from lib.faceqa.compatibility import compute_compatibility
 from lib.faceqa.coverage import (
@@ -30,13 +28,14 @@ from lib.faceqa.coverage import (
     compute_coverage,
     compute_identity_quality,
     identity_coverage_status,
+    load_alignments_envelope,
     records_from_alignments,
+    save_alignments_envelope,
 )
 from lib.faceqa.readiness import generate_readiness_report
 from lib.faceqa.redundancy import RedundancyReport, compute_redundancy
 from lib.faceqa.redundancy_outputs import (
     render_contact_sheets,
-    write_manifests,
     write_sorted_folders,
 )
 from lib.utils import FaceswapError, get_module_objects
@@ -71,22 +70,35 @@ class Faceqa:  # pylint:disable=invalid-name
         alignments = self._require_alignments("alignments")
         min_bucket_pct = float(getattr(self._args, "min_bucket_pct", 5.0))
         suggest_pruning = bool(getattr(self._args, "suggest_pruning", False))
+        sort_prune = bool(getattr(self._args, "sort_prune", False))
+        contact_sheets = bool(getattr(self._args, "contact_sheets", False))
+
+        if not getattr(self._args, "frames_dir", None):
+            raise FaceswapError(
+                "--frames-dir is required for FaceQA coverage: aligned crops, "
+                "SPIGA pose backfill, and identity embedding backfill all need "
+                "the source frames to produce a complete report."
+            )
+        if (sort_prune or contact_sheets) and not suggest_pruning:
+            raise FaceswapError(
+                "--sort-prune / --contact-sheets only emit artefacts for "
+                "pruning recommendations; enable --suggest-pruning to compute "
+                "them first."
+            )
+        if (sort_prune or contact_sheets) and not getattr(self._args, "faces_dir", None):
+            raise FaceswapError(
+                "--sort-prune / --contact-sheets require --faces-dir so the "
+                "extracted aligned-face images can be sorted or rendered."
+            )
 
         # Identity is both a coverage signal and the redundancy guardrail. Run
         # embedding backfill before records are built so coverage, readiness,
         # and pruning all observe the same enriched alignments state.
-        if suggest_pruning or getattr(self._args, "frames_dir", None):
-            self._run_identity_backfill(alignments)
+        self._run_identity_backfill(alignments)
 
-        sidecar = self._sidecar_path(alignments)
-        qa_file = load_sidecar(str(sidecar)) if sidecar.is_file() else None
+        raw_envelope, entries = load_alignments_envelope(alignments)
 
-        if qa_file is None:
-            logger.info("No FaceQA sidecar found. Deriving metrics from alignments.")
-        else:
-            logger.info("Loaded %s FaceQA sidecar records from '%s'.", len(qa_file.faces), sidecar)
-
-        backfill_added = False
+        pose_backfill_added = False
         pose_backfiller = self._pose_backfiller()
         pose_backfill_callback: (
             T.Callable[[FaceQARecord, FileAlignments], dict[str, T.Any] | None] | None
@@ -98,21 +110,20 @@ class Faceqa:  # pylint:disable=invalid-name
                 record: FaceQARecord,
                 face: FileAlignments,
             ) -> dict[str, T.Any] | None:
-                nonlocal backfill_added
+                nonlocal pose_backfill_added
                 pose: dict[str, T.Any] | None = pose_backfiller(record, face)
                 if pose is not None:
-                    backfill_added = True
+                    pose_backfill_added = True
                 return pose
 
             pose_backfill_callback = _track_pose_backfill
 
         records = records_from_alignments(
-            alignments,
-            qa_file=qa_file,
+            entries,
             pose_backfiller=pose_backfill_callback,
         )
 
-        identity_quality = compute_identity_quality(records, alignments)
+        identity_quality = compute_identity_quality(records, entries)
         if identity_quality.disabled_reason:
             logger.info(
                 "Identity quality classification skipped: %s", identity_quality.disabled_reason
@@ -130,23 +141,28 @@ class Faceqa:  # pylint:disable=invalid-name
                 identity_quality.reject,
             )
 
-        if backfill_added or identity_quality.updated:
-            save_sidecar(str(sidecar), FaceQAFile(generated_by="faceqa", faces=records))
-            logger.info("Persisted FaceQA enrichment metadata to '%s'.", sidecar)
+        if pose_backfill_added or identity_quality.updated:
+            save_alignments_envelope(alignments, raw_envelope, entries)
+            logger.info(
+                "Persisted FaceQA enrichment (pose/identity) into alignments '%s'.",
+                alignments,
+            )
 
         coverage = compute_coverage(
             records,
             exclude_duplicates=bool(getattr(self._args, "exclude_duplicates", False)),
             exclude_outliers=bool(getattr(self._args, "exclude_outliers", False)),
-            sidecar_used=qa_file is not None,
+            sidecar_used=False,
         )
 
         report = generate_readiness_report(
             coverage,
             alignments=str(alignments),
-            sidecar=str(sidecar) if sidecar.is_file() else None,
+            sidecar=None,
             min_bucket_pct=min_bucket_pct,
         )
+
+        output_dir = self._output_dir(alignments)
 
         if suggest_pruning:
             redundancy = compute_redundancy(
@@ -163,9 +179,9 @@ class Faceqa:  # pylint:disable=invalid-name
                 redundancy.review_count,
                 redundancy.prune_candidate_count,
             )
-            self._maybe_write_prune_outputs(redundancy)
+            self._emit_pruning_artifacts(redundancy, output_dir)
 
-        output_json, output_markdown = self._coverage_output_paths(alignments)
+        output_json, output_markdown = self._coverage_output_paths(alignments, output_dir)
         output_json.write_text(report.to_json(indent=2) + "\n", encoding="utf-8")
         output_markdown.write_text(report.to_markdown(), encoding="utf-8")
         logger.info(
@@ -226,34 +242,59 @@ class Faceqa:  # pylint:disable=invalid-name
             report.persisted,
         )
 
-    def _maybe_write_prune_outputs(self, redundancy: RedundancyReport) -> None:
-        prune_dir_value = getattr(self._args, "output_dir", None)
-        if not prune_dir_value:
+    def _emit_pruning_artifacts(
+        self,
+        redundancy: RedundancyReport,
+        output_dir: Path,
+    ) -> None:
+        """Optionally write the sort-prune folders and / or contact sheets.
+
+        Coverage JSON is the single machine-readable source of truth for the
+        recommendations (see ``report.pruning_suggestions``). This method
+        materialises *visual* artefacts on top of that.
+        """
+        sort_prune = bool(getattr(self._args, "sort_prune", False))
+        contact_sheets = bool(getattr(self._args, "contact_sheets", False))
+        if not (sort_prune or contact_sheets):
             return
-        faces_dir_value = getattr(self._args, "faces_dir", None)
-        if not faces_dir_value:
-            raise FaceswapError(
-                "--prune-output-dir requires --faces-dir so aligned-face images "
-                "can be copied into the sorted folders."
-            )
-        faces_dir = Path(faces_dir_value)
+
+        faces_dir = Path(self._args.faces_dir)
         if not faces_dir.is_dir():
             raise FaceswapError(f"Aligned faces directory not found: {faces_dir}")
-        prune_dir = Path(prune_dir_value)
-        prune_dir.mkdir(parents=True, exist_ok=True)
-        (prune_dir / "faceqa_redundancy.json").write_text(
-            redundancy.to_json() + "\n", encoding="utf-8"
-        )
-        layout = write_sorted_folders(redundancy, faces_dir=faces_dir, output_dir=prune_dir)
-        write_manifests(redundancy, prune_dir)
-        sheets = render_contact_sheets(
-            redundancy, faces_dir=faces_dir, output_dir=layout.contact_sheets_dir
-        )
-        logger.info(
-            "Wrote pruning artefacts to '%s' (%d contact sheets).",
-            prune_dir,
-            len(sheets),
-        )
+
+        pruning_dir = output_dir / "pruning"
+        pruning_dir.mkdir(parents=True, exist_ok=True)
+
+        if sort_prune:
+            keep_originals = bool(getattr(self._args, "keep_originals", True))
+            # When keep=True (default, safe): copy into pruning/ under output_dir.
+            # When keep=False (destructive): move originals into bucket subdirs of faces_dir.
+            target_root = pruning_dir if keep_originals else faces_dir
+            write_sorted_folders(
+                redundancy,
+                faces_dir=faces_dir,
+                output_dir=target_root,
+                copy=keep_originals,
+            )
+            logger.info(
+                "Sort-prune: %s aligned faces into '%s' (keep=%s).",
+                "copied" if keep_originals else "moved",
+                target_root,
+                keep_originals,
+            )
+
+        if contact_sheets:
+            sheets_dir = pruning_dir / "contact_sheets"
+            sheets = render_contact_sheets(
+                redundancy,
+                faces_dir=faces_dir,
+                output_dir=sheets_dir,
+            )
+            logger.info(
+                "Contact sheets: rendered %d cluster sheet(s) under '%s'.",
+                len(sheets),
+                sheets_dir,
+            )
 
     # ------------------------------------------------------------------
     # Source-target compatibility
@@ -262,8 +303,8 @@ class Faceqa:  # pylint:disable=invalid-name
     def _run_compatibility(self) -> None:
         source = self._require_alignments("source_alignments")
         target = self._require_alignments("target_alignments")
-        source_coverage = self._coverage_for_compatibility(source, sidecar_arg="source_sidecar")
-        target_coverage = self._coverage_for_compatibility(target, sidecar_arg="target_sidecar")
+        source_coverage = self._coverage_for_compatibility(source)
+        target_coverage = self._coverage_for_compatibility(target)
         report = compute_compatibility(
             source_coverage,
             target_coverage,
@@ -291,18 +332,13 @@ class Faceqa:  # pylint:disable=invalid-name
     def _coverage_for_compatibility(
         self,
         alignments: Path,
-        *,
-        sidecar_arg: str,
     ) -> FacesetCoverageReport:
-        sidecar_value = getattr(self._args, sidecar_arg, None)
-        sidecar = Path(sidecar_value) if sidecar_value else Path(sidecar_path(str(alignments)))
-        qa_file = load_sidecar(str(sidecar)) if sidecar.is_file() else None
-        records = records_from_alignments(alignments, qa_file=qa_file)
+        records = records_from_alignments(alignments)
         return compute_coverage(
             records,
             exclude_duplicates=bool(getattr(self._args, "exclude_duplicates", False)),
             exclude_outliers=bool(getattr(self._args, "exclude_outliers", False)),
-            sidecar_used=qa_file is not None,
+            sidecar_used=False,
         )
 
     # ------------------------------------------------------------------
@@ -320,26 +356,20 @@ class Faceqa:  # pylint:disable=invalid-name
             raise FaceswapError(f"Alignments file not found: {path}")
         return path
 
-    def _sidecar_path(self, alignments: Path) -> Path:
-        explicit = getattr(self._args, "sidecar", None)
-        if explicit:
-            path = Path(explicit)
-            if not path.is_file():
-                raise FaceswapError(f"FaceQA sidecar not found: {path}")
-            return path
-        return Path(sidecar_path(str(alignments)))
-
     def _pose_backfiller(self) -> SpigaPoseBackfiller | None:
         frames_dir = getattr(self._args, "frames_dir", None)
         if not frames_dir:
             return None
         return SpigaPoseBackfiller(Frames(frames_dir))
 
-    def _coverage_output_paths(self, alignments: Path) -> tuple[Path, Path]:
+    def _output_dir(self, alignments: Path) -> Path:
+        """Resolve the single FaceQA output directory."""
         output_dir_value = getattr(self._args, "output_dir", None)
         output_dir = Path(output_dir_value) if output_dir_value else alignments.parent
         output_dir.mkdir(parents=True, exist_ok=True)
+        return output_dir
 
+    def _coverage_output_paths(self, alignments: Path, output_dir: Path) -> tuple[Path, Path]:
         stem = alignments.stem
         return (
             output_dir / f"{stem}_faceqa_coverage.json",
@@ -347,10 +377,7 @@ class Faceqa:  # pylint:disable=invalid-name
         )
 
     def _compatibility_output_dir(self, source: Path) -> Path:
-        output_dir_value = getattr(self._args, "output_dir", None)
-        output_dir = Path(output_dir_value) if output_dir_value else source.parent
-        output_dir.mkdir(parents=True, exist_ok=True)
-        return output_dir
+        return self._output_dir(source)
 
 
 __all__ = get_module_objects(__name__)

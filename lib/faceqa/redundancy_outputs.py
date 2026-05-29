@@ -10,8 +10,6 @@ cluster.
 
 from __future__ import annotations
 
-import csv
-import json
 import logging
 import shutil
 import typing as T
@@ -52,66 +50,6 @@ class RedundancyLayout:
         }
 
 
-_MANIFEST_FIELDS: tuple[str, ...] = (
-    "frame",
-    "face_index",
-    "cluster_id",
-    "cluster_size",
-    "representative",
-    "recommendation",
-    "quality_score",
-    "redundancy_distance_to_representative",
-    "temporal_distance_to_representative",
-    "temporal_confidence",
-    "pose_bucket",
-    "pitch_bucket",
-    "expression_bucket",
-    "lighting_bucket",
-    "reason",
-    "identity_outlier",
-    "has_identity",
-)
-
-
-def write_manifests(report: RedundancyReport, output_dir: str | Path) -> dict[str, Path]:
-    """Write per-recommendation CSV/JSONL manifests.
-
-    Each recommendation gets its own manifest pair so consumers cannot
-    accidentally train on records that the pipeline routed to ``review`` for
-    safety reasons (identity outliers, missing metrics, borderline calls).
-    """
-    out = Path(output_dir)
-    out.mkdir(parents=True, exist_ok=True)
-    artefacts: dict[str, Path] = {}
-    keep_records = [r for r in report.records if r.recommendation == KEEP]
-    review_records = [r for r in report.records if r.recommendation == REVIEW]
-    prune_records = [r for r in report.records if r.recommendation == PRUNE]
-    artefacts["keep_csv"] = _write_csv(out / "keep.csv", keep_records)
-    artefacts["keep_jsonl"] = _write_jsonl(out / "keep.jsonl", keep_records)
-    artefacts["review_csv"] = _write_csv(out / "review.csv", review_records)
-    artefacts["review_jsonl"] = _write_jsonl(out / "review.jsonl", review_records)
-    artefacts["prune_csv"] = _write_csv(out / "prune_candidates.csv", prune_records)
-    artefacts["prune_jsonl"] = _write_jsonl(out / "prune_candidates.jsonl", prune_records)
-    return artefacts
-
-
-def _write_csv(path: Path, records: list[RedundancyRecord]) -> Path:
-    with path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=_MANIFEST_FIELDS)
-        writer.writeheader()
-        for record in records:
-            payload = record.to_dict()
-            writer.writerow({field_: payload.get(field_) for field_ in _MANIFEST_FIELDS})
-    return path
-
-
-def _write_jsonl(path: Path, records: list[RedundancyRecord]) -> Path:
-    with path.open("w", encoding="utf-8") as handle:
-        for record in records:
-            handle.write(json.dumps(record.to_dict()) + "\n")
-    return path
-
-
 # ---------------------------------------------------------------------------
 # Sorted folders
 # ---------------------------------------------------------------------------
@@ -136,12 +74,17 @@ def write_sorted_folders(
     *,
     faces_dir: str | Path,
     output_dir: str | Path,
+    copy: bool = True,
 ) -> RedundancyLayout:
-    """Copy aligned faces into recommendation-named output folders.
+    """Sort aligned faces into ``keep``/``review``/``prune_candidate`` folders.
 
-    Originals are preserved (no source files are moved or deleted) and the
-    per-face copy decisions are emitted to ``duplicate_mapping.csv`` for
-    repeatability.
+    ``copy=True`` (default, safe): duplicate each face from ``faces_dir`` into
+    a bucket subfolder under ``output_dir``. Originals are preserved.
+
+    ``copy=False`` (destructive): MOVE the originals into bucket subfolders
+    that get created inside ``output_dir``. Callers wanting to keep their
+    extracted faces folder intact should leave the default. A ``redundancy_mapping.csv``
+    is always written next to the buckets for repeatability.
     """
     faces_dir_p = Path(faces_dir)
     out = Path(output_dir)
@@ -157,21 +100,26 @@ def write_sorted_folders(
         REVIEW: layout.review_dir,
         PRUNE: layout.prune_dir,
     }
-    mapping_lines = ["source,destination,recommendation,cluster_id,representative"]
+    operation = "copy" if copy else "move"
+    mapping_lines = ["source,destination,recommendation,cluster_id,representative,operation"]
     for record in report.records:
         source = _face_filename(record, faces_dir=faces_dir_p)
         target_dir = rec_to_dir.get(record.recommendation)
         if source is None or target_dir is None:
             mapping_lines.append(
                 f"{record.frame}#face{record.face_index},,"
-                f"{record.recommendation},{record.cluster_id},{record.representative}"
+                f"{record.recommendation},{record.cluster_id},{record.representative},"
+                f"{operation}"
             )
             continue
         destination = target_dir / source.name
-        shutil.copy2(source, destination)
+        if copy:
+            shutil.copy2(source, destination)
+        else:
+            shutil.move(str(source), str(destination))
         mapping_lines.append(
             f"{source},{destination},{record.recommendation},"
-            f"{record.cluster_id},{record.representative}"
+            f"{record.cluster_id},{record.representative},{operation}"
         )
     layout.mapping_log.write_text("\n".join(mapping_lines) + "\n", encoding="utf-8")
     return layout
