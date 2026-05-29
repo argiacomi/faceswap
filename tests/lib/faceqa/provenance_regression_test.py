@@ -108,7 +108,7 @@ def test_fallback_provenance_downweights_representative_quality() -> None:
 
 
 def test_fallback_lighting_bucket_penalty_is_reduced() -> None:
-    """Fallback-only lighting mismatch should cluster where frame-derived mismatch reviews."""
+    """Fallback-only lighting bucket mismatch contributes less than frame-derived mismatch."""
     common = dict(
         yaw=0.0,
         pitch=0.0,
@@ -123,7 +123,7 @@ def test_fallback_lighting_bucket_penalty_is_reduced() -> None:
         FaceQARecord(
             frame="frame_000001.png",
             face_index=0,
-            mean_luminance=90.0,
+            mean_luminance=59.0,
             contrast=10.0,
             left_right_ratio=1.0,
             top_bottom_ratio=1.0,
@@ -135,7 +135,7 @@ def test_fallback_lighting_bucket_penalty_is_reduced() -> None:
         FaceQARecord(
             frame="frame_000002.png",
             face_index=0,
-            mean_luminance=170.0,
+            mean_luminance=61.0,
             contrast=10.0,
             left_right_ratio=1.0,
             top_bottom_ratio=1.0,
