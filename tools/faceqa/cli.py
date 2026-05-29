@@ -10,50 +10,84 @@ from lib.cli.actions import (
     DirFullPaths,
     DirOrFileFullPaths,
     FileFullPaths,
-    SaveFileFullPaths,
+    Radio,
     Slider,
 )
 from lib.cli.args import FaceSwapArgs
 from lib.utils import get_module_objects
 
+# LOCALES
 _LANG = gettext.translation("tools.faceqa.cli", localedir="locales", fallback=True)
 _ = _LANG.gettext
 
+
 _HELPTEXT = _(
-    "Unified FaceQA tool: coverage audit (with optional coverage-aware pruning "
-    "suggestions) and source-target compatibility scoring."
+    "Unified FaceQA tool: coverage audit with optional coverage-aware pruning "
+    "suggestions, and source-target compatibility scoring."
 )
 
 
 class FaceqaArgs(FaceSwapArgs):  # pylint:disable=invalid-name
-    """Unified FaceQA CLI arguments."""
+    """Class to parse the command line arguments for FaceQA."""
 
     @staticmethod
     def get_info() -> str:
+        """Obtain command information.
+
+        Returns
+        -------
+        str
+            The help text for displaying in argparse's help output.
+        """
         return _(
             "FaceQA tool\n"
-            "Supports two modes selected via --mode:\n"
-            "  coverage       Audit faceset coverage / readiness from alignments.\n"
-            "                 Pass --suggest-pruning to add coverage-aware\n"
-            "                 representation-redundancy recommendations.\n"
-            "  compatibility  Score whether a source faceset can support a target."
+            "Audit faceset coverage/readiness, optionally emit coverage-aware "
+            "representation-redundancy pruning recommendations, or compare "
+            "source and target faceset compatibility."
         )
 
     @staticmethod
     def get_argument_list() -> list[dict[str, T.Any]]:
-        return [
+        """Collect the argparse argument options.
+
+        Returns
+        -------
+        list[dict[str, typing.Any]]
+            The argparse command line options for processing by argparse.
+        """
+        frames_dir = _(
+            " Must pass a frames folder/source video file (-r) so FaceQA can backfill "
+            "SPIGA pose and missing identity embeddings before coverage is reported."
+        )
+        faces_dir = _(
+            " Pass a faces folder (-c) only when writing pruning sorted folders or contact sheets."
+        )
+        output_dir = _(
+            " Use the output directory (-o) for coverage/compatibility reports and any "
+            "pruning artifacts."
+        )
+
+        argument_list: list[dict[str, T.Any]] = []
+        argument_list.append(
             {
                 "opts": ("--mode",),
+                "action": Radio,
                 "type": str,
                 "dest": "mode",
+                "group": _("processing"),
                 "choices": ("coverage", "compatibility"),
                 "default": "coverage",
-                "group": _("mode"),
-                "help": _("Which FaceQA workflow to run."),
-            },
-            # ----------------------------------------------------------------
-            # Coverage-mode inputs
-            # ----------------------------------------------------------------
+                "help": _(
+                    "R|Choose which FaceQA workflow to run."
+                    "\nL|'coverage': Audit faceset coverage/readiness from an alignments "
+                    "file and source frames. Pass --suggest-pruning to add "
+                    "coverage-aware keep/review/prune_candidate recommendations.{0}{2}"
+                    "\nL|'compatibility': Score whether a source faceset can support a "
+                    "target faceset.{2}"
+                ).format(frames_dir, faces_dir, output_dir),
+            }
+        )
+        argument_list.append(
             {
                 "opts": ("-a", "--alignments"),
                 "action": FileFullPaths,
@@ -62,8 +96,13 @@ class FaceqaArgs(FaceSwapArgs):  # pylint:disable=invalid-name
                 "group": _("data"),
                 "default": None,
                 "filetypes": "alignments",
-                "help": _("Alignments (.fsa) for --mode coverage."),
-            },
+                "help": _(
+                    "Alignments (.fsa) for 'coverage' mode. Required when "
+                    "--mode coverage is selected."
+                ),
+            }
+        )
+        argument_list.append(
             {
                 "opts": ("-s", "--sidecar"),
                 "action": FileFullPaths,
@@ -72,72 +111,102 @@ class FaceqaArgs(FaceSwapArgs):  # pylint:disable=invalid-name
                 "group": _("data"),
                 "default": None,
                 "filetypes": "json",
-                "help": _("Optional FaceQA sidecar JSON."),
-            },
-            {
-                "opts": ("-f", "--frames-dir", "--source-images"),
-                "action": DirOrFileFullPaths,
-                "type": str,
-                "dest": "frames_dir",
-                "group": _("data"),
-                "default": None,
-                "filetypes": "video",
-                "help": _("Source frames or video for SPIGA pose backfill."),
-            },
-            {
-                "opts": ("--faces-dir",),
-                "action": DirFullPaths,
-                "type": str,
-                "dest": "faces_dir",
-                "group": _("data"),
-                "default": None,
                 "help": _(
-                    "Aligned-face directory. Required only when "
-                    "--suggest-pruning is used with --prune-output-dir."
+                    "Optional FaceQA sidecar JSON for 'coverage' mode. When omitted, "
+                    "FaceQA derives metrics from alignments and source frames."
                 ),
-            },
-            # ----------------------------------------------------------------
-            # Coverage-mode output
-            # ----------------------------------------------------------------
+            }
+        )
+        argument_list.append(
             {
-                "opts": ("-o", "--output-json"),
-                "action": SaveFileFullPaths,
-                "type": str,
-                "dest": "output_json",
-                "group": _("output"),
-                "default": None,
-                "filetypes": "json",
-                "help": _("JSON coverage report path."),
-            },
+                "opts": ("-c", "-faces_folder"),
+                "action": DirFullPaths,
+                "dest": "faces_dir",
+                "group": ("data"),
+                "help": ("Directory containing extracted faces."),
+            }
+        )
+        argument_list.append(
             {
-                "opts": ("-m", "--output-markdown"),
-                "action": SaveFileFullPaths,
+                "opts": ("-r", "-frames_folder"),
+                "action": DirOrFileFullPaths,
+                "dest": "frames_dir",
+                "required": False,
+                "filetypes": "video",
+                "group": _("data"),
+                "help": _("Directory containing source frames that faces were extracted from."),
+            }
+        )
+        argument_list.append(
+            {
+                "opts": ("-o", "--output-dir"),
+                "action": DirFullPaths,
+                "dest": "output_dir",
+                "group": _("Data"),
+                "help": _(
+                    "Output directory. Location to save FaceQA reports, manifests, sorted "
+                    "folders, and contact sheets. Defaults to the relevant alignments "
+                    "directory when omitted."
+                ),
+            }
+        )
+        argument_list.append(
+            {
+                "opts": ("--suggest-pruning",),
+                "action": "store_true",
+                "dest": "suggest_pruning",
+                "group": _("pruning"),
+                "default": False,
+                "help": _(
+                    "Run coverage-aware representation redundancy and emit "
+                    "keep/review/prune_candidate recommendations alongside the "
+                    "coverage report. Sorted folders/contact sheets are written only "
+                    "when a faces folder (-c) is supplied."
+                ),
+            }
+        )
+        argument_list.append(
+            {
+                "opts": ("--prune-aggressiveness",),
+                "action": Radio,
                 "type": str,
-                "dest": "output_markdown",
-                "group": _("output"),
-                "default": None,
-                "filetypes": "markdown",
-                "help": _("Markdown coverage report path."),
-            },
-            # ----------------------------------------------------------------
-            # Coverage filters and thresholds
-            # ----------------------------------------------------------------
+                "dest": "prune_aggressiveness",
+                "group": _("pruning"),
+                "default": "balanced",
+                "choices": ("conservative", "balanced", "aggressive"),
+                "help": _(
+                    "R|Pruning aggressiveness preset."
+                    "\nL|'conservative': Prune only obvious redundant surplus."
+                    "\nL|'balanced': Default coverage-aware pruning policy."
+                    "\nL|'aggressive': Prune wider representation redundancy while "
+                    "preserving effective coverage."
+                ),
+            }
+        )
+        argument_list.append(
             {
                 "opts": ("--exclude-duplicates",),
                 "action": "store_true",
                 "dest": "exclude_duplicates",
                 "default": False,
-                "group": _("filters"),
-                "help": _("Exclude duplicate prune candidates from usable_faces."),
-            },
+                "group": _("coverage"),
+                "help": _(
+                    "Exclude duplicate prune candidates from usable_faces after "
+                    "coverage-aware pruning recommendations have been generated."
+                ),
+            }
+        )
+        argument_list.append(
             {
                 "opts": ("--exclude-outliers",),
                 "action": "store_true",
                 "dest": "exclude_outliers",
                 "default": False,
-                "group": _("filters"),
+                "group": _("coverage"),
                 "help": _("Exclude identity outliers and rejects from usable_faces."),
-            },
+            }
+        )
+        argument_list.append(
             {
                 "opts": ("-p", "--min-bucket-pct"),
                 "action": Slider,
@@ -146,57 +215,15 @@ class FaceqaArgs(FaceSwapArgs):  # pylint:disable=invalid-name
                 "default": 5.0,
                 "min_max": (0.0, 50.0),
                 "rounding": 1,
-                "group": _("thresholds"),
+                "group": _("coverage"),
                 "help": _(
-                    "Bucket %% below which coverage buckets are flagged "
-                    "as under-represented. Also drives the protection floor "
+                    "Bucket %% below which coverage buckets are flagged as "
+                    "under-represented. Also drives the coverage protection floor "
                     "used by --suggest-pruning."
                 ),
-            },
-            # ----------------------------------------------------------------
-            # Pruning suggestions
-            # ----------------------------------------------------------------
-            {
-                "opts": ("--suggest-pruning",),
-                "action": "store_true",
-                "dest": "suggest_pruning",
-                "default": False,
-                "group": _("pruning"),
-                "help": _(
-                    "Run coverage-aware representation redundancy and emit "
-                    "keep/review/prune_candidate recommendations alongside "
-                    "coverage."
-                ),
-            },
-            {
-                "opts": ("--prune-aggressiveness",),
-                "type": str,
-                "dest": "prune_aggressiveness",
-                "default": "balanced",
-                "choices": ("conservative", "balanced", "aggressive"),
-                "group": _("pruning"),
-                "help": _(
-                    "Pruning aggressiveness preset. Conservative prunes only "
-                    "obvious duplicates; aggressive prunes wider redundancy."
-                ),
-            },
-            {
-                "opts": ("--prune-output-dir",),
-                "action": DirFullPaths,
-                "type": str,
-                "dest": "prune_output_dir",
-                "group": _("pruning"),
-                "default": None,
-                "help": _(
-                    "Directory to write sorted folders (keep/review/"
-                    "prune_candidate), CSV/JSONL manifests, and contact "
-                    "sheets when --suggest-pruning is enabled. Requires "
-                    "--faces-dir."
-                ),
-            },
-            # ----------------------------------------------------------------
-            # Compatibility-mode options
-            # ----------------------------------------------------------------
+            }
+        )
+        argument_list.append(
             {
                 "opts": ("--source-alignments",),
                 "action": FileFullPaths,
@@ -205,8 +232,13 @@ class FaceqaArgs(FaceSwapArgs):  # pylint:disable=invalid-name
                 "group": _("compatibility"),
                 "default": None,
                 "filetypes": "alignments",
-                "help": _("Source faceset alignments for --mode compatibility."),
-            },
+                "help": _(
+                    "Source faceset alignments for 'compatibility' mode. Required "
+                    "when --mode compatibility is selected."
+                ),
+            }
+        )
+        argument_list.append(
             {
                 "opts": ("--target-alignments",),
                 "action": FileFullPaths,
@@ -215,8 +247,13 @@ class FaceqaArgs(FaceSwapArgs):  # pylint:disable=invalid-name
                 "group": _("compatibility"),
                 "default": None,
                 "filetypes": "alignments",
-                "help": _("Target faceset alignments for --mode compatibility."),
-            },
+                "help": _(
+                    "Target faceset alignments for 'compatibility' mode. Required "
+                    "when --mode compatibility is selected."
+                ),
+            }
+        )
+        argument_list.append(
             {
                 "opts": ("--source-sidecar",),
                 "action": FileFullPaths,
@@ -225,8 +262,10 @@ class FaceqaArgs(FaceSwapArgs):  # pylint:disable=invalid-name
                 "group": _("compatibility"),
                 "default": None,
                 "filetypes": "json",
-                "help": _("Optional source FaceQA sidecar JSON."),
-            },
+                "help": _("Optional source FaceQA sidecar JSON for 'compatibility' mode."),
+            }
+        )
+        argument_list.append(
             {
                 "opts": ("--target-sidecar",),
                 "action": FileFullPaths,
@@ -235,21 +274,10 @@ class FaceqaArgs(FaceSwapArgs):  # pylint:disable=invalid-name
                 "group": _("compatibility"),
                 "default": None,
                 "filetypes": "json",
-                "help": _("Optional target FaceQA sidecar JSON."),
-            },
-            {
-                "opts": ("--compatibility-output-dir",),
-                "action": DirFullPaths,
-                "type": str,
-                "dest": "compatibility_output_dir",
-                "group": _("compatibility"),
-                "default": None,
-                "help": _(
-                    "Output directory for compatibility JSON/Markdown "
-                    "reports. Defaults to the source alignments directory."
-                ),
-            },
-        ]
+                "help": _("Optional target FaceQA sidecar JSON for 'compatibility' mode."),
+            }
+        )
+        return argument_list
 
 
 __all__ = get_module_objects(__name__)

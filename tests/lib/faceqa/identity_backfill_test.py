@@ -211,8 +211,11 @@ def test_backfill_identity_no_op_when_nothing_to_fill(tmp_path) -> None:
     assert report.persisted is False
 
 
-def test_backfill_identity_reports_unsupported_model(tmp_path) -> None:
-    """When every face uses an unsupported model, the report flags it cleanly."""
+def test_backfill_identity_falls_back_from_unsupported_model(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """Unsupported existing identity keys fall back to the default supported model."""
     alignments = tmp_path / "alignments.fsa"
     _save_alignments(
         alignments,
@@ -223,25 +226,50 @@ def test_backfill_identity_reports_unsupported_model(tmp_path) -> None:
         },
     )
 
+    def _fake_loader(self, _model_name: str) -> object:  # noqa: ANN001
+        self._plugin = _FakePlugin()
+        return self._plugin
+
+    monkeypatch.setattr(IdentityBackfiller, "_load_plugin", _fake_loader)
+
     report = backfill_identity(alignments, frames_loader=_FakeFrames())
 
-    assert report.model == "t_face_irse50"
-    assert report.disabled_reason is not None
-    assert "unsupported" in report.disabled_reason
-    assert report.backfilled == 0
-    assert report.persisted is False
+    assert report.model == "arcface"
+    assert report.disabled_reason is None
+    assert report.already_present == 0
+    assert report.backfilled == 1
+    assert report.persisted is True
+
+    raw = get_serializer("compressed").load(str(alignments))
+    persisted = AlignmentsEntry.from_dict(raw["__data__"]["frame_000001.png"])
+    assert "arcface" in persisted.faces[0].identity
 
 
-def test_backfill_identity_reports_no_identity_embeddings(tmp_path) -> None:
-    """A faceset with zero identity vectors is reported but not an error."""
+def test_backfill_identity_uses_default_model_when_no_embeddings_exist(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """A faceset with zero identity vectors should be backfilled with the default model."""
     alignments = tmp_path / "alignments.fsa"
     _save_alignments(alignments, {"frame_000001.png": [_face()]})
 
+    def _fake_loader(self, _model_name: str) -> object:  # noqa: ANN001
+        self._plugin = _FakePlugin()
+        return self._plugin
+
+    monkeypatch.setattr(IdentityBackfiller, "_load_plugin", _fake_loader)
+
     report = backfill_identity(alignments, frames_loader=_FakeFrames())
 
-    assert report.model is None
-    assert report.disabled_reason and "no identity" in report.disabled_reason
-    assert report.persisted is False
+    assert report.model == "arcface"
+    assert report.disabled_reason is None
+    assert report.already_present == 0
+    assert report.backfilled == 1
+    assert report.persisted is True
+
+    raw = get_serializer("compressed").load(str(alignments))
+    persisted = AlignmentsEntry.from_dict(raw["__data__"]["frame_000001.png"])
+    assert "arcface" in persisted.faces[0].identity
 
 
 def test_backfill_identity_explicit_model_override(tmp_path, monkeypatch) -> None:

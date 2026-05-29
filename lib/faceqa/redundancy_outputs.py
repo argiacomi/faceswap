@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 
 CONTACT_SHEET_TILE_SIZE = 384
-CONTACT_SHEET_COLS = 4
+CONTACT_SHEET_COLS = 12
 CONTACT_SHEET_FORMAT = "png"
 
 

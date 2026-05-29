@@ -39,6 +39,12 @@ POSE_HIGH_CONFIDENCE_DELTA = 10.0
 POSE_MEDIUM_CONFIDENCE_DELTA = 25.0
 SPIGA_BACKFILL_INPUT_SIZE = 256
 
+DEFAULT_IDENTITY_BACKFILL_MODEL = "arcface"
+MIN_IDENTITY_QUALITY_FACES = 3
+IDENTITY_REJECT_THRESHOLD = 0.15
+IDENTITY_OUTLIER_THRESHOLD = 0.25
+IDENTITY_BORDERLINE_THRESHOLD = 0.35
+
 
 @dataclass
 class FacesetCoverageReport:
@@ -51,6 +57,9 @@ class FacesetCoverageReport:
     metric_summary: dict[str, dict[str, float | None]] = field(default_factory=dict)
     duplicate_ratio: float | None = None
     identity_outlier_ratio: float | None = None
+    identity_embedding_coverage_ratio: float | None = None
+    identity_decision_coverage_ratio: float | None = None
+    identity_unknown_ratio: float | None = None
     mask_qa_distribution: dict[str, int] = field(default_factory=dict)
     source_counts: dict[str, int] = field(default_factory=dict)
     joint_pose_coverage: dict[str, T.Any] = field(default_factory=dict)
@@ -540,6 +549,62 @@ class IdentityBackfillReport:
         }
 
 
+@dataclass
+class IdentityCoverageStatus:
+    """Summary of existing identity embedding coverage in an alignments file."""
+
+    model: str | None = None
+    total_faces: int = 0
+    available_faces: int = 0
+    missing_faces: int = 0
+    model_counts: dict[str, int] = field(default_factory=dict)
+
+    @property
+    def complete(self) -> bool:
+        """Return whether every face has a vector for the selected model."""
+        return self.total_faces == self.available_faces
+
+    def to_dict(self) -> dict[str, T.Any]:
+        return {
+            "model": self.model,
+            "total_faces": self.total_faces,
+            "available_faces": self.available_faces,
+            "missing_faces": self.missing_faces,
+            "model_counts": self.model_counts,
+            "complete": self.complete,
+        }
+
+
+@dataclass
+class IdentityQualityReport:
+    """Summary of identity quality decisions derived from embeddings."""
+
+    model: str | None = None
+    total_faces: int = 0
+    vectors_available: int = 0
+    classified: int = 0
+    inlier: int = 0
+    borderline: int = 0
+    outlier: int = 0
+    reject: int = 0
+    updated: bool = False
+    disabled_reason: str | None = None
+
+    def to_dict(self) -> dict[str, T.Any]:
+        return {
+            "model": self.model,
+            "total_faces": self.total_faces,
+            "vectors_available": self.vectors_available,
+            "classified": self.classified,
+            "inlier": self.inlier,
+            "borderline": self.borderline,
+            "outlier": self.outlier,
+            "reject": self.reject,
+            "updated": self.updated,
+            "disabled_reason": self.disabled_reason,
+        }
+
+
 def majority_identity_model(
     faces: T.Iterable[FileAlignments],
     *,
@@ -614,8 +679,11 @@ class IdentityBackfiller:
         aligned = self._aligned_face(face, frame, face_index, plugin.input_size, plugin.centering)
         if aligned is None:
             return None
-        feed = aligned[None]  # add batch dim; identity plugins expect uint8 BGR
+        feed = aligned[None]  # add batch dim; identity plugins expect aligned BGR crops
         try:
+            pre_process = getattr(plugin, "pre_process", None)
+            if callable(pre_process):
+                feed = pre_process(feed)
             raw = plugin.process(feed)
             normalised = plugin.post_process(raw)
         except Exception as err:  # pylint:disable=broad-except
@@ -721,16 +789,17 @@ def backfill_identity(
     if model is None:
         chosen, counts = majority_identity_model(all_faces, candidates=_IDENTITY_PLUGIN_REGISTRY)
         if chosen is None:
-            chosen, counts = majority_identity_model(all_faces)
-            if chosen is None:
-                report.disabled_reason = "no identity embeddings present in alignments"
-                return report
-            report.model = chosen
-            report.disabled_reason = (
-                f"identity backfill unsupported for model '{chosen}' "
-                f"(coverage: {counts.get(chosen, 0)} faces)"
-            )
-            return report
+            unsupported, unsupported_counts = majority_identity_model(all_faces)
+            if unsupported is not None:
+                logger.info(
+                    "Existing identity model '%s' is unsupported for backfill "
+                    "(coverage: %s). Falling back to '%s'.",
+                    unsupported,
+                    unsupported_counts.get(unsupported, 0),
+                    DEFAULT_IDENTITY_BACKFILL_MODEL,
+                )
+            chosen = DEFAULT_IDENTITY_BACKFILL_MODEL
+            counts = {}
         logger.info("Identity backfill model selected: '%s' (coverage: %s)", chosen, counts)
         report.model = chosen
     else:
@@ -772,6 +841,174 @@ def backfill_identity(
         else:
             serializer.save(str(path), new_data)
         report.persisted = True
+    return report
+
+
+def _identity_model_for_faces(
+    faces: T.Iterable[FileAlignments],
+    *,
+    model: str | None = None,
+) -> tuple[str | None, dict[str, int]]:
+    """Return the identity model to use for coverage/backfill decisions."""
+    faces_list = list(faces)
+    if model is not None:
+        return model, majority_identity_model(faces_list)[1]
+
+    chosen, counts = majority_identity_model(faces_list, candidates=_IDENTITY_PLUGIN_REGISTRY)
+    if chosen is not None:
+        return chosen, counts
+
+    unsupported, unsupported_counts = majority_identity_model(faces_list)
+    if unsupported is not None:
+        logger.info(
+            "Existing identity model '%s' is unsupported for backfill. "
+            "Using default supported model '%s' for FaceQA identity coverage.",
+            unsupported,
+            DEFAULT_IDENTITY_BACKFILL_MODEL,
+        )
+        return DEFAULT_IDENTITY_BACKFILL_MODEL, unsupported_counts
+
+    return DEFAULT_IDENTITY_BACKFILL_MODEL, {}
+
+
+def identity_coverage_status(
+    alignments_path: str | Path,
+    *,
+    model: str | None = None,
+) -> IdentityCoverageStatus:
+    """Return current embedding coverage for the selected identity model."""
+    faces = [face for _frame, _idx, face in load_alignments_records(alignments_path)]
+    selected_model, counts = _identity_model_for_faces(faces, model=model)
+    if selected_model is None:
+        return IdentityCoverageStatus(total_faces=len(faces), model_counts=counts)
+
+    available = sum(
+        (
+            face.identity.get(selected_model) is not None
+            and np.asarray(face.identity.get(selected_model)).ravel().size > 0
+        )
+        for face in faces
+    )
+    total = len(faces)
+    return IdentityCoverageStatus(
+        model=selected_model,
+        total_faces=total,
+        available_faces=available,
+        missing_faces=max(0, total - available),
+        model_counts=counts,
+    )
+
+
+def _normalise_identity_vector(vector: T.Any) -> np.ndarray | None:
+    """Return a finite, unit-length identity vector or ``None``."""
+    if vector is None:
+        return None
+    arr = np.asarray(vector, dtype=np.float32).reshape(-1)
+    if arr.size == 0 or not np.all(np.isfinite(arr)):
+        return None
+    norm = float(np.linalg.norm(arr))
+    if norm <= 0.0:
+        return None
+    return arr / norm
+
+
+def _identity_decision(score: float) -> tuple[str, str]:
+    """Return ``(quality_flag, final_decision)`` for a centroid similarity."""
+    if score < IDENTITY_REJECT_THRESHOLD:
+        return "reject", "reject"
+    if score < IDENTITY_OUTLIER_THRESHOLD:
+        return "outlier", "outlier"
+    if score < IDENTITY_BORDERLINE_THRESHOLD:
+        return "borderline", "review"
+    return "inlier", "inlier"
+
+
+def _set_record_value(record: FaceQARecord, field_name: str, value: T.Any) -> bool:
+    """Set a FaceQARecord attribute when present and changed."""
+    if not hasattr(record, field_name):
+        return False
+    if getattr(record, field_name) == value:
+        return False
+    setattr(record, field_name, value)
+    return True
+
+
+def _identity_vectors_from_alignments(
+    alignments_path: str | Path,
+    model: str,
+) -> dict[tuple[str, int], np.ndarray]:
+    """Return normalized identity vectors keyed by ``(frame, face_index)``."""
+    vectors: dict[tuple[str, int], np.ndarray] = {}
+    for frame, idx, face in load_alignments_records(alignments_path):
+        vector = _normalise_identity_vector(face.identity.get(model))
+        if vector is not None:
+            vectors[(frame, idx)] = vector
+    return vectors
+
+
+def compute_identity_quality(
+    records: list[FaceQARecord],
+    alignments_path: str | Path,
+    *,
+    model: str | None = None,
+) -> IdentityQualityReport:
+    """Derive identity availability/outlier decisions before coverage.
+
+    Identity backfill writes vectors into alignments. This function reads those
+    vectors, compares them to the faceset centroid for the selected model, and
+    mutates matching FaceQA records so ``compute_coverage()`` can report
+    identity buckets and ``identity_outlier_ratio`` from the enriched records.
+    """
+    report = IdentityQualityReport(total_faces=len(records))
+    faces = [face for _frame, _idx, face in load_alignments_records(alignments_path)]
+    selected_model, _counts = _identity_model_for_faces(faces, model=model)
+    report.model = selected_model
+    if selected_model is None:
+        report.disabled_reason = "no identity model available"
+        return report
+
+    vectors_by_key = _identity_vectors_from_alignments(alignments_path, selected_model)
+    report.vectors_available = len(vectors_by_key)
+    if len(vectors_by_key) < MIN_IDENTITY_QUALITY_FACES:
+        report.disabled_reason = (
+            f"not enough identity vectors to classify outliers "
+            f"({len(vectors_by_key)}/{MIN_IDENTITY_QUALITY_FACES})"
+        )
+        return report
+
+    matrix = np.stack(list(vectors_by_key.values())).astype(np.float32, copy=False)
+    centroid = matrix.mean(axis=0)
+    centroid_norm = float(np.linalg.norm(centroid))
+    if centroid_norm <= 0.0 or not np.all(np.isfinite(centroid)):
+        report.disabled_reason = "identity centroid is invalid"
+        return report
+    centroid = centroid / centroid_norm
+
+    records_by_key = {(record.frame, record.face_index): record for record in records}
+    for key, vector in vectors_by_key.items():
+        record = records_by_key.get(key)
+        if record is None:
+            continue
+
+        score = float(np.dot(vector, centroid))
+        quality_flag, final_decision = _identity_decision(score)
+        report.classified += 1
+        if quality_flag == "reject":
+            report.reject += 1
+        elif quality_flag == "outlier":
+            report.outlier += 1
+        elif quality_flag == "borderline":
+            report.borderline += 1
+        else:
+            report.inlier += 1
+
+        changed = False
+        changed |= _set_record_value(record, "identity_model", selected_model)
+        changed |= _set_record_value(record, "identity_score", score)
+        changed |= _set_record_value(record, "identity_quality_flag", quality_flag)
+        changed |= _set_record_value(record, "identity_final_decision", final_decision)
+        report.updated = report.updated or changed
+
     return report
 
 
@@ -1039,6 +1276,33 @@ def _compute_identity_outlier_ratio(records: list[FaceQARecord]) -> float | None
     return sum(_is_identity_outlier(record) for record in records) / len(records)
 
 
+def _compute_identity_embedding_coverage_ratio(records: list[FaceQARecord]) -> float | None:
+    if not records:
+        return None
+    return sum(
+        record.identity_model is not None or record.identity_score is not None
+        for record in records
+    ) / len(records)
+
+
+def _compute_identity_decision_coverage_ratio(records: list[FaceQARecord]) -> float | None:
+    if not records:
+        return None
+    return sum(
+        record.identity_quality_flag is not None or record.identity_final_decision is not None
+        for record in records
+    ) / len(records)
+
+
+def _compute_identity_unknown_ratio(
+    counts: dict[str, dict[str, int]],
+    total: int,
+) -> float | None:
+    if total == 0:
+        return None
+    return counts.get("identity", {}).get("unknown", 0) / total
+
+
 def _mask_qa_distribution(records: list[FaceQARecord]) -> dict[str, int]:
     distribution: dict[str, int] = {}
     for record in records:
@@ -1249,6 +1513,9 @@ def compute_coverage(
         metric_summary=_metric_summary(records_list),
         duplicate_ratio=_compute_duplicate_ratio(records_list) if total else None,
         identity_outlier_ratio=_compute_identity_outlier_ratio(records_list) if total else None,
+        identity_embedding_coverage_ratio=_compute_identity_embedding_coverage_ratio(records_list),
+        identity_decision_coverage_ratio=_compute_identity_decision_coverage_ratio(records_list),
+        identity_unknown_ratio=_compute_identity_unknown_ratio(counts, total),
         mask_qa_distribution=_mask_qa_distribution(records_list),
         joint_pose_coverage=_joint_pose_coverage(records_list),
         expression_coverage=_expression_coverage(records_list),

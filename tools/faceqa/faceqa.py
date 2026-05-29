@@ -28,6 +28,8 @@ from lib.faceqa.coverage import (
     SpigaPoseBackfiller,
     backfill_identity,
     compute_coverage,
+    compute_identity_quality,
+    identity_coverage_status,
     records_from_alignments,
 )
 from lib.faceqa.readiness import generate_readiness_report
@@ -67,8 +69,18 @@ class Faceqa:  # pylint:disable=invalid-name
 
     def _run_coverage(self) -> None:
         alignments = self._require_alignments("alignments")
+        min_bucket_pct = float(getattr(self._args, "min_bucket_pct", 5.0))
+        suggest_pruning = bool(getattr(self._args, "suggest_pruning", False))
+
+        # Identity is both a coverage signal and the redundancy guardrail. Run
+        # embedding backfill before records are built so coverage, readiness,
+        # and pruning all observe the same enriched alignments state.
+        if suggest_pruning or getattr(self._args, "frames_dir", None):
+            self._run_identity_backfill(alignments)
+
         sidecar = self._sidecar_path(alignments)
         qa_file = load_sidecar(str(sidecar)) if sidecar.is_file() else None
+
         if qa_file is None:
             logger.info("No FaceQA sidecar found. Deriving metrics from alignments.")
         else:
@@ -76,13 +88,15 @@ class Faceqa:  # pylint:disable=invalid-name
 
         backfill_added = False
         pose_backfiller = self._pose_backfiller()
-        track_pose_backfill: (
+        pose_backfill_callback: (
             T.Callable[[FaceQARecord, FileAlignments], dict[str, T.Any] | None] | None
         ) = None
+
         if pose_backfiller is not None:
 
-            def track_pose_backfill(
-                record: FaceQARecord, face: FileAlignments
+            def _track_pose_backfill(
+                record: FaceQARecord,
+                face: FileAlignments,
             ) -> dict[str, T.Any] | None:
                 nonlocal backfill_added
                 pose: dict[str, T.Any] | None = pose_backfiller(record, face)
@@ -90,22 +104,43 @@ class Faceqa:  # pylint:disable=invalid-name
                     backfill_added = True
                 return pose
 
+            pose_backfill_callback = _track_pose_backfill
+
         records = records_from_alignments(
             alignments,
             qa_file=qa_file,
-            pose_backfiller=track_pose_backfill,
+            pose_backfiller=pose_backfill_callback,
         )
-        if backfill_added:
-            save_sidecar(str(sidecar), FaceQAFile(generated_by="faceqa", faces=records))
-            logger.info("Persisted SPIGA pose backfill metadata to '%s'.", sidecar)
 
-        min_bucket_pct = float(getattr(self._args, "min_bucket_pct", 5.0))
+        identity_quality = compute_identity_quality(records, alignments)
+        if identity_quality.disabled_reason:
+            logger.info(
+                "Identity quality classification skipped: %s", identity_quality.disabled_reason
+            )
+        else:
+            logger.info(
+                "Identity quality (%s): %d vectors, %d classified "
+                "(inlier=%d, borderline=%d, outlier=%d, reject=%d).",
+                identity_quality.model,
+                identity_quality.vectors_available,
+                identity_quality.classified,
+                identity_quality.inlier,
+                identity_quality.borderline,
+                identity_quality.outlier,
+                identity_quality.reject,
+            )
+
+        if backfill_added or identity_quality.updated:
+            save_sidecar(str(sidecar), FaceQAFile(generated_by="faceqa", faces=records))
+            logger.info("Persisted FaceQA enrichment metadata to '%s'.", sidecar)
+
         coverage = compute_coverage(
             records,
             exclude_duplicates=bool(getattr(self._args, "exclude_duplicates", False)),
             exclude_outliers=bool(getattr(self._args, "exclude_outliers", False)),
             sidecar_used=qa_file is not None,
         )
+
         report = generate_readiness_report(
             coverage,
             alignments=str(alignments),
@@ -113,22 +148,7 @@ class Faceqa:  # pylint:disable=invalid-name
             min_bucket_pct=min_bucket_pct,
         )
 
-        if bool(getattr(self._args, "suggest_pruning", False)):
-            self._run_identity_backfill(alignments)
-            # The backfill may have mutated alignments on disk; reload records
-            # so the redundancy guardrail sees the freshly-populated identity
-            # vectors.
-            records = records_from_alignments(
-                alignments,
-                qa_file=qa_file,
-                pose_backfiller=track_pose_backfill,
-            )
-            coverage = compute_coverage(
-                records,
-                exclude_duplicates=bool(getattr(self._args, "exclude_duplicates", False)),
-                exclude_outliers=bool(getattr(self._args, "exclude_outliers", False)),
-                sidecar_used=qa_file is not None,
-            )
+        if suggest_pruning:
             redundancy = compute_redundancy(
                 records,
                 coverage=coverage,
@@ -157,27 +177,39 @@ class Faceqa:  # pylint:disable=invalid-name
         logger.info("Wrote Markdown: %s", output_markdown)
 
     def _run_identity_backfill(self, alignments: Path) -> None:
-        """Backfill missing identity embeddings before redundancy clustering.
+        """Backfill missing identity embeddings before coverage reporting.
 
-        Identity is the redundancy layer's cross-subject guardrail. Pruning
-        cannot run safely without it, so when ``--suggest-pruning`` is set we
-        require ``--frames-dir`` and run the backfill mandatorily.
+        Identity is a FaceQA coverage signal and the pruning guardrail. If the
+        selected identity model is already complete, no source frames are
+        required. Otherwise ``--frames-dir`` is needed to fill missing vectors.
         """
+        status = identity_coverage_status(alignments)
+        if status.complete:
+            logger.info(
+                "Identity coverage already complete for '%s' (%d/%d faces).",
+                status.model,
+                status.available_faces,
+                status.total_faces,
+            )
+            return
+
         frames_dir = getattr(self._args, "frames_dir", None)
         if not frames_dir:
             raise FaceswapError(
-                "--suggest-pruning requires --frames-dir so missing identity "
-                "embeddings can be backfilled from the source frames before "
-                "redundancy clustering."
+                "--suggest-pruning requires --frames-dir when identity embeddings "
+                "are incomplete, so FaceQA can backfill identity before coverage "
+                "and redundancy clustering."
             )
+
         report = backfill_identity(
             alignments,
             frames_loader=Frames(frames_dir),
+            model=status.model,
         )
         if report.disabled_reason:
             logger.warning(
-                "Identity backfill disabled (%s); pruning will rely on the "
-                "existing identity coverage only.",
+                "Identity backfill disabled (%s); coverage/pruning will rely on "
+                "the existing identity coverage only.",
                 report.disabled_reason,
             )
             return
@@ -195,7 +227,7 @@ class Faceqa:  # pylint:disable=invalid-name
         )
 
     def _maybe_write_prune_outputs(self, redundancy: RedundancyReport) -> None:
-        prune_dir_value = getattr(self._args, "prune_output_dir", None)
+        prune_dir_value = getattr(self._args, "output_dir", None)
         if not prune_dir_value:
             return
         faces_dir_value = getattr(self._args, "faces_dir", None)
@@ -304,23 +336,21 @@ class Faceqa:  # pylint:disable=invalid-name
         return SpigaPoseBackfiller(Frames(frames_dir))
 
     def _coverage_output_paths(self, alignments: Path) -> tuple[Path, Path]:
-        output_json = Path(
-            getattr(self._args, "output_json", None)
-            or alignments.with_name(f"{alignments.stem}_faceqa_coverage.json")
+        output_dir_value = getattr(self._args, "output_dir", None)
+        output_dir = Path(output_dir_value) if output_dir_value else alignments.parent
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        stem = alignments.stem
+        return (
+            output_dir / f"{stem}_faceqa_coverage.json",
+            output_dir / f"{stem}_faceqa_coverage.md",
         )
-        output_markdown = Path(
-            getattr(self._args, "output_markdown", None)
-            or alignments.with_name(f"{alignments.stem}_faceqa_coverage.md")
-        )
-        output_json.parent.mkdir(parents=True, exist_ok=True)
-        output_markdown.parent.mkdir(parents=True, exist_ok=True)
-        return output_json, output_markdown
 
     def _compatibility_output_dir(self, source: Path) -> Path:
-        value = getattr(self._args, "compatibility_output_dir", None)
-        out = Path(value) if value else source.parent
-        out.mkdir(parents=True, exist_ok=True)
-        return out
+        output_dir_value = getattr(self._args, "output_dir", None)
+        output_dir = Path(output_dir_value) if output_dir_value else source.parent
+        output_dir.mkdir(parents=True, exist_ok=True)
+        return output_dir
 
 
 __all__ = get_module_objects(__name__)
