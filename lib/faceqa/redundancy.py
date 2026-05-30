@@ -163,6 +163,36 @@ class RepresentationFeatures:
     identity_outlier: bool
     has_metrics: bool
     image_metrics_provenance: str | None
+    # Issue #208 — fine pruning compatibility signals. Bands are integer
+    # codes (lower idx = lower magnitude); ``None`` means the underlying
+    # feature was missing and the band cannot gate.
+    yaw_micro_band: int | None = None
+    """Fine yaw band (7.5 deg) for pruning compatibility — preserves
+    micro-yaw / slight-head-turn variation that the coarse readiness
+    bucket would otherwise compress into one ``frontal`` blob."""
+    pitch_micro_band: int | None = None
+    """Fine pitch band (7.5 deg)."""
+    mouth_openness_band: int | None = None
+    """Mouth-open intensity band for distinguishing closed / slight /
+    open / wide-open mouth poses."""
+    smile_proxy_band: int | None = None
+    """Smile intensity band for distinguishing neutral / slight / broad
+    smiles."""
+    eye_closure_band: int | None = None
+    """Eye-closure intensity band for distinguishing open / squint /
+    closed eyes."""
+    brow_raise_band: int | None = None
+    """Brow-raise intensity band for distinguishing neutral / raised
+    brows."""
+    expression_asymmetry_band: int | None = None
+    """Expression-asymmetry band for distinguishing symmetric /
+    asymmetric faces."""
+    appearance_mode: tuple[int, int, int, int] | None = None
+    """Discrete (luminance, color_warmth, saturation, contrast) signature
+    used as a lightweight visual-look-mode fingerprint. Different
+    appearance modes block normal redundancy edges so visually distinct
+    looks (hairstyle / makeup / event / lighting) are preserved by
+    default."""
 
 
 @dataclass
@@ -339,6 +369,19 @@ class RedundancyReport:
     component_diameter_max: float | None = None
     """Largest per-cluster diameter observed after splitting; capped by
     the splitter's diameter limit when no cluster exceeded it."""
+    # Issue #208 — readiness FAIL safety cap diagnostic. ``None`` when the
+    # cap did not fire (either readiness wasn't supplied OR the prune
+    # ratio was within bounds).
+    readiness_safety_cap_applied: bool = False
+    """``True`` when ``compute_redundancy`` demoted borderline prune
+    candidates to review because readiness was FAIL and the prune ratio
+    would otherwise have been extreme."""
+    readiness_safety_cap_reason: str | None = None
+    """Human-readable explanation of the cap (``None`` when not
+    applied)."""
+    readiness_safety_cap_demotions: int = 0
+    """Number of records whose recommendation was demoted from
+    ``prune_candidate`` to ``review`` by the cap."""
 
     def to_dict(self) -> dict[str, T.Any]:
         return {
@@ -359,6 +402,9 @@ class RedundancyReport:
             "giant_component_warning": self.giant_component_warning,
             "component_spread_p95": self.component_spread_p95,
             "component_diameter_max": self.component_diameter_max,
+            "readiness_safety_cap_applied": self.readiness_safety_cap_applied,
+            "readiness_safety_cap_reason": self.readiness_safety_cap_reason,
+            "readiness_safety_cap_demotions": self.readiness_safety_cap_demotions,
         }
 
     def to_json(self, *, indent: int = 2) -> str:
@@ -485,6 +531,70 @@ def _norm_warmth(value: float | None) -> float | None:
     return math.tanh(value / 60.0)
 
 
+# Issue #208 — fine pruning bands. Band edges are tuples of ascending
+# thresholds; ``_band_index`` returns 0..len(edges) so adjacency = a gap of
+# exactly 1. Each band's edges are conservative enough that "obviously
+# similar" faces land in the same band while visually distinct ones split.
+_YAW_MICRO_DEG: float = 7.5
+_PITCH_MICRO_DEG: float = 7.5
+
+_MOUTH_OPENNESS_EDGES: tuple[float, ...] = (0.05, 0.12, 0.22, 0.35)
+_SMILE_PROXY_EDGES: tuple[float, ...] = (0.10, 0.22, 0.40)
+_EYE_CLOSURE_EDGES: tuple[float, ...] = (0.20, 0.45, 0.70)
+_BROW_RAISE_EDGES: tuple[float, ...] = (0.10, 0.25, 0.45)
+_EXPRESSION_ASYMMETRY_EDGES: tuple[float, ...] = (0.15, 0.30, 0.50)
+
+# Appearance-mode band edges. These mirror the coverage thresholds where
+# they exist (luminance / saturation) and add a signed-warmth band so a
+# cool-lighting subject doesn't cluster with a warm-lighting subject.
+_LUMINANCE_MODE_EDGES: tuple[float, ...] = (60.0, 100.0, 150.0, 200.0)
+_WARMTH_MODE_EDGES: tuple[float, ...] = (-30.0, 0.0, 30.0)
+_SATURATION_MODE_EDGES: tuple[float, ...] = (40.0, 80.0, 120.0)
+_CONTRAST_MODE_EDGES: tuple[float, ...] = (15.0, 25.0, 40.0)
+
+
+def _band_index(value: float | None, edges: tuple[float, ...]) -> int | None:
+    """Return the 0-indexed bin position of ``value`` against ``edges``.
+
+    ``edges`` is a tuple of ascending thresholds; the returned index is
+    ``len(edges)`` for values at or above the last threshold. ``None``
+    is returned when ``value`` is missing / non-finite so the gate
+    cannot fire on missing data.
+    """
+    if value is None or not math.isfinite(value):
+        return None
+    for idx, edge in enumerate(edges):
+        if value < edge:
+            return idx
+    return len(edges)
+
+
+def _signed_angle_band(value: float | None, width: float) -> int | None:
+    """Return the signed-yaw / signed-pitch micro-band index.
+
+    ``round(value / width)`` is signed so the bands stay symmetric around
+    0; ``None`` for missing / non-finite values.
+    """
+    if value is None or not math.isfinite(value):
+        return None
+    return int(round(value / width))
+
+
+def _appearance_mode_signature(record: FaceQARecord) -> tuple[int, int, int, int] | None:
+    """Return the discrete appearance-mode signature for a face.
+
+    All four channels must be present; a missing channel collapses the
+    signature to ``None`` so we don't block edges on partial data.
+    """
+    luminance = _band_index(record.mean_luminance, _LUMINANCE_MODE_EDGES)
+    warmth = _band_index(record.color_warmth, _WARMTH_MODE_EDGES)
+    saturation = _band_index(record.saturation, _SATURATION_MODE_EDGES)
+    contrast = _band_index(record.contrast, _CONTRAST_MODE_EDGES)
+    if None in (luminance, warmth, saturation, contrast):
+        return None
+    return (luminance, warmth, saturation, contrast)  # type: ignore[return-value]
+
+
 def _features_for(record: FaceQARecord) -> RepresentationFeatures:
     """Return the normalised representation feature vector for one record."""
     has_identity = _has_identity_guardrail(record)
@@ -546,6 +656,17 @@ def _features_for(record: FaceQARecord) -> RepresentationFeatures:
         identity_outlier=bool(identity_outlier),
         has_metrics=has_metrics,
         image_metrics_provenance=getattr(record, "image_metrics_provenance", None),
+        # Issue #208 — fine pruning compatibility signals.
+        yaw_micro_band=_signed_angle_band(record.yaw, _YAW_MICRO_DEG),
+        pitch_micro_band=_signed_angle_band(record.pitch, _PITCH_MICRO_DEG),
+        mouth_openness_band=_band_index(record.mouth_openness, _MOUTH_OPENNESS_EDGES),
+        smile_proxy_band=_band_index(record.smile_proxy, _SMILE_PROXY_EDGES),
+        eye_closure_band=_band_index(record.eye_closure, _EYE_CLOSURE_EDGES),
+        brow_raise_band=_band_index(record.brow_raise_proxy, _BROW_RAISE_EDGES),
+        expression_asymmetry_band=_band_index(
+            record.expression_asymmetry, _EXPRESSION_ASYMMETRY_EDGES
+        ),
+        appearance_mode=_appearance_mode_signature(record),
     )
 
 
@@ -924,6 +1045,113 @@ def _bucket_compatibility(
     return True, ""
 
 
+# Issue #208 — fine pruning compatibility constants.
+# ``_FINE_ADJACENT_DISTANCE_SCALE`` is the multiplier on
+# ``representation_distance_threshold`` required for adjacent fine pose
+# bands; non-adjacent fine bands ONLY pass when an obvious-duplicate
+# override fires.
+_FINE_ADJACENT_DISTANCE_SCALE: float = 0.7
+# Expression bands tolerate a single-band gap by default — the underlying
+# numeric features are noisy enough that a hard "same band only" rule
+# would over-protect. Two-band gaps trip the gate unless the obvious-
+# duplicate override fires.
+_EXPRESSION_BAND_GAP_LIMIT: int = 1
+# Each expression band that's checked: (RepresentationFeatures attr name,
+# human-readable label used in the diagnostic reason string).
+_FINE_EXPRESSION_BANDS: tuple[tuple[str, str], ...] = (
+    ("mouth_openness_band", "mouth openness"),
+    ("smile_proxy_band", "smile intensity"),
+    ("eye_closure_band", "eye closure"),
+    ("brow_raise_band", "brow raise"),
+    ("expression_asymmetry_band", "expression asymmetry"),
+)
+
+
+def _fine_pruning_compatibility(
+    features_a: RepresentationFeatures,
+    features_b: RepresentationFeatures,
+    *,
+    distance: float,
+    temporal_confidence: float,
+    config: AggressivenessConfig,
+) -> tuple[bool, str]:
+    """Return ``(compatible, reason)`` for the fine pruning constraints.
+
+    Issue #208 adds three layers of fine pruning compatibility ON TOP of
+    the coarse ``_bucket_compatibility`` gate so visually distinct
+    training examples are not silently merged into pruning clusters:
+
+    * **Fine pose bands** — same-band passes, adjacent bands require
+      stricter distance (``threshold * _FINE_ADJACENT_DISTANCE_SCALE``),
+      non-adjacent bands block unless the obvious-duplicate override
+      fires.
+    * **Fine expression bands** — same / adjacent band passes,
+      gap >= 2 blocks unless obvious.
+    * **Appearance mode** — different appearance-mode signatures block
+      unless obvious so different hairstyles / makeup / event /
+      lighting setups don't fold into one pruning cluster.
+
+    Obvious duplicates (``distance <= obvious_duplicate_threshold`` AND
+    high temporal confidence) override any fine constraint — true
+    near-duplicates still prune heavily, the gate only protects visually
+    distinct samples.
+    """
+    obvious_override = (
+        distance <= config.obvious_duplicate_threshold
+        and temporal_confidence >= _TEMPORAL_CONFIDENCE_FOR_OBVIOUS_EDGE
+    )
+    strict_limit = config.representation_distance_threshold * _FINE_ADJACENT_DISTANCE_SCALE
+
+    # Fine yaw / pitch micro-bands. These are SIGNED so adjacency is
+    # meaningful (left -> centre -> right; up -> neutral -> down).
+    for attr, label in (
+        ("yaw_micro_band", "yaw"),
+        ("pitch_micro_band", "pitch"),
+    ):
+        va = getattr(features_a, attr)
+        vb = getattr(features_b, attr)
+        if va is None or vb is None:
+            continue
+        if va == vb:
+            continue
+        gap = abs(va - vb)
+        if gap == 1:
+            if not (distance <= strict_limit or obvious_override):
+                return False, (
+                    f"adjacent fine {label} bands ({va} vs {vb}) require "
+                    f"stricter distance ({distance:.2f} > {strict_limit:.2f})"
+                )
+        elif not obvious_override:
+            return False, (
+                f"fine {label} band mismatch ({va} vs {vb}, gap={gap}) blocks pruning edge"
+            )
+
+    # Fine expression bands. Two-band gap (or wider) blocks; one-band gap
+    # is tolerated since the numeric expression features are noisy.
+    for attr, label in _FINE_EXPRESSION_BANDS:
+        va = getattr(features_a, attr)
+        vb = getattr(features_b, attr)
+        if va is None or vb is None:
+            continue
+        gap = abs(va - vb)
+        if gap > _EXPRESSION_BAND_GAP_LIMIT and not obvious_override:
+            return False, (
+                f"fine {label} band mismatch ({va} vs {vb}, gap={gap}) blocks pruning edge"
+            )
+
+    # Appearance mode — discrete (luminance, warmth, saturation, contrast)
+    # signature. A different signature means different hairstyle /
+    # makeup / event / lighting setup — visually distinct, must NOT
+    # collapse into one pruning cluster unless the pair is an obvious
+    # duplicate.
+    mode_a = features_a.appearance_mode
+    mode_b = features_b.appearance_mode
+    if mode_a is not None and mode_b is not None and mode_a != mode_b and not obvious_override:
+        return False, (f"appearance mode mismatch ({mode_a} vs {mode_b}) blocks pruning edge")
+
+    return True, ""
+
+
 def can_create_redundancy_edge(
     *,
     features_a: RepresentationFeatures,
@@ -992,6 +1220,23 @@ def can_create_redundancy_edge(
     )
     if not bucket_ok:
         return False, bucket_reason
+
+    # Issue #208: fine pruning compatibility. The coarse bucket gate
+    # blocks frontal-vs-profile, smile-vs-neutral, etc.; the fine gate
+    # blocks micro-yaw drift inside ``frontal``, mouth-shape variation
+    # inside ``smile``, and different appearance modes (hairstyle /
+    # makeup / event) inside the same coarse bucket. Together they
+    # answer the stricter pruning question "would removing this face
+    # lose a visually distinct training example?".
+    fine_ok, fine_reason = _fine_pruning_compatibility(
+        features_a,
+        features_b,
+        distance=distance,
+        temporal_confidence=temporal_confidence,
+        config=config,
+    )
+    if not fine_ok:
+        return False, fine_reason
 
     if obvious:
         if temporal_confidence < _TEMPORAL_CONFIDENCE_FOR_OBVIOUS_EDGE:
@@ -1702,6 +1947,88 @@ def _percentile(values: list[float], pct: float) -> float | None:
     return ordered[lower] + (ordered[upper] - ordered[lower]) * fraction
 
 
+# Issue #208 — readiness FAIL safety cap parameters. The cap fires when:
+#   1. ``coverage`` is supplied AND
+#   2. ``ReadinessScores.overall_readiness_score`` is below the FAIL band
+#      (``_READINESS_FAIL_SCORE``) AND
+#   3. The proposed prune ratio exceeds ``_READINESS_FAIL_PRUNE_RATIO``.
+# Under those conditions, borderline prune candidates are demoted to
+# review so an under-developed faceset doesn't get gutted before the
+# user reviews the topology.
+_READINESS_FAIL_SCORE: float = 50.0
+_READINESS_FAIL_PRUNE_RATIO: float = 0.80
+# Reasons that match "obvious duplicate" survive the demotion — the cap
+# protects visually distinct samples, not true near-duplicates.
+_OBVIOUS_DUPLICATE_REASON_SUBSTRINGS: tuple[str, ...] = ("obvious duplicate",)
+
+
+def _apply_readiness_safety_cap(
+    output_records: list[RedundancyRecord],
+    coverage: FacesetCoverageReport | None,
+    total_faces: int,
+) -> tuple[bool, str | None, int]:
+    """Demote borderline ``prune_candidate`` rows to ``review`` when the
+    safety cap conditions fire.
+
+    Returns ``(applied, reason, demoted_count)`` — ``applied`` is True
+    when at least one demotion was made; ``reason`` carries the human-
+    readable cap explanation for the report header.
+    """
+    if coverage is None or total_faces == 0:
+        return False, None, 0
+
+    # Local import to avoid the circular ``coverage -> redundancy``
+    # dependency that would arise if scoring were imported at module
+    # top-level.
+    from lib.faceqa.scoring import compute_readiness_scores
+
+    try:
+        scores = compute_readiness_scores(coverage)
+    except Exception:  # pylint: disable=broad-except
+        logger.debug("Readiness safety cap: scoring failed; cap not applied.")
+        return False, None, 0
+
+    overall = scores.overall_readiness_score
+    if overall >= _READINESS_FAIL_SCORE:
+        return False, None, 0
+
+    proposed_prune = sum(1 for r in output_records if r.recommendation == PRUNE)
+    prune_ratio = proposed_prune / total_faces
+    if prune_ratio <= _READINESS_FAIL_PRUNE_RATIO:
+        return False, None, 0
+
+    demoted = 0
+    for record in output_records:
+        if record.recommendation != PRUNE:
+            continue
+        eligibility = (record.edge_eligibility or "").lower()
+        if any(substr in eligibility for substr in _OBVIOUS_DUPLICATE_REASON_SUBSTRINGS):
+            # Obvious duplicates stay prune — the cap is about
+            # protecting VISUALLY DISTINCT samples on an
+            # under-developed faceset.
+            continue
+        record.recommendation = REVIEW
+        cap_note = (
+            f"readiness FAIL safety cap: demoted to review "
+            f"(readiness={overall:.1f}, prune ratio "
+            f"{prune_ratio:.0%} > {_READINESS_FAIL_PRUNE_RATIO:.0%})"
+        )
+        record.reason = f"{record.reason}; {cap_note}" if record.reason else cap_note
+        demoted += 1
+
+    if demoted == 0:
+        return False, None, 0
+
+    reason = (
+        f"readiness FAIL (overall={overall:.1f} < {_READINESS_FAIL_SCORE:.0f}) "
+        f"AND proposed prune ratio {prune_ratio:.0%} > "
+        f"{_READINESS_FAIL_PRUNE_RATIO:.0%}; demoted {demoted} borderline "
+        f"prune candidate(s) to review."
+    )
+    logger.info("Redundancy %s", reason)
+    return True, reason, demoted
+
+
 def _compute_cluster_health(
     components: list[list[int]],
     total_faces: int,
@@ -2035,6 +2362,18 @@ def compute_redundancy(
                 )
             )
 
+    # Issue #208 — readiness FAIL safety cap. When the supplied coverage
+    # report scores below the FAIL threshold AND the proposed prune
+    # ratio is extreme, demote BORDERLINE prune candidates to review so
+    # an under-developed faceset doesn't get gutted before the user has
+    # a chance to look at the topology. Obvious duplicates (where the
+    # member's ``edge_eligibility`` reason names "obvious duplicate")
+    # are preserved as prune candidates — the cap protects visually
+    # distinct samples, not true near-duplicates.
+    cap_applied, cap_reason, cap_demotions = _apply_readiness_safety_cap(
+        output_records, coverage, n
+    )
+
     keep = sum(1 for r in output_records if r.recommendation == KEEP)
     review = sum(1 for r in output_records if r.recommendation == REVIEW)
     prune = sum(1 for r in output_records if r.recommendation == PRUNE)
@@ -2067,6 +2406,9 @@ def compute_redundancy(
         giant_component_warning=giant_component_warning,
         component_spread_p95=component_spread_p95,
         component_diameter_max=component_diameter_max,
+        readiness_safety_cap_applied=cap_applied,
+        readiness_safety_cap_reason=cap_reason,
+        readiness_safety_cap_demotions=cap_demotions,
         records=output_records,
     )
 

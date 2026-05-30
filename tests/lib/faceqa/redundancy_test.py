@@ -1349,3 +1349,302 @@ def test_oversize_cap_uses_O_n_annotation_path() -> None:
     # And the cap-bypass reason populates EVERY member.
     reasons = {diag.split_reason_by_member[m] for m in members}
     assert reasons == {f"component too large for diameter check ({n} > {cap}) — kept as-is"}
+
+
+# ---------------------------------------------------------------------------
+# Issue #208 — fine pruning compatibility regression scenarios
+# ---------------------------------------------------------------------------
+
+
+def test_fine_yaw_micro_band_blocks_within_frontal_bucket() -> None:
+    """Two faces both inside the coarse ``frontal`` bucket but on
+    opposite sides of the fine micro yaw band must NOT merge unless
+    the obvious-duplicate override fires (issue #208 fine pose)."""
+    from lib.faceqa.redundancy import _AGGRESSIVENESS_PRESETS as PRESETS
+    from lib.faceqa.redundancy import _features_for, can_create_redundancy_edge
+
+    # ``frontal`` covers |yaw| <= 15 deg, so 0 and 12 are both frontal but
+    # land in different 7.5-deg micro bands (0 vs 2).
+    a = _record("frame_000001.png", yaw=0.0)
+    b = _record("frame_000002.png", yaw=12.0)
+    fa, fb = _features_for(a), _features_for(b)
+
+    config = PRESETS["balanced"]
+    eligible, reason = can_create_redundancy_edge(
+        features_a=fa,
+        features_b=fb,
+        # Above obvious threshold (0.10 for balanced) so the override
+        # cannot rescue the pair — the fine gate must block.
+        distance=0.18,
+        compared=10,
+        temporal_confidence=1.0,
+        config=config,
+    )
+    assert eligible is False
+    assert "fine yaw" in reason
+
+
+def test_obvious_duplicate_overrides_fine_pose_mismatch() -> None:
+    """Obvious duplicates may still cross fine yaw bands when temporal
+    confidence is high (issue #208 obvious override)."""
+    from lib.faceqa.redundancy import _AGGRESSIVENESS_PRESETS as PRESETS
+    from lib.faceqa.redundancy import _features_for, can_create_redundancy_edge
+
+    a = _record("frame_000001.png", yaw=0.0)
+    b = _record("frame_000002.png", yaw=12.0)
+    fa, fb = _features_for(a), _features_for(b)
+
+    config = PRESETS["balanced"]
+    eligible, _reason = can_create_redundancy_edge(
+        features_a=fa,
+        features_b=fb,
+        distance=config.obvious_duplicate_threshold - 0.01,
+        compared=10,
+        temporal_confidence=1.0,
+        config=config,
+    )
+    assert eligible is True
+
+
+def test_fine_expression_band_blocks_within_same_coarse_bucket() -> None:
+    """Two faces in the same coarse ``smile`` expression bucket but with
+    very different mouth-openness intensities must NOT merge unless the
+    obvious-duplicate override fires (issue #208 fine expression)."""
+    from lib.faceqa.redundancy import _AGGRESSIVENESS_PRESETS as PRESETS
+    from lib.faceqa.redundancy import _features_for, can_create_redundancy_edge
+
+    # Closed-mouth slight smile vs broad open-mouth smile.
+    closed = _record(
+        "frame_000001.png",
+        yaw=0.0,
+        expression_bucket="smile",
+        mouth_openness=0.03,
+        smile_proxy=0.12,
+    )
+    wide = _record(
+        "frame_000002.png",
+        yaw=0.0,
+        expression_bucket="smile",
+        mouth_openness=0.40,
+        smile_proxy=0.45,
+    )
+    fa, fb = _features_for(closed), _features_for(wide)
+
+    eligible, reason = can_create_redundancy_edge(
+        features_a=fa,
+        features_b=fb,
+        distance=0.18,
+        compared=10,
+        temporal_confidence=1.0,
+        config=PRESETS["balanced"],
+    )
+    assert eligible is False
+    assert "mouth openness" in reason or "smile intensity" in reason
+
+
+def test_appearance_mode_blocks_different_visual_looks() -> None:
+    """Same coarse lighting bucket, but different fine appearance-mode
+    bands must NOT merge unless obvious-duplicate (issue #208
+    appearance mode). Exercising ``_fine_pruning_compatibility``
+    directly isolates the appearance-mode gate from the coarse
+    lighting-bucket gate."""
+    from lib.faceqa.redundancy import _AGGRESSIVENESS_PRESETS as PRESETS
+    from lib.faceqa.redundancy import _features_for, _fine_pruning_compatibility
+
+    # Both records share the same coarse lighting bucket and pose, but
+    # their fine luminance / warmth / saturation bands differ so the
+    # appearance-mode signature must mismatch.
+    a = _record(
+        "frame_000001.png",
+        yaw=0.0,
+        mean_luminance=80.0,
+        color_warmth=-20.0,
+        saturation=30.0,
+        contrast=18.0,
+    )
+    b = _record(
+        "frame_000002.png",
+        yaw=0.0,
+        mean_luminance=170.0,
+        color_warmth=20.0,
+        saturation=100.0,
+        contrast=35.0,
+    )
+    fa, fb = _features_for(a), _features_for(b)
+    assert fa.appearance_mode != fb.appearance_mode
+
+    compat, reason = _fine_pruning_compatibility(
+        fa,
+        fb,
+        distance=0.18,
+        temporal_confidence=1.0,
+        config=PRESETS["balanced"],
+    )
+    assert compat is False
+    assert "appearance mode" in reason
+
+
+def test_fine_bands_populated_on_representation_features() -> None:
+    """``_features_for`` exposes every #208 fine-band field on the
+    returned ``RepresentationFeatures``."""
+    from lib.faceqa.redundancy import _features_for
+
+    record = _record(
+        "frame_000001.png",
+        yaw=12.0,
+        pitch=-4.0,
+        mouth_openness=0.18,
+        smile_proxy=0.30,
+        eye_closure=0.10,
+    )
+    features = _features_for(record)
+
+    assert features.yaw_micro_band == 2  # round(12.0 / 7.5)
+    assert features.pitch_micro_band == -1  # round(-4.0 / 7.5)
+    assert features.mouth_openness_band is not None
+    assert features.smile_proxy_band is not None
+    assert features.eye_closure_band is not None
+    assert features.appearance_mode is not None
+
+
+def _cap_input_record(
+    *,
+    recommendation: str,
+    edge_eligibility: str | None,
+    cluster_id: int = 0,
+    face_index: int = 0,
+) -> RedundancyRecord:
+    """Build a synthetic ``RedundancyRecord`` for direct cap testing."""
+    from lib.faceqa.redundancy import RedundancyRecord
+
+    return RedundancyRecord(
+        frame=f"frame_{face_index:06d}.png",
+        face_index=face_index,
+        cluster_id=cluster_id,
+        cluster_size=20,
+        representative=False,
+        recommendation=recommendation,
+        quality_score=0.5,
+        redundancy_distance_to_representative=0.18,
+        temporal_distance_to_representative=5,
+        temporal_confidence=0.95,
+        pose_bucket="frontal",
+        pitch_bucket="neutral",
+        expression_bucket="neutral",
+        lighting_bucket="uniform",
+        reason="redundant + safe temporal",
+        identity_outlier=False,
+        has_identity=True,
+        edge_eligibility=edge_eligibility,
+    )
+
+
+def test_readiness_fail_safety_cap_demotes_borderline_prunes() -> None:
+    """When readiness fails AND the prune ratio is extreme, borderline
+    prune candidates (those NOT flagged as obvious duplicates) are
+    demoted to review (issue #208 §4 safety cap)."""
+    from unittest.mock import patch
+
+    from lib.faceqa import scoring as scoring_mod
+    from lib.faceqa.coverage import FacesetCoverageReport
+    from lib.faceqa.redundancy import (
+        PRUNE,
+        REVIEW,
+        _apply_readiness_safety_cap,
+    )
+
+    # 17 borderline prune candidates + 3 keeps → 85% prune ratio, well
+    # above the 80% threshold.
+    output_records = [
+        _cap_input_record(
+            recommendation=PRUNE,
+            edge_eligibility="redundant + safe temporal",
+            face_index=i,
+        )
+        for i in range(17)
+    ] + [
+        _cap_input_record(
+            recommendation="keep",
+            edge_eligibility=None,
+            face_index=i,
+        )
+        for i in range(17, 20)
+    ]
+    coverage = FacesetCoverageReport(total_faces=20)
+
+    class _FakeScores:
+        overall_readiness_score = 30.0
+
+    with patch.object(scoring_mod, "compute_readiness_scores", return_value=_FakeScores()):
+        applied, reason, demotions = _apply_readiness_safety_cap(output_records, coverage, 20)
+
+    assert applied is True
+    assert demotions == 17
+    assert reason is not None and "readiness FAIL" in reason
+    # Every demoted record is now in review and carries the cap note.
+    review_count = sum(1 for r in output_records if r.recommendation == REVIEW)
+    assert review_count == 17
+    assert all(
+        "readiness FAIL safety cap" in (r.reason or "")
+        for r in output_records
+        if r.recommendation == REVIEW
+    )
+
+
+def test_readiness_safety_cap_preserves_obvious_duplicates() -> None:
+    """Obvious duplicates survive the cap — the cap protects VISUALLY
+    DISTINCT samples, not true near-duplicates."""
+    from unittest.mock import patch
+
+    from lib.faceqa import scoring as scoring_mod
+    from lib.faceqa.coverage import FacesetCoverageReport
+    from lib.faceqa.redundancy import PRUNE, _apply_readiness_safety_cap
+
+    # 8 obvious-duplicate prunes + 9 borderline prunes + 3 keeps.
+    obvious_prunes = [
+        _cap_input_record(
+            recommendation=PRUNE,
+            edge_eligibility="obvious duplicate (distance=0.05)",
+            face_index=i,
+        )
+        for i in range(8)
+    ]
+    borderline_prunes = [
+        _cap_input_record(
+            recommendation=PRUNE,
+            edge_eligibility="redundant + safe temporal",
+            face_index=8 + i,
+        )
+        for i in range(9)
+    ]
+    keeps = [
+        _cap_input_record(
+            recommendation="keep",
+            edge_eligibility=None,
+            face_index=17 + i,
+        )
+        for i in range(3)
+    ]
+    output_records = obvious_prunes + borderline_prunes + keeps
+    coverage = FacesetCoverageReport(total_faces=20)
+
+    class _FakeScores:
+        overall_readiness_score = 25.0
+
+    with patch.object(scoring_mod, "compute_readiness_scores", return_value=_FakeScores()):
+        _applied, _reason, demotions = _apply_readiness_safety_cap(output_records, coverage, 20)
+
+    # Only the borderline prunes are demoted; obvious duplicates remain
+    # as PRUNE.
+    assert demotions == 9
+    surviving_obvious = [r for r in output_records[:8] if r.recommendation == PRUNE]
+    assert len(surviving_obvious) == 8
+
+
+def test_readiness_safety_cap_skipped_when_no_coverage() -> None:
+    """No coverage report → cap cannot fire."""
+    records = _near_identical_run(8, yaw=0.0)
+    report = compute_redundancy(records)
+    assert report.readiness_safety_cap_applied is False
+    assert report.readiness_safety_cap_demotions == 0
+    assert report.readiness_safety_cap_reason is None
