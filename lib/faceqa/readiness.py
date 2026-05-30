@@ -7,7 +7,11 @@ import json
 import typing as T
 from dataclasses import dataclass, field
 
-from lib.faceqa.coverage import FacesetCoverageReport
+from lib.faceqa.coverage import (
+    IMAGE_METRICS_PROVENANCE_FRAME,
+    IMAGE_METRICS_PROVENANCE_THUMBNAIL,
+    FacesetCoverageReport,
+)
 from lib.faceqa.scoring import ReadinessScores, compute_readiness_scores
 from lib.utils import get_module_objects
 
@@ -407,8 +411,8 @@ def _format_provenance_summary(provenance: dict[str, int]) -> str:
     if not provenance:
         return ""
     total = sum(provenance.values()) or 1
-    frame = provenance.get("frame_aligned_crop", 0)
-    thumb = provenance.get("thumbnail_fallback", 0)
+    frame = provenance.get(IMAGE_METRICS_PROVENANCE_FRAME, 0)
+    thumb = provenance.get(IMAGE_METRICS_PROVENANCE_THUMBNAIL, 0)
     other = total - frame - thumb
     chunks = [f"frame {frame / total:.0%}"]
     if thumb:
@@ -458,8 +462,8 @@ def _fmt_pct(value: float) -> str:
 def _provenance_trust(tag: str) -> str:
     """Return the trust label for a metrics-provenance tag."""
     mapping = {
-        "frame_aligned_crop": "authoritative",
-        "thumbnail_fallback": "reduced (decoded thumbnail)",
+        IMAGE_METRICS_PROVENANCE_FRAME: "authoritative",
+        IMAGE_METRICS_PROVENANCE_THUMBNAIL: "reduced (decoded thumbnail)",
         "missing": "unknown",
     }
     return mapping.get(tag, "unknown")

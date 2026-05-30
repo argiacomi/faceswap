@@ -882,3 +882,91 @@ def test_redundancy_record_carries_compared_metrics_diagnostic() -> None:
     payload = record.to_dict()
     assert payload["compared_metrics"] == 0
     assert payload["edge_eligibility"] is None
+
+
+# ---------------------------------------------------------------------------
+# Issue #199 follow-ups — cluster-level missing-identity, populated
+# diagnostics on non-representative records.
+# ---------------------------------------------------------------------------
+
+
+def test_missing_identity_cluster_routes_representative_to_review() -> None:
+    """A representative that lacks the identity guardrail must REVIEW, not KEEP.
+
+    The new edge gate (#199) allows obvious + temporally-safe pairs through
+    even when identity is missing — the post-cluster intent is then "whole
+    cluster to review". This pins that intent at the representative-side.
+    """
+    records = _near_identical_run(2, yaw=0.0, expression_bucket="neutral")
+    # Strip the identity guardrail from BOTH records so the rep ends up
+    # without identity.
+    for record in records:
+        record.identity_model = None
+        record.identity_quality_flag = None
+        record.identity_final_decision = None
+
+    report = compute_redundancy(records, aggressiveness="balanced")
+
+    assert report.cluster_count == 1, (
+        "obvious + temporally-safe duplicates still cluster across missing identity per the gate"
+    )
+    rep = next(r for r in report.records if r.representative)
+    assert rep.recommendation == REVIEW
+    assert "missing identity embedding guardrail" in rep.reason
+
+
+def test_missing_identity_cluster_routes_members_to_review() -> None:
+    """Non-representative members in a missing-identity cluster also REVIEW.
+
+    The previous shape would prune the member as an obvious duplicate even
+    though the cluster as a whole lacked the cross-subject guardrail. The
+    follow-up adds a cluster-level check so the entire cluster lands in
+    review together.
+    """
+    records = _near_identical_run(2, yaw=0.0, expression_bucket="neutral")
+    for record in records:
+        record.identity_model = None
+        record.identity_quality_flag = None
+        record.identity_final_decision = None
+
+    report = compute_redundancy(records, aggressiveness="balanced")
+
+    members = [r for r in report.records if not r.representative]
+    assert members, "expected at least one non-representative member"
+    for member in members:
+        assert member.recommendation == REVIEW
+        assert "missing identity embedding guardrail" in member.reason
+
+
+def test_redundancy_member_record_populates_diagnostics() -> None:
+    """Member records expose ``compared_metrics`` + ``edge_eligibility`` so
+    the JSON output can audit why each face landed where (#199 follow-up).
+    """
+    records = _near_identical_run(2, yaw=0.0, expression_bucket="neutral")
+
+    report = compute_redundancy(records, aggressiveness="balanced")
+
+    members = [r for r in report.records if not r.representative]
+    assert members, "expected at least one non-representative member"
+    for member in members:
+        assert member.compared_metrics > 0
+        assert member.edge_eligibility is not None
+        # The gate's eligibility reason for an obvious duplicate carries the
+        # phrase "obvious duplicate" — pin it so the diagnostic source is
+        # clear in the JSON output.
+        assert "obvious duplicate" in member.edge_eligibility
+
+
+def test_frame_index_returns_trailing_numeric_group() -> None:
+    """``_frame_index`` must return the LAST numeric run in the frame name.
+
+    Issue #199 follow-up replaces ``_FRAME_NUMBER_RE.findall(frame)`` with
+    a tighter regex that captures only the last numeric group; this pins
+    the contract for compound names like ``shot_07_000123.png``.
+    """
+    from lib.faceqa.redundancy import _frame_index
+
+    assert _frame_index("frame_000123.png") == 123
+    assert _frame_index("shot_07_000456.jpg") == 456
+    assert _frame_index("frame.png") is None
+    assert _frame_index("000789") == 789

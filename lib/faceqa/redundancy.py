@@ -285,12 +285,16 @@ class RedundancyReport:
 # ---------------------------------------------------------------------------
 
 
+# Match the LAST run of digits in a frame name (e.g. "frame_000123.png" or
+# "shot_07_000123.jpg") so ``_frame_index`` can skip ``findall`` + indexing
+# into the materialised list (issue #199 follow-up).
+_FRAME_LAST_NUMBER_RE = re.compile(r"(\d+)(?!.*\d)")
+
+
 def _frame_index(frame: str) -> int | None:
     """Return the trailing numeric index of a frame name when present."""
-    matches = _FRAME_NUMBER_RE.findall(frame)
-    if not matches:
-        return None
-    return int(matches[-1])
+    match = _FRAME_LAST_NUMBER_RE.search(frame)
+    return int(match.group(1)) if match is not None else None
 
 
 def _record_image_metric_scale(record: FaceQARecord) -> float:
@@ -967,9 +971,17 @@ def _record_is_in_surplus_bucket(
 
 
 def _representative_safety_reason(features: RepresentationFeatures) -> str | None:
-    """Return a review reason if a representative cannot safely default to keep."""
+    """Return a review reason if a representative cannot safely default to keep.
+
+    A representative that lacks the identity guardrail cannot safely default
+    to KEEP — we have no way to verify it's the same subject as the other
+    cluster members (issue #199 follow-up). The whole cluster falls into
+    review via this rule combined with the member-side check below.
+    """
     if features.identity_outlier:
         return "identity outlier — review even when selected as representative"
+    if not features.has_identity:
+        return "missing identity embedding guardrail — review even when representative"
     if not features.has_metrics:
         return "missing representation metrics — review even when singleton"
     return None
@@ -986,15 +998,20 @@ def _decide_single_member(
     rep_record: FaceQARecord,
     protection_budget_remaining: int,
     member_in_surplus_bucket: bool,
+    rep_features: RepresentationFeatures | None = None,
 ) -> tuple[str, str, int]:
     """Return ``(recommendation, reason, budget_after)`` for one cluster member.
 
     Order of decisions:
     - missing metrics → review
     - identity outlier → review
-    - **missing identity embedding** → review (guardrail: without identity
-      verification we cannot confidently keep or prune *any* member, even
-      when it looks like an alternate or sits in a protected bucket).
+    - **missing identity embedding (member OR representative)** → review
+      (guardrail: without identity verification we cannot confidently keep
+      or prune *any* member, even when it looks like an alternate or sits
+      in a protected bucket). ``rep_features`` is optional for backward
+      compatibility with existing tests; when supplied, the
+      missing-identity check covers BOTH sides of the edge so the
+      "whole cluster to review" intent from issue #199 actually holds.
     - meaningful pose/expression/lighting variation → keep (alternate)
     - **obvious duplicate** (hard redundancy floor) → prune, even when the
       bucket is fragile; protection budget never rescues exact duplicates.
@@ -1010,13 +1027,18 @@ def _decide_single_member(
             "identity outlier — review for mismatched subject",
             protection_budget_remaining,
         )
-    if not member_features.has_identity:
-        # Identity is the cross-subject guardrail. Without it we cannot
-        # confidently keep an alternate, spend protection budget on it, or
-        # prune it as redundant — every non-obvious outcome routes to review.
+    if not member_features.has_identity or (
+        rep_features is not None and not rep_features.has_identity
+    ):
+        # Identity is the cross-subject guardrail. Without it on EITHER
+        # side of the edge we cannot confidently keep an alternate, spend
+        # protection budget on it, or prune it as redundant — every
+        # outcome routes to review so the whole cluster lands in the
+        # review bucket together (issue #199 follow-up).
+        side = "member" if not member_features.has_identity else "representative"
         return (
             REVIEW,
-            "missing identity embedding guardrail — review before keep or prune",
+            f"missing identity embedding guardrail on {side} — review before keep or prune",
             protection_budget_remaining,
         )
     bucket_keys_member = _bucket_keys_for(member_record)
@@ -1239,6 +1261,7 @@ def compute_redundancy(
                 rep_record=rep_record,
                 protection_budget_remaining=budget,
                 member_in_surplus_bucket=_record_is_in_surplus_bucket(member_record, surplus),
+                rep_features=rep_features,
             )
             output_records.append(
                 RedundancyRecord(
@@ -1261,6 +1284,13 @@ def compute_redundancy(
                     reason=reason,
                     identity_outlier=member_features.identity_outlier,
                     has_identity=member_features.has_identity,
+                    # Issue #199 follow-up: surface the per-pair diagnostics
+                    # so the JSON output explains WHY each member was kept,
+                    # reviewed, or marked as a prune candidate. Representatives
+                    # keep the 0/None defaults — they have no edge of their
+                    # own to describe.
+                    compared_metrics=compared,
+                    edge_eligibility=_edge_reason_for(member, rep_index),
                 )
             )
 
