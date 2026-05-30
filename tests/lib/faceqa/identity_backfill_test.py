@@ -352,3 +352,65 @@ def test_backfill_identity_explicit_model_override(tmp_path, monkeypatch) -> Non
     assert report.model == "insightface"
     assert report.backfilled == 2
     assert report.already_present == 0
+
+
+# ---------------------------------------------------------------------------
+# Identity-model selection logging — visibility into priority tie-breaks.
+# ---------------------------------------------------------------------------
+
+
+def test_identity_model_selection_log_lists_all_candidates(
+    caplog,
+) -> None:
+    """The selection log surfaces ALL stored models + their face counts so
+    the chosen winner can be audited at INFO level."""
+    import logging as _logging
+
+    from lib.faceqa.coverage import _identity_model_for_faces
+
+    caplog.set_level(_logging.INFO, logger="lib.faceqa.coverage")
+    faces = [
+        _face(insightface=np.ones(512, dtype="float32")),
+        _face(insightface=np.ones(512, dtype="float32")),
+        _face(insightface=np.ones(512, dtype="float32")),
+        _face(adaface=np.ones(512, dtype="float32")),
+    ]
+
+    chosen, _ = _identity_model_for_faces(faces)
+
+    text = "\n".join(rec.getMessage() for rec in caplog.records)
+    assert chosen == "insightface"
+    assert "Identity model selection" in text
+    # Both models appear in the diagnostic, with descending counts.
+    assert "insightface=3" in text
+    assert "adaface=1" in text
+
+
+def test_identity_model_selection_log_names_priority_tie_break(
+    caplog,
+) -> None:
+    """When two supported models tie at the top coverage count, the log
+    explicitly names the priority tie-break path so the user can see why
+    ``arcface`` beat ``insightface`` (or vice versa)."""
+    import logging as _logging
+
+    from lib.faceqa.coverage import _identity_model_for_faces
+
+    caplog.set_level(_logging.INFO, logger="lib.faceqa.coverage")
+    faces = [
+        _face(
+            arcface=np.ones(512, dtype="float32"),
+            insightface=np.ones(512, dtype="float32"),
+        ),
+        _face(
+            arcface=np.ones(512, dtype="float32"),
+            insightface=np.ones(512, dtype="float32"),
+        ),
+    ]
+
+    chosen, _ = _identity_model_for_faces(faces)
+
+    text = "\n".join(rec.getMessage() for rec in caplog.records)
+    assert chosen == "arcface"
+    assert "tied at coverage=2" in text
+    assert "priority tie-break chose 'arcface'" in text

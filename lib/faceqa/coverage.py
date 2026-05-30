@@ -1267,7 +1267,7 @@ def backfill_identity(
                 )
             chosen = DEFAULT_IDENTITY_BACKFILL_MODEL
             counts = {}
-        logger.info("Identity backfill model selected: '%s' (coverage: %s)", chosen, counts)
+        _log_identity_model_choice(chosen, counts, note=" (backfill)")
         report.model = chosen
     else:
         if model not in _IDENTITY_PLUGIN_REGISTRY:
@@ -1317,6 +1317,58 @@ def backfill_identity(
     return report
 
 
+def _format_identity_counts(counts: dict[str, int]) -> str:
+    """Render ``counts`` as a stable ``name=N`` summary for logging.
+
+    Higher coverage models come first; alphabetical fallback on ties so the
+    log line is deterministic across runs.
+    """
+    if not counts:
+        return "(none)"
+    ordered = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    return ", ".join(f"{name}={n}" for name, n in ordered)
+
+
+def _log_identity_model_choice(
+    chosen: str,
+    counts: dict[str, int],
+    *,
+    note: str = "",
+) -> None:
+    """Emit the per-run identity-model selection diagnostic.
+
+    Shows EVERY supported model that any face carried (via
+    ``_format_identity_counts``) plus the winner. When two or more models
+    tied at the top coverage count, the priority tie-break path is named
+    explicitly so a user reading the log can audit why ``arcface`` beat
+    ``insightface`` (or vice versa).
+    """
+    if not counts:
+        if chosen:
+            logger.info("Identity model selection: '%s' (no stored vectors%s)", chosen, note)
+        return
+    summary = _format_identity_counts(counts)
+    chosen_count = counts.get(chosen, 0)
+    tied = [name for name, n in counts.items() if n == chosen_count]
+    if len(tied) > 1:
+        logger.info(
+            "Identity model selection: %d candidate(s) tied at coverage=%d "
+            "(%s); priority tie-break chose '%s'%s",
+            len(tied),
+            chosen_count,
+            ", ".join(sorted(tied)),
+            chosen,
+            note,
+        )
+    else:
+        logger.info(
+            "Identity model selection: '%s' wins on coverage (%s)%s",
+            chosen,
+            summary,
+            note,
+        )
+
+
 def _identity_model_for_faces(
     faces: T.Iterable[FileAlignments],
     *,
@@ -1325,22 +1377,33 @@ def _identity_model_for_faces(
     """Return the identity model to use for coverage/backfill decisions."""
     faces_list = list(faces)
     if model is not None:
-        return model, majority_identity_model(faces_list)[1]
+        all_counts = majority_identity_model(faces_list)[1]
+        logger.info(
+            "Identity model selection: explicit override '%s' (stored coverage: %s)",
+            model,
+            _format_identity_counts(all_counts),
+        )
+        return model, all_counts
 
     chosen, counts = majority_identity_model(faces_list, candidates=_IDENTITY_PLUGIN_REGISTRY)
     if chosen is not None:
+        _log_identity_model_choice(chosen, counts)
         return chosen, counts
 
     unsupported, unsupported_counts = majority_identity_model(faces_list)
     if unsupported is not None:
         logger.info(
-            "Existing identity model '%s' is unsupported for backfill. "
-            "Using default supported model '%s' for FaceQA identity coverage.",
-            unsupported,
+            "Identity model selection: stored models %s are unsupported for "
+            "backfill; using default '%s'.",
+            _format_identity_counts(unsupported_counts),
             DEFAULT_IDENTITY_BACKFILL_MODEL,
         )
         return DEFAULT_IDENTITY_BACKFILL_MODEL, unsupported_counts
 
+    logger.info(
+        "Identity model selection: no stored identity vectors; using default '%s'.",
+        DEFAULT_IDENTITY_BACKFILL_MODEL,
+    )
     return DEFAULT_IDENTITY_BACKFILL_MODEL, {}
 
 
