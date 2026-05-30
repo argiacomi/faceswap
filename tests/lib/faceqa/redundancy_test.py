@@ -970,3 +970,198 @@ def test_frame_index_returns_trailing_numeric_group() -> None:
     assert _frame_index("shot_07_000456.jpg") == 456
     assert _frame_index("frame.png") is None
     assert _frame_index("000789") == 789
+
+
+# ---------------------------------------------------------------------------
+# Issue #204 — giant-component prevention regression scenarios
+# ---------------------------------------------------------------------------
+
+
+def test_bucket_mismatch_blocks_normal_redundancy_edge() -> None:
+    """A pose-bucket mismatch between non-adjacent buckets (frontal vs
+    right_profile) blocks the redundancy edge even when continuous
+    features look similar (issue #204 §1).
+    """
+    from lib.faceqa.redundancy import _AGGRESSIVENESS_PRESETS as PRESETS
+    from lib.faceqa.redundancy import _features_for, can_create_redundancy_edge
+
+    frontal = _record("frame_000001.png", yaw=0.0)
+    profile = _record("frame_000002.png", yaw=45.0)
+    fa, fb = _features_for(frontal), _features_for(profile)
+
+    eligible, reason = can_create_redundancy_edge(
+        features_a=fa,
+        features_b=fb,
+        # Above obvious_duplicate_threshold (0.10 for balanced) so the
+        # obvious-override clause does NOT fire — the bucket gate is what
+        # must block this edge.
+        distance=0.20,
+        compared=10,
+        temporal_confidence=1.0,
+        config=PRESETS["balanced"],
+    )
+    assert eligible is False
+    assert "yaw bucket mismatch" in reason
+
+
+def test_obvious_duplicate_overrides_bucket_mismatch() -> None:
+    """Obvious duplicates may bridge bucket mismatch when temporal
+    confidence is high (issue #204 §1 override clause)."""
+    from lib.faceqa.redundancy import _AGGRESSIVENESS_PRESETS as PRESETS
+    from lib.faceqa.redundancy import _features_for, can_create_redundancy_edge
+
+    frontal = _record("frame_000001.png", yaw=0.0, expression_bucket="neutral")
+    smile = _record("frame_000002.png", yaw=0.0, expression_bucket="smile")
+    fa, fb = _features_for(frontal), _features_for(smile)
+
+    config = PRESETS["balanced"]
+    eligible, reason = can_create_redundancy_edge(
+        features_a=fa,
+        features_b=fb,
+        distance=config.obvious_duplicate_threshold - 0.01,
+        compared=10,
+        temporal_confidence=1.0,
+        config=config,
+    )
+    assert eligible is True
+    assert "obvious duplicate" in reason
+
+
+def test_adjacent_yaw_buckets_require_stricter_distance() -> None:
+    """Adjacent yaw buckets (frontal vs right_slight) need stricter
+    distance than same-bucket pairs (issue #204 §2)."""
+    from lib.faceqa.redundancy import (
+        _ADJACENT_BUCKET_DISTANCE_SCALE,
+        _features_for,
+        can_create_redundancy_edge,
+    )
+    from lib.faceqa.redundancy import _AGGRESSIVENESS_PRESETS as PRESETS
+
+    frontal = _record("frame_000001.png", yaw=0.0)
+    slight = _record("frame_000002.png", yaw=20.0)
+    fa, fb = _features_for(frontal), _features_for(slight)
+
+    config = PRESETS["balanced"]
+    strict_limit = config.representation_distance_threshold * _ADJACENT_BUCKET_DISTANCE_SCALE
+    # Just above the strict-distance limit but below the same-bucket
+    # threshold: the pair must NOT be eligible.
+    just_too_far = strict_limit + 0.05
+    eligible, reason = can_create_redundancy_edge(
+        features_a=fa,
+        features_b=fb,
+        distance=just_too_far,
+        compared=10,
+        temporal_confidence=1.0,
+        config=config,
+    )
+    assert eligible is False
+    assert "adjacent yaw" in reason
+
+    # Inside the strict limit: eligible (subject to the temporal gate).
+    eligible_close, _ = can_create_redundancy_edge(
+        features_a=fa,
+        features_b=fb,
+        distance=strict_limit - 0.05,
+        compared=10,
+        temporal_confidence=1.0,
+        config=config,
+    )
+    assert eligible_close is True
+
+
+def test_transitive_chain_does_not_create_giant_component() -> None:
+    """A run of records sweeping ``frontal -> right_slight -> right_profile``
+    must NOT collapse into a single component once bucket mismatch gates
+    cut the chain at the first non-adjacent hop (issue #204 §2)."""
+    records = (
+        _near_identical_run(15, yaw=0.0, frame_start=1)
+        + _near_identical_run(15, yaw=22.0, frame_start=2000)
+        + _near_identical_run(15, yaw=45.0, frame_start=4000)
+    )
+
+    report = compute_redundancy(records, aggressiveness="balanced")
+
+    # At minimum three distinct multi-face clusters (one per yaw band).
+    multi_face = [r for r in report.records if r.representative and r.cluster_size > 1]
+    assert len(multi_face) >= 3
+    assert report.largest_cluster_size < len(records)
+
+
+def test_report_includes_cluster_health_fields() -> None:
+    """RedundancyReport surfaces the #204 cluster-health fields with
+    sensible defaults on a small balanced faceset."""
+    # Spread records across distinct pose buckets so the cluster
+    # topology has more than one multi-face cluster — keeps the
+    # giant-component warning naturally False on this small case
+    # without the warning needing to be silenced manually.
+    # Spread across FIVE distinct yaw buckets (3 records each = 15 total)
+    # so the largest cluster ratio stays below the ticket's 0.25 giant-
+    # component threshold (3 / 15 = 0.20).
+    records = (
+        _near_identical_run(3, yaw=0.0, frame_start=1)
+        + _near_identical_run(3, yaw=22.0, frame_start=2000)
+        + _near_identical_run(3, yaw=-22.0, frame_start=3000)
+        + _near_identical_run(3, yaw=45.0, frame_start=4000)
+        + _near_identical_run(3, yaw=-45.0, frame_start=5000)
+    )
+
+    report = compute_redundancy(records)
+
+    assert report.largest_cluster_size >= 1
+    assert 0.0 <= report.largest_cluster_ratio <= 1.0
+    assert report.giant_component_warning is False
+    # Diameter map populated even when no split happened.
+    assert report.component_diameter_max is not None
+    # Round-tripping through JSON includes the new fields.
+    payload = json.loads(report.to_json())
+    for field_name in (
+        "largest_cluster_size",
+        "largest_cluster_ratio",
+        "giant_component_warning",
+        "component_spread_p95",
+        "component_diameter_max",
+    ):
+        assert field_name in payload
+
+
+def test_per_member_diagnostics_populated() -> None:
+    """Each cluster member surfaces the #204 per-member diagnostics
+    (nearest_neighbor_distance, direct_to_representative,
+    component_diameter)."""
+    records = _near_identical_run(6, yaw=0.0)
+
+    report = compute_redundancy(records)
+    members = [r for r in report.records if not r.representative]
+
+    assert members, "expected non-representative members in clustered run"
+    for member in members:
+        assert member.nearest_neighbor_distance is not None
+        assert member.component_diameter is not None
+        assert isinstance(member.direct_to_representative, bool)
+
+
+def test_identity_outlier_still_blocked_by_edge_gate() -> None:
+    """Issue #199 guardrail remains intact under the new bucket gates —
+    an identity outlier never creates a graph edge regardless of bucket
+    state."""
+    from lib.faceqa.redundancy import _AGGRESSIVENESS_PRESETS as PRESETS
+    from lib.faceqa.redundancy import _features_for, can_create_redundancy_edge
+
+    a = _record("frame_000001.png", yaw=0.0)
+    outlier = _record(
+        "frame_000002.png",
+        yaw=0.0,
+        identity_quality_flag="outlier",
+    )
+    fa, fb = _features_for(a), _features_for(outlier)
+
+    eligible, reason = can_create_redundancy_edge(
+        features_a=fa,
+        features_b=fb,
+        distance=0.05,
+        compared=10,
+        temporal_confidence=1.0,
+        config=PRESETS["balanced"],
+    )
+    assert eligible is False
+    assert "identity outlier" in reason

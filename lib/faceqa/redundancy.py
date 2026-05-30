@@ -202,6 +202,23 @@ class RedundancyRecord:
     representative, the reason the edge passed eligibility (e.g. ``obvious
     duplicate``, ``redundant + safe temporal``). ``None`` for singleton
     clusters and representatives. See :func:`can_create_redundancy_edge`."""
+    # Issue #204 — per-member component diagnostics that distinguish
+    # direct redundancy from transitive-chain membership.
+    nearest_neighbor_distance: float | None = None
+    """Distance to the nearest member within the same (post-split)
+    component. ``0.0`` for singletons. Helps audit whether a member is
+    truly close to ANY other cluster member or only reachable through
+    a chain."""
+    direct_to_representative: bool = True
+    """``True`` when the member's pairwise distance to the cluster
+    representative is within ``representation_distance_threshold *
+    _MEMBER_TO_REP_SCALE``. ``False`` indicates the member sits in the
+    same component only via transitive redundancy chaining and should be
+    treated more conservatively."""
+    component_diameter: float | None = None
+    """Maximum pairwise distance among all members of the (post-split)
+    component. Surfaced so the user can spot sprawling clusters even
+    when the splitter chose not to break them up."""
 
     def to_dict(self) -> dict[str, T.Any]:
         return {
@@ -224,6 +241,9 @@ class RedundancyRecord:
             "has_identity": self.has_identity,
             "compared_metrics": self.compared_metrics,
             "edge_eligibility": self.edge_eligibility,
+            "nearest_neighbor_distance": self.nearest_neighbor_distance,
+            "direct_to_representative": self.direct_to_representative,
+            "component_diameter": self.component_diameter,
         }
 
 
@@ -259,6 +279,29 @@ class RedundancyReport:
     effective_coverage: dict[str, EffectiveCoverageDimension] = field(default_factory=dict)
     protected_buckets: list[str] = field(default_factory=list)
     records: list[RedundancyRecord] = field(default_factory=list)
+    # Issue #204 — cluster-health metrics for spotting giant-component
+    # pathologies before they hit the pruning policy.
+    largest_cluster_size: int = 0
+    """Member count of the biggest (post-split) cluster."""
+    largest_cluster_ratio: float = 0.0
+    """``largest_cluster_size / total_faces`` (0.0 when no faces)."""
+    giant_component_warning: bool = False
+    """``True`` when the cluster topology looks pathological per the
+    rules in :func:`_compute_cluster_health`:
+
+    * ``largest_cluster_ratio > 0.25``, OR
+    * ``largest_cluster_size > 1000``, OR
+    * ``multi_face_clusters <= 2 AND total_faces > 1000``.
+
+    Surfaces in the JSON output so callers can audit topology issues
+    without reading every per-record diagnostic."""
+    component_spread_p95: float | None = None
+    """95th-percentile per-member ``nearest_neighbor_distance`` across the
+    report; high values mean members are reaching far for their nearest
+    redundancy neighbour and the clusters are likely too sprawling."""
+    component_diameter_max: float | None = None
+    """Largest per-cluster diameter observed after splitting; capped by
+    the splitter's diameter limit when no cluster exceeded it."""
 
     def to_dict(self) -> dict[str, T.Any]:
         return {
@@ -274,6 +317,11 @@ class RedundancyReport:
             },
             "protected_buckets": self.protected_buckets,
             "records": [r.to_dict() for r in self.records],
+            "largest_cluster_size": self.largest_cluster_size,
+            "largest_cluster_ratio": self.largest_cluster_ratio,
+            "giant_component_warning": self.giant_component_warning,
+            "component_spread_p95": self.component_spread_p95,
+            "component_diameter_max": self.component_diameter_max,
         }
 
     def to_json(self, *, indent: int = 2) -> str:
@@ -706,6 +754,139 @@ _TEMPORAL_CONFIDENCE_FOR_REDUNDANT_EDGE: float = 0.8
 _TEMPORAL_CONFIDENCE_FOR_OBVIOUS_EDGE: float = 0.7
 
 
+# Ordered yaw / pitch bucket labels used by ``_bucket_compatibility`` to
+# distinguish ADJACENT bucket pairs (allowed at stricter distance) from
+# NON-ADJACENT pairs (blocked unless the pair is an obvious duplicate).
+# Issue #204: chains like ``frontal -> slight -> profile -> extreme``
+# previously collapsed into one component via transitive union; the
+# adjacency-aware gate cuts that chain at the first non-adjacent hop.
+_YAW_BUCKET_ORDER: tuple[str, ...] = (
+    "left_extreme",
+    "left_profile",
+    "left_slight",
+    "frontal",
+    "right_slight",
+    "right_profile",
+    "right_extreme",
+)
+_PITCH_BUCKET_ORDER: tuple[str, ...] = (
+    "down_extreme",
+    "down",
+    "neutral",
+    "up",
+    "up_extreme",
+)
+# Scale applied to ``representation_distance_threshold`` when adjacent
+# pose/pitch buckets are bridged — the pair must be ~40% closer than a
+# same-bucket pair to qualify.
+_ADJACENT_BUCKET_DISTANCE_SCALE: float = 0.6
+
+
+def _bucket_index(order: tuple[str, ...], bucket: str | None) -> int | None:
+    """Return the position of ``bucket`` in ``order``, or ``None`` when
+    the bucket is missing / unknown / outside the known sequence."""
+    if bucket is None or bucket == "unknown":
+        return None
+    try:
+        return order.index(bucket)
+    except ValueError:
+        return None
+
+
+def _bucket_compatibility(
+    features_a: RepresentationFeatures,
+    features_b: RepresentationFeatures,
+    *,
+    distance: float,
+    temporal_confidence: float,
+    config: AggressivenessConfig,
+) -> tuple[bool, str]:
+    """Return ``(compatible, reason)`` for the hard bucket constraints.
+
+    Issue #204 made these constraints first-class on the redundancy graph
+    so transitive chains across bucket boundaries can no longer silently
+    collapse into one giant component:
+
+    * Pose (yaw) bucket mismatch BLOCKS the edge by default; adjacent
+      buckets in :data:`_YAW_BUCKET_ORDER` may bridge only at stricter
+      distance (``threshold * _ADJACENT_BUCKET_DISTANCE_SCALE``).
+    * Pitch bucket mismatch uses the same adjacency rule.
+    * Expression bucket mismatch BLOCKS the edge (no adjacency notion).
+    * Lighting bucket mismatch BLOCKS the edge.
+    * Obvious duplicates (``distance <= obvious_duplicate_threshold`` AND
+      ``temporal_confidence >= obvious floor``) may OVERRIDE any bucket
+      mismatch — the post-cluster review path catches the bucket-skew on
+      the diagnostic side.
+    * Unknown buckets do NOT hard-block (we can't tell if they match) but
+      remain subject to the existing continuous-feature distance check.
+    """
+    obvious_override = (
+        distance <= config.obvious_duplicate_threshold
+        and temporal_confidence >= _TEMPORAL_CONFIDENCE_FOR_OBVIOUS_EDGE
+    )
+    strict_limit = config.representation_distance_threshold * _ADJACENT_BUCKET_DISTANCE_SCALE
+
+    yaw_a = _bucket_index(_YAW_BUCKET_ORDER, features_a.pose_bucket)
+    yaw_b = _bucket_index(_YAW_BUCKET_ORDER, features_b.pose_bucket)
+    if yaw_a is not None and yaw_b is not None and yaw_a != yaw_b:
+        gap = abs(yaw_a - yaw_b)
+        if gap == 1:
+            if not (distance <= strict_limit or obvious_override):
+                return False, (
+                    f"adjacent yaw buckets ({features_a.pose_bucket} vs "
+                    f"{features_b.pose_bucket}) require stricter distance "
+                    f"({distance:.2f} > {strict_limit:.2f})"
+                )
+        elif not obvious_override:
+            return False, (
+                f"yaw bucket mismatch ({features_a.pose_bucket} vs "
+                f"{features_b.pose_bucket}) blocks redundancy edge"
+            )
+
+    pitch_a = _bucket_index(_PITCH_BUCKET_ORDER, features_a.pitch_bucket)
+    pitch_b = _bucket_index(_PITCH_BUCKET_ORDER, features_b.pitch_bucket)
+    if pitch_a is not None and pitch_b is not None and pitch_a != pitch_b:
+        gap = abs(pitch_a - pitch_b)
+        if gap == 1:
+            if not (distance <= strict_limit or obvious_override):
+                return False, (
+                    f"adjacent pitch buckets ({features_a.pitch_bucket} vs "
+                    f"{features_b.pitch_bucket}) require stricter distance "
+                    f"({distance:.2f} > {strict_limit:.2f})"
+                )
+        elif not obvious_override:
+            return False, (
+                f"pitch bucket mismatch ({features_a.pitch_bucket} vs "
+                f"{features_b.pitch_bucket}) blocks redundancy edge"
+            )
+
+    exp_a = features_a.expression_bucket
+    exp_b = features_b.expression_bucket
+    if (
+        exp_a is not None
+        and exp_b is not None
+        and exp_a != "unknown"
+        and exp_b != "unknown"
+        and exp_a != exp_b
+        and not obvious_override
+    ):
+        return False, f"expression bucket mismatch ({exp_a} vs {exp_b}) blocks redundancy edge"
+
+    lit_a = features_a.lighting_bucket
+    lit_b = features_b.lighting_bucket
+    if (
+        lit_a is not None
+        and lit_b is not None
+        and lit_a != "unknown"
+        and lit_b != "unknown"
+        and lit_a != lit_b
+        and not obvious_override
+    ):
+        return False, f"lighting bucket mismatch ({lit_a} vs {lit_b}) blocks redundancy edge"
+
+    return True, ""
+
+
 def can_create_redundancy_edge(
     *,
     features_a: RepresentationFeatures,
@@ -760,6 +941,21 @@ def can_create_redundancy_edge(
             "high-confidence duplicates may cluster across missing identity"
         )
 
+    # Issue #204: hard bucket-compatibility gate. Pose / pitch / expression
+    # / lighting mismatches block normal redundancy edges; obvious
+    # duplicates may override only when temporal confidence is high
+    # (handled inside ``_bucket_compatibility``). Surfacing the bucket
+    # reason here keeps the downstream diagnostic explicit.
+    bucket_ok, bucket_reason = _bucket_compatibility(
+        features_a,
+        features_b,
+        distance=distance,
+        temporal_confidence=temporal_confidence,
+        config=config,
+    )
+    if not bucket_ok:
+        return False, bucket_reason
+
     if obvious:
         if temporal_confidence < _TEMPORAL_CONFIDENCE_FOR_OBVIOUS_EDGE:
             return False, (
@@ -792,6 +988,142 @@ def can_create_redundancy_edge(
 # ---------------------------------------------------------------------------
 
 
+# Issue #204 component-diameter rules. A cluster is "too sprawling" when
+# any pairwise distance inside it exceeds
+# ``representation_distance_threshold * _COMPONENT_DIAMETER_SCALE``; a
+# member is treated as "directly compatible with the representative" when
+# its distance to the rep is under
+# ``representation_distance_threshold * _MEMBER_TO_REP_SCALE``. Outside
+# that band the member is split into its own sub-component.
+_COMPONENT_DIAMETER_SCALE: float = 1.5
+_MEMBER_TO_REP_SCALE: float = 1.25
+# Only run the diameter pass on components above this size — pairs and
+# triples can't form chains long enough to exceed the diameter band.
+_COMPONENT_SPLIT_MIN_SIZE: int = 4
+
+
+def _split_high_diameter_components(
+    components: list[list[int]],
+    features: list[RepresentationFeatures],
+    ctx: _PairwiseContext,
+    config: AggressivenessConfig,
+) -> tuple[list[list[int]], dict[int, float], dict[int, float], dict[int, bool]]:
+    """Split components whose internal spread exceeds the diameter limit.
+
+    Returns ``(new_components, diameter_by_member, nearest_neighbor_by_member,
+    direct_to_rep_by_member)``. The diameter map is keyed by face index
+    and reports the max pairwise distance within that face's FINAL
+    component (after splitting); nearest_neighbor is the closest other
+    member within the final component; ``direct_to_rep`` flags whether
+    the member is within :data:`_MEMBER_TO_REP_SCALE` of the chosen
+    representative.
+
+    Greedy split policy (issue #204 §3):
+
+    * Compute pairwise distances inside each over-sized component.
+    * If the component diameter is under the limit, leave it intact.
+    * Otherwise seed a sub-cluster from the highest-quality member and
+      attach every member whose distance to the seed is within
+      ``threshold * _MEMBER_TO_REP_SCALE``. Repeat on the remainder
+      until every face has a sub-cluster.
+    """
+    diameter_by_member: dict[int, float] = {}
+    nearest_neighbor_by_member: dict[int, float] = {}
+    direct_to_rep_by_member: dict[int, bool] = {}
+    new_components: list[list[int]] = []
+
+    diameter_limit = config.representation_distance_threshold * _COMPONENT_DIAMETER_SCALE
+    rep_limit = config.representation_distance_threshold * _MEMBER_TO_REP_SCALE
+
+    def _pairwise_distance_matrix(members: list[int]) -> dict[tuple[int, int], float]:
+        """Return the symmetric distance map keyed by (min, max) member pairs."""
+        distances: dict[tuple[int, int], float] = {}
+        for i_pos, i in enumerate(members):
+            for j in members[i_pos + 1 :]:
+                dist, _compared = _distance_with_ctx(ctx, i, j)
+                key = (i, j) if i < j else (j, i)
+                distances[key] = dist
+        return distances
+
+    def _diameter(members: list[int], distances: dict[tuple[int, int], float]) -> float:
+        return max(distances.values(), default=0.0) if len(members) > 1 else 0.0
+
+    def _annotate(
+        members: list[int],
+        distances: dict[tuple[int, int], float],
+        diameter: float,
+    ) -> int:
+        """Choose representative + populate per-member diagnostics; returns rep."""
+        rep = max(members, key=lambda idx: (features[idx].quality_score, -idx))
+        for member in members:
+            diameter_by_member[member] = diameter
+            if len(members) == 1:
+                nearest_neighbor_by_member[member] = 0.0
+                direct_to_rep_by_member[member] = True
+                continue
+            neighbours = [
+                distances[(member, other) if member < other else (other, member)]
+                for other in members
+                if other != member
+            ]
+            nearest_neighbor_by_member[member] = min(neighbours) if neighbours else math.inf
+            if member == rep:
+                direct_to_rep_by_member[member] = True
+            else:
+                key = (member, rep) if member < rep else (rep, member)
+                direct_to_rep_by_member[member] = distances.get(key, math.inf) <= rep_limit
+        return rep
+
+    for members in components:
+        if len(members) < _COMPONENT_SPLIT_MIN_SIZE:
+            distances = _pairwise_distance_matrix(members) if len(members) > 1 else {}
+            diameter = _diameter(members, distances)
+            _annotate(members, distances, diameter)
+            new_components.append(members)
+            continue
+
+        distances = _pairwise_distance_matrix(members)
+        diameter = _diameter(members, distances)
+        if diameter <= diameter_limit:
+            _annotate(members, distances, diameter)
+            new_components.append(members)
+            continue
+
+        # Greedy split: seed from highest-quality member, attach members
+        # within ``rep_limit`` distance, recurse on the remainder.
+        remaining = set(members)
+        while remaining:
+            seed = max(
+                remaining,
+                key=lambda idx: (features[idx].quality_score, -idx),
+            )
+            sub = [seed]
+            remaining.discard(seed)
+            attached = []
+            for other in list(remaining):
+                key = (seed, other) if seed < other else (other, seed)
+                if distances.get(key, math.inf) <= rep_limit:
+                    sub.append(other)
+                    attached.append(other)
+            for other in attached:
+                remaining.discard(other)
+            sub.sort()
+            sub_distances = {
+                key: dist for key, dist in distances.items() if key[0] in sub and key[1] in sub
+            }
+            sub_diameter = _diameter(sub, sub_distances)
+            _annotate(sub, sub_distances, sub_diameter)
+            new_components.append(sub)
+
+    new_components.sort(key=lambda c: c[0])
+    return (
+        new_components,
+        diameter_by_member,
+        nearest_neighbor_by_member,
+        direct_to_rep_by_member,
+    )
+
+
 def _build_redundancy_clusters(
     features: list[RepresentationFeatures],
     config: AggressivenessConfig,
@@ -801,6 +1133,7 @@ def _build_redundancy_clusters(
     list[list[int]],
     dict[tuple[int, int], tuple[float, int, float, int | None]],
     dict[tuple[int, int], tuple[bool, str]],
+    _PairwiseContext,
 ]:
     """Union-find clusters by redundancy edges plus per-pair edge data.
 
@@ -861,7 +1194,7 @@ def _build_redundancy_clusters(
         root = find(idx)
         clusters_by_root.setdefault(root, []).append(idx)
     components = sorted(clusters_by_root.values(), key=lambda c: c[0])
-    return components, edges, edge_reasons
+    return components, edges, edge_reasons, ctx
 
 
 # ---------------------------------------------------------------------------
@@ -1128,6 +1461,77 @@ def _protection_budget_for_cluster(
 # ---------------------------------------------------------------------------
 
 
+_GIANT_COMPONENT_RATIO_LIMIT: float = 0.25
+_GIANT_COMPONENT_SIZE_LIMIT: int = 1000
+_SPARSE_MULTI_CLUSTER_LIMIT: int = 2
+_LARGE_FACESET_THRESHOLD: int = 1000
+
+
+def _percentile(values: list[float], pct: float) -> float | None:
+    """Plain numpy-free percentile so the helper stays usable on tiny lists."""
+    if not values:
+        return None
+    if len(values) == 1:
+        return values[0]
+    ordered = sorted(values)
+    rank = (pct / 100.0) * (len(ordered) - 1)
+    lower = int(rank)
+    upper = min(lower + 1, len(ordered) - 1)
+    fraction = rank - lower
+    return ordered[lower] + (ordered[upper] - ordered[lower]) * fraction
+
+
+def _compute_cluster_health(
+    components: list[list[int]],
+    total_faces: int,
+    multi_face_clusters: int,
+    diameter_by_member: dict[int, float],
+    nearest_neighbor_by_member: dict[int, float],
+) -> tuple[int, float, bool, float | None, float | None]:
+    """Return cluster-health metrics for the report header.
+
+    Returns ``(largest_cluster_size, largest_cluster_ratio,
+    giant_component_warning, component_spread_p95,
+    component_diameter_max)``. Issue #204: a giant component is a sign
+    that the topology over-merged and the prune policy should be
+    audited even when the per-face decisions look conservative.
+    """
+    if not components or total_faces == 0:
+        return 0, 0.0, False, None, None
+
+    largest = max(len(c) for c in components)
+    ratio = largest / total_faces
+    sparse_clusters_on_big_faceset = (
+        multi_face_clusters <= _SPARSE_MULTI_CLUSTER_LIMIT
+        and total_faces > _LARGE_FACESET_THRESHOLD
+    )
+    warning = (
+        ratio > _GIANT_COMPONENT_RATIO_LIMIT
+        or largest > _GIANT_COMPONENT_SIZE_LIMIT
+        or sparse_clusters_on_big_faceset
+    )
+    # Spread is computed over non-singleton clusters so singletons (which
+    # contribute 0.0 nearest-neighbour distance trivially) don't drag the
+    # p95 down.
+    non_singleton_spreads = [
+        nearest_neighbor_by_member[member]
+        for component in components
+        if len(component) > 1
+        for member in component
+        if member in nearest_neighbor_by_member
+        and math.isfinite(nearest_neighbor_by_member[member])
+    ]
+    spread_p95 = _percentile(non_singleton_spreads, 95.0)
+    diameter_values = [
+        diameter_by_member[member]
+        for component in components
+        for member in component
+        if member in diameter_by_member and math.isfinite(diameter_by_member[member])
+    ]
+    diameter_max = max(diameter_values, default=None)
+    return largest, round(ratio, 4), warning, spread_p95, diameter_max
+
+
 def compute_redundancy(
     records: T.Sequence[FaceQARecord],
     *,
@@ -1154,9 +1558,21 @@ def compute_redundancy(
         return RedundancyReport(aggressiveness=aggressiveness)
 
     features = [_features_for(record) for record in record_list]
-    components, edges, edge_reasons = _build_redundancy_clusters(
+    components, edges, edge_reasons, ctx = _build_redundancy_clusters(
         features, config, progress_callback=progress_callback
     )
+    # Issue #204: split any component whose internal spread exceeds the
+    # diameter limit so transitive chains across bucket boundaries can't
+    # masquerade as one giant cluster. ``_split_high_diameter_components``
+    # also populates per-member diagnostics (nearest-neighbor distance,
+    # direct-to-representative flag, component diameter) that flow into
+    # each ``RedundancyRecord`` below.
+    (
+        components,
+        diameter_by_member,
+        nearest_neighbor_by_member,
+        direct_to_rep_by_member,
+    ) = _split_high_diameter_components(components, features, ctx, config)
 
     def _edge_reason_for(member_index: int, rep_index: int) -> str | None:
         """Return the eligibility reason for the (rep_index, member_index) edge.
@@ -1212,6 +1628,7 @@ def compute_redundancy(
         else:
             rep_recommendation = KEEP
             rep_reason = "unique representation (singleton cluster)"
+        cluster_diameter = diameter_by_member.get(rep_index)
         output_records.append(
             RedundancyRecord(
                 frame=rep_record.frame,
@@ -1231,6 +1648,9 @@ def compute_redundancy(
                 reason=rep_reason,
                 identity_outlier=rep_features.identity_outlier,
                 has_identity=rep_features.has_identity,
+                nearest_neighbor_distance=nearest_neighbor_by_member.get(rep_index, 0.0),
+                direct_to_representative=True,
+                component_diameter=cluster_diameter,
             )
         )
         # Allocate a small protection budget for fragile-bucket clusters and
@@ -1291,6 +1711,10 @@ def compute_redundancy(
                     # own to describe.
                     compared_metrics=compared,
                     edge_eligibility=_edge_reason_for(member, rep_index),
+                    # Issue #204 — per-member component diagnostics.
+                    nearest_neighbor_distance=nearest_neighbor_by_member.get(member),
+                    direct_to_representative=direct_to_rep_by_member.get(member, False),
+                    component_diameter=diameter_by_member.get(member),
                 )
             )
 
@@ -1298,6 +1722,19 @@ def compute_redundancy(
     review = sum(1 for r in output_records if r.recommendation == REVIEW)
     prune = sum(1 for r in output_records if r.recommendation == PRUNE)
     multi = sum(1 for c in components if len(c) > 1)
+    (
+        largest_cluster_size,
+        largest_cluster_ratio,
+        giant_component_warning,
+        component_spread_p95,
+        component_diameter_max,
+    ) = _compute_cluster_health(
+        components,
+        n,
+        multi,
+        diameter_by_member,
+        nearest_neighbor_by_member,
+    )
     return RedundancyReport(
         aggressiveness=aggressiveness,
         total_faces=n,
@@ -1308,6 +1745,11 @@ def compute_redundancy(
         prune_candidate_count=prune,
         effective_coverage=effective,
         protected_buckets=sorted(f"{dim}:{bucket}" for dim, bucket in protected),
+        largest_cluster_size=largest_cluster_size,
+        largest_cluster_ratio=largest_cluster_ratio,
+        giant_component_warning=giant_component_warning,
+        component_spread_p95=component_spread_p95,
+        component_diameter_max=component_diameter_max,
         records=output_records,
     )
 
