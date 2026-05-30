@@ -424,7 +424,7 @@ def _make_insightface_loader(
                 recognition = _load_recognition(providers)
                 recognition.prepare(ctx_id=ctx_id)
 
-        logger.info(
+        logger.debug(
             "InsightFace %s recognition providers: %s",
             model_type,
             recognition.session.get_providers(),

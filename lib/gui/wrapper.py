@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import signal
 import sys
 import typing as T
@@ -33,6 +34,30 @@ if os.name == "nt":
     import win32console  # pylint:disable=import-error
 
 logger = logging.getLogger(__name__)
+
+_ANSI_ESCAPE_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+_CONTROL_RE = re.compile(r"[\x00-\x1F\x7F]+")
+_UNCONSUMED_TQDM_RE = re.compile(
+    r"^.+?:\s+\d+(?:\.\d+)?\w+\s+\[\d+:\d+(?::\d+)?,\s+[^\]]+/s\]\s*$"
+)
+
+
+def _clean_console_control(output: str) -> str:
+    """Remove terminal control characters before classifying process output."""
+    cleaned = _ANSI_ESCAPE_RE.sub("", output)
+    return _CONTROL_RE.sub("", cleaned)
+
+
+def _has_console_content(output: str) -> bool:
+    """Return whether subprocess output contains printable console content."""
+    return bool(_clean_console_control(output).strip())
+
+
+def _is_unconsumed_tqdm_line(output: str) -> bool:
+    """Return whether output is a tqdm status line not consumed by the parser."""
+    cleaned = _ANSI_ESCAPE_RE.sub("", output)
+    cleaned = cleaned.replace("\r", "").replace("\n", "").strip()
+    return bool(_UNCONSUMED_TQDM_RE.match(cleaned))
 
 
 class ProcessWrapper:
@@ -279,6 +304,8 @@ class FaceswapControl:
         self._session_info = wrapper._training_session_location
         self._config = get_config()
         self._statusbar = self._config.statusbar
+        self._last_stdout_was_progress = False
+        self._last_stderr_was_progress = False
         self._command: str | None = None
         self._process: Popen | None = None
         self._thread: LongRunningTask | None = None
@@ -329,9 +356,16 @@ class FaceswapControl:
         """
         action, *args = event
         if action == "stdout":
+            # Preserve intentional blank stdout lines. ``print`` emits the
+            # message and newline separately after Tk redirects sys.stdout, so
+            # final-sink filtering would collapse console formatting.
             print(args[0])
         elif action == "stderr":
-            print(args[0], file=sys.stderr)
+            # Stderr is reserved for real error/status text. Blank/control-only
+            # stderr has already been filtered in the pipe reader, but keep a
+            # final guard so queued cleanup artifacts cannot reach the console.
+            if _has_console_content(args[0]):
+                print(args[0], file=sys.stderr)
         elif action == "progress_update":
             self._statusbar.progress_update(args[0], args[1], args[2])
         elif action == "status_mode":
@@ -431,11 +465,26 @@ class FaceswapControl:
             if output == "" and self._process.poll() is not None:
                 break
 
-            if output and self._process_progress_stdout(output):
+            if not output:
                 continue
 
-            if output.strip():
-                self._queue_ui_update("stdout", output.rstrip())
+            if self._process_progress_stdout(output):
+                self._last_stdout_was_progress = True
+                continue
+
+            if _is_unconsumed_tqdm_line(output):
+                self._last_stdout_was_progress = True
+                continue
+
+            if not _has_console_content(output):
+                if self._last_stdout_was_progress:
+                    continue
+                # Preserve intentional blank stdout from child ``print()``.
+                self._queue_ui_update("stdout", output.rstrip("\r\n"))
+                continue
+
+            self._last_stdout_was_progress = False
+            self._queue_ui_update("stdout", output.rstrip("\r\n"))
 
         returncode = self._process.poll()
         assert returncode is not None
@@ -444,8 +493,7 @@ class FaceswapControl:
         logger.debug("Terminated stdout reader. returncode: %s", returncode)
 
     def _read_stderr(self) -> None:
-        """Read stdout from the subprocess. If training, pass the loss
-        values to Queue"""
+        """Read stderr from the subprocess."""
         logger.debug("Opening stderr reader")
         assert self._process is not None
         while True:
@@ -457,12 +505,29 @@ class FaceswapControl:
                 if str(err).lower().startswith("i/o operation on closed file"):
                     break
                 raise
+
             if output == "" and self._process.poll() is not None:
                 break
-            if output:
-                if self._runtime.process_stderr(output).consumed:
-                    continue
-                self._queue_ui_update("stderr", output.strip())
+
+            if not output:
+                continue
+
+            if self._runtime.process_stderr(output).consumed:
+                self._last_stderr_was_progress = True
+                continue
+
+            if _is_unconsumed_tqdm_line(output):
+                self._last_stderr_was_progress = True
+                continue
+
+            if not _has_console_content(output):
+                # Stderr blank/control-only output is almost always terminal
+                # drawing noise (for example tqdm leave=False cleanup), so do
+                # not surface it in the Tk console.
+                continue
+
+            self._last_stderr_was_progress = False
+            self._queue_ui_update("stderr", output.strip())
         logger.debug("Terminated stderr reader")
 
     def _thread_stdout(self) -> None:

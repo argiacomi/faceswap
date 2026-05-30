@@ -56,7 +56,13 @@ EXTERNAL_LOGGER_POLICY: dict[str, dict[str, T.Any]] = {
     "matplotlib": {"lower_info_to_debug": True, "max_stream_level": "WARNING"},
     "matplotlib.font_manager": {"lower_info_to_debug": True},
     # libav (via PyAV) emits per-frame INFO that drowns extract/convert output.
-    "libav": {"lower_info_to_debug": True, "max_stream_level": "WARNING"},
+    "libav": {
+        "lower_info_to_debug": True,
+        "max_stream_level": "WARNING",
+        "suppress_stream_patterns": (
+            ("libav.swscaler", None, "No accelerated colorspace conversion found from"),
+        ),
+    },
     # Pillow / numexpr boilerplate has no console value. Both downgrades
     # (drop INFO) and the WARNING ceiling are needed: lowering alone leaves
     # noisy WARNING-tier debug intact, and capping alone still lets INFO
@@ -132,7 +138,7 @@ class _StreamPatternSuppressionFilter(logging.Filter):
 
     def filter(self, record: logging.LogRecord) -> bool:
         for name, funcname, substring in self._patterns:
-            if record.name != name:
+            if record.name != name and not record.name.startswith(name + "."):
                 continue
             if funcname is not None and record.funcName != funcname:
                 continue

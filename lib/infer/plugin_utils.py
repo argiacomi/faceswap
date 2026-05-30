@@ -276,7 +276,7 @@ def compile_models(
             )
             return
         if policy.requested != policy.effective:
-            logger.warning(
+            logger.info(
                 "[%s] Compile mode '%s' downgraded to '%s' on backend '%s'. %s",
                 plugin.name,
                 policy.requested,
@@ -285,7 +285,7 @@ def compile_models(
                 policy.reason,
             )
         elif policy.experimental:
-            logger.warning(
+            logger.debug(
                 "[%s] Compile mode '%s' on backend '%s' is experimental. %s",
                 plugin.name,
                 policy.effective,

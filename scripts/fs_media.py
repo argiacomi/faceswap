@@ -36,6 +36,7 @@ def finalize(images_found: int, num_faces_detected: int, verify_output: bool) ->
     verify_output
         ``True`` if multiple faces were detected in frames otherwise ``False``.
     """
+    print()
     logger.info("-------------------------")
     logger.info("Images found:        %s", images_found)
     logger.info("Faces detected:      %s", num_faces_detected)
@@ -45,6 +46,7 @@ def finalize(images_found: int, num_faces_detected: int, verify_output: bool) ->
             "Double check your results."
         )
     logger.info("-------------------------")
+    print()
 
 
 class Alignments(AlignmentsBase):
