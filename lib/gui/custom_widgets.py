@@ -604,6 +604,9 @@ class Tooltip:  # pylint:disable=too-few-public-methods
         The time in milliseconds to wait before showing the tool-tip. Default: 400
     wrap_length: int, optional
         The text length for each line before wrapping. Default: 250
+    max_lifetime: int, optional
+        Fail-safe maximum time in milliseconds that a tool-tip may remain visible before it is
+        force-hidden, even if Tk drops the expected leave/destroy events. Default: 10000
 
     Example
     -------
@@ -626,19 +629,26 @@ class Tooltip:  # pylint:disable=too-few-public-methods
         text_variable=None,
         wait_time=400,
         wrap_length=250,
+        max_lifetime=10000,
     ):
 
         self._waittime = wait_time  # in milliseconds, originally 500
+        self._max_lifetime = max_lifetime  # in milliseconds, fail-safe auto-hide
         self.wrap_length = wrap_length  # in pixels, originally 180
         self._widget = widget
         self._text = text
         self._text_variable = text_variable
-        self._widget.bind("<Enter>", self._on_enter)
-        self._widget.bind("<Leave>", self._on_leave)
-        self._widget.bind("<ButtonPress>", self._on_leave)
+        # Use additive bindings so that the tool-tip never overwrites bindings owned by the
+        # widget itself, and add lifecycle events so the tool-tip cannot outlive its source.
+        self._widget.bind("<Enter>", self._on_enter, add="+")
+        self._widget.bind("<Leave>", self._on_leave, add="+")
+        self._widget.bind("<ButtonPress>", self._on_leave, add="+")
+        self._widget.bind("<Destroy>", self._on_destroy, add="+")
+        self._widget.bind("<Unmap>", self._on_leave, add="+")
         self._theme = get_config().user_theme["tooltip"]
         self._pad = pad
         self._ident = None
+        self._lifetime_ident = None
         self._topwidget = None
 
     def _on_enter(self, event=None):  # pylint:disable=unused-argument
@@ -650,20 +660,46 @@ class Tooltip:  # pylint:disable=too-few-public-methods
         self._unschedule()
         self._hide()
 
+    def _on_destroy(self, event=None):
+        """Clean up when the source widget itself is destroyed.
+
+        Child widget destroy events are ignored so that the tool-tip is only torn down when its
+        own source widget is going away.
+        """
+        if event is not None and event.widget is not self._widget:
+            return
+        self._unschedule()
+        self._hide()
+
     def _schedule(self):
         """Show the tooltip after wait period"""
         self._unschedule()
-        self._ident = self._widget.after(self._waittime, self._show)
+        with contextlib.suppress(TclError):
+            self._ident = self._widget.after(self._waittime, self._show)
 
     def _unschedule(self):
-        """Hide the tooltip"""
+        """Cancel any pending show/auto-hide callbacks, suppressing errors from stale callback
+        ids or already-destroyed widgets."""
         id_ = self._ident
         self._ident = None
         if id_:
-            self._widget.after_cancel(id_)
+            with contextlib.suppress(TclError):
+                self._widget.after_cancel(id_)
+        lifetime_id = self._lifetime_ident
+        self._lifetime_ident = None
+        if lifetime_id:
+            with contextlib.suppress(TclError):
+                self._widget.after_cancel(lifetime_id)
 
     def _show(self):
         """Show the tooltip"""
+        # Clear the scheduled id and destroy any existing tool-tip first so that repeated calls
+        # to ``_show`` cannot orphan a previous ``Toplevel``.
+        self._ident = None
+        self._hide()
+        with contextlib.suppress(TclError):
+            if not self._widget.winfo_exists() or not self._widget.winfo_ismapped():
+                return
 
         def tip_pos_calculator(
             widget,
@@ -757,12 +793,26 @@ class Tooltip:  # pylint:disable=too-few-public-methods
 
         self._topwidget.wm_geometry(f"+{xpos}+{ypos}")
 
+        # Tool-tip-local escape paths so that interacting with the tool-tip window itself, or
+        # pressing escape, will always tear it down.
+        self._topwidget.bind("<Leave>", self._on_leave, add="+")
+        self._topwidget.bind("<ButtonPress>", self._on_leave, add="+")
+        self._topwidget.bind("<Escape>", self._on_leave, add="+")
+
+        # Fail-safe: never let a tool-tip remain visible forever, even if Tk drops every expected
+        # leave/unmap/destroy event for the source widget.
+        with contextlib.suppress(TclError):
+            self._lifetime_ident = self._widget.after(self._max_lifetime, self._on_leave)
+
     def _hide(self):
-        """Hide the tooltip"""
+        """Hide the tooltip, always clearing the tracked window and suppressing errors from a
+        window Tk has already destroyed."""
         topwidget = self._topwidget
-        if topwidget:
-            topwidget.destroy()
         self._topwidget = None
+        if topwidget is not None:
+            with contextlib.suppress(TclError):
+                if topwidget.winfo_exists():
+                    topwidget.destroy()
 
 
 class MultiOption(ttk.Checkbutton):  # pylint:disable=too-many-ancestors
