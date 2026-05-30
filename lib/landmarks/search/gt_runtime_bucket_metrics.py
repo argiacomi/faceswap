@@ -36,7 +36,10 @@ import numpy as np
 # Canonical single-model candidate names. The "best_single" winner per
 # bucket is computed restricted to this set so the report can tell the
 # user whether an ensemble actually beats the best individual model on
-# that production slice.
+# that production slice. Direct callers may pass a custom set; when they
+# do not, the aggregator infers single-model names from the candidate
+# table so in-process pipeline runs with custom model sets are not
+# silently restricted to these four defaults.
 SINGLE_MODEL_CANDIDATES: frozenset[str] = frozenset({"fan", "hrnet", "spiga", "orformer"})
 
 # Stable column order for the CSV writer: one row per (bucket, candidate).
@@ -54,6 +57,16 @@ GT_RUNTIME_BUCKET_CSV_COLUMNS: tuple[str, ...] = (
 
 # Default tie-break order for ``best_candidate`` / ``best_single_candidate``.
 _TIE_BREAK_FIELDS: tuple[str, ...] = ("mean_nme", "p90_nme", "failure_rate")
+
+_TRUE_STRINGS: frozenset[str] = frozenset({"1", "true", "t", "yes", "y"})
+_FALSE_STRINGS: frozenset[str] = frozenset({"0", "false", "f", "no", "n", ""})
+_ENSEMBLE_CANDIDATE_TOKENS: tuple[str, ...] = (
+    "ensemble",
+    "mean",
+    "median",
+    "weighted",
+    "downweight",
+)
 
 
 @dataclass(frozen=True)
@@ -130,6 +143,57 @@ def _opt_float(value: float | None) -> float | None:
     return f if math.isfinite(f) else None
 
 
+def _parse_bool(value: T.Any) -> bool:
+    """Parse bool-like CSV/direct-call values consistently.
+
+    Candidate-table CSVs round-trip booleans as strings, while direct
+    callers often pass native ``bool`` values. ``bool("0")`` and
+    ``bool("False")`` are both ``True`` in Python, so normalize explicitly
+    before aggregating failure rates.
+    """
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    if isinstance(value, (int, float)):
+        return bool(value)
+
+    text = str(value).strip().lower()
+    if text in _TRUE_STRINGS:
+        return True
+    if text in _FALSE_STRINGS:
+        return False
+    return False
+
+
+def _candidate_looks_like_single_model(candidate: str) -> bool:
+    """Heuristic fallback for custom single-model candidate names."""
+    lowered = candidate.strip().lower()
+    if not lowered:
+        return False
+    return not any(token in lowered for token in _ENSEMBLE_CANDIDATE_TOKENS)
+
+
+def _single_model_candidate_set(
+    configured: Iterable[str] | None,
+    candidates: Iterable[str],
+) -> frozenset[str]:
+    """Return the single-model set for best-single selection.
+
+    Explicit CLI input wins. When omitted, infer from the candidate table
+    so embedded pipeline runs with ``--models custom_a,custom_b`` do not
+    accidentally restrict the best-single calculation to the hard-coded
+    defaults.
+    """
+    if configured is not None:
+        return frozenset(str(candidate) for candidate in configured)
+
+    inferred = frozenset(
+        candidate for candidate in candidates if _candidate_looks_like_single_model(candidate)
+    )
+    return inferred or SINGLE_MODEL_CANDIDATES
+
+
 def _aggregate_one_candidate(
     nmes: list[float],
     failures: list[bool],
@@ -180,7 +244,7 @@ def aggregate_runtime_bucket_metrics(
     rows: Sequence[Mapping[str, T.Any]],
     *,
     selected_candidate: str | None = None,
-    single_model_candidates: Iterable[str] = SINGLE_MODEL_CANDIDATES,
+    single_model_candidates: Iterable[str] | None = None,
 ) -> dict[str, RuntimeBucketMetrics]:
     """Aggregate candidate-table rows into per-runtime-bucket metrics.
 
@@ -203,7 +267,7 @@ def aggregate_runtime_bucket_metrics(
             continue
         if not math.isfinite(nme_value):
             continue
-        failure = bool(row.get("failure"))
+        failure = _parse_bool(row.get("failure"))
         sample_id = str(row.get("sample_id") or "")
 
         bucket_entry = grouped.setdefault(bucket, {})
@@ -213,7 +277,6 @@ def aggregate_runtime_bucket_metrics(
         if sample_id:
             samples.add(sample_id)
 
-    single_set = frozenset(single_model_candidates)
     result: dict[str, RuntimeBucketMetrics] = {}
     for bucket in sorted(grouped.keys(), key=lambda b: (b == "unknown", b)):
         per_candidate_aggregates: dict[str, CandidateBucketMetrics] = {}
@@ -229,6 +292,10 @@ def aggregate_runtime_bucket_metrics(
             )
             bucket_sample_ids.update(samples)
 
+        single_set = _single_model_candidate_set(
+            single_model_candidates,
+            per_candidate_aggregates.keys(),
+        )
         best = _select_best(per_candidate_aggregates)
         best_single = _select_best(per_candidate_aggregates, restrict_to=single_set)
         sel = (
@@ -351,6 +418,6 @@ def load_candidate_table_csv(path: Path) -> list[dict[str, T.Any]]:
                 with contextlib.suppress(ValueError):
                     row["nme"] = float(row["nme"])
             if "failure" in row:
-                row["failure"] = row.get("failure") in {"1", "True", "true", "TRUE"}
+                row["failure"] = _parse_bool(row.get("failure"))
             rows.append(row)
     return rows

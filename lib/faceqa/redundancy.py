@@ -1363,9 +1363,15 @@ def _build_redundancy_clusters(
     ctx = _build_pairwise_context(features)
     frame_indices = [feat.frame_index for feat in features]
 
-    # Issue #199: edges carry per-pair distance/compared/temporal data PLUS
-    # the eligibility reason so the post-cluster decision layer can
-    # surface why a candidate was (or wasn't) folded into the graph.
+    # Issue #199: eligible edges carry per-pair distance/compared/temporal
+    # data PLUS the eligibility reason so the post-cluster decision layer can
+    # surface why a candidate was folded into the graph.
+    #
+    # Issue #204 follow-up: do NOT materialise diagnostics for every rejected
+    # pair. Large facesets still require the unavoidable O(N^2) comparison
+    # pass to discover eligible redundancy edges, but keeping only eligible
+    # edges prevents the worst-case O(N^2) memory blow-up before the later
+    # oversize-component cap can run.
     edges: dict[tuple[int, int], tuple[float, int, float, int | None]] = {}
     edge_reasons: dict[tuple[int, int], tuple[bool, str]] = {}
     for i in range(n):
@@ -1373,7 +1379,6 @@ def _build_redundancy_clusters(
         for j in range(i + 1, n):
             distance, compared = _distance_with_ctx(ctx, i, j)
             t_conf, frame_distance = _temporal_confidence(fi, frame_indices[j], config)
-            edges[(i, j)] = (distance, compared, t_conf, frame_distance)
             eligible, reason = can_create_redundancy_edge(
                 features_a=features[i],
                 features_b=features[j],
@@ -1382,8 +1387,9 @@ def _build_redundancy_clusters(
                 temporal_confidence=t_conf,
                 config=config,
             )
-            edge_reasons[(i, j)] = (eligible, reason)
             if eligible:
+                edges[(i, j)] = (distance, compared, t_conf, frame_distance)
+                edge_reasons[(i, j)] = (True, reason)
                 union(i, j)
             if progress_callback is not None:
                 progress_callback(1)
@@ -1795,11 +1801,10 @@ def compute_redundancy(
     def _edge_reason_for(member_index: int | None, rep_index: int | None) -> str | None:
         """Return the eligibility reason for the (rep_index, member_index) edge.
 
-        ``edge_reasons`` is keyed off ascending index pairs ``(i, j)``;
-        normalise the lookup here so the caller doesn't care about
-        ordering. Returns ``None`` for singleton clusters (no edge),
-        when either index is missing, or when the pair never produced
-        an eligible edge in the original graph.
+        ``edge_reasons`` is keyed off ascending index pairs ``(i, j)`` and
+        now stores eligible graph edges only. Missing entries therefore mean
+        singleton clusters, absent indices, or pairs that failed eligibility
+        during the streaming union-find pass.
         """
         if member_index is None or rep_index is None or member_index == rep_index:
             return None
@@ -1809,6 +1814,32 @@ def compute_redundancy(
             return None
         eligible, reason = entry
         return reason if eligible else None
+
+    def _pair_diagnostics_for(
+        member_index: int,
+        rep_index: int,
+    ) -> tuple[float, int, float, int | None]:
+        """Return pair diagnostics, recomputing non-eligible pairs on demand.
+
+        The clustering pass keeps only eligible edges to avoid O(N^2)
+        memory. Non-representative records still need their direct
+        member-to-representative distance and temporal confidence for the
+        recommendation layer, so calculate that one pair lazily when the
+        edge was not cached.
+        """
+        if member_index == rep_index:
+            return 0.0, len(_FEATURE_ATTRS), 1.0, 0
+        key = (rep_index, member_index) if rep_index < member_index else (member_index, rep_index)
+        cached = edges.get(key)
+        if cached is not None:
+            return cached
+        distance, compared = _distance_with_ctx(ctx, member_index, rep_index)
+        t_conf, frame_distance = _temporal_confidence(
+            features[member_index].frame_index,
+            features[rep_index].frame_index,
+            config,
+        )
+        return distance, compared, t_conf, frame_distance
 
     def _neighbor_frame_for(records: list[FaceQARecord], neighbor_idx: int | None) -> str | None:
         if neighbor_idx is None:
@@ -1915,8 +1946,7 @@ def compute_redundancy(
             member_features = features[member]
             member_record = record_list[member]
             buckets = _bucket_keys_for(member_record)
-            edge_key = (min(member, rep_index), max(member, rep_index))
-            distance, compared, t_conf, t_dist = edges.get(edge_key, (math.inf, 0, 0.7, None))
+            distance, compared, t_conf, t_dist = _pair_diagnostics_for(member, rep_index)
             recommendation, reason, budget = _decide_single_member(
                 member_features=member_features,
                 distance=distance,

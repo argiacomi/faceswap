@@ -1660,10 +1660,14 @@ def _metric_summary(records: list[FaceQARecord]) -> dict[str, dict[str, float | 
     ``_summarize`` allocation per metric; the single-pass form below
     keeps the total walks linear in ``len(records)``.
     """
-    buffers: dict[str, list[float | None]] = {field: [] for field in _METRIC_SUMMARY_FIELDS}
+    buffers: dict[str, list[float | None]] = {
+        metric_field: [] for metric_field in _METRIC_SUMMARY_FIELDS
+    }
+
     for record in records:
-        for field in _METRIC_SUMMARY_FIELDS:
-            buffers[field].append(getattr(record, field))
+        for metric_field in _METRIC_SUMMARY_FIELDS:
+            buffers[metric_field].append(getattr(record, metric_field))
+
     return {name: _summarize(values) for name, values in buffers.items()}
 
 
