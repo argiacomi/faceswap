@@ -32,6 +32,7 @@ from lib.landmarks.ensemble.scorer_training import (
     TRAINING_METRICS_JSON,
     TRAINING_ROWS_CSV,
     train_runtime_resolver_scorer,
+    train_runtime_resolver_scorer_suite,
     train_runtime_resolver_scorer_v2,
 )
 from lib.landmarks.ensemble.weights import load_weights
@@ -66,7 +67,12 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--training-mode",
-        choices=("learned_quality_v1", "continuous_regret_v1_1", "learned_quality_v2"),
+        choices=(
+            "learned_quality_v1",
+            "continuous_regret_v1_1",
+            "learned_quality_v2",
+            "scorer_suite",
+        ),
         default="",
         help=(
             "Explicit scorer training mode. learned_quality_v2 trains a LightGBM "
@@ -102,7 +108,30 @@ def main(argv: T.Sequence[str] | None = None) -> int:
     configure_tool_logging(args.log_level)
     weights = load_weights(args.weights)
     candidates = parse_candidates(args.candidates, weights)
-    if args.training_mode == "learned_quality_v2":
+    if args.training_mode == "scorer_suite":
+        metrics = train_runtime_resolver_scorer_suite(
+            gt_manifest=args.gt_manifest,
+            gt_cache_dir=args.gt_cache_dir,
+            production_manifest=args.production_manifest,
+            production_cache_dir=args.production_cache_dir,
+            weights_path=args.weights,
+            candidates=candidates,
+            output_dir=args.output_dir,
+            gt_hard_resolver_metadata=args.gt_hard_resolver_metadata,
+            failure_threshold=args.failure_threshold,
+            high_gap_threshold=args.high_gap_threshold,
+            outlier_threshold=args.outlier_threshold,
+            l2=args.l2,
+            learning_rate=args.learning_rate,
+            iterations=args.iterations,
+            eval_fraction=args.eval_fraction,
+            split_seed=args.split_seed,
+            allow_image_backfill=args.allow_image_backfill,
+            v2_learning_rate=args.learning_rate,
+            v2_iterations=args.iterations,
+            v2_num_leaves=args.num_leaves,
+        )
+    elif args.training_mode == "learned_quality_v2":
         metrics = train_runtime_resolver_scorer_v2(
             gt_manifest=args.gt_manifest,
             gt_cache_dir=args.gt_cache_dir,
@@ -143,7 +172,7 @@ def main(argv: T.Sequence[str] | None = None) -> int:
             allow_image_backfill=args.allow_image_backfill,
             target=args.target,
         )
-    logger.info("Wrote runtime resolver scorer to %s", metrics["artifact"])
+    logger.info("Wrote runtime resolver scorer artifacts to %s", metrics["artifact"])
     return 0
 
 
@@ -160,5 +189,6 @@ __all__ = [
     "TRAINING_ROWS_CSV",
     "main",
     "train_runtime_resolver_scorer",
+    "train_runtime_resolver_scorer_suite",
     "train_runtime_resolver_scorer_v2",
 ]

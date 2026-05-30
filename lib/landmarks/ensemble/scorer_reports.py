@@ -45,6 +45,26 @@ def write_scorer_policy_outputs(
         :worst_sample_count
     ]
     write_json(output_dir / SCORER_WORST_SAMPLES_JSON, {"samples": worst})
+    feature_importances = getattr(scorer, "feature_importances", None)
+    if isinstance(feature_importances, dict) and feature_importances:
+        with (output_dir / SCORER_FEATURE_IMPORTANCE_CSV).open(
+            "w",
+            newline="",
+            encoding="utf-8",
+        ) as handle:
+            writer = csv.DictWriter(handle, fieldnames=["feature", "importance"])
+            writer.writeheader()
+            for feature, importance in sorted(
+                feature_importances.items(),
+                key=lambda item: abs(float(item[1])),
+                reverse=True,
+            ):
+                writer.writerow({"feature": feature, "importance": importance})
+        return
+
+    coefficients = getattr(scorer, "coefficients", None)
+    if coefficients is None:
+        return
     with (output_dir / SCORER_FEATURE_IMPORTANCE_CSV).open(
         "w",
         newline="",
@@ -53,7 +73,7 @@ def write_scorer_policy_outputs(
         writer = csv.DictWriter(handle, fieldnames=["feature", "coefficient", "abs_coefficient"])
         writer.writeheader()
         for feature, coefficient in sorted(
-            zip(scorer.features, scorer.coefficients, strict=True),
+            zip(scorer.features, coefficients, strict=True),
             key=lambda item: abs(item[1]),
             reverse=True,
         ):

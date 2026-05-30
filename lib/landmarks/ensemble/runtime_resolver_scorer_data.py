@@ -187,11 +187,13 @@ class CandidateQualityRow:
     oracle: str
     runtime_bucket_source: str
     geometry_veto_reasons: tuple[str, ...]
+    face_index: int = 0
 
     def to_csv_row(self) -> dict[str, T.Any]:
         """Return stable CSV fields plus a JSON feature payload."""
         return {
             "sample_id": self.sample_id,
+            "face_index": self.face_index,
             "dataset": self.dataset,
             "condition": self.condition,
             "candidate_name": self.candidate_name,
@@ -740,6 +742,7 @@ def rows_for_context(
         rows.append(
             CandidateQualityRow(
                 sample_id=context.sample_id,
+                face_index=context.face_index,
                 dataset=context.dataset,
                 condition=context.condition,
                 candidate_name=candidate.name,
