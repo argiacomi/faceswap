@@ -1067,6 +1067,74 @@ _FINE_EXPRESSION_BANDS: tuple[tuple[str, str], ...] = (
 )
 
 
+def _is_visually_obvious(
+    features_a: RepresentationFeatures,
+    features_b: RepresentationFeatures,
+) -> tuple[bool, str | None]:
+    """Return ``(visually_obvious, mismatch_reason)`` for one pair.
+
+    Issue #208 follow-up. The earlier shape allowed ANY fine
+    pose / expression / appearance mismatch to be bypassed when the
+    pair's continuous representation distance was below
+    ``obvious_duplicate_threshold``. In practice that let visually
+    distinct red-carpet looks with very similar continuous descriptors
+    fall through the obvious-override path AND through the
+    readiness-FAIL safety cap, undermining the whole fine gate.
+
+    The fix: an "obvious duplicate" must ALSO be visually obvious.
+    This helper computes that second predicate purely from the fine
+    bands already cached on :class:`RepresentationFeatures`:
+
+    * Same-or-adjacent fine yaw band (``gap <= 1``).
+    * Same-or-adjacent fine pitch band (``gap <= 1``).
+    * Each fine expression band gap within
+      :data:`_EXPRESSION_BAND_GAP_LIMIT`.
+    * Appearance mode is exactly equal OR differs by at most one bin in
+      exactly one channel — single-dimension lighting drift across a
+      bin boundary is tolerated, multi-channel drift is not.
+
+    Returns the first concrete mismatch reason (or ``None`` when every
+    fine signal is compatible) so the caller can surface a precise
+    ``representation-obvious but visually distinct`` diagnostic.
+
+    Missing fine signals do not count as a mismatch — a face we can't
+    classify on a given band stays eligible for the override on that
+    band so partial-data faces are not unfairly held back.
+    """
+    for attr, label in (
+        ("yaw_micro_band", "yaw"),
+        ("pitch_micro_band", "pitch"),
+    ):
+        va = getattr(features_a, attr)
+        vb = getattr(features_b, attr)
+        if va is None or vb is None or va == vb:
+            continue
+        if abs(va - vb) > 1:
+            return False, f"fine {label} band gap ({va} vs {vb}, gap={abs(va - vb)})"
+
+    for attr, label in _FINE_EXPRESSION_BANDS:
+        va = getattr(features_a, attr)
+        vb = getattr(features_b, attr)
+        if va is None or vb is None:
+            continue
+        gap = abs(va - vb)
+        if gap > _EXPRESSION_BAND_GAP_LIMIT:
+            return False, f"fine {label} band gap ({va} vs {vb}, gap={gap})"
+
+    mode_a = features_a.appearance_mode
+    mode_b = features_b.appearance_mode
+    if mode_a is not None and mode_b is not None and mode_a != mode_b:
+        # Tolerate single-bin drift in exactly one channel; reject any
+        # multi-channel drift OR a >1 bin gap in any channel.
+        diffs = [abs(a - b) for a, b in zip(mode_a, mode_b, strict=False)]
+        max_diff = max(diffs)
+        non_zero = sum(1 for d in diffs if d > 0)
+        if max_diff > 1 or non_zero > 1:
+            return False, f"appearance mode mismatch ({mode_a} vs {mode_b})"
+
+    return True, None
+
+
 def _fine_pruning_compatibility(
     features_a: RepresentationFeatures,
     features_b: RepresentationFeatures,
@@ -1091,15 +1159,33 @@ def _fine_pruning_compatibility(
       unless obvious so different hairstyles / makeup / event /
       lighting setups don't fold into one pruning cluster.
 
-    Obvious duplicates (``distance <= obvious_duplicate_threshold`` AND
-    high temporal confidence) override any fine constraint — true
-    near-duplicates still prune heavily, the gate only protects visually
-    distinct samples.
+    Obvious duplicates may override the fine constraints ONLY when the
+    pair is also visually obvious (issue #208 follow-up): same-or-
+    adjacent fine pose AND fine expression AND a compatible appearance
+    mode. A pair that is representation-obvious but visually distinct
+    is rejected with an explicit
+    ``representation-obvious but visually distinct`` reason so the
+    downstream diagnostic surfaces the exact mismatch that produced the
+    earlier "1610 prune candidates on a 1665-face red-carpet set"
+    pathology.
     """
-    obvious_override = (
+    representation_obvious = (
         distance <= config.obvious_duplicate_threshold
         and temporal_confidence >= _TEMPORAL_CONFIDENCE_FOR_OBVIOUS_EDGE
     )
+    visually_obvious, visual_mismatch_reason = _is_visually_obvious(features_a, features_b)
+    # Issue #208 follow-up: an "obvious duplicate" is only honoured when
+    # the pair is ALSO visually compatible. A pair that is
+    # representation-obvious but visually distinct is the exact
+    # pathology that produced "1610 prune candidates on a 1665-face
+    # red-carpet set" — surface the veto explicitly so the downstream
+    # diagnostic explains why the override didn't fire.
+    if representation_obvious and not visually_obvious:
+        return False, (
+            "representation-obvious but visually distinct — "
+            f"{visual_mismatch_reason} overrides distance-only duplicate signal"
+        )
+    obvious_override = representation_obvious and visually_obvious
     strict_limit = config.representation_distance_threshold * _FINE_ADJACENT_DISTANCE_SCALE
 
     # Fine yaw / pitch micro-bands. These are SIGNED so adjacency is

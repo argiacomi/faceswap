@@ -1031,7 +1031,10 @@ def test_obvious_duplicate_overrides_bucket_mismatch() -> None:
 
 def test_adjacent_yaw_buckets_require_stricter_distance() -> None:
     """Adjacent yaw buckets (frontal vs right_slight) need stricter
-    distance than same-bucket pairs (issue #204 §2)."""
+    distance than same-bucket pairs (issue #204 §2). The yaw values
+    here are also adjacent in the #208 fine micro-band (gap=1) so the
+    coarse adjacency rule is what blocks / allows the pair, not the
+    finer follow-up gate."""
     from lib.faceqa.redundancy import (
         _ADJACENT_BUCKET_DISTANCE_SCALE,
         _features_for,
@@ -1039,8 +1042,11 @@ def test_adjacent_yaw_buckets_require_stricter_distance() -> None:
     )
     from lib.faceqa.redundancy import _AGGRESSIVENESS_PRESETS as PRESETS
 
+    # 0° (fine band 0) vs 7° (fine band 1) — adjacent in BOTH coarse
+    # ``frontal`` / ``right_slight`` AND the fine micro-band so this
+    # exercises the coarse-adjacency rule cleanly.
     frontal = _record("frame_000001.png", yaw=0.0)
-    slight = _record("frame_000002.png", yaw=20.0)
+    slight = _record("frame_000002.png", yaw=7.0)
     fa, fb = _features_for(frontal), _features_for(slight)
 
     config = PRESETS["balanced"]
@@ -1057,7 +1063,11 @@ def test_adjacent_yaw_buckets_require_stricter_distance() -> None:
         config=config,
     )
     assert eligible is False
-    assert "adjacent yaw" in reason
+    # Reason now flows through either the coarse adjacent-yaw gate or
+    # the fine adjacent-yaw gate depending on which scale fires first;
+    # both surface ``adjacent`` + ``yaw`` so the diagnostic still
+    # explains the block.
+    assert "adjacent" in reason and "yaw" in reason
 
     # Inside the strict limit: eligible (subject to the temporal gate).
     eligible_close, _ = can_create_redundancy_edge(
@@ -1385,18 +1395,47 @@ def test_fine_yaw_micro_band_blocks_within_frontal_bucket() -> None:
     assert "fine yaw" in reason
 
 
-def test_obvious_duplicate_overrides_fine_pose_mismatch() -> None:
-    """Obvious duplicates may still cross fine yaw bands when temporal
-    confidence is high (issue #208 obvious override)."""
+def test_obvious_duplicate_blocked_when_visually_distinct() -> None:
+    """Representation-obvious distance must NOT bridge a fine pose gap
+    of >1 band — the override now requires visual compatibility too
+    (issue #208 follow-up)."""
     from lib.faceqa.redundancy import _AGGRESSIVENESS_PRESETS as PRESETS
     from lib.faceqa.redundancy import _features_for, can_create_redundancy_edge
 
+    # 0° (fine band 0) vs 12° (fine band 2) — fine yaw gap=2.
     a = _record("frame_000001.png", yaw=0.0)
     b = _record("frame_000002.png", yaw=12.0)
     fa, fb = _features_for(a), _features_for(b)
 
     config = PRESETS["balanced"]
-    eligible, _reason = can_create_redundancy_edge(
+    eligible, reason = can_create_redundancy_edge(
+        features_a=fa,
+        features_b=fb,
+        distance=config.obvious_duplicate_threshold - 0.01,
+        compared=10,
+        temporal_confidence=1.0,
+        config=config,
+    )
+    assert eligible is False
+    assert "representation-obvious but visually distinct" in reason
+    assert "fine yaw band gap" in reason
+
+
+def test_obvious_duplicate_still_overrides_when_visually_compatible() -> None:
+    """The obvious-override still fires when the pair is visually
+    compatible — same fine pose / expression / appearance — so true
+    near-duplicates continue to prune (issue #208 follow-up)."""
+    from lib.faceqa.redundancy import _AGGRESSIVENESS_PRESETS as PRESETS
+    from lib.faceqa.redundancy import _features_for, can_create_redundancy_edge
+
+    # Exact same pose / expression / appearance signals — visually
+    # obvious AND representation-obvious.
+    a = _record("frame_000001.png", yaw=0.0)
+    b = _record("frame_000002.png", yaw=0.0)
+    fa, fb = _features_for(a), _features_for(b)
+
+    config = PRESETS["balanced"]
+    eligible, reason = can_create_redundancy_edge(
         features_a=fa,
         features_b=fb,
         distance=config.obvious_duplicate_threshold - 0.01,
@@ -1405,6 +1444,7 @@ def test_obvious_duplicate_overrides_fine_pose_mismatch() -> None:
         config=config,
     )
     assert eligible is True
+    assert "obvious duplicate" in reason
 
 
 def test_fine_expression_band_blocks_within_same_coarse_bucket() -> None:
@@ -1647,3 +1687,52 @@ def test_readiness_safety_cap_skipped_when_no_coverage() -> None:
     assert report.readiness_safety_cap_applied is False
     assert report.readiness_safety_cap_demotions == 0
     assert report.readiness_safety_cap_reason is None
+
+
+def test_obvious_duplicate_blocked_across_appearance_mode_mismatch() -> None:
+    """Representation-obvious distance must NOT bridge an appearance-mode
+    mismatch (different makeup / lighting / event) — this is the exact
+    "1610 prune candidates on 1665-face red-carpet set" pathology that
+    motivated the #208 follow-up.
+    """
+    from lib.faceqa.redundancy import _AGGRESSIVENESS_PRESETS as PRESETS
+    from lib.faceqa.redundancy import _features_for, can_create_redundancy_edge
+
+    # Same pose, expression. Different appearance-mode signature: high
+    # vs low warmth + saturation simulates a different makeup / event
+    # / lighting setup.
+    look_a = _record(
+        "frame_000001.png",
+        yaw=0.0,
+        mean_luminance=140.0,
+        color_warmth=30.0,
+        saturation=120.0,
+        contrast=45.0,
+    )
+    look_b = _record(
+        "frame_000002.png",
+        yaw=0.0,
+        mean_luminance=100.0,
+        color_warmth=-30.0,
+        saturation=30.0,
+        contrast=15.0,
+    )
+    fa, fb = _features_for(look_a), _features_for(look_b)
+
+    # Sanity: the appearance modes really do differ — otherwise the
+    # test is exercising the wrong path.
+    assert fa.appearance_mode is not None and fb.appearance_mode is not None
+    assert fa.appearance_mode != fb.appearance_mode
+
+    config = PRESETS["balanced"]
+    eligible, reason = can_create_redundancy_edge(
+        features_a=fa,
+        features_b=fb,
+        distance=config.obvious_duplicate_threshold - 0.01,
+        compared=10,
+        temporal_confidence=1.0,
+        config=config,
+    )
+    assert eligible is False
+    assert "representation-obvious but visually distinct" in reason
+    assert "appearance mode mismatch" in reason
