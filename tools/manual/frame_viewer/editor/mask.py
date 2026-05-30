@@ -47,6 +47,11 @@ class Mask(Editor):
         self._meta: dict[str, T.Any] = {}
         self._tk_faces: list[ImageTk.PhotoImage] = []
         self._internal_size = 512
+        # Cached RGB tile for the mask overlay. Mask color and zoom/frame dims
+        # rarely change between redraws so a single-entry cache avoids the
+        # np.tile + astype allocation that dominates the per-tick redraw cost.
+        # Keyed by (rgb tuple, target shape tuple).
+        self._overlay_rgb_cache: tuple[tuple[int, ...], tuple[int, ...], np.ndarray] | None = None
         control_text = _(
             "Mask Editor\nEdit the mask."
             "\n - NB: For Landmark based masks (e.g. components/extended) it is "
@@ -495,6 +500,27 @@ class Mask(Editor):
             {"image": self._tk_faces[face_index], "anchor": tk.NW},
         )
 
+    def _cached_overlay_rgb(
+        self,
+        rgb_color: npt.NDArray[np.int32],
+        target_shape: tuple[int, ...],
+    ) -> np.ndarray:
+        """Return a uint8 RGB tile for ``rgb_color`` matching ``target_shape``.
+
+        Reuses the cached tile when ``rgb_color`` and ``target_shape`` are unchanged
+        so the per-tick mask overlay redraw avoids re-allocating an H*W*3 array.
+        """
+        key_color = tuple(int(v) for v in rgb_color)
+        if (
+            self._overlay_rgb_cache is not None
+            and self._overlay_rgb_cache[0] == key_color
+            and self._overlay_rgb_cache[1] == target_shape
+        ):
+            return self._overlay_rgb_cache[2]
+        rgb = np.tile(rgb_color, target_shape).astype("uint8")
+        self._overlay_rgb_cache = (key_color, target_shape, rgb)
+        return rgb
+
     def _update_mask_image_zoomed(
         self, mask: npt.NDArray[np.uint8], rgb_color: npt.NDArray[np.int32]
     ) -> Image.Image:
@@ -511,7 +537,7 @@ class Mask(Editor):
         -------
         The zoomed mask image formatted for display
         """
-        rgb = np.tile(rgb_color, self._zoomed_dims + (1,)).astype("uint8")
+        rgb = self._cached_overlay_rgb(rgb_color, self._zoomed_dims + (1,))
         out = cv2.resize(mask, tuple(reversed(self._zoomed_dims)), interpolation=cv2.INTER_CUBIC)[
             ..., None
         ]
@@ -552,7 +578,7 @@ class Mask(Editor):
             borderMode=cv2.BORDER_CONSTANT,
         )[slices[0], slices[1]]
         out = out[..., None] if out.ndim == 2 else out
-        rgb = np.tile(rgb_color, out.shape).astype("uint8")
+        rgb = self._cached_overlay_rgb(rgb_color, out.shape)
         rgba = np.concatenate((rgb, np.minimum(out, self._meta["roi_mask"][face_index])), axis=2)
         return Image.fromarray(rgba)
 

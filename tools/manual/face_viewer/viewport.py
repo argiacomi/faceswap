@@ -896,6 +896,10 @@ class TKFace:
     def update_mask(self, mask: np.ndarray | None) -> None:
         """Update the mask in the 4th channel of :attr:`photo` to the given mask.
 
+        Unlike :func:`update`, this leaves the cached face bytes untouched and only
+        rebuilds the RGBA composite for the existing face. Used when only the mask
+        annotation has changed and the underlying face image is still current.
+
         Parameters
         ----------
         mask: :class:`numpy.ndarray` or ``None``
@@ -919,10 +923,11 @@ class TKFace:
         """
         retval = cv2.imdecode(face, cv2.IMREAD_UNCHANGED)
         assert retval is not None
+        if retval.shape[0] == self._size:
+            return retval[..., 2::-1]
         interp = cv2.INTER_CUBIC if retval.shape[0] < self._size else cv2.INTER_AREA
-        if retval.shape[0] != self._size:
-            face = cv2.resize(retval, (self._size, self._size), interpolation=interp)
-        return retval[..., 2::-1]
+        resized = cv2.resize(retval, (self._size, self._size), interpolation=interp)
+        return resized[..., 2::-1]
 
     def _generate_tk_face_data(self, mask: np.ndarray | None) -> Image.Image:
         """Create the :class:`tkinter.PhotoImage` from the currant :attr:`_face`.
@@ -937,7 +942,7 @@ class TKFace:
         :class:`PIL.Image.Image`
             The face formatted for the  :class:`~tools.manual.faceviewer.frame.FacesViewer` canvas.
         """
-        mask = np.ones(self._face.shape[:2], dtype="uint8") * 255 if mask is None else mask
+        mask = np.full(self._face.shape[:2], 255, dtype="uint8") if mask is None else mask
         if mask.shape[0] != self._size:
             mask = cv2.resize(mask, self._face.shape[:2], interpolation=cv2.INTER_AREA)
         img = np.concatenate((self._face, mask[..., None]), axis=-1)

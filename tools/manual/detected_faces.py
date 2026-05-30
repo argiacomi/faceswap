@@ -10,6 +10,7 @@ import os
 import tkinter as tk
 import typing as T
 from copy import deepcopy
+from pathlib import Path
 from queue import Empty, Queue
 
 import cv2
@@ -248,8 +249,9 @@ class DetectedFaces:
         else:
             filename = "alignments.fsa"
             if self._globals.is_video:
-                folder, vid = os.path.split(os.path.splitext(input_location)[0])
-                filename = f"{vid}_{filename}"
+                video_path = Path(input_location)
+                folder = str(video_path.parent)
+                filename = f"{video_path.stem}_{filename}"
             else:
                 folder = input_location
         retval = Alignments(folder, filename)
@@ -438,11 +440,17 @@ class _DiskIO:
             progress_bar.stop()
             return
 
+        # Drain the queue and step the progress bar once per tick. Tk redraw
+        # cost dominates step() so batching keeps the bar responsive when the
+        # background worker bursts many frames between ticks.
+        total_step = 0
         while True:
             try:
-                progress_bar.step(queue.get(False, 0))
+                total_step += queue.get(False, 0)
             except Empty:
                 break
+        if total_step:
+            progress_bar.step(total_step)
         progress_bar.after(100, self._monitor_extract, thread, queue, progress_bar)
 
     def _background_extract(
@@ -469,10 +477,11 @@ class _DiskIO:
                 filename,
             )
             src_filename = os.path.basename(filename)
+            src_stem = os.path.splitext(src_filename)[0]
             progress_queue.put(1)
 
             for face_idx, face in enumerate(self._frame_faces[frame_idx]):
-                output = f"{os.path.splitext(src_filename)[0]}_{face_idx}.png"
+                output = f"{src_stem}_{face_idx}.png"
                 aligned = AlignedFace(
                     face.landmarks_xy, image=image, centering="head", size=512
                 )  # TODO user selectable size

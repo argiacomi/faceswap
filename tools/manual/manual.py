@@ -4,11 +4,11 @@
 from __future__ import annotations
 
 import logging
-import os
 import sys
 import tkinter as tk
 import typing as T
 from dataclasses import dataclass
+from pathlib import Path
 from time import sleep
 from tkinter import ttk
 
@@ -331,6 +331,9 @@ class _Options(ttk.Frame):  # pylint:disable=too-many-ancestors
 
         self._globals = tk_globals
         self._display_frame = display_frame
+        # Stores `(tk_var, trace_token)` pairs so traces can be removed on
+        # teardown rather than leaked into the Tcl interpreter.
+        self._trace_tokens: list[tuple[tk.Variable, str]] = []
         self._control_panels = self._initialize()
         self._set_tk_callbacks()
         self._update_options()
@@ -398,7 +401,9 @@ class _Options(ttk.Frame):  # pylint:disable=too-many-ancestors
     def _set_tk_callbacks(self) -> None:
         """Sets the callback to change to the relevant control panel options when the selected
         editor is changed, and the display update on panel option change."""
-        self._display_frame.tk_selected_action.trace("w", self._update_options)
+        action_var = self._display_frame.tk_selected_action
+        token = action_var.trace_add("write", self._update_options)
+        self._trace_tokens.append((action_var, token))
         seen_controls = set()
         for name, editor in self._display_frame.editors.items():
             for ctl in editor.controls["controls"]:
@@ -412,7 +417,10 @@ class _Options(ttk.Frame):  # pylint:disable=too-many-ancestors
                     ctl.title,
                 )
                 seen_controls.add(ctl)
-                ctl.tk_var.trace("w", lambda *e: self._globals.var_full_update.set(True))
+                token = ctl.tk_var.trace_add(
+                    "write", lambda *e: self._globals.var_full_update.set(True)
+                )
+                self._trace_tokens.append((ctl.tk_var, token))
 
     def _update_options(self, *args) -> None:  # pylint:disable=unused-argument
         """Update the control panel display for the current editor.
@@ -667,7 +675,7 @@ class FrameLoader:
         """
         self._loader = SingleFrameLoader(frames_location, video_meta_data=video_meta_data)
         if not self._loader.is_video and len(frame_list) < self._loader.count:
-            files = [os.path.basename(f) for f in self._loader.file_list]
+            files = [Path(f).name for f in self._loader.file_list]
             skip_list = [idx for idx, fname in enumerate(files) if fname not in frame_list]
             logger.debug(
                 "Adding %s entries to skip list for images not in alignments file",

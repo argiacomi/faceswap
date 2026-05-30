@@ -512,7 +512,9 @@ class FacesViewer(tk.Canvas):  # pylint:disable=too-many-ancestors
         hls = np.array(colorsys.rgb_to_hls(*hex_to_rgb(self.control_colors[color_key])))
         scale = (1 - scale) + 1 if hls[1] < 120 else scale
         hls[1] = max(0.0, min(256.0, scale * hls[1]))
-        rgb = np.clip(np.rint(colorsys.hls_to_rgb(*hls)).astype("uint8"), 0, 255)
+        # Clip before astype: colorsys.hls_to_rgb can return 256-ish values for
+        # L clamped at 256, which would wrap with uint8 before the clip fires.
+        rgb = np.clip(np.rint(colorsys.hls_to_rgb(*hls)), 0, 255).astype("uint8")
         retval = rgb_to_hex(rgb)
         return retval
 
