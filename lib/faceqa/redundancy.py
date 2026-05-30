@@ -1818,7 +1818,7 @@ def compute_redundancy(
     def _pair_diagnostics_for(
         member_index: int,
         rep_index: int,
-    ) -> tuple[float, int, float, int | None]:
+    ) -> tuple[float, int, float, int | None, bool, str | None]:
         """Return pair diagnostics, recomputing non-eligible pairs on demand.
 
         The clustering pass keeps only eligible edges to avoid O(N^2)
@@ -1827,19 +1827,30 @@ def compute_redundancy(
         recommendation layer, so calculate that one pair lazily when the
         edge was not cached.
         """
+
         if member_index == rep_index:
-            return 0.0, len(_FEATURE_ATTRS), 1.0, 0
+            return 0.0, len(_FEATURE_ATTRS), 1.0, 0, True, None
+
         key = (rep_index, member_index) if rep_index < member_index else (member_index, rep_index)
         cached = edges.get(key)
         if cached is not None:
-            return cached
+            return (*cached, True, _edge_reason_for(member_index, rep_index))
+
         distance, compared = _distance_with_ctx(ctx, member_index, rep_index)
         t_conf, frame_distance = _temporal_confidence(
             features[member_index].frame_index,
             features[rep_index].frame_index,
             config,
         )
-        return distance, compared, t_conf, frame_distance
+        eligible, reason = can_create_redundancy_edge(
+            features_a=features[member_index],
+            features_b=features[rep_index],
+            distance=distance,
+            compared=compared,
+            temporal_confidence=t_conf,
+            config=config,
+        )
+        return distance, compared, t_conf, frame_distance, eligible, reason
 
     def _neighbor_frame_for(records: list[FaceQARecord], neighbor_idx: int | None) -> str | None:
         if neighbor_idx is None:
@@ -1946,19 +1957,32 @@ def compute_redundancy(
             member_features = features[member]
             member_record = record_list[member]
             buckets = _bucket_keys_for(member_record)
-            distance, compared, t_conf, t_dist = _pair_diagnostics_for(member, rep_index)
-            recommendation, reason, budget = _decide_single_member(
-                member_features=member_features,
-                distance=distance,
-                compared=compared,
-                temporal_confidence=t_conf,
-                config=config,
-                member_record=member_record,
-                rep_record=rep_record,
-                protection_budget_remaining=budget,
-                member_in_surplus_bucket=_record_is_in_surplus_bucket(member_record, surplus),
-                rep_features=rep_features,
+            distance, compared, t_conf, t_dist, direct_rep_eligible, direct_rep_edge_reason = (
+                _pair_diagnostics_for(member, rep_index)
             )
+
+            if not direct_rep_eligible:
+                recommendation, reason, budget = (
+                    REVIEW,
+                    (
+                        "cluster-linked but not directly redundant with representative"
+                        + (f": {direct_rep_edge_reason}" if direct_rep_edge_reason else "")
+                    ),
+                    budget,
+                )
+            else:
+                recommendation, reason, budget = _decide_single_member(
+                    member_features=member_features,
+                    distance=distance,
+                    compared=compared,
+                    temporal_confidence=t_conf,
+                    config=config,
+                    member_record=member_record,
+                    rep_record=rep_record,
+                    protection_budget_remaining=budget,
+                    member_in_surplus_bucket=_record_is_in_surplus_bucket(member_record, surplus),
+                    rep_features=rep_features,
+                )
             output_records.append(
                 RedundancyRecord(
                     frame=member_record.frame,
