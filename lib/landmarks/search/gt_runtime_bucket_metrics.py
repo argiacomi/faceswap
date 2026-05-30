@@ -189,9 +189,7 @@ def _single_model_candidate_set(
         return frozenset(str(candidate) for candidate in configured)
 
     inferred = frozenset(
-        candidate
-        for candidate in candidates
-        if _candidate_looks_like_single_model(candidate)
+        candidate for candidate in candidates if _candidate_looks_like_single_model(candidate)
     )
     return inferred or SINGLE_MODEL_CANDIDATES
 

@@ -1283,7 +1283,10 @@ def _selected_candidate_from_best_setup_payload(
     return ordered[0] if ordered else None
 
 
-def _emit_gt_runtime_bucket_artifacts(args: argparse.Namespace, paths: PipelinePaths) -> None:
+def _emit_gt_runtime_bucket_artifacts(
+    args_or_paths: argparse.Namespace | PipelinePaths,
+    paths: PipelinePaths | None = None,
+) -> None:
     """Aggregate ``candidate_table.csv`` into per-runtime-bucket metrics.
 
     Issue #205. Runs in-process after ``binary_scorer_training`` writes
@@ -1304,6 +1307,12 @@ def _emit_gt_runtime_bucket_artifacts(args: argparse.Namespace, paths: PipelineP
     not coupled to the aggregator — the metrics are a diagnostic-grade
     convenience artifact, not a gating output.
     """
+    if paths is None:
+        args = argparse.Namespace(models=DEFAULT_MODELS)
+        paths = T.cast(PipelinePaths, args_or_paths)
+    else:
+        args = T.cast(argparse.Namespace, args_or_paths)
+
     candidate_table = paths.binary_scorer_train_dir / "candidate_table.csv"
     if not candidate_table.is_file():
         logger.info("gt_runtime_bucket aggregation skipped: %s not found", candidate_table)
@@ -1330,9 +1339,7 @@ def _emit_gt_runtime_bucket_artifacts(args: argparse.Namespace, paths: PipelineP
             )
             return
         candidate_names = {
-            str(row.get("candidate"))
-            for row in rows
-            if row.get("candidate") is not None
+            str(row.get("candidate")) for row in rows if row.get("candidate") is not None
         }
         selected_candidate = _selected_candidate_from_best_setup_payload(
             best_setup_payload,
