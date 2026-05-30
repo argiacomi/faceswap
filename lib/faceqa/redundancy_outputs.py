@@ -219,9 +219,33 @@ def render_contact_sheets(
         clusters.setdefault(record.cluster_id, []).append(record)
     written: list[Path] = []
     for cluster_id, records in sorted(clusters.items()):
+        # Issue #208 follow-up 2: within each cluster, order tiles so
+        # the contact sheet is auditable at a glance:
+        #
+        #   1. Representative first.
+        #   2. Then by recommendation (keep -> review -> prune) so the
+        #      reviewer can see the keep candidates immediately and
+        #      verify the prune candidates against them without
+        #      hunting.
+        #   3. Then by appearance mode (lighting / makeup / event
+        #      fingerprint) so visually-similar sub-groups appear
+        #      together within each recommendation bucket.
+        #   4. Then by fine pose band and expression band so faces
+        #      with similar pose / mouth shape sit side-by-side.
+        #   5. Finally by frame + face index for stable ordering.
+        recommendation_rank = {KEEP: 0, REVIEW: 1, PRUNE: 2}
         records.sort(
             key=lambda r: (
                 0 if r.representative else 1,
+                recommendation_rank.get(r.recommendation, 3),
+                # Fall back to "" / (-1, -1) for missing visual signals
+                # so partial-data records sort last within their bucket
+                # rather than mixing into the visually-grouped runs.
+                (r.appearance_mode if r.appearance_mode is not None else (-1, -1, -1, -1)),
+                (r.yaw_micro_band if r.yaw_micro_band is not None else -999),
+                (r.pitch_micro_band if r.pitch_micro_band is not None else -999),
+                (r.mouth_openness_band if r.mouth_openness_band is not None else -999),
+                (r.smile_proxy_band if r.smile_proxy_band is not None else -999),
                 -r.quality_score,
                 r.frame,
                 r.face_index,

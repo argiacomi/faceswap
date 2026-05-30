@@ -281,6 +281,24 @@ class RedundancyRecord:
 
     ``None`` indicates the cluster was within the diameter limit and
     untouched by the splitter."""
+    # Issue #208 follow-up 2 — surface the fine visual signals on each
+    # output record so the contact-sheet renderer can sort tiles by
+    # visual mode and downstream consumers can audit the cluster's
+    # visual coherence without re-running ``_features_for``.
+    appearance_mode: tuple[int, int, int, int] | None = None
+    """Discrete (luminance, warmth, saturation, contrast) appearance
+    signature. ``None`` when one or more channels were missing on the
+    underlying record."""
+    yaw_micro_band: int | None = None
+    """Signed 7.5-degree yaw micro-band index. ``None`` for missing yaw."""
+    pitch_micro_band: int | None = None
+    """Signed 7.5-degree pitch micro-band index. ``None`` for missing pitch."""
+    mouth_openness_band: int | None = None
+    """Discrete mouth-openness intensity band. ``None`` for missing
+    mouth_openness."""
+    smile_proxy_band: int | None = None
+    """Discrete smile-proxy intensity band. ``None`` for missing
+    smile_proxy."""
 
     def to_dict(self) -> dict[str, T.Any]:
         return {
@@ -311,6 +329,13 @@ class RedundancyRecord:
             "nearest_neighbor_edge_eligibility": self.nearest_neighbor_edge_eligibility,
             "connected_via_representative": self.connected_via_representative,
             "split_reason": self.split_reason,
+            "appearance_mode": (
+                list(self.appearance_mode) if self.appearance_mode is not None else None
+            ),
+            "yaw_micro_band": self.yaw_micro_band,
+            "pitch_micro_band": self.pitch_micro_band,
+            "mouth_openness_band": self.mouth_openness_band,
+            "smile_proxy_band": self.smile_proxy_band,
         }
 
 
@@ -1996,6 +2021,186 @@ def _protection_budget_for_cluster(
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Issue #208 follow-up 2 — post-cluster visual-span splitter.
+#
+# Pairwise gates decide whether two faces MAY connect; visual-span
+# splitting decides whether the resulting connected component is still
+# coherent as a single pruning cluster. Without this second pass a
+# large red-carpet faceset can keep one technically-connected component
+# whose internal yaw / expression / appearance bands sweep across many
+# visually-distinct modes — the same kind of pathology the distance-
+# diameter splitter fixes for numeric distance, but for fine visual
+# modes.
+# ---------------------------------------------------------------------------
+
+# Only run the visual-span pass on components above this size. Small
+# clusters cannot accumulate enough visual span to require splitting and
+# the pass is O(N) per cluster — cheap but not free.
+_VISUAL_SPAN_SPLIT_MIN_SIZE: int = 50
+
+# Per-band span limits (max-min across cluster members). A cluster
+# exceeding ANY of these gets split.
+_VISUAL_SPAN_LIMITS: dict[str, int] = {
+    "yaw_micro_band": 2,
+    "pitch_micro_band": 2,
+    "mouth_openness_band": 1,
+    "smile_proxy_band": 1,
+}
+# Appearance-mode drift is computed channel-wise via the same
+# "exact OR one bin in one channel" rule as the obvious-override
+# tightening; if the cluster contains TWO appearance signatures that
+# violate that rule, the cluster is also split.
+
+# Visual-mode key used to group members during the split. Adjacent
+# bins collapse via ``// 2`` so neighbouring micro-bands merge into a
+# single key bucket — keeps the splitter from over-fragmenting.
+_VISUAL_MODE_KEY_ATTRS: tuple[str, ...] = (
+    "yaw_micro_band",
+    "pitch_micro_band",
+    "mouth_openness_band",
+    "smile_proxy_band",
+)
+
+
+def _visual_mode_key(features: RepresentationFeatures) -> tuple[T.Any, ...]:
+    """Return the discrete visual-mode key for one face.
+
+    Adjacent micro-bins are folded together (``band // 2`` for signed
+    bands, ``// 2`` for the unsigned bands too) so the key groups
+    visually-similar faces into the SAME bucket instead of fragmenting
+    on every per-band boundary. Appearance mode is included verbatim
+    since it is already a small discrete signature.
+
+    ``None`` band values become ``None`` in the key so partial-data
+    faces cluster together rather than scattering across all possible
+    bins.
+    """
+    parts: list[T.Any] = []
+    for attr in _VISUAL_MODE_KEY_ATTRS:
+        value = getattr(features, attr)
+        if value is None:
+            parts.append(None)
+        else:
+            # Signed bands ``//`` in Python rounds toward -inf — that's
+            # fine here, the goal is "neighbouring bins share a bucket".
+            parts.append(value // 2)
+    parts.append(features.appearance_mode)
+    return tuple(parts)
+
+
+def _appearance_modes_compatible(
+    a: tuple[int, int, int, int] | None,
+    b: tuple[int, int, int, int] | None,
+) -> bool:
+    """Return ``True`` when two appearance modes are equal OR drift by
+    exactly one bin in exactly one channel.
+
+    Matches the obvious-override "visually obvious" rule so the
+    visual-span splitter and the obvious-override gate agree on what
+    counts as a compatible appearance.
+    """
+    if a is None or b is None or a == b:
+        return True
+    diffs = [abs(x - y) for x, y in zip(a, b, strict=False)]
+    return max(diffs) <= 1 and sum(1 for d in diffs if d > 0) <= 1
+
+
+def _visual_span_exceeds_limits(
+    members: list[int],
+    features: list[RepresentationFeatures],
+) -> str | None:
+    """Return the first concrete span violation, or ``None`` when the
+    cluster's visual span fits within :data:`_VISUAL_SPAN_LIMITS`."""
+    for attr, limit in _VISUAL_SPAN_LIMITS.items():
+        values = [getattr(features[m], attr) for m in members]
+        present = [v for v in values if v is not None]
+        if len(present) < 2:
+            continue
+        span = max(present) - min(present)
+        if span > limit:
+            return f"{attr} span={span} > {limit}"
+
+    # Appearance-mode diversity: if ANY pair in the cluster is not
+    # appearance-compatible, the span is too broad. O(N^2) is fine
+    # because we only get here when the per-band span check did not
+    # already fire — by then the cluster is small enough that even
+    # an O(N^2) scan over its appearance signatures is cheap relative
+    # to the rest of the pipeline. Short-circuit on the first mismatch.
+    modes = {
+        features[m].appearance_mode for m in members if features[m].appearance_mode is not None
+    }
+    if len(modes) > 1:
+        mode_list = sorted(modes)
+        for i_pos, a in enumerate(mode_list):
+            for b in mode_list[i_pos + 1 :]:
+                if not _appearance_modes_compatible(a, b):
+                    return f"appearance modes {a} vs {b} drift > 1 bin"
+    return None
+
+
+def _split_high_visual_span_components(
+    components: list[list[int]],
+    features: list[RepresentationFeatures],
+    split_reason_by_member: dict[int, str | None],
+) -> list[list[int]]:
+    """Split components whose internal visual-mode span is too broad.
+
+    Walks ``components`` AFTER the distance-diameter splitter, leaves
+    small components alone, and for each large component:
+
+    1. Computes the per-band span + appearance diversity via
+       :func:`_visual_span_exceeds_limits`.
+    2. If a limit is exceeded, partitions members by
+       :func:`_visual_mode_key` — adjacent bins fold via ``// 2`` so
+       neighbouring micro-bands stay together but distinct visual
+       modes split apart.
+    3. Records the split reason on every relocated member so the
+       per-record diagnostic surfaces the visual-mode rationale.
+
+    Components that don't violate the limits pass through unchanged.
+    """
+    out: list[list[int]] = []
+    for members in components:
+        if len(members) < _VISUAL_SPAN_SPLIT_MIN_SIZE:
+            out.append(members)
+            continue
+        violation = _visual_span_exceeds_limits(members, features)
+        if violation is None:
+            out.append(members)
+            continue
+
+        groups: dict[tuple[T.Any, ...], list[int]] = {}
+        for member in members:
+            key = _visual_mode_key(features[member])
+            groups.setdefault(key, []).append(member)
+
+        # Single-bucket grouping means the visual-mode key collapses
+        # everything together — we'd produce the same component, so
+        # there is nothing to split. Leave the cluster intact (the
+        # downstream diagnostics still surface the topology issue via
+        # cluster-health metrics) but record the bypass on every member
+        # so reviewers can audit.
+        if len(groups) <= 1:
+            for member in members:
+                if split_reason_by_member.get(member) is None:
+                    split_reason_by_member[member] = (
+                        f"visual-span {violation} but mode-key collapsed to one bucket "
+                        "— left intact"
+                    )
+            out.append(members)
+            continue
+
+        reason = f"split from oversize component due to visual-mode span ({violation})"
+        for sub in groups.values():
+            sub.sort()
+            for member in sub:
+                split_reason_by_member[member] = reason
+            out.append(sub)
+    out.sort(key=lambda c: c[0])
+    return out
+
+
 def _finite_or_none(value: float | None) -> float | None:
     """Return ``value`` when it is a finite float; otherwise ``None``.
 
@@ -2210,6 +2415,13 @@ def compute_redundancy(
     direct_to_rep_by_member = split_diag.direct_to_rep_by_member
     connected_via_rep_edge_by_member = split_diag.connected_via_rep_edge_by_member
     split_reason_by_member = split_diag.split_reason_by_member
+    # Issue #208 follow-up 2: post-cluster visual-span splitter. Walks
+    # the diameter-split components and breaks any LARGE cluster whose
+    # internal fine pose / expression / appearance span exceeds the
+    # per-band limits, even when the pairwise gates allowed the
+    # connections individually. Member-indexed diagnostic maps stay
+    # valid across this pass (the splitter only re-groups indices).
+    components = _split_high_visual_span_components(components, features, split_reason_by_member)
 
     def _edge_reason_for(member_index: int | None, rep_index: int | None) -> str | None:
         """Return the eligibility reason for the (rep_index, member_index) edge.
@@ -2352,6 +2564,11 @@ def compute_redundancy(
                 ),
                 connected_via_representative=True,
                 split_reason=split_reason_by_member.get(rep_index),
+                appearance_mode=rep_features.appearance_mode,
+                yaw_micro_band=rep_features.yaw_micro_band,
+                pitch_micro_band=rep_features.pitch_micro_band,
+                mouth_openness_band=rep_features.mouth_openness_band,
+                smile_proxy_band=rep_features.smile_proxy_band,
             )
         )
         # Allocate a small protection budget for fragile-bucket clusters and
@@ -2445,6 +2662,11 @@ def compute_redundancy(
                         member, False
                     ),
                     split_reason=split_reason_by_member.get(member),
+                    appearance_mode=member_features.appearance_mode,
+                    yaw_micro_band=member_features.yaw_micro_band,
+                    pitch_micro_band=member_features.pitch_micro_band,
+                    mouth_openness_band=member_features.mouth_openness_band,
+                    smile_proxy_band=member_features.smile_proxy_band,
                 )
             )
 
