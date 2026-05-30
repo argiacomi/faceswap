@@ -1791,9 +1791,13 @@ def test_visual_span_splitter_breaks_appearance_diverse_components() -> None:
     one_giant_component = [list(range(len(records)))]
     split_reasons: dict[int, str | None] = {idx: None for idx in range(len(records))}
 
-    out = _split_high_visual_span_components(one_giant_component, features, split_reasons)
+    out, visual_split_subs = _split_high_visual_span_components(
+        one_giant_component, features, split_reasons
+    )
 
     assert len(out) >= 2, f"expected >= 2 sub-components, got {len(out)}"
+    assert visual_split_subs, "expected visual splitter to report produced sub-components"
+
     visual_split_reasons = [
         reason for reason in split_reasons.values() if reason and "visual-mode span" in reason
     ]

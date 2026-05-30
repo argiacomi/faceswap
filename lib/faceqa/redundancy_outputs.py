@@ -234,18 +234,19 @@ def render_contact_sheets(
         #      with similar pose / mouth shape sit side-by-side.
         #   5. Finally by frame + face index for stable ordering.
         recommendation_rank = {KEEP: 0, REVIEW: 1, PRUNE: 2}
+
+        def _none_last(value):
+            return (value is None, value)
+
         records.sort(
             key=lambda r: (
                 0 if r.representative else 1,
                 recommendation_rank.get(r.recommendation, 3),
-                # Fall back to "" / (-1, -1) for missing visual signals
-                # so partial-data records sort last within their bucket
-                # rather than mixing into the visually-grouped runs.
-                (r.appearance_mode if r.appearance_mode is not None else (-1, -1, -1, -1)),
-                (r.yaw_micro_band if r.yaw_micro_band is not None else -999),
-                (r.pitch_micro_band if r.pitch_micro_band is not None else -999),
-                (r.mouth_openness_band if r.mouth_openness_band is not None else -999),
-                (r.smile_proxy_band if r.smile_proxy_band is not None else -999),
+                (r.appearance_mode is None, r.appearance_mode or ()),
+                _none_last(r.yaw_micro_band),
+                _none_last(r.pitch_micro_band),
+                _none_last(r.mouth_openness_band),
+                _none_last(r.smile_proxy_band),
                 -r.quality_score,
                 r.frame,
                 r.face_index,

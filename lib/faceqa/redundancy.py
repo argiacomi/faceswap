@@ -2143,7 +2143,7 @@ def _split_high_visual_span_components(
     components: list[list[int]],
     features: list[RepresentationFeatures],
     split_reason_by_member: dict[int, str | None],
-) -> list[list[int]]:
+) -> tuple[list[list[int]], list[list[int]]]:
     """Split components whose internal visual-mode span is too broad.
 
     Walks ``components`` AFTER the distance-diameter splitter, leaves
@@ -2161,6 +2161,7 @@ def _split_high_visual_span_components(
     Components that don't violate the limits pass through unchanged.
     """
     out: list[list[int]] = []
+    refreshed_subs: list[list[int]] = []  # Sub-components needing diagnostic refresh.
     for members in components:
         if len(members) < _VISUAL_SPAN_SPLIT_MIN_SIZE:
             out.append(members)
@@ -2180,7 +2181,8 @@ def _split_high_visual_span_components(
         # there is nothing to split. Leave the cluster intact (the
         # downstream diagnostics still surface the topology issue via
         # cluster-health metrics) but record the bypass on every member
-        # so reviewers can audit.
+        # so reviewers can audit. No diagnostic refresh needed since
+        # the component membership did not change.
         if len(groups) <= 1:
             for member in members:
                 if split_reason_by_member.get(member) is None:
@@ -2197,8 +2199,105 @@ def _split_high_visual_span_components(
             for member in sub:
                 split_reason_by_member[member] = reason
             out.append(sub)
+            refreshed_subs.append(sub)
     out.sort(key=lambda c: c[0])
-    return out
+    return out, refreshed_subs
+
+
+def _refresh_component_diagnostics(
+    members: list[int],
+    features: list[RepresentationFeatures],
+    ctx: _PairwiseContext,
+    config: AggressivenessConfig,
+    edge_reasons: dict[tuple[int, int], tuple[bool, str]],
+    *,
+    diameter_by_member: dict[int, float],
+    nearest_neighbor_by_member: dict[int, float],
+    nearest_neighbor_index_by_member: dict[int, int | None],
+    direct_to_rep_by_member: dict[int, bool],
+    connected_via_rep_edge_by_member: dict[int, bool],
+) -> None:
+    """Refresh per-member diagnostics for one FINAL component.
+
+    Issue #208 follow-up 3. The visual-span splitter runs after the
+    diameter splitter and can re-group a parent component into several
+    smaller visual-mode sub-components. When that happens, diagnostics
+    created by the diameter pass (nearest neighbour, component diameter,
+    direct-to-representative, and graph-edge-to-representative) describe
+    the PRE-visual-split parent, not the final cluster rendered in the
+    report. Recompute those fields for each visual sub-component while
+    preserving the existing ``split_reason_by_member`` entries populated
+    by the splitters.
+    """
+    rep_limit = config.representation_distance_threshold * _MEMBER_TO_REP_SCALE
+
+    def _distance(i: int, j: int) -> float:
+        dist, _compared = _distance_with_ctx(ctx, i, j)
+        return dist
+
+    def _has_eligible_rep_edge(member: int, rep: int) -> bool:
+        if member == rep:
+            return True
+        key = (member, rep) if member < rep else (rep, member)
+        entry = edge_reasons.get(key)
+        return bool(entry and entry[0])
+
+    rep = max(members, key=lambda idx: (features[idx].quality_score, -idx))
+
+    if len(members) == 1:
+        sole = members[0]
+        diameter_by_member[sole] = 0.0
+        nearest_neighbor_by_member[sole] = 0.0
+        nearest_neighbor_index_by_member[sole] = None
+        direct_to_rep_by_member[sole] = True
+        connected_via_rep_edge_by_member[sole] = True
+        return
+
+    # Keep the final-diagnostic refresh bounded. Visual splitting usually
+    # produces much smaller groups; if a group somehow remains huge, use
+    # the same O(N) representative-only fallback as the diameter cap.
+    if len(members) > _MAX_COMPONENT_SIZE_FOR_DIAMETER_SPLIT:
+        for member in members:
+            diameter_by_member[member] = math.inf
+            nearest_neighbor_by_member[member] = math.inf
+            nearest_neighbor_index_by_member[member] = None
+            if member == rep:
+                direct_to_rep_by_member[member] = True
+                connected_via_rep_edge_by_member[member] = True
+                continue
+            dist_to_rep = _distance(member, rep)
+            direct_to_rep_by_member[member] = dist_to_rep <= rep_limit
+            connected_via_rep_edge_by_member[member] = _has_eligible_rep_edge(member, rep)
+        return
+
+    pair_distance: dict[int, dict[int, float]] = {m: {} for m in members}
+    for i_pos, i in enumerate(members):
+        for j in members[i_pos + 1 :]:
+            d = _distance(i, j)
+            pair_distance[i][j] = d
+            pair_distance[j][i] = d
+
+    diameter = max(
+        (max(neighbours.values()) for neighbours in pair_distance.values()), default=0.0
+    )
+    for member in members:
+        diameter_by_member[member] = diameter
+        neighbours = pair_distance[member]
+        if not neighbours:
+            nearest_neighbor_by_member[member] = math.inf
+            nearest_neighbor_index_by_member[member] = None
+        else:
+            nearest_idx = min(neighbours, key=neighbours.__getitem__)
+            nearest_neighbor_by_member[member] = neighbours[nearest_idx]
+            nearest_neighbor_index_by_member[member] = nearest_idx
+
+        if member == rep:
+            direct_to_rep_by_member[member] = True
+            connected_via_rep_edge_by_member[member] = True
+            continue
+        dist_to_rep = pair_distance[member].get(rep, math.inf)
+        direct_to_rep_by_member[member] = dist_to_rep <= rep_limit
+        connected_via_rep_edge_by_member[member] = _has_eligible_rep_edge(member, rep)
 
 
 def _finite_or_none(value: float | None) -> float | None:
@@ -2421,7 +2520,27 @@ def compute_redundancy(
     # per-band limits, even when the pairwise gates allowed the
     # connections individually. Member-indexed diagnostic maps stay
     # valid across this pass (the splitter only re-groups indices).
-    components = _split_high_visual_span_components(components, features, split_reason_by_member)
+    components, _visual_split_subs = _split_high_visual_span_components(
+        components, features, split_reason_by_member
+    )
+    # Issue #208 follow-up 3: refresh per-member diagnostics for each
+    # sub-component the visual splitter produced. Without this, the
+    # diameter / nearest-neighbour / direct-to-rep fields would still
+    # describe the PRE-split parent component — pointing to faces no
+    # longer in the final cluster.
+    for _sub in _visual_split_subs:
+        _refresh_component_diagnostics(
+            _sub,
+            features,
+            ctx,
+            config,
+            edge_reasons,
+            diameter_by_member=diameter_by_member,
+            nearest_neighbor_by_member=nearest_neighbor_by_member,
+            nearest_neighbor_index_by_member=nearest_neighbor_index_by_member,
+            direct_to_rep_by_member=direct_to_rep_by_member,
+            connected_via_rep_edge_by_member=connected_via_rep_edge_by_member,
+        )
 
     def _edge_reason_for(member_index: int | None, rep_index: int | None) -> str | None:
         """Return the eligibility reason for the (rep_index, member_index) edge.
