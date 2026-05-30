@@ -17,7 +17,7 @@ if T.TYPE_CHECKING:  # pragma: no cover - import cycle guard
     from lib.gui.qt_shell.main_window import ConsolePane
 
 _ANSI_ESCAPE_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
-_LOG_LEVEL_RE = re.compile(r".+?(\s\d+:\d+:\d+\s)(?P<lvl>[A-Z]+)\s")
+_LOG_LEVEL_RE = re.compile(r"(?:^|.*?\s)(?P<time>\d{1,2}:\d{2}:\d{2})\s+(?P<lvl>[A-Z]+)\b")
 _KNOWN_TAGS = {"info", "verbose", "warning", "error", "critical", "stdout", "stderr"}
 
 
