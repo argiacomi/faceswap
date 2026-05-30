@@ -29,6 +29,7 @@ from lib.landmarks.ensemble.runtime_resolver_scorer_data import (
     image_aware_runtime_result,
 )
 from lib.landmarks.ensemble.weights import load_weights
+from tools.landmarks.run_landmark_resolver_pipeline import DEFAULT_MODELS
 
 logger = logging.getLogger("backfill_runtime_resolver_metadata")
 
@@ -202,7 +203,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--weights", type=Path, required=True)
     parser.add_argument("--setup", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--models", default="hrnet,spiga,orformer")
+    parser.add_argument("--models", default=DEFAULT_MODELS)
     parser.add_argument("--crop-size", type=int, default=DEFAULT_IMAGE_BACKFILL_CROP_SIZE)
     parser.add_argument("--log-level", default="INFO")
     return parser

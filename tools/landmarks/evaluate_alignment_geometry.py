@@ -44,6 +44,7 @@ from lib.landmarks.evaluation.geometry_metrics import (
 )
 from lib.landmarks.evaluation.geometry_signals import alignment_summary
 from lib.landmarks.evaluation.harness import LandmarkSample, load_manifest
+from tools.landmarks.run_landmark_resolver_pipeline import DEFAULT_MODELS
 
 logger = logging.getLogger(__name__)
 
@@ -303,7 +304,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--cache-dir", required=True)
-    parser.add_argument("--models", default="hrnet,spiga,orformer")
+    parser.add_argument("--models", default=DEFAULT_MODELS)
     parser.add_argument(
         "--variants",
         default="",

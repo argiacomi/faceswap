@@ -33,6 +33,7 @@ from lib.landmarks.evaluation.hard_slices import (
     HardSliceThresholds,
     slice_manifest_samples,
 )
+from tools.landmarks.run_landmark_resolver_pipeline import DEFAULT_MODELS
 
 logger = logging.getLogger(__name__)
 
@@ -207,7 +208,7 @@ def main(argv: list[str] | None = None) -> int:
             "CLI is invoked against the freshly built hard-case manifest."
         ),
     )
-    parser.add_argument("--models", default="hrnet,spiga,orformer")
+    parser.add_argument("--models", default=DEFAULT_MODELS)
     parser.add_argument("--variants", default="")
     parser.add_argument("--weights", default="")
     parser.add_argument("--outlier-threshold", type=float, default=3.5)

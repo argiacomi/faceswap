@@ -70,6 +70,7 @@ from tools.landmarks.production_promotion_gate import (
     ProductionGateConfig,
     run_production_promotion_gate,
 )
+from tools.landmarks.run_landmark_resolver_pipeline import DEFAULT_MODELS
 
 
 def _parse_csv(value: str) -> tuple[str, ...]:
@@ -679,7 +680,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--cache-dir", required=True)
     parser.add_argument("--splits", required=True)
-    parser.add_argument("--models", default="hrnet,spiga,orformer")
+    parser.add_argument("--models", default=DEFAULT_MODELS)
     parser.add_argument("--model-subsets", default="all")
     parser.add_argument(
         "--weight-generators", default="equal,inverse_mean_error,regularized_inverse_error"
