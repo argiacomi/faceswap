@@ -958,6 +958,32 @@ class IdentityQualityReport:
         }
 
 
+# Tie-break order when two identity models have the same coverage count.
+# ArcFace stays the stable FaceQA default for equal coverage; ``insightface``
+# / ``adaface`` / ``vggface2`` follow. Unknown models fall back to
+# deterministic alphabetical ordering — see ``_identity_model_priority``.
+IDENTITY_MODEL_PRIORITY: tuple[str, ...] = (
+    "arcface",
+    "insightface",
+    "adaface",
+    "vggface2",
+)
+
+
+def _identity_model_priority(model: str) -> int:
+    """Return the ranked position of ``model`` in :data:`IDENTITY_MODEL_PRIORITY`.
+
+    Lower index == higher priority. Unknown models all share the
+    ``len(IDENTITY_MODEL_PRIORITY)`` rank so the
+    :func:`majority_identity_model` tie-break still has a deterministic
+    fallback (alphabetical) below the known models.
+    """
+    try:
+        return IDENTITY_MODEL_PRIORITY.index(model)
+    except ValueError:
+        return len(IDENTITY_MODEL_PRIORITY)
+
+
 def majority_identity_model(
     faces: T.Iterable[FileAlignments],
     *,
@@ -990,7 +1016,16 @@ def majority_identity_model(
             counts[key] = counts.get(key, 0) + 1
     if not counts:
         return None, counts
-    winning = max(counts.items(), key=lambda item: (item[1], item[0]))[0]
+    # Tie-break order (issue follow-up):
+    #   1. Higher coverage count wins.
+    #   2. Earlier ``IDENTITY_MODEL_PRIORITY`` index wins on equal coverage —
+    #      negated so ``max`` picks the smaller index (= higher priority).
+    #   3. Alphabetical model name as the final deterministic fallback for
+    #      unknown models that share the lowest priority rank.
+    winning = max(
+        counts.items(),
+        key=lambda item: (item[1], -_identity_model_priority(item[0]), item[0]),
+    )[0]
     return winning, counts
 
 

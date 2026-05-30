@@ -72,7 +72,8 @@ class _FakePlugin:
 
 
 def test_majority_identity_model_picks_broadest_coverage() -> None:
-    """The model used by the most faces wins; ties break by name."""
+    """The model used by the most faces wins; ties fall through to
+    :data:`IDENTITY_MODEL_PRIORITY`."""
     faces = [
         _face(insightface=np.ones(512, dtype="float32")),
         _face(insightface=np.ones(512, dtype="float32")),
@@ -84,6 +85,61 @@ def test_majority_identity_model_picks_broadest_coverage() -> None:
 
     assert chosen == "insightface"
     assert counts == {"insightface": 2, "adaface": 1}
+
+
+def test_majority_identity_model_uses_priority_for_ties() -> None:
+    """When two models tie on coverage, the earlier entry in
+    ``IDENTITY_MODEL_PRIORITY`` wins (``arcface`` stays the stable
+    FaceQA default).
+    """
+    faces = [
+        _face(
+            insightface=np.ones(512, dtype="float32"),
+            arcface=np.ones(512, dtype="float32"),
+        ),
+        _face(
+            insightface=np.ones(512, dtype="float32"),
+            arcface=np.ones(512, dtype="float32"),
+        ),
+    ]
+
+    chosen, counts = majority_identity_model(faces)
+
+    assert chosen == "arcface"
+    assert counts == {"insightface": 2, "arcface": 2}
+
+
+def test_majority_identity_model_priority_loses_to_higher_coverage() -> None:
+    """Priority is a TIE-BREAK only — a non-priority model with broader
+    coverage still wins."""
+    faces = [
+        _face(adaface=np.ones(512, dtype="float32")),  # broader coverage
+        _face(adaface=np.ones(512, dtype="float32")),
+        _face(adaface=np.ones(512, dtype="float32")),
+        _face(arcface=np.ones(512, dtype="float32")),  # higher priority but lower coverage
+        _face(arcface=np.ones(512, dtype="float32")),
+    ]
+
+    chosen, counts = majority_identity_model(faces)
+
+    assert chosen == "adaface"
+    assert counts == {"adaface": 3, "arcface": 2}
+
+
+def test_majority_identity_model_unknown_models_tie_deterministically() -> None:
+    """Models outside ``IDENTITY_MODEL_PRIORITY`` share the lowest priority
+    rank and fall back to the legacy ``max(name)`` deterministic tie-break
+    (reverse-alphabetical because ``max`` picks the larger string)."""
+    faces = [
+        _face(zzz_face=np.ones(512, dtype="float32"), aaa_face=np.ones(512, dtype="float32")),
+    ]
+
+    chosen, _ = majority_identity_model(faces)
+
+    # ``max`` on a (count, -priority, name) key picks the alphabetically
+    # larger name when count + priority both tie. Either ordering would be
+    # deterministic; this just pins the actual behaviour.
+    assert chosen == "zzz_face"
 
 
 def test_majority_identity_model_handles_no_embeddings() -> None:
