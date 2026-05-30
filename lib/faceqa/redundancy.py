@@ -1191,6 +1191,47 @@ def _split_high_diameter_components(
             direct_to_rep_by_member[member] = dist_to_rep <= rep_limit
             connected_via_rep_edge_by_member[member] = _has_eligible_rep_edge(member, rep)
 
+    def _annotate_oversize(members: list[int], reason: str | None) -> None:
+        """Light-weight annotation for components above
+        :data:`_MAX_COMPONENT_SIZE_FOR_DIAMETER_SPLIT`.
+
+        Issue #204 follow-up. ``_annotate`` builds a full per-pair
+        distance dict (O(N^2) time AND memory); ``_annotate_oversize``
+        only computes the O(N) per-member distance to a single chosen
+        representative so the cap branch genuinely avoids the
+        giant-component pathology. The cost of the missing data:
+
+        * ``diameter_by_member`` is left ``inf`` — the splitter chose
+          to bypass the diameter pass, so a definitive diameter would
+          require the same O(N^2) work the bypass exists to avoid.
+        * ``nearest_neighbor_by_member`` / index are left ``inf`` /
+          ``None`` for the same reason.
+        * ``direct_to_rep_by_member`` is the per-member distance check
+          to the chosen representative (cheap, O(N) total).
+        * ``connected_via_rep_edge_by_member`` is the cheap
+          ``edge_reasons`` lookup the regular path uses.
+        * ``split_reason_by_member`` carries the cap-bypass reason so
+          the report surfaces the topology issue.
+
+        ``compute_redundancy``'s downstream consumers treat ``inf`` /
+        ``None`` diagnostics as "missing" and fall back to safer
+        recommendations, so the lightweight annotation never produces
+        a more aggressive prune decision than the regular path would.
+        """
+        rep = max(members, key=lambda idx: (features[idx].quality_score, -idx))
+        for member in members:
+            diameter_by_member[member] = math.inf
+            nearest_neighbor_by_member[member] = math.inf
+            nearest_neighbor_index_by_member[member] = None
+            split_reason_by_member[member] = reason
+            if member == rep:
+                direct_to_rep_by_member[member] = True
+                connected_via_rep_edge_by_member[member] = True
+                continue
+            dist_to_rep = _distance(member, rep)
+            direct_to_rep_by_member[member] = dist_to_rep <= rep_limit
+            connected_via_rep_edge_by_member[member] = _has_eligible_rep_edge(member, rep)
+
     for members in components:
         # Small components can't form chains long enough to exceed the
         # diameter band; annotate directly without the splitter logic.
@@ -1200,16 +1241,19 @@ def _split_high_diameter_components(
             continue
 
         # Issue #204 follow-up — cap the work on truly huge components.
-        # The pairwise pass below is O(N^2); above this cap we KEEP the
-        # component intact, surface the bypass via ``split_reason``, and
-        # rely on the giant-component warning + cluster-health metrics to
-        # flag the topology so the user can re-tune aggressiveness.
+        # ``_annotate`` would build a full N*(N-1)/2 pair_distance dict
+        # (~43M pairs / ~3GB on a 9,304-face giant component); above this
+        # cap we KEEP the component intact AND use the O(N) light-weight
+        # annotation path so the giant-component pathology cannot crash
+        # the process. Cluster-health metrics + ``split_reason`` still
+        # surface the topology issue so the user can re-tune
+        # aggressiveness.
         if len(members) > _MAX_COMPONENT_SIZE_FOR_DIAMETER_SPLIT:
             reason = (
                 f"component too large for diameter check ({len(members)} > "
                 f"{_MAX_COMPONENT_SIZE_FOR_DIAMETER_SPLIT}) — kept as-is"
             )
-            _annotate(members, reason=reason)
+            _annotate_oversize(members, reason=reason)
             new_components.append(members)
             continue
 
@@ -1615,6 +1659,23 @@ def _protection_budget_for_cluster(
 # ---------------------------------------------------------------------------
 
 
+def _finite_or_none(value: float | None) -> float | None:
+    """Return ``value`` when it is a finite float; otherwise ``None``.
+
+    Used by ``compute_redundancy`` when projecting the splitter's
+    diameter / nearest-neighbour diagnostics onto ``RedundancyRecord``:
+    the oversize-component cap path (issue #204 follow-up) leaves these
+    as ``math.inf`` to signal "uncomputed", but ``math.inf`` does not
+    round-trip through standard JSON, so the report-level fields are
+    surfaced as ``None`` instead.
+    """
+    if value is None:
+        return None
+    if not math.isfinite(value):
+        return None
+    return float(value)
+
+
 _GIANT_COMPONENT_RATIO_LIMIT: float = 0.25
 _GIANT_COMPONENT_SIZE_LIMIT: int = 1000
 _SPARSE_MULTI_CLUSTER_LIMIT: int = 2
@@ -1818,9 +1879,11 @@ def compute_redundancy(
                 reason=rep_reason,
                 identity_outlier=rep_features.identity_outlier,
                 has_identity=rep_features.has_identity,
-                nearest_neighbor_distance=nearest_neighbor_by_member.get(rep_index, 0.0),
+                nearest_neighbor_distance=_finite_or_none(
+                    nearest_neighbor_by_member.get(rep_index, 0.0)
+                ),
                 direct_to_representative=True,
-                component_diameter=cluster_diameter,
+                component_diameter=_finite_or_none(cluster_diameter),
                 nearest_neighbor_frame=_neighbor_frame_for(
                     record_list,
                     nearest_neighbor_index_by_member.get(rep_index),
@@ -1895,9 +1958,11 @@ def compute_redundancy(
                     compared_metrics=compared,
                     edge_eligibility=_edge_reason_for(member, rep_index),
                     # Issue #204 — per-member component diagnostics.
-                    nearest_neighbor_distance=nearest_neighbor_by_member.get(member),
+                    nearest_neighbor_distance=_finite_or_none(
+                        nearest_neighbor_by_member.get(member)
+                    ),
                     direct_to_representative=direct_to_rep_by_member.get(member, False),
-                    component_diameter=diameter_by_member.get(member),
+                    component_diameter=_finite_or_none(diameter_by_member.get(member)),
                     nearest_neighbor_frame=_neighbor_frame_for(
                         record_list,
                         nearest_neighbor_index_by_member.get(member),

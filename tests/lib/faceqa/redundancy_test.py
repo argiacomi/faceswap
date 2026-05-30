@@ -8,6 +8,7 @@ issue #176, plus exercise the public ``RedundancyReport`` interface.
 from __future__ import annotations
 
 import json
+import math
 
 from lib.faceqa.coverage import compute_coverage
 from lib.faceqa.record import FaceQARecord
@@ -1285,3 +1286,66 @@ def test_split_reason_marks_members_when_diameter_split_happens() -> None:
         assert "split from oversize component due to diameter" in reasons
     # Cluster-health metric also reflects whatever the splitter did.
     assert report.component_diameter_max is not None
+
+
+def test_oversize_cap_uses_O_n_annotation_path() -> None:
+    """The cap branch (#204 follow-up) MUST avoid the O(N^2) pairwise
+    distance pass. A cap-sized component must trigger only one
+    ``_distance_with_ctx`` call per non-rep member (member→rep) and
+    leave ``component_diameter`` / ``nearest_neighbor_distance``
+    unpopulated (``inf``), NOT compute every pair.
+    """
+    from lib.faceqa import redundancy as redundancy_module
+    from lib.faceqa.redundancy import _AGGRESSIVENESS_PRESETS as PRESETS
+    from lib.faceqa.redundancy import (
+        _MAX_COMPONENT_SIZE_FOR_DIAMETER_SPLIT,
+        _build_pairwise_context,
+        _features_for,
+        _split_high_diameter_components,
+    )
+
+    cap = _MAX_COMPONENT_SIZE_FOR_DIAMETER_SPLIT
+    n = cap + 5
+    records = _near_identical_run(n, yaw=0.0)
+    config = PRESETS["balanced"]
+    features = [_features_for(r) for r in records]
+    members = list(range(len(records)))
+    ctx = _build_pairwise_context(features)
+
+    # Spy on the inner per-pair distance helper so we can count calls.
+    call_count = 0
+    original = redundancy_module._distance_with_ctx
+
+    def _counting(*args, **kwargs):  # noqa: ANN001, ANN003
+        nonlocal call_count
+        call_count += 1
+        return original(*args, **kwargs)
+
+    redundancy_module._distance_with_ctx = _counting
+    try:
+        components, diag = _split_high_diameter_components(
+            [members], features, ctx, config, edge_reasons={}
+        )
+    finally:
+        redundancy_module._distance_with_ctx = original
+
+    # ``_annotate_oversize`` should make ONE distance call per non-rep
+    # member (n - 1) — definitely far below the O(N^2) pair count.
+    n_pairs = n * (n - 1) // 2
+    assert call_count == n - 1, (
+        f"expected {n - 1} distance evaluations (one per non-rep member); "
+        f"got {call_count}. Pair count would have been {n_pairs}."
+    )
+
+    # Cluster shape is intact (cap kept it).
+    assert len(components) == 1
+    assert len(components[0]) == n
+
+    # Diameter + nearest-neighbour are left "uncomputed" (math.inf) and
+    # surfaced as ``None`` in the report layer via ``_finite_or_none``.
+    assert all(not math.isfinite(diag.diameter_by_member[m]) for m in members)
+    assert all(not math.isfinite(diag.nearest_neighbor_by_member[m]) for m in members)
+
+    # And the cap-bypass reason populates EVERY member.
+    reasons = {diag.split_reason_by_member[m] for m in members}
+    assert reasons == {f"component too large for diameter check ({n} > {cap}) — kept as-is"}
