@@ -207,6 +207,62 @@ class PreviewExtract:
         assert self._preview_image is not None
         self._preview_image.save(filename)
 
+    def resize_preview(self, thumbnail_size: int, frame_dims: tuple[int, int]) -> bool:
+        """Re-layout cached thumbnails for a resized display panel.
+
+        If the resized panel can fit more thumbnails than are currently cached,
+        reload the latest available preview files from disk so the newly visible
+        slots can be populated with real images rather than placeholders.
+        """
+        logger.debug(
+            "Resizing preview image: (thumbnail_size: %s, frame_dims: %s)",
+            thumbnail_size,
+            frame_dims,
+        )
+
+        cols = frame_dims[0] // thumbnail_size
+        rows = frame_dims[1] // thumbnail_size
+        capacity = cols * rows
+        if capacity == 0:
+            return False
+
+        cached_count = 0 if self._images is None else self._images.shape[0]
+        if cached_count < capacity:
+            image_files, gui_preview = self._get_preview_image_files()
+            if image_files:
+                image_files = sorted(image_files, key=os.path.getctime)
+                image_files = image_files[-capacity:]
+
+                # Rebuild the cache for the new capacity rather than appending to
+                # the old smaller cache. This lets resize growth backfill newly
+                # visible slots with existing output images.
+                old_images = self._images
+                old_filenames = self._filenames
+                try:
+                    self._images = None
+                    self._filenames = []
+                    loaded = self._load_images_to_cache(image_files, frame_dims, thumbnail_size)
+                except Exception:
+                    self._images = old_images
+                    self._filenames = old_filenames
+                    raise
+
+                if loaded and image_files == [gui_preview]:
+                    try:
+                        os.remove(image_files[0])
+                    except FileNotFoundError:
+                        logger.debug("Preview image already deleted: %s", image_files[0])
+
+        show_image = self._place_previews(frame_dims)
+        if show_image is None:
+            self._preview_image = None
+            self._preview_image_tk = None
+            return False
+
+        self._preview_image = show_image
+        self._preview_image_tk = ImageTk.PhotoImage(show_image)
+        return True
+
     def set_faceswap_output_path(self, location: str, batch_mode: bool = False) -> None:
         """Set the path that will contain the output from an Extract or Convert task.
 
@@ -273,6 +329,19 @@ class PreviewExtract:
             self._modified = max(os.path.getmtime(img) for img in retval)
             logger.debug("Number new images: %s, Last Modified: %s", len(retval), self._modified)
         return retval
+
+    def _get_preview_image_files(self) -> tuple[list[str], str]:
+        """Return available preview image files and the GUI preview path."""
+        image_path = self._get_newest_folder() if self._batch_mode else self._output_path
+        image_files = _get_previews(image_path)
+        gui_preview = os.path.join(self._output_path, ".gui_preview.jpg")
+
+        if not image_files or (len(image_files) == 1 and gui_preview not in image_files):
+            return [], gui_preview
+
+        # Filter to just the gui_preview if it exists in folder output.
+        image_files = [gui_preview] if gui_preview in image_files else image_files
+        return image_files, gui_preview
 
     def _pad_and_border(self, image: Image.Image, size: int) -> np.ndarray:
         """Pad rectangle images to a square and draw borders
@@ -470,8 +539,18 @@ class PreviewExtract:
             logger.debug("Cols or Rows is zero. No items to display")
             return None
 
-        remainder = (cols * rows) - num_images
-        if remainder != 0:
+        capacity = cols * rows
+        if num_images > capacity:
+            logger.debug(
+                "Truncating sample display for resized panel. num_images: %s, capacity: %s",
+                num_images,
+                capacity,
+            )
+            samples = samples[-capacity:]
+            num_images = capacity
+
+        remainder = capacity - num_images
+        if remainder > 0:
             logger.debug("Padding sample display. Remainder: %s", remainder)
             assert self._placeholder is not None
             placeholder = np.concatenate([np.expand_dims(self._placeholder, 0)] * remainder)
@@ -510,14 +589,12 @@ class PreviewExtract:
             thumbnail_size,
             frame_dims,
         )
-        image_path = self._get_newest_folder() if self._batch_mode else self._output_path
-        image_files = _get_previews(image_path)
-        gui_preview = os.path.join(self._output_path, ".gui_preview.jpg")
-        if not image_files or (len(image_files) == 1 and gui_preview not in image_files):
+
+        image_files, gui_preview = self._get_preview_image_files()
+        if not image_files:
             logger.debug("No preview to display")
             return False
-        # Filter to just the gui_preview if it exists in folder output
-        image_files = [gui_preview] if gui_preview in image_files else image_files
+
         logger.debug("Image Files: %s", len(image_files))
 
         image_files = self._get_newest_filenames(image_files)
@@ -528,16 +605,17 @@ class PreviewExtract:
             logger.debug("Failed to load any preview images")
             if gui_preview in image_files:
                 # Reset last modified for failed loading of a gui preview image so it is picked
-                # up next time
+                # up next time.
                 self._modified = 0.0
             return False
 
         if image_files == [gui_preview]:
-            # Delete the preview image so that the main scripts know to output another
+            # Delete the preview image so that the main scripts know to output another.
             logger.debug("Deleting preview image")
             os.remove(image_files[0])
+
         show_image = self._place_previews(frame_dims)
-        if not show_image:
+        if show_image is None:
             self._preview_image = None
             self._preview_image_tk = None
             return False

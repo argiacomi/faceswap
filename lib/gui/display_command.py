@@ -28,28 +28,38 @@ _ = _LANG.gettext
 
 
 class PreviewExtract(DisplayOptionalPage):  # pylint:disable=too-many-ancestors
-    """Tab to display output preview images for extract and convert"""
+    """Tab to display output preview images for extract and convert."""
+
+    _RESIZE_DEBOUNCE_MS = 150
 
     def __init__(self, *args, **kwargs) -> None:
         logger.debug(parse_class_init(locals()))
         self._preview = get_images().preview_extract
+        self._resize_after_id: str | None = None
+        self._last_preview_dims: tuple[int, int] = (0, 0)
         super().__init__(*args, **kwargs)
+        self._bind_preview_panel_resize()
         logger.debug("Initialized %s", self.__class__.__name__)
 
     def display_item_set(self) -> None:
-        """Load the latest preview if available"""
+        """Load the latest preview if available."""
         logger.trace("Loading latest preview")  # type:ignore[attr-defined]
         size = int(256 if self.command == "convert" else 128 * get_config().scaling_factor)
-        if not self._preview.load_latest_preview(
-            thumbnail_size=size, frame_dims=(self.winfo_width(), self.winfo_height())
-        ):
+        frame_dims = self._preview_frame_dims()
+        if not self._is_valid_preview_dims(frame_dims):
+            logger.trace("Preview panel has invalid dimensions: %s", frame_dims)  # type:ignore[attr-defined]
+            return
+
+        if not self._preview.load_latest_preview(thumbnail_size=size, frame_dims=frame_dims):
             logger.trace("Preview not updated")  # type:ignore[attr-defined]
             return
+
+        self._last_preview_dims = frame_dims
         logger.debug("Preview loaded")
         self.display_item = True
 
     def display_item_process(self) -> None:
-        """Display the preview"""
+        """Display the preview."""
         logger.trace("Displaying preview")  # type:ignore[attr-defined]
         if not self.subnotebook.children:
             self.add_child()
@@ -57,7 +67,7 @@ class PreviewExtract(DisplayOptionalPage):  # pylint:disable=too-many-ancestors
             self.update_child()
 
     def add_child(self) -> None:
-        """Add the preview label child"""
+        """Add the preview label child."""
         logger.debug("Adding child")
         preview = self.subnotebook_add_page(self.tabname, widget=None)
         lblpreview = ttk.Label(preview, image=self._preview.image)  # type:ignore[arg-type]
@@ -65,13 +75,13 @@ class PreviewExtract(DisplayOptionalPage):  # pylint:disable=too-many-ancestors
         Tooltip(lblpreview, text=self.helptext, wrap_length=200)
 
     def update_child(self) -> None:
-        """Update the preview image on the label"""
+        """Update the preview image on the label."""
         logger.trace("Updating preview")  # type:ignore[attr-defined]
         for widget in self.subnotebook_get_widgets():
             widget.configure(image=self._preview.image)
 
     def save_items(self) -> None:
-        """Open save dialogue and save preview"""
+        """Open save dialogue and save preview."""
         location = FileHandler("dir", None).return_file
         if not location:
             return
@@ -80,6 +90,83 @@ class PreviewExtract(DisplayOptionalPage):  # pylint:disable=too-many-ancestors
         filename = os.path.join(location, f"{filename}_{now}.png")
         self._preview.save(filename)
         print(f"Saved preview to {filename}")
+
+    def subnotebook_show(self) -> None:
+        """Show the preview notebook and restore resize handling."""
+        super().subnotebook_show()
+        self._bind_preview_panel_resize()
+
+    def close(self) -> None:
+        """Cancel pending resize callbacks before closing the preview page."""
+        self._cancel_resize_callback()
+        super().close()
+
+    def _bind_preview_panel_resize(self) -> None:
+        """Bind preview panel resize events to cached preview re-layout."""
+        if not self._has_valid_subnotebook():
+            return
+        self.subnotebook.bind("<Configure>", self._on_preview_panel_resize, add="+")
+
+    def _preview_frame_dims(self) -> tuple[int, int]:
+        """Return the available dimensions for the preview image panel."""
+        if not self._has_valid_subnotebook():
+            return (0, 0)
+        return self.subnotebook.winfo_width(), self.subnotebook.winfo_height()
+
+    @staticmethod
+    def _is_valid_preview_dims(frame_dims: tuple[int, int]) -> bool:
+        """Return whether the preview panel dimensions are usable."""
+        return frame_dims[0] > 1 and frame_dims[1] > 1
+
+    def _cancel_resize_callback(self) -> None:
+        """Cancel any pending preview resize callback."""
+        if self._resize_after_id is None:
+            return
+        try:
+            self.after_cancel(self._resize_after_id)
+        except tk.TclError:
+            logger.debug("Resize callback already cancelled or fired: %s", self._resize_after_id)
+        self._resize_after_id = None
+
+    def _on_preview_panel_resize(self, event: tk.Event) -> None:  # pylint:disable=unused-argument
+        """Schedule preview re-layout when the display panel changes size."""
+        if not self._tab_is_active or not self._has_valid_subnotebook():
+            return
+        if not self.subnotebook.children:
+            return
+
+        frame_dims = self._preview_frame_dims()
+        if not self._is_valid_preview_dims(frame_dims):
+            return
+        if frame_dims == self._last_preview_dims:
+            return
+
+        self._last_preview_dims = frame_dims
+        self._cancel_resize_callback()
+        self._resize_after_id = self.after(
+            self._RESIZE_DEBOUNCE_MS,
+            self._resize_preview_to_panel,
+        )
+
+    def _resize_preview_to_panel(self) -> None:
+        """Recompute the cached preview image for the current panel size."""
+        self._resize_after_id = None
+
+        if not self._tab_is_active or not self._has_valid_subnotebook():
+            return
+        if not self.subnotebook.children:
+            return
+
+        frame_dims = self._preview_frame_dims()
+        if not self._is_valid_preview_dims(frame_dims):
+            return
+
+        size = int(256 if self.command == "convert" else 128 * get_config().scaling_factor)
+        if not self._preview.resize_preview(thumbnail_size=size, frame_dims=frame_dims):
+            logger.trace("Preview resize not updated")  # type:ignore[attr-defined]
+            return
+
+        self.update_child()
 
 
 class PreviewTrain(DisplayOptionalPage):  # pylint:disable=too-many-ancestors

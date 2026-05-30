@@ -6,14 +6,32 @@ from __future__ import annotations
 import typing as T
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
+from PIL import Image
 
 from lib.gui.display import DisplayNotebook
 from lib.gui.display_page import DisplayOptionalPage
 from lib.gui.options import CliOption, CliOptions
 from lib.gui.services.runtime_events import RuntimeEvent
 from lib.gui.services.runtime_service import ProcessRuntimeService
+from lib.gui.utils import image as gui_image
 from lib.gui.wrapper import FaceswapControl, ProcessWrapper
+
+
+class _FakePhotoImage:
+    """Minimal stand-in for ImageTk.PhotoImage."""
+
+    def __init__(self, image: Image.Image) -> None:
+        self.image = image
+
+    def width(self) -> int:
+        """Return image width."""
+        return self.image.width
+
+    def height(self) -> int:
+        """Return image height."""
+        return self.image.height
 
 
 class _FakePanelOption:
@@ -93,6 +111,18 @@ class _FakePsutilProcess:
     def kill(self) -> None:
         """Record kill."""
         self.killed = True
+
+
+def _preview_extract_with_cache(num_images: int = 4, size: int = 10) -> gui_image.PreviewExtract:
+    """Return a PreviewExtract instance with synthetic cached thumbnails."""
+    preview = gui_image.PreviewExtract.__new__(gui_image.PreviewExtract)
+    preview._images = np.stack(
+        [np.full((size, size, 3), fill_value=idx, dtype=np.uint8) for idx in range(num_images)]
+    )
+    preview._placeholder = None
+    preview._preview_image = None
+    preview._preview_image_tk = None
+    return preview
 
 
 @pytest.fixture(name="cli_opts")
@@ -381,3 +411,28 @@ def test_display_notebook_tab_change_ignores_missing_child() -> None:
     notebook.children = {}
 
     notebook._on_tab_change(None)
+
+
+def test_preview_extract_reflow_truncates_cache_when_panel_shrinks() -> None:
+    """Preview reflow should truncate cached thumbnails to the resized panel capacity."""
+    preview = _preview_extract_with_cache(num_images=4, size=10)
+
+    image = preview._place_previews((10, 10))  # pylint:disable=protected-access
+
+    assert image is not None
+    assert image.size == (10, 10)
+
+
+def test_preview_extract_resize_preview_reflows_cached_image(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """resize_preview should rebuild the PhotoImage from cached thumbnails."""
+    monkeypatch.setattr(gui_image.ImageTk, "PhotoImage", _FakePhotoImage)
+    preview = _preview_extract_with_cache(num_images=2, size=10)
+
+    updated = preview.resize_preview(thumbnail_size=10, frame_dims=(20, 10))
+
+    assert updated is True
+    assert preview._preview_image is not None  # pylint:disable=protected-access
+    assert preview._preview_image.size == (20, 10)  # pylint:disable=protected-access
+    assert isinstance(preview._preview_image_tk, _FakePhotoImage)  # pylint:disable=protected-access
