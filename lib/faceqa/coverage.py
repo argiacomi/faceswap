@@ -1489,29 +1489,47 @@ def _count_usable(
     return usable
 
 
+# Fields summarised by ``_metric_summary``. Kept in one place so the
+# single-pass record walk below stays in sync with the dictionary order
+# (issue #192 P2 high — reduce ``records × metrics`` Python iterations to
+# a single ``records`` walk per metric pass).
+_METRIC_SUMMARY_FIELDS: tuple[str, ...] = (
+    "yaw",
+    "pitch",
+    "roll",
+    "pose_max_abs_delta",
+    "blur_score",
+    "average_distance",
+    "mean_luminance",
+    "luminance_variance",
+    "contrast",
+    "left_right_ratio",
+    "top_bottom_ratio",
+    "saturation",
+    "color_warmth",
+    "mouth_openness",
+    "mouth_width_ratio",
+    "smile_proxy",
+    "eye_closure",
+    "brow_raise_proxy",
+    "expression_asymmetry",
+)
+
+
 def _metric_summary(records: list[FaceQARecord]) -> dict[str, dict[str, float | None]]:
-    fields_ = {
-        "yaw": [record.yaw for record in records],
-        "pitch": [record.pitch for record in records],
-        "roll": [record.roll for record in records],
-        "pose_max_abs_delta": [record.pose_max_abs_delta for record in records],
-        "blur_score": [record.blur_score for record in records],
-        "average_distance": [record.average_distance for record in records],
-        "mean_luminance": [record.mean_luminance for record in records],
-        "luminance_variance": [record.luminance_variance for record in records],
-        "contrast": [record.contrast for record in records],
-        "left_right_ratio": [record.left_right_ratio for record in records],
-        "top_bottom_ratio": [record.top_bottom_ratio for record in records],
-        "saturation": [record.saturation for record in records],
-        "color_warmth": [record.color_warmth for record in records],
-        "mouth_openness": [record.mouth_openness for record in records],
-        "mouth_width_ratio": [record.mouth_width_ratio for record in records],
-        "smile_proxy": [record.smile_proxy for record in records],
-        "eye_closure": [record.eye_closure for record in records],
-        "brow_raise_proxy": [record.brow_raise_proxy for record in records],
-        "expression_asymmetry": [record.expression_asymmetry for record in records],
-    }
-    return {name: _summarize(values) for name, values in fields_.items()}
+    """Return min / median / max per metric field across ``records``.
+
+    Walks the records ONCE and pushes each metric's value into its own
+    buffer. The previous shape paid ``len(records) × 19`` Python
+    iterations (one list comprehension per field) plus a separate
+    ``_summarize`` allocation per metric; the single-pass form below
+    keeps the total walks linear in ``len(records)``.
+    """
+    buffers: dict[str, list[float | None]] = {field: [] for field in _METRIC_SUMMARY_FIELDS}
+    for record in records:
+        for field in _METRIC_SUMMARY_FIELDS:
+            buffers[field].append(getattr(record, field))
+    return {name: _summarize(values) for name, values in buffers.items()}
 
 
 def _summarize(values: list[float | None]) -> dict[str, float | None]:
@@ -1525,18 +1543,33 @@ def _summarize(values: list[float | None]) -> dict[str, float | None]:
     }
 
 
-def _lighting_coverage(records: list[FaceQARecord]) -> dict[str, T.Any]:
-    """Return lighting bucket coverage with entropy and occupancy metrics."""
-    counts: dict[str, int] = {bucket: 0 for bucket in LIGHTING_BUCKETS}
+def _bucketed_coverage(
+    records: list[FaceQARecord],
+    *,
+    buckets: T.Sequence[str],
+    bucket_fn: T.Callable[[FaceQARecord], str],
+    prefix: str,
+) -> dict[str, T.Any]:
+    """Return counts / percentages / entropy / occupancy for one bucket
+    dimension.
+
+    Extracted helper consumed by both ``_lighting_coverage`` and
+    ``_expression_coverage`` (issue #192 P2 high — the two functions
+    duplicated count / unknown / classified / occupied / entropy /
+    percentage / missing-bin logic). ``prefix`` shapes the dimension-
+    specific output keys (``f"occupied_{prefix}_bins"`` etc.) so the
+    legacy JSON layout is preserved.
+    """
+    counts: dict[str, int] = {bucket: 0 for bucket in buckets}
     unknown = 0
     for record in records:
-        bucket = _lighting_bucket(record)
+        bucket = bucket_fn(record)
         if bucket == "unknown":
             unknown += 1
             continue
         counts[bucket] = counts.get(bucket, 0) + 1
     classified = sum(counts.values())
-    total_bins = len(LIGHTING_BUCKETS)
+    total_bins = len(buckets)
     occupied = sum(1 for value in counts.values() if value > 0)
     percentages = (
         {bucket: round(value / classified * 100, 2) for bucket, value in counts.items()}
@@ -1557,56 +1590,34 @@ def _lighting_coverage(records: list[FaceQARecord]) -> dict[str, T.Any]:
         "counts": counts,
         "percentages": percentages,
         "total_bins": total_bins,
-        "occupied_lighting_bins": occupied,
-        "empty_lighting_bins": total_bins - occupied,
-        "lighting_bin_coverage_pct": bin_coverage_pct,
-        "lighting_entropy": round(entropy, 4),
+        f"occupied_{prefix}_bins": occupied,
+        f"empty_{prefix}_bins": total_bins - occupied,
+        f"{prefix}_bin_coverage_pct": bin_coverage_pct,
+        f"{prefix}_entropy": round(entropy, 4),
         "classified_faces": classified,
         "unknown_faces": unknown,
         "missing_bins": missing_bins,
     }
+
+
+def _lighting_coverage(records: list[FaceQARecord]) -> dict[str, T.Any]:
+    """Return lighting bucket coverage with entropy and occupancy metrics."""
+    return _bucketed_coverage(
+        records,
+        buckets=LIGHTING_BUCKETS,
+        bucket_fn=_lighting_bucket,
+        prefix="lighting",
+    )
 
 
 def _expression_coverage(records: list[FaceQARecord]) -> dict[str, T.Any]:
     """Return expression bucket coverage with entropy and occupancy metrics."""
-    counts: dict[str, int] = {bucket: 0 for bucket in EXPRESSION_BUCKETS}
-    unknown = 0
-    for record in records:
-        bucket = _expression_bucket(record)
-        if bucket == "unknown":
-            unknown += 1
-            continue
-        counts[bucket] = counts.get(bucket, 0) + 1
-    classified = sum(counts.values())
-    total_bins = len(EXPRESSION_BUCKETS)
-    occupied = sum(1 for value in counts.values() if value > 0)
-    percentages = (
-        {bucket: round(value / classified * 100, 2) for bucket, value in counts.items()}
-        if classified
-        else {bucket: 0.0 for bucket in counts}
+    return _bucketed_coverage(
+        records,
+        buckets=EXPRESSION_BUCKETS,
+        bucket_fn=_expression_bucket,
+        prefix="expression",
     )
-    if classified:
-        probabilities = np.array(
-            [value / classified for value in counts.values() if value > 0],
-            dtype="float64",
-        )
-        entropy = float(-np.sum(probabilities * np.log2(probabilities)))
-    else:
-        entropy = 0.0
-    bin_coverage_pct = round(occupied / total_bins * 100, 2) if total_bins else 0.0
-    missing_bins = [bucket for bucket, value in counts.items() if value == 0]
-    return {
-        "counts": counts,
-        "percentages": percentages,
-        "total_bins": total_bins,
-        "occupied_expression_bins": occupied,
-        "empty_expression_bins": total_bins - occupied,
-        "expression_bin_coverage_pct": bin_coverage_pct,
-        "expression_entropy": round(entropy, 4),
-        "classified_faces": classified,
-        "unknown_faces": unknown,
-        "missing_bins": missing_bins,
-    }
 
 
 # The per-record bucket classifiers (``_pose_bucket`` etc.) used to live

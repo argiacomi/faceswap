@@ -337,6 +337,47 @@ def _has_identity_guardrail(record: FaceQARecord) -> bool:
     )
 
 
+# Per-feature normalisation helpers — hoisted from ``_features_for`` so
+# they are not redefined on every record (issue #192 P2). All five share
+# the same ``None`` / ``not finite`` short-circuit; the body differs only
+# in the clamp + scaling.
+
+
+def _norm_angle(value: float | None) -> float | None:
+    """Clamp an angular feature to [-1, 1] after dividing by 90 deg."""
+    if value is None or not math.isfinite(value):
+        return None
+    return max(-1.0, min(1.0, value / 90.0))
+
+
+def _norm_unit(value: float | None) -> float | None:
+    """Clamp a unit-scale feature to [0, 1.5]."""
+    if value is None or not math.isfinite(value):
+        return None
+    return max(0.0, min(1.5, value))
+
+
+def _norm_luma(value: float | None) -> float | None:
+    """Clamp a 0-255 luminance feature to [0, 1] after dividing by 255."""
+    if value is None or not math.isfinite(value):
+        return None
+    return max(0.0, min(1.0, value / 255.0))
+
+
+def _norm_ratio(value: float | None) -> float | None:
+    """Compress a ratio centred on 1.0 — 2.0 -> ~0.5, 0.5 -> ~-0.5."""
+    if value is None or not math.isfinite(value):
+        return None
+    return math.tanh(value - 1.0)
+
+
+def _norm_warmth(value: float | None) -> float | None:
+    """Compress a colour-warmth signal centred on 0."""
+    if value is None or not math.isfinite(value):
+        return None
+    return math.tanh(value / 60.0)
+
+
 def _features_for(record: FaceQARecord) -> RepresentationFeatures:
     """Return the normalised representation feature vector for one record."""
     has_identity = _has_identity_guardrail(record)
@@ -344,34 +385,12 @@ def _features_for(record: FaceQARecord) -> RepresentationFeatures:
         record.identity_final_decision in {"outlier", "reject"}
     )
 
-    def _norm_angle(value: float | None) -> float | None:
-        if value is None or not math.isfinite(value):
-            return None
-        return max(-1.0, min(1.0, value / 90.0))
-
-    def _norm_unit(value: float | None) -> float | None:
-        if value is None or not math.isfinite(value):
-            return None
-        return max(0.0, min(1.5, value))
-
-    def _norm_luma(value: float | None) -> float | None:
-        if value is None or not math.isfinite(value):
-            return None
-        return max(0.0, min(1.0, value / 255.0))
-
-    def _norm_ratio(value: float | None) -> float | None:
-        if value is None or not math.isfinite(value):
-            return None
-        # 1.0 == balanced. Compress so 2.0 → ~0.5, 0.5 → ~-0.5.
-        return math.tanh(value - 1.0)
-
-    def _norm_warmth(value: float | None) -> float | None:
-        if value is None or not math.isfinite(value):
-            return None
-        return math.tanh(value / 60.0)
-
-    # Determine bucket-level views. These come from the coverage layer directly
-    # (we don't recompute them here to avoid drifting from the canonical impl).
+    # Determine bucket-level views once per record. The redundancy
+    # ``_features_for`` consumer used to recompute these per pairwise
+    # comparison inside the O(N^2) clustering loop via inline imports
+    # from coverage; with the new public bucket helpers (issue #192 P1)
+    # and the cached labels here, the buckets are computed exactly once
+    # per record and reused by every distance / decision call below.
     pose_bucket = None
     pitch_bucket = None
     lighting_bucket = None
@@ -465,17 +484,137 @@ def _provenance_scale(
     return _FALLBACK_PROVENANCE_WEIGHT_SCALE
 
 
+# Frozen ordering of the continuous-feature attributes used inside the
+# per-pair distance calculation. Building a numpy ``(N, F)`` values matrix
+# from this order lets ``_distance_with_ctx`` collapse the previous
+# ``len(FEATURE_WEIGHTS)`` Python iterations + ``getattr`` calls into a
+# handful of vectorised numpy ops (issue #192 P2 high).
+_FEATURE_ATTRS: tuple[str, ...] = tuple(FEATURE_WEIGHTS.keys())
+_FEATURE_WEIGHTS_ARRAY: np.ndarray = np.array(
+    [FEATURE_WEIGHTS[attr] for attr in _FEATURE_ATTRS], dtype=np.float32
+)
+_FEATURE_IS_IMAGE: np.ndarray = np.array(
+    [attr in _IMAGE_DERIVED_FEATURES for attr in _FEATURE_ATTRS], dtype=bool
+)
+# Bucket-penalty terms — kept as a small tuple, indexed by name. The
+# bucket comparisons are cheap (string equality) so they stay in Python.
+_BUCKET_PENALTY_TERMS: tuple[tuple[str, float], ...] = (
+    ("expression_bucket", 0.4),
+    ("lighting_bucket", 0.3),
+)
+
+
+@dataclass(frozen=True)
+class _PairwiseContext:
+    """Precomputed per-record state consumed by ``_distance_with_ctx``.
+
+    ``values`` is a ``(N, F)`` float32 matrix of normalised feature values
+    with ``np.nan`` in the slots where a record had ``None`` for that
+    attribute. ``masks`` is the boolean availability mirror so the inner
+    pair function can build the joint-availability vector with one AND.
+    ``frame_provenance`` is a per-record boolean: True when the record's
+    image metrics are frame-derived. ``expression_buckets`` /
+    ``lighting_buckets`` are per-record string lists used for the bucket
+    penalty.
+    """
+
+    values: np.ndarray
+    masks: np.ndarray
+    frame_provenance: np.ndarray
+    expression_buckets: list[str | None]
+    lighting_buckets: list[str | None]
+
+
+def _build_pairwise_context(features: list[RepresentationFeatures]) -> _PairwiseContext:
+    """Precompute per-record arrays consumed by the inner distance loop.
+
+    Replaces the ``len(features) * len(FEATURE_WEIGHTS)`` ``getattr`` calls
+    + ``_provenance_scale`` recomputes the previous shape paid per pair
+    with one linear pass over records here (issue #192 P2 high).
+    """
+    n = len(features)
+    f = len(_FEATURE_ATTRS)
+    values = np.full((n, f), np.nan, dtype=np.float32)
+    for row, feature in enumerate(features):
+        for col, attr in enumerate(_FEATURE_ATTRS):
+            value = getattr(feature, attr)
+            if value is not None and math.isfinite(value):
+                values[row, col] = value
+    masks = ~np.isnan(values)
+    frame_provenance = np.array(
+        [feat.image_metrics_provenance == _FRAME_PROVENANCE for feat in features],
+        dtype=bool,
+    )
+    expression_buckets = [feat.expression_bucket for feat in features]
+    lighting_buckets = [feat.lighting_bucket for feat in features]
+    return _PairwiseContext(
+        values=values,
+        masks=masks,
+        frame_provenance=frame_provenance,
+        expression_buckets=expression_buckets,
+        lighting_buckets=lighting_buckets,
+    )
+
+
+def _distance_with_ctx(ctx: _PairwiseContext, i: int, j: int) -> tuple[float, int]:
+    """Return ``(weighted_distance, compared_dimensions)`` for record pair ``(i, j)``.
+
+    Vectorised counterpart of :func:`_representation_distance`. The slower
+    Python-attribute shape is preserved as a backward-compatible public
+    helper below for callers (and tests) that operate on individual
+    ``RepresentationFeatures`` objects.
+    """
+    diff = ctx.values[i] - ctx.values[j]
+    mask = ctx.masks[i] & ctx.masks[j]
+    both_frame = bool(ctx.frame_provenance[i] and ctx.frame_provenance[j])
+    if both_frame:
+        scale = np.ones_like(_FEATURE_WEIGHTS_ARRAY)
+    else:
+        scale = np.where(_FEATURE_IS_IMAGE, _FALLBACK_PROVENANCE_WEIGHT_SCALE, 1.0)
+    eff_w = _FEATURE_WEIGHTS_ARRAY * scale * mask
+    denominator = float(eff_w.sum())
+    if denominator == 0.0:
+        return math.inf, 0
+    sq = np.where(mask, diff * diff, 0.0)
+    numerator = float((eff_w * sq).sum())
+    compared = int(mask.sum())
+    distance = math.sqrt(numerator / denominator)
+
+    bucket_penalty = 0.0
+    bucket_total = 0.0
+    exp_i, exp_j = ctx.expression_buckets[i], ctx.expression_buckets[j]
+    lit_i, lit_j = ctx.lighting_buckets[i], ctx.lighting_buckets[j]
+    for attr, weight in _BUCKET_PENALTY_TERMS:
+        if attr == "expression_bucket":
+            va, vb = exp_i, exp_j
+        else:
+            va, vb = lit_i, lit_j
+        if va is None or vb is None or va == "unknown" or vb == "unknown":
+            continue
+        bucket_total += weight
+        if va != vb:
+            # Lighting bucket is image-derived; reduced weight when either
+            # side used a non-frame fallback.
+            if attr == "lighting_bucket" and not both_frame:
+                bucket_penalty += weight * _FALLBACK_PROVENANCE_WEIGHT_SCALE
+            else:
+                bucket_penalty += weight
+    if bucket_total > 0:
+        distance += (bucket_penalty / bucket_total) * 0.5
+    return distance, compared
+
+
 def _representation_distance(
     a: RepresentationFeatures,
     b: RepresentationFeatures,
 ) -> tuple[float, int]:
-    """Return ``(weighted_distance, compared_dimensions)``.
+    """Return ``(weighted_distance, compared_dimensions)`` for one pair.
 
-    Missing features contribute zero to both the numerator and the denominator;
-    the caller treats low ``compared_dimensions`` as low confidence (review).
-    Image-derived features (lighting / framing) are scaled down when either
-    face's image metrics came from a non-frame fallback, so the original
-    "d=0.39 from stale lighting" pathology can't slip through.
+    The clustering loop now uses :func:`_distance_with_ctx` for hot-path
+    vectorisation; this slower Python-attribute form is preserved as a
+    public-style helper because tests (and external probes that operate
+    on individual ``RepresentationFeatures`` objects) still call it
+    directly.
     """
     numerator = 0.0
     denominator = 0.0
@@ -494,7 +633,7 @@ def _representation_distance(
         return math.inf, 0
     bucket_penalty = 0.0
     bucket_total = 0.0
-    for attr, weight in (("expression_bucket", 0.4), ("lighting_bucket", 0.3)):
+    for attr, weight in _BUCKET_PENALTY_TERMS:
         va = getattr(a, attr)
         vb = getattr(b, attr)
         if va is None or vb is None or va == "unknown" or vb == "unknown":
@@ -504,7 +643,6 @@ def _representation_distance(
             bucket_penalty += weight * _provenance_scale(a, b, attr)
     distance = math.sqrt(numerator / denominator)
     if bucket_total > 0:
-        # Up-weight visually-different buckets even if continuous features look similar.
         distance += (bucket_penalty / bucket_total) * 0.5
     return distance, compared
 
@@ -565,13 +703,18 @@ def _build_redundancy_clusters(
         else:
             parent[ra] = rb
 
+    # Precompute per-record arrays ONCE so the O(N^2) clustering loop below
+    # consumes them via array indexing instead of repeated ``getattr`` +
+    # ``_provenance_scale`` work per pair (issue #192 P2 high).
+    ctx = _build_pairwise_context(features)
+    frame_indices = [feat.frame_index for feat in features]
+
     edges: dict[tuple[int, int], tuple[float, int, float, int | None]] = {}
     for i in range(n):
+        fi = frame_indices[i]
         for j in range(i + 1, n):
-            distance, compared = _representation_distance(features[i], features[j])
-            t_conf, frame_distance = _temporal_confidence(
-                features[i].frame_index, features[j].frame_index, config
-            )
+            distance, compared = _distance_with_ctx(ctx, i, j)
+            t_conf, frame_distance = _temporal_confidence(fi, frame_indices[j], config)
             edges[(i, j)] = (distance, compared, t_conf, frame_distance)
             if compared >= 3:
                 obvious = distance <= config.obvious_duplicate_threshold
