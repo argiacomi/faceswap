@@ -108,7 +108,9 @@ class Viewport:
             self._objects.visible_faces.flatten(),
             strict=False,
         ):
-            if frame_idx == -1:
+            frame_idx = int(frame_idx)
+            face_idx = int(face_idx)
+            if frame_idx == -1 or face_idx == -1 or det_face is None:
                 continue
 
             key = "_".join([str(frame_idx), str(face_idx)])
