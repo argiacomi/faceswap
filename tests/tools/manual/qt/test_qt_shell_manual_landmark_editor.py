@@ -13,6 +13,7 @@ Covers #103:
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pytest
@@ -30,6 +31,9 @@ from tools.manual.session import ManualSession
 # Pure overlay helpers
 # ---------------------------------------------------------------------------
 
+@pytest.fixture(autouse=True)
+def _silence_expected_pose_warning(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.ERROR, logger="lib.align.pose")
 
 def test_landmark_at_returns_closest_index_within_tolerance() -> None:
     """``landmark_at`` picks the closest landmark, not the first matching."""
