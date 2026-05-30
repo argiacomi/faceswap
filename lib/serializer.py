@@ -7,6 +7,8 @@ import json
 import logging
 import os
 import pickle
+import stat
+import tempfile
 import zlib
 from io import BytesIO
 
@@ -70,12 +72,75 @@ class Serializer:
         """
         logger.debug("filename: %s, data type: %s", filename, type(data))
         filename = self._check_extension(filename)
+        directory = os.path.dirname(os.path.abspath(filename)) or "."
+        basename = os.path.basename(filename)
+
+        payload = self.marshal(data)
+        tmp_name = None
+
         try:
-            with open(filename, self._write_option) as s_file:
-                s_file.write(self.marshal(data))
+            fd, tmp_name = tempfile.mkstemp(
+                prefix=f".{basename}.",
+                suffix=".tmp",
+                dir=directory,
+            )
+            with os.fdopen(fd, self._write_option) as s_file:
+                s_file.write(payload)
+                s_file.flush()
+                os.fsync(s_file.fileno())
+
+            # Validate that the marshaled payload round-trips before replacing
+            # the known-good file. ``payload`` is already in memory, so this
+            # avoids re-reading the temp file; the write above is fsync'd, so a
+            # disk-level failure would already have raised ``OSError``.
+            try:
+                self.unmarshal(payload)
+            except Exception as err:  # pylint:disable=broad-except
+                msg = f"Error serializing data to '{filename}': {err}"
+                raise FaceswapError(msg) from err
+
+            # ``mkstemp`` forces mode 0o600; restore the destination's existing
+            # permissions (or the umask default for a new file) so the atomic
+            # replace does not silently narrow access to the saved file.
+            os.chmod(tmp_name, self._target_mode(filename))
+
+            os.replace(tmp_name, filename)
+            tmp_name = None
+
+            # Best effort directory fsync.
+            try:
+                dir_fd = os.open(directory, os.O_DIRECTORY)
+                try:
+                    os.fsync(dir_fd)
+                finally:
+                    os.close(dir_fd)
+            except (AttributeError, OSError):
+                pass
+
         except OSError as err:
             msg = f"Error writing to '{filename}': {err.strerror}"
             raise FaceswapError(msg) from err
+        finally:
+            if tmp_name and os.path.exists(tmp_name):
+                try:
+                    os.remove(tmp_name)
+                except OSError:
+                    logger.warning("Could not remove temporary serializer file: %s", tmp_name)
+
+    @staticmethod
+    def _target_mode(filename):
+        """Return the permission bits to apply to the replacement file.
+
+        Preserves an existing file's mode so an atomic save does not change
+        its permissions; for a new file, falls back to the process umask
+        default (mirroring a plain ``open`` write).
+        """
+        try:
+            return stat.S_IMODE(os.stat(filename).st_mode)
+        except OSError:
+            current_umask = os.umask(0)
+            os.umask(current_umask)
+            return 0o666 & ~current_umask
 
     def _check_extension(self, filename):
         """Check the filename has an extension. If not add the correct one for the serializer"""
