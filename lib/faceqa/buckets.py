@@ -37,7 +37,7 @@ from lib.utils import get_module_objects
 # ``coverage``.
 POSE_YAW_THRESHOLDS: tuple[float, float, float] = (15.0, 30.0, 60.0)
 POSE_PITCH_THRESHOLDS: tuple[float, float] = (15.0, 30.0)
-BLUR_THRESHOLDS: tuple[float, float, float] = (6.0, 3.0, 1.0)
+BLUR_THRESHOLDS: tuple[float, float, float] = (2.5, 1.25, 0.45)
 RESOLUTION_THRESHOLDS: tuple[int, int, int] = (256, 128, 64)
 OCCLUSION_THRESHOLDS: tuple[float, float, float] = (0.05, 0.20, 0.50)
 DISTANCE_THRESHOLDS: tuple[float, float, float] = (0.10, 0.20, 0.40)

@@ -40,7 +40,7 @@ def test_compute_coverage_uses_embedded_faceqa_risk_metadata() -> None:
         FaceQARecord(
             frame="frame.png",
             face_index=0,
-            blur_score=0.5,
+            blur_score=0.2,
             duplicate_keep_recommendation="prune_candidate",
             identity_quality_flag="outlier",
             resolution=[40, 40],

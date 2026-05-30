@@ -148,7 +148,7 @@ def test_compute_compatibility_overall_is_weighted() -> None:
 def test_quality_compatibility_penalizes_worse_source() -> None:
     """A blurrier/lower-res source than the target should reduce quality compatibility."""
     high_quality = _records(count=30, blur=8.0, resolution=(512, 512))
-    low_quality = _records(count=30, blur=0.5, resolution=(64, 64))
+    low_quality = _records(count=30, blur=0.2, resolution=(48, 48))
 
     source = compute_coverage(low_quality)
     target = compute_coverage(high_quality)
