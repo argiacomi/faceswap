@@ -14,13 +14,14 @@ if str(_REPO_ROOT) not in sys.path:
 from tools.landmarks import evaluate_runtime_resolver as base
 
 DEFAULT_PRIORITY: tuple[str, ...] = (
+    "weighted_median",
     "static_weighted_downweight",
     "static_weighted",
     "static_weighted_hard_drop",
-    "weighted_median",
     "spiga",
-    "hrnet",
     "orformer",
+    "hrnet",
+    "fan",
 )
 
 BUCKET_PRIORITIES: dict[str, tuple[str, ...]] = {

@@ -1044,9 +1044,13 @@ def test_export_resolver_candidate_table_cli_default_includes_plain_average(
 
     rows = list(csv.DictReader(output_csv.open(encoding="utf-8")))
     assert exit_code == 0
-    assert len(rows) == 16
+    # ``fan`` is a default scorer candidate but this fixture only caches
+    # hrnet/spiga/orformer predictions (and weights), so the table builder
+    # legitimately skips fan -- leaving 8 candidates across 2 samples.
+    expected_candidates = set(scorer_data.DEFAULT_SCORER_CANDIDATES) - {"fan"}
+    assert len(rows) == len(expected_candidates) * 2 == 16
     assert sum(1 for _line in output_csv.open(encoding="utf-8")) == 17
-    assert {row["candidate"] for row in rows} == set(scorer_data.DEFAULT_SCORER_CANDIDATES)
+    assert {row["candidate"] for row in rows} == expected_candidates
     assert "plain_average" in {row["candidate"] for row in rows}
 
 

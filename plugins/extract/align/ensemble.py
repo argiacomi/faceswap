@@ -76,6 +76,7 @@ def _trace(message: str, *args: T.Any) -> None:
 
 
 _PLUGIN_CLASSES = {
+    "fan": ("plugins.extract.align.fan", "FAN", "2d_68"),
     "hrnet": ("plugins.extract.align.hrnet", "HRNet", "2d_68"),
     "spiga": ("plugins.extract.align.spiga", "SPIGA", None),
     "orformer": ("plugins.extract.align.orformer", "ORFormer", None),

@@ -22,6 +22,7 @@ from lib.landmarks.core.schema import (
 logger = logging.getLogger(__name__)
 
 SUPPORTED_MODEL_PLUGINS: dict[str, tuple[str, str, str | None]] = {
+    "fan": ("plugins.extract.align.fan", "FAN", "2d_68"),
     "hrnet": ("plugins.extract.align.hrnet", "HRNet", "2d_68"),
     "spiga": ("plugins.extract.align.spiga", "SPIGA", None),
     "orformer": ("plugins.extract.align.orformer", "ORFormer", None),

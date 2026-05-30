@@ -56,6 +56,7 @@ DEFAULT_OUTLIER_THRESHOLD: float = 3.5
 DEFAULT_IMAGE_BACKFILL_CROP_SCALE: float = 1.6
 DEFAULT_IMAGE_BACKFILL_CROP_SIZE: int = 256
 DEFAULT_RESOLVER_CANDIDATES: tuple[str, ...] = (
+    "fan",
     "hrnet",
     "spiga",
     "orformer",

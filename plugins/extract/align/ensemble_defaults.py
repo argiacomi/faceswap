@@ -21,10 +21,10 @@ batch_size = ConfigItem(
 
 models = ConfigItem(
     datatype=list,
-    default=["hrnet", "spiga", "orformer"],
+    default=["fan", "hrnet", "spiga", "orformer"],
     group="settings",
     info="Aligner adapters to try when the ensemble plugin is loaded.",
-    choices=["hrnet", "spiga", "orformer"],
+    choices=["fan", "hrnet", "spiga", "orformer"],
 )
 
 crop_scale = ConfigItem(
