@@ -50,6 +50,12 @@ from lib.landmarks.pipeline_conventions import (
     validate_resolver_metadata_for_manifest,
     write_json,
 )
+from lib.landmarks.search.gt_runtime_bucket_metrics import (
+    aggregate_runtime_bucket_metrics,
+    load_candidate_table_csv,
+    write_runtime_bucket_csv,
+    write_runtime_bucket_json,
+)
 from tools.landmarks.pipeline_progress import PipelineProgress, configure_logging
 
 logger = logging.getLogger("run_landmark_resolver_pipeline")
@@ -76,8 +82,8 @@ STAGES: tuple[str, ...] = (
     "artifact_export",
     "config_update",
 )
-DEFAULT_MODELS = "hrnet,spiga,orformer"
-DEFAULT_CANDIDATES = "hrnet,spiga,orformer,plain_average,static_weighted,static_weighted_downweight,static_weighted_hard_drop,weighted_median"
+DEFAULT_MODELS = "fan,hrnet,spiga,orformer"
+DEFAULT_CANDIDATES = "fan,hrnet,spiga,orformer,plain_average,static_weighted,static_weighted_downweight,static_weighted_hard_drop,weighted_median"
 DEFAULT_HARD_SOURCE_DATASET = "aflw2000-3d"
 BASE_DATASET_MANIFEST_SENTINEL_FILENAME = ".base_dataset_manifest_complete.json"
 BASE_CACHE_SENTINEL_FILENAME = ".base_prediction_cache_complete.json"
@@ -1231,6 +1237,74 @@ def _artifact_export_matches(args: argparse.Namespace, paths: PipelinePaths) -> 
     )
 
 
+def _emit_gt_runtime_bucket_artifacts(paths: PipelinePaths) -> None:
+    """Aggregate ``candidate_table.csv`` into per-runtime-bucket metrics.
+
+    Issue #205. Runs in-process after ``binary_scorer_training`` writes
+    the candidate diagnostic table. Reads:
+
+    * ``paths.binary_scorer_train_dir / "candidate_table.csv"`` — the
+      per-sample-per-candidate rows.
+    * ``paths.best_setup`` — the chosen setup, for the
+      ``selected_candidate_*`` slice of the report.
+
+    Writes (into ``paths.candidate_dir`` — the canonical candidate-search
+    output dir per the ticket):
+
+    * ``gt_runtime_bucket_metrics.json``
+    * ``gt_runtime_bucket_metrics.csv``
+
+    Exceptions are caught and logged so the pipeline stage's success is
+    not coupled to the aggregator — the metrics are a diagnostic-grade
+    convenience artifact, not a gating output.
+    """
+    candidate_table = paths.binary_scorer_train_dir / "candidate_table.csv"
+    if not candidate_table.is_file():
+        logger.info("gt_runtime_bucket aggregation skipped: %s not found", candidate_table)
+        return
+
+    selected_candidate: str | None = None
+    if paths.best_setup.is_file():
+        try:
+            best_setup_payload = json.loads(paths.best_setup.read_text(encoding="utf-8"))
+            candidate_payload = best_setup_payload.get("candidate") or {}
+            selected_candidate = (
+                candidate_payload.get("strategy")
+                or candidate_payload.get("weight_generator")
+                or best_setup_payload.get("strategy")
+            )
+        except Exception as err:  # noqa: BLE001
+            logger.warning(
+                "gt_runtime_bucket aggregation could not read selected candidate from %s: %s",
+                paths.best_setup,
+                err,
+            )
+
+    try:
+        rows = load_candidate_table_csv(candidate_table)
+        if not rows:
+            logger.info(
+                "gt_runtime_bucket aggregation skipped: %s has no rows",
+                candidate_table,
+            )
+            return
+        metrics = aggregate_runtime_bucket_metrics(rows, selected_candidate=selected_candidate)
+        json_path = write_runtime_bucket_json(
+            metrics, paths.candidate_dir / "gt_runtime_bucket_metrics.json"
+        )
+        csv_path = write_runtime_bucket_csv(
+            metrics, paths.candidate_dir / "gt_runtime_bucket_metrics.csv"
+        )
+        logger.info(
+            "Wrote gt_runtime_bucket_metrics across %d bucket(s): %s, %s",
+            len(metrics),
+            json_path,
+            csv_path,
+        )
+    except Exception as err:  # noqa: BLE001
+        logger.warning("gt_runtime_bucket aggregation skipped: %s", err)
+
+
 def _stage_complete(stage: str, args: argparse.Namespace, paths: PipelinePaths) -> bool:
     if stage == "build_hard_source_manifest" and args.hard_source_manifest is not None:
         return True
@@ -2314,6 +2388,12 @@ def _execute_stage(stage: str, args: argparse.Namespace, paths: PipelinePaths) -
                     stage, "planned", command=command, outputs=outputs, contract=contract.to_json()
                 )
             _run_command(command)
+            # Issue #205: aggregate the freshly-written candidate_table.csv
+            # into per-runtime-bucket production metrics and drop the
+            # artifacts into ``paths.candidate_dir`` for downstream
+            # consumers (the helper is crash-safe — a failure logs and
+            # continues so binary_scorer_training stays green).
+            _emit_gt_runtime_bucket_artifacts(paths)
         elif stage == "continuous_scorer_training":
             command = _command_scorer_training(
                 args,
