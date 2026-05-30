@@ -17,6 +17,7 @@ from lib.faceqa.redundancy import (
     KEEP,
     PRUNE,
     REVIEW,
+    RedundancyRecord,
     compute_redundancy,
 )
 
@@ -1515,8 +1516,6 @@ def _cap_input_record(
     face_index: int = 0,
 ) -> RedundancyRecord:
     """Build a synthetic ``RedundancyRecord`` for direct cap testing."""
-    from lib.faceqa.redundancy import RedundancyRecord
-
     return RedundancyRecord(
         frame=f"frame_{face_index:06d}.png",
         face_index=face_index,
