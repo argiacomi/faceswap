@@ -1237,7 +1237,53 @@ def _artifact_export_matches(args: argparse.Namespace, paths: PipelinePaths) -> 
     )
 
 
-def _emit_gt_runtime_bucket_artifacts(paths: PipelinePaths) -> None:
+def _selected_candidate_from_best_setup_payload(
+    payload: T.Mapping[str, T.Any],
+    candidate_names: T.AbstractSet[str],
+) -> str | None:
+    """Extract the selected candidate name from ``best_setup.json``.
+
+    The canonical writer stores setup fields at top level (for example
+    ``strategy`` and ``weight_generator.name``), while older tests and
+    ad-hoc artifacts used a nested ``candidate`` object. Prefer values
+    that exactly match the candidate table so the report's
+    ``selected_candidate_*`` columns are populated only with a real row.
+    """
+
+    ordered: list[str] = []
+
+    def _add(value: T.Any) -> None:
+        if isinstance(value, str) and value and value not in ordered:
+            ordered.append(value)
+
+    candidate_payload = payload.get("candidate")
+    if isinstance(candidate_payload, str):
+        _add(candidate_payload)
+    elif isinstance(candidate_payload, T.Mapping):
+        _add(candidate_payload.get("name"))
+        _add(candidate_payload.get("strategy"))
+        nested_weight_generator = candidate_payload.get("weight_generator")
+        if isinstance(nested_weight_generator, T.Mapping):
+            _add(nested_weight_generator.get("name"))
+        else:
+            _add(nested_weight_generator)
+
+    _add(payload.get("selected_candidate"))
+    _add(payload.get("candidate_name"))
+    _add(payload.get("strategy"))
+    weight_generator = payload.get("weight_generator")
+    if isinstance(weight_generator, T.Mapping):
+        _add(weight_generator.get("name"))
+    else:
+        _add(weight_generator)
+
+    for candidate in ordered:
+        if candidate in candidate_names:
+            return candidate
+    return ordered[0] if ordered else None
+
+
+def _emit_gt_runtime_bucket_artifacts(args: argparse.Namespace, paths: PipelinePaths) -> None:
     """Aggregate ``candidate_table.csv`` into per-runtime-bucket metrics.
 
     Issue #205. Runs in-process after ``binary_scorer_training`` writes
@@ -1263,16 +1309,11 @@ def _emit_gt_runtime_bucket_artifacts(paths: PipelinePaths) -> None:
         logger.info("gt_runtime_bucket aggregation skipped: %s not found", candidate_table)
         return
 
-    selected_candidate: str | None = None
+    best_setup_payload: dict[str, T.Any] = {}
     if paths.best_setup.is_file():
         try:
-            best_setup_payload = json.loads(paths.best_setup.read_text(encoding="utf-8"))
-            candidate_payload = best_setup_payload.get("candidate") or {}
-            selected_candidate = (
-                candidate_payload.get("strategy")
-                or candidate_payload.get("weight_generator")
-                or best_setup_payload.get("strategy")
-            )
+            payload = json.loads(paths.best_setup.read_text(encoding="utf-8"))
+            best_setup_payload = payload if isinstance(payload, dict) else {}
         except Exception as err:  # noqa: BLE001
             logger.warning(
                 "gt_runtime_bucket aggregation could not read selected candidate from %s: %s",
@@ -1288,7 +1329,20 @@ def _emit_gt_runtime_bucket_artifacts(paths: PipelinePaths) -> None:
                 candidate_table,
             )
             return
-        metrics = aggregate_runtime_bucket_metrics(rows, selected_candidate=selected_candidate)
+        candidate_names = {
+            str(row.get("candidate"))
+            for row in rows
+            if row.get("candidate") is not None
+        }
+        selected_candidate = _selected_candidate_from_best_setup_payload(
+            best_setup_payload,
+            candidate_names,
+        )
+        metrics = aggregate_runtime_bucket_metrics(
+            rows,
+            selected_candidate=selected_candidate,
+            single_model_candidates=_split_csv_values(args.models),
+        )
         json_path = write_runtime_bucket_json(
             metrics, paths.candidate_dir / "gt_runtime_bucket_metrics.json"
         )
@@ -2393,7 +2447,7 @@ def _execute_stage(stage: str, args: argparse.Namespace, paths: PipelinePaths) -
             # artifacts into ``paths.candidate_dir`` for downstream
             # consumers (the helper is crash-safe — a failure logs and
             # continues so binary_scorer_training stays green).
-            _emit_gt_runtime_bucket_artifacts(paths)
+            _emit_gt_runtime_bucket_artifacts(args, paths)
         elif stage == "continuous_scorer_training":
             command = _command_scorer_training(
                 args,
