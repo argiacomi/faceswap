@@ -781,7 +781,14 @@ class Grid:
         padding = [None for _ in range(face_count, columns * rows)]
         self._display_faces = np.array(
             [
-                None if idx is None or face_idx is None else current_faces[idx][face_idx]
+                # ``face_idx == -1`` is the new no-face-frame placeholder
+                # (issue #201 bug 3); ``idx is None`` / ``face_idx is None``
+                # is the trailing grid padding. Both resolve to ``None``
+                # here so the renderer reads the labels grid as the source
+                # of truth for what to draw.
+                None
+                if idx is None or face_idx is None or face_idx < 0
+                else current_faces[idx][face_idx]
                 for idx, face_idx in zip(
                     self._raw_indices["frame"] + padding,
                     self._raw_indices["face"] + padding,

@@ -91,7 +91,11 @@ class HoverBox:
         if frame_idx == self._current_frame_index and face_idx == self._current_face_index:
             return
 
-        if -1 in face:
+        # Issue #201 bug 3: an All Frames / No Faces placeholder cell
+        # has ``frame_idx >= 0`` and ``face_idx == -1``. Don't clear
+        # the cursor for that — the user is hovering a real frame
+        # cell, even though there's no face annotation to highlight.
+        if frame_idx == -1:
             self._clear()
             self._canvas.config(cursor="")
             self._current_frame_index = None

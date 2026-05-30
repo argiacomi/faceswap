@@ -308,26 +308,52 @@ class _DiskIO:
 
     def save(self) -> None:
         """Convert updated :class:`~lib.align.DetectedFace` objects to alignments format
-        and save the alignments file."""
+        and save the alignments file.
+
+        Every outcome — no-op, success, and failure — logs at INFO so the
+        Manual Tool's status bar and stdout reflect what the save button
+        just did. The previous DEBUG/VERBOSE-only logging was the root cause
+        of the "save button does nothing" report in issue #201.
+        """
         if not self._tk_unsaved.get():
-            logger.debug("Alignments not updated. Returning")
+            logger.info("No alignment changes to save.")
             return
+
         frames = list(self._updated_frame_indices)
-        logger.verbose(
-            "Saving alignments for %s updated frames",  # type:ignore[attr-defined]
+        alignments_path = getattr(self._alignments, "file", "<alignments>")
+        logger.info(
+            "Writing alignments for %s updated frame(s) to '%s'...",
             len(frames),
+            alignments_path,
         )
 
-        for idx, faces in zip(
-            frames, np.array(self._frame_faces, dtype="object")[np.array(frames)], strict=False
-        ):
-            frame = self._sorted_frame_names[idx]
-            self._alignments.data[frame].faces = [face.to_alignment() for face in faces]
+        try:
+            for idx, faces in zip(
+                frames,
+                np.array(self._frame_faces, dtype="object")[np.array(frames)],
+                strict=False,
+            ):
+                frame = self._sorted_frame_names[idx]
+                self._alignments.data[frame].faces = [face.to_alignment() for face in faces]
 
-        self._alignments.backup()
-        self._alignments.save()
+            self._alignments.backup()
+            self._alignments.save()
+        except Exception as err:  # pylint:disable=broad-except
+            logger.error(
+                "Failed to write alignments to '%s': %s",
+                alignments_path,
+                err,
+                exc_info=True,
+            )
+            return
+
         self._updated_frame_indices.clear()
         self._tk_unsaved.set(False)
+        logger.info(
+            "Saved alignments for %s frame(s) to '%s'.",
+            len(frames),
+            alignments_path,
+        )
 
     def revert_to_saved(self, frame_index: int) -> None:
         """Revert the frame's alignments to their saved version for the given frame index.
@@ -590,13 +616,29 @@ class Filter:
     @property
     def raw_indices(self) -> dict[T.Literal["frame", "face"], list[int]]:
         """The frame and face indices that meet the current filter criteria for each displayed
-        face."""
+        face.
+
+        Issue #201 bug 3 — the ``All Frames`` and ``No Faces`` filters now
+        emit a synthetic ``(frame_idx, -1)`` entry for every frame that
+        has no faces, so the bottom grid allocates a cell for every such
+        frame instead of silently dropping it. The renderer recognises
+        ``face_idx == -1`` (with ``frame_idx >= 0``) as
+        "draw a full-frame thumbnail" — distinct from the trailing
+        grid padding which uses ``frame_idx == -1`` as well.
+        """
         frame_indices: list[int] = []
         face_indices: list[int] = []
         face_counts = self._detected_faces.face_count_per_index  # Copy to avoid recalculations
+        filter_mode = self._globals.var_filter_mode.get()
+        include_empty_frames = filter_mode in ("All Frames", "No Faces")
 
         for frame_idx in self.frames_list:
-            for face_idx in range(face_counts[frame_idx]):
+            count = face_counts[frame_idx]
+            if count == 0 and include_empty_frames:
+                frame_indices.append(frame_idx)
+                face_indices.append(-1)
+                continue
+            for face_idx in range(count):
                 frame_indices.append(frame_idx)
                 face_indices.append(face_idx)
 

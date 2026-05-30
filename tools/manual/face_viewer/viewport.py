@@ -214,6 +214,18 @@ class Viewport:
                             self._canvas.itemconfig(mesh_id, state="hidden")
                     continue
 
+                if face_idx == -1:
+                    # Issue #201 bug 3 — no face thumbnail to display, so
+                    # render the source frame's full-frame thumbnail in
+                    # the cell instead. The cell stays selectable so a
+                    # user can still navigate to the frame from the grid.
+                    tk_face = self.get_full_frame_tk_face(int(frame_idx))
+                    self._canvas.itemconfig(image_id, image=tk_face.photo)
+                    for area in mesh_ids.values():
+                        for mesh_id in area:
+                            self._canvas.itemconfig(mesh_id, state="hidden")
+                    continue
+
                 tk_face = self.get_tk_face(frame_idx, face_idx, face)
                 self._canvas.itemconfig(image_id, image=tk_face.photo)
 
@@ -347,6 +359,37 @@ class Viewport:
         else:
             logger.trace("tk_face exists: %s", key)  # type:ignore[attr-defined]
             tk_face = self._tk_faces[key]
+        return tk_face
+
+    def get_full_frame_tk_face(self, frame_index: int) -> TKFace:
+        """Return a :class:`TKFace` populated with a full-frame thumbnail.
+
+        Used for the All Frames / No Faces grid placeholders introduced
+        by issue #201 bug 3 when a frame has no face thumbnail to show.
+        The TKFace is cached per frame index so a scroll / redraw does
+        not re-decode the source image. Cache key is namespaced with
+        ``"frame_"`` so it cannot collide with the existing per-face
+        cache keys (``"{frame_index}_{face_index}"``).
+        """
+        key = f"frame_{frame_index}"
+        cached = self._tk_faces.get(key)
+        if cached is not None:
+            return cached
+        image = self._canvas._globals.frame_image(frame_index)
+        if image is None:
+            # The FrameLoader hasn't published yet (early startup) or
+            # the loader returned nothing for this index. Fall back to
+            # a deterministic gray placeholder so the cell still
+            # renders something rather than throwing.
+            placeholder = np.full((self.face_size, self.face_size, 3), 64, dtype=np.uint8)
+        else:
+            placeholder = cv2.resize(
+                image,
+                (self.face_size, self.face_size),
+                interpolation=cv2.INTER_AREA,
+            )
+        tk_face = TKFace(placeholder, size=self.face_size, mask=None)
+        self._tk_faces[key] = tk_face
         return tk_face
 
     def _get_tk_face_object(

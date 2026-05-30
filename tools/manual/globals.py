@@ -112,6 +112,12 @@ class TkGlobals:
         )
         self._current_frame = CurrentFrame()
         self._selected_faces: set[tuple[int, int]] = set()
+        # Optional handle on the FrameLoader. Attached by the Manual class
+        # after the loader's background init thread has finished — see
+        # issue #201 bug 3 (All Frames / No Faces grid placeholders need a
+        # way to resolve a full-frame BGR image by frame index without
+        # plumbing the loader through every layer).
+        self._frame_loader: T.Any | None = None
         logger.debug("Initialized %s", self.__class__.__name__)
 
     @classmethod
@@ -320,6 +326,38 @@ class TkGlobals:
         Compatibility wrapper for current-frame callers.
         """
         self.clear_selected_faces()
+
+    def attach_frame_loader(self, frame_loader: T.Any) -> None:
+        """Attach the Manual Tool's FrameLoader so consumers can lazily
+        resolve a full-frame BGR image by index.
+
+        Called once from ``Manual`` after the loader's background init
+        thread has joined. Decoupling the attachment from
+        ``__init__`` keeps TkGlobals constructable in tests (the grid
+        unit tests do not need a real loader).
+        """
+        self._frame_loader = frame_loader
+
+    def frame_image(self, frame_index: int) -> T.Any:
+        """Return the full BGR frame for ``frame_index``.
+
+        Returns ``None`` when no FrameLoader has been attached yet (e.g.
+        the grid is rebuilding during early startup) or when the loader
+        cannot satisfy the request. Callers must treat ``None`` as
+        "render a generic placeholder" rather than crashing.
+        """
+        loader = self._frame_loader
+        if loader is None:
+            return None
+        inner = getattr(loader, "_loader", None)
+        getter = getattr(inner, "image_from_index", None)
+        if not callable(getter):
+            return None
+        try:
+            _filename, image = getter(frame_index)
+        except Exception:  # pylint:disable=broad-except
+            return None
+        return image
 
     def set_frame_count(self, count: int) -> None:
         """Set the count of total number of frames to :attr:`frame_count` when the

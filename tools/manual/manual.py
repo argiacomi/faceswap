@@ -67,21 +67,37 @@ class Manual(tk.Tk):
         logger.debug(parse_class_init(locals()))
         super().__init__()
         arguments = handle_deprecated_cli_opts(arguments)
+        # Visible startup-progress logging — issue #201 bug 2 — so a slow
+        # initialization phase can be distinguished from a hung UI in the
+        # Manual Tool's log/stdout. Every milestone below is also still
+        # logged at DEBUG via the existing helpers; the INFO milestones are
+        # additional and intentionally low-volume.
+        logger.info("Manual Tool: loading session...")
         try:
             self._session = ManualSession.from_namespace(arguments)
         except ValueError as err:
             logger.error("%s", err)
             sys.exit(1)
 
+        logger.info("Manual Tool: initializing Tk...")
         self._initialize_tkinter()
         self._globals = TkGlobals(self._session.frames)
 
+        logger.info("Manual Tool: launching aligner background initialization...")
         extractor = Aligner(self._globals)
+        logger.info(
+            "Manual Tool: loading alignments from '%s'...",
+            self._session.alignments_path or "<no file>",
+        )
         self._detected_faces = DetectedFaces(
             self._globals,
             self._session.alignments_path or "",
             self._session.frames,
             extractor,
+        )
+        logger.info(
+            "Manual Tool: alignments loaded (%s frames in alignments).",
+            len(self._detected_faces.frame_list),
         )
 
         video_meta_data = self._detected_faces.video_meta_data
@@ -89,37 +105,57 @@ class Manual(tk.Tk):
             val is not None for val in video_meta_data.values()
         )
 
-        loader = FrameLoader(
+        logger.info("Manual Tool: launching frame loader background thread...")
+        self._frame_loader = FrameLoader(
             self._globals,
             arguments.frames,
             video_meta_data,
             self._detected_faces.frame_list,
         )
+        # Stash the aligner ref so the shutdown path can close it too.
+        self._aligner = extractor
 
         if valid_meta:  # Load the faces whilst other threads complete if we have valid meta data
+            logger.info("Manual Tool: loading faces (valid video meta-data)...")
             self._detected_faces.load_faces()
 
         self._containers = self._create_containers()
-        self._wait_for_threads(extractor, loader, valid_meta)
+        logger.info("Manual Tool: waiting for background threads to finish...")
+        self._wait_for_threads(extractor, self._frame_loader, valid_meta)
+        # Issue #201 bug 3: now that the SingleFrameLoader is initialised,
+        # publish it on TkGlobals so the face-viewer can resolve full-frame
+        # thumbnails for the All Frames / No Faces filters.
+        self._globals.attach_frame_loader(self._frame_loader)
         if not valid_meta:  # If meta data needs updating, load faces after other threads
+            logger.info("Manual Tool: loading faces (after frame meta-data scan)...")
             self._detected_faces.load_faces()
 
+        logger.info("Manual Tool: generating / verifying thumbnails...")
         self._generate_thumbs(
             self._session.frames,
             self._session.thumb_regenerate,
             self._session.single_process,
         )
 
+        logger.info("Manual Tool: building display frame and editors...")
         self._display = DisplayFrame(self._containers.top, self._globals, self._detected_faces)
         _Options(self._containers.top, self._globals, self._display)
 
+        logger.info("Manual Tool: building bottom-grid face viewer...")
         self._faces_frame = FacesFrame(
             self._containers.bottom, self._globals, self._detected_faces, self._display
         )
         self._display.tk_selected_action.set("View")
 
         self.bind("<Key>", self._handle_key_press)
+        # Issue #201 bug 1: hook window-manager close so the shutdown path
+        # below runs whether the user clicks the title-bar X or hits the
+        # quit shortcut. Without this, the default Tk close just destroys
+        # the root window and leaves the background loader / aligner
+        # threads in zombie state.
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
         self._set_initial_layout()
+        logger.info("Manual Tool: ready.")
         logger.debug("Initialized %s", self.__class__.__name__)
 
     def _wait_for_threads(self, extractor: Aligner, loader: FrameLoader, valid_meta: bool) -> None:
@@ -299,6 +335,46 @@ class Manual(tk.Tk):
         location = int(self.winfo_screenheight() // 1.5)
         self._containers.main.sashpos(0, location)
         self.update_idletasks()
+
+    def _on_close(self) -> None:
+        """Window-manager close handler — issue #201 bug 1.
+
+        Closing the Manual Tool window via the title-bar X used to leave
+        non-daemon worker threads alive (the SingleFrameLoader's video
+        reader thread is the main culprit on video inputs), so the
+        process would never exit when the Manual Tool was launched
+        standalone. This handler:
+
+        * Closes the SingleFrameLoader (releases the video reader and
+          joins the I/O thread).
+        * Destroys the root Tk window so any remaining ``after()``
+          callbacks no-op.
+        * Calls ``sys.exit(0)`` so the standalone process actually
+          terminates even when a background Aligner plugin thread
+          stayed non-daemon.
+
+        The "explicit Quit" path and the WM_DELETE_WINDOW path are now
+        the same callable, so any save-on-close prompt or post-shutdown
+        cleanup added later only needs one home.
+        """
+        logger.info("Manual Tool: shutting down...")
+        loader = getattr(self, "_frame_loader", None)
+        if loader is not None:
+            inner = getattr(loader, "_loader", None)
+            close = getattr(inner, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:  # pylint:disable=broad-except
+                    logger.debug("Manual Tool: frame loader close raised", exc_info=True)
+        try:
+            self.destroy()
+        except Exception:  # pylint:disable=broad-except
+            logger.debug("Manual Tool: root window destroy raised", exc_info=True)
+        logger.info("Manual Tool: shut down.")
+        # ``sys.exit`` lets atexit handlers run; the standalone tool launcher
+        # in ``tools/manual/cli.py`` then returns to its caller cleanly.
+        sys.exit(0)
 
     def process(self) -> None:
         """The entry point for the Visual Alignments tool from :mod:`lib.tools.manual.cli`.
