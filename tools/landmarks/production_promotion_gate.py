@@ -208,6 +208,13 @@ def _best_single(
     evaluations: T.Sequence[ProductionSampleEvaluation],
     models: T.Sequence[str],
 ) -> tuple[str, dict[str, float]]:
+    missing = {
+        model for model in models if any(model not in row.nme_by_candidate for row in evaluations)
+    }
+    if missing:
+        raise ValueError(
+            f"best-single gate missing evaluated candidates for model(s): {sorted(missing)}"
+        )
     summaries = {model: _candidate_summary(evaluations, model) for model in models}
     best = min(
         models,
@@ -333,7 +340,7 @@ def evaluate_production_gate(
     models = tuple(weights)
     if not models:
         raise ValueError("production weights did not contain any model weights")
-    requested_candidates = tuple(DEFAULT_RESOLVER_CANDIDATES)
+    requested_candidates = tuple(dict.fromkeys((*DEFAULT_RESOLVER_CANDIDATES, *models)))
     contexts = load_contexts(
         manifest_path=manifest_path,
         cache_dir=cache_dir,
