@@ -758,13 +758,15 @@ def _effective_coverage(
     touch each bucket; ``raw_counts`` is the legacy per-face count. The
     ``redundancy_ratio`` per bucket is ``raw / max(effective, 1)``.
     """
+    from collections import Counter as _Counter
+
     result: dict[str, EffectiveCoverageDimension] = {}
     for dimension in EFFECTIVE_COVERAGE_DIMENSIONS:
-        raw: dict[str, int] = {}
+        raw: _Counter[str] = _Counter()
         cluster_buckets: dict[str, set[int]] = {}
         for idx, record in enumerate(records):
             bucket = _bucket_of(record, dimension)
-            raw[bucket] = raw.get(bucket, 0) + 1
+            raw[bucket] += 1
             cluster_buckets.setdefault(bucket, set()).add(cluster_of[idx])
         effective = {bucket: len(clusters) for bucket, clusters in cluster_buckets.items()}
         ratios = {
@@ -772,7 +774,7 @@ def _effective_coverage(
         }
         result[dimension] = EffectiveCoverageDimension(
             dimension=dimension,
-            raw_counts=raw,
+            raw_counts=dict(raw),
             effective_counts=effective,
             redundancy_ratios=ratios,
         )

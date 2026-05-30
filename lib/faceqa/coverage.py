@@ -244,6 +244,11 @@ def _record_from_alignment(frame: str, idx: int, face: FileAlignments) -> FaceQA
         mask_qa_ref=_mask_ref(face),
     )
     if face.identity:
+        # Initialize ``identity_model`` from the alignment payload itself
+        # (comma-joined identity keys). ``_populate_metadata`` below may
+        # intentionally overwrite this with a stored, more specific
+        # ``identity_model`` value if the metadata envelope carries one
+        # (issue #192 P3 — small explanatory comment).
         record.identity_model = ",".join(sorted(face.identity))
     _populate_aligned_metrics(record, face)
     _populate_pose_metadata(record, face.metadata)
@@ -325,7 +330,12 @@ def _compute_image_metrics(image: np.ndarray) -> dict[str, T.Any] | None:
         return None
     metrics: dict[str, T.Any] = {"blur_score": _estimate_blur(image)}
     if image.ndim == 3:
-        metrics["black_pixel_ratio"] = float(np.all(image == [0, 0, 0], axis=2).mean())
+        # ``image.any(axis=2)`` reduces to a single ``(H, W)`` bool array
+        # along the channel axis, then the inverted ``~`` flag-true means
+        # every channel was zero. This avoids the previous
+        # ``image == [0, 0, 0]`` allocation of a full ``(H, W, 3)`` bool
+        # grid before reducing (issue #192 P2).
+        metrics["black_pixel_ratio"] = float((~image.any(axis=2)).mean())
     features = compute_lighting_features(image)
     if features is not None:
         for key in (
@@ -441,16 +451,31 @@ _IDENTITY_ENVELOPE_FIELDS: tuple[tuple[str, str], ...] = (
 )
 
 
+# Frozen set of every ``FaceQARecord`` field — used by
+# ``_populate_metadata`` to avoid walking every dataclass field per face
+# when most metadata payloads carry only a handful of keys
+# (issue #192 P2).
+_RECORD_FIELDS: frozenset[str] = frozenset(
+    FaceQARecord.__dataclass_fields__  # pylint:disable=no-member
+)
+
+
 def _populate_metadata(record: FaceQARecord, metadata: dict[str, T.Any]) -> None:
-    """Copy known FaceQA fields from per-face metadata when present."""
+    """Copy known FaceQA fields from per-face metadata when present.
+
+    Iterates the payload keys (typically a small handful) rather than
+    every dataclass field per face — the previous shape paid
+    ``len(FaceQARecord.fields)`` Python iterations per record (issue
+    #192 P2).
+    """
     payload = metadata.get("faceqa", metadata)
     if not isinstance(payload, dict):
         return
-    for key in FaceQARecord.__dataclass_fields__:  # pylint:disable=no-member
-        if key in _IMAGE_METRIC_RECORD_FIELDS:
+    for key, value in payload.items():
+        if key not in _RECORD_FIELDS or key in _IMAGE_METRIC_RECORD_FIELDS:
             continue
-        if getattr(record, key) in (None, []) and key in payload:
-            setattr(record, key, payload[key])
+        if getattr(record, key) in (None, []):
+            setattr(record, key, value)
     identity_payload = payload.get("identity")
     if isinstance(identity_payload, dict):
         for src_key, dst_key in _IDENTITY_ENVELOPE_FIELDS:
@@ -953,8 +978,14 @@ def majority_identity_model(
                 continue
             if vec is None:
                 continue
-            arr = np.asarray(vec).ravel()
-            if arr.size == 0:
+            # Skip the ``np.asarray(vec).ravel()`` allocation for the
+            # common path where ``vec`` is already a sized ndarray; fall
+            # back to a single ``len`` check otherwise (issue #192 P2).
+            try:
+                size = vec.size  # type: ignore[union-attr]
+            except AttributeError:
+                size = len(vec)
+            if size == 0:
                 continue
             counts[key] = counts.get(key, 0) + 1
     if not counts:
@@ -1289,13 +1320,19 @@ def identity_coverage_status(
     if selected_model is None:
         return IdentityCoverageStatus(total_faces=len(faces), model_counts=counts)
 
-    available = sum(
-        (
-            face.identity.get(selected_model) is not None
-            and np.asarray(face.identity.get(selected_model)).ravel().size > 0
-        )
-        for face in faces
-    )
+    def _has_vector(face: FileAlignments) -> bool:
+        # Bind ``face.identity.get(selected_model)`` once per face so the
+        # subsequent ``.size`` check doesn't dictate a second lookup +
+        # ``np.asarray().ravel()`` allocation (issue #192 P3).
+        vec = face.identity.get(selected_model)
+        if vec is None:
+            return False
+        try:
+            return bool(vec.size > 0)  # type: ignore[union-attr]
+        except AttributeError:
+            return len(vec) > 0
+
+    available = sum(_has_vector(face) for face in faces)
     total = len(faces)
     return IdentityCoverageStatus(
         model=selected_model,
@@ -1826,10 +1863,12 @@ def _summarise_image_metrics_provenance(
     entries: dict[str, AlignmentsEntry] | None,
 ) -> dict[str, int]:
     """Return ``{provenance: count}`` for image_metrics across the faceset."""
-    summary: dict[str, int] = {}
+    from collections import Counter as _Counter
+
     if entries is None:
         # Without entries we cannot inspect face.metadata; bail with empty dict.
-        return summary
+        return {}
+    counter: _Counter[str] = _Counter()
     for entry in entries.values():
         for face in entry.faces:
             envelope = face.metadata.get("faceqa", {}).get("image_metrics")
@@ -1837,11 +1876,11 @@ def _summarise_image_metrics_provenance(
                 tag = str(envelope.get("provenance") or "unknown")
             else:
                 tag = "missing"
-            summary[tag] = summary.get(tag, 0) + 1
-    if not summary:
+            counter[tag] += 1
+    if not counter:
         # Records present but no metadata block at all.
-        summary = {"missing": len(records)}
-    return summary
+        return {"missing": len(records)}
+    return dict(counter)
 
 
 def compute_coverage(

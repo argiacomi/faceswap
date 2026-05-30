@@ -9,7 +9,7 @@ import typing as T
 from dataclasses import dataclass, field
 
 from lib.faceqa.coverage import FacesetCoverageReport
-from lib.faceqa.scoring import compute_readiness_scores
+from lib.faceqa.scoring import quality_component
 from lib.utils import get_module_objects
 
 # Compatibility component weights (sum to 1).
@@ -326,8 +326,12 @@ def _quality_dimension(
     target_coverage: FacesetCoverageReport,
     weight: float,
 ) -> DimensionCompatibility:
-    source_quality = compute_readiness_scores(source_coverage).components["quality"]
-    target_quality = compute_readiness_scores(target_coverage).components["quality"]
+    # Use the public ``quality_component`` helper instead of running the
+    # full readiness scoring pipeline twice — the old shape rebuilt every
+    # component (pose, expression, lighting, quality) and then read only
+    # the quality slot (issue #192 P2).
+    source_quality = quality_component(source_coverage)
+    target_quality = quality_component(target_coverage)
     if target_quality.score <= 0:
         score = 100.0 if source_quality.score > 0 else 0.0
     else:

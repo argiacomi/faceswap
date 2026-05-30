@@ -16,6 +16,11 @@ logger = logging.getLogger(__name__)
 # 68-point Multi-PIE landmark indices.
 RIGHT_EYE = (36, 37, 38, 39, 40, 41)
 LEFT_EYE = (42, 43, 44, 45, 46, 47)
+# Pre-built int32 index arrays so the expression-feature pass can index
+# into ``landmarks`` without paying a fresh ``list(RIGHT_EYE)`` / ``np.asarray``
+# allocation per face (issue #192 P2).
+_RIGHT_EYE_IDX = np.array(RIGHT_EYE, dtype=np.int32)
+_LEFT_EYE_IDX = np.array(LEFT_EYE, dtype=np.int32)
 RIGHT_BROW = (17, 18, 19, 20, 21)
 LEFT_BROW = (22, 23, 24, 25, 26)
 MOUTH_OUTER_LEFT_CORNER = 48
@@ -71,8 +76,8 @@ def _eye_aspect_ratio(landmarks: np.ndarray, indices: T.Sequence[int]) -> float:
 
 def _interocular_distance(landmarks: np.ndarray) -> float:
     """Return the distance between right and left eye centers."""
-    right = landmarks[list(RIGHT_EYE)].mean(axis=0)
-    left = landmarks[list(LEFT_EYE)].mean(axis=0)
+    right = landmarks[_RIGHT_EYE_IDX].mean(axis=0)
+    left = landmarks[_LEFT_EYE_IDX].mean(axis=0)
     return float(np.linalg.norm(left - right))
 
 

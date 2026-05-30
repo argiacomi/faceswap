@@ -232,6 +232,17 @@ def _quality_signal_coverage(coverage: FacesetCoverageReport) -> float:
     return round(available / expected, 4) if expected else 0.0
 
 
+def quality_component(coverage: FacesetCoverageReport) -> ComponentScore:
+    """Public alias for the internal ``_quality_component`` helper.
+
+    Exposed so :mod:`lib.faceqa.compatibility` can read the quality
+    component directly instead of paying the full
+    ``compute_readiness_scores`` cost twice per dimension computation
+    (issue #192 P2).
+    """
+    return _quality_component(coverage)
+
+
 def _quality_component(coverage: FacesetCoverageReport) -> ComponentScore:
     if coverage.total_faces == 0:
         return ComponentScore(
