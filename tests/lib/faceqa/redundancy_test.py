@@ -1804,6 +1804,97 @@ def test_visual_span_splitter_breaks_appearance_diverse_components() -> None:
     assert visual_split_reasons, "visual-mode split reason should appear on relocated members"
 
 
+def test_visual_split_refreshes_final_component_diagnostics() -> None:
+    """Visual-span subclusters must refresh nearest-neighbour / diameter
+    diagnostics so they describe the final component, not the pre-split
+    parent component (issue #208 follow-up 3).
+    """
+    from lib.faceqa.redundancy import (
+        _AGGRESSIVENESS_PRESETS,
+        _VISUAL_SPAN_SPLIT_MIN_SIZE,
+        _build_pairwise_context,
+        _distance_with_ctx,
+        _features_for,
+        _refresh_component_diagnostics,
+        _split_high_visual_span_components,
+    )
+
+    cap = _VISUAL_SPAN_SPLIT_MIN_SIZE
+    n_per_mode = cap // 2 + 2
+
+    mode_a_records = [
+        _record(
+            frame=f"a_{idx:06d}.png",
+            yaw=0.0,
+            mean_luminance=140.0,
+            color_warmth=30.0,
+            saturation=120.0,
+            contrast=45.0,
+        )
+        for idx in range(1, n_per_mode + 1)
+    ]
+    mode_b_records = [
+        _record(
+            frame=f"b_{idx:06d}.png",
+            yaw=0.0,
+            mean_luminance=100.0,
+            color_warmth=-30.0,
+            saturation=30.0,
+            contrast=15.0,
+        )
+        for idx in range(1, n_per_mode + 1)
+    ]
+    records = mode_a_records + mode_b_records
+    features = [_features_for(record) for record in records]
+    ctx = _build_pairwise_context(features)
+    config = _AGGRESSIVENESS_PRESETS["balanced"]
+
+    split_reasons: dict[int, str | None] = {idx: None for idx in range(len(records))}
+    components, visual_split_subs = _split_high_visual_span_components(
+        [list(range(len(records)))], features, split_reasons
+    )
+
+    assert len(components) >= 2
+    assert visual_split_subs
+
+    diameter_by_member: dict[int, float] = {}
+    nearest_neighbor_by_member: dict[int, float] = {}
+    nearest_neighbor_index_by_member: dict[int, int | None] = {}
+    direct_to_rep_by_member: dict[int, bool] = {}
+    connected_via_rep_edge_by_member: dict[int, bool] = {}
+
+    for sub in visual_split_subs:
+        _refresh_component_diagnostics(
+            sub,
+            features,
+            ctx,
+            config,
+            edge_reasons={},
+            diameter_by_member=diameter_by_member,
+            nearest_neighbor_by_member=nearest_neighbor_by_member,
+            nearest_neighbor_index_by_member=nearest_neighbor_index_by_member,
+            direct_to_rep_by_member=direct_to_rep_by_member,
+            connected_via_rep_edge_by_member=connected_via_rep_edge_by_member,
+        )
+
+    for sub in visual_split_subs:
+        sub_set = set(sub)
+        if len(sub) <= 1:
+            continue
+
+        expected_diameter = 0.0
+        for i_pos, i in enumerate(sub):
+            for j in sub[i_pos + 1 :]:
+                distance, _compared = _distance_with_ctx(ctx, i, j)
+                expected_diameter = max(expected_diameter, distance)
+
+        for member in sub:
+            assert nearest_neighbor_index_by_member[member] in sub_set
+            assert math.isclose(diameter_by_member[member], expected_diameter, abs_tol=1e-9)
+            assert isinstance(direct_to_rep_by_member[member], bool)
+            assert isinstance(connected_via_rep_edge_by_member[member], bool)
+
+
 def test_contact_sheet_orders_within_cluster_by_recommendation_then_visual_mode(
     tmp_path,
 ) -> None:
@@ -1942,6 +2033,144 @@ def test_contact_sheet_orders_within_cluster_by_recommendation_then_visual_mode(
     ], captured_order
 
     # ensure the sheet rendered
-    assert (tmp_path / "sheets" / "cluster_0001.png").exists() or True  # placeholder OK
+    assert (tmp_path / "sheets" / "cluster_0001.png").exists()
     # Silence unused
     _ = cv2
+
+
+def test_contact_sheet_sorts_missing_visual_signals_last_within_recommendation(
+    tmp_path,
+) -> None:
+    """Missing visual-mode fields sort last within a recommendation bucket.
+
+    Regression for the contact-sheet sort key: ``None`` appearance /
+    micro-band values used to be represented by negative sentinels, which
+    sorted them before real visual signals. They should sort after records
+    with populated visual fields while preserving recommendation order.
+    """
+    from lib.faceqa.redundancy import RedundancyRecord, RedundancyReport
+    from lib.faceqa.redundancy_outputs import render_contact_sheets
+
+    records = [
+        RedundancyRecord(
+            frame="frame_000001.png",
+            face_index=0,
+            cluster_id=1,
+            cluster_size=4,
+            representative=True,
+            recommendation=KEEP,
+            quality_score=0.9,
+            redundancy_distance_to_representative=0.0,
+            temporal_distance_to_representative=0,
+            temporal_confidence=1.0,
+            pose_bucket="frontal",
+            pitch_bucket="neutral",
+            expression_bucket="neutral",
+            lighting_bucket="balanced",
+            reason="rep",
+            identity_outlier=False,
+            has_identity=True,
+            appearance_mode=(2, 2, 2, 2),
+            yaw_micro_band=0,
+            pitch_micro_band=0,
+            mouth_openness_band=0,
+            smile_proxy_band=0,
+        ),
+        RedundancyRecord(
+            frame="frame_000002.png",
+            face_index=0,
+            cluster_id=1,
+            cluster_size=4,
+            representative=False,
+            recommendation=REVIEW,
+            quality_score=0.5,
+            redundancy_distance_to_representative=0.05,
+            temporal_distance_to_representative=1,
+            temporal_confidence=0.95,
+            pose_bucket="frontal",
+            pitch_bucket="neutral",
+            expression_bucket="neutral",
+            lighting_bucket="balanced",
+            reason="review with visual fields",
+            identity_outlier=False,
+            has_identity=True,
+            appearance_mode=(2, 2, 2, 2),
+            yaw_micro_band=0,
+            pitch_micro_band=0,
+            mouth_openness_band=0,
+            smile_proxy_band=0,
+        ),
+        RedundancyRecord(
+            frame="frame_000003.png",
+            face_index=0,
+            cluster_id=1,
+            cluster_size=4,
+            representative=False,
+            recommendation=REVIEW,
+            quality_score=0.99,
+            redundancy_distance_to_representative=0.05,
+            temporal_distance_to_representative=2,
+            temporal_confidence=0.95,
+            pose_bucket="frontal",
+            pitch_bucket="neutral",
+            expression_bucket="neutral",
+            lighting_bucket="balanced",
+            reason="review with missing visual fields",
+            identity_outlier=False,
+            has_identity=True,
+            appearance_mode=None,
+            yaw_micro_band=None,
+            pitch_micro_band=None,
+            mouth_openness_band=None,
+            smile_proxy_band=None,
+        ),
+        RedundancyRecord(
+            frame="frame_000004.png",
+            face_index=0,
+            cluster_id=1,
+            cluster_size=4,
+            representative=False,
+            recommendation=PRUNE,
+            quality_score=0.4,
+            redundancy_distance_to_representative=0.05,
+            temporal_distance_to_representative=3,
+            temporal_confidence=0.95,
+            pose_bucket="frontal",
+            pitch_bucket="neutral",
+            expression_bucket="neutral",
+            lighting_bucket="balanced",
+            reason="prune",
+            identity_outlier=False,
+            has_identity=True,
+            appearance_mode=(2, 2, 2, 2),
+            yaw_micro_band=0,
+            pitch_micro_band=0,
+            mouth_openness_band=0,
+            smile_proxy_band=0,
+        ),
+    ]
+    report = RedundancyReport(total_faces=4, cluster_count=1, records=records)
+
+    captured_order: list[str] = []
+    from lib.faceqa import redundancy_outputs as out_mod
+
+    original = out_mod._tile_for_record
+
+    def _spy(record, *, faces_dir, tile_size):  # noqa: ANN001
+        captured_order.append(record.frame)
+        import numpy as np
+
+        return np.zeros((tile_size, tile_size, 3), dtype=np.uint8)
+
+    out_mod._tile_for_record = _spy
+    try:
+        render_contact_sheets(report, faces_dir=tmp_path / "faces", output_dir=tmp_path / "sheets")
+    finally:
+        out_mod._tile_for_record = original
+
+    assert captured_order == [
+        "frame_000001.png",  # rep
+        "frame_000002.png",  # review with populated visual fields
+        "frame_000003.png",  # review with missing visual fields sorts last in review
+        "frame_000004.png",  # prune remains after review due recommendation rank
+    ], captured_order
