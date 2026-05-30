@@ -35,6 +35,11 @@ POSE_RECORD_FIELDS = {
     "pose_max_abs_delta",
 }
 
+# Pre-sorted view used by ``clear_face_metadata`` so the iteration order is
+# stable AND the sort cost is paid once at import time rather than per face
+# (issue #196).
+_SORTED_POSE_FIELDS: tuple[str, ...] = tuple(sorted(POSE_RECORD_FIELDS))
+
 
 def _remove_if_empty(parent: dict[str, Any], key: str) -> None:
     value = parent.get(key)
@@ -71,7 +76,7 @@ def clear_face_metadata(metadata: dict[str, Any]) -> int:
 
         # Remove stale selected/native pose fields that can make
         # _valid_spiga_pose() return True before backfill runs.
-        for key in sorted(POSE_RECORD_FIELDS):
+        for key in _SORTED_POSE_FIELDS:
             if key in faceqa:
                 faceqa.pop(key, None)
                 changes += 1
@@ -100,6 +105,14 @@ def clear_face_metadata(metadata: dict[str, Any]) -> int:
 
 
 def backup_path(path: Path) -> Path:
+    """Return a non-colliding backup path next to ``path``.
+
+    ``path.with_suffix(path.suffix + ".bak")`` is intentional: it preserves
+    the original extension (``foo.fsa`` becomes ``foo.fsa.bak``, not
+    ``foo.bak``) so the relationship to the source file is obvious on disk.
+    Subsequent collisions append a numeric suffix (``foo.fsa.bak1``,
+    ``foo.fsa.bak2``, ...) — verified per issue #196.
+    """
     candidate = path.with_suffix(path.suffix + ".bak")
     if not candidate.exists():
         return candidate

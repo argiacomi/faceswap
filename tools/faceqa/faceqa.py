@@ -117,12 +117,22 @@ class Faceqa:  # pylint:disable=invalid-name
                 "extracted aligned-face images can be sorted or rendered."
             )
 
+        # Build the shared frames loader ONCE per coverage run and publish
+        # it on ``self`` so every helper that ``_run_coverage`` invokes
+        # (``_pose_backfiller`` / ``_metrics_backfiller`` /
+        # ``_run_identity_backfill``) reuses the SAME instance — the folder
+        # / video index is walked once instead of three times (issue #196).
+        self._use_frames_loader(self._frames_loader())
+
         # Identity is both a coverage signal and the redundancy guardrail. Run
         # embedding backfill before records are built so coverage, readiness,
         # and pruning all observe the same enriched alignments state.
         self._run_identity_backfill(alignments)
 
         raw_envelope, entries = load_alignments_envelope(alignments)
+        # Bind ``total_faces`` ONCE — reused by every per-stage tqdm bar
+        # below and by the sort-prune progress total (issue #196).
+        total_faces = sum(len(entry.faces) for entry in entries.values())
 
         pose_backfill_added = False
         pose_backfiller = self._pose_backfiller()
@@ -145,7 +155,6 @@ class Faceqa:  # pylint:disable=invalid-name
             pose_backfill_callback = _track_pose_backfill
 
         metrics_backfiller = self._metrics_backfiller()
-        total_faces = sum(len(entry.faces) for entry in entries.values())
         with _faceqa_progress(total=total_faces, desc="FaceQA metrics", unit="face") as tick:
             records = records_from_alignments(
                 entries,
@@ -243,6 +252,11 @@ class Faceqa:  # pylint:disable=invalid-name
         Identity is a FaceQA coverage signal and the pruning guardrail. If the
         selected identity model is already complete, no source frames are
         required. Otherwise ``--frames-dir`` is needed to fill missing vectors.
+
+        Reuses the shared frames loader cached on ``self`` by
+        ``_run_coverage`` so the folder / video index is not enumerated a
+        second time (issue #196). Constructs its own loader when invoked
+        without a shared one.
         """
         status = identity_coverage_status(alignments)
         if status.complete:
@@ -254,13 +268,16 @@ class Faceqa:  # pylint:disable=invalid-name
             )
             return
 
-        frames_dir = getattr(self._args, "frames_dir", None)
-        if not frames_dir:
-            raise FaceswapError(
-                "--suggest-pruning requires --frames-dir when identity embeddings "
-                "are incomplete, so FaceQA can backfill identity before coverage "
-                "and redundancy clustering."
-            )
+        frames_loader = self._frames_loader()
+        if frames_loader is None:
+            frames_dir = getattr(self._args, "frames_dir", None)
+            if not frames_dir:
+                raise FaceswapError(
+                    "--suggest-pruning requires --frames-dir when identity embeddings "
+                    "are incomplete, so FaceQA can backfill identity before coverage "
+                    "and redundancy clustering."
+                )
+            frames_loader = Frames(frames_dir)
 
         # ``backfill_identity`` ticks once per face it considers, including
         # already-present + skipped, so the tqdm total must be the FULL
@@ -274,7 +291,7 @@ class Faceqa:  # pylint:disable=invalid-name
         ) as tick:
             report = backfill_identity(
                 alignments,
-                frames_loader=Frames(frames_dir),
+                frames_loader=frames_loader,
                 model=status.model,
                 progress_callback=tick,
             )
@@ -415,13 +432,13 @@ class Faceqa:  # pylint:disable=invalid-name
         *,
         desc: str = "FaceQA compatibility",
     ) -> FacesetCoverageReport:
-        raw_envelope, entries = load_alignments_envelope(alignments)
+        # Compatibility is read-only on alignments; the envelope is
+        # intentionally discarded since no enrichment is triggered for this
+        # faceset (issue #196).
+        _envelope, entries = load_alignments_envelope(alignments)
         total_faces = sum(len(entry.faces) for entry in entries.values())
         with _faceqa_progress(total=total_faces, desc=desc, unit="face") as tick:
             records = records_from_alignments(entries, progress_callback=tick)
-        # Compatibility is read-only on alignments; raw_envelope is intentionally
-        # discarded since no enrichment was triggered for this faceset.
-        del raw_envelope
         return compute_coverage(
             records,
             exclude_duplicates=bool(getattr(self._args, "exclude_duplicates", False)),
@@ -443,17 +460,41 @@ class Faceqa:  # pylint:disable=invalid-name
             raise FaceswapError(f"Alignments file not found: {path}")
         return path
 
-    def _pose_backfiller(self) -> SpigaPoseBackfiller | None:
+    def _frames_loader(self) -> Frames | None:
+        """Return the shared :class:`Frames` loader for this FaceQA run.
+
+        ``_run_coverage`` calls this once at the top of the run and caches
+        the result on ``self`` via :meth:`_use_frames_loader`. Subsequent
+        calls from ``_pose_backfiller`` / ``_metrics_backfiller`` /
+        ``_run_identity_backfill`` therefore reuse the SAME loader, walking
+        the folder / video index once instead of three times (issue #196).
+
+        Returns ``None`` when ``--frames-dir`` is missing.
+        """
+        cached = getattr(self, "_shared_frames_loader", None)
+        if cached is not None:
+            return cached
         frames_dir = getattr(self._args, "frames_dir", None)
         if not frames_dir:
             return None
-        return SpigaPoseBackfiller(Frames(frames_dir))
+        return Frames(frames_dir)
+
+    def _use_frames_loader(self, loader: Frames | None) -> None:
+        """Publish a pre-built loader so subsequent ``_frames_loader()`` calls
+        reuse it instead of constructing fresh instances (issue #196)."""
+        self._shared_frames_loader = loader
+
+    def _pose_backfiller(self) -> SpigaPoseBackfiller | None:
+        loader = self._frames_loader()
+        if loader is None:
+            return None
+        return SpigaPoseBackfiller(loader)
 
     def _metrics_backfiller(self) -> FrameImageMetricsBackfiller | None:
-        frames_dir = getattr(self._args, "frames_dir", None)
-        if not frames_dir:
+        loader = self._frames_loader()
+        if loader is None:
             return None
-        return FrameImageMetricsBackfiller(Frames(frames_dir))
+        return FrameImageMetricsBackfiller(loader)
 
     def _output_dir(self, alignments: Path) -> Path:
         """Resolve the single FaceQA output directory."""
