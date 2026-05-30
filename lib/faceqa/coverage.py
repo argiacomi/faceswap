@@ -14,10 +14,48 @@ import numpy as np
 
 from lib.align import AlignedFace, DetectedFace
 from lib.align.objects import AlignmentsEntry, FileAlignments
+from lib.faceqa.buckets import (
+    blur_bucket as _blur_bucket,
+)
+from lib.faceqa.buckets import (
+    expression_bucket as _expression_bucket,
+)
+from lib.faceqa.buckets import (
+    identity_bucket as _identity_bucket,
+)
+from lib.faceqa.buckets import (
+    is_identity_outlier as _is_identity_outlier,
+)
+from lib.faceqa.buckets import (
+    lighting_bucket as _lighting_bucket,
+)
+from lib.faceqa.buckets import (
+    mask_qa_bucket as _mask_qa_bucket,
+)
+from lib.faceqa.buckets import (
+    misalignment_bucket as _misalignment_bucket,
+)
+from lib.faceqa.buckets import (
+    occlusion_bucket as _occlusion_bucket,
+)
+from lib.faceqa.buckets import (
+    pitch_bucket as _pitch_bucket,
+)
+from lib.faceqa.buckets import (
+    pose_bucket as _pose_bucket,
+)
+from lib.faceqa.buckets import (
+    pose_confidence_bucket as _pose_confidence_bucket,
+)
+from lib.faceqa.buckets import (
+    pose_source_bucket as _pose_source_bucket,
+)
+from lib.faceqa.buckets import (
+    resolution_bucket as _resolution_bucket,
+)
 from lib.faceqa.expression import EXPRESSION_BUCKETS, compute_expression_features
 from lib.faceqa.expression import bucket_for_features as expression_bucket_for_features
-from lib.faceqa.lighting import LIGHTING_BUCKETS, LightingFeatures, compute_lighting_features
-from lib.faceqa.lighting import bucket_for_features as lighting_bucket_for_features
+from lib.faceqa.lighting import LIGHTING_BUCKETS, compute_lighting_features
 from lib.faceqa.record import FaceQARecord
 from lib.serializer import get_serializer
 from lib.utils import get_module_objects
@@ -27,13 +65,12 @@ logger = logging.getLogger(__name__)
 if T.TYPE_CHECKING:
     from collections.abc import Callable
 
-POSE_YAW_THRESHOLDS = (15.0, 30.0, 60.0)
-POSE_PITCH_THRESHOLDS = (15.0, 30.0)
+# Bucket-classification thresholds live in ``lib.faceqa.buckets`` so the
+# bucket helpers and their thresholds stay co-located. The validation
+# thresholds below (``POSE_LIMITS`` etc.) are NOT bucket-classification
+# values — they gate ``_valid_pose_values`` / ``_pose_confidence`` — and
+# remain in coverage.
 ROLL_RISK_THRESHOLDS = (10.0, 25.0)
-BLUR_THRESHOLDS = (6.0, 3.0, 1.0)
-RESOLUTION_THRESHOLDS = (256, 128, 64)
-OCCLUSION_THRESHOLDS = (0.05, 0.20, 0.50)
-DISTANCE_THRESHOLDS = (0.10, 0.20, 0.40)
 POSE_LIMITS = {"yaw": (-120.0, 120.0), "pitch": (-90.0, 90.0), "roll": (-90.0, 90.0)}
 
 # Bucket labels emitted by ``_pose_bucket`` / ``_pitch_bucket``. Coverage,
@@ -1572,67 +1609,13 @@ def _expression_coverage(records: list[FaceQARecord]) -> dict[str, T.Any]:
     }
 
 
-def _pose_bucket(record: FaceQARecord) -> str:
-    """Return the yaw bucket label for a record (``unknown`` if missing)."""
-    yaw = record.yaw
-    if yaw is None or not np.isfinite(yaw):
-        return "unknown"
-    mag = abs(float(yaw))
-    low, mid, high = POSE_YAW_THRESHOLDS
-    if mag <= low:
-        return "frontal"
-    sign = "left" if yaw < 0 else "right"
-    if mag <= mid:
-        return f"{sign}_slight"
-    if mag <= high:
-        return f"{sign}_profile"
-    return f"{sign}_extreme"
-
-
-def _pitch_bucket(record: FaceQARecord) -> str:
-    """Return the pitch bucket label for a record (``unknown`` if missing)."""
-    pitch = record.pitch
-    if pitch is None or not np.isfinite(pitch):
-        return "unknown"
-    mag = abs(float(pitch))
-    low, high = POSE_PITCH_THRESHOLDS
-    if mag <= low:
-        return "neutral"
-    sign = "down" if pitch < 0 else "up"
-    if mag <= high:
-        return sign
-    return f"{sign}_extreme"
-
-
-def _lighting_bucket(record: FaceQARecord) -> str:
-    """Return the lighting bucket label for a record (``unknown`` if missing).
-
-    Only the fields actually consulted by :func:`lighting_bucket_for_features`
-    are required (mean_luminance, contrast, left_right_ratio,
-    top_bottom_ratio, color_warmth); the optional ``luminance_variance`` /
-    ``saturation`` slots default to ``0.0`` so legacy records that only carry
-    the bucket-discriminating features still classify.
-    """
-    required = (
-        record.mean_luminance,
-        record.left_right_ratio,
-        record.top_bottom_ratio,
-        record.contrast,
-        record.color_warmth,
-    )
-    if any(value is None for value in required):
-        return "unknown"
-    features: LightingFeatures = {
-        "mean_luminance": float(T.cast(float, record.mean_luminance)),
-        "luminance_variance": float(record.luminance_variance or 0.0),
-        "contrast": float(T.cast(float, record.contrast)),
-        "left_right_ratio": float(T.cast(float, record.left_right_ratio)),
-        "top_bottom_ratio": float(T.cast(float, record.top_bottom_ratio)),
-        "saturation": float(record.saturation or 0.0),
-        "color_warmth": float(T.cast(float, record.color_warmth)),
-    }
-    label = lighting_bucket_for_features(features)
-    return label if label else "unknown"
+# The per-record bucket classifiers (``_pose_bucket`` etc.) used to live
+# here; they were promoted to ``lib.faceqa.buckets`` in issue #192
+# Priority 1 to remove the private-API coupling between ``coverage`` and
+# ``redundancy``. The names are aliased into this module via the import
+# block at the top of the file so the existing internal call sites (the
+# ``_BUCKET_DIMENSIONS`` dispatch table below, ``_metric_summary``, etc.)
+# continue to work unchanged.
 
 
 def _mask_ref(face: FileAlignments) -> str | None:
@@ -1645,105 +1628,6 @@ def _mask_ref(face: FileAlignments) -> str | None:
     if not face.mask:
         return None
     return ",".join(sorted(face.mask))
-
-
-def _mask_qa_bucket(record: FaceQARecord) -> str:
-    """Return the mask-availability bucket label for a face."""
-    if not record.mask_qa_ref:
-        return "missing"
-    return "present"
-
-
-def _is_identity_outlier(record: FaceQARecord) -> bool:
-    """Return whether a record is classified as an identity outlier/reject."""
-    flag = record.identity_quality_flag
-    decision = record.identity_final_decision
-    if flag in ("outlier", "reject"):
-        return True
-    return decision in ("outlier", "reject")
-
-
-def _expression_bucket(record: FaceQARecord) -> str:
-    """Return the expression bucket label (``unknown`` when missing)."""
-    return record.expression_bucket or "unknown"
-
-
-def _blur_bucket(record: FaceQARecord) -> str:
-    """Return the blur bucket label for a record."""
-    score = record.blur_score
-    if score is None or not np.isfinite(score):
-        return "unknown"
-    good, ok_, mediocre = BLUR_THRESHOLDS
-    if score >= good:
-        return "good"
-    if score >= ok_:
-        return "ok"
-    if score >= mediocre:
-        return "mediocre"
-    return "unusable"
-
-
-def _resolution_bucket(record: FaceQARecord) -> str:
-    """Return the resolution bucket label for a record."""
-    if not record.resolution:
-        return "unknown"
-    width = record.resolution[0] if record.resolution else 0
-    height = record.resolution[1] if len(record.resolution) > 1 else width
-    min_side = min(int(width), int(height))
-    good, ok_, low = RESOLUTION_THRESHOLDS
-    if min_side >= good:
-        return "good"
-    if min_side >= ok_:
-        return "ok"
-    if min_side >= low:
-        return "low"
-    return "tiny"
-
-
-def _misalignment_bucket(record: FaceQARecord) -> str:
-    """Return the landmark-misalignment bucket label for a record."""
-    distance = record.average_distance
-    if distance is None or not np.isfinite(distance):
-        return "unknown"
-    low, medium, high = DISTANCE_THRESHOLDS
-    if distance <= low:
-        return "low"
-    if distance <= medium:
-        return "medium"
-    if distance <= high:
-        return "high"
-    return "extreme"
-
-
-def _occlusion_bucket(record: FaceQARecord) -> str:
-    """Return the occlusion bucket label for a record."""
-    score = record.occlusion_score
-    if score is None or not np.isfinite(score):
-        return "unknown"
-    minimal, mild, moderate = OCCLUSION_THRESHOLDS
-    if score <= minimal:
-        return "minimal"
-    if score <= mild:
-        return "mild"
-    if score <= moderate:
-        return "moderate"
-    return "severe"
-
-
-def _identity_bucket(record: FaceQARecord) -> str:
-    """Return the identity-classification bucket label for a record."""
-    flag = record.identity_quality_flag or record.identity_final_decision
-    if flag in ("inlier", "borderline", "outlier", "reject", "review"):
-        return str(flag)
-    return "unknown"
-
-
-def _pose_source_bucket(record: FaceQARecord) -> str:
-    return record.pose_source or "unknown"
-
-
-def _pose_confidence_bucket(record: FaceQARecord) -> str:
-    return record.pose_confidence or "unknown"
 
 
 _BUCKET_DIMENSIONS: tuple[tuple[str, T.Callable[[FaceQARecord], str]], ...] = (

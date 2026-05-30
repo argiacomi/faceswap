@@ -24,6 +24,15 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from lib.faceqa.buckets import (
+    lighting_bucket as _lighting_bucket,
+)
+from lib.faceqa.buckets import (
+    pitch_bucket as _pitch_bucket,
+)
+from lib.faceqa.buckets import (
+    pose_bucket as _pose_bucket,
+)
 from lib.faceqa.coverage import FacesetCoverageReport
 from lib.faceqa.record import FaceQARecord
 from lib.utils import get_module_objects
@@ -366,12 +375,6 @@ def _features_for(record: FaceQARecord) -> RepresentationFeatures:
     pose_bucket = None
     pitch_bucket = None
     lighting_bucket = None
-    from lib.faceqa.coverage import (
-        _lighting_bucket,
-        _pitch_bucket,
-        _pose_bucket,
-    )
-
     try:
         pose_bucket = _pose_bucket(record)
         pitch_bucket = _pitch_bucket(record)
@@ -591,12 +594,6 @@ def _build_redundancy_clusters(
 
 
 def _bucket_of(record: FaceQARecord, dimension: str) -> str:
-    from lib.faceqa.coverage import (
-        _lighting_bucket,
-        _pitch_bucket,
-        _pose_bucket,
-    )
-
     if dimension == "pose":
         return str(_pose_bucket(record))
     if dimension == "pitch":
