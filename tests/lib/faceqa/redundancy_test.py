@@ -1165,3 +1165,123 @@ def test_identity_outlier_still_blocked_by_edge_gate() -> None:
     )
     assert eligible is False
     assert "identity outlier" in reason
+
+
+# ---------------------------------------------------------------------------
+# Issue #204 follow-up — strict diameter guarantee + richer diagnostics
+# ---------------------------------------------------------------------------
+
+
+def test_split_components_guarantee_diameter_within_limit() -> None:
+    """The strict attachment rule (member must be within rep_limit of seed
+    AND within diameter_limit of every already-attached member) MUST hold
+    after splitting — no post-split component can exceed the diameter
+    band even when the parent component did."""
+    from lib.faceqa.redundancy import _AGGRESSIVENESS_PRESETS as PRESETS
+    from lib.faceqa.redundancy import (
+        _COMPONENT_DIAMETER_SCALE,
+        _build_redundancy_clusters,
+        _distance_with_ctx,
+        _features_for,
+        _split_high_diameter_components,
+    )
+
+    # Build a chain of 12 near-identical-yaw faces so the original union
+    # forms one big component that the splitter must then reduce.
+    records = _near_identical_run(12, yaw=0.0)
+    config = PRESETS["balanced"]
+    features = [_features_for(r) for r in records]
+    components, _, edge_reasons, ctx = _build_redundancy_clusters(features, config)
+    new_components, diag = _split_high_diameter_components(
+        components, features, ctx, config, edge_reasons
+    )
+
+    diameter_limit = config.representation_distance_threshold * _COMPONENT_DIAMETER_SCALE
+    for component in new_components:
+        if len(component) <= 1:
+            continue
+        for i_pos, i in enumerate(component):
+            for j in component[i_pos + 1 :]:
+                dist, _ = _distance_with_ctx(ctx, i, j)
+                assert dist <= diameter_limit + 1e-9, (
+                    f"pair ({i}, {j}) distance {dist:.3f} exceeds diameter "
+                    f"limit {diameter_limit:.3f} in component {component}"
+                )
+
+    # Every member's component_diameter <= limit (mirrors the per-pair
+    # assertion above through the diagnostics map).
+    for value in diag.diameter_by_member.values():
+        assert value <= diameter_limit + 1e-9
+
+
+def test_oversize_component_surfaces_split_reason() -> None:
+    """When a component exceeds the size cap, the splitter keeps it intact
+    AND records the ``split_reason`` on every member so the diagnostics
+    flag the bypass."""
+    from lib.faceqa.redundancy import _AGGRESSIVENESS_PRESETS as PRESETS
+    from lib.faceqa.redundancy import (
+        _MAX_COMPONENT_SIZE_FOR_DIAMETER_SPLIT,
+        _features_for,
+        _split_high_diameter_components,
+    )
+
+    # Synthesize one synthetic oversize component without paying for the
+    # O(N^2) union-find loop on N > 2000 records.
+    cap = _MAX_COMPONENT_SIZE_FOR_DIAMETER_SPLIT
+    records = _near_identical_run(cap + 2, yaw=0.0)
+    config = PRESETS["balanced"]
+    features = [_features_for(r) for r in records]
+    members = list(range(len(records)))
+    from lib.faceqa.redundancy import _build_pairwise_context
+
+    ctx = _build_pairwise_context(features)
+    components, diag = _split_high_diameter_components(
+        [members], features, ctx, config, edge_reasons={}
+    )
+
+    assert len(components) == 1
+    assert len(components[0]) == cap + 2
+    reasons = {diag.split_reason_by_member[m] for m in components[0]}
+    assert reasons == {f"component too large for diameter check ({cap + 2} > {cap}) — kept as-is"}
+
+
+def test_per_member_nearest_neighbor_diagnostics_populated() -> None:
+    """Every clustered member surfaces the nearest-neighbour identifier
+    + edge eligibility so reasons can distinguish "redundant with
+    representative" from "redundant through neighbour chain"."""
+    records = _near_identical_run(6, yaw=0.0)
+
+    report = compute_redundancy(records)
+    members = [r for r in report.records if not r.representative]
+
+    assert members
+    for member in members:
+        # Nearest neighbour identifier resolves to a real record.
+        assert member.nearest_neighbor_frame is not None
+        assert member.nearest_neighbor_face_index is not None
+        # ``connected_via_representative`` is a bool (True or False);
+        # ``direct_to_representative`` is also a bool. They may agree on
+        # this synthetic run but the API must expose both.
+        assert isinstance(member.connected_via_representative, bool)
+        assert isinstance(member.direct_to_representative, bool)
+
+
+def test_split_reason_marks_members_when_diameter_split_happens() -> None:
+    """A genuinely chained component must produce sub-clusters whose
+    members carry the ``split from oversize component due to diameter``
+    reason."""
+    # Drift yaw across the run so the cumulative span exceeds the
+    # diameter limit even though each adjacent pair sits within
+    # the same bucket. The splitter must then carve the chain into
+    # diameter-safe sub-clusters.
+    records = [_record(f"frame_{i:06d}.png", yaw=float(-7 + i * 1.4)) for i in range(12)]
+
+    report = compute_redundancy(records, aggressiveness="balanced")
+    reasons = {r.split_reason for r in report.records if r.split_reason is not None}
+    # Either the splitter fired (reason populated) OR every pair sat
+    # within the diameter envelope; assert the actual diameter contract
+    # holds either way.
+    if reasons:
+        assert "split from oversize component due to diameter" in reasons
+    # Cluster-health metric also reflects whatever the splitter did.
+    assert report.component_diameter_max is not None

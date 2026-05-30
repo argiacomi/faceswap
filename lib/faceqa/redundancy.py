@@ -219,6 +219,38 @@ class RedundancyRecord:
     """Maximum pairwise distance among all members of the (post-split)
     component. Surfaced so the user can spot sprawling clusters even
     when the splitter chose not to break them up."""
+    # Issue #204 follow-up — richer per-member diagnostics so reasons
+    # can distinguish "redundant with representative" from "redundant
+    # through nearest neighbour" from "split from oversize component".
+    nearest_neighbor_frame: str | None = None
+    """Frame name of the nearest cluster neighbour, when one exists."""
+    nearest_neighbor_face_index: int | None = None
+    """Face index of the nearest cluster neighbour, when one exists."""
+    nearest_neighbor_edge_eligibility: str | None = None
+    """Eligibility reason for the graph edge between this face and its
+    nearest cluster neighbour. ``None`` when no edge was scored
+    (singletons or post-split components where the original union-find
+    never saw the pair)."""
+    connected_via_representative: bool = True
+    """``True`` when the member had an ELIGIBLE redundancy edge to the
+    cluster representative in the original graph; ``False`` flags
+    transitive-chain membership where the member's redundancy is only
+    reachable through another neighbour. Distinct from
+    ``direct_to_representative`` (which is a distance check)."""
+    split_reason: str | None = None
+    """Populated when the diameter splitter touched the parent
+    component:
+
+    * ``"split from oversize component due to diameter"`` — the member
+      ended up in a sub-cluster because the parent component's pairwise
+      diameter exceeded the limit.
+    * ``"component too large for diameter check (N > cap) — kept as-is"``
+      — the parent component exceeded
+      ``_MAX_COMPONENT_SIZE_FOR_DIAMETER_SPLIT``, so the splitter
+      bypassed it to avoid O(N^2) memory / CPU on a worst-case shape.
+
+    ``None`` indicates the cluster was within the diameter limit and
+    untouched by the splitter."""
 
     def to_dict(self) -> dict[str, T.Any]:
         return {
@@ -244,6 +276,11 @@ class RedundancyRecord:
             "nearest_neighbor_distance": self.nearest_neighbor_distance,
             "direct_to_representative": self.direct_to_representative,
             "component_diameter": self.component_diameter,
+            "nearest_neighbor_frame": self.nearest_neighbor_frame,
+            "nearest_neighbor_face_index": self.nearest_neighbor_face_index,
+            "nearest_neighbor_edge_eligibility": self.nearest_neighbor_edge_eligibility,
+            "connected_via_representative": self.connected_via_representative,
+            "split_reason": self.split_reason,
         }
 
 
@@ -1000,6 +1037,27 @@ _MEMBER_TO_REP_SCALE: float = 1.25
 # Only run the diameter pass on components above this size — pairs and
 # triples can't form chains long enough to exceed the diameter band.
 _COMPONENT_SPLIT_MIN_SIZE: int = 4
+# Issue #204 follow-up. The diameter pass guarantees sub-cluster
+# diameter <= diameter_limit, but for very large connected components
+# (the giant-component pathology that motivated the ticket in the first
+# place) even the on-demand pairwise checks add a quadratic pass over
+# the worst component. Above this size we KEEP the component intact and
+# log the bypass on each member via ``split_reason`` so the giant-
+# component warning + diagnostics still flag the topology issue without
+# burning minutes of CPU on a worst-case split.
+_MAX_COMPONENT_SIZE_FOR_DIAMETER_SPLIT: int = 2000
+
+
+@dataclass(frozen=True)
+class _SplitDiagnostics:
+    """Per-member diagnostics produced by ``_split_high_diameter_components``."""
+
+    diameter_by_member: dict[int, float]
+    nearest_neighbor_by_member: dict[int, float]
+    nearest_neighbor_index_by_member: dict[int, int | None]
+    direct_to_rep_by_member: dict[int, bool]
+    connected_via_rep_edge_by_member: dict[int, bool]
+    split_reason_by_member: dict[int, str | None]
 
 
 def _split_high_diameter_components(
@@ -1007,91 +1065,173 @@ def _split_high_diameter_components(
     features: list[RepresentationFeatures],
     ctx: _PairwiseContext,
     config: AggressivenessConfig,
-) -> tuple[list[list[int]], dict[int, float], dict[int, float], dict[int, bool]]:
+    edge_reasons: dict[tuple[int, int], tuple[bool, str]],
+) -> tuple[list[list[int]], _SplitDiagnostics]:
     """Split components whose internal spread exceeds the diameter limit.
 
-    Returns ``(new_components, diameter_by_member, nearest_neighbor_by_member,
-    direct_to_rep_by_member)``. The diameter map is keyed by face index
-    and reports the max pairwise distance within that face's FINAL
-    component (after splitting); nearest_neighbor is the closest other
-    member within the final component; ``direct_to_rep`` flags whether
-    the member is within :data:`_MEMBER_TO_REP_SCALE` of the chosen
-    representative.
+    Returns ``(new_components, _SplitDiagnostics)``. The diagnostics
+    expose enough per-member state to distinguish "redundant with
+    representative" from "reachable only through a neighbour chain" and
+    surface WHY the splitter touched (or didn't touch) a given
+    component (``split_reason``):
 
-    Greedy split policy (issue #204 §3):
+    * ``diameter_by_member`` — max pairwise distance within the
+      post-split component the member ended up in.
+    * ``nearest_neighbor_by_member`` — distance to the closest other
+      member within the post-split component (0.0 for singletons).
+    * ``nearest_neighbor_index_by_member`` — face-list index of that
+      neighbour (``None`` for singletons).
+    * ``direct_to_rep_by_member`` — whether the member's pairwise
+      distance to the chosen representative is within
+      :data:`_MEMBER_TO_REP_SCALE` of the threshold (distance-based).
+    * ``connected_via_rep_edge_by_member`` — whether the member had an
+      ELIGIBLE redundancy edge to the representative in the original
+      graph (graph-based; ``False`` flags transitive-chain membership).
+    * ``split_reason_by_member`` — None when no split was needed,
+      ``"split from oversize component due to diameter"`` when the
+      diameter pass relocated the member, and
+      ``"component too large for diameter check ({size} > {cap}) — kept as-is"``
+      when the size cap fired.
 
-    * Compute pairwise distances inside each over-sized component.
-    * If the component diameter is under the limit, leave it intact.
-    * Otherwise seed a sub-cluster from the highest-quality member and
-      attach every member whose distance to the seed is within
-      ``threshold * _MEMBER_TO_REP_SCALE``. Repeat on the remainder
-      until every face has a sub-cluster.
+    Splitter contract (issue #204 follow-up): every emitted sub-cluster
+    is GUARANTEED to have diameter <= ``diameter_limit`` UNLESS the
+    parent component exceeded
+    :data:`_MAX_COMPONENT_SIZE_FOR_DIAMETER_SPLIT`. The attachment loop
+    uses the stricter "distance to seed <= rep_limit AND distance to
+    every already-attached member <= diameter_limit" rule so a member
+    can't pull two attached members across the diameter envelope.
     """
     diameter_by_member: dict[int, float] = {}
     nearest_neighbor_by_member: dict[int, float] = {}
+    nearest_neighbor_index_by_member: dict[int, int | None] = {}
     direct_to_rep_by_member: dict[int, bool] = {}
+    connected_via_rep_edge_by_member: dict[int, bool] = {}
+    split_reason_by_member: dict[int, str | None] = {}
     new_components: list[list[int]] = []
 
     diameter_limit = config.representation_distance_threshold * _COMPONENT_DIAMETER_SCALE
     rep_limit = config.representation_distance_threshold * _MEMBER_TO_REP_SCALE
 
-    def _pairwise_distance_matrix(members: list[int]) -> dict[tuple[int, int], float]:
-        """Return the symmetric distance map keyed by (min, max) member pairs."""
-        distances: dict[tuple[int, int], float] = {}
+    def _distance(i: int, j: int) -> float:
+        """On-demand pairwise distance using the shared context."""
+        dist, _compared = _distance_with_ctx(ctx, i, j)
+        return dist
+
+    def _component_diameter(members: list[int]) -> float:
+        """Compute the diameter of one component by scanning each pair once."""
+        if len(members) <= 1:
+            return 0.0
+        worst = 0.0
         for i_pos, i in enumerate(members):
             for j in members[i_pos + 1 :]:
-                dist, _compared = _distance_with_ctx(ctx, i, j)
-                key = (i, j) if i < j else (j, i)
-                distances[key] = dist
-        return distances
+                d = _distance(i, j)
+                if d > worst:
+                    worst = d
+        return worst
 
-    def _diameter(members: list[int], distances: dict[tuple[int, int], float]) -> float:
-        return max(distances.values(), default=0.0) if len(members) > 1 else 0.0
+    def _has_eligible_rep_edge(member: int, rep: int) -> bool:
+        """Was there an ELIGIBLE edge between ``member`` and ``rep`` in the
+        original graph? Reads from ``edge_reasons`` keyed off (min,max)."""
+        if member == rep:
+            return True
+        key = (member, rep) if member < rep else (rep, member)
+        entry = edge_reasons.get(key)
+        return bool(entry and entry[0])
 
-    def _annotate(
-        members: list[int],
-        distances: dict[tuple[int, int], float],
-        diameter: float,
-    ) -> int:
-        """Choose representative + populate per-member diagnostics; returns rep."""
+    def _annotate(members: list[int], reason: str | None) -> None:
+        """Choose a representative + populate every member's diagnostics.
+
+        Pairwise distances are computed on demand so we never materialise
+        the full N*(N-1)/2 matrix.
+        """
         rep = max(members, key=lambda idx: (features[idx].quality_score, -idx))
+        if len(members) == 1:
+            sole = members[0]
+            diameter_by_member[sole] = 0.0
+            nearest_neighbor_by_member[sole] = 0.0
+            nearest_neighbor_index_by_member[sole] = None
+            direct_to_rep_by_member[sole] = True
+            connected_via_rep_edge_by_member[sole] = True
+            split_reason_by_member[sole] = reason
+            return
+
+        # Per-pair distances are reused for: diameter, per-member nearest
+        # neighbour, per-member distance-to-rep. Materialising them ONCE
+        # in a (member -> {neighbour -> distance}) map keeps the inner
+        # loop O(N^2) but reuses each pair instead of recomputing it
+        # three times.
+        pair_distance: dict[int, dict[int, float]] = {m: {} for m in members}
+        for i_pos, i in enumerate(members):
+            for j in members[i_pos + 1 :]:
+                d = _distance(i, j)
+                pair_distance[i][j] = d
+                pair_distance[j][i] = d
+
+        diameter = (
+            max((max(neighbours.values()) for neighbours in pair_distance.values()), default=0.0)
+            if len(members) > 1
+            else 0.0
+        )
         for member in members:
             diameter_by_member[member] = diameter
-            if len(members) == 1:
-                nearest_neighbor_by_member[member] = 0.0
-                direct_to_rep_by_member[member] = True
-                continue
-            neighbours = [
-                distances[(member, other) if member < other else (other, member)]
-                for other in members
-                if other != member
-            ]
-            nearest_neighbor_by_member[member] = min(neighbours) if neighbours else math.inf
+            split_reason_by_member[member] = reason
+            neighbours = pair_distance[member]
+            if not neighbours:
+                nearest_neighbor_by_member[member] = math.inf
+                nearest_neighbor_index_by_member[member] = None
+            else:
+                nearest_idx = min(neighbours, key=neighbours.__getitem__)
+                nearest_neighbor_by_member[member] = neighbours[nearest_idx]
+                nearest_neighbor_index_by_member[member] = nearest_idx
             if member == rep:
                 direct_to_rep_by_member[member] = True
-            else:
-                key = (member, rep) if member < rep else (rep, member)
-                direct_to_rep_by_member[member] = distances.get(key, math.inf) <= rep_limit
-        return rep
+                connected_via_rep_edge_by_member[member] = True
+                continue
+            dist_to_rep = pair_distance[member].get(rep, math.inf)
+            direct_to_rep_by_member[member] = dist_to_rep <= rep_limit
+            connected_via_rep_edge_by_member[member] = _has_eligible_rep_edge(member, rep)
 
     for members in components:
+        # Small components can't form chains long enough to exceed the
+        # diameter band; annotate directly without the splitter logic.
         if len(members) < _COMPONENT_SPLIT_MIN_SIZE:
-            distances = _pairwise_distance_matrix(members) if len(members) > 1 else {}
-            diameter = _diameter(members, distances)
-            _annotate(members, distances, diameter)
+            _annotate(members, reason=None)
             new_components.append(members)
             continue
 
-        distances = _pairwise_distance_matrix(members)
-        diameter = _diameter(members, distances)
+        # Issue #204 follow-up — cap the work on truly huge components.
+        # The pairwise pass below is O(N^2); above this cap we KEEP the
+        # component intact, surface the bypass via ``split_reason``, and
+        # rely on the giant-component warning + cluster-health metrics to
+        # flag the topology so the user can re-tune aggressiveness.
+        if len(members) > _MAX_COMPONENT_SIZE_FOR_DIAMETER_SPLIT:
+            reason = (
+                f"component too large for diameter check ({len(members)} > "
+                f"{_MAX_COMPONENT_SIZE_FOR_DIAMETER_SPLIT}) — kept as-is"
+            )
+            _annotate(members, reason=reason)
+            new_components.append(members)
+            continue
+
+        # Check the cheap diameter first — most components are small
+        # enough that the full pairwise scan inside ``_component_diameter``
+        # is the same as what ``_annotate`` would do anyway, so when the
+        # check passes we hand off to ``_annotate`` for the diagnostics.
+        diameter = _component_diameter(members)
         if diameter <= diameter_limit:
-            _annotate(members, distances, diameter)
+            _annotate(members, reason=None)
             new_components.append(members)
             continue
 
-        # Greedy split: seed from highest-quality member, attach members
-        # within ``rep_limit`` distance, recurse on the remainder.
-        remaining = set(members)
+        # Strict greedy split (issue #204 follow-up). For each sub-cluster:
+        #   * seed = highest-quality remaining member.
+        #   * attach a candidate ONLY when distance(candidate, seed) <=
+        #     rep_limit AND distance(candidate, every already-attached
+        #     member) <= diameter_limit.
+        # The conjunction guarantees the sub-cluster's diameter never
+        # exceeds ``diameter_limit`` regardless of how generous
+        # ``rep_limit`` is.
+        remaining: set[int] = set(members)
         while remaining:
             seed = max(
                 remaining,
@@ -1099,28 +1239,42 @@ def _split_high_diameter_components(
             )
             sub = [seed]
             remaining.discard(seed)
-            attached = []
-            for other in list(remaining):
-                key = (seed, other) if seed < other else (other, seed)
-                if distances.get(key, math.inf) <= rep_limit:
-                    sub.append(other)
-                    attached.append(other)
-            for other in attached:
-                remaining.discard(other)
+            # Distances within the current sub: ``sub_distances[idx]`` is the
+            # cached distance from ``idx`` to the seed for the rep_limit check.
+            for candidate in sorted(remaining):
+                seed_distance = _distance(seed, candidate)
+                if seed_distance > rep_limit:
+                    continue
+                # Stricter rule: must also stay within diameter_limit of
+                # EVERY already-attached member, not just the seed.
+                exceeds_diameter = False
+                for attached in sub[1:]:
+                    if _distance(attached, candidate) > diameter_limit:
+                        exceeds_diameter = True
+                        break
+                if exceeds_diameter:
+                    continue
+                sub.append(candidate)
+            for attached in sub[1:]:
+                remaining.discard(attached)
             sub.sort()
-            sub_distances = {
-                key: dist for key, dist in distances.items() if key[0] in sub and key[1] in sub
-            }
-            sub_diameter = _diameter(sub, sub_distances)
-            _annotate(sub, sub_distances, sub_diameter)
+            _annotate(
+                sub,
+                reason="split from oversize component due to diameter",
+            )
             new_components.append(sub)
 
     new_components.sort(key=lambda c: c[0])
     return (
         new_components,
-        diameter_by_member,
-        nearest_neighbor_by_member,
-        direct_to_rep_by_member,
+        _SplitDiagnostics(
+            diameter_by_member=diameter_by_member,
+            nearest_neighbor_by_member=nearest_neighbor_by_member,
+            nearest_neighbor_index_by_member=nearest_neighbor_index_by_member,
+            direct_to_rep_by_member=direct_to_rep_by_member,
+            connected_via_rep_edge_by_member=connected_via_rep_edge_by_member,
+            split_reason_by_member=split_reason_by_member,
+        ),
     )
 
 
@@ -1563,26 +1717,30 @@ def compute_redundancy(
     )
     # Issue #204: split any component whose internal spread exceeds the
     # diameter limit so transitive chains across bucket boundaries can't
-    # masquerade as one giant cluster. ``_split_high_diameter_components``
-    # also populates per-member diagnostics (nearest-neighbor distance,
-    # direct-to-representative flag, component diameter) that flow into
-    # each ``RedundancyRecord`` below.
-    (
-        components,
-        diameter_by_member,
-        nearest_neighbor_by_member,
-        direct_to_rep_by_member,
-    ) = _split_high_diameter_components(components, features, ctx, config)
+    # masquerade as one giant cluster. The splitter populates a
+    # ``_SplitDiagnostics`` record so per-member diagnostics
+    # (nearest neighbour, direct-to-rep, graph-edge to rep, split reason)
+    # flow into each ``RedundancyRecord`` below.
+    components, split_diag = _split_high_diameter_components(
+        components, features, ctx, config, edge_reasons
+    )
+    diameter_by_member = split_diag.diameter_by_member
+    nearest_neighbor_by_member = split_diag.nearest_neighbor_by_member
+    nearest_neighbor_index_by_member = split_diag.nearest_neighbor_index_by_member
+    direct_to_rep_by_member = split_diag.direct_to_rep_by_member
+    connected_via_rep_edge_by_member = split_diag.connected_via_rep_edge_by_member
+    split_reason_by_member = split_diag.split_reason_by_member
 
-    def _edge_reason_for(member_index: int, rep_index: int) -> str | None:
+    def _edge_reason_for(member_index: int | None, rep_index: int | None) -> str | None:
         """Return the eligibility reason for the (rep_index, member_index) edge.
 
         ``edge_reasons`` is keyed off ascending index pairs ``(i, j)``;
         normalise the lookup here so the caller doesn't care about
-        ordering. Returns ``None`` for singleton clusters (no edge) or
-        for representatives.
+        ordering. Returns ``None`` for singleton clusters (no edge),
+        when either index is missing, or when the pair never produced
+        an eligible edge in the original graph.
         """
-        if member_index == rep_index:
+        if member_index is None or rep_index is None or member_index == rep_index:
             return None
         key = (rep_index, member_index) if rep_index < member_index else (member_index, rep_index)
         entry = edge_reasons.get(key)
@@ -1590,6 +1748,18 @@ def compute_redundancy(
             return None
         eligible, reason = entry
         return reason if eligible else None
+
+    def _neighbor_frame_for(records: list[FaceQARecord], neighbor_idx: int | None) -> str | None:
+        if neighbor_idx is None:
+            return None
+        return records[neighbor_idx].frame
+
+    def _neighbor_face_index_for(
+        records: list[FaceQARecord], neighbor_idx: int | None
+    ) -> int | None:
+        if neighbor_idx is None:
+            return None
+        return records[neighbor_idx].face_index
 
     cluster_of: dict[int, int] = {}
     for cluster_id, members in enumerate(components):
@@ -1651,6 +1821,19 @@ def compute_redundancy(
                 nearest_neighbor_distance=nearest_neighbor_by_member.get(rep_index, 0.0),
                 direct_to_representative=True,
                 component_diameter=cluster_diameter,
+                nearest_neighbor_frame=_neighbor_frame_for(
+                    record_list,
+                    nearest_neighbor_index_by_member.get(rep_index),
+                ),
+                nearest_neighbor_face_index=_neighbor_face_index_for(
+                    record_list,
+                    nearest_neighbor_index_by_member.get(rep_index),
+                ),
+                nearest_neighbor_edge_eligibility=_edge_reason_for(
+                    nearest_neighbor_index_by_member.get(rep_index), rep_index
+                ),
+                connected_via_representative=True,
+                split_reason=split_reason_by_member.get(rep_index),
             )
         )
         # Allocate a small protection budget for fragile-bucket clusters and
@@ -1715,6 +1898,21 @@ def compute_redundancy(
                     nearest_neighbor_distance=nearest_neighbor_by_member.get(member),
                     direct_to_representative=direct_to_rep_by_member.get(member, False),
                     component_diameter=diameter_by_member.get(member),
+                    nearest_neighbor_frame=_neighbor_frame_for(
+                        record_list,
+                        nearest_neighbor_index_by_member.get(member),
+                    ),
+                    nearest_neighbor_face_index=_neighbor_face_index_for(
+                        record_list,
+                        nearest_neighbor_index_by_member.get(member),
+                    ),
+                    nearest_neighbor_edge_eligibility=_edge_reason_for(
+                        nearest_neighbor_index_by_member.get(member), member
+                    ),
+                    connected_via_representative=connected_via_rep_edge_by_member.get(
+                        member, False
+                    ),
+                    split_reason=split_reason_by_member.get(member),
                 )
             )
 
