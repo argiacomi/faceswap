@@ -322,8 +322,17 @@ def test_singleton_identity_outlier_routes_to_review_not_keep() -> None:
     assert outlier.recommendation == REVIEW
 
 
-def test_representative_identity_outlier_routes_to_review() -> None:
-    """An identity outlier promoted to representative still routes to review."""
+def test_identity_outlier_stays_in_singleton_cluster_and_routes_to_review() -> None:
+    """Identity outliers never enter the redundancy graph (issue #199).
+
+    Previously the outlier could be unioned into a non-outlier cluster and
+    then routed to review via the post-cluster representative-safety
+    rule. The new constrained-redundancy pipeline excludes outlier edges
+    at the graph level (``can_create_redundancy_edge`` returns False),
+    so the outlier ends up in its own singleton cluster and the
+    non-outliers cluster among themselves. The singleton outlier still
+    routes to review via :func:`_representative_safety_reason`.
+    """
     records = (
         # Two non-outlier members with lower quality (smaller resolution).
         [
@@ -340,7 +349,8 @@ def test_representative_identity_outlier_routes_to_review() -> None:
                 yaw=0.0,
             ),
         ]
-        # High-quality outlier; will rank highest by quality_score and become rep.
+        # High-quality outlier — graph excludes it; lands in its own
+        # singleton cluster.
         + [
             _record(
                 "frame_000003.png",
@@ -354,10 +364,17 @@ def test_representative_identity_outlier_routes_to_review() -> None:
 
     report = compute_redundancy(records)
 
-    rep = next(r for r in report.records if r.representative)
-    assert rep.frame == "frame_000003.png"
-    assert rep.identity_outlier is True
-    assert rep.recommendation == REVIEW
+    outlier_record = next(r for r in report.records if r.frame == "frame_000003.png")
+    assert outlier_record.representative is True
+    assert outlier_record.identity_outlier is True
+    assert outlier_record.cluster_size == 1
+    assert outlier_record.recommendation == REVIEW
+
+    non_outlier_records = [r for r in report.records if r.frame != "frame_000003.png"]
+    # The two non-outlier faces share one cluster id (they cluster among
+    # themselves now that the outlier is excluded from the graph).
+    cluster_ids = {r.cluster_id for r in non_outlier_records}
+    assert len(cluster_ids) == 1
 
 
 def test_obvious_duplicate_prunes_even_in_protected_bucket() -> None:
@@ -679,3 +696,189 @@ def test_compute_redundancy_invokes_progress_callback_per_pair() -> None:
     assert all(t == 1 for t in ticks)
     # Sanity: clustering still produced a meaningful report.
     assert len(report.records) == 5
+
+
+# ---------------------------------------------------------------------------
+# Issue #199 — explicit redundancy edge eligibility gate.
+# ---------------------------------------------------------------------------
+
+
+def _features_with_overrides(**overrides):  # type: ignore[no-untyped-def]
+    """Build a ``RepresentationFeatures`` with sane defaults for edge tests."""
+    from lib.faceqa.redundancy import RepresentationFeatures
+
+    base = dict(
+        yaw=0.0,
+        pitch=0.0,
+        roll=0.0,
+        mouth_openness=0.05,
+        smile_proxy=0.05,
+        eye_closure=0.0,
+        expression_asymmetry=0.0,
+        luminance=0.5,
+        contrast=0.4,
+        left_right_ratio=0.0,
+        top_bottom_ratio=0.0,
+        color_warmth=0.0,
+        saturation=0.5,
+        average_distance=0.05,
+        expression_bucket="neutral",
+        lighting_bucket="flat_frontal",
+        pose_bucket="frontal",
+        pitch_bucket="neutral",
+        frame_index=0,
+        quality_score=0.8,
+        has_identity=True,
+        identity_outlier=False,
+        has_metrics=True,
+        image_metrics_provenance="frame_aligned_crop",
+    )
+    base.update(overrides)
+    return RepresentationFeatures(**base)
+
+
+def test_can_create_redundancy_edge_blocks_few_comparable_metrics() -> None:
+    """Pairs with fewer than the minimum comparable dimensions are not edges."""
+    from lib.faceqa.redundancy import (
+        _AGGRESSIVENESS_PRESETS,
+        can_create_redundancy_edge,
+    )
+
+    config = _AGGRESSIVENESS_PRESETS["balanced"]
+    a = _features_with_overrides()
+    b = _features_with_overrides(frame_index=1)
+    eligible, reason = can_create_redundancy_edge(
+        features_a=a,
+        features_b=b,
+        distance=0.01,
+        compared=1,
+        temporal_confidence=1.0,
+        config=config,
+    )
+    assert eligible is False
+    assert "too few comparable metrics" in reason
+
+
+def test_can_create_redundancy_edge_blocks_identity_outlier() -> None:
+    """Identity outliers are excluded from the redundancy graph (issue #199)."""
+    from lib.faceqa.redundancy import (
+        _AGGRESSIVENESS_PRESETS,
+        can_create_redundancy_edge,
+    )
+
+    config = _AGGRESSIVENESS_PRESETS["balanced"]
+    a = _features_with_overrides()
+    b = _features_with_overrides(frame_index=1, identity_outlier=True)
+    eligible, reason = can_create_redundancy_edge(
+        features_a=a,
+        features_b=b,
+        distance=0.01,
+        compared=10,
+        temporal_confidence=1.0,
+        config=config,
+    )
+    assert eligible is False
+    assert "identity outlier" in reason
+
+
+def test_can_create_redundancy_edge_blocks_redundant_distance_for_missing_identity() -> None:
+    """A redundant-distance match without identity isn't an edge — only
+    obvious-distance + high-temporal duplicates can cluster across missing
+    identity (issue #199)."""
+    from lib.faceqa.redundancy import (
+        _AGGRESSIVENESS_PRESETS,
+        can_create_redundancy_edge,
+    )
+
+    config = _AGGRESSIVENESS_PRESETS["balanced"]
+    # Borderline redundant distance, both sides missing identity → blocked.
+    a = _features_with_overrides(has_identity=False)
+    b = _features_with_overrides(frame_index=1, has_identity=False)
+    eligible, reason = can_create_redundancy_edge(
+        features_a=a,
+        features_b=b,
+        distance=0.20,  # below the balanced threshold (0.25) but not obvious
+        compared=10,
+        temporal_confidence=1.0,
+        config=config,
+    )
+    assert eligible is False
+    assert "missing identity" in reason
+
+
+def test_can_create_redundancy_edge_allows_obvious_duplicate_across_missing_identity() -> None:
+    """Obvious + temporally-safe duplicates DO cluster across missing
+    identity so the post-cluster decision layer can review the cluster as a
+    unit (issue #199)."""
+    from lib.faceqa.redundancy import (
+        _AGGRESSIVENESS_PRESETS,
+        can_create_redundancy_edge,
+    )
+
+    config = _AGGRESSIVENESS_PRESETS["balanced"]
+    a = _features_with_overrides(has_identity=False)
+    b = _features_with_overrides(frame_index=1, has_identity=False)
+    eligible, reason = can_create_redundancy_edge(
+        features_a=a,
+        features_b=b,
+        distance=0.01,  # well below the obvious duplicate floor
+        compared=10,
+        temporal_confidence=1.0,
+        config=config,
+    )
+    assert eligible is True
+    assert "obvious duplicate" in reason
+    assert "missing-identity" in reason
+
+
+def test_can_create_redundancy_edge_blocks_obvious_match_with_low_temporal() -> None:
+    """An obvious-distance pair must NOT cluster if it's temporally distant
+    — we cannot confidently call it a duplicate without temporal support."""
+    from lib.faceqa.redundancy import (
+        _AGGRESSIVENESS_PRESETS,
+        can_create_redundancy_edge,
+    )
+
+    config = _AGGRESSIVENESS_PRESETS["balanced"]
+    a = _features_with_overrides()
+    b = _features_with_overrides(frame_index=10_000)  # very far apart
+    eligible, reason = can_create_redundancy_edge(
+        features_a=a,
+        features_b=b,
+        distance=0.01,
+        compared=10,
+        temporal_confidence=0.4,
+        config=config,
+    )
+    assert eligible is False
+    assert "temporal_confidence" in reason
+
+
+def test_redundancy_record_carries_compared_metrics_diagnostic() -> None:
+    """``RedundancyRecord.compared_metrics`` defaults exist + persist through
+    ``to_dict`` so the output can be audited (issue #199)."""
+    from lib.faceqa.redundancy import RedundancyRecord
+
+    record = RedundancyRecord(
+        frame="frame_000001.png",
+        face_index=0,
+        cluster_id=0,
+        cluster_size=1,
+        representative=True,
+        recommendation="keep",
+        quality_score=0.8,
+        redundancy_distance_to_representative=None,
+        temporal_distance_to_representative=None,
+        temporal_confidence=1.0,
+        pose_bucket="frontal",
+        pitch_bucket="neutral",
+        expression_bucket="neutral",
+        lighting_bucket="flat_frontal",
+        reason="singleton",
+        identity_outlier=False,
+        has_identity=True,
+    )
+
+    payload = record.to_dict()
+    assert payload["compared_metrics"] == 0
+    assert payload["edge_eligibility"] is None

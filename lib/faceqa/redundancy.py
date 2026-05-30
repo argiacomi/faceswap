@@ -167,7 +167,14 @@ class RepresentationFeatures:
 
 @dataclass
 class RedundancyRecord:
-    """Per-face redundancy outcome."""
+    """Per-face redundancy outcome.
+
+    The new ``compared_metrics`` and ``edge_eligibility`` fields are part
+    of the explicit constrained-redundancy pipeline from issue #199 — they
+    expose enough state on each output row to audit why a face landed in a
+    cluster (or stayed alone). Defaults are provided so older test
+    constructions that pre-date #199 still build.
+    """
 
     frame: str
     face_index: int
@@ -186,6 +193,15 @@ class RedundancyRecord:
     reason: str
     identity_outlier: bool
     has_identity: bool
+    # Issue #199 — per-record edge diagnostics.
+    compared_metrics: int = 0
+    """Number of comparable continuous-feature dimensions between this face
+    and its cluster representative. Treat low values (<3) as low confidence."""
+    edge_eligibility: str | None = None
+    """If a redundancy edge was created between this face and its
+    representative, the reason the edge passed eligibility (e.g. ``obvious
+    duplicate``, ``redundant + safe temporal``). ``None`` for singleton
+    clusters and representatives. See :func:`can_create_redundancy_edge`."""
 
     def to_dict(self) -> dict[str, T.Any]:
         return {
@@ -206,6 +222,8 @@ class RedundancyRecord:
             "reason": self.reason,
             "identity_outlier": self.identity_outlier,
             "has_identity": self.has_identity,
+            "compared_metrics": self.compared_metrics,
+            "edge_eligibility": self.edge_eligibility,
         }
 
 
@@ -669,6 +687,103 @@ def _temporal_confidence(
 
 
 # ---------------------------------------------------------------------------
+# Edge eligibility — issue #199
+#
+# The constrained-redundancy pipeline gates EVERY union-find merge through
+# ``can_create_redundancy_edge`` so the resulting graph represents SAFE
+# redundancy relationships only. Questionable pairs no longer get silently
+# unioned and then handled later inside the post-cluster decision layer —
+# the graph itself encodes the safety constraints.
+# ---------------------------------------------------------------------------
+
+
+_MIN_COMPARED_FOR_EDGE: int = 3
+_TEMPORAL_CONFIDENCE_FOR_REDUNDANT_EDGE: float = 0.8
+_TEMPORAL_CONFIDENCE_FOR_OBVIOUS_EDGE: float = 0.7
+
+
+def can_create_redundancy_edge(
+    *,
+    features_a: RepresentationFeatures,
+    features_b: RepresentationFeatures,
+    distance: float,
+    compared: int,
+    temporal_confidence: float,
+    config: AggressivenessConfig,
+) -> tuple[bool, str]:
+    """Return ``(eligible, reason)`` for one candidate redundancy edge.
+
+    The ticket's contract is:
+
+    * Enough representation metrics must be comparable.
+    * Neither face is an identity reject / outlier (the edge collapses two
+      faces into the same cluster, which would inherit the outlier into
+      the cluster's representation; outlier handling stays in the
+      review layer downstream).
+    * Identity state is safe, or missing identity forces review-only
+      behaviour — a redundancy edge SHOULD NOT be created across a
+      missing-identity face because we can't verify it's the same
+      subject.
+    * Representation distance is under the selected threshold (either
+      obvious-duplicate floor OR the redundancy threshold with
+      temporal-confidence gate).
+    * Obvious duplicates still allowed at lower temporal confidence so
+      true duplicates are not rescued by frame-distance alone.
+
+    A pair that fails any rule returns ``(False, reason)`` — the reason
+    is surfaced in the post-cluster diagnostics so the user can audit
+    which constraint blocked the merge.
+    """
+    if compared < _MIN_COMPARED_FOR_EDGE:
+        return False, f"too few comparable metrics ({compared} < {_MIN_COMPARED_FOR_EDGE})"
+    if features_a.identity_outlier or features_b.identity_outlier:
+        return False, "identity outlier on at least one side — graph excludes outliers"
+
+    obvious = distance <= config.obvious_duplicate_threshold
+    high_temporal = temporal_confidence >= _TEMPORAL_CONFIDENCE_FOR_OBVIOUS_EDGE
+
+    # Missing-identity gate (issue #199): a missing-identity pair MAY still
+    # cluster when the match is an obvious, temporally-safe duplicate; the
+    # post-cluster decision layer will route the entire cluster to review
+    # via the existing ``missing identity embedding guardrail`` rule. For
+    # any other case (redundant-but-not-obvious distance, distant temporal)
+    # the edge is blocked outright so missing-identity faces cannot be
+    # confidently merged with anyone.
+    missing_identity = not features_a.has_identity or not features_b.has_identity
+    if missing_identity and not (obvious and high_temporal):
+        return False, (
+            "missing identity guardrail on at least one side — only obvious "
+            "high-confidence duplicates may cluster across missing identity"
+        )
+
+    if obvious:
+        if temporal_confidence < _TEMPORAL_CONFIDENCE_FOR_OBVIOUS_EDGE:
+            return False, (
+                f"obvious-distance match but temporal_confidence "
+                f"{temporal_confidence:.2f} < {_TEMPORAL_CONFIDENCE_FOR_OBVIOUS_EDGE:.2f}"
+            )
+        if missing_identity:
+            return True, (
+                f"obvious duplicate (distance={distance:.2f}) — clustered "
+                "across missing-identity for downstream review"
+            )
+        return True, f"obvious duplicate (distance={distance:.2f})"
+    if distance > config.representation_distance_threshold:
+        return False, (
+            f"distance {distance:.2f} > threshold {config.representation_distance_threshold:.2f}"
+        )
+    if temporal_confidence < _TEMPORAL_CONFIDENCE_FOR_REDUNDANT_EDGE:
+        return False, (
+            f"redundant-distance match but temporal_confidence "
+            f"{temporal_confidence:.2f} < {_TEMPORAL_CONFIDENCE_FOR_REDUNDANT_EDGE:.2f}"
+        )
+    return True, (
+        f"redundant + safe temporal (distance={distance:.2f}, "
+        f"temporal_confidence={temporal_confidence:.2f})"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Clustering
 # ---------------------------------------------------------------------------
 
@@ -678,7 +793,11 @@ def _build_redundancy_clusters(
     config: AggressivenessConfig,
     *,
     progress_callback: T.Callable[[int], None] | None = None,
-) -> tuple[list[list[int]], dict[tuple[int, int], tuple[float, int, float, int | None]]]:
+) -> tuple[
+    list[list[int]],
+    dict[tuple[int, int], tuple[float, int, float, int | None]],
+    dict[tuple[int, int], tuple[bool, str]],
+]:
     """Union-find clusters by redundancy edges plus per-pair edge data.
 
     ``progress_callback`` (when supplied) receives ``1`` after each pairwise
@@ -709,18 +828,28 @@ def _build_redundancy_clusters(
     ctx = _build_pairwise_context(features)
     frame_indices = [feat.frame_index for feat in features]
 
+    # Issue #199: edges carry per-pair distance/compared/temporal data PLUS
+    # the eligibility reason so the post-cluster decision layer can
+    # surface why a candidate was (or wasn't) folded into the graph.
     edges: dict[tuple[int, int], tuple[float, int, float, int | None]] = {}
+    edge_reasons: dict[tuple[int, int], tuple[bool, str]] = {}
     for i in range(n):
         fi = frame_indices[i]
         for j in range(i + 1, n):
             distance, compared = _distance_with_ctx(ctx, i, j)
             t_conf, frame_distance = _temporal_confidence(fi, frame_indices[j], config)
             edges[(i, j)] = (distance, compared, t_conf, frame_distance)
-            if compared >= 3:
-                obvious = distance <= config.obvious_duplicate_threshold
-                redundant = distance <= config.representation_distance_threshold and t_conf >= 0.8
-                if obvious or redundant:
-                    union(i, j)
+            eligible, reason = can_create_redundancy_edge(
+                features_a=features[i],
+                features_b=features[j],
+                distance=distance,
+                compared=compared,
+                temporal_confidence=t_conf,
+                config=config,
+            )
+            edge_reasons[(i, j)] = (eligible, reason)
+            if eligible:
+                union(i, j)
             if progress_callback is not None:
                 progress_callback(1)
     clusters_by_root: dict[int, list[int]] = {}
@@ -728,7 +857,7 @@ def _build_redundancy_clusters(
         root = find(idx)
         clusters_by_root.setdefault(root, []).append(idx)
     components = sorted(clusters_by_root.values(), key=lambda c: c[0])
-    return components, edges
+    return components, edges, edge_reasons
 
 
 # ---------------------------------------------------------------------------
@@ -1003,9 +1132,27 @@ def compute_redundancy(
         return RedundancyReport(aggressiveness=aggressiveness)
 
     features = [_features_for(record) for record in record_list]
-    components, edges = _build_redundancy_clusters(
+    components, edges, edge_reasons = _build_redundancy_clusters(
         features, config, progress_callback=progress_callback
     )
+
+    def _edge_reason_for(member_index: int, rep_index: int) -> str | None:
+        """Return the eligibility reason for the (rep_index, member_index) edge.
+
+        ``edge_reasons`` is keyed off ascending index pairs ``(i, j)``;
+        normalise the lookup here so the caller doesn't care about
+        ordering. Returns ``None`` for singleton clusters (no edge) or
+        for representatives.
+        """
+        if member_index == rep_index:
+            return None
+        key = (rep_index, member_index) if rep_index < member_index else (member_index, rep_index)
+        entry = edge_reasons.get(key)
+        if entry is None:
+            return None
+        eligible, reason = entry
+        return reason if eligible else None
+
     cluster_of: dict[int, int] = {}
     for cluster_id, members in enumerate(components):
         for member in members:
