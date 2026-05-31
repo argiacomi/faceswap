@@ -24,10 +24,12 @@ import numpy as np
 
 from lib.landmarks.core.schema import normalize_landmarks
 from lib.landmarks.datasets import (
+    DEFAULT_INTEROCULAR_NORMALIZER_SOURCE,
     IMAGE_EXTS,
     _condition_labels_from_metadata,
     _explicit_scenario_groups,
     _filter_samples,
+    _interocular_normalizer,
     _source_root,
     _write_manifest_and_audit,
 )
@@ -337,10 +339,16 @@ def _build_from_root(
                 DEFAULT_OCCLUSION_HIDDEN_FRACTION_THRESHOLD
             )
 
-        normalizer = _profile_safe_normalizer(points)
-        if normalizer is not None:
-            metadata["normalizer"] = normalizer
-            metadata["normalizer_source"] = "aflw2000_3d_bbox_sqrt_wh"
+        sample_id_for_metric = annotation.relative_to(root).with_suffix("").as_posix()
+        profile_normalizer = _profile_safe_normalizer(points)
+        if profile_normalizer is not None:
+            normalizer = profile_normalizer
+            normalizer_source = "aflw2000_3d_bbox_sqrt_wh"
+        else:
+            normalizer = _interocular_normalizer(points, sample_id=sample_id_for_metric)
+            normalizer_source = DEFAULT_INTEROCULAR_NORMALIZER_SOURCE
+        metadata["normalizer"] = normalizer
+        metadata["normalizer_source"] = normalizer_source
 
         condition_metadata = {
             key: value
@@ -369,7 +377,7 @@ def _build_from_root(
         if zbuffer_labels:
             condition_labels = tuple(dict.fromkeys((*zbuffer_labels, *condition_labels)))
 
-        sample_id = annotation.relative_to(root).with_suffix("").as_posix()
+        sample_id = sample_id_for_metric
         entry: dict[str, T.Any] = {
             "sample_id": sample_id,
             "dataset": "aflw2000-3d",

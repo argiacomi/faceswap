@@ -121,6 +121,46 @@ AFLW2000_3D_SOURCE = DatasetSourceSpec(
     ),
 )
 
+DEFAULT_INTEROCULAR_NORMALIZER_SOURCE = "interocular_outer_eye_corners_36_45"
+
+
+def _validate_metric_normalizer(value: T.Any, *, sample_id: str = "") -> float:
+    """Return a finite positive manifest metric normalizer."""
+    try:
+        normalizer = float(value)
+    except (TypeError, ValueError) as err:
+        raise ValueError(f"sample {sample_id!r} normalizer is not numeric: {value!r}") from err
+    if not np.isfinite(normalizer) or normalizer <= 0.0:
+        raise ValueError(f"sample {sample_id!r} normalizer must be finite and > 0: {normalizer!r}")
+    return normalizer
+
+
+def _interocular_normalizer(points: np.ndarray, *, sample_id: str = "") -> float:
+    """Return canonical 68-point interocular distance using outer eye corners 36 and 45."""
+    canonical = normalize_landmarks(np.asarray(points, dtype="float32"))
+    if canonical.shape != (68, 2):
+        raise ValueError(
+            f"sample {sample_id!r} landmarks must normalize to 68x2, got {canonical.shape}"
+        )
+    return _validate_metric_normalizer(
+        np.linalg.norm(canonical[36] - canonical[45]),
+        sample_id=sample_id,
+    )
+
+
+def _entry_or_interocular_normalizer(
+    entry: T.Mapping[str, T.Any],
+    points: np.ndarray,
+    *,
+    sample_id: str = "",
+) -> float:
+    """Preserve an explicit manifest normalizer or derive the 68-point default."""
+    metadata = entry.get("metadata", {}) if isinstance(entry.get("metadata"), dict) else {}
+    explicit = entry.get("normalizer", metadata.get("normalizer"))
+    if explicit is not None:
+        return _validate_metric_normalizer(explicit, sample_id=sample_id)
+    return _interocular_normalizer(points, sample_id=sample_id)
+
 
 def validate_manifest_mode(value: str) -> str:
     """Return a valid manifest write mode."""
@@ -166,15 +206,20 @@ def build_manifest(
         image = _matching_image(landmarks)
         if image is None:
             continue
+        sample_id = landmarks.stem
+        points = np.load(str(landmarks)).astype("float32")
+        normalizer = _interocular_normalizer(points, sample_id=sample_id)
         samples.append(
             {
-                "sample_id": landmarks.stem,
+                "sample_id": sample_id,
                 "dataset": dataset_name,
                 "condition": condition,
                 "conditions": (condition,),
                 "image": str(image.resolve()),
                 "landmarks": str(landmarks.resolve()),
-                "source": {"dataset": dataset_name, "source_id": landmarks.stem},
+                "normalizer": normalizer,
+                "source": {"dataset": dataset_name, "source_id": sample_id},
+                "metadata": {"normalizer_source": DEFAULT_INTEROCULAR_NORMALIZER_SOURCE},
             }
         )
     return _write_manifest_and_audit(
@@ -214,6 +259,8 @@ def build_directory_manifest(
         if image is None:
             continue
         sample_id = landmarks.relative_to(src).with_suffix("").as_posix()
+        points = np.load(str(landmarks)).astype("float32")
+        normalizer = _interocular_normalizer(points, sample_id=sample_id)
         samples.append(
             {
                 "sample_id": sample_id,
@@ -222,7 +269,9 @@ def build_directory_manifest(
                 "conditions": (condition,),
                 "image": str(image.resolve()),
                 "landmarks": str(landmarks.resolve()),
+                "normalizer": normalizer,
                 "source": {"dataset": dataset_name, "source_id": sample_id},
+                "metadata": {"normalizer_source": DEFAULT_INTEROCULAR_NORMALIZER_SOURCE},
             }
         )
     return _write_manifest_and_audit(
@@ -374,10 +423,13 @@ def build_wflw_manifest(
                 condition_labels[0] if condition_labels else _fallback_condition_label(scenario)
             )
             canonical_68 = normalize_landmarks(points.reshape(98, 2), source_schema="2d_98")
+            normalizer = _interocular_normalizer(canonical_68, sample_id=sample_id)
             metadata: dict[str, T.Any] = {
                 "bbox": bbox,
                 "attributes": attributes,
                 "image_id": image_rel,
+                "normalizer": normalizer,
+                "normalizer_source": DEFAULT_INTEROCULAR_NORMALIZER_SOURCE,
             }
             visibility = _visibility_from_jaw_asymmetry(canonical_68)
             if visibility is not None:
@@ -392,6 +444,7 @@ def build_wflw_manifest(
                 "source_schema": "2d_98",
                 "source": {"dataset": "wflw", "source_id": sample_id},
                 "metadata": metadata,
+                "normalizer": normalizer,
                 "points": canonical_68,
             }
             if visibility is not None:
@@ -548,6 +601,9 @@ def build_cofw_manifest(
             if image_value and not image_path.is_absolute():
                 image_value = str((image_base / image_path).resolve())
             sample_id = str(entry.get("sample_id") or entry.get("id") or index)
+            normalizer = _entry_or_interocular_normalizer(entry, points, sample_id=sample_id)
+            metadata.setdefault("normalizer", normalizer)
+            metadata.setdefault("normalizer_source", DEFAULT_INTEROCULAR_NORMALIZER_SOURCE)
             samples.append(
                 {
                     "sample_id": sample_id,
@@ -558,6 +614,7 @@ def build_cofw_manifest(
                     "source_schema": source_schema,
                     "source": {"dataset": "cofw", "source_id": image_value or sample_id},
                     "metadata": metadata,
+                    "normalizer": normalizer,
                     "points": points,
                 }
             )
@@ -687,6 +744,9 @@ def _build_json_or_directory_dataset_manifest(
                 or Path(image_value).with_suffix("").name
                 or index
             )
+            normalizer = _entry_or_interocular_normalizer(entry, points, sample_id=sample_id)
+            metadata.setdefault("normalizer", normalizer)
+            metadata.setdefault("normalizer_source", DEFAULT_INTEROCULAR_NORMALIZER_SOURCE)
             samples.append(
                 {
                     "sample_id": sample_id,
@@ -697,6 +757,7 @@ def _build_json_or_directory_dataset_manifest(
                     "source_schema": source_schema,
                     "source": {"dataset": dataset_name, "source_id": image_value or sample_id},
                     "metadata": metadata,
+                    "normalizer": normalizer,
                     "points": points,
                 }
             )

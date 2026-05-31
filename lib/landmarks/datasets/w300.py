@@ -23,10 +23,12 @@ import numpy as np
 
 from lib.landmarks.core.schema import normalize_landmarks
 from lib.landmarks.datasets import (
+    DEFAULT_INTEROCULAR_NORMALIZER_SOURCE,
     IMAGE_EXTS,
     _explicit_scenario_groups,
     _fallback_condition_label,
     _filter_samples,
+    _interocular_normalizer,
     _source_root,
     _write_manifest_and_audit,
 )
@@ -341,6 +343,7 @@ def _build_from_root(
         points = _parse_pts(annotation)
         condition_labels = _condition_for_path(annotation.relative_to(root), default=scenario)
         sample_id = annotation.relative_to(root).with_suffix("").as_posix()
+        normalizer = _interocular_normalizer(points, sample_id=sample_id)
         samples.append(
             {
                 "sample_id": sample_id,
@@ -350,6 +353,7 @@ def _build_from_root(
                 "image": str(image.resolve()),
                 "source_schema": "2d_68",
                 "source": {"dataset": "300w", "source_id": sample_id},
+                "normalizer": normalizer,
                 "metadata": {
                     "image_id": image.relative_to(root).as_posix(),
                     "annotation_file": annotation.relative_to(root).as_posix(),
@@ -360,6 +364,8 @@ def _build_from_root(
                     "ibug_part_urls": list(W300_OFFICIAL_PART_URLS),
                     "face_bbox": _landmark_bbox(points),
                     "face_bbox_source": "300w_68_landmark_extrema",
+                    "normalizer": normalizer,
+                    "normalizer_source": DEFAULT_INTEROCULAR_NORMALIZER_SOURCE,
                 },
                 "points": normalize_landmarks(points, source_schema="2d_68"),
             }
