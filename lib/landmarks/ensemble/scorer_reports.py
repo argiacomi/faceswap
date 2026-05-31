@@ -52,14 +52,25 @@ def write_scorer_policy_outputs(
             newline="",
             encoding="utf-8",
         ) as handle:
-            writer = csv.DictWriter(handle, fieldnames=["feature", "importance"])
+            writer = csv.DictWriter(
+                handle,
+                fieldnames=["feature", "importance", "coefficient", "abs_coefficient", "kind"],
+            )
             writer.writeheader()
             for feature, importance in sorted(
                 feature_importances.items(),
                 key=lambda item: abs(float(item[1])),
                 reverse=True,
             ):
-                writer.writerow({"feature": feature, "importance": importance})
+                writer.writerow(
+                    {
+                        "feature": feature,
+                        "importance": importance,
+                        "coefficient": "",
+                        "abs_coefficient": "",
+                        "kind": "feature_importance",
+                    }
+                )
         return
 
     coefficients = getattr(scorer, "coefficients", None)
@@ -70,7 +81,10 @@ def write_scorer_policy_outputs(
         newline="",
         encoding="utf-8",
     ) as handle:
-        writer = csv.DictWriter(handle, fieldnames=["feature", "coefficient", "abs_coefficient"])
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=["feature", "importance", "coefficient", "abs_coefficient", "kind"],
+        )
         writer.writeheader()
         for feature, coefficient in sorted(
             zip(scorer.features, coefficients, strict=True),
@@ -80,8 +94,10 @@ def write_scorer_policy_outputs(
             writer.writerow(
                 {
                     "feature": feature,
+                    "importance": "",
                     "coefficient": coefficient,
                     "abs_coefficient": abs(coefficient),
+                    "kind": "coefficient",
                 }
             )
 

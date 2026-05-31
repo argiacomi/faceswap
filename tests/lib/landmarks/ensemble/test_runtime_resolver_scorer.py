@@ -586,7 +586,7 @@ def test_evaluate_runtime_resolver_scorer_compares_binary_and_continuous(
     )
 
     assert report["primary_scorer_policy"] == "learned_quality_v1_1"
-    assert report["runtime_policy"] == "learned_quality_v1"
+    assert report["runtime_policy"] == "learned_quality_v1_1"
     assert report["promoted_scorer_version"] == "continuous_regret_v1_1"
     assert report["promoted_scorer_target"] == TARGET_SELECTION_COST
     assert report["promoted_scorer_label"] == "learned_quality_v1_1"

@@ -169,6 +169,9 @@ class PipelinePaths:
     candidate_dir: Path = field(init=False)
     best_setup: Path = field(init=False)
     best_weights: Path = field(init=False)
+    gt_runtime_bucket_candidate_table: Path = field(init=False)
+    gt_runtime_bucket_metrics_json: Path = field(init=False)
+    gt_runtime_bucket_metrics_csv: Path = field(init=False)
     hard_dir: Path = field(init=False)
     hard_manifest: Path = field(init=False)
     frozen_gt_metadata: Path = field(init=False)
@@ -272,6 +275,21 @@ class PipelinePaths:
         object.__setattr__(self, "candidate_dir", self.output_root / "candidate_search")
         object.__setattr__(self, "best_setup", self.candidate_dir / "best_setup.json")
         object.__setattr__(self, "best_weights", self.candidate_dir / "best_weights.json")
+        object.__setattr__(
+            self,
+            "gt_runtime_bucket_candidate_table",
+            self.candidate_dir / "gt_runtime_bucket_candidate_table.csv",
+        )
+        object.__setattr__(
+            self,
+            "gt_runtime_bucket_metrics_json",
+            self.candidate_dir / "gt_runtime_bucket_metrics.json",
+        )
+        object.__setattr__(
+            self,
+            "gt_runtime_bucket_metrics_csv",
+            self.candidate_dir / "gt_runtime_bucket_metrics.csv",
+        )
         object.__setattr__(self, "hard_dir", self.output_root / "gt_hard_validation")
         object.__setattr__(self, "hard_manifest", self.hard_dir / "manifest.json")
         object.__setattr__(self, "frozen_gt_metadata", self.output_root / RESOLVER_METADATA_JSONL)
@@ -846,6 +864,35 @@ def _command_candidate_search(args: argparse.Namespace, paths: PipelinePaths) ->
     return _append_extra(argv, args.candidate_search_arg)
 
 
+def _command_gt_runtime_bucket_candidate_table(
+    args: argparse.Namespace,
+    paths: PipelinePaths,
+) -> list[str]:
+    """Build full-GT candidate diagnostics for production/runtime bucket reports.
+
+    This intentionally uses the full candidate-search GT manifest/cache, not
+    the GT-hard scorer manifest. The emitted table is then aggregated into
+    gt_runtime_bucket_metrics.json/.csv.
+    """
+    argv = [
+        args.python_executable,
+        _script("export_resolver_candidate_table.py"),
+        "--manifest",
+        str(paths.run_manifest),
+        "--cache-dir",
+        str(paths.run_cache),
+        "--weights",
+        str(paths.best_weights),
+        "--candidates",
+        args.candidates,
+        "--output-csv",
+        str(paths.gt_runtime_bucket_candidate_table),
+    ]
+    if args.allow_image_backfill:
+        argv.append("--allow-image-backfill")
+    return argv
+
+
 def _command_hard_validation(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
     source_manifest = _effective_hard_source_manifest(args, paths)
     weights = paths.best_weights if paths.best_weights.exists() else paths.run_static_weights
@@ -1108,7 +1155,13 @@ def _outputs_for(stage: str, paths: PipelinePaths) -> list[Path]:
             paths.production_resolver_metadata,
             paths.production_resolver_metadata_sentinel,
         ],
-        "candidate_search": [paths.best_setup, paths.best_weights],
+        "candidate_search": [
+            paths.best_setup,
+            paths.best_weights,
+            paths.gt_runtime_bucket_candidate_table,
+            paths.gt_runtime_bucket_metrics_json,
+            paths.gt_runtime_bucket_metrics_csv,
+        ],
         "hard_alignment_validation": [paths.hard_manifest],
         "build_gt_hard_resolver_metadata": [paths.frozen_gt_metadata],
         "freeze_resolver_metadata": [paths.frozen_gt_metadata],
@@ -1165,6 +1218,7 @@ def _required_inputs_for(stage: str, args: argparse.Namespace, paths: PipelinePa
             paths.run_static_weights,
         ],
         "candidate_search": [
+            paths.run_manifest,
             paths.run_cache,
             paths.run_cache_sentinel,
             paths.run_splits,
@@ -1462,25 +1516,16 @@ def _emit_gt_runtime_bucket_artifacts(
     args_or_paths: argparse.Namespace | PipelinePaths,
     paths: PipelinePaths | None = None,
 ) -> None:
-    """Aggregate ``candidate_table.csv`` into per-runtime-bucket metrics.
+    """Aggregate full-GT candidate diagnostics into runtime-bucket metrics.
 
-    Issue #205. Runs in-process after ``binary_scorer_training`` writes
-    the candidate diagnostic table. Reads:
+    Issue #205/#206: this report must be based on the full GT candidate-search
+    manifest/cache, not the GT-hard scorer rows. The candidate table is produced
+    by ``export_resolver_candidate_table.py`` during ``candidate_search`` and is
+    then aggregated here into the canonical candidate-search diagnostics:
 
-    * ``paths.binary_scorer_train_dir / "candidate_table.csv"`` — the
-      per-sample-per-candidate rows.
-    * ``paths.best_setup`` — the chosen setup, for the
-      ``selected_candidate_*`` slice of the report.
-
-    Writes (into ``paths.candidate_dir`` — the canonical candidate-search
-    output dir per the ticket):
-
+    * ``gt_runtime_bucket_candidate_table.csv``
     * ``gt_runtime_bucket_metrics.json``
     * ``gt_runtime_bucket_metrics.csv``
-
-    Exceptions are caught and logged so the pipeline stage's success is
-    not coupled to the aggregator — the metrics are a diagnostic-grade
-    convenience artifact, not a gating output.
     """
     if paths is None:
         args = argparse.Namespace(models=DEFAULT_MODELS)
@@ -1488,19 +1533,24 @@ def _emit_gt_runtime_bucket_artifacts(
     else:
         args = T.cast(argparse.Namespace, args_or_paths)
 
-    binary_scorer_train_dir = getattr(paths, "binary_scorer_train_dir", None)
-    scorer_train_dir = getattr(paths, "scorer_train_dir", None)
+    candidate_table = Path(
+        getattr(
+            paths,
+            "gt_runtime_bucket_candidate_table",
+            Path(getattr(paths, "candidate_dir")) / "gt_runtime_bucket_candidate_table.csv",
+        )
+    )
 
-    candidate_tables = []
-    if binary_scorer_train_dir is not None:
-        candidate_tables.append(binary_scorer_train_dir / "candidate_table.csv")
-    if scorer_train_dir is not None:
-        candidate_tables.append(scorer_train_dir / "candidate_table.csv")
+    # Backward-compatible fallback for older tests/callers that construct a
+    # minimal paths object with only binary_scorer_train_dir. The production
+    # pipeline writes the full-GT table above during candidate_search.
+    if not candidate_table.is_file() and hasattr(paths, "binary_scorer_train_dir"):
+        legacy_candidate_table = Path(paths.binary_scorer_train_dir) / "candidate_table.csv"
+        if legacy_candidate_table.is_file():
+            candidate_table = legacy_candidate_table
 
-    candidate_table = next((table for table in candidate_tables if table.is_file()), None)
-    if candidate_table is None:
-        missing = candidate_tables[-1] if candidate_tables else "candidate_table.csv"
-        logger.info("gt_runtime_bucket aggregation skipped: %s not found", missing)
+    if not candidate_table.is_file():
+        logger.info("gt_runtime_bucket aggregation skipped: %s not found", candidate_table)
         return
 
     best_setup_payload: dict[str, T.Any] = {}
@@ -1536,13 +1586,27 @@ def _emit_gt_runtime_bucket_artifacts(
             single_model_candidates=_split_csv_values(args.models),
         )
         json_path = write_runtime_bucket_json(
-            metrics, paths.candidate_dir / "gt_runtime_bucket_metrics.json"
+            metrics,
+            Path(
+                getattr(
+                    paths,
+                    "gt_runtime_bucket_metrics_json",
+                    Path(getattr(paths, "candidate_dir")) / "gt_runtime_bucket_metrics.json",
+                )
+            ),
         )
         csv_path = write_runtime_bucket_csv(
-            metrics, paths.candidate_dir / "gt_runtime_bucket_metrics.csv"
+            metrics,
+            Path(
+                getattr(
+                    paths,
+                    "gt_runtime_bucket_metrics_csv",
+                    Path(getattr(paths, "candidate_dir")) / "gt_runtime_bucket_metrics.csv",
+                )
+            ),
         )
         logger.info(
-            "Wrote gt_runtime_bucket_metrics across %d bucket(s): %s, %s",
+            "Wrote full-GT gt_runtime_bucket_metrics across %d bucket(s): %s, %s",
             len(metrics),
             json_path,
             csv_path,
@@ -2085,28 +2149,25 @@ def _copy_if_exists(source: Path, dest_dir: Path, *, name: str | None = None) ->
 
 
 def _copy_scorer_with_promotion_metadata(source: Path, target: Path, *, promoted_from: str) -> str:
+    """Copy the scorer artifact without mutating its JSON payload.
+
+    Promotion provenance belongs in artifacts_manifest.json / the production
+    bundle manifest. The trained scorer artifact should remain immutable so its
+    hash and contents match the training output.
+    """
     if not source.exists():
         return ""
     target.parent.mkdir(parents=True, exist_ok=True)
     payload = json.loads(source.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise PipelineContractError(f"scorer artifact must be a JSON object: {source}")
-    payload["scorer_version"] = str(payload.get("scorer_version") or payload.get("version") or "")
-    if not payload["scorer_version"]:
-        payload["scorer_version"] = SCORER_VERSION_CONTINUOUS_REGRET
-    if payload["scorer_version"] == SCORER_VERSION_LEARNED_QUALITY_V2:
-        payload.setdefault("selection_target", "inverse_selection_cost_rank")
-        payload.setdefault("objective", "lambdarank_inverse_regret")
-        payload.setdefault("training_mode", "grouped_lambdarank")
-        payload.setdefault("runtime_policy", "learned_quality_v2")
-    else:
-        payload.setdefault("selection_target", "continuous_regret")
-        payload.setdefault("objective", "minimize_candidate_selection_regret")
-        payload.setdefault("training_mode", "continuous_selection_cost")
-        payload.setdefault("runtime_policy", "learned_quality_v1")
-    payload["promoted_from"] = promoted_from
-    target.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    logger.debug("Exported scorer artifact source=%s target=%s", source, target)
+    shutil.copyfile(source, target)
+    logger.debug(
+        "Exported immutable scorer artifact source=%s target=%s promoted_from=%s",
+        source,
+        target,
+        promoted_from,
+    )
     return str(target)
 
 
@@ -2160,7 +2221,21 @@ def _export_artifacts(args: argparse.Namespace, paths: PipelinePaths) -> dict[st
     manifest = {key: value for key, value in exported.items() if value}
     if exported["runtime_resolver_scorer"]:
         scorer_payload = _read_json(paths.exported_scorer_artifact)
+        active_policy = _promoted_runtime_policy(args)
         manifest["runtime_resolver_scorer_source"] = str(scorer_source)
+        manifest["runtime_resolver_scorer_source_sha256"] = _sha256_file(scorer_source)
+        manifest["runtime_resolver_scorer_sha256"] = _sha256_file(paths.exported_scorer_artifact)
+        manifest["active_policy"] = active_policy
+        manifest["promotion"] = {
+            "active_policy": active_policy,
+            "promoted_from": str(scorer_source.relative_to(paths.output_root)),
+            "source": str(scorer_source),
+            "source_sha256": _sha256_file(scorer_source),
+            "exported": str(paths.exported_scorer_artifact),
+            "exported_sha256": _sha256_file(paths.exported_scorer_artifact),
+            "target": str(scorer_payload.get("target") or ""),
+            "model_type": str(scorer_payload.get("model_type") or ""),
+        }
         manifest["runtime_resolver_scorer_version"] = str(
             scorer_payload.get("scorer_version")
             or scorer_payload.get("version")
@@ -2565,10 +2640,23 @@ def _execute_stage(stage: str, args: argparse.Namespace, paths: PipelinePaths) -
         elif stage == "candidate_search":
             command = _command_candidate_search(args, paths)
             if args.dry_run:
+                diagnostic_command = _command_gt_runtime_bucket_candidate_table(args, paths)
                 return StageResult(
-                    stage, "planned", command=command, outputs=outputs, contract=contract.to_json()
+                    stage,
+                    "planned",
+                    command=command,
+                    outputs=outputs,
+                    contract=contract.to_json(),
+                    notes=[
+                        "would run candidate search",
+                        "would export full-GT runtime-bucket candidate diagnostics",
+                        "diagnostic command: " + " ".join(diagnostic_command),
+                    ],
                 )
             _run_command(command)
+            diagnostic_command = _command_gt_runtime_bucket_candidate_table(args, paths)
+            _run_command(diagnostic_command)
+            _emit_gt_runtime_bucket_artifacts(args, paths)
         elif stage == "hard_alignment_validation":
             command = _command_hard_validation(args, paths)
             if args.dry_run:
@@ -2639,10 +2727,6 @@ def _execute_stage(stage: str, args: argparse.Namespace, paths: PipelinePaths) -
                 )
             _run_command(command)
             _write_scorer_training_sentinel(args, paths)
-            # Issue #205: aggregate the freshly-written candidate_table.csv
-            # into per-runtime-bucket production metrics and drop the
-            # artifacts into ``paths.candidate_dir`` for downstream consumers.
-            _emit_gt_runtime_bucket_artifacts(args, paths)
         elif stage == "scorer_evaluation":
             command = _command_scorer_eval(args, paths)
             if args.dry_run:
@@ -2895,7 +2979,8 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, T.Any]:
             break
     summary = _summary_payload(args, paths, results)
     write_json(paths.summary_json, summary)
-    _write_summary_md(paths.summary_md, summary)
+    if getattr(args, "write_summary_md", False):
+        _write_summary_md(paths.summary_md, summary)
     failed = next((row for row in results if row.status == "failed"), None)
     if failed is not None:
         raise RuntimeError(f"pipeline failed at {failed.name}: {failed.error}")
@@ -2932,6 +3017,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--start-at", choices=STAGES)
     parser.add_argument("--write-config", action="store_true")
     parser.add_argument("--print-config-patch", action="store_true")
+    parser.add_argument(
+        "--write-summary-md",
+        action="store_true",
+        help="Write the optional human-readable pipeline_summary.md alongside pipeline_summary.json.",
+    )
     parser.add_argument(
         "--progress", action="store_true", help="Force terminal progress bar output."
     )

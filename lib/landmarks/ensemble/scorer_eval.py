@@ -1281,7 +1281,7 @@ def evaluate_runtime_resolver_scorer(
             )
         ),
         "promoted_scorer_label": primary_scorer_policy,
-        "runtime_policy": "learned_quality_v1",
+        "runtime_policy": promotion_policy,
         "best_single": {"candidate": best_single_name, **best_single_summary},
         "static_weighted_downweight": {"candidate": static_name, **static},
         primary_scorer_policy: scorer_summary,
@@ -1318,6 +1318,45 @@ def evaluate_runtime_resolver_scorer(
         "gt_hard_all_policy_metrics": gt_hard_all_policy_metrics,
         "gt_hard_only_policy_metrics": gt_hard_all_policy_metrics,
         "gt_roll_hard_policy_metrics": gt_roll_hard_policy_metrics,
+    }
+
+    # New normalized sections for #206. Keep legacy top-level fields above for
+    # compatibility while giving new consumers one stable nested schema.
+    report["promotion"] = {
+        "status": report_status,
+        "scope": promotion_scope,
+        "policy": promotion_policy,
+        "gate_source": report["promotion_gate_source"],
+        "failed_gates": list(report_failed_gates),
+        "installed_baseline": installed_baseline_gates,
+    }
+    report["diagnostics"] = {
+        "failed_gates": list(failed_gates),
+        "universal_failed_gates": list(universal_failed_gates),
+        "combined_failed_gates": list(combined_failed_gates),
+        "production_failed_gates": list(production_failed_gates),
+        "gt_hard_failed_gates": list(gt_hard_failed_gates),
+        "row_backed_eval": scorer_rows is not None,
+        "scorer_rows": "" if scorer_rows is None else str(scorer_rows),
+        "derived_no_image_sample_count": len(derived_no_image_contexts),
+        "derived_no_image_gt_hard_sample_count": len(derived_no_image_gt_hard_contexts),
+    }
+    report["metrics_by_source"] = {
+        "production_validated": production_only_policy_metrics,
+        "gt_hard": gt_hard_all_policy_metrics,
+        "gt_roll_hard": gt_roll_hard_policy_metrics,
+    }
+    report["fallbacks"] = {
+        "fallback_count": fallback_count,
+        "safe_fallback_count": safe_fallback_count,
+        "hard_slice_fallback_count": hard_slice_fallback_count,
+        "consensus_collapse_rejection_count": hard_slice_fallback_count,
+        "impact": fallback_impact_summary(fallback_impacts),
+    }
+    report["artifacts"] = {
+        "scorer_path": str(scorer_path),
+        "binary_scorer_path": "" if binary_scorer_path is None else str(binary_scorer_path),
+        "v2_scorer_path": "" if v2_scorer_path is None else str(v2_scorer_path),
     }
     if binary_scorer is not None:
         binary_summary = policy_summary(contexts, binary_scorer_choices)

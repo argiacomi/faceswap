@@ -56,6 +56,7 @@ def _args(tmp_path: Path, **overrides: object) -> argparse.Namespace:
         "start_at": None,
         "write_config": False,
         "print_config_patch": False,
+        "write_summary_md": False,
         "progress": False,
         "no_progress": True,
         "config_path": tmp_path / "extract.ini",
@@ -232,7 +233,7 @@ def _write_v2_promotion_report(
 
 
 def test_pipeline_runner_dry_run_writes_summaries_contracts_and_progress(tmp_path: Path) -> None:
-    args = _args(tmp_path, dry_run=True)
+    args = _args(tmp_path, dry_run=True, write_summary_md=True)
 
     summary = run_pipeline(args)
 
@@ -1327,21 +1328,19 @@ def test_artifact_export_records_promoted_scorer_provenance(tmp_path: Path) -> N
     args = _args(tmp_path)
     paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
     _touch_pipeline_outputs(paths)
+    source_scorer_payload = {
+        "artifact_schema_version": 1,
+        "model_type": "linear_regression",
+        "target": "selection_cost",
+        "score_semantics": "predicted_cost",
+        "higher_is_better": False,
+        "features": ["candidate_name=hrnet"],
+        "coefficients": [1.0],
+        "intercept": 0.0,
+        "version": "continuous_regret_v1_1",
+    }
     paths.scorer_artifact.write_text(
-        json.dumps(
-            {
-                "artifact_schema_version": 1,
-                "model_type": "linear_regression",
-                "target": "selection_cost",
-                "score_semantics": "predicted_cost",
-                "higher_is_better": False,
-                "features": ["candidate_name=hrnet"],
-                "coefficients": [1.0],
-                "intercept": 0.0,
-                "version": "continuous_regret_v1_1",
-            }
-        )
-        + "\n",
+        json.dumps(source_scorer_payload) + "\n",
         encoding="utf-8",
     )
 
@@ -1359,12 +1358,19 @@ def test_artifact_export_records_promoted_scorer_provenance(tmp_path: Path) -> N
     assert manifest["runtime_resolver_scorer"] == str(paths.exported_scorer_artifact)
     assert manifest["runtime_resolver_scorer_source"] == str(paths.scorer_artifact)
     assert manifest["runtime_resolver_scorer_version"] == "continuous_regret_v1_1"
-    assert scorer_payload["scorer_version"] == "continuous_regret_v1_1"
-    assert scorer_payload["model_type"] == "linear_regression"
-    assert scorer_payload["target"] == "selection_cost"
-    assert scorer_payload["objective"] == "minimize_candidate_selection_regret"
-    assert scorer_payload["training_mode"] == "continuous_selection_cost"
-    assert scorer_payload["runtime_policy"] == "learned_quality_v1"
+    assert manifest["active_policy"] == "learned_quality_v1_1"
+    assert manifest["promotion"]["active_policy"] == "learned_quality_v1_1"
+    assert manifest["promotion"]["promoted_from"] == str(
+        paths.scorer_artifact.relative_to(paths.output_root)
+    )
+    # #206: scorer artifacts stay immutable; promotion/provenance metadata lives
+    # in the manifest, not inside the copied scorer JSON.
+    assert scorer_payload == source_scorer_payload
+    assert "promoted_from" not in scorer_payload
+    assert "scorer_version" not in scorer_payload
+    assert "objective" not in scorer_payload
+    assert "training_mode" not in scorer_payload
+    assert "runtime_policy" not in scorer_payload
     assert manifest["scorer_rows"] == str(paths.exported_scorer_rows)
     assert manifest["scorer_dataset_manifest"] == str(paths.exported_scorer_dataset_manifest)
     assert paths.exported_scorer_rows.read_text(encoding="utf-8") == "sample_id,split\ns1,eval\n"

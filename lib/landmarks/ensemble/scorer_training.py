@@ -808,6 +808,24 @@ def train_runtime_resolver_scorer_suite(
             },
         },
         "candidate_table": str(candidate_table_path),
+        "compatibility_artifacts": {
+            "legacy_per_scorer_training_rows": [
+                str(binary_dir / TRAINING_ROWS_CSV),
+                str(continuous_dir / TRAINING_ROWS_CSV),
+                str(v2_dir / TRAINING_ROWS_CSV),
+            ],
+            "legacy_per_scorer_eval_rows": [
+                str(binary_dir / EVAL_ROWS_CSV),
+                str(continuous_dir / EVAL_ROWS_CSV),
+                str(v2_dir / EVAL_ROWS_CSV),
+            ],
+            "candidate_table": str(candidate_table_path),
+            "note": (
+                "These files are kept for compatibility. New consumers should use "
+                "scorer_dataset/rows.csv and scorer_dataset/manifest.json."
+            ),
+        },
+        "candidate_table_status": "compatibility_derived_from_scorer_contexts",
         "split_seed": split_seed,
         "eval_fraction": eval_fraction,
         "candidates": list(candidates),
