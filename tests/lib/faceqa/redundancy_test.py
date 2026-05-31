@@ -133,6 +133,22 @@ def test_hundred_near_identical_in_rare_bucket_not_all_kept() -> None:
     assert report.prune_candidate_count >= 80
 
 
+def test_pruning_records_include_confidence_and_diversity_metadata() -> None:
+    records = _near_identical_run(8, yaw=0.0, expression_bucket="neutral")
+    report = compute_redundancy(records)
+
+    assert report.cluster_pruning_stats
+    for record in report.records:
+        data = record.to_dict()
+        assert "prune_confidence" in data
+        assert data["prune_confidence_band"] in {"low", "medium", "high"}
+        assert isinstance(data["prune_confidence_factors"], dict)
+        assert "diversity_preservation_score" in data
+    prune_records = [record for record in report.records if record.recommendation == PRUNE]
+    assert prune_records
+    assert all("representative_distance" in r.prune_confidence_factors for r in prune_records)
+
+
 def test_effective_coverage_lower_than_raw_for_repeated_faces() -> None:
     """Repeated near-identical faces should not satisfy a raw coverage threshold."""
     records = _near_identical_run(50, yaw=-45.0, expression_bucket="neutral")
@@ -143,6 +159,32 @@ def test_effective_coverage_lower_than_raw_for_repeated_faces() -> None:
     assert sum(eff.raw_counts.values()) == 50
     assert sum(eff.effective_counts.values()) < 10
     assert any(ratio > 5.0 for ratio in eff.redundancy_ratios.values())
+
+
+def test_deca_mismatch_splits_prune_groups() -> None:
+    """DECA signatures preserve learned-space variation during pruning."""
+    records = _near_identical_run(8, yaw=0.0, expression_bucket="neutral")
+    signals = {
+        (record.frame, record.face_index): {
+            "expression_cell": "0:1",
+            "pose_cell": "0:1",
+            "lighting_cell": "0:1",
+            "latent_cluster": 0 if idx < 4 else 1,
+        }
+        for idx, record in enumerate(records)
+    }
+
+    report = compute_redundancy(records, aggressiveness="balanced", deep_pruning_signals=signals)
+
+    assert report.deep_pruning_enabled is True
+    assert report.deep_pruning_signal_count == 8
+    assert report.prune_candidate_count < compute_redundancy(records).prune_candidate_count
+    assert len({record.prune_group_id for record in report.records}) >= 2
+    assert any(
+        "DECA latent cluster mismatch" in blocker
+        for diag in report.cluster_merge_diagnostics.values()
+        for blocker in diag.get("split_blockers", [])
+    )
 
 
 def test_temporal_close_higher_confidence_than_temporal_far() -> None:
@@ -1608,11 +1650,13 @@ def test_readiness_fail_safety_cap_demotes_borderline_prunes() -> None:
         overall_readiness_score = 30.0
 
     with patch.object(scoring_mod, "compute_readiness_scores", return_value=_FakeScores()):
-        applied, reason, changed = _apply_readiness_safety_cap(output_records, coverage, 20)
+        applied, reason, changed, cap = _apply_readiness_safety_cap(output_records, coverage, 20)
 
     assert applied is True
+    assert cap["applied"] is True
     assert changed > 0
-    assert reason is not None and "keep/review" in reason
+    assert reason is not None and "adaptive readiness cap" in reason
+    assert "keep/review" in reason
     assert sum(1 for r in output_records if r.recommendation == KEEP) > 1
     assert sum(1 for r in output_records if r.recommendation == REVIEW) > 0
     assert sum(1 for r in output_records if r.recommendation == PRUNE) <= 12
@@ -1647,7 +1691,7 @@ def test_readiness_safety_cap_preserves_obvious_duplicates() -> None:
         overall_readiness_score = 25.0
 
     with patch.object(scoring_mod, "compute_readiness_scores", return_value=_FakeScores()):
-        applied, _reason, changed = _apply_readiness_safety_cap(output_records, coverage, 20)
+        applied, _reason, changed, _cap = _apply_readiness_safety_cap(output_records, coverage, 20)
 
     assert applied is True
     assert changed > 0
@@ -1688,9 +1732,10 @@ def test_readiness_safety_cap_enforces_max_ratio_across_obvious_duplicates() -> 
         overall_readiness_score = 30.0
 
     with patch.object(scoring_mod, "compute_readiness_scores", return_value=_FakeScores()):
-        applied, reason, demotions = _apply_readiness_safety_cap(output_records, coverage, 20)
+        applied, reason, demotions, cap = _apply_readiness_safety_cap(output_records, coverage, 20)
 
     assert applied is True
+    assert cap["max_prune_ratio"] == 0.6
     assert demotions >= 3
     assert reason is not None and "final prune ratio" in reason
     assert sum(1 for record in output_records if record.recommendation == PRUNE) <= 16
@@ -1738,7 +1783,7 @@ def test_readiness_safety_cap_preserves_cluster_review_floor() -> None:
         overall_readiness_score = 25.0
 
     with patch.object(scoring_mod, "compute_readiness_scores", return_value=_FakeScores()):
-        applied, _reason, _demotions = _apply_readiness_safety_cap(
+        applied, _reason, _demotions, _cap = _apply_readiness_safety_cap(
             output_records, coverage, cluster_size
         )
 
@@ -1786,13 +1831,55 @@ def test_readiness_safety_cap_enforces_lower_prune_ratio_and_keep_floor() -> Non
         overall_readiness_score = 25.0
 
     with patch.object(scoring_mod, "compute_readiness_scores", return_value=_FakeScores()):
-        applied, reason, _changed = _apply_readiness_safety_cap(output_records, coverage, total)
+        applied, reason, _changed, cap = _apply_readiness_safety_cap(
+            output_records, coverage, total
+        )
 
     assert applied is True
+    assert cap["readiness_band"] == "readiness_lt_50"
     assert reason is not None and "prune ratio" in reason
     assert sum(1 for r in output_records if r.recommendation == PRUNE) <= 36
     assert sum(1 for r in output_records if r.recommendation == KEEP) >= 7
     assert sum(1 for r in output_records if r.recommendation == REVIEW) >= 6
+
+
+def test_adaptive_prune_cap_uses_integrated_readiness_scores() -> None:
+    from lib.faceqa.redundancy import PRUNE, REVIEW, _apply_readiness_safety_cap
+
+    output_records = [
+        _cap_input_record(
+            recommendation=PRUNE,
+            edge_eligibility="redundant + safe temporal",
+            face_index=i,
+        )
+        for i in range(8)
+    ] + [
+        _cap_input_record(
+            recommendation="keep",
+            edge_eligibility=None,
+            face_index=8 + i,
+        )
+        for i in range(2)
+    ]
+    applied, _reason, _changed, cap = _apply_readiness_safety_cap(
+        output_records,
+        None,
+        10,
+        {
+            "overall_readiness_score": 55.0,
+            "landmark_readiness_score": 45.0,
+            "components": {"deca_deep": {"score": 85.0}},
+        },
+    )
+
+    assert applied is True
+    assert cap["readiness_score"] == 55.0
+    assert cap["landmark_readiness_score"] == 45.0
+    assert cap["deca_readiness_score"] == 85.0
+    assert cap["readiness_band"] == "readiness_50_to_65"
+    assert cap["max_prune_ratio"] == 0.7
+    assert sum(1 for r in output_records if r.recommendation == PRUNE) <= 7
+    assert sum(1 for r in output_records if r.recommendation == REVIEW) >= 1
 
 
 def test_readiness_safety_cap_skipped_when_no_coverage() -> None:
@@ -2148,9 +2235,66 @@ def test_contact_sheet_orders_within_cluster_by_recommendation_then_visual_mode(
     ], captured_order
 
     # ensure the sheet rendered
-    assert (tmp_path / "sheets" / "cluster_0001.png").exists()
+    assert (tmp_path / "sheets" / "normal_review" / "cluster_0001.png").exists()
     # Silence unused
     _ = cv2
+
+
+def test_contact_sheets_are_split_by_cluster_triage_group(tmp_path) -> None:
+    from lib.faceqa.redundancy import RedundancyRecord, RedundancyReport
+    from lib.faceqa.redundancy_outputs import render_contact_sheets
+
+    records = [
+        RedundancyRecord(
+            frame="frame_000001.png",
+            face_index=0,
+            cluster_id=4,
+            cluster_size=2,
+            representative=True,
+            recommendation="keep",
+            quality_score=0.9,
+            redundancy_distance_to_representative=0.0,
+            temporal_distance_to_representative=0,
+            temporal_confidence=1.0,
+            pose_bucket="frontal",
+            pitch_bucket="neutral",
+            expression_bucket="neutral",
+            lighting_bucket="uniform",
+            reason="rep",
+            identity_outlier=False,
+            has_identity=True,
+        ),
+        RedundancyRecord(
+            frame="frame_000002.png",
+            face_index=0,
+            cluster_id=4,
+            cluster_size=2,
+            representative=False,
+            recommendation="review",
+            quality_score=0.8,
+            redundancy_distance_to_representative=0.1,
+            temporal_distance_to_representative=1,
+            temporal_confidence=1.0,
+            pose_bucket="frontal",
+            pitch_bucket="neutral",
+            expression_bucket="neutral",
+            lighting_bucket="uniform",
+            reason="review",
+            identity_outlier=False,
+            has_identity=True,
+        ),
+    ]
+    report = RedundancyReport(
+        total_faces=2,
+        cluster_count=1,
+        records=records,
+        cluster_pruning_stats=[{"cluster_id": 4, "triage_group": "priority_review"}],
+    )
+
+    written = render_contact_sheets(report, faces_dir=tmp_path / "faces", output_dir=tmp_path)
+
+    assert len(written) == 1
+    assert written[0].parent.name == "priority_review"
 
 
 def test_contact_sheet_sorts_missing_visual_signals_last_within_recommendation(

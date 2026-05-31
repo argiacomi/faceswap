@@ -35,7 +35,7 @@ from lib.faceqa.coverage import (
     records_from_alignments,
     save_alignments_envelope,
 )
-from lib.faceqa.readiness import generate_readiness_report
+from lib.faceqa.readiness import generate_readiness_report, integrate_deep_readiness
 from lib.faceqa.record import FaceQARecord
 from lib.faceqa.redundancy import RedundancyReport, compute_redundancy
 from lib.faceqa.redundancy_outputs import (
@@ -224,6 +224,8 @@ class Faceqa:  # pylint:disable=invalid-name
             min_bucket_pct=min_bucket_pct,
         )
 
+        deep_pruning_signals = self._run_deep_analysis(entries, report, total_faces=total_faces)
+
         output_dir = self._output_dir(alignments)
 
         if suggest_pruning:
@@ -232,8 +234,10 @@ class Faceqa:  # pylint:disable=invalid-name
                 redundancy = compute_redundancy(
                     records,
                     coverage=coverage,
+                    readiness_scores=report.readiness_scores,
                     aggressiveness=str(getattr(self._args, "prune_aggressiveness", "balanced")),
                     min_bucket_pct=min_bucket_pct,
+                    deep_pruning_signals=deep_pruning_signals,
                     progress_callback=tick,
                 )
             report.pruning_suggestions = redundancy.to_dict()
@@ -256,6 +260,67 @@ class Faceqa:  # pylint:disable=invalid-name
         )
         logger.info("Wrote JSON: %s", output_json)
         logger.info("Wrote Markdown: %s", output_markdown)
+
+    def _run_deep_analysis(
+        self,
+        entries: dict[str, T.Any],
+        report: T.Any,
+        *,
+        total_faces: int,
+    ) -> dict[tuple[str, int], dict[str, T.Any]] | None:
+        """Optionally run the DECA deep audit and attach it to the report.
+
+        Gated on ``--deep-analysis deca``; when ``none`` (the default) this is
+        a no-op so the standard coverage workflow stays lightweight and never
+        imports torch or the DECA package. The DECA encoder, metrics, and
+        landmark-vs-DECA comparison live in :mod:`lib.faceqa.deep`.
+        """
+        deep_analysis = str(getattr(self._args, "deep_analysis", "none"))
+        if deep_analysis != "deca":
+            return None
+
+        # Imported here (not at module top) so the default lightweight path
+        # pays no torch / DECA import cost.
+        from lib.faceqa.deep.audit import build_encoder, run_deep_audit
+        from lib.faceqa.deep.weights import default_weights_path
+
+        frames_loader = self._frames_loader()
+        if frames_loader is None:
+            raise FaceswapError(
+                "--frames-dir is required for --deep-analysis deca so FaceQA can "
+                "reconstruct aligned crops for the DECA encoder."
+            )
+
+        # ``build_encoder`` downloads and SHA256-validates the DECA checkpoint
+        # through the standard faceswap model cache when it is not present.
+        deep_device = "cpu" if bool(getattr(self._args, "cpu", False)) else "auto"
+        encoder = build_encoder(device=deep_device)
+
+        with _faceqa_progress(
+            total=total_faces, desc="FaceQA deep audit (DECA)", unit="face"
+        ) as tick:
+            deep_report = run_deep_audit(
+                entries,
+                encoder=encoder,
+                frames_loader=frames_loader,
+                readiness_scores=report.readiness_scores,
+                weights_path=default_weights_path(),
+                progress_callback=tick,
+            )
+        report.deep_audit = deep_report.to_dict()
+        integrate_deep_readiness(report)
+        logger.info(
+            "DECA deep audit: %d/%d faces encoded, device=%s, status=%s, readiness=%s.",
+            deep_report.faces_encoded,
+            deep_report.faces_total,
+            deep_report.device,
+            deep_report.status,
+            deep_report.deca_readiness.get("score") if deep_report.deca_readiness else None,
+        )
+        return {
+            (str(signal["frame"]), int(signal["face_index"])): signal
+            for signal in deep_report.pruning_signals
+        }
 
     def _run_identity_backfill(
         self,
