@@ -1579,35 +1579,107 @@ def _cap_input_record(
 
 
 def test_readiness_fail_safety_cap_demotes_borderline_prunes() -> None:
-    """When readiness fails AND the prune ratio is extreme, borderline
-    prune candidates (those NOT flagged as obvious duplicates) are
-    demoted to review (issue #208 §4 safety cap)."""
+    """FAIL-readiness cap promotes some prunes to KEEP and routes excess to REVIEW."""
     from unittest.mock import patch
 
     from lib.faceqa import scoring as scoring_mod
     from lib.faceqa.coverage import FacesetCoverageReport
-    from lib.faceqa.redundancy import (
-        PRUNE,
-        REVIEW,
-        _apply_readiness_safety_cap,
-    )
+    from lib.faceqa.redundancy import KEEP, PRUNE, REVIEW, _apply_readiness_safety_cap
 
-    # 17 borderline prune candidates + 3 keeps → 85% prune ratio, well
-    # above the 80% threshold.
     output_records = [
         _cap_input_record(
             recommendation=PRUNE,
             edge_eligibility="redundant + safe temporal",
             face_index=i,
         )
-        for i in range(17)
+        for i in range(19)
+    ] + [
+        _cap_input_record(
+            recommendation=KEEP,
+            edge_eligibility=None,
+            face_index=19,
+        )
+    ]
+    output_records[-1].representative = True
+    coverage = FacesetCoverageReport(total_faces=20)
+
+    class _FakeScores:
+        overall_readiness_score = 30.0
+
+    with patch.object(scoring_mod, "compute_readiness_scores", return_value=_FakeScores()):
+        applied, reason, changed = _apply_readiness_safety_cap(output_records, coverage, 20)
+
+    assert applied is True
+    assert changed > 0
+    assert reason is not None and "keep/review" in reason
+    assert sum(1 for r in output_records if r.recommendation == KEEP) > 1
+    assert sum(1 for r in output_records if r.recommendation == REVIEW) > 0
+    assert sum(1 for r in output_records if r.recommendation == PRUNE) <= 12
+
+
+def test_readiness_safety_cap_preserves_obvious_duplicates() -> None:
+    """Obvious duplicates are preserved only up to the FAIL-readiness prune ceiling."""
+    from unittest.mock import patch
+
+    from lib.faceqa import scoring as scoring_mod
+    from lib.faceqa.coverage import FacesetCoverageReport
+    from lib.faceqa.redundancy import KEEP, PRUNE, REVIEW, _apply_readiness_safety_cap
+
+    obvious_prunes = [
+        _cap_input_record(
+            recommendation=PRUNE,
+            edge_eligibility="obvious duplicate (distance=0.05)",
+            face_index=i,
+        )
+        for i in range(19)
+    ]
+    representative = _cap_input_record(
+        recommendation=KEEP,
+        edge_eligibility=None,
+        face_index=19,
+    )
+    representative.representative = True
+    output_records = obvious_prunes + [representative]
+    coverage = FacesetCoverageReport(total_faces=20)
+
+    class _FakeScores:
+        overall_readiness_score = 25.0
+
+    with patch.object(scoring_mod, "compute_readiness_scores", return_value=_FakeScores()):
+        applied, _reason, changed = _apply_readiness_safety_cap(output_records, coverage, 20)
+
+    assert applied is True
+    assert changed > 0
+    assert sum(1 for r in output_records if r.recommendation == PRUNE) <= 12
+    assert sum(1 for r in output_records if r.recommendation == KEEP) > 1
+    assert sum(1 for r in output_records if r.recommendation == REVIEW) > 0
+
+
+def test_readiness_safety_cap_enforces_max_ratio_across_obvious_duplicates() -> None:
+    """FAIL-readiness cap must demote obvious duplicates when needed to
+    enforce the hard post-cap max prune ratio.
+    """
+    from unittest.mock import patch
+
+    from lib.faceqa import scoring as scoring_mod
+    from lib.faceqa.coverage import FacesetCoverageReport
+    from lib.faceqa.redundancy import PRUNE, REVIEW, _apply_readiness_safety_cap
+
+    # 19 obvious-duplicate prunes + 1 keep → 95% prune ratio on a FAIL set.
+    # At the 80% ceiling, at least 3 obvious duplicates must be demoted.
+    output_records = [
+        _cap_input_record(
+            recommendation=PRUNE,
+            edge_eligibility="obvious duplicate (distance=0.01)",
+            face_index=i,
+        )
+        for i in range(19)
     ] + [
         _cap_input_record(
             recommendation="keep",
             edge_eligibility=None,
-            face_index=i,
+            face_index=19,
         )
-        for i in range(17, 20)
     ]
     coverage = FacesetCoverageReport(total_faces=20)
 
@@ -1618,66 +1690,108 @@ def test_readiness_fail_safety_cap_demotes_borderline_prunes() -> None:
         applied, reason, demotions = _apply_readiness_safety_cap(output_records, coverage, 20)
 
     assert applied is True
-    assert demotions == 17
-    assert reason is not None and "readiness FAIL" in reason
-    # Every demoted record is now in review and carries the cap note.
-    review_count = sum(1 for r in output_records if r.recommendation == REVIEW)
-    assert review_count == 17
-    assert all(
-        "readiness FAIL safety cap" in (r.reason or "")
-        for r in output_records
-        if r.recommendation == REVIEW
-    )
+    assert demotions >= 3
+    assert reason is not None and "final prune ratio" in reason
+    assert sum(1 for record in output_records if record.recommendation == PRUNE) <= 16
+    assert sum(1 for record in output_records if record.recommendation == REVIEW) >= 3
 
 
-def test_readiness_safety_cap_preserves_obvious_duplicates() -> None:
-    """Obvious duplicates survive the cap — the cap protects VISUALLY
-    DISTINCT samples, not true near-duplicates."""
+def test_readiness_safety_cap_preserves_cluster_review_floor() -> None:
+    """Large FAIL-readiness clusters should retain review samples even when
+    every non-representative prune is an obvious duplicate.
+    """
     from unittest.mock import patch
 
     from lib.faceqa import scoring as scoring_mod
     from lib.faceqa.coverage import FacesetCoverageReport
-    from lib.faceqa.redundancy import PRUNE, _apply_readiness_safety_cap
+    from lib.faceqa.redundancy import (
+        _READINESS_FAIL_CLUSTER_REVIEW_FLOOR_LARGE_MIN,
+        PRUNE,
+        REVIEW,
+        _apply_readiness_safety_cap,
+    )
 
-    # 8 obvious-duplicate prunes + 9 borderline prunes + 3 keeps.
-    obvious_prunes = [
+    cluster_size = 60
+    output_records = [
         _cap_input_record(
             recommendation=PRUNE,
-            edge_eligibility="obvious duplicate (distance=0.05)",
+            edge_eligibility="obvious duplicate (distance=0.01)",
+            cluster_id=7,
             face_index=i,
         )
-        for i in range(8)
-    ]
-    borderline_prunes = [
-        _cap_input_record(
-            recommendation=PRUNE,
-            edge_eligibility="redundant + safe temporal",
-            face_index=8 + i,
-        )
-        for i in range(9)
-    ]
-    keeps = [
+        for i in range(cluster_size - 1)
+    ] + [
         _cap_input_record(
             recommendation="keep",
             edge_eligibility=None,
-            face_index=17 + i,
+            cluster_id=7,
+            face_index=cluster_size - 1,
         )
-        for i in range(3)
     ]
-    output_records = obvious_prunes + borderline_prunes + keeps
-    coverage = FacesetCoverageReport(total_faces=20)
+    for record in output_records:
+        record.cluster_size = cluster_size
+
+    coverage = FacesetCoverageReport(total_faces=cluster_size)
 
     class _FakeScores:
         overall_readiness_score = 25.0
 
     with patch.object(scoring_mod, "compute_readiness_scores", return_value=_FakeScores()):
-        _applied, _reason, demotions = _apply_readiness_safety_cap(output_records, coverage, 20)
+        applied, _reason, _demotions = _apply_readiness_safety_cap(
+            output_records, coverage, cluster_size
+        )
 
-    # Only the borderline prunes are demoted; obvious duplicates remain
-    # as PRUNE.
-    assert demotions == 9
-    surviving_obvious = [r for r in output_records[:8] if r.recommendation == PRUNE]
-    assert len(surviving_obvious) == 8
+    assert applied is True
+    cluster_reviews = [
+        record
+        for record in output_records
+        if record.cluster_id == 7 and record.recommendation == REVIEW
+    ]
+    assert len(cluster_reviews) >= _READINESS_FAIL_CLUSTER_REVIEW_FLOOR_LARGE_MIN
+
+
+def test_readiness_safety_cap_enforces_lower_prune_ratio_and_keep_floor() -> None:
+    """FAIL-readiness policy should preserve KEEP samples, not only review overflow."""
+    from unittest.mock import patch
+
+    from lib.faceqa import scoring as scoring_mod
+    from lib.faceqa.coverage import FacesetCoverageReport
+    from lib.faceqa.redundancy import KEEP, PRUNE, REVIEW, _apply_readiness_safety_cap
+
+    total = 60
+    output_records = [
+        _cap_input_record(
+            recommendation=PRUNE,
+            edge_eligibility="obvious duplicate (distance=0.01)",
+            cluster_id=3,
+            face_index=i,
+        )
+        for i in range(total - 1)
+    ] + [
+        _cap_input_record(
+            recommendation=KEEP,
+            edge_eligibility=None,
+            cluster_id=3,
+            face_index=total - 1,
+        )
+    ]
+    output_records[-1].representative = True
+    for record in output_records:
+        record.cluster_size = total
+
+    coverage = FacesetCoverageReport(total_faces=total)
+
+    class _FakeScores:
+        overall_readiness_score = 25.0
+
+    with patch.object(scoring_mod, "compute_readiness_scores", return_value=_FakeScores()):
+        applied, reason, _changed = _apply_readiness_safety_cap(output_records, coverage, total)
+
+    assert applied is True
+    assert reason is not None and "prune ratio" in reason
+    assert sum(1 for r in output_records if r.recommendation == PRUNE) <= 36
+    assert sum(1 for r in output_records if r.recommendation == KEEP) >= 7
+    assert sum(1 for r in output_records if r.recommendation == REVIEW) >= 6
 
 
 def test_readiness_safety_cap_skipped_when_no_coverage() -> None:

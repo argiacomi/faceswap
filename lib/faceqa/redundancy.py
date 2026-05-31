@@ -187,7 +187,7 @@ class RepresentationFeatures:
     expression_asymmetry_band: int | None = None
     """Expression-asymmetry band for distinguishing symmetric /
     asymmetric faces."""
-    appearance_mode: tuple[int, int, int, int] | None = None
+    appearance_mode: tuple[int, ...] | None = None
     """Discrete (luminance, color_warmth, saturation, contrast) signature
     used as a lightweight visual-look-mode fingerprint. Different
     appearance modes block normal redundancy edges so visually distinct
@@ -285,7 +285,7 @@ class RedundancyRecord:
     # output record so the contact-sheet renderer can sort tiles by
     # visual mode and downstream consumers can audit the cluster's
     # visual coherence without re-running ``_features_for``.
-    appearance_mode: tuple[int, int, int, int] | None = None
+    appearance_mode: tuple[int, ...] | None = None
     """Discrete (luminance, warmth, saturation, contrast) appearance
     signature. ``None`` when one or more channels were missing on the
     underlying record."""
@@ -297,6 +297,16 @@ class RedundancyRecord:
     """Discrete mouth-openness intensity band. ``None`` for missing
     mouth_openness."""
     smile_proxy_band: int | None = None
+    prune_group_id: int | None = None
+    """Tight duplicate subgroup id used for pruning decisions. Multiple
+    prune groups may share one broad contact-sheet cluster_id."""
+    prune_group_size: int | None = None
+    """Number of faces in the tight duplicate subgroup."""
+    contact_cluster_reason: str | None = None
+    """Human-readable merge diagnostic for the broad contact-sheet cluster."""
+    contact_cluster_split_blockers: list[str] = field(default_factory=list)
+    """Top reasons why the broad contact cluster was split into multiple
+    tight prune groups."""
     """Discrete smile-proxy intensity band. ``None`` for missing
     smile_proxy."""
 
@@ -336,6 +346,10 @@ class RedundancyRecord:
             "pitch_micro_band": self.pitch_micro_band,
             "mouth_openness_band": self.mouth_openness_band,
             "smile_proxy_band": self.smile_proxy_band,
+            "prune_group_id": self.prune_group_id,
+            "prune_group_size": self.prune_group_size,
+            "contact_cluster_reason": self.contact_cluster_reason,
+            "contact_cluster_split_blockers": self.contact_cluster_split_blockers,
         }
 
 
@@ -405,6 +419,9 @@ class RedundancyReport:
     """Human-readable explanation of the cap (``None`` when not
     applied)."""
     readiness_safety_cap_demotions: int = 0
+    cluster_merge_diagnostics: dict[int, dict[str, T.Any]] = field(default_factory=dict)
+    """Per-contact-cluster diagnostics explaining broad merge reason and
+    blockers that forced tight prune-subgroup splits."""
     """Number of records whose recommendation was demoted from
     ``prune_candidate`` to ``review`` by the cap."""
 
@@ -430,6 +447,7 @@ class RedundancyReport:
             "readiness_safety_cap_applied": self.readiness_safety_cap_applied,
             "readiness_safety_cap_reason": self.readiness_safety_cap_reason,
             "readiness_safety_cap_demotions": self.readiness_safety_cap_demotions,
+            "cluster_merge_diagnostics": self.cluster_merge_diagnostics,
         }
 
     def to_json(self, *, indent: int = 2) -> str:
@@ -576,6 +594,8 @@ _LUMINANCE_MODE_EDGES: tuple[float, ...] = (60.0, 100.0, 150.0, 200.0)
 _WARMTH_MODE_EDGES: tuple[float, ...] = (-30.0, 0.0, 30.0)
 _SATURATION_MODE_EDGES: tuple[float, ...] = (40.0, 80.0, 120.0)
 _CONTRAST_MODE_EDGES: tuple[float, ...] = (15.0, 25.0, 40.0)
+_FRAMING_MODE_EDGES: tuple[float, ...] = (0.75, 0.95, 1.05, 1.25)
+_EYE_REGION_MODE_EDGES: tuple[float, ...] = (0.02, 0.06, 0.12, 0.20)
 
 
 def _band_index(value: float | None, edges: tuple[float, ...]) -> int | None:
@@ -605,19 +625,33 @@ def _signed_angle_band(value: float | None, width: float) -> int | None:
     return int(round(value / width))
 
 
-def _appearance_mode_signature(record: FaceQARecord) -> tuple[int, int, int, int] | None:
-    """Return the discrete appearance-mode signature for a face.
+def _appearance_mode_signature(record: FaceQARecord) -> tuple[int, ...] | None:
+    """Return an expanded discrete appearance-mode signature for a face.
 
-    All four channels must be present; a missing channel collapses the
-    signature to ``None`` so we don't block edges on partial data.
+    The first four channels are the previous luminance / warmth / saturation /
+    contrast signature. Extra channels use available crop/context proxies so
+    visually different event looks are less likely to share a prune group.
     """
     luminance = _band_index(record.mean_luminance, _LUMINANCE_MODE_EDGES)
     warmth = _band_index(record.color_warmth, _WARMTH_MODE_EDGES)
     saturation = _band_index(record.saturation, _SATURATION_MODE_EDGES)
     contrast = _band_index(record.contrast, _CONTRAST_MODE_EDGES)
-    if None in (luminance, warmth, saturation, contrast):
+    left_right = _band_index(record.left_right_ratio, _FRAMING_MODE_EDGES)
+    top_bottom = _band_index(record.top_bottom_ratio, _FRAMING_MODE_EDGES)
+    eye_region = _band_index(record.eye_closure, _EYE_REGION_MODE_EDGES)
+
+    channels = (
+        luminance,
+        warmth,
+        saturation,
+        contrast,
+        left_right,
+        top_bottom,
+        eye_region,
+    )
+    if None in channels:
         return None
-    return (luminance, warmth, saturation, contrast)  # type: ignore[return-value]
+    return T.cast(tuple[int, ...], channels)
 
 
 def _features_for(record: FaceQARecord) -> RepresentationFeatures:
@@ -2037,15 +2071,15 @@ def _protection_budget_for_cluster(
 # Only run the visual-span pass on components above this size. Small
 # clusters cannot accumulate enough visual span to require splitting and
 # the pass is O(N) per cluster — cheap but not free.
-_VISUAL_SPAN_SPLIT_MIN_SIZE: int = 50
+_VISUAL_SPAN_SPLIT_MIN_SIZE: int = 150
 
 # Per-band span limits (max-min across cluster members). A cluster
 # exceeding ANY of these gets split.
 _VISUAL_SPAN_LIMITS: dict[str, int] = {
-    "yaw_micro_band": 2,
-    "pitch_micro_band": 2,
-    "mouth_openness_band": 1,
-    "smile_proxy_band": 1,
+    "yaw_micro_band": 6,
+    "pitch_micro_band": 6,
+    "mouth_openness_band": 5,
+    "smile_proxy_band": 5,
 }
 # Appearance-mode drift is computed channel-wise via the same
 # "exact OR one bin in one channel" rule as the obvious-override
@@ -2063,18 +2097,28 @@ _VISUAL_MODE_KEY_ATTRS: tuple[str, ...] = (
 )
 
 
+def _contact_sheet_appearance_key(
+    appearance_mode: tuple[int, ...] | None,
+) -> tuple[int, ...] | None:
+    """Return a coarse appearance key for broad contact-sheet grouping.
+
+    Tight prune subgroups use the full expanded appearance_mode. Contact sheets
+    intentionally use only the original lighting/look channels and fold adjacent
+    bins, so look variants can share one review sheet without becoming prune-safe
+    duplicates.
+    """
+    if appearance_mode is None:
+        return None
+    coarse_channels = appearance_mode[:4]
+    return tuple(value // 2 for value in coarse_channels)
+
 def _visual_mode_key(features: RepresentationFeatures) -> tuple[T.Any, ...]:
-    """Return the discrete visual-mode key for one face.
+    """Return the broad visual-mode key for contact-sheet splitting.
 
-    Adjacent micro-bins are folded together (``band // 2`` for signed
-    bands, ``// 2`` for the unsigned bands too) so the key groups
-    visually-similar faces into the SAME bucket instead of fragmenting
-    on every per-band boundary. Appearance mode is included verbatim
-    since it is already a small discrete signature.
-
-    ``None`` band values become ``None`` in the key so partial-data
-    faces cluster together rather than scattering across all possible
-    bins.
+    This key is intentionally coarser than prune-subgroup compatibility.
+    Pose/expression bands are folded aggressively, and appearance uses a
+    contact-sheet-only coarse key. The full appearance_mode remains available
+    to complete-link prune groups so pruning stays strict.
     """
     parts: list[T.Any] = []
     for attr in _VISUAL_MODE_KEY_ATTRS:
@@ -2082,16 +2126,14 @@ def _visual_mode_key(features: RepresentationFeatures) -> tuple[T.Any, ...]:
         if value is None:
             parts.append(None)
         else:
-            # Signed bands ``//`` in Python rounds toward -inf — that's
-            # fine here, the goal is "neighbouring bins share a bucket".
-            parts.append(value // 2)
-    parts.append(features.appearance_mode)
+            parts.append(value // 4)
+    parts.append(_contact_sheet_appearance_key(features.appearance_mode))
     return tuple(parts)
 
 
 def _appearance_modes_compatible(
-    a: tuple[int, int, int, int] | None,
-    b: tuple[int, int, int, int] | None,
+    a: tuple[int, ...] | None,
+    b: tuple[int, ...] | None,
 ) -> bool:
     """Return ``True`` when two appearance modes are equal OR drift by
     exactly one bin in exactly one channel.
@@ -2337,19 +2379,117 @@ def _percentile(values: list[float], pct: float) -> float | None:
     return ordered[lower] + (ordered[upper] - ordered[lower]) * fraction
 
 
-# Issue #208 — readiness FAIL safety cap parameters. The cap fires when:
+# Issue #208 follow-up 4 — readiness FAIL safety cap parameters. The cap fires when:
 #   1. ``coverage`` is supplied AND
 #   2. ``ReadinessScores.overall_readiness_score`` is below the FAIL band
 #      (``_READINESS_FAIL_SCORE``) AND
 #   3. The proposed prune ratio exceeds ``_READINESS_FAIL_PRUNE_RATIO``.
-# Under those conditions, borderline prune candidates are demoted to
-# review so an under-developed faceset doesn't get gutted before the
-# user reviews the topology.
+#
+# The cap now preserves useful samples instead of only producing review piles:
+#
+#   * promotes visually-diverse prune candidates to KEEP to satisfy a
+#     per-cluster keep floor;
+#   * demotes borderline prune candidates to REVIEW;
+#   * preserves a per-cluster review floor;
+#   * enforces the global max prune ratio across *all* remaining prune
+#     candidates, including obvious duplicates.
 _READINESS_FAIL_SCORE: float = 50.0
-_READINESS_FAIL_PRUNE_RATIO: float = 0.80
-# Reasons that match "obvious duplicate" survive the demotion — the cap
-# protects visually distinct samples, not true near-duplicates.
+_READINESS_FAIL_PRUNE_RATIO: float = 0.60
+_READINESS_FAIL_CLUSTER_KEEP_FLOOR_PCT: float = 0.10
+_READINESS_FAIL_CLUSTER_KEEP_FLOOR_MIN: int = 1
+_READINESS_FAIL_CLUSTER_KEEP_FLOOR_LARGE_SIZE: int = 50
+_READINESS_FAIL_CLUSTER_KEEP_FLOOR_LARGE_MIN: int = 6
+_READINESS_FAIL_CLUSTER_REVIEW_FLOOR_PCT: float = 0.10
+_READINESS_FAIL_CLUSTER_REVIEW_FLOOR_MIN: int = 1
+_READINESS_FAIL_CLUSTER_REVIEW_FLOOR_LARGE_SIZE: int = 50
+_READINESS_FAIL_CLUSTER_REVIEW_FLOOR_LARGE_MIN: int = 6
 _OBVIOUS_DUPLICATE_REASON_SUBSTRINGS: tuple[str, ...] = ("obvious duplicate",)
+
+
+def _is_obvious_duplicate_prune(record: RedundancyRecord) -> bool:
+    """Return whether ``record`` is an obvious-duplicate prune candidate."""
+    if record.recommendation != PRUNE:
+        return False
+    eligibility = (record.edge_eligibility or "").lower()
+    reason = (record.reason or "").lower()
+    return any(
+        substring in eligibility or substring in reason
+        for substring in _OBVIOUS_DUPLICATE_REASON_SUBSTRINGS
+    )
+
+
+def _readiness_cap_keep_floor(cluster_size: int) -> int:
+    """Minimum non-representative KEEP samples to preserve in a failed set."""
+    if cluster_size <= 1:
+        return 0
+    floor = max(
+        _READINESS_FAIL_CLUSTER_KEEP_FLOOR_MIN,
+        math.ceil(cluster_size * _READINESS_FAIL_CLUSTER_KEEP_FLOOR_PCT),
+    )
+    if cluster_size > _READINESS_FAIL_CLUSTER_KEEP_FLOOR_LARGE_SIZE:
+        floor = max(floor, _READINESS_FAIL_CLUSTER_KEEP_FLOOR_LARGE_MIN)
+    return min(cluster_size - 1, floor)
+
+
+def _readiness_cap_review_floor(cluster_size: int) -> int:
+    """Minimum non-representative REVIEW samples to preserve in a failed set."""
+    if cluster_size <= 1:
+        return 0
+    floor = max(
+        _READINESS_FAIL_CLUSTER_REVIEW_FLOOR_MIN,
+        math.ceil(cluster_size * _READINESS_FAIL_CLUSTER_REVIEW_FLOOR_PCT),
+    )
+    if cluster_size > _READINESS_FAIL_CLUSTER_REVIEW_FLOOR_LARGE_SIZE:
+        floor = max(floor, _READINESS_FAIL_CLUSTER_REVIEW_FLOOR_LARGE_MIN)
+    return min(cluster_size - 1, floor)
+
+
+def _readiness_cap_preserve_sort_key(record: RedundancyRecord) -> tuple[T.Any, ...]:
+    """Sort prune candidates from most-to-least worth preserving.
+
+    Prefer samples with weaker duplicate evidence and more likely visual value:
+    not directly tied to the representative, not connected via representative
+    edge, farther from the representative, in broader/larger clusters, and then
+    higher quality.
+    """
+    distance = record.redundancy_distance_to_representative
+    if distance is None or not math.isfinite(distance):
+        distance = math.inf
+    diameter = record.component_diameter
+    if diameter is None or not math.isfinite(diameter):
+        diameter = math.inf
+    return (
+        0 if not record.direct_to_representative else 1,
+        0 if not record.connected_via_representative else 1,
+        -distance,
+        -diameter,
+        -record.cluster_size,
+        -record.quality_score,
+        record.cluster_id,
+        record.frame,
+        record.face_index,
+    )
+
+
+def _apply_readiness_cap_record(
+    record: RedundancyRecord,
+    *,
+    recommendation: str,
+    overall: float,
+    proposed_prune_ratio: float,
+    phase: str,
+) -> bool:
+    """Move one prune candidate to KEEP/REVIEW and append an auditable reason."""
+    if record.recommendation != PRUNE:
+        return False
+    record.recommendation = recommendation
+    cap_note = (
+        f"readiness FAIL safety cap ({phase}): moved to {recommendation} "
+        f"(readiness={overall:.1f}, proposed prune ratio "
+        f"{proposed_prune_ratio:.0%} > {_READINESS_FAIL_PRUNE_RATIO:.0%})"
+    )
+    record.reason = f"{record.reason}; {cap_note}" if record.reason else cap_note
+    return True
 
 
 def _apply_readiness_safety_cap(
@@ -2357,12 +2497,16 @@ def _apply_readiness_safety_cap(
     coverage: FacesetCoverageReport | None,
     total_faces: int,
 ) -> tuple[bool, str | None, int]:
-    """Demote borderline ``prune_candidate`` rows to ``review`` when the
-    safety cap conditions fire.
+    """Preserve KEEP/REVIEW samples when readiness FAILs and pruning is high.
 
-    Returns ``(applied, reason, demoted_count)`` — ``applied`` is True
-    when at least one demotion was made; ``reason`` carries the human-
-    readable cap explanation for the report header.
+    Returns ``(applied, reason, changed_count)`` — ``applied`` is True when
+    at least one prune candidate moved to KEEP or REVIEW; ``reason`` carries
+    the human-readable cap explanation for the report header.
+
+    The cap is intentionally less aggressive than the original 80% prune
+    ceiling: it promotes diverse cluster samples to KEEP first, then fills a
+    REVIEW floor, then enforces a global max prune ratio across all remaining
+    prune candidates, including obvious duplicates.
     """
     if coverage is None or total_faces == 0:
         return False, None, 0
@@ -2383,41 +2527,462 @@ def _apply_readiness_safety_cap(
         return False, None, 0
 
     proposed_prune = sum(1 for r in output_records if r.recommendation == PRUNE)
-    prune_ratio = proposed_prune / total_faces
-    if prune_ratio <= _READINESS_FAIL_PRUNE_RATIO:
+    proposed_prune_ratio = proposed_prune / total_faces
+    if proposed_prune_ratio <= _READINESS_FAIL_PRUNE_RATIO:
         return False, None, 0
 
-    demoted = 0
+    changed = 0
+
+    by_cluster: dict[int, list[RedundancyRecord]] = {}
     for record in output_records:
-        if record.recommendation != PRUNE:
-            continue
-        eligibility = (record.edge_eligibility or "").lower()
-        if any(substr in eligibility for substr in _OBVIOUS_DUPLICATE_REASON_SUBSTRINGS):
-            # Obvious duplicates stay prune — the cap is about
-            # protecting VISUALLY DISTINCT samples on an
-            # under-developed faceset.
-            continue
-        record.recommendation = REVIEW
-        cap_note = (
-            f"readiness FAIL safety cap: demoted to review "
-            f"(readiness={overall:.1f}, prune ratio "
-            f"{prune_ratio:.0%} > {_READINESS_FAIL_PRUNE_RATIO:.0%})"
-        )
-        record.reason = f"{record.reason}; {cap_note}" if record.reason else cap_note
-        demoted += 1
+        if record.cluster_size > 1:
+            by_cluster.setdefault(record.cluster_id, []).append(record)
 
-    if demoted == 0:
+    # 1. Promote the best preservation candidates to KEEP in each final
+    # cluster. This keeps low-readiness pruning from becoming a giant review
+    # pile with too few retained examples.
+    for cluster_records in by_cluster.values():
+        cluster_size = max((record.cluster_size for record in cluster_records), default=0)
+        floor = _readiness_cap_keep_floor(cluster_size)
+        if floor <= 0:
+            continue
+        non_rep_keeps = sum(
+            1
+            for record in cluster_records
+            if not record.representative and record.recommendation == KEEP
+        )
+        needed = floor - non_rep_keeps
+        if needed <= 0:
+            continue
+        candidates = [
+            record
+            for record in cluster_records
+            if not record.representative and record.recommendation == PRUNE
+        ]
+        for record in sorted(candidates, key=_readiness_cap_preserve_sort_key)[:needed]:
+            if _apply_readiness_cap_record(
+                record,
+                recommendation=KEEP,
+                overall=overall,
+                proposed_prune_ratio=proposed_prune_ratio,
+                phase=f"cluster keep floor ({floor} non-representative sample(s))",
+            ):
+                changed += 1
+
+    # 2. Demote borderline prune candidates to REVIEW before touching obvious
+    # duplicates for the global ceiling.
+    borderline = [
+        record
+        for record in output_records
+        if record.recommendation == PRUNE and not _is_obvious_duplicate_prune(record)
+    ]
+    for record in sorted(borderline, key=_readiness_cap_preserve_sort_key):
+        if _apply_readiness_cap_record(
+            record,
+            recommendation=REVIEW,
+            overall=overall,
+            proposed_prune_ratio=proposed_prune_ratio,
+            phase="borderline prune",
+        ):
+            changed += 1
+
+    # 3. Preserve a smaller REVIEW floor in each final multi-face cluster.
+    for cluster_records in by_cluster.values():
+        cluster_size = max((record.cluster_size for record in cluster_records), default=0)
+        floor = _readiness_cap_review_floor(cluster_size)
+        if floor <= 0:
+            continue
+        non_rep_reviews = sum(
+            1
+            for record in cluster_records
+            if not record.representative and record.recommendation == REVIEW
+        )
+        needed = floor - non_rep_reviews
+        if needed <= 0:
+            continue
+        candidates = [
+            record
+            for record in cluster_records
+            if not record.representative and record.recommendation == PRUNE
+        ]
+        for record in sorted(candidates, key=_readiness_cap_preserve_sort_key)[:needed]:
+            if _apply_readiness_cap_record(
+                record,
+                recommendation=REVIEW,
+                overall=overall,
+                proposed_prune_ratio=proposed_prune_ratio,
+                phase=f"cluster review floor ({floor} non-representative sample(s))",
+            ):
+                changed += 1
+
+    # 4. Enforce the hard post-cap max prune ratio across all remaining prunes.
+    max_prune = math.floor(total_faces * _READINESS_FAIL_PRUNE_RATIO)
+    remaining_prune = sum(1 for r in output_records if r.recommendation == PRUNE)
+    overflow = max(0, remaining_prune - max_prune)
+    if overflow > 0:
+        candidates = [record for record in output_records if record.recommendation == PRUNE]
+        for record in sorted(candidates, key=_readiness_cap_preserve_sort_key)[:overflow]:
+            if _apply_readiness_cap_record(
+                record,
+                recommendation=REVIEW,
+                overall=overall,
+                proposed_prune_ratio=proposed_prune_ratio,
+                phase=f"hard {_READINESS_FAIL_PRUNE_RATIO:.0%} prune-ratio ceiling",
+            ):
+                changed += 1
+
+    if changed == 0:
         return False, None, 0
 
+    final_keep = sum(1 for r in output_records if r.recommendation == KEEP)
+    final_review = sum(1 for r in output_records if r.recommendation == REVIEW)
+    final_prune = sum(1 for r in output_records if r.recommendation == PRUNE)
+    final_prune_ratio = final_prune / total_faces
     reason = (
         f"readiness FAIL (overall={overall:.1f} < {_READINESS_FAIL_SCORE:.0f}) "
-        f"AND proposed prune ratio {prune_ratio:.0%} > "
-        f"{_READINESS_FAIL_PRUNE_RATIO:.0%}; demoted {demoted} borderline "
-        f"prune candidate(s) to review."
+        f"AND proposed prune ratio {proposed_prune_ratio:.0%} > "
+        f"{_READINESS_FAIL_PRUNE_RATIO:.0%}; moved {changed} prune candidate(s) "
+        f"to keep/review (final keep={final_keep}, review={final_review}, "
+        f"final prune ratio {final_prune_ratio:.0%})."
     )
     logger.info("Redundancy %s", reason)
-    return True, reason, demoted
+    return True, reason, changed
 
+
+# ---------------------------------------------------------------------------
+# Complete-link prune subgroups inside broad contact-sheet clusters.
+#
+# Pairwise redundancy edges are treated as neighbour proposals only. Final
+# prune groups must pass a complete-link-style validator. This separates:
+#
+#   cluster_id      = broad contact-sheet cluster
+#   prune_group_id = tight duplicate subgroup used for pruning decisions
+# ---------------------------------------------------------------------------
+
+_PRUNE_GROUP_REP_SCALE: float = 0.95
+_PRUNE_GROUP_REP_SCALE_FAIL: float = 0.75
+_PRUNE_GROUP_DIAMETER_SCALE: float = 1.15
+_PRUNE_GROUP_DIAMETER_SCALE_FAIL: float = 0.90
+_PRUNE_GROUP_ULTRA_DUPLICATE_SCALE: float = 0.45
+_PRUNE_GROUP_TEMPORAL_LOCAL_MIN: float = 0.55
+_PRUNE_GROUP_MIN_QUALITY_DELTA: float = 0.45
+_PRUNE_GROUP_MIN_QUALITY_DELTA_FAIL: float = 0.35
+
+_PRUNE_GROUP_SPAN_LIMITS: dict[str, int] = {
+    "yaw_micro_band": 3,
+    "pitch_micro_band": 3,
+    "mouth_openness_band": 2,
+    "smile_proxy_band": 2,
+}
+
+_PRUNE_GROUP_SPAN_LIMITS_FAIL: dict[str, int] = {
+    "yaw_micro_band": 2,
+    "pitch_micro_band": 2,
+    "mouth_openness_band": 1,
+    "smile_proxy_band": 1,
+}
+
+_PRUNE_GROUP_APPEARANCE_LIGHTING_SPAN: int = 1
+
+
+@dataclass(frozen=True)
+class _CandidateAcceptance:
+    accepted: bool
+    reason: str
+    blockers: tuple[str, ...] = ()
+
+
+def _coverage_fails_readiness(coverage: FacesetCoverageReport | None) -> bool:
+    """Return whether supplied coverage sits in the readiness FAIL band."""
+    if coverage is None:
+        return False
+    from lib.faceqa.scoring import compute_readiness_scores
+
+    try:
+        return compute_readiness_scores(coverage).overall_readiness_score < _READINESS_FAIL_SCORE
+    except Exception:  # pylint: disable=broad-except
+        logger.debug("Could not compute readiness for adaptive prune subgroup thresholds.")
+        return False
+
+
+def _edge_reason_lookup(
+    edge_reasons: dict[tuple[int, int], tuple[bool, str]],
+    a: int,
+    b: int,
+) -> str | None:
+    if a == b:
+        return None
+    key = (a, b) if a < b else (b, a)
+    entry = edge_reasons.get(key)
+    if entry is None:
+        return None
+    eligible, reason = entry
+    return reason if eligible else None
+
+
+def _span_for_attr(members: list[int], features: list[RepresentationFeatures], attr: str) -> int:
+    values = [getattr(features[idx], attr) for idx in members]
+    values = [value for value in values if value is not None]
+    if len(values) < 2:
+        return 0
+    return int(max(values) - min(values))
+
+
+def _appearance_lighting_span(
+    members: list[int],
+    features: list[RepresentationFeatures],
+) -> int:
+    modes = [features[idx].appearance_mode for idx in members if features[idx].appearance_mode]
+    if len(modes) < 2:
+        return 0
+    widths = []
+    for channel in range(min(4, min(len(mode) for mode in modes))):
+        values = [mode[channel] for mode in modes]
+        widths.append(max(values) - min(values))
+    return int(max(widths, default=0))
+
+
+def _appearance_modes_pairwise_compatible(
+    members: list[int],
+    features: list[RepresentationFeatures],
+) -> bool:
+    modes = [features[idx].appearance_mode for idx in members]
+    for i, mode_a in enumerate(modes):
+        for mode_b in modes[i + 1 :]:
+            if not _appearance_modes_compatible(mode_a, mode_b):
+                return False
+    return True
+
+
+def _quality_consistent(
+    members: list[int],
+    features: list[RepresentationFeatures],
+    *,
+    coverage_failed: bool,
+) -> bool:
+    if len(members) < 2:
+        return True
+    values = [features[idx].quality_score for idx in members]
+    allowed = (
+        _PRUNE_GROUP_MIN_QUALITY_DELTA_FAIL
+        if coverage_failed
+        else _PRUNE_GROUP_MIN_QUALITY_DELTA
+    )
+    return (max(values) - min(values)) <= allowed
+
+
+def _candidate_complete_link_acceptance(
+    *,
+    candidate: int,
+    current: list[int],
+    features: list[RepresentationFeatures],
+    ctx: _PairwiseContext,
+    config: AggressivenessConfig,
+    edge_reasons: dict[tuple[int, int], tuple[bool, str]],
+    coverage_failed: bool,
+) -> _CandidateAcceptance:
+    """Return whether adding candidate keeps the subgroup prune-safe."""
+    proposed = [*current, candidate]
+    rep = max(current, key=lambda idx: (features[idx].quality_score, -idx))
+    candidate_dist_to_rep, _ = _distance_with_ctx(ctx, candidate, rep)
+
+    rep_limit_scale = _PRUNE_GROUP_REP_SCALE_FAIL if coverage_failed else _PRUNE_GROUP_REP_SCALE
+    diameter_scale = (
+        _PRUNE_GROUP_DIAMETER_SCALE_FAIL if coverage_failed else _PRUNE_GROUP_DIAMETER_SCALE
+    )
+    rep_limit = config.representation_distance_threshold * rep_limit_scale
+    diameter_limit = config.representation_distance_threshold * diameter_scale
+    ultra_limit = config.obvious_duplicate_threshold * _PRUNE_GROUP_ULTRA_DUPLICATE_SCALE
+
+    blockers: list[str] = []
+
+    if candidate_dist_to_rep > rep_limit:
+        blockers.append(
+            f"member-to-prune-representative distance {candidate_dist_to_rep:.3f} > "
+            f"{rep_limit:.3f}"
+        )
+
+    max_distance = 0.0
+    nearest_distance = math.inf
+    has_local_edge = False
+    has_temporal_local = False
+
+    for member in current:
+        distance, _compared = _distance_with_ctx(ctx, candidate, member)
+        max_distance = max(max_distance, distance)
+        nearest_distance = min(nearest_distance, distance)
+        if _edge_reason_lookup(edge_reasons, candidate, member) is not None:
+            has_local_edge = True
+
+        temporal_confidence, _frame_distance = _temporal_confidence(
+            features[candidate].frame_index,
+            features[member].frame_index,
+            config,
+        )
+        if temporal_confidence >= _PRUNE_GROUP_TEMPORAL_LOCAL_MIN:
+            has_temporal_local = True
+
+    if max_distance > diameter_limit:
+        blockers.append(f"complete-link diameter {max_distance:.3f} > {diameter_limit:.3f}")
+
+    if not has_local_edge:
+        blockers.append("no eligible local redundancy edge inside prune subgroup")
+
+    if not has_temporal_local and nearest_distance > ultra_limit:
+        blockers.append(
+            "far-temporal visual match without ultra-identical neighbour "
+            f"(nearest={nearest_distance:.3f} > {ultra_limit:.3f})"
+        )
+
+    span_limits = _PRUNE_GROUP_SPAN_LIMITS_FAIL if coverage_failed else _PRUNE_GROUP_SPAN_LIMITS
+    for attr, limit in span_limits.items():
+        span = _span_for_attr(proposed, features, attr)
+        if span > limit:
+            blockers.append(f"{attr} span {span} > {limit}")
+
+    lighting_span = _appearance_lighting_span(proposed, features)
+    if lighting_span > _PRUNE_GROUP_APPEARANCE_LIGHTING_SPAN:
+        blockers.append(
+            f"appearance lighting span {lighting_span} > "
+            f"{_PRUNE_GROUP_APPEARANCE_LIGHTING_SPAN}"
+        )
+
+    if not _appearance_modes_pairwise_compatible(proposed, features):
+        blockers.append("appearance mode drift exceeds compatible one-channel rule")
+
+    if not _quality_consistent(proposed, features, coverage_failed=coverage_failed):
+        blockers.append("quality spread too wide for automatic prune subgroup")
+
+    if blockers:
+        return _CandidateAcceptance(False, "split from prune subgroup", tuple(blockers))
+
+    reason_parts = [
+        "complete-link accepted",
+        f"rep_distance={candidate_dist_to_rep:.3f}",
+        f"diameter={max_distance:.3f}",
+        "local_edge" if has_local_edge else "no_local_edge",
+        "temporal_neighbour" if has_temporal_local else "ultra-identical-far-temporal",
+    ]
+    return _CandidateAcceptance(True, "; ".join(reason_parts))
+
+
+def _build_complete_link_prune_subgroups(
+    contact_components: list[list[int]],
+    features: list[RepresentationFeatures],
+    ctx: _PairwiseContext,
+    config: AggressivenessConfig,
+    edge_reasons: dict[tuple[int, int], tuple[bool, str]],
+    *,
+    coverage_failed: bool,
+) -> tuple[list[list[int]], dict[int, int], dict[int, dict[str, T.Any]]]:
+    """Split broad contact-sheet clusters into tight complete-link prune groups."""
+    prune_groups: list[list[int]] = []
+    prune_group_to_contact: dict[int, int] = {}
+    contact_diagnostics: dict[int, dict[str, T.Any]] = {}
+
+    for contact_cluster_id, members in enumerate(contact_components):
+        pending: set[int] = set(members)
+        local_groups: list[list[int]] = []
+        blockers: list[str] = []
+
+        while pending:
+            seed = max(pending, key=lambda idx: (features[idx].quality_score, -idx))
+            pending.remove(seed)
+            group = [seed]
+
+            changed = True
+            while changed:
+                changed = False
+                best_candidate: int | None = None
+                best_acceptance: _CandidateAcceptance | None = None
+
+                for candidate in sorted(
+                    pending,
+                    key=lambda idx: (-features[idx].quality_score, idx),
+                ):
+                    acceptance = _candidate_complete_link_acceptance(
+                        candidate=candidate,
+                        current=group,
+                        features=features,
+                        ctx=ctx,
+                        config=config,
+                        edge_reasons=edge_reasons,
+                        coverage_failed=coverage_failed,
+                    )
+                    if acceptance.accepted:
+                        best_candidate = candidate
+                        best_acceptance = acceptance
+                        break
+                    blockers.extend(acceptance.blockers[:2])
+
+                if best_candidate is not None:
+                    group.append(best_candidate)
+                    pending.remove(best_candidate)
+                    changed = True
+
+            group.sort()
+            local_groups.append(group)
+
+        local_groups.sort(key=lambda group: min(group))
+
+        for group in local_groups:
+            prune_group_id = len(prune_groups)
+            prune_groups.append(group)
+            prune_group_to_contact[prune_group_id] = contact_cluster_id
+
+        unique_blockers = [
+            blocker
+            for blocker in dict.fromkeys(blockers)
+            if blocker and "complete-link accepted" not in blocker
+        ][:12]
+        contact_diagnostics[contact_cluster_id] = {
+            "reason": _contact_cluster_reason(members, local_groups, features, ctx),
+            "prune_group_count": len(local_groups),
+            "prune_group_sizes": [len(group) for group in local_groups],
+            # Rejected-candidate reasons only. Accepted complete-link samples are
+            # intentionally excluded so this field describes why the broad contact
+            # cluster had to split into multiple prune groups.
+            "split_blockers": unique_blockers,
+            "coverage_failed": coverage_failed,
+        }
+
+    return prune_groups, prune_group_to_contact, contact_diagnostics
+
+
+def _contact_cluster_reason(
+    members: list[int],
+    prune_groups: list[list[int]],
+    features: list[RepresentationFeatures],
+    ctx: _PairwiseContext,
+) -> str:
+    """Human-readable explanation for why a broad contact sheet exists."""
+    if not members:
+        return "empty contact cluster"
+    if len(members) == 1:
+        return "singleton contact cluster"
+
+    diameter = 0.0
+    for i_pos, i in enumerate(members):
+        for j in members[i_pos + 1 :]:
+            distance, _compared = _distance_with_ctx(ctx, i, j)
+            diameter = max(diameter, distance)
+
+    spans = {attr: _span_for_attr(members, features, attr) for attr in _VISUAL_MODE_KEY_ATTRS}
+    appearance_modes = {
+        features[idx].appearance_mode
+        for idx in members
+        if features[idx].appearance_mode is not None
+    }
+
+    parts = [
+        "broad contact cluster",
+        f"size={len(members)}",
+        f"diameter={diameter:.3f}",
+        f"prune_groups={len(prune_groups)}",
+        f"appearance_modes={len(appearance_modes)}",
+    ]
+    parts.extend(f"{name}_span={value}" for name, value in spans.items())
+    return "; ".join(parts)
 
 def _compute_cluster_health(
     components: list[list[int]],
@@ -2608,10 +3173,42 @@ def compute_redundancy(
             return None
         return records[neighbor_idx].face_index
 
+    contact_components = components
+    coverage_failed = _coverage_fails_readiness(coverage)
+    (
+        prune_groups,
+        prune_group_to_contact_cluster,
+        cluster_merge_diagnostics,
+    ) = _build_complete_link_prune_subgroups(
+        contact_components,
+        features,
+        ctx,
+        config,
+        edge_reasons,
+        coverage_failed=coverage_failed,
+    )
+
+    # Refresh diagnostics against tight prune groups. Contact sheets remain
+    # broad, but pruning diagnostics now describe the group that can actually
+    # justify pruning.
+    for _group in prune_groups:
+        _refresh_component_diagnostics(
+            _group,
+            features,
+            ctx,
+            config,
+            edge_reasons,
+            diameter_by_member=diameter_by_member,
+            nearest_neighbor_by_member=nearest_neighbor_by_member,
+            nearest_neighbor_index_by_member=nearest_neighbor_index_by_member,
+            direct_to_rep_by_member=direct_to_rep_by_member,
+            connected_via_rep_edge_by_member=connected_via_rep_edge_by_member,
+        )
+
     cluster_of: dict[int, int] = {}
-    for cluster_id, members in enumerate(components):
+    for prune_group_id, members in enumerate(prune_groups):
         for member in members:
-            cluster_of[member] = cluster_id
+            cluster_of[member] = prune_group_id
 
     effective = _effective_coverage(record_list, cluster_of)
     if coverage is not None:
@@ -2622,6 +3219,7 @@ def compute_redundancy(
                 # Only ensure we did not under-count anything that shows in the
                 # canonical coverage report; we never overwrite our own data.
                 dim.raw_counts.setdefault(bucket, raw_value)
+
     protected, surplus = _classify_buckets(
         effective,
         config,
@@ -2630,28 +3228,38 @@ def compute_redundancy(
     )
 
     output_records: list[RedundancyRecord] = []
-    for cluster_id, members in enumerate(components):
+
+    for prune_group_id, members in enumerate(prune_groups):
+        contact_cluster_id = prune_group_to_contact_cluster[prune_group_id]
+        contact_members = contact_components[contact_cluster_id]
+        contact_diag = cluster_merge_diagnostics.get(contact_cluster_id, {})
+        contact_reason = T.cast(str | None, contact_diag.get("reason"))
+        split_blockers = T.cast(list[str], contact_diag.get("split_blockers", []))
+
         rep_index = max(members, key=lambda idx: (features[idx].quality_score, -idx))
         rep_features = features[rep_index]
         rep_record = record_list[rep_index]
         rep_buckets = _bucket_keys_for(rep_record)
         safety_reason = _representative_safety_reason(rep_features)
+
         if safety_reason is not None:
             rep_recommendation = REVIEW
             rep_reason = safety_reason
         elif len(members) > 1:
             rep_recommendation = KEEP
-            rep_reason = "representative of redundancy cluster"
+            rep_reason = "representative of tight prune subgroup within contact cluster"
         else:
             rep_recommendation = KEEP
-            rep_reason = "unique representation (singleton cluster)"
+            rep_reason = "unique tight prune subgroup within contact cluster"
+
         cluster_diameter = diameter_by_member.get(rep_index)
+
         output_records.append(
             RedundancyRecord(
                 frame=rep_record.frame,
                 face_index=rep_record.face_index,
-                cluster_id=cluster_id,
-                cluster_size=len(members),
+                cluster_id=contact_cluster_id,
+                cluster_size=len(contact_members),
                 representative=True,
                 recommendation=rep_recommendation,
                 quality_score=rep_features.quality_score,
@@ -2688,10 +3296,13 @@ def compute_redundancy(
                 pitch_micro_band=rep_features.pitch_micro_band,
                 mouth_openness_band=rep_features.mouth_openness_band,
                 smile_proxy_band=rep_features.smile_proxy_band,
+                prune_group_id=prune_group_id,
+                prune_group_size=len(members),
+                contact_cluster_reason=contact_reason,
+                contact_cluster_split_blockers=split_blockers,
             )
         )
-        # Allocate a small protection budget for fragile-bucket clusters and
-        # consume it in descending quality order so the best alternates win.
+
         budget = _protection_budget_for_cluster(
             members=members,
             representative_index=rep_index,
@@ -2700,12 +3311,15 @@ def compute_redundancy(
             surplus=surplus,
             config=config,
         )
+
         non_rep_members = [m for m in members if m != rep_index]
         non_rep_members.sort(key=lambda idx: (-features[idx].quality_score, idx))
+
         for member in non_rep_members:
             member_features = features[member]
             member_record = record_list[member]
             buckets = _bucket_keys_for(member_record)
+
             distance, compared, t_conf, t_dist, direct_rep_eligible, direct_rep_edge_reason = (
                 _pair_diagnostics_for(member, rep_index)
             )
@@ -2714,7 +3328,7 @@ def compute_redundancy(
                 recommendation, reason, budget = (
                     REVIEW,
                     (
-                        "cluster-linked but not directly redundant with representative"
+                        "prune-subgroup member not directly redundant with subgroup representative"
                         + (f": {direct_rep_edge_reason}" if direct_rep_edge_reason else "")
                     ),
                     budget,
@@ -2732,12 +3346,13 @@ def compute_redundancy(
                     member_in_surplus_bucket=_record_is_in_surplus_bucket(member_record, surplus),
                     rep_features=rep_features,
                 )
+
             output_records.append(
                 RedundancyRecord(
                     frame=member_record.frame,
                     face_index=member_record.face_index,
-                    cluster_id=cluster_id,
-                    cluster_size=len(members),
+                    cluster_id=contact_cluster_id,
+                    cluster_size=len(contact_members),
                     representative=False,
                     recommendation=recommendation,
                     quality_score=member_features.quality_score,
@@ -2753,14 +3368,8 @@ def compute_redundancy(
                     reason=reason,
                     identity_outlier=member_features.identity_outlier,
                     has_identity=member_features.has_identity,
-                    # Issue #199 follow-up: surface the per-pair diagnostics
-                    # so the JSON output explains WHY each member was kept,
-                    # reviewed, or marked as a prune candidate. Representatives
-                    # keep the 0/None defaults — they have no edge of their
-                    # own to describe.
                     compared_metrics=compared,
                     edge_eligibility=_edge_reason_for(member, rep_index),
-                    # Issue #204 — per-member component diagnostics.
                     nearest_neighbor_distance=_finite_or_none(
                         nearest_neighbor_by_member.get(member)
                     ),
@@ -2786,17 +3395,19 @@ def compute_redundancy(
                     pitch_micro_band=member_features.pitch_micro_band,
                     mouth_openness_band=member_features.mouth_openness_band,
                     smile_proxy_band=member_features.smile_proxy_band,
+                    prune_group_id=prune_group_id,
+                    prune_group_size=len(members),
+                    contact_cluster_reason=contact_reason,
+                    contact_cluster_split_blockers=split_blockers,
                 )
             )
 
     # Issue #208 — readiness FAIL safety cap. When the supplied coverage
     # report scores below the FAIL threshold AND the proposed prune
-    # ratio is extreme, demote BORDERLINE prune candidates to review so
-    # an under-developed faceset doesn't get gutted before the user has
-    # a chance to look at the topology. Obvious duplicates (where the
-    # member's ``edge_eligibility`` reason names "obvious duplicate")
-    # are preserved as prune candidates — the cap protects visually
-    # distinct samples, not true near-duplicates.
+    # ratio is extreme, preserve additional KEEP/REVIEW samples so an
+    # under-developed faceset does not get gutted. The cap now enforces
+    # its global prune ceiling even when remaining candidates are labelled
+    # as obvious duplicates.
     cap_applied, cap_reason, cap_demotions = _apply_readiness_safety_cap(
         output_records, coverage, n
     )
@@ -2836,6 +3447,7 @@ def compute_redundancy(
         readiness_safety_cap_applied=cap_applied,
         readiness_safety_cap_reason=cap_reason,
         readiness_safety_cap_demotions=cap_demotions,
+        cluster_merge_diagnostics=cluster_merge_diagnostics,
         records=output_records,
     )
 
