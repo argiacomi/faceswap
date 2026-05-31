@@ -20,7 +20,10 @@ class E2Ptransform(nn.Module):
         edge2point = self.edge2point.transpose(-1, -2)
         point_edges = torch.matmul(edges_mat, edge2point)
         point_edges = point_edges.reshape(B, H, W, -1).permute(0, 3, 1, 2)
-        point_edges[point_edges > 1] = 1.0
+        # Avoid in-place boolean-index assignment, which can fail on Apple Silicon/MPS
+        # with AcceleratorError for this tensor shape. This preserves the original
+        # upper-bound clipping behavior without mutating through a boolean mask.
+        point_edges = point_edges.clamp(max=1.0)
         return point_edges
 
     def _select_matrix(self, points, edges):
