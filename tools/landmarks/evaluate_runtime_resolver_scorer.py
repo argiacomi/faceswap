@@ -59,6 +59,24 @@ def _parser() -> argparse.ArgumentParser:
         help="Optional scorer eval-row CSV; when supplied, policy metrics use only held-out rows.",
     )
     parser.add_argument(
+        "--scorer-rows",
+        type=Path,
+        default=None,
+        help=(
+            "Canonical scorer rows CSV from scorer_training/scorer_dataset/rows.csv. "
+            "When supplied without --eval-split, evaluation filters to rows marked split=eval."
+        ),
+    )
+    parser.add_argument(
+        "--scorer-dataset",
+        type=Path,
+        default=None,
+        help=(
+            "Canonical scorer_dataset directory or manifest. Used to resolve rows.csv "
+            "when --scorer-rows is omitted."
+        ),
+    )
+    parser.add_argument(
         "--candidates",
         default="",
         help=f"Comma-separated candidate list. Defaults to {DEFAULT_SCORER_CANDIDATE_CSV}.",
@@ -140,6 +158,8 @@ def main(argv: T.Sequence[str] | None = None) -> int:
         candidates=candidates,
         output_dir=args.output_dir,
         eval_split=args.eval_split,
+        scorer_rows=args.scorer_rows,
+        scorer_dataset=args.scorer_dataset,
         failure_threshold=args.failure_threshold,
         outlier_threshold=args.outlier_threshold,
         epsilon_mean_nme=args.epsilon_mean_nme,

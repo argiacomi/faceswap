@@ -8,6 +8,7 @@ import json
 import typing as T
 from collections import Counter, defaultdict
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 
@@ -31,6 +32,10 @@ from lib.landmarks.ensemble.runtime_resolver_scorer_data import (
     rows_for_context,
 )
 from lib.landmarks.ensemble.scorer_contexts import load_scorer_contexts
+from lib.landmarks.ensemble.scorer_dataset import (
+    read_scorer_dataset,
+    resolve_scorer_dataset_path,
+)
 from lib.landmarks.ensemble.scorer_reports import write_scorer_policy_outputs
 from lib.landmarks.ensemble.scorer_target_config import (
     MODEL_TYPE_LINEAR_REGRESSION,
@@ -65,7 +70,10 @@ def eval_split_sources(path: Path) -> tuple[set[tuple[str, str, str]], dict[str,
         reader = csv.DictReader(handle)
         if "sample_id" not in (reader.fieldnames or ()):
             raise ValueError(f"eval split {path} must contain a sample_id column")
+        has_split = "split" in (reader.fieldnames or ())
         for row in reader:
+            if has_split and str(row.get("split", "")).strip() not in {"", "eval"}:
+                continue
             sample_id = str(row.get("sample_id", "")).strip()
             if not sample_id:
                 continue
@@ -428,7 +436,7 @@ def score_policy_choices(
     """Choose one candidate per sample for a scorer artifact."""
     choices: dict[str, str] = {}
     for context in contexts:
-        context_rows = rows_for_context(context)
+        context_rows = _context_rows_for_eval(context)
         scores = {
             row.candidate_name: scorer.score_feature_map(row.feature_values)
             for row in context_rows
@@ -540,6 +548,207 @@ def assert_lower_score_is_better(scorer: RuntimeResolverScorer) -> None:
         )
 
 
+
+def _row_bool(value: T.Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return str(value).strip().lower() in {"1", "true", "yes", "y"}
+
+
+def _row_float(value: T.Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _row_int(value: T.Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _row_geometry_reasons(value: T.Any) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, (tuple, list)):
+        return tuple(str(item) for item in value if str(item))
+    raw = str(value).strip()
+    if not raw:
+        return ()
+    return tuple(item for item in raw.split("|") if item)
+
+
+def _row_feature_values(row: T.Mapping[str, T.Any]) -> dict[str, float]:
+    features = row.get("features")
+    if isinstance(features, dict):
+        return {str(key): _row_float(value) for key, value in features.items()}
+
+    features_json = row.get("features_json")
+    if isinstance(features_json, str) and features_json.strip():
+        try:
+            decoded = json.loads(features_json)
+        except json.JSONDecodeError:
+            decoded = {}
+        if isinstance(decoded, dict):
+            return {str(key): _row_float(value) for key, value in decoded.items()}
+
+    reserved = {
+        "split",
+        "source",
+        "sample_id",
+        "face_index",
+        "dataset",
+        "condition",
+        "candidate_name",
+        "candidate_nme",
+        "oracle_nme",
+        "regret_vs_oracle",
+        "normalized_regret",
+        "failure_label",
+        "large_regret_label",
+        "candidate_failure_or_high_gap",
+        "selection_cost",
+        "is_oracle",
+        "was_selected_by_current_policy",
+        "gap_vs_oracle",
+        "runtime_bucket",
+        "runtime_bucket_source",
+        "risk_route",
+        "geometry_veto_reasons",
+        "selected_by_current_policy",
+        "selected_candidate_missing_from_eval",
+        "oracle",
+        "features_json",
+    }
+    payload: dict[str, float] = {}
+    for key, value in row.items():
+        if key in reserved:
+            continue
+        try:
+            payload[str(key)] = float(value)
+        except (TypeError, ValueError):
+            continue
+    return payload
+
+
+def _context_rows_for_eval(context: T.Any) -> list[T.Any]:
+    row_payload = getattr(context, "scorer_rows", None)
+    if row_payload is not None:
+        return list(row_payload)
+    return rows_for_context(context)
+
+
+def row_contexts_from_scorer_rows(
+    scorer_rows: Path,
+) -> tuple[list[T.Any], dict[str, str]]:
+    """Build lightweight evaluation contexts directly from canonical scorer rows."""
+
+    dataset = read_scorer_dataset(scorer_rows)
+    source_rows = dataset.eval_rows or dataset.rows
+    if not source_rows:
+        raise ValueError(f"scorer rows {scorer_rows} did not contain any evaluation rows")
+
+    groups: dict[tuple[str, str, str, int], list[dict[str, T.Any]]] = defaultdict(list)
+    for row in source_rows:
+        split = str(row.get("split", "")).strip()
+        if split and split != "eval":
+            continue
+        sample_id = str(row.get("sample_id", "")).strip()
+        if not sample_id:
+            continue
+        source = str(row.get("source", "")).strip()
+        row_dataset = str(row.get("dataset", "")).strip()
+        face_index = _row_int(row.get("face_index", 0))
+        groups[(source, row_dataset, sample_id, face_index)].append(dict(row))
+
+    if not groups:
+        raise ValueError(f"scorer rows {scorer_rows} did not contain any eval rows")
+
+    contexts: list[T.Any] = []
+    source_by_sample_id: dict[str, str] = {}
+
+    for (source, row_dataset, sample_id, face_index), rows in sorted(groups.items()):
+        first = rows[0]
+        nme_by_candidate: dict[str, float] = {}
+        failure_by_candidate: dict[str, bool] = {}
+        metrics: dict[str, T.Any] = {}
+        candidates_payload: list[T.Any] = []
+        scorer_row_payload: list[T.Any] = []
+
+        oracle = str(first.get("oracle") or "")
+        current_policy_choice = str(first.get("selected_by_current_policy") or "")
+        runtime_bucket = str(first.get("runtime_bucket") or "")
+        runtime_bucket_source = str(first.get("runtime_bucket_source") or "")
+        condition = str(first.get("condition") or "")
+        selected_missing = _row_bool(first.get("selected_candidate_missing_from_eval", 0))
+
+        for row in rows:
+            candidate_name = str(row.get("candidate_name") or "").strip()
+            if not candidate_name:
+                continue
+            candidate_nme = _row_float(row.get("candidate_nme"))
+            candidate_failure = _row_bool(row.get("failure_label", row.get("candidate_failure_or_high_gap", 0)))
+            feature_values = _row_feature_values(row)
+            geometry_reasons = _row_geometry_reasons(row.get("geometry_veto_reasons"))
+
+            nme_by_candidate[candidate_name] = candidate_nme
+            failure_by_candidate[candidate_name] = candidate_failure
+            metrics[candidate_name] = SimpleNamespace(geometry_veto_reasons=geometry_reasons)
+            candidates_payload.append(SimpleNamespace(name=candidate_name))
+            scorer_row_payload.append(
+                SimpleNamespace(
+                    candidate_name=candidate_name,
+                    feature_values=feature_values,
+                )
+            )
+
+            if not oracle and _row_bool(row.get("is_oracle", 0)):
+                oracle = candidate_name
+            if not current_policy_choice and _row_bool(row.get("was_selected_by_current_policy", 0)):
+                current_policy_choice = candidate_name
+
+        if not nme_by_candidate:
+            continue
+
+        if not oracle:
+            oracle = min(nme_by_candidate, key=lambda name: (nme_by_candidate[name], name))
+        if not current_policy_choice or current_policy_choice not in nme_by_candidate:
+            current_policy_choice = oracle
+
+        contexts.append(
+            SimpleNamespace(
+                sample_id=sample_id,
+                face_index=face_index,
+                dataset=row_dataset,
+                source=source,
+                condition=condition,
+                candidates=tuple(candidates_payload),
+                metrics=metrics,
+                nme_by_candidate=nme_by_candidate,
+                failure_by_candidate=failure_by_candidate,
+                current_policy_choice=current_policy_choice,
+                selected_candidate_missing_from_eval=selected_missing,
+                oracle=oracle,
+                runtime_bucket=runtime_bucket,
+                runtime_bucket_source=runtime_bucket_source,
+                risk_route=str(first.get("risk_route") or ""),
+                candidate_extra_features={},
+                scorer_rows=tuple(scorer_row_payload),
+            )
+        )
+        if source:
+            source_by_sample_id[sample_id] = source
+
+    if not contexts:
+        raise ValueError(f"scorer rows {scorer_rows} did not produce any evaluation contexts")
+
+    return contexts, source_by_sample_id
+
+
 def evaluate_runtime_resolver_scorer(
     *,
     gt_manifest: Path | None,
@@ -553,6 +762,8 @@ def evaluate_runtime_resolver_scorer(
     candidates: T.Sequence[str],
     output_dir: Path,
     eval_split: Path | None = None,
+    scorer_rows: Path | None = None,
+    scorer_dataset: Path | None = None,
     failure_threshold: float = DEFAULT_FAILURE_THRESHOLD,
     outlier_threshold: float = DEFAULT_OUTLIER_THRESHOLD,
     epsilon_mean_nme: float = 0.001,
@@ -573,6 +784,14 @@ def evaluate_runtime_resolver_scorer(
             f"promotion_scope must be one of {PROMOTION_SCOPES}, got {promotion_scope!r}"
         )
     output_dir.mkdir(parents=True, exist_ok=True)
+    if scorer_dataset is not None and scorer_rows is None:
+        _dataset_dir, scorer_rows, _manifest = resolve_scorer_dataset_path(scorer_dataset)
+    if scorer_rows is not None and eval_split is None:
+        # Issue #206: canonical scorer rows are the training-to-eval handoff.
+        # In this migration slice, the existing evaluator still rebuilds
+        # contexts, but it filters them by the canonical eval rows instead of
+        # a per-scorer legacy eval CSV.
+        eval_split = scorer_rows
     scorer = load_runtime_resolver_scorer(scorer_path)
     assert_lower_score_is_better(scorer)
     binary_scorer = (
@@ -583,22 +802,28 @@ def evaluate_runtime_resolver_scorer(
     v2_scorer = None if v2_scorer_path is None else load_runtime_resolver_scorer(v2_scorer_path)
     if v2_scorer is not None:
         assert_lower_score_is_better(v2_scorer)
-    contexts = load_scorer_contexts(
-        gt_manifest=gt_manifest,
-        gt_cache_dir=gt_cache_dir,
-        production_manifest=production_manifest,
-        production_cache_dir=production_cache_dir,
-        weights_path=weights_path,
-        candidates=candidates,
-        failure_threshold=failure_threshold,
-        outlier_threshold=outlier_threshold,
-        allow_image_backfill=allow_image_backfill,
-        gt_hard_resolver_metadata=gt_hard_resolver_metadata,
-        require_gt_hard_metadata=not allow_derived_no_image_gt_hard,
-    )
     source_by_sample_id: dict[str, str] = {}
-    if eval_split is not None:
-        contexts, source_by_sample_id = filter_contexts_by_eval_split(contexts, eval_split)
+    if scorer_dataset is not None and scorer_rows is None:
+        _dataset_dir, scorer_rows, _manifest = resolve_scorer_dataset_path(scorer_dataset)
+
+    if scorer_rows is not None:
+        contexts, source_by_sample_id = row_contexts_from_scorer_rows(scorer_rows)
+    else:
+        contexts = load_scorer_contexts(
+            gt_manifest=gt_manifest,
+            gt_cache_dir=gt_cache_dir,
+            production_manifest=production_manifest,
+            production_cache_dir=production_cache_dir,
+            weights_path=weights_path,
+            candidates=candidates,
+            failure_threshold=failure_threshold,
+            outlier_threshold=outlier_threshold,
+            allow_image_backfill=allow_image_backfill,
+            gt_hard_resolver_metadata=gt_hard_resolver_metadata,
+            require_gt_hard_metadata=not allow_derived_no_image_gt_hard,
+        )
+        if eval_split is not None:
+            contexts, source_by_sample_id = filter_contexts_by_eval_split(contexts, eval_split)
     missing_current = [
         context.sample_id for context in contexts if context.selected_candidate_missing_from_eval
     ]
@@ -619,7 +844,7 @@ def evaluate_runtime_resolver_scorer(
     safe_fallback_count = 0
     hard_slice_fallback_count = 0
     for context in contexts:
-        context_rows = rows_for_context(context)
+        context_rows = _context_rows_for_eval(context)
         score_by_candidate = {
             row.candidate_name: scorer.score_feature_map(row.feature_values)
             for row in context_rows

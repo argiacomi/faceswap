@@ -1037,6 +1037,8 @@ def _command_scorer_eval(args: argparse.Namespace, paths: PipelinePaths) -> list
         str(paths.v2_scorer_artifact),
         "--eval-split",
         str(paths.continuous_scorer_eval_rows),
+        "--scorer-rows",
+        str(paths.scorer_rows_csv),
         "--candidates",
         args.candidates,
         "--output-dir",
