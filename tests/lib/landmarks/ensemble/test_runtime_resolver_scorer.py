@@ -13,6 +13,7 @@ import numpy as np
 import pytest
 
 import lib.landmarks.ensemble.runtime_resolver_scorer_data as scorer_data
+import lib.landmarks.ensemble.scorer_eval as scorer_eval_impl
 from lib.landmarks.cache.prediction_cache import DiskPredictionCache
 from lib.landmarks.core.schema import LandmarkPrediction
 from lib.landmarks.ensemble.promoted_setup import write_best_setup
@@ -1132,3 +1133,147 @@ def test_export_resolver_candidate_table_skips_missing_candidate_prediction(
     )
 
     assert report["row_count"] == 1
+
+
+
+def _write_canonical_scorer_rows(path: Path) -> Path:
+    fieldnames = [
+        "split",
+        "source",
+        "sample_id",
+        "face_index",
+        "dataset",
+        "condition",
+        "candidate_name",
+        "candidate_nme",
+        "oracle_nme",
+        "regret_vs_oracle",
+        "normalized_regret",
+        "failure_label",
+        "large_regret_label",
+        "candidate_failure_or_high_gap",
+        "selection_cost",
+        "is_oracle",
+        "was_selected_by_current_policy",
+        "gap_vs_oracle",
+        "runtime_bucket",
+        "runtime_bucket_source",
+        "risk_route",
+        "geometry_veto_reasons",
+        "selected_by_current_policy",
+        "selected_candidate_missing_from_eval",
+        "oracle",
+        "features_json",
+    ]
+
+    def row(split: str, sample_id: str, candidate: str, nme: float) -> dict[str, object]:
+        oracle_nme = 0.01
+        gap = nme - oracle_nme
+        return {
+            "split": split,
+            "source": "production_validated",
+            "sample_id": sample_id,
+            "face_index": 0,
+            "dataset": "production_validated",
+            "condition": "profile_left",
+            "candidate_name": candidate,
+            "candidate_nme": nme,
+            "oracle_nme": oracle_nme,
+            "regret_vs_oracle": gap,
+            "normalized_regret": max(gap, 0.0),
+            "failure_label": 0,
+            "large_regret_label": 0,
+            "candidate_failure_or_high_gap": 0,
+            "selection_cost": max(gap, 0.0),
+            "is_oracle": int(candidate == "hrnet"),
+            "was_selected_by_current_policy": int(candidate == "hrnet"),
+            "gap_vs_oracle": gap,
+            "runtime_bucket": "stored_profile_left",
+            "runtime_bucket_source": "stored_manifest_landmark_ensemble",
+            "risk_route": "low_risk",
+            "geometry_veto_reasons": "",
+            "selected_by_current_policy": "hrnet",
+            "selected_candidate_missing_from_eval": 0,
+            "oracle": "hrnet",
+            "features_json": json.dumps({f"candidate_name={candidate}": 1.0}, sort_keys=True),
+        }
+
+    rows = [
+        row("train", "train_sample", "hrnet", 0.01),
+        row("train", "train_sample", "spiga", 0.04),
+        row("train", "train_sample", "static_weighted_downweight", 0.02),
+        row("eval", "eval_sample", "hrnet", 0.01),
+        row("eval", "eval_sample", "spiga", 0.04),
+        row("eval", "eval_sample", "static_weighted_downweight", 0.02),
+    ]
+
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+    return path
+
+
+def test_row_contexts_from_scorer_rows_uses_only_eval_split(tmp_path: Path) -> None:
+    rows_path = _write_canonical_scorer_rows(tmp_path / "rows.csv")
+
+    contexts, source_by_sample_id = scorer_eval_impl.row_contexts_from_scorer_rows(rows_path)
+
+    assert [context.sample_id for context in contexts] == ["eval_sample"]
+    assert source_by_sample_id == {"eval_sample": "production_validated"}
+
+    context = contexts[0]
+    assert context.dataset == "production_validated"
+    assert context.source == "production_validated"
+    assert context.oracle == "hrnet"
+    assert context.current_policy_choice == "hrnet"
+    assert context.runtime_bucket == "stored_profile_left"
+    assert set(context.nme_by_candidate) == {
+        "hrnet",
+        "spiga",
+        "static_weighted_downweight",
+    }
+    assert len(context.scorer_rows) == 3
+
+
+def test_evaluate_runtime_resolver_scorer_uses_scorer_rows_without_context_rebuild(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rows_path = _write_canonical_scorer_rows(tmp_path / "rows.csv")
+    scorer_path = write_runtime_resolver_scorer(
+        RuntimeResolverScorer(
+            features=(
+                "candidate_name=hrnet",
+                "candidate_name=spiga",
+                "candidate_name=static_weighted_downweight",
+            ),
+            coefficients=(-5.0, 5.0, 0.0),
+            intercept=0.0,
+        ),
+        tmp_path / "runtime_resolver_scorer.json",
+    )
+
+    def fail_context_rebuild(**_kwargs: object) -> object:
+        raise AssertionError("row-backed evaluation must not rebuild scorer contexts")
+
+    monkeypatch.setattr(scorer_eval_impl, "load_scorer_contexts", fail_context_rebuild)
+
+    report = evaluate_runtime_resolver_scorer(
+        gt_manifest=None,
+        gt_cache_dir=None,
+        production_manifest=None,
+        production_cache_dir=None,
+        weights_path=tmp_path / "unused_weights.json",
+        scorer_path=scorer_path,
+        candidates=("hrnet", "spiga", "static_weighted_downweight"),
+        output_dir=tmp_path / "row_backed_eval",
+        scorer_rows=rows_path,
+        installed_scorer_dir=None,
+    )
+
+    assert report["sample_count"] == 1
+    assert report["production_only_policy_metrics"]["sample_count"] == 1
+    assert report["current_binary_logistic_scorer"]["pick_counts"] == {"hrnet": 1}
+    assert (tmp_path / "row_backed_eval" / "scorer_policy_eval_report.json").is_file()
