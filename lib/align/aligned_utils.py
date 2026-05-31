@@ -611,3 +611,42 @@ def points_to_68(
 
 
 __all__ = get_module_objects(__name__)
+
+
+def bbox_to_square_roi(batch: np.ndarray, scale: float) -> np.ndarray:
+    """Format a batch of detection bounding boxes into square ROI patches.
+
+    Used by aligner plugins that need a square crop centred on the
+    detector's box and scaled by a plugin-specific factor (ensemble,
+    SPIGA, HRNet — issue #195). The previous shape duplicated identical
+    NumPy expressions in three plugins; consolidating here keeps the
+    rounding / centring / dtype behaviour in lock-step.
+
+    Parameters
+    ----------
+    batch
+        A ``(N, 4)`` int / float array of detection bboxes in
+        ``[left, top, right, bottom]`` order.
+    scale
+        The crop-scale factor — each plugin's own padding multiplier
+        (e.g. ensemble uses its ``crop_scale``, HRNet uses ``1.25``).
+
+    Returns
+    -------
+    np.ndarray
+        ``(N, 4)`` int32 array of square ROI boxes in
+        ``[left, top, right, bottom]`` order.
+    """
+    heights = batch[:, 3] - batch[:, 1]
+    widths = batch[:, 2] - batch[:, 0]
+    ctr_x = np.rint((batch[:, 0] + batch[:, 2]) * 0.5).astype("int32")
+    ctr_y = np.rint((batch[:, 1] + batch[:, 3]) * 0.5).astype("int32")
+    side = np.maximum(widths, heights) * scale
+    half = np.rint(side * 0.5).astype("int32")
+
+    retval = np.empty((batch.shape[0], 4), dtype=np.int32)
+    retval[:, 0] = ctr_x - half
+    retval[:, 1] = ctr_y - half
+    retval[:, 2] = ctr_x + half
+    retval[:, 3] = ctr_y + half
+    return retval

@@ -42,6 +42,11 @@ from plugins.extract.base import ExtractPlugin
 
 from . import retinaface_defaults as cfg
 
+# ImageNet-style per-channel mean used by the RetinaFace pre-processing
+# step. Hoisted to module scope per issue #195 so the array is allocated
+# once at import rather than per RetinaFace instance.
+_AVERAGE_IMG: np.ndarray = np.array([[104.0, 117.0, 123.0]], dtype="float32")
+
 if T.TYPE_CHECKING:
     import numpy.typing as npt
 # pylint:disable=duplicate-code
@@ -60,7 +65,10 @@ class RetinaFace(ExtractPlugin):
             force_cpu=cfg.cpu(),
         )
         self.model: RetinaFaceModel
-        self._average_img = np.array([[104.0, 117.0, 123.0]], dtype="float32")
+        # ``_AVERAGE_IMG`` is a per-channel mean constant — hoisted to
+        # module scope so the array is allocated once instead of per
+        # RetinaFace instance (issue #195 medium-priority).
+        self._average_img = _AVERAGE_IMG
         self._confidence = cfg.confidence() / 100
         self._variance = [0.1, 0.2]
         self._priors = self._generate_priors()

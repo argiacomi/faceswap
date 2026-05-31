@@ -24,6 +24,13 @@ if T.TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Public parameter names surfaced in ``ExtractPlugin.__repr__`` (issue
+# #195 simplification — hoisted out of the comprehension so the
+# membership check is a single set lookup instead of a list scan).
+_REPR_PARAM_NAMES: frozenset[str] = frozenset(
+    {"input_size", "batch_size", "is_rgb", "dtype", "scale"}
+)
+
 
 class _TorchInfer:
     """Handles loading PyTorch models and handling data transfer for plugins that use PyTorch
@@ -54,36 +61,23 @@ class _TorchInfer:
         force_cpu = self.device.type == "cpu"
         return f"{self.__class__.__name__}(name={name}, force_cpu={force_cpu})"
 
-    def _get_device(self, cpu: bool = False) -> torch.device:
-        """Get the correctly configured device for running inference
-
-        Parameters
-        ----------
-        cpu
-            ``True`` to force running on the CPU.
-
-        Returns
-        -------
-        The device that torch should use
-        """
-        if cpu:
-            logger.debug("[%s] CPU mode selected. Returning CPU device context", self._name)
-            return torch.device("cpu")
-
-        if torch.cuda.is_available():
-            logger.debug("[%s] Cuda available. Returning Cuda device context", self._name)
-            return torch.device("cuda")
-
-        if torch.backends.mps.is_available():
-            logger.debug("[%s] MPS available. Returning MPS device context", self._name)
-            return torch.device("mps")
-
-        logger.debug("[%s] No backends available. Returning CPU device context", self._name)
-        return torch.device("cpu")
-
     @staticmethod
-    def _state_dict_from_checkpoint(checkpoint: T.Any) -> T.Any:
-        """Return a model state dict from common PyTorch checkpoint layouts."""
+    def _strip_prefix(state_dict: dict[str, T.Any], prefix: str) -> dict[str, T.Any]:
+        """Return ``state_dict`` with ``prefix`` stripped from string keys."""
+        return {
+            key[len(prefix) :] if isinstance(key, str) and key.startswith(prefix) else key: value
+            for key, value in state_dict.items()
+        }
+
+    @classmethod
+    def _state_dict_from_checkpoint(cls, checkpoint: T.Any) -> T.Any:
+        """Return a model state dict from common PyTorch checkpoint layouts.
+
+        Handles three layouts: a bare dict, ``{"state_dict": dict}``, and
+        either of those with leading ``module.`` / ``model.`` key
+        prefixes (issue #195 simplification — prefix stripping is now its
+        own helper for readability).
+        """
         if (
             isinstance(checkpoint, dict)
             and "state_dict" in checkpoint
@@ -96,12 +90,7 @@ class _TorchInfer:
 
         for prefix in ("module.", "model."):
             if any(isinstance(key, str) and key.startswith(prefix) for key in checkpoint):
-                return {
-                    key[len(prefix) :]
-                    if isinstance(key, str) and key.startswith(prefix)
-                    else key: value
-                    for key, value in checkpoint.items()
-                }
+                return cls._strip_prefix(checkpoint, prefix)
         return checkpoint
 
     def load_torch_model(
@@ -166,6 +155,21 @@ class _TorchInfer:
 
         self._first_batch_seen = True
 
+    def _to_device_tensor(self, batch: np.ndarray) -> torch.Tensor:
+        """Move a NumPy batch onto :attr:`device` as a channels-last tensor.
+
+        Issue #195 simplification — the pinned + non-pinned branches in
+        ``predict`` differed only by the pinning/non-blocking flags; the
+        common path lives here so ``predict`` stays focused on inference.
+        """
+        if self._use_pinned:
+            return (
+                torch.from_numpy(batch)
+                .pin_memory()
+                .to(self.device, non_blocking=True, memory_format=torch.channels_last)
+            )
+        return torch.from_numpy(batch).to(self.device, memory_format=torch.channels_last)
+
     def predict(self, batch: np.ndarray) -> np.ndarray:
         """Run inference on a PyTorch model.
 
@@ -184,18 +188,7 @@ class _TorchInfer:
             )
 
         with torch.inference_mode():
-            if self._use_pinned:
-                feed = (
-                    torch.from_numpy(batch)
-                    .pin_memory()
-                    .to(
-                        self.device,
-                        non_blocking=True,
-                        memory_format=torch.channels_last,
-                    )
-                )
-            else:
-                feed = torch.from_numpy(batch).to(self.device, memory_format=torch.channels_last)
+            feed = self._to_device_tensor(batch)
             out = self._model(feed)
 
             if not self._first_batch_seen:
@@ -271,11 +264,7 @@ class ExtractPlugin(abc.ABC):
 
     def __repr__(self) -> str:
         """Pretty print for logging"""
-        params = {
-            k: v
-            for k, v in self.__dict__.items()
-            if k in ["input_size", "batch_size", "is_rgb", "dtype", "scale"]
-        }
+        params = {k: v for k, v in self.__dict__.items() if k in _REPR_PARAM_NAMES}
         params["force_cpu"] = self.device.type == "cpu"
         s_params = ", ".join(f"{k}={repr(v)}" for k, v in params.items())
         return f"{self.__class__.__name__}({s_params})"

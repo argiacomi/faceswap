@@ -15,6 +15,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
+from lib.align.aligned_utils import bbox_to_square_roi
 from lib.utils import GetModel, get_module_objects
 from plugins.extract.base import ExtractPlugin
 
@@ -56,8 +57,11 @@ class HRNet(ExtractPlugin):
         self.model: HighResolutionNet
         self.realign_centering = "legacy"
 
-        self._mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
-        self._std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+        # Mean/std are constant ImageNet normalisation values — hoisted
+        # to ``_HRNET_MEAN`` / ``_HRNET_STD`` so the arrays are allocated
+        # once at import time instead of per HRNet instance (issue #195).
+        self._mean = _HRNET_MEAN
+        self._std = _HRNET_STD
         self._dark = Dark(68, self._hm_size) if cfg.dark_decoder() else None
 
     @classmethod
@@ -161,18 +165,7 @@ class HRNet(ExtractPlugin):
         -------
         The face detection bounding boxes formatted to take an image patch for prediction
         """
-        heights = batch[:, 3] - batch[:, 1]
-        widths = batch[:, 2] - batch[:, 0]
-        ctr_x = np.rint((batch[:, 0] + batch[:, 2]) * 0.5).astype("int32")
-        ctr_y = np.rint((batch[:, 1] + batch[:, 3]) * 0.5).astype("int32")
-        size = np.maximum(widths, heights) * 1.25
-        half = np.rint(size * 0.5).astype("int32")
-        retval = np.empty((batch.shape[0], 4), dtype=np.int32)
-        retval[:, 0] = ctr_x - half
-        retval[:, 1] = ctr_y - half
-        retval[:, 2] = ctr_x + half
-        retval[:, 3] = ctr_y + half
-        return retval
+        return bbox_to_square_roi(batch, _HRNET_CROP_SCALE)
 
     def process(self, batch: np.ndarray) -> np.ndarray:
         """Predict the 68 point landmarks

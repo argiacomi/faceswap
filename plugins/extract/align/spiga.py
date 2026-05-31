@@ -16,6 +16,7 @@ import numpy as np
 import torch
 from torch import nn
 
+from lib.align.aligned_utils import bbox_to_square_roi
 from lib.utils import FaceswapError, GetModelFromUrl, get_module_objects
 from plugins.extract.base import ExtractPlugin
 
@@ -301,19 +302,7 @@ class SPIGA(ExtractPlugin):
         -------
         The face detection bounding boxes formatted to take an image patch for prediction
         """
-        heights = batch[:, 3] - batch[:, 1]
-        widths = batch[:, 2] - batch[:, 0]
-        ctr_x = np.rint((batch[:, 0] + batch[:, 2]) * 0.5).astype("int32")
-        ctr_y = np.rint((batch[:, 1] + batch[:, 3]) * 0.5).astype("int32")
-        side = np.maximum(widths, heights) * self._target_dist
-        half = np.rint(side * 0.5).astype("int32")
-
-        retval = np.empty((batch.shape[0], 4), dtype=np.int32)
-        retval[:, 0] = ctr_x - half
-        retval[:, 1] = ctr_y - half
-        retval[:, 2] = ctr_x + half
-        retval[:, 3] = ctr_y + half
-        return retval
+        return bbox_to_square_roi(batch, self._target_dist)
 
     def process(self, batch: np.ndarray) -> np.ndarray:
         """Predict the face landmarks.

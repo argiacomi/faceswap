@@ -15,6 +15,7 @@ import typing as T
 
 import numpy as np
 
+from lib.align.aligned_utils import bbox_to_square_roi
 from lib.landmarks.adapters import (
     FaceswapAlignerAdapter,
     LandmarkAdapter,
@@ -483,18 +484,7 @@ class Ensemble(ExtractPlugin):
 
     def pre_process(self, batch: np.ndarray) -> np.ndarray:
         """Format detection boxes into a shared square ensemble crop."""
-        heights = batch[:, 3] - batch[:, 1]
-        widths = batch[:, 2] - batch[:, 0]
-        ctr_x = np.rint((batch[:, 0] + batch[:, 2]) * 0.5).astype("int32")
-        ctr_y = np.rint((batch[:, 1] + batch[:, 3]) * 0.5).astype("int32")
-        side = np.maximum(widths, heights) * self._crop_scale
-        half = np.rint(side * 0.5).astype("int32")
-
-        retval = np.empty((batch.shape[0], 4), dtype=np.int32)
-        retval[:, 0] = ctr_x - half
-        retval[:, 1] = ctr_y - half
-        retval[:, 2] = ctr_x + half
-        retval[:, 3] = ctr_y + half
+        retval = bbox_to_square_roi(batch, self._crop_scale)
         self.set_crop_matrices(roi_to_matrix(retval), detector_bboxes=batch)
         _trace(
             "[Ensemble] pre_process detector_bboxes=%s crop_rois=%s crop_scale=%s",

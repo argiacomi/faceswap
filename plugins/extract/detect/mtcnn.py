@@ -18,6 +18,11 @@ from . import mtcnn_defaults as cfg
 
 logger = logging.getLogger(__name__)
 
+# Reusable empty-bbox sentinel returned when R-Net has no candidates for a
+# given image. Avoids re-allocating ``np.array([])`` per empty result
+# (issue #195 medium-priority).
+_EMPTY_BBOX: np.ndarray = np.array([])
+
 
 class MTCNN(ExtractPlugin):
     """MTCNN detector for face recognition."""
@@ -324,7 +329,7 @@ class PNetRunner:
         in_side = 2 * size + 11
         stride = 0.0 if size == 1 else float(in_side - 12) / (size - 1)
         (var_x, var_y) = np.nonzero(class_probabilities >= self._threshold)
-        bbox = np.array([var_x, var_y]).T
+        bbox = np.column_stack((var_x, var_y))
 
         bbox = np.concatenate(
             (
@@ -335,9 +340,7 @@ class PNetRunner:
         )
         offset = roi[:4, var_x, var_y].T
         bbox = bbox + offset * 12.0 * scale
-        rectangles = np.concatenate(
-            (bbox, np.array([class_probabilities[var_x, var_y]]).T), axis=1
-        )
+        rectangles = np.concatenate((bbox, class_probabilities[var_x, var_y][:, None]), axis=1)
         rectangles = rect2square(rectangles)
 
         np.clip(rectangles[..., :4], 0.0, self._input_size, out=rectangles[..., :4])
@@ -503,7 +506,7 @@ class RNetRunner:
         pick = np.nonzero(prob >= self._threshold)
 
         bbox = rectangles.T[:4, pick]
-        scores = np.array([prob[pick]]).T.ravel()
+        scores = prob[pick].ravel()
         deltas = roi.T[:4, pick]
 
         dims = np.tile([bbox[2] - bbox[0], bbox[3] - bbox[1]], (2, 1, 1))
@@ -532,7 +535,7 @@ class RNetRunner:
         ret: list[np.ndarray] = []
         for idx, (rectangles, image) in enumerate(zip(rectangle_batch, images, strict=False)):
             if not np.any(rectangles):
-                ret.append(np.array([]))
+                ret.append(_EMPTY_BBOX)
                 continue
 
             batch = np.empty((rectangles.shape[0], 24, 24, 3), dtype="float32")
@@ -668,10 +671,10 @@ class ONetRunner:
         """
         prob = class_probabilities[:, 1]
         pick = np.nonzero(prob >= self._threshold)[0]
-        scores = np.array([prob[pick]]).T.ravel()
+        scores = prob[pick].ravel()
 
         bbox = rectangles[pick]
-        dims = np.array([bbox[..., 2] - bbox[..., 0], bbox[..., 3] - bbox[..., 1]]).T
+        dims = np.column_stack((bbox[..., 2] - bbox[..., 0], bbox[..., 3] - bbox[..., 1]))
 
         pts = (
             np.vstack(np.hsplit(points[pick], 2))
