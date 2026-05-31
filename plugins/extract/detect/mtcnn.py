@@ -105,7 +105,7 @@ class MTCNN(ExtractPlugin):
         )
 
         placeholder_shape = (self.batch_size, self.input_size, self.input_size, 3)
-        placeholder = np.zeros(placeholder_shape, dtype="float32")
+        placeholder = np.zeros(placeholder_shape, dtype="float32")  # type: ignore[var-annotated]
 
         model.detect_faces(placeholder)
         logger.debug("[%s] Loaded model", self.name)
@@ -139,8 +139,8 @@ class MTCNN(ExtractPlugin):
         The batch of detection results from the model
         """
         prediction, points = self.model.detect_faces(batch)
-        logger.trace(
-            "prediction: %s, mtcnn_points: %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "prediction: %s, mtcnn_points: %s",
             prediction,
             points,
         )
@@ -158,7 +158,7 @@ class MTCNN(ExtractPlugin):
         -------
         The processed detection bounding box from the model at model input size
         """
-        return np.array([p[..., :4] for p in batch], dtype="object")
+        return np.array([p[..., :4] for p in batch], dtype="object")  # type: ignore[no-any-return]
 
 
 # MTCNN Detector
@@ -268,7 +268,7 @@ class PNetRunner:
     ) -> None:
         logger.debug(parse_class_init(locals()))
         self._model = PNet(weights_path)
-        self._model.to(device, memory_format=torch.channels_last)  # type:ignore[call-overload]
+        self._model.to(device, memory_format=torch.channels_last)
         self.device = device
 
         self._input_size = input_size
@@ -350,7 +350,7 @@ class PNetRunner:
                 rectangles[..., 3] > rectangles[..., 1],
             )
         )[0]
-        rect = rectangles[pick, :4].astype("int")
+        rect = rectangles[pick, :4].astype("int")  # type: ignore[var-annotated]
         scores = rectangles[pick, 4]
 
         return nms(rect, scores, 0.3, "iou")
@@ -475,7 +475,7 @@ class RNetRunner:
     ) -> None:
         logger.debug(parse_class_init(locals()))
         self._model = RNet(weights_path)
-        self._model.to(device, memory_format=torch.channels_last)  # type:ignore[call-overload]
+        self._model.to(device, memory_format=torch.channels_last)
         self.device = device
         self._input_size = input_size
         self._threshold = threshold
@@ -636,7 +636,7 @@ class ONetRunner:
     ) -> None:
         logger.debug(parse_class_init(locals()))
         self._model = ONet(weights_path)
-        self._model.to(device, memory_format=torch.channels_last)  # type:ignore[call-overload]
+        self._model.to(device, memory_format=torch.channels_last)
         self.device = device
         self._input_size = input_size
         self._threshold = threshold

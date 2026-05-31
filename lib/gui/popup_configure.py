@@ -805,7 +805,7 @@ class _Presets():
             logger.debug("%s cancelled", action.title())
 
         self._raise_toplevel()
-        return filename
+        return filename  # type: ignore[no-any-return]
 
     def _get_initial_filename(self) -> str:
         """Obtain the initial filename for saving a preset.

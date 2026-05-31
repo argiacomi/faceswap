@@ -45,7 +45,7 @@ def test_runtime_bucket_family_is_canonical() -> None:
 
 
 def _face() -> np.ndarray:
-    points = np.zeros((68, 2), dtype="float32")
+    points = np.zeros((68, 2), dtype="float32")  # type: ignore[var-annotated]
     points[0:17, 0] = np.linspace(40, 160, 17)
     points[0:17, 1] = 120 + 30 * np.sin(np.linspace(0, np.pi, 17))
     points[17:22, 0] = np.linspace(50, 90, 5)
@@ -578,7 +578,7 @@ def test_learned_quality_policy_rejects_consensus_collapse_fusion_for_best_singl
 def test_runtime_resolver_records_eye_visual_evidence_for_runtime_bucket() -> None:
     """Eye visual evidence is diagnostic and stays within the canonical bucket family."""
     base = _face()
-    crop = np.full((200, 200, 3), 0.55, dtype="float32")
+    crop = np.full((200, 200, 3), 0.55, dtype="float32")  # type: ignore[var-annotated]
     for y in range(75, 96):
         for x in range(52, 90):
             crop[y, x] = 0.05 if (x + y) % 2 else 0.95

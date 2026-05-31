@@ -17,7 +17,7 @@ from lib.gui.services.command_builder import CommandBuilder
 from tests.lib.gui._qt_helpers import option_spec as _option_spec
 
 
-def _command_panel(*options):  # type:ignore[no-untyped-def]
+def _command_panel(*options):
     """Return a CommandPanel backed by a single extract command.
 
     Wraps the shared ``tests.lib.gui._qt_helpers.command_panel`` helper but
@@ -31,7 +31,7 @@ def _command_panel(*options):  # type:ignore[no-untyped-def]
     return CommandPanel(CommandSchema((CommandSpec("faceswap", "extract", tuple(options)),)))
 
 
-def test_radio_option_extracts_and_restores_value(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_radio_option_extracts_and_restores_value(qtbot) -> None:
     """Radio metadata should render exclusive choices and restore stored values."""
     panel = _command_panel(
         _option_spec(
@@ -59,7 +59,7 @@ def test_radio_option_extracts_and_restores_value(qtbot) -> None:  # type:ignore
     assert panel.command_spec()[2] == {"--mode": "one"}
 
 
-def test_multi_option_extracts_and_restores_values(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_multi_option_extracts_and_restores_values(qtbot) -> None:
     """Multi-option metadata should emit selected choices and restore stored choices."""
     panel = _command_panel(
         _option_spec(
@@ -90,7 +90,7 @@ def test_multi_option_extracts_and_restores_values(qtbot) -> None:  # type:ignor
     assert panel.command_spec()[2] == {"--features": ["fast", "slow"]}
 
 
-def test_empty_multi_option_skips_cli_emission(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_empty_multi_option_skips_cli_emission(qtbot) -> None:
     """An empty multi-option selection should be omitted from built CLI args."""
     panel = _command_panel(
         _option_spec(
@@ -112,7 +112,7 @@ def test_empty_multi_option_skips_cli_emission(qtbot) -> None:  # type:ignore[no
     assert CommandBuilder.build_options(panel.command_spec()[2]) == []
 
 
-def test_store_false_checkbox_emits_when_unchecked(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_store_false_checkbox_emits_when_unchecked(qtbot) -> None:
     """store_false checkboxes should emit their switch when unchecked."""
     panel = _command_panel(
         _option_spec(
@@ -143,7 +143,7 @@ def test_store_false_checkbox_emits_when_unchecked(qtbot) -> None:  # type:ignor
     assert CommandBuilder.build_options(panel.command_spec()[2]) == ["--disable-feature"]
 
 
-def test_int_slider_extracts_restores_and_clamps(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_int_slider_extracts_restores_and_clamps(qtbot) -> None:
     """Integer sliders should sync their line edit, restore values and clamp bounds."""
     panel = _command_panel(
         _option_spec(
@@ -194,7 +194,7 @@ def test_int_slider_extracts_restores_and_clamps(qtbot) -> None:  # type:ignore[
     assert line_edit.text() == "64"
 
 
-def test_float_slider_extracts_rounds_and_clamps(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_float_slider_extracts_rounds_and_clamps(qtbot) -> None:
     """Float sliders should preserve configured precision and clamp bounds."""
     panel = _command_panel(
         _option_spec(
@@ -235,7 +235,7 @@ def test_float_slider_extracts_rounds_and_clamps(qtbot) -> None:  # type:ignore[
     assert line_edit.text() == "0.5"
 
 
-def test_browse_buttons_get_stable_object_names(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_browse_buttons_get_stable_object_names(qtbot) -> None:
     """Path options should wrap line edits with browse buttons named by mode."""
     panel = _command_panel(
         _option_spec(
@@ -256,7 +256,7 @@ def test_browse_buttons_get_stable_object_names(qtbot) -> None:  # type:ignore[n
     assert isinstance(panel.renderer.widget_for_switch("-i"), QLineEdit)
 
 
-def test_group_sections_render_labels_and_containers(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_group_sections_render_labels_and_containers(qtbot) -> None:
     """Grouped options should render titled group sections."""
     panel = _command_panel(
         _option_spec("Input", "-i", group="Data"),
@@ -273,7 +273,7 @@ def test_group_sections_render_labels_and_containers(qtbot) -> None:  # type:ign
     assert set(panel.renderer.rendered_switches) == {"-i", "-o", "--debug"}
 
 
-def test_choice_clusters_render_as_titled_groupboxes(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_choice_clusters_render_as_titled_groupboxes(qtbot) -> None:
     """Radio and multi-select clusters should render inside titled QGroupBoxes.
 
     Tk renders each detector/aligner/mask plugin cluster inside a bordered
@@ -311,7 +311,7 @@ def test_choice_clusters_render_as_titled_groupboxes(qtbot) -> None:  # type:ign
     assert len(clusters) == 2
 
 
-def test_plain_bool_options_pack_into_horizontal_cluster(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_plain_bool_options_pack_into_horizontal_cluster(qtbot) -> None:
     """Plain boolean options should be collected into a horizontal grid (Tk parity).
 
     Tk renders boolean controls in a shared ``checkbuttons_frame`` so options like
@@ -343,7 +343,7 @@ def test_plain_bool_options_pack_into_horizontal_cluster(qtbot) -> None:  # type
     assert rows == {0}, f"Expected all checkboxes on row 0, got rows: {rows}"
 
 
-def test_required_option_label_renders_asterisk(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_required_option_label_renders_asterisk(qtbot) -> None:
     """Required options should render a red-asterisk marker in their label."""
     from PySide6.QtCore import Qt
 
@@ -359,12 +359,12 @@ def test_required_option_label_renders_asterisk(qtbot) -> None:  # type:ignore[n
     assert len(labels) == 1
     assert "Input Dir" in labels[0].text()
     assert "*" in labels[0].text()
-    assert labels[0].textFormat() == Qt.RichText
+    assert labels[0].textFormat() == Qt.RichText  # type: ignore[attr-defined]
     assert labels[0].property("required") is True
     assert [lbl.text() for lbl in plain_labels] == ["Optional"]
 
 
-def test_required_flag_drives_validation(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_required_flag_drives_validation(qtbot) -> None:
     """The explicit is_required flag should trigger inline validation."""
     panel = _command_panel(
         _option_spec("Model Dir", "-m", is_required=True),
@@ -378,7 +378,7 @@ def test_required_flag_drives_validation(qtbot) -> None:  # type:ignore[no-untyp
     assert panel.validation_errors() == ()
 
 
-def test_file_filter_threaded_to_qfile_dialog(monkeypatch, qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_file_filter_threaded_to_qfile_dialog(monkeypatch, qtbot) -> None:
     """OptionSpec.file_filter must be passed to QFileDialog browsers."""
     from PySide6.QtWidgets import QFileDialog
 
@@ -421,7 +421,7 @@ def test_file_filter_threaded_to_qfile_dialog(monkeypatch, qtbot) -> None:  # ty
     assert captured["save"] == "Images (*.png *.jpg);;All files (*)"
 
 
-def test_group_section_collapses_when_unchecked(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_group_section_collapses_when_unchecked(qtbot) -> None:
     """Toggling the drawer should hide all fields in that group."""
     panel = _command_panel(
         _option_spec("Input", "-i", group="Data"),
@@ -439,7 +439,7 @@ def test_group_section_collapses_when_unchecked(qtbot) -> None:  # type:ignore[n
     assert all(field.isVisibleTo(group) for field in fields)
 
 
-def test_advanced_toggle_filters_advanced_options(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_advanced_toggle_filters_advanced_options(qtbot) -> None:
     """The 'Show advanced' toggle should hide is_advanced options when off."""
     panel = _command_panel(
         _option_spec("Basic", "-b"),
@@ -460,7 +460,7 @@ def test_advanced_toggle_filters_advanced_options(qtbot) -> None:  # type:ignore
     assert set(panel.renderer.rendered_switches) == {"-b"}
 
 
-def test_advanced_toggle_hidden_when_no_advanced_options(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_advanced_toggle_hidden_when_no_advanced_options(qtbot) -> None:
     """The advanced toggle hides itself when the current command has no advanced options."""
     panel = _command_panel(
         _option_spec("Basic", "-b"),
@@ -472,7 +472,7 @@ def test_advanced_toggle_hidden_when_no_advanced_options(qtbot) -> None:  # type
     assert toggle.isHidden() is True
 
 
-def test_inline_error_clears_when_required_field_filled(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_inline_error_clears_when_required_field_filled(qtbot) -> None:
     """Inline validation error label should hide once a required field is provided."""
     panel = _command_panel(_option_spec("Model", "-m", is_required=True))
     qtbot.addWidget(panel)
@@ -491,7 +491,7 @@ def test_inline_error_clears_when_required_field_filled(qtbot) -> None:  # type:
     assert panel.validation_errors() == ()
 
 
-def test_group_drawer_uses_disclosure_arrow_not_checkbox(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_group_drawer_uses_disclosure_arrow_not_checkbox(qtbot) -> None:
     """Group drawers must use a QToolButton with arrow indicator, not a QCheckBox.
 
     Regression for an earlier iteration where QGroupBox.setCheckable rendered a
@@ -516,16 +516,16 @@ def test_group_drawer_uses_disclosure_arrow_not_checkbox(qtbot) -> None:  # type
     assert toggle.text() == "Data"
     assert toggle.isCheckable() is True
     assert toggle.isChecked() is True
-    assert toggle.arrowType() == Qt.DownArrow
+    assert toggle.arrowType() == Qt.DownArrow  # type: ignore[attr-defined]
 
     drawer.setChecked(False)
-    assert toggle.arrowType() == Qt.RightArrow
+    assert toggle.arrowType() == Qt.RightArrow  # type: ignore[attr-defined]
 
     drawer.setChecked(True)
-    assert toggle.arrowType() == Qt.DownArrow
+    assert toggle.arrowType() == Qt.DownArrow  # type: ignore[attr-defined]
 
 
-def test_helptext_remains_tooltip_only_no_inline_hint(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_helptext_remains_tooltip_only_no_inline_hint(qtbot) -> None:
     """Helptext is exposed via tooltips; no inline hint label is rendered.
 
     Regression for an earlier iteration where every option grew a multi-line

@@ -6,7 +6,7 @@ from __future__ import annotations
 from PySide6.QtWidgets import QLineEdit
 
 
-def _panel():  # type:ignore[no-untyped-def]
+def _panel():
     """Return a CommandPanel with multiple simple commands."""
     from lib.gui.qt_shell.command_panel import CommandPanel
     from lib.gui.qt_shell.command_schema import CommandSchema, CommandSpec, OptionSpec
@@ -21,14 +21,14 @@ def _panel():  # type:ignore[no-untyped-def]
     return CommandPanel(schema)
 
 
-def _line_edit(panel, switch: str) -> QLineEdit:  # type:ignore[no-untyped-def]
+def _line_edit(panel, switch: str) -> QLineEdit:
     """Return the line edit for a rendered switch."""
     widget = panel.renderer.widget_for_switch(switch)
     assert isinstance(widget, QLineEdit)
     return widget
 
 
-def test_command_option_state_preserves_values_across_switches(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_command_option_state_preserves_values_across_switches(qtbot) -> None:
     """Switching commands should cache previous command values and restore them later."""
     panel = _panel()
     qtbot.addWidget(panel)
@@ -46,7 +46,7 @@ def test_command_option_state_preserves_values_across_switches(qtbot) -> None:  
     assert panel.command_spec()[2] == {"-m": "/models"}
 
 
-def test_command_option_state_caches_programmatic_set_command_values(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_command_option_state_caches_programmatic_set_command_values(qtbot) -> None:
     """Project/session command restore should seed the per-command cache."""
     panel = _panel()
     qtbot.addWidget(panel)
@@ -58,7 +58,7 @@ def test_command_option_state_caches_programmatic_set_command_values(qtbot) -> N
     assert panel.command_spec()[2] == {"-o": "/output"}
 
 
-def test_command_option_state_clear_values_drops_active_command_cache(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_command_option_state_clear_values_drops_active_command_cache(qtbot) -> None:
     """Clear should reset the active command and not restore stale cached values."""
     panel = _panel()
     qtbot.addWidget(panel)

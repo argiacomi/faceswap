@@ -139,7 +139,7 @@ class RetinaFace(ExtractPlugin):
         -------
         The batch of images ready for feeding the model
         """
-        return (batch - self._average_img).transpose(0, 3, 1, 2)
+        return (batch - self._average_img).transpose(0, 3, 1, 2)  # type: ignore[no-any-return]
 
     def process(self, batch: np.ndarray) -> np.ndarray:
         """Run model to get predictions
@@ -239,7 +239,7 @@ class RetinaFace(ExtractPlugin):
         batch_boxes = self._decode(locs) * self.input_size
         batch_scores = T.cast("npt.NDArray[np.float32]", confidence[:, :, 1])
         batch_mask = batch_scores > self._confidence
-        final_boxes = []
+        final_boxes = []  # type: ignore[var-annotated]
         for boxes, scores, mask in zip(batch_boxes, batch_scores, batch_mask, strict=False):
             scores = scores[mask]
             if scores.size == 0:
@@ -251,7 +251,7 @@ class RetinaFace(ExtractPlugin):
             detections = np.hstack([boxes[order], scores[order][:, None]])
             final_boxes.append(self._nms(detections)[..., :4])
 
-        retval = np.empty(len(final_boxes), dtype=object)
+        retval = np.empty(len(final_boxes), dtype=object)  # type: ignore[var-annotated]
         retval[:] = final_boxes
         return retval
 

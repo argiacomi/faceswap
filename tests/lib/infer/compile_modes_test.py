@@ -32,7 +32,7 @@ class _CompileModule(torch.nn.Module):
     def forward(self, *args, **kwargs):  # pylint:disable=unused-argument
         raise NotImplementedError
 
-    def compile(self, **kwargs) -> None:  # type:ignore[override]
+    def compile(self, **kwargs) -> None:
         self.calls.append(kwargs)
         self._compiled_call_impl = object()
         response = self._responses.pop(0)
@@ -152,7 +152,7 @@ def test_logs_include_backend_mode_and_fallback(caplog) -> None:
         patch("lib.infer.plugin_utils.warmup_plugin", return_value=False),
         caplog.at_level(logging.INFO),
     ):
-        compile_models(_Plugin(), [module], policy)
+        compile_models(_Plugin(), [module], policy)  # type: ignore[arg-type]
 
     assert "backend=nvidia" in caplog.text
     assert "mode=default" in caplog.text
@@ -170,7 +170,7 @@ def test_compile_models_dedupes_duplicate_module_references() -> None:
     policy = CompilePolicy("default", "default", "nvidia")
 
     with patch("lib.infer.plugin_utils.warmup_plugin", return_value=False):
-        compile_models(_Plugin(), [module, module], policy)
+        compile_models(_Plugin(), [module, module], policy)  # type: ignore[arg-type]
 
     assert len(module.calls) == 1
 
@@ -185,7 +185,7 @@ def test_compile_models_falls_back_to_eager_when_compiled_warmup_fails(caplog) -
         patch("lib.infer.plugin_utils.warmup_plugin", side_effect=[False, None, False]),
         caplog.at_level(logging.INFO),
     ):
-        compile_models(_Plugin(), [module], policy)
+        compile_models(_Plugin(), [module], policy)  # type: ignore[arg-type]
 
     assert getattr(module, "_compiled_call_impl", None) is None
     assert "First compiled execution warmup failed" in caplog.text
@@ -203,7 +203,7 @@ def test_compile_models_logs_failed_eager_fallback_when_rewarmup_fails(caplog) -
         patch("lib.infer.plugin_utils.warmup_plugin", side_effect=[False, None, None]),
         caplog.at_level(logging.INFO),
     ):
-        compile_models(_Plugin(), [module], policy)
+        compile_models(_Plugin(), [module], policy)  # type: ignore[arg-type]
 
     assert getattr(module, "_compiled_call_impl", None) is None
     assert "First compiled execution warmup failed" in caplog.text
@@ -226,7 +226,7 @@ def test_compile_models_skips_orformer_on_mps(caplog) -> None:
         patch("lib.infer.plugin_utils.warmup_plugin", return_value=False),
         caplog.at_level(logging.INFO),
     ):
-        compile_models(_OrformerPlugin(), [module], policy)
+        compile_models(_OrformerPlugin(), [module], policy)  # type: ignore[arg-type]
 
     assert module.calls == []
     assert "Skipping torch.compile on Apple Silicon for ORFormer" in caplog.text
@@ -242,7 +242,7 @@ def test_compile_models_skips_spiga_on_mps(caplog) -> None:
         patch("lib.infer.plugin_utils.warmup_plugin", return_value=True),
         caplog.at_level(logging.INFO),
     ):
-        compile_models(_SpigaPlugin(), [module], policy)
+        compile_models(_SpigaPlugin(), [module], policy)  # type: ignore[arg-type]
 
     assert module.calls == []
     assert "Skipping torch.compile on Apple Silicon for SPIGA" in caplog.text

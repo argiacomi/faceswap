@@ -94,7 +94,7 @@ class FAN(ExtractPlugin):
         retval[:, 1] = ctr_y - half + tl_offset
         retval[:, 2] = ctr_x + half
         retval[:, 3] = ctr_y + half
-        return retval
+        return retval  # type: ignore[no-any-return]
 
     def process(self, batch: np.ndarray) -> np.ndarray:
         """Predict the 68 point landmarks
@@ -123,7 +123,7 @@ class FAN(ExtractPlugin):
         The final landmarks in 0-1 space
         """
         if self._dark is not None:
-            return self._dark(batch) / 64.0
+            return self._dark(batch) / 64.0  # type: ignore[no-any-return]
         num_images, num_landmarks, height, width = batch.shape
         assert height == width, "Heatmaps must be square"
         resolution = height
@@ -160,7 +160,7 @@ class FAN(ExtractPlugin):
         subpixel_landmarks[..., 0] = indices[1] + x_delta + 0.5
         subpixel_landmarks[..., 1] = indices[0] + y_delta + 0.5
         subpixel_landmarks /= resolution
-        return subpixel_landmarks
+        return subpixel_landmarks  # type: ignore[no-any-return]
 
 
 class ConvBlock(nn.Module):

@@ -470,7 +470,7 @@ class Faceqa:  # pylint:disable=invalid-name
         """
         cached = getattr(self, "_shared_frames_loader", None)
         if cached is not None:
-            return cached
+            return cached  # type: ignore[no-any-return]
         frames_dir = getattr(self._args, "frames_dir", None)
         if not frames_dir:
             return None

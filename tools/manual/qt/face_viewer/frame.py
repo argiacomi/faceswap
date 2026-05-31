@@ -67,10 +67,10 @@ class CrossFrameFaceGridPanel(QListWidget):
         self.setResizeMode(QListView.Adjust)
         self.setWrapping(True)
         self.setSelectionMode(QListWidget.ExtendedSelection)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)  # type: ignore[attr-defined]
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)  # type: ignore[attr-defined]
         self.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
-        self.setFocusPolicy(Qt.StrongFocus)
+        self.setFocusPolicy(Qt.StrongFocus)  # type: ignore[attr-defined]
         self.setMouseTracking(True)
         self.viewport().setMouseTracking(True)
         self.setSpacing(1)
@@ -87,7 +87,7 @@ class CrossFrameFaceGridPanel(QListWidget):
         self._mask_opacity = 50
         self._render_requests: tuple[FaceGridRenderRequest, ...] = ()
         self.itemClicked.connect(self._on_item_clicked)
-        self.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.setContextMenuPolicy(Qt.CustomContextMenu)  # type: ignore[attr-defined]
         self.customContextMenuRequested.connect(self._on_context_menu_requested)
         self.set_face_size(self._face_size_name)
 
@@ -162,8 +162,8 @@ class CrossFrameFaceGridPanel(QListWidget):
             self.clear()
             if not self._entries:
                 item = QListWidgetItem("No faces match current filter")
-                item.setFlags(Qt.NoItemFlags)
-                item.setTextAlignment(Qt.AlignCenter)
+                item.setFlags(Qt.NoItemFlags)  # type: ignore[attr-defined]
+                item.setTextAlignment(Qt.AlignCenter)  # type: ignore[attr-defined]
                 self.addItem(item)
                 self._render_requests = ()
                 return
@@ -211,7 +211,7 @@ class CrossFrameFaceGridPanel(QListWidget):
                 and entry.frame_index == frame_index
                 and entry.face_index == face_index
             ):
-                return item
+                return item  # type: ignore[no-any-return]
         return None
 
     def select_face(self, frame_index: int, face_index: int) -> bool:
@@ -267,13 +267,13 @@ class CrossFrameFaceGridPanel(QListWidget):
         super().leaveEvent(event)
 
     def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa:N802
-        if event.key() in (Qt.Key_Return, Qt.Key_Enter):
+        if event.key() in (Qt.Key_Return, Qt.Key_Enter):  # type: ignore[attr-defined]
             entry = self._current_entry()
             if entry is not None:
                 self.face_activated.emit(entry.frame_index, entry.face_index)
                 event.accept()
                 return
-        if event.key() == Qt.Key_Delete:
+        if event.key() == Qt.Key_Delete:  # type: ignore[attr-defined]
             selected = self.selected_entry_keys()
             if selected:
                 self.faces_delete_requested.emit(selected)

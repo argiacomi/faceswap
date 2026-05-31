@@ -31,7 +31,7 @@ def _points(offset: float = 0.0) -> np.ndarray:
         ),
         axis=1,
     )
-    return points + offset
+    return points + offset  # type: ignore[no-any-return]
 
 
 def test_disk_prediction_cache_round_trip(tmp_path: Path) -> None:

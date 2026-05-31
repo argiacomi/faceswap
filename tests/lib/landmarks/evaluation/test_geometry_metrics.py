@@ -17,7 +17,7 @@ from lib.landmarks.evaluation.geometry_signals import alignment_summary
 
 
 def _truth_face() -> np.ndarray:
-    points = np.zeros((68, 2), dtype="float32")
+    points = np.zeros((68, 2), dtype="float32")  # type: ignore[var-annotated]
     points[0:17, 0] = np.linspace(40, 160, 17)
     points[0:17, 1] = 120 + 30 * np.sin(np.linspace(0, np.pi, 17))
     points[17:22, 0] = np.linspace(50, 90, 5)

@@ -11,7 +11,7 @@ from lib.infer.objects import FrameFaces, frame_faces_to_alignment
 
 def test_frame_faces_to_alignment_persists_landmark_metadata() -> None:
     """Resolver debug metadata is serialized into alignment face entries."""
-    landmarks = np.zeros((1, 68, 2), dtype="float32")
+    landmarks = np.zeros((1, 68, 2), dtype="float32")  # type: ignore[var-annotated]
     media = FrameFaces(
         "frame.png",
         np.zeros((16, 16, 3), dtype="uint8"),

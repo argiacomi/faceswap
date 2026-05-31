@@ -116,8 +116,8 @@ class FromFaces:
         frame_name = src.source_filename
         face_index = src.face_index
 
-        logger.trace(
-            "Extracted alignment for frame: '%s', face index: %s",  # type:ignore
+        logger.trace(  # type: ignore[attr-defined]
+            "Extracted alignment for frame: '%s', face index: %s",
             frame_name,
             face_index,
         )
@@ -189,8 +189,8 @@ class FromFaces:
         face.from_alignment(alignment)
         new_filename = f"{os.path.splitext(source_info.source_filename)[0]}_{new_index}.png"
 
-        logger.trace(
-            "Updating png header for '%s': (face index from %s to %s, "  # type:ignore
+        logger.trace(  # type: ignore[attr-defined]
+            "Updating png header for '%s': (face index from %s to %s, "
             "original filename from '%s' to '%s'",
             face_path,
             source_info.face_index,
@@ -269,7 +269,7 @@ class Rename:
             self._faces = faces
         else:
             assert arguments is not None
-            self._faces = Faces(arguments.faces_dir, **kwargs)  # type:ignore  # needs TypedDict :/
+            self._faces = Faces(arguments.faces_dir, **kwargs)  # needs TypedDict :/
         logger.debug("Initialized %s", self.__class__.__name__)
 
     def process(self) -> None:

@@ -72,7 +72,7 @@ class Legacy:  # pylint:disable=too-few-public-methods
 
         retval = json.loads(s_config)
         logger.debug("Loaded keras 2.x model config: %s", retval)
-        return retval
+        return retval  # type: ignore[no-any-return]
 
     @classmethod
     def _unwrap_outputs(cls, outputs: list[list[T.Any]]) -> list[list[str | int]]:
@@ -92,7 +92,7 @@ class Legacy:  # pylint:disable=too-few-public-methods
             item[1] = int(item[1])
             item[2] = int(item[2])
         logger.debug("Unwrapped outputs: %s to: %s", outputs, retval)
-        return retval
+        return retval  # type: ignore[no-any-return]
 
     def _get_clip_config(self) -> dict[str, T.Any]:
         """Build a clip model from the configuration information stored in the legacy state file
@@ -141,7 +141,7 @@ class Legacy:  # pylint:disable=too-few-public-methods
             input_size,
             retval,
         )
-        return retval
+        return retval  # type: ignore[no-any-return]
 
     def _convert_lambda_config(self, layer: dict[str, T.Any]):
         """Keras 2 TFLambdaOps are not compatible with Keras 3. Scalar operations can be

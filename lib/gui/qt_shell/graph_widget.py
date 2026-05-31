@@ -168,7 +168,7 @@ class TrainingGraphWidget(QWidget):
         finally:
             painter.end()
 
-    def wheelEvent(self, event) -> None:  # type:ignore[no-untyped-def] # noqa:N802
+    def wheelEvent(self, event) -> None:  # noqa:N802
         """Zoom graph history with the mouse wheel.
 
         Holding Shift mirrors Tk-style value-axis zoom while the default wheel zooms x/history.
@@ -182,7 +182,7 @@ class TrainingGraphWidget(QWidget):
             self.zoom_in() if vertical else self.zoom_out()
         event.accept()
 
-    def mousePressEvent(self, event) -> None:  # type:ignore[no-untyped-def] # noqa:N802
+    def mousePressEvent(self, event) -> None:  # noqa:N802
         """Start graph panning."""
         if event.button() == Qt.MouseButton.LeftButton:
             self._drag_start = (float(event.position().x()), float(event.position().y()))
@@ -190,7 +190,7 @@ class TrainingGraphWidget(QWidget):
             return
         super().mousePressEvent(event)
 
-    def mouseMoveEvent(self, event) -> None:  # type:ignore[no-untyped-def] # noqa:N802
+    def mouseMoveEvent(self, event) -> None:  # noqa:N802
         """Pan graph history while dragging."""
         if self._drag_start is None or (self._zoom <= 1.0 and self._y_zoom <= 1.0):
             super().mouseMoveEvent(event)
@@ -205,7 +205,7 @@ class TrainingGraphWidget(QWidget):
             self._set_y_pan(self._y_pan + ((current_y - start_y) / max(1, self.height())))
         event.accept()
 
-    def mouseReleaseEvent(self, event) -> None:  # type:ignore[no-untyped-def] # noqa:N802
+    def mouseReleaseEvent(self, event) -> None:  # noqa:N802
         """Stop graph panning."""
         self._drag_start = None
         super().mouseReleaseEvent(event)

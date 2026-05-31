@@ -278,9 +278,7 @@ def read_image_meta(filename):
     retval = {}
     if os.path.splitext(filename)[-1].lower() != ".png":
         # Get the dimensions directly from the image for non-png
-        logger.trace(  # type:ignore[attr-defined]
-            "Non png found. Loading file for dimensions: '%s'", filename
-        )
+        logger.trace("Non png found. Loading file for dimensions: '%s'", filename)
         img = cv2.imread(filename)
         assert img is not None
         retval["height"], retval["width"] = img.shape[:2]
@@ -297,9 +295,7 @@ def read_image_meta(filename):
         while True:
             chunk = in_file.read(8)
             length, field = struct.unpack(">I4s", chunk)
-            logger.trace(  # type:ignore[attr-defined]
-                "Read chunk: (chunk: %s, length: %s, field: %s", chunk, length, field
-            )
+            logger.trace("Read chunk: (chunk: %s, length: %s, field: %s", chunk, length, field)
             if not chunk or field == b"IDAT":
                 break
             if field == b"IHDR":
@@ -322,12 +318,12 @@ def read_image_meta(filename):
                         )
                     break
                 logger.trace(
-                    "Skipping iTXt chunk: '%s'",  # type:ignore[attr-defined]
+                    "Skipping iTXt chunk: '%s'",
                     keyword.decode("latin-1", errors="ignore"),
                 )
                 length = 0  # Reset marker for next chunk
             in_file.seek(length + 4, 1)
-    logger.trace("filename: %s, metadata: %s", filename, retval)  # type:ignore[attr-defined]
+    logger.trace("filename: %s, metadata: %s", filename, retval)
     return retval
 
 
@@ -359,7 +355,7 @@ def read_image_meta_batch(filenames):
     >>> for filename, meta in read_image_meta_batch(image_filenames):
     >>>         <do something>
     """
-    logger.trace("Requested batch: '%s'", filenames)  # type:ignore[attr-defined]
+    logger.trace("Requested batch: '%s'", filenames)
     executor = futures.ThreadPoolExecutor()
     with executor:
         logger.debug("Submitting %s items to executor", len(filenames))
@@ -369,7 +365,7 @@ def read_image_meta_batch(filenames):
         logger.debug("Successfully submitted %s items to executor", len(filenames))
         for future in futures.as_completed(read_meta):
             retval = (read_meta[future], future.result())
-            logger.trace("Yielding: %s", retval)  # type:ignore[attr-defined]
+            logger.trace("Yielding: %s", retval)
             yield retval
 
 
@@ -438,8 +434,8 @@ def update_existing_metadata(filename: str, metadata: PNGHeader | bytes) -> None
             keyword, value = png.read(length).split(b"\0", 1)
             if keyword != b"faceswap":
                 # Write existing non fs-iTXt data + CRC
-                logger.trace(
-                    "Copying non-faceswap iTXt chunk: %s",  # type:ignore[attr-defined]
+                logger.trace(  # type: ignore[attr-defined]
+                    "Copying non-faceswap iTXt chunk: %s",
                     keyword,
                 )
                 tmp.write(keyword + b"\0" + value + png.read(4))
@@ -627,7 +623,7 @@ def tiff_read_meta(image: bytes) -> dict[str, T.Any]:  # pylint:disable=too-many
 
     assert data is not None, "No Metadata found in Tiff File"
     retval = json.loads(data.decode("ascii"))
-    return retval
+    return retval  # type: ignore[no-any-return]
 
 
 def png_read_meta(image: bytes) -> PNGHeader | dict[str, T.Any]:
@@ -670,8 +666,8 @@ def png_read_meta(image: bytes) -> PNGHeader | dict[str, T.Any]:
                     err,
                 )
             break
-        logger.trace(
-            "Skipping iTXt chunk: '%s'",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "Skipping iTXt chunk: '%s'",
             keyword.decode("latin-1", errors="ignore"),
         )
         pointer += length + 4
@@ -697,7 +693,7 @@ def generate_thumbnail(image, size=96, quality=60):
         The given image encoded to a jpg at the given size and quality settings
     """
     logger.trace(
-        "Input shape: %s, size: %s, quality: %s",  # type:ignore[attr-defined]
+        "Input shape: %s, size: %s, quality: %s",
         image.shape,
         size,
         quality,
@@ -707,7 +703,7 @@ def generate_thumbnail(image, size=96, quality=60):
         interpolator = cv2.INTER_AREA if orig_size > size else cv2.INTER_CUBIC
         image = cv2.resize(image, (size, size), interpolation=interpolator)
     retval = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, quality])[1]
-    logger.trace("Output shape: %s", retval.shape)  # type:ignore[attr-defined]
+    logger.trace("Output shape: %s", retval.shape)
     return retval
 
 
@@ -747,9 +743,7 @@ def batch_convert_color(batch, color_space):
     to use 32-bit images in cases that need the full range of colors or that convert an image
     before an operation and then convert back.
     """
-    logger.trace(  # type:ignore[attr-defined]
-        "Batch converting: (batch shape: %s, color_space: %s)", batch.shape, color_space
-    )
+    logger.trace("Batch converting: (batch shape: %s, color_space: %s)", batch.shape, color_space)
     original_shape = batch.shape
     batch = batch.reshape((original_shape[0] * original_shape[1], *original_shape[2:]))
     batch = cv2.cvtColor(batch, getattr(cv2, f"COLOR_{color_space}"))
@@ -849,10 +843,10 @@ class ImageIO:
 
     def _set_thread(self):
         """Set the background thread for the load and save iterators and launch it."""
-        logger.trace("[%s] Setting thread", self._name)  # type:ignore[attr-defined]
+        logger.trace("[%s] Setting thread", self._name)
         if self._thread is not None and self._thread.is_alive():
             logger.trace(
-                "[%s] Thread pre-exists and is alive: %s",  # type:ignore[attr-defined]
+                "[%s] Thread pre-exists and is alive: %s",
                 self._name,
                 self._thread,
             )
@@ -1034,8 +1028,8 @@ class ImagesLoader(ImageIO):
                 # All black frames will return not numpy.any() so check dims too
                 logger.warning("Unable to open image. Skipping: '%s'", filename)
                 continue
-            logger.trace(
-                "[%s] Putting to queue: %s",  # type:ignore[attr-defined]
+            logger.trace(  # type: ignore[attr-defined]
+                "[%s] Putting to queue: %s",
                 self._name,
                 [v.shape if isinstance(v, np.ndarray) else v for v in retval],
             )
@@ -1048,8 +1042,8 @@ class ImagesLoader(ImageIO):
                     queue.put(retval, timeout=0.2)
                     break
                 except QueueFull:
-                    logger.trace(
-                        "[%s] Queue full. Waiting",  # type:ignore[attr-defined]
+                    logger.trace(  # type: ignore[attr-defined]
+                        "[%s] Queue full. Waiting",
                         self._name,
                     )
                     continue
@@ -1100,8 +1094,8 @@ class ImagesLoader(ImageIO):
                 frame.to_ndarray(channel_last=True, format="bgr24"),
             )
             filename = self._dummy_video_frame_name(idx)
-            logger.trace(
-                "[%s] Loading video frame: '%s'",  # type:ignore[attr-defined]
+            logger.trace(  # type: ignore[attr-defined]
+                "[%s] Loading video frame: '%s'",
                 self._name,
                 filename,
             )
@@ -1181,8 +1175,8 @@ class ImagesLoader(ImageIO):
             if retval == "EOF":
                 logger.trace("[%s] Got EOF", self._name)  # type:ignore[attr-defined]
                 break
-            logger.trace(
-                "[%s] Yielding: %s",  # type:ignore[attr-defined]
+            logger.trace(  # type: ignore[attr-defined]
+                "[%s] Yielding: %s",
                 self._name,
                 [v.shape if isinstance(v, np.ndarray) else v for v in retval],
             )
@@ -1228,7 +1222,7 @@ class FacesLoader(ImagesLoader):
         self._count = len(self.file_list) if count is None else count
 
         logger.debug("[%s] count: %s", self._name, self.count)
-        logger.trace("[%s] file_list: %s", self._name, self.file_list)  # type:ignore[attr-defined]
+        logger.trace("[%s] file_list: %s", self._name, self.file_list)
 
     def _from_folder(self):
         """Generator for loading images from a folder
@@ -1247,9 +1241,7 @@ class FacesLoader(ImagesLoader):
         logger.debug("[%s] Loading images from folder: '%s'", self._name, self.location)
         for idx, filename in enumerate(self.file_list):
             if idx in self._skip_list:
-                logger.trace(  # type:ignore[attr-defined]
-                    "[%s] Skipping face %s due to skip list", self._name, idx
-                )
+                logger.trace("[%s] Skipping face %s due to skip list", self._name, idx)
                 continue
             image_read = read_image(filename, raise_error=False, with_metadata=True)
             if image_read is None:
@@ -1428,7 +1420,7 @@ class ImagesSaver(ImageIO):
             if item == "EOF":
                 logger.debug("[%s] EOF received", self._name)
                 break
-            logger.trace("[%s] Submitting: '%s'", self._name, item[0])  # type:ignore[attr-defined]
+            logger.trace("[%s] Submitting: '%s'", self._name, item[0])
             executor.submit(self._save, *item)
         executor.shutdown()
 
@@ -1459,8 +1451,8 @@ class ImagesSaver(ImageIO):
             else:
                 assert isinstance(image, np.ndarray)
                 cv2.imwrite(filename, image)
-            logger.trace(
-                "[%s] Saved image: '%s'",  # type:ignore[attr-defined]
+            logger.trace(  # type: ignore[attr-defined]
+                "[%s] Saved image: '%s'",
                 self._name,
                 filename,
             )
@@ -1495,8 +1487,8 @@ class ImagesSaver(ImageIO):
             )
             return
         self._set_thread()
-        logger.trace(
-            "[%s] Putting to save queue: '%s'",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "[%s] Putting to save queue: '%s'",
             self._name,
             filename,
         )

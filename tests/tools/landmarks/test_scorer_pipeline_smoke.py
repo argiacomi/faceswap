@@ -69,7 +69,7 @@ def _canonical_face(offset_x: float = 0.0, offset_y: float = 0.0) -> np.ndarray:
     assert array.shape == (68, 2)
     array[:, 0] += offset_x
     array[:, 1] += offset_y
-    return array
+    return array  # type: ignore[no-any-return]
 
 
 def _write_manifest(

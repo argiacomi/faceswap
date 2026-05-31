@@ -219,7 +219,7 @@ def test_spiga_pose_backfiller_uses_source_frame_alignment_not_thumbnail() -> No
             # Mirror SPIGA's actual square-ROI shape: (B, l, t, r, b) int32.
             # For (x=0, y=0, w=80, h=90) the centre is (40, 45) and the
             # side (max(80,90) * 1.2 [default target_dist]) ≈ 108, half ≈ 54.
-            return np.array([[40 - 54, 45 - 54, 40 + 54, 45 + 54]], dtype=np.int32)
+            return np.array([[40 - 54, 45 - 54, 40 + 54, 45 + 54]], dtype=np.int32)  # type: ignore[no-any-return]
 
         def process(self, batch: np.ndarray) -> np.ndarray:
             self.feed = batch
@@ -288,7 +288,7 @@ def test_spiga_pose_backfiller_does_not_use_load_aligned(monkeypatch) -> None:
             self.last_debug_metadata: list[dict[str, object]] = []
 
         def pre_process(self, batch: np.ndarray) -> np.ndarray:
-            return np.array([[10, 10, 74, 74]], dtype=np.int32)
+            return np.array([[10, 10, 74, 74]], dtype=np.int32)  # type: ignore[no-any-return]
 
         def process(self, batch: np.ndarray) -> np.ndarray:
             return np.zeros((1, 71, 2), dtype=np.float32)
@@ -337,7 +337,7 @@ def test_spiga_pose_backfiller_clamps_off_frame_roi() -> None:
 
         def pre_process(self, batch: np.ndarray) -> np.ndarray:
             # Square ROI of side 128 that extends 32px off the left+top.
-            return np.array([[-32, -32, 96, 96]], dtype=np.int32)
+            return np.array([[-32, -32, 96, 96]], dtype=np.int32)  # type: ignore[no-any-return]
 
         def process(self, batch: np.ndarray) -> np.ndarray:
             self.feed = batch
@@ -1026,7 +1026,7 @@ def test_records_from_alignments_derives_lighting_from_thumbnail(tmp_path) -> No
     import cv2
 
     face = _face()
-    image = np.full((32, 32, 3), 90, dtype=np.uint8)
+    image = np.full((32, 32, 3), 90, dtype=np.uint8)  # type: ignore[var-annotated]
     image[:, 16:] = 200
     encoded = cv2.imencode(".jpg", image)[1]
     face.thumb = np.asarray(encoded, dtype=np.uint8)
@@ -1300,7 +1300,7 @@ def test_compute_identity_quality_ticks_per_record_even_when_unclassified(tmp_pa
     from lib.faceqa.coverage import compute_identity_quality
 
     # Three faces carry vectors; two do not. Total records = 5.
-    seeded = _np.ones(512, dtype="float32")
+    seeded = _np.ones(512, dtype="float32")  # type: ignore[var-annotated]
     faces = [
         _face(),  # frame_000001.png face 0 — has vector
         _face(),  # frame_000002.png face 0 — has vector
@@ -1423,7 +1423,7 @@ def test_identity_quality_ticks_all_records_when_too_few_vectors(tmp_path) -> No
     from lib.faceqa.coverage import MIN_IDENTITY_QUALITY_FACES, compute_identity_quality
 
     # Five records but only 2 vectors (< MIN_IDENTITY_QUALITY_FACES=3).
-    vector = _np.ones(512, dtype="float32")
+    vector = _np.ones(512, dtype="float32")  # type: ignore[var-annotated]
     faces = []
     for has_vector in (True, True, False, False, False):
         face = _face()
@@ -1461,7 +1461,7 @@ def test_identity_quality_ticks_all_records_when_centroid_invalid(tmp_path) -> N
     from lib.faceqa.coverage import compute_identity_quality
 
     def _basis(idx: int, sign: int) -> _np.ndarray:
-        vec = _np.zeros(512, dtype="float32")
+        vec = _np.zeros(512, dtype="float32")  # type: ignore[var-annotated]
         vec[idx] = float(sign)
         return vec
 

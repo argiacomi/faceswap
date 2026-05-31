@@ -187,7 +187,7 @@ class ConstantsAugmentation:
 
         lab_adjust = np.array([amount_l, amount_ab, amount_ab], dtype="float32")
         logger.debug("[AugConstants] lab_adjust: %s", lab_adjust)
-        return lab_adjust
+        return lab_adjust  # type: ignore[no-any-return]
 
     @classmethod
     def _get_color(cls, size: int) -> ConstantsColor:
@@ -269,8 +269,8 @@ class ConstantsAugmentation:
         edge_anchors = np.broadcast_to(edge_anchors, (batch_size, 8, 2))
         grids = np.mgrid[
             0 : p_mx : complex(size),  # type:ignore[misc]  # pylint:disable=no-member
-            0 : p_mx : complex(size),
-        ].astype("float32")  # type:ignore[misc]
+            0 : p_mx : complex(size),  # type: ignore[misc]
+        ].astype("float32")
 
         logger.debug(
             "[AugConstants] edge_anchors: (%s, %s), grids: (%s, %s)",
@@ -416,15 +416,15 @@ class ImageAugmentation:
             dtype="uint8",
         )
         grid_sizes = (grid_bases * (base_contrast // 2)) + base_contrast
-        logger.trace(
-            "[Aug] Adjusting Contrast. Grid Sizes: %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "[Aug] Adjusting Contrast. Grid Sizes: %s",
             grid_sizes,
         )
 
         clahes = [
             cv2.createCLAHE(clipLimit=2.0, tileGridSize=(grid_size, grid_size))
             for grid_size in grid_sizes
-        ]  # type:ignore[attr-defined]
+        ]
 
         for idx, clahe in zip(indices, clahes, strict=False):
             batch[idx, :, :, 0] = clahe.apply(
@@ -528,16 +528,16 @@ class ImageAugmentation:
         randoms = np.random.rand(self._batch_size)
         indices = np.where(randoms <= self._constants.transform.flip)[0]
         batch[indices] = batch[indices, :, ::-1]
-        logger.trace(
-            "[Aug] Randomly flipped %s images of %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "[Aug] Randomly flipped %s images of %s",
             len(indices),
             self._batch_size,
         )
         if points is None:
             return
         points[indices, ..., 0] = (self._processing_size - 1) - points[indices, ..., 0]
-        logger.trace(
-            "[Aug] Randomly flipped %s points: %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "[Aug] Randomly flipped %s points: %s",
             len(indices),
             format_array(points),
         )
@@ -575,11 +575,11 @@ class ImageAugmentation:
             ]
         )
 
-        logger.trace(
-            "[Aug] Warped image shape: %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "[Aug] Warped image shape: %s",
             warped_batch.shape,
         )
-        return warped_batch
+        return warped_batch  # type: ignore[no-any-return]
 
     def _random_warp_landmarks(
         self,
@@ -665,11 +665,11 @@ class ImageAugmentation:
                 for image, map_ in zip(batch, maps, strict=False)
             ]
         )
-        logger.trace(
-            "[Aug] Warped batch shape: %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "[Aug] Warped batch shape: %s",
             warped_batch.shape,
         )
-        return warped_batch
+        return warped_batch  # type: ignore[no-any-return]
 
     def warp(
         self,

@@ -78,7 +78,7 @@ class PreviewExtract(DisplayOptionalPage):  # pylint:disable=too-many-ancestors
         """Add the preview label child."""
         logger.debug("Adding child")
         preview = self.subnotebook_add_page(self.tabname, widget=None)
-        lblpreview = ttk.Label(preview, image=self._preview.image)  # type:ignore[arg-type]
+        lblpreview = ttk.Label(preview, image=self._preview.image)
         lblpreview.pack(side=tk.TOP, anchor=tk.NW)
         Tooltip(lblpreview, text=self.helptext, wrap_length=200)
 
@@ -211,9 +211,9 @@ class PreviewTrain(DisplayOptionalPage):  # pylint:disable=too-many-ancestors
         logger.debug("Adding refresh option")
         btnrefresh = ttk.Button(
             self.optsframe,
-            image=get_images().icons["reload"],  # type:ignore[arg-type]
-            command=lambda x="update": preview_trigger().set(x),
-        )  # type:ignore[misc]
+            image=get_images().icons["reload"],
+            command=lambda x="update": preview_trigger().set(x),  # type: ignore[misc]
+        )
         btnrefresh.pack(padx=2, side=tk.RIGHT)
         Tooltip(
             btnrefresh,
@@ -227,9 +227,9 @@ class PreviewTrain(DisplayOptionalPage):  # pylint:disable=too-many-ancestors
         logger.debug("Adding mask toggle option")
         btntoggle = ttk.Button(
             self.optsframe,
-            image=get_images().icons["mask2"],  # type:ignore[arg-type]
-            command=lambda x="mask_toggle": preview_trigger().set(x),
-        )  # type:ignore[misc]
+            image=get_images().icons["mask2"],
+            command=lambda x="mask_toggle": preview_trigger().set(x),  # type: ignore[misc]
+        )
         btntoggle.pack(padx=2, side=tk.RIGHT)
         Tooltip(
             btntoggle,
@@ -316,7 +316,7 @@ class GraphDisplay(DisplayOptionalPage):  # pylint:disable=too-many-ancestors
         tk_vars["display_iterations"] = iterations_var
 
         logger.debug(tk_vars)
-        return tk_vars
+        return tk_vars  # type: ignore[no-any-return]
 
     def on_tab_select(self) -> None:
         """Callback for when the graph tab is selected.
@@ -347,7 +347,7 @@ class GraphDisplay(DisplayOptionalPage):  # pylint:disable=too-many-ancestors
         tk_var = get_config().tk_vars.refresh_graph
         btnrefresh = ttk.Button(
             self.optsframe,
-            image=get_images().icons["reload"],  # type:ignore[arg-type]
+            image=get_images().icons["reload"],
             command=lambda: tk_var.set(True),
         )
         btnrefresh.pack(padx=2, side=tk.RIGHT)
@@ -366,8 +366,8 @@ class GraphDisplay(DisplayOptionalPage):  # pylint:disable=too-many-ancestors
             self.optsframe,
             variable=tk_var,
             text="Raw",
-            command=lambda v=tk_var: self._display_data_callback("raw", v),
-        )  # type:ignore
+            command=lambda v=tk_var: self._display_data_callback("raw", v),  # type: ignore[misc]
+        )
         chkbtn.pack(side=tk.RIGHT, padx=5, anchor=tk.W)
         Tooltip(chkbtn, text=_("Display the raw loss data"), wrap_length=200)
 
@@ -379,8 +379,8 @@ class GraphDisplay(DisplayOptionalPage):  # pylint:disable=too-many-ancestors
             self.optsframe,
             variable=tk_var,
             text="Smoothed",
-            command=lambda v=tk_var: self._display_data_callback("smoothed", v),
-        )  # type:ignore
+            command=lambda v=tk_var: self._display_data_callback("smoothed", v),  # type: ignore[misc]
+        )
         chkbtn.pack(side=tk.RIGHT, padx=5, anchor=tk.W)
         Tooltip(chkbtn, text=_("Display the smoothed loss data"), wrap_length=200)
 
@@ -577,7 +577,7 @@ class GraphDisplay(DisplayOptionalPage):  # pylint:disable=too-many-ancestors
         ):
             var = self.vars[name]
             if name not in self._trace_vars:
-                self._trace_vars[name] = (var, var.trace_add("write", action))
+                self._trace_vars[name] = (var, var.trace_add("write", action))  # type: ignore[index]
 
     def _clear_trace_variables(self) -> None:
         """Clear all of the trace variables from :attr:`_trace_vars` and reset the dictionary."""

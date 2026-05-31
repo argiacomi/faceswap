@@ -287,14 +287,14 @@ class _MaskProcessing:  # pylint:disable=too-many-instance-attributes
         if mask_type in self._lm_masks:
             retval = self._get_landmarks_mask(
                 self._lm_masks[
-                    T.cast(T.Literal["components", "extended", "eye", "mouth"], mask_type)
+                    T.cast(T.Literal["components", "extended", "eye", "mouth"], mask_type)  # type: ignore[redundant-cast]
                 ],
                 aligned,
             )
         else:
             retval = self._get_face_mask(masks[mask_type], aligned.pose)
-        logger.trace(
-            "[%s] Got mask '%s': %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "[%s] Got mask '%s': %s",
             self._name,
             mask_type,
             format_array(retval),
@@ -365,8 +365,8 @@ class _BaseSet(Dataset, abc.ABC):
         -------
         The face patch ready for augmentation
         """
-        logger.trace(
-            "[%s] image: %s alignments: %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "[%s] image: %s alignments: %s",
             self._name,
             format_array(image),
             alignments,
@@ -448,8 +448,8 @@ class TrainSet(_BaseSet):
             The image file index
         """
         filename = self._image_list[index]
-        logger.trace(
-            "[%s] Loading image %s: %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "[%s] Loading image %s: %s",
             self._name,
             index,
             filename,
@@ -463,8 +463,8 @@ class TrainSet(_BaseSet):
         for i, mask_type in enumerate(self._mask_types):
             retval[..., 3 + i] = self._mask(meta.alignments.mask, mask_type, filename, face)
 
-        logger.trace(
-            "[%s] images and masks: %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "[%s] images and masks: %s",
             self._name,
             format_array(retval),
         )
@@ -560,8 +560,8 @@ class PreviewSet(_BaseSet):
             An output face at full coverage with the mask in the 4th channel
         """
         filename = self._image_list[index]
-        logger.trace(
-            "[%s] Loading image %s: %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "[%s] Loading image %s: %s",
             self._name,
             index,
             filename,
@@ -572,7 +572,7 @@ class PreviewSet(_BaseSet):
         in_face = self._get_face(image, meta.alignments, self._input_size, self._coverage)
         in_img = T.cast("npt.NDArray[np.uint8]", in_face.face)
         out_face = self._get_face(image, meta.alignments, self._full_size, 1.0)
-        out_img = np.empty((self._full_size, self._full_size, 4), dtype=np.uint8)
+        out_img = np.empty((self._full_size, self._full_size, 4), dtype=np.uint8)  # type: ignore[var-annotated]
         out_img[..., :3] = T.cast("npt.NDArray[np.uint8]", out_face.face)
 
         if self._mask_types:
@@ -588,8 +588,8 @@ class PreviewSet(_BaseSet):
 
         feed = torch.from_numpy(to_float32(in_img))
         target = torch.from_numpy(to_float32(out_img))
-        logger.trace(
-            "[%s] feed: %s (%s), target: %s (%s)",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "[%s] feed: %s (%s), target: %s (%s)",
             self._name,
             feed.shape,
             feed.dtype,
@@ -617,7 +617,7 @@ class MultiDataset(Dataset):
         self._datasets = datasets
         self._len = max(len(d) for d in datasets)
 
-        self._remainder = [np.empty(0, dtype=np.int64)] * len(self._datasets)
+        self._remainder = [np.empty(0, dtype=np.int64)] * len(self._datasets)  # type: ignore[var-annotated]
         self._indices = self._shuffle_indices()
         self._is_random = is_random
 
@@ -641,7 +641,7 @@ class MultiDataset(Dataset):
         An array of indices of shape (num_datasets, len(self)) of random indices that can be looked
         up for each value given to __get_item__
         """
-        retval = np.empty((len(self._datasets), self._len), dtype=np.int64)
+        retval = np.empty((len(self._datasets), self._len), dtype=np.int64)  # type: ignore[var-annotated]
         for idx, ds in enumerate(self._datasets):
             ds_len = len(ds)
             filled = 0

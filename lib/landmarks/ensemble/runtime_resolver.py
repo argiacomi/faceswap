@@ -978,7 +978,7 @@ def _frame_to_crop_pixels(
     pixels = normalized[:, :2].copy()
     pixels[:, 0] *= float(width)
     pixels[:, 1] *= float(height)
-    return pixels.astype("float32", copy=False)
+    return pixels.astype("float32", copy=False)  # type: ignore[no-any-return]
 
 
 def _crop_gray(image_crop: np.ndarray) -> np.ndarray:
@@ -993,7 +993,7 @@ def _crop_gray(image_crop: np.ndarray) -> np.ndarray:
         raise ValueError(f"image_crop must have shape (H, W) or (H, W, C), got {crop.shape}")
     if gray.size and float(np.nanmax(gray)) > 2.0:
         gray = gray / 255.0
-    return np.nan_to_num(gray, nan=0.0, posinf=1.0, neginf=0.0).clip(0.0, 1.0)
+    return np.nan_to_num(gray, nan=0.0, posinf=1.0, neginf=0.0).clip(0.0, 1.0)  # type: ignore[no-any-return]
 
 
 def _eye_visual_score(gray: np.ndarray, eye_points: np.ndarray) -> float:
@@ -1282,7 +1282,7 @@ def _runtime_yaw_severity(
 def _consensus_landmarks(candidates: T.Sequence[CandidateRecord]) -> np.ndarray:
     """Return median candidate landmarks in frame coordinates."""
     stack = np.stack([candidate.landmarks.astype("float64") for candidate in candidates], axis=0)
-    return np.median(stack, axis=0).astype("float32", copy=False)
+    return np.median(stack, axis=0).astype("float32", copy=False)  # type: ignore[no-any-return]
 
 
 def _image_geometry_yaw_signal(
@@ -1900,7 +1900,7 @@ def resolve_runtime(
             )
             if hard_slice_fallback_used:
                 rejected_candidate = selected
-                selected = hard_slice_fallback
+                selected = hard_slice_fallback  # type: ignore[assignment]
                 fallback_reason = "consensus_collapse_fusion_rejected"
             else:
                 rejected_candidate = ""
@@ -1923,7 +1923,7 @@ def resolve_runtime(
             )
             if safe_fallback_used:
                 rejected_candidate = selected
-                selected = safe_fallback
+                selected = safe_fallback  # type: ignore[assignment]
                 fallback_reason = "scorer_high_risk_safe_fallback"
             guard_replacement = _hard_pose_plain_average_replacement(
                 selected=selected,
@@ -1940,7 +1940,7 @@ def resolve_runtime(
             if hard_pose_plain_average_guard_used:
                 rejected_candidate = selected
                 hard_pose_plain_average_rejected_candidate = selected
-                selected = guard_replacement
+                selected = guard_replacement  # type: ignore[assignment]
                 fallback_reason = fallback_reason or "hard_pose_plain_average_guard"
         logger.debug(
             "[RuntimeResolver] learned selection=%s fallback_reason=%s rejected=%s",
@@ -2002,7 +2002,7 @@ def resolve_runtime(
         )
         if hard_pose_plain_average_guard_used:
             hard_pose_plain_average_rejected_candidate = selected
-            selected = guard_replacement
+            selected = guard_replacement  # type: ignore[assignment]
             fallback_reason = fallback_reason or "hard_pose_plain_average_guard"
         logger.debug(
             "[RuntimeResolver] bucket-priority selection=%s fallback_reason=%s",

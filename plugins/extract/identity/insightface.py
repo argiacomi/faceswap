@@ -33,7 +33,7 @@ class InsightFace(FacePlugin):
     _SUPPORTED = ("antelopev2", "buffalo_l", "buffalo_sc")
 
     def __init__(self) -> None:
-        self._model_type = T.cast(str, cfg.model_type())
+        self._model_type = T.cast(str, cfg.model_type())  # type: ignore[redundant-cast]
         self._force_cpu = bool(cfg.cpu())
         if self._model_type not in self._SUPPORTED:
             raise FaceswapError(
@@ -45,7 +45,7 @@ class InsightFace(FacePlugin):
             input_size=adapter.input_size,
             batch_size=cfg.batch_size(),
             is_rgb=False,
-            dtype=np.uint8,
+            dtype=np.uint8,  # type: ignore[arg-type]
             scale=(0, 255),
             force_cpu=self._force_cpu,
             centering="face",

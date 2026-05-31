@@ -132,7 +132,7 @@ class Settings:
         )
 
         retval = dtype_conf["name"]
-        return retval
+        return retval  # type: ignore[no-any-return]
 
     def _get_mixed_precision_layers(self, layers: list[dict]) -> list[str]:
         """Obtain the names of the layers in a mixed precision model that have their dtype policy

@@ -29,7 +29,7 @@ def _weighted_median_loop_reference(points: np.ndarray, weights: np.ndarray) -> 
             order = np.argsort(values)
             cumulative = np.cumsum(landmark_weights[order])
             output[landmark_idx, coord_idx] = values[order[np.searchsorted(cumulative, 0.5)]]
-    return output
+    return output  # type: ignore[no-any-return]
 
 
 @pytest.mark.parametrize("seed", [0, 1, 7, 42, 1337])
@@ -93,11 +93,11 @@ def test_weighted_median_dominant_weight_drives_output() -> None:
 
 def test_weighted_median_independent_landmarks_resolve_independently() -> None:
     """Each landmark's weighted median resolves separately from the others."""
-    points = np.zeros((3, 68, 2), dtype="float32")
+    points = np.zeros((3, 68, 2), dtype="float32")  # type: ignore[var-annotated]
     points[0] = 1.0
     points[1] = 5.0
     points[2] = 100.0
-    weights = np.ones((3, 68), dtype="float32")
+    weights = np.ones((3, 68), dtype="float32")  # type: ignore[var-annotated]
     weights[:, 0] = (1.0, 0.0, 0.0)  # landmark 0: only model 0 has weight
     weights[:, 1] = (0.0, 0.0, 1.0)  # landmark 1: only model 2 has weight
 
@@ -111,7 +111,7 @@ def test_weighted_median_independent_landmarks_resolve_independently() -> None:
 
 def test_weighted_median_returns_float32() -> None:
     """Output dtype is float32 regardless of input dtype."""
-    points = np.full((3, 68, 2), 1.0, dtype="float64")
+    points = np.full((3, 68, 2), 1.0, dtype="float64")  # type: ignore[var-annotated]
     weights = np.array([1.0, 1.0, 1.0], dtype="float64")
 
     result = weighted_median(points, weights)

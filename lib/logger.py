@@ -25,7 +25,7 @@ if T.TYPE_CHECKING:
 # Add our custom levels to logger
 for new_level in (("VERBOSE", 15), ("TRACE", 5)):
     level_name, level_num = new_level
-    level_map = logging.getLevelNamesMapping()
+    level_map = logging.getLevelNamesMapping()  # type: ignore[attr-defined]
     if level_name in level_map:
         continue
     logging.addLevelName(level_num, level_name)
@@ -204,7 +204,7 @@ def _apply_external_logger_policy(
             lower_info_prefixes.append(logger_name)
         max_level = policy.get("max_stream_level")
         if isinstance(max_level, str):
-            max_levels[logger_name] = logging.getLevelNamesMapping()[max_level.upper()]
+            max_levels[logger_name] = logging.getLevelNamesMapping()[max_level.upper()]  # type: ignore[attr-defined]
         for pattern in policy.get("suppress_stream_patterns", ()):
             # Normalise to a 3-tuple ``(name, funcname, substring)``.
             if len(pattern) == 2:
@@ -812,7 +812,7 @@ def get_loglevel(loglevel: str) -> int:
     -------
     The numeric representation of the given loglevel
     """
-    numeric_level = logging.getLevelNamesMapping()[loglevel.upper()]
+    numeric_level = logging.getLevelNamesMapping()[loglevel.upper()]  # type: ignore[attr-defined]
     if not isinstance(numeric_level, int):
         raise ValueError(f"Invalid log level: {loglevel}")
     return numeric_level
@@ -926,7 +926,7 @@ def _faceswap_logrecord(*args, **kwargs) -> logging.LogRecord:
     """Add a flag to :class:`logging.LogRecord` to not strip formatting from particular
     records."""
     record = _OLD_FACTORY(*args, **kwargs)
-    record.strip_spaces = True  # type:ignore
+    record.strip_spaces = True
     return record
 
 

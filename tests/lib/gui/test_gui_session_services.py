@@ -102,7 +102,7 @@ class _Config:
 
     def __init__(self) -> None:
         self.cli_opts = _CliOptions()
-        self.modified_vars = {}
+        self.modified_vars = {}  # type: ignore[var-annotated]
         self.tk_vars = _TkVars()
         self.project = _Project()
 
@@ -154,14 +154,14 @@ def _session(tmp_path: Path) -> tuple[_GuiSession, _ProjectStore]:
     filename = str(tmp_path / "project.fsw")
     Path(filename).touch()
 
-    session._project_store = store  # pylint:disable=protected-access
-    session._config = _Config()
+    session._project_store = store  # type: ignore[assignment]  # pylint:disable=protected-access
+    session._config = _Config()  # type: ignore[assignment]
     session._file_picker = None  # pylint:disable=protected-access
     session._saved_tasks = None  # pylint:disable=protected-access
     session._modified = False  # pylint:disable=protected-access
-    session._modified_tracker = _ModifiedTracker()  # pylint:disable=protected-access
-    session._recent_files = _RecentFiles()  # pylint:disable=protected-access
-    session._option_applier = _OptionApplier(True)  # pylint:disable=protected-access
+    session._modified_tracker = _ModifiedTracker()  # type: ignore[assignment]  # pylint:disable=protected-access
+    session._recent_files = _RecentFiles()  # type: ignore[assignment]  # pylint:disable=protected-access
+    session._option_applier = _OptionApplier(True)  # type: ignore[assignment]  # pylint:disable=protected-access
     session._state = ProjectSessionState(filename=filename)  # pylint:disable=protected-access
     return session, store
 
@@ -189,7 +189,7 @@ def test_gui_session_save_uses_project_store(tmp_path: Path, monkeypatch) -> Non
     session._save()  # pylint:disable=protected-access
 
     assert store.saved_filename == session._state.filename  # pylint:disable=protected-access
-    assert store.saved_project.model_dump() == {
+    assert store.saved_project.model_dump() == {  # type: ignore[attr-defined]
         "version": 2,
         "tab_name": "extract",
         "tasks": {"extract": {"Input Dir": "/input"}},
@@ -198,8 +198,8 @@ def test_gui_session_save_uses_project_store(tmp_path: Path, monkeypatch) -> Non
         "extract": {"Input Dir": "/input"},
         "tab_name": "extract",
     }
-    assert session._modified_tracker.reset_command is None  # pylint:disable=protected-access
-    assert session._recent_files.added == (  # pylint:disable=protected-access
+    assert session._modified_tracker.reset_command is None  # type: ignore[union-attr]  # pylint:disable=protected-access
+    assert session._recent_files.added == (  # type: ignore[attr-defined]  # pylint:disable=protected-access
         session._state.filename,  # pylint:disable=protected-access
         "project",
     )
@@ -218,7 +218,7 @@ def test_gui_session_set_options_delegates_to_option_applier(
 
     session._set_options()  # pylint:disable=protected-access
 
-    assert session._option_applier.calls == [  # pylint:disable=protected-access
+    assert session._option_applier.calls == [  # type: ignore[union-attr]  # pylint:disable=protected-access
         (options, None)
     ]
     assert session._config.tk_vars.console_clear.get() is False
@@ -234,11 +234,11 @@ def test_gui_session_set_options_delegates_to_option_applier_missing_command(
         "extract": {"Input Dir": "/input"},
     }
     session._state.set_options(options)  # pylint:disable=protected-access
-    session._option_applier = _OptionApplier(False)  # pylint:disable=protected-access
+    session._option_applier = _OptionApplier(False)  # type: ignore[assignment]  # pylint:disable=protected-access
 
     session._set_options("train")  # pylint:disable=protected-access
 
-    assert session._option_applier.calls == [  # pylint:disable=protected-access
+    assert session._option_applier.calls == [  # type: ignore[union-attr]  # pylint:disable=protected-access
         (options, "train")
     ]
     assert session._config.tk_vars.console_clear.get() is True
@@ -316,7 +316,7 @@ def test_last_session_save_uses_state_filename(tmp_path: Path, monkeypatch) -> N
     last_session = LastSession.__new__(LastSession)
     last_session._state = ProjectSessionState(filename=str(filename))  # pylint:disable=protected-access
     last_session._serializer = serializer  # pylint:disable=protected-access
-    last_session._config = _Config()  # pylint:disable=protected-access
+    last_session._config = _Config()  # type: ignore[assignment]  # pylint:disable=protected-access
     monkeypatch.setattr(type(last_session), "_enabled", property(lambda self: True))
     monkeypatch.setattr(last_session, "to_dict", lambda: {"tab_name": "extract"})
 
@@ -336,14 +336,14 @@ def test_last_session_load_uses_state_filename(tmp_path: Path, monkeypatch) -> N
     last_session = LastSession.__new__(LastSession)
     last_session._state = ProjectSessionState(filename=str(filename))  # pylint:disable=protected-access
     last_session._serializer = _Serializer({"tab_name": "extract"})  # pylint:disable=protected-access
-    last_session._config = _Config()  # pylint:disable=protected-access
-    last_session._option_applier = _OptionApplier(True)  # pylint:disable=protected-access
+    last_session._config = _Config()  # type: ignore[assignment]  # pylint:disable=protected-access
+    last_session._option_applier = _OptionApplier(True)  # type: ignore[assignment]  # pylint:disable=protected-access
     monkeypatch.setattr(last_session, "_set_project", lambda: None)
 
     last_session.load()
 
     assert last_session._state.options == {"tab_name": "extract"}  # pylint:disable=protected-access
-    assert last_session._option_applier.calls == [  # pylint:disable=protected-access
+    assert last_session._option_applier.calls == [  # type: ignore[union-attr]  # pylint:disable=protected-access
         ({"tab_name": "extract"}, None)
     ]
     assert not hasattr(last_session, "_filename")

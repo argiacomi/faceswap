@@ -60,7 +60,7 @@ from tools.landmarks.train_runtime_resolver_scorer import (
 
 
 def _face(offset: float = 0.0) -> np.ndarray:
-    points = np.zeros((68, 2), dtype="float32")
+    points = np.zeros((68, 2), dtype="float32")  # type: ignore[var-annotated]
     points[0:17, 0] = np.linspace(10, 90, 17)
     points[0:17, 1] = 80 + 20 * np.sin(np.linspace(0, np.pi, 17))
     points[17:22, 0] = np.linspace(20, 40, 5)
@@ -131,11 +131,11 @@ def _write_fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
 
 
 def _write_fixture_images(manifest_path: Path) -> None:
-    import cv2  # type: ignore[import-not-found]
+    import cv2
 
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     for sample in payload["samples"]:
-        image = np.full((128, 128, 3), 128, dtype="uint8")
+        image = np.full((128, 128, 3), 128, dtype="uint8")  # type: ignore[var-annotated]
         cv2.imwrite(str(manifest_path.parent / sample["image"]), image)
 
 
@@ -443,7 +443,7 @@ def test_train_runtime_resolver_scorer_v2_writes_lightgbm_ranker_artifact(
             return self.model_str
 
         def predict(self, matrix: np.ndarray, **_kwargs: object) -> np.ndarray:
-            return np.asarray([float(row[0]) for row in matrix], dtype="float64")
+            return np.asarray([float(row[0]) for row in matrix], dtype="float64")  # type: ignore[no-any-return]
 
     class FakeRanker:
         def __init__(self, **params: object) -> None:

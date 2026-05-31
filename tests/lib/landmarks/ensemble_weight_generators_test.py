@@ -27,7 +27,7 @@ MODELS = ("hrnet", "spiga", "orformer")
 
 def _table_from_constant_errors(values: tuple[float, float, float]) -> ErrorTable:
     """ErrorTable where every sample has a uniform per-landmark error per model."""
-    errors = {
+    errors = {  # type: ignore[var-annotated]
         name: np.full((4, LANDMARK_COUNT), value, dtype="float32")
         for name, value in zip(MODELS, values, strict=True)
     }
@@ -38,7 +38,7 @@ def _table_from_varied_errors() -> ErrorTable:
     """ErrorTable with different errors per landmark range, useful for region tests."""
     errors: dict[str, np.ndarray] = {}
     for offset, name in enumerate(MODELS, start=1):
-        matrix = np.zeros((3, LANDMARK_COUNT), dtype="float32")
+        matrix = np.zeros((3, LANDMARK_COUNT), dtype="float32")  # type: ignore[var-annotated]
         matrix[:, :17] = 1.0 * offset  # jaw
         matrix[:, 17:48] = 2.0 * offset  # brows, nose, eyes
         matrix[:, 48:] = 3.0 * offset  # mouth
@@ -91,7 +91,7 @@ def test_every_generator_returns_normalized_68_weights(name: str) -> None:
 def test_inverse_mean_error_parity_with_legacy_weights_from_errors() -> None:
     """``inverse_mean_error`` must match legacy ``weights_from_errors`` output."""
     table = _table_from_constant_errors((1.0, 2.0, 4.0))
-    legacy = weights_from_errors(table.mean_errors())
+    legacy = weights_from_errors(table.mean_errors())  # type: ignore[arg-type]
     result = InverseMeanErrorGenerator().fit(table)
     for model in MODELS:
         np.testing.assert_allclose(result.weights[model], legacy[model], rtol=1e-6, atol=1e-6)
@@ -112,7 +112,7 @@ def test_equal_generator_distributes_evenly_across_models() -> None:
 def test_inverse_median_error_diverges_from_mean_under_outlier_samples() -> None:
     """``inverse_median_error`` ignores a single high-error outlier sample."""
     errors: dict[str, np.ndarray] = {}
-    base = np.full((9, LANDMARK_COUNT), 1.0, dtype="float32")
+    base = np.full((9, LANDMARK_COUNT), 1.0, dtype="float32")  # type: ignore[var-annotated]
     errors["hrnet"] = base.copy()
     spiga = base.copy()
     spiga[0] = 100.0  # one bad sample
@@ -134,7 +134,7 @@ def test_inverse_median_error_diverges_from_mean_under_outlier_samples() -> None
 
 def test_winner_take_landmark_gives_each_landmark_to_lowest_error_model() -> None:
     """``winner_take_landmark`` puts 100% weight on the lowest-error model per column."""
-    errors = {
+    errors = {  # type: ignore[var-annotated]
         "hrnet": np.full((1, LANDMARK_COUNT), 5.0, dtype="float32"),
         "spiga": np.full((1, LANDMARK_COUNT), 3.0, dtype="float32"),
         "orformer": np.full((1, LANDMARK_COUNT), 1.0, dtype="float32"),
@@ -221,7 +221,7 @@ def test_error_table_rejects_invalid_inputs() -> None:
         ErrorTable.from_samples({"hrnet": np.full((2, 67), 1.0, dtype="float32")})
     with pytest.raises(ValueError):
         ErrorTable.from_samples({"hrnet": np.full((2, 68), -1.0, dtype="float32")})
-    bad = np.full((2, 68), 1.0, dtype="float32")
+    bad = np.full((2, 68), 1.0, dtype="float32")  # type: ignore[var-annotated]
     bad[0, 0] = np.nan
     with pytest.raises(ValueError):
         ErrorTable.from_samples({"hrnet": bad})

@@ -446,8 +446,8 @@ class Alignments:  # pylint:disable=too-many-public-methods
                 if filter_out
                 else [idx for idx in range(len(frame_data.faces)) if idx not in face_indices]
             )
-            logger.trace(
-                "frame: '%s', filter_list: %s",  # type:ignore[attr-defined]
+            logger.trace(  # type: ignore[attr-defined]
+                "frame: '%s', filter_list: %s",
                 source_frame,
                 filter_list,
             )

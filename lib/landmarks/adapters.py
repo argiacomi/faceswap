@@ -216,7 +216,7 @@ class FaceswapAlignerAdapter(LandmarkAdapter):
         if not hasattr(self.plugin, "load_model"):
             return self.plugin
         model = self.plugin.load_model()
-        self.plugin.model = model
+        self.plugin.model = model  # type: ignore[attr-defined]
         return model
 
     def _format_images(self, images: np.ndarray) -> np.ndarray:
@@ -239,7 +239,7 @@ class FaceswapAlignerAdapter(LandmarkAdapter):
             if dtype != np.dtype("float32"):
                 batch = batch.astype(dtype, copy=False)
         # Wrapped plugins may normalize in place, so do not share the Ensemble crop batch.
-        return np.ascontiguousarray(batch).copy()
+        return np.ascontiguousarray(batch).copy()  # type: ignore[no-any-return]
 
     def predict(self, image: np.ndarray, *, face: object | None = None) -> LandmarkPrediction:
         """Predict one prepared crop with the wrapped Faceswap plugin."""
@@ -269,8 +269,8 @@ class FaceswapAlignerAdapter(LandmarkAdapter):
         del faces
         if images.ndim != 4:
             raise ValueError(f"images must have shape (N, H, W, C), got {images.shape}")
-        raw = self.plugin.process(self._format_images(images))
-        points = self.plugin.post_process(raw)
+        raw = self.plugin.process(self._format_images(images))  # type: ignore[attr-defined]
+        points = self.plugin.post_process(raw)  # type: ignore[attr-defined]
         points = np.asarray(points, dtype="float32")
         if points.ndim != 3 or points.shape[0] != images.shape[0]:
             raise ValueError(

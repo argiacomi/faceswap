@@ -53,8 +53,8 @@ class RecordIterator:
         if not self._is_live or not self._log_file.closed:
             return
 
-        logger.trace(
-            "Re-opening '%s' and Seeking to %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "Re-opening '%s' and Seeking to %s",
             self._file_path,
             self._position,
         )
@@ -67,8 +67,8 @@ class RecordIterator:
         """Close the event file. If live data, record the current position"""
         if self._is_live:
             self._position = self._log_file.tell()
-            logger.trace(
-                "Setting live position to %s",  # type:ignore[attr-defined]
+            logger.trace(  # type: ignore[attr-defined]
+                "Setting live position to %s",
                 self._position,
             )
 

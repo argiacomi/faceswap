@@ -22,7 +22,7 @@ from tools.landmarks.search_ensemble_setup import main as search_main
 
 
 def _truth_points() -> np.ndarray:
-    return np.stack(
+    return np.stack(  # type: ignore[no-any-return]
         (
             np.linspace(20.0, 70.0, LANDMARK_COUNT, dtype="float32"),
             np.linspace(25.0, 75.0, LANDMARK_COUNT, dtype="float32"),
@@ -32,7 +32,7 @@ def _truth_points() -> np.ndarray:
 
 
 def _prediction(noise: float) -> np.ndarray:
-    return _truth_points() + noise
+    return _truth_points() + noise  # type: ignore[no-any-return]
 
 
 def _build_fixture(tmp_path: Path) -> dict[str, Path]:
@@ -1033,13 +1033,13 @@ def test_production_gate_failure_does_not_block_artifacts_by_default(
     output_dir = tmp_path / "search"
 
     def _fake_gate(**_kwargs: object) -> dict[str, object]:
-        report_path = _kwargs["output_dir"] / "production_promotion_report.json"
+        report_path = _kwargs["output_dir"] / "production_promotion_report.json"  # type: ignore[operator]
         payload = {
             "status": "fail",
             "failed_gates": ["bucket_profile_left_mean_regresses_vs_best_single"],
         }
         report_path.write_text(json.dumps(payload), encoding="utf-8")
-        return payload
+        return payload  # type: ignore[return-value]
 
     monkeypatch.setattr(search_cli, "run_production_promotion_gate", _fake_gate)
 
@@ -1084,10 +1084,10 @@ def test_production_gate_failure_blocks_when_explicitly_requested(
     output_dir = tmp_path / "search"
 
     def _fake_gate(**_kwargs: object) -> dict[str, object]:
-        report_path = _kwargs["output_dir"] / "production_promotion_report.json"
+        report_path = _kwargs["output_dir"] / "production_promotion_report.json"  # type: ignore[operator]
         payload = {"status": "fail", "failed_gates": ["bucket_x"]}
         report_path.write_text(json.dumps(payload), encoding="utf-8")
-        return payload
+        return payload  # type: ignore[return-value]
 
     monkeypatch.setattr(search_cli, "run_production_promotion_gate", _fake_gate)
 

@@ -51,7 +51,7 @@ class ExponentialMovingAverage:
             self._ewma_vectorized(self._data, self._out)  # Normal function can handle this input
         else:
             self._ewma_vectorized_safe()  # Use the safe version
-        return self._out
+        return self._out  # type: ignore[no-any-return]
 
     def _get_max_row_size(self) -> int:
         """Calculate the maximum row size for the running platform for the given dtype.
@@ -81,8 +81,8 @@ class ExponentialMovingAverage:
 
         if leftover > 0:
             # set temporary results to slice view of out parameter
-            out_main_view = np.reshape(self._out[:-leftover], (num_rows, self._row_size))
-            data_main_view = np.reshape(self._data[:-leftover], (num_rows, self._row_size))
+            out_main_view = np.reshape(self._out[:-leftover], (num_rows, self._row_size))  # type: ignore[var-annotated]
+            data_main_view = np.reshape(self._data[:-leftover], (num_rows, self._row_size))  # type: ignore[var-annotated]
         else:
             out_main_view = self._out.reshape(-1, self._row_size)
             data_main_view = self._data.reshape(-1, self._row_size)
@@ -93,7 +93,7 @@ class ExponentialMovingAverage:
         last_scaling_factor = scaling_factors[-1]
 
         # create offset array
-        offsets = np.empty(out_main_view.shape[0], dtype=self._dtype)
+        offsets = np.empty(out_main_view.shape[0], dtype=self._dtype)  # type: ignore[var-annotated]
         offsets[0] = first_offset
         # iteratively calculate offset for each row
 
@@ -108,7 +108,7 @@ class ExponentialMovingAverage:
             self._ewma_vectorized(
                 self._data[-leftover:],
                 self._out[-leftover:],
-                offset=out_main_view[-1, -1],
+                offset=out_main_view[-1, -1],  # type: ignore[arg-type]
             )
 
     def _ewma_vectorized(
@@ -131,7 +131,7 @@ class ExponentialMovingAverage:
         if data.size < 1:  # empty input, return empty array
             return
 
-        offset = data[0] if offset is None else offset
+        offset = data[0] if offset is None else offset  # type: ignore[assignment]
 
         # scaling_factors -> 0 as len(data) gets large. This leads to divide-by-zeros below
         scaling_factors = np.power(

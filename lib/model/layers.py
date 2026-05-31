@@ -291,7 +291,7 @@ class L2Normalize(Layer):  # pylint:disable=too-many-ancestors,abstract-method
         """
         config = super().get_config()
         config["axis"] = self.axis
-        return config
+        return config  # type: ignore[no-any-return]
 
 
 class PixelShuffler(Layer):  # pylint:disable=too-many-ancestors,abstract-method

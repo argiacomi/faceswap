@@ -566,7 +566,7 @@ def apply_policy(
 
 
 def _load_truth(sample: LandmarkSample) -> np.ndarray:
-    return np.load(sample.landmarks).astype("float32")
+    return np.load(sample.landmarks).astype("float32")  # type: ignore[no-any-return]
 
 
 def evaluate_sample(

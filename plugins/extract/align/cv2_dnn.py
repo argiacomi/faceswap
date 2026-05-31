@@ -91,7 +91,7 @@ class CV2DNNAlign(ExtractPlugin):
         retval[:, 1] = cy - half
         retval[:, 2] = retval[:, 0] + size
         retval[:, 3] = retval[:, 1] + size
-        return retval
+        return retval  # type: ignore[no-any-return]
 
     def process(self, batch: np.ndarray) -> np.ndarray:
         """Predict the 68 point landmarks
@@ -106,7 +106,7 @@ class CV2DNNAlign(ExtractPlugin):
         The predictions from the aligner
         """
         self.model.setInput(batch.transpose((0, 3, 1, 2)))
-        return self.model.forward().reshape(batch.shape[0], -1, 2)
+        return self.model.forward().reshape(batch.shape[0], -1, 2)  # type: ignore[no-any-return]
 
 
 __all__ = get_module_objects(__name__)

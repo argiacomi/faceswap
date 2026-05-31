@@ -47,7 +47,7 @@ class QtConsoleRouter(QObject):
         super().__init__(console)
         self._console = console
         self._stream = stream if stream in ("stdout", "stderr") else "stdout"
-        self.text_ready.connect(self._deliver, Qt.QueuedConnection)
+        self.text_ready.connect(self._deliver, Qt.QueuedConnection)  # type: ignore[attr-defined]
 
     def write(self, text: str) -> int:
         """File-like write: emit the chunk for delivery on the GUI thread."""
@@ -65,7 +65,7 @@ class QtConsoleRouter(QObject):
     def flush() -> None:
         """File-like flush: pass through to the real terminal stdout."""
         with contextlib.suppress(AttributeError, OSError):
-            sys.__stdout__.flush()
+            sys.__stdout__.flush()  # type: ignore[union-attr]
 
     @staticmethod
     def isatty() -> bool:
@@ -116,9 +116,9 @@ def install_console_routers(console: ConsolePane) -> tuple[QtConsoleRouter, QtCo
     stderr_router = QtConsoleRouter(console, "stderr")
     stdout_router._original_stream = sys.stdout  # type:ignore[attr-defined]
     stderr_router._original_stream = sys.stderr  # type:ignore[attr-defined]
-    sys.stdout = stdout_router  # type:ignore[assignment]
-    sys.stderr = stderr_router  # type:ignore[assignment]
-    console._log_router = stdout_router  # type:ignore[attr-defined]
+    sys.stdout = stdout_router
+    sys.stderr = stderr_router
+    console._log_router = stdout_router
     return stdout_router, stderr_router
 
 

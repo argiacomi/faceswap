@@ -978,7 +978,7 @@ class FrameFaces:  # pylint:disable=too-many-instance-attributes
                 f"{mask_batch.masks.shape[0]} mask(s), "
                 f"{mask_batch.matrices.shape[0]} matrix/matrices"
             )
-        return Mask(
+        return Mask(  # type: ignore[no-any-return]
             storage_size=mask_batch.storage_size,
             storage_centering=mask_batch.centering,
         ).add(mask_batch.masks[idx], mask_batch.matrices[idx])
@@ -1032,8 +1032,8 @@ class FrameFaces:  # pylint:disable=too-many-instance-attributes
 
     def remove_image(self) -> None:
         """Delete the image and reset :attr:`image` to ``None``."""
-        logger.trace(
-            "[%s] Removing image for filename: '%s'",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "[%s] Removing image for filename: '%s'",
             self._name,
             self.filename,
         )

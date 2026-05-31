@@ -54,7 +54,7 @@ class Writer(Output):
         self._dtype = {"8": np.uint8, "16": np.uint16, "32": np.float32}[cfg.bit_depth()]
         self._multiplier = {"8": 255.0, "16": 65535.0, "32": 1.0}[cfg.bit_depth()]
 
-        self._dummy_patch = np.zeros((1, patch_size, patch_size, 4), dtype=np.float32)
+        self._dummy_patch = np.zeros((1, patch_size, patch_size, 4), dtype=np.float32)  # type: ignore[var-annotated]
 
         tl_box = np.array(
             [[0, 0], [patch_size, 0], [patch_size, patch_size], [0, patch_size]],
@@ -130,8 +130,8 @@ class Writer(Output):
         if cfg.face_index_location() == "after":
             retval = f"{retval}.{face_idx}"
         retval += ext
-        logger.trace(
-            "source filename: '%s', output filename: '%s'",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "source filename: '%s', output filename: '%s'",
             filename,
             retval,
         )
@@ -183,7 +183,7 @@ class Writer(Output):
             The inverse transformation matrices
         """
         if not np.any(matrices):
-            return np.array(
+            return np.array(  # type: ignore[no-any-return]
                 [[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]], dtype=np.float32
             )
 
@@ -191,7 +191,7 @@ class Writer(Output):
         mat = np.concatenate([matrices, np.repeat(identity, matrices.shape[0], axis=0)], axis=1)
         retval = np.linalg.inv(mat)
         logger.trace("matrix: %s, inverse: %s", mat, retval)  # type:ignore[attr-defined]
-        return retval
+        return retval  # type: ignore[no-any-return]
 
     def _adjust_to_origin(self, matrices: np.ndarray, canvas_size: tuple[int, int]) -> None:
         """Adjust the transformation matrix to use the correct target coordinates system. The
@@ -238,7 +238,7 @@ class Writer(Output):
             cv2.transform(np.expand_dims(self._box, axis=1), mat[:2, ...]).squeeze()
             for mat in matrices
         ]
-        return np.array(retval, dtype=np.float32)
+        return np.array(retval, dtype=np.float32)  # type: ignore[no-any-return]
 
     def pre_encode(self, image: np.ndarray, **kwargs) -> list[list[bytes]]:
         """Pre_encode the image in lib/convert.py threads as it is a LOT quicker.

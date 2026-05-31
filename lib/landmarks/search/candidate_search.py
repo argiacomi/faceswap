@@ -341,7 +341,7 @@ def _fuse_candidate(
     method = strategy_outlier_method(candidate.strategy)
     threshold = candidate.outlier_threshold if strategy_uses_threshold(candidate.strategy) else 3.5
     if not strategy_requires_weights(candidate.strategy):
-        return plain_average(predictions, outlier_method=method, outlier_threshold=threshold)
+        return plain_average(predictions, outlier_method=method, outlier_threshold=threshold)  # type: ignore[arg-type]
     if candidate.strategy == "weighted_median":
         stack = np.stack([prediction.canonical_68().points for prediction in predictions], axis=0)
         normalized = normalize_weight_matrix(
@@ -360,7 +360,7 @@ def _fuse_candidate(
         predictions,
         weight_matrix,
         outlier_method=method,
-        outlier_threshold=threshold,
+        outlier_threshold=threshold,  # type: ignore[arg-type]
     )
 
 

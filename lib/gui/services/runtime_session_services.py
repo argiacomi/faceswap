@@ -15,7 +15,9 @@ from .runtime_events import RuntimeEvent
 class TrainingSessionProtocol(T.Protocol):
     """Small protocol for the legacy ``lib.gui.analysis.Session`` singleton."""
 
-    is_training: bool
+    @property
+    def is_training(self) -> bool:
+        """Return whether a training session is active."""
 
     def initialize_session(
         self, model_folder: str, model_name: str, is_training: bool = False

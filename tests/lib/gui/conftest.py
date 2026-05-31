@@ -10,7 +10,7 @@ from PySide6.QtWidgets import QMessageBox
 
 
 @pytest.fixture(scope="session", autouse=True)
-def _suppress_gui_test_info_logs() -> None:
+def _suppress_gui_test_info_logs() -> None:  # type: ignore[misc]
     """Silence routine GUI-test INFO logs while preserving warnings/errors.
 
     Manual Tool GUI tests create and open fixture alignments files as setup for

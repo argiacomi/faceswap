@@ -12,13 +12,13 @@ from tools.manual.qt.face_viewer.viewport import (
 from tools.manual.session import ManualEditableAlignments
 
 
-def _panel(qtbot) -> CrossFrameFaceGridPanel:  # type:ignore[no-untyped-def]
+def _panel(qtbot) -> CrossFrameFaceGridPanel:
     panel = CrossFrameFaceGridPanel(FaceGridThumbnailRenderer(ManualEditableAlignments()))
     qtbot.addWidget(panel)
     return panel
 
 
-def test_face_grid_uses_legacy_thumbnail_size_table(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_face_grid_uses_legacy_thumbnail_size_table(qtbot) -> None:
     """Qt face-grid sizes match the legacy Tk table."""
     panel = _panel(qtbot)
 
@@ -38,7 +38,7 @@ def test_face_grid_uses_legacy_thumbnail_size_table(qtbot) -> None:  # type:igno
         assert panel.gridSize().height() == size + 4
 
 
-def test_face_grid_omits_per_thumbnail_labels_and_packs_tightly(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_face_grid_omits_per_thumbnail_labels_and_packs_tightly(qtbot) -> None:
     """Dense grid items have no default text label and minimal spacing."""
     panel = _panel(qtbot)
     panel.set_face_size("Tiny")

@@ -58,7 +58,7 @@ def random_input_from_plugin(
     retval += low
     if channels_last:
         retval = retval.transpose(0, 2, 3, 1)
-    return retval
+    return retval  # type: ignore[no-any-return]
 
 
 def get_torch_modules(
@@ -154,10 +154,10 @@ def warmup_plugin(
         # so disable logging
         try:  # cv2 arbitrarily moves this based on build options :/
             cv2_loglevel = cv2.getLogLevel()  # type:ignore[attr-defined]
-            cv2_setlevel = cv2.setLogLevel
+            cv2_setlevel = cv2.setLogLevel  # type: ignore[attr-defined]
         except AttributeError:
             try:
-                cv2_loglevel = cv2.utils.logging.getLogLevel()  # type:ignore[attr-defined]
+                cv2_loglevel = cv2.utils.logging.getLogLevel()
                 cv2_setlevel = cv2.utils.logging.setLogLevel
             except AttributeError:
                 pass

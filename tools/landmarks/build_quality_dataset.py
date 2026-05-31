@@ -237,7 +237,7 @@ def _validate_args(args: argparse.Namespace) -> None:
 def _wflw_source_dir(args: argparse.Namespace) -> str | None:
     """Return an explicit WFLW source dir, resolving official multipart downloads."""
     if not args.wflw_download_official:
-        return args.source_dir
+        return args.source_dir  # type: ignore[no-any-return]
     return str(
         resolve_wflw_official_source(
             cache_dir=args.cache_dir,
@@ -250,7 +250,7 @@ def _wflw_source_dir(args: argparse.Namespace) -> str | None:
 def _cofw_json(args: argparse.Namespace) -> str | None:
     """Return an explicit or auto-materialized COFW-68 JSON export path."""
     if args.cofw_json or args.source_dir or args.source_zip or args.download_url:
-        return args.cofw_json
+        return args.cofw_json  # type: ignore[no-any-return]
     return str(
         resolve_cofw68_json(
             cache_dir=args.cache_dir,

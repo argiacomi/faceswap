@@ -96,7 +96,7 @@ class _FakeEnsemblePlugin:
 def _make_profiler() -> Profiler:
     """Build a Profiler without touching ``__init__`` so the discovery helpers can be tested."""
     profiler = Profiler.__new__(Profiler)
-    profiler._channels_last = []  # type:ignore[attr-defined]
+    profiler._channels_last = []
     return profiler
 
 
@@ -109,11 +109,11 @@ def test_check_for_torch_uses_profile_hook_when_provided() -> None:
         hook_modules=[wrapped.model],
     )
 
-    assert profiler._check_for_torch(plugin) is True
+    assert profiler._check_for_torch(plugin) is True  # type: ignore[arg-type]
     assert plugin.hook_calls == 1
     # warmup_plugin probes channel order by calling ``process``; the ensemble must execute.
     assert plugin.process_calls >= 1
-    assert profiler._channels_last == [False]  # type:ignore[attr-defined]
+    assert profiler._channels_last == [False]
 
 
 def test_check_for_torch_skips_when_hook_returns_empty() -> None:
@@ -121,10 +121,10 @@ def test_check_for_torch_skips_when_hook_returns_empty() -> None:
     profiler = _make_profiler()
     plugin = _FakeEnsemblePlugin(adapters=[_StaticAdapter()], hook_modules=[])
 
-    assert profiler._check_for_torch(plugin) is False
+    assert profiler._check_for_torch(plugin) is False  # type: ignore[arg-type]
     assert plugin.hook_calls == 1
     assert plugin.process_calls == 0
-    assert profiler._channels_last == []  # type:ignore[attr-defined]
+    assert profiler._channels_last == []
 
 
 def test_check_for_torch_falls_back_to_get_torch_modules() -> None:
@@ -132,9 +132,9 @@ def test_check_for_torch_falls_back_to_get_torch_modules() -> None:
     profiler = _make_profiler()
     plugin = _FakeTorchPlugin()
 
-    assert profiler._check_for_torch(plugin) is True
+    assert profiler._check_for_torch(plugin) is True  # type: ignore[arg-type]
     assert plugin.process_calls >= 1
-    assert profiler._channels_last == [False]  # type:ignore[attr-defined]
+    assert profiler._channels_last == [False]
 
 
 def test_ensemble_profile_torch_modules_collects_from_wrapped_plugins() -> None:
@@ -149,7 +149,7 @@ def test_ensemble_profile_torch_modules_collects_from_wrapped_plugins() -> None:
         _FaceswapAdapter(wrapped_b),
     ]
 
-    modules = Ensemble.profile_torch_modules(adapters)
+    modules = Ensemble.profile_torch_modules(adapters)  # type: ignore[arg-type]
 
     assert wrapped_a.model in modules
     assert wrapped_b.model in modules
@@ -160,7 +160,7 @@ def test_ensemble_profile_torch_modules_returns_empty_for_static_adapters() -> N
     """The real Ensemble hook returns nothing when every adapter is static."""
     from plugins.extract.align.ensemble import Ensemble
 
-    assert Ensemble.profile_torch_modules([_StaticAdapter(), _StaticAdapter()]) == []
+    assert Ensemble.profile_torch_modules([_StaticAdapter(), _StaticAdapter()]) == []  # type: ignore[list-item]
 
 
 def test_check_for_torch_runs_warmup_via_ensemble_process(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -181,5 +181,5 @@ def test_check_for_torch_runs_warmup_via_ensemble_process(monkeypatch: pytest.Mo
 
     monkeypatch.setattr(plugin, "process", _spy)
 
-    assert profiler._check_for_torch(plugin) is True
+    assert profiler._check_for_torch(plugin) is True  # type: ignore[arg-type]
     assert process_inputs, "warmup should call Ensemble.process at least once"

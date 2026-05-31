@@ -140,7 +140,7 @@ class DisplayController(QObject):
         for index in range(self._tabs.count()):
             label = self._tabs.tabText(index)
             if label in self._ORDER:
-                self._widgets[label] = self._tabs.widget(index)
+                self._widgets[label] = self._tabs.widget(index)  # type: ignore[assignment]
 
     def _ensure_tab(self, label: str) -> None:
         """Ensure a tab exists and is visible."""
@@ -169,7 +169,7 @@ class DisplayController(QObject):
             return
         widget = self._tabs.widget(index)
         self._tabs.removeTab(index)
-        widget.setParent(None)
+        widget.setParent(None)  # type: ignore[union-attr]
 
     def _set_tab_visible(self, label: str, visible: bool) -> None:
         """Set tab visibility when the tab exists."""
@@ -256,7 +256,7 @@ class DisplayController(QObject):
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(12, 12, 12, 8)
         label = QLabel(f"{name} display placeholder")
-        label.setAlignment(Qt.AlignCenter)
+        label.setAlignment(Qt.AlignCenter)  # type: ignore[attr-defined]
         label.setWordWrap(True)
         label.setObjectName(f"qt-shell-{name.lower()}-placeholder")
         layout.addWidget(label, 1)

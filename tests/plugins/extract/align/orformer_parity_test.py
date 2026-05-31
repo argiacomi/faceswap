@@ -146,7 +146,7 @@ def _build_crop_from_box(
     src_pts = np.array([[left, top], [right, top], [left, bottom]], dtype=np.float32)
     dst_pts = np.array([[0, 0], [output_size, 0], [0, output_size]], dtype=np.float32)
     matrix = cv2.getAffineTransform(src_pts, dst_pts)
-    return cv2.warpAffine(image, matrix, (output_size, output_size), flags=cv2.INTER_LINEAR)
+    return cv2.warpAffine(image, matrix, (output_size, output_size), flags=cv2.INTER_LINEAR)  # type: ignore[no-any-return]
 
 
 def _upstream_reference_input(crop_uint8: np.ndarray) -> np.ndarray:
@@ -156,14 +156,14 @@ def _upstream_reference_input(crop_uint8: np.ndarray) -> np.ndarray:
     resized = cv2.resize(crop_uint8, (64, 64), interpolation=cv2.INTER_LINEAR)
     norm = resized.astype(np.float32) / 255.0
     norm = (norm - _IMAGENET_MEAN) / _IMAGENET_STD
-    return np.ascontiguousarray(norm.transpose(2, 0, 1)[np.newaxis])
+    return np.ascontiguousarray(norm.transpose(2, 0, 1)[np.newaxis])  # type: ignore[no-any-return]
 
 
 def _normalize_256(crop_uint8: np.ndarray) -> np.ndarray:
     """Normalise 256×256 crop to (1, 3, 256, 256) float32."""
     norm = crop_uint8.astype(np.float32) / 255.0
     norm = (norm - _IMAGENET_MEAN) / _IMAGENET_STD
-    return np.ascontiguousarray(norm.transpose(2, 0, 1)[np.newaxis])
+    return np.ascontiguousarray(norm.transpose(2, 0, 1)[np.newaxis])  # type: ignore[no-any-return]
 
 
 def _nme(pred: np.ndarray, gt: np.ndarray, pair: tuple[int, int]) -> float:

@@ -93,13 +93,13 @@ class ManualFrameView(
         super().__init__(parent)
         self.setObjectName("qt-manual-frame-view")
         self.setMinimumSize(0, 0)
-        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)  # type: ignore[attr-defined]
         self.setMouseTracking(True)
-        self.setCursor(Qt.ArrowCursor)
+        self.setCursor(Qt.ArrowCursor)  # type: ignore[attr-defined]
         # ``StrongFocus`` lets the frame view receive keyboard focus on click
         # so frame-view-scoped shortcuts (e.g. arrow-key nudge) fire only when
         # the user is interacting with the frame, not the face panel.
-        self.setFocusPolicy(Qt.StrongFocus)
+        self.setFocusPolicy(Qt.StrongFocus)  # type: ignore[attr-defined]
         self._source: QPixmap = QPixmap()
         self._zoom: float = 1.0
         self._offset: QPointF = QPointF(0.0, 0.0)
@@ -137,21 +137,21 @@ class ManualFrameView(
         self._landmark_selection_provider: T.Callable[[], frozenset[int]] | None = None
         self._landmark_hover_callback: T.Callable[[int | None, int | None], None] | None = None
         self._landmark_hover_index: int | None = None
-        self._edit_drag_mode: str | None = None
+        self._edit_drag_mode: str | None = None  # type: ignore[assignment]
         # Modes: "move" | "resize" | "add" | "landmark" | "landmark_group"
         # | "landmark_marquee"
-        self._edit_drag_handle: str | None = None
-        self._edit_drag_face_index: int | None = None
-        self._edit_drag_source_anchor: QPointF | None = None
-        self._edit_drag_original_bbox: QRectF | None = None
-        self._edit_drag_current_bbox: QRectF | None = None
+        self._edit_drag_handle: str | None = None  # type: ignore[assignment]
+        self._edit_drag_face_index: int | None = None  # type: ignore[assignment]
+        self._edit_drag_source_anchor: QPointF | None = None  # type: ignore[assignment]
+        self._edit_drag_original_bbox: QRectF | None = None  # type: ignore[assignment]
+        self._edit_drag_current_bbox: QRectF | None = None  # type: ignore[assignment]
         # Landmark-drag state — populated by ``_begin_landmark_drag``.
-        self._landmark_drag_index: int | None = None
-        self._landmark_drag_indices: tuple[int, ...] = ()
-        self._landmark_drag_origins: tuple[tuple[float, float], ...] = ()
+        self._landmark_drag_index: int | None = None  # type: ignore[assignment]
+        self._landmark_drag_indices: tuple[int, ...] = ()  # type: ignore[assignment]
+        self._landmark_drag_origins: tuple[tuple[float, float], ...] = ()  # type: ignore[assignment]
         # Extract Box editor (#102) state — set by ``_begin_extract_drag``.
         self._extract_mode_provider: T.Callable[[], bool] | None = None
-        self._extract_drag_center: QPointF | None = None
+        self._extract_drag_center: QPointF | None = None  # type: ignore[assignment]
         self._extract_drag_start_radius: float = 0.0
         self._extract_drag_start_angle: float = 0.0
         self._extract_drag_scale: float = 1.0
@@ -275,7 +275,7 @@ class ManualFrameView(
     def restore_view_state(self, state: T.Mapping[str, object]) -> bool:
         """Restore a previously captured zoom/pan state."""
         try:
-            zoom = float(state.get("zoom", 1.0))
+            zoom = float(state.get("zoom", 1.0))  # type: ignore[arg-type]
             offset_raw = state.get("offset", (0.0, 0.0))
             if not isinstance(offset_raw, Sequence) or len(offset_raw) != 2:
                 return False
@@ -521,7 +521,7 @@ class ManualFrameView(
         self._brush_preview_source_point = None
         self._hovered_face_index = None
         self._set_landmark_hover(None)
-        self.setCursor(Qt.ArrowCursor)
+        self.setCursor(Qt.ArrowCursor)  # type: ignore[attr-defined]
         self.update()
 
     def edit_drag_preview_bbox(self) -> QRectF | None:
@@ -542,13 +542,13 @@ class ManualFrameView(
         self.frame_interaction_started.emit()
         position = event.position()
         source_point = self._widget_to_source(position)
-        if event.button() == Qt.RightButton:
+        if event.button() == Qt.RightButton:  # type: ignore[attr-defined]
             if self._emit_context_menu(source_point, event.globalPosition()):
                 event.accept()
                 return
             super().mousePressEvent(event)
             return
-        if event.button() != Qt.LeftButton:
+        if event.button() != Qt.LeftButton:  # type: ignore[attr-defined]
             super().mousePressEvent(event)
             return
         # Always emit clicked_at so selection on empty-space click is preserved.
@@ -579,7 +579,7 @@ class ManualFrameView(
         # No edit/add drag available — start pan.
         self._drag_anchor = position.toPoint()
         self._drag_origin = QPointF(self._offset)
-        self.setCursor(Qt.ClosedHandCursor)
+        self.setCursor(Qt.ClosedHandCursor)  # type: ignore[attr-defined]
         event.accept()
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa:N802
@@ -632,10 +632,10 @@ class ManualFrameView(
         painter.fillRect(self.rect(), QColor("#000000"))
         if self._source.isNull():
             painter.setPen(QColor("#cccccc"))
-            painter.drawText(self.rect(), Qt.AlignCenter | Qt.TextWordWrap, self._empty_message)
+            painter.drawText(self.rect(), Qt.AlignCenter | Qt.TextWordWrap, self._empty_message)  # type: ignore[attr-defined]
             return
         target = self._target_rect()
-        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)  # type: ignore[attr-defined]
         painter.drawPixmap(target, self._source, QRectF(self._source.rect()))
         viewport = FrameViewport(
             source_size=(self._source.width(), self._source.height()),

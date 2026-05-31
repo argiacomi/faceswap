@@ -244,7 +244,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     if args.cache_dir:
         _run_geometry_eval(
-            hard_manifest=Path(summary["output_manifest"]),
+            hard_manifest=Path(summary["output_manifest"]),  # type: ignore[arg-type]
             cache_dir=Path(args.cache_dir),
             output_dir=output_dir,
             models=args.models,

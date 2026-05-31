@@ -96,8 +96,8 @@ def alignment_summary(
         size=size,
         coverage_ratio=coverage_ratio,
     )
-    matrix = aligned.matrix.astype("float64")
-    roi = aligned.original_roi.astype("float64")
+    matrix = aligned.matrix.astype("float64")  # type: ignore[var-annotated]
+    roi = aligned.original_roi.astype("float64")  # type: ignore[var-annotated]
     pose = aligned.pose
     scale, rotation_degrees, translation = _decompose_similarity_matrix(matrix)
     return AlignmentSummary(
@@ -256,7 +256,7 @@ def _convex_hull_points(points: np.ndarray) -> np.ndarray | None:
         hull = ConvexHull(points)
     except (QhullError, ValueError):
         return None
-    return points[hull.vertices].astype("float64")
+    return points[hull.vertices].astype("float64")  # type: ignore[no-any-return]
 
 
 def _polygon_signed_area2(polygon: np.ndarray) -> float:
@@ -309,7 +309,7 @@ def _sutherland_hodgman(subject: np.ndarray, clip: np.ndarray) -> np.ndarray:
         edge = edge_end - edge_start
 
         def inside(point: T.Sequence[float], _es=edge_start, _e=edge) -> bool:
-            return (_e[0] * (point[1] - _es[1]) - _e[1] * (point[0] - _es[0])) >= 0
+            return (_e[0] * (point[1] - _es[1]) - _e[1] * (point[0] - _es[0])) >= 0  # type: ignore[no-any-return]
 
         def intersect(
             p1: T.Sequence[float],
@@ -335,7 +335,7 @@ def _sutherland_hodgman(subject: np.ndarray, clip: np.ndarray) -> np.ndarray:
                 output.append(intersect(previous, point))
     if not output:
         return np.zeros((0, 2), dtype="float64")
-    return np.asarray(output, dtype="float64")
+    return np.asarray(output, dtype="float64")  # type: ignore[no-any-return]
 
 
 def polygon_iou(predicted: np.ndarray, truth: np.ndarray) -> float:
@@ -397,7 +397,7 @@ def _select_visible(points: np.ndarray, visibility: T.Sequence[bool] | None) -> 
             f"visibility length {len(visibility)} must match landmark count {points.shape[0]}"
         )
     mask = np.array(list(visibility), dtype=bool)
-    return points[mask]
+    return points[mask]  # type: ignore[no-any-return]
 
 
 @dataclass(frozen=True)

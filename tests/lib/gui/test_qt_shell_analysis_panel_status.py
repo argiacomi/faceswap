@@ -28,7 +28,7 @@ class _AnalysisServiceDouble:
         self.table_rows: tuple[AnalysisTableRow, ...] = ()
         self.clear_count = 0
 
-    def load_session(self, _source) -> tuple[AnalysisTableRow, ...]:  # type:ignore[no-untyped-def]
+    def load_session(self, _source) -> tuple[AnalysisTableRow, ...]:
         """Load rows for the panel."""
         self.is_loaded = True
         self.table_rows = (
@@ -41,7 +41,7 @@ class _AnalysisServiceDouble:
         """Refresh rows for the panel."""
         return self.table_rows
 
-    def save_csv(self, _filename) -> int:  # type:ignore[no-untyped-def]
+    def save_csv(self, _filename) -> int:
         """Return the number of current rows."""
         return len(self.table_rows)
 
@@ -52,12 +52,12 @@ class _AnalysisServiceDouble:
         self.clear_count += 1
 
 
-def _label(panel: AnalysisPanel, name: str):  # type:ignore[no-untyped-def]
+def _label(panel: AnalysisPanel, name: str):
     """Return a named label."""
     return panel.findChild(type(panel._status_label), f"qt-shell-analysis-{name}")  # pylint:disable=protected-access
 
 
-def test_analysis_panel_uses_summary_metrics_status(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_analysis_panel_uses_summary_metrics_status(qtbot) -> None:
     """Loading rows should show graph, iteration and detail summary metrics."""
     service = _AnalysisServiceDouble()
     panel = AnalysisPanel(service=service)  # type:ignore[arg-type]
@@ -73,7 +73,7 @@ def test_analysis_panel_uses_summary_metrics_status(qtbot) -> None:  # type:igno
     assert _label(panel, "selection").text() == "No session selected"
 
 
-def test_analysis_panel_training_status(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_analysis_panel_training_status(qtbot) -> None:
     """Training sessions should be identified in the status text."""
     service = _AnalysisServiceDouble()
     service.is_training = True
@@ -86,7 +86,7 @@ def test_analysis_panel_training_status(qtbot) -> None:  # type:ignore[no-untype
     assert _label(panel, "source").text() == f"Training: model  |  {service.source.model_dir}"
 
 
-def test_analysis_panel_loaded_empty_status(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_analysis_panel_loaded_empty_status(qtbot) -> None:
     """A loaded session with no rows should have a distinct empty status."""
     service = _AnalysisServiceDouble()
     panel = AnalysisPanel(service=service)  # type:ignore[arg-type]
@@ -102,7 +102,7 @@ def test_analysis_panel_loaded_empty_status(qtbot) -> None:  # type:ignore[no-un
     )
 
 
-def test_analysis_panel_clear_resets_summary_status(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_analysis_panel_clear_resets_summary_status(qtbot) -> None:
     """Clear should reset the richer status text to the unloaded state."""
     service = _AnalysisServiceDouble()
     panel = AnalysisPanel(service=service)  # type:ignore[arg-type]

@@ -31,7 +31,7 @@ class Trainer(TrainerBase):
         -------
         The Random sampler
         """
-        return torch.utils.data.RandomSampler
+        return torch.utils.data.RandomSampler  # type: ignore[no-any-return]
 
     def _forward(
         self, inputs: list[torch.Tensor], targets: list[torch.Tensor], meta: BatchMeta

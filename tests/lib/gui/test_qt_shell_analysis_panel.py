@@ -56,7 +56,7 @@ def _summary_row(
     }
 
 
-def _panel(session: _SessionDouble | None = None):  # type:ignore[no-untyped-def]
+def _panel(session: _SessionDouble | None = None):
     """Return an AnalysisPanel with an injected service."""
     from lib.gui.qt_shell.analysis_panel import AnalysisPanel
     from lib.gui.services.analysis_session_service import AnalysisSessionService
@@ -72,35 +72,35 @@ def _state_file(tmp_path: Path, name: str = "model") -> Path:
     return state_file
 
 
-def _button(panel, name: str) -> QPushButton:  # type:ignore[no-untyped-def]
+def _button(panel, name: str) -> QPushButton:
     """Return an AnalysisPanel button by object name suffix."""
     button = panel.findChild(QPushButton, f"qt-shell-analysis-{name}")
     assert button is not None
-    return button
+    return button  # type: ignore[no-any-return]
 
 
-def _label(panel, name: str) -> QLabel:  # type:ignore[no-untyped-def]
+def _label(panel, name: str) -> QLabel:
     """Return an AnalysisPanel label by object name suffix."""
     label = panel.findChild(QLabel, f"qt-shell-analysis-{name}")
     assert label is not None
-    return label
+    return label  # type: ignore[no-any-return]
 
 
-def _combo(panel, name: str) -> QComboBox:  # type:ignore[no-untyped-def]
+def _combo(panel, name: str) -> QComboBox:
     """Return an AnalysisPanel combo by object name suffix."""
     combo = panel.findChild(QComboBox, f"qt-shell-analysis-{name}")
     assert combo is not None
-    return combo
+    return combo  # type: ignore[no-any-return]
 
 
-def _table(panel) -> QTableWidget:  # type:ignore[no-untyped-def]
+def _table(panel) -> QTableWidget:
     """Return the AnalysisPanel table."""
     table = panel.findChild(QTableWidget, "qt-shell-session-stats")
     assert table is not None
-    return table
+    return table  # type: ignore[no-any-return]
 
 
-def test_analysis_panel_initial_state(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_analysis_panel_initial_state(qtbot) -> None:
     """AnalysisPanel should start empty with only Open enabled."""
     panel = _panel(_SessionDouble([]))
     qtbot.addWidget(panel)
@@ -108,7 +108,7 @@ def test_analysis_panel_initial_state(qtbot) -> None:  # type:ignore[no-untyped-
 
     assert table.rowCount() == 0
     assert table.columnCount() == 8
-    assert [table.horizontalHeaderItem(idx).text() for idx in range(8)] == [
+    assert [table.horizontalHeaderItem(idx).text() for idx in range(8)] == [  # type: ignore[union-attr]
         "Graphs",
         "#",
         "Start",
@@ -132,7 +132,7 @@ def test_analysis_panel_initial_state(qtbot) -> None:  # type:ignore[no-untyped-
     assert _combo(panel, "group").isEnabled() is False
 
 
-def test_analysis_panel_loads_session_rows(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_analysis_panel_loads_session_rows(qtbot, tmp_path: Path) -> None:
     """Loading a source should initialize the service and render table values."""
     session = _SessionDouble(
         [
@@ -150,12 +150,12 @@ def test_analysis_panel_loads_session_rows(qtbot, tmp_path: Path) -> None:  # ty
     assert loaded is True
     assert session.initialized == [(str(tmp_path), "my_model", False)]
     assert table.rowCount() == 2
-    assert table.item(0, 0).text() == "✓"
-    assert table.item(0, 1).text() == "1"
-    assert table.item(0, 5).text() == "16"
-    assert table.item(0, 7).text() == "53.3"
-    assert table.item(1, 0).text() == ""
-    assert table.item(1, 1).data(0x0100) == "total"
+    assert table.item(0, 0).text() == "✓"  # type: ignore[union-attr]
+    assert table.item(0, 1).text() == "1"  # type: ignore[union-attr]
+    assert table.item(0, 5).text() == "16"  # type: ignore[union-attr]
+    assert table.item(0, 7).text() == "53.3"  # type: ignore[union-attr]
+    assert table.item(1, 0).text() == ""  # type: ignore[union-attr]
+    assert table.item(1, 1).data(0x0100) == "total"  # type: ignore[union-attr]
     assert _label(panel, "source").text() == f"my_model  |  {tmp_path}"
     assert _label(panel, "status").text() == "Loaded session: 2 rows, 1 graph, 200 iterations"
     assert (
@@ -169,7 +169,7 @@ def test_analysis_panel_loads_session_rows(qtbot, tmp_path: Path) -> None:  # ty
     assert _combo(panel, "group").isEnabled() is True
 
 
-def test_analysis_panel_refresh_replaces_rows(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_analysis_panel_refresh_replaces_rows(qtbot, tmp_path: Path) -> None:
     """Refresh should pull latest rows from the backing session service."""
     session = _SessionDouble([_summary_row(1)])
     panel = _panel(session)
@@ -182,13 +182,13 @@ def test_analysis_panel_refresh_replaces_rows(qtbot, tmp_path: Path) -> None:  #
 
     assert refreshed is True
     assert table.rowCount() == 1
-    assert table.item(0, 1).text() == "2"
-    assert table.item(0, 5).text() == "32"
-    assert table.item(0, 6).text() == "200"
+    assert table.item(0, 1).text() == "2"  # type: ignore[union-attr]
+    assert table.item(0, 5).text() == "32"  # type: ignore[union-attr]
+    assert table.item(0, 6).text() == "200"  # type: ignore[union-attr]
     assert _label(panel, "status").text() == "Loaded session: 1 row, 1 graph, 200 iterations"
 
 
-def test_analysis_panel_filters_groups_and_selects_session_rows(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_analysis_panel_filters_groups_and_selects_session_rows(qtbot, tmp_path: Path) -> None:
     """Filter/group controls and row selection should mirror Tk stats tree behavior."""
     session = _SessionDouble(
         [
@@ -205,7 +205,7 @@ def test_analysis_panel_filters_groups_and_selects_session_rows(qtbot, tmp_path:
     table = _table(panel)
 
     assert table.rowCount() == 2
-    assert [table.item(row, 1).text() for row in range(table.rowCount())] == ["1", "Total"]
+    assert [table.item(row, 1).text() for row in range(table.rowCount())] == ["1", "Total"]  # type: ignore[union-attr]
     assert (
         _label(panel, "detail").text()
         == "Rows: 2 | Graphs: 2 | Iterations: 200 | Avg EGs/sec: 50.00"
@@ -214,7 +214,7 @@ def test_analysis_panel_filters_groups_and_selects_session_rows(qtbot, tmp_path:
     _combo(panel, "filter").setCurrentText("All sessions")
     _combo(panel, "group").setCurrentText("Total vs sessions")
 
-    assert [table.item(row, 1).text() for row in range(table.rowCount())] == ["Total", "1", "2"]
+    assert [table.item(row, 1).text() for row in range(table.rowCount())] == ["Total", "1", "2"]  # type: ignore[union-attr]
 
     table.setCurrentCell(1, 1)
 
@@ -224,7 +224,7 @@ def test_analysis_panel_filters_groups_and_selects_session_rows(qtbot, tmp_path:
     )
 
 
-def test_analysis_panel_loads_from_model_context(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_analysis_panel_loads_from_model_context(qtbot, tmp_path: Path) -> None:
     """Training context should auto-attach to the current model folder/name."""
     session = _SessionDouble([_summary_row()])
     panel = _panel(session)
@@ -243,7 +243,7 @@ def test_analysis_panel_loads_from_model_context(qtbot, tmp_path: Path) -> None:
     assert _button(panel, "clear").isEnabled() is False
 
 
-def test_analysis_panel_saves_csv(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_analysis_panel_saves_csv(qtbot, tmp_path: Path) -> None:
     """Saving should delegate to AnalysisSessionService and update status."""
     panel = _panel(_SessionDouble([_summary_row()]))
     qtbot.addWidget(panel)
@@ -259,7 +259,7 @@ def test_analysis_panel_saves_csv(qtbot, tmp_path: Path) -> None:  # type:ignore
     assert _label(panel, "status").text() == "Saved 1 rows"
 
 
-def test_analysis_panel_clear_resets_table_and_service(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_analysis_panel_clear_resets_table_and_service(qtbot, tmp_path: Path) -> None:
     """Clear should reset labels, buttons and service state."""
     session = _SessionDouble([_summary_row()])
     panel = _panel(session)
@@ -284,7 +284,7 @@ def test_analysis_panel_clear_resets_table_and_service(qtbot, tmp_path: Path) ->
     assert _button(panel, "clear").isEnabled() is False
 
 
-def test_analysis_panel_cleanup_resets_with_terminal_message(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_analysis_panel_cleanup_resets_with_terminal_message(qtbot, tmp_path: Path) -> None:
     """Terminal cleanup paths should clear state and preserve the terminal reason."""
     session = _SessionDouble([_summary_row()])
     panel = _panel(session)
@@ -298,7 +298,7 @@ def test_analysis_panel_cleanup_resets_with_terminal_message(qtbot, tmp_path: Pa
     assert _label(panel, "status").text() == "Analysis cleared after reload"
 
 
-def test_analysis_panel_load_failure_displays_error(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_analysis_panel_load_failure_displays_error(qtbot, tmp_path: Path) -> None:
     """Load errors should stay in-panel instead of raising dialogs."""
     panel = _panel(_SessionDouble([]))
     qtbot.addWidget(panel)

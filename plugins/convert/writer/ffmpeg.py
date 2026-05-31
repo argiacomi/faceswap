@@ -171,8 +171,8 @@ class Writer(Output):
                 "[FFMPEG] Rendering from cache. Frame no: %s", save_no
             )
             self._muxer.encode(save_image)
-        logger.trace(
-            "[FFMPEG] Current cache size: %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "[FFMPEG] Current cache size: %s",
             len(self.cache),
         )
 
@@ -187,8 +187,8 @@ class Writer(Output):
         image: :class:`numpy.ndarray`
             The converted image to be written
         """
-        logger.trace(
-            "Received frame: (filename: '%s', shape: %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "Received frame: (filename: '%s', shape: %s",
             filename,
             image.shape,
         )

@@ -291,7 +291,7 @@ def policy_summary(
     base = summary(values, failures)
     base.update(
         {
-            "pick_counts": dict(Counter(choices.values())),
+            "pick_counts": dict(Counter(choices.values())),  # type: ignore[dict-item]
             "oracle_match_rate": oracle_matches / len(contexts) if contexts else 0.0,
             "mean_gap_vs_oracle": float(np.mean(gaps)) if gaps else 0.0,
         }
@@ -350,7 +350,7 @@ def policy_metric_bundle(
                 continue
             payload[policy_name] = policy_summary((), {})
         return payload
-    payload: dict[str, T.Any] = {
+    payload: dict[str, T.Any] = {  # type: ignore[no-redef]
         "sample_count": len(contexts),
         scorer_policy_name: policy_summary(contexts, choice_subset(contexts, scorer_choices)),
         RUNTIME_POLICY_REPORT_LABEL: policy_summary(
@@ -481,12 +481,12 @@ def load_installed_policy_scorers(
     for path in sorted(scorer_dir.glob("*.json")):
         try:
             scorer = load_runtime_resolver_scorer(path)
-            assert_lower_score_is_better(scorer)
+            assert_lower_score_is_better(scorer)  # type: ignore[arg-type]
         except (OSError, ValueError, RuntimeError):
             continue
-        policy = scorer_policy_key_for_path(path, scorer)
+        policy = scorer_policy_key_for_path(path, scorer)  # type: ignore[arg-type]
         if policy in LEARNED_POLICIES:
-            scorers[policy] = scorer
+            scorers[policy] = scorer  # type: ignore[assignment]
 
     if not active_policy and len(scorers) == 1:
         active_policy = next(iter(scorers))
@@ -807,15 +807,15 @@ def evaluate_runtime_resolver_scorer(
         _dataset_dir, scorer_rows, _manifest = resolve_scorer_dataset_path(scorer_dataset)
 
     scorer = load_runtime_resolver_scorer(scorer_path)
-    assert_lower_score_is_better(scorer)
+    assert_lower_score_is_better(scorer)  # type: ignore[arg-type]
     binary_scorer = (
         None if binary_scorer_path is None else load_runtime_resolver_scorer(binary_scorer_path)
     )
     if binary_scorer is not None:
-        assert_lower_score_is_better(binary_scorer)
+        assert_lower_score_is_better(binary_scorer)  # type: ignore[arg-type]
     v2_scorer = None if v2_scorer_path is None else load_runtime_resolver_scorer(v2_scorer_path)
     if v2_scorer is not None:
-        assert_lower_score_is_better(v2_scorer)
+        assert_lower_score_is_better(v2_scorer)  # type: ignore[arg-type]
     source_by_sample_id: dict[str, str] = {}
     if scorer_rows is not None:
         contexts, source_by_sample_id = row_contexts_from_scorer_rows(scorer_rows)
@@ -952,7 +952,7 @@ def evaluate_runtime_resolver_scorer(
                 "fallback_failure_delta_vs_rejected": (
                     None
                     if rejected_failure is None
-                    else int(replacement_failure) - int(rejected_failure)
+                    else int(replacement_failure) - int(rejected_failure)  # type: ignore[arg-type]
                 ),
             }
         )
@@ -963,7 +963,7 @@ def evaluate_runtime_resolver_scorer(
     )
     static = candidate_summary(contexts, static_name) if static_name else best_single_summary
     scorer_summary = policy_summary(contexts, scorer_choices)
-    primary_scorer_policy = scorer_policy_key(scorer)
+    primary_scorer_policy = scorer_policy_key(scorer)  # type: ignore[arg-type]
     extra_scorer_choices: dict[str, T.Mapping[str, str]] = {
         primary_scorer_policy: scorer_choices,
     }

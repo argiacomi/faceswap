@@ -72,7 +72,7 @@ class BatchMeta:
             **{k: None if v is None else [x[:, key] for x in v] for k, v in self.__dict__.items()}
         )
 
-    def to(self, device: str | torch.Device) -> T.Self:
+    def to(self, device: str | torch.Device) -> T.Self:  # type: ignore[name-defined]
         """Place all contained tensors onto the given device
 
         Parameters
@@ -230,7 +230,7 @@ class LandmarkMatcher:
         for i, folder in enumerate(self._folders):
             side = get_label(i, len(self._folders))
             file_list = get_sorted_images(folder)
-            lms = np.empty((len(file_list), 68, 2), dtype=np.float32)
+            lms = np.empty((len(file_list), 68, 2), dtype=np.float32)  # type: ignore[var-annotated]
             for filename, meta in tqdm(
                 read_image_meta_batch(file_list),
                 desc=f"WTL: Caching Landmarks ({side.upper()})",
@@ -302,8 +302,8 @@ class LandmarkMatcher:
             matches[side_id, :, 1] = dst_lms
 
         retval = matches.reshape((-1, 2, 68, 2)).copy()
-        logger.trace(
-            "[LandmarkMatcher] matched_points: %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "[LandmarkMatcher] matched_points: %s",
             format_array(retval),
         )
         return retval
@@ -392,8 +392,8 @@ class Collate:  # pylint:disable=too-many-instance-attributes
         meta
             Any additional Meta information relating to the batch required for training the model
         """
-        logger.trace(
-            "[%s] Compiling targets: batch shape: %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "[%s] Compiling targets: batch shape: %s",
             self._name,
             batch.shape,
         )
@@ -430,8 +430,8 @@ class Collate:  # pylint:disable=too-many-instance-attributes
                 for idx in range(reshaped[0].shape[-1] - 3)
             }
         )
-        logger.trace(
-            "[%s] Processed targets: %s, masks: %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "[%s] Processed targets: %s, masks: %s",
             self._name,
             [t.shape for t in targets],
             masks,
@@ -484,7 +484,7 @@ class Collate:  # pylint:disable=too-many-instance-attributes
         """
         shape = data[0][0][0].shape
         batch = np.empty((self._num_inputs, self._batch_size, *shape), dtype=np.uint8)
-        indices = np.empty((self._num_inputs, self._batch_size), dtype=np.int64)
+        indices = np.empty((self._num_inputs, self._batch_size), dtype=np.int64)  # type: ignore[var-annotated]
         for idx in range(self._num_inputs):
             batch[idx] = [d[0][idx] for d in data]
             indices[idx] = [d[1][idx] for d in data]

@@ -403,7 +403,7 @@ class LPIPSLoss(nn.Module):  # pylint:disable=too-many-instance-attributes
         List of either the linear network outputs (when using lpips) or summed network outputs
         """
         if self._use_lpips:
-            return self._linear_net(inputs)
+            return self._linear_net(inputs)  # type: ignore[no-any-return]
         return [torch.sum(x, dim=1) for x in inputs]
 
     def _process_output(self, inputs: torch.Tensor, output_dims: tuple) -> torch.Tensor:

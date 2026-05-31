@@ -40,7 +40,7 @@ def _session_with_frames(folder: Path, count: int = 1) -> ManualSession:
     return ManualSession.create(frames=str(folder))
 
 
-def _make_window(qtbot, folder: Path) -> ManualToolWindow:  # type:ignore[no-untyped-def]
+def _make_window(qtbot, folder: Path) -> ManualToolWindow:
     """Create a Manual Tool window with one loaded image frame."""
     session = _session_with_frames(folder)
     window = ManualToolWindow(session)
@@ -51,7 +51,7 @@ def _make_window(qtbot, folder: Path) -> ManualToolWindow:  # type:ignore[no-unt
     return window
 
 
-def test_manual_tool_persists_and_restores_window_state(  # type:ignore[no-untyped-def]
+def test_manual_tool_persists_and_restores_window_state(
     qtbot, tmp_path: Path, monkeypatch
 ) -> None:
     """Manual Tool saves geometry/window state plus the main splitter sizes."""
@@ -95,7 +95,7 @@ def test_manual_tool_persists_and_restores_window_state(  # type:ignore[no-untyp
     assert restored._manual_splitter.sizes() == expected_sizes  # noqa:SLF001
 
 
-def test_manual_toolbar_uses_theme_icon_size(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_manual_toolbar_uses_theme_icon_size(qtbot, tmp_path: Path) -> None:
     """The Manual toolbar adopts the shell theme's configured icon size."""
     window = _make_window(qtbot, tmp_path)
     toolbar = window.findChild(QToolBar, "qt-manual-toolbar")

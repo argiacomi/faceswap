@@ -18,7 +18,7 @@ from lib.landmarks.evaluation.profile_metrics import (
 
 
 def _truth_points() -> np.ndarray:
-    return np.stack(
+    return np.stack(  # type: ignore[no-any-return]
         (
             np.linspace(0.0, 100.0, 68, dtype="float32"),
             np.linspace(0.0, 200.0, 68, dtype="float32"),

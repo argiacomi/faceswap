@@ -130,7 +130,7 @@ def _write_release2_fixture(
     image_path = output_dir / relative
     image_path.parent.mkdir(parents=True, exist_ok=True)
     height, width = image_hw or mat_hw
-    image = np.zeros((height, width, 3), dtype="uint8")
+    image = np.zeros((height, width, 3), dtype="uint8")  # type: ignore[var-annotated]
     image[..., 1] = 128
     assert cv2.imwrite(str(image_path), image)
     (base / "aflw_train_images.txt").write_text(relative + "\n", encoding="utf-8")

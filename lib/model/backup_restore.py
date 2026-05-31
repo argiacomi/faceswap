@@ -88,8 +88,8 @@ class Backup:
         if os.path.exists(backupfile):
             os.remove(backupfile)
         if os.path.exists(full_path):
-            logger.verbose(
-                "Backing up: '%s' to '%s'",  # type:ignore[attr-defined]
+            logger.verbose(  # type: ignore[attr-defined]
+                "Backing up: '%s' to '%s'",
                 full_path,
                 backupfile,
             )
@@ -174,8 +174,8 @@ class Backup:
                 logger.debug("Not restoring file: '%s'", filename)
                 continue
             dstfile = os.path.splitext(filename)[0]
-            logger.verbose(
-                "Restoring '%s' to '%s'",  # type:ignore[attr-defined]
+            logger.verbose(  # type: ignore[attr-defined]
+                "Restoring '%s' to '%s'",
                 filename,
                 dstfile,
             )

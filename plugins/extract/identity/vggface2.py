@@ -78,7 +78,7 @@ class VGGFace2(FacePlugin):
         -------
         The updated images for feeding the model
         """
-        return (batch - self._average_img).transpose(0, 3, 1, 2)
+        return (batch - self._average_img).transpose(0, 3, 1, 2)  # type: ignore[no-any-return]
 
     def process(self, batch: np.ndarray) -> np.ndarray:
         """Get the identity matrix from the model

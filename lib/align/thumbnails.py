@@ -72,7 +72,7 @@ class Thumbnails:
             face_index,
             retval.shape,
         )
-        return retval
+        return retval  # type: ignore[no-any-return]
 
     def add_thumbnail(self, frame: str, face_index: int, thumb: np.ndarray) -> None:
         """Add a thumbnail for the given face index for the given frame.

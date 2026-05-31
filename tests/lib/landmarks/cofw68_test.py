@@ -15,7 +15,7 @@ from lib.landmarks.datasets.cofw68 import build_cofw68_json_from_sources, resolv
 
 def _points_68(offset: float) -> np.ndarray:
     """Return deterministic 68-point landmarks."""
-    return np.stack(
+    return np.stack(  # type: ignore[no-any-return]
         (
             np.linspace(10 + offset, 77 + offset, 68, dtype="float32"),
             np.linspace(20 + offset, 87 + offset, 68, dtype="float32"),
@@ -33,7 +33,7 @@ def test_build_cofw68_json_from_color_mat_and_annotation_mats(tmp_path: Path) ->
     color_root.mkdir(parents=True)
     test_annotations.mkdir(parents=True)
 
-    images = np.empty((2, 1), dtype=object)
+    images = np.empty((2, 1), dtype=object)  # type: ignore[var-annotated]
     images[0, 0] = np.full((8, 9, 3), 32, dtype="uint8")
     images[1, 0] = np.full((10, 7, 3), 64, dtype="uint8")
     scipy_io.savemat(str(color_root / "COFW_test_color.mat"), {"IsT": images})
@@ -86,7 +86,7 @@ def test_resolve_cofw68_json_uses_cached_archives_when_download_disabled(
     test_annotations = annotation_root / "test_annotations"
     color_root.mkdir(parents=True)
     test_annotations.mkdir(parents=True)
-    images = np.empty((1, 1), dtype=object)
+    images = np.empty((1, 1), dtype=object)  # type: ignore[var-annotated]
     images[0, 0] = np.full((8, 9, 3), 32, dtype="uint8")
     scipy_io.savemat(str(color_root / "COFW_test_color.mat"), {"IsT": images})
     scipy_io.savemat(

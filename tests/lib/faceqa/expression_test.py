@@ -14,7 +14,7 @@ from lib.faceqa.expression import (
 
 def _neutral_landmarks() -> np.ndarray:
     """Return a synthetic 68-point face with eyes open and mouth closed."""
-    points = np.zeros((68, 2), dtype="float32")
+    points = np.zeros((68, 2), dtype="float32")  # type: ignore[var-annotated]
 
     # Right eye corners and lids (open).
     points[36] = (30.0, 40.0)  # outer corner

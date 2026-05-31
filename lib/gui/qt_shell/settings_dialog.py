@@ -87,9 +87,9 @@ class _SettingsPage(QWidget):
         if helptext:
             summary = QLabel(self._format_helptext(helptext))
             summary.setObjectName("qt-shell-settings-summary")
-            summary.setTextFormat(Qt.RichText)
+            summary.setTextFormat(Qt.RichText)  # type: ignore[attr-defined]
             summary.setWordWrap(True)
-            summary.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+            summary.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)  # type: ignore[attr-defined]
             layout.addWidget(summary)
         self._renderer.set_options(tuple(option.spec for option in options.values()))
         self.sync_from_state()
@@ -144,7 +144,7 @@ class _LinksPage(QWidget):
             button = QPushButton(link.replace("_", " ").title())
             button.setObjectName("qt-shell-settings-link")
             button.setFlat(True)
-            button.setCursor(Qt.PointingHandCursor)
+            button.setCursor(Qt.PointingHandCursor)  # type: ignore[attr-defined]
             button.clicked.connect(lambda _checked=False, ident=identifier: callback(ident))
             layout.addWidget(button)
         layout.addStretch(1)
@@ -205,7 +205,7 @@ class SettingsDialog(QDialog):
     def selected_identifier(self) -> str | None:
         """Return the selected tree identifier."""
         item = self._tree.currentItem()
-        data = None if item is None else item.data(0, Qt.UserRole)
+        data = None if item is None else item.data(0, Qt.UserRole)  # type: ignore[attr-defined]
         return data if isinstance(data, str) else None
 
     @property
@@ -219,7 +219,7 @@ class SettingsDialog(QDialog):
         layout.setContentsMargins(10, 10, 10, 8)
         layout.setSpacing(8)
         layout.addWidget(self._top_header())
-        splitter = QSplitter(Qt.Horizontal)
+        splitter = QSplitter(Qt.Horizontal)  # type: ignore[attr-defined]
         splitter.setObjectName("qt-shell-settings-splitter")
         self._tree.setObjectName("qt-shell-settings-tree")
         self._tree.setHeaderHidden(True)
@@ -277,7 +277,7 @@ class SettingsDialog(QDialog):
         scroll = QScrollArea()
         scroll.setObjectName("qt-shell-settings-scroll")
         scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)  # type: ignore[attr-defined]
         self._page_layout.setContentsMargins(0, 0, 0, 0)
         self._page_layout.setSpacing(0)
         scroll.setWidget(self._page_host)
@@ -355,7 +355,7 @@ class SettingsDialog(QDialog):
         self._tree.setIconSize(QSize(self._theme.icon_size, self._theme.icon_size))
         for category in self._ordered_categories():
             item = QTreeWidgetItem([category.replace("_", " ").title()])
-            item.setData(0, Qt.UserRole, category)
+            item.setData(0, Qt.UserRole, category)  # type: ignore[attr-defined]
             item.setToolTip(0, self._tree_tooltip(category))
             icon = icon_for_action(self._theme, f"settings_{category}")
             if not icon.isNull():
@@ -369,7 +369,7 @@ class SettingsDialog(QDialog):
                     continue
                 self._insert_path(roots[category], category, parts)
         for index in range(self._tree.topLevelItemCount()):
-            self._tree.topLevelItem(index).setExpanded(True)
+            self._tree.topLevelItem(index).setExpanded(True)  # type: ignore[union-attr]
 
     def _insert_path(self, root: QTreeWidgetItem, category: str, parts: list[str]) -> None:
         """Insert one nested section path."""
@@ -381,7 +381,7 @@ class SettingsDialog(QDialog):
             child = self._child(current, identifier)
             if child is None:
                 child = QTreeWidgetItem([part.replace("_", " ").title()])
-                child.setData(0, Qt.UserRole, identifier)
+                child.setData(0, Qt.UserRole, identifier)  # type: ignore[attr-defined]
                 child.setToolTip(0, self._tree_tooltip(identifier))
                 current.addChild(child)
             current = child
@@ -401,9 +401,9 @@ class SettingsDialog(QDialog):
         query = text.strip().lower()
         for index in range(self._tree.topLevelItemCount()):
             item = self._tree.topLevelItem(index)
-            self._filter_item(item, query)
-            if query and not item.isHidden():
-                item.setExpanded(True)
+            self._filter_item(item, query)  # type: ignore[arg-type]
+            if query and not item.isHidden():  # type: ignore[union-attr]
+                item.setExpanded(True)  # type: ignore[union-attr]
         current = self._tree.currentItem()
         if current is not None and current.isHidden():
             replacement = self._first_visible_item()
@@ -415,7 +415,7 @@ class SettingsDialog(QDialog):
         child_matches = False
         for index in range(item.childCount()):
             child_matches = self._filter_item(item.child(index), query) or child_matches
-        identifier = item.data(0, Qt.UserRole)
+        identifier = item.data(0, Qt.UserRole)  # type: ignore[attr-defined]
         searchable = " ".join(
             (
                 item.text(0),
@@ -442,12 +442,12 @@ class SettingsDialog(QDialog):
                 found = walk(item.child(index))
                 if found is not None:
                     return found
-            if item.data(0, Qt.UserRole) in self._options:
+            if item.data(0, Qt.UserRole) in self._options:  # type: ignore[attr-defined]
                 return item
             return None
 
         for index in range(self._tree.topLevelItemCount()):
-            found = walk(self._tree.topLevelItem(index))
+            found = walk(self._tree.topLevelItem(index))  # type: ignore[arg-type]
             if found is not None:
                 return found
         return None
@@ -457,8 +457,8 @@ class SettingsDialog(QDialog):
         """Return child matching identifier."""
         for index in range(parent.childCount()):
             child = parent.child(index)
-            if child.data(0, Qt.UserRole) == identifier:
-                return child
+            if child.data(0, Qt.UserRole) == identifier:  # type: ignore[attr-defined]
+                return child  # type: ignore[no-any-return]
         return None
 
     def _selection_changed(
@@ -467,7 +467,7 @@ class SettingsDialog(QDialog):
         """Update the visible page."""
         if current is None:
             return
-        identifier = current.data(0, Qt.UserRole)
+        identifier = current.data(0, Qt.UserRole)  # type: ignore[attr-defined]
         if not isinstance(identifier, str):
             return
         category = identifier.split("|")[0]
@@ -541,7 +541,7 @@ class SettingsDialog(QDialog):
         """Return a tree item by identifier."""
 
         def walk(item: QTreeWidgetItem) -> QTreeWidgetItem | None:
-            if item.data(0, Qt.UserRole) == identifier:
+            if item.data(0, Qt.UserRole) == identifier:  # type: ignore[attr-defined]
                 return item
             for index in range(item.childCount()):
                 found = walk(item.child(index))
@@ -550,7 +550,7 @@ class SettingsDialog(QDialog):
             return None
 
         for index in range(self._tree.topLevelItemCount()):
-            found = walk(self._tree.topLevelItem(index))
+            found = walk(self._tree.topLevelItem(index))  # type: ignore[arg-type]
             if found is not None:
                 return found
         return None
@@ -832,8 +832,8 @@ class SettingsDialog(QDialog):
             helptext=str(getattr(option, "helptext", "")),
             is_radio=bool(getattr(option, "gui_radio", False)),
             is_multi_option=datatype is list,
-            slider_min=min_max[0] if is_slider else None,
-            slider_max=min_max[1] if is_slider else None,
+            slider_min=min_max[0] if is_slider else None,  # type: ignore[index]
+            slider_max=min_max[1] if is_slider else None,  # type: ignore[index]
             slider_rounding=rounding if is_slider else None,
             browser_modes=browser_modes,
             file_filter=file_filter,
@@ -870,9 +870,9 @@ class SettingsDialog(QDialog):
         if datatype is bool:
             return bool(value)
         if datatype is int:
-            return int(value)
+            return int(value)  # type: ignore[call-overload]
         if datatype is float:
-            return float(value)
+            return float(value)  # type: ignore[arg-type]
         return "" if value is None else str(value)
 
     @staticmethod
@@ -901,7 +901,7 @@ class _State:
         """Open or raise the singleton dialog."""
         if self._dialog is None:
             self._dialog = SettingsDialog(section=name, parent=parent)
-            self._dialog.setAttribute(Qt.WA_DeleteOnClose, True)
+            self._dialog.setAttribute(Qt.WA_DeleteOnClose, True)  # type: ignore[attr-defined]
             self._dialog.destroyed.connect(self._clear_dialog)
         elif name is not None:
             self._dialog._select_initial_section(name)  # pylint:disable=protected-access

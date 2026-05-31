@@ -22,10 +22,10 @@ def _status(panel: PreviewPanel) -> QLabel:
     """Return the preview status label."""
     label = panel.findChild(QLabel, "qt-shell-preview-status")
     assert label is not None
-    return label
+    return label  # type: ignore[no-any-return]
 
 
-def test_preview_live_refresh_starts_only_with_source(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_preview_live_refresh_starts_only_with_source(qtbot, tmp_path: Path) -> None:
     """Live refresh should only start when a preview source is configured."""
     panel = PreviewPanel()
     qtbot.addWidget(panel)
@@ -41,7 +41,7 @@ def test_preview_live_refresh_starts_only_with_source(qtbot, tmp_path: Path) -> 
     assert panel._refresh_timer.interval() == 250  # pylint:disable=protected-access
 
 
-def test_preview_live_refresh_status_marks_live_mode(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_preview_live_refresh_status_marks_live_mode(qtbot, tmp_path: Path) -> None:
     """Live refresh status should show that the preview is polling."""
     _touch_image(tmp_path, "first.png")
     panel = PreviewPanel()
@@ -54,7 +54,7 @@ def test_preview_live_refresh_status_marks_live_mode(qtbot, tmp_path: Path) -> N
     assert _status(panel).text() == "Loaded 1 preview image (live)"
 
 
-def test_training_preview_live_refresh_status_marks_live_mode(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_training_preview_live_refresh_status_marks_live_mode(qtbot, tmp_path: Path) -> None:
     """Train preview polling should use Tk's fixed training preview cache image."""
     _touch_image(tmp_path, PreviewOutputService.TRAINING_PREVIEW)
     _touch_image(tmp_path, "ignored.png")
@@ -71,7 +71,7 @@ def test_training_preview_live_refresh_status_marks_live_mode(qtbot, tmp_path: P
     assert _status(panel).text() == "Loaded 1 training preview image (live)"
 
 
-def test_preview_refresh_preserves_selected_image(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_preview_refresh_preserves_selected_image(qtbot, tmp_path: Path) -> None:
     """Refreshing should preserve the selected preview image when it still exists."""
     _touch_image(tmp_path, "first.png")
     second = _touch_image(tmp_path, "second.png")
@@ -86,7 +86,7 @@ def test_preview_refresh_preserves_selected_image(qtbot, tmp_path: Path) -> None
     assert panel._image_list.currentItem().data(0x0100) == str(second)  # pylint:disable=protected-access
 
 
-def test_preview_refresh_selects_first_when_previous_selection_disappears(  # type:ignore[no-untyped-def]
+def test_preview_refresh_selects_first_when_previous_selection_disappears(
     qtbot,
     tmp_path: Path,
 ) -> None:
@@ -104,7 +104,7 @@ def test_preview_refresh_selects_first_when_previous_selection_disappears(  # ty
     assert panel._image_list.currentItem().data(0x0100) == str(first)  # pylint:disable=protected-access
 
 
-def test_clear_preview_stops_live_refresh(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_clear_preview_stops_live_refresh(qtbot, tmp_path: Path) -> None:
     """Clearing preview output should stop polling and reset status."""
     panel = PreviewPanel()
     qtbot.addWidget(panel)
@@ -119,7 +119,7 @@ def test_clear_preview_stops_live_refresh(qtbot, tmp_path: Path) -> None:  # typ
     assert _status(panel).text() == "No preview images loaded"
 
 
-def test_cleanup_preview_stops_timer_and_clears_ui_and_service(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_cleanup_preview_stops_timer_and_clears_ui_and_service(qtbot, tmp_path: Path) -> None:
     """Terminal preview cleanup should clear timer, service state and UI state together."""
     panel = PreviewPanel()
     qtbot.addWidget(panel)
@@ -135,7 +135,7 @@ def test_cleanup_preview_stops_timer_and_clears_ui_and_service(qtbot, tmp_path: 
     assert _status(panel).text() == "Preview stopped"
 
 
-def test_main_window_starts_and_stops_preview_polling_for_extract(  # type:ignore[no-untyped-def]
+def test_main_window_starts_and_stops_preview_polling_for_extract(
     qtbot,
     monkeypatch,
     tmp_path: Path,
@@ -157,8 +157,8 @@ def test_main_window_starts_and_stops_preview_polling_for_extract(  # type:ignor
     )
     window = MainWindow(schema)
     qtbot.addWidget(window)
-    window._runner.configure_runtime_context = lambda _context: None  # type:ignore[method-assign] # pylint:disable=protected-access
-    window._runner.start = lambda _args, command=None: None  # type:ignore[method-assign] # pylint:disable=protected-access
+    window._runner.configure_runtime_context = lambda _context: None  # type: ignore[assignment]  # type:ignore[method-assign] # pylint:disable=protected-access
+    window._runner.start = lambda _args, command=None: None  # type: ignore[method-assign, misc]  # type:ignore[method-assign] # pylint:disable=protected-access
     window._command_panel.set_command("extract", {"-o": str(tmp_path)})  # pylint:disable=protected-access
 
     window._run_command()  # pylint:disable=protected-access

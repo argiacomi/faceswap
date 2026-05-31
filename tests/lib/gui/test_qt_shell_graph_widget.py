@@ -33,7 +33,7 @@ def _long_snapshot(count: int = 100_000) -> TrainingGraphSnapshot:
     )
 
 
-def test_graph_widget_renders_all_series_by_default(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_graph_widget_renders_all_series_by_default(qtbot) -> None:
     """Graph widget should render every series when no selection is provided."""
     widget = TrainingGraphWidget()
     qtbot.addWidget(widget)
@@ -44,7 +44,7 @@ def test_graph_widget_renders_all_series_by_default(qtbot) -> None:  # type:igno
     assert widget.status_text == "Rendered 2 series, 3 points: metric_a, metric_b"
 
 
-def test_graph_widget_filters_selected_series(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_graph_widget_filters_selected_series(qtbot) -> None:
     """Graph widget should render only requested series."""
     widget = TrainingGraphWidget()
     qtbot.addWidget(widget)
@@ -55,7 +55,7 @@ def test_graph_widget_filters_selected_series(qtbot) -> None:  # type:ignore[no-
     assert widget.status_text == "Rendered 1 series, 3 points: metric_b"
 
 
-def test_graph_widget_handles_empty_data(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_graph_widget_handles_empty_data(qtbot) -> None:
     """Empty snapshots should show empty state."""
     widget = TrainingGraphWidget()
     qtbot.addWidget(widget)
@@ -66,7 +66,7 @@ def test_graph_widget_handles_empty_data(qtbot) -> None:  # type:ignore[no-untyp
     assert widget.status_text == "No graph data loaded"
 
 
-def test_graph_widget_clear_resets_state(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_graph_widget_clear_resets_state(qtbot) -> None:
     """Clear should reset series, selection and status."""
     widget = TrainingGraphWidget()
     qtbot.addWidget(widget)
@@ -82,7 +82,7 @@ def test_graph_widget_clear_resets_state(qtbot) -> None:  # type:ignore[no-untyp
     assert widget.viewport == (1.0, 1.0, 0.0, 0.0)
 
 
-def test_graph_widget_zoom_and_reset_view(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_graph_widget_zoom_and_reset_view(qtbot) -> None:
     """Graph widget should expose bounded x/y zoom controls."""
     widget = TrainingGraphWidget()
     qtbot.addWidget(widget)
@@ -107,7 +107,7 @@ def test_graph_widget_zoom_and_reset_view(qtbot) -> None:  # type:ignore[no-unty
     assert widget.viewport == (1.0, 1.0, 0.0, 0.0)
 
 
-def test_graph_widget_decimates_long_history_for_fast_paint(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_graph_widget_decimates_long_history_for_fast_paint(qtbot) -> None:
     """Long histories should be capped to a viewport-sized point budget."""
     widget = TrainingGraphWidget()
     qtbot.addWidget(widget)
@@ -126,7 +126,7 @@ def test_graph_widget_decimates_long_history_for_fast_paint(qtbot) -> None:  # t
     assert widget.last_decimated_count == len(points)
 
 
-def test_graph_widget_visible_values_respect_x_zoom_and_pan(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_graph_widget_visible_values_respect_x_zoom_and_pan(qtbot) -> None:
     """Zoom/pan should expose a bounded subsection of the graph history."""
     widget = TrainingGraphWidget()
     qtbot.addWidget(widget)
@@ -141,7 +141,7 @@ def test_graph_widget_visible_values_respect_x_zoom_and_pan(qtbot) -> None:  # t
     assert visible[-1] == 99.0
 
 
-def test_graph_widget_saves_image_when_data_loaded(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_graph_widget_saves_image_when_data_loaded(qtbot, tmp_path: Path) -> None:
     """Saving should create an image when graph data exists."""
     widget = TrainingGraphWidget()
     qtbot.addWidget(widget)
@@ -153,7 +153,7 @@ def test_graph_widget_saves_image_when_data_loaded(qtbot, tmp_path: Path) -> Non
     assert filename.exists()
 
 
-def test_graph_widget_saves_jpeg_when_requested(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_graph_widget_saves_jpeg_when_requested(qtbot, tmp_path: Path) -> None:
     """Image export should infer common formats from filename suffixes."""
     widget = TrainingGraphWidget()
     qtbot.addWidget(widget)
@@ -165,7 +165,7 @@ def test_graph_widget_saves_jpeg_when_requested(qtbot, tmp_path: Path) -> None: 
     assert filename.exists()
 
 
-def test_graph_widget_does_not_save_empty_image(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_graph_widget_does_not_save_empty_image(qtbot, tmp_path: Path) -> None:
     """Saving should fail cleanly when no graph data is rendered."""
     widget = TrainingGraphWidget()
     qtbot.addWidget(widget)

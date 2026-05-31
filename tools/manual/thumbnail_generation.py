@@ -119,7 +119,7 @@ def _regenerate_video(
         if metadata is None or not metadata.is_valid
         else {"pts_time": list(metadata.pts_time), "keyframes": list(metadata.keyframes)}
     )
-    loader = SingleFrameLoader(session.frames, video_meta_data=meta_dict)
+    loader = SingleFrameLoader(session.frames, video_meta_data=meta_dict)  # type: ignore[arg-type]
     try:
         frame_index_by_name = {
             session.frame_name_for_index(index): index for index in range(loader.count)
@@ -161,9 +161,9 @@ def _thumbnail_from_face(face: T.Any, image: np.ndarray) -> np.ndarray:
     if landmarks.size:
         aligned = AlignedFace(landmarks, image=image, centering="head", size=96)
         if aligned.face is not None:
-            return generate_thumbnail(aligned.face, size=96)
+            return generate_thumbnail(aligned.face, size=96)  # type: ignore[no-any-return]
     crop = _bbox_crop(face, image)
-    return generate_thumbnail(crop, size=96)
+    return generate_thumbnail(crop, size=96)  # type: ignore[no-any-return]
 
 
 def _bbox_crop(face: T.Any, image: np.ndarray) -> np.ndarray:

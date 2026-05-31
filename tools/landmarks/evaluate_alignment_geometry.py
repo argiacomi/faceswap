@@ -54,7 +54,7 @@ def _parse_csv(value: str) -> tuple[str, ...]:
 
 
 def _truth_landmarks(sample: LandmarkSample) -> np.ndarray:
-    return np.load(sample.landmarks).astype("float32")
+    return np.load(sample.landmarks).astype("float32")  # type: ignore[no-any-return]
 
 
 def evaluate_manifest(

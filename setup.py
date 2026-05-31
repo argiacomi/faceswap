@@ -189,7 +189,7 @@ class Environment:
         """Check installed pip version"""
         for i in range(2):
             try:
-                _pip = T.cast("pip", import_module("pip"))  # type:ignore[valid-type]
+                _pip = T.cast("pip", import_module("pip"))
                 break
             except ModuleNotFoundError:
                 if i == 0:
@@ -198,7 +198,7 @@ class Environment:
                     continue
                 logger.error("Import pip failed. Please Install python3-pip and try again")
                 sys.exit(1)
-        logger.info("Pip version: %s", _pip.__version__)  # type:ignore[attr-defined]
+        logger.info("Pip version: %s", _pip.__version__)
 
     def _configure_keras(self) -> None:
         """Set up the keras.json file to use Torch as the backend"""

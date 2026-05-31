@@ -27,7 +27,7 @@ def _session_with_frames(folder: Path, count: int = 3) -> ManualSession:
     return ManualSession.create(frames=str(folder))
 
 
-def _make_window(qtbot, folder: Path) -> ManualToolWindow:  # type:ignore[no-untyped-def]
+def _make_window(qtbot, folder: Path) -> ManualToolWindow:
     """Return a ManualToolWindow after its startup worker has drained."""
     window = ManualToolWindow(_session_with_frames(folder))
     qtbot.addWidget(window)
@@ -39,7 +39,7 @@ def _make_window(qtbot, folder: Path) -> ManualToolWindow:  # type:ignore[no-unt
     return window
 
 
-def test_save_persists_edits_to_alignments_file(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_save_persists_edits_to_alignments_file(qtbot, tmp_path: Path) -> None:
     """A successful save writes the editable model into the alignments file on disk."""
     from lib.align import Alignments
 
@@ -64,7 +64,7 @@ def test_save_persists_edits_to_alignments_file(qtbot, tmp_path: Path) -> None: 
     assert len(reloaded.data["frame_001.png"].faces) == 1
 
 
-def test_save_failure_keeps_session_dirty(  # type:ignore[no-untyped-def]
+def test_save_failure_keeps_session_dirty(
     qtbot,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -91,7 +91,7 @@ def test_save_failure_keeps_session_dirty(  # type:ignore[no-untyped-def]
     assert window.editable_alignments.can_undo is True
 
 
-def test_close_with_unsaved_changes_can_be_cancelled(  # type:ignore[no-untyped-def]
+def test_close_with_unsaved_changes_can_be_cancelled(
     qtbot,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -115,7 +115,7 @@ def test_close_with_unsaved_changes_can_be_cancelled(  # type:ignore[no-untyped-
     assert window.editor_state.unsaved is True
 
 
-def test_close_with_unsaved_changes_accepts_when_confirmed(  # type:ignore[no-untyped-def]
+def test_close_with_unsaved_changes_accepts_when_confirmed(
     qtbot,
     tmp_path: Path,
 ) -> None:
@@ -128,7 +128,7 @@ def test_close_with_unsaved_changes_accepts_when_confirmed(  # type:ignore[no-un
     assert event.isAccepted() is True
 
 
-def test_save_after_persist_refreshes_face_panel(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_save_after_persist_refreshes_face_panel(qtbot, tmp_path: Path) -> None:
     """After persistence the face panel reflects faces stored on disk."""
     window = _make_window(qtbot, tmp_path)
     window.editable_alignments.add_face(0, (10.0, 10.0, 30.0, 30.0))
@@ -142,7 +142,7 @@ def test_save_after_persist_refreshes_face_panel(qtbot, tmp_path: Path) -> None:
     assert len(window.face_panel.faces) == 2
 
 
-def test_revert_current_frame_restores_saved_alignments(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_revert_current_frame_restores_saved_alignments(qtbot, tmp_path: Path) -> None:
     """Revert reloads the current frame from disk rather than only undoing history."""
     from lib.align import Alignments
 
@@ -164,7 +164,7 @@ def test_revert_current_frame_restores_saved_alignments(qtbot, tmp_path: Path) -
 def test_save_preserves_unrelated_mask_identity_and_metadata(
     qtbot,
     tmp_path: Path,
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """Saving bbox/landmark edits keeps unrelated face payloads intact."""
     import zlib
 
@@ -198,7 +198,7 @@ def test_save_preserves_unrelated_mask_identity_and_metadata(
 def test_save_preserves_multiple_faces_masks_identities_and_frame_metadata(
     qtbot,
     tmp_path: Path,
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """A save round-trip keeps unrelated .fsa payloads across faces and frames."""
     import zlib
 

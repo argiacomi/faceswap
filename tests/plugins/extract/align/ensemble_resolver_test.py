@@ -14,7 +14,7 @@ from plugins.extract.align.ensemble import Ensemble
 
 def _face() -> np.ndarray:
     """Plausible iBUG-style 68-point face used so AlignedFace returns sane geometry."""
-    points = np.zeros((68, 2), dtype="float32")
+    points = np.zeros((68, 2), dtype="float32")  # type: ignore[var-annotated]
     points[0:17, 0] = np.linspace(40, 160, 17)
     points[0:17, 1] = 120 + 30 * np.sin(np.linspace(0, np.pi, 17))
     points[17:22, 0] = np.linspace(50, 90, 5)
@@ -83,7 +83,7 @@ def test_resolver_enabled_routes_low_risk_path(tmp_path) -> None:
         crop_scale=1.0,
         strategy="plain_average",
         use_alignment_resolver=True,
-        **_TEST_NO_BUNDLE_KWARGS,  # bypass production bundle requirement
+        **_TEST_NO_BUNDLE_KWARGS,  # type: ignore[arg-type]  # bypass production bundle requirement
         hard_case_strategy="static_weighted_downweight",
         hard_disagreement_px=50.0,  # generous so we land in low_risk
     )
@@ -104,7 +104,7 @@ def test_resolver_metadata_carries_per_model_disagreement(tmp_path) -> None:
         crop_scale=1.0,
         strategy="plain_average",
         use_alignment_resolver=True,
-        **_TEST_NO_BUNDLE_KWARGS,  # bypass production bundle requirement
+        **_TEST_NO_BUNDLE_KWARGS,  # type: ignore[arg-type]  # bypass production bundle requirement
     )
     plugin.model = plugin.load_model()
     plugin.predict_landmarks_68(np.zeros((256, 256, 3), dtype="float32"))
@@ -336,7 +336,7 @@ def test_init_resolver_enabled_with_test_kwargs_skips_bundle(
         strategy="plain_average",
         use_alignment_resolver=True,
         resolver_policy="roll_aware_veto",
-        **_TEST_NO_BUNDLE_KWARGS,
+        **_TEST_NO_BUNDLE_KWARGS,  # type: ignore[arg-type]
     )
 
     assert plugin._setup_path == ""

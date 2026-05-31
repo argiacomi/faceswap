@@ -467,16 +467,16 @@ def aggregate_geometry_samples(
     roi_with_diag = [s for s in samples if s.roi_diagnostics is not None]
     if roi_with_diag:
         hull_coverage = np.array(
-            [s.roi_diagnostics.aligned_crop_visible_hull_iou for s in roi_with_diag]
+            [s.roi_diagnostics.aligned_crop_visible_hull_iou for s in roi_with_diag]  # type: ignore[union-attr]
         )
         coverage = np.array(
-            [s.roi_diagnostics.landmarks_inside_aligned_crop_fraction for s in roi_with_diag]
+            [s.roi_diagnostics.landmarks_inside_aligned_crop_fraction for s in roi_with_diag]  # type: ignore[union-attr]
         )
         miss_flags = np.array(
-            [s.roi_diagnostics.aligned_crop_misses_visible_face for s in roi_with_diag],
+            [s.roi_diagnostics.aligned_crop_misses_visible_face for s in roi_with_diag],  # type: ignore[union-attr]
             dtype=bool,
         )
-        aspect_ratios = np.array([s.roi_diagnostics.bbox_aspect_ratio for s in roi_with_diag])
+        aspect_ratios = np.array([s.roi_diagnostics.bbox_aspect_ratio for s in roi_with_diag])  # type: ignore[union-attr]
         mean_aligned_crop_visible_hull_iou = float(hull_coverage.mean())
         mean_landmarks_inside_aligned_crop_fraction = float(coverage.mean())
         aligned_crop_miss_rate = float(miss_flags.mean())

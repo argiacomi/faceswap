@@ -162,7 +162,7 @@ def _inverse_error_weights(matrix: np.ndarray, *, epsilon: float) -> np.ndarray:
     """
     if epsilon <= 0:
         raise ValueError("epsilon must be greater than zero")
-    return 1.0 / np.maximum(matrix.astype("float32"), epsilon)
+    return 1.0 / np.maximum(matrix.astype("float32"), epsilon)  # type: ignore[no-any-return]
 
 
 def _matrix_from_errors(
@@ -179,7 +179,7 @@ def _matrix_from_errors(
             f"aggregated errors must have shape {(len(models), errors.landmark_count)}, "
             f"got {matrix.shape}"
         )
-    return matrix
+    return matrix  # type: ignore[no-any-return]
 
 
 def _normalize_to_result(
@@ -213,7 +213,7 @@ class EqualGenerator:
         models: T.Sequence[str] | None = None,
     ) -> WeightFitResult:
         chosen = _resolve_models(errors, models)
-        matrix = np.ones((len(chosen), errors.landmark_count), dtype="float32")
+        matrix = np.ones((len(chosen), errors.landmark_count), dtype="float32")  # type: ignore[var-annotated]
         return _normalize_to_result(
             self.name,
             chosen,
@@ -330,7 +330,7 @@ def _region_broadcast(
             continue
         region_means = mean_matrix[:, indices].mean(axis=1, keepdims=True)
         output[:, indices] = region_means
-    return output[:, :landmark_count]
+    return output[:, :landmark_count]  # type: ignore[no-any-return]
 
 
 @dataclass(frozen=True)
@@ -407,7 +407,7 @@ def _normalize_columns(matrix: np.ndarray) -> np.ndarray:
     totals = matrix.sum(axis=0)
     if np.any(totals <= 0):
         raise ValueError("column sums must be positive before normalization")
-    return matrix / totals[None, :]
+    return matrix / totals[None, :]  # type: ignore[no-any-return]
 
 
 @dataclass(frozen=True)
@@ -479,7 +479,7 @@ class SoftmaxNegativeErrorGenerator:
         )
 
 
-_DEFAULT_GENERATOR_INSTANCES: tuple[WeightGenerator, ...] = (
+_DEFAULT_GENERATOR_INSTANCES: tuple[WeightGenerator, ...] = (  # type: ignore[assignment]
     EqualGenerator(),
     InverseMeanErrorGenerator(),
     InverseMedianErrorGenerator(),

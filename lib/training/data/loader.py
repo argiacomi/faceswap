@@ -82,7 +82,7 @@ class TrainLoader:  # pylint:disable=too-many-instance-attributes
         )
         self._epoch = 0
 
-    def __iter__(self) -> T.Self:
+    def __iter__(self) -> T.Self:  # type: ignore[name-defined]
         """This is an iterator"""
         return self
 
@@ -154,7 +154,7 @@ class TrainLoader:  # pylint:disable=too-many-instance-attributes
             The meta information for the batch
         """
         try:
-            inputs, targets, meta = T.cast(
+            inputs, targets, meta = T.cast(  # type: ignore[redundant-cast]
                 tuple[list[torch.Tensor], list[torch.Tensor], "BatchMeta"],
                 next(self._iterator),
             )
@@ -227,7 +227,7 @@ class PreviewLoader:
         self._loader = self.get_loader()
         self._iterator = T.cast(T.Iterator[tuple[torch.Tensor, torch.Tensor]], iter(self._loader))
 
-    def __iter__(self) -> T.Self:
+    def __iter__(self) -> T.Self:  # type: ignore[name-defined]
         """This is an iterator"""
         return self
 
@@ -290,7 +290,7 @@ class PreviewLoader:
             A batch of full sized, full coverage input images with mask in the 4th channel
         """
         try:
-            inputs, targets = T.cast(tuple[torch.Tensor, torch.Tensor], next(self._iterator))
+            inputs, targets = T.cast(tuple[torch.Tensor, torch.Tensor], next(self._iterator))  # type: ignore[redundant-cast]
 
         except StopIteration:
             logger.debug("[PreviewLoader] end")
@@ -320,7 +320,7 @@ class PreviewLoader:
         inputs = items[0].swapaxes(0, 1)
         targets = items[1].swapaxes(0, 1)
         logger.debug(
-            "[PreviewLoader] inputs: %s, targets: %s",  # type:ignore[attr-defined]
+            "[PreviewLoader] inputs: %s, targets: %s",
             inputs.shape,
             targets.shape,
         )

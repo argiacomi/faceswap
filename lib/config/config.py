@@ -116,7 +116,7 @@ class FaceswapConfig:
         section = ".".join((plugin_type, module.replace("_defaults", "")))
         logger.debug("Importing defaults module: %s.%s", module_path, module)
         mod = import_module(f"{module_path}.{module}")
-        self.add_section(section, mod.HELPTEXT)  # type:ignore[attr-defined]
+        self.add_section(section, mod.HELPTEXT)
         for key, val in vars(mod).items():
             if isinstance(val, ConfigItem):
                 self.add_item(section=section, title=key, config_item=val)

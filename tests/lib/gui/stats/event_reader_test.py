@@ -564,7 +564,7 @@ class Test_EventParser:  # pylint:disable=invalid-name
         )
         event.wall_time = timestamp
         retval = event.SerializeToString() if serialize else event
-        return retval
+        return retval  # type: ignore[no-any-return]
 
     @pytest.fixture(name="mock_iterator")
     def iterator(self) -> Iterator[bytes]:

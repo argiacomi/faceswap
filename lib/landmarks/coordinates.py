@@ -88,7 +88,7 @@ def transform_points(
     translation = mats[:, :2, 2]
     transformed = pts @ linear.transpose(0, 2, 1) + translation[:, None, :]
     transformed = transformed.astype("float32", copy=False)
-    return transformed[0] if single_points and single_matrix else transformed
+    return transformed[0] if single_points and single_matrix else transformed  # type: ignore[no-any-return]
 
 
 def normalized_crop_to_frame(

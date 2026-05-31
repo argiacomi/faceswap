@@ -24,7 +24,7 @@ def install_trace_level() -> None:
             self._log(TRACE_LEVEL, message, args, **kwargs)
 
     if not hasattr(logging.Logger, "trace"):
-        logging.Logger.trace = trace
+        logging.Logger.trace = trace  # type: ignore[attr-defined]
 
 
 def logging_level(value: str | int) -> int:
@@ -172,7 +172,7 @@ class PipelineProgress:
         if self._BAR is None:
             from tqdm import tqdm  # pylint:disable=import-outside-toplevel
 
-            self._BAR = tqdm(
+            self._BAR = tqdm(  # type: ignore[misc]
                 total=self.total,
                 desc="landmark pipeline",
                 unit="stage",
@@ -182,7 +182,7 @@ class PipelineProgress:
         self._BAR.set_postfix_str(f"{stage} {status}", refresh=True)
         if completed >= self.total or status == "failed":
             self._BAR.close()
-            self._BAR = None
+            self._BAR = None  # type: ignore[misc]
 
 
 __all__ = [

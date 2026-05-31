@@ -13,7 +13,7 @@ from lib.cli.args import GuiArgs
 from lib.cli.launcher import GUI_SHELL_ENV, QT_NO_EXEC_ENV, FaceswapError, ScriptExecutor
 
 
-def _gui_args(**overrides) -> Namespace:  # type:ignore[no-untyped-def]
+def _gui_args(**overrides) -> Namespace:
     """Return a minimal GUI argument namespace."""
     values = {
         "gui_shell": None,
@@ -35,7 +35,7 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def test_gui_shell_defaults_to_tk_when_unset(monkeypatch) -> None:  # type:ignore[no-untyped-def]
+def test_gui_shell_defaults_to_tk_when_unset(monkeypatch) -> None:
     """The GUI shell selector should keep Tk as the default."""
     monkeypatch.delenv(GUI_SHELL_ENV, raising=False)
 
@@ -50,21 +50,21 @@ def test_gui_shell_accepts_shell_qt_and_qt_alias() -> None:
     assert parser.parse_args(["--qt"]).gui_shell == "qt"
 
 
-def test_gui_shell_reads_environment_when_cli_is_unset(monkeypatch) -> None:  # type:ignore[no-untyped-def]
+def test_gui_shell_reads_environment_when_cli_is_unset(monkeypatch) -> None:
     """Environment selector should be used when CLI selector is omitted."""
     monkeypatch.setenv(GUI_SHELL_ENV, "qt")
 
     assert ScriptExecutor._resolve_gui_shell(_gui_args()) == "qt"
 
 
-def test_gui_shell_cli_overrides_environment(monkeypatch) -> None:  # type:ignore[no-untyped-def]
+def test_gui_shell_cli_overrides_environment(monkeypatch) -> None:
     """CLI selector should override the environment shell selector."""
     monkeypatch.setenv(GUI_SHELL_ENV, "tk")
 
     assert ScriptExecutor._resolve_gui_shell(_gui_args(gui_shell="qt")) == "qt"
 
 
-def test_gui_shell_rejects_invalid_environment(monkeypatch) -> None:  # type:ignore[no-untyped-def]
+def test_gui_shell_rejects_invalid_environment(monkeypatch) -> None:
     """Invalid environment selectors should fail clearly."""
     monkeypatch.setenv(GUI_SHELL_ENV, "bad")
 
@@ -72,7 +72,7 @@ def test_gui_shell_rejects_invalid_environment(monkeypatch) -> None:  # type:ign
         ScriptExecutor._resolve_gui_shell(_gui_args())
 
 
-def test_qt_no_exec_resolves_from_cli_and_environment(monkeypatch) -> None:  # type:ignore[no-untyped-def]
+def test_qt_no_exec_resolves_from_cli_and_environment(monkeypatch) -> None:
     """Qt no-exec smoke mode should resolve from CLI or environment."""
     monkeypatch.delenv(QT_NO_EXEC_ENV, raising=False)
     assert ScriptExecutor._resolve_gui_no_exec(_gui_args(no_gui_exec=True)) is True
@@ -82,7 +82,7 @@ def test_qt_no_exec_resolves_from_cli_and_environment(monkeypatch) -> None:  # t
     assert ScriptExecutor._resolve_gui_no_exec(_gui_args(no_gui_exec=False)) is True
 
 
-def test_qt_no_exec_checks_pyside6_but_skips_display(monkeypatch) -> None:  # type:ignore[no-untyped-def]
+def test_qt_no_exec_checks_pyside6_but_skips_display(monkeypatch) -> None:
     """Qt no-exec smoke launch should not require a display after PySide6 check."""
     executor = ScriptExecutor("gui")
     executor._gui_shell = "qt"  # pylint:disable=protected-access
@@ -96,7 +96,7 @@ def test_qt_no_exec_checks_pyside6_but_skips_display(monkeypatch) -> None:  # ty
     assert calls == ["qt"]
 
 
-def test_qt_normal_launch_checks_display(monkeypatch) -> None:  # type:ignore[no-untyped-def]
+def test_qt_normal_launch_checks_display(monkeypatch) -> None:
     """Normal Qt launch should still run display preflight."""
     executor = ScriptExecutor("gui")
     executor._gui_shell = "qt"  # pylint:disable=protected-access
@@ -110,7 +110,7 @@ def test_qt_normal_launch_checks_display(monkeypatch) -> None:  # type:ignore[no
     assert calls == ["qt", "display"]
 
 
-def test_tk_launch_keeps_tk_and_display_preflight(monkeypatch) -> None:  # type:ignore[no-untyped-def]
+def test_tk_launch_keeps_tk_and_display_preflight(monkeypatch) -> None:
     """Tk default path should keep Tkinter and display preflight."""
     executor = ScriptExecutor("gui")
     executor._gui_shell = "tk"  # pylint:disable=protected-access
@@ -124,12 +124,12 @@ def test_tk_launch_keeps_tk_and_display_preflight(monkeypatch) -> None:  # type:
     assert calls == ["tk", "display"]
 
 
-def test_missing_pyside6_raises_faceswap_error(monkeypatch) -> None:  # type:ignore[no-untyped-def]
+def test_missing_pyside6_raises_faceswap_error(monkeypatch) -> None:
     """Missing PySide6 should fail with the expected launch error."""
     executor = ScriptExecutor("gui")
     executor._gui_shell = "qt"  # pylint:disable=protected-access
 
-    def fake_import(name, *args, **kwargs):  # type:ignore[no-untyped-def]
+    def fake_import(name, *args, **kwargs):
         if name == "PySide6.QtWidgets":
             raise ImportError("missing")
         return original_import(name, *args, **kwargs)
@@ -141,7 +141,7 @@ def test_missing_pyside6_raises_faceswap_error(monkeypatch) -> None:  # type:ign
         executor._test_for_gui()  # pylint:disable=protected-access
 
 
-def test_no_display_raises_for_normal_qt_launch(monkeypatch) -> None:  # type:ignore[no-untyped-def]
+def test_no_display_raises_for_normal_qt_launch(monkeypatch) -> None:
     """Normal Qt launch should remain display-gated on headless non-Windows hosts."""
     executor = ScriptExecutor("gui")
     executor._gui_shell = "qt"  # pylint:disable=protected-access
@@ -155,14 +155,14 @@ def test_no_display_raises_for_normal_qt_launch(monkeypatch) -> None:  # type:ig
         executor._test_for_gui()  # pylint:disable=protected-access
 
 
-def test_import_script_routes_qt_gui_to_qt_module(monkeypatch) -> None:  # type:ignore[no-untyped-def]
+def test_import_script_routes_qt_gui_to_qt_module(monkeypatch) -> None:
     """Qt shell selection should import scripts.gui_qt."""
     imported: list[str] = []
 
     class _Module:
         Gui = object
 
-    def fake_import_module(module_name: str):  # type:ignore[no-untyped-def]
+    def fake_import_module(module_name: str):
         imported.append(module_name)
         return _Module
 
@@ -178,14 +178,14 @@ def test_import_script_routes_qt_gui_to_qt_module(monkeypatch) -> None:  # type:
     assert imported == ["scripts.gui_qt"]
 
 
-def test_import_script_routes_tk_gui_to_tk_module(monkeypatch) -> None:  # type:ignore[no-untyped-def]
+def test_import_script_routes_tk_gui_to_tk_module(monkeypatch) -> None:
     """Tk shell selection should keep the existing scripts.gui import path."""
     imported: list[str] = []
 
     class _Module:
         Gui = object
 
-    def fake_import_module(module_name: str):  # type:ignore[no-untyped-def]
+    def fake_import_module(module_name: str):
         imported.append(module_name)
         return _Module
 

@@ -56,7 +56,7 @@ def _counts(*counts: int) -> dict[int, int]:
     return {index: count for index, count in enumerate(counts)}
 
 
-def _count_callable(counts: dict[int, int]):  # type:ignore[no-untyped-def]
+def _count_callable(counts: dict[int, int]):
     """Return a ``face_count(frame_index)`` callable that defaults to 0."""
 
     def _face_count(index: int) -> int:

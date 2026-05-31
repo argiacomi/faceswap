@@ -128,7 +128,7 @@ def parse_compile_mode(value: str) -> CompileMode:
     if normalized in _COMPILE_ALIASES:
         return _COMPILE_ALIASES[normalized]
     if normalized in COMPILE_MODES:
-        return T.cast(CompileMode, normalized)
+        return T.cast(CompileMode, normalized)  # type: ignore[redundant-cast]
     modes = ", ".join(COMPILE_MODES)
     raise argparse.ArgumentTypeError(f"Invalid compile mode '{value}'. Choose from: {modes}")
 
@@ -239,7 +239,7 @@ def is_compiled_module(module: torch.nn.Module) -> bool:
 def reset_compiled_module(module: torch.nn.Module) -> None:
     """Restore ``module`` to eager execution if it was previously compiled."""
     if hasattr(module, "_compiled_call_impl"):
-        module._compiled_call_impl = None  # type:ignore[attr-defined]
+        module._compiled_call_impl = None
 
 
 def record_compile_outcome(policy: CompilePolicy, result: CompileResult) -> None:

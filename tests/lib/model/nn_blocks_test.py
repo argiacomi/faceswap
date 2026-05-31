@@ -44,7 +44,7 @@ def block_test(layer_func,  # pylint:disable=dangerous-default-value,too-many-lo
     # check with the functional API
     model = Model(inp, outp)
 
-    actual_output = model.predict(input_data, verbose=0)  # type:ignore
+    actual_output = model.predict(input_data, verbose=0)
 
     # test serialization, weight setting at model level
     model_config = model.get_config()
@@ -52,7 +52,7 @@ def block_test(layer_func,  # pylint:disable=dangerous-default-value,too-many-lo
     if model.weights:
         weights = model.get_weights()
         recovered_model.set_weights(weights)
-        _output = recovered_model.predict(input_data, verbose=0)  # type:ignore
+        _output = recovered_model.predict(input_data, verbose=0)
         assert_allclose(_output, actual_output, rtol=1e-3)
 
     # for further checks in the caller function

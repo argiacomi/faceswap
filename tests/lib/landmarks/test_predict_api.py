@@ -66,7 +66,7 @@ class _FakeAligner:
 def test_faceswap_aligner_adapter_fixtures_return_canonical_68() -> None:
     """HRNet/SPIGA/ORFormer wrapper path normalizes fake plugin outputs."""
     matrix = roi_to_matrix(np.array([0, 0, 100, 100], dtype="float32"))
-    images = np.zeros((1, 16, 16, 3), dtype="float32")
+    images = np.zeros((1, 16, 16, 3), dtype="float32")  # type: ignore[var-annotated]
     adapters = [
         FaceswapAlignerAdapter(
             LandmarkAdapterConfig(model, schema="2d_68", coordinate_space="normalized_crop"),

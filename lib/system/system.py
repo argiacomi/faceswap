@@ -129,8 +129,8 @@ class System:  # pylint:disable=too-many-instance-attributes
         if self.is_windows:
             retval = ctypes.windll.shell32.IsUserAnAdmin() != 0  # type:ignore[attr-defined]
         else:
-            retval = os.getuid() == 0  # type:ignore[attr-defined]  # pylint:disable=no-member
-        return retval
+            retval = os.getuid() == 0  # pylint:disable=no-member
+        return retval  # type: ignore[no-any-return]
 
     def _check_virtual_env(self) -> bool:
         """Check whether we are in a virtual environment

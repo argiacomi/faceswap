@@ -60,7 +60,7 @@ def weights_matrix_for_models(
         model: list(weights.get(model, [default_weight] * landmark_count)) for model in models
     }
     normalized = normalize_static_weights(selected, landmark_count=landmark_count)
-    return np.asarray([normalized[model] for model in models], dtype="float32")
+    return np.asarray([normalized[model] for model in models], dtype="float32")  # type: ignore[no-any-return]
 
 
 def weights_from_errors(

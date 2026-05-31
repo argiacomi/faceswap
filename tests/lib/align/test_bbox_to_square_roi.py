@@ -28,7 +28,7 @@ def _legacy(batch: np.ndarray, scale: float) -> np.ndarray:
     retval[:, 1] = ctr_y - half
     retval[:, 2] = ctr_x + half
     retval[:, 3] = ctr_y + half
-    return retval
+    return retval  # type: ignore[no-any-return]
 
 
 def test_helper_matches_legacy_inline_expression_for_int_input() -> None:
@@ -101,7 +101,7 @@ def test_centring_uses_input_bbox_centre() -> None:
 def test_helper_handles_empty_batch() -> None:
     """Empty input must produce an empty (0, 4) int32 output without
     raising — defends against the aligners receiving a zero-face batch."""
-    batch = np.empty((0, 4), dtype=np.int32)
+    batch = np.empty((0, 4), dtype=np.int32)  # type: ignore[var-annotated]
     roi = bbox_to_square_roi(batch, 1.25)
     assert roi.shape == (0, 4)
     assert roi.dtype == np.int32

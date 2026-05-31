@@ -230,7 +230,7 @@ class HRNet(ExtractPlugin):
         The final landmarks in 0-1 space
         """
         if self._dark is not None:
-            return self._dark(batch) / self._hm_size
+            return self._dark(batch) / self._hm_size  # type: ignore[no-any-return]
         batch_size, num_points, height, width = batch.shape
         assert height == width, "Heatmaps must be square"
         resolution = height
@@ -254,7 +254,7 @@ class HRNet(ExtractPlugin):
         diff = np.stack([delta_x, delta_y], axis=-1)
         coords += (np.sign(diff) * 0.25 * mask[..., None]) + 0.5
         coords /= resolution
-        return coords
+        return coords  # type: ignore[no-any-return]
 
 
 class BasicBlock(nn.Module):
@@ -634,7 +634,7 @@ class HighResolutionModule(nn.Module):
                         )
                     )
                 elif j == i:
-                    fuse_layer.append(None)  # type:ignore[arg-type]
+                    fuse_layer.append(None)
                 else:
                     conv3x3s = []
                     for k in range(i - j):
@@ -846,7 +846,7 @@ class HighResolutionNet(nn.Module):  # pylint:disable=too-many-instance-attribut
                         )
                     )
                 else:
-                    transition_layers.append(None)  # type:ignore[arg-type]
+                    transition_layers.append(None)
                 continue
             conv3x3s = []
             for j in range(i + 1 - num_branches_pre):

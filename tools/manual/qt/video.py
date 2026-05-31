@@ -40,7 +40,7 @@ class _VideoFrameWorker(QObject):
         from lib.image import SingleFrameLoader
 
         try:
-            self._loader = SingleFrameLoader(self._path, video_meta_data=self._video_meta_data)
+            self._loader = SingleFrameLoader(self._path, video_meta_data=self._video_meta_data)  # type: ignore[arg-type]
         except Exception as err:  # pragma: no cover - exercised through integration
             self.load_failed.emit(-1, f"Could not open video: {err}")
             return
@@ -78,7 +78,7 @@ def _bgr_array_to_qimage(frame: T.Any) -> QImage:
         # 4-channel BGRA fallback.
         image = QImage(frame.data, width, height, width * 4, QImage.Format_ARGB32)
     # The numpy buffer is owned by the caller; copy to detach.
-    return image.copy()
+    return image.copy()  # type: ignore[no-any-return]
 
 
 class VideoFrameProvider(QObject):

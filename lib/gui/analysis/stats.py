@@ -104,7 +104,7 @@ class GlobalSession:
         # ``max(...)`` over an empty iterable would raise; the
         # ``not sessions`` guard above keeps that safe.
         max_id = str(max(int(idx) for idx in sessions))
-        return sessions[max_id]["no_logs"]
+        return sessions[max_id]["no_logs"]  # type: ignore[no-any-return]
 
     @property
     def session_ids(self) -> list[int]:
@@ -374,7 +374,7 @@ class SessionsSummary:
                     "end_time": np.max(timestamps) if np.any(timestamps) else 0,
                     "iterations": timestamps.shape[0] if np.any(timestamps) else 0,
                 }
-                for sess_id, timestamps in T.cast(
+                for sess_id, timestamps in T.cast(  # type: ignore[redundant-cast]
                     dict[int, np.ndarray], self._session.get_timestamps(None)
                 ).items()
             }
@@ -383,7 +383,7 @@ class SessionsSummary:
             logger.debug("Updating summary time stamps for training session")
 
             session_id = _SESSION.session_ids[-1]
-            latest = T.cast(np.ndarray, self._session.get_timestamps(session_id))
+            latest = T.cast(np.ndarray, self._session.get_timestamps(session_id))  # type: ignore[redundant-cast]
 
             self._time_stats[session_id] = {
                 "start_time": np.min(latest) if np.any(latest) else 0,
@@ -781,7 +781,7 @@ class Calculations:
         logger.debug("mean: %s, limit: %s", mean, limit)
         retdata = np.where(abs(data - mean) < limit, data, mean)
         logger.debug("Flattened outliers")
-        return retdata
+        return retdata  # type: ignore[no-any-return]
 
     def _remove_raw(self) -> None:
         """Remove raw values from :attr:`stats` if they are not requested."""
@@ -807,7 +807,7 @@ class Calculations:
             T.cast(np.ndarray, _SESSION.get_timestamps(self._session_id))
         )
         logger.debug("Calculated rate: Item_count: %s", len(retval))
-        return retval
+        return retval  # type: ignore[no-any-return]
 
     @classmethod
     def _calc_rate_total(cls) -> np.ndarray:
@@ -833,7 +833,7 @@ class Calculations:
             rate.extend((batchsize * 2) / np.diff(timestamps))
         retval = np.array(rate)
         logger.debug("Calculated totals rate: Item_count: %s", len(retval))
-        return retval
+        return retval  # type: ignore[no-any-return]
 
     def _get_calculations(self) -> None:
         """Perform the required calculations and populate :attr:`stats`."""
@@ -877,14 +877,14 @@ class Calculations:
 
         if datapoints <= (self._args["avg_samples"] * 2):
             logger.info("Not enough data to compile rolling average")
-            return np.array([], dtype="float64")
+            return np.array([], dtype="float64")  # type: ignore[no-any-return]
 
         avgs = np.cumsum(np.nan_to_num(data), dtype="float64")
         avgs[window:] = avgs[window:] - avgs[:-window]
         avgs = avgs[window - 1 :] / window
         avgs = np.pad(avgs, (pad, datapoints - (avgs.shape[0] + pad)), constant_values=(np.nan,))
         logger.debug("Calculated Average: shape: %s", avgs.shape)
-        return avgs
+        return avgs  # type: ignore[no-any-return]
 
     def _calc_smoothed(self, data: np.ndarray) -> np.ndarray:
         """Smooth the data.
@@ -922,11 +922,11 @@ class Calculations:
         if points < 10:
             dummy = np.empty((points,), dtype=data.dtype)
             dummy[:] = np.nan
-            return dummy
+            return dummy  # type: ignore[no-any-return]
         x_range = range(points)
         trend = np.poly1d(np.polyfit(x_range, np.nan_to_num(data), 3))(x_range)
         logger.debug("Calculated Trend: shape: %s", trend.shape)
-        return trend
+        return trend  # type: ignore[no-any-return]
 
 
 __all__ = get_module_objects(__name__)

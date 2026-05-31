@@ -45,114 +45,114 @@ class ControlsMixin:
 
     def set_editor_overlay_color(self, editor_mode: str, role: str, color: str | QColor) -> None:
         """Override one overlay color role for one editor mode."""
-        if role not in self._OVERLAY_COLOR_DEFAULTS:
+        if role not in self._OVERLAY_COLOR_DEFAULTS:  # type: ignore[attr-defined]
             raise ValueError(f"Unknown overlay color role: {role}")
         qcolor = color if isinstance(color, QColor) else QColor(str(color))
         if not qcolor.isValid():
             raise ValueError(f"Invalid overlay color: {color}")
-        self._overlay_color_overrides.setdefault(str(editor_mode), {})[role] = QColor(qcolor)
-        self._frame_view.update()
+        self._overlay_color_overrides.setdefault(str(editor_mode), {})[role] = QColor(qcolor)  # type: ignore[attr-defined]
+        self._frame_view.update()  # type: ignore[attr-defined]
 
     def editor_overlay_color(self, editor_mode: str, role: str) -> QColor:
         """Return the configured overlay color for ``editor_mode`` and ``role``."""
-        override = self._overlay_color_overrides.get(str(editor_mode), {}).get(role)
+        override = self._overlay_color_overrides.get(str(editor_mode), {}).get(role)  # type: ignore[attr-defined]
         if override is not None:
             return QColor(override)
-        return QColor(self._OVERLAY_COLOR_DEFAULTS.get(role, QColor("#3aa0ff")))
+        return QColor(self._OVERLAY_COLOR_DEFAULTS.get(role, QColor("#3aa0ff")))  # type: ignore[attr-defined]
 
     def _overlay_color(self, role: str) -> QColor:
         """Return overlay color for the current editor mode."""
-        return self.editor_overlay_color(self._editor_state.editor_mode, role)
+        return self.editor_overlay_color(self._editor_state.editor_mode, role)  # type: ignore[attr-defined]
 
     def _on_unsaved_changed(self, dirty: bool) -> None:
         """Forward editor-state unsaved changes to UI signals."""
-        self.dirty_changed.emit(bool(dirty))
+        self.dirty_changed.emit(bool(dirty))  # type: ignore[attr-defined]
         self._sync_actions()
 
     def cycle_filter_mode(self) -> None:
         """Advance to the next filter mode in the legacy rotation order."""
         from tools.manual.frame_filter import FILTER_MODES
 
-        current = self._editor_state.filter_mode or FILTER_MODES[0]
+        current = self._editor_state.filter_mode or FILTER_MODES[0]  # type: ignore[attr-defined]
         try:
             index = FILTER_MODES.index(current)
         except ValueError:
             index = -1
         new_mode = FILTER_MODES[(index + 1) % len(FILTER_MODES)]
-        self._editor_state.set("filter_mode", new_mode)
-        self._refresh_filter_results()
-        filtered_count = len(self._filtered_frame_indices)
+        self._editor_state.set("filter_mode", new_mode)  # type: ignore[attr-defined]
+        self._refresh_filter_results()  # type: ignore[attr-defined]
+        filtered_count = len(self._filtered_frame_indices)  # type: ignore[attr-defined]
         suffix = f" ({filtered_count} match)" if filtered_count else " (no matches)"
-        self.statusBar().showMessage(f"Filter: {new_mode}{suffix}", 5000)
+        self.statusBar().showMessage(f"Filter: {new_mode}{suffix}", 5000)  # type: ignore[attr-defined]
 
     def cycle_annotation_display(self) -> None:
         """Cycle annotation overlays in the legacy rotation order."""
         order = ("None", "Mesh", "Mask", "Landmarks")
-        current = self._editor_state.annotation_mode or order[0]
+        current = self._editor_state.annotation_mode or order[0]  # type: ignore[attr-defined]
         try:
             index = order.index(current)
         except ValueError:
             index = -1
-        self._editor_state.set("annotation_mode", order[(index + 1) % len(order)])
-        self.statusBar().showMessage(f"Annotation: {self._editor_state.annotation_mode}", 5000)
+        self._editor_state.set("annotation_mode", order[(index + 1) % len(order)])  # type: ignore[attr-defined]
+        self.statusBar().showMessage(f"Annotation: {self._editor_state.annotation_mode}", 5000)  # type: ignore[attr-defined]
 
     def toggle_mesh_annotation(self) -> None:
         """Toggle the face-grid Mesh overlay independently (F9)."""
-        enabled = not bool(self._editor_state.face_grid_mesh_visible)
-        self._editor_state.set("face_grid_mesh_visible", enabled)
-        self.statusBar().showMessage(f"Face grid Mesh: {'on' if enabled else 'off'}", 3000)
+        enabled = not bool(self._editor_state.face_grid_mesh_visible)  # type: ignore[attr-defined]
+        self._editor_state.set("face_grid_mesh_visible", enabled)  # type: ignore[attr-defined]
+        self.statusBar().showMessage(f"Face grid Mesh: {'on' if enabled else 'off'}", 3000)  # type: ignore[attr-defined]
 
     def toggle_mask_annotation(self) -> None:
         """Toggle the face-grid Mask overlay independently (F10)."""
-        enabled = not bool(self._editor_state.face_grid_mask_visible)
-        self._editor_state.set("face_grid_mask_visible", enabled)
-        self.statusBar().showMessage(f"Face grid Mask: {'on' if enabled else 'off'}", 3000)
+        enabled = not bool(self._editor_state.face_grid_mask_visible)  # type: ignore[attr-defined]
+        self._editor_state.set("face_grid_mask_visible", enabled)  # type: ignore[attr-defined]
+        self.statusBar().showMessage(f"Face grid Mask: {'on' if enabled else 'off'}", 3000)  # type: ignore[attr-defined]
 
     def set_editor_view(self) -> None:
         """Activate the View editor mode."""
-        self._editor_state.set("editor_mode", "View")
+        self._editor_state.set("editor_mode", "View")  # type: ignore[attr-defined]
 
     def set_editor_boundingbox(self) -> None:
         """Activate the Bounding Box editor mode."""
-        self._editor_state.set("editor_mode", "BoundingBox")
+        self._editor_state.set("editor_mode", "BoundingBox")  # type: ignore[attr-defined]
 
     def set_editor_extractbox(self) -> None:
         """Activate the Extract Box editor mode."""
-        self._editor_state.set("editor_mode", "ExtractBox")
+        self._editor_state.set("editor_mode", "ExtractBox")  # type: ignore[attr-defined]
 
     def set_editor_landmarks(self) -> None:
         """Activate the Landmarks editor mode."""
-        self._editor_state.set("editor_mode", "Landmarks")
+        self._editor_state.set("editor_mode", "Landmarks")  # type: ignore[attr-defined]
 
     def set_editor_mask(self) -> None:
         """Activate the Mask editor mode."""
-        self._editor_state.set("editor_mode", "Mask")
+        self._editor_state.set("editor_mode", "Mask")  # type: ignore[attr-defined]
 
     def zoom_in(self) -> None:
         """Zoom into the embedded frame view."""
-        self._frame_view.zoom_in()
+        self._frame_view.zoom_in()  # type: ignore[attr-defined]
 
     def zoom_out(self) -> None:
         """Zoom out of the embedded frame view."""
-        self._frame_view.zoom_out()
+        self._frame_view.zoom_out()  # type: ignore[attr-defined]
 
     def reset_view(self) -> None:
         """Reset the embedded frame view."""
         self._magnify_restore_state = None
-        self._frame_view.reset_view()
+        self._frame_view.reset_view()  # type: ignore[attr-defined]
 
     def magnify_active_face(self) -> bool:
         """Toggle fitting the active face bbox to the viewport."""
         if self._magnify_restore_state is not None:
             return self._restore_magnified_view()
-        bbox = self._active_face_bbox()
+        bbox = self._active_face_bbox()  # type: ignore[attr-defined]
         if bbox is None:
-            self.statusBar().showMessage("No active face to magnify", 3000)
+            self.statusBar().showMessage("No active face to magnify", 3000)  # type: ignore[attr-defined]
             return False
-        self._magnify_restore_state = self._frame_view.view_state()
-        if not self._frame_view.magnify_to_source_rect(bbox):
+        self._magnify_restore_state = self._frame_view.view_state()  # type: ignore[attr-defined]
+        if not self._frame_view.magnify_to_source_rect(bbox):  # type: ignore[attr-defined]
             self._magnify_restore_state = None
-            self.statusBar().showMessage("Could not magnify active face", 3000)
+            self.statusBar().showMessage("Could not magnify active face", 3000)  # type: ignore[attr-defined]
             return False
         return True
 
@@ -160,11 +160,11 @@ class ControlsMixin:
         """Fit the active face when entering detail editors without losing view state."""
         if self._magnify_restore_state is not None:
             return True
-        bbox = self._active_face_bbox()
+        bbox = self._active_face_bbox()  # type: ignore[attr-defined]
         if bbox is None:
             return False
-        self._magnify_restore_state = self._frame_view.view_state()
-        if self._frame_view.magnify_to_source_rect(bbox):
+        self._magnify_restore_state = self._frame_view.view_state()  # type: ignore[attr-defined]
+        if self._frame_view.magnify_to_source_rect(bbox):  # type: ignore[attr-defined]
             return True
         self._magnify_restore_state = None
         return False
@@ -187,7 +187,7 @@ class ControlsMixin:
 
         container = QWidget()
         container.setObjectName("qt-manual-filter-controls")
-        container.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        container.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)  # type: ignore[attr-defined]
         layout = QHBoxLayout(container)
         layout.setContentsMargins(4, 0, 4, 0)
         layout.setSpacing(8)
@@ -199,21 +199,21 @@ class ControlsMixin:
         self._filter_combo = QComboBox()
         self._filter_combo.setObjectName("qt-manual-filter-combo")
         self._filter_combo.addItems(tuple(FILTER_MODES))
-        self._filter_combo.setCurrentText(self._editor_state.filter_mode or FILTER_MODES[0])
+        self._filter_combo.setCurrentText(self._editor_state.filter_mode or FILTER_MODES[0])  # type: ignore[attr-defined]
         self._filter_combo.currentTextChanged.connect(self._on_filter_combo_changed)
         layout.addWidget(self._filter_combo)
 
         self._filter_threshold_label = QLabel("Threshold:")
         self._filter_threshold_label.setObjectName("qt-manual-filter-threshold-label")
         layout.addWidget(self._filter_threshold_label)
-        self._filter_threshold_slider = QSlider(Qt.Horizontal)
+        self._filter_threshold_slider = QSlider(Qt.Horizontal)  # type: ignore[attr-defined]
         self._filter_threshold_slider.setObjectName("qt-manual-filter-threshold-slider")
         self._filter_threshold_slider.setRange(MISALIGNED_THRESHOLD_MIN, MISALIGNED_THRESHOLD_MAX)
-        self._filter_threshold_slider.setValue(int(self._editor_state.filter_distance))
+        self._filter_threshold_slider.setValue(int(self._editor_state.filter_distance))  # type: ignore[attr-defined]
         self._filter_threshold_slider.setFixedWidth(120)
         self._filter_threshold_slider.valueChanged.connect(self._on_filter_threshold_changed)
         layout.addWidget(self._filter_threshold_slider)
-        self._filter_threshold_value = QLabel(str(self._editor_state.filter_distance))
+        self._filter_threshold_value = QLabel(str(self._editor_state.filter_distance))  # type: ignore[attr-defined]
         self._filter_threshold_value.setObjectName("qt-manual-filter-threshold-value")
         layout.addWidget(self._filter_threshold_value)
 
@@ -225,8 +225,8 @@ class ControlsMixin:
         label = getattr(self, "_filter_label", None)
         if label is None:
             return
-        mode = self._editor_state.filter_mode or "All Frames"
-        total = len(self._filtered_frame_indices)
+        mode = self._editor_state.filter_mode or "All Frames"  # type: ignore[attr-defined]
+        total = len(self._filtered_frame_indices)  # type: ignore[attr-defined]
         if mode == "All Frames":
             text = f"Filter: All Frames ({total})"
         else:
@@ -246,7 +246,7 @@ class ControlsMixin:
             self._filter_threshold_label.setVisible(misaligned)
             self._filter_threshold_slider.setVisible(misaligned)
             self._filter_threshold_value.setVisible(misaligned)
-            current = int(self._editor_state.filter_distance)
+            current = int(self._editor_state.filter_distance)  # type: ignore[attr-defined]
             self._filter_threshold_value.setText(str(current))
             self._filter_threshold_slider.blockSignals(True)
             try:
@@ -256,44 +256,44 @@ class ControlsMixin:
 
     def _on_filter_threshold_changed(self, value: int) -> None:
         """Persist threshold and refresh the filter when the slider moves."""
-        self._editor_state.set("filter_distance", int(value))
-        self._refresh_filter_results()
+        self._editor_state.set("filter_distance", int(value))  # type: ignore[attr-defined]
+        self._refresh_filter_results()  # type: ignore[attr-defined]
 
     def _on_filter_combo_changed(self, mode: str) -> None:
         """Persist a filter selected from the transport-row selector."""
         if not mode:
             return
-        self._editor_state.set("filter_mode", str(mode))
-        self._refresh_filter_results()
+        self._editor_state.set("filter_mode", str(mode))  # type: ignore[attr-defined]
+        self._refresh_filter_results()  # type: ignore[attr-defined]
 
     def available_aligners(self) -> tuple[str, ...]:
         """Return aligner plugin display names from the cached service."""
-        return self._aligner_service.available_aligners
+        return self._aligner_service.available_aligners  # type: ignore[attr-defined, no-any-return]
 
     def available_normalizations(self) -> tuple[str, ...]:
         """Return normalization methods supported by the aligner service."""
-        return self._aligner_service.available_normalizations()
+        return self._aligner_service.available_normalizations()  # type: ignore[attr-defined, no-any-return]
 
     def set_aligner_name(self, name: str) -> None:
         """Select the active aligner plugin."""
         value = str(name).strip()
         if not value or value.startswith("No aligners"):
             return
-        self._editor_state.set("aligner_name", value)
+        self._editor_state.set("aligner_name", value)  # type: ignore[attr-defined]
         self._sync_aligner_controls()
         self._schedule_aligner_preload()
 
     def set_aligner_normalization(self, method: str) -> None:
         """Apply a normalization method to the aligner service."""
         value = str(method)
-        self._editor_state.set("aligner_normalization", value)
-        self._aligner_service.set_normalization(value)
+        self._editor_state.set("aligner_normalization", value)  # type: ignore[attr-defined]
+        self._aligner_service.set_normalization(value)  # type: ignore[attr-defined]
         self._sync_aligner_controls()
         self._schedule_aligner_preload()
 
     def _active_aligner_name(self) -> str:
         """Return editor-state aligner name, falling back to the service default."""
-        return self._editor_state.aligner_name or self._aligner_service.default_aligner()
+        return self._editor_state.aligner_name or self._aligner_service.default_aligner()  # type: ignore[attr-defined, no-any-return]
 
     def _build_aligner_controls(self) -> QWidget:
         """Return the Bounding Box aligner control panel."""
@@ -316,7 +316,7 @@ class ControlsMixin:
 
         self._aligner_auto_run_checkbox = QCheckBox("Auto-run")
         self._aligner_auto_run_checkbox.setObjectName("qt-manual-aligner-auto-run")
-        self._aligner_auto_run_checkbox.setChecked(bool(self._editor_state.aligner_auto_run))
+        self._aligner_auto_run_checkbox.setChecked(bool(self._editor_state.aligner_auto_run))  # type: ignore[attr-defined]
         self._aligner_auto_run_checkbox.toggled.connect(self._on_aligner_auto_run_toggled)
         top.addWidget(self._aligner_auto_run_checkbox)
 
@@ -368,7 +368,7 @@ class ControlsMixin:
         progress_row.addWidget(self._aligner_status_label, 1)
         outer.addLayout(progress_row)
 
-        container.setVisible(self._editor_state.editor_mode == "BoundingBox")
+        container.setVisible(self._editor_state.editor_mode == "BoundingBox")  # type: ignore[attr-defined]
         self._sync_aligner_controls()
         return container
 
@@ -378,14 +378,14 @@ class ControlsMixin:
 
     def _on_aligner_auto_run_toggled(self, checked: bool) -> None:
         """Persist the auto-run checkbox value on editor state."""
-        self._editor_state.set("aligner_auto_run", bool(checked))
+        self._editor_state.set("aligner_auto_run", bool(checked))  # type: ignore[attr-defined]
         self._sync_aligner_controls()
 
     def _on_aligner_rerun_clicked(self) -> None:
         """Run the active aligner against the selected face."""
-        face_index = self._active_face_index()
+        face_index = self._active_face_index()  # type: ignore[attr-defined]
         if face_index is None:
-            self.statusBar().showMessage("No active face to align", 3000)
+            self.statusBar().showMessage("No active face to align", 3000)  # type: ignore[attr-defined]
             return
         self.rerun_aligner_for_face(int(face_index))
 
@@ -394,7 +394,7 @@ class ControlsMixin:
         controls = getattr(self, "_aligner_controls", None)
         if controls is None:
             return
-        active = self._editor_state.editor_mode == "BoundingBox"
+        active = self._editor_state.editor_mode == "BoundingBox"  # type: ignore[attr-defined]
         controls.setVisible(active)
         if active:
             self._sync_aligner_controls()
@@ -405,8 +405,8 @@ class ControlsMixin:
         if combo is None:
             return
         aligners = list(self.available_aligners())
-        current = self._editor_state.aligner_name or (
-            self._aligner_service.default_aligner() if aligners else ""
+        current = self._editor_state.aligner_name or (  # type: ignore[attr-defined]
+            self._aligner_service.default_aligner() if aligners else ""  # type: ignore[attr-defined]
         )
         if current and current not in aligners:
             aligners.insert(0, current)
@@ -423,7 +423,7 @@ class ControlsMixin:
             combo.setEnabled(False)
         combo.blockSignals(False)
 
-        normalization = str(self._editor_state.aligner_normalization)
+        normalization = str(self._editor_state.aligner_normalization)  # type: ignore[attr-defined]
         for method, button in self._aligner_normalization_buttons.items():
             button.blockSignals(True)
             button.setChecked(method == normalization)
@@ -440,12 +440,12 @@ class ControlsMixin:
         auto_run = getattr(self, "_aligner_auto_run_checkbox", None)
         if auto_run is not None:
             auto_run.blockSignals(True)
-            auto_run.setChecked(bool(self._editor_state.aligner_auto_run))
+            auto_run.setChecked(bool(self._editor_state.aligner_auto_run))  # type: ignore[attr-defined]
             auto_run.blockSignals(False)
 
         rerun = getattr(self, "_aligner_rerun_button", None)
         if rerun is not None:
-            rerun.setEnabled(bool(aligners) and self._active_face_index() is not None)
+            rerun.setEnabled(bool(aligners) and self._active_face_index() is not None)  # type: ignore[attr-defined]
 
     def _schedule_aligner_preload(self) -> None:
         """Preload the selected aligner/backend while BBox controls are visible."""
@@ -453,31 +453,31 @@ class ControlsMixin:
         if controls is None or not controls.isVisible():
             return
         aligner = self._active_aligner_name()
-        normalization = str(self._editor_state.aligner_normalization)
+        normalization = str(self._editor_state.aligner_normalization)  # type: ignore[attr-defined]
         if not aligner:
             self._set_aligner_load_status("failed", "", "No aligner plugins available")
             return
         target = (aligner, normalization)
-        if target in self._aligner_loaded_targets:
+        if target in self._aligner_loaded_targets:  # type: ignore[attr-defined]
             self._set_aligner_load_status("ready", aligner, f"Aligner '{aligner}' ready")
             return
-        if self._aligner_load_worker is not None and self._aligner_load_target == target:
+        if self._aligner_load_worker is not None and self._aligner_load_target == target:  # type: ignore[has-type]
             return
-        if self._aligner_load_worker is not None:
-            if not self._aligner_load_worker.stop():
-                self.statusBar().showMessage(
+        if self._aligner_load_worker is not None:  # type: ignore[has-type]
+            if not self._aligner_load_worker.stop():  # type: ignore[has-type]
+                self.statusBar().showMessage(  # type: ignore[attr-defined]
                     "Aligner is still loading. Wait before changing selection.",
                     5000,
                 )
                 return
-            self._aligner_load_worker.deleteLater()
+            self._aligner_load_worker.deleteLater()  # type: ignore[has-type]
             self._aligner_load_worker = None
 
         worker = ManualAlignerLoadWorker(
-            self._aligner_service,
+            self._aligner_service,  # type: ignore[attr-defined]
             aligner,
             normalization,
-            parent=self,
+            parent=self,  # type: ignore[arg-type]
         )
         worker.status.connect(self._on_aligner_load_status)
         worker.completed.connect(self._on_aligner_load_completed)
@@ -490,8 +490,8 @@ class ControlsMixin:
         """Handle status emitted by the background aligner preload worker."""
         self._set_aligner_load_status(kind, aligner, message)
         timeout = 5000 if kind == "failed" else 3000
-        self.statusBar().showMessage(message, timeout)
-        self._emit_console(f"Manual Tool aligner: {message}")
+        self.statusBar().showMessage(message, timeout)  # type: ignore[attr-defined]
+        self._emit_console(f"Manual Tool aligner: {message}")  # type: ignore[attr-defined]
 
     def _on_aligner_load_completed(
         self, aligner: str, normalization: str, ok: bool, message: str
@@ -501,7 +501,7 @@ class ControlsMixin:
         if self._aligner_load_target is not None and target != self._aligner_load_target:
             return
         if ok:
-            self._aligner_loaded_targets.add(target)
+            self._aligner_loaded_targets.add(target)  # type: ignore[attr-defined]
             self._set_aligner_load_status("ready", aligner, message)
         else:
             self._set_aligner_load_status("failed", aligner, message)
@@ -512,7 +512,7 @@ class ControlsMixin:
             worker.deleteLater()
             self._aligner_load_worker = None
 
-        self._aligner_load_target = None
+        self._aligner_load_target = None  # type: ignore[assignment]
         self._sync_aligner_controls()
 
     def _set_aligner_load_status(self, kind: str, aligner: str, message: str) -> None:
@@ -548,8 +548,8 @@ class ControlsMixin:
             return
         self._set_aligner_load_status(kind, aligner, message)
         timeout = 5000 if kind == "failed" else 3000
-        self.statusBar().showMessage(message, timeout)
-        self._emit_console(f"Manual Tool aligner: {message}")
+        self.statusBar().showMessage(message, timeout)  # type: ignore[attr-defined]
+        self._emit_console(f"Manual Tool aligner: {message}")  # type: ignore[attr-defined]
         if kind == "failed":
             logger.error("Manual Tool aligner: %s", message)
 
@@ -561,66 +561,66 @@ class ControlsMixin:
         aligner_name: str | None = None,
     ) -> bool:
         """Rerun the configured aligner against one face on the current frame."""
-        frame_index = self._current_frame_index()
+        frame_index = self._current_frame_index()  # type: ignore[attr-defined]
         if frame_index < 0:
-            self.statusBar().showMessage("No frame to align", 3000)
+            self.statusBar().showMessage("No frame to align", 3000)  # type: ignore[attr-defined]
             return False
-        faces = self._editable.faces(frame_index)
+        faces = self._editable.faces(frame_index)  # type: ignore[attr-defined]
         if face_index < 0 or face_index >= len(faces):
-            self.statusBar().showMessage("No active face to align", 3000)
+            self.statusBar().showMessage("No active face to align", 3000)  # type: ignore[attr-defined]
             return False
-        image = self._frame_view.current_frame_array()
+        image = self._frame_view.current_frame_array()  # type: ignore[attr-defined]
         if image is None:
-            self.statusBar().showMessage("Cannot align: frame image not loaded", 4000)
+            self.statusBar().showMessage("Cannot align: frame image not loaded", 4000)  # type: ignore[attr-defined]
             return False
         face = faces[face_index]
         try:
-            landmarks = self._aligner_service.align(
+            landmarks = self._aligner_service.align(  # type: ignore[attr-defined]
                 image,
                 face.bbox,
                 aligner=aligner_name or self._active_aligner_name() or None,
-                normalization=self._editor_state.aligner_normalization,
+                normalization=self._editor_state.aligner_normalization,  # type: ignore[attr-defined]
             )
         except Exception as err:  # noqa: BLE001 - surface to user; model untouched
             logger.exception("Manual Tool: aligner run failed")
-            self.statusBar().showMessage(f"Aligner failed: {err}", 5000)
-            self._emit_console(f"Manual Tool aligner failed: {err}")
+            self.statusBar().showMessage(f"Aligner failed: {err}", 5000)  # type: ignore[attr-defined]
+            self._emit_console(f"Manual Tool aligner failed: {err}")  # type: ignore[attr-defined]
             return False
         new_points = [(float(point[0]), float(point[1])) for point in landmarks]
-        setter = self._editable.set_landmarks_live if live else self._editable.set_landmarks
+        setter = self._editable.set_landmarks_live if live else self._editable.set_landmarks  # type: ignore[attr-defined]
         if not setter(frame_index, face_index, new_points):
             return False
-        self._editor_state.set("edited", True)
-        self.refresh_faces()
-        self._frame_view.update()
+        self._editor_state.set("edited", True)  # type: ignore[attr-defined]
+        self.refresh_faces()  # type: ignore[attr-defined]
+        self._frame_view.update()  # type: ignore[attr-defined]
         return True
 
     def _sync_actions(self) -> None:
         """Update action availability from session, selection and dirty state."""
-        if not self._actions:
+        if not self._actions:  # type: ignore[attr-defined]
             return
-        filtered = self._filtered_frame_indices
+        filtered = self._filtered_frame_indices  # type: ignore[attr-defined]
         filtered_total = len(filtered)
         has_frames = filtered_total > 0
         if has_frames:
-            not_first = self._previous_filtered_row() is not None
-            not_last = self._next_filtered_row() is not None
+            not_first = self._previous_filtered_row() is not None  # type: ignore[attr-defined]
+            not_last = self._next_filtered_row() is not None  # type: ignore[attr-defined]
         else:
             not_first = False
             not_last = False
-        frame_index = self._current_frame_index()
-        editable_count = self._editable.face_count(frame_index) if frame_index >= 0 else 0
-        face_selected = self._editor_state.face_index >= 0 and (
-            editable_count > 0 or bool(self._face_panel.faces)
+        frame_index = self._current_frame_index()  # type: ignore[attr-defined]
+        editable_count = self._editable.face_count(frame_index) if frame_index >= 0 else 0  # type: ignore[attr-defined]
+        face_selected = self._editor_state.face_index >= 0 and (  # type: ignore[attr-defined]
+            editable_count > 0 or bool(self._face_panel.faces)  # type: ignore[attr-defined]
         )
-        has_frame_loaded = self._frame_view.has_frame
-        editor_mode = self._editor_state.editor_mode
+        has_frame_loaded = self._frame_view.has_frame  # type: ignore[attr-defined]
+        editor_mode = self._editor_state.editor_mode  # type: ignore[attr-defined]
 
         availability: dict[str, bool] = {
-            "save": self._editor_state.unsaved,
-            "revert_frame": self._editor_state.edited
-            or self._editor_state.unsaved
-            or self._editable.can_undo,
+            "save": self._editor_state.unsaved,  # type: ignore[attr-defined]
+            "revert_frame": self._editor_state.edited  # type: ignore[attr-defined]
+            or self._editor_state.unsaved  # type: ignore[attr-defined]
+            or self._editable.can_undo,  # type: ignore[attr-defined]
             "first_frame": not_first,
             "previous_frame": not_first,
             "next_frame": not_last,
@@ -630,8 +630,8 @@ class ControlsMixin:
             "copy_next_face": not_last,
             "delete_face": face_selected and editable_count > 0,
             "add_face": has_frame_loaded,
-            "undo_edit": self._editable.can_undo,
-            "redo_edit": self._editable.can_redo,
+            "undo_edit": self._editable.can_undo,  # type: ignore[attr-defined]
+            "redo_edit": self._editable.can_redo,  # type: ignore[attr-defined]
             "cycle_filter": has_frames,
             "cycle_annotation": has_frames,
             "toggle_mask_annotation": has_frames,
@@ -643,23 +643,23 @@ class ControlsMixin:
             "zoom_in": has_frames,
             "zoom_out": has_frames,
             "reset_view": has_frames,
-            "legacy_tool": bool(self._legacy_args),
-            "extract_faces": has_frames and self._alignments_handle.exists,
+            "legacy_tool": bool(self._legacy_args),  # type: ignore[attr-defined]
+            "extract_faces": has_frames and self._alignments_handle.exists,  # type: ignore[attr-defined]
         }
-        if self._busy_operation is not None:
+        if self._busy_operation is not None:  # type: ignore[attr-defined]
             for key in self._MUTATING_ACTION_KEYS:
                 if key in availability:
                     availability[key] = False
         for key, enabled in availability.items():
-            action = self._actions.get(key)
+            action = self._actions.get(key)  # type: ignore[attr-defined]
             if action is not None:
                 action.setEnabled(enabled)
-        mesh_action = self._actions.get("cycle_annotation")
+        mesh_action = self._actions.get("cycle_annotation")  # type: ignore[attr-defined]
         if mesh_action is not None:
-            mesh_action.setChecked(bool(self._editor_state.face_grid_mesh_visible))
-        mask_action = self._actions.get("toggle_mask_annotation")
+            mesh_action.setChecked(bool(self._editor_state.face_grid_mesh_visible))  # type: ignore[attr-defined]
+        mask_action = self._actions.get("toggle_mask_annotation")  # type: ignore[attr-defined]
         if mask_action is not None:
-            mask_action.setChecked(bool(self._editor_state.face_grid_mask_visible))
+            mask_action.setChecked(bool(self._editor_state.face_grid_mask_visible))  # type: ignore[attr-defined]
         if hasattr(self, "_sync_rail_mode_actions"):
             self._sync_rail_mode_actions()
 
@@ -667,14 +667,14 @@ class ControlsMixin:
         """Refresh action availability when the editor mode flips."""
         self._clear_frame_temp_state()
         self._sync_actions()
-        self._refresh_mask_controls_visibility()
+        self._refresh_mask_controls_visibility()  # type: ignore[attr-defined]
         self._refresh_aligner_controls_visibility()
-        mode = str(self._editor_state.editor_mode)
+        mode = str(self._editor_state.editor_mode)  # type: ignore[attr-defined]
         if mode in {"Landmarks", "Mask"}:
             self._auto_magnify_active_face()
         else:
             self._restore_magnified_view()
-        self._frame_view.update()
+        self._frame_view.update()  # type: ignore[attr-defined]
 
     def _clear_frame_temp_state(self) -> None:
         """Clear frame-view temporary state owned by the active editor."""
@@ -682,9 +682,9 @@ class ControlsMixin:
         self._live_bbox_original_face = None
         self._live_bbox_add_undo_start = None
         self._live_bbox_add_previous_faces = ()
-        self._overlay.set_selected_landmarks(())
-        self._overlay.set_hovered_landmark(None, None)
-        self._frame_view.clear_editor_temporary_state()
+        self._overlay.set_selected_landmarks(())  # type: ignore[attr-defined]
+        self._overlay.set_hovered_landmark(None, None)  # type: ignore[attr-defined]
+        self._frame_view.clear_editor_temporary_state()  # type: ignore[attr-defined]
 
 
 __all__ = ["ControlsMixin"]

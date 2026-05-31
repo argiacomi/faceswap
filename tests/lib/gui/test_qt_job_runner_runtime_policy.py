@@ -17,7 +17,7 @@ class _ProcessDouble:
 
     def state(self) -> QProcess.ProcessState:
         """Return a running process state."""
-        return QProcess.Running
+        return QProcess.Running  # type: ignore[no-any-return]
 
     def terminate(self) -> None:
         """Capture terminate calls."""
@@ -49,7 +49,7 @@ def test_job_runner_stop_uses_train_termination_policy(monkeypatch) -> None:
     process = _ProcessDouble()
     runner.process = process  # type:ignore[assignment]
     runner._runtime.command = "train"  # pylint:disable=protected-access
-    stdout = []
+    stdout = []  # type: ignore[var-annotated]
     runner.stdout.connect(stdout.append)
 
     runner.stop()
@@ -69,7 +69,7 @@ def test_job_runner_stop_uses_default_termination_policy(monkeypatch) -> None:
     process = _ProcessDouble()
     runner.process = process  # type:ignore[assignment]
     runner._runtime.command = "extract"  # pylint:disable=protected-access
-    stdout = []
+    stdout = []  # type: ignore[var-annotated]
     runner.stdout.connect(stdout.append)
 
     runner.stop()

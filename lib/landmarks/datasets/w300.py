@@ -101,7 +101,7 @@ def _parse_pts(path: Path) -> np.ndarray:
     points = np.asarray(rows, dtype="float32")
     if points.shape != (68, 2):
         raise ValueError(f"300W .pts file must contain 68 x/y points, got {points.shape}: {path}")
-    return points
+    return points  # type: ignore[no-any-return]
 
 
 def _matching_image(annotation: Path) -> Path | None:

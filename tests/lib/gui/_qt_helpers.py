@@ -111,7 +111,7 @@ def toolbar(window: QMainWindow, name: str = "qt-shell-toolbar") -> QToolBar:
 
     found = window.findChild(QToolBar, name)
     assert found is not None, f"Toolbar {name!r} not found"
-    return found
+    return found  # type: ignore[no-any-return]
 
 
 def button(parent: QWidget, name: str) -> QPushButton:
@@ -120,7 +120,7 @@ def button(parent: QWidget, name: str) -> QPushButton:
 
     found = parent.findChild(QPushButton, name)
     assert found is not None, f"Button {name!r} not found"
-    return found
+    return found  # type: ignore[no-any-return]
 
 
 def label(parent: QWidget, name: str) -> QLabel:
@@ -129,7 +129,7 @@ def label(parent: QWidget, name: str) -> QLabel:
 
     found = parent.findChild(QLabel, name)
     assert found is not None, f"Label {name!r} not found"
-    return found
+    return found  # type: ignore[no-any-return]
 
 
 def list_widget(parent: QWidget, name: str) -> QListWidget:
@@ -138,4 +138,4 @@ def list_widget(parent: QWidget, name: str) -> QListWidget:
 
     found = parent.findChild(QListWidget, name)
     assert found is not None, f"List widget {name!r} not found"
-    return found
+    return found  # type: ignore[no-any-return]

@@ -72,7 +72,7 @@ def entry_conditions(entry: dict[str, T.Any]) -> tuple[str, ...]:
     if isinstance(raw, str):
         values = (raw,)
     elif isinstance(raw, (list, tuple)):
-        values = tuple(str(item) for item in raw if str(item))
+        values = tuple(str(item) for item in raw if str(item))  # type: ignore[assignment]
     else:
         values = (str(entry.get("condition", "default")),)
     return tuple(dict.fromkeys(value for value in values if value)) or ("default",)
@@ -134,7 +134,7 @@ def _entry_landmark_points(entry: dict[str, T.Any], output_dir: Path) -> np.ndar
     points = np.load(str(landmark_path)).astype("float32")
     if points.ndim != 2 or points.shape[1] < 2 or not points.size:
         return None
-    return points[:, :2]
+    return points[:, :2]  # type: ignore[no-any-return]
 
 
 def _landmark_bbox(points: np.ndarray) -> list[float]:

@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 
-def test_command_panel_set_external_errors_shown_inline(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_command_panel_set_external_errors_shown_inline(qtbot) -> None:
     """External errors render inline in the command panel validation area."""
     from lib.gui.qt_shell.command_panel import CommandPanel
     from lib.gui.qt_shell.command_schema import CommandSchema, CommandSpec, OptionSpec
@@ -25,7 +25,7 @@ def test_command_panel_set_external_errors_shown_inline(qtbot) -> None:  # type:
     assert panel._validation_label.isHidden() is False  # noqa: SLF001
 
 
-def test_command_panel_switching_commands_clears_external_errors(  # type:ignore[no-untyped-def]
+def test_command_panel_switching_commands_clears_external_errors(
     qtbot,
 ) -> None:
     """Switching to a different command must drop stale launcher errors."""
@@ -51,7 +51,7 @@ def test_command_panel_switching_commands_clears_external_errors(  # type:ignore
     assert panel._validation_label.isHidden() is True  # noqa: SLF001
 
 
-def test_command_panel_value_change_clears_external_errors(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_command_panel_value_change_clears_external_errors(qtbot) -> None:
     """Editing a field should drop stale external errors."""
     from lib.gui.qt_shell.command_panel import CommandPanel
     from lib.gui.qt_shell.command_schema import CommandSchema, CommandSpec, OptionSpec
@@ -71,7 +71,7 @@ def test_command_panel_value_change_clears_external_errors(qtbot) -> None:  # ty
 
 
 def test_manual_window_from_command_values_raises_for_missing_frames(
-    qtbot,  # type:ignore[no-untyped-def]
+    qtbot,
     tmp_path: Path,
 ) -> None:
     """The native window builder surfaces session validation errors as ValueError."""
@@ -87,7 +87,7 @@ def test_manual_window_from_command_values_raises_for_missing_frames(
 
 
 def test_manual_window_from_command_values_succeeds_for_image_folder(
-    qtbot,  # type:ignore[no-untyped-def]
+    qtbot,
     tmp_path: Path,
 ) -> None:
     """A valid image folder produces a native window with the shared session."""

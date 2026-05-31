@@ -315,7 +315,7 @@ class CliOptions:
         else:
             retval = str
         logger.debug("Setting type to %s for %s", retval, type_)
-        return retval
+        return retval  # type: ignore[no-any-return]
 
     @classmethod
     def _get_rounding(cls, opt: dict[str, T.Any]) -> int | None:
@@ -339,7 +339,7 @@ class CliOptions:
         else:
             retval = None
         logger.debug("Setting rounding to %s for type %s", retval, dtype)
-        return retval
+        return retval  # type: ignore[no-any-return]
 
     @classmethod
     def _expand_action_option(

@@ -70,7 +70,7 @@ def test_pose_rows_pin_faceswap_pose_conventions(
 def test_spiga_post_process_strips_pose_and_stores_metadata() -> None:
     """SPIGA keeps native pose metadata while returning only landmarks."""
     plugin = SPIGA()
-    landmarks = np.zeros((1, plugin._model_config.num_landmarks, 2), dtype="float32")
+    landmarks = np.zeros((1, plugin._model_config.num_landmarks, 2), dtype="float32")  # type: ignore[var-annotated]
     pose_rows = np.array([[[12.0, 0.0], [-3.0, 0.0], [4.0, 0.0]]], dtype="float32")
     output = np.concatenate([landmarks, pose_rows], axis=1)
 
@@ -95,7 +95,7 @@ def test_spiga_post_process_strips_pose_and_stores_metadata() -> None:
 def test_uninitialized_spiga_post_process_passes_plain_landmarks() -> None:
     """Post-process remains compatible with object.__new__ test doubles."""
     plugin = object.__new__(SPIGA)
-    plugin._model_config = SimpleNamespace(num_landmarks=98)
+    plugin._model_config = SimpleNamespace(num_landmarks=98)  # type: ignore[assignment]
     arr = np.random.default_rng(0).uniform(0.0, 1.0, (3, 98, 2)).astype(np.float32)
 
     result = plugin.post_process(arr)
@@ -127,7 +127,7 @@ def test_align_stores_spiga_pose_metadata_with_validation() -> None:
     aligned._cache_rotation = np.zeros((1, 3, 1), dtype="float32")
     batch = SimpleNamespace(aligned=aligned)
 
-    Align._store_plugin_metadata(handler, batch, face_count=1, feed_count=1)
+    Align._store_plugin_metadata(handler, batch, face_count=1, feed_count=1)  # type: ignore[arg-type]
 
     pose = batch.aligned.metadata[0]["spiga"]["pose"]
     assert pose["source"] == "spiga"
@@ -155,7 +155,7 @@ def test_align_averages_spiga_pose_metadata_across_refeeds() -> None:
     aligned._cache_rotation = np.zeros((2, 3, 1), dtype="float32")
     batch = SimpleNamespace(aligned=aligned)
 
-    Align._store_plugin_metadata(handler, batch, face_count=2, feed_count=6)
+    Align._store_plugin_metadata(handler, batch, face_count=2, feed_count=6)  # type: ignore[arg-type]
 
     first_pose = batch.aligned.metadata[0]["spiga"]["pose"]
     assert first_pose["yaw"] == pytest.approx(20.0)

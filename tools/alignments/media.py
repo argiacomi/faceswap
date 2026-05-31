@@ -162,8 +162,8 @@ class MediaLoader:
         """Check whether passed in file has a valid extension"""
         extension = os.path.splitext(filename)[1]
         retval = extension.lower() in IMAGE_EXTENSIONS
-        logger.trace(
-            "Filename has valid extension: '%s': %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "Filename has valid extension: '%s': %s",
             filename,
             retval,
         )
@@ -222,7 +222,7 @@ class MediaLoader:
         self._vid_reader.set(cv2.CAP_PROP_POS_FRAMES, frame_no)
 
         _, image = self._vid_reader.read()
-        return image
+        return image  # type: ignore[no-any-return]
 
     def stream(
         self, skip_list: list[int] | None = None
@@ -520,8 +520,8 @@ class ExtractedFaces:
     """
 
     def __init__(self, frames: Frames, alignments: AlignmentData, size: int = 512) -> None:
-        logger.trace(
-            "Initializing %s: size: %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "Initializing %s: size: %s",
             self.__class__.__name__,
             size,
         )

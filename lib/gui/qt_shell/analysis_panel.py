@@ -186,12 +186,12 @@ class AnalysisPanel(QWidget):
         layout.setContentsMargins(12, 12, 12, 8)
         layout.setSpacing(8)
 
-        self._title.setAlignment(Qt.AlignCenter)
+        self._title.setAlignment(Qt.AlignCenter)  # type: ignore[attr-defined]
         self._title.setObjectName("qt-shell-analysis-title")
         layout.addWidget(self._title)
 
         self._source_label.setObjectName("qt-shell-analysis-source")
-        self._source_label.setAlignment(Qt.AlignCenter)
+        self._source_label.setAlignment(Qt.AlignCenter)  # type: ignore[attr-defined]
         self._source_label.setWordWrap(True)
         layout.addWidget(self._source_label)
 
@@ -212,12 +212,12 @@ class AnalysisPanel(QWidget):
         layout.addLayout(controls)
 
         self._detail_label.setObjectName("qt-shell-analysis-detail")
-        self._detail_label.setAlignment(Qt.AlignCenter)
+        self._detail_label.setAlignment(Qt.AlignCenter)  # type: ignore[attr-defined]
         layout.addWidget(self._detail_label)
 
         self._table.setObjectName("qt-shell-session-stats")
         self._table.setMinimumWidth(0)
-        self._table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)  # type: ignore[attr-defined]
         self._table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self._table.setHorizontalHeaderLabels(AnalysisSessionService.TABLE_HEADERS)
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -226,7 +226,7 @@ class AnalysisPanel(QWidget):
         layout.addWidget(self._table, 1)
 
         self._selection_label.setObjectName("qt-shell-analysis-selection")
-        self._selection_label.setAlignment(Qt.AlignCenter)
+        self._selection_label.setAlignment(Qt.AlignCenter)  # type: ignore[attr-defined]
         layout.addWidget(self._selection_label)
 
         footer = QHBoxLayout()
@@ -305,7 +305,7 @@ class AnalysisPanel(QWidget):
             for column_index, value in enumerate(row.values):
                 item = QTableWidgetItem(self._display_value(value, column_index))
                 if column_index in (0, 1, 5, 6, 7):
-                    item.setTextAlignment(Qt.AlignCenter)
+                    item.setTextAlignment(Qt.AlignCenter)  # type: ignore[attr-defined]
                 if row.is_total:
                     item.setData(Qt.ItemDataRole.UserRole, "total")
                 self._table.setItem(row_index, column_index, item)

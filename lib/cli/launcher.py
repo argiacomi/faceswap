@@ -87,7 +87,7 @@ class ScriptExecutor:
         )
         module = import_module(mod)
         script = getattr(module, self._command.title())
-        return script
+        return script  # type: ignore[no-any-return]
 
     def _test_for_torch_version(self) -> None:
         """Check that the required PyTorch version is installed.

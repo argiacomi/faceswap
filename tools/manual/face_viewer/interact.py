@@ -41,7 +41,7 @@ class HoverBox:
         self._globals = viewport._canvas._globals
         self._navigation = viewport._canvas._display_frame.navigation
         self._box = self._canvas.create_rectangle(
-            0.0,  # type:ignore[call-overload]
+            0.0,
             0.0,
             float(self._size),
             float(self._size),
@@ -324,9 +324,8 @@ class ActiveFrame:
             return
 
         rows, cols = np.where(self._objects.visible_grid[0] == self.frame_index)
-        logger.trace(
-            "Setting active objects: (rows: %s, "  # type:ignore[attr-defined]
-            "columns: %s)",
+        logger.trace(  # type: ignore[attr-defined]
+            "Setting active objects: (rows: %s, columns: %s)",
             rows,
             cols,
         )
@@ -341,7 +340,7 @@ class ActiveFrame:
             and self._objects.visible_faces.shape == viewport_shape
         )
         if not objects_ready:
-            logger.trace(
+            logger.trace(  # type: ignore[attr-defined]
                 "Viewport objects are not ready. Clearing active objects: "
                 "visible_grid: %s, images: %s, meshes: %s, faces: %s",
                 viewport_shape,
@@ -404,17 +403,15 @@ class ActiveFrame:
             return
 
         if self._canvas.winfo_height() > self._size:
-            logger.trace(
-                "Viewport taller than single face height. "  # type:ignore[attr-defined]
-                "Moving Active faces to top: %s",
+            logger.trace(  # type: ignore[attr-defined]
+                "Viewport taller than single face height. Moving Active faces to top: %s",
                 top,
             )
             self._canvas.yview_moveto(top / height)
             self._viewport.update()
         elif self._canvas.winfo_height() <= self._size and y_top != top:
-            logger.trace(
-                "Viewport shorter than single face height. "  # type:ignore[attr-defined]
-                "Moving Active faces to top: %s",
+            logger.trace(  # type: ignore[attr-defined]
+                "Viewport shorter than single face height. Moving Active faces to top: %s",
                 top,
             )
             self._canvas.yview_moveto(top / height)
@@ -431,7 +428,7 @@ class ActiveFrame:
         logger.debug("new_boxes_count: %s", new_boxes_count)
         for _ in range(new_boxes_count):
             box = self._canvas.create_rectangle(
-                0.0,  # type:ignore[call-overload]
+                0.0,
                 0.0,
                 float(self._viewport.face_size),
                 float(self._viewport.face_size),

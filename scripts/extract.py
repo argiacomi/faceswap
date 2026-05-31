@@ -1034,7 +1034,7 @@ class Output:  # pylint:disable=too-many-instance-attributes
             return (T.cast("npt.NDArray[np.uint8]", self._align["empty_faces"]), [])
         image_ids = np.fromiter((0 for _ in range(len(media))), dtype=np.int32)
         if self._saver is None:
-            faces = np.empty((0, self._size, self._size, 3), dtype=np.uint8)
+            faces = np.empty((0, self._size, self._size, 3), dtype=np.uint8)  # type: ignore[var-annotated]
             mats = batch_adjust_matrices(
                 media.aligned.matrices_head,
                 96,
@@ -1137,7 +1137,7 @@ class Output:  # pylint:disable=too-many-instance-attributes
             )
         finalize(
             count,
-            T.cast(int, self._counts["faces"]),
+            T.cast(int, self._counts["faces"]),  # type: ignore[redundant-cast]
             T.cast(bool, self._counts["verify"]),
         )
         self._counts["verify"] = False

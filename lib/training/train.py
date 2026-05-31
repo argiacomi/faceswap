@@ -427,12 +427,12 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
 
         combined_loss = np.array([x.total.item() for x in loss], dtype=np.float32)
         self._model.add_history(combined_loss)
-        logger.trace(
-            "[Trainer] original loss: %s, combined_loss: %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "[Trainer] original loss: %s, combined_loss: %s",
             loss,
             combined_loss,
         )
-        return combined_loss
+        return combined_loss  # type: ignore[no-any-return]
 
     def _print_loss(self, loss: np.ndarray) -> None:
         """Outputs the loss for the current iteration to the console.
@@ -601,8 +601,8 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
             ``True`` to generate a timelapse preview image
         """
         self._model.state.increment_iterations()
-        logger.trace(
-            "[Trainer] Training one step: (iteration: %s)",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "[Trainer] Training one step: (iteration: %s)",
             self._model.iterations,
         )
         do_snapshot = (

@@ -151,7 +151,7 @@ class ORFormer(ExtractPlugin):
         retval[:, 1] = ctr_y - half
         retval[:, 2] = ctr_x + half
         retval[:, 3] = ctr_y + half
-        return retval
+        return retval  # type: ignore[no-any-return]
 
     def process(self, batch: np.ndarray) -> np.ndarray:
         """Predict face landmarks."""

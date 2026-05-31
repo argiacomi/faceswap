@@ -124,8 +124,8 @@ class InfoLoader:
         if not metadata or not metadata.get("alignments") or not metadata.get("source"):
             return None
         metadata = PNGHeader.from_dict(metadata)
-        self.cached_source_data[filename] = metadata.source
-        return metadata.alignments
+        self.cached_source_data[filename] = metadata.source  # type: ignore[union-attr]
+        return metadata.alignments  # type: ignore[union-attr]
 
     def _metadata_reader(self) -> ImgMetaType:
         """Load metadata from saved aligned faces

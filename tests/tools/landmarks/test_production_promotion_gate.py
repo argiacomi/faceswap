@@ -19,7 +19,7 @@ from tools.landmarks.production_promotion_gate import (
 
 
 def _points(offset: float = 0.0) -> np.ndarray:
-    points = np.zeros((68, 2), dtype="float32")
+    points = np.zeros((68, 2), dtype="float32")  # type: ignore[var-annotated]
     points[:, 0] = np.linspace(10.0, 90.0, 68) + offset
     points[:, 1] = np.linspace(20.0, 110.0, 68)
     return points
@@ -124,13 +124,13 @@ def test_production_gate_passes_competitive_policy(tmp_path: Path) -> None:
     )
 
     assert report["status"] == "pass"
-    assert report["best_static_ensemble"]["candidate"] in {
+    assert report["best_static_ensemble"]["candidate"] in {  # type: ignore[index]
         "static_weighted",
         "static_weighted_downweight",
     }
-    assert report["current_promoted_setup"]["candidate"] == "static_weighted_downweight"
-    assert Path(report["artifacts"]["json"]).is_file()
-    assert Path(report["artifacts"]["per_bucket_csv"]).is_file()
+    assert report["current_promoted_setup"]["candidate"] == "static_weighted_downweight"  # type: ignore[index]
+    assert Path(report["artifacts"]["json"]).is_file()  # type: ignore[index]
+    assert Path(report["artifacts"]["per_bucket_csv"]).is_file()  # type: ignore[index]
 
 
 def test_production_gate_fails_against_best_single(tmp_path: Path) -> None:
@@ -147,7 +147,7 @@ def test_production_gate_fails_against_best_single(tmp_path: Path) -> None:
     )
 
     assert report["status"] == "fail"
-    assert "chosen_policy_mean_nme_regresses_vs_best_single" in report["failed_gates"]
+    assert "chosen_policy_mean_nme_regresses_vs_best_single" in report["failed_gates"]  # type: ignore[operator]
 
 
 def test_production_gate_fails_against_static_ensemble(tmp_path: Path) -> None:
@@ -165,7 +165,7 @@ def test_production_gate_fails_against_static_ensemble(tmp_path: Path) -> None:
     )
 
     assert report["status"] == "fail"
-    assert "chosen_policy_mean_nme_regresses_vs_static_downweight" in report["failed_gates"]
+    assert "chosen_policy_mean_nme_regresses_vs_static_downweight" in report["failed_gates"]  # type: ignore[operator]
 
 
 def test_production_gate_fails_missing_runtime_metadata(tmp_path: Path) -> None:
@@ -183,7 +183,7 @@ def test_production_gate_fails_missing_runtime_metadata(tmp_path: Path) -> None:
     )
 
     assert report["status"] == "fail"
-    assert "missing_production_runtime_metadata" in report["failed_gates"]
+    assert "missing_production_runtime_metadata" in report["failed_gates"]  # type: ignore[operator]
 
 
 def test_production_gate_fails_derived_no_image_runtime_metadata(tmp_path: Path) -> None:
@@ -209,7 +209,7 @@ def test_production_gate_fails_derived_no_image_runtime_metadata(tmp_path: Path)
 
     assert report["status"] == "fail"
     assert report["derived_no_image_runtime_metadata_count"] == 1
-    assert "production_runtime_bucket_source_derived_no_image_evidence" in report["failed_gates"]
+    assert "production_runtime_bucket_source_derived_no_image_evidence" in report["failed_gates"]  # type: ignore[operator]
 
 
 def test_production_gate_uses_image_aware_sidecar_metadata(tmp_path: Path) -> None:
@@ -336,7 +336,7 @@ def test_production_gate_fails_per_bucket_regression(tmp_path: Path) -> None:
     )
 
     assert report["status"] == "fail"
-    assert "bucket_profile_left_mean_regresses_vs_best_single" in report["failed_gates"]
+    assert "bucket_profile_left_mean_regresses_vs_best_single" in report["failed_gates"]  # type: ignore[operator]
 
 
 def test_production_gate_warns_for_tiny_hard_bucket_regression(tmp_path: Path) -> None:
@@ -360,4 +360,4 @@ def test_production_gate_warns_for_tiny_hard_bucket_regression(tmp_path: Path) -
     assert report["status"] == "pass"
     assert not report["failed_gates"]
     assert report["warnings"] == ["bucket_profile_left_sample_count_1_below_gate_min_20"]
-    assert report["per_bucket"]["profile_left"]["sample_count"] == 1.0
+    assert report["per_bucket"]["profile_left"]["sample_count"] == 1.0  # type: ignore[index]

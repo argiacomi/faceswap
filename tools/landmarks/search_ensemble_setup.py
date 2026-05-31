@@ -127,7 +127,7 @@ def _show_progress(args: argparse.Namespace) -> bool:
 def _candidate_progress(
     candidates: T.Sequence[Candidate], *, enabled: bool
 ) -> T.Iterable[Candidate]:
-    return tqdm(
+    return tqdm(  # type: ignore[no-any-return]
         candidates,
         total=len(candidates),
         desc="Evaluate candidates",
@@ -139,7 +139,7 @@ def _candidate_progress(
 def _geometry_candidate_progress(
     results: T.Sequence[CandidateResult], *, enabled: bool
 ) -> T.Iterable[CandidateResult]:
-    return tqdm(
+    return tqdm(  # type: ignore[no-any-return]
         results,
         total=len(results),
         desc="Evaluate geometry candidates",

@@ -108,7 +108,7 @@ class Mask(ExtractHandlerFace):
         )
 
         data = self._format_images(data)
-        batch.matrices = data[..., -1]  # type:ignore[assignment]  # Hacky re-use for ROI
+        batch.matrices = data[..., -1]  # Hacky re-use for ROI
         batch.data = self.plugin.pre_process(data[..., :3])
         batch.masks[self.storage_name] = ExtractBatchMask(self._centering, matrices)
 

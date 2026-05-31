@@ -963,7 +963,7 @@ def _sentinel_matches(path: Path, expected: dict[str, object]) -> bool:
         actual = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return False
-    return actual == expected
+    return actual == expected  # type: ignore[no-any-return]
 
 
 def _scorer_training_sentinel_matches(args: argparse.Namespace, paths: PipelinePaths) -> bool:

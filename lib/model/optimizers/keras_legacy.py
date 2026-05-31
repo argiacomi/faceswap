@@ -339,7 +339,7 @@ class AdaBelief(Optimizer):  # pylint:disable=too-many-instance-attributes,too-m
                 "min_learning_rate": self.min_learning_rate,
             }
         )
-        return config
+        return config  # type: ignore[no-any-return]
 
 
 # Update Optimizers into Keras custom objects

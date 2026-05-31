@@ -61,7 +61,7 @@ class Loader:
     @property
     def location(self) -> str:
         """Full path to the source folder/video file location"""
-        return self._loader.location
+        return self._loader.location  # type: ignore[no-any-return]
 
     @property
     def skip_count(self) -> int:

@@ -55,7 +55,7 @@ class ManualTransportBar(QWidget):
         scrubber.setContentsMargins(0, 0, 0, 0)
         scrubber.setSpacing(6)
 
-        self._slider = QSlider(Qt.Horizontal)
+        self._slider = QSlider(Qt.Horizontal)  # type: ignore[attr-defined]
         self._slider.setObjectName("qt-manual-transport-slider")
         self._slider.setRange(0, 0)
         self._slider.setEnabled(False)

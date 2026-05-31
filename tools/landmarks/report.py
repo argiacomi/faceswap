@@ -17,7 +17,7 @@ def main(argv: list[str] | None = None) -> int:
         metrics = json.load(infile)
     overall = metrics.get("overall", {})
     summary = metrics.get("best_variant", {})
-    best_single = min(
+    best_single = min(  # type: ignore[var-annotated]
         (
             (name, data)
             for name, data in overall.items()

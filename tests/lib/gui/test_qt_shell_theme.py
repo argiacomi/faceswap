@@ -277,7 +277,7 @@ def test_every_canonical_tk_color_key_has_section_qualified_token() -> None:
             assert theme.color(token) == value
 
 
-def test_unknown_legacy_theme_keys_are_logged_not_rejected(caplog) -> None:  # type:ignore[no-untyped-def]
+def test_unknown_legacy_theme_keys_are_logged_not_rejected(caplog) -> None:
     """Permissive legacy loads should log unknown keys at debug level."""
     payload = {"tooltip": {"background_color": "#010203", "mystery": "#040506"}}
 
@@ -288,7 +288,7 @@ def test_unknown_legacy_theme_keys_are_logged_not_rejected(caplog) -> None:  # t
     assert "Ignoring unknown legacy theme key: tooltip.mystery" in caplog.text
 
 
-def test_legacy_icon_cache_paths_are_resolved(qtbot) -> None:  # type:ignore[no-untyped-def] # noqa: ARG001
+def test_legacy_icon_cache_paths_are_resolved(qtbot) -> None:  # noqa: ARG001
     """Qt should reuse the same icon cache as the Tk taskbar and favicon."""
     theme = QtTheme.default()
 

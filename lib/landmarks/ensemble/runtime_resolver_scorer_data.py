@@ -294,7 +294,7 @@ def _is_strategy(name: str) -> bool:
 
 
 def _load_truth(sample: LandmarkSample) -> np.ndarray:
-    return np.load(sample.landmarks).astype("float32")
+    return np.load(sample.landmarks).astype("float32")  # type: ignore[no-any-return]
 
 
 def _runtime_metadata(sample: LandmarkSample) -> dict[str, T.Any]:
@@ -399,7 +399,7 @@ def ensemble_crop_roi(
     ctr_x = int(np.rint((bbox[0] + bbox[2]) * 0.5))
     ctr_y = int(np.rint((bbox[1] + bbox[3]) * 0.5))
     half = int(np.rint(max(float(width), float(height)) * float(crop_scale) * 0.5))
-    return np.asarray([ctr_x - half, ctr_y - half, ctr_x + half, ctr_y + half], dtype="int32")
+    return np.asarray([ctr_x - half, ctr_y - half, ctr_x + half, ctr_y + half], dtype="int32")  # type: ignore[no-any-return]
 
 
 def crop_square_rgb(
@@ -410,7 +410,7 @@ def crop_square_rgb(
 ) -> np.ndarray:
     """Crop a square ROI with zero padding, then resize to the aligner crop size."""
     try:
-        import cv2  # type: ignore[import-not-found]
+        import cv2
     except ModuleNotFoundError as err:  # pragma: no cover - environment guard
         raise RuntimeError("image-aware runtime metadata backfill requires opencv-python") from err
 
@@ -435,21 +435,21 @@ def crop_square_rgb(
             dst_left : dst_left + (src_right - src_left),
         ] = image[src_top:src_bottom, src_left:src_right, :3]
     if width == crop_size and height == crop_size:
-        return canvas
-    return cv2.resize(canvas, (crop_size, crop_size), interpolation=cv2.INTER_LINEAR)
+        return canvas  # type: ignore[no-any-return]
+    return cv2.resize(canvas, (crop_size, crop_size), interpolation=cv2.INTER_LINEAR)  # type: ignore[no-any-return]
 
 
 def load_image_rgb(path: str | Path) -> np.ndarray:
     """Load an RGB image for image-aware runtime bucket backfill."""
     try:
-        import cv2  # type: ignore[import-not-found]
+        import cv2
     except ModuleNotFoundError as err:  # pragma: no cover - environment guard
         raise RuntimeError("image-aware runtime metadata backfill requires opencv-python") from err
 
     image_bgr = cv2.imread(str(path), cv2.IMREAD_COLOR)
     if image_bgr is None:
         raise FileNotFoundError(f"could not read image {path}")
-    return cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+    return cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)  # type: ignore[no-any-return]
 
 
 def image_aware_runtime_result(
@@ -464,7 +464,7 @@ def image_aware_runtime_result(
     """Run the runtime resolver with the production crop and image evidence."""
     image_rgb = load_image_rgb(sample.image)
     roi = ensemble_crop_roi(detector_bbox, crop_scale=crop_scale)
-    crop = crop_square_rgb(image_rgb, roi, crop_size=crop_size).astype("float32") / 255.0
+    crop = crop_square_rgb(image_rgb, roi, crop_size=crop_size).astype("float32") / 255.0  # type: ignore[arg-type]
     return resolve_runtime(
         predictions,
         config,
@@ -590,7 +590,7 @@ def build_sample_context(
             f"face_index={face_index}. Refusing image-aware backfill."
         )
     else:
-        stored_runtime = _stored_runtime_diagnostics(sample)
+        stored_runtime = _stored_runtime_diagnostics(sample)  # type: ignore[assignment]
     image_backfill_result = None
     if stored_runtime is None:
         if allow_image_backfill and reference_bbox is not None:
@@ -910,7 +910,7 @@ def write_candidate_table_csv(rows: T.Sequence[dict[str, T.Any]], path: Path) ->
 def write_candidate_table_parquet(rows: T.Sequence[dict[str, T.Any]], path: Path) -> Path:
     """Write the canonical candidate diagnostic table to parquet when available."""
     try:
-        import pandas as pd  # type: ignore[import-not-found]
+        import pandas as pd  # type: ignore[import-untyped]
     except ModuleNotFoundError as err:
         raise RuntimeError(
             "parquet export requires pandas plus a parquet engine such as pyarrow; "

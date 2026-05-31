@@ -1028,7 +1028,7 @@ def majority_identity_model(
             # common path where ``vec`` is already a sized ndarray; fall
             # back to a single ``len`` check otherwise (issue #192 P2).
             try:
-                size = vec.size  # type: ignore[union-attr]
+                size = vec.size
             except AttributeError:
                 size = len(vec)
             if size == 0:
@@ -1124,7 +1124,7 @@ class IdentityBackfiller:
         try:
             face_obj = DetectedFace()
             face_obj.from_alignment(face, image=image)
-            face_obj.load_aligned(image, size=size, centering=centering)
+            face_obj.load_aligned(image, size=size, centering=centering)  # type: ignore[arg-type]
         except Exception as err:  # pylint:disable=broad-except
             logger.warning(
                 "Could not reconstruct aligned face for identity backfill "
@@ -1467,7 +1467,7 @@ def identity_coverage_status(
         if vec is None:
             return False
         try:
-            return bool(vec.size > 0)  # type: ignore[union-attr]
+            return bool(vec.size > 0)
         except AttributeError:
             return len(vec) > 0
 
@@ -1600,7 +1600,7 @@ def compute_identity_quality(
         if key not in classified_keys:
             continue
         vector = vectors_by_key[key]
-        face = faces_by_key.get(key)
+        face = faces_by_key.get(key)  # type: ignore[assignment]
         score = float(np.dot(vector, centroid))
         quality_flag, final_decision = _identity_decision(score)
         report.classified += 1

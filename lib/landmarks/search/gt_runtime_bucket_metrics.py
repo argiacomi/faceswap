@@ -262,7 +262,7 @@ def aggregate_runtime_bucket_metrics(
         if candidate is None:
             continue
         try:
-            nme_value = float(row.get("nme"))
+            nme_value = float(row.get("nme"))  # type: ignore[arg-type]
         except (TypeError, ValueError):
             continue
         if not math.isfinite(nme_value):
@@ -311,7 +311,7 @@ def aggregate_runtime_bucket_metrics(
         ) -> float | None:
             if name is None:
                 return None
-            return getattr(_aggregates[name], attr)
+            return getattr(_aggregates[name], attr)  # type: ignore[no-any-return]
 
         bucket_sample_count = (
             len(bucket_sample_ids)

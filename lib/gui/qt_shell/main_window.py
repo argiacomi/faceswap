@@ -69,14 +69,14 @@ class FreeSplitter(QSplitter):
         self.setHandleWidth(6)
         self.setOpaqueResize(True)
 
-    def addWidget(self, widget: QWidget) -> None:  # type:ignore[override]  # noqa:N802
+    def addWidget(self, widget: QWidget) -> None:  # noqa:N802
         """Force each child's minimum to zero so the handle can move anywhere.
 
         ``QSizePolicy.Ignored`` makes QSplitter ignore the child's minimumSizeHint
         so the user can drag continuously between zero and the full splitter range.
         """
         widget.setMinimumSize(0, 0)
-        widget.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
+        widget.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)  # type: ignore[attr-defined]
         super().addWidget(widget)
         self.setCollapsible(self.count() - 1, True)
 
@@ -128,7 +128,7 @@ class ConsolePane(QPlainTextEdit):
         """Append one console line with the requested tag."""
         self.write(f"{text}\n", tag=tag)
 
-    def _format_for(self, tag: str):  # type:ignore[no-untyped-def]
+    def _format_for(self, tag: str):
         """Return a cached QTextCharFormat for one console tag."""
         if tag not in _CONSOLE_TAG_COLORS or self._theme is None:
             return None
@@ -214,9 +214,9 @@ class MainWindow(QMainWindow):
             QEvent.Type.Wheel,
         }:
             self._mark_modified_from_user_event()
-        return super().eventFilter(watched, event)
+        return super().eventFilter(watched, event)  # type: ignore[no-any-return]
 
-    def closeEvent(self, event) -> None:  # type:ignore[no-untyped-def] # noqa:N802
+    def closeEvent(self, event) -> None:  # noqa:N802
         """Prompt before closing with unsaved project changes."""
         if not self.isVisible():
             self._stop_preview_live_refresh()
@@ -280,7 +280,7 @@ class MainWindow(QMainWindow):
         self._build_menus()
         self._build_toolbar()
         self._build_statusbar()
-        top = FreeSplitter(Qt.Horizontal)
+        top = FreeSplitter(Qt.Horizontal)  # type: ignore[attr-defined]
         top.setObjectName("qt-shell-main-splitter")
         top.addWidget(self._command_panel)
         top.addWidget(self._display_tabs())
@@ -288,7 +288,7 @@ class MainWindow(QMainWindow):
         top.setStretchFactor(1, 1)
         top.setSizes([420, 840])
         self._main_splitter = top
-        main = FreeSplitter(Qt.Vertical)
+        main = FreeSplitter(Qt.Vertical)  # type: ignore[attr-defined]
         main.setObjectName("qt-shell-vertical-splitter")
         main.addWidget(top)
         main.addWidget(self._console)
@@ -353,7 +353,7 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(12, 12, 12, 8)
         label = QLabel(f"{name} display placeholder")
-        label.setAlignment(Qt.AlignCenter)
+        label.setAlignment(Qt.AlignCenter)  # type: ignore[attr-defined]
         label.setWordWrap(True)
         label.setObjectName(f"qt-shell-{name.lower()}-placeholder")
         layout.addWidget(label, 1)
@@ -645,7 +645,7 @@ class MainWindow(QMainWindow):
             return True
         self._command_panel.set_external_errors(())
         self._project = self._session_service.snapshot_project(self._project, command, values)
-        window.setAttribute(Qt.WA_DeleteOnClose, True)
+        window.setAttribute(Qt.WA_DeleteOnClose, True)  # type: ignore[attr-defined]
         window.destroyed.connect(lambda _obj=None, w=window: self._discard_native_tool(w))
         self._native_tool_windows.append(window)
         window.show()
@@ -678,7 +678,7 @@ class MainWindow(QMainWindow):
     def _consume_runtime_event(self, event: object) -> None:
         """Route structured runtime events to runtime-aware UI widgets."""
         if self._display_controller is not None:
-            self._display_controller.consume_event(event)
+            self._display_controller.consume_event(event)  # type: ignore[arg-type]
         self._update_runtime_status(event)
         self._refresh_displays_from_event(event)
         self._sync_view_actions()
@@ -844,7 +844,7 @@ class MainWindow(QMainWindow):
         filename, _ = QFileDialog.getSaveFileName(
             self,
             "Save Faceswap Project As",
-            self._project_filename if self._file_kind == PROJECT_KIND else "",
+            self._project_filename if self._file_kind == PROJECT_KIND else "",  # type: ignore[arg-type]
             "Faceswap project (*.fsw);;JSON files (*.json);;All files (*)",
         )
         if filename:
@@ -855,7 +855,7 @@ class MainWindow(QMainWindow):
         filename, _ = QFileDialog.getSaveFileName(
             self,
             "Save Faceswap Task As",
-            self._project_filename if self._file_kind == TASK_KIND else "",
+            self._project_filename if self._file_kind == TASK_KIND else "",  # type: ignore[arg-type]
             "Faceswap task (*.fst);;JSON files (*.json);;All files (*)",
         )
         if filename:
@@ -1097,14 +1097,14 @@ class MainWindow(QMainWindow):
         display_items = self._recent_files.display_items(recent_files)
         if not display_items:
             action = self._recent_menu.addAction("No recent files")
-            action.setEnabled(False)
+            action.setEnabled(False)  # type: ignore[attr-defined]
         else:
             for display_item in display_items:
                 item = display_item.file
                 normalized_kind = self._session_service.normalize_kind(item.kind, item.filename)
                 action = self._recent_menu.addAction(display_item.label)
-                action.setToolTip(display_item.tooltip)
-                action.triggered.connect(
+                action.setToolTip(display_item.tooltip)  # type: ignore[attr-defined]
+                action.triggered.connect(  # type: ignore[attr-defined]
                     lambda _checked=False, filename=item.filename, kind=normalized_kind: (
                         self._open_session_file(
                             filename,
@@ -1170,7 +1170,7 @@ class MainWindow(QMainWindow):
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
-        return response == QMessageBox.StandardButton.Yes
+        return response == QMessageBox.StandardButton.Yes  # type: ignore[no-any-return]
 
     def _show_error(self, message: str) -> None:
         """Display an error in both console and dialog form."""

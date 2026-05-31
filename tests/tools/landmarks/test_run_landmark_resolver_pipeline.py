@@ -809,7 +809,7 @@ def test_gt_hard_resolver_metadata_generation_ignores_stale_manifest_runtime_met
     observed: dict[str, object] = {}
 
     def fake_build_sample_context(sample_arg: object, **_: object) -> SimpleNamespace:
-        observed["metadata"] = dict(sample_arg.metadata)
+        observed["metadata"] = dict(sample_arg.metadata)  # type: ignore[attr-defined]
         return SimpleNamespace(
             runtime_bucket="generated_frontal",
             runtime_bucket_source="derived_no_image_evidence",
@@ -836,7 +836,7 @@ def test_gt_hard_resolver_metadata_generation_ignores_stale_manifest_runtime_met
         output=output,
     )
 
-    assert "landmark_ensemble" not in observed["metadata"]
+    assert "landmark_ensemble" not in observed["metadata"]  # type: ignore[operator]
     assert rows[0]["landmark_ensemble"]["runtime_bucket"] == "generated_frontal"
     assert rows[0]["landmark_ensemble"]["runtime_bucket_source"] == "derived_no_image_evidence"
     assert rows[0]["landmark_ensemble"]["selected_candidate"] == "hrnet"
@@ -1248,7 +1248,7 @@ def test_config_preview_and_write_preserves_unmanaged_config_entries(tmp_path: P
     _apply_config(args, paths)
 
     parser = configparser.ConfigParser()
-    parser.optionxform = str
+    parser.optionxform = str  # type: ignore[assignment, method-assign]
     parser.read(args.config_path, encoding="utf-8")
 
     assert parser.get("global", "aligner_min_scale") == "0.03"
@@ -1301,7 +1301,7 @@ def test_config_write_appends_missing_align_ensemble_section(tmp_path: Path) -> 
     assert "resolver_policy = learned_quality_v1_1" in config_text
 
     parser = configparser.ConfigParser()
-    parser.optionxform = str
+    parser.optionxform = str  # type: ignore[assignment, method-assign]
     parser.read(args.config_path, encoding="utf-8")
     assert parser.get("global", "aligner_min_scale") == "0.03"
     assert parser.get("detect.scrfd", "model") == "10g"
@@ -1571,7 +1571,7 @@ def test_apply_config_installs_production_bundle(
         "learned_quality_v1_1",
         "learned_quality_v2",
     }
-    assert loaded.scorer_path_for("learned_quality_v1_1").is_file()
+    assert loaded.scorer_path_for("learned_quality_v1_1").is_file()  # type: ignore[union-attr]
     assert loaded.scorer_path_for(pa.ROLL_AWARE_VETO_POLICY) is None
 
 

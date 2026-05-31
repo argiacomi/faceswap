@@ -127,13 +127,12 @@ class FacesFrame(ttk.Frame):  # pylint:disable=too-many-ancestors
         """
 
         if self._event.is_set():
-            logger.trace(
-                "Update already running. "  # type:ignore[attr-defined]
-                "Aborting repeated keypress"
+            logger.trace(  # type: ignore[attr-defined]
+                "Update already running. Aborting repeated keypress"
             )
             return
-        logger.trace(
-            "Running update on received key press: %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "Running update on received key press: %s",
             direction,
         )
 
@@ -339,7 +338,7 @@ class FacesViewer(tk.Canvas):  # pylint:disable=too-many-ancestors
     @property
     def selected_mask(self) -> str:
         """str: The currently selected mask from the display frame control panel."""
-        return self._display_frame.tk_selected_mask.get().lower()
+        return self._display_frame.tk_selected_mask.get().lower()  # type: ignore[no-any-return]
 
     @property
     def control_colors(self) -> dict[str, str]:
@@ -438,9 +437,8 @@ class FacesViewer(tk.Canvas):  # pylint:disable=too-many-ancestors
             The event fired by the mouse scrolling
         """
         if self._event.is_set():
-            logger.trace(
-                "Update already running. "  # type:ignore[attr-defined]
-                "Aborting repeated mousewheel"
+            logger.trace(  # type: ignore[attr-defined]
+                "Update already running. Aborting repeated mousewheel"
             )
             return
         if platform.system() == "Darwin":
@@ -516,7 +514,7 @@ class FacesViewer(tk.Canvas):  # pylint:disable=too-many-ancestors
         # L clamped at 256, which would wrap with uint8 before the clip fires.
         rgb = np.clip(np.rint(colorsys.hls_to_rgb(*hls)), 0, 255).astype("uint8")
         retval = rgb_to_hex(rgb)
-        return retval
+        return retval  # type: ignore[no-any-return]
 
     def _toggle_annotations(self, annotation: T.Literal["mesh", "mask"]) -> None:
         """Toggle optional annotations on or off after the user depresses an optional button.
@@ -608,9 +606,8 @@ class Grid:
             max(0, floor(height * self._canvas.yview()[0]) - self._face_size),
             ceil(height * self._canvas.yview()[1]),
         )
-        logger.trace(
-            "height: %s, yview: %s, face_size: %s, "  # type:ignore[attr-defined]
-            "visible: %s",
+        logger.trace(  # type: ignore[attr-defined]
+            "height: %s, yview: %s, face_size: %s, visible: %s",
             height,
             self._canvas.yview(),
             self._face_size,
@@ -662,7 +659,7 @@ class Grid:
             The y coordinate of the first face for the given frame
         """
         assert self._grid is not None
-        return min(self._grid[3][np.where(self._grid[0] == frame_index)])
+        return min(self._grid[3][np.where(self._grid[0] == frame_index)])  # type: ignore[no-any-return]
 
     def frame_has_faces(self, frame_index: int) -> bool | np.bool_:
         """Check whether the given frame index contains any faces.
@@ -762,7 +759,7 @@ class Grid:
             padding,
             labels.shape,
         )
-        return labels
+        return labels  # type: ignore[no-any-return]
 
     def _get_display_faces(self):
         """Get the detected faces for the current filter, arrange to grid and set to
@@ -819,8 +816,8 @@ class Grid:
             frames
         """
         retval = self._frames_list.index(frame_index) if frame_index in self._frames_list else None
-        logger.trace(
-            "frame_index: %s, transport_index: %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "frame_index: %s, transport_index: %s",
             frame_index,
             retval,
         )
@@ -869,12 +866,12 @@ class ContextMenu:  # pylint:disable=too-few-public-methods
             self._canvas.canvasx(event.x), self._canvas.canvasy(event.y)
         )[:2]
         if frame_idx == -1:
-            logger.trace("No valid item under mouse")  # type:ignore[attr-defined]
+            logger.trace("No valid item under mouse")
             self._frame_index = self._face_index = None
             return
         self._frame_index = frame_idx
         self._face_index = face_idx
-        logger.trace("Popping right click menu")  # type:ignore[attr-defined]
+        logger.trace("Popping right click menu")
         self._menu.popup(event)
 
     def _delete_face(self):
@@ -886,8 +883,7 @@ class ContextMenu:  # pylint:disable=too-few-public-methods
             else (self._face_index,)
         )
         logger.trace(
-            "Right click delete received. frame_id: %s, "  # type:ignore[attr-defined]
-            "face_id: %s, selected_face_ids: %s",
+            "Right click delete received. frame_id: %s, face_id: %s, selected_face_ids: %s",
             self._frame_index,
             self._face_index,
             selected_faces,

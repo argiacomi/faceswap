@@ -160,11 +160,11 @@ class GraphPanel(QWidget):
 
         title = QLabel("Training Graph")
         title.setObjectName("qt-shell-graph-title")
-        title.setAlignment(Qt.AlignCenter)
+        title.setAlignment(Qt.AlignCenter)  # type: ignore[attr-defined]
         layout.addWidget(title)
 
         self._source_label.setObjectName("qt-shell-graph-source")
-        self._source_label.setAlignment(Qt.AlignCenter)
+        self._source_label.setAlignment(Qt.AlignCenter)  # type: ignore[attr-defined]
         self._source_label.setWordWrap(True)
         layout.addWidget(self._source_label)
 

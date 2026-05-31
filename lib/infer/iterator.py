@@ -74,7 +74,7 @@ class ExtractIterator(T.Generic[QueueItemInT, QueueItemOutT], abc.ABC):
         self._flush = False
         self._shutdown = False
 
-    def __iter__(self) -> T.Self:
+    def __iter__(self) -> T.Self:  # type: ignore[name-defined]
         """This is an iterator"""
         return self
 
@@ -101,8 +101,8 @@ class ExtractIterator(T.Generic[QueueItemInT, QueueItemOutT], abc.ABC):
         except QueueEmpty:
             logger.trace("[%s] No item available", self._name)  # type:ignore[attr-defined]
             return None
-        logger.trace(
-            "[%s] From queue: %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "[%s] From queue: %s",
             self._name,
             retval.name if isinstance(retval, ExtractSignal) else retval,
         )
@@ -150,15 +150,15 @@ class ExtractIterator(T.Generic[QueueItemInT, QueueItemOutT], abc.ABC):
             )
             return retval
         if len(self._fifo) <= 1:
-            logger.trace(
-                "[%s.fifo] No items available. batches: %s",  # type:ignore[attr-defined]
+            logger.trace(  # type: ignore[attr-defined]
+                "[%s.fifo] No items available. batches: %s",
                 self._name,
                 len(self._fifo),
             )
             return None
         retval = self._fifo.popleft()
-        logger.trace(
-            "[%s.fifo] Popping: %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "[%s.fifo] Popping: %s",
             self._name,
             retval,
         )
@@ -433,8 +433,8 @@ class InboundIterator(ExtractIterator[ExtractBatch, ExtractBatch]):
             batch.append(in_batch)
             return
 
-        logger.trace(
-            "[%s] Adding new batch for %s face(s)",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "[%s] Adding new batch for %s face(s)",
             self._name,
             len(in_batch),
         )
@@ -622,8 +622,8 @@ class InterimIterator(ExtractIterator[ExtractBatch, ExtractBatch]):
         if batch == ExtractSignal.FLUSH:
             logger.debug("[%s] FLUSH Received", self._name)
 
-        logger.trace(
-            "[%s] Releasing batch: %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "[%s] Releasing batch: %s",
             self._name,
             batch.name if isinstance(batch, ExtractSignal) else batch,
         )

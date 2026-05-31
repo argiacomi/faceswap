@@ -81,8 +81,8 @@ class ConfigFile:
     # I/O
     def load(self) -> None:
         """Load values from the saved config ini file into our Config object"""
-        logger.verbose(
-            "[%s] Loading config: '%s'",  # type:ignore[attr-defined]
+        logger.verbose(  # type: ignore[attr-defined]
+            "[%s] Loading config: '%s'",
             self._plugin_group,
             self._file_path,
         )

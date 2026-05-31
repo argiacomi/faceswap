@@ -36,7 +36,7 @@ def _session_with_frames(folder: Path, count: int = 1) -> ManualSession:
     return ManualSession.create(frames=str(folder))
 
 
-def _make_window(qtbot, folder: Path) -> ManualToolWindow:  # type:ignore[no-untyped-def]
+def _make_window(qtbot, folder: Path) -> ManualToolWindow:
     session = _session_with_frames(folder)
     window = ManualToolWindow(session)
     qtbot.addWidget(window)
@@ -69,7 +69,7 @@ def _drag(
     start: QPointF,
     end: QPointF,
     *,
-    modifiers: Qt.KeyboardModifier = Qt.NoModifier,
+    modifiers: Qt.KeyboardModifier = Qt.NoModifier,  # type: ignore[attr-defined]
 ) -> None:
     global_start = view.mapToGlobal(start.toPoint())
     global_end = view.mapToGlobal(end.toPoint())
@@ -78,8 +78,8 @@ def _drag(
             QEvent.Type.MouseButtonPress,
             start,
             QPointF(global_start),
-            Qt.LeftButton,
-            Qt.LeftButton,
+            Qt.LeftButton,  # type: ignore[attr-defined]
+            Qt.LeftButton,  # type: ignore[attr-defined]
             modifiers,
         )
     )
@@ -88,8 +88,8 @@ def _drag(
             QEvent.Type.MouseMove,
             end,
             QPointF(global_end),
-            Qt.NoButton,
-            Qt.LeftButton,
+            Qt.NoButton,  # type: ignore[attr-defined]
+            Qt.LeftButton,  # type: ignore[attr-defined]
             modifiers,
         )
     )
@@ -98,8 +98,8 @@ def _drag(
             QEvent.Type.MouseButtonRelease,
             end,
             QPointF(global_end),
-            Qt.LeftButton,
-            Qt.NoButton,
+            Qt.LeftButton,  # type: ignore[attr-defined]
+            Qt.NoButton,  # type: ignore[attr-defined]
             modifiers,
         )
     )
@@ -110,7 +110,7 @@ def _drag(
 # ---------------------------------------------------------------------------
 
 
-def test_mask_draw_and_erase_actions_set_brush_mode(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_mask_draw_and_erase_actions_set_brush_mode(qtbot, tmp_path: Path) -> None:
     """B sets Draw mode and D sets Erase mode."""
     window = _make_window(qtbot, tmp_path)
     _enter_mask_mode(window)
@@ -120,9 +120,7 @@ def test_mask_draw_and_erase_actions_set_brush_mode(qtbot, tmp_path: Path) -> No
     assert window._editor_state.brush_mode == "draw"
 
 
-def test_entering_mask_mode_auto_magnifies_and_leaving_restores(  # type:ignore[no-untyped-def]
-    qtbot, tmp_path: Path
-) -> None:
+def test_entering_mask_mode_auto_magnifies_and_leaving_restores(qtbot, tmp_path: Path) -> None:
     """Entering Mask mode auto-fits the active face and View restores it."""
     window = _make_window(qtbot, tmp_path)
     face_index = _seed_face(window)
@@ -130,15 +128,15 @@ def test_entering_mask_mode_auto_magnifies_and_leaving_restores(  # type:ignore[
 
     before = window._frame_view.view_state()
     _enter_mask_mode(window)
-    assert window._frame_view.zoom > float(before["zoom"])
+    assert window._frame_view.zoom > float(before["zoom"])  # type: ignore[arg-type]
 
     window._editor_state.set("editor_mode", "View")
     restored = window._frame_view.view_state()
-    assert abs(float(restored["zoom"]) - float(before["zoom"])) < 0.001
+    assert abs(float(restored["zoom"]) - float(before["zoom"])) < 0.001  # type: ignore[arg-type]
     assert restored["offset"] == before["offset"]
 
 
-def test_brush_size_increment_and_decrement_clamp_to_bounds(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_brush_size_increment_and_decrement_clamp_to_bounds(qtbot, tmp_path: Path) -> None:
     """``[`` and ``]`` step brush size by the configured amount and clamp."""
     window = _make_window(qtbot, tmp_path)
     _enter_mask_mode(window)
@@ -163,7 +161,7 @@ def test_brush_size_increment_and_decrement_clamp_to_bounds(qtbot, tmp_path: Pat
 # ---------------------------------------------------------------------------
 
 
-def test_mask_drag_paints_into_editable_model(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_mask_drag_paints_into_editable_model(qtbot, tmp_path: Path) -> None:
     """Drag inside bbox writes pixels through ``paint_mask_stroke``."""
     window = _make_window(qtbot, tmp_path)
     _enter_mask_mode(window)
@@ -183,7 +181,7 @@ def test_mask_drag_paints_into_editable_model(qtbot, tmp_path: Path) -> None:  #
     assert window._editor_state.edited is True
 
 
-def test_mask_drag_paints_continuous_line_between_events(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_mask_drag_paints_continuous_line_between_events(qtbot, tmp_path: Path) -> None:
     """Drag painting connects press and move points in stored mask space."""
     window = _make_window(qtbot, tmp_path)
     _enter_mask_mode(window)
@@ -202,7 +200,7 @@ def test_mask_drag_paints_continuous_line_between_events(qtbot, tmp_path: Path) 
     assert mask[64, 64] == 255
 
 
-def test_rectangle_mask_brush_stamps_square(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_rectangle_mask_brush_stamps_square(qtbot, tmp_path: Path) -> None:
     """Rectangle cursor shape paints a square stamp instead of a circular one."""
     window = _make_window(qtbot, tmp_path)
     _enter_mask_mode(window)
@@ -217,7 +215,7 @@ def test_rectangle_mask_brush_stamps_square(qtbot, tmp_path: Path) -> None:  # t
     assert mask[58, 58] == 255
 
 
-def test_mask_paint_uses_persisted_affine_transform(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_mask_paint_uses_persisted_affine_transform(qtbot, tmp_path: Path) -> None:
     """Painting existing masks uses their stored affine, not bbox projection."""
     import zlib
 
@@ -243,7 +241,7 @@ def test_mask_paint_uses_persisted_affine_transform(qtbot, tmp_path: Path) -> No
     assert mask[64, 64] == 255
 
 
-def test_ctrl_drag_inverts_mode_for_one_gesture(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_ctrl_drag_inverts_mode_for_one_gesture(qtbot, tmp_path: Path) -> None:
     """Ctrl+drag while in Draw mode erases (invert mode flag)."""
     window = _make_window(qtbot, tmp_path)
     _enter_mask_mode(window)
@@ -262,7 +260,7 @@ def test_ctrl_drag_inverts_mode_for_one_gesture(qtbot, tmp_path: Path) -> None: 
         view,
         _source_to_widget(view, 100.0, 100.0),
         _source_to_widget(view, 105.0, 105.0),
-        modifiers=Qt.ControlModifier,
+        modifiers=Qt.ControlModifier,  # type: ignore[attr-defined]
     )
     painted_after = int(mask.sum())
     assert painted_after < painted_before
@@ -270,7 +268,7 @@ def test_ctrl_drag_inverts_mode_for_one_gesture(qtbot, tmp_path: Path) -> None: 
     assert window._editor_state.brush_mode == "draw"
 
 
-def test_mask_drag_outside_bbox_is_noop(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_mask_drag_outside_bbox_is_noop(qtbot, tmp_path: Path) -> None:
     """A press outside the active face's bbox does not start a mask drag."""
     window = _make_window(qtbot, tmp_path)
     _enter_mask_mode(window)
@@ -289,7 +287,7 @@ def test_mask_drag_outside_bbox_is_noop(qtbot, tmp_path: Path) -> None:  # type:
     assert window._editable.get_mask(0, face_index, window.active_mask_type()) is None
 
 
-def test_mask_drag_no_active_face_is_noop(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_mask_drag_no_active_face_is_noop(qtbot, tmp_path: Path) -> None:
     """Mask gestures are no-ops when no face is active."""
     window = _make_window(qtbot, tmp_path)
     _enter_mask_mode(window)
@@ -309,7 +307,7 @@ def test_mask_drag_no_active_face_is_noop(qtbot, tmp_path: Path) -> None:  # typ
 # ---------------------------------------------------------------------------
 
 
-def test_paint_mask_at_marks_dirty_and_is_undoable(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_paint_mask_at_marks_dirty_and_is_undoable(qtbot, tmp_path: Path) -> None:
     """``paint_mask_at`` participates in the undo/redo stack."""
     window = _make_window(qtbot, tmp_path)
     _enter_mask_mode(window)
@@ -330,7 +328,7 @@ def test_paint_mask_at_marks_dirty_and_is_undoable(qtbot, tmp_path: Path) -> Non
     assert int(mask.sum()) == painted
 
 
-def test_paint_mask_at_invert_flag_erases(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_paint_mask_at_invert_flag_erases(qtbot, tmp_path: Path) -> None:
     """The ``invert`` flag flips Draw vs Erase for a single stamp."""
     window = _make_window(qtbot, tmp_path)
     _enter_mask_mode(window)
@@ -347,7 +345,7 @@ def test_paint_mask_at_invert_flag_erases(qtbot, tmp_path: Path) -> None:  # typ
     assert int(mask.sum()) == 0
 
 
-def test_active_mask_type_falls_back_to_default(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_active_mask_type_falls_back_to_default(qtbot, tmp_path: Path) -> None:
     """``active_mask_type`` returns DEFAULT_MASK_TYPE when user hasn't picked."""
     window = _make_window(qtbot, tmp_path)
     assert window._editor_state.mask_type == ""
@@ -356,7 +354,7 @@ def test_active_mask_type_falls_back_to_default(qtbot, tmp_path: Path) -> None: 
     assert window.active_mask_type() == "extended"
 
 
-def test_paint_mask_at_no_frame_returns_false_with_status_message(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_paint_mask_at_no_frame_returns_false_with_status_message(qtbot, tmp_path: Path) -> None:
     """Painting with no current frame returns False + surfaces a status message."""
     window = _make_window(qtbot, tmp_path)
     # ``_current_frame_index`` is anchored to ``_current_frame``, not the
@@ -373,7 +371,7 @@ def test_paint_mask_at_no_frame_returns_false_with_status_message(qtbot, tmp_pat
 # ---------------------------------------------------------------------------
 
 
-def test_mask_controls_hidden_outside_mask_mode(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_mask_controls_hidden_outside_mask_mode(qtbot, tmp_path: Path) -> None:
     """The Mask control row is hidden in View / BBox / Landmark / Extract modes."""
     window = _make_window(qtbot, tmp_path)
 
@@ -382,7 +380,7 @@ def test_mask_controls_hidden_outside_mask_mode(qtbot, tmp_path: Path) -> None: 
         assert window._mask_controls.isVisible() is False, mode
 
 
-def test_mask_controls_hide_after_leaving_mask_mode(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_mask_controls_hide_after_leaving_mask_mode(qtbot, tmp_path: Path) -> None:
     """Leaving Mask mode immediately hides the mask-type controls."""
     window = _make_window(qtbot, tmp_path)
     _enter_mask_mode(window)
@@ -393,7 +391,7 @@ def test_mask_controls_hide_after_leaving_mask_mode(qtbot, tmp_path: Path) -> No
     assert window._mask_controls.isVisible() is False
 
 
-def test_mask_controls_visible_when_mask_mode_active(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_mask_controls_visible_when_mask_mode_active(qtbot, tmp_path: Path) -> None:
     """Entering Mask mode surfaces the mask-type dropdown + opacity slider."""
     window = _make_window(qtbot, tmp_path)
     _enter_mask_mode(window)
@@ -406,7 +404,7 @@ def test_mask_controls_visible_when_mask_mode_active(qtbot, tmp_path: Path) -> N
     assert window._mask_type_combo.currentText() == window.active_mask_type()
 
 
-def test_mask_type_dropdown_includes_persisted_blobs(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_mask_type_dropdown_includes_persisted_blobs(qtbot, tmp_path: Path) -> None:
     """A persisted mask blob surfaces as a dropdown option even without painting."""
     import numpy as np
 
@@ -427,7 +425,7 @@ def test_mask_type_dropdown_includes_persisted_blobs(qtbot, tmp_path: Path) -> N
     assert "vgg-clear" in items
 
 
-def test_mask_type_dropdown_change_updates_editor_state(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_mask_type_dropdown_change_updates_editor_state(qtbot, tmp_path: Path) -> None:
     """Selecting a different mask type writes through to editor state."""
     window = _make_window(qtbot, tmp_path)
     _enter_mask_mode(window)
@@ -436,7 +434,7 @@ def test_mask_type_dropdown_change_updates_editor_state(qtbot, tmp_path: Path) -
     assert window.active_mask_type() == "extended"
 
 
-def test_mask_opacity_slider_updates_editor_state(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_mask_opacity_slider_updates_editor_state(qtbot, tmp_path: Path) -> None:
     """Moving the opacity slider writes through to editor state."""
     window = _make_window(qtbot, tmp_path)
     _enter_mask_mode(window)
@@ -456,7 +454,7 @@ def _hover_at(window: ManualToolWindow, sx: float, sy: float) -> None:
     view._update_hover_cursor(pos)  # noqa: SLF001 - exercising the hover seam
 
 
-def test_brush_preview_hidden_outside_mask_mode(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_brush_preview_hidden_outside_mask_mode(qtbot, tmp_path: Path) -> None:
     """The brush preview is hidden in View / BBox / Landmark / Extract modes."""
     window = _make_window(qtbot, tmp_path)
     face_index = _seed_face(window)
@@ -466,7 +464,7 @@ def test_brush_preview_hidden_outside_mask_mode(qtbot, tmp_path: Path) -> None: 
     assert window._frame_view.brush_preview is None
 
 
-def test_brush_preview_visible_over_active_face_in_mask_mode(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_brush_preview_visible_over_active_face_in_mask_mode(qtbot, tmp_path: Path) -> None:
     """Hovering inside the active face's bbox in Mask mode shows the preview."""
     window = _make_window(qtbot, tmp_path)
     face_index = _seed_face(window)
@@ -488,7 +486,7 @@ def test_brush_preview_visible_over_active_face_in_mask_mode(qtbot, tmp_path: Pa
     assert point.y() == pytest.approx(100.0, abs=0.5)
 
 
-def test_mask_brush_cursor_hides_native_cursor_over_roi(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_mask_brush_cursor_hides_native_cursor_over_roi(qtbot, tmp_path: Path) -> None:
     """Brush preview over the active ROI hides the native cursor."""
     window = _make_window(qtbot, tmp_path)
     face_index = _seed_face(window)
@@ -498,10 +496,10 @@ def test_mask_brush_cursor_hides_native_cursor_over_roi(qtbot, tmp_path: Path) -
     _hover_at(window, 100.0, 100.0)
 
     assert window._frame_view.brush_preview is not None
-    assert window._frame_view.cursor().shape() == Qt.BlankCursor
+    assert window._frame_view.cursor().shape() == Qt.BlankCursor  # type: ignore[attr-defined]
 
 
-def test_brush_preview_hidden_outside_bbox_in_mask_mode(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_brush_preview_hidden_outside_bbox_in_mask_mode(qtbot, tmp_path: Path) -> None:
     """Hovering outside the active face's bbox hides the preview."""
     window = _make_window(qtbot, tmp_path)
     face_index = _seed_face(window)
@@ -555,7 +553,7 @@ def test_mask_overlay_clips_to_roi_and_uses_selected_mask_type() -> None:
     assert np.any(model.get_mask(0, face_index, "extended"))
 
 
-def test_brush_preview_hidden_when_no_active_face(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_brush_preview_hidden_when_no_active_face(qtbot, tmp_path: Path) -> None:
     """No active face means no preview, even in Mask mode."""
     window = _make_window(qtbot, tmp_path)
     _enter_mask_mode(window)
@@ -563,23 +561,23 @@ def test_brush_preview_hidden_when_no_active_face(qtbot, tmp_path: Path) -> None
     assert window._frame_view.brush_preview is None
 
 
-def test_brush_preview_radius_reflects_brush_size_change(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_brush_preview_radius_reflects_brush_size_change(qtbot, tmp_path: Path) -> None:
     """Changing brush size updates the preview radius on next hover."""
     window = _make_window(qtbot, tmp_path)
     face_index = _seed_face(window)
     window._editor_state.set("face_index", face_index)
     _enter_mask_mode(window)
     _hover_at(window, 100.0, 100.0)
-    assert window._frame_view.brush_preview["radius"] == pytest.approx(
+    assert window._frame_view.brush_preview["radius"] == pytest.approx(  # type: ignore[index]
         window._editor_state.brush_size / 2.0
     )
 
     window._editor_state.set("brush_size", 40)
     _hover_at(window, 100.0, 100.0)
-    assert window._frame_view.brush_preview["radius"] == pytest.approx(20.0)
+    assert window._frame_view.brush_preview["radius"] == pytest.approx(20.0)  # type: ignore[index]
 
 
-def test_brush_preview_mode_reflects_draw_vs_erase(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_brush_preview_mode_reflects_draw_vs_erase(qtbot, tmp_path: Path) -> None:
     """Switching brush_mode updates the preview's draw/erase colour cue."""
     window = _make_window(qtbot, tmp_path)
     face_index = _seed_face(window)
@@ -587,13 +585,13 @@ def test_brush_preview_mode_reflects_draw_vs_erase(qtbot, tmp_path: Path) -> Non
     _enter_mask_mode(window)
     window.set_mask_erase_mode()
     _hover_at(window, 100.0, 100.0)
-    assert window._frame_view.brush_preview["mode"] == "erase"
+    assert window._frame_view.brush_preview["mode"] == "erase"  # type: ignore[index]
     window.set_mask_draw_mode()
     _hover_at(window, 100.0, 100.0)
-    assert window._frame_view.brush_preview["mode"] == "draw"
+    assert window._frame_view.brush_preview["mode"] == "draw"  # type: ignore[index]
 
 
-def test_brush_preview_reflects_cursor_shape_and_color(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_brush_preview_reflects_cursor_shape_and_color(qtbot, tmp_path: Path) -> None:
     """Cursor shape/color controls drive the brush preview."""
     window = _make_window(qtbot, tmp_path)
     face_index = _seed_face(window)
@@ -605,11 +603,11 @@ def test_brush_preview_reflects_cursor_shape_and_color(qtbot, tmp_path: Path) ->
     _hover_at(window, 100.0, 100.0)
 
     preview = window._frame_view.brush_preview
-    assert preview["shape"] == "Rectangle"
-    assert preview["color"] == "#00ff00"
+    assert preview["shape"] == "Rectangle"  # type: ignore[index]
+    assert preview["color"] == "#00ff00"  # type: ignore[index]
 
 
-def test_brush_preview_cleared_on_leave_event(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_brush_preview_cleared_on_leave_event(qtbot, tmp_path: Path) -> None:
     """``leaveEvent`` hides the preview so it doesn't ghost outside the view."""
     from PySide6.QtCore import QEvent as _QEvent
     from PySide6.QtGui import QEnterEvent  # noqa: F401 — for type registration
@@ -625,7 +623,7 @@ def test_brush_preview_cleared_on_leave_event(qtbot, tmp_path: Path) -> None:  #
     assert window._frame_view.brush_preview is None
 
 
-def test_brush_preview_cleared_on_mode_switch(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_brush_preview_cleared_on_mode_switch(qtbot, tmp_path: Path) -> None:
     """Switching out of Mask mode hides any in-flight preview on the next hover."""
     window = _make_window(qtbot, tmp_path)
     face_index = _seed_face(window)
@@ -643,7 +641,7 @@ def test_brush_preview_cleared_on_mode_switch(qtbot, tmp_path: Path) -> None:  #
 # ---------------------------------------------------------------------------
 
 
-def test_paint_mask_at_no_active_face_surfaces_status_message(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_paint_mask_at_no_active_face_surfaces_status_message(qtbot, tmp_path: Path) -> None:
     """Painting with no editable faces returns False and surfaces a status message."""
     window = _make_window(qtbot, tmp_path)
     _enter_mask_mode(window)
@@ -657,7 +655,7 @@ def test_paint_mask_at_no_active_face_surfaces_status_message(qtbot, tmp_path: P
     assert window._active_face_index() is None
 
 
-def test_paint_mask_at_invalid_face_returns_false_silently(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_paint_mask_at_invalid_face_returns_false_silently(qtbot, tmp_path: Path) -> None:
     """An invalid face_index returns False and does not crash."""
     window = _make_window(qtbot, tmp_path)
     _enter_mask_mode(window)

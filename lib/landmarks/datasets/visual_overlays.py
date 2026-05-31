@@ -54,7 +54,7 @@ def _landmarks_for_entry(entry: dict, output_dir: Path) -> np.ndarray | None:
     points = np.load(str(landmark_path)).astype("float32")
     if points.ndim != 2 or points.shape[1] < 2:
         return None
-    return points
+    return points  # type: ignore[no-any-return]
 
 
 def _overlay_dir(entry: dict, output_dir: Path) -> Path:

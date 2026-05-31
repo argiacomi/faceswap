@@ -47,7 +47,7 @@ _INTERSECTION_REGIONS: tuple[tuple[int, ...], ...] = (
 
 
 def _canonical_68() -> np.ndarray:
-    points = np.zeros((68, 2), dtype="float64")
+    points = np.zeros((68, 2), dtype="float64")  # type: ignore[var-annotated]
     points[0:17, 0] = np.linspace(0.05, 0.91, 17)
     points[0:17, 1] = 0.62 + 0.39 * np.sin(np.linspace(0.0, math.pi, 17))
     points[17:22, 0] = np.linspace(0.18, 0.54, 5)
@@ -177,7 +177,7 @@ def _point_in_polygon(point: np.ndarray, polygon: np.ndarray) -> bool:
 
 
 def _similarity_fit_error(points: np.ndarray) -> float:
-    source = points[:, :2].astype("float64", copy=False)
+    source = points[:, :2].astype("float64", copy=False)  # type: ignore[var-annotated]
     source_centered = source - np.mean(source, axis=0)
     target_centered = _CANONICAL_68 - np.mean(_CANONICAL_68, axis=0)
     source_norm = float(np.linalg.norm(source_centered))

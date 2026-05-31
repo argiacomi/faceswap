@@ -21,7 +21,7 @@ from plugins.extract.align.hrnet import HRNet
 
 
 def _points(value: float) -> np.ndarray:
-    points = np.full((68, 2), value, dtype="float32")
+    points = np.full((68, 2), value, dtype="float32")  # type: ignore[var-annotated]
     return points
 
 
@@ -132,7 +132,7 @@ class _FakeAligner:
 
     def process(self, batch: np.ndarray) -> np.ndarray:
         """Return one placeholder output per input crop."""
-        return np.repeat(self._points[None], batch.shape[0], axis=0)
+        return np.repeat(self._points[None], batch.shape[0], axis=0)  # type: ignore[no-any-return]
 
     def post_process(self, raw: np.ndarray) -> np.ndarray:
         """Expose the fake landmarks in the plugin's public output contract."""
@@ -147,13 +147,13 @@ class _HRNetPostProcessAligner:
     scale = (0, 1)
 
     def __init__(self, heatmaps: np.ndarray) -> None:
-        self._heatmaps = heatmaps.astype("float32", copy=False)
+        self._heatmaps = heatmaps.astype("float32", copy=False)  # type: ignore[var-annotated]
         self._hrnet = object.__new__(HRNet)
         self._hrnet._dark = None
 
     def process(self, batch: np.ndarray) -> np.ndarray:
         """Return deterministic fixture heatmaps for each crop."""
-        return np.repeat(self._heatmaps, batch.shape[0], axis=0)
+        return np.repeat(self._heatmaps, batch.shape[0], axis=0)  # type: ignore[no-any-return]
 
     def post_process(self, raw: np.ndarray) -> np.ndarray:
         """Use Faceswap HRNet's normalized landmark decoder."""
@@ -162,7 +162,7 @@ class _HRNetPostProcessAligner:
 
 def _hrnet_heatmaps() -> np.ndarray:
     """Return deterministic heatmaps with one valid peak per landmark."""
-    heatmaps = np.zeros((1, 68, 64, 64), dtype="float32")
+    heatmaps = np.zeros((1, 68, 64, 64), dtype="float32")  # type: ignore[var-annotated]
     for index in range(68):
         x_val = 4 + (index % 50)
         y_val = 5 + (index % 45)
@@ -233,10 +233,10 @@ def test_ensemble_crop_matrices_match_normalized_crop_contract() -> None:
     roi = plugin.pre_process(np.array([[10, 20, 50, 60]], dtype="int32"))
 
     np.testing.assert_array_equal(roi, np.array([[10, 20, 50, 60]], dtype="int32"))
-    np.testing.assert_allclose(plugin._last_matrices[0], roi_to_matrix(roi[0]))
+    np.testing.assert_allclose(plugin._last_matrices[0], roi_to_matrix(roi[0]))  # type: ignore[index]
     corners = np.array([[0.0, 0.0], [1.0, 1.0]], dtype="float32")
     np.testing.assert_allclose(
-        normalized_crop_to_frame(corners, plugin._last_matrices[0]),
+        normalized_crop_to_frame(corners, plugin._last_matrices[0]),  # type: ignore[index]
         np.array([[10.0, 20.0], [50.0, 60.0]], dtype="float32"),
     )
 
@@ -305,7 +305,7 @@ def test_ensemble_reconstructs_crop_matrix_from_bbox_for_normalized_resolver_poi
 
     expected = normalized_crop_to_frame(
         normalized,
-        plugin._matrix_from_detector_bbox(detector_bbox),
+        plugin._matrix_from_detector_bbox(detector_bbox),  # type: ignore[arg-type]
     )
     np.testing.assert_allclose(result, expected)
 

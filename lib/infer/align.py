@@ -353,7 +353,7 @@ class Align(ExtractHandler):
         chunks = self._re_feed.total_feeds if is_final else 1
         for idx in range(chunks):
             start = idx * batch_size
-            results.append(T.cast(np.ndarray, self._predict(feed[start : start + batch_size])))
+            results.append(T.cast(np.ndarray, self._predict(feed[start : start + batch_size])))  # type: ignore[redundant-cast]
 
         # Issue #194 P3: assert uniform plugin output here so a
         # ragged-shape plugin produces an immediate, debuggable error
@@ -721,7 +721,7 @@ class ReAlign:
         """A transform matrix that crops the default (center) image patch out of the expanded image
         patch"""
         self._matrices: npt.NDArray[np.float32] = np.empty((0, 3, 3), dtype="float32")
-        self._images = np.zeros(
+        self._images = np.zeros(  # type: ignore[var-annotated]
             (plugin.batch_size, self._expanded_size, self._expanded_size, 3),
             dtype=plugin.dtype,
         )
@@ -844,7 +844,7 @@ class ReAlign:
         """
         # Frame space -> Normalized Space -> Aligned space -> Patch Space
         # normalized -> aligned
-        mats = batch_umeyama(landmarks[:, 17:], self._mean_face, True).astype("float32")
+        mats = batch_umeyama(landmarks[:, 17:], self._mean_face, True).astype("float32")  # type: ignore[var-annotated]
 
         # normalized -> patch
         # Get plugin adjustments

@@ -23,7 +23,7 @@ def _points(offset: float = 0.0) -> np.ndarray:
         ),
         axis=1,
     )
-    return points + offset
+    return points + offset  # type: ignore[no-any-return]
 
 
 def test_cached_three_model_pipeline_runs_all_ensemble_variants(tmp_path: Path) -> None:

@@ -13,7 +13,7 @@ from lib.landmarks.core.schema import LandmarkPrediction
 
 
 def _points(value: float) -> np.ndarray:
-    points = np.zeros((68, 2), dtype="float32")
+    points = np.zeros((68, 2), dtype="float32")  # type: ignore[var-annotated]
     points[:, 0] = value
     points[:, 1] = value
     return points
@@ -48,11 +48,11 @@ def test_weighted_average_static_weights() -> None:
 
 def test_weighted_average_per_landmark_weights() -> None:
     """Static weights can vary independently for each landmark."""
-    weights = np.ones((2, 68), dtype="float32")
+    weights = np.ones((2, 68), dtype="float32")  # type: ignore[var-annotated]
     weights[0, 0] = 3.0
     weights[1, 0] = 1.0
 
-    result = weighted_average([_points(0), _points(10)], weights=weights)
+    result = weighted_average([_points(0), _points(10)], weights=weights)  # type: ignore[arg-type]
 
     assert result.points[0, 0] == np.float32(2.5)
     np.testing.assert_allclose(result.points[1:], _points(5)[1:])

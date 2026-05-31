@@ -77,12 +77,12 @@ class Mask(Editor):
     def _opacity(self) -> float:
         """The mask opacity setting from the control panel from 0.0 - 1.0."""
         annotation = self.__class__.__name__
-        return self._annotation_formats[annotation]["mask_opacity"].get() / 100.0
+        return self._annotation_formats[annotation]["mask_opacity"].get() / 100.0  # type: ignore[no-any-return]
 
     @property
     def _brush_radius(self) -> int:
         """The radius of the brush to use as set in control panel options"""
-        return self._control_vars["brush"]["BrushSize"].get()
+        return self._control_vars["brush"]["BrushSize"].get()  # type: ignore[no-any-return]
 
     @property
     def _edit_mode(self) -> str:
@@ -98,17 +98,17 @@ class Mask(Editor):
     @property
     def _is_lasso(self) -> bool:
         """``True`` if the lasso fill tool is active."""
-        return self._actions["lasso"]["tk_var"].get()
+        return self._actions["lasso"]["tk_var"].get()  # type: ignore[no-any-return]
 
     @property
     def _cursor_color(self) -> str:
         """The hex code for the selected cursor color"""
-        return self._control_vars["brush"]["CursorColor"].get()
+        return self._control_vars["brush"]["CursorColor"].get()  # type: ignore[no-any-return]
 
     @property
     def _cursor_shape_name(self) -> str:
         """The selected cursor shape"""
-        return self._control_vars["display"]["CursorShape"].get()
+        return self._control_vars["display"]["CursorShape"].get()  # type: ignore[no-any-return]
 
     def _add_actions(self) -> None:
         """Add the optional action buttons to the viewer. Current actions are Draw, Erase,
@@ -199,13 +199,13 @@ class Mask(Editor):
         """Add a trace to change the displayed mask on a mask type change."""
         var = self._control_vars["display"]["MaskType"]
         var.trace("w", lambda *e: self._on_mask_type_change())
-        return var.get()
+        return var.get()  # type: ignore[no-any-return]
 
     def _set_tk_cursor_shape_change_callback(self) -> tk.StringVar:
         """Add a trace to change the displayed cursor on a cursor shape type change."""
         var = self._control_vars["display"]["CursorShape"]
         var.trace("w", lambda *e: self._on_cursor_shape_change())
-        return var.get()
+        return var.get()  # type: ignore[no-any-return]
 
     def _on_cursor_shape_change(self) -> None:
         """Set the cursor shape"""
@@ -285,7 +285,7 @@ class Mask(Editor):
 
         active_face = self._globals.face_index
         if 0 <= active_face < len(faces):
-            return active_face
+            return active_face  # type: ignore[no-any-return]
         return None
 
     def _current_frame_faces(self, frame_index: int | None = None) -> list[align.DetectedFace]:
@@ -293,7 +293,7 @@ class Mask(Editor):
         frame_index = self._globals.frame_index if frame_index is None else frame_index
         if frame_index < 0 or frame_index >= len(self._det_faces.current_faces):
             return []
-        return self._det_faces.current_faces[frame_index]
+        return self._det_faces.current_faces[frame_index]  # type: ignore[no-any-return]
 
     def hide_annotation(self, tag=None) -> None:
         """Clear the mask :attr:`_meta` dict when hiding the annotation."""
@@ -477,8 +477,8 @@ class Mask(Editor):
             top_left = self._meta["top_left"][face_index]
 
         if len(self._tk_faces) < face_index + 1:
-            logger.trace(
-                "Adding new Photo Image for face index: %s",  # type:ignore[attr-defined]
+            logger.trace(  # type: ignore[attr-defined]
+                "Adding new Photo Image for face index: %s",
                 face_index,
             )
             self._tk_faces.append(ImageTk.PhotoImage(display_image))
@@ -519,7 +519,7 @@ class Mask(Editor):
             return self._overlay_rgb_cache[2]
         rgb = np.tile(rgb_color, target_shape).astype("uint8")
         self._overlay_rgb_cache = (key_color, target_shape, rgb)
-        return rgb
+        return rgb  # type: ignore[no-any-return]
 
     def _update_mask_image_zoomed(
         self, mask: npt.NDArray[np.uint8], rgb_color: npt.NDArray[np.int32]
@@ -913,8 +913,8 @@ class Mask(Editor):
             The visibility state of the cursor
         """
         if self._cursor_shape_name == "Rectangle":
-            return self._canvas.create_rectangle(x_1, y_1, x_2, y_2, outline=outline, state=state)
-        return self._canvas.create_oval(x_1, y_1, x_2, y_2, outline=outline, state=state)
+            return self._canvas.create_rectangle(x_1, y_1, x_2, y_2, outline=outline, state=state)  # type: ignore[no-any-return]
+        return self._canvas.create_oval(x_1, y_1, x_2, y_2, outline=outline, state=state)  # type: ignore[no-any-return]
 
     def _mask_to_alignments(self, face_index: int) -> None:
         """Update the annotated mask to alignments.
@@ -941,8 +941,8 @@ class Mask(Editor):
         radius_var = self._control_vars["brush"]["BrushSize"]
         current_val = radius_var.get()
         new_val = min(100, current_val + 2) if increase else max(1, current_val - 2)
-        logger.trace(
-            "Adjusting brush radius from %s to %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "Adjusting brush radius from %s to %s",
             current_val,
             new_val,
         )
@@ -955,8 +955,8 @@ class Mask(Editor):
         new_coords = tuple(
             coord - delta if idx < 2 else coord + delta for idx, coord in enumerate(current_coords)
         )
-        logger.trace(
-            "Adjusting brush coordinates from %s to %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "Adjusting brush coordinates from %s to %s",
             current_coords,
             new_coords,
         )

@@ -267,7 +267,7 @@ def evaluate_sample(
 
 
 def main(argv: T.Sequence[str] | None = None) -> int:
-    base.POLICY_REGISTRY.setdefault("bucket_aware_veto", lambda candidates, metrics: candidates[0])
+    base.POLICY_REGISTRY.setdefault("bucket_aware_veto", lambda candidates, metrics: candidates[0])  # type: ignore[arg-type, return-value]
     base.evaluate_sample = evaluate_sample
     return base.main(argv)
 

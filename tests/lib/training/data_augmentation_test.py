@@ -218,7 +218,7 @@ def test_constants_from_config(size: int,
 # IMAGE AUGMENTATION #
 def get_batch(batch_size, size: int) -> np.ndarray:
     """ Obtain a batch of random float32 image data for the given batch size and height/width """
-    return (np.random.random((batch_size, size, size, 3)) * 255).astype("uint8")
+    return (np.random.random((batch_size, size, size, 3)) * 255).astype("uint8")  # type: ignore[no-any-return]
 
 
 def get_instance(batch_size, size) -> ImageAugmentation:
@@ -303,7 +303,7 @@ def test_image_augmentation_random_clahe(size: int,  # pylint:disable=too-many-l
                   (instance._constants.color.clahe_base_contrast //
                    2)) + instance._constants.color.clahe_base_contrast
     clahe_calls = [mocker.call(clipLimit=2.0, tileGridSize=(grid, grid))
-                   for grid in grid_sizes]  # type:ignore
+                   for grid in grid_sizes]
     clahe_mock = mocker.patch(f"{MODULE_PREFIX}.cv2.createCLAHE",
                               return_value=cv2.createCLAHE(clipLimit=2.0, tileGridSize=(3, 3)))
 
@@ -315,7 +315,7 @@ def test_image_augmentation_random_clahe(size: int,  # pylint:disable=too-many-l
     randint_mock.assert_called_once_with(instance._constants.color.clahe_max_size + 1,
                                          size=where_ret[0].shape[0],
                                          dtype="uint8")
-    clahe_mock.assert_has_calls(clahe_calls)  # type:ignore
+    clahe_mock.assert_has_calls(clahe_calls)
 
 
 @pytest.mark.parametrize(("size", "batch_size"), ((64, 16), (384, 32)))
@@ -383,7 +383,7 @@ def test_image_augmentation_transform(size: int,
     batch = get_batch(batch_size, size)
     get_instance(batch_size, size).transform(batch, None)
 
-    rand_mock.assert_has_calls(rand_calls)  # type:ignore
+    rand_mock.assert_has_calls(rand_calls)
     rotmat_mock.assert_called_once()
     assert affine_mock.call_count == batch_size
 
@@ -433,7 +433,7 @@ def test_image_augmentation_random_warp(size: int,
     eval_ret = np.ones_like(rand_ret)
     eval_mock = mocker.patch(f"{MODULE_PREFIX}.ne.evaluate", return_value=eval_ret)
 
-    resize_ret = np.ones((size, size)).astype("float32")
+    resize_ret = np.ones((size, size)).astype("float32")  # type: ignore[var-annotated]
     resize_mock = mocker.patch(f"{MODULE_PREFIX}.cv2.resize", return_value=resize_ret)
 
     remap_mock = mocker.patch(f"{MODULE_PREFIX}.cv2.remap")

@@ -120,8 +120,8 @@ class ConfigTools:
                 if new_value == old_value or (
                     isinstance(old_value, list) and set(str(new_value).split()) == set(old_value)
                 ):
-                    logger.trace(
-                        "Skipping unchanged option '%s'",  # type:ignore[attr-defined]
+                    logger.trace(  # type: ignore[attr-defined]
+                        "Skipping unchanged option '%s'",
                         option_name,
                     )
                 logger.debug(
@@ -541,7 +541,7 @@ class ActionFrame(ttk.Frame):  # pylint:disable=too-many-ancestors
             assert action is not None
             btnutl = ttk.Button(
                 frame,
-                image=img,  # type:ignore[arg-type]
+                image=img,
                 command=action,
             )
             btnutl.pack(padx=2, side=tk.RIGHT)
@@ -711,9 +711,9 @@ class ConfigFrame(ttk.Frame):  # pylint:disable=too-many-ancestors
 
             btnutl = ttk.Button(
                 btn_frame,
-                image=img,  # type:ignore[arg-type]
-                command=lambda cmd=action: cmd(config_key),
-            )  # type:ignore[misc]
+                image=img,
+                command=lambda cmd=action: cmd(config_key),  # type: ignore[misc]
+            )
             btnutl.pack(padx=2, side=tk.RIGHT)
             Tooltip(btnutl, text=text, wrap_length=200)
         logger.debug("Added util buttons")

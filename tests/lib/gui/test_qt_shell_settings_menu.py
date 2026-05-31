@@ -15,7 +15,7 @@ SETTINGS_MENU_LABEL = "Settings"
 CONFIGURE_SETTINGS_LABEL = "Configure Settings..."
 
 
-def _main_window(qtbot, monkeypatch, tmp_path: Path):  # type:ignore[no-untyped-def]
+def _main_window(qtbot, monkeypatch, tmp_path: Path):
     """Return a MainWindow with a deterministic schema."""
     monkeypatch.setenv("HOME", str(tmp_path))
 
@@ -42,14 +42,14 @@ def _settings_menu(window: QMainWindow) -> QMenu:
     """Return the Settings menu."""
     menu = window.findChild(QMenu, "qt-shell-settings-menu")
     assert menu is not None, "Settings menu not found"
-    return menu
+    return menu  # type: ignore[no-any-return]
 
 
 def _toolbar(window: QMainWindow) -> QToolBar:
     """Return the main toolbar."""
     toolbar = window.findChild(QToolBar, "qt-shell-toolbar")
     assert toolbar is not None, "Toolbar not found"
-    return toolbar
+    return toolbar  # type: ignore[no-any-return]
 
 
 def _toolbar_settings_actions(window: QMainWindow):
@@ -63,7 +63,7 @@ def _toolbar_settings_actions(window: QMainWindow):
 
 def test_settings_menu_is_inserted_between_project_and_command(
     qtbot, monkeypatch, tmp_path: Path
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """Top-level menu order should place Settings between Project and Command."""
     window = _main_window(qtbot, monkeypatch, tmp_path)
 
@@ -74,7 +74,7 @@ def test_settings_menu_is_inserted_between_project_and_command(
 
 def test_settings_menu_contains_configure_settings_action(
     qtbot, monkeypatch, tmp_path: Path
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """Settings menu should expose the Configure Settings entry point plus the
     per-section shortcuts (Tk parity)."""
     window = _main_window(qtbot, monkeypatch, tmp_path)
@@ -94,14 +94,14 @@ def test_settings_menu_contains_configure_settings_action(
     }.issubset(object_names)
 
 
-def test_settings_menu_action_routes_to_dialog(qtbot, monkeypatch, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_settings_menu_action_routes_to_dialog(qtbot, monkeypatch, tmp_path: Path) -> None:
     """Configure Settings should open and reuse the Qt settings dialog."""
     import lib.gui.qt_shell.main_window as main_window_module
 
     created: list[object] = []
 
     class _DialogDouble:
-        def __init__(self, section=None, parent=None) -> None:  # type:ignore[no-untyped-def]
+        def __init__(self, section=None, parent=None) -> None:
             self.section = section
             self.parent = parent
             self.show_count = 0
@@ -130,17 +130,17 @@ def test_settings_menu_action_routes_to_dialog(qtbot, monkeypatch, tmp_path: Pat
     dialog = window._open_settings_dialog("train")  # pylint:disable=protected-access
 
     assert len(created) == 1
-    assert created[0].parent is window
-    assert created[0].show_count == 2
-    assert created[0].raise_count == 2
-    assert created[0].activate_count == 2
-    assert created[0].selected == ["train"]
+    assert created[0].parent is window  # type: ignore[attr-defined]
+    assert created[0].show_count == 2  # type: ignore[attr-defined]
+    assert created[0].raise_count == 2  # type: ignore[attr-defined]
+    assert created[0].activate_count == 2  # type: ignore[attr-defined]
+    assert created[0].selected == ["train"]  # type: ignore[attr-defined]
     assert dialog is created[0]
 
 
 def test_toolbar_contains_command_specific_settings_actions(
     qtbot, monkeypatch, tmp_path: Path
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """Toolbar should expose Extract, Train and Convert settings shortcuts."""
     window = _main_window(qtbot, monkeypatch, tmp_path)
 
@@ -165,14 +165,14 @@ def test_toolbar_contains_command_specific_settings_actions(
 
 def test_toolbar_settings_actions_route_to_command_sections(
     qtbot, monkeypatch, tmp_path: Path
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """Toolbar settings shortcuts should route to command-specific dialog sections."""
     import lib.gui.qt_shell.main_window as main_window_module
 
     created: list[object] = []
 
     class _DialogDouble:
-        def __init__(self, section=None, parent=None) -> None:  # type:ignore[no-untyped-def]
+        def __init__(self, section=None, parent=None) -> None:
             self.section = section
             self.parent = parent
             self.show_count = 0
@@ -200,9 +200,9 @@ def test_toolbar_settings_actions_route_to_command_sections(
         action.trigger()
 
     assert len(created) == 1
-    assert created[0].section == "extract"
-    assert created[0].parent is window
-    assert created[0].selected == ["train", "convert"]
-    assert created[0].show_count == 3
-    assert created[0].raise_count == 3
-    assert created[0].activate_count == 3
+    assert created[0].section == "extract"  # type: ignore[attr-defined]
+    assert created[0].parent is window  # type: ignore[attr-defined]
+    assert created[0].selected == ["train", "convert"]  # type: ignore[attr-defined]
+    assert created[0].show_count == 3  # type: ignore[attr-defined]
+    assert created[0].raise_count == 3  # type: ignore[attr-defined]
+    assert created[0].activate_count == 3  # type: ignore[attr-defined]

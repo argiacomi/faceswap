@@ -102,46 +102,46 @@ class GlobalVariables:
     @property
     def display(self) -> tk.StringVar:
         """:class:`tkinter.StringVar`: The current Faceswap command running"""
-        return self._display
+        return self._display  # type: ignore[no-any-return]
 
     @property
     def running_task(self) -> tk.BooleanVar:
         """:class:`tkinter.BooleanVar`: ``True`` if a Faceswap task is running otherwise
         ``False``"""
-        return self._running_task
+        return self._running_task  # type: ignore[no-any-return]
 
     @property
     def is_training(self) -> tk.BooleanVar:
         """:class:`tkinter.BooleanVar`: ``True`` if Faceswap is currently training otherwise
         ``False``"""
-        return self._is_training
+        return self._is_training  # type: ignore[no-any-return]
 
     @property
     def action_command(self) -> tk.StringVar:
         """:class:`tkinter.StringVar`: The command line action to perform"""
-        return self._action_command
+        return self._action_command  # type: ignore[no-any-return]
 
     @property
     def generate_command(self) -> tk.StringVar:
         """:class:`tkinter.StringVar`: The command line action to generate"""
-        return self._generate_command
+        return self._generate_command  # type: ignore[no-any-return]
 
     @property
     def console_clear(self) -> tk.BooleanVar:
         """:class:`tkinter.BooleanVar`: ``True`` if the console should be cleared otherwise
         ``False``"""
-        return self._console_clear
+        return self._console_clear  # type: ignore[no-any-return]
 
     @property
     def refresh_graph(self) -> tk.BooleanVar:
         """:class:`tkinter.BooleanVar`:  ``True`` if the training graph should be refreshed
         otherwise ``False``"""
-        return self._refresh_graph
+        return self._refresh_graph  # type: ignore[no-any-return]
 
     @property
     def analysis_folder(self) -> tk.StringVar:
         """:class:`tkinter.StringVar`: Full path the analysis folder"""
-        return self._analysis_folder
+        return self._analysis_folder  # type: ignore[no-any-return]
 
     def _initialize_variables(self) -> None:
         """Initialize the default variable values"""
@@ -224,12 +224,12 @@ class Config:  # pylint:disable=too-many-public-methods
     @property
     def root(self) -> tk.Tk:
         """:class:`tkinter.Tk`: The root tkinter window."""
-        return self._constants["root"]
+        return self._constants["root"]  # type: ignore[no-any-return]
 
     @property
     def scaling_factor(self) -> float:
         """float: The scaling factor for current display."""
-        return self._constants["scaling_factor"]
+        return self._constants["scaling_factor"]  # type: ignore[no-any-return]
 
     @property
     def path_cache(self) -> str:
@@ -284,30 +284,30 @@ class Config:  # pylint:disable=too-many-public-methods
     def tools_notebook(self) -> ToolsNotebook:
         """:class:`lib.gui.command.ToolsNotebook`: The Faceswap Tools sub-Notebook."""
         assert self.command_notebook is not None
-        return self.command_notebook.tools_notebook
+        return self.command_notebook.tools_notebook  # type: ignore[no-any-return]
 
     @property
     def modified_vars(self) -> dict[str, tk.BooleanVar]:
         """dict: The command notebook modified tkinter variables."""
         assert self.command_notebook is not None
-        return self.command_notebook.modified_vars
+        return self.command_notebook.modified_vars  # type: ignore[no-any-return]
 
     @property
     def _command_tabs(self) -> dict[str, int]:
         """dict: Command tab titles with their IDs."""
         assert self.command_notebook is not None
-        return self.command_notebook.tab_names
+        return self.command_notebook.tab_names  # type: ignore[no-any-return]
 
     @property
     def _tools_tabs(self) -> dict[str, int]:
         """dict: Tools command tab titles with their IDs."""
         assert self.command_notebook is not None
-        return self.command_notebook.tools_tab_names
+        return self.command_notebook.tools_tab_names  # type: ignore[no-any-return]
 
     @property
     def user_theme(self) -> dict[str, T.Any]:  # TODO Dataclass
         """dict: The GUI theme selection options."""
-        return self._user_theme
+        return self._user_theme  # type: ignore[no-any-return]
 
     @property
     def default_font(self) -> tuple[str, int]:
@@ -331,7 +331,7 @@ class Config:  # pylint:disable=too-many-public-methods
         dpi = root.winfo_fpixels("1i")
         scaling = dpi / 72.0
         logger.debug("dpi: %s, scaling: %s'", dpi, scaling)
-        return scaling
+        return scaling  # type: ignore[no-any-return]
 
     def set_default_options(self) -> None:
         """Set the default options for :mod:`lib.gui.projects`

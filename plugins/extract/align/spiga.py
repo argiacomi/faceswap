@@ -445,7 +445,7 @@ def _load_world_shape(db_landmarks: list[int]) -> np.ndarray:
         "models3d",
         f"mean_face_3D_{len(db_landmarks)}.txt",
     )
-    posit_landmarks = np.genfromtxt(filename, delimiter="|", dtype=int, usecols=0).tolist()
+    posit_landmarks = np.genfromtxt(filename, delimiter="|", dtype=int, usecols=0).tolist()  # type: ignore[call-overload]
     mean_face_3d = np.genfromtxt(
         filename, delimiter="|", dtype=(float, float, float), usecols=(1, 2, 3)
     ).tolist()
@@ -455,7 +455,7 @@ def _load_world_shape(db_landmarks: list[int]) -> np.ndarray:
     for idx, elem in enumerate(mean_face_3d):
         world_all[idx_for[posit_landmarks[idx]]] = [elem[2], -elem[0], -elem[1]]
     assert all(item is not None for item in world_all)
-    return np.array(world_all, dtype=np.float32)
+    return np.array(world_all, dtype=np.float32)  # type: ignore[no-any-return]
 
 
 def _camera_matrix(bbox: list[int], focal_ratio: float) -> np.ndarray:
@@ -463,7 +463,7 @@ def _camera_matrix(bbox: list[int], focal_ratio: float) -> np.ndarray:
     focal_length_x = bbox[2] * focal_ratio
     focal_length_y = bbox[3] * focal_ratio
     face_center = (bbox[0] + (bbox[2] * 0.5)), (bbox[1] + (bbox[3] * 0.5))
-    return np.array(
+    return np.array(  # type: ignore[no-any-return]
         [
             [focal_length_x, 0, face_center[0]],
             [0, focal_length_y, face_center[1]],

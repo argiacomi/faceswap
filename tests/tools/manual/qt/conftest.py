@@ -10,7 +10,7 @@ from PySide6.QtWidgets import QMessageBox
 
 
 @pytest.fixture(scope="session", autouse=True)
-def _suppress_manual_qt_info_logs() -> None:
+def _suppress_manual_qt_info_logs() -> None:  # type: ignore[misc]
     """Silence routine Manual Tool INFO logs while preserving warnings/errors."""
     logger_names = (
         "tools.manual.qt",

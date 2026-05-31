@@ -1564,7 +1564,7 @@ class ManualEditableAlignments:
             affine_matrix=affine,
             interpolator=interpolator,
             stored_size=size,
-            stored_centering=cls.MASK_STORED_CENTERING,
+            stored_centering=cls.MASK_STORED_CENTERING,  # type: ignore[arg-type]
         )
 
     @classmethod

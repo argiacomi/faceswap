@@ -283,7 +283,7 @@ def test_confidence_scales_with_quality_signal_coverage() -> None:
         "top_bottom_ratio": 1.0,
         "color_warmth": 0.0,
     }
-    minimal = [FaceQARecord(frame=f"f{i}.png", face_index=0, **base_kwargs) for i in range(40)]
+    minimal = [FaceQARecord(frame=f"f{i}.png", face_index=0, **base_kwargs) for i in range(40)]  # type: ignore[arg-type]
     enriched = [
         FaceQARecord(
             frame=f"f{i}.png",
@@ -294,7 +294,7 @@ def test_confidence_scales_with_quality_signal_coverage() -> None:
             occlusion_score=0.0,
             duplicate_keep_recommendation="keep",
             identity_quality_flag="inlier",
-            **base_kwargs,
+            **base_kwargs,  # type: ignore[arg-type]
         )
         for i in range(40)
     ]

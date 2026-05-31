@@ -179,37 +179,37 @@ def test_get_module_objects(mocker: pytest_mock.MockerFixture):
         pass
 
     InternalPublic.__module__ = "our_mod"
-    test_module.InternalPublic = InternalPublic
+    test_module.InternalPublic = InternalPublic  # type: ignore[attr-defined]
 
     class _InternalPrivate:
         pass
 
     _InternalPrivate.__module__ = "our_mod"
-    test_module._InternalPrivate = _InternalPrivate
+    test_module._InternalPrivate = _InternalPrivate  # type: ignore[attr-defined]
 
     class External:
         pass
 
     External.__module__ = "other_mod"
-    test_module.External = External
+    test_module.External = External  # type: ignore[attr-defined]
 
     def func_public():
         pass
 
     func_public.__module__ = "our_mod"
-    test_module.func_public = func_public
+    test_module.func_public = func_public  # type: ignore[attr-defined]
 
     def _func_private():
         pass
 
     _func_private.__module__ = "our_mod"
-    test_module._func_private = _func_private
+    test_module._func_private = _func_private  # type: ignore[attr-defined]
 
     def func_external():
         pass
 
     func_external.__module__ = "other_mod"
-    test_module.func_external = func_external
+    test_module.func_external = func_external  # type: ignore[attr-defined]
 
     mocker.patch.dict(sys.modules, {"our_mod": test_module})
 
@@ -588,7 +588,7 @@ def test_get_model__write_zipfile(
 
     if dl_type == "continue":  # Write a partial download of the correct size
         with open(get_model_instance._model_zip_path, "wb") as partial:
-            partial.write(b"\x00" * sum(chunks))  # type:ignore
+            partial.write(b"\x00" * sum(chunks))
         downloaded = os.path.getsize(get_model_instance._model_zip_path)
 
     get_model_instance._write_zipfile(response, downloaded)
@@ -601,7 +601,7 @@ def test_get_model__write_zipfile(
     assert os.path.isfile(get_model_instance._model_zip_path)
     downloaded_size = os.path.getsize(get_model_instance._model_zip_path)
     downloaded_size = downloaded_size if dl_type == "new" else downloaded_size // 2
-    assert downloaded_size == sum(chunks)  # type:ignore
+    assert downloaded_size == sum(chunks)
 
 
 # TODO remove the next line that supresses a weird pytest bug when it tears down the tempdir

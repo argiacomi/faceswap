@@ -34,7 +34,7 @@ _TRUE_VALUES = {"1", "true", "yes", "on"}
 class Gui:
     """Qt GUI process wrapper used by the standard Faceswap launcher."""
 
-    def __init__(self, arguments) -> None:  # type:ignore[no-untyped-def]
+    def __init__(self, arguments) -> None:
         self._arguments = arguments
         self._owns_app = QApplication.instance() is None
         self._no_exec = self._resolve_no_exec(arguments)
@@ -97,7 +97,7 @@ class Gui:
             self._restore_console_logging()
 
     @staticmethod
-    def _resolve_no_exec(arguments) -> bool:  # type:ignore[no-untyped-def]
+    def _resolve_no_exec(arguments) -> bool:
         """Return whether Qt should skip the event loop for launch smoke tests."""
         if bool(getattr(arguments, "no_gui_exec", False)):
             return True

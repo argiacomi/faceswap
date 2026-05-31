@@ -151,8 +151,8 @@ def test_process_combines_sources_and_exposes_metadata(
     primary = np.array([[[0.8, 0.2], [0.4, 0.0]]], dtype=np.float32)
     secondary = np.array([[[0.5, 0.6], [0.1, 0.3]]], dtype=np.float32)
     plugin._sources = [  # pylint:disable=protected-access
-        _FakeSource("bisenet-fp_face", _output(primary, primary, source_id="bisenet-fp_face")),
-        _FakeSource(
+        _FakeSource("bisenet-fp_face", _output(primary, primary, source_id="bisenet-fp_face")),  # type: ignore[list-item]
+        _FakeSource(  # type: ignore[list-item]
             "segnext-fp_face",
             _output(secondary, secondary, source_id="segnext-fp_face"),
         ),
@@ -186,8 +186,8 @@ def test_process_rejects_source_without_probability_maps(
         source_id="bisenet-fp_face",
     )
     plugin._sources = [  # pylint:disable=protected-access
-        _FakeSource("custom_face", binary_only),
-        _FakeSource("bisenet-fp_face", parser),
+        _FakeSource("custom_face", binary_only),  # type: ignore[list-item]
+        _FakeSource("bisenet-fp_face", parser),  # type: ignore[list-item]
     ]
 
     with pytest.raises(FaceswapError, match="does not expose per-class probabilities"):

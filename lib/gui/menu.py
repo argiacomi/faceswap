@@ -229,8 +229,8 @@ class FileMenu(tk.Menu):  # pylint:disable=too-many-ancestors
                 kwargs = {"filename": filename, "current_tab": False}
             self.recent_menu.add_command(
                 label=f"{filename} ({lbl.title()})",
-                command=lambda kw=kwargs, fn=load_func: fn(**kw),
-            )  # type:ignore
+                command=lambda kw=kwargs, fn=load_func: fn(**kw),  # type: ignore[misc]
+            )
         if removed_files:
             for recent_item in removed_files:
                 logger.debug("Removing from recent files: `%s`", recent_item[0])
@@ -403,13 +403,13 @@ class HelpMenu(tk.Menu):  # pylint:disable=too-many-ancestors
         self.add_command(
             label=_("Check for updates..."),
             underline=0,
-            command=lambda action="_check": self._in_thread(action),
-        )  # type:ignore
+            command=lambda action="_check": self._in_thread(action),  # type: ignore[misc]
+        )
         self.add_command(
             label=_("Update Faceswap..."),
             underline=0,
-            command=lambda action="_update": self._in_thread(action),
-        )  # type:ignore
+            command=lambda action="_update": self._in_thread(action),  # type: ignore[misc]
+        )
         if self._build_branches_menu():
             self.add_cascade(label=_("Switch Branch"), underline=7, menu=self._branches_menu)
         self.add_separator()
@@ -419,8 +419,8 @@ class HelpMenu(tk.Menu):  # pylint:disable=too-many-ancestors
         self.add_command(
             label=_("Output System Information"),
             underline=0,
-            command=lambda action="_output_sysinfo": self._in_thread(action),
-        )  # type:ignore
+            command=lambda action="_output_sysinfo": self._in_thread(action),  # type: ignore[misc]
+        )
         logger.debug("Built help menu")
 
     def _build_branches_menu(self) -> bool:
@@ -443,8 +443,9 @@ class HelpMenu(tk.Menu):  # pylint:disable=too-many-ancestors
 
         for branch in branches:
             self._branches_menu.add_command(
-                label=branch, command=lambda b=branch: self._switch_branch(b)
-            )  # type:ignore
+                label=branch,
+                command=lambda b=branch: self._switch_branch(b),  # type: ignore[misc]
+            )
         return True
 
     @classmethod
@@ -508,8 +509,8 @@ class HelpMenu(tk.Menu):  # pylint:disable=too-many-ancestors
         for resource in _RESOURCES:
             self.recources_menu.add_command(
                 label=resource[0],
-                command=lambda link=resource[1]: webbrowser.open_new(link),
-            )  # type:ignore
+                command=lambda link=resource[1]: webbrowser.open_new(link),  # type: ignore[misc]
+            )
         logger.debug("Built resources menu")
 
     @classmethod
@@ -610,9 +611,9 @@ class TaskBar(ttk.Frame):  # pylint:disable=too-many-ancestors
             cmd = getattr(self._config.project, loader)
             btn = ttk.Button(
                 frame,
-                image=get_images().icons[btntype],  # type:ignore[arg-type]
-                command=lambda fn=cmd, kw=kwargs: fn(**kw),
-            )  # type:ignore[misc]
+                image=get_images().icons[btntype],
+                command=lambda fn=cmd, kw=kwargs: fn(**kw),  # type: ignore[misc]
+            )
             btn.pack(side=tk.LEFT, anchor=tk.W)
             hlp = self._set_help(btntype)
             Tooltip(btn, text=hlp, wrap_length=200)
@@ -632,9 +633,9 @@ class TaskBar(ttk.Frame):  # pylint:disable=too-many-ancestors
             cmd = getattr(self._config.tasks, loader)
             btn = ttk.Button(
                 frame,
-                image=get_images().icons[btntype],  # type:ignore[arg-type]
-                command=lambda fn=cmd, kw=kwargs: fn(**kw),
-            )  # type:ignore[misc]
+                image=get_images().icons[btntype],
+                command=lambda fn=cmd, kw=kwargs: fn(**kw),  # type: ignore[misc]
+            )
             btn.pack(side=tk.LEFT, anchor=tk.W)
             hlp = self._set_help(btntype)
             Tooltip(btn, text=hlp, wrap_length=200)
@@ -650,9 +651,9 @@ class TaskBar(ttk.Frame):  # pylint:disable=too-many-ancestors
             logger.debug("Adding button: '%s'", btntype)
             btn = ttk.Button(
                 frame,
-                image=get_images().icons[btntype],  # type:ignore[arg-type]
-                command=lambda n=name: open_popup(name=n),
-            )  # type:ignore[misc]
+                image=get_images().icons[btntype],
+                command=lambda n=name: open_popup(name=n),  # type: ignore[misc]
+            )
             btn.pack(side=tk.LEFT, anchor=tk.W)
             hlp = _("Configure {} settings...").format(name.title())
             Tooltip(btn, text=hlp, wrap_length=200)

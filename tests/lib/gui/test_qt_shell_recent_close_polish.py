@@ -11,7 +11,7 @@ from lib.gui.models.project import ProjectFile
 from lib.gui.services.project_session_service import PROJECT_KIND, TASK_KIND
 
 
-def _main_window(qtbot, monkeypatch, tmp_path: Path):  # type:ignore[no-untyped-def]
+def _main_window(qtbot, monkeypatch, tmp_path: Path):
     """Return a MainWindow with a deterministic schema and isolated caches."""
     monkeypatch.setenv("HOME", str(tmp_path))
 
@@ -39,7 +39,7 @@ def _main_window(qtbot, monkeypatch, tmp_path: Path):  # type:ignore[no-untyped-
     return window
 
 
-def test_close_project_can_be_cancelled_by_dirty_prompt(  # type:ignore[no-untyped-def]
+def test_close_project_can_be_cancelled_by_dirty_prompt(
     qtbot,
     monkeypatch,
     tmp_path: Path,
@@ -62,7 +62,7 @@ def test_close_project_can_be_cancelled_by_dirty_prompt(  # type:ignore[no-untyp
     assert window._modified is True  # pylint:disable=protected-access
 
 
-def test_close_project_discards_after_confirmation(  # type:ignore[no-untyped-def]
+def test_close_project_discards_after_confirmation(
     qtbot,
     monkeypatch,
     tmp_path: Path,
@@ -89,7 +89,7 @@ def test_close_project_discards_after_confirmation(  # type:ignore[no-untyped-de
     assert window.windowTitle() == "Faceswap Qt Shell Prototype - Untitled"
 
 
-def test_missing_recent_file_is_pruned_when_opened(  # type:ignore[no-untyped-def]
+def test_missing_recent_file_is_pruned_when_opened(
     qtbot,
     monkeypatch,
     tmp_path: Path,
@@ -109,7 +109,7 @@ def test_missing_recent_file_is_pruned_when_opened(  # type:ignore[no-untyped-de
     assert window.statusBar().currentMessage() == "Recent file no longer exists"
 
 
-def test_refresh_recent_menu_prunes_missing_files(  # type:ignore[no-untyped-def]
+def test_refresh_recent_menu_prunes_missing_files(
     qtbot,
     monkeypatch,
     tmp_path: Path,
@@ -131,7 +131,7 @@ def test_refresh_recent_menu_prunes_missing_files(  # type:ignore[no-untyped-def
     assert window._recent_menu.actions()[0].text() == "Project: existing.fsw"  # pylint:disable=protected-access
 
 
-def test_recent_menu_uses_duplicate_aware_display_labels(  # type:ignore[no-untyped-def]
+def test_recent_menu_uses_duplicate_aware_display_labels(
     qtbot,
     monkeypatch,
     tmp_path: Path,
@@ -157,7 +157,7 @@ def test_recent_menu_uses_duplicate_aware_display_labels(  # type:ignore[no-unty
     ]
 
 
-def test_recent_menu_routes_actions_with_normalized_kind(  # type:ignore[no-untyped-def]
+def test_recent_menu_routes_actions_with_normalized_kind(
     qtbot,
     monkeypatch,
     tmp_path: Path,
@@ -181,7 +181,7 @@ def test_recent_menu_routes_actions_with_normalized_kind(  # type:ignore[no-unty
     assert opened == [(str(legacy_task), TASK_KIND)]
 
 
-def test_clear_recent_files_resets_menu(  # type:ignore[no-untyped-def]
+def test_clear_recent_files_resets_menu(
     qtbot,
     monkeypatch,
     tmp_path: Path,

@@ -41,7 +41,7 @@ _IMAGENET_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 def _make_synthetic_crop(seed: int = 0, h: int = 256, w: int = 256) -> np.ndarray:
     """Return an (H, W, 3) uint8 synthetic face crop."""
     rng = np.random.default_rng(seed)
-    return rng.integers(0, 256, size=(h, w, 3), dtype=np.uint8)
+    return rng.integers(0, 256, size=(h, w, 3), dtype=np.uint8)  # type: ignore[no-any-return]
 
 
 def _faceswap_reference_input(crop_uint8: np.ndarray) -> np.ndarray:
@@ -56,7 +56,7 @@ def _faceswap_reference_input(crop_uint8: np.ndarray) -> np.ndarray:
     norm = (crop_f32 - _IMAGENET_MEAN) / _IMAGENET_STD
     tensor = torch.from_numpy(norm.transpose(2, 0, 1)[np.newaxis])  # (1,3,256,256)
     ref = F.interpolate(tensor, size=(64, 64), mode="bilinear", align_corners=False)
-    return ref.numpy()
+    return ref.numpy()  # type: ignore[no-any-return]
 
 
 def _upstream_reference_input(crop_uint8: np.ndarray) -> np.ndarray:
@@ -69,7 +69,7 @@ def _upstream_reference_input(crop_uint8: np.ndarray) -> np.ndarray:
     resized = cv2.resize(crop_uint8, (64, 64), interpolation=cv2.INTER_LINEAR)
     norm = resized.astype(np.float32) / 255.0
     norm = (norm - _IMAGENET_MEAN) / _IMAGENET_STD
-    return np.ascontiguousarray(norm.transpose(2, 0, 1)[np.newaxis])
+    return np.ascontiguousarray(norm.transpose(2, 0, 1)[np.newaxis])  # type: ignore[no-any-return]
 
 
 # ---------------------------------------------------------------------------

@@ -11,7 +11,7 @@ from collections import deque
 import cv2
 import numpy as np
 from PIL import Image
-from scipy.spatial import cKDTree  # type:ignore[attr-defined]
+from scipy.spatial import cKDTree
 from sklearn.cluster import MiniBatchKMeans
 
 from lib.logger import parse_class_init
@@ -103,8 +103,8 @@ class Writer(Output):
                 )
                 break
             save_no = self._frame_order.popleft()
-            logger.trace(
-                "[GIF] Rendering from cache. Frame no: %s",  # type: ignore[attr-defined]
+            logger.trace(  # type: ignore[attr-defined]
+                "[GIF] Rendering from cache. Frame no: %s",
                 save_no,
             )
             img = self.cache.pop(save_no)
@@ -178,7 +178,7 @@ class Writer(Output):
         del mapped
         img.putpalette(palette)
         if cfg.dithering():
-            meth = Image.FLOYDSTEINBERG  # type:ignore[attr-defined]  # pylint:disable=no-member
+            meth = Image.FLOYDSTEINBERG  # pylint:disable=no-member
             img = img.convert("P", dither=meth)
         return img
 

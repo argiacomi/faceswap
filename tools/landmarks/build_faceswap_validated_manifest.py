@@ -267,7 +267,7 @@ def _crop_square_rgb(image: np.ndarray, roi: np.ndarray, size: int) -> np.ndarra
 
     import cv2
 
-    return cv2.resize(crop, (size, size), interpolation=cv2.INTER_LINEAR)
+    return cv2.resize(crop, (size, size), interpolation=cv2.INTER_LINEAR)  # type: ignore[no-any-return]
 
 
 class RuntimeLandmarkEnsembleMetadataExtractor:
@@ -301,7 +301,7 @@ class RuntimeLandmarkEnsembleMetadataExtractor:
         image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
         bbox = np.asarray([_bbox(face)], dtype="float32")
         roi = self._plugin.pre_process(bbox)[0]
-        crop = _crop_square_rgb(image_rgb, roi, int(self._plugin.input_size)).astype("float32")
+        crop = _crop_square_rgb(image_rgb, roi, int(self._plugin.input_size)).astype("float32")  # type: ignore[var-annotated]
         self._plugin.process(crop[None] / 255.0)
         metadata = getattr(self._plugin, "last_debug_metadata", [])
         if not metadata:
@@ -479,7 +479,7 @@ def _metadata_summary(
         ):
             if key in full_ensemble_metadata:
                 metadata[f"landmark_ensemble_{key}"] = full_ensemble_metadata[key]
-    return _json_safe(metadata)
+    return _json_safe(metadata)  # type: ignore[no-any-return]
 
 
 def _log_audit_summary(audit: dict[str, T.Any]) -> None:

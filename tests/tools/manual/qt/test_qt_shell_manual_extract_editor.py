@@ -35,9 +35,7 @@ def _session_with_frames(folder: Path, count: int = 1) -> ManualSession:
     return ManualSession.create(frames=str(folder))
 
 
-def _wait_for_frame_view_ready(  # type:ignore[no-untyped-def]
-    qtbot, window: ManualToolWindow, *, timeout: int = 3000
-) -> None:
+def _wait_for_frame_view_ready(qtbot, window: ManualToolWindow, *, timeout: int = 3000) -> None:
     """Wait until the frame view has both a source image and a laid-out rect.
 
     Synthetic mouse tests need both invariants:
@@ -61,7 +59,7 @@ def _wait_for_frame_view_ready(  # type:ignore[no-untyped-def]
     qtbot.waitUntil(_ready, timeout=timeout)
 
 
-def _make_window(qtbot, folder: Path) -> ManualToolWindow:  # type:ignore[no-untyped-def]
+def _make_window(qtbot, folder: Path) -> ManualToolWindow:
     session = _session_with_frames(folder)
     window = ManualToolWindow(session)
     qtbot.addWidget(window)
@@ -98,9 +96,9 @@ def _drag(view: ManualFrameView, start: QPointF, end: QPointF) -> None:
             QEvent.Type.MouseButtonPress,
             start,
             QPointF(global_start),
-            Qt.LeftButton,
-            Qt.LeftButton,
-            Qt.NoModifier,
+            Qt.LeftButton,  # type: ignore[attr-defined]
+            Qt.LeftButton,  # type: ignore[attr-defined]
+            Qt.NoModifier,  # type: ignore[attr-defined]
         )
     )
     view.mouseMoveEvent(
@@ -108,9 +106,9 @@ def _drag(view: ManualFrameView, start: QPointF, end: QPointF) -> None:
             QEvent.Type.MouseMove,
             end,
             QPointF(global_end),
-            Qt.NoButton,
-            Qt.LeftButton,
-            Qt.NoModifier,
+            Qt.NoButton,  # type: ignore[attr-defined]
+            Qt.LeftButton,  # type: ignore[attr-defined]
+            Qt.NoModifier,  # type: ignore[attr-defined]
         )
     )
     view.mouseReleaseEvent(
@@ -118,14 +116,14 @@ def _drag(view: ManualFrameView, start: QPointF, end: QPointF) -> None:
             QEvent.Type.MouseButtonRelease,
             end,
             QPointF(global_end),
-            Qt.LeftButton,
-            Qt.NoButton,
-            Qt.NoModifier,
+            Qt.LeftButton,  # type: ignore[attr-defined]
+            Qt.NoButton,  # type: ignore[attr-defined]
+            Qt.NoModifier,  # type: ignore[attr-defined]
         )
     )
 
 
-def test_extract_translate_drag_moves_face(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_extract_translate_drag_moves_face(qtbot, tmp_path: Path) -> None:
     """Interior drag in Extract Box mode translates landmarks + bbox."""
     window = _make_window(qtbot, tmp_path)
     _enter_extract_mode(window)
@@ -147,7 +145,7 @@ def test_extract_translate_drag_moves_face(qtbot, tmp_path: Path) -> None:  # ty
 def test_extract_translate_preserves_full_landmark_alignment(
     qtbot,
     tmp_path: Path,
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """Translate moves every landmark by the same source delta as the bbox."""
     window = _make_window(qtbot, tmp_path)
     _enter_extract_mode(window)
@@ -167,7 +165,7 @@ def test_extract_translate_preserves_full_landmark_alignment(
     assert face.landmarks == tuple((x + 12.0, y + 9.0) for x, y in landmarks)
 
 
-def test_extract_corner_drag_scales_face(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_extract_corner_drag_scales_face(qtbot, tmp_path: Path) -> None:
     """Corner drag in Extract Box mode scales landmarks + bbox around the centre."""
     window = _make_window(qtbot, tmp_path)
     _enter_extract_mode(window)
@@ -193,7 +191,7 @@ def test_extract_corner_drag_scales_face(qtbot, tmp_path: Path) -> None:  # type
 def test_extract_corner_drag_keeps_legacy_minimum_size(
     qtbot,
     tmp_path: Path,
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """Inward corner drags do not shrink below the Tk minimum box size."""
     window = _make_window(qtbot, tmp_path)
     _enter_extract_mode(window)
@@ -210,7 +208,7 @@ def test_extract_corner_drag_keeps_legacy_minimum_size(
 def test_extract_corner_drag_clamps_to_source_bounds(
     qtbot,
     tmp_path: Path,
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """Outward corner scale cannot move the extract box outside the source image."""
     window = _make_window(qtbot, tmp_path)
     _enter_extract_mode(window)
@@ -231,7 +229,7 @@ def test_extract_corner_drag_clamps_to_source_bounds(
     assert face.bbox[1] + face.bbox[3] <= view.source_size[1]
 
 
-def test_extract_outside_corner_drag_rotates_face(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_extract_outside_corner_drag_rotates_face(qtbot, tmp_path: Path) -> None:
     """Outside-corner drag in Extract Box mode rotates landmarks around the centre."""
     window = _make_window(qtbot, tmp_path)
     _enter_extract_mode(window)
@@ -259,7 +257,7 @@ def test_extract_outside_corner_drag_rotates_face(qtbot, tmp_path: Path) -> None
 def test_extract_rotation_angle_convention_is_source_y_down(
     qtbot,
     tmp_path: Path,
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """A +pi/2 Extract rotation maps east of centre to south of centre."""
     window = _make_window(qtbot, tmp_path)
     _enter_extract_mode(window)
@@ -276,7 +274,7 @@ def test_extract_rotation_angle_convention_is_source_y_down(
 def test_extract_rotation_drag_updates_continuous_preview_angle(
     qtbot,
     tmp_path: Path,
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """During a rotation drag, move events continuously update the pending angle."""
     window = _make_window(qtbot, tmp_path)
     _enter_extract_mode(window)
@@ -296,9 +294,9 @@ def test_extract_rotation_drag_updates_continuous_preview_angle(
             QEvent.Type.MouseButtonPress,
             start,
             QPointF(global_start),
-            Qt.LeftButton,
-            Qt.LeftButton,
-            Qt.NoModifier,
+            Qt.LeftButton,  # type: ignore[attr-defined]
+            Qt.LeftButton,  # type: ignore[attr-defined]
+            Qt.NoModifier,  # type: ignore[attr-defined]
         )
     )
     view.mouseMoveEvent(
@@ -306,9 +304,9 @@ def test_extract_rotation_drag_updates_continuous_preview_angle(
             QEvent.Type.MouseMove,
             middle,
             QPointF(global_middle),
-            Qt.NoButton,
-            Qt.LeftButton,
-            Qt.NoModifier,
+            Qt.NoButton,  # type: ignore[attr-defined]
+            Qt.LeftButton,  # type: ignore[attr-defined]
+            Qt.NoModifier,  # type: ignore[attr-defined]
         )
     )
 
@@ -319,14 +317,14 @@ def test_extract_rotation_drag_updates_continuous_preview_angle(
             QEvent.Type.MouseButtonRelease,
             middle,
             QPointF(global_middle),
-            Qt.LeftButton,
-            Qt.NoButton,
-            Qt.NoModifier,
+            Qt.LeftButton,  # type: ignore[attr-defined]
+            Qt.NoButton,  # type: ignore[attr-defined]
+            Qt.NoModifier,  # type: ignore[attr-defined]
         )
     )
 
 
-def test_extract_no_active_face_fall_through(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_extract_no_active_face_fall_through(qtbot, tmp_path: Path) -> None:
     """Extract gestures are no-ops without an active face."""
     window = _make_window(qtbot, tmp_path)
     _enter_extract_mode(window)
@@ -339,7 +337,7 @@ def test_extract_no_active_face_fall_through(qtbot, tmp_path: Path) -> None:  # 
     assert scales == []
 
 
-def test_extract_drag_participates_in_undo(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_extract_drag_participates_in_undo(qtbot, tmp_path: Path) -> None:
     """Extract Box scale is undoable + redoable through the editable model."""
     window = _make_window(qtbot, tmp_path)
     _enter_extract_mode(window)
@@ -358,7 +356,7 @@ def test_extract_drag_participates_in_undo(qtbot, tmp_path: Path) -> None:  # ty
     assert window._editable.faces(0)[0].bbox == after_bbox
 
 
-def test_extract_invalid_scale_surfaces_status(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_extract_invalid_scale_surfaces_status(qtbot, tmp_path: Path) -> None:
     """A degenerate scale leaves state unchanged and surfaces a message."""
     window = _make_window(qtbot, tmp_path)
     _enter_extract_mode(window)
@@ -371,7 +369,7 @@ def test_extract_invalid_scale_surfaces_status(qtbot, tmp_path: Path) -> None:  
     assert window.statusBar().currentMessage().startswith("Scale failed")
 
 
-def test_extract_cursor_feedback_distinguishes_regions(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_extract_cursor_feedback_distinguishes_regions(qtbot, tmp_path: Path) -> None:
     """Hover over body / corner / rotation-halo yields distinct cursor shapes.
 
     Uses a larger seeded bbox so that handle tolerance can't bleed into the
@@ -387,16 +385,16 @@ def test_extract_cursor_feedback_distinguishes_regions(qtbot, tmp_path: Path) ->
     view = window._frame_view
     # Body of bbox → SizeAllCursor.
     view._update_hover_cursor(_source_to_widget(view, 100.0, 100.0))  # noqa: SLF001
-    assert view.cursor().shape() == Qt.SizeAllCursor
+    assert view.cursor().shape() == Qt.SizeAllCursor  # type: ignore[attr-defined]
     # SE corner → SizeFDiagCursor.
     view._update_hover_cursor(_source_to_widget(view, 180.0, 180.0))  # noqa: SLF001
-    assert view.cursor().shape() == Qt.SizeFDiagCursor
+    assert view.cursor().shape() == Qt.SizeFDiagCursor  # type: ignore[attr-defined]
     # Far outside the rotation halo → default arrow.
     view._update_hover_cursor(QPointF(0.0, 0.0))
-    assert view.cursor().shape() == Qt.ArrowCursor
+    assert view.cursor().shape() == Qt.ArrowCursor  # type: ignore[attr-defined]
 
 
-def test_extract_scale_handler_clamps_via_model(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_extract_scale_handler_clamps_via_model(qtbot, tmp_path: Path) -> None:
     """Pi/2 rotation produces a different landmark cloud + bbox via the model."""
     window = _make_window(qtbot, tmp_path)
     _enter_extract_mode(window)

@@ -21,7 +21,7 @@ from lib.landmarks.datasets.w300 import (
 
 def _points_68() -> np.ndarray:
     """Return deterministic 68-point landmarks."""
-    return np.stack(
+    return np.stack(  # type: ignore[no-any-return]
         (
             np.linspace(10, 77, 68, dtype="float32"),
             np.linspace(20, 87, 68, dtype="float32"),
@@ -34,7 +34,7 @@ def _write_png(path: Path) -> None:
     """Write a tiny valid PNG image."""
     cv2 = pytest.importorskip("cv2")
     path.parent.mkdir(parents=True, exist_ok=True)
-    image = np.zeros((32, 32, 3), dtype="uint8")
+    image = np.zeros((32, 32, 3), dtype="uint8")  # type: ignore[var-annotated]
     image[..., 2] = 255
     assert cv2.imwrite(str(path), image)
 

@@ -10,7 +10,7 @@ import zlib
 from dataclasses import dataclass, field
 
 import numpy as np
-from tensorboard.compat.proto import event_pb2  # type:ignore[import-untyped]
+from tensorboard.compat.proto import event_pb2
 
 from lib.logger import parse_class_init
 from lib.training.tensorboard import RecordIterator
@@ -798,8 +798,8 @@ class _EventParser:
             if "/" in tag:
                 category, loss_name = tag.split("/", maxsplit=1)
                 formatted[idx] = f"{category}-{loss_name.upper()}"
-        logger.trace(
-            "[EventParser] Formatted tags from %s to %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "[EventParser] Formatted tags from %s to %s",
             tags,
             formatted,
         )

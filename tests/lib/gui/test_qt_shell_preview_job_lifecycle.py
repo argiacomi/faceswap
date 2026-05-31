@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 
-def _main_window(qtbot, monkeypatch, tmp_path: Path):  # type:ignore[no-untyped-def]
+def _main_window(qtbot, monkeypatch, tmp_path: Path):
     """Return a MainWindow with deterministic command metadata."""
     monkeypatch.setenv("HOME", str(tmp_path))
 
@@ -31,7 +31,7 @@ def _main_window(qtbot, monkeypatch, tmp_path: Path):  # type:ignore[no-untyped-
     return window
 
 
-def _capture_preview_refresh(window, monkeypatch):  # type:ignore[no-untyped-def]
+def _capture_preview_refresh(window, monkeypatch):
     """Patch Preview live refresh methods and return captured calls."""
     calls: list[str] = []
     preview = window._preview_panel_widget  # pylint:disable=protected-access
@@ -43,11 +43,11 @@ def _capture_preview_refresh(window, monkeypatch):  # type:ignore[no-untyped-def
 
 def _patch_runner_start(
     window, monkeypatch, *, fail: bool = False
-) -> list[tuple[str, tuple[str, ...]]]:  # type:ignore[no-untyped-def]
+) -> list[tuple[str, tuple[str, ...]]]:
     """Patch the job runner start method and return captured invocations."""
     starts: list[tuple[str, tuple[str, ...]]] = []
 
-    def start(args, *, command: str) -> None:  # type:ignore[no-untyped-def]
+    def start(args, *, command: str) -> None:
         if fail:
             raise RuntimeError("run failed")
         starts.append((command, tuple(args)))
@@ -56,7 +56,7 @@ def _patch_runner_start(
     return starts
 
 
-def test_extract_job_with_preview_output_starts_live_refresh(  # type:ignore[no-untyped-def]
+def test_extract_job_with_preview_output_starts_live_refresh(
     qtbot,
     monkeypatch,
     tmp_path: Path,
@@ -73,7 +73,7 @@ def test_extract_job_with_preview_output_starts_live_refresh(  # type:ignore[no-
     assert starts[0][0] == "extract"
 
 
-def test_convert_job_with_preview_output_starts_live_refresh(  # type:ignore[no-untyped-def]
+def test_convert_job_with_preview_output_starts_live_refresh(
     qtbot,
     monkeypatch,
     tmp_path: Path,
@@ -89,7 +89,7 @@ def test_convert_job_with_preview_output_starts_live_refresh(  # type:ignore[no-
     assert calls == ["start"]
 
 
-def test_train_job_does_not_start_preview_live_refresh(  # type:ignore[no-untyped-def]
+def test_train_job_does_not_start_preview_live_refresh(
     qtbot,
     monkeypatch,
     tmp_path: Path,
@@ -105,7 +105,7 @@ def test_train_job_does_not_start_preview_live_refresh(  # type:ignore[no-untype
     assert calls == ["stop"]
 
 
-def test_preview_capable_job_without_output_stops_live_refresh(  # type:ignore[no-untyped-def]
+def test_preview_capable_job_without_output_stops_live_refresh(
     qtbot,
     monkeypatch,
     tmp_path: Path,
@@ -121,7 +121,7 @@ def test_preview_capable_job_without_output_stops_live_refresh(  # type:ignore[n
     assert calls == ["stop"]
 
 
-def test_failed_run_stops_live_refresh_and_shows_error(  # type:ignore[no-untyped-def]
+def test_failed_run_stops_live_refresh_and_shows_error(
     qtbot,
     monkeypatch,
     tmp_path: Path,
@@ -140,7 +140,7 @@ def test_failed_run_stops_live_refresh_and_shows_error(  # type:ignore[no-untype
     assert errors == ["run failed"]
 
 
-def test_stop_finish_reset_open_and_reload_stop_live_refresh(  # type:ignore[no-untyped-def]
+def test_stop_finish_reset_open_and_reload_stop_live_refresh(
     qtbot,
     monkeypatch,
     tmp_path: Path,
@@ -165,7 +165,7 @@ def test_stop_finish_reset_open_and_reload_stop_live_refresh(  # type:ignore[no-
     assert calls == ["stop"] * 7
 
 
-def test_run_command_still_raises_unexpected_build_errors(  # type:ignore[no-untyped-def]
+def test_run_command_still_raises_unexpected_build_errors(
     qtbot,
     monkeypatch,
     tmp_path: Path,

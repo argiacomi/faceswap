@@ -50,7 +50,7 @@ class _RootProcess:
         return self._children
 
 
-def _install_fake_psutil(  # type:ignore[no-untyped-def]
+def _install_fake_psutil(
     monkeypatch,
     children: list[_ChildProcess],
     alive: list[_ChildProcess],
@@ -62,7 +62,7 @@ def _install_fake_psutil(  # type:ignore[no-untyped-def]
         assert pid == 1234
         return _RootProcess(children)
 
-    def wait_procs(procs: list[_ChildProcess], *, timeout: float):  # type:ignore[no-untyped-def]
+    def wait_procs(procs: list[_ChildProcess], *, timeout: float):
         wait_calls.append((procs, timeout))
         gone = [child for child in procs if child not in alive]
         return gone, alive
@@ -98,14 +98,14 @@ def test_runtime_termination_policy_default_plan_uses_terminate() -> None:
     assert plan.message == "Terminating Process..."
 
 
-def test_process_tree_terminator_returns_false_without_psutil(monkeypatch) -> None:  # type:ignore[no-untyped-def]
+def test_process_tree_terminator_returns_false_without_psutil(monkeypatch) -> None:
     """Process-tree cleanup should be a no-op when psutil is unavailable."""
     monkeypatch.setitem(sys.modules, "psutil", None)
 
     assert ProcessTreeTerminator().terminate(1234, timeout_seconds=1.0) is False
 
 
-def test_process_tree_terminator_terminates_children_and_kills_survivors(monkeypatch) -> None:  # type:ignore[no-untyped-def]
+def test_process_tree_terminator_terminates_children_and_kills_survivors(monkeypatch) -> None:
     """Process-tree cleanup should terminate descendants and kill survivors after timeout."""
     first = _ChildProcess()
     survivor = _ChildProcess()
@@ -121,7 +121,7 @@ def test_process_tree_terminator_terminates_children_and_kills_survivors(monkeyp
     assert wait_calls == [([first, survivor], 0.25)]
 
 
-def test_process_tree_terminator_ignores_child_errors(monkeypatch) -> None:  # type:ignore[no-untyped-def]
+def test_process_tree_terminator_ignores_child_errors(monkeypatch) -> None:
     """Process-tree cleanup should keep going when individual child calls fail."""
     failed_terminate = _ChildProcess(fail_terminate=True)
     failed_kill = _ChildProcess(fail_kill=True)

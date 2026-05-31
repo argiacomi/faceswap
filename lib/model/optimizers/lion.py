@@ -65,7 +65,7 @@ class Lion(Optimizer):
         super().__init__(params, defaults)
 
     @torch.no_grad()
-    def step(self, closure: T.Callable | None = None) -> torch.Tensor:  # type:ignore[override]
+    def step(self, closure: T.Callable | None = None) -> torch.Tensor:
         """Performs a single optimization step.
 
         Parameters

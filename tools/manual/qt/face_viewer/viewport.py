@@ -39,10 +39,10 @@ _FACE_GRID_SIZES: dict[str, int] = {
     "Extra Large": 192,
 }
 
-_FACE_GRID_ENTRY_ROLE = Qt.UserRole
-_FACE_GRID_ACTIVE_FRAME_ROLE = Qt.UserRole + 1
-_FACE_GRID_ACTIVE_FACE_ROLE = Qt.UserRole + 2
-_FACE_GRID_HOVER_ROLE = Qt.UserRole + 3
+_FACE_GRID_ENTRY_ROLE = Qt.UserRole  # type: ignore[attr-defined]
+_FACE_GRID_ACTIVE_FRAME_ROLE = Qt.UserRole + 1  # type: ignore[attr-defined]
+_FACE_GRID_ACTIVE_FACE_ROLE = Qt.UserRole + 2  # type: ignore[attr-defined]
+_FACE_GRID_HOVER_ROLE = Qt.UserRole + 3  # type: ignore[attr-defined]
 
 
 @dataclass(frozen=True)
@@ -107,19 +107,19 @@ class FaceGridThumbnailRenderer:
             else QImage()
         )
         if not image.isNull():
-            return QPixmap.fromImage(
+            return QPixmap.fromImage(  # type: ignore[no-any-return]
                 image.scaled(
                     icon_size,
                     icon_size,
-                    Qt.KeepAspectRatioByExpanding,
-                    Qt.SmoothTransformation,
+                    Qt.KeepAspectRatioByExpanding,  # type: ignore[attr-defined]
+                    Qt.SmoothTransformation,  # type: ignore[attr-defined]
                 )
             ).copy(0, 0, icon_size, icon_size)
         pixmap = QPixmap(icon_size, icon_size)
         pixmap.fill(QColor("#222"))
         painter = QPainter(pixmap)
         painter.setPen(QColor("#888"))
-        painter.drawText(pixmap.rect(), Qt.AlignCenter, "?")
+        painter.drawText(pixmap.rect(), Qt.AlignCenter, "?")  # type: ignore[attr-defined]
         painter.end()
         return pixmap
 
@@ -170,12 +170,12 @@ class FaceGridThumbnailRenderer:
         pen = QPen(self._MESH_PEN)
         pen.setWidthF(max(1.0, icon_size / 80.0))
         painter.setPen(pen)
-        painter.setBrush(Qt.NoBrush)
+        painter.setBrush(Qt.NoBrush)  # type: ignore[attr-defined]
         for polygon in groups["polygon"]:
             painter.drawPolygon(QPolygonF(polygon))
         for line in groups["line"]:
             painter.drawPolyline(QPolygonF(line))
-        painter.setPen(Qt.NoPen)
+        painter.setPen(Qt.NoPen)  # type: ignore[attr-defined]
         painter.setBrush(QBrush(self._LANDMARK_FILL))
         radius = max(1.0, icon_size / 42.0)
         for group in (*groups["polygon"], *groups["line"]):

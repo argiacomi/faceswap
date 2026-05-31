@@ -241,7 +241,7 @@ def _fuse(
         # Fall back to equal weights when no static weights are configured.
         weights = {candidate.model: [1.0] * 68 for candidate in candidates}
     else:
-        weights = {model: config.weights[model] for model in (c.model for c in candidates)}
+        weights = {model: config.weights[model] for model in (c.model for c in candidates)}  # type: ignore[misc]
     matrix = np.array([weights[model] for model in (c.model for c in candidates)], dtype="float32")
     if canonical == "weighted_median":
         stack = np.stack([item.canonical_68().points for item in items], axis=0)
@@ -361,7 +361,7 @@ def resolve_alignment_geometry(
         1.0 if len(rejected) == 0 else 0.5,
         max(0.0, 1.0 - raw_score),
     ]
-    geometry_confidence = float(max(0.0, min(1.0, np.mean(confidence_components))))
+    geometry_confidence = float(max(0.0, min(1.0, np.mean(confidence_components))))  # type: ignore[arg-type]
 
     try:
         fused = _fuse(chosen_strategy, active_candidates, config)

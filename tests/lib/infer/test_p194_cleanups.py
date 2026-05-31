@@ -71,7 +71,7 @@ def test_format_images_rejects_uint8_with_non_passthrough_scale() -> None:
     the configuration mistake fails fast instead of corrupting the
     upstream batch."""
     handler = _make_handler(dtype=np.uint8, scale=(-1, 1))
-    images = np.full((2, 4, 4, 3), 128, dtype=np.uint8)
+    images = np.full((2, 4, 4, 3), 128, dtype=np.uint8)  # type: ignore[var-annotated]
     snapshot = images.copy()
 
     with pytest.raises(ValueError, match=r"uint8 plugins must use scale=\(0, 255\)"):
@@ -86,14 +86,14 @@ def test_format_images_aliases_uint8_when_scale_is_passthrough() -> None:
     """When the plugin's scale IS ``(0, 255)``, the legacy fast path
     is preserved: we return the caller's array directly (no copy)."""
     handler = _make_handler(dtype=np.uint8, scale=(0, 255))
-    images = np.full((2, 4, 4, 3), 128, dtype=np.uint8)
+    images = np.full((2, 4, 4, 3), 128, dtype=np.uint8)  # type: ignore[var-annotated]
     assert handler._format_images(images) is images
 
 
 def test_format_images_returns_float_array_for_non_uint8_plugin() -> None:
     """The pre-existing float dtype path is unchanged."""
     handler = _make_handler(dtype=np.float32, scale=(-1, 1))
-    images = np.full((1, 2, 2, 3), 255, dtype=np.uint8)
+    images = np.full((1, 2, 2, 3), 255, dtype=np.uint8)  # type: ignore[var-annotated]
 
     retval = handler._format_images(images)
 
@@ -232,7 +232,7 @@ def test_rebatch_data_trace_does_not_slice_deque() -> None:
         error_state=MagicMock(),
     )
     # Pre-seed the FIFO with more items than ``count`` to exercise the tail.
-    instance._fifo.extend(_StubBatch(2) for _ in range(3))
+    instance._fifo.extend(_StubBatch(2) for _ in range(3))  # type: ignore[misc]
     # Drive the loop without real batching machinery: report 6 boxes and
     # make the fifo/no-box appends no-ops so only the trace line is under test.
     instance._handle_non_split_batch = lambda batch: (6, instance._batch_size)  # type: ignore[method-assign]
@@ -243,4 +243,4 @@ def test_rebatch_data_trace_does_not_slice_deque() -> None:
     # future lazy-logging refactor of the call.
     iterator_mod.logger.setLevel(5)  # TRACE
 
-    instance._rebatch_data(_StubBatch(6))  # must not raise
+    instance._rebatch_data(_StubBatch(6))  # type: ignore[arg-type]  # must not raise

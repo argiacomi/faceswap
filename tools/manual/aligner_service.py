@@ -148,7 +148,7 @@ class _PluginAlignerBackend:
             detected_faces=[face],
             passthrough=True,
         ).detected_faces[0]
-        return np.asarray(result.landmarks_xy, dtype=np.float32)
+        return np.asarray(result.landmarks_xy, dtype=np.float32)  # type: ignore[no-any-return]
 
     def set_normalization(self, method: str) -> None:
         """Propagate a normalization change to the underlying pipeline."""
@@ -279,7 +279,7 @@ class ManualAlignerService:
             aligner,
             f"Aligner '{aligner}' produced {len(landmarks_array)} landmark(s)",
         )
-        return landmarks_array
+        return landmarks_array  # type: ignore[no-any-return]
 
     def set_normalization(self, normalization: str, aligner: str | None = None) -> None:
         """Propagate a normalization change to one or all loaded backends.

@@ -48,7 +48,7 @@ def _filter_with_counts(counts: list[int], filter_mode: str):
 
     instance = Filter.__new__(Filter)
     instance._globals = detected_faces._globals
-    instance._detected_faces = detected_faces
+    instance._detected_faces = detected_faces  # type: ignore[assignment]
     return instance
 
 
@@ -110,7 +110,7 @@ def test_grid_get_display_faces_treats_placeholder_as_none() -> None:
     # 1 row x 3 cols; one frame each. ``current_faces`` is per-frame.
     current_face_0 = SimpleNamespace(name="frame0_face0")
     current_face_2 = SimpleNamespace(name="frame2_face0")
-    grid._detected_faces = SimpleNamespace(
+    grid._detected_faces = SimpleNamespace(  # type: ignore[assignment]
         current_faces=[[current_face_0], [], [current_face_2]],
     )
     grid._grid = np.zeros((4, 1, 3), dtype="int")  # 1 row, 3 cols, just for shape
@@ -118,10 +118,10 @@ def test_grid_get_display_faces_treats_placeholder_as_none() -> None:
 
     Grid._get_display_faces(grid)
 
-    assert grid._display_faces.shape == (1, 3)
-    assert grid._display_faces[0, 0] is current_face_0
-    assert grid._display_faces[0, 1] is None  # placeholder
-    assert grid._display_faces[0, 2] is current_face_2
+    assert grid._display_faces.shape == (1, 3)  # type: ignore[attr-defined]
+    assert grid._display_faces[0, 0] is current_face_0  # type: ignore[index]
+    assert grid._display_faces[0, 1] is None  # type: ignore[index]  # placeholder
+    assert grid._display_faces[0, 2] is current_face_2  # type: ignore[index]
 
 
 # ---------------------------------------------------------------------------
@@ -156,7 +156,7 @@ def test_tk_globals_frame_image_returns_none_when_no_loader_attached() -> None:
 
 def test_tk_globals_attach_frame_loader_then_frame_image_uses_loader() -> None:
     """Once the loader is attached, ``frame_image`` round-trips through it."""
-    sample = np.full((480, 640, 3), 200, dtype=np.uint8)
+    sample = np.full((480, 640, 3), 200, dtype=np.uint8)  # type: ignore[var-annotated]
     inner = _FakeInnerLoader({3: sample})
     frame_loader = SimpleNamespace(_loader=inner)
     globals_ = _make_globals_without_tkinter()
@@ -192,11 +192,11 @@ def _io_with_unsaved(unsaved: bool, alignments_path: str = "/tmp/alignments.fsa"
     from tools.manual.detected_faces import _DiskIO as _IO
 
     io_obj = _IO.__new__(_IO)
-    io_obj._tk_unsaved = SimpleNamespace(get=lambda: unsaved, set=MagicMock())
+    io_obj._tk_unsaved = SimpleNamespace(get=lambda: unsaved, set=MagicMock())  # type: ignore[assignment]
     io_obj._updated_frame_indices = {0, 1}
     io_obj._sorted_frame_names = ["frame_0.png", "frame_1.png"]
-    io_obj._frame_faces = [[SimpleNamespace(to_alignment=lambda: {"f": 0})] for _ in range(2)]
-    io_obj._alignments = SimpleNamespace(
+    io_obj._frame_faces = [[SimpleNamespace(to_alignment=lambda: {"f": 0})] for _ in range(2)]  # type: ignore[list-item]
+    io_obj._alignments = SimpleNamespace(  # type: ignore[assignment]
         file=alignments_path,
         data={
             "frame_0.png": SimpleNamespace(faces=[]),
@@ -281,8 +281,8 @@ def test_on_close_calls_loader_close_then_destroy_then_exit(monkeypatch) -> None
 
     instance = Manual.__new__(Manual)
     inner_loader = SimpleNamespace(close=MagicMock())
-    instance._frame_loader = SimpleNamespace(_loader=inner_loader)
-    instance.destroy = MagicMock()
+    instance._frame_loader = SimpleNamespace(_loader=inner_loader)  # type: ignore[assignment]
+    instance.destroy = MagicMock()  # type: ignore[method-assign]
 
     exits: list[int] = []
     monkeypatch.setattr(sys, "exit", lambda code=0: exits.append(code))
@@ -312,7 +312,7 @@ def test_on_close_tolerates_missing_loader(monkeypatch) -> None:
 
     Manual._on_close(instance)
 
-    instance.destroy.assert_called_once()
+    instance.destroy.assert_called_once()  # type: ignore[attr-defined]
     assert exits == [0]
 
 
@@ -323,8 +323,8 @@ def test_on_close_swallows_loader_exception(monkeypatch) -> None:
 
     instance = Manual.__new__(Manual)
     inner_loader = SimpleNamespace(close=MagicMock(side_effect=RuntimeError("reader hung")))
-    instance._frame_loader = SimpleNamespace(_loader=inner_loader)
-    instance.destroy = MagicMock()
+    instance._frame_loader = SimpleNamespace(_loader=inner_loader)  # type: ignore[assignment]
+    instance.destroy = MagicMock()  # type: ignore[method-assign]
 
     exits: list[int] = []
     monkeypatch.setattr(sys, "exit", lambda code=0: exits.append(code))

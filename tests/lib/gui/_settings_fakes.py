@@ -54,7 +54,7 @@ class FakeOption:
 class FakeConfig(SimpleNamespace):
     """``FaceswapConfig``-compatible fake that counts saves."""
 
-    def __init__(self, sections):  # type:ignore[no-untyped-def]
+    def __init__(self, sections):
         super().__init__(sections=sections, saves=0)
 
     def save_config(self) -> None:
@@ -91,7 +91,7 @@ def tree(dialog: SettingsDialog) -> QTreeWidget:
 
     widget = dialog.findChild(QTreeWidget, "qt-shell-settings-tree")
     assert widget is not None, "settings tree widget not found"
-    return widget
+    return widget  # type: ignore[no-any-return]
 
 
 def label(dialog: SettingsDialog, name: str) -> QLabel:
@@ -100,7 +100,7 @@ def label(dialog: SettingsDialog, name: str) -> QLabel:
 
     widget = dialog.findChild(QLabel, f"qt-shell-settings-{name}")
     assert widget is not None, f"label {name!r} not found"
-    return widget
+    return widget  # type: ignore[no-any-return]
 
 
 def button(dialog: SettingsDialog, name: str) -> QPushButton:
@@ -109,7 +109,7 @@ def button(dialog: SettingsDialog, name: str) -> QPushButton:
 
     widget = dialog.findChild(QPushButton, f"qt-shell-settings-{name}")
     assert widget is not None, f"button {name!r} not found"
-    return widget
+    return widget  # type: ignore[no-any-return]
 
 
 def renderer(dialog: SettingsDialog) -> OptionsFormRenderer:
@@ -118,7 +118,7 @@ def renderer(dialog: SettingsDialog) -> OptionsFormRenderer:
 
     widget = dialog.findChild(OptionsFormRenderer, "qt-shell-settings-options")
     assert widget is not None, "settings option renderer not found"
-    return widget
+    return widget  # type: ignore[no-any-return]
 
 
 def filter_edit(dialog: SettingsDialog) -> QLineEdit:
@@ -127,14 +127,14 @@ def filter_edit(dialog: SettingsDialog) -> QLineEdit:
 
     widget = dialog.findChild(QLineEdit, "qt-shell-settings-filter")
     assert widget is not None, "settings filter widget not found"
-    return widget
+    return widget  # type: ignore[no-any-return]
 
 
-def find_item(tree_widget: QTreeWidget, identifier: str):  # type:ignore[no-untyped-def]
+def find_item(tree_widget: QTreeWidget, identifier: str):
     """Return a tree item by its hidden ``UserRole`` identifier, or ``None``."""
     from PySide6.QtCore import Qt
 
-    def walk(item):  # type:ignore[no-untyped-def]
+    def walk(item):
         if item.data(0, Qt.UserRole) == identifier:
             return item
         for index in range(item.childCount()):

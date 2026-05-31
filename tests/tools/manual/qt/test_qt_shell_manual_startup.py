@@ -36,12 +36,12 @@ def _session_with_frames(folder: Path, count: int = 2) -> ManualSession:
     return ManualSession.create(frames=str(folder))
 
 
-def _drain_qt_events(qtbot, *, timeout_ms: int = 1500) -> None:  # type:ignore[no-untyped-def]
+def _drain_qt_events(qtbot, *, timeout_ms: int = 1500) -> None:
     """Pump Qt events until the predicate fires or timeout — used to await signals."""
     qtbot.wait(timeout_ms)
 
 
-def test_startup_task_completes_quickly_for_missing_alignments(  # type:ignore[no-untyped-def]
+def test_startup_task_completes_quickly_for_missing_alignments(
     qtbot,
     tmp_path: Path,
 ) -> None:
@@ -64,7 +64,7 @@ def test_startup_task_completes_quickly_for_missing_alignments(  # type:ignore[n
     assert progress == [("complete", "No alignments file yet — ready")]
 
 
-def test_startup_task_open_and_thumb_stages_complete(  # type:ignore[no-untyped-def]
+def test_startup_task_open_and_thumb_stages_complete(
     qtbot,
     tmp_path: Path,
 ) -> None:
@@ -103,7 +103,7 @@ def test_startup_task_open_and_thumb_stages_complete(  # type:ignore[no-untyped-
     assert "frame_000.png" in reloaded.data
 
 
-def test_manual_tool_window_seeds_editable_model_synchronously(  # type:ignore[no-untyped-def]
+def test_manual_tool_window_seeds_editable_model_synchronously(
     qtbot,
     tmp_path: Path,
 ) -> None:
@@ -124,7 +124,7 @@ def test_manual_tool_window_seeds_editable_model_synchronously(  # type:ignore[n
     assert len(window.face_panel.faces) == 1
 
 
-def test_manual_tool_window_seeds_sparse_alignments_to_filename_index(  # type:ignore[no-untyped-def]
+def test_manual_tool_window_seeds_sparse_alignments_to_filename_index(
     qtbot,
     tmp_path: Path,
 ) -> None:
@@ -146,7 +146,7 @@ def test_manual_tool_window_seeds_sparse_alignments_to_filename_index(  # type:i
     assert window.editable_alignments.faces(2)[0].bbox == (10.0, 10.0, 30.0, 30.0)
 
 
-def test_startup_task_emits_failed_signal_on_exception(  # type:ignore[no-untyped-def]
+def test_startup_task_emits_failed_signal_on_exception(
     qtbot,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -175,7 +175,7 @@ def test_startup_task_emits_failed_signal_on_exception(  # type:ignore[no-untype
     assert failed and "simulated open()" in failed[0]
 
 
-def test_manual_tool_window_runs_startup_worker(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_manual_tool_window_runs_startup_worker(qtbot, tmp_path: Path) -> None:
     """ManualToolWindow constructs and drives a ManualStartupWorker."""
     session = _session_with_frames(tmp_path)
     window = ManualToolWindow(session)
@@ -187,7 +187,7 @@ def test_manual_tool_window_runs_startup_worker(qtbot, tmp_path: Path) -> None: 
     assert "ready" in window._status_label.text().lower()  # noqa: SLF001
 
 
-def test_manual_tool_window_pipes_messages_to_console_logger(  # type:ignore[no-untyped-def]
+def test_manual_tool_window_pipes_messages_to_console_logger(
     qtbot,
     tmp_path: Path,
 ) -> None:
@@ -204,7 +204,7 @@ def test_manual_tool_window_pipes_messages_to_console_logger(  # type:ignore[no-
     assert any("ready" in line.lower() for line in captured)
 
 
-def test_manual_tool_window_shows_failure_dialog_on_startup_error(  # type:ignore[no-untyped-def]
+def test_manual_tool_window_shows_failure_dialog_on_startup_error(
     qtbot,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -227,7 +227,7 @@ def test_manual_tool_window_shows_failure_dialog_on_startup_error(  # type:ignor
     assert any("boom" in record.message for record in caplog.records)
 
 
-def test_video_metadata_loaded_before_video_provider_starts(  # type:ignore[no-untyped-def]
+def test_video_metadata_loaded_before_video_provider_starts(
     qtbot,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -266,7 +266,7 @@ def test_video_metadata_loaded_before_video_provider_starts(  # type:ignore[no-u
     observed: dict[str, object] = {}
 
     def _capture_start_video_provider(self: object) -> None:
-        observed["video_metadata"] = self._video_metadata  # noqa: SLF001
+        observed["video_metadata"] = self._video_metadata  # type: ignore[attr-defined]  # noqa: SLF001
 
     monkeypatch.setattr(
         ManualToolWindow,
@@ -283,7 +283,7 @@ def test_video_metadata_loaded_before_video_provider_starts(  # type:ignore[no-u
     )
 
 
-def test_manual_startup_worker_stop_quits_thread(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_manual_startup_worker_stop_quits_thread(qtbot, tmp_path: Path) -> None:
     """ManualStartupWorker.stop() shuts the QThread down cleanly."""
     session = _session_with_frames(tmp_path)
     handle = session.alignments_handle()
@@ -295,7 +295,7 @@ def test_manual_startup_worker_stop_quits_thread(qtbot, tmp_path: Path) -> None:
     assert worker._thread.isRunning() is False  # noqa: SLF001
 
 
-def test_manual_startup_progress_bar_reports_determinate_percent(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_manual_startup_progress_bar_reports_determinate_percent(qtbot, tmp_path: Path) -> None:
     """Each startup stage advances the progress bar to its mapped percent."""
     from tools.manual.qt import ManualToolWindow, _ManualStartupTask
 
@@ -335,7 +335,7 @@ def test_manual_startup_task_stage_percent_is_monotonic() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_emit_thumb_progress_carries_per_event_percent(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_emit_thumb_progress_carries_per_event_percent(qtbot, tmp_path: Path) -> None:
     """Multi-step thumbnail progress emits the right percent for every step.
 
     The previous implementation mutated ``STAGE_PERCENT["thumbs_progress"]``
@@ -366,7 +366,7 @@ def test_emit_thumb_progress_carries_per_event_percent(qtbot, tmp_path: Path) ->
     assert received[-1][0] == 99
 
 
-def test_thumb_progress_state_does_not_bleed_between_tasks(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_thumb_progress_state_does_not_bleed_between_tasks(qtbot, tmp_path: Path) -> None:
     """Two startup task instances must not influence each other's percent."""
     folder_a = tmp_path / "a"
     folder_b = tmp_path / "b"
@@ -408,7 +408,7 @@ def test_stage_percent_no_longer_contains_thumbs_progress() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_thumbs_named_stage_does_not_reset_live_thumb_percent(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_thumbs_named_stage_does_not_reset_live_thumb_percent(qtbot, tmp_path: Path) -> None:
     """After a per-event percent fires, the named ``thumbs`` stage must not
     repaint the bar back to the 66% anchor.
 
@@ -444,7 +444,7 @@ def test_thumbs_named_stage_does_not_reset_live_thumb_percent(qtbot, tmp_path: P
 
 def test_thumbs_named_stage_still_paints_anchor_before_live_progress(
     qtbot, tmp_path: Path
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """The initial ``thumbs`` stage *does* still paint 66% — the guard only
     suppresses the *reset* once live progress has started."""
     session = _session_with_frames(tmp_path)
@@ -458,7 +458,7 @@ def test_thumbs_named_stage_still_paints_anchor_before_live_progress(
     assert window._thumb_progress_seen is False
 
 
-def test_startup_retry_resets_thumb_progress_seen_flag(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_startup_retry_resets_thumb_progress_seen_flag(qtbot, tmp_path: Path) -> None:
     """A second startup (e.g. after a failure + retry) clears the guard flag."""
     session = _session_with_frames(tmp_path)
     window = ManualToolWindow(session)
@@ -478,7 +478,7 @@ def test_startup_retry_resets_thumb_progress_seen_flag(qtbot, tmp_path: Path) ->
 # ---------------------------------------------------------------------------
 
 
-def test_startup_worker_is_torn_down_after_completion(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_startup_worker_is_torn_down_after_completion(qtbot, tmp_path: Path) -> None:
     """``_on_startup_completed`` must drain + drop ``_startup_worker``.
 
     Before this fix every Manual Tool test left the startup ``QThread``
@@ -497,7 +497,7 @@ def test_startup_worker_is_torn_down_after_completion(qtbot, tmp_path: Path) -> 
     assert window._startup_worker is None
 
 
-def test_startup_worker_is_torn_down_after_failure(qtbot, tmp_path: Path, monkeypatch) -> None:  # type:ignore[no-untyped-def]
+def test_startup_worker_is_torn_down_after_failure(qtbot, tmp_path: Path, monkeypatch) -> None:
     """``_on_startup_failed`` also drains + drops the worker.
 
     Without the drain a failed startup leaves the QThread running until
@@ -506,7 +506,7 @@ def test_startup_worker_is_torn_down_after_failure(qtbot, tmp_path: Path, monkey
     from PySide6.QtWidgets import QMessageBox
 
     # Force the startup task to fail by making the alignments file unreadable.
-    def _broken_open(self) -> object:  # type:ignore[no-untyped-def]
+    def _broken_open(self) -> object:
         raise RuntimeError("simulated open failure")
 
     from tools.manual.session import ManualAlignmentsHandle

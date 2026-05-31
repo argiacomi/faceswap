@@ -43,7 +43,7 @@ def test_bucket_for_features_classifies_dark_and_overexposed() -> None:
 
 
 def test_bucket_for_features_classifies_side_lit() -> None:
-    image = np.full((32, 32, 3), 90, dtype=np.uint8)
+    image = np.full((32, 32, 3), 90, dtype=np.uint8)  # type: ignore[var-annotated]
     image[:, 16:] = 200  # bright right half
 
     features = compute_lighting_features(image)
@@ -54,7 +54,7 @@ def test_bucket_for_features_classifies_side_lit() -> None:
 
 
 def test_bucket_for_features_classifies_top_lit() -> None:
-    image = np.full((32, 32, 3), 90, dtype=np.uint8)
+    image = np.full((32, 32, 3), 90, dtype=np.uint8)  # type: ignore[var-annotated]
     image[:16, :] = 200  # bright top half
 
     features = compute_lighting_features(image)
@@ -67,7 +67,7 @@ def test_bucket_for_features_classifies_top_lit() -> None:
 def test_bucket_for_features_classifies_high_contrast() -> None:
     # Checkerboard of black and white pixels: large per-pixel variance but
     # equal means in every quadrant so side/top buckets do not trigger.
-    image = np.zeros((32, 32, 3), dtype=np.uint8)
+    image = np.zeros((32, 32, 3), dtype=np.uint8)  # type: ignore[var-annotated]
     grid = np.indices((32, 32)).sum(axis=0) % 2
     image[grid == 0] = 255
 
@@ -81,12 +81,12 @@ def test_bucket_for_features_classifies_high_contrast() -> None:
 
 
 def test_bucket_for_features_classifies_warm_and_cool() -> None:
-    warm_image = np.zeros((32, 32, 3), dtype=np.uint8)
+    warm_image = np.zeros((32, 32, 3), dtype=np.uint8)  # type: ignore[var-annotated]
     warm_image[:, :, 2] = 160  # red
     warm_image[:, :, 1] = 110  # green
     warm_image[:, :, 0] = 90  # blue
 
-    cool_image = np.zeros((32, 32, 3), dtype=np.uint8)
+    cool_image = np.zeros((32, 32, 3), dtype=np.uint8)  # type: ignore[var-annotated]
     cool_image[:, :, 0] = 160  # blue
     cool_image[:, :, 1] = 110
     cool_image[:, :, 2] = 90

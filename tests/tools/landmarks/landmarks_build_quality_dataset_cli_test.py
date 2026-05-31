@@ -24,7 +24,7 @@ from tools.landmarks import build_quality_dataset
 
 def _points_68() -> np.ndarray:
     """Return deterministic 68-point landmarks."""
-    return np.stack(
+    return np.stack(  # type: ignore[no-any-return]
         (
             np.linspace(0, 67, 68, dtype="float32"),
             np.linspace(10, 77, 68, dtype="float32"),
@@ -35,7 +35,7 @@ def _points_68() -> np.ndarray:
 
 def _points_98() -> np.ndarray:
     """Return deterministic 98-point landmarks."""
-    return np.stack(
+    return np.stack(  # type: ignore[no-any-return]
         (
             np.linspace(0, 97, 98, dtype="float32"),
             np.linspace(100, 197, 98, dtype="float32"),
@@ -48,7 +48,7 @@ def _write_png(path: Path) -> None:
     """Write a tiny valid PNG for fixture-copy and overlay tests."""
     cv2 = pytest.importorskip("cv2")
     path.parent.mkdir(parents=True, exist_ok=True)
-    image = np.zeros((96, 96, 3), dtype="uint8")
+    image = np.zeros((96, 96, 3), dtype="uint8")  # type: ignore[var-annotated]
     image[..., 1] = 128
     assert cv2.imwrite(str(path), image)
 

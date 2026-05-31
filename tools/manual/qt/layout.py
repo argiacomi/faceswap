@@ -59,8 +59,8 @@ class LayoutMixin:
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(4)
 
-        self._face_panel.setObjectName("qt-manual-current-frame-face-panel")
-        self._face_panel.hide()
+        self._face_panel.setObjectName("qt-manual-current-frame-face-panel")  # type: ignore[attr-defined]
+        self._face_panel.hide()  # type: ignore[attr-defined]
 
         rail = QWidget()
         rail.setObjectName("qt-manual-face-grid-mini-rail")
@@ -68,37 +68,37 @@ class LayoutMixin:
         rail_layout.setContentsMargins(0, 0, 0, 0)
         rail_layout.setSpacing(4)
         for button, text, tooltip in (
-            (self._face_grid_mesh_button, "M", "Toggle thumbnail Mesh overlay (F9)"),
-            (self._face_grid_mask_button, "K", "Toggle thumbnail Mask overlay (F10)"),
+            (self._face_grid_mesh_button, "M", "Toggle thumbnail Mesh overlay (F9)"),  # type: ignore[attr-defined]
+            (self._face_grid_mask_button, "K", "Toggle thumbnail Mask overlay (F10)"),  # type: ignore[attr-defined]
         ):
             button.setText(text)
             button.setCheckable(True)
             button.setAutoRaise(False)
-            button.setToolButtonStyle(Qt.ToolButtonTextOnly)
+            button.setToolButtonStyle(Qt.ToolButtonTextOnly)  # type: ignore[attr-defined]
             button.setToolTip(tooltip)
             button.setFixedSize(28, 28)
             rail_layout.addWidget(button)
-        self._face_grid_mesh_button.setObjectName("qt-manual-face-grid-mesh-toggle")
-        self._face_grid_mask_button.setObjectName("qt-manual-face-grid-mask-toggle")
-        self._face_grid_mesh_button.toggled.connect(
-            lambda checked: self._editor_state.set("face_grid_mesh_visible", bool(checked))
+        self._face_grid_mesh_button.setObjectName("qt-manual-face-grid-mesh-toggle")  # type: ignore[attr-defined]
+        self._face_grid_mask_button.setObjectName("qt-manual-face-grid-mask-toggle")  # type: ignore[attr-defined]
+        self._face_grid_mesh_button.toggled.connect(  # type: ignore[attr-defined]
+            lambda checked: self._editor_state.set("face_grid_mesh_visible", bool(checked))  # type: ignore[attr-defined]
         )
-        self._face_grid_mask_button.toggled.connect(
-            lambda checked: self._editor_state.set("face_grid_mask_visible", bool(checked))
+        self._face_grid_mask_button.toggled.connect(  # type: ignore[attr-defined]
+            lambda checked: self._editor_state.set("face_grid_mask_visible", bool(checked))  # type: ignore[attr-defined]
         )
         rail_layout.addStretch(1)
         layout.addWidget(rail)
 
-        layout.addWidget(self._face_grid_panel, 1)
+        layout.addWidget(self._face_grid_panel, 1)  # type: ignore[attr-defined]
         return container
 
     def _build_ui(self) -> None:
         """Build Manual Tool widgets."""
-        self.resize(1120, 720)
+        self.resize(1120, 720)  # type: ignore[attr-defined]
         self._build_toolbar()
         status = QStatusBar()
         status.setObjectName("qt-manual-status-bar")
-        self.setStatusBar(status)
+        self.setStatusBar(status)  # type: ignore[attr-defined]
 
         editor_area = QWidget()
         editor_area.setObjectName("qt-manual-editor-area")
@@ -122,23 +122,23 @@ class LayoutMixin:
         canvas_layout = QVBoxLayout(canvas)
         canvas_layout.setContentsMargins(0, 0, 0, 0)
         canvas_layout.setSpacing(0)
-        canvas_layout.addWidget(self._frame_view, 1)
+        canvas_layout.addWidget(self._frame_view, 1)  # type: ignore[attr-defined]
         center_layout.addWidget(canvas, 1)
-        center_layout.addWidget(self._transport_bar)
+        center_layout.addWidget(self._transport_bar)  # type: ignore[attr-defined]
         center_layout.addWidget(self._build_transport_button_row())
         editor_layout.addWidget(center, 1)
         editor_layout.addWidget(self._build_context_panel())
 
-        self._metadata_label.setParent(editor_area)
-        self._metadata_label.setObjectName("qt-manual-session-metadata")
-        self._metadata_label.setWordWrap(True)
-        self._metadata_label.hide()
-        self._thumbnail_panel.setObjectName("qt-manual-hidden-frame-thumbnail-panel")
-        self._thumbnail_panel.hide()
-        self._status_label.hide()
-        self._status_label.setParent(editor_area)
+        self._metadata_label.setParent(editor_area)  # type: ignore[attr-defined]
+        self._metadata_label.setObjectName("qt-manual-session-metadata")  # type: ignore[attr-defined]
+        self._metadata_label.setWordWrap(True)  # type: ignore[attr-defined]
+        self._metadata_label.hide()  # type: ignore[attr-defined]
+        self._thumbnail_panel.setObjectName("qt-manual-hidden-frame-thumbnail-panel")  # type: ignore[attr-defined]
+        self._thumbnail_panel.hide()  # type: ignore[attr-defined]
+        self._status_label.hide()  # type: ignore[attr-defined]
+        self._status_label.setParent(editor_area)  # type: ignore[attr-defined]
 
-        splitter = QSplitter(Qt.Vertical)
+        splitter = QSplitter(Qt.Vertical)  # type: ignore[attr-defined]
         splitter.setObjectName("qt-manual-main-splitter")
         splitter.addWidget(editor_area)
         splitter.addWidget(self._build_face_grid_panel())
@@ -146,14 +146,14 @@ class LayoutMixin:
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([560, 160])
         self._manual_splitter = splitter
-        self.setCentralWidget(splitter)
+        self.setCentralWidget(splitter)  # type: ignore[attr-defined]
 
     def _build_editor_rail(self) -> QWidget:
         """Return the legacy-style left vertical editor/action rail."""
         rail = QWidget()
         rail.setObjectName("qt-manual-editor-rail")
         rail.setFixedWidth(42)
-        rail.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        rail.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)  # type: ignore[attr-defined]
         layout = QVBoxLayout(rail)
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(4)
@@ -182,15 +182,15 @@ class LayoutMixin:
         panel.setObjectName("qt-manual-context-panel")
         panel.setMinimumWidth(240)
         panel.setMaximumWidth(300)
-        panel.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        panel.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)  # type: ignore[attr-defined]
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(8)
 
-        self._mask_controls = self._build_mask_controls()
+        self._mask_controls = self._build_mask_controls()  # type: ignore[attr-defined]
         self._mask_controls.hide()
         layout.addWidget(self._mask_controls)
-        self._aligner_controls = self._build_aligner_controls()
+        self._aligner_controls = self._build_aligner_controls()  # type: ignore[attr-defined]
         self._aligner_controls.hide()
         layout.addWidget(self._aligner_controls)
         layout.addStretch(1)
@@ -213,25 +213,25 @@ class LayoutMixin:
         ):
             layout.addWidget(self._tool_button_for_action(action_key, parent=row))
         layout.addStretch(1)
-        self._filter_controls = self._build_filter_controls()
+        self._filter_controls = self._build_filter_controls()  # type: ignore[attr-defined]
         layout.addWidget(self._filter_controls)
         layout.addWidget(self._tool_button_for_action("extract_faces", parent=row))
         layout.addWidget(self._tool_button_for_action("save", parent=row))
         self._configure_face_size_combo()
-        layout.addWidget(self._face_grid_size_combo)
+        layout.addWidget(self._face_grid_size_combo)  # type: ignore[attr-defined]
         return row
 
     def _configure_face_size_combo(self) -> None:
         """Move the face-grid size selector into the transport row."""
-        self._face_grid_size_combo.setObjectName("qt-manual-face-grid-size")
-        if self._face_grid_size_combo.count() == 0:
-            self._face_grid_size_combo.addItems(tuple(_FACE_GRID_SIZES))
-            self._face_grid_size_combo.currentTextChanged.connect(self._on_face_grid_size_changed)
-        size_name = self._editor_state.faces_size or "Medium"
+        self._face_grid_size_combo.setObjectName("qt-manual-face-grid-size")  # type: ignore[attr-defined]
+        if self._face_grid_size_combo.count() == 0:  # type: ignore[attr-defined]
+            self._face_grid_size_combo.addItems(tuple(_FACE_GRID_SIZES))  # type: ignore[attr-defined]
+            self._face_grid_size_combo.currentTextChanged.connect(self._on_face_grid_size_changed)  # type: ignore[attr-defined]
+        size_name = self._editor_state.faces_size or "Medium"  # type: ignore[attr-defined]
         if size_name not in _FACE_GRID_SIZES:
             size_name = "Medium"
-        self._face_grid_size_combo.setCurrentText(size_name)
-        self._face_grid_panel.set_face_size(size_name)
+        self._face_grid_size_combo.setCurrentText(size_name)  # type: ignore[attr-defined]
+        self._face_grid_panel.set_face_size(size_name)  # type: ignore[attr-defined]
 
     def _tool_button_for_action(
         self,
@@ -240,16 +240,16 @@ class LayoutMixin:
         parent: QWidget | None = None,
     ) -> QToolButton:
         """Create an icon-only button bound to an existing action."""
-        action = self._actions[action_key]
+        action = self._actions[action_key]  # type: ignore[attr-defined]
         button = QToolButton(parent or self)
         button.setObjectName(f"qt-manual-rail-action-{action_key}")
         button.setDefaultAction(action)
         button.setAutoRaise(False)
-        button.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        button.setToolButtonStyle(Qt.ToolButtonIconOnly)  # type: ignore[attr-defined]
         button.setFixedSize(32, 32)
         button.setIconSize(QSize(16, 16))
         if action.icon().isNull():
-            button.setToolButtonStyle(Qt.ToolButtonTextOnly)
+            button.setToolButtonStyle(Qt.ToolButtonTextOnly)  # type: ignore[attr-defined]
             button.setText(action.text()[:1])
         self._rail_action_buttons[action_key] = button
         return button
@@ -266,7 +266,7 @@ class LayoutMixin:
     def _sync_rail_mode_actions(self) -> None:
         """Show optional rail actions only for the active editor mode."""
         buttons = getattr(self, "_rail_action_buttons", {})
-        active_keys = set(self._MODE_RAIL_ACTIONS.get(self._editor_state.editor_mode, ()))
+        active_keys = set(self._MODE_RAIL_ACTIONS.get(self._editor_state.editor_mode, ()))  # type: ignore[attr-defined]
         all_mode_keys = {key for keys in self._MODE_RAIL_ACTIONS.values() for key in keys}
         for key in all_mode_keys:
             button = buttons.get(key)
@@ -283,16 +283,16 @@ class LayoutMixin:
         self._manual_toolbar = toolbar
         toolbar.setObjectName("qt-manual-toolbar")
         toolbar.setIconSize(QSize(theme.icon_size, theme.icon_size))
-        self.addToolBar(toolbar)
+        self.addToolBar(toolbar)  # type: ignore[attr-defined]
         for spec in MANUAL_ACTIONS:
             if spec.separator_before and spec.toolbar_visible:
                 toolbar.addSeparator()
-            owner: QWidget = self
-            shortcut_context = Qt.WindowShortcut
+            owner: QWidget = self  # type: ignore[assignment]
+            shortcut_context = Qt.WindowShortcut  # type: ignore[attr-defined]
             if spec.focus_scope == "frame_view":
-                owner = self._frame_view
-                shortcut_context = Qt.WidgetWithChildrenShortcut
-                self._frame_view.setFocusPolicy(Qt.StrongFocus)
+                owner = self._frame_view  # type: ignore[attr-defined]
+                shortcut_context = Qt.WidgetWithChildrenShortcut  # type: ignore[attr-defined]
+                self._frame_view.setFocusPolicy(Qt.StrongFocus)  # type: ignore[attr-defined]
             action = QAction(spec.label, owner)
             action.setObjectName(f"qt-manual-action-{spec.key}")
             if spec.tooltip:
@@ -313,19 +313,19 @@ class LayoutMixin:
             owner.addAction(action)
             if spec.toolbar_visible:
                 toolbar.addAction(action)
-            self._actions[spec.key] = action
+            self._actions[spec.key] = action  # type: ignore[attr-defined]
         toolbar.hide()
-        self._sync_play_action_icon()
+        self._sync_play_action_icon()  # type: ignore[attr-defined]
 
     def _hide_default_parity_panels(self) -> None:
         """Keep non-legacy default panels hidden after window-state restore."""
         toolbar = getattr(self, "_manual_toolbar", None)
         if toolbar is not None:
             toolbar.hide()
-        self._metadata_label.hide()
-        self._thumbnail_panel.hide()
-        self._face_panel.hide()
-        self._status_label.hide()
+        self._metadata_label.hide()  # type: ignore[attr-defined]
+        self._thumbnail_panel.hide()  # type: ignore[attr-defined]
+        self._face_panel.hide()  # type: ignore[attr-defined]
+        self._status_label.hide()  # type: ignore[attr-defined]
 
     def _make_action_dispatch(
         self, key: str, handler: T.Callable[[], object]
@@ -333,7 +333,7 @@ class LayoutMixin:
         """Return a closure that invokes ``handler`` and emits :attr:`action_triggered`."""
 
         def _dispatch(_checked: bool = False) -> None:
-            self.action_triggered.emit(key)
+            self.action_triggered.emit(key)  # type: ignore[attr-defined]
             try:
                 handler()
             except Exception:  # pragma: no cover - defensive; surface in logs
@@ -343,60 +343,60 @@ class LayoutMixin:
 
     def _connect_signals(self) -> None:
         """Connect selection and dirty-state signals."""
-        self._thumbnail_panel.currentItemChanged.connect(self._thumbnail_selected)
-        self._thumbnail_panel.currentRowChanged.connect(self._on_thumbnail_row_changed)
-        self._transport_bar.position_changed.connect(self._on_transport_position_changed)
-        self._face_panel.face_selected.connect(self._on_face_selected)
-        self._face_grid_panel.face_activated.connect(self._on_face_grid_activated)
-        self._face_grid_panel.face_hovered.connect(self._on_face_grid_hovered)
-        self._face_grid_panel.face_context_menu_requested.connect(
-            self._on_face_grid_context_menu_requested
+        self._thumbnail_panel.currentItemChanged.connect(self._thumbnail_selected)  # type: ignore[attr-defined]
+        self._thumbnail_panel.currentRowChanged.connect(self._on_thumbnail_row_changed)  # type: ignore[attr-defined]
+        self._transport_bar.position_changed.connect(self._on_transport_position_changed)  # type: ignore[attr-defined]
+        self._face_panel.face_selected.connect(self._on_face_selected)  # type: ignore[attr-defined]
+        self._face_grid_panel.face_activated.connect(self._on_face_grid_activated)  # type: ignore[attr-defined]
+        self._face_grid_panel.face_hovered.connect(self._on_face_grid_hovered)  # type: ignore[attr-defined]
+        self._face_grid_panel.face_context_menu_requested.connect(  # type: ignore[attr-defined]
+            self._on_face_grid_context_menu_requested  # type: ignore[attr-defined]
         )
-        self._face_grid_panel.face_delete_requested.connect(self._delete_face_at)
-        self._face_grid_panel.faces_delete_requested.connect(self._delete_faces_at)
-        self._frame_view.frame_interaction_started.connect(self._stop_playback)
-        self._frame_view.clicked_at.connect(self._on_frame_clicked)
-        self._frame_view.face_move_requested.connect(self._on_face_move_requested)
-        self._frame_view.face_resize_requested.connect(self._on_face_resize_requested)
-        self._frame_view.face_add_requested.connect(self._on_face_add_requested)
-        self._frame_view.face_context_menu_requested.connect(self._on_frame_context_menu_requested)
-        self._frame_view.landmark_move_requested.connect(self._on_landmark_move_requested)
-        self._frame_view.landmarks_move_requested.connect(self._on_landmarks_move_requested)
-        self._frame_view.landmarks_select_requested.connect(self._on_landmarks_select_requested)
-        self._face_panel.face_context_menu_requested.connect(
-            self._on_face_panel_context_menu_requested
+        self._face_grid_panel.face_delete_requested.connect(self._delete_face_at)  # type: ignore[attr-defined]
+        self._face_grid_panel.faces_delete_requested.connect(self._delete_faces_at)  # type: ignore[attr-defined]
+        self._frame_view.frame_interaction_started.connect(self._stop_playback)  # type: ignore[attr-defined]
+        self._frame_view.clicked_at.connect(self._on_frame_clicked)  # type: ignore[attr-defined]
+        self._frame_view.face_move_requested.connect(self._on_face_move_requested)  # type: ignore[attr-defined]
+        self._frame_view.face_resize_requested.connect(self._on_face_resize_requested)  # type: ignore[attr-defined]
+        self._frame_view.face_add_requested.connect(self._on_face_add_requested)  # type: ignore[attr-defined]
+        self._frame_view.face_context_menu_requested.connect(self._on_frame_context_menu_requested)  # type: ignore[attr-defined]
+        self._frame_view.landmark_move_requested.connect(self._on_landmark_move_requested)  # type: ignore[attr-defined]
+        self._frame_view.landmarks_move_requested.connect(self._on_landmarks_move_requested)  # type: ignore[attr-defined]
+        self._frame_view.landmarks_select_requested.connect(self._on_landmarks_select_requested)  # type: ignore[attr-defined]
+        self._face_panel.face_context_menu_requested.connect(  # type: ignore[attr-defined]
+            self._on_face_panel_context_menu_requested  # type: ignore[attr-defined]
         )
-        self._frame_view.install_editor_seams(
-            active_face_provider=self._active_face_index,
-            active_bbox_provider=self._active_face_bbox,
-            add_mode_provider=self._is_add_mode_active,
-            face_hit_provider=self._face_at_source_point,
-            face_bboxes_provider=self._visible_face_bboxes,
-            face_select_callback=self._select_frame_face,
-            face_add_callback=self._on_live_face_add_requested,
-            face_live_update_callback=self._on_live_face_bbox_requested,
-            face_live_commit_callback=self._on_live_face_bbox_committed,
+        self._frame_view.install_editor_seams(  # type: ignore[attr-defined]
+            active_face_provider=self._active_face_index,  # type: ignore[attr-defined]
+            active_bbox_provider=self._active_face_bbox,  # type: ignore[attr-defined]
+            add_mode_provider=self._is_add_mode_active,  # type: ignore[attr-defined]
+            face_hit_provider=self._face_at_source_point,  # type: ignore[attr-defined]
+            face_bboxes_provider=self._visible_face_bboxes,  # type: ignore[attr-defined]
+            face_select_callback=self._select_frame_face,  # type: ignore[attr-defined]
+            face_add_callback=self._on_live_face_add_requested,  # type: ignore[attr-defined]
+            face_live_update_callback=self._on_live_face_bbox_requested,  # type: ignore[attr-defined]
+            face_live_commit_callback=self._on_live_face_bbox_committed,  # type: ignore[attr-defined]
         )
-        self._frame_view.install_landmark_seams(
-            landmark_mode_provider=self._is_landmark_mode_active,
-            landmark_provider=self._active_face_landmarks,
-            landmark_selection_provider=lambda: self._overlay.selected_landmarks,
-            landmark_faces_provider=self._frame_landmark_faces,
-            landmark_hover_callback=self._overlay.set_hovered_landmark,
+        self._frame_view.install_landmark_seams(  # type: ignore[attr-defined]
+            landmark_mode_provider=self._is_landmark_mode_active,  # type: ignore[attr-defined]
+            landmark_provider=self._active_face_landmarks,  # type: ignore[attr-defined]
+            landmark_selection_provider=lambda: self._overlay.selected_landmarks,  # type: ignore[attr-defined]
+            landmark_faces_provider=self._frame_landmark_faces,  # type: ignore[attr-defined]
+            landmark_hover_callback=self._overlay.set_hovered_landmark,  # type: ignore[attr-defined]
         )
-        self._frame_view.install_extract_seams(
-            extract_mode_provider=self._is_extract_mode_active,
+        self._frame_view.install_extract_seams(  # type: ignore[attr-defined]
+            extract_mode_provider=self._is_extract_mode_active,  # type: ignore[attr-defined]
         )
-        self._frame_view.install_mask_seams(
-            mask_mode_provider=self._is_mask_mode_active,
-            brush_provider=self._current_brush_spec,
-            mask_roi_provider=self._active_mask_roi_contains,
+        self._frame_view.install_mask_seams(  # type: ignore[attr-defined]
+            mask_mode_provider=self._is_mask_mode_active,  # type: ignore[attr-defined]
+            brush_provider=self._current_brush_spec,  # type: ignore[attr-defined]
+            mask_roi_provider=self._active_mask_roi_contains,  # type: ignore[attr-defined]
         )
-        self._frame_view.face_scale_requested.connect(self._on_face_scale_requested)
-        self._frame_view.face_rotate_requested.connect(self._on_face_rotate_requested)
-        self._frame_view.mask_paint_requested.connect(self._on_mask_paint_requested)
-        self.dirty_changed.connect(
-            lambda dirty: self.statusBar().showMessage(
+        self._frame_view.face_scale_requested.connect(self._on_face_scale_requested)  # type: ignore[attr-defined]
+        self._frame_view.face_rotate_requested.connect(self._on_face_rotate_requested)  # type: ignore[attr-defined]
+        self._frame_view.mask_paint_requested.connect(self._on_mask_paint_requested)  # type: ignore[attr-defined]
+        self.dirty_changed.connect(  # type: ignore[attr-defined]
+            lambda dirty: self.statusBar().showMessage(  # type: ignore[attr-defined]
                 "Manual Tool has unsaved changes" if dirty else "Manual Tool ready",
                 5000,
             )

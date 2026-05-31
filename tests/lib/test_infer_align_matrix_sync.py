@@ -43,7 +43,7 @@ class _FakeReAlign:
             ],
             dtype="float32",
         )
-        self._matrices = np.empty((0, 3, 3), dtype="float32")
+        self._matrices = np.empty((0, 3, 3), dtype="float32")  # type: ignore[var-annotated]
 
     @property
     def matrices(self) -> np.ndarray:
@@ -63,15 +63,15 @@ def test_prepare_data_passes_realign_second_pass_matrices_to_plugin() -> None:
     plugin = _MatrixAwarePlugin()
     re_align = _FakeReAlign()
     handler = object.__new__(Align)
-    handler.plugin = plugin
-    handler._re_align = re_align
-    handler._re_feed = SimpleNamespace(total_feeds=1)
+    handler.plugin = plugin  # type: ignore[assignment]
+    handler._re_align = re_align  # type: ignore[assignment]
+    handler._re_feed = SimpleNamespace(total_feeds=1)  # type: ignore[assignment]
     batch = SimpleNamespace(
         bboxes=np.array([[10, 20, 30, 40], [50, 60, 70, 80]], dtype="int32"),
         data=None,
     )
 
-    Align._prepare_data(handler, batch, iteration=2)
+    Align._prepare_data(handler, batch, iteration=2)  # type: ignore[arg-type]
 
     np.testing.assert_allclose(plugin.matrices, re_align.matrices)
     np.testing.assert_allclose(plugin.detector_bboxes, batch.bboxes.astype("float32"))
@@ -81,14 +81,14 @@ def test_prepare_data_passes_realign_second_pass_matrices_to_plugin() -> None:
 def test_post_process_persists_plugin_debug_metadata() -> None:
     """Align post-process stores plugin metadata for alignments serialization."""
     handler = object.__new__(Align)
-    handler.plugin = SimpleNamespace(
+    handler.plugin = SimpleNamespace(  # type: ignore[assignment]
         name="Ensemble",
         last_debug_metadata=[{"selected_candidate": "spiga", "bucket": "profile_left"}],
     )
     handler._overridden = {"post_process": False}
-    handler._re_align = SimpleNamespace(enabled=False)
-    handler._re_feed = SimpleNamespace(total_feeds=1, merge=lambda landmarks: landmarks)
-    handler._filters = lambda batch: None
+    handler._re_align = SimpleNamespace(enabled=False)  # type: ignore[assignment]
+    handler._re_feed = SimpleNamespace(total_feeds=1, merge=lambda landmarks: landmarks)  # type: ignore[assignment]
+    handler._filters = lambda batch: None  # type: ignore[assignment]
     handler._landmark_type = None
     batch = SimpleNamespace(
         data=np.zeros((1, 68, 2), dtype="float32"),
@@ -96,7 +96,7 @@ def test_post_process_persists_plugin_debug_metadata() -> None:
         aligned=ExtractBatchAligned(),
     )
 
-    Align.post_process(handler, batch)
+    Align.post_process(handler, batch)  # type: ignore[arg-type]
 
     assert batch.aligned.metadata == [
         {"landmark_ensemble": {"selected_candidate": "spiga", "bucket": "profile_left"}}

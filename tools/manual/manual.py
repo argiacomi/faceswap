@@ -308,8 +308,8 @@ class Manual(tk.Tk):
         modifier = "_".join(val for key, val in modifiers.items() if event.state & key != 0)
         key_press = "_".join([modifier, press]) if modifier else press
         if key_press.lower() in bindings:
-            logger.trace(
-                "key press: %s, action: %s",  # type:ignore[attr-defined]
+            logger.trace(  # type: ignore[attr-defined]
+                "key press: %s, action: %s",
                 key_press,
                 bindings[key_press.lower()],
             )
@@ -532,7 +532,7 @@ class Aligner:
     def __init__(self, tk_globals: TkGlobals) -> None:
         logger.debug("Initializing: %s (tk_globals: %s)", self.__class__.__name__, tk_globals)
         self._globals = tk_globals
-        self._aligners: dict[str, ExtractRunner[Align]] = {}
+        self._aligners: dict[str, ExtractRunner[Align]] = {}  # type: ignore[type-var]
         self._detected_faces: DetectedFaces
         self._init_thread = self._background_init_aligner()
         logger.debug("Initialized: %s", self.__class__.__name__)
@@ -617,8 +617,8 @@ class Aligner:
         -------
         The 68 point landmark alignments
         """
-        logger.trace(
-            "frame_index: %s, face_index: %s, aligner: %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "frame_index: %s, face_index: %s, aligner: %s",
             frame_index,
             face_index,
             aligner,
@@ -648,7 +648,7 @@ class Aligner:
         """
         for plugin, aligner in self._aligners.items():
             logger.debug("Setting '%s' to: '%s'", plugin, method)
-            T.cast("Align", aligner.handler).set_normalize_method(method)
+            T.cast("Align", aligner.handler).set_normalize_method(method)  # type: ignore[redundant-cast]
 
 
 class FrameLoader:
@@ -780,8 +780,8 @@ class FrameLoader:
         """
         position = self._globals.frame_index
         if not initialize and (position == self._current_idx and not self._globals.is_zoomed):
-            logger.trace(
-                "Update criteria not met. Not updating: "  # type:ignore[attr-defined]
+            logger.trace(  # type: ignore[attr-defined]
+                "Update criteria not met. Not updating: "
                 "(initialize: %s, position: %s, current_idx: %s, is_zoomed: %s)",
                 initialize,
                 position,
@@ -795,8 +795,8 @@ class FrameLoader:
         else:
             assert self._loader is not None
             filename, frame = self._loader.image_from_index(position)
-        logger.trace(
-            "filename: %s, frame: %s, position: %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "filename: %s, frame: %s, position: %s",
             filename,
             frame.shape,
             position,

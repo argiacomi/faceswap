@@ -115,7 +115,7 @@ def _opencv_interpolation(mode: str) -> int:
 
 def _batch_to_numpy(images: torch.Tensor) -> np.ndarray:
     """Convert BCHW tensors to BHWC NumPy arrays on CPU."""
-    return images.detach().cpu().permute(0, 2, 3, 1).contiguous().numpy()
+    return images.detach().cpu().permute(0, 2, 3, 1).contiguous().numpy()  # type: ignore[no-any-return]
 
 
 def _batch_from_numpy(images: np.ndarray, *, device: torch.device) -> torch.Tensor:

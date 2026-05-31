@@ -86,7 +86,7 @@ class DataclassDict:
         The inbound item to a DataclassDict or numpy array. ``None`` if the item does not convert
         """
         if isinstance(data_type, type) and issubclass(data_type, DataclassDict):
-            return data_type.from_dict(val)
+            return data_type.from_dict(val)  # type: ignore[no-any-return]
 
         origin = T.get_origin(data_type)
         if origin is types.UnionType:
@@ -102,7 +102,7 @@ class DataclassDict:
 
         args = T.get_args(data_type)
         dtype = T.get_args(args[1])[0]
-        return np.array(val, dtype=dtype)
+        return np.array(val, dtype=dtype)  # type: ignore[no-any-return]
 
     @classmethod
     def _parse_dict(cls, field_type: T.Any, value: dict[str, T.Any]) -> dict[str, T.Any]:
@@ -161,7 +161,7 @@ class DataclassDict:
         return retval
 
     @classmethod
-    def from_dict(cls, data_dict: dict[str, T.Any]) -> T.Self:
+    def from_dict(cls, data_dict: dict[str, T.Any]) -> T.Self:  # type: ignore[name-defined]
         """Load the contents from a serialized python dict into this dataclass
 
         Parameters

@@ -98,7 +98,7 @@ def test_geometry_improvement_gate_selects_lower_score_candidate() -> None:
     application = apply_gates(results, config, geometry_scores=geometry_scores)
 
     assert application.promoted is better
-    assert application.promoted_outcome.geometry_score == pytest.approx(0.10)
+    assert application.promoted_outcome.geometry_score == pytest.approx(0.10)  # type: ignore[union-attr]
 
 
 def test_geometry_improvement_gate_rejects_worse_candidate() -> None:

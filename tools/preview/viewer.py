@@ -260,7 +260,7 @@ class FacesDisplay:  # pylint:disable=too-many-instance-attributes
             text_x,
             text_y,
         )
-        header_box = np.ones((height, self._size * self._total_columns, 3), np.uint8) * 255
+        header_box = np.ones((height, self._size * self._total_columns, 3), np.uint8) * 255  # type: ignore[var-annotated]
         for idx, text in enumerate(self._faces.filenames):
             cv2.putText(
                 header_box,

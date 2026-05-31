@@ -105,7 +105,7 @@ def _resolver_metadata_row(context: T.Any, sample: LandmarkSample) -> dict[str, 
         **resolver,
         "resolver": dict(resolver),
     }
-    return _json_safe(
+    return _json_safe(  # type: ignore[no-any-return]
         {
             "sample_id": sample.sample_id,
             "image_path": str(sample.image),

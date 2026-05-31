@@ -31,7 +31,7 @@ from lib.landmarks.evaluation.nme_metrics import (
 
 
 def _load_truth(sample: LandmarkSample) -> np.ndarray:
-    return np.load(sample.landmarks).astype("float32")
+    return np.load(sample.landmarks).astype("float32")  # type: ignore[no-any-return]
 
 
 def _append_grouped(
@@ -376,7 +376,7 @@ def run_quality_harness(
         grouped_errors,
         variants=variants,
         failure_threshold=failure_threshold,
-        conditions=summary["conditions"],
+        conditions=summary["conditions"],  # type: ignore[arg-type]
         scenario_buckets=scenario_buckets,
         any_sample_failed=any_sample_failed,
         overall_metrics=scenario_weighted_overall,

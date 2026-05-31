@@ -79,7 +79,7 @@ class Viewport:
     @property
     def selected_editor(self) -> str:
         """str: The currently selected editor."""
-        return self._tk_selected_editor.get().lower()
+        return self._tk_selected_editor.get().lower()  # type: ignore[no-any-return]
 
     def toggle_mesh(self, state: T.Literal["hidden", "normal"]) -> None:
         """Toggles the mesh optional annotations on and off.
@@ -229,8 +229,8 @@ class Viewport:
                 *collection, strict=False
             ):
                 if frame_idx == self._active_frame.frame_index and not refresh_annotations:
-                    logger.trace(
-                        "Skipping active frame: %s",  # type:ignore[attr-defined]
+                    logger.trace(  # type: ignore[attr-defined]
+                        "Skipping active frame: %s",
                         frame_idx,
                     )
                     continue
@@ -348,8 +348,8 @@ class Viewport:
         for key in list(self._tk_faces):
             if key not in keys:
                 del self._tk_faces[key]
-        logger.trace(
-            "keys: %s allocated_faces: %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "keys: %s allocated_faces: %s",
             keys,
             len(self._tk_faces),
         )
@@ -376,9 +376,8 @@ class Viewport:
         is_active = frame_index == self._active_frame.frame_index
         key = "_".join([str(frame_index), str(face_index)])
         if key not in self._tk_faces or is_active:
-            logger.trace(
-                "creating new tk_face: (key: %s, "  # type:ignore[attr-defined]
-                "is_active: %s)",
+            logger.trace(  # type: ignore[attr-defined]
+                "creating new tk_face: (key: %s, is_active: %s)",
                 key,
                 is_active,
             )
@@ -427,7 +426,7 @@ class Viewport:
             # the loader returned nothing for this index. Fall back to
             # a deterministic gray placeholder so the cell still
             # renders something rather than throwing.
-            placeholder = np.full((self.face_size, self.face_size, 3), 64, dtype=np.uint8)
+            placeholder = np.full((self.face_size, self.face_size, 3), 64, dtype=np.uint8)  # type: ignore[var-annotated]
         else:
             placeholder = cv2.resize(
                 image,
@@ -567,7 +566,7 @@ class Viewport:
                 else self._objects.visible_grid[:, y_idx, x_idx]
             )
         logger.trace(retval)  # type:ignore[attr-defined]
-        return retval
+        return retval  # type: ignore[no-any-return]
 
     def move_active_to_top(self) -> None:
         """Check whether the active frame is going off the bottom of the viewport, if so: move it
@@ -668,8 +667,8 @@ class Recycler:
             if self._assets[asset_type]:
                 asset_id = self._assets[asset_type].pop()
                 self._canvas.itemconfig(asset_id, **kwargs)
-                logger.trace(
-                    "Recycled mesh %s: %s",  # type:ignore[attr-defined]
+                logger.trace(  # type: ignore[attr-defined]
+                    "Recycled mesh %s: %s",
                     asset_type,
                     asset_id,
                 )
@@ -677,8 +676,8 @@ class Recycler:
                 coords = (0, 0) if asset_type == "polygon" else (0, 0, 0, 0)
                 tags = ["viewport", "viewport_mesh", f"viewport_{asset_type}"]
                 asset_id = self._mesh_methods[asset_type](coords, width=1, tags=tags, **kwargs)
-                logger.trace(
-                    "Created new mesh %s: %s",  # type:ignore[attr-defined]
+                logger.trace(  # type: ignore[attr-defined]
+                    "Created new mesh %s: %s",
                     asset_type,
                     asset_id,
                 )
@@ -759,9 +758,9 @@ class VisibleObjects:
         """:class:`numpy.ndarray`: The canvas (`x`, `y`) position of the face currently in the
         viewable area's top left position."""
         retval = (
-            [0.0, 0.0] if not np.any(self._images) else self._canvas.coords(self._images[0][0])
+            [0.0, 0.0] if not np.any(self._images) else self._canvas.coords(self._images[0][0])  # type: ignore[call-overload]
         )
-        return np.array(retval, dtype="int")
+        return np.array(retval, dtype="int")  # type: ignore[no-any-return]
 
     def update(self) -> None:
         """Load and unload thumbnails in the visible area of the faces viewer."""
@@ -778,8 +777,8 @@ class VisibleObjects:
 
         required_rows = self._visible_grid.shape[1] if self._grid.is_valid else 0
         existing_rows = len(self._images)
-        logger.trace(
-            "existing_rows: %s. required_rows: %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "existing_rows: %s. required_rows: %s",
             existing_rows,
             required_rows,
         )
@@ -832,8 +831,8 @@ class VisibleObjects:
         self._recycler.recycle_assets(images + mesh_ids)
         self._images = self._images[:required_rows]
         self._meshes = self._meshes[:required_rows]
-        logger.trace(
-            "self._images: %s, self._meshes: %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "self._images: %s, self._meshes: %s",
             self._images.shape,
             self._meshes.shape,
         )
@@ -862,9 +861,8 @@ class VisibleObjects:
             if not np.any(self._images)
             else [self._canvas.coords(item_id) for item_id in self._images[0]]
         )
-        logger.trace(
-            "existing rows: %s, required_rows: %s, "  # type:ignore[attr-defined]
-            "base_coords: %s",
+        logger.trace(  # type: ignore[attr-defined]
+            "existing rows: %s, required_rows: %s, base_coords: %s",
             existing_rows,
             required_rows,
             base_coords,
@@ -903,8 +901,8 @@ class VisibleObjects:
             self._images = np.concatenate((self._images, a_images))
             self._meshes = np.concatenate((self._meshes, a_meshes))
 
-        logger.trace(
-            "self._images: %s, self._meshes: %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "self._images: %s, self._meshes: %s",
             self._images.shape,
             self._meshes.shape,
         )
@@ -919,15 +917,15 @@ class VisibleObjects:
         """
         current_y = self._top_left[1]
         required_y = self.visible_grid[3, 0, 0] if self._grid.is_valid else 0
-        logger.trace(
-            "current_y: %s, required_y: %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "current_y: %s, required_y: %s",
             current_y,
             required_y,
         )
         if current_y == required_y:
             logger.trace("No move required")  # type:ignore[attr-defined]
             return False
-        shift_amount = required_y - current_y
+        shift_amount = required_y - current_y  # type: ignore[var-annotated]
         logger.trace("Shifting viewport: %s", shift_amount)  # type:ignore[attr-defined]
         self._canvas.move("viewport", 0, shift_amount)
         return True
@@ -1013,10 +1011,10 @@ class TKFace:
         retval = cv2.imdecode(face, cv2.IMREAD_UNCHANGED)
         assert retval is not None
         if retval.shape[0] == self._size:
-            return retval[..., 2::-1]
+            return retval[..., 2::-1]  # type: ignore[no-any-return]
         interp = cv2.INTER_CUBIC if retval.shape[0] < self._size else cv2.INTER_AREA
         resized = cv2.resize(retval, (self._size, self._size), interpolation=interp)
-        return resized[..., 2::-1]
+        return resized[..., 2::-1]  # type: ignore[no-any-return]
 
     def _generate_tk_face_data(self, mask: np.ndarray | None) -> Image.Image:
         """Create the :class:`tkinter.PhotoImage` from the currant :attr:`_face`.

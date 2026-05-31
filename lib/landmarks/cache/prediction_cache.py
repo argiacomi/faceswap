@@ -129,7 +129,7 @@ class DiskPredictionCache:
         path = self.metadata_path(sample_id)
         if not path.is_file():
             return {}
-        return json.loads(path.read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8"))  # type: ignore[no-any-return]
 
     def metadata_entry(
         self,

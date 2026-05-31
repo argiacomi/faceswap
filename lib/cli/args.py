@@ -309,7 +309,7 @@ class FaceSwapArgs:
             epilog="Questions and feedback: https://faceswap.dev/forum",
             formatter_class=SmartFormatter,
         )
-        return parser
+        return parser  # type: ignore[no-any-return]
 
     def _add_arguments(self) -> None:
         """Parse the list of dictionaries containing the command line arguments and convert to

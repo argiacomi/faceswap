@@ -160,7 +160,7 @@ class DetectedFace:  # pylint:disable=too-many-instance-attributes
         """Return landmarks as a float32 numpy array, preserving ``None``."""
         if landmarks is None:
             return None
-        return np.asarray(landmarks, dtype=np.float32)
+        return np.asarray(landmarks, dtype=np.float32)  # type: ignore[no-any-return]
 
     def add_mask(
         self,
@@ -192,8 +192,8 @@ class DetectedFace:  # pylint:disable=too-many-instance-attributes
             The centering to store the mask at. One of `"legacy"`, `"face"`, `"head"`.
             Default: `"face"`
         """
-        logger.trace(
-            "name: '%s', mask shape: %s, affine_matrix: %s, "  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "name: '%s', mask shape: %s, affine_matrix: %s, "
             "storage_size: %s, storage_centering: %s)",
             name,
             mask.shape,
@@ -232,8 +232,8 @@ class DetectedFace:  # pylint:disable=too-many-instance-attributes
         embedding
             The identity embedding
         """
-        logger.trace(
-            "name: '%s', embedding shape: %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "name: '%s', embedding shape: %s",
             name,
             embedding.shape,
         )
@@ -322,7 +322,7 @@ class DetectedFace:  # pylint:disable=too-many-instance-attributes
         """
         if not self._training_masks:
             return None
-        return np.frombuffer(decompress(self._training_masks[0]), dtype="uint8").reshape(
+        return np.frombuffer(decompress(self._training_masks[0]), dtype="uint8").reshape(  # type: ignore[no-any-return]
             self._training_masks[1]
         )
 
@@ -362,7 +362,7 @@ class DetectedFace:  # pylint:disable=too-many-instance-attributes
         alignment: FileAlignments | PNGAlignments,
         image: np.ndarray | None = None,
         with_thumb: bool = False,
-    ) -> T.Self:
+    ) -> T.Self:  # type: ignore[name-defined]
         """Set the attributes of this class from an alignments file and optionally load the face
         into the ``image`` attribute.
 
@@ -382,9 +382,8 @@ class DetectedFace:  # pylint:disable=too-many-instance-attributes
         This DetectedFace object populated by the incoming alignment dict
         """
 
-        logger.trace(
-            "Creating from alignment: (alignment: %s,"  # type:ignore[attr-defined]
-            " has_image: %s)",
+        logger.trace(  # type: ignore[attr-defined]
+            "Creating from alignment: (alignment: %s, has_image: %s)",
             alignment,
             bool(image is not None),
         )
@@ -415,8 +414,8 @@ class DetectedFace:  # pylint:disable=too-many-instance-attributes
         # empty/uninitialised array which is the actual intent here.
         if image is not None and image.size:
             self._image_to_face(image)
-        logger.trace(
-            "Created from alignment: (left: %s, width: %s, "  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "Created from alignment: (left: %s, width: %s, "
             "top: %s, height: %s, landmarks: %s, mask: %s)",
             self.left,
             self.width,
@@ -450,7 +449,7 @@ class DetectedFace:  # pylint:disable=too-many-instance-attributes
         )
         return alignment
 
-    def from_png_meta(self, alignment: PNGAlignments) -> T.Self:
+    def from_png_meta(self, alignment: PNGAlignments) -> T.Self:  # type: ignore[name-defined]
         """Set the attributes of this class from alignments stored in a png exif header.
 
         Parameters
@@ -474,8 +473,8 @@ class DetectedFace:  # pylint:disable=too-many-instance-attributes
         for key, val in alignment.identity.items():
             self._identity[key] = np.array(val, dtype="float32")
         self.metadata = alignment.metadata
-        logger.trace(
-            "Created from png exif header: (left: %s, "  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "Created from png exif header: (left: %s, "
             "width: %s, top: %s  height: %s, landmarks: %s, mask: %s, identity: %s)",
             self.left,
             self.width,
@@ -559,14 +558,12 @@ class DetectedFace:  # pylint:disable=too-many-instance-attributes
         """
         if self._aligned and not force:
             # Don't reload an already aligned face
-            logger.trace(
-                "Skipping alignment calculation for already "  # type:ignore[attr-defined]
-                "aligned face"
+            logger.trace(  # type: ignore[attr-defined]
+                "Skipping alignment calculation for already aligned face"
             )
         else:
-            logger.trace(
-                "Loading aligned face: (size: %s, "  # type:ignore[attr-defined]
-                "dtype: %s)",
+            logger.trace(  # type: ignore[attr-defined]
+                "Loading aligned face: (size: %s, dtype: %s)",
                 size,
                 dtype,
             )

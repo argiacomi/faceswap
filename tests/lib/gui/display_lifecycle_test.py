@@ -45,7 +45,7 @@ def test_display_page_recreates_invalid_subnotebook_before_adding_page(monkeypat
     page.subnotebook = _FakeNotebook(exists=False)
 
     recreated = _FakeNotebook()
-    page.subnotebook_show = lambda: setattr(page, "subnotebook", recreated)
+    page.subnotebook_show = lambda: setattr(page, "subnotebook", recreated)  # type: ignore[method-assign]
 
     monkeypatch.setattr(display_page_mod.ttk, "Frame", _FakeFrame)
 
@@ -63,9 +63,9 @@ def test_display_optional_page_close_cancels_pending_update() -> None:
     page = DisplayOptionalPage.__new__(DisplayOptionalPage)
     page._update_after_id = "after#1"
     page._after_ids = []
-    page.after_cancel = MagicMock()
+    page.after_cancel = MagicMock()  # type: ignore[method-assign]
     child = MagicMock()
-    page.winfo_children = lambda: [child]
+    page.winfo_children = lambda: [child]  # type: ignore[method-assign]
 
     DisplayOptionalPage.close(page)
 
@@ -77,16 +77,16 @@ def test_display_notebook_remove_tabs_destroys_optional_page_widgets() -> None:
     """Removing optional tabs should destroy the forgotten page widget."""
     notebook = DisplayNotebook.__new__(DisplayNotebook)
     notebook._static_tabs = [".analysis"]
-    notebook.tabs = lambda: [".analysis", ".preview1"]
+    notebook.tabs = lambda: [".analysis", ".preview1"]  # type: ignore[method-assign]
     notebook.children = {"preview1": MagicMock()}
-    notebook.forget = MagicMock()
+    notebook.forget = MagicMock()  # type: ignore[method-assign]
 
     DisplayNotebook._remove_tabs(notebook)
 
     child_object = notebook.children["preview1"]
-    child_object.close.assert_called_once_with()
+    child_object.close.assert_called_once_with()  # type: ignore[attr-defined]
     notebook.forget.assert_called_once_with(".preview1")
-    child_object.destroy.assert_called_once_with()
+    child_object.destroy.assert_called_once_with()  # type: ignore[attr-defined]
 
 
 def test_display_notebook_skips_rebuild_when_command_unchanged() -> None:
@@ -101,8 +101,8 @@ def test_display_notebook_skips_rebuild_when_command_unchanged() -> None:
     notebook._updating_displaybook = False
     notebook._wrapper_var = MagicMock()
     notebook._wrapper_var.get = MagicMock(return_value="extract")
-    notebook._remove_tabs = MagicMock()
-    notebook._command_display = MagicMock()
+    notebook._remove_tabs = MagicMock()  # type: ignore[method-assign]
+    notebook._command_display = MagicMock()  # type: ignore[method-assign]
 
     DisplayNotebook._update_displaybook(notebook)
 
@@ -118,8 +118,8 @@ def test_display_notebook_ignores_reentrant_update() -> None:
     notebook._updating_displaybook = True  # simulate an in-flight rebuild
     notebook._wrapper_var = MagicMock()
     notebook._wrapper_var.get = MagicMock(return_value="extract")
-    notebook._remove_tabs = MagicMock()
-    notebook._command_display = MagicMock()
+    notebook._remove_tabs = MagicMock()  # type: ignore[method-assign]
+    notebook._command_display = MagicMock()  # type: ignore[method-assign]
 
     DisplayNotebook._update_displaybook(notebook)
 
@@ -137,8 +137,8 @@ def test_display_notebook_rebuild_updates_displayed_command_on_change() -> None:
     notebook._updating_displaybook = False
     notebook._wrapper_var = MagicMock()
     notebook._wrapper_var.get = MagicMock(return_value="extract")
-    notebook._remove_tabs = MagicMock()
-    notebook._command_display = MagicMock()
+    notebook._remove_tabs = MagicMock()  # type: ignore[method-assign]
+    notebook._command_display = MagicMock()  # type: ignore[method-assign]
 
     DisplayNotebook._update_displaybook(notebook)
 
@@ -158,8 +158,8 @@ def test_display_notebook_rebuild_clears_state_for_unknown_command() -> None:
     notebook._updating_displaybook = False
     notebook._wrapper_var = MagicMock()
     notebook._wrapper_var.get = MagicMock(return_value="")
-    notebook._remove_tabs = MagicMock()
-    notebook._command_display = MagicMock()
+    notebook._remove_tabs = MagicMock()  # type: ignore[method-assign]
+    notebook._command_display = MagicMock()  # type: ignore[method-assign]
 
     DisplayNotebook._update_displaybook(notebook)
 
@@ -173,10 +173,10 @@ def test_display_notebook_remove_tabs_tcl_destroy_fallback() -> None:
     stale widget cannot survive into the next rebuild (#188)."""
     notebook = DisplayNotebook.__new__(DisplayNotebook)
     notebook._static_tabs = [".analysis"]
-    notebook.tabs = lambda: [".analysis", ".previewextract2"]
+    notebook.tabs = lambda: [".analysis", ".previewextract2"]  # type: ignore[method-assign]
     # Empty children dict → Python lookup misses the optional tab.
     notebook.children = {}
-    notebook.forget = MagicMock()
+    notebook.forget = MagicMock()  # type: ignore[method-assign]
     fake_tk = MagicMock()
     notebook.tk = fake_tk
 
@@ -193,9 +193,9 @@ def test_display_notebook_remove_tabs_swallows_tcl_errors() -> None:
 
     notebook = DisplayNotebook.__new__(DisplayNotebook)
     notebook._static_tabs = []
-    notebook.tabs = lambda: [".previewextract2"]
+    notebook.tabs = lambda: [".previewextract2"]  # type: ignore[method-assign]
     notebook.children = {}
-    notebook.forget = MagicMock(side_effect=tk.TclError("already destroyed"))
+    notebook.forget = MagicMock(side_effect=tk.TclError("already destroyed"))  # type: ignore[method-assign]
     fake_tk = MagicMock()
     fake_tk.call = MagicMock(side_effect=tk.TclError("already destroyed"))
     notebook.tk = fake_tk

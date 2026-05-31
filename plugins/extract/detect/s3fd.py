@@ -77,7 +77,7 @@ class S3FD(ExtractPlugin):
         -------
         The batch of images ready for feeding the model
         """
-        return (batch - self._average_img).transpose(0, 3, 1, 2)
+        return (batch - self._average_img).transpose(0, 3, 1, 2)  # type: ignore[no-any-return]
 
     def process(self, batch: np.ndarray) -> np.ndarray:
         """Run model to get predictions
@@ -119,7 +119,7 @@ class S3FD(ExtractPlugin):
         )
         boxes[:, :2] -= boxes[:, 2:] / 2
         boxes[:, 2:] += boxes[:, :2]
-        return boxes
+        return boxes  # type: ignore[no-any-return]
 
     def _process_bbox(
         self,  # pylint:disable=too-many-locals
@@ -236,7 +236,7 @@ class S3FD(ExtractPlugin):
             boxes = self._post_process(bbox_list)
             final_list = self._nms(boxes, 0.5)
             ret.append(final_list[..., :4])
-        retval = np.empty(len(ret), dtype=object)
+        retval = np.empty(len(ret), dtype=object)  # type: ignore[var-annotated]
         retval[:] = ret
         return retval
 

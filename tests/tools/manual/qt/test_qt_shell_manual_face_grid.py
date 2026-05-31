@@ -29,7 +29,7 @@ def _session_with_frames(folder: Path, count: int = 5) -> ManualSession:
     return ManualSession.create(frames=str(folder))
 
 
-def _make_window(qtbot, folder: Path, count: int = 5) -> ManualToolWindow:  # type:ignore[no-untyped-def]
+def _make_window(qtbot, folder: Path, count: int = 5) -> ManualToolWindow:
     """Return a shown ManualToolWindow with startup fully drained."""
     window = ManualToolWindow(_session_with_frames(folder, count=count))
     qtbot.addWidget(window)
@@ -54,7 +54,7 @@ def _seed_face(
     )
 
 
-def test_face_grid_lists_faces_across_filtered_session(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_face_grid_lists_faces_across_filtered_session(qtbot, tmp_path: Path) -> None:
     """The grid displays every visible face, not only current-frame faces."""
     window = _make_window(qtbot, tmp_path, count=5)
 
@@ -66,7 +66,7 @@ def test_face_grid_lists_faces_across_filtered_session(qtbot, tmp_path: Path) ->
     assert window.face_grid_panel.count() == 3
 
 
-def test_face_grid_respects_active_filter(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_face_grid_respects_active_filter(qtbot, tmp_path: Path) -> None:
     """Grid contents are derived from ``filtered_frame_indices()``."""
     window = _make_window(qtbot, tmp_path, count=5)
     _seed_face(window, 1)
@@ -91,7 +91,7 @@ def test_face_grid_respects_active_filter(qtbot, tmp_path: Path) -> None:  # typ
 def test_face_grid_size_control_updates_layout_and_preserves_active(
     qtbot,
     tmp_path: Path,
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """Legacy face-size choices resize icons and keep the active face selected."""
     window = _make_window(qtbot, tmp_path, count=3)
     _seed_face(window, 2)
@@ -107,7 +107,7 @@ def test_face_grid_size_control_updates_layout_and_preserves_active(
     assert window.face_grid_panel.active_entry() == (2, 0)
 
 
-def test_face_grid_wraps_to_available_width(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_face_grid_wraps_to_available_width(qtbot, tmp_path: Path) -> None:
     """The wrapping layout adapts column count to the viewport width."""
     window = _make_window(qtbot, tmp_path, count=8)
     for frame_index in range(8):
@@ -140,7 +140,7 @@ def test_face_grid_wraps_to_available_width(qtbot, tmp_path: Path) -> None:  # t
     assert wide_columns > narrow_columns
 
 
-def test_face_grid_click_navigates_frame_and_face(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_face_grid_click_navigates_frame_and_face(qtbot, tmp_path: Path) -> None:
     """Clicking a grid thumbnail loads its source frame and selects the face."""
     window = _make_window(qtbot, tmp_path, count=4)
     _seed_face(window, 0)
@@ -152,7 +152,7 @@ def test_face_grid_click_navigates_frame_and_face(qtbot, tmp_path: Path) -> None
 
     panel.scrollToItem(item)
     qtbot.wait(0)
-    qtbot.mouseClick(panel.viewport(), Qt.LeftButton, pos=panel.visualItemRect(item).center())
+    qtbot.mouseClick(panel.viewport(), Qt.LeftButton, pos=panel.visualItemRect(item).center())  # type: ignore[attr-defined]
 
     assert window.editor_state.frame_index == 3
     assert window._thumbnail_panel.currentRow() == 3
@@ -160,7 +160,7 @@ def test_face_grid_click_navigates_frame_and_face(qtbot, tmp_path: Path) -> None
     assert panel.active_entry() == (3, 1)
 
 
-def test_face_grid_active_and_hover_state_are_testable(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_face_grid_active_and_hover_state_are_testable(qtbot, tmp_path: Path) -> None:
     """Active frame/face and hover state are exposed through item state."""
     window = _make_window(qtbot, tmp_path, count=4)
     _seed_face(window, 2)
@@ -180,11 +180,11 @@ def test_face_grid_active_and_hover_state_are_testable(qtbot, tmp_path: Path) ->
     qtbot.mouseMove(panel.viewport(), panel.visualItemRect(hover_item).center())
 
     assert panel.hovered_entry() == (2, 0)
-    assert panel.item_for(2, 0).data(Qt.UserRole + 3) is True
+    assert panel.item_for(2, 0).data(Qt.UserRole + 3) is True  # type: ignore[attr-defined, union-attr]
     assert window.statusBar().currentMessage() == "Frame 3 / Face 1"
 
 
-def test_face_grid_keyboard_and_mouse_wheel_scroll(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_face_grid_keyboard_and_mouse_wheel_scroll(qtbot, tmp_path: Path) -> None:
     """Focused grid handles list keyboard paging and mouse-wheel scrolling."""
     window = _make_window(qtbot, tmp_path, count=18)
     for frame_index in range(18):
@@ -193,21 +193,21 @@ def test_face_grid_keyboard_and_mouse_wheel_scroll(qtbot, tmp_path: Path) -> Non
     panel = window.face_grid_panel
     panel.setFixedSize(150, 110)
     window._face_grid_size_combo.setCurrentText("Extra Large")
-    panel.setFocus(Qt.OtherFocusReason)
+    panel.setFocus(Qt.OtherFocusReason)  # type: ignore[attr-defined]
     qtbot.waitUntil(lambda: panel.verticalScrollBar().maximum() > 0, timeout=3000)
 
     assert panel.currentRow() <= 0
-    qtbot.keyClick(panel, Qt.Key_Down)
+    qtbot.keyClick(panel, Qt.Key_Down)  # type: ignore[attr-defined]
     assert panel.currentRow() > 0
     panel.setCurrentRow(0)
     panel.verticalScrollBar().setValue(0)
 
-    qtbot.keyClick(panel, Qt.Key_PageDown)
+    qtbot.keyClick(panel, Qt.Key_PageDown)  # type: ignore[attr-defined]
     page_down_row = panel.currentRow()
     page_down_scroll = panel.verticalScrollBar().value()
     assert page_down_row > 0 or page_down_scroll > 0
 
-    qtbot.keyClick(panel, Qt.Key_PageUp)
+    qtbot.keyClick(panel, Qt.Key_PageUp)  # type: ignore[attr-defined]
     assert (
         panel.currentRow() < page_down_row or panel.verticalScrollBar().value() < page_down_scroll
     )
@@ -218,9 +218,9 @@ def test_face_grid_keyboard_and_mouse_wheel_scroll(qtbot, tmp_path: Path) -> Non
         QPointF(panel.viewport().mapToGlobal(QPoint(20, 20))),
         QPoint(0, 0),
         QPoint(0, -240),
-        Qt.NoButton,
-        Qt.NoModifier,
-        Qt.ScrollUpdate,
+        Qt.NoButton,  # type: ignore[attr-defined]
+        Qt.NoModifier,  # type: ignore[attr-defined]
+        Qt.ScrollUpdate,  # type: ignore[attr-defined]
         False,
     )
     QApplication.sendEvent(panel.viewport(), wheel_event)
@@ -231,7 +231,7 @@ def test_face_grid_right_click_menu_delete_path(
     qtbot,
     tmp_path: Path,
     monkeypatch,
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """Right-clicking a grid thumbnail opens a Delete Face menu wired to deletion."""
     import PySide6.QtWidgets as qtwidgets
 
@@ -239,7 +239,7 @@ def test_face_grid_right_click_menu_delete_path(
         def __init__(self) -> None:
             self.callback = None
 
-        def connect(self, callback):  # type:ignore[no-untyped-def]
+        def connect(self, callback):
             self.callback = callback
 
         def emit(self) -> None:
@@ -252,9 +252,9 @@ def test_face_grid_right_click_menu_delete_path(
             self.triggered = _FakeSignal()
 
     class _FakeMenu:
-        instances = []
+        instances = []  # type: ignore[var-annotated]
 
-        def __init__(self, parent=None) -> None:  # type:ignore[no-untyped-def]
+        def __init__(self, parent=None) -> None:
             self.parent = parent
             self.actions: list[_FakeAction] = []
             self.aboutToHide = _FakeSignal()
@@ -266,7 +266,7 @@ def test_face_grid_right_click_menu_delete_path(
             self.actions.append(action)
             return action
 
-        def popup(self, point) -> None:  # type:ignore[no-untyped-def]
+        def popup(self, point) -> None:
             self.popup_point = point
 
         def deleteLater(self) -> None:  # noqa:N802
@@ -298,7 +298,7 @@ def test_face_grid_right_click_menu_delete_path(
 def test_face_grid_delete_removes_non_current_face_and_refreshes(
     qtbot,
     tmp_path: Path,
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """Grid deletion works for a face outside the current frame."""
     window = _make_window(qtbot, tmp_path, count=4)
     _seed_face(window, 0)
@@ -315,7 +315,7 @@ def test_face_grid_delete_removes_non_current_face_and_refreshes(
 def test_face_grid_overlay_render_requests_track_mask_and_mesh(
     qtbot,
     tmp_path: Path,
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """Thumbnail render state carries F9/F10 mesh and mask overlay settings."""
     window = _make_window(qtbot, tmp_path, count=2)
     jaw = tuple(
@@ -327,7 +327,7 @@ def test_face_grid_overlay_render_requests_track_mask_and_mesh(
     )
     landmarks = jaw + core
     _seed_face(window, 0, landmarks=landmarks)
-    mask = np.zeros((32, 32), dtype=np.uint8)
+    mask = np.zeros((32, 32), dtype=np.uint8)  # type: ignore[var-annotated]
     mask[8:24, 8:24] = 255
     window.editable_alignments._mask_state[(0, 0, "components")] = mask
 
@@ -361,7 +361,7 @@ def test_face_grid_overlay_render_requests_track_mask_and_mesh(
 def test_face_grid_mini_rail_toggles_mesh_and_mask_independently(
     qtbot,
     tmp_path: Path,
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """F9/F10 and the mini rail expose independent thumbnail annotation toggles."""
     window = _make_window(qtbot, tmp_path, count=2)
     _seed_face(window, 0)
@@ -396,7 +396,7 @@ def test_face_grid_mini_rail_toggles_mesh_and_mask_independently(
 def test_face_grid_delete_key_removes_multi_selection_across_frames(
     qtbot,
     tmp_path: Path,
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """Extended grid selection deletes all selected faces as one undoable edit."""
     window = _make_window(qtbot, tmp_path, count=4)
     _seed_face(window, 0)
@@ -413,9 +413,9 @@ def test_face_grid_delete_key_removes_multi_selection_across_frames(
             QItemSelectionModel.Select,
         )
     assert panel.selected_entry_keys() == ((0, 0), (1, 1), (3, 0))
-    panel.setFocus(Qt.OtherFocusReason)
+    panel.setFocus(Qt.OtherFocusReason)  # type: ignore[attr-defined]
 
-    panel.keyPressEvent(QKeyEvent(QEvent.KeyPress, Qt.Key_Delete, Qt.NoModifier))
+    panel.keyPressEvent(QKeyEvent(QEvent.KeyPress, Qt.Key_Delete, Qt.NoModifier))  # type: ignore[attr-defined]
 
     assert window.editable_alignments.face_count(0) == 0
     assert window.editable_alignments.face_count(1) == 1
@@ -432,7 +432,7 @@ def test_face_grid_delete_key_removes_multi_selection_across_frames(
 def test_face_grid_refreshes_after_non_current_edit_with_filter(
     qtbot,
     tmp_path: Path,
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """Non-current edits refresh filtered results and grid contents without navigating."""
     window = _make_window(qtbot, tmp_path, count=4)
     window._thumbnail_panel.setCurrentRow(0)

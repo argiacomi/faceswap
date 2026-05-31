@@ -78,7 +78,7 @@ def test_sessions_returns_empty_dict_on_missing_state() -> None:
 
     instance = Session.__new__(Session)
 
-    instance._state = None
+    instance._state = None  # type: ignore[assignment]
     assert instance._sessions == {}
 
     instance._state = {}
@@ -97,7 +97,7 @@ def test_logging_disabled_returns_true_when_no_sessions() -> None:
     from lib.gui.analysis.stats import GlobalSession as Session
 
     instance = Session.__new__(Session)
-    instance._state = None
+    instance._state = None  # type: ignore[assignment]
     instance._is_training = False
     assert instance.logging_disabled is True
 

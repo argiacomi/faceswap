@@ -22,7 +22,7 @@ from tools.manual.session import ManualSession
 
 def _write_real_frame(path: Path, value: int = 90) -> None:
     """Write a small valid PNG with cv2 (Pixmap fixtures aren't decoded by read_image)."""
-    image = np.full((96, 96, 3), value, dtype=np.uint8)
+    image = np.full((96, 96, 3), value, dtype=np.uint8)  # type: ignore[var-annotated]
     assert cv2.imwrite(str(path), image)
 
 
@@ -40,7 +40,7 @@ def _session_with_real_frames(folder: Path, count: int = 2) -> ManualSession:
     return ManualSession.create(frames=str(folder))
 
 
-def _wait_for_startup(qtbot, window: ManualToolWindow, *, timeout: int = 5000) -> None:  # type:ignore[no-untyped-def]
+def _wait_for_startup(qtbot, window: ManualToolWindow, *, timeout: int = 5000) -> None:
     """Wait until ManualToolWindow's startup worker has fully drained.
 
     Extract tests write the same ``alignments.fsa`` that startup refresh may
@@ -63,7 +63,7 @@ def test_extract_uses_editable_state_after_unsaved_add(
     qtbot,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """An unsaved add appears in extracted output (#116)."""
     session = _session_with_real_frames(tmp_path)
     # Pre-existing PNG fixtures from QPixmap are filtered out by ManualSession
@@ -108,7 +108,7 @@ def test_extract_uses_editable_state_after_unsaved_delete(
     qtbot,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """An unsaved delete *removes* the face from extracted output (#116)."""
     # Seed an alignments file with one face, persisted to disk.
     _write_real_frame(tmp_path / "frame_000.png", value=80)
@@ -157,7 +157,7 @@ def test_cancel_button_appears_while_extract_runs(
     qtbot,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """The Cancel button becomes visible + enabled while extract is in flight."""
     _write_real_frame(tmp_path / "frame_000.png")
     session = ManualSession.create(frames=str(tmp_path))
@@ -186,7 +186,7 @@ def test_cancel_button_appears_while_extract_runs(
     # event loop drains and the worker finishes.
     real_start = None
 
-    def _capture_then_start(self):  # type:ignore[no-untyped-def]
+    def _capture_then_start(self):
         button = window._extract_cancel_button
         visible_during_run.append(bool(button is not None and button.isVisible()))
         enabled_during_run.append(bool(button is not None and button.isEnabled()))
@@ -212,7 +212,7 @@ def test_cancel_button_appears_while_extract_runs(
     assert button.isEnabled() is False
 
 
-def test_cancel_extract_returns_false_when_idle(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_cancel_extract_returns_false_when_idle(qtbot, tmp_path: Path) -> None:
     """``cancel_extract`` is a no-op when no extraction is running."""
     _write_real_frame(tmp_path / "frame_000.png")
     session = ManualSession.create(frames=str(tmp_path))
@@ -225,7 +225,7 @@ def test_cancel_extract_forwards_to_worker_and_disables_button(
     qtbot,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """``cancel_extract`` calls ``worker.cancel`` and disables the button immediately."""
     _write_real_frame(tmp_path / "frame_000.png")
     session = ManualSession.create(frames=str(tmp_path))
@@ -278,7 +278,7 @@ def test_cancel_extract_forwards_to_worker_and_disables_button(
 
 def test_extract_worker_stop_returns_true_when_thread_already_finished(
     qtbot, tmp_path: Path
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """A no-op stop on a worker whose thread already exited returns True."""
     from tools.manual.qt import ManualExtractFacesWorker
 
@@ -288,7 +288,7 @@ def test_extract_worker_stop_returns_true_when_thread_already_finished(
         session,
         str(tmp_path / "out"),
     )
-    qtbot.addWidget = lambda *_args, **_kwargs: None  # type:ignore[assignment]
+    qtbot.addWidget = lambda *_args, **_kwargs: None
     # Quit the QThread before we call ``stop`` — it should report success.
     worker._thread.quit()  # noqa: SLF001
     worker._thread.wait(1000)  # noqa: SLF001
@@ -298,7 +298,7 @@ def test_extract_worker_stop_returns_true_when_thread_already_finished(
 
 def test_extract_worker_stop_returns_false_when_thread_refuses_to_exit(
     qtbot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """A worker whose thread is stuck mid-frame reports stop() == False."""
     import threading
 
@@ -308,7 +308,7 @@ def test_extract_worker_stop_returns_false_when_thread_refuses_to_exit(
     release = threading.Event()
     in_run = threading.Event()
 
-    def slow_run(self) -> None:  # type:ignore[no-untyped-def]
+    def slow_run(self) -> None:
         in_run.set()
         # Block until the test releases us.  This simulates a frame
         # operation that ignores the cancel poll between frames.
@@ -335,7 +335,7 @@ def test_extract_worker_stop_returns_false_when_thread_refuses_to_exit(
 
 def test_close_event_ignores_close_while_extract_thread_alive(
     qtbot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """Closing the window during a stuck extract is rejected; ref stays alive."""
     import threading
 
@@ -345,7 +345,7 @@ def test_close_event_ignores_close_while_extract_thread_alive(
     release = threading.Event()
     in_run = threading.Event()
 
-    def slow_run(self) -> None:  # type:ignore[no-untyped-def]
+    def slow_run(self) -> None:
         in_run.set()
         release.wait(timeout=5.0)
         self.completed.emit(object())

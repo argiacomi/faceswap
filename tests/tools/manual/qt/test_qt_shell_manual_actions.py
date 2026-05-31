@@ -96,7 +96,7 @@ def test_manual_action_shortcuts_match_legacy_bindings() -> None:
     assert "F10" in by_key["toggle_mask_annotation"].shortcut
 
 
-def test_window_registers_actions_with_shortcuts(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_window_registers_actions_with_shortcuts(qtbot, tmp_path: Path) -> None:
     """Building the window populates the action registry with shortcuts."""
     from PySide6.QtGui import QKeySequence
 
@@ -113,7 +113,7 @@ def test_window_registers_actions_with_shortcuts(qtbot, tmp_path: Path) -> None:
                 assert normalized in shortcuts, (spec.key, expected, shortcuts)
 
 
-def test_save_action_disabled_until_dirty(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_save_action_disabled_until_dirty(qtbot, tmp_path: Path) -> None:
     """Save starts disabled and enables once the editor state is dirty."""
     session = _session_with_frames(tmp_path)
     window = ManualToolWindow(session)
@@ -124,7 +124,7 @@ def test_save_action_disabled_until_dirty(qtbot, tmp_path: Path) -> None:  # typ
     assert save_action.isEnabled() is True
 
 
-def test_save_success_clears_dirty_state(  # type:ignore[no-untyped-def]
+def test_save_success_clears_dirty_state(
     qtbot,
     tmp_path: Path,
 ) -> None:
@@ -146,7 +146,7 @@ def test_save_success_clears_dirty_state(  # type:ignore[no-untyped-def]
     assert (tmp_path / "alignments.fsa").exists()
 
 
-def test_navigation_actions_track_thumbnail_position(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_navigation_actions_track_thumbnail_position(qtbot, tmp_path: Path) -> None:
     """First/Previous disable at row 0; Next/Last disable at the last row."""
     session = _session_with_frames(tmp_path, count=3)
     window = ManualToolWindow(session)
@@ -170,7 +170,7 @@ def test_navigation_actions_track_thumbnail_position(qtbot, tmp_path: Path) -> N
     assert actions["previous_frame"].isEnabled() is True
 
 
-def test_delete_face_action_requires_face_selection(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_delete_face_action_requires_face_selection(qtbot, tmp_path: Path) -> None:
     """Delete is disabled when the editable model is empty, enabled when a face exists."""
     session = _session_with_frames(tmp_path)
     window = ManualToolWindow(session)
@@ -187,7 +187,7 @@ def test_delete_key_path_deletes_hovered_frame_face_in_edit_modes(
     qtbot,
     tmp_path: Path,
     mode: str,
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """Delete targets the hovered frame face in BBox and Extract Box modes."""
     session = _session_with_frames(tmp_path)
     window = ManualToolWindow(session)
@@ -209,7 +209,7 @@ def test_delete_key_path_deletes_hovered_frame_face_in_edit_modes(
     assert faces[0].bbox == (5.0, 5.0, 20.0, 20.0)
 
 
-def test_editor_mode_actions_toggle_other_modes(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_editor_mode_actions_toggle_other_modes(qtbot, tmp_path: Path) -> None:
     """Activating an editor mode disables its own action and enables the others."""
     session = _session_with_frames(tmp_path)
     window = ManualToolWindow(session)
@@ -227,7 +227,7 @@ def test_editor_mode_actions_toggle_other_modes(qtbot, tmp_path: Path) -> None: 
     assert actions["set_landmarks_mode"].isEnabled() is False
 
 
-def test_cycle_filter_advances_state(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_cycle_filter_advances_state(qtbot, tmp_path: Path) -> None:
     """cycle_filter_mode walks the legacy rotation order."""
     session = _session_with_frames(tmp_path)
     window = ManualToolWindow(session)
@@ -245,7 +245,7 @@ def test_cycle_filter_advances_state(qtbot, tmp_path: Path) -> None:  # type:ign
     assert seen[-1] == "Has Face(s)"
 
 
-def test_copy_prev_face_copies_into_editable_model(  # type:ignore[no-untyped-def]
+def test_copy_prev_face_copies_into_editable_model(
     qtbot,
     tmp_path: Path,
 ) -> None:
@@ -269,7 +269,7 @@ def test_copy_prev_face_copies_into_editable_model(  # type:ignore[no-untyped-de
 def test_copy_prev_face_uses_nearest_previous_frame_with_faces(
     qtbot,
     tmp_path: Path,
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """Copy previous skips empty adjacent frames like the legacy Manual Tool."""
     session = _session_with_frames(tmp_path, count=4)
     window = ManualToolWindow(session)
@@ -284,7 +284,7 @@ def test_copy_prev_face_uses_nearest_previous_frame_with_faces(
     assert faces[0].bbox == (5.0, 5.0, 30.0, 30.0)
 
 
-def test_copy_prev_face_noop_when_source_empty(  # type:ignore[no-untyped-def]
+def test_copy_prev_face_noop_when_source_empty(
     qtbot,
     tmp_path: Path,
 ) -> None:
@@ -300,7 +300,7 @@ def test_copy_prev_face_noop_when_source_empty(  # type:ignore[no-untyped-def]
     assert window.editable_alignments.face_count(1) == 0
 
 
-def test_revert_clears_dirty(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_revert_clears_dirty(qtbot, tmp_path: Path) -> None:
     """Revert clears edited + unsaved on the shared editor state."""
     session = _session_with_frames(tmp_path)
     window = ManualToolWindow(session)
@@ -313,7 +313,7 @@ def test_revert_clears_dirty(qtbot, tmp_path: Path) -> None:  # type:ignore[no-u
     assert window.editor_state.edited is False
 
 
-def test_action_triggered_signal_fires_on_trigger(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_action_triggered_signal_fires_on_trigger(qtbot, tmp_path: Path) -> None:
     """Triggering an action emits action_triggered with the action key."""
     session = _session_with_frames(tmp_path)
     window = ManualToolWindow(session)
@@ -330,7 +330,7 @@ def test_action_triggered_signal_fires_on_trigger(qtbot, tmp_path: Path) -> None
     assert "toggle_mask_annotation" in captured
 
 
-def test_legacy_action_requires_legacy_args(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_legacy_action_requires_legacy_args(qtbot, tmp_path: Path) -> None:
     """The legacy fallback action is disabled when no legacy command is configured."""
     session = _session_with_frames(tmp_path)
     window = ManualToolWindow(session, legacy_args=None)
@@ -352,7 +352,7 @@ def test_legacy_action_requires_legacy_args(qtbot, tmp_path: Path) -> None:  # t
         ("set_mask_mode", "Mask"),
     ],
 )
-def test_editor_mode_actions_set_editor_state(  # type:ignore[no-untyped-def]
+def test_editor_mode_actions_set_editor_state(
     qtbot,
     tmp_path: Path,
     action_key: str,

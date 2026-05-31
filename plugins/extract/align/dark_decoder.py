@@ -73,7 +73,7 @@ class Dark:
         pred_mask = pred_mask.astype(np.float32)
 
         preds *= pred_mask
-        return preds
+        return preds  # type: ignore[no-any-return]
 
     def gaussian_blur(self, heatmap: np.ndarray) -> np.ndarray:
         """Perform gaussian blurring on the heatmaps
@@ -117,7 +117,7 @@ class Dark:
         new_max = cropped.reshape(batch_size, self._num_points, -1).max(axis=2)
         scale = origin_max / (new_max + 1e-8)  # avoid division by zero
         scale = scale[:, :, None, None]
-        return cropped * scale
+        return cropped * scale  # type: ignore[no-any-return]
 
     def taylor(
         self,

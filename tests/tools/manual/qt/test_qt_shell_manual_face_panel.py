@@ -16,7 +16,7 @@ def _make_jpeg_bytes(color: str = "#3366ff", size: int = 24) -> bytes:
     image.fill(QColor(color))
     buffer = QBuffer()
     buffer.open(QIODevice.WriteOnly)
-    assert image.save(buffer, "JPG", 90)
+    assert image.save(buffer, "JPG", 90)  # type: ignore[call-overload]
     payload = bytes(buffer.data())
     buffer.close()
     # Sanity check: should look like a JPEG.
@@ -48,7 +48,7 @@ def test_decode_jpeg_to_qimage_decodes_valid_payload() -> None:
     assert image.height() == 32
 
 
-def test_face_panel_set_faces_populates_items(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_face_panel_set_faces_populates_items(qtbot) -> None:
     """set_faces populates one item per face with the matching face_index."""
     panel = FaceThumbnailPanel()
     qtbot.addWidget(panel)
@@ -59,10 +59,10 @@ def test_face_panel_set_faces_populates_items(qtbot) -> None:  # type:ignore[no-
     assert panel.faces == (_face(0, payload), _face(1, payload), _face(2, payload))
     assert panel.currentRow() == 0
     assert panel.active_face() is not None
-    assert panel.active_face().face_index == 0
+    assert panel.active_face().face_index == 0  # type: ignore[union-attr]
 
 
-def test_face_panel_empty_state_shows_placeholder_item(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_face_panel_empty_state_shows_placeholder_item(qtbot) -> None:
     """An empty frame still renders a non-selectable placeholder row."""
     panel = FaceThumbnailPanel()
     qtbot.addWidget(panel)
@@ -71,11 +71,11 @@ def test_face_panel_empty_state_shows_placeholder_item(qtbot) -> None:  # type:i
     item = panel.item(0)
     assert item is not None
     assert item.text() == "No faces in frame"
-    assert item.flags() == Qt.NoItemFlags
+    assert item.flags() == Qt.NoItemFlags  # type: ignore[attr-defined]
     assert panel.active_face() is None
 
 
-def test_face_panel_emits_minus_one_when_cleared(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_face_panel_emits_minus_one_when_cleared(qtbot) -> None:
     """Clearing the panel must emit face_selected(-1) so callers can reset state."""
     panel = FaceThumbnailPanel()
     qtbot.addWidget(panel)
@@ -95,7 +95,7 @@ def test_face_panel_emits_minus_one_when_cleared(qtbot) -> None:  # type:ignore[
     assert -1 in captured
 
 
-def test_face_panel_emits_face_selected_on_row_change(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_face_panel_emits_face_selected_on_row_change(qtbot) -> None:
     """Selecting a row emits the face_selected signal with the face_index."""
     panel = FaceThumbnailPanel()
     qtbot.addWidget(panel)
@@ -110,7 +110,7 @@ def test_face_panel_emits_face_selected_on_row_change(qtbot) -> None:  # type:ig
     assert captured == [2, 1]
 
 
-def test_face_panel_keyboard_navigation_changes_selection(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_face_panel_keyboard_navigation_changes_selection(qtbot) -> None:
     """Right-arrow keypress advances selection and emits the matching signal."""
     panel = FaceThumbnailPanel()
     qtbot.addWidget(panel)
@@ -119,19 +119,19 @@ def test_face_panel_keyboard_navigation_changes_selection(qtbot) -> None:  # typ
     captured: list[int] = []
     panel.face_selected.connect(captured.append)
 
-    panel.setFocus(Qt.OtherFocusReason)
-    key = QKeyEvent(QKeyEvent.KeyPress, Qt.Key_Right, Qt.NoModifier)
+    panel.setFocus(Qt.OtherFocusReason)  # type: ignore[attr-defined]
+    key = QKeyEvent(QKeyEvent.KeyPress, Qt.Key_Right, Qt.NoModifier)  # type: ignore[attr-defined]
     panel.keyPressEvent(key)
-    key = QKeyEvent(QKeyEvent.KeyPress, Qt.Key_Right, Qt.NoModifier)
+    key = QKeyEvent(QKeyEvent.KeyPress, Qt.Key_Right, Qt.NoModifier)  # type: ignore[attr-defined]
     panel.keyPressEvent(key)
-    key = QKeyEvent(QKeyEvent.KeyPress, Qt.Key_Left, Qt.NoModifier)
+    key = QKeyEvent(QKeyEvent.KeyPress, Qt.Key_Left, Qt.NoModifier)  # type: ignore[attr-defined]
     panel.keyPressEvent(key)
 
     assert panel.currentRow() == 1
     assert captured == [1, 2, 1]
 
 
-def test_face_panel_select_face_resolves_face_index(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_face_panel_select_face_resolves_face_index(qtbot) -> None:
     """select_face honors face_index regardless of row order changes."""
     panel = FaceThumbnailPanel()
     qtbot.addWidget(panel)
@@ -143,7 +143,7 @@ def test_face_panel_select_face_resolves_face_index(qtbot) -> None:  # type:igno
     assert panel.select_face(99) is False
 
 
-def test_face_panel_refreshes_on_set_faces(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_face_panel_refreshes_on_set_faces(qtbot) -> None:
     """Calling set_faces a second time fully refreshes the panel state."""
     panel = FaceThumbnailPanel()
     qtbot.addWidget(panel)
@@ -165,7 +165,7 @@ def test_face_thumbnail_has_image_flag() -> None:
     assert _face(0, b"\xff\xd8payload").has_image is True
 
 
-def test_face_panel_uses_placeholder_for_undecodable_payload(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_face_panel_uses_placeholder_for_undecodable_payload(qtbot) -> None:
     """Items with empty/undecodable payloads still get an icon."""
     panel = FaceThumbnailPanel()
     qtbot.addWidget(panel)
@@ -177,7 +177,7 @@ def test_face_panel_uses_placeholder_for_undecodable_payload(qtbot) -> None:  # 
         assert item.icon().isNull() is False
 
 
-def test_manual_tool_window_updates_editor_face_index_on_panel_selection(  # type:ignore[no-untyped-def]
+def test_manual_tool_window_updates_editor_face_index_on_panel_selection(
     qtbot,
     tmp_path,
 ) -> None:

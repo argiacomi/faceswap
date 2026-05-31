@@ -31,7 +31,7 @@ def _points(offset: float = 0.0) -> np.ndarray:
         ),
         axis=1,
     )
-    return points + offset
+    return points + offset  # type: ignore[no-any-return]
 
 
 def _write_manifest(tmp_path: Path, sample_ids: tuple[str, ...]) -> Path:

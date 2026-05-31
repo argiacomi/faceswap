@@ -157,7 +157,7 @@ def label_bad_candidates(
         existing = by_sample.get(record.sample_id)
         if existing is None or record.geometry_score < existing:
             by_sample[record.sample_id] = record.geometry_score
-    labels = np.zeros(len(records), dtype=bool)
+    labels = np.zeros(len(records), dtype=bool)  # type: ignore[var-annotated]
     for idx, record in enumerate(records):
         labels[idx] = (record.geometry_score - by_sample[record.sample_id]) > margin
     return labels
@@ -199,8 +199,8 @@ def _classify(values: np.ndarray, threshold: float, direction: str) -> np.ndarra
     boundary still flags those candidates — important for bimodal signals.
     """
     if direction == "higher_is_worse":
-        return values >= threshold
-    return values <= threshold
+        return values >= threshold  # type: ignore[no-any-return]
+    return values <= threshold  # type: ignore[no-any-return]
 
 
 def validate_signal(

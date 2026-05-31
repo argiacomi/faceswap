@@ -203,7 +203,7 @@ def test_last_session_store_round_trip(tmp_path: Path, store: ProjectStore) -> N
     assert restored.ui_state == {"window_size": [1280, 760]}
 
 
-def test_main_window_reload_applies_fixture_state(  # type:ignore[no-untyped-def]
+def test_main_window_reload_applies_fixture_state(
     qtbot,
     monkeypatch,
     tmp_path: Path,

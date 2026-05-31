@@ -65,7 +65,7 @@ def get_adjusted_center(
         offset,
         center,
     )
-    return center
+    return center  # type: ignore[no-any-return]
 
 
 def get_base_scale(source_centering: CenteringType, source_coverage: float = 1.0) -> float:
@@ -221,8 +221,8 @@ def get_matrix_scaling(matrix: np.ndarray) -> tuple[int, int]:
         if avg_scale >= 1.0
         else (cv2.INTER_AREA, cv2.INTER_CUBIC)
     )
-    logger.trace(
-        "interpolator: %s, inverse interpolator: %s",  # type:ignore[attr-defined]
+    logger.trace(  # type: ignore[attr-defined]
+        "interpolator: %s, inverse interpolator: %s",
         interpolators[0],
         interpolators[1],
     )
@@ -249,26 +249,26 @@ def transform_image(
     -------
     The transformed image
     """
-    logger.trace(
-        "image shape: %s, matrix: %s, size: %s. padding: %s",  # type:ignore[attr-defined]
+    logger.trace(  # type: ignore[attr-defined]
+        "image shape: %s, matrix: %s, size: %s. padding: %s",
         image.shape,
         matrix,
         size,
         padding,
     )
     # transform the matrix for size and padding
-    mat = matrix * (size - 2 * padding)
+    mat = matrix * (size - 2 * padding)  # type: ignore[var-annotated]
     mat[:, 2] += padding
 
     # transform image
     interpolators = get_matrix_scaling(mat)
     retval = cv2.warpAffine(image, mat, (size, size), flags=interpolators[0])
-    logger.trace(
-        "transformed matrix: %s, final image shape: %s",  # type:ignore[attr-defined]
+    logger.trace(  # type: ignore[attr-defined]
+        "transformed matrix: %s, final image shape: %s",
         mat,
         image.shape,
     )
-    return retval
+    return retval  # type: ignore[no-any-return]
 
 
 @T.overload
@@ -278,7 +278,7 @@ def sub_crop(
 
 
 @T.overload
-def sub_crop(
+def sub_crop(  # type: ignore[overload-cannot-match]
     image: npt.NDArray[np.float32], offset: npt.NDArray[np.int32], out_size: int
 ) -> npt.NDArray[np.float32]: ...
 
@@ -358,7 +358,7 @@ def batch_create_matrices(
 
     cx = cy = (size - 1) / 2.0
 
-    matrices = np.zeros((len(rotation), 3, 3), dtype=np.float32)
+    matrices = np.zeros((len(rotation), 3, 3), dtype=np.float32)  # type: ignore[var-annotated]
     matrices[:, 0, 0] = cos_t
     matrices[:, 0, 1] = sin_t
     matrices[:, 1, 0] = -sin_t
@@ -442,7 +442,7 @@ def batch_sub_crop(
 
 
 @T.overload
-def batch_sub_crop(
+def batch_sub_crop(  # type: ignore[overload-cannot-match]
     images: npt.NDArray[np.float32],
     offsets: npt.NDArray[np.int32],
     out_size: int,
@@ -476,7 +476,7 @@ def batch_sub_crop(
     batch_size, height, width, channels = images.shape
 
     if base_grid is None:
-        yy, xx = np.meshgrid(
+        yy, xx = np.meshgrid(  # type: ignore[var-annotated]
             np.arange(out_size, dtype="int32"),
             np.arange(out_size, dtype="int32"),
             indexing="ij",
@@ -649,4 +649,4 @@ def bbox_to_square_roi(batch: np.ndarray, scale: float) -> np.ndarray:
     retval[:, 1] = ctr_y - half
     retval[:, 2] = ctr_x + half
     retval[:, 3] = ctr_y + half
-    return retval
+    return retval  # type: ignore[no-any-return]

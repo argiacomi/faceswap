@@ -65,7 +65,7 @@ class OptionGroupDrawer(QWidget):
         super().__init__(parent)
         self.setObjectName("qt-shell-option-group")
         self.setMinimumWidth(0)
-        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)  # type: ignore[attr-defined]
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
@@ -75,24 +75,24 @@ class OptionGroupDrawer(QWidget):
         self._toggle.setObjectName("qt-shell-option-group-toggle")
         self._toggle.setCheckable(True)
         self._toggle.setChecked(True)
-        self._toggle.setArrowType(Qt.DownArrow)
-        self._toggle.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-        self._toggle.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self._toggle.setArrowType(Qt.DownArrow)  # type: ignore[attr-defined]
+        self._toggle.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)  # type: ignore[attr-defined]
+        self._toggle.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)  # type: ignore[attr-defined]
         self._toggle.toggled.connect(self._on_toggled)
         outer.addWidget(self._toggle)
 
         self._content = QWidget()
         self._content.setObjectName("qt-shell-option-group-content")
         self._content.setMinimumWidth(0)
-        self._content.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self._content.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)  # type: ignore[attr-defined]
         self._form = QFormLayout(self._content)
         self._form.setContentsMargins(10, 4, 10, 10)
         self._form.setHorizontalSpacing(12)
         self._form.setVerticalSpacing(6)
         self._form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
         self._form.setRowWrapPolicy(QFormLayout.DontWrapRows)
-        self._form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        self._form.setFormAlignment(Qt.AlignLeft | Qt.AlignTop)
+        self._form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)  # type: ignore[attr-defined]
+        self._form.setFormAlignment(Qt.AlignLeft | Qt.AlignTop)  # type: ignore[attr-defined]
         outer.addWidget(self._content)
 
     @property
@@ -102,7 +102,7 @@ class OptionGroupDrawer(QWidget):
 
     def title(self) -> str:
         """Return the drawer title (mirrors QGroupBox.title())."""
-        return self._toggle.text()
+        return self._toggle.text()  # type: ignore[no-any-return]
 
     def isCheckable(self) -> bool:  # noqa: N802 - Qt-style camelCase for test parity
         """Drawers are always collapsible; kept for test-shape compatibility."""
@@ -110,7 +110,7 @@ class OptionGroupDrawer(QWidget):
 
     def isChecked(self) -> bool:  # noqa: N802
         """Return whether the drawer is currently expanded."""
-        return self._toggle.isChecked()
+        return self._toggle.isChecked()  # type: ignore[no-any-return]
 
     def setChecked(self, expanded: bool) -> None:  # noqa: N802
         """Expand (``True``) or collapse (``False``) the drawer."""
@@ -118,7 +118,7 @@ class OptionGroupDrawer(QWidget):
 
     def _on_toggled(self, expanded: bool) -> None:
         """Update arrow direction and hide content when collapsed."""
-        self._toggle.setArrowType(Qt.DownArrow if expanded else Qt.RightArrow)
+        self._toggle.setArrowType(Qt.DownArrow if expanded else Qt.RightArrow)  # type: ignore[attr-defined]
         self._content.setVisible(expanded)
 
 
@@ -131,7 +131,7 @@ class OptionsFormRenderer(QWidget):
         super().__init__(parent)
         self._option_columns = max(1, int(option_columns))
         self.setMinimumWidth(0)
-        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)  # type: ignore[attr-defined]
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(5, 5, 5, 5)
         self._layout.setSpacing(8)
@@ -176,7 +176,7 @@ class OptionsFormRenderer(QWidget):
         container = QWidget()
         container.setObjectName("qt-shell-option-bool-cluster")
         container.setMinimumWidth(0)
-        container.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        container.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)  # type: ignore[attr-defined]
         grid = QGridLayout(container)
         grid.setContentsMargins(0, 4, 0, 4)
         grid.setHorizontalSpacing(16)
@@ -184,7 +184,7 @@ class OptionsFormRenderer(QWidget):
         columns = self._choice_columns(len(bool_pairs))
         for index, (spec, checkbox) in enumerate(bool_pairs):
             checkbox.setText(spec.title)
-            checkbox.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            checkbox.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)  # type: ignore[attr-defined]
             grid.addWidget(checkbox, index // columns, index % columns)
         for column in range(columns):
             grid.setColumnStretch(column, 1)
@@ -221,8 +221,8 @@ class OptionsFormRenderer(QWidget):
         """Remove and delete child widgets from a layout."""
         while layout.count():
             item = layout.takeAt(0)
-            child_layout = item.layout()
-            widget = item.widget()
+            child_layout = item.layout()  # type: ignore[union-attr]
+            widget = item.widget()  # type: ignore[union-attr]
             if child_layout is not None:
                 cls._clear_layout(child_layout)
             if widget is not None:
@@ -256,7 +256,7 @@ class OptionsFormRenderer(QWidget):
             return drawer.form
         section = QWidget()
         section.setMinimumWidth(0)
-        section.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        section.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)  # type: ignore[attr-defined]
         section.setObjectName("qt-shell-option-group-master")
         form = QFormLayout(section)
         form.setContentsMargins(10, 8, 10, 10)
@@ -264,8 +264,8 @@ class OptionsFormRenderer(QWidget):
         form.setVerticalSpacing(6)
         form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
         form.setRowWrapPolicy(QFormLayout.DontWrapRows)
-        form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        form.setFormAlignment(Qt.AlignLeft | Qt.AlignTop)
+        form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)  # type: ignore[attr-defined]
+        form.setFormAlignment(Qt.AlignLeft | Qt.AlignTop)  # type: ignore[attr-defined]
         self._layout.addWidget(section)
         return form
 
@@ -279,7 +279,7 @@ class OptionsFormRenderer(QWidget):
         """
         if self._is_required(spec):
             label = QLabel(f'{escape(spec.title)} <span style="color:#c0392b;">*</span>')
-            label.setTextFormat(Qt.RichText)
+            label.setTextFormat(Qt.RichText)  # type: ignore[attr-defined]
             label.setObjectName("qt-shell-option-label-required")
             label.setProperty("required", True)
         else:
@@ -287,9 +287,9 @@ class OptionsFormRenderer(QWidget):
             label.setObjectName("qt-shell-option-label")
         label.setMinimumWidth(self.LABEL_COLUMN_WIDTH)
         label.setMaximumWidth(self.LABEL_COLUMN_WIDTH)
-        label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        label.setAlignment(Qt.AlignLeft | Qt.AlignTop)  # type: ignore[attr-defined]
         label.setWordWrap(True)
-        label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.MinimumExpanding)
+        label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.MinimumExpanding)  # type: ignore[attr-defined]
         if spec.helptext:
             label.setToolTip(self._tooltip_text(self._title_tooltip(spec)))
         return label
@@ -333,7 +333,7 @@ class OptionsFormRenderer(QWidget):
         """Build an exclusive choice widget for radio metadata."""
         widget = QWidget()
         widget.setMinimumWidth(0)
-        widget.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        widget.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)  # type: ignore[attr-defined]
         layout = QGridLayout(widget)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setHorizontalSpacing(12)
@@ -345,7 +345,7 @@ class OptionsFormRenderer(QWidget):
         for index, choice in enumerate(spec.choices):
             button = QRadioButton(choice)
             button.setMinimumWidth(0)
-            button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)  # type: ignore[attr-defined]
             button.setChecked(choice == default)
             if spec.helptext:
                 button.setToolTip(self._tooltip_text(spec.helptext))
@@ -360,7 +360,7 @@ class OptionsFormRenderer(QWidget):
         """Build a multi-select widget only for multi-option metadata."""
         widget = QWidget()
         widget.setMinimumWidth(0)
-        widget.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        widget.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)  # type: ignore[attr-defined]
         layout = QGridLayout(widget)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setHorizontalSpacing(12)
@@ -370,7 +370,7 @@ class OptionsFormRenderer(QWidget):
         for index, choice in enumerate(spec.choices):
             checkbox = QCheckBox(choice)
             checkbox.setMinimumWidth(0)
-            checkbox.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            checkbox.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)  # type: ignore[attr-defined]
             checkbox.setChecked(choice in selected)
             if spec.helptext:
                 checkbox.setToolTip(self._tooltip_text(spec.helptext))
@@ -387,14 +387,14 @@ class OptionsFormRenderer(QWidget):
         layout.setContentsMargins(0, 4, 0, 4)
         layout.setSpacing(8)
 
-        slider = QSlider(Qt.Horizontal)
+        slider = QSlider(Qt.Horizontal)  # type: ignore[attr-defined]
         line_edit = QLineEdit()
         line_edit.setFixedWidth(54)
-        line_edit.setAlignment(Qt.AlignCenter)
+        line_edit.setAlignment(Qt.AlignCenter)  # type: ignore[attr-defined]
         slider.setObjectName("qt-shell-option-slider")
         line_edit.setObjectName("qt-shell-option-slider-value")
         slider.setMinimumWidth(0)
-        slider.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        slider.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)  # type: ignore[attr-defined]
         slider_height = max(
             slider.sizeHint().height(),
             slider.minimumSizeHint().height(),
@@ -420,8 +420,8 @@ class OptionsFormRenderer(QWidget):
 
         slider.valueChanged.connect(sync_line)
         line_edit.editingFinished.connect(sync_slider)
-        layout.addWidget(slider, 1, Qt.AlignVCenter)
-        layout.addWidget(line_edit, 0, Qt.AlignVCenter)
+        layout.addWidget(slider, 1, Qt.AlignVCenter)  # type: ignore[attr-defined]
+        layout.addWidget(line_edit, 0, Qt.AlignVCenter)  # type: ignore[attr-defined]
         self._set_slider_value(spec, widget, spec.default)
         return widget
 
@@ -440,7 +440,7 @@ class OptionsFormRenderer(QWidget):
         """Wrap a line edit with browse buttons for the configured browser modes."""
         row = QWidget()
         row.setMinimumWidth(0)
-        row.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        row.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)  # type: ignore[attr-defined]
         layout = QHBoxLayout(row)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
@@ -458,7 +458,7 @@ class OptionsFormRenderer(QWidget):
             else:
                 button.setText(self._browser_label(mode))
             button.setToolTip(self._tooltip_text(self._browser_tooltip(mode, spec)))
-            button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+            button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)  # type: ignore[attr-defined]
             button.setFixedSize(QSize(24, 24))
             button.setFlat(True)
             button.clicked.connect(
@@ -706,9 +706,9 @@ class OptionsFormRenderer(QWidget):
         """Apply common growth policy for option widgets."""
         widget.setMinimumWidth(0)
         if isinstance(widget, (QLineEdit, QComboBox)):
-            widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)  # type: ignore[attr-defined]
         else:
-            widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+            widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)  # type: ignore[attr-defined]
 
     @staticmethod
     def _checked_for_value(spec: OptionSpec, value: object, value_is_command_value: bool) -> bool:
@@ -738,7 +738,7 @@ class OptionsFormRenderer(QWidget):
         line_edit = widget.findChild(QLineEdit)
         if line_edit is None:
             slider = widget.findChild(QSlider)
-            return cls._slider_to_value(spec, slider.value())  # type:ignore[union-attr]
+            return cls._slider_to_value(spec, slider.value())
         return cls._coerce_slider_value(spec, line_edit.text())
 
     @classmethod
@@ -761,11 +761,11 @@ class OptionsFormRenderer(QWidget):
         """Coerce an arbitrary value into the slider's command type and bounds."""
         try:
             if spec.value_type is float:
-                coerced: int | float = float(value)
+                coerced: int | float = float(value)  # type: ignore[arg-type]
             else:
                 coerced = int(float(str(value)))
         except (TypeError, ValueError):
-            coerced = 0 if spec.default in (None, "") else spec.default
+            coerced = 0 if spec.default in (None, "") else spec.default  # type: ignore[assignment]
             coerced = float(coerced) if spec.value_type is float else int(coerced)
         if spec.slider_min is not None:
             coerced = max(coerced, spec.slider_min)
@@ -791,7 +791,7 @@ class OptionsFormRenderer(QWidget):
     @classmethod
     def _slider_scale(cls, spec: OptionSpec) -> int:
         """Return integer scale factor for float sliders."""
-        return 10 ** cls._slider_decimals(spec)
+        return 10 ** cls._slider_decimals(spec)  # type: ignore[no-any-return]
 
     @staticmethod
     def _join_paths(paths: T.Iterable[str]) -> str:
@@ -953,7 +953,7 @@ class CommandPanel(QWidget):
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)  # type: ignore[attr-defined]
         scroll.setObjectName("qt-shell-command-scroll")
         scroll.setWidget(self._renderer)
         self._scroll = scroll

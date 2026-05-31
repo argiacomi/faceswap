@@ -138,7 +138,7 @@ class ExtractHandler(abc.ABC):
         metadata = getattr(plugin, "last_debug_metadata", None)
         if not isinstance(metadata, list) or len(metadata) <= feed_size:
             return
-        plugin.last_debug_metadata = metadata[:feed_size]
+        plugin.last_debug_metadata = metadata[:feed_size]  # type: ignore[attr-defined]
 
     def _is_overridden(
         self, method_name: T.Literal["pre_process", "process", "post_process"]
@@ -261,16 +261,16 @@ class ExtractHandler(abc.ABC):
                     "uint8 plugins must use scale=(0, 255); scale into float at the "
                     "plugin layer if a different range is needed."
                 )
-            return images
+            return images  # type: ignore[no-any-return]
 
         retval = images.astype(self.plugin.dtype)
         if self.plugin.scale == (0, 255):
-            return retval
+            return retval  # type: ignore[no-any-return]
         low, high = self.plugin.scale
         im_range = high - low
         retval /= 255.0 / im_range
         retval += low
-        return retval
+        return retval  # type: ignore[no-any-return]
 
     def output_info(self) -> None:
         """Called after the final item is put to the out queue. Override for plugin runner

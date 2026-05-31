@@ -36,7 +36,7 @@ class PreviewImageView(QLabel):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__("No preview selected", parent)
         self.setObjectName("qt-shell-preview-image")
-        self.setAlignment(Qt.AlignCenter)
+        self.setAlignment(Qt.AlignCenter)  # type: ignore[attr-defined]
         self.setWordWrap(True)
         self.setMinimumSize(0, 0)
         self._source_pixmap = QPixmap()
@@ -94,12 +94,12 @@ class PreviewImageView(QLabel):
             self._render_pixmap()
             self.view_changed.emit()
 
-    def resizeEvent(self, event) -> None:  # type:ignore[no-untyped-def] # noqa:N802
+    def resizeEvent(self, event) -> None:  # noqa:N802
         """Re-render scaled preview on resize."""
         super().resizeEvent(event)
         self._render_pixmap()
 
-    def wheelEvent(self, event) -> None:  # type:ignore[no-untyped-def] # noqa:N802
+    def wheelEvent(self, event) -> None:  # noqa:N802
         """Zoom the preview with the mouse wheel."""
         if self._source_pixmap.isNull():
             return
@@ -109,7 +109,7 @@ class PreviewImageView(QLabel):
             self.zoom_out()
         event.accept()
 
-    def mousePressEvent(self, event) -> None:  # type:ignore[no-untyped-def] # noqa:N802
+    def mousePressEvent(self, event) -> None:  # noqa:N802
         """Start image panning when zoomed in."""
         if event.button() == Qt.MouseButton.LeftButton and self._zoom > 1.0:
             self._drag_start = (float(event.position().x()), float(event.position().y()))
@@ -117,7 +117,7 @@ class PreviewImageView(QLabel):
             return
         super().mousePressEvent(event)
 
-    def mouseMoveEvent(self, event) -> None:  # type:ignore[no-untyped-def] # noqa:N802
+    def mouseMoveEvent(self, event) -> None:  # noqa:N802
         """Pan the preview while dragging."""
         if self._drag_start is None or self._zoom <= 1.0:
             super().mouseMoveEvent(event)
@@ -132,7 +132,7 @@ class PreviewImageView(QLabel):
         )
         event.accept()
 
-    def mouseReleaseEvent(self, event) -> None:  # type:ignore[no-untyped-def] # noqa:N802
+    def mouseReleaseEvent(self, event) -> None:  # noqa:N802
         """Stop image panning."""
         self._drag_start = None
         super().mouseReleaseEvent(event)
@@ -162,8 +162,8 @@ class PreviewImageView(QLabel):
         scaled = self._source_pixmap.scaled(
             target_width,
             target_height,
-            Qt.KeepAspectRatio,
-            Qt.SmoothTransformation,
+            Qt.KeepAspectRatio,  # type: ignore[attr-defined]
+            Qt.SmoothTransformation,  # type: ignore[attr-defined]
         )
         if self._zoom <= 1.0:
             self.setPixmap(scaled)
@@ -351,11 +351,11 @@ class PreviewPanel(QWidget):
 
         title = QLabel("Preview Output")
         title.setObjectName("qt-shell-preview-title")
-        title.setAlignment(Qt.AlignCenter)
+        title.setAlignment(Qt.AlignCenter)  # type: ignore[attr-defined]
         layout.addWidget(title)
 
         self._source_label.setObjectName("qt-shell-preview-source")
-        self._source_label.setAlignment(Qt.AlignCenter)
+        self._source_label.setAlignment(Qt.AlignCenter)  # type: ignore[attr-defined]
         self._source_label.setWordWrap(True)
         layout.addWidget(self._source_label)
 
@@ -367,7 +367,7 @@ class PreviewPanel(QWidget):
         scroll = QScrollArea()
         scroll.setObjectName("qt-shell-preview-scroll")
         scroll.setWidgetResizable(True)
-        scroll.setAlignment(Qt.AlignCenter)
+        scroll.setAlignment(Qt.AlignCenter)  # type: ignore[attr-defined]
         scroll.setWidget(self._image_label)
         content.addWidget(scroll, 1)
         layout.addLayout(content, 1)
@@ -440,7 +440,7 @@ class PreviewPanel(QWidget):
         selected_row = 0
         for row, image in enumerate(images):
             item = QListWidgetItem(image.name)
-            item.setData(Qt.UserRole, str(image.path))
+            item.setData(Qt.UserRole, str(image.path))  # type: ignore[attr-defined]
             self._image_list.addItem(item)
             if selected_path == str(image.path):
                 selected_row = row
@@ -449,7 +449,7 @@ class PreviewPanel(QWidget):
     def _selected_image_path(self) -> str | None:
         """Return the currently selected preview image path."""
         current = self._image_list.currentItem()
-        return None if current is None else str(current.data(Qt.UserRole))
+        return None if current is None else str(current.data(Qt.UserRole))  # type: ignore[attr-defined]
 
     def _current_image_changed(
         self,
@@ -461,7 +461,7 @@ class PreviewPanel(QWidget):
             self._image_label.clear_preview()
             self._sync_actions()
             return
-        path = Path(str(current.data(Qt.UserRole)))
+        path = Path(str(current.data(Qt.UserRole)))  # type: ignore[attr-defined]
         pixmap = QPixmap(str(path))
         if pixmap.isNull():
             self._image_label.clear_preview(f"Unable to load image: {path.name}")

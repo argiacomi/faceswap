@@ -21,7 +21,7 @@ COVERAGE = ROOT / "lib" / "faceqa" / "coverage.py"
 
 def _minimal_face() -> FileAlignments:
     """Return a minimal alignment face for coverage-tool integration tests."""
-    landmarks = np.zeros((68, 2), dtype="float32")
+    landmarks = np.zeros((68, 2), dtype="float32")  # type: ignore[var-annotated]
     return FileAlignments(x=0, y=0, w=80, h=90, landmarks_xy=landmarks)
 
 

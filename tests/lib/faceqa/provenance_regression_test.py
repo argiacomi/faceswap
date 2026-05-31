@@ -128,7 +128,7 @@ def test_fallback_lighting_bucket_penalty_is_reduced() -> None:
             color_warmth=0.0,
             saturation=50.0,
             image_metrics_provenance=IMAGE_METRICS_PROVENANCE_THUMBNAIL,
-            **common,
+            **common,  # type: ignore[arg-type]
         ),
         FaceQARecord(
             frame="frame_000002.png",
@@ -140,7 +140,7 @@ def test_fallback_lighting_bucket_penalty_is_reduced() -> None:
             color_warmth=0.0,
             saturation=50.0,
             image_metrics_provenance=IMAGE_METRICS_PROVENANCE_THUMBNAIL,
-            **common,
+            **common,  # type: ignore[arg-type]
         ),
     ]
 

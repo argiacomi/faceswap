@@ -179,10 +179,10 @@ class Output:
 
         if not self._input_is_faces:  # Frame is in the detected faces object
             assert detected_faces[0].image is not None
-            return np.ascontiguousarray(detected_faces[0].image)
+            return np.ascontiguousarray(detected_faces[0].image)  # type: ignore[no-any-return]
 
         # Outputting to frames, but input is faces. Apply the face patches to an empty canvas
-        retval = np.zeros((*frame_dims, 3), dtype="uint8")
+        retval = np.zeros((*frame_dims, 3), dtype="uint8")  # type: ignore[var-annotated]
         for detected_face in detected_faces:
             assert detected_face.image is not None
             face = AlignedFace(
@@ -280,8 +280,8 @@ class Output:
             assert len(detected_faces) == 1  # If outputting faces, we should only receive 1 face
             retval = self._get_background_face(detected_faces[0], mask_centering, mask_size)
 
-        logger.trace(
-            "Background image (size: %s, dtype: %s)",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "Background image (size: %s, dtype: %s)",
             retval.shape,
             retval.dtype,
         )
@@ -308,7 +308,7 @@ class Output:
         -------
         The final mask to apply to the output image
         """
-        retval = np.zeros(mask_dims, dtype="uint8")
+        retval = np.zeros(mask_dims, dtype="uint8")  # type: ignore[var-annotated]
         for face in detected_faces:
             mask_object = face.mask[mask_type]
             mask_object.set_blur_and_threshold(
@@ -320,8 +320,8 @@ class Output:
                 else mask_object.mask[..., 0]
             )
             np.maximum(retval, mask, out=retval)
-        logger.trace(
-            "Final mask (shape: %s, dtype: %s)",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "Final mask (shape: %s, dtype: %s)",
             retval.shape,
             retval.dtype,
         )
@@ -347,7 +347,7 @@ class Output:
 
         mask = mask[..., None]
         if self._type == "masked":
-            return np.concatenate([background, mask], axis=-1)
+            return np.concatenate([background, mask], axis=-1)  # type: ignore[no-any-return]
 
         height, width = background.shape[:2]
         masked = (background.astype("float32") * mask.astype("float32") / 255.0).astype("uint8")
@@ -357,7 +357,7 @@ class Output:
         axis = 0 if background.shape[0] < background.shape[1] else 1
         retval = np.concatenate((background, masked, mask), axis=axis)
 
-        return retval
+        return retval  # type: ignore[no-any-return]
 
     def _create_image(
         self,
@@ -401,8 +401,8 @@ class Output:
         )
         retval = self._build_output_image(background, mask)
 
-        logger.trace(
-            "Output image (shape: %s, dtype: %s)",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "Output image (shape: %s, dtype: %s)",
             retval.shape,
             retval.dtype,
         )
@@ -539,8 +539,8 @@ class Output:
             if not self._full_frame:
                 filename += f"_{idx}"
             filename = os.path.join(self._saver.location, f"{filename}.png")
-            logger.trace(
-                "filename: '%s', image_shape: %s",  # type:ignore[attr-defined]
+            logger.trace(  # type: ignore[attr-defined]
+                "filename: '%s', image_shape: %s",
                 filename,
                 image.shape,
             )

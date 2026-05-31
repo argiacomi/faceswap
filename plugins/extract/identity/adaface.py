@@ -31,7 +31,7 @@ class AdaFace(FacePlugin):
             input_size=adapter.input_size,
             batch_size=cfg.batch_size(),
             is_rgb=False,
-            dtype=np.uint8,
+            dtype=np.uint8,  # type: ignore[arg-type]
             scale=(0, 255),
             force_cpu=self._force_cpu,
             centering="face",

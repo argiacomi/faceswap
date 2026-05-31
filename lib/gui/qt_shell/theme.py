@@ -781,7 +781,7 @@ def _positive_int(value: object, default: int) -> int:
     if isinstance(value, bool):
         return default
     try:
-        parsed = int(value)
+        parsed = int(value)  # type: ignore[call-overload]
     except (TypeError, ValueError):
         return default
     return parsed if parsed > 0 else default

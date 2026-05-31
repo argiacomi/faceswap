@@ -90,7 +90,7 @@ class NvidiaStats(_GPUStats):
             )
             retval = 0
         self._log("debug", f"GPU Device count: {retval}")
-        return retval
+        return retval  # type: ignore[no-any-return]
 
     def _get_active_devices(self) -> list[int]:
         """Obtain the indices of active GPUs (those that have not been explicitly excluded by
@@ -134,7 +134,7 @@ class NvidiaStats(_GPUStats):
             self._log("debug", f"Unable to obtain driver. Original error: {str(err)}")
             driver = "No Nvidia driver found"
         self._log("debug", f"GPU Driver: {driver}")
-        return driver
+        return driver  # type: ignore[no-any-return]
 
     def _get_device_names(self) -> list[str]:
         """Obtain the list of names of connected Nvidia GPUs as identified in :attr:`_handles`.

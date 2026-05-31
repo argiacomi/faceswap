@@ -22,7 +22,7 @@ from lib.landmarks.datasets.aflw2000_3d import (
 
 def _points_68_2d() -> np.ndarray:
     """Return deterministic 68-point landmarks as 2x68."""
-    return np.stack(
+    return np.stack(  # type: ignore[no-any-return]
         (
             np.linspace(10, 77, 68, dtype="float32"),
             np.linspace(20, 87, 68, dtype="float32"),
@@ -35,14 +35,14 @@ def _points_68_3d() -> np.ndarray:
     """Return deterministic 68-point landmarks as 3x68."""
     xy = _points_68_2d()
     z = np.linspace(1, 68, 68, dtype="float32")[None, :]
-    return np.concatenate((xy, z), axis=0)
+    return np.concatenate((xy, z), axis=0)  # type: ignore[no-any-return]
 
 
 def _write_png(path: Path) -> None:
     """Write a tiny valid PNG image."""
     cv2 = pytest.importorskip("cv2")
     path.parent.mkdir(parents=True, exist_ok=True)
-    image = np.zeros((32, 32, 3), dtype="uint8")
+    image = np.zeros((32, 32, 3), dtype="uint8")  # type: ignore[var-annotated]
     image[..., 0] = 255
     assert cv2.imwrite(str(path), image)
 
@@ -111,8 +111,8 @@ def test_build_aflw2000_3d_manifest_falls_back_to_68_point_pt2d(tmp_path: Path) 
 def _frontal_pt3d_68() -> np.ndarray:
     """Return a 3x68 array with near-uniform depth (frontal face)."""
     xy = _points_68_2d()
-    z = np.full((1, 68), 50.0, dtype="float32")
-    return np.concatenate((xy, z), axis=0)
+    z = np.full((1, 68), 50.0, dtype="float32")  # type: ignore[var-annotated]
+    return np.concatenate((xy, z), axis=0)  # type: ignore[no-any-return]
 
 
 def _profile_pt3d_68() -> np.ndarray:
@@ -127,13 +127,13 @@ def _profile_pt3d_68() -> np.ndarray:
     each other's neighborhood. The z-buffer test should hide exactly
     indices 8..15.
     """
-    xy = np.zeros((68, 2), dtype="float32")
+    xy = np.zeros((68, 2), dtype="float32")  # type: ignore[var-annotated]
     xy[0:8] = [10.0, 10.0]  # front layer of cluster A
     xy[8:16] = [10.0, 10.0]  # back layer of cluster A (XY-coincident with front)
     xy[16:] = [90.0, 90.0]  # cluster B (isolated from cluster A)
-    z = np.zeros((68,), dtype="float32")
+    z = np.zeros((68,), dtype="float32")  # type: ignore[var-annotated]
     z[0:8] = 60.0  # extent ≈ 113 → 60 > depth_margin (0.10 * 113 ≈ 11)
-    return np.concatenate((xy.T, z[None, :]), axis=0)
+    return np.concatenate((xy.T, z[None, :]), axis=0)  # type: ignore[no-any-return]
 
 
 def test_pt3d_z_coordinates_extracts_depth_column_for_3x68() -> None:
@@ -154,7 +154,7 @@ def test_pt3d_z_coordinates_returns_none_when_pt3d_missing() -> None:
 def test_visibility_from_zbuffer_returns_none_for_uniform_depth() -> None:
     """A face with uniform depth has no front-of-back relationships to flag."""
     xy = _points_68_2d().T  # (68, 2)
-    z = np.full((68,), 50.0, dtype="float32")
+    z = np.full((68,), 50.0, dtype="float32")  # type: ignore[var-annotated]
     assert _visibility_from_zbuffer(xy, z) is None
 
 
@@ -175,7 +175,7 @@ def test_visibility_from_zbuffer_hides_landmarks_behind_xy_neighbors() -> None:
 
 def test_visibility_from_zbuffer_returns_none_when_xy_extent_collapses() -> None:
     """Degenerate input (no XY extent) returns ``None`` rather than dividing by zero."""
-    xy = np.zeros((68, 2), dtype="float32")
+    xy = np.zeros((68, 2), dtype="float32")  # type: ignore[var-annotated]
     z = np.linspace(0, 60, 68, dtype="float32")
     assert _visibility_from_zbuffer(xy, z) is None
 
@@ -206,7 +206,7 @@ def test_profile_safe_normalizer_returns_bbox_sqrt_when_eyes_collapse() -> None:
 
 def test_profile_safe_normalizer_handles_degenerate_bbox() -> None:
     """A collapsed bbox (zero area) returns None instead of crashing."""
-    xy = np.zeros((68, 2), dtype="float32")
+    xy = np.zeros((68, 2), dtype="float32")  # type: ignore[var-annotated]
     assert _profile_safe_normalizer(xy) is None
 
 
@@ -294,15 +294,15 @@ def _heavily_occluded_pt3d_68(hidden_count: int) -> np.ndarray:
     bracket the z-buffer occlusion threshold.
     """
     assert 1 <= hidden_count <= 60
-    xy = np.zeros((68, 2), dtype="float32")
+    xy = np.zeros((68, 2), dtype="float32")  # type: ignore[var-annotated]
     front_size = 4
     cluster_a = front_size + hidden_count
     xy[:front_size] = [10.0, 10.0]
     xy[front_size:cluster_a] = [10.0, 10.0]
     xy[cluster_a:] = [90.0, 90.0]
-    z = np.zeros((68,), dtype="float32")
+    z = np.zeros((68,), dtype="float32")  # type: ignore[var-annotated]
     z[:front_size] = 60.0
-    return np.concatenate((xy.T, z[None, :]), axis=0)
+    return np.concatenate((xy.T, z[None, :]), axis=0)  # type: ignore[no-any-return]
 
 
 def test_zbuffer_occlusion_label_returns_empty_for_none_visibility() -> None:

@@ -196,8 +196,8 @@ class AlignedFace:  # pylint:disable=too-many-instance-attributes
         self._matrices: dict[CenteringType, np.ndarray] = {"legacy": self._get_default_matrix()}
 
         self._face = self.extract_face(image)
-        logger.trace(
-            "Initialized: %s (padding: %s, face shape: %s)",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "Initialized: %s (padding: %s, face shape: %s)",
             self.__class__.__name__,
             self._padding,
             self._face if self._face is None else self._face.shape,
@@ -233,8 +233,8 @@ class AlignedFace:  # pylint:disable=too-many-instance-attributes
             matrix = self._matrices["legacy"].copy()
             matrix[:, 2] -= self.pose.offset[self._centering]
             self._matrices[self._centering] = matrix
-            logger.trace(
-                "original matrix: %s, new matrix: %s",  # type:ignore[attr-defined]
+            logger.trace(  # type: ignore[attr-defined]
+                "original matrix: %s, new matrix: %s",
                 self._matrices["legacy"],
                 matrix,
             )
@@ -255,7 +255,7 @@ class AlignedFace:  # pylint:disable=too-many-instance-attributes
         original frame with padding and sizing applied."""
         with self._cache.lock("adjusted_matrix"):
             if self._cache.adjusted_matrix is None:
-                mat = self.matrix * (self._size - 2 * self.padding)
+                mat = self.matrix * (self._size - 2 * self.padding)  # type: ignore[var-annotated]
                 mat[:, 2] += self.padding
                 logger.trace("adjusted_matrix: %s", mat)  # type:ignore[attr-defined]
                 self._cache.adjusted_matrix = mat
@@ -376,8 +376,8 @@ class AlignedFace:  # pylint:disable=too-many-instance-attributes
                         lms = points_to_68(lms)
                     # Index the CONVERTED 68-point landmarks, not the
                     # original ``normalized_landmarks`` which may be 98-point.
-                    lowest_eyes = np.max(lms[np.r_[17:27, 36:48], 1])
-                    highest_mouth = np.min(lms[48:68, 1])
+                    lowest_eyes = np.max(lms[np.r_[17:27, 36:48], 1])  # type: ignore[var-annotated]
+                    highest_mouth = np.min(lms[48:68, 1])  # type: ignore[var-annotated]
                     position = highest_mouth - lowest_eyes
                     logger.trace(  # type:ignore[attr-defined]
                         "lowest_eyes: %s, highest_mouth: %s, relative_eye_mouth_position: %s",
@@ -459,7 +459,7 @@ class AlignedFace:  # pylint:disable=too-many-instance-attributes
             points,
             retval,
         )
-        return retval
+        return retval  # type: ignore[no-any-return]
 
     def _inverse_adjusted_matrix(self, mat: np.ndarray) -> np.ndarray:
         """Cached inverse of the adjusted matrix.
@@ -496,9 +496,8 @@ class AlignedFace:  # pylint:disable=too-many-instance-attributes
         ``None`` if no image has been provided.
         """
         if image is None:
-            logger.trace(
-                "_extract_face called without a loaded "  # type:ignore[attr-defined]
-                "image. Returning empty face."
+            logger.trace(  # type: ignore[attr-defined]
+                "_extract_face called without a loaded image. Returning empty face."
             )
             return None
 
@@ -518,7 +517,7 @@ class AlignedFace:  # pylint:disable=too-many-instance-attributes
                 mat[1, 2] += self.y_offset
             retval = transform_image(image, mat, self._size, self.padding)
         retval = retval if self._dtype is None else retval.astype(self._dtype)
-        return retval
+        return retval  # type: ignore[no-any-return]
 
     def _convert_centering(self, image: np.ndarray) -> np.ndarray:
         """When the face being loaded is pre-aligned, the loaded image will have 'head' centering
@@ -557,7 +556,7 @@ class AlignedFace:  # pylint:disable=too-many-instance-attributes
             image.shape,
             retval.shape,
         )
-        return retval
+        return retval  # type: ignore[no-any-return]
 
     def split_mask(self) -> np.ndarray:
         """Remove the mask from the alpha channel of :attr:`face` and return the mask
@@ -670,14 +669,14 @@ def _umeyama(source: np.ndarray, destination: np.ndarray, estimate_scale: bool) 
     if np.linalg.det(A) < 0:
         d[dim - 1] = -1
 
-    retval = np.eye(dim + 1, dtype=np.double)
+    retval = np.eye(dim + 1, dtype=np.double)  # type: ignore[var-annotated]
 
     U, S, V = np.linalg.svd(A)
 
     # Eq. (40) and (43).
     rank = np.linalg.matrix_rank(A)
     if rank == 0:
-        return np.nan * retval
+        return np.nan * retval  # type: ignore[no-any-return]
     if rank == dim - 1:
         if np.linalg.det(U) * np.linalg.det(V) > 0:
             retval[:dim, :dim] = U @ V
@@ -756,7 +755,7 @@ def batch_umeyama(source: np.ndarray, destination: np.ndarray, estimate_scale: b
 
     retval[:, :dim, :dim] = scale[:, None, None] * rot
     retval[:, :dim, dim] = trans
-    return retval
+    return retval  # type: ignore[no-any-return]
 
 
 __all__ = get_module_objects(__name__)

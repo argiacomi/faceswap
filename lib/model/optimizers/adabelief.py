@@ -166,7 +166,7 @@ class AdaBelief(Optimizer):
                     )
 
     def step(
-        self,  # type:ignore[override]  # noqa: C901
+        self,  # noqa: C901
         closure: T.Callable | None = None,
     ) -> torch.Tensor:
         """Performs a single optimization step.

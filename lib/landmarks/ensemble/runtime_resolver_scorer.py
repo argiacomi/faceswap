@@ -545,7 +545,7 @@ def feature_matrix(
     features: T.Sequence[str],
 ) -> np.ndarray:
     """Convert feature maps into a dense model matrix."""
-    return np.asarray(
+    return np.asarray(  # type: ignore[no-any-return]
         [[_float(row.get(feature)) for feature in features] for row in rows],
         dtype="float64",
     )

@@ -223,7 +223,7 @@ class LandmarkRename(_Updater):
         for val in self._alignments.values():
             for alignment in val["faces"]:
                 if "landmarksXY" in alignment:
-                    alignment["landmarks_xy"] = alignment.pop("landmarksXY")  # type:ignore
+                    alignment["landmarks_xy"] = alignment.pop("landmarksXY")
                     update_count += 1
         return update_count
 

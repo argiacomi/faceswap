@@ -50,7 +50,7 @@ def _state_file(tmp_path: Path, name: str = "model") -> Path:
     return state_file
 
 
-def _panel(session: _SessionDouble | None = None):  # type:ignore[no-untyped-def]
+def _panel(session: _SessionDouble | None = None):
     """Return a GraphPanel with injected graph service."""
     from lib.gui.qt_shell.graph_panel import GraphPanel
 
@@ -58,35 +58,35 @@ def _panel(session: _SessionDouble | None = None):  # type:ignore[no-untyped-def
     return GraphPanel(TrainingGraphService(session))
 
 
-def _button(panel, name: str) -> QPushButton:  # type:ignore[no-untyped-def]
+def _button(panel, name: str) -> QPushButton:
     """Return a GraphPanel button by object name suffix."""
     button = panel.findChild(QPushButton, f"qt-shell-graph-{name}")
     assert button is not None
-    return button
+    return button  # type: ignore[no-any-return]
 
 
-def _label(panel, name: str) -> QLabel:  # type:ignore[no-untyped-def]
+def _label(panel, name: str) -> QLabel:
     """Return a GraphPanel label by object name suffix."""
     label = panel.findChild(QLabel, f"qt-shell-graph-{name}")
     assert label is not None
-    return label
+    return label  # type: ignore[no-any-return]
 
 
-def _graph_text(panel) -> QPlainTextEdit:  # type:ignore[no-untyped-def]
+def _graph_text(panel) -> QPlainTextEdit:
     """Return the GraphPanel text display."""
     widget = panel.findChild(QPlainTextEdit, "qt-shell-graph-text")
     assert widget is not None
-    return widget
+    return widget  # type: ignore[no-any-return]
 
 
-def _session_combo(panel) -> QComboBox:  # type:ignore[no-untyped-def]
+def _session_combo(panel) -> QComboBox:
     """Return the GraphPanel session selector."""
     combo = panel.findChild(QComboBox, "qt-shell-graph-session")
     assert combo is not None
-    return combo
+    return combo  # type: ignore[no-any-return]
 
 
-def test_graph_panel_initial_state(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_graph_panel_initial_state(qtbot) -> None:
     """GraphPanel should start empty with only Open enabled."""
     panel = _panel()
     qtbot.addWidget(panel)
@@ -100,7 +100,7 @@ def test_graph_panel_initial_state(qtbot) -> None:  # type:ignore[no-untyped-def
     assert _session_combo(panel).isEnabled() is False
 
 
-def test_graph_panel_apply_context_configures_source(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_graph_panel_apply_context_configures_source(qtbot, tmp_path: Path) -> None:
     """Command context should configure model source for a future graph refresh."""
     panel = _panel()
     qtbot.addWidget(panel)
@@ -117,7 +117,7 @@ def test_graph_panel_apply_context_configures_source(qtbot, tmp_path: Path) -> N
     assert _button(panel, "clear").isEnabled() is True
 
 
-def test_graph_panel_apply_context_ignores_missing_model_info(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_graph_panel_apply_context_ignores_missing_model_info(qtbot) -> None:
     """Command contexts without model details should be ignored."""
     panel = _panel()
     qtbot.addWidget(panel)
@@ -129,7 +129,7 @@ def test_graph_panel_apply_context_ignores_missing_model_info(qtbot) -> None:  #
     assert _label(panel, "source").text() == "No graph source configured"
 
 
-def test_graph_panel_loads_state_file_and_renders_series(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_graph_panel_loads_state_file_and_renders_series(qtbot, tmp_path: Path) -> None:
     """Loading a state source should render loss sparklines and summary text."""
     session = _SessionDouble()
     panel = _panel(session)
@@ -153,7 +153,7 @@ def test_graph_panel_loads_state_file_and_renders_series(qtbot, tmp_path: Path) 
     assert combo.itemText(2) == "2"
 
 
-def test_graph_panel_refresh_loads_configured_training_source(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_graph_panel_refresh_loads_configured_training_source(qtbot, tmp_path: Path) -> None:
     """Refresh should initialize a configured training source once state exists."""
     session = _SessionDouble()
     panel = _panel(session)
@@ -168,7 +168,7 @@ def test_graph_panel_refresh_loads_configured_training_source(qtbot, tmp_path: P
     assert "loss_a:" in _graph_text(panel).toPlainText()
 
 
-def test_graph_panel_session_selector_filters_series(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_graph_panel_session_selector_filters_series(qtbot, tmp_path: Path) -> None:
     """Selecting a session should refresh graph text for that session."""
     panel = _panel(_SessionDouble())
     qtbot.addWidget(panel)
@@ -183,7 +183,7 @@ def test_graph_panel_session_selector_filters_series(qtbot, tmp_path: Path) -> N
     assert "loss_b:" not in graph_text
 
 
-def test_graph_panel_load_failure_displays_error(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_graph_panel_load_failure_displays_error(qtbot, tmp_path: Path) -> None:
     """Load failures should stay inside the panel."""
     panel = _panel()
     qtbot.addWidget(panel)
@@ -195,7 +195,7 @@ def test_graph_panel_load_failure_displays_error(qtbot, tmp_path: Path) -> None:
     assert _graph_text(panel).toPlainText() == "No graph data loaded"
 
 
-def test_graph_panel_clear_resets_state(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_graph_panel_clear_resets_state(qtbot, tmp_path: Path) -> None:
     """Clear should reset source, data, combo and buttons."""
     panel = _panel(_SessionDouble())
     qtbot.addWidget(panel)
@@ -212,7 +212,7 @@ def test_graph_panel_clear_resets_state(qtbot, tmp_path: Path) -> None:  # type:
     assert _button(panel, "clear").isEnabled() is False
 
 
-def test_main_window_uses_real_graph_panel(qtbot, monkeypatch, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_main_window_uses_real_graph_panel(qtbot, monkeypatch, tmp_path: Path) -> None:
     """MainWindow should install a real GraphPanel in the Graph tab."""
     monkeypatch.setenv("HOME", str(tmp_path))
 

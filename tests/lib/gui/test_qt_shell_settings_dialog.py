@@ -82,18 +82,18 @@ def _config_provider():
     }
 
 
-def test_settings_dialog_orders_categories_like_tk(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_settings_dialog_orders_categories_like_tk(qtbot) -> None:
     """Settings tree should prioritize Extract, Train, Convert before other categories."""
     dialog = SettingsDialog(config_provider=_config_provider)
     qtbot.addWidget(dialog)
     tree = _tree(dialog)
 
-    labels = [tree.topLevelItem(index).text(0) for index in range(tree.topLevelItemCount())]
+    labels = [tree.topLevelItem(index).text(0) for index in range(tree.topLevelItemCount())]  # type: ignore[union-attr]
 
     assert labels == ["Extract", "Train", "Convert", "Gui"]
 
 
-def test_settings_dialog_exposes_section_metadata(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_settings_dialog_exposes_section_metadata(qtbot) -> None:
     """Settings sections should include identifiers, help text and option counts."""
     dialog = SettingsDialog(config_provider=_config_provider)
     qtbot.addWidget(dialog)
@@ -106,7 +106,7 @@ def test_settings_dialog_exposes_section_metadata(qtbot) -> None:  # type:ignore
     assert sections["convert|writer|output"].option_count == 3
 
 
-def test_settings_dialog_selects_requested_category(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_settings_dialog_selects_requested_category(qtbot) -> None:
     """Opening settings for a command should select that top-level category."""
     dialog = SettingsDialog(section="train", config_provider=_config_provider)
     qtbot.addWidget(dialog)
@@ -116,7 +116,7 @@ def test_settings_dialog_selects_requested_category(qtbot) -> None:  # type:igno
     assert _label(dialog, "page-header").text() == "Global"
 
 
-def test_settings_dialog_uses_nested_tree_and_links_pages(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_settings_dialog_uses_nested_tree_and_links_pages(qtbot) -> None:
     """Selecting a parent section without options should show child links."""
     dialog = SettingsDialog(config_provider=_config_provider)
     qtbot.addWidget(dialog)
@@ -136,7 +136,7 @@ def test_settings_dialog_uses_nested_tree_and_links_pages(qtbot) -> None:  # typ
     assert _label(dialog, "page-header").text() == "Detect - Face"
 
 
-def test_settings_dialog_renders_real_option_widgets(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_settings_dialog_renders_real_option_widgets(qtbot) -> None:
     """Config options should render through the reusable Qt option renderer."""
     dialog = SettingsDialog(section="convert|writer|output", config_provider=_config_provider)
     qtbot.addWidget(dialog)
@@ -151,7 +151,7 @@ def test_settings_dialog_renders_real_option_widgets(qtbot) -> None:  # type:ign
     assert {box.text() for box in modes.findChildren(QCheckBox)} == {"fast", "safe"}
 
 
-def test_settings_dialog_renders_ensemble_paths_with_file_browsers(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_settings_dialog_renders_ensemble_paths_with_file_browsers(qtbot) -> None:
     """Ensemble setup/weights paths should open file selectors in the Qt settings UI."""
     configs = {
         "extract": FakeConfig(
@@ -179,7 +179,7 @@ def test_settings_dialog_renders_ensemble_paths_with_file_browsers(qtbot) -> Non
     assert all("JSON files" in spec.file_filter for spec in renderer._specs)
 
 
-def test_settings_dialog_page_save_and_reset_update_config(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_settings_dialog_page_save_and_reset_update_config(qtbot) -> None:
     """Page save/reset should act on the selected page's live config state."""
     configs = _config_provider()
     dialog = SettingsDialog(
@@ -208,7 +208,7 @@ def test_settings_dialog_page_save_and_reset_update_config(qtbot) -> None:  # ty
     assert _label(dialog, "status").property("status") == "success"
 
 
-def test_settings_dialog_save_all_scopes_to_selected_config(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_settings_dialog_save_all_scopes_to_selected_config(qtbot) -> None:
     """Save All should persist all settings for the selected top-level config only."""
     configs = _config_provider()
     dialog = SettingsDialog(section="gui", config_provider=lambda: configs)
@@ -227,7 +227,7 @@ def test_settings_dialog_save_all_scopes_to_selected_config(qtbot) -> None:  # t
     assert configs["convert"].saves == 0
 
 
-def test_settings_dialog_presets_save_and_load_current_page(qtbot, tmp_path, monkeypatch) -> None:  # type:ignore[no-untyped-def]
+def test_settings_dialog_presets_save_and_load_current_page(qtbot, tmp_path, monkeypatch) -> None:
     """Preset load/save should include metadata and update the current page only."""
     serializer = FakeSerializer()
     dialog = SettingsDialog(
@@ -272,7 +272,7 @@ def test_settings_dialog_presets_save_and_load_current_page(qtbot, tmp_path, mon
     assert theme.text() == "light"
 
 
-def test_gui_config_save_rebuilds_or_defers(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_gui_config_save_rebuilds_or_defers(qtbot) -> None:
     """GUI config saves should rebuild immediately unless a task is running."""
     configs = _config_provider()
     rebuilt: list[str] = []

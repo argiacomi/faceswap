@@ -62,12 +62,12 @@ class WarmupScheduler(LRScheduler):
         The next learning rate for each parameter group for the next step
         """
         if self.last_epoch >= self.steps:
-            return self.base_lrs
+            return self.base_lrs  # type: ignore[no-any-return]
 
         factor = self.last_epoch / self.steps
         lrs = [base_lr * factor for base_lr in self.base_lrs]
-        logger.trace(
-            "Learning rate set to %s for step %s/%s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "Learning rate set to %s for step %s/%s",
             lrs,
             self.last_epoch,
             self.steps,

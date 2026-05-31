@@ -428,7 +428,7 @@ def _decide_with_missing_identity(
     member_kwargs = dict(identity_model=None, identity_quality_flag=None)
     if member_record_overrides:
         member_kwargs.update(member_record_overrides)
-    member_record = _record("frame_000010.png", **member_kwargs)
+    member_record = _record("frame_000010.png", **member_kwargs)  # type: ignore[arg-type]
     member_features = _features_for(member_record)
     return _decide_single_member(
         member_features=member_features,
@@ -705,7 +705,7 @@ def test_compute_redundancy_invokes_progress_callback_per_pair() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _features_with_overrides(**overrides):  # type: ignore[no-untyped-def]
+def _features_with_overrides(**overrides):
     """Build a ``RepresentationFeatures`` with sane defaults for edge tests."""
     from lib.faceqa.redundancy import RepresentationFeatures
 

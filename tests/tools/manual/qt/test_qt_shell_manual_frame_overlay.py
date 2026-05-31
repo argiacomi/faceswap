@@ -101,7 +101,7 @@ def test_bbox_mode_draws_handles_for_all_visible_faces() -> None:
         annotation_mode_provider=lambda: "",
     )
     calls: list[QRectF] = []
-    overlay._draw_handles = lambda _painter, rect: calls.append(QRectF(rect))  # type:ignore[method-assign] # noqa:SLF001
+    overlay._draw_handles = lambda _painter, rect: calls.append(QRectF(rect))  # type: ignore[assignment]  # type:ignore[method-assign] # noqa:SLF001
     image = QImage(80, 40, QImage.Format_ARGB32)
     painter = QPainter(image)
     try:

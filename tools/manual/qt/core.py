@@ -116,7 +116,7 @@ class ManualToolWindow(
         self._transport_bar = ManualTransportBar()
         self._play_timer = QTimer(self)
         self._play_timer.setInterval(int(1000 / 24))
-        self._play_timer.setTimerType(Qt.PreciseTimer)
+        self._play_timer.setTimerType(Qt.PreciseTimer)  # type: ignore[attr-defined]
         self._play_timer.timeout.connect(self._advance_during_playback)
         self._filtered_frame_indices: tuple[int, ...] = ()
         self._progress_bar: QProgressBar | None = None
@@ -133,8 +133,8 @@ class ManualToolWindow(
         self._save_worker: ManualSaveWorker | None = None
         self._save_busy_stack: contextlib.ExitStack | None = None
         self._pending_extract_folder: str | None = None
-        self._live_bbox_added_face: int | None = None
-        self._live_bbox_original_face: EditableFace | None = None
+        self._live_bbox_added_face: int | None = None  # type: ignore[assignment]
+        self._live_bbox_original_face: EditableFace | None = None  # type: ignore[assignment]
         self._live_bbox_add_undo_start: int | None = None
         self._live_bbox_add_previous_faces: tuple[EditableFace, ...] = ()
         self._overlay = ManualFrameOverlay(

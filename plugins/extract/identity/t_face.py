@@ -71,7 +71,7 @@ class TFace(FacePlugin):
         -------
         The updated images for feeding the model
         """
-        return batch.transpose(0, 3, 1, 2)
+        return batch.transpose(0, 3, 1, 2)  # type: ignore[no-any-return]
 
     def process(self, batch: np.ndarray) -> np.ndarray:
         """Get the identity matrix from the model

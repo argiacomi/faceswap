@@ -94,7 +94,7 @@ def test_pre_process_roi_side_uses_longer_detection_edge() -> None:
 def test_pre_process_batch_size_preserved() -> None:
     """Output has exactly one ROI per input detection."""
     plugin = _spiga()
-    bboxes = np.zeros((7, 4), dtype=np.int32)
+    bboxes = np.zeros((7, 4), dtype=np.int32)  # type: ignore[var-annotated]
     bboxes[:, 2] = 100
     bboxes[:, 3] = 100
     roi = plugin.pre_process(bboxes)
@@ -167,15 +167,15 @@ def _build_tensor(image: np.ndarray, bbox: np.ndarray) -> np.ndarray:
     class _StubReFeed:
         total_feeds = 1
 
-    handler.plugin = _StubPlugin()
-    handler._re_feed = _StubReFeed()
+    handler.plugin = _StubPlugin()  # type: ignore[assignment]
+    handler._re_feed = _StubReFeed()  # type: ignore[assignment]
 
     spiga = _spiga(target_dist=1.60)
     roi = spiga.pre_process(bbox)
 
     # Reproduce _matrices_from_roi.
     side = float(roi[0, 2] - roi[0, 0])
-    mats = np.zeros((1, 3, 3), dtype=np.float32)
+    mats = np.zeros((1, 3, 3), dtype=np.float32)  # type: ignore[var-annotated]
     mats[0, 0, 0] = side
     mats[0, 1, 1] = side
     mats[0, 0, 2] = float(roi[0, 0])
@@ -191,7 +191,7 @@ def _build_tensor(image: np.ndarray, bbox: np.ndarray) -> np.ndarray:
     clamped[:, 3] = np.clip(roi[:, 3], 0, h - 1)
 
     scale = 256.0 / mats[:, 0, 0]
-    dst = np.zeros((1, 4), dtype=np.int32)
+    dst = np.zeros((1, 4), dtype=np.int32)  # type: ignore[var-annotated]
     dst[:, [0, 2]] = np.clip(
         np.round((clamped[:, [0, 2]] - roi[:, 0, None]) * scale[:, None]), 0, 256
     )
@@ -222,7 +222,7 @@ def test_preprocessing_channel_order_is_bgr() -> None:
     well inside 0–1999).  This avoids black-border padding that would dilute the
     channel means and cause false failures.
     """
-    image = np.zeros((2000, 2000, 3), dtype=np.uint8)
+    image = np.zeros((2000, 2000, 3), dtype=np.uint8)  # type: ignore[var-annotated]
     image[:, :, 2] = 255  # Red channel in BGR
 
     bbox = np.array([[500, 500, 1500, 1500]], dtype=np.int32)
@@ -252,7 +252,7 @@ def test_preprocessing_scale_is_zero_to_one() -> None:
 
 def test_preprocessing_output_shape_is_1x256x256x3() -> None:
     """Preprocessed batch has shape (1, 256, 256, 3) regardless of input image size."""
-    image = np.ones((2000, 2000, 3), dtype=np.uint8) * 128
+    image = np.ones((2000, 2000, 3), dtype=np.uint8) * 128  # type: ignore[var-annotated]
     bbox = np.array([[500, 500, 1500, 1500]], dtype=np.int32)
     tensor = _build_tensor(image, bbox)
     assert tensor.shape == (1, 256, 256, 3)
@@ -320,7 +320,7 @@ def test_post_process_passes_through_float32() -> None:
     from plugins.extract.align.spiga import SPIGA
 
     plugin = object.__new__(SPIGA)
-    plugin._model_config = SimpleNamespace(num_landmarks=98)
+    plugin._model_config = SimpleNamespace(num_landmarks=98)  # type: ignore[assignment]
     arr = np.random.default_rng(0).uniform(0.0, 1.0, (3, 98, 2)).astype(np.float32)
     result = plugin.post_process(arr)
     assert result.dtype == np.float32
@@ -331,7 +331,7 @@ def test_post_process_converts_float64_to_float32() -> None:
     from plugins.extract.align.spiga import SPIGA
 
     plugin = object.__new__(SPIGA)
-    plugin._model_config = SimpleNamespace(num_landmarks=68)
+    plugin._model_config = SimpleNamespace(num_landmarks=68)  # type: ignore[assignment]
     arr = np.random.default_rng(0).uniform(0.0, 1.0, (2, 68, 2))  # float64
     result = plugin.post_process(arr)
     assert result.dtype == np.float32

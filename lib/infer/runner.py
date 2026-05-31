@@ -172,7 +172,7 @@ class ExtractRunner(T.Generic[HandlerT]):
         """Pretty print for logging"""
         return f"{self.__class__.__name__}(handler={self.handler})"
 
-    def __iter__(self) -> T.Self:
+    def __iter__(self) -> T.Self:  # type: ignore[name-defined]
         """This is an iterator"""
         return self
 
@@ -283,8 +283,8 @@ class ExtractRunner(T.Generic[HandlerT]):
         assert next_process in ("process", "post_process", "out")
         queue = self._queues[next_process]
         self._clean_output(batch, next_process)
-        logger.trace(
-            "[%s.%s] Outputting to '%s': %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "[%s.%s] Outputting to '%s': %s",
             self._plugin_name,
             process,
             next_process,
@@ -300,8 +300,8 @@ class ExtractRunner(T.Generic[HandlerT]):
                 )
                 return
             try:
-                logger.trace(
-                    "[%s.%s] Putting to out queue: %s",  # type:ignore[attr-defined]
+                logger.trace(  # type: ignore[attr-defined]
+                    "[%s.%s] Putting to out queue: %s",
                     self._plugin_name,
                     process,
                     batch.name if isinstance(batch, ExtractSignal) else batch,
@@ -309,8 +309,8 @@ class ExtractRunner(T.Generic[HandlerT]):
                 queue.put(batch, timeout=0.2)
                 break
             except QueueFull:
-                logger.trace(
-                    "[%s.%s] Waiting to put item",  # type:ignore[attr-defined]
+                logger.trace(  # type: ignore[attr-defined]
+                    "[%s.%s] Waiting to put item",
                     self._plugin_name,
                     process,
                 )
@@ -741,10 +741,10 @@ class ExtractRunner(T.Generic[HandlerT]):
         """
         if input_runner is None:
             return
-        self.put = input_runner.put
-        self.put_media = input_runner.put_media
-        self.stop = input_runner.stop
-        self.flush = input_runner.flush
+        self.put = input_runner.put  # type: ignore[method-assign]
+        self.put_media = input_runner.put_media  # type: ignore[method-assign]
+        self.stop = input_runner.stop  # type: ignore[method-assign]
+        self.flush = input_runner.flush  # type: ignore[method-assign]
 
         logger.debug(
             "[%s] Set pipeline interfaces to %s",

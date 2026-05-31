@@ -392,7 +392,7 @@ def split_summary_counts(
                 ("by_scenario_bucket", scenario_bucket(sample)),
             ):
                 counts[key][split_name][value] = counts[key][split_name].get(value, 0) + 1
-    counts["totals"] = {name: len(assignment.ids_for(name)) for name in SPLIT_NAMES}
+    counts["totals"] = {name: len(assignment.ids_for(name)) for name in SPLIT_NAMES}  # type: ignore[misc]
     return counts
 
 

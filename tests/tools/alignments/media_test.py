@@ -235,8 +235,8 @@ class TestMediaLoader:
         """
         media_loader = media_loader_instance
         expected = np.random.rand(256, 256, 3)
-        media_loader.load_video_frame = T.cast(
-            MagicMock,  # type:ignore
+        media_loader.load_video_frame = T.cast(  # type: ignore[method-assign]
+            MagicMock,
             mocker.MagicMock(return_value=expected),
         )
         read_image_patch = mocker.patch("tools.alignments.media.read_image", return_value=expected)
@@ -281,7 +281,7 @@ class TestMediaLoader:
         vid_cap = mocker.MagicMock(cv2.VideoCapture)
         vid_cap.read.side_effect = ((1, expected),)
 
-        media_loader._vid_reader = T.cast(MagicMock, vid_cap)  # type:ignore
+        media_loader._vid_reader = T.cast(MagicMock, vid_cap)
         output = media_loader.load_video_frame(filename)
         vid_cap.set.assert_called_once()
         np.testing.assert_equal(output, expected)
@@ -418,13 +418,13 @@ class TestFaces:
         seen: dict[str, list[int]] = {}
 
         # New item
-        is_dupe = faces._handle_duplicate(paths[0], data, seen)  # type:ignore
+        is_dupe = faces._handle_duplicate(paths[0], data, seen)
         assert src_filename in seen and seen[src_filename] == [src_face_idx]
         assert not os.path.exists(dupe_dir)
         assert not is_dupe
 
         # Dupe item
-        is_dupe = faces._handle_duplicate(paths[1], data, seen)  # type:ignore
+        is_dupe = faces._handle_duplicate(paths[1], data, seen)
         assert src_filename in seen and seen[src_filename] == [src_face_idx]
         assert len(seen) == 1
         assert os.path.exists(dupe_dir)
@@ -531,7 +531,7 @@ class TestFaces:
             mock.source.face_index = 0
             data.append((f"file{idx}.png", mock))
 
-        faces.file_list_sorted = data  # type: ignore
+        faces.file_list_sorted = data
         expected = {"src0.png": [0], "src1.png": [0], "src2.png": [0], "src3.png": [0]}
         result = faces.load_items()
         assert result == expected
@@ -543,7 +543,7 @@ class TestFaces:
             mock.source.face_index = 0 if idx % 2 == 0 else 1
             data.append((f"file{idx}.png", mock))
 
-        faces.file_list_sorted = data  # type: ignore
+        faces.file_list_sorted = data
         expected = {"src0.png": [0, 1], "src1.png": [0, 1]}
         result = faces.load_items()
         assert result == expected
@@ -766,14 +766,14 @@ class TestExtractedFaces:
         assert extract_face_mock.call_count == 3
         assert faces.current_frame == frame
 
-        faces.alignments.reset_mock()  # type:ignore
+        faces.alignments.reset_mock()
         extract_face_mock.reset_mock()
 
         # Alignment data + no image
-        faces.alignments.get_faces_in_frame.return_value = ["data1"]  # type:ignore
+        faces.alignments.get_faces_in_frame.return_value = ["data1"]
         faces.get_faces(frame, None)
-        faces.alignments.get_faces_in_frame.assert_called_once_with(frame)  # type:ignore
-        faces.frames.load_image.assert_called_once_with(frame)  # type:ignore
+        faces.alignments.get_faces_in_frame.assert_called_once_with(frame)
+        faces.frames.load_image.assert_called_once_with(frame)
         assert extract_face_mock.call_count == 1
         assert faces.current_frame == frame
 

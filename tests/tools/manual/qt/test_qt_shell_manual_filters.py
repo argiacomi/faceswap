@@ -33,7 +33,7 @@ def _session_with_frames(folder: Path, count: int = 5) -> ManualSession:
     return ManualSession.create(frames=str(folder))
 
 
-def _make_window(qtbot, folder: Path, count: int = 5) -> ManualToolWindow:  # type:ignore[no-untyped-def]
+def _make_window(qtbot, folder: Path, count: int = 5) -> ManualToolWindow:
     """Return a shown ManualToolWindow with startup fully drained."""
     window = ManualToolWindow(_session_with_frames(folder, count=count))
     qtbot.addWidget(window)
@@ -52,7 +52,7 @@ def _seed_face(window: ManualToolWindow, frame_index: int) -> int:
     )
 
 
-def test_filter_mode_drives_navigation_transport_and_playback(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_filter_mode_drives_navigation_transport_and_playback(qtbot, tmp_path: Path) -> None:
     """Navigation actions walk matching frames from the active filtered list."""
     window = _make_window(qtbot, tmp_path, count=5)
     _seed_face(window, 1)
@@ -90,7 +90,7 @@ def test_filter_mode_drives_navigation_transport_and_playback(qtbot, tmp_path: P
     assert window.editor_state.is_playing is False
 
 
-def test_empty_filter_disables_transport_and_reports_status(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_empty_filter_disables_transport_and_reports_status(qtbot, tmp_path: Path) -> None:
     """An empty filter result is safe and disables filtered navigation."""
     window = _make_window(qtbot, tmp_path, count=3)
 
@@ -113,14 +113,14 @@ def test_misaligned_threshold_control_refreshes_filtered_results(
     qtbot,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """The Misaligned threshold slider is visible and re-runs filtering."""
     from tools.manual import frame_filter
 
     window = _make_window(qtbot, tmp_path, count=4)
     _seed_face(window, 2)
 
-    def _predicate_for_model(_model, threshold_raw: int):  # type:ignore[no-untyped-def]
+    def _predicate_for_model(_model, threshold_raw: int):
         return lambda frame_index: frame_index == 2 and threshold_raw <= 10
 
     monkeypatch.setattr(frame_filter, "misaligned_predicate_for_model", _predicate_for_model)
@@ -148,7 +148,7 @@ def test_misaligned_threshold_control_refreshes_filtered_results(
     assert window._filter_threshold_value.text() == "5"
 
 
-def test_face_count_edit_refreshes_active_filter_results(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_face_count_edit_refreshes_active_filter_results(qtbot, tmp_path: Path) -> None:
     """Adding a face should immediately update an active count-based filter."""
     window = _make_window(qtbot, tmp_path, count=3)
     window.editor_state.set("filter_mode", "Has Face(s)")
@@ -163,7 +163,7 @@ def test_face_count_edit_refreshes_active_filter_results(qtbot, tmp_path: Path) 
 
 def test_non_current_face_count_edit_refreshes_without_navigating_current_frame(
     qtbot, tmp_path: Path
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """Adding a face on another frame refreshes filters but leaves the row alone."""
     window = _make_window(qtbot, tmp_path, count=4)
     window._thumbnail_panel.setCurrentRow(0)
@@ -179,7 +179,7 @@ def test_non_current_face_count_edit_refreshes_without_navigating_current_frame(
     assert window._filter_label.text() == "Filter: Has Face(s) (1 match)"
 
 
-def test_no_faces_filter_add_keeps_current_frame_until_next(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_no_faces_filter_add_keeps_current_frame_until_next(qtbot, tmp_path: Path) -> None:
     """Adding a face under No Faces updates matches without jumping away."""
     window = _make_window(qtbot, tmp_path, count=3)
     window._thumbnail_panel.setCurrentRow(0)
@@ -197,7 +197,7 @@ def test_no_faces_filter_add_keeps_current_frame_until_next(qtbot, tmp_path: Pat
 def test_has_faces_filter_delete_keeps_current_frame_until_previous(
     qtbot,
     tmp_path: Path,
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """Deleting the only face under Has Face(s) preserves the current row."""
     window = _make_window(qtbot, tmp_path, count=3)
     _seed_face(window, 0)
@@ -218,7 +218,7 @@ def test_has_faces_filter_delete_keeps_current_frame_until_previous(
 def test_single_face_filter_second_face_keeps_current_frame_until_next(
     qtbot,
     tmp_path: Path,
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """Adding a second face under Single Face does not navigate immediately."""
     window = _make_window(qtbot, tmp_path, count=3)
     _seed_face(window, 0)

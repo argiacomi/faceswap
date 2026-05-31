@@ -74,7 +74,8 @@ class ProcessWrapper:
         self._statusbar = get_config().statusbar
         self._training_session_location: dict[T.Literal["model_name", "model_folder"], str] = {}
         self._training_session_service = TrainingSessionRuntimeService(
-            Session, graph_refresh_callback=self._refresh_graph
+            Session,
+            graph_refresh_callback=self._refresh_graph,
         )
         self._preview_output_service = PreviewOutputRuntimeService(
             images_provider=get_images,
@@ -91,8 +92,8 @@ class ProcessWrapper:
     def _set_callbacks(self) -> None:
         """Set the tkinter variable callbacks for performing an action or generating a command"""
         logger.debug("Setting tk variable traces")
-        self._tk_vars.action_command.trace_add("write", self._action_command)
-        self._tk_vars.generate_command.trace_add("write", self._generate_command)
+        self._tk_vars.action_command.trace_add("write", self._action_command)  # type: ignore[arg-type]
+        self._tk_vars.generate_command.trace_add("write", self._generate_command)  # type: ignore[arg-type]
 
     def _refresh_graph(self) -> None:
         """Trigger a graph/analysis refresh from a runtime service event."""
@@ -632,7 +633,7 @@ class FaceswapControl:
         buf.KeyDown = 1
         buf.RepeatCount = 1
         buf.Char = character
-        return buf
+        return buf  # type: ignore[no-any-return]
 
     def _terminate_process_tree(self, process: Popen) -> None:
         """Terminate the launched process and its children."""

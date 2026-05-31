@@ -146,7 +146,7 @@ def _detector_class(module_name: str) -> type[ExtractPlugin]:
         if value is ExtractPlugin:
             continue
         if issubclass(value, ExtractPlugin) and value.__module__ == module.__name__:
-            candidates.append(T.cast(type[ExtractPlugin], value))
+            candidates.append(T.cast(type[ExtractPlugin], value))  # type: ignore[redundant-cast]
     if not candidates:
         raise ValueError(f"detector module has no ExtractPlugin subclass: {module.__name__}")
     if len(candidates) > 1:
@@ -162,7 +162,7 @@ def _build_detector(name: str) -> ExtractPlugin:
     """Build and load a Faceswap detector plugin by CLI name."""
     module_name = _normalize_detector_name(name)
     cls = _detector_class(module_name)
-    detector = cls()
+    detector = cls()  # type: ignore[call-arg]
     detector.model = detector.load_model()
     logger.info("Loaded detector plugin '%s' (%s)", name, detector.__class__.__name__)
     return detector

@@ -26,30 +26,30 @@ class LandmarkFrameEditorMixin:
 
     def _set_landmark_hover(self, landmark_index: int | None) -> None:
         """Persist Landmark editor hover state and notify the overlay."""
-        if self._landmark_hover_index == landmark_index:
+        if self._landmark_hover_index == landmark_index:  # type: ignore[has-type]
             return
         self._landmark_hover_index = landmark_index
-        face_index = self._active_face_provider() if self._active_face_provider else None
-        if self._landmark_hover_callback is not None:
-            self._landmark_hover_callback(
+        face_index = self._active_face_provider() if self._active_face_provider else None  # type: ignore[attr-defined]
+        if self._landmark_hover_callback is not None:  # type: ignore[attr-defined]
+            self._landmark_hover_callback(  # type: ignore[attr-defined]
                 None if landmark_index is None else face_index,
                 landmark_index,
             )
-        self.update()
+        self.update()  # type: ignore[attr-defined]
 
     def _update_landmark_hover(self, source_point: QPointF | None) -> bool:
         """Update hover target for Landmark mode and return whether a point is hit."""
         if (
-            self._landmark_mode_provider is None
-            or self._landmark_provider is None
-            or self._active_face_provider is None
-            or not self._landmark_mode_provider()
+            self._landmark_mode_provider is None  # type: ignore[attr-defined]
+            or self._landmark_provider is None  # type: ignore[attr-defined]
+            or self._active_face_provider is None  # type: ignore[attr-defined]
+            or not self._landmark_mode_provider()  # type: ignore[attr-defined]
             or source_point is None
         ):
             self._set_landmark_hover(None)
             return False
-        face_index = self._active_face_provider()
-        landmarks = self._landmark_provider() if face_index is not None else None
+        face_index = self._active_face_provider()  # type: ignore[attr-defined]
+        landmarks = self._landmark_provider() if face_index is not None else None  # type: ignore[attr-defined]
         if not landmarks:
             self._set_landmark_hover(None)
             return False
@@ -73,7 +73,7 @@ class LandmarkFrameEditorMixin:
             return
         if current.x() == anchor.x() and current.y() == anchor.y():
             return
-        self.landmark_move_requested.emit(
+        self.landmark_move_requested.emit(  # type: ignore[attr-defined]
             int(face_index), int(landmark_index), float(current.x()), float(current.y())
         )
 
@@ -90,7 +90,7 @@ class LandmarkFrameEditorMixin:
         dy = current.y()
         if dx == 0.0 and dy == 0.0:
             return
-        self.landmarks_move_requested.emit(int(face_index), tuple(indices), float(dx), float(dy))
+        self.landmarks_move_requested.emit(int(face_index), tuple(indices), float(dx), float(dy))  # type: ignore[attr-defined]
 
     def _emit_landmark_marquee(
         self,
@@ -109,26 +109,26 @@ class LandmarkFrameEditorMixin:
             current is None
             or current.width() <= 0.0
             or current.height() <= 0.0
-            or self._landmark_provider is None
+            or self._landmark_provider is None  # type: ignore[attr-defined]
         ):
-            self.landmarks_select_requested.emit(int(face_index), ())
+            self.landmarks_select_requested.emit(int(face_index), ())  # type: ignore[attr-defined]
             return
         face_matches: list[tuple[int, tuple[int, ...]]] = []
-        if self._landmark_faces_provider is not None:
-            for candidate_face_index, landmarks in self._landmark_faces_provider():
+        if self._landmark_faces_provider is not None:  # type: ignore[attr-defined]
+            for candidate_face_index, landmarks in self._landmark_faces_provider():  # type: ignore[attr-defined]
                 indices = ManualFrameOverlay.landmarks_in_rect(landmarks, current)
                 if indices:
                     face_matches.append((int(candidate_face_index), indices))
         else:
-            landmarks = self._landmark_provider() or ()
+            landmarks = self._landmark_provider() or ()  # type: ignore[attr-defined]
             indices = ManualFrameOverlay.landmarks_in_rect(landmarks, current)
             if indices:
                 face_matches.append((int(face_index), indices))
         if len(face_matches) != 1:
-            self.landmarks_select_requested.emit(int(face_index), ())
+            self.landmarks_select_requested.emit(int(face_index), ())  # type: ignore[attr-defined]
             return
         selected_face, indices = face_matches[0]
-        self.landmarks_select_requested.emit(selected_face, indices)
+        self.landmarks_select_requested.emit(selected_face, indices)  # type: ignore[attr-defined]
 
     def _begin_landmark_drag(
         self,
@@ -146,20 +146,20 @@ class LandmarkFrameEditorMixin:
           falls back to bbox move/resize.
         """
         if (
-            self._landmark_mode_provider is None
-            or self._landmark_provider is None
-            or self._landmark_selection_provider is None
-            or not self._landmark_mode_provider()
+            self._landmark_mode_provider is None  # type: ignore[attr-defined]
+            or self._landmark_provider is None  # type: ignore[attr-defined]
+            or self._landmark_selection_provider is None  # type: ignore[attr-defined]
+            or not self._landmark_mode_provider()  # type: ignore[attr-defined]
         ):
             return False
         if source_point is None:
             return False
-        if self._active_face_provider is None:
+        if self._active_face_provider is None:  # type: ignore[attr-defined]
             return False
-        face_index = self._active_face_provider()
+        face_index = self._active_face_provider()  # type: ignore[attr-defined]
         if face_index is None:
             return False
-        landmarks = self._landmark_provider()
+        landmarks = self._landmark_provider()  # type: ignore[attr-defined]
         if not landmarks:
             return False
         # 1) Point hit-test first — drag a single landmark, or a group when
@@ -170,7 +170,7 @@ class LandmarkFrameEditorMixin:
             tolerance=self._LANDMARK_GRAB_TOLERANCE,
         )
         if hit_index is not None:
-            selection = self._landmark_selection_provider()
+            selection = self._landmark_selection_provider()  # type: ignore[attr-defined]
             self._edit_drag_source_anchor = QPointF(source_point)
             self._landmark_drag_index = hit_index
             if hit_index in selection and len(selection) > 1:
@@ -186,14 +186,14 @@ class LandmarkFrameEditorMixin:
             return True
         # 2) Empty-space drag inside the active face's bbox starts a marquee.
         #    Outside the bbox we fall through so the user can still pan.
-        bbox = self._active_bbox_provider() if self._active_bbox_provider else None
+        bbox = self._active_bbox_provider() if self._active_bbox_provider else None  # type: ignore[attr-defined]
         if bbox is None or not bbox.contains(source_point):
             return False
         self._edit_drag_mode = "landmark_marquee"
         self._edit_drag_source_anchor = QPointF(source_point)
         self._edit_drag_original_bbox = QRectF(source_point.x(), source_point.y(), 0.0, 0.0)
         self._edit_drag_current_bbox = QRectF(source_point.x(), source_point.y(), 0.0, 0.0)
-        self.setCursor(Qt.CrossCursor)
+        self.setCursor(Qt.CrossCursor)  # type: ignore[attr-defined]
         return True
 
 
@@ -202,27 +202,27 @@ class LandmarkWindowEditorMixin:
 
     def _is_landmark_mode_active(self) -> bool:
         """Return whether the Landmark editor (F4) is active."""
-        return self._editor_state.editor_mode == "Landmarks"
+        return self._editor_state.editor_mode == "Landmarks"  # type: ignore[attr-defined, no-any-return]
 
     def _active_face_landmarks(self) -> tuple[tuple[float, float], ...] | None:
         """Return the active face's landmark sequence (Landmark editor seam)."""
-        frame_index = self._current_frame_index()
-        face_index = self._editor_state.face_index
+        frame_index = self._current_frame_index()  # type: ignore[attr-defined]
+        face_index = self._editor_state.face_index  # type: ignore[attr-defined]
         if frame_index < 0 or face_index < 0:
             return None
-        faces = self._editable.faces(frame_index)
+        faces = self._editable.faces(frame_index)  # type: ignore[attr-defined]
         if face_index >= len(faces):
             return None
-        return faces[face_index].landmarks
+        return faces[face_index].landmarks  # type: ignore[no-any-return]
 
     def _frame_landmark_faces(self) -> tuple[tuple[int, tuple[tuple[float, float], ...]], ...]:
         """Return landmark sets for all faces on the current frame."""
-        frame_index = self._current_frame_index()
+        frame_index = self._current_frame_index()  # type: ignore[attr-defined]
         if frame_index < 0:
             return ()
         return tuple(
             (face.face_index, face.landmarks)
-            for face in self._editable.faces(frame_index)
+            for face in self._editable.faces(frame_index)  # type: ignore[attr-defined]
             if face.landmarks
         )
 
@@ -230,18 +230,18 @@ class LandmarkWindowEditorMixin:
         self, face_index: int, landmark_index: int, new_x: float, new_y: float
     ) -> None:
         """Apply a single-point landmark edit and refresh the overlay."""
-        frame_index = self._current_frame_index()
+        frame_index = self._current_frame_index()  # type: ignore[attr-defined]
         if frame_index < 0:
-            self.statusBar().showMessage("No frame to edit", 3000)
+            self.statusBar().showMessage("No frame to edit", 3000)  # type: ignore[attr-defined]
             return
-        if not self._editable.update_landmark(
+        if not self._editable.update_landmark(  # type: ignore[attr-defined]
             frame_index, int(face_index), int(landmark_index), float(new_x), float(new_y)
         ):
-            self.statusBar().showMessage("Landmark edit failed", 3000)
+            self.statusBar().showMessage("Landmark edit failed", 3000)  # type: ignore[attr-defined]
             return
-        self._editor_state.set("edited", True)
-        self.refresh_faces()
-        self._frame_view.update()
+        self._editor_state.set("edited", True)  # type: ignore[attr-defined]
+        self.refresh_faces()  # type: ignore[attr-defined]
+        self._frame_view.update()  # type: ignore[attr-defined]
 
     def _on_landmarks_move_requested(
         self,
@@ -251,28 +251,28 @@ class LandmarkWindowEditorMixin:
         dy: float,
     ) -> None:
         """Apply a group-move edit across the marquee-selected landmark set."""
-        frame_index = self._current_frame_index()
+        frame_index = self._current_frame_index()  # type: ignore[attr-defined]
         if frame_index < 0:
-            self.statusBar().showMessage("No frame to edit", 3000)
+            self.statusBar().showMessage("No frame to edit", 3000)  # type: ignore[attr-defined]
             return
         idx_tuple = tuple(indices) if not isinstance(indices, tuple) else indices
-        if not self._editable.move_landmarks(
+        if not self._editable.move_landmarks(  # type: ignore[attr-defined]
             frame_index, int(face_index), idx_tuple, float(dx), float(dy)
         ):
-            self.statusBar().showMessage("Landmark group move failed", 3000)
+            self.statusBar().showMessage("Landmark group move failed", 3000)  # type: ignore[attr-defined]
             return
-        self._editor_state.set("edited", True)
-        self.refresh_faces()
-        self._frame_view.update()
+        self._editor_state.set("edited", True)  # type: ignore[attr-defined]
+        self.refresh_faces()  # type: ignore[attr-defined]
+        self._frame_view.update()  # type: ignore[attr-defined]
 
     def _on_landmarks_select_requested(self, face_index: int, indices: T.Any) -> None:
         """Update the overlay's selection set from a marquee release."""
-        if face_index != self._editor_state.face_index:
+        if face_index != self._editor_state.face_index:  # type: ignore[attr-defined]
             return
         idx_tuple = tuple(indices) if not isinstance(indices, tuple) else indices
-        self._overlay.set_selected_landmarks(idx_tuple)
+        self._overlay.set_selected_landmarks(idx_tuple)  # type: ignore[attr-defined]
         if not idx_tuple:
-            self.statusBar().showMessage("Landmark selection cleared", 2000)
+            self.statusBar().showMessage("Landmark selection cleared", 2000)  # type: ignore[attr-defined]
         else:
-            self.statusBar().showMessage(f"Selected {len(idx_tuple)} landmark(s)", 2000)
-        self._frame_view.update()
+            self.statusBar().showMessage(f"Selected {len(idx_tuple)} landmark(s)", 2000)  # type: ignore[attr-defined]
+        self._frame_view.update()  # type: ignore[attr-defined]

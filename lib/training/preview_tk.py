@@ -632,8 +632,8 @@ class _Bindings:  # pylint:disable=too-few-public-methods
             event.x / self._image.display_image.width(),
             event.y / self._image.display_image.height(),
         ]
-        logger.trace(
-            "Mouse click action: (event: %s, drag_data: %s)",  # type: ignore
+        logger.trace(  # type: ignore[attr-defined]
+            "Mouse click action: (event: %s, drag_data: %s)",
             event,
             self._drag_data,
         )
@@ -669,9 +669,8 @@ class _Bindings:  # pylint:disable=too-few-public-methods
         move_axis = self._canvas.xview if event.keysym in ("Left", "Right") else self._canvas.yview
         visible = move_axis()[1] - move_axis()[0]
         amount = -visible / 25 if event.keysym in ("Up", "Left") else visible / 25
-        logger.trace(
-            "Key move event: (event: %s, move_axis: %s, visible: %s, "  # type: ignore
-            "amount: %s)",
+        logger.trace(  # type: ignore[attr-defined]
+            "Key move event: (event: %s, move_axis: %s, visible: %s, amount: %s)",
             move_axis,
             visible,
             amount,

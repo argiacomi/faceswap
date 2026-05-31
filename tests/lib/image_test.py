@@ -10,7 +10,7 @@ from lib.image import FacesLoader, encode_image, read_image_meta
 
 def _write_malformed_faceswap_png(filename: str) -> None:
     """Create a PNG with malformed Faceswap iTXt metadata."""
-    image = np.zeros((8, 8, 3), dtype=np.uint8)
+    image = np.zeros((8, 8, 3), dtype=np.uint8)  # type: ignore[var-annotated]
     encoded = encode_image(image, ".png", metadata=b"not_a_python_literal(")
     with open(filename, "wb") as out_file:
         out_file.write(encoded)

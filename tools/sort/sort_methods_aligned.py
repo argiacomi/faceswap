@@ -245,7 +245,7 @@ class SortSize(SortAlignedMetric):
         """
         roi = aligned_face.original_roi
         size = ((roi[1][0] - roi[0][0]) ** 2 + (roi[1][1] - roi[0][1]) ** 2) ** 0.5
-        return size
+        return size  # type: ignore[no-any-return]
 
     def binning(self) -> list[list[str]]:
         """Create bins to split linearly from the lowest to the highest sample value
@@ -309,7 +309,7 @@ class SortFaceCNN(SortAlignedMetric):
             for j in range(i + 1, img_list_len):
                 fl1 = self._result[i][1]
                 fl2 = self._result[j][1]
-                score = np.sum(np.absolute((fl2 - fl1).flatten()))  # pyright:ignore[reportAttributeAccessIssue]
+                score = np.sum(np.absolute((fl2 - fl1).flatten()))  # type: ignore[var-annotated]  # pyright:ignore[reportAttributeAccessIssue]
                 if score < min_score:
                     min_score = score
                     j_min_score = j
@@ -406,9 +406,9 @@ class SortFaceCNN(SortAlignedMetric):
         """
         scores = []
         for ref in references:
-            score = np.sum(np.absolute((ref - face).flatten()))
+            score = np.sum(np.absolute((ref - face).flatten()))  # type: ignore[var-annotated]
             scores.append(score)
-        return sum(scores) / len(scores)
+        return sum(scores) / len(scores)  # type: ignore[no-any-return]
 
 
 __all__ = get_module_objects(__name__)

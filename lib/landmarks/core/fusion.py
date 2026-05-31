@@ -49,7 +49,7 @@ def normalize_weights(weights: T.Sequence[float], count: int) -> np.ndarray:
     total = float(array.sum())
     if total <= 0:
         raise ValueError("at least one weight must be greater than zero")
-    return array / total
+    return array / total  # type: ignore[no-any-return]
 
 
 def normalize_weight_matrix(
@@ -62,7 +62,7 @@ def normalize_weight_matrix(
     array = np.asarray(weights, dtype="float32")
     if array.ndim == 1:
         array = normalize_weights(array, model_count)[:, None]
-        return np.repeat(array, landmark_count, axis=1)
+        return np.repeat(array, landmark_count, axis=1)  # type: ignore[no-any-return]
     if array.shape != (model_count, landmark_count):
         raise ValueError(
             "weights must be one per model or a per-landmark matrix with shape "
@@ -73,7 +73,7 @@ def normalize_weight_matrix(
     totals = array.sum(axis=0)
     if np.any(totals <= 0):
         raise ValueError("each landmark must have at least one non-zero model weight")
-    return array / totals[None, :]
+    return array / totals[None, :]  # type: ignore[no-any-return]
 
 
 def weights_from_sources(
@@ -190,7 +190,7 @@ def static_weighted(
     """Fuse predictions with static per-model or per-landmark weights."""
     return weighted_average(
         predictions,
-        weights=weights,
+        weights=weights,  # type: ignore[arg-type]
         reject_outliers=reject_outliers,
         outlier_threshold=outlier_threshold,
         outlier_method=outlier_method,

@@ -54,7 +54,7 @@ class Custom(FacePlugin):
         -------
         A zero'd array of the same shape and dtype as the input
         """
-        return np.zeros(batch.shape[:3], dtype="uint8")
+        return np.zeros(batch.shape[:3], dtype="uint8")  # type: ignore[no-any-return]
 
     def process(self, batch: np.ndarray) -> np.ndarray:
         """Get the masks from the model

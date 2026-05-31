@@ -21,7 +21,7 @@ class _ProcessDouble:
 
     def state(self) -> QProcess.ProcessState:
         """Return the configured process state."""
-        return self._state
+        return self._state  # type: ignore[no-any-return]
 
     def terminate(self) -> None:
         """Capture terminate calls."""
@@ -96,7 +96,7 @@ class _CliOptions:
     }
 
 
-def _force_cpu_backend(monkeypatch) -> None:  # type:ignore[no-untyped-def]
+def _force_cpu_backend(monkeypatch) -> None:
     """Force stable CPU CLI metadata for real CLI discovery tests."""
     monkeypatch.setenv("FACESWAP_BACKEND", "cpu")
     from lib.utils import set_backend
@@ -113,13 +113,13 @@ def test_qt_shell_imports_without_tk_config() -> None:
     assert "lib.gui.control_helper" not in sys.modules
 
 
-def test_qt_shell_does_not_initialize_tk_config(monkeypatch, qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_qt_shell_does_not_initialize_tk_config(monkeypatch, qtbot) -> None:
     """The Qt shell should construct without initializing Tk GUI config."""
     _force_cpu_backend(monkeypatch)
 
     import lib.gui.utils as gui_utils
 
-    def fail(*args, **kwargs):  # type:ignore[no-untyped-def]
+    def fail(*args, **kwargs):
         raise AssertionError("Tk GUI config initialized")
 
     monkeypatch.setattr(gui_utils, "initialize_config", fail)
@@ -131,7 +131,7 @@ def test_qt_shell_does_not_initialize_tk_config(monkeypatch, qtbot) -> None:  # 
     qtbot.addWidget(window)
 
 
-def test_main_window_constructs(qtbot, monkeypatch, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_main_window_constructs(qtbot, monkeypatch, tmp_path: Path) -> None:
     """The Qt shell main window should construct without starting the app loop."""
     monkeypatch.setenv("HOME", str(tmp_path))
     _force_cpu_backend(monkeypatch)
@@ -184,7 +184,7 @@ def test_command_schema_service_discovers_real_faceswap_cli_metadata(
     assert "lib.gui.control_helper" not in sys.modules
 
 
-def test_real_cli_metadata_renders_extract_train_convert(qtbot, monkeypatch) -> None:  # type:ignore[no-untyped-def]
+def test_real_cli_metadata_renders_extract_train_convert(qtbot, monkeypatch) -> None:
     """CommandPanel should render real extract/train/convert CLI metadata."""
     _force_cpu_backend(monkeypatch)
 
@@ -205,7 +205,7 @@ def test_real_cli_metadata_renders_extract_train_convert(qtbot, monkeypatch) -> 
         assert switches.issubset(set(panel.renderer.rendered_switches))
 
 
-def test_command_schema_renders_groups_tooltips_and_browse_buttons(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_command_schema_renders_groups_tooltips_and_browse_buttons(qtbot) -> None:
     """CommandPanel should expose group/help/path metadata without full Tk parity."""
     from lib.gui.qt_shell.command_panel import CommandPanel
     from lib.gui.qt_shell.command_schema import CommandSchema, CommandSpec, OptionSpec
@@ -252,7 +252,7 @@ def test_command_schema_renders_groups_tooltips_and_browse_buttons(qtbot) -> Non
     assert all(not button.icon().isNull() for button in browse_buttons)
 
 
-def test_command_schema_renders_widgets(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_command_schema_renders_widgets(qtbot) -> None:
     """CommandPanel should render widgets from CommandSchema option specs."""
     from lib.gui.qt_shell.command_panel import CommandPanel
     from lib.gui.qt_shell.command_schema import CommandSchema, CommandSpec, OptionSpec
@@ -321,8 +321,8 @@ def test_job_runner_finished_drains_output_before_clearing_process() -> None:
 
     runner = JobRunner()
     runner.process = _BufferedProcessDouble(b"final stdout", b"final stderr")  # type:ignore[assignment]
-    stdout = []
-    stderr = []
+    stdout = []  # type: ignore[var-annotated]
+    stderr = []  # type: ignore[var-annotated]
     runner.stdout.connect(stdout.append)
     runner.stderr.connect(stderr.append)
 
@@ -333,7 +333,7 @@ def test_job_runner_finished_drains_output_before_clearing_process() -> None:
     assert runner.process is None
 
 
-def test_job_runner_finished_clears_process(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_job_runner_finished_clears_process(qtbot) -> None:
     """Finished jobs should clear the old QProcess reference."""
     from lib.gui.qt_shell.job_runner import JobRunner
 

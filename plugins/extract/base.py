@@ -122,7 +122,7 @@ class _TorchInfer:
         weights = torch.load(weights_path, map_location=self.device)
         weights = self._state_dict_from_checkpoint(weights)
         model.load_state_dict(weights)
-        model.to(self.device, memory_format=torch.channels_last)  # type:ignore[call-overload]
+        model.to(self.device, memory_format=torch.channels_last)
         model.eval()
 
         self._model = model
@@ -204,7 +204,7 @@ class _TorchInfer:
             )
 
         if self._output_is_list:
-            retval = np.empty((self._output_length,), dtype="object")
+            retval = np.empty((self._output_length,), dtype="object")  # type: ignore[var-annotated]
             retval[:] = out
             return retval
         return T.cast(np.ndarray, out)

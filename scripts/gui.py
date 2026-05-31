@@ -109,7 +109,7 @@ class FaceswapGui(tk.Tk):
         """Create a paned window with a visible separator."""
         return tk.PanedWindow(
             parent,
-            orient=orient,
+            orient=orient,  # type: ignore[arg-type]
             name=name,
             borderwidth=0,
             sashrelief=tk.RIDGE,

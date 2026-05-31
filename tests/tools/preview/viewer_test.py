@@ -94,8 +94,8 @@ class TestFacesDisplay:
         """update_tk_image builds, scales and exposes the public tk_image."""
         f_display = self.get_faces_display_instance()
         f_display._build_faces_image = T.cast(MagicMock, mocker.MagicMock())  # type:ignore
-        f_display._get_scale_size = T.cast(
-            MagicMock,  # type:ignore
+        f_display._get_scale_size = T.cast(  # type: ignore[method-assign]
+            MagicMock,
             mocker.MagicMock(return_value=(128, 128)),
         )
         f_display._faces_source = np.zeros(
@@ -113,11 +113,11 @@ class TestFacesDisplay:
 
             def width(self) -> int:
                 """Return the mocked image width."""
-                return self._image.width
+                return self._image.width  # type: ignore[no-any-return]
 
             def height(self) -> int:
                 """Return the mocked image height."""
-                return self._image.height
+                return self._image.height  # type: ignore[no-any-return]
 
         mocker.patch("tools.preview.viewer.ImageTk.PhotoImage", MockPhotoImage)
         f_display.update_tk_image()
@@ -134,8 +134,8 @@ class TestFacesDisplay:
         f_display = self.get_faces_display_instance()
         f_display.set_display_dimensions((800, 600))
 
-        tall_image = np.zeros((_PREVIEW_FACE_SIZE * 2, _PREVIEW_FACE_SIZE, 3), dtype=np.uint8)
-        wide_image = np.zeros((_PREVIEW_FACE_SIZE, _PREVIEW_FACE_SIZE * 4, 3), dtype=np.uint8)
+        tall_image = np.zeros((_PREVIEW_FACE_SIZE * 2, _PREVIEW_FACE_SIZE, 3), dtype=np.uint8)  # type: ignore[var-annotated]
+        wide_image = np.zeros((_PREVIEW_FACE_SIZE, _PREVIEW_FACE_SIZE * 4, 3), dtype=np.uint8)  # type: ignore[var-annotated]
 
         assert f_display._get_scale_size(tall_image) == (300, 600)
         assert f_display._get_scale_size(wide_image) == (800, 200)
@@ -152,8 +152,8 @@ class TestFacesDisplay:
             MagicMock,
             mocker.MagicMock(return_value=np.random.rand(header_size, 256 * _PREVIEW_COLUMNS, 3)),
         )
-        f_display._draw_rect = T.cast(
-            MagicMock,  # type:ignore
+        f_display._draw_rect = T.cast(  # type: ignore[method-assign]
+            MagicMock,
             mocker.MagicMock(side_effect=lambda x: x),
         )
 

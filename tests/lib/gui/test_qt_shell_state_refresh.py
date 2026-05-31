@@ -18,7 +18,7 @@ class _Event:
         self.progress = None
 
 
-def _main_window(qtbot, monkeypatch, tmp_path: Path):  # type:ignore[no-untyped-def]
+def _main_window(qtbot, monkeypatch, tmp_path: Path):
     """Return a MainWindow with a deterministic schema."""
     monkeypatch.setenv("HOME", str(tmp_path))
 
@@ -36,7 +36,7 @@ def _main_window(qtbot, monkeypatch, tmp_path: Path):  # type:ignore[no-untyped-
     return window
 
 
-def test_capture_ui_state_includes_display_geometry_and_sources(  # type:ignore[no-untyped-def]
+def test_capture_ui_state_includes_display_geometry_and_sources(
     qtbot,
     monkeypatch,
     tmp_path: Path,
@@ -61,7 +61,7 @@ def test_capture_ui_state_includes_display_geometry_and_sources(  # type:ignore[
     assert state["vertical_splitter"] == window._vertical_splitter.sizes()  # pylint:disable=protected-access
 
 
-def test_restore_ui_state_restores_geometry_and_panel_sources(  # type:ignore[no-untyped-def]
+def test_restore_ui_state_restores_geometry_and_panel_sources(
     qtbot,
     monkeypatch,
     tmp_path: Path,
@@ -115,7 +115,7 @@ def test_restore_ui_state_restores_geometry_and_panel_sources(  # type:ignore[no
     assert window.height() == 600
 
 
-def test_restore_last_session_applies_saved_ui_state(  # type:ignore[no-untyped-def]
+def test_restore_last_session_applies_saved_ui_state(
     qtbot,
     monkeypatch,
     tmp_path: Path,
@@ -148,7 +148,7 @@ def test_restore_last_session_applies_saved_ui_state(  # type:ignore[no-untyped-
     assert restored == {"display_tab": "Graph", "preview_source": "preview-output"}
 
 
-def test_runtime_events_refresh_requested_display_panels(  # type:ignore[no-untyped-def]
+def test_runtime_events_refresh_requested_display_panels(
     qtbot,
     monkeypatch,
     tmp_path: Path,
@@ -159,17 +159,17 @@ def test_runtime_events_refresh_requested_display_panels(  # type:ignore[no-unty
     monkeypatch.setattr(
         window._analysis_panel_widget,  # pylint:disable=protected-access
         "refresh_session",
-        lambda: calls.append("analysis") or True,
+        lambda: calls.append("analysis") or True,  # type: ignore[func-returns-value]
     )
     monkeypatch.setattr(
         window._preview_panel_widget,  # pylint:disable=protected-access
         "refresh_preview",
-        lambda: calls.append("preview") or True,
+        lambda: calls.append("preview") or True,  # type: ignore[func-returns-value]
     )
     monkeypatch.setattr(
         window._graph_panel_widget,  # pylint:disable=protected-access
         "refresh_graph",
-        lambda: calls.append("graph") or True,
+        lambda: calls.append("graph") or True,  # type: ignore[func-returns-value]
     )
 
     window._refresh_displays_from_event(  # pylint:disable=protected-access
@@ -179,7 +179,7 @@ def test_runtime_events_refresh_requested_display_panels(  # type:ignore[no-unty
     assert calls == ["preview", "graph"]
 
 
-def test_saved_model_event_refreshes_all_display_panels(  # type:ignore[no-untyped-def]
+def test_saved_model_event_refreshes_all_display_panels(
     qtbot,
     monkeypatch,
     tmp_path: Path,
@@ -190,17 +190,17 @@ def test_saved_model_event_refreshes_all_display_panels(  # type:ignore[no-untyp
     monkeypatch.setattr(
         window._analysis_panel_widget,  # pylint:disable=protected-access
         "refresh_session",
-        lambda: calls.append("analysis") or True,
+        lambda: calls.append("analysis") or True,  # type: ignore[func-returns-value]
     )
     monkeypatch.setattr(
         window._preview_panel_widget,  # pylint:disable=protected-access
         "refresh_preview",
-        lambda: calls.append("preview") or True,
+        lambda: calls.append("preview") or True,  # type: ignore[func-returns-value]
     )
     monkeypatch.setattr(
         window._graph_panel_widget,  # pylint:disable=protected-access
         "refresh_graph",
-        lambda: calls.append("graph") or True,
+        lambda: calls.append("graph") or True,  # type: ignore[func-returns-value]
     )
 
     window._refresh_displays_from_event(  # pylint:disable=protected-access

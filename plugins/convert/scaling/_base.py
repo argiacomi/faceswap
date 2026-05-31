@@ -26,7 +26,7 @@ class Adjustment:
     def run(self, new_face):
         """Perform selected adjustment on face"""
         # pylint:disable=duplicate-code
-        logger.trace("Performing scaling adjustment")  # type:ignore[attr-defined]
+        logger.trace("Performing scaling adjustment")
         # Remove Mask for processing
         reinsert_mask = False
         final_mask = None
@@ -40,5 +40,5 @@ class Adjustment:
             # Reinsert Mask
             assert final_mask is not None
             new_face = np.concatenate((new_face, np.expand_dims(final_mask, axis=-1)), -1)
-        logger.trace("Performed scaling adjustment")  # type:ignore[attr-defined]
+        logger.trace("Performed scaling adjustment")
         return new_face

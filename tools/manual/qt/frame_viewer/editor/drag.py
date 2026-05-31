@@ -19,7 +19,7 @@ class FrameEditDragMixin:
         and marquee modes (#103).  All previews update incrementally and
         request a repaint so the view + overlays stay in sync.
         """
-        source_point = self._widget_to_source(position)
+        source_point = self._widget_to_source(position)  # type: ignore[attr-defined]
         if source_point is None or self._edit_drag_source_anchor is None:
             return
         anchor = self._edit_drag_source_anchor
@@ -30,18 +30,18 @@ class FrameEditDragMixin:
             # Single-point drag: the overlay reads the live coord from
             # ``landmark_drag_preview`` so we just store the new position.
             self._edit_drag_current_bbox = QRectF(source_point.x(), source_point.y(), 0.0, 0.0)
-            self.update()
+            self.update()  # type: ignore[attr-defined]
             return
         if mode == "landmark_group":
             # Group move: overlay reads ``landmark_drag_preview`` for each
             # selected index — we just store the delta in the current bbox.
             self._edit_drag_current_bbox = QRectF(dx, dy, 0.0, 0.0)
-            self.update()
+            self.update()  # type: ignore[attr-defined]
             return
         if mode == "landmark_marquee":
             rect = QRectF(anchor, source_point).normalized()
             self._edit_drag_current_bbox = rect
-            self.update()
+            self.update()  # type: ignore[attr-defined]
             return
         if mode == "extract_translate":
             origin = self._edit_drag_original_bbox
@@ -52,15 +52,15 @@ class FrameEditDragMixin:
                     origin.width(),
                     origin.height(),
                 )
-            self.update()
+            self.update()  # type: ignore[attr-defined]
             return
         if mode == "extract_scale":
-            self._update_extract_scale(source_point)
-            self.update()
+            self._update_extract_scale(source_point)  # type: ignore[attr-defined]
+            self.update()  # type: ignore[attr-defined]
             return
         if mode == "extract_rotate":
-            self._update_extract_rotate(source_point)
-            self.update()
+            self._update_extract_rotate(source_point)  # type: ignore[attr-defined]
+            self.update()  # type: ignore[attr-defined]
             return
         if self._edit_drag_original_bbox is None:
             return
@@ -75,22 +75,22 @@ class FrameEditDragMixin:
         elif mode == "add":
             self._edit_drag_current_bbox = QRectF(anchor, source_point).normalized()
         else:
-            self._edit_drag_current_bbox = self._resize_bbox(
+            self._edit_drag_current_bbox = self._resize_bbox(  # type: ignore[attr-defined]
                 self._edit_drag_original_bbox, self._edit_drag_handle or "", dx, dy
             )
-        if mode in {"move", "resize"} and self._face_live_update_callback is not None:
+        if mode in {"move", "resize"} and self._face_live_update_callback is not None:  # type: ignore[attr-defined]
             face_index = (
                 self._edit_drag_face_index
                 if self._edit_drag_face_index is not None
-                else self._active_face_provider()
-                if self._active_face_provider
+                else self._active_face_provider()  # type: ignore[attr-defined]
+                if self._active_face_provider  # type: ignore[attr-defined]
                 else None
             )
             if face_index is not None and self._edit_drag_current_bbox is not None:
-                self._face_live_update_callback(
+                self._face_live_update_callback(  # type: ignore[attr-defined]
                     int(face_index), QRectF(self._edit_drag_current_bbox)
                 )
-        self.update()
+        self.update()  # type: ignore[attr-defined]
 
     def _commit_edit_drag(self) -> None:
         """Emit the appropriate signal then clear the in-progress drag state."""
@@ -105,26 +105,26 @@ class FrameEditDragMixin:
         face_index = (
             self._edit_drag_face_index
             if self._edit_drag_face_index is not None
-            else self._active_face_provider()
-            if self._active_face_provider
+            else self._active_face_provider()  # type: ignore[attr-defined]
+            if self._active_face_provider  # type: ignore[attr-defined]
             else None
         )
         self._reset_edit_drag()
         if mode == "add":
-            self._emit_add_request(anchor, current)
-            self.update()
+            self._emit_add_request(anchor, current)  # type: ignore[attr-defined]
+            self.update()  # type: ignore[attr-defined]
             return
         if mode == "landmark":
-            self._emit_landmark_move(face_index, landmark_index, anchor, current)
-            self.update()
+            self._emit_landmark_move(face_index, landmark_index, anchor, current)  # type: ignore[attr-defined]
+            self.update()  # type: ignore[attr-defined]
             return
         if mode == "landmark_group":
-            self._emit_landmark_group_move(face_index, landmark_indices, current)
-            self.update()
+            self._emit_landmark_group_move(face_index, landmark_indices, current)  # type: ignore[attr-defined]
+            self.update()  # type: ignore[attr-defined]
             return
         if mode == "landmark_marquee":
-            self._emit_landmark_marquee(face_index, current)
-            self.update()
+            self._emit_landmark_marquee(face_index, current)  # type: ignore[attr-defined]
+            self.update()  # type: ignore[attr-defined]
             return
         if mode == "extract_translate":
             if face_index is not None and original is not None and current is not None:
@@ -132,20 +132,20 @@ class FrameEditDragMixin:
                 dy = current.y() - original.y()
                 if dx != 0.0 or dy != 0.0:
                     self.face_move_requested.emit(int(face_index), float(dx), float(dy))
-            self.update()
+            self.update()  # type: ignore[attr-defined]
             return
         if mode == "extract_scale":
             if face_index is not None and extract_scale != 1.0:
-                self.face_scale_requested.emit(int(face_index), float(extract_scale))
-            self.update()
+                self.face_scale_requested.emit(int(face_index), float(extract_scale))  # type: ignore[attr-defined]
+            self.update()  # type: ignore[attr-defined]
             return
         if mode == "extract_rotate":
             if face_index is not None and extract_angle != 0.0:
-                self.face_rotate_requested.emit(int(face_index), float(extract_angle))
-            self.update()
+                self.face_rotate_requested.emit(int(face_index), float(extract_angle))  # type: ignore[attr-defined]
+            self.update()  # type: ignore[attr-defined]
             return
         if face_index is None or original is None or current is None:
-            self.update()
+            self.update()  # type: ignore[attr-defined]
             return
         if mode in {"move", "resize"} and self._face_live_update_callback is not None:
             self._face_live_commit_callback and self._face_live_commit_callback(int(face_index))
@@ -177,7 +177,7 @@ class FrameEditDragMixin:
         self._edit_drag_face_index = None
         self._edit_drag_source_anchor = None
         self._edit_drag_original_bbox = None
-        self._edit_drag_current_bbox = None
+        self._edit_drag_current_bbox = None  # type: ignore[assignment]
         self._landmark_drag_index = None
         self._landmark_drag_indices = ()
         self._landmark_drag_origins = ()
@@ -202,9 +202,9 @@ class FrameEditDragMixin:
         )
         painter.save()
         pen = QPen(QColor("#88d4ff"))
-        pen.setStyle(Qt.DashLine)
+        pen.setStyle(Qt.DashLine)  # type: ignore[attr-defined]
         pen.setWidthF(2.0)
         painter.setPen(pen)
-        painter.setBrush(Qt.NoBrush)
+        painter.setBrush(Qt.NoBrush)  # type: ignore[attr-defined]
         painter.drawRect(widget_rect)
         painter.restore()

@@ -16,7 +16,7 @@ def _coerce_image(image: np.ndarray, *, copy: bool) -> np.ndarray:
     array = np.array(image, copy=copy)
     if array.ndim not in (2, 3):
         raise ValueError(f"debug images must be 2D or 3D arrays, got shape {array.shape}")
-    return array
+    return array  # type: ignore[no-any-return]
 
 
 def _paint_numpy(image: np.ndarray, x_val: int, y_val: int, color: Color, radius: int) -> None:
@@ -49,9 +49,9 @@ def draw_landmarks(
         else to_canonical_68(points)
     )
     try:
-        import cv2  # type:ignore[import-not-found]
+        import cv2
     except ImportError:
-        cv2 = None
+        cv2 = None  # type: ignore[assignment]
 
     for x_float, y_float in landmark_points[:, :2]:
         x_val = int(round(float(x_float)))

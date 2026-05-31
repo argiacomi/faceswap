@@ -137,7 +137,7 @@ def test_best_candidate_and_best_single_use_mean_nme_with_tie_breaks() -> None:
     profile = metrics["profile_left"]
     assert profile.best_candidate == "weighted_median"
     assert profile.best_single_candidate == "fan"
-    assert profile.best_candidate_mean_nme < profile.best_single_mean_nme
+    assert profile.best_candidate_mean_nme < profile.best_single_mean_nme  # type: ignore[operator]
 
 
 def test_selected_candidate_metrics_only_populate_when_present() -> None:

@@ -217,7 +217,7 @@ def normalize_landmark_array(
             )
     elif array.shape[1] not in (2, 3):
         raise ValueError(f"landmarks must have 2 or 3 dimensions, got {array.shape[1]}")
-    return np.ascontiguousarray(array, dtype=dtype)
+    return np.ascontiguousarray(array, dtype=dtype)  # type: ignore[no-any-return]
 
 
 def to_canonical_68(

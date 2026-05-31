@@ -87,7 +87,7 @@ class Check:
             logger.error("No source folder (-fr or -fc) was provided")
             sys.exit(1)
         logger.debug("type: '%s', source_dir: '%s'", self._type, source_dir)
-        return source_dir
+        return source_dir  # type: ignore[no-any-return]
 
     def _get_items(self) -> list[dict[str, str]] | list[tuple[str, PNGHeader]]:
         """Set the correct items to process
@@ -101,7 +101,7 @@ class Check:
         assert self._type is not None
         items: Frames | Faces = globals()[self._type.title()](self._source_dir)
         self._is_video = items.is_video
-        return T.cast(list[dict[str, str]] | list[tuple[str, "PNGHeader"]], items.file_list_sorted)
+        return T.cast(list[dict[str, str]] | list[tuple[str, "PNGHeader"]], items.file_list_sorted)  # type: ignore[redundant-cast]
 
     def process(self) -> None:
         """Process the frames check against the alignments file"""
@@ -514,9 +514,8 @@ class Sort:
                 continue
             sorted_alignments = sorted(alignments, key=lambda a: a.x)
             if sorted_alignments == alignments:
-                logger.trace(
-                    "Alignments already in correct order. Not "  # type:ignore
-                    "sorting: '%s'",
+                logger.trace(  # type: ignore[attr-defined]
+                    "Alignments already in correct order. Not sorting: '%s'",
                     frame,
                 )
                 continue
@@ -668,7 +667,7 @@ class Spatial:
         shapes_im_coords = shapes_centered + np.tile(mean_coords, [num_pts, 1, 1])
 
         logger.debug("Normalized to original: %s", shapes_im_coords)
-        return shapes_im_coords
+        return shapes_im_coords  # type: ignore[no-any-return]
 
     def _normalize(self, face_index: int) -> bool:
         """Compile all original and normalized alignments for a face index
@@ -807,7 +806,7 @@ class Spatial:
 
         retval = signal.convolve(landmarks_padded, temporal_filter, mode="valid", method="fft")
         logger.debug("Temporally Smoothed: %s", retval)
-        return retval
+        return retval  # type: ignore[no-any-return]
 
     def _update_alignments(self, landmarks: np.ndarray, face_index: int) -> None:
         """Update smoothed landmarks back to alignments
@@ -827,8 +826,8 @@ class Spatial:
             landmarks_update = landmarks[:, :, idx]
             landmarks_xy = landmarks_update.reshape(68, 2)
             self._alignments.data[frame].faces[face_index].landmarks_xy = landmarks_xy
-            logger.trace(
-                "Updated: (frame: '%s', face_index: %s, landmarks: %s)",  # type:ignore
+            logger.trace(  # type: ignore[attr-defined]
+                "Updated: (frame: '%s', face_index: %s, landmarks: %s)",
                 frame,
                 face_index,
                 landmarks_xy,

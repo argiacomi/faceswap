@@ -11,7 +11,7 @@ from plugins.extract.align.dark_decoder import Dark
 def test_dark_decoder_flat_heatmaps_stay_finite_and_in_bounds() -> None:
     """Flat heatmaps should fall back safely instead of producing large coordinates."""
     decoder = Dark(68, 64)
-    heatmap = np.zeros((2, 68, 64, 64), dtype=np.float32)
+    heatmap = np.zeros((2, 68, 64, 64), dtype=np.float32)  # type: ignore[var-annotated]
 
     coords = decoder(heatmap)
 
@@ -39,7 +39,7 @@ def test_dark_decoder_noisy_heatmaps_stay_finite_and_in_bounds() -> None:
 def test_dark_taylor_falls_back_for_near_singular_hessian() -> None:
     """A near-singular Hessian should keep the original argmax coordinate."""
     decoder = Dark(1, 64, min_hessian_det=1e-6)
-    heatmap = np.zeros((1, 1, 64, 64), dtype=np.float32)
+    heatmap = np.zeros((1, 1, 64, 64), dtype=np.float32)  # type: ignore[var-annotated]
     x_coord = 30
     y_coord = 30
     heatmap[0, 0, y_coord, x_coord + 1] = 1.0
@@ -57,7 +57,7 @@ def test_dark_taylor_falls_back_for_near_singular_hessian() -> None:
 def test_dark_taylor_clamps_large_offsets_to_local_refinement() -> None:
     """Large but finite Taylor steps should be clipped to local sub-pixel motion."""
     decoder = Dark(1, 64, min_hessian_det=1e-12, max_offset=1.0)
-    heatmap = np.zeros((1, 1, 64, 64), dtype=np.float32)
+    heatmap = np.zeros((1, 1, 64, 64), dtype=np.float32)  # type: ignore[var-annotated]
     x_coord = 30
     y_coord = 30
     heatmap[0, 0, y_coord, x_coord + 1] = 1.0

@@ -24,7 +24,7 @@ def _session_with_frames(folder: Path, count: int = 2) -> ManualSession:
     return ManualSession.create(frames=str(folder))
 
 
-def _make_window(qtbot, folder: Path) -> ManualToolWindow:  # type:ignore[no-untyped-def]
+def _make_window(qtbot, folder: Path) -> ManualToolWindow:
     """Return a shown ManualToolWindow with startup drained."""
     window = ManualToolWindow(_session_with_frames(folder))
     qtbot.addWidget(window)
@@ -34,7 +34,7 @@ def _make_window(qtbot, folder: Path) -> ManualToolWindow:  # type:ignore[no-unt
     return window
 
 
-def test_default_shell_hides_non_legacy_panels(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_default_shell_hides_non_legacy_panels(qtbot, tmp_path: Path) -> None:
     """The default Qt shell omits the toolbar, metadata, status row and extra panels."""
     window = _make_window(qtbot, tmp_path)
 
@@ -51,7 +51,7 @@ def test_default_shell_hides_non_legacy_panels(qtbot, tmp_path: Path) -> None:  
 def test_top_editor_area_uses_legacy_rail_canvas_context_shape(
     qtbot,
     tmp_path: Path,
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """The top area is left rail, center canvas/transport, and fixed right panel."""
     window = _make_window(qtbot, tmp_path)
 
@@ -74,7 +74,7 @@ def test_top_editor_area_uses_legacy_rail_canvas_context_shape(
 def test_left_rail_contains_editor_and_frame_actions(
     qtbot,
     tmp_path: Path,
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """Editor modes and copy/revert actions live in the vertical left rail."""
     window = _make_window(qtbot, tmp_path)
     rail = window.findChild(QWidget, "qt-manual-editor-rail")
@@ -92,13 +92,13 @@ def test_left_rail_contains_editor_and_frame_actions(
     ):
         button = rail.findChild(QToolButton, f"qt-manual-rail-action-{key}")
         assert button is not None, key
-        assert button.toolButtonStyle() == Qt.ToolButtonIconOnly
+        assert button.toolButtonStyle() == Qt.ToolButtonIconOnly  # type: ignore[attr-defined]
 
 
 def test_optional_rail_actions_track_active_editor(
     qtbot,
     tmp_path: Path,
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """Mode-specific rail actions are visible only for the active editor."""
     window = _make_window(qtbot, tmp_path)
     rail = window.findChild(QWidget, "qt-manual-editor-rail")
@@ -121,7 +121,7 @@ def test_optional_rail_actions_track_active_editor(
 def test_transport_row_contains_filter_save_extract_and_face_size(
     qtbot,
     tmp_path: Path,
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """The second transport row carries navigation, filter, extract/save and face size."""
     window = _make_window(qtbot, tmp_path)
     row = window.findChild(QWidget, "qt-manual-transport-button-row")
@@ -140,7 +140,7 @@ def test_transport_row_contains_filter_save_extract_and_face_size(
     assert window._filter_threshold_slider.isVisible() is True  # noqa:SLF001
 
 
-def test_frame_view_paints_black_centered_gutters(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_frame_view_paints_black_centered_gutters(qtbot) -> None:
     """The frame canvas uses black gutters and centers the source image."""
 
     def assert_color_close(actual: QColor, expected: QColor, tolerance: int = 4) -> None:

@@ -110,7 +110,7 @@ def _backfilled_metadata(metadata: T.Mapping[str, T.Any]) -> dict[str, T.Any]:
     payload["runtime_bucket_source"] = "image_aware_backfill"
     payload["bucket"] = payload.get("runtime_bucket") or payload.get("bucket")
     payload.setdefault("candidate_scores", {})
-    return _json_safe(payload)
+    return _json_safe(payload)  # type: ignore[no-any-return]
 
 
 def backfill_runtime_resolver_metadata(

@@ -82,7 +82,7 @@ class Sort:
             The full path to an input video or folder of images
         """
         if not self._args.batch_mode or self._args.output_dir is None:
-            return self._args.output_dir
+            return self._args.output_dir  # type: ignore[no-any-return]
 
         retval = os.path.join(self._args.output_dir, os.path.basename(input_location))
         logger.debug("Returning output: '%s' for input: '%s'", retval, input_location)

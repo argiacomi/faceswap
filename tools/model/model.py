@@ -286,7 +286,7 @@ class Restore:
 
         ext = ".keras.bk"
         model_name = next(fname for fname in bk_files if fname.endswith(ext))
-        return model_name[: -len(ext)]
+        return model_name[: -len(ext)]  # type: ignore[no-any-return]
 
 
 __all__ = get_module_objects(__name__)

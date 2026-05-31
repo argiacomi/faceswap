@@ -23,7 +23,7 @@ from lib.landmarks.datasets import (
 
 def _points_68() -> np.ndarray:
     """Return deterministic 68-point landmarks."""
-    return np.stack(
+    return np.stack(  # type: ignore[no-any-return]
         (
             np.linspace(0, 67, 68, dtype="float32"),
             np.linspace(10, 77, 68, dtype="float32"),
@@ -34,7 +34,7 @@ def _points_68() -> np.ndarray:
 
 def _points_98() -> np.ndarray:
     """Return deterministic 98-point landmarks."""
-    return np.stack(
+    return np.stack(  # type: ignore[no-any-return]
         (
             np.linspace(0, 97, 98, dtype="float32"),
             np.linspace(100, 197, 98, dtype="float32"),
@@ -146,7 +146,7 @@ def test_wflw_builder_disambiguates_multiple_faces_in_same_image(tmp_path: Path)
 
 def _frontal_canonical_68() -> np.ndarray:
     """Return synthetic 68-point landmarks where the nose sits between equally-spaced ear jaws."""
-    points = np.zeros((68, 2), dtype="float32")
+    points = np.zeros((68, 2), dtype="float32")  # type: ignore[var-annotated]
     points[0] = [0.0, 50.0]
     points[16] = [100.0, 50.0]
     points[30] = [50.0, 30.0]  # nose tip exactly at midpoint
@@ -155,7 +155,7 @@ def _frontal_canonical_68() -> np.ndarray:
 
 def _profile_right_canonical_68() -> np.ndarray:
     """Return a 68-point cloud where the subject's right side is compressed (head turned to subject's right)."""
-    points = np.zeros((68, 2), dtype="float32")
+    points = np.zeros((68, 2), dtype="float32")  # type: ignore[var-annotated]
     # Right jaw close to nose, left jaw far from nose.
     points[0] = [40.0, 50.0]
     points[16] = [100.0, 50.0]
@@ -165,7 +165,7 @@ def _profile_right_canonical_68() -> np.ndarray:
 
 def _profile_left_canonical_68() -> np.ndarray:
     """Return a 68-point cloud where the subject's left side is compressed (head turned to subject's left)."""
-    points = np.zeros((68, 2), dtype="float32")
+    points = np.zeros((68, 2), dtype="float32")  # type: ignore[var-annotated]
     points[0] = [0.0, 50.0]
     points[16] = [60.0, 50.0]
     points[30] = [50.0, 30.0]
@@ -197,7 +197,7 @@ def test_visibility_from_jaw_asymmetry_masks_subject_left_when_compressed() -> N
 
 def test_visibility_from_jaw_asymmetry_returns_none_for_degenerate_nose_at_jaw() -> None:
     """If the nose collapses onto a jaw extreme (total distance 0), no visibility is emitted."""
-    points = np.zeros((68, 2), dtype="float32")
+    points = np.zeros((68, 2), dtype="float32")  # type: ignore[var-annotated]
     points[0] = [10.0, 0.0]
     points[16] = [10.0, 0.0]
     points[30] = [10.0, 0.0]
@@ -218,7 +218,7 @@ def test_wflw_builder_emits_visibility_when_jawline_is_asymmetric(tmp_path: Path
     # threshold. We touch only the three 98-indices that map to canonical
     # jaw[0]/jaw[16]/nose[30] and leave the rest at innocuous values.
     mapping = MAP_2D_68[LandmarkType.LM_2D_98]
-    points = np.zeros((98, 2), dtype="float32")
+    points = np.zeros((98, 2), dtype="float32")  # type: ignore[var-annotated]
     points[:, 0] = np.linspace(0, 97, 98, dtype="float32")
     points[mapping[0]] = [40.0, 50.0]  # subject-right ear close to nose
     points[mapping[16]] = [100.0, 50.0]  # subject-left ear far from nose
@@ -254,7 +254,7 @@ def test_wflw_builder_omits_visibility_for_symmetric_jawline(tmp_path: Path) -> 
     # by anchoring those three indices around a common nose X, leaving the other
     # 95 points at innocuous values that the asymmetry helper never inspects.
     mapping = MAP_2D_68[LandmarkType.LM_2D_98]
-    points = np.zeros((98, 2), dtype="float32")
+    points = np.zeros((98, 2), dtype="float32")  # type: ignore[var-annotated]
     points[:, 0] = np.linspace(0, 97, 98, dtype="float32")  # arbitrary X for non-jaw
     points[mapping[0]] = [0.0, 50.0]  # canonical jaw[0]
     points[mapping[16]] = [100.0, 50.0]  # canonical jaw[16]

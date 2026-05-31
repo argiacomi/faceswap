@@ -83,7 +83,7 @@ class Mask:
         :class:`numpy.ndarray`
             The box mask
         """
-        box = np.zeros((output_size, output_size, 1), dtype="float32")
+        box = np.zeros((output_size, output_size, 1), dtype="float32")  # type: ignore[var-annotated]
         edge = (output_size // 32) + 1
         box[edge:-edge, edge:-edge] = 1.0
 
@@ -176,7 +176,7 @@ class Mask:
             )
         else:
             face_mask = face_mask.astype("float32") / 255.0
-        return face_mask
+        return face_mask  # type: ignore[no-any-return]
 
     def _get_mask(
         self,
@@ -220,7 +220,7 @@ class Mask:
             mask = self._get_stored_mask(detected_face, centering, source_offset, target_offset)
 
         logger.trace(mask.shape)  # type: ignore
-        return mask
+        return mask  # type: ignore[no-any-return]
 
     # MASK MANIPULATIONS
     def _get_erosion_kernels(self, mask: np.ndarray) -> list[np.ndarray]:
@@ -323,8 +323,8 @@ class Mask:
         raw_mask : :class:`numpy.ndarray`
             The mask with no erosion/dilation applied
         """
-        logger.trace(
-            "Performing mask adjustment: (detected_face: %s, "  # type: ignore
+        logger.trace(  # type: ignore[attr-defined]
+            "Performing mask adjustment: (detected_face: %s, "
             "source_offset: %s, target_offset: %s, centering: '%s', predicted_mask: %s",
             detected_face,
             source_offset,

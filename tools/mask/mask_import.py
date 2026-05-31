@@ -416,8 +416,8 @@ class Import:
             The mask loaded from disk
         """
         assert self._alignments is not None
-        logger.trace(
-            "Adding %s mask(s) for '%s'",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "Adding %s mask(s) for '%s'",
             len(media.detected_faces),
             media.filename,
         )
@@ -446,8 +446,8 @@ class Import:
 
         mask = T.cast("np.ndarray", cv2.imread(mask_file, cv2.IMREAD_GRAYSCALE))
 
-        logger.trace(
-            "Loaded mask for frame '%s': %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "Loaded mask for frame '%s': %s",
             os.path.basename(mask_file),
             mask.shape,
         )

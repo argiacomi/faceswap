@@ -20,7 +20,7 @@ from lib.landmarks.search.candidate_search import Candidate
 
 
 def _predictions() -> list[LandmarkPrediction]:
-    base = np.full((68, 2), 0.5, dtype="float32")
+    base = np.full((68, 2), 0.5, dtype="float32")  # type: ignore[var-annotated]
     return [
         LandmarkPrediction(base, source="hrnet"),
         LandmarkPrediction(base + 0.5, source="spiga"),
@@ -68,7 +68,7 @@ def test_fuse_candidate_uses_candidate_strategy_and_threshold() -> None:
         bbox_source="manifest",
         crop_scale=1.6,
     )
-    base = np.full((68, 2), 0.5, dtype="float32")
+    base = np.full((68, 2), 0.5, dtype="float32")  # type: ignore[var-annotated]
     weights = {model: [0.5] * 68 for model in candidate.models}
     fused = fuse_candidate(candidate, [base, base + 0.5], weights=weights)
     assert fused.shape == (68, 2)

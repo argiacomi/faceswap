@@ -56,7 +56,7 @@ _CORE_LMS = np.array(
 )
 """The indices used from 68 point landmarks to align to a 3D head"""
 
-_DISTORTION_COEFFICIENTS = np.zeros((4, 1), dtype="float32")
+_DISTORTION_COEFFICIENTS = np.zeros((4, 1), dtype="float32")  # type: ignore[var-annotated]
 """The distortion co-efficient for 3D point estimation (assumes no lens distortion)"""
 
 _MEAN_FACE3D = MEAN_FACE[LandmarkType.LM_3D_26]
@@ -92,7 +92,7 @@ def get_camera_matrix(focal_length: int = 4) -> np.ndarray:
         [[focal_length, 0, 0.5], [0, focal_length, 0.5], [0, 0, 1]], dtype="double"
     )
     logger.trace("camera_matrix: %s", camera_matrix)  # type:ignore[attr-defined]
-    return camera_matrix
+    return camera_matrix  # type: ignore[no-any-return]
 
 
 def get_xyz_2d(
@@ -202,7 +202,7 @@ class PoseEstimate:
 
     def _get_pitch_yaw_roll(self) -> None:
         """Obtain the yaw, roll and pitch from the :attr:`_rotation` in Eular angles."""
-        proj_matrix = np.zeros((3, 4), dtype="float32")
+        proj_matrix = np.zeros((3, 4), dtype="float32")  # type: ignore[var-annotated]
         proj_matrix[:3, :3] = cv2.Rodrigues(self._rotation)[0]
         euler = cv2.decomposeProjectionMatrix(proj_matrix)[-1]
         self._pitch_yaw_roll = T.cast(tuple[float, float, float], tuple(euler.squeeze()))
@@ -239,8 +239,8 @@ class PoseEstimate:
                 _DISTORTION_COEFFICIENTS,
                 flags=cv2.SOLVEPNP_ITERATIVE,
             )
-        logger.trace(
-            "points: %s, rotation: %s, translation: %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "points: %s, rotation: %s, translation: %s",
             points,
             rotation,
             translation,
@@ -361,7 +361,7 @@ class Batch3D:
         k[:, 2, 0] = -units[:, 1]
         k[:, 2, 1] = units[:, 0]
 
-        ident = np.eye(3, dtype="float32")
+        ident = np.eye(3, dtype="float32")  # type: ignore[var-annotated]
         retval = ident + np.sin(theta)[:, None] * k + (1 - np.cos(theta))[:, None] * (k @ k)
         return retval
 

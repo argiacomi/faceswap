@@ -366,8 +366,8 @@ class _DiskIO:
         if frame_index not in self._updated_frame_indices:
             logger.debug("Alignments not amended. Returning")
             return
-        logger.verbose(
-            "Reverting alignments for frame_index %s",  # type:ignore[attr-defined]
+        logger.verbose(  # type: ignore[attr-defined]
+            "Reverting alignments for frame_index %s",
             frame_index,
         )
         alignments = self._alignments.data[self._sorted_frame_names[frame_index]].faces
@@ -497,8 +497,8 @@ class _DiskIO:
         loader = ImagesLoader(self._input_location, count=self._alignments.frames_count)
         for frame_idx, filename_image in enumerate(loader.load()):
             filename, image = filename_image[:2]
-            logger.trace(
-                "Outputting frame: %s: %s",  # type:ignore[attr-defined]
+            logger.trace(  # type: ignore[attr-defined]
+                "Outputting frame: %s: %s",
                 frame_idx,
                 filename,
             )
@@ -567,8 +567,8 @@ class Filter:
             )
         )
         assert isinstance(retval, bool)
-        logger.trace(
-            "filter_mode: %s, frame meets criteria: %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "filter_mode: %s, frame meets criteria: %s",
             filter_mode,
             retval,
         )
@@ -606,8 +606,8 @@ class Filter:
             )
         else:
             retval = len(face_count_per_index)
-        logger.trace(
-            "filter mode: %s, frame count: %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "filter mode: %s, frame count: %s",
             self._globals.var_filter_mode.get(),
             retval,
         )
@@ -646,8 +646,8 @@ class Filter:
             "frame": frame_indices,
             "face": face_indices,
         }
-        logger.trace(
-            "frame_indices: %s, face_indices: %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "frame_indices: %s, face_indices: %s",
             frame_indices,
             face_indices,
         )
@@ -675,8 +675,8 @@ class Filter:
             ]
         else:
             retval = list(range(len(face_count_per_index)))
-        logger.trace(
-            "filter mode: %s, number_frames: %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "filter mode: %s, number_frames: %s",
             self._globals.var_filter_mode.get(),
             len(retval),
         )
@@ -891,9 +891,8 @@ class FaceUpdate:
         aligner
             The aligner to use to generate the landmarks. Default: "HRNet"
         """
-        logger.trace(
-            "frame_index: %s, face_index %s, pnt_x %s, "  # type:ignore[attr-defined]
-            "width %s, pnt_y %s, height %s, aligner: %s",
+        logger.trace(  # type: ignore[attr-defined]
+            "frame_index: %s, face_index %s, pnt_x %s, width %s, pnt_y %s, height %s, aligner: %s",
             frame_index,
             face_index,
             pnt_x,

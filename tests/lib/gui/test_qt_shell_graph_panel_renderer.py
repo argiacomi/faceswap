@@ -38,12 +38,12 @@ class _GraphServiceDouble:
         """Return current snapshot."""
         return self.snapshot
 
-    def set_session_id(self, session_id) -> TrainingGraphSnapshot:  # type:ignore[no-untyped-def]
+    def set_session_id(self, session_id) -> TrainingGraphSnapshot:
         """Capture session id selection."""
         self.session_id = session_id
         return self.snapshot
 
-    def save_csv(self, filename, *, selected_keys=()):  # type:ignore[no-untyped-def]
+    def save_csv(self, filename, *, selected_keys=()):
         """Save selected series as CSV."""
         series = self.snapshot.series_for_keys(selected_keys)
         if not series:
@@ -73,31 +73,31 @@ def _combo(panel: GraphPanel, name: str) -> QComboBox:
     """Return a named combo box."""
     combo = panel.findChild(QComboBox, f"qt-shell-graph-{name}")
     assert combo is not None
-    return combo
+    return combo  # type: ignore[no-any-return]
 
 
 def _label(panel: GraphPanel, name: str) -> QLabel:
     """Return a named label."""
     label = panel.findChild(QLabel, f"qt-shell-graph-{name}")
     assert label is not None
-    return label
+    return label  # type: ignore[no-any-return]
 
 
 def _button(panel: GraphPanel, name: str) -> QPushButton:
     """Return a named button."""
     button = panel.findChild(QPushButton, f"qt-shell-graph-{name}")
     assert button is not None
-    return button
+    return button  # type: ignore[no-any-return]
 
 
 def _widget(panel: GraphPanel) -> TrainingGraphWidget:
     """Return the graph widget."""
     widget = panel.findChild(TrainingGraphWidget, "qt-shell-training-graph-widget")
     assert widget is not None
-    return widget
+    return widget  # type: ignore[no-any-return]
 
 
-def test_graph_panel_renders_chart_and_populates_loss_keys(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_graph_panel_renders_chart_and_populates_loss_keys(qtbot) -> None:
     """Refreshing should render chart data and populate the loss-key selector."""
     panel = GraphPanel(service=_GraphServiceDouble())  # type:ignore[arg-type]
     qtbot.addWidget(panel)
@@ -118,7 +118,7 @@ def test_graph_panel_renders_chart_and_populates_loss_keys(qtbot) -> None:  # ty
     assert _button(panel, "y-zoom-out").isEnabled() is True
 
 
-def test_graph_panel_loss_key_selection_filters_chart(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_graph_panel_loss_key_selection_filters_chart(qtbot) -> None:
     """Changing the loss-key selector should filter the rendered chart."""
     panel = GraphPanel(service=_GraphServiceDouble())  # type:ignore[arg-type]
     qtbot.addWidget(panel)
@@ -131,7 +131,7 @@ def test_graph_panel_loss_key_selection_filters_chart(qtbot) -> None:  # type:ig
     assert _label(panel, "status").text() == "Rendered 1 series, 3 points: metric_b"
 
 
-def test_graph_panel_save_image_uses_chart_widget(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_graph_panel_save_image_uses_chart_widget(qtbot, tmp_path: Path) -> None:
     """Saving should delegate to the chart widget and update status."""
     panel = GraphPanel(service=_GraphServiceDouble())  # type:ignore[arg-type]
     qtbot.addWidget(panel)
@@ -144,7 +144,7 @@ def test_graph_panel_save_image_uses_chart_widget(qtbot, tmp_path: Path) -> None
     assert _label(panel, "status").text() == "Graph image saved"
 
 
-def test_graph_panel_save_csv_uses_selected_loss_keys(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_graph_panel_save_csv_uses_selected_loss_keys(qtbot, tmp_path: Path) -> None:
     """CSV export should write the currently selected graph series only."""
     panel = GraphPanel(service=_GraphServiceDouble())  # type:ignore[arg-type]
     qtbot.addWidget(panel)
@@ -159,7 +159,7 @@ def test_graph_panel_save_csv_uses_selected_loss_keys(qtbot, tmp_path: Path) -> 
     assert _label(panel, "status").text() == "Graph CSV saved: 3 rows"
 
 
-def test_graph_panel_clear_resets_renderer_controls(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_graph_panel_clear_resets_renderer_controls(qtbot) -> None:
     """Clear should reset chart, key selector and export buttons."""
     service = _GraphServiceDouble()
     panel = GraphPanel(service=service)  # type:ignore[arg-type]

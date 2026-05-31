@@ -122,7 +122,7 @@ def test_manual_frame_overlay_annotation_visibility_matrix() -> None:
     }
 
 
-def test_manual_tool_window_registers_overlay(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_manual_tool_window_registers_overlay(qtbot, tmp_path: Path) -> None:
     """ManualToolWindow installs its overlay on the frame view."""
     session = _session_with_frames(tmp_path)
     window = ManualToolWindow(session)
@@ -131,9 +131,7 @@ def test_manual_tool_window_registers_overlay(qtbot, tmp_path: Path) -> None:  #
     assert window.frame_overlay in overlays
 
 
-def test_manual_tool_overlay_colors_are_editor_configurable(  # type:ignore[no-untyped-def]
-    qtbot, tmp_path: Path
-) -> None:
+def test_manual_tool_overlay_colors_are_editor_configurable(qtbot, tmp_path: Path) -> None:
     """Per-editor overlay color overrides feed the frame overlay painter."""
     session = _session_with_frames(tmp_path)
     window = ManualToolWindow(session)
@@ -146,7 +144,7 @@ def test_manual_tool_overlay_colors_are_editor_configurable(  # type:ignore[no-u
     assert window.frame_overlay._color("landmark") == QColor("#112233")  # noqa: SLF001
 
 
-def test_add_face_action_appends_to_editable_model(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_add_face_action_appends_to_editable_model(qtbot, tmp_path: Path) -> None:
     """Triggering add_face puts a new face into the editable model."""
     session = _session_with_frames(tmp_path)
     window = ManualToolWindow(session)
@@ -161,7 +159,7 @@ def test_add_face_action_appends_to_editable_model(qtbot, tmp_path: Path) -> Non
     assert window.editor_state.face_index == 0
 
 
-def test_delete_face_action_mutates_editable_model(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_delete_face_action_mutates_editable_model(qtbot, tmp_path: Path) -> None:
     """Triggering delete_active_face removes the face and clamps face_index."""
     session = _session_with_frames(tmp_path)
     window = ManualToolWindow(session)
@@ -177,7 +175,7 @@ def test_delete_face_action_mutates_editable_model(qtbot, tmp_path: Path) -> Non
     assert window.editor_state.unsaved is True
 
 
-def test_undo_action_reverts_edit(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_undo_action_reverts_edit(qtbot, tmp_path: Path) -> None:
     """undo_edit reverses the last mutation and toggles redo availability."""
     session = _session_with_frames(tmp_path)
     window = ManualToolWindow(session)
@@ -194,7 +192,7 @@ def test_undo_action_reverts_edit(qtbot, tmp_path: Path) -> None:  # type:ignore
     assert window.editable_alignments.face_count(0) == 1
 
 
-def test_undo_redo_actions_track_availability(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_undo_redo_actions_track_availability(qtbot, tmp_path: Path) -> None:
     """The undo/redo actions are disabled when their stacks are empty."""
     session = _session_with_frames(tmp_path)
     window = ManualToolWindow(session)
@@ -213,7 +211,7 @@ def test_undo_redo_actions_track_availability(qtbot, tmp_path: Path) -> None:  #
     assert actions["redo_edit"].isEnabled() is True
 
 
-def test_frame_click_selects_face_under_pointer(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_frame_click_selects_face_under_pointer(qtbot, tmp_path: Path) -> None:
     """clicked_at -> _on_frame_clicked hit-tests the editable model."""
     session = _session_with_frames(tmp_path)
     window = ManualToolWindow(session)
@@ -225,7 +223,7 @@ def test_frame_click_selects_face_under_pointer(qtbot, tmp_path: Path) -> None: 
     assert window.editor_state.face_index == 1
 
 
-def test_nudge_active_face_translates_bbox(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_nudge_active_face_translates_bbox(qtbot, tmp_path: Path) -> None:
     """nudge_active_face moves the active face's bbox and marks the session dirty."""
     session = _session_with_frames(tmp_path)
     window = ManualToolWindow(session)
@@ -239,7 +237,7 @@ def test_nudge_active_face_translates_bbox(qtbot, tmp_path: Path) -> None:  # ty
     assert window.editor_state.unsaved is True
 
 
-def test_revert_clears_editable_stack(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_revert_clears_editable_stack(qtbot, tmp_path: Path) -> None:
     """revert_current_frame undoes all queued edits."""
     session = _session_with_frames(tmp_path)
     window = ManualToolWindow(session)
@@ -253,7 +251,7 @@ def test_revert_clears_editable_stack(qtbot, tmp_path: Path) -> None:  # type:ig
     assert window.editor_state.unsaved is False
 
 
-def test_face_panel_clear_resets_editor_state_face_index(  # type:ignore[no-untyped-def]
+def test_face_panel_clear_resets_editor_state_face_index(
     qtbot,
     tmp_path: Path,
 ) -> None:
@@ -269,7 +267,7 @@ def test_face_panel_clear_resets_editor_state_face_index(  # type:ignore[no-unty
     assert window.editor_state.face_index == -1
 
 
-def test_revert_only_reverts_current_frame_edits(  # type:ignore[no-untyped-def]
+def test_revert_only_reverts_current_frame_edits(
     qtbot,
     tmp_path: Path,
 ) -> None:
@@ -290,7 +288,7 @@ def test_revert_only_reverts_current_frame_edits(  # type:ignore[no-untyped-def]
     assert window.editor_state.unsaved is True
 
 
-def test_delete_last_face_clears_active_face(  # type:ignore[no-untyped-def]
+def test_delete_last_face_clears_active_face(
     qtbot,
     tmp_path: Path,
 ) -> None:
@@ -307,7 +305,7 @@ def test_delete_last_face_clears_active_face(  # type:ignore[no-untyped-def]
     assert window.editor_state.face_index == -1
 
 
-def test_face_panel_reflects_editable_model_pre_save(  # type:ignore[no-untyped-def]
+def test_face_panel_reflects_editable_model_pre_save(
     qtbot,
     tmp_path: Path,
 ) -> None:
@@ -323,7 +321,7 @@ def test_face_panel_reflects_editable_model_pre_save(  # type:ignore[no-untyped-
     assert [face.face_index for face in window.face_panel.faces] == [0, 1]
 
 
-def test_overlay_active_face_tracks_editor_state(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_overlay_active_face_tracks_editor_state(qtbot, tmp_path: Path) -> None:
     """Updating editor_state.face_index syncs the overlay highlight."""
     session = _session_with_frames(tmp_path)
     window = ManualToolWindow(session)

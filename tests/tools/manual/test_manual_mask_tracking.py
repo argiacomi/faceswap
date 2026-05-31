@@ -38,7 +38,7 @@ class _StubAlignments:
 
 def _sentinel_blob() -> MaskAlignmentsFile:
     """Return a persisted mask blob with a non-Qt affine sentinel."""
-    grid = np.zeros(
+    grid = np.zeros(  # type: ignore[var-annotated]
         (
             ManualEditableAlignments.MASK_STORED_SIZE,
             ManualEditableAlignments.MASK_STORED_SIZE,

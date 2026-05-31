@@ -53,7 +53,7 @@ def test_decoder_residual_scale_only_scales_residual_branch(
     model = Model(inputs, outputs)
     _set_constant_residual_weights(model)
 
-    data = np.full((1, 4, 4, 1), 2.0, dtype="float32")
+    data = np.full((1, 4, 4, 1), 2.0, dtype="float32")  # type: ignore[var-annotated]
     result = model.predict(data, verbose=0)
 
     expected = np.full_like(data, 2.0 + residual_scale)

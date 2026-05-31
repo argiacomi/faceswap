@@ -93,8 +93,8 @@ class MaskGenerator:
 
         retval = not face.mask or face.mask.get(self._mask_type, None) is None
 
-        logger.trace(
-            "Needs updating: %s, '%s' - %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "Needs updating: %s, '%s' - %s",
             retval,
             frame,
             idx,
@@ -132,8 +132,8 @@ class MaskGenerator:
                 )
 
             if not needs_update:
-                logger.trace(
-                    "No masks need updating in '%s'",  # type:ignore[attr-defined]
+                logger.trace(  # type: ignore[attr-defined]
+                    "No masks need updating in '%s'",
                     media.filename,
                 )
                 continue
@@ -196,8 +196,8 @@ class MaskGenerator:
         """
         assert self._alignments is not None
         fname = os.path.basename(media.filename)
-        logger.trace(
-            "Updating %s faces in frame '%s'",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "Updating %s faces in frame '%s'",
             len(media),
             fname,
         )

@@ -232,7 +232,7 @@ class Samples:
         ]
         cols = len(labels)
         height = int(patch_width / 4.5)
-        headers = np.zeros((cols, height, patch_width, 3), dtype="uint8") + 255
+        headers = np.zeros((cols, height, patch_width, 3), dtype="uint8") + 255  # type: ignore[var-annotated]
         font = cv2.FONT_HERSHEY_SIMPLEX
         scaling = patch_width / 140
         text_sizes = [

@@ -26,7 +26,7 @@ def download_google_drive_file(
     that use direct URLs do not need the optional dependency.
     """
     try:
-        import gdown  # type: ignore[import-not-found]
+        import gdown
     except ImportError as err:
         raise GoogleDriveDownloadError(
             "Google Drive dataset downloads require the optional 'gdown' dependency. "

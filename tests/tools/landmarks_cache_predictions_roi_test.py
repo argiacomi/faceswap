@@ -15,7 +15,7 @@ from tools.landmarks import cache_predictions
 
 def _points_98() -> np.ndarray:
     """Return deterministic WFLW-style 98-point landmarks."""
-    return np.stack(
+    return np.stack(  # type: ignore[no-any-return]
         (
             np.linspace(10, 206, 98, dtype="float32"),
             np.linspace(30, 226, 98, dtype="float32"),

@@ -65,7 +65,7 @@ class _PreviewTriggerDouble:
     def __init__(self) -> None:
         self.clear_calls: list[object] = []
 
-    def clear(self, trigger_type=None) -> None:  # type:ignore[no-untyped-def]
+    def clear(self, trigger_type=None) -> None:
         """Capture clear calls."""
         self.clear_calls.append(trigger_type)
 
@@ -146,7 +146,7 @@ def test_training_session_service_does_not_reinitialize_existing_training_sessio
 
     assert session.initialized == []
     assert refreshes == [True]
-    assert events[0].payload["initialized"] is False
+    assert events[0].payload["initialized"] is False  # type: ignore[index]
 
 
 def test_training_session_service_ignores_non_saved_model_output() -> None:
@@ -201,7 +201,7 @@ def test_process_runtime_service_emits_training_session_events_from_stdout() -> 
     training = TrainingSessionRuntimeService(session)
     training.configure(model_folder="/models", model_name="model_a")
     runtime = ProcessRuntimeService("train", training_session=training)
-    events = []
+    events = []  # type: ignore[var-annotated]
     runtime.add_event_callback(events.append)
 
     parsed = runtime.process_stdout("1000 [Saved Model] checkpoint written\n")
@@ -221,7 +221,7 @@ def test_process_runtime_service_configures_preview_output_context() -> None:
         preview_trigger_provider=lambda: trigger,
     )
     runtime = ProcessRuntimeService("extract", preview_output=preview)
-    events = []
+    events = []  # type: ignore[var-annotated]
     runtime.add_event_callback(events.append)
     context = CommandExecutionContext.from_values(
         "extract",
@@ -250,7 +250,7 @@ def test_process_runtime_service_keeps_preview_event_when_tk_images_unavailable(
         images_provider=lambda: (_ for _ in ()).throw(AssertionError("no tk"))
     )
     runtime = ProcessRuntimeService("extract", preview_output=preview)
-    events = []
+    events = []  # type: ignore[var-annotated]
     runtime.add_event_callback(events.append)
 
     configured_events = runtime.configure_context(
@@ -266,7 +266,7 @@ def test_process_runtime_service_skips_preview_event_without_output_path() -> No
     """Runtime context without preview output should not emit preview events."""
     preview = PreviewOutputRuntimeService(images_provider=lambda: _ImagesDouble())
     runtime = ProcessRuntimeService("extract", preview_output=preview)
-    events = []
+    events = []  # type: ignore[var-annotated]
     runtime.add_event_callback(events.append)
 
     configured_events = runtime.configure_context(CommandExecutionContext())

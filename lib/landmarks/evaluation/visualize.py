@@ -58,7 +58,7 @@ def draw_rejected_landmarks(
                 continue
             cv2.line(output, (x_val - 4, y_val - 4), (x_val + 4, y_val + 4), color, 1)
             cv2.line(output, (x_val - 4, y_val + 4), (x_val + 4, y_val - 4), color, 1)
-    return output
+    return output  # type: ignore[no-any-return]
 
 
 def write_debug_records(records: list[dict[str, T.Any]], output_dir: str | Path) -> None:

@@ -16,7 +16,7 @@ from tools.landmarks.build_hard_alignment_validation import main as build_main
 
 
 def _truth_face() -> np.ndarray:
-    points = np.zeros((LANDMARK_COUNT, 2), dtype="float32")
+    points = np.zeros((LANDMARK_COUNT, 2), dtype="float32")  # type: ignore[var-annotated]
     points[0:17, 0] = np.linspace(40, 160, 17)
     points[0:17, 1] = 120 + 30 * np.sin(np.linspace(0, np.pi, 17))
     points[17:22, 0] = np.linspace(50, 90, 5)
@@ -45,7 +45,7 @@ def _yaw_sample(sid: str, yaw_radians: float | None) -> dict:
         "metadata": {"face_bbox": [40.0, 60.0, 160.0, 150.0]},
     }
     if yaw_radians is not None:
-        payload["metadata"]["Pose_Para"] = [
+        payload["metadata"]["Pose_Para"] = [  # type: ignore[index]
             0.0,
             yaw_radians,
             0.0,

@@ -53,14 +53,14 @@ def _get_activation(
     layer_name: str | None = None,
 ) -> keras.layers.Layer | None:
     """Obtain an activation layer for Phaze-A controlled paths."""
-    activation = None if name in (None, "none") else name.lower()
+    activation = None if name in (None, "none") else name.lower()  # type: ignore[union-attr]
     kwargs = {} if layer_name is None else {"name": layer_name}
     if activation is None:
         return None
     if activation == "leakyrelu":
         return kl.LeakyReLU(negative_slope=alpha, **kwargs)
     if activation in ("swish", "silu"):
-        return Swish(**kwargs)
+        return Swish(**kwargs)  # type: ignore[arg-type]
     raise ValueError(f"Unsupported activation '{name}'. Choose from: leakyrelu, swish, silu")
 
 
@@ -83,18 +83,18 @@ def _get_norm_layer(
     layer_name: str | None = None,
 ) -> keras.layers.Layer | None:
     """Obtain a normalization layer for Phaze-A controlled paths."""
-    norm = None if name in (None, "none") else name.lower()
+    norm = None if name in (None, "none") else name.lower()  # type: ignore[union-attr]
     kwargs = {} if layer_name is None else {"name": layer_name}
     if norm is None:
         return None
     if norm == "group":
-        return GroupNormalization(axis=axis if axis is not None else -1, **kwargs)
+        return GroupNormalization(axis=axis if axis is not None else -1, **kwargs)  # type: ignore[arg-type]
     if norm == "instance":
-        return InstanceNormalization(axis=axis, **kwargs)
+        return InstanceNormalization(axis=axis, **kwargs)  # type: ignore[arg-type]
     if norm == "layer":
         return kl.LayerNormalization(axis=axis if axis is not None else -1, **kwargs)
     if norm == "rms":
-        return RMSNormalization(axis=axis if axis is not None else -1, **kwargs)
+        return RMSNormalization(axis=axis if axis is not None else -1, **kwargs)  # type: ignore[arg-type]
     raise ValueError(
         f"Unsupported normalization '{name}'. Choose from: group, instance, layer, rms"
     )

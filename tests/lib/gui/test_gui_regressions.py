@@ -27,11 +27,11 @@ class _FakePhotoImage:
 
     def width(self) -> int:
         """Return image width."""
-        return self.image.width
+        return self.image.width  # type: ignore[no-any-return]
 
     def height(self) -> int:
         """Return image height."""
-        return self.image.height
+        return self.image.height  # type: ignore[no-any-return]
 
 
 class _FakePanelOption:
@@ -129,9 +129,9 @@ def _preview_extract_with_cache(num_images: int = 4, size: int = 10) -> gui_imag
 def cli_opts_fixture() -> CliOptions:
     """Return a CliOptions instance with synthetic options."""
     cli_opts = CliOptions.__new__(CliOptions)
-    extract_input = CliOption(_FakePanelOption("current", default="default"), ("-i",), None)
-    extract_flag = CliOption(_FakePanelOption(True, default=True), ("-b",), None)
-    train_input = CliOption(_FakePanelOption("train", default="train_default"), ("-t",), None)
+    extract_input = CliOption(_FakePanelOption("current", default="default"), ("-i",), None)  # type: ignore[arg-type]
+    extract_flag = CliOption(_FakePanelOption(True, default=True), ("-b",), None)  # type: ignore[arg-type]
+    train_input = CliOption(_FakePanelOption("train", default="train_default"), ("-t",), None)  # type: ignore[arg-type]
     cli_opts._opts = {
         "extract": {
             "Input": extract_input,
@@ -163,24 +163,24 @@ def test_reset_single_command(cli_opts: CliOptions) -> None:
     """Reset updates only the requested command back to defaults."""
     cli_opts.reset("extract")
 
-    assert cli_opts._opts["extract"]["Input"].panel_option.get() == "default"
-    assert cli_opts._opts["extract"]["Flag"].panel_option.get() is True
-    assert cli_opts._opts["train"]["Input"].panel_option.get() == "train"
+    assert cli_opts._opts["extract"]["Input"].panel_option.get() == "default"  # type: ignore[union-attr]
+    assert cli_opts._opts["extract"]["Flag"].panel_option.get() is True  # type: ignore[union-attr]
+    assert cli_opts._opts["train"]["Input"].panel_option.get() == "train"  # type: ignore[union-attr]
 
 
 def test_clear_single_command(cli_opts: CliOptions) -> None:
     """Clear updates only the requested command to empty values."""
     cli_opts.clear("extract")
 
-    assert cli_opts._opts["extract"]["Input"].panel_option.get() == ""
-    assert cli_opts._opts["extract"]["Flag"].panel_option.get() is False
-    assert cli_opts._opts["train"]["Input"].panel_option.get() == "train"
+    assert cli_opts._opts["extract"]["Input"].panel_option.get() == ""  # type: ignore[union-attr]
+    assert cli_opts._opts["extract"]["Flag"].panel_option.get() is False  # type: ignore[union-attr]
+    assert cli_opts._opts["train"]["Input"].panel_option.get() == "train"  # type: ignore[union-attr]
 
 
 def test_gen_cli_arguments_with_quoted_nargs() -> None:
     """Quoted nargs values preserve mixed quoted and unquoted values."""
     cli_opts = CliOptions.__new__(CliOptions)
-    input_option = CliOption(_FakePanelOption('"foo bar" baz'), ("-i",), "+")
+    input_option = CliOption(_FakePanelOption('"foo bar" baz'), ("-i",), "+")  # type: ignore[arg-type]
     cli_opts._opts = {"extract": {"Input": input_option, "helptext": "extract help"}}
 
     with pytest.deprecated_call(match="CliOptions.gen_cli_arguments"):
@@ -192,17 +192,17 @@ def test_gen_cli_arguments_with_quoted_nargs() -> None:
 def test_invalid_quote_rolls_back_gui_state(capsys: pytest.CaptureFixture[str]) -> None:
     """Invalid generated arguments do not leave the GUI marked as running."""
     wrapper = ProcessWrapper.__new__(ProcessWrapper)
-    wrapper._tk_vars = SimpleNamespace(
+    wrapper._tk_vars = SimpleNamespace(  # type: ignore[assignment]
         action_command=_FakeVar("faceswap,extract"),
         running_task=_FakeVar(False),
         is_training=_FakeVar(True),
         display=_FakeVar("extract"),
     )
-    wrapper._statusbar = _FakeStatusbar()
-    wrapper._task = SimpleNamespace(terminate=lambda: None, execute_script=lambda *_args: None)
+    wrapper._statusbar = _FakeStatusbar()  # type: ignore[assignment]
+    wrapper._task = SimpleNamespace(terminate=lambda: None, execute_script=lambda *_args: None)  # type: ignore[assignment]
     wrapper._command = None
-    wrapper._build_args = lambda _category: (_ for _ in ()).throw(ValueError("bad quote"))
-    wrapper._prepare_after_args_built = lambda: pytest.fail("prepare should not run")
+    wrapper._build_args = lambda _category: (_ for _ in ()).throw(ValueError("bad quote"))  # type: ignore[assignment, method-assign, misc]
+    wrapper._prepare_after_args_built = lambda: pytest.fail("prepare should not run")  # type: ignore[method-assign]
 
     wrapper._action_command()
 
@@ -210,7 +210,7 @@ def test_invalid_quote_rolls_back_gui_state(capsys: pytest.CaptureFixture[str]) 
     assert wrapper._tk_vars.is_training.get() is False
     assert wrapper._tk_vars.display.get() == ""
     assert wrapper._tk_vars.action_command.get() == ""
-    assert wrapper._statusbar.stop_called is True
+    assert wrapper._statusbar.stop_called is True  # type: ignore[attr-defined]
     assert wrapper._statusbar.message.get() == "Invalid command options"
     assert "bad quote" in capsys.readouterr().err
 
@@ -220,16 +220,16 @@ def test_invalid_generate_does_not_clear_running_task(
 ) -> None:
     """Invalid Generate options do not reset an already running task."""
     wrapper = ProcessWrapper.__new__(ProcessWrapper)
-    wrapper._tk_vars = SimpleNamespace(
+    wrapper._tk_vars = SimpleNamespace(  # type: ignore[assignment]
         generate_command=_FakeVar("faceswap,extract"),
         running_task=_FakeVar(True),
         is_training=_FakeVar(True),
         display=_FakeVar("train"),
         console_clear=_FakeVar(False),
     )
-    wrapper._statusbar = _FakeStatusbar()
+    wrapper._statusbar = _FakeStatusbar()  # type: ignore[assignment]
     wrapper._command = "train"
-    wrapper._build_args = lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("bad quote"))
+    wrapper._build_args = lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("bad quote"))  # type: ignore[method-assign]
 
     wrapper._generate_command()
 
@@ -239,7 +239,7 @@ def test_invalid_generate_does_not_clear_running_task(
     assert wrapper._tk_vars.console_clear.get() is True
     assert wrapper._tk_vars.generate_command.get() == ""
     assert wrapper._command == "train"
-    assert wrapper._statusbar.stop_called is False
+    assert wrapper._statusbar.stop_called is False  # type: ignore[attr-defined]
     assert "bad quote" in capsys.readouterr().err
 
 
@@ -280,9 +280,9 @@ def test_terminate_targets_launched_process_pid_only(
     monkeypatch.setattr(wrapper_mod.psutil, "wait_procs", lambda procs, timeout: (procs, []))
 
     control = FaceswapControl.__new__(FaceswapControl)
-    control._queue_ui_update = lambda *_args: None
+    control._queue_ui_update = lambda *_args: None  # type: ignore[method-assign]
 
-    control._terminate_process_tree(SimpleNamespace(pid=12345))
+    control._terminate_process_tree(SimpleNamespace(pid=12345))  # type: ignore[arg-type]
 
     assert process_ids == [12345]
     assert root.terminated is True
@@ -316,7 +316,7 @@ def test_faceswap_control_runtime_progress_event_updates_statusbar() -> None:
     """Runtime progress events should update the legacy Tk status bar."""
     control = FaceswapControl.__new__(FaceswapControl)
     statusbar = _FakeStatusbar()
-    control._statusbar = statusbar  # pylint:disable=protected-access
+    control._statusbar = statusbar  # type: ignore[assignment]  # pylint:disable=protected-access
 
     control._handle_runtime_event(  # pylint:disable=protected-access
         RuntimeEvent("progress", "Halfway", 42.9)
@@ -329,7 +329,7 @@ def test_faceswap_control_runtime_status_event_updates_mode_and_loss() -> None:
     """Runtime status events should preserve training loss status behavior."""
     control = FaceswapControl.__new__(FaceswapControl)
     statusbar = _FakeStatusbar()
-    control._statusbar = statusbar  # pylint:disable=protected-access
+    control._statusbar = statusbar  # type: ignore[assignment]  # pylint:disable=protected-access
 
     control._handle_runtime_event(  # pylint:disable=protected-access
         RuntimeEvent(
@@ -347,10 +347,10 @@ def test_faceswap_control_training_session_event_refreshes_graph() -> None:
     """Training session runtime events should refresh the legacy graph display."""
     control = FaceswapControl.__new__(FaceswapControl)
     refresh_graph = _FakeVar(False)
-    control._config = SimpleNamespace(  # pylint:disable=protected-access
+    control._config = SimpleNamespace(  # type: ignore[assignment]  # pylint:disable=protected-access
         tk_vars=SimpleNamespace(refresh_graph=refresh_graph)
     )
-    control._statusbar = _FakeStatusbar()  # pylint:disable=protected-access
+    control._statusbar = _FakeStatusbar()  # type: ignore[assignment]  # pylint:disable=protected-access
 
     control._handle_runtime_event(  # pylint:disable=protected-access
         RuntimeEvent("training_session", payload={"graph_refresh": True})
@@ -367,9 +367,9 @@ def test_display_optional_page_close_cancels_scheduled_callbacks() -> None:
     cancelled: list[str] = []
     destroyed_children: list[str] = []
     child = SimpleNamespace(destroy=lambda: destroyed_children.append("child"))
-    page.after_cancel = lambda after_id: cancelled.append(after_id)
-    page.winfo_children = lambda: [child]
-    page.destroy = lambda: pytest.fail("parent notebook owns page destruction")
+    page.after_cancel = lambda after_id: cancelled.append(after_id)  # type: ignore[assignment, method-assign]
+    page.winfo_children = lambda: [child]  # type: ignore[list-item, method-assign]
+    page.destroy = lambda: pytest.fail("parent notebook owns page destruction")  # type: ignore[method-assign]
 
     page.close()
 
@@ -389,14 +389,14 @@ def test_display_notebook_tab_removal_does_not_error_after_close() -> None:
         close=lambda: actions.append("close"),
         destroy=lambda: actions.append("destroy"),
     )
-    notebook.children = {"preview": optional_page}
-    notebook.tabs = lambda: list(tabs)
+    notebook.children = {"preview": optional_page}  # type: ignore[dict-item]
+    notebook.tabs = lambda: list(tabs)  # type: ignore[method-assign]
 
     def forget(child: str) -> None:
         actions.append(f"forget:{child}")
         tabs.remove(child)
 
-    notebook.forget = forget
+    notebook.forget = forget  # type: ignore[assignment, method-assign]
 
     notebook._remove_tabs()
 
@@ -407,7 +407,7 @@ def test_display_notebook_tab_removal_does_not_error_after_close() -> None:
 def test_display_notebook_tab_change_ignores_missing_child() -> None:
     """Tab-change events after removal do not assume the selected child still exists."""
     notebook = DisplayNotebook.__new__(DisplayNotebook)
-    notebook.select = lambda: "notebook.missing"
+    notebook.select = lambda: "notebook.missing"  # type: ignore[assignment, method-assign, misc]
     notebook.children = {}
 
     notebook._on_tab_change(None)

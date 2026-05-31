@@ -310,9 +310,9 @@ class SortMethod:
 
         assert aln_face.face is not None
         if mask is None:
-            return aln_face.face
+            return aln_face.face  # type: ignore[no-any-return]
 
-        return np.minimum(aln_face.face, mask)
+        return np.minimum(aln_face.face, mask)  # type: ignore[no-any-return]
 
 
 class SortMultiMethod(SortMethod):
@@ -450,7 +450,7 @@ class SortBlur(SortMethod):
             image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         blur_map = T.cast(np.ndarray, cv2.Laplacian(image, cv2.CV_32F))
         score = np.var(blur_map) / np.sqrt(image.shape[0] * image.shape[1])
-        return score
+        return score  # type: ignore[no-any-return]
 
     def estimate_blur_fft(
         self, image: np.ndarray, alignments: PNGAlignments | None = None
@@ -570,7 +570,7 @@ class SortColor(SortMethod):
 
         operation = "ijk, kl -> ijl" if self._method == "gray" else "ijl, kl -> ijk"
         path = np.einsum_path(operation, image[..., :3], conversion, optimize="optimal")[0]
-        return np.einsum(operation, image[..., :3], conversion, optimize=path).astype("float32")
+        return np.einsum(operation, image[..., :3], conversion, optimize=path).astype("float32")  # type: ignore[no-any-return]
 
     def _near_split(self, bin_range: int) -> list[int]:
         """Obtain the split for the given number of bins for the given range
@@ -607,7 +607,7 @@ class SortColor(SortMethod):
         img_bins = np.digitize([float(x[1]) for x in self._result], bins_edges, right=True)
 
         # Place imgs in bins
-        for idx, _bin in enumerate(img_bins):
+        for idx, _bin in enumerate(img_bins):  # type: ignore[arg-type, var-annotated]
             bins[_bin].append(self._result[idx][0])
 
         retval = [b for b in bins if b]
@@ -867,7 +867,7 @@ class SortHistogram(SortMethod):
     def _calc_histogram(self, image: np.ndarray, alignments: PNGAlignments | None) -> np.ndarray:
         if alignments:
             image = self._mask_face(image, alignments)
-        return cv2.calcHist([image], [0], None, [256], [0, 256])
+        return cv2.calcHist([image], [0], None, [256], [0, 256])  # type: ignore[no-any-return]
 
     def _sort_dissim(self) -> None:
         """Sort histograms by dissimilarity"""
@@ -962,7 +962,7 @@ class SortHistogram(SortMethod):
                     current_key, current_score = key, score
 
             if current_score < threshold:
-                reference_groups[T.cast(int, current_key)].append(img)
+                reference_groups[T.cast(int, current_key)].append(img)  # type: ignore[redundant-cast]
                 bins[current_key].append(self._result[i][0])
             else:
                 reference_groups[len(reference_groups)] = [img]

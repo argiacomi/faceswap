@@ -25,7 +25,7 @@ from tools.landmarks import build_quality_dataset
 
 def _points_98_row(image_rel: str = "images/sample.jpg") -> str:
     """Return one minimal WFLW 98-point annotation row."""
-    coords = []
+    coords = []  # type: ignore[var-annotated]
     for index in range(98):
         coords.extend((float(index), float(index + 100)))
     return (
@@ -56,7 +56,7 @@ def _write_tar(path: Path, files: dict[str, str], *, gzip: bool = False) -> None
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, encoding="utf-8")
         mode = "w:gz" if gzip else "w"
-        with tarfile.open(path, mode) as tf:
+        with tarfile.open(path, mode) as tf:  # type: ignore[call-overload]
             for file_path in sorted(staging.rglob("*")):
                 if file_path.is_file():
                     tf.add(file_path, arcname=file_path.relative_to(staging).as_posix())

@@ -11,7 +11,7 @@ from _tkinter import Tcl_Obj, TclError
 from functools import partial
 from itertools import zip_longest
 from tkinter import colorchooser, ttk
-from typing import TYPE_CHECKING, Any, Literal, Self, cast, get_args
+from typing import TYPE_CHECKING, Any, Literal, Self, cast, get_args  # type: ignore[attr-defined]
 
 from lib.logger import parse_class_init
 from lib.utils import get_module_objects
@@ -310,7 +310,7 @@ class ControlPanelOption:
             helptext = helptext.replace("\n\t", "\n - ").replace("%%", "%")
         helptext = self.title + " - " + helptext
         logger.debug("Formatted control help: (name: '%s', help: '%s'", self.name, helptext)
-        return helptext
+        return helptext  # type: ignore[no-any-return]
 
     def get(self) -> str | bool | int | float:
         """ Return the option value from the tk_var
@@ -336,7 +336,7 @@ class ControlPanelOption:
                 val = 0.0
             else:
                 raise
-        return val
+        return val  # type: ignore[no-any-return]
 
     def set(self, value: str | bool | int | float | None) -> None:
         """ Set the variable for the config option with the given value
@@ -420,10 +420,10 @@ class ControlPanelOption:
         if self._track_modified and self._command is not None:
             logger.debug("Tracking variable modification: %s", self.name)
             var.trace_add("write",
-                      lambda name, index, mode, cmd=self._command: self._modified_callback(cmd))
+                      lambda name, index, mode, cmd=self._command: self._modified_callback(cmd))  # type: ignore[misc]
 
         if self._track_modified and self._command == "train" and self.title == "Model Dir":
-            var.trace_add("write", lambda name, index, mode, v=var: self._model_callback(v))
+            var.trace_add("write", lambda name, index, mode, v=var: self._model_callback(v))  # type: ignore[misc]
 
         return var
 

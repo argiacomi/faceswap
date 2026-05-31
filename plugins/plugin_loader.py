@@ -121,7 +121,7 @@ class PluginLoader:
 
         retval = getattr(module, obj)()
         logger.info("Loading %s from %s", plugin_type.title(), retval.name)
-        return retval
+        return retval  # type: ignore[no-any-return]
 
     @staticmethod
     def get_model(name: str, disable_logging: bool = False) -> type[ModelBase]:

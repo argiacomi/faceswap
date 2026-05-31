@@ -37,7 +37,7 @@ class _ProcessDouble:
         self.kill_count += 1
 
 
-def test_stop_sends_interrupt_for_train_before_terminate(qtbot, monkeypatch) -> None:  # type:ignore[no-untyped-def]
+def test_stop_sends_interrupt_for_train_before_terminate(qtbot, monkeypatch) -> None:
     """Train stop should request SIGINT and skip immediate terminate when it succeeds."""
     runner = JobRunner()
     process = _ProcessDouble(pid=4321)
@@ -57,7 +57,7 @@ def test_stop_sends_interrupt_for_train_before_terminate(qtbot, monkeypatch) -> 
     assert messages == ["Sending Exit Signal\n"]
 
 
-def test_stop_falls_back_to_terminate_when_train_interrupt_fails(qtbot, monkeypatch) -> None:  # type:ignore[no-untyped-def]
+def test_stop_falls_back_to_terminate_when_train_interrupt_fails(qtbot, monkeypatch) -> None:
     """Train stop should use terminate when SIGINT cannot be sent."""
     runner = JobRunner()
     process = _ProcessDouble(pid=4321)
@@ -72,7 +72,7 @@ def test_stop_falls_back_to_terminate_when_train_interrupt_fails(qtbot, monkeypa
     assert process.terminate_count == 1
 
 
-def test_stop_uses_terminate_for_train_on_windows(qtbot, monkeypatch) -> None:  # type:ignore[no-untyped-def]
+def test_stop_uses_terminate_for_train_on_windows(qtbot, monkeypatch) -> None:
     """Windows train stop should use QProcess terminate because SIGINT is unavailable."""
     runner = JobRunner()
     process = _ProcessDouble(pid=4321)
@@ -86,7 +86,7 @@ def test_stop_uses_terminate_for_train_on_windows(qtbot, monkeypatch) -> None:  
     assert process.terminate_count == 1
 
 
-def test_stop_uses_terminate_for_non_train(qtbot, monkeypatch) -> None:  # type:ignore[no-untyped-def]
+def test_stop_uses_terminate_for_non_train(qtbot, monkeypatch) -> None:
     """Non-train commands should use standard QProcess terminate first."""
     runner = JobRunner()
     process = _ProcessDouble(pid=4321)
@@ -106,7 +106,7 @@ def test_stop_uses_terminate_for_non_train(qtbot, monkeypatch) -> None:  # type:
     assert messages == ["Terminating Process...\n"]
 
 
-def test_stop_schedules_kill_fallback_for_train(qtbot, monkeypatch) -> None:  # type:ignore[no-untyped-def]
+def test_stop_schedules_kill_fallback_for_train(qtbot, monkeypatch) -> None:
     """Train stop should still schedule kill fallback after graceful interrupt."""
     runner = JobRunner()
     process = _ProcessDouble(pid=4321)
@@ -144,7 +144,7 @@ def test_kill_fallback_invokes_tree_terminator() -> None:
     runner._pending_termination_plan = runner._termination_policy.plan("extract")  # pylint:disable=protected-access
     calls: list[tuple[int, float]] = []
     runner._tree_terminator.terminate = (  # type:ignore[method-assign] # pylint:disable=protected-access
-        lambda pid, *, timeout_seconds: calls.append((pid, timeout_seconds)) or True
+        lambda pid, *, timeout_seconds: calls.append((pid, timeout_seconds)) or True  # type: ignore[func-returns-value]
     )
 
     runner._kill_if_running()  # pylint:disable=protected-access

@@ -76,8 +76,8 @@ def test_batch_sub_crop_handles_non_three_channel_images(channels: int) -> None:
     height = width = 32
     out_size = 16
     batch = 2
-    images = np.full((batch, height, width, channels), 200, dtype=np.uint8)
-    offsets = np.zeros((batch, 2), dtype=np.int32)
+    images = np.full((batch, height, width, channels), 200, dtype=np.uint8)  # type: ignore[var-annotated]
+    offsets = np.zeros((batch, 2), dtype=np.int32)  # type: ignore[var-annotated]
 
     out = batch_sub_crop(images, offsets, out_size)
 
@@ -129,7 +129,7 @@ def test_relative_eye_mouth_position_indexes_converted_landmarks(monkeypatch) ->
 
             return _Ctx()
 
-    face._cache = _Cache()
+    face._cache = _Cache()  # type: ignore[assignment]
     # monkeypatch.setattr handles teardown for us so we never strip the
     # base class's real ``normalized_landmarks`` property after the test
     # — that previous corruption broke unrelated AlignedFace consumers
@@ -173,9 +173,9 @@ def test_from_alignment_invokes_image_to_face_on_all_black_frame() -> None:
     )
 
     calls: list[np.ndarray] = []
-    face._image_to_face = lambda image: calls.append(image)  # type: ignore[assignment]
+    face._image_to_face = lambda image: calls.append(image)  # type: ignore[method-assign]
 
-    all_black = np.zeros((64, 64, 3), dtype=np.uint8)
+    all_black = np.zeros((64, 64, 3), dtype=np.uint8)  # type: ignore[var-annotated]
     face.from_alignment(alignment, image=all_black)
 
     assert len(calls) == 1
@@ -198,7 +198,7 @@ def test_from_alignment_skips_image_to_face_on_empty_array() -> None:
     )
 
     calls: list[np.ndarray] = []
-    face._image_to_face = lambda image: calls.append(image)  # type: ignore[assignment]
+    face._image_to_face = lambda image: calls.append(image)  # type: ignore[method-assign]
 
     face.from_alignment(alignment, image=np.empty((0, 0, 3), dtype=np.uint8))
 

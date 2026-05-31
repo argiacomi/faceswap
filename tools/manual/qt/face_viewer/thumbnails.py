@@ -48,12 +48,12 @@ class ManualThumbnailPanel(QListWidget):
         self.clear()
         if not frames:
             item = QListWidgetItem("No image frames available yet")
-            item.setFlags(Qt.NoItemFlags)
+            item.setFlags(Qt.NoItemFlags)  # type: ignore[attr-defined]
             self.addItem(item)
             return
         for frame in frames:
             item = QListWidgetItem(f"{frame.index + 1}: {frame.name}")
-            item.setData(Qt.UserRole, frame.index)
+            item.setData(Qt.UserRole, frame.index)  # type: ignore[attr-defined]
             self.addItem(item)
 
 
@@ -62,7 +62,7 @@ def _decode_jpeg_to_qimage(payload: bytes) -> QImage:
     if not payload:
         return QImage()
     image = QImage()
-    if not image.loadFromData(payload, "JPG"):
+    if not image.loadFromData(payload, "JPG"):  # type: ignore[arg-type]
         # Some thumbnails are JPEG-encoded but without a JPG hint; let Qt sniff.
         image = QImage()
         if not image.loadFromData(payload):
@@ -95,8 +95,8 @@ class FaceThumbnailPanel(QListWidget):
         self.setResizeMode(QListView.Adjust)
         self.setWrapping(False)
         self.setSelectionMode(QListWidget.SingleSelection)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)  # type: ignore[attr-defined]
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)  # type: ignore[attr-defined]
         self.setIconSize(QSize(self._ICON_SIZE, self._ICON_SIZE))
         self.setSpacing(6)
         self.setMinimumHeight(self._ICON_SIZE + 36)
@@ -104,7 +104,7 @@ class FaceThumbnailPanel(QListWidget):
         self._faces: tuple[FaceThumbnail, ...] = ()
         self._placeholder = self._build_placeholder_icon()
         self.currentRowChanged.connect(self._on_row_changed)
-        self.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.setContextMenuPolicy(Qt.CustomContextMenu)  # type: ignore[attr-defined]
         self.customContextMenuRequested.connect(self._on_context_menu_requested)
 
     def _on_context_menu_requested(self, position: QPoint) -> None:
@@ -112,7 +112,7 @@ class FaceThumbnailPanel(QListWidget):
         item = self.itemAt(position)
         if item is None:
             return
-        face_index = item.data(Qt.UserRole)
+        face_index = item.data(Qt.UserRole)  # type: ignore[attr-defined]
         if not isinstance(face_index, int):
             return
         self.face_context_menu_requested.emit(face_index, QPointF(self.mapToGlobal(position)))
@@ -135,14 +135,14 @@ class FaceThumbnailPanel(QListWidget):
             self.clear()
             if not self._faces:
                 placeholder = QListWidgetItem("No faces in frame")
-                placeholder.setFlags(Qt.NoItemFlags)
-                placeholder.setTextAlignment(Qt.AlignCenter)
+                placeholder.setFlags(Qt.NoItemFlags)  # type: ignore[attr-defined]
+                placeholder.setTextAlignment(Qt.AlignCenter)  # type: ignore[attr-defined]
                 self.addItem(placeholder)
             else:
                 for face in self._faces:
                     item = QListWidgetItem(f"Face {face.face_index + 1}")
-                    item.setData(Qt.UserRole, face.face_index)
-                    item.setTextAlignment(Qt.AlignCenter)
+                    item.setData(Qt.UserRole, face.face_index)  # type: ignore[attr-defined]
+                    item.setTextAlignment(Qt.AlignCenter)  # type: ignore[attr-defined]
                     item.setIcon(self._icon_for(face))
                     item.setSizeHint(QSize(self._ICON_SIZE + 24, self._ICON_SIZE + 28))
                     self.addItem(item)
@@ -159,7 +159,7 @@ class FaceThumbnailPanel(QListWidget):
             item = self.item(row)
             if item is None:
                 continue
-            data = item.data(Qt.UserRole)
+            data = item.data(Qt.UserRole)  # type: ignore[attr-defined]
             if isinstance(data, int) and data == face_index:
                 self.setCurrentRow(row)
                 return True
@@ -185,7 +185,7 @@ class FaceThumbnailPanel(QListWidget):
         pixmap.fill(QColor("#222"))
         painter = QPainter(pixmap)
         painter.setPen(QColor("#888"))
-        painter.drawText(pixmap.rect(), Qt.AlignCenter, "?")
+        painter.drawText(pixmap.rect(), Qt.AlignCenter, "?")  # type: ignore[attr-defined]
         painter.end()
         return QIcon(pixmap)
 

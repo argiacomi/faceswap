@@ -163,7 +163,7 @@ def extract_faces(
         )
     else:
         targets = tuple(
-            (frame_name, entry)
+            (frame_name, entry)  # type: ignore[misc]
             for frame_name, entry in alignments.data.items()
             if _entry_faces(entry)
         )
@@ -190,7 +190,7 @@ def _ensure_output_folder(path: str) -> str:
     return get_folder(path)
 
 
-def _build_saver(output_folder: str):  # type:ignore[no-untyped-def]
+def _build_saver(output_folder: str):
     """Return a Tk-parity ``ImagesSaver`` for writing PNGs as raw bytes."""
     from lib.image import ImagesSaver
 
@@ -246,7 +246,7 @@ def _extract_video(
         if metadata is None or not metadata.is_valid
         else {"pts_time": list(metadata.pts_time), "keyframes": list(metadata.keyframes)}
     )
-    loader = SingleFrameLoader(request.session.frames, video_meta_data=meta_dict)
+    loader = SingleFrameLoader(request.session.frames, video_meta_data=meta_dict)  # type: ignore[arg-type]
     try:
         name_to_index = {
             request.session.frame_name_for_index(index): index for index in range(loader.count)

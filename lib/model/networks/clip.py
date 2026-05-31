@@ -358,7 +358,7 @@ class EmbeddingLayer(layers.Layer):  # pylint:disable=too-many-ancestors,abstrac
         retval = super().get_config()
         retval["input_shape"] = self._input_shape
         retval["scale"] = self._scale
-        return retval
+        return retval  # type: ignore[no-any-return]
 
 
 class ClassEmbedding(EmbeddingLayer):  # pylint:disable=too-many-ancestors,abstract-method

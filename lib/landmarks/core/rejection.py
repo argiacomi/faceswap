@@ -44,7 +44,7 @@ def _as_stack(predictions: T.Sequence[LandmarkPrediction | np.ndarray]) -> np.nd
     ]
     if not points:
         raise ValueError("at least one prediction is required")
-    return np.stack(points, axis=0).astype("float32", copy=False)
+    return np.stack(points, axis=0).astype("float32", copy=False)  # type: ignore[no-any-return]
 
 
 def _normalize_weights(
@@ -63,7 +63,7 @@ def _normalize_weights(
         total = float(array.sum())
         if total <= 0:
             raise ValueError("at least one weight must be greater than zero")
-        return np.repeat((array / total)[:, None], landmark_count, axis=1)
+        return np.repeat((array / total)[:, None], landmark_count, axis=1)  # type: ignore[no-any-return]
     if array.shape != (model_count, landmark_count):
         raise ValueError(
             "weights must be one per model or a per-landmark matrix with shape "
@@ -74,7 +74,7 @@ def _normalize_weights(
     totals = array.sum(axis=0)
     if np.any(totals <= 0):
         raise ValueError("each landmark must have at least one non-zero model weight")
-    return array / totals[None, :]
+    return array / totals[None, :]  # type: ignore[no-any-return]
 
 
 def pairwise_disagreement(stack: np.ndarray) -> np.ndarray:
@@ -83,7 +83,7 @@ def pairwise_disagreement(stack: np.ndarray) -> np.ndarray:
     if points.ndim != 3 or points.shape[-1] != 2:
         raise ValueError(f"stack must have shape (M, 68, 2), got {points.shape}")
     diffs = np.linalg.norm(points[:, None] - points[None, :], axis=-1)
-    return diffs.mean(axis=1).astype("float32")
+    return diffs.mean(axis=1).astype("float32")  # type: ignore[no-any-return]
 
 
 def reject_outliers(
@@ -185,7 +185,7 @@ def weighted_median(stack: np.ndarray, weights: np.ndarray) -> np.ndarray:
     cumulative = np.cumsum(sorted_weights, axis=0)
     median_idx = np.argmax(cumulative >= 0.5, axis=0)  # (L, 2)
     selected = np.take_along_axis(sorted_values, median_idx[None, :, :], axis=0)
-    return selected[0].astype("float32", copy=False)
+    return selected[0].astype("float32", copy=False)  # type: ignore[no-any-return]
 
 
 def reject_landmark_outliers(

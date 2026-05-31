@@ -255,7 +255,7 @@ def _per_bucket(
             "mean_nme": chosen["mean"],
             "p90_nme": chosen["p90"],
             "failure_rate": chosen["failure_rate"],
-            "best_single_candidate": best_single_name,
+            "best_single_candidate": best_single_name,  # type: ignore[dict-item]
             "best_single_mean_nme": best_single["mean"],
             "static_downweight_mean_nme": static["mean"],
             "regression_vs_best_single": chosen["mean"] - best_single["mean"],
@@ -400,7 +400,7 @@ def evaluate_production_gate(
         ),
     )
     static = _candidate_summary(evaluations, "static_weighted_downweight")
-    chosen = _chosen_summary(evaluations)
+    chosen = _chosen_summary(evaluations)  # type: ignore[assignment]
     oracle = _oracle_summary(evaluations)
     pick_counts = Counter(row.chosen for row in evaluations)
     oracle_matches = sum(1 for row in evaluations if row.chosen == row.oracle)
@@ -454,16 +454,16 @@ def evaluate_production_gate(
         "static_downweight_failure_rate": static["failure_rate"],
         "chosen_policy": {
             "name": config.policy,
-            "mean_nme": chosen["mean"],
-            "p90_nme": chosen["p90"],
-            "failure_rate": chosen["failure_rate"],
+            "mean_nme": chosen["mean"],  # type: ignore[index]
+            "p90_nme": chosen["p90"],  # type: ignore[index]
+            "failure_rate": chosen["failure_rate"],  # type: ignore[index]
             "pick_counts": dict(pick_counts),
             "oracle_match_rate": oracle_matches / len(evaluations),
             "mean_gap_vs_oracle": float(np.mean(gaps)),
         },
-        "chosen_policy_mean_nme": chosen["mean"],
-        "chosen_policy_p90_nme": chosen["p90"],
-        "chosen_policy_failure_rate": chosen["failure_rate"],
+        "chosen_policy_mean_nme": chosen["mean"],  # type: ignore[index]
+        "chosen_policy_p90_nme": chosen["p90"],  # type: ignore[index]
+        "chosen_policy_failure_rate": chosen["failure_rate"],  # type: ignore[index]
         "chosen_policy_pick_counts": dict(pick_counts),
         "chosen_policy_oracle_match_rate": oracle_matches / len(evaluations),
         "chosen_policy_mean_gap_vs_oracle": float(np.mean(gaps)),

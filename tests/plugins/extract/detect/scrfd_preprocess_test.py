@@ -17,9 +17,9 @@ def _build_detector(mode: str = "torch", device: str = "cpu") -> SCRFD:
     detector = object.__new__(SCRFD)
     detector.input_size = 640
     detector.name = "SCRFD"
-    detector._postprocess_mode = mode
+    detector._postprocess_mode = mode  # type: ignore[assignment]
     # SCRFD exposes ``device`` as a read-only property backed by ``_torch.device``.
-    detector._torch = SimpleNamespace(device=torch.device(device))
+    detector._torch = SimpleNamespace(device=torch.device(device))  # type: ignore[assignment]
     detector._last_profile_events = []
     return detector
 
@@ -73,10 +73,10 @@ def test_process_forced_torch_accepts_uint8_bgr_batches() -> None:
 def test_process_legacy_numpy_path_passes_through_pre_processed_blob() -> None:
     """When ``from_torch`` receives an already-NCHW float blob, it must be forwarded as-is."""
     detector = _build_detector(mode="numpy")
-    sentinel = np.empty((1,), dtype=object)
+    sentinel = np.empty((1,), dtype=object)  # type: ignore[var-annotated]
     detector.from_torch = lambda batch: sentinel  # type: ignore[method-assign]
 
-    batch = np.zeros((1, 3, 16, 16), dtype=np.float32)
+    batch = np.zeros((1, 3, 16, 16), dtype=np.float32)  # type: ignore[var-annotated]
 
     assert detector.process(batch) is sentinel
 
@@ -86,7 +86,7 @@ def test_process_torch_path_accepts_legacy_normalized_nchw_input() -> None:
     detector = _build_detector(mode="torch")
     seen: list[torch.Tensor] = []
     detector.model = _RecordingModel(seen)
-    batch = np.zeros((1, 3, 16, 16), dtype=np.float32)
+    batch = np.zeros((1, 3, 16, 16), dtype=np.float32)  # type: ignore[var-annotated]
     batch[0, 0, 0, 0] = 0.25  # marker to detect mutation
 
     detector.process(batch)

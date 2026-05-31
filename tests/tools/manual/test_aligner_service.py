@@ -51,7 +51,7 @@ def _make_factory(
     instances: list[_StubBackend],
     landmarks: np.ndarray | None = None,
     fail_for: dict[tuple[str, str], Exception] | None = None,
-):  # type:ignore[no-untyped-def]
+):
     fail_for = fail_for or {}
     landmarks = landmarks if landmarks is not None else np.zeros((68, 2), dtype=np.float32)
 
@@ -133,7 +133,7 @@ def test_default_aligner_empty_when_no_plugins_available() -> None:
     assert svc.default_aligner() == ""
 
 
-def test_default_factory_imports_pipeline_runner_from_lib_infer_align(monkeypatch) -> None:  # type:ignore[no-untyped-def]
+def test_default_factory_imports_pipeline_runner_from_lib_infer_align(monkeypatch) -> None:
     """The production factory imports ``lib.infer.align.Align``, not the plugin package."""
     calls: list[tuple[str, str]] = []
 
@@ -154,7 +154,7 @@ def test_default_factory_imports_pipeline_runner_from_lib_infer_align(monkeypatc
 
     backend = make_default_aligner_factory()("HRNet", "clahe")
 
-    assert backend._ensure_pipeline() == "fake-pipeline"  # noqa: SLF001
+    assert backend._ensure_pipeline() == "fake-pipeline"  # type: ignore[attr-defined]  # noqa: SLF001
     assert calls == [("HRNet", "clahe")]
 
 
@@ -166,7 +166,7 @@ def test_default_factory_imports_pipeline_runner_from_lib_infer_align(monkeypatc
 def test_align_returns_factory_landmarks_with_default_aligner() -> None:
     """``align`` constructs a backend on first use and returns its landmarks."""
     instances: list[_StubBackend] = []
-    landmarks = np.full((68, 2), 7.0, dtype=np.float32)
+    landmarks = np.full((68, 2), 7.0, dtype=np.float32)  # type: ignore[var-annotated]
     svc = _service(instances=instances, landmarks=landmarks)
 
     out = svc.align(np.zeros((4, 4, 3), dtype=np.uint8), (0.0, 0.0, 10.0, 10.0))
@@ -282,7 +282,7 @@ def test_set_normalization_swallows_backend_errors() -> None:
         def angry(_method: str) -> None:
             raise RuntimeError("can't change normalization")
 
-        backend.set_normalization = angry  # type:ignore[method-assign]
+        backend.set_normalization = angry  # type: ignore[assignment]  # type:ignore[method-assign]
         instances.append(backend)
         return backend
 

@@ -383,7 +383,7 @@ class Ensemble(ExtractPlugin):
             loaded = self._filter_promoted_adapters(loaded)
         for adapter in loaded:
             if hasattr(adapter, "load_model"):
-                adapter.load_model()  # type: ignore[attr-defined]
+                adapter.load_model()
         logger.info(
             "Loaded landmark ensemble adapters: %s",
             ", ".join(adapter.config.name for adapter in loaded),
@@ -546,7 +546,7 @@ class Ensemble(ExtractPlugin):
                 "for batch_size=%s. Outputs will be wrong unless this is a warmup batch.",
                 batch_size,
             )
-            return matrices
+            return matrices  # type: ignore[no-any-return]
 
         cached_count = self._last_matrices.shape[0]
         copy_count = min(cached_count, batch_size)
@@ -568,7 +568,7 @@ class Ensemble(ExtractPlugin):
                 batch_size,
                 copy_count,
             )
-        return matrices
+        return matrices  # type: ignore[no-any-return]
 
         cached_count = self._last_matrices.shape[0]
         copy_count = min(cached_count, batch_size)
@@ -637,7 +637,7 @@ class Ensemble(ExtractPlugin):
             [center_x - half, center_y - half, center_x + half, center_y + half],
             dtype="float32",
         )
-        return roi_to_matrix(roi)
+        return roi_to_matrix(roi)  # type: ignore[no-any-return]
 
     def _frame_points_for_resolver(
         self,
@@ -650,9 +650,9 @@ class Ensemble(ExtractPlugin):
         """Ensure runtime resolver candidates are in original-frame coordinates."""
         frame_points = np.asarray(points, dtype="float32")
         if not self._looks_normalized_against_bbox(frame_points, detector_bbox):
-            return frame_points
+            return frame_points  # type: ignore[no-any-return]
         if not self._is_identity_matrix(crop_to_frame_matrix):
-            converted = normalized_crop_to_frame(frame_points, crop_to_frame_matrix)
+            converted = normalized_crop_to_frame(frame_points, crop_to_frame_matrix)  # type: ignore[arg-type]
             if not self._looks_normalized_against_bbox(converted, detector_bbox):
                 logger.debug(
                     "[Ensemble] converted normalized resolver candidate to frame space: "
@@ -746,8 +746,8 @@ class Ensemble(ExtractPlugin):
             )
             totals = subset.sum(axis=0)
             safe = np.where(totals > 0, totals, 1.0)
-            return subset / safe[None, :]
-        return np.array([adapter.config.weight for adapter in adapters], dtype="float32")
+            return subset / safe[None, :]  # type: ignore[no-any-return]
+        return np.array([adapter.config.weight for adapter in adapters], dtype="float32")  # type: ignore[no-any-return]
 
     @staticmethod
     def _roll_estimate(points: np.ndarray) -> float | None:
@@ -1134,7 +1134,7 @@ class Ensemble(ExtractPlugin):
                 ),
                 matrices[idx],
             )
-        return output
+        return output  # type: ignore[no-any-return]
 
     def _bbox_for_face(self, face_index: int) -> tuple[float, float, float, float] | None:
         """Return the cached detector bbox for one face index, or ``None`` if unavailable."""

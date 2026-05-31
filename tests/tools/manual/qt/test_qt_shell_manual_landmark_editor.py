@@ -72,7 +72,7 @@ def _session_with_frames(folder: Path, count: int = 1) -> ManualSession:
     return ManualSession.create(frames=str(folder))
 
 
-def _make_window(qtbot, folder: Path) -> ManualToolWindow:  # type:ignore[no-untyped-def]
+def _make_window(qtbot, folder: Path) -> ManualToolWindow:
     session = _session_with_frames(folder)
     window = ManualToolWindow(session)
     qtbot.addWidget(window)
@@ -112,9 +112,9 @@ def _drag(view: ManualFrameView, start: QPointF, end: QPointF) -> None:
             QEvent.Type.MouseButtonPress,
             start,
             QPointF(global_start),
-            Qt.LeftButton,
-            Qt.LeftButton,
-            Qt.NoModifier,
+            Qt.LeftButton,  # type: ignore[attr-defined]
+            Qt.LeftButton,  # type: ignore[attr-defined]
+            Qt.NoModifier,  # type: ignore[attr-defined]
         )
     )
     view.mouseMoveEvent(
@@ -122,9 +122,9 @@ def _drag(view: ManualFrameView, start: QPointF, end: QPointF) -> None:
             QEvent.Type.MouseMove,
             end,
             QPointF(global_end),
-            Qt.NoButton,
-            Qt.LeftButton,
-            Qt.NoModifier,
+            Qt.NoButton,  # type: ignore[attr-defined]
+            Qt.LeftButton,  # type: ignore[attr-defined]
+            Qt.NoModifier,  # type: ignore[attr-defined]
         )
     )
     view.mouseReleaseEvent(
@@ -132,14 +132,14 @@ def _drag(view: ManualFrameView, start: QPointF, end: QPointF) -> None:
             QEvent.Type.MouseButtonRelease,
             end,
             QPointF(global_end),
-            Qt.LeftButton,
-            Qt.NoButton,
-            Qt.NoModifier,
+            Qt.LeftButton,  # type: ignore[attr-defined]
+            Qt.NoButton,  # type: ignore[attr-defined]
+            Qt.NoModifier,  # type: ignore[attr-defined]
         )
     )
 
 
-def test_single_landmark_drag_updates_editable_model(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_single_landmark_drag_updates_editable_model(qtbot, tmp_path: Path) -> None:
     """Dragging a landmark moves only that point in the editable model."""
     window = _make_window(qtbot, tmp_path)
     _enter_landmark_mode(window)
@@ -162,7 +162,7 @@ def test_single_landmark_drag_updates_editable_model(qtbot, tmp_path: Path) -> N
 def test_landmark_hover_uses_large_anchor_label_and_hidden_cursor(
     qtbot,
     tmp_path: Path,
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """Hover near a point highlights it, labels it, and hides the native cursor."""
     window = _make_window(qtbot, tmp_path)
     _enter_landmark_mode(window)
@@ -175,10 +175,10 @@ def test_landmark_hover_uses_large_anchor_label_and_hidden_cursor(
 
     assert window._frame_view.landmark_hover == {"face_index": face_index, "landmark_index": 0}
     assert window._overlay.hovered_landmark == (face_index, 0)
-    assert window._frame_view.cursor().shape() == Qt.BlankCursor
+    assert window._frame_view.cursor().shape() == Qt.BlankCursor  # type: ignore[attr-defined]
 
 
-def test_marquee_selects_landmarks_inside_rect(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_marquee_selects_landmarks_inside_rect(qtbot, tmp_path: Path) -> None:
     """An empty-space drag inside the bbox selects every landmark inside the rect."""
     window = _make_window(qtbot, tmp_path)
     _enter_landmark_mode(window)
@@ -203,7 +203,7 @@ def test_marquee_selects_landmarks_inside_rect(qtbot, tmp_path: Path) -> None:  
 def test_marquee_crossing_multiple_faces_clears_selection(
     qtbot,
     tmp_path: Path,
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """A marquee containing landmarks from multiple faces is rejected like Tk."""
     window = _make_window(qtbot, tmp_path)
     _enter_landmark_mode(window)
@@ -222,7 +222,7 @@ def test_marquee_crossing_multiple_faces_clears_selection(
     assert window._overlay.selected_landmarks == frozenset()
 
 
-def test_group_move_translates_only_selected_landmarks(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_group_move_translates_only_selected_landmarks(qtbot, tmp_path: Path) -> None:
     """After a marquee selection, dragging a selected point moves the group."""
     window = _make_window(qtbot, tmp_path)
     _enter_landmark_mode(window)
@@ -248,7 +248,7 @@ def test_group_move_translates_only_selected_landmarks(qtbot, tmp_path: Path) ->
     assert landmarks[3] == (80.0, 80.0)
 
 
-def test_zoomed_landmark_drag_uses_inverse_view_transform(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_zoomed_landmark_drag_uses_inverse_view_transform(qtbot, tmp_path: Path) -> None:
     """After auto-magnify, widget drags still land in source coordinates."""
     window = _make_window(qtbot, tmp_path)
     face_index = _seed_face_with_landmarks(window)
@@ -267,7 +267,7 @@ def test_zoomed_landmark_drag_uses_inverse_view_transform(qtbot, tmp_path: Path)
 def test_editor_mode_and_frame_switch_clear_landmark_temp_state(
     qtbot,
     tmp_path: Path,
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """Selections, hover labels and drags clear when editor/frame changes."""
     session = _session_with_frames(tmp_path, count=2)
     window = ManualToolWindow(session)
@@ -296,7 +296,7 @@ def test_editor_mode_and_frame_switch_clear_landmark_temp_state(
     assert window._overlay.hovered_landmark is None
 
 
-def test_landmark_edit_participates_in_undo_history(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_landmark_edit_participates_in_undo_history(qtbot, tmp_path: Path) -> None:
     """A landmark drag is undoable + redoable through the editable model."""
     window = _make_window(qtbot, tmp_path)
     _enter_landmark_mode(window)
@@ -319,9 +319,7 @@ def test_landmark_edit_participates_in_undo_history(qtbot, tmp_path: Path) -> No
     assert abs(landmarks[0][0] - 55.0) < 0.5
 
 
-def test_landmark_mode_with_no_active_face_falls_back_to_pan(  # type:ignore[no-untyped-def]
-    qtbot, tmp_path: Path
-) -> None:
+def test_landmark_mode_with_no_active_face_falls_back_to_pan(qtbot, tmp_path: Path) -> None:
     """Landmark gestures are no-ops when there is no active face."""
     window = _make_window(qtbot, tmp_path)
     _enter_landmark_mode(window)
@@ -340,7 +338,7 @@ def test_landmark_mode_with_no_active_face_falls_back_to_pan(  # type:ignore[no-
     assert window._editable.face_count(0) == 0
 
 
-def test_magnify_active_face_zooms_and_pans(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_magnify_active_face_zooms_and_pans(qtbot, tmp_path: Path) -> None:
     """``magnify_active_face`` zooms into the bbox of the active face."""
     window = _make_window(qtbot, tmp_path)
     _enter_landmark_mode(window)
@@ -353,9 +351,7 @@ def test_magnify_active_face_zooms_and_pans(qtbot, tmp_path: Path) -> None:  # t
     assert after_zoom > before_zoom
 
 
-def test_magnify_active_face_toggles_back_to_previous_view(  # type:ignore[no-untyped-def]
-    qtbot, tmp_path: Path
-) -> None:
+def test_magnify_active_face_toggles_back_to_previous_view(qtbot, tmp_path: Path) -> None:
     """The Landmark magnify command restores the prior zoom/pan on second trigger."""
     window = _make_window(qtbot, tmp_path)
     _enter_landmark_mode(window)
@@ -364,17 +360,15 @@ def test_magnify_active_face_toggles_back_to_previous_view(  # type:ignore[no-un
 
     before = window._frame_view.view_state()
     assert window.magnify_active_face() is True
-    assert window._frame_view.zoom > float(before["zoom"])
+    assert window._frame_view.zoom > float(before["zoom"])  # type: ignore[arg-type]
 
     assert window.magnify_active_face() is True
     restored = window._frame_view.view_state()
-    assert abs(float(restored["zoom"]) - float(before["zoom"])) < 0.001
+    assert abs(float(restored["zoom"]) - float(before["zoom"])) < 0.001  # type: ignore[arg-type]
     assert restored["offset"] == before["offset"]
 
 
-def test_entering_landmarks_auto_magnifies_and_leaving_restores(  # type:ignore[no-untyped-def]
-    qtbot, tmp_path: Path
-) -> None:
+def test_entering_landmarks_auto_magnifies_and_leaving_restores(qtbot, tmp_path: Path) -> None:
     """Entering Landmark mode auto-fits the active face and View restores it."""
     window = _make_window(qtbot, tmp_path)
     face_index = _seed_face_with_landmarks(window)
@@ -382,17 +376,15 @@ def test_entering_landmarks_auto_magnifies_and_leaving_restores(  # type:ignore[
 
     before = window._frame_view.view_state()
     window._editor_state.set("editor_mode", "Landmarks")
-    assert window._frame_view.zoom > float(before["zoom"])
+    assert window._frame_view.zoom > float(before["zoom"])  # type: ignore[arg-type]
 
     window._editor_state.set("editor_mode", "View")
     restored = window._frame_view.view_state()
-    assert abs(float(restored["zoom"]) - float(before["zoom"])) < 0.001
+    assert abs(float(restored["zoom"]) - float(before["zoom"])) < 0.001  # type: ignore[arg-type]
     assert restored["offset"] == before["offset"]
 
 
-def test_magnify_with_no_active_face_is_noop_and_surfaces_status(  # type:ignore[no-untyped-def]
-    qtbot, tmp_path: Path
-) -> None:
+def test_magnify_with_no_active_face_is_noop_and_surfaces_status(qtbot, tmp_path: Path) -> None:
     """``magnify_active_face`` returns False + shows a status message when nothing is active."""
     window = _make_window(qtbot, tmp_path)
     # No face added.

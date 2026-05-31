@@ -64,9 +64,7 @@ def _inert_aligner_service() -> ManualAlignerService:
     )
 
 
-def _wait_for_frame_view_ready(  # type:ignore[no-untyped-def]
-    qtbot, window: ManualToolWindow, *, timeout: int = 3000
-) -> None:
+def _wait_for_frame_view_ready(qtbot, window: ManualToolWindow, *, timeout: int = 3000) -> None:
     """Wait until the frame view has both a source image and a usable target rect."""
     # Offscreen splitter layouts can leave the frame view at 0x0 even after
     # the source pixmap has loaded. Synthetic mouse tests need a stable
@@ -87,7 +85,7 @@ def _wait_for_frame_view_ready(  # type:ignore[no-untyped-def]
     qtbot.waitUntil(_ready, timeout=timeout)
 
 
-def _make_window(qtbot, folder: Path) -> ManualToolWindow:  # type:ignore[no-untyped-def]
+def _make_window(qtbot, folder: Path) -> ManualToolWindow:
     session = _session_with_frames(folder, count=2)
     window = ManualToolWindow(session, aligner_service=_inert_aligner_service())
     # Interaction tests are about pointer/context/save behavior, not #104
@@ -112,7 +110,7 @@ def _press_release(view: ManualFrameView, pos: QPointF, button: Qt.MouseButton) 
             QPointF(global_pos),
             button,
             button,
-            Qt.NoModifier,
+            Qt.NoModifier,  # type: ignore[attr-defined]
         )
     )
     view.mouseReleaseEvent(
@@ -121,8 +119,8 @@ def _press_release(view: ManualFrameView, pos: QPointF, button: Qt.MouseButton) 
             pos,
             QPointF(global_pos),
             button,
-            Qt.NoButton,
-            Qt.NoModifier,
+            Qt.NoButton,  # type: ignore[attr-defined]
+            Qt.NoModifier,  # type: ignore[attr-defined]
         )
     )
 
@@ -152,7 +150,7 @@ def _mouse_event(
         QPointF(view.mapToGlobal(pos.toPoint())),
         button,
         buttons,
-        Qt.NoModifier,
+        Qt.NoModifier,  # type: ignore[attr-defined]
     )
 
 
@@ -161,7 +159,7 @@ def _mouse_event(
 # ---------------------------------------------------------------------------
 
 
-def test_click_in_bbox_mode_creates_face_at_pointer(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_click_in_bbox_mode_creates_face_at_pointer(qtbot, tmp_path: Path) -> None:
     """Clicking empty frame space in BBox mode creates a face under the pointer."""
     window = _make_window(qtbot, tmp_path)
     window._editor_state.set("editor_mode", "BoundingBox")
@@ -171,14 +169,14 @@ def test_click_in_bbox_mode_creates_face_at_pointer(qtbot, tmp_path: Path) -> No
     pos = QPointF(target.x() + target.width() / 2, target.y() + target.height() / 2)
     initial_count = window._editable.face_count(0)
 
-    _press_release(window._frame_view, pos, Qt.LeftButton)
+    _press_release(window._frame_view, pos, Qt.LeftButton)  # type: ignore[attr-defined]
 
     assert window._editable.face_count(0) == initial_count + 1
     # Pointer-added face goes through the same editable model, so undo works.
     assert window._editable.can_undo
 
 
-def test_bbox_add_centers_default_box_without_source_clamp(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_bbox_add_centers_default_box_without_source_clamp(qtbot, tmp_path: Path) -> None:
     """A BBox click near the frame edge centers the default square on the click."""
     window = _make_window(qtbot, tmp_path)
     window._editor_state.set("editor_mode", "BoundingBox")
@@ -186,13 +184,13 @@ def test_bbox_add_centers_default_box_without_source_clamp(qtbot, tmp_path: Path
 
     pos = _source_to_widget(window, 5.0, 5.0)
 
-    _press_release(window._frame_view, pos, Qt.LeftButton)
+    _press_release(window._frame_view, pos, Qt.LeftButton)  # type: ignore[attr-defined]
 
     face = window._editable.faces(0)[0]
     assert face.bbox == pytest.approx((-5.0, -5.0, 20.0, 20.0))
 
 
-def test_entering_bbox_mode_does_not_passively_preload_aligner(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_entering_bbox_mode_does_not_passively_preload_aligner(qtbot, tmp_path: Path) -> None:
     """BBox controls becoming visible must not touch production aligner loading."""
     window = _make_window(qtbot, tmp_path)
 
@@ -203,7 +201,7 @@ def test_entering_bbox_mode_does_not_passively_preload_aligner(qtbot, tmp_path: 
     assert window._aligner_loaded_targets == set()
 
 
-def test_click_in_view_mode_does_not_create_face(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_click_in_view_mode_does_not_create_face(qtbot, tmp_path: Path) -> None:
     """Outside BBox mode an empty-space click must NOT add a face."""
     window = _make_window(qtbot, tmp_path)
     window._editor_state.set("editor_mode", "View")
@@ -213,11 +211,11 @@ def test_click_in_view_mode_does_not_create_face(qtbot, tmp_path: Path) -> None:
     pos = QPointF(target.x() + target.width() / 2, target.y() + target.height() / 2)
     initial = window._editable.face_count(0)
 
-    _press_release(window._frame_view, pos, Qt.LeftButton)
+    _press_release(window._frame_view, pos, Qt.LeftButton)  # type: ignore[attr-defined]
     assert window._editable.face_count(0) == initial
 
 
-def test_pointer_added_face_participates_in_undo_redo(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_pointer_added_face_participates_in_undo_redo(qtbot, tmp_path: Path) -> None:
     """Pointer-added faces share the toolbar add stack: undo removes them."""
     window = _make_window(qtbot, tmp_path)
     window._editor_state.set("editor_mode", "BoundingBox")
@@ -227,7 +225,7 @@ def test_pointer_added_face_participates_in_undo_redo(qtbot, tmp_path: Path) -> 
     pos = QPointF(target.x() + target.width() / 2, target.y() + target.height() / 2)
 
     before = window._editable.face_count(0)
-    _press_release(window._frame_view, pos, Qt.LeftButton)
+    _press_release(window._frame_view, pos, Qt.LeftButton)  # type: ignore[attr-defined]
     assert window._editable.face_count(0) == before + 1
     assert window._editable.undo()
     assert window._editable.face_count(0) == before
@@ -240,7 +238,7 @@ def test_pointer_added_face_participates_in_undo_redo(qtbot, tmp_path: Path) -> 
 # ---------------------------------------------------------------------------
 
 
-def test_frame_view_right_click_emits_context_menu(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_frame_view_right_click_emits_context_menu(qtbot, tmp_path: Path) -> None:
     """Right-clicking an existing face emits the context-menu signal."""
     window = _make_window(qtbot, tmp_path)
     window._editor_state.set("editor_mode", "BoundingBox")
@@ -263,9 +261,9 @@ def test_frame_view_right_click_emits_context_menu(qtbot, tmp_path: Path) -> Non
             QEvent.Type.MouseButtonPress,
             pos,
             QPointF(global_pos),
-            Qt.RightButton,
-            Qt.RightButton,
-            Qt.NoModifier,
+            Qt.RightButton,  # type: ignore[attr-defined]
+            Qt.RightButton,  # type: ignore[attr-defined]
+            Qt.NoModifier,  # type: ignore[attr-defined]
         )
     )
 
@@ -273,7 +271,7 @@ def test_frame_view_right_click_emits_context_menu(qtbot, tmp_path: Path) -> Non
     assert received[0][0] == 0
 
 
-def test_face_panel_right_click_emits_context_menu(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_face_panel_right_click_emits_context_menu(qtbot, tmp_path: Path) -> None:
     """Right-clicking a face thumbnail emits the context-menu signal."""
     panel = FaceThumbnailPanel()
     qtbot.addWidget(panel)
@@ -302,7 +300,7 @@ def test_face_panel_right_click_emits_context_menu(qtbot, tmp_path: Path) -> Non
 # ---------------------------------------------------------------------------
 
 
-def test_nudge_actions_scoped_to_frame_view(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_nudge_actions_scoped_to_frame_view(qtbot, tmp_path: Path) -> None:
     """Nudge QActions are parented to the frame view, not the window."""
     window = _make_window(qtbot, tmp_path)
     for key in (
@@ -320,34 +318,34 @@ def test_nudge_actions_scoped_to_frame_view(qtbot, tmp_path: Path) -> None:  # t
             f"Nudge action {key} should be parented to the frame view so it only "
             f"fires when the frame view has focus."
         )
-        assert action.shortcutContext() == Qt.WidgetWithChildrenShortcut
+        assert action.shortcutContext() == Qt.WidgetWithChildrenShortcut  # type: ignore[attr-defined]
 
 
-def test_non_nudge_actions_remain_window_scoped(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_non_nudge_actions_remain_window_scoped(qtbot, tmp_path: Path) -> None:
     """Save / navigation actions remain window-scoped so the panel can't block them."""
     window = _make_window(qtbot, tmp_path)
     for key in ("save", "previous_frame", "next_frame", "delete_face"):
         action = window.actions_by_key[key]
         assert action.parent() is window
-        assert action.shortcutContext() == Qt.WindowShortcut
+        assert action.shortcutContext() == Qt.WindowShortcut  # type: ignore[attr-defined]
 
 
-def test_frame_view_takes_keyboard_focus_on_click(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_frame_view_takes_keyboard_focus_on_click(qtbot, tmp_path: Path) -> None:
     """Clicking the frame view should give it keyboard focus."""
     window = _make_window(qtbot, tmp_path)
     _wait_for_frame_view_ready(qtbot, window)
 
     target = window._frame_view._target_rect()
     pos = QPointF(target.x() + 4, target.y() + 4)
-    _press_release(window._frame_view, pos, Qt.LeftButton)
+    _press_release(window._frame_view, pos, Qt.LeftButton)  # type: ignore[attr-defined]
 
-    assert window._frame_view.focusPolicy() == Qt.StrongFocus
+    assert window._frame_view.focusPolicy() == Qt.StrongFocus  # type: ignore[attr-defined]
 
 
 def test_bbox_hover_cursor_uses_non_active_visible_face_handles(
     qtbot,
     tmp_path: Path,
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """BBox hover hit-testing follows every visible handle, not only active face."""
     window = _make_window(qtbot, tmp_path)
     window._editable.add_face(0, (10.0, 10.0, 30.0, 30.0))
@@ -362,13 +360,13 @@ def test_bbox_hover_cursor_uses_non_active_visible_face_handles(
             QEvent.Type.MouseMove,
             window._frame_view,
             pos,
-            Qt.NoButton,
-            Qt.NoButton,
+            Qt.NoButton,  # type: ignore[attr-defined]
+            Qt.NoButton,  # type: ignore[attr-defined]
         )
     )
 
     assert window._frame_view.hovered_face_index == 1
-    assert window._frame_view.cursor().shape() == Qt.SizeFDiagCursor
+    assert window._frame_view.cursor().shape() == Qt.SizeFDiagCursor  # type: ignore[attr-defined]
 
 
 # ---------------------------------------------------------------------------
@@ -376,7 +374,7 @@ def test_bbox_hover_cursor_uses_non_active_visible_face_handles(
 # ---------------------------------------------------------------------------
 
 
-def test_frame_view_left_click_stops_playback(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_frame_view_left_click_stops_playback(qtbot, tmp_path: Path) -> None:
     """A direct frame click freezes playback before selection/edit dispatch."""
     window = _make_window(qtbot, tmp_path)
     _wait_for_frame_view_ready(qtbot, window)
@@ -385,7 +383,7 @@ def test_frame_view_left_click_stops_playback(qtbot, tmp_path: Path) -> None:  #
 
     target = window._frame_view._target_rect()
     pos = QPointF(target.center())
-    _press_release(window._frame_view, pos, Qt.LeftButton)
+    _press_release(window._frame_view, pos, Qt.LeftButton)  # type: ignore[attr-defined]
 
     assert window._editor_state.is_playing is False
     assert window._play_timer.isActive() is False
@@ -394,7 +392,7 @@ def test_frame_view_left_click_stops_playback(qtbot, tmp_path: Path) -> None:  #
 def test_bbox_drag_stops_playback_and_does_not_advance_mid_drag(
     qtbot,
     tmp_path: Path,
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """Starting a BBox drag stops the timer before it can advance rows."""
     window = _make_window(qtbot, tmp_path)
     window._editable.add_face(0, (10.0, 10.0, 40.0, 40.0))
@@ -410,8 +408,8 @@ def test_bbox_drag_stops_playback_and_does_not_advance_mid_drag(
             QEvent.Type.MouseButtonPress,
             window._frame_view,
             start,
-            Qt.LeftButton,
-            Qt.LeftButton,
+            Qt.LeftButton,  # type: ignore[attr-defined]
+            Qt.LeftButton,  # type: ignore[attr-defined]
         )
     )
     qtbot.wait(80)
@@ -424,8 +422,8 @@ def test_bbox_drag_stops_playback_and_does_not_advance_mid_drag(
             QEvent.Type.MouseButtonRelease,
             window._frame_view,
             start,
-            Qt.LeftButton,
-            Qt.NoButton,
+            Qt.LeftButton,  # type: ignore[attr-defined]
+            Qt.NoButton,  # type: ignore[attr-defined]
         )
     )
 
@@ -433,7 +431,7 @@ def test_bbox_drag_stops_playback_and_does_not_advance_mid_drag(
 def test_mask_paint_stops_playback_and_keeps_frame_mid_stroke(
     qtbot,
     tmp_path: Path,
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """Mask paint press stops playback before the paint stroke starts."""
     window = _make_window(qtbot, tmp_path)
     window._editable.add_face(0, (10.0, 10.0, 40.0, 40.0))
@@ -449,8 +447,8 @@ def test_mask_paint_stops_playback_and_keeps_frame_mid_stroke(
             QEvent.Type.MouseButtonPress,
             window._frame_view,
             start,
-            Qt.LeftButton,
-            Qt.LeftButton,
+            Qt.LeftButton,  # type: ignore[attr-defined]
+            Qt.LeftButton,  # type: ignore[attr-defined]
         )
     )
     qtbot.wait(80)
@@ -463,13 +461,13 @@ def test_mask_paint_stops_playback_and_keeps_frame_mid_stroke(
             QEvent.Type.MouseButtonRelease,
             window._frame_view,
             start,
-            Qt.LeftButton,
-            Qt.NoButton,
+            Qt.LeftButton,  # type: ignore[attr-defined]
+            Qt.NoButton,  # type: ignore[attr-defined]
         )
     )
 
 
-def test_frame_view_right_click_stops_playback(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_frame_view_right_click_stops_playback(qtbot, tmp_path: Path) -> None:
     """Right-click context-menu interaction also freezes playback first."""
     window = _make_window(qtbot, tmp_path)
     window._editable.add_face(0, (10.0, 10.0, 40.0, 40.0))
@@ -485,8 +483,8 @@ def test_frame_view_right_click_stops_playback(qtbot, tmp_path: Path) -> None:  
             QEvent.Type.MouseButtonPress,
             window._frame_view,
             pos,
-            Qt.RightButton,
-            Qt.RightButton,
+            Qt.RightButton,  # type: ignore[attr-defined]
+            Qt.RightButton,  # type: ignore[attr-defined]
         )
     )
 
@@ -502,7 +500,7 @@ def test_frame_view_right_click_stops_playback(qtbot, tmp_path: Path) -> None:  
 # ---------------------------------------------------------------------------
 
 
-def _slow_persist(release, observations: list, modified: int = 1):  # type:ignore[no-untyped-def]
+def _slow_persist(release, observations: list, modified: int = 1):
     """Persist stub that pauses on the worker thread until ``release`` fires.
 
     Used by the #115 async-save tests to assert main-thread state while the
@@ -510,7 +508,7 @@ def _slow_persist(release, observations: list, modified: int = 1):  # type:ignor
     the test can verify what the worker saw under the busy lock.
     """
 
-    def _stub(_editable, *, frame_names):  # type:ignore[no-untyped-def]
+    def _stub(_editable, *, frame_names):
         observations.append(frame_names)
         release.wait(timeout=5.0)
         return modified
@@ -518,7 +516,7 @@ def _slow_persist(release, observations: list, modified: int = 1):  # type:ignor
     return _stub
 
 
-def test_save_blocks_duplicate_invocation_while_in_flight(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_save_blocks_duplicate_invocation_while_in_flight(qtbot, tmp_path: Path) -> None:
     """A second save() call while one is in flight returns False.
 
     Save is now async (#115) so re-entry is detected by ``_save_in_flight``,
@@ -534,7 +532,7 @@ def test_save_blocks_duplicate_invocation_while_in_flight(qtbot, tmp_path: Path)
 
     release = threading.Event()
     observations: list = []
-    window._alignments_handle.persist = _slow_persist(release, observations)  # type:ignore[assignment]
+    window._alignments_handle.persist = _slow_persist(release, observations)  # type: ignore[method-assign]
 
     try:
         assert window.save() is True
@@ -548,7 +546,7 @@ def test_save_blocks_duplicate_invocation_while_in_flight(qtbot, tmp_path: Path)
         qtbot.waitUntil(lambda: window._save_worker is None, timeout=5000)
 
 
-def test_save_disables_mutating_actions_during_flight(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_save_disables_mutating_actions_during_flight(qtbot, tmp_path: Path) -> None:
     """Mutating actions are disabled while save is running."""
     import threading
 
@@ -558,7 +556,7 @@ def test_save_disables_mutating_actions_during_flight(qtbot, tmp_path: Path) -> 
 
     release = threading.Event()
     observations: list = []
-    window._alignments_handle.persist = _slow_persist(release, observations)  # type:ignore[assignment]
+    window._alignments_handle.persist = _slow_persist(release, observations)  # type: ignore[method-assign]
 
     try:
         assert window.save() is True
@@ -579,19 +577,19 @@ def test_save_disables_mutating_actions_during_flight(qtbot, tmp_path: Path) -> 
     assert window.actions_by_key["add_face"].isEnabled() is True
 
 
-def test_save_failure_preserves_dirty_state(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_save_failure_preserves_dirty_state(qtbot, tmp_path: Path) -> None:
     """A persist failure leaves dirty state intact and re-enables save."""
     window = _make_window(qtbot, tmp_path)
     _wait_for_frame_view_ready(qtbot, window)
     window._editable.add_face(0, (5.0, 5.0, 20.0, 20.0))
     window.mark_dirty(True)
 
-    def failing_persist(_editable, *, frame_names):  # type:ignore[no-untyped-def]
+    def failing_persist(_editable, *, frame_names):
         raise RuntimeError("persist failed")
 
-    window._alignments_handle.persist = failing_persist  # type:ignore[assignment]
+    window._alignments_handle.persist = failing_persist  # type: ignore[method-assign]
 
-    # save() returns True (scheduled); the failure surfaces through the worker.
+    # save() returns True (scheduled); the failure surfaces through the worker.  # type: ignore[method-assign]
     assert window.save() is True
     qtbot.waitUntil(lambda: window._save_worker is None, timeout=5000)
 
@@ -601,14 +599,14 @@ def test_save_failure_preserves_dirty_state(qtbot, tmp_path: Path) -> None:  # t
     assert window.actions_by_key["save"].isEnabled() is True
 
 
-def test_save_success_clears_dirty_state(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_save_success_clears_dirty_state(qtbot, tmp_path: Path) -> None:
     """Successful save clears dirty + edited + face_count_changed flags."""
     window = _make_window(qtbot, tmp_path)
     _wait_for_frame_view_ready(qtbot, window)
     window._editable.add_face(0, (5.0, 5.0, 20.0, 20.0))
     window.mark_dirty(True)
 
-    window._alignments_handle.persist = lambda *a, **k: 1  # type:ignore[assignment]
+    window._alignments_handle.persist = lambda *a, **k: 1  # type: ignore[method-assign]
     assert window.save() is True
     qtbot.waitUntil(lambda: window._save_worker is None, timeout=5000)
 
@@ -617,7 +615,7 @@ def test_save_success_clears_dirty_state(qtbot, tmp_path: Path) -> None:  # type
     assert window._editor_state.face_count_changed is False
 
 
-def test_save_shows_busy_progress_bar(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_save_shows_busy_progress_bar(qtbot, tmp_path: Path) -> None:
     """A determinate progress bar is materialized + branded for save.
 
     Under async save, observability of the busy state belongs on the main
@@ -632,7 +630,7 @@ def test_save_shows_busy_progress_bar(qtbot, tmp_path: Path) -> None:  # type:ig
 
     release = threading.Event()
     observations: list = []
-    window._alignments_handle.persist = _slow_persist(release, observations)  # type:ignore[assignment]
+    window._alignments_handle.persist = _slow_persist(release, observations)  # type: ignore[method-assign]
 
     try:
         assert window.save() is True
@@ -650,7 +648,7 @@ def test_save_shows_busy_progress_bar(qtbot, tmp_path: Path) -> None:  # type:ig
     assert window._save_in_flight is False
 
 
-def test_busy_lock_helper_releases_state_on_exception(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_busy_lock_helper_releases_state_on_exception(qtbot, tmp_path: Path) -> None:
     """``_with_busy_lock`` restores state even when the block raises."""
     window = _make_window(qtbot, tmp_path)
 
@@ -670,7 +668,7 @@ def test_busy_lock_helper_releases_state_on_exception(qtbot, tmp_path: Path) -> 
 # ---------------------------------------------------------------------------
 
 
-def test_save_busy_state_painted_before_persistence_completes(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_save_busy_state_painted_before_persistence_completes(qtbot, tmp_path: Path) -> None:
     """The busy state + disabled actions are observable before persist returns.
 
     Under async save (#115), persistence runs on a worker thread, so the
@@ -695,7 +693,7 @@ def test_save_busy_state_painted_before_persistence_completes(qtbot, tmp_path: P
 
     release = threading.Event()
     observations: list = []
-    window._alignments_handle.persist = _slow_persist(release, observations)  # type:ignore[assignment]
+    window._alignments_handle.persist = _slow_persist(release, observations)  # type: ignore[method-assign]
 
     try:
         assert window.save() is True

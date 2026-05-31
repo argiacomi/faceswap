@@ -48,10 +48,10 @@ def _mouse_event(
     scene and global positions explicitly.
     """
     global_pos = QPointF(view.mapToGlobal(pos.toPoint()))
-    return QMouseEvent(event_type, pos, pos, global_pos, button, buttons, Qt.NoModifier)
+    return QMouseEvent(event_type, pos, pos, global_pos, button, buttons, Qt.NoModifier)  # type: ignore[attr-defined]
 
 
-def test_frame_view_loads_fixture_image(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_frame_view_loads_fixture_image(qtbot, tmp_path: Path) -> None:
     """ManualFrameView loads a fixture frame and reports its source size."""
     view = ManualFrameView()
     qtbot.addWidget(view)
@@ -67,7 +67,7 @@ def test_frame_view_loads_fixture_image(qtbot, tmp_path: Path) -> None:  # type:
     assert captured == [frame]
 
 
-def test_frame_view_zoom_clamped_to_bounds(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_frame_view_zoom_clamped_to_bounds(qtbot, tmp_path: Path) -> None:
     """Zoom in/out are clamped between 1x and 20x."""
     view = ManualFrameView()
     qtbot.addWidget(view)
@@ -83,7 +83,7 @@ def test_frame_view_zoom_clamped_to_bounds(qtbot, tmp_path: Path) -> None:  # ty
     assert view.zoom == pytest.approx(1.0)
 
 
-def test_frame_view_pan_clamped_while_zoomed(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_frame_view_pan_clamped_while_zoomed(qtbot, tmp_path: Path) -> None:
     """Drag-pan while zoomed updates the offset and stays within the clamped margin."""
     view = ManualFrameView()
     qtbot.addWidget(view)
@@ -97,17 +97,17 @@ def test_frame_view_pan_clamped_while_zoomed(qtbot, tmp_path: Path) -> None:  # 
     start = QPoint(100, 80)
     moved = QPoint(180, 130)
 
-    QTest.mousePress(view, Qt.LeftButton, Qt.NoModifier, start)
+    QTest.mousePress(view, Qt.LeftButton, Qt.NoModifier, start)  # type: ignore[attr-defined]
     QTest.mouseMove(view, moved)
-    QTest.mouseRelease(view, Qt.LeftButton, Qt.NoModifier, moved)
+    QTest.mouseRelease(view, Qt.LeftButton, Qt.NoModifier, moved)  # type: ignore[attr-defined]
 
     offset = view.offset
     assert offset.x() != 0.0 or offset.y() != 0.0
 
     # Drag the view by an absurd amount; offset must remain finite and clamped.
-    QTest.mousePress(view, Qt.LeftButton, Qt.NoModifier, QPoint(100, 80))
+    QTest.mousePress(view, Qt.LeftButton, Qt.NoModifier, QPoint(100, 80))  # type: ignore[attr-defined]
     QTest.mouseMove(view, QPoint(5000, 5000))
-    QTest.mouseRelease(view, Qt.LeftButton, Qt.NoModifier, QPoint(5000, 5000))
+    QTest.mouseRelease(view, Qt.LeftButton, Qt.NoModifier, QPoint(5000, 5000))  # type: ignore[attr-defined]
     clamped = view.offset
 
     # Pan offset never exceeds the widget dimensions when zoomed; this guards the clamp.
@@ -115,7 +115,7 @@ def test_frame_view_pan_clamped_while_zoomed(qtbot, tmp_path: Path) -> None:  # 
     assert abs(clamped.y()) <= view.height()
 
 
-def test_frame_view_wheel_zooms(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_frame_view_wheel_zooms(qtbot, tmp_path: Path) -> None:
     """Mouse wheel scrolls zoom in/out within bounds."""
     view = ManualFrameView()
     qtbot.addWidget(view)
@@ -127,9 +127,9 @@ def test_frame_view_wheel_zooms(qtbot, tmp_path: Path) -> None:  # type:ignore[n
         QPointF(100, 80),
         QPoint(0, 0),
         QPoint(0, 120),
-        Qt.NoButton,
-        Qt.NoModifier,
-        Qt.NoScrollPhase,
+        Qt.NoButton,  # type: ignore[attr-defined]
+        Qt.NoModifier,  # type: ignore[attr-defined]
+        Qt.NoScrollPhase,  # type: ignore[attr-defined]
         False,
     )
     view.wheelEvent(wheel_up)
@@ -141,16 +141,16 @@ def test_frame_view_wheel_zooms(qtbot, tmp_path: Path) -> None:  # type:ignore[n
         QPointF(100, 80),
         QPoint(0, 0),
         QPoint(0, -120),
-        Qt.NoButton,
-        Qt.NoModifier,
-        Qt.NoScrollPhase,
+        Qt.NoButton,  # type: ignore[attr-defined]
+        Qt.NoModifier,  # type: ignore[attr-defined]
+        Qt.NoScrollPhase,  # type: ignore[attr-defined]
         False,
     )
     view.wheelEvent(wheel_down)
     assert view.zoom < previous
 
 
-def test_frame_view_reset_view_returns_to_baseline(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_frame_view_reset_view_returns_to_baseline(qtbot, tmp_path: Path) -> None:
     """Reset view restores zoom=1 and zero offset."""
     view = ManualFrameView()
     qtbot.addWidget(view)
@@ -164,7 +164,7 @@ def test_frame_view_reset_view_returns_to_baseline(qtbot, tmp_path: Path) -> Non
     assert view.offset.y() == pytest.approx(0.0)
 
 
-def test_frame_view_clear_frame_resets_state(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_frame_view_clear_frame_resets_state(qtbot, tmp_path: Path) -> None:
     """clear_frame drops the pixmap and shows the empty message."""
     view = ManualFrameView()
     qtbot.addWidget(view)
@@ -176,7 +176,7 @@ def test_frame_view_clear_frame_resets_state(qtbot, tmp_path: Path) -> None:  # 
     assert view.source_size == (0, 0)
 
 
-def test_frame_view_overlay_invoked(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_frame_view_overlay_invoked(qtbot, tmp_path: Path) -> None:
     """Overlay callables receive the painter and viewport during paint."""
     view = ManualFrameView()
     qtbot.addWidget(view)
@@ -205,7 +205,7 @@ def test_frame_view_overlay_invoked(qtbot, tmp_path: Path) -> None:  # type:igno
     assert received == [], "Overlay still invoked after removal"
 
 
-def test_frame_view_click_emits_source_coordinates(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_frame_view_click_emits_source_coordinates(qtbot, tmp_path: Path) -> None:
     """Left-click inside the painted frame emits source-image coordinates."""
     view = ManualFrameView()
     qtbot.addWidget(view)
@@ -217,8 +217,8 @@ def test_frame_view_click_emits_source_coordinates(qtbot, tmp_path: Path) -> Non
 
     # Click roughly at center → expect coordinates near the middle of the source image.
     centre = QPoint(view.width() // 2, view.height() // 2)
-    QTest.mousePress(view, Qt.LeftButton, Qt.NoModifier, centre)
-    QTest.mouseRelease(view, Qt.LeftButton, Qt.NoModifier, centre)
+    QTest.mousePress(view, Qt.LeftButton, Qt.NoModifier, centre)  # type: ignore[attr-defined]
+    QTest.mouseRelease(view, Qt.LeftButton, Qt.NoModifier, centre)  # type: ignore[attr-defined]
 
     assert len(captured) == 1
     source_point = captured[0]
@@ -226,9 +226,7 @@ def test_frame_view_click_emits_source_coordinates(qtbot, tmp_path: Path) -> Non
     assert 12 <= source_point.y() <= 20
 
 
-def test_manual_tool_window_navigation_emits_frame_changed(  # type:ignore[no-untyped-def]
-    qtbot, tmp_path: Path
-) -> None:
+def test_manual_tool_window_navigation_emits_frame_changed(qtbot, tmp_path: Path) -> None:
     """ManualToolWindow advances frames and emits frame_changed."""
     session = _session_with_frames(tmp_path, count=3)
     window = ManualToolWindow(session)
@@ -247,7 +245,7 @@ def test_manual_tool_window_navigation_emits_frame_changed(  # type:ignore[no-un
     assert window.frame_view.has_frame is True
 
 
-def test_frame_view_drag_inside_bbox_emits_move(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_frame_view_drag_inside_bbox_emits_move(qtbot, tmp_path: Path) -> None:
     """Dragging from inside an active bbox emits face_move_requested on release."""
     from PySide6.QtCore import QRectF
 
@@ -279,22 +277,22 @@ def test_frame_view_drag_inside_bbox_emits_move(qtbot, tmp_path: Path) -> None: 
         QEvent.Type.MouseButtonPress,
         view,
         start_widget,
-        Qt.LeftButton,
-        Qt.LeftButton,
+        Qt.LeftButton,  # type: ignore[attr-defined]
+        Qt.LeftButton,  # type: ignore[attr-defined]
     )
     move = _mouse_event(
         QEvent.Type.MouseMove,
         view,
         end_widget,
-        Qt.NoButton,
-        Qt.LeftButton,
+        Qt.NoButton,  # type: ignore[attr-defined]
+        Qt.LeftButton,  # type: ignore[attr-defined]
     )
     release = _mouse_event(
         QEvent.Type.MouseButtonRelease,
         view,
         end_widget,
-        Qt.LeftButton,
-        Qt.NoButton,
+        Qt.LeftButton,  # type: ignore[attr-defined]
+        Qt.NoButton,  # type: ignore[attr-defined]
     )
     view.mousePressEvent(press)
     view.mouseMoveEvent(move)
@@ -308,7 +306,7 @@ def test_frame_view_drag_inside_bbox_emits_move(qtbot, tmp_path: Path) -> None: 
     assert dy == pytest.approx(10.0, abs=0.5)
 
 
-def test_frame_view_drag_se_handle_emits_resize(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_frame_view_drag_se_handle_emits_resize(qtbot, tmp_path: Path) -> None:
     """Dragging the SE handle emits face_resize_requested with grown bbox."""
     from PySide6.QtCore import QRectF
 
@@ -338,22 +336,22 @@ def test_frame_view_drag_se_handle_emits_resize(qtbot, tmp_path: Path) -> None: 
         QEvent.Type.MouseButtonPress,
         view,
         start_widget,
-        Qt.LeftButton,
-        Qt.LeftButton,
+        Qt.LeftButton,  # type: ignore[attr-defined]
+        Qt.LeftButton,  # type: ignore[attr-defined]
     )
     move = _mouse_event(
         QEvent.Type.MouseMove,
         view,
         end_widget,
-        Qt.NoButton,
-        Qt.LeftButton,
+        Qt.NoButton,  # type: ignore[attr-defined]
+        Qt.LeftButton,  # type: ignore[attr-defined]
     )
     release = _mouse_event(
         QEvent.Type.MouseButtonRelease,
         view,
         end_widget,
-        Qt.LeftButton,
-        Qt.NoButton,
+        Qt.LeftButton,  # type: ignore[attr-defined]
+        Qt.NoButton,  # type: ignore[attr-defined]
     )
     view.mousePressEvent(press)
     view.mouseMoveEvent(move)
@@ -369,7 +367,7 @@ def test_frame_view_drag_se_handle_emits_resize(qtbot, tmp_path: Path) -> None: 
     assert rect.height() == pytest.approx(45.0, abs=0.5)
 
 
-def test_frame_view_hover_cursor_switches_on_handle(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_frame_view_hover_cursor_switches_on_handle(qtbot, tmp_path: Path) -> None:
     """Hovering an active-face resize handle yields a diagonal sizing cursor."""
     from PySide6.QtCore import QRectF
 
@@ -391,12 +389,12 @@ def test_frame_view_hover_cursor_switches_on_handle(qtbot, tmp_path: Path) -> No
     target = view._target_rect()
     # Hover SE corner -> SizeFDiagCursor; inside body -> SizeAllCursor.
     view._update_hover_cursor(QPointF(target.x() + 50.0, target.y() + 50.0))
-    assert view.cursor().shape() == Qt.SizeFDiagCursor
+    assert view.cursor().shape() == Qt.SizeFDiagCursor  # type: ignore[attr-defined]
     view._update_hover_cursor(QPointF(target.x() + 30.0, target.y() + 30.0))
-    assert view.cursor().shape() == Qt.SizeAllCursor
+    assert view.cursor().shape() == Qt.SizeAllCursor  # type: ignore[attr-defined]
 
 
-def test_manual_window_arrow_key_nudges_active_face(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_manual_window_arrow_key_nudges_active_face(qtbot, tmp_path: Path) -> None:
     """The Up arrow keyboard shortcut translates the active face one source pixel."""
     session = _session_with_frames(tmp_path, count=1)
     window = ManualToolWindow(session)

@@ -40,7 +40,7 @@ def test_is_modified_handles_missing_command() -> None:
 def test_reset_all() -> None:
     """Reset without a command should reset all modified vars."""
     vars_by_command = {"extract": _BoolVar(True), "train": _BoolVar(True)}
-    tracker = ModifiedStateTracker(vars_by_command)
+    tracker = ModifiedStateTracker(vars_by_command)  # type: ignore[arg-type]
 
     tracker.reset()
 
@@ -51,7 +51,7 @@ def test_reset_all() -> None:
 def test_reset_one_command() -> None:
     """Reset with a command should reset only that command."""
     vars_by_command = {"extract": _BoolVar(True), "train": _BoolVar(True)}
-    tracker = ModifiedStateTracker(vars_by_command)
+    tracker = ModifiedStateTracker(vars_by_command)  # type: ignore[arg-type]
 
     tracker.reset("extract")
 
@@ -62,7 +62,7 @@ def test_reset_one_command() -> None:
 def test_set_one_command() -> None:
     """Set should update only existing commands."""
     vars_by_command = {"extract": _BoolVar(False)}
-    tracker = ModifiedStateTracker(vars_by_command)
+    tracker = ModifiedStateTracker(vars_by_command)  # type: ignore[arg-type]
 
     tracker.set("extract")
     tracker.set("missing")

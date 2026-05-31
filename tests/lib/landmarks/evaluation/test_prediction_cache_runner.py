@@ -17,7 +17,7 @@ from tools.landmarks import cache_predictions
 
 def _truth_points(offset: float = 0.0) -> np.ndarray:
     """Return deterministic frame-space canonical landmarks."""
-    return (
+    return (  # type: ignore[no-any-return]
         np.stack(
             (
                 np.linspace(20, 80, 68, dtype="float32"),
@@ -31,7 +31,7 @@ def _truth_points(offset: float = 0.0) -> np.ndarray:
 
 def _points_98_normalized() -> np.ndarray:
     """Return a deterministic normalized 98-point prediction."""
-    return np.stack(
+    return np.stack(  # type: ignore[no-any-return]
         (
             np.linspace(0.1, 0.9, 98, dtype="float32"),
             np.linspace(0.2, 0.8, 98, dtype="float32"),
@@ -44,7 +44,7 @@ def _write_manifest(tmp_path: Path, *, include_bbox: bool = True) -> Path:
     """Write a minimal image+landmark manifest."""
     dataset = tmp_path / "dataset"
     dataset.mkdir()
-    image = np.zeros((128, 128, 3), dtype="uint8")
+    image = np.zeros((128, 128, 3), dtype="uint8")  # type: ignore[var-annotated]
     assert cv2.imwrite(str(dataset / "sample.png"), image)
     np.save(str(dataset / "truth.npy"), _truth_points())
     sample = {
@@ -55,7 +55,7 @@ def _write_manifest(tmp_path: Path, *, include_bbox: bool = True) -> Path:
         "condition": "clean",
     }
     if include_bbox:
-        sample["face_bbox"] = [20, 25, 80, 85]
+        sample["face_bbox"] = [20, 25, 80, 85]  # type: ignore[assignment]
     manifest = dataset / "manifest.json"
     manifest.write_text(json.dumps({"samples": [sample]}), encoding="utf-8")
     return manifest
@@ -68,7 +68,7 @@ class _CountingStaticAdapter(StaticLandmarkAdapter):
         super().__init__(config, points)
         self.calls = 0
 
-    def predict_batch(self, images, *, matrices=None, faces=None):  # type:ignore[no-untyped-def]
+    def predict_batch(self, images, *, matrices=None, faces=None):
         self.calls += 1
         return super().predict_batch(images, matrices=matrices, faces=faces)
 
@@ -168,16 +168,16 @@ def test_run_model_predictions_reuses_fresh_cache_and_refresh_forces_regeneratio
         adapters={"hrnet": adapter},
     )
 
-    assert cache_predictions._run_model_predictions(batch_size=1, refresh=False, **kwargs) == (
+    assert cache_predictions._run_model_predictions(batch_size=1, refresh=False, **kwargs) == (  # type: ignore[arg-type]
         1,
         0,
     )
-    assert cache_predictions._run_model_predictions(batch_size=8, refresh=False, **kwargs) == (
+    assert cache_predictions._run_model_predictions(batch_size=8, refresh=False, **kwargs) == (  # type: ignore[arg-type]
         0,
         1,
     )
     assert adapter.calls == 1
-    assert cache_predictions._run_model_predictions(batch_size=1, refresh=True, **kwargs) == (1, 0)
+    assert cache_predictions._run_model_predictions(batch_size=1, refresh=True, **kwargs) == (1, 0)  # type: ignore[arg-type]
     assert adapter.calls == 2
 
 
@@ -257,7 +257,7 @@ def test_model_runner_dispatch_builds_selected_adapters(monkeypatch: pytest.Monk
     """Model names are dispatched through the shared adapter factory."""
     seen = []
 
-    def fake_build_landmark_adapter(model: str, **kwargs):  # type:ignore[no-untyped-def]
+    def fake_build_landmark_adapter(model: str, **kwargs):
         seen.append((model, kwargs))
         return _CountingStaticAdapter(
             LandmarkAdapterConfig(model, coordinate_space="normalized_crop"),

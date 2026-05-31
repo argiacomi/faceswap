@@ -16,7 +16,7 @@ _LEGACY_LANDMARK_POSE_BUCKET_KEY = "_".join(("landmark", "pose", "bucket"))
 
 
 def _points(offset: float = 0.0) -> np.ndarray:
-    points = np.zeros((68, 2), dtype="float32")
+    points = np.zeros((68, 2), dtype="float32")  # type: ignore[var-annotated]
     points[:, 0] = np.linspace(20.0 + offset, 120.0 + offset, 68)
     points[:, 1] = np.linspace(30.0, 160.0, 68)
     return points

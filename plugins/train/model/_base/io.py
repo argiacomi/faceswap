@@ -255,7 +255,7 @@ class IO:
             "[IO] Loaded optimizer state_dict: %s",
             {k: list(v) if isinstance(v, dict) else v for k, v in retval.items()},
         )
-        return retval
+        return retval  # type: ignore[no-any-return]
 
     def _save_optimizer(self, optimizer: Optimizer) -> None:
         """Inject the optimizer's state_dict into the .keras model file

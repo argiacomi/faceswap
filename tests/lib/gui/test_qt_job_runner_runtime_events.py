@@ -16,7 +16,7 @@ class _BufferedProcessDouble:
 
     def state(self) -> QProcess.ProcessState:
         """Return the configured process state."""
-        return self._state
+        return self._state  # type: ignore[no-any-return]
 
     def readAllStandardOutput(self) -> bytes:
         """Return buffered stdout once."""
@@ -48,8 +48,8 @@ def test_job_runner_emits_progress_event_from_tqdm_stdout() -> None:
         b"Extracting:  25%|##5       | 5/20 [00:02<00:06,  2.50it/s]\n"
     )  # type:ignore[assignment]
     runner._runtime.command = "extract"  # pylint:disable=protected-access
-    progress = []
-    stdout = []
+    progress = []  # type: ignore[var-annotated]
+    stdout = []  # type: ignore[var-annotated]
     runner.progress.connect(progress.append)
     runner.stdout.connect(stdout.append)
 
@@ -62,14 +62,14 @@ def test_job_runner_emits_progress_event_from_tqdm_stdout() -> None:
     assert progress[0].payload["parser"] == "tqdm"
 
 
-def test_job_runner_emits_final_status_event_on_finish(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_job_runner_emits_final_status_event_on_finish(qtbot) -> None:
     """Qt JobRunner should emit final RuntimeEvent status before finished."""
     from lib.gui.qt_shell.job_runner import JobRunner
 
     runner = JobRunner()
     runner.process = _BufferedProcessDouble()  # type:ignore[assignment]
     runner._runtime.command = "train"  # pylint:disable=protected-access
-    progress = []
+    progress = []  # type: ignore[var-annotated]
     runner.progress.connect(progress.append)
 
     with qtbot.waitSignal(runner.finished, timeout=1000) as signal:
@@ -91,8 +91,8 @@ def test_job_runner_suppresses_consumed_stderr_output() -> None:
         stderr=b"Training:  50%|#####     | 10/20 [00:04<00:04,  2.50it/s]\n"
     )  # type:ignore[assignment]
     runner._runtime.command = "train"  # pylint:disable=protected-access
-    progress = []
-    stderr = []
+    progress = []  # type: ignore[var-annotated]
+    stderr = []  # type: ignore[var-annotated]
     runner.progress.connect(progress.append)
     runner.stderr.connect(stderr.append)
 
@@ -109,8 +109,8 @@ def test_job_runner_preserves_plain_stdout_output() -> None:
     runner = JobRunner()
     runner.process = _BufferedProcessDouble(b"ordinary console line\n")  # type:ignore[assignment]
     runner._runtime.command = "extract"  # pylint:disable=protected-access
-    progress = []
-    stdout = []
+    progress = []  # type: ignore[var-annotated]
+    stdout = []  # type: ignore[var-annotated]
     runner.progress.connect(progress.append)
     runner.stdout.connect(stdout.append)
 
@@ -131,8 +131,8 @@ def test_job_runner_handles_mixed_plain_and_tqdm_stdout_chunk() -> None:
         b"another plain line\n"
     )  # type:ignore[assignment]
     runner._runtime.command = "extract"  # pylint:disable=protected-access
-    progress = []
-    stdout = []
+    progress = []  # type: ignore[var-annotated]
+    stdout = []  # type: ignore[var-annotated]
     runner.progress.connect(progress.append)
     runner.stdout.connect(stdout.append)
 
@@ -154,8 +154,8 @@ def test_job_runner_handles_multiple_progress_lines_in_one_chunk() -> None:
         b"Extracting:  50%|#####     | 10/20 [00:04<00:04,  2.50it/s]\n"
     )  # type:ignore[assignment]
     runner._runtime.command = "extract"  # pylint:disable=protected-access
-    progress = []
-    stdout = []
+    progress = []  # type: ignore[var-annotated]
+    stdout = []  # type: ignore[var-annotated]
     runner.progress.connect(progress.append)
     runner.stdout.connect(stdout.append)
 
@@ -173,8 +173,8 @@ def test_job_runner_preserves_partial_tqdm_stdout_until_complete() -> None:
     runner = JobRunner()
     runner.process = process  # type:ignore[assignment]
     runner._runtime.command = "extract"  # pylint:disable=protected-access
-    progress = []
-    stdout = []
+    progress = []  # type: ignore[var-annotated]
+    stdout = []  # type: ignore[var-annotated]
     runner.progress.connect(progress.append)
     runner.stdout.connect(stdout.append)
 
@@ -187,14 +187,14 @@ def test_job_runner_preserves_partial_tqdm_stdout_until_complete() -> None:
     assert progress[0].progress == 25.0
 
 
-def test_job_runner_preserves_partial_plain_stdout_until_finished(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_job_runner_preserves_partial_plain_stdout_until_finished(qtbot) -> None:
     """Trailing partial plain output should be flushed when the process finishes."""
     from lib.gui.qt_shell.job_runner import JobRunner
 
     runner = JobRunner()
     runner.process = _BufferedProcessDouble(b"partial plain output")  # type:ignore[assignment]
     runner._runtime.command = "extract"  # pylint:disable=protected-access
-    stdout = []
+    stdout = []  # type: ignore[var-annotated]
     runner.stdout.connect(stdout.append)
 
     with qtbot.waitSignal(runner.finished, timeout=1000):
@@ -208,13 +208,13 @@ def test_job_runner_accepts_command_when_starting(monkeypatch) -> None:
     from lib.gui.qt_shell import job_runner
 
     class _SignalDouble:
-        def connect(self, _callback):  # type:ignore[no-untyped-def]
+        def connect(self, _callback):
             return None
 
     class _ProcessStartDouble:
         NotRunning = QProcess.NotRunning
 
-        def __init__(self, _parent=None) -> None:  # type:ignore[no-untyped-def]
+        def __init__(self, _parent=None) -> None:
             self.readyReadStandardOutput = _SignalDouble()
             self.readyReadStandardError = _SignalDouble()
             self.errorOccurred = _SignalDouble()
@@ -223,16 +223,16 @@ def test_job_runner_accepts_command_when_starting(monkeypatch) -> None:
             self.arguments = None
             self.started = False
 
-        def state(self):  # type:ignore[no-untyped-def]
+        def state(self):
             return QProcess.NotRunning
 
-        def setProgram(self, program):  # type:ignore[no-untyped-def]
+        def setProgram(self, program):
             self.program = program
 
-        def setArguments(self, arguments):  # type:ignore[no-untyped-def]
+        def setArguments(self, arguments):
             self.arguments = arguments
 
-        def start(self):  # type:ignore[no-untyped-def]
+        def start(self):
             self.started = True
 
     monkeypatch.setattr(job_runner, "QProcess", _ProcessStartDouble)
@@ -241,7 +241,7 @@ def test_job_runner_accepts_command_when_starting(monkeypatch) -> None:
     runner.start(["python", "-u", "/repo/faceswap.py", "extract"], command="convert")
 
     assert runner._runtime.command == "convert"  # pylint:disable=protected-access
-    assert runner.process.started is True
+    assert runner.process.started is True  # type: ignore[union-attr]
 
 
 def test_job_runner_infers_command_from_argv(monkeypatch) -> None:
@@ -249,28 +249,28 @@ def test_job_runner_infers_command_from_argv(monkeypatch) -> None:
     from lib.gui.qt_shell import job_runner
 
     class _SignalDouble:
-        def connect(self, _callback):  # type:ignore[no-untyped-def]
+        def connect(self, _callback):
             return None
 
     class _ProcessStartDouble:
         NotRunning = QProcess.NotRunning
 
-        def __init__(self, _parent=None) -> None:  # type:ignore[no-untyped-def]
+        def __init__(self, _parent=None) -> None:
             self.readyReadStandardOutput = _SignalDouble()
             self.readyReadStandardError = _SignalDouble()
             self.errorOccurred = _SignalDouble()
             self.finished = _SignalDouble()
 
-        def state(self):  # type:ignore[no-untyped-def]
+        def state(self):
             return QProcess.NotRunning
 
-        def setProgram(self, _program):  # type:ignore[no-untyped-def]
+        def setProgram(self, _program):
             return None
 
-        def setArguments(self, _arguments):  # type:ignore[no-untyped-def]
+        def setArguments(self, _arguments):
             return None
 
-        def start(self):  # type:ignore[no-untyped-def]
+        def start(self):
             return None
 
     monkeypatch.setattr(job_runner, "QProcess", _ProcessStartDouble)
@@ -281,7 +281,7 @@ def test_job_runner_infers_command_from_argv(monkeypatch) -> None:
     assert runner._runtime.command == "effmpeg"  # pylint:disable=protected-access
 
 
-def test_main_window_display_controller_reacts_to_runner_progress(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_main_window_display_controller_reacts_to_runner_progress(qtbot) -> None:
     """MainWindow should route runner RuntimeEvent values to DisplayController."""
     from lib.gui.qt_shell.command_schema import CommandSchema, CommandSpec
     from lib.gui.qt_shell.main_window import MainWindow
@@ -291,13 +291,13 @@ def test_main_window_display_controller_reacts_to_runner_progress(qtbot) -> None
     window = MainWindow(schema)
     qtbot.addWidget(window)
 
-    assert window._display_controller.visible_tab_names() == ("Analysis",)  # pylint:disable=protected-access
+    assert window._display_controller.visible_tab_names() == ("Analysis",)  # type: ignore[union-attr]  # pylint:disable=protected-access
 
     window._runner.progress.emit(  # pylint:disable=protected-access
         RuntimeEvent(kind="progress", progress=50.0, payload={"command": "train"})
     )
 
-    assert window._display_controller.visible_tab_names() == (  # pylint:disable=protected-access
+    assert window._display_controller.visible_tab_names() == (  # type: ignore[union-attr]  # pylint:disable=protected-access
         "Analysis",
         "Graph",
     )

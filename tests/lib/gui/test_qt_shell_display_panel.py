@@ -19,7 +19,7 @@ class _RuntimeEvent:
     payload: dict[str, object] | None = None
 
 
-def _main_window(monkeypatch, tmp_path):  # type:ignore[no-untyped-def]
+def _main_window(monkeypatch, tmp_path):
     """Return a MainWindow with a small deterministic schema."""
     monkeypatch.setenv("HOME", str(tmp_path))
 
@@ -38,29 +38,29 @@ def _main_window(monkeypatch, tmp_path):  # type:ignore[no-untyped-def]
     return MainWindow(schema)
 
 
-def _display_tabs(window):  # type:ignore[no-untyped-def]
+def _display_tabs(window):
     """Return the Qt shell display tab widget."""
     tabs = window.findChild(QTabWidget, "qt-shell-display-tabs")
     assert tabs is not None
     return tabs
 
 
-def _view_action(window, label: str):  # type:ignore[no-untyped-def]
+def _view_action(window, label: str):
     """Return a persisted View menu action by label."""
     return window._view_actions[label]  # pylint:disable=protected-access
 
 
-def _view_action_enabled(window, label: str) -> bool:  # type:ignore[no-untyped-def]
+def _view_action_enabled(window, label: str) -> bool:
     """Return whether a View menu action is enabled."""
-    return _view_action(window, label).isEnabled()
+    return _view_action(window, label).isEnabled()  # type: ignore[no-any-return]
 
 
-def _trigger_view_action(window, label: str) -> None:  # type:ignore[no-untyped-def]
+def _trigger_view_action(window, label: str) -> None:
     """Trigger a View menu action by label."""
     _view_action(window, label).trigger()
 
 
-def test_analysis_panel_renders_session_stats_placeholder(  # type:ignore[no-untyped-def]
+def test_analysis_panel_renders_session_stats_placeholder(
     qtbot,
     monkeypatch,
     tmp_path,
@@ -87,7 +87,7 @@ def test_analysis_panel_renders_session_stats_placeholder(  # type:ignore[no-unt
     assert "No session data loaded" in labels
 
 
-def test_analysis_panel_disables_horizontal_scrolling(  # type:ignore[no-untyped-def]
+def test_analysis_panel_disables_horizontal_scrolling(
     qtbot,
     monkeypatch,
     tmp_path,
@@ -98,11 +98,11 @@ def test_analysis_panel_disables_horizontal_scrolling(  # type:ignore[no-untyped
     table = window.findChild(QTableWidget, "qt-shell-session-stats")
 
     assert table is not None
-    assert table.horizontalScrollBarPolicy() == Qt.ScrollBarAlwaysOff
+    assert table.horizontalScrollBarPolicy() == Qt.ScrollBarAlwaysOff  # type: ignore[attr-defined]
     assert table.minimumWidth() == 0
 
 
-def test_right_display_panel_is_display_only(  # type:ignore[no-untyped-def]
+def test_right_display_panel_is_display_only(
     qtbot,
     monkeypatch,
     tmp_path,
@@ -120,7 +120,7 @@ def test_right_display_panel_is_display_only(  # type:ignore[no-untyped-def]
     ]
 
 
-def test_view_menu_actions_follow_runtime_display_visibility(  # type:ignore[no-untyped-def]
+def test_view_menu_actions_follow_runtime_display_visibility(
     qtbot,
     monkeypatch,
     tmp_path,
@@ -156,7 +156,7 @@ def test_view_menu_actions_follow_runtime_display_visibility(  # type:ignore[no-
     assert tabs.tabText(tabs.currentIndex()) == "Analysis"
 
 
-def test_progress_runtime_event_updates_status_and_progress_bar(  # type:ignore[no-untyped-def]
+def test_progress_runtime_event_updates_status_and_progress_bar(
     qtbot,
     monkeypatch,
     tmp_path,
@@ -178,7 +178,7 @@ def test_progress_runtime_event_updates_status_and_progress_bar(  # type:ignore[
     assert progress.value() == 42
 
 
-def test_status_runtime_event_can_set_indeterminate_progress(  # type:ignore[no-untyped-def]
+def test_status_runtime_event_can_set_indeterminate_progress(
     qtbot,
     monkeypatch,
     tmp_path,
@@ -203,7 +203,7 @@ def test_status_runtime_event_can_set_indeterminate_progress(  # type:ignore[no-
     assert progress.maximum() == 0
 
 
-def test_job_finished_resets_progress_and_view_actions(  # type:ignore[no-untyped-def]
+def test_job_finished_resets_progress_and_view_actions(
     qtbot,
     monkeypatch,
     tmp_path,
@@ -232,7 +232,7 @@ def test_job_finished_resets_progress_and_view_actions(  # type:ignore[no-untype
     assert _view_action_enabled(window, "Graph") is False
 
 
-def test_main_panels_are_adjustable(  # type:ignore[no-untyped-def]
+def test_main_panels_are_adjustable(
     qtbot,
     monkeypatch,
     tmp_path,

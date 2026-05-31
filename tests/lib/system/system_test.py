@@ -114,7 +114,7 @@ def test_system_get_permissions(system_instance: System) -> None:
     if platform.system() == "Windows":
         assert is_admin == (ctypes.windll.shell32.IsUserAnAdmin() != 0)  # type:ignore
     else:
-        assert is_admin == (os.getuid() == 0)  # type:ignore  # pylint:disable=no-member
+        assert is_admin == (os.getuid() == 0)  # pylint:disable=no-member
 
 
 def test_system_check_virtual_env(

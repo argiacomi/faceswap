@@ -18,7 +18,7 @@ class _RuntimeEvent:
     payload: dict[str, object] | None = None
 
 
-def _controller(qtbot):  # type:ignore[no-untyped-def]
+def _controller(qtbot):
     """Return a DisplayController with an empty tab widget."""
     from lib.gui.qt_shell.display_controller import DisplayController
 
@@ -27,7 +27,7 @@ def _controller(qtbot):  # type:ignore[no-untyped-def]
     return DisplayController(tabs), tabs
 
 
-def test_controller_starts_with_analysis_only(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_controller_starts_with_analysis_only(qtbot) -> None:
     """Analysis should be present before runtime state creates dynamic tabs."""
     controller, _tabs = _controller(qtbot)
 
@@ -35,7 +35,7 @@ def test_controller_starts_with_analysis_only(qtbot) -> None:  # type:ignore[no-
     assert controller.visible_tab_names() == ("Analysis",)
 
 
-def test_extract_runtime_event_creates_preview_tab(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_extract_runtime_event_creates_preview_tab(qtbot) -> None:
     """Extract runtime events should create Preview without Graph."""
     controller, _tabs = _controller(qtbot)
 
@@ -49,7 +49,7 @@ def test_extract_runtime_event_creates_preview_tab(qtbot) -> None:  # type:ignor
     assert controller.command == "extract"
 
 
-def test_convert_progress_event_creates_preview_tab(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_convert_progress_event_creates_preview_tab(qtbot) -> None:
     """Convert progress events should also be enough to make Preview relevant."""
     controller, _tabs = _controller(qtbot)
 
@@ -62,7 +62,7 @@ def test_convert_progress_event_creates_preview_tab(qtbot) -> None:  # type:igno
     assert controller.visible_tab_names() == ("Analysis", "Preview")
 
 
-def test_train_runtime_event_creates_graph_tab_without_preview(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_train_runtime_event_creates_graph_tab_without_preview(qtbot) -> None:
     """Training should expose Graph but not extract/convert Preview."""
     controller, _tabs = _controller(qtbot)
 
@@ -75,7 +75,7 @@ def test_train_runtime_event_creates_graph_tab_without_preview(qtbot) -> None:  
     assert controller.command == "train"
 
 
-def test_runtime_display_state_payload_controls_tabs(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_runtime_display_state_payload_controls_tabs(qtbot) -> None:
     """Runtime display-state payloads should drive the same dynamic tab rules."""
     controller, _tabs = _controller(qtbot)
 
@@ -87,7 +87,7 @@ def test_runtime_display_state_payload_controls_tabs(qtbot) -> None:  # type:ign
     assert controller.visible_tab_names() == ("Analysis", "Graph")
 
 
-def test_terminal_runtime_event_removes_dynamic_tabs(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_terminal_runtime_event_removes_dynamic_tabs(qtbot) -> None:
     """Finished process events should return the display area to Analysis only."""
     controller, _tabs = _controller(qtbot)
 
@@ -102,7 +102,7 @@ def test_terminal_runtime_event_removes_dynamic_tabs(qtbot) -> None:  # type:ign
     assert controller.command is None
 
 
-def test_unknown_events_are_not_consumed(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_unknown_events_are_not_consumed(qtbot) -> None:
     """Events without display-relevant state should not mutate tabs."""
     controller, _tabs = _controller(qtbot)
 
@@ -112,7 +112,7 @@ def test_unknown_events_are_not_consumed(qtbot) -> None:  # type:ignore[no-untyp
     assert controller.tab_names() == ("Analysis",)
 
 
-def test_preserve_existing_tabs_hides_instead_of_removing(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_preserve_existing_tabs_hides_instead_of_removing(qtbot) -> None:
     """MainWindow can attach to existing placeholders without changing tab ownership."""
     from lib.gui.qt_shell.display_controller import DisplayController
 

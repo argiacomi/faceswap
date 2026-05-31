@@ -35,18 +35,18 @@ class ExtractBoxFrameEditorMixin:
         4. Otherwise return ``False`` so the view can pan instead.
         """
 
-        if self._extract_mode_provider is None or not self._extract_mode_provider():
+        if self._extract_mode_provider is None or not self._extract_mode_provider():  # type: ignore[attr-defined]
             return False
-        if self._active_face_provider is None or self._active_bbox_provider is None:
+        if self._active_face_provider is None or self._active_bbox_provider is None:  # type: ignore[attr-defined]
             return False
-        face_index = self._active_face_provider()
+        face_index = self._active_face_provider()  # type: ignore[attr-defined]
         if face_index is None:
             return False
-        widget_bbox = self._active_bbox_widget_rect()
-        source_bbox = self._active_bbox_source_rect()
+        widget_bbox = self._active_bbox_widget_rect()  # type: ignore[attr-defined]
+        source_bbox = self._active_bbox_source_rect()  # type: ignore[attr-defined]
         if widget_bbox is None or source_bbox is None:
             return False
-        source_point = self._widget_to_source(position)
+        source_point = self._widget_to_source(position)  # type: ignore[attr-defined]
         if source_point is None:
             return False
         QPointF(
@@ -60,7 +60,7 @@ class ExtractBoxFrameEditorMixin:
         handle = ManualFrameOverlay.handle_at(
             widget_bbox,
             position,
-            tolerance=self._HANDLE_GRAB_TOLERANCE,
+            tolerance=self._HANDLE_GRAB_TOLERANCE,  # type: ignore[attr-defined]
         )
         # Scale uses the legacy corner handles (nw/ne/sw/se).
         if handle is not None:
@@ -82,7 +82,7 @@ class ExtractBoxFrameEditorMixin:
             return True
         if widget_bbox.contains(position):
             self._edit_drag_mode = "extract_translate"
-            self._edit_drag_handle = None
+            self._edit_drag_handle = None  # type: ignore[assignment]
             self._edit_drag_face_index = int(face_index)
             self._edit_drag_source_anchor = source_point
             self._edit_drag_original_bbox = QRectF(source_bbox)
@@ -102,7 +102,7 @@ class ExtractBoxFrameEditorMixin:
             source_point.x() - centre_source.x(),
         )
         self._edit_drag_mode = "extract_rotate"
-        self._edit_drag_handle = None
+        self._edit_drag_handle = None  # type: ignore[assignment]
         self._edit_drag_face_index = int(face_index)
         self._extract_drag_center = centre_source
         self._extract_drag_start_angle = start_angle
@@ -131,7 +131,7 @@ class ExtractBoxFrameEditorMixin:
             self._EXTRACT_MIN_BOX_SIZE / max(1.0, original.width()),
             self._EXTRACT_MIN_BOX_SIZE / max(1.0, original.height()),
         )
-        source_width, source_height = self.source_size
+        source_width, source_height = self.source_size  # type: ignore[attr-defined]
         max_scale = min(
             (2.0 * self._extract_drag_center.x()) / max(1.0, original.width()),
             (2.0 * self._extract_drag_center.y()) / max(1.0, original.height()),
@@ -170,35 +170,35 @@ class ExtractBoxWindowEditorMixin:
 
     def _is_extract_mode_active(self) -> bool:
         """Return whether the Extract Box editor (F3) is active."""
-        return self._editor_state.editor_mode == "ExtractBox"
+        return self._editor_state.editor_mode == "ExtractBox"  # type: ignore[attr-defined, no-any-return]
 
     def _on_face_scale_requested(self, face_index: int, scale: float) -> None:
         """Apply an Extract Box corner-drag scale to the active face (#102)."""
-        frame_index = self._current_frame_index()
+        frame_index = self._current_frame_index()  # type: ignore[attr-defined]
         if frame_index < 0:
-            self.statusBar().showMessage("No frame to edit", 3000)
+            self.statusBar().showMessage("No frame to edit", 3000)  # type: ignore[attr-defined]
             return
-        if not self._editable.scale_face(
+        if not self._editable.scale_face(  # type: ignore[attr-defined]
             frame_index,
             int(face_index),
             float(scale),
-            source_size=self._frame_view.source_size,
+            source_size=self._frame_view.source_size,  # type: ignore[attr-defined]
         ):
-            self.statusBar().showMessage("Scale failed (degenerate result)", 3000)
+            self.statusBar().showMessage("Scale failed (degenerate result)", 3000)  # type: ignore[attr-defined]
             return
-        self._editor_state.set("edited", True)
-        self.refresh_faces()
-        self._frame_view.update()
+        self._editor_state.set("edited", True)  # type: ignore[attr-defined]
+        self.refresh_faces()  # type: ignore[attr-defined]
+        self._frame_view.update()  # type: ignore[attr-defined]
 
     def _on_face_rotate_requested(self, face_index: int, angle: float) -> None:
         """Apply an Extract Box rotation-zone drag to the active face (#102)."""
-        frame_index = self._current_frame_index()
+        frame_index = self._current_frame_index()  # type: ignore[attr-defined]
         if frame_index < 0:
-            self.statusBar().showMessage("No frame to edit", 3000)
+            self.statusBar().showMessage("No frame to edit", 3000)  # type: ignore[attr-defined]
             return
-        if not self._editable.rotate_face(frame_index, int(face_index), float(angle)):
-            self.statusBar().showMessage("Rotate failed (no active face)", 3000)
+        if not self._editable.rotate_face(frame_index, int(face_index), float(angle)):  # type: ignore[attr-defined]
+            self.statusBar().showMessage("Rotate failed (no active face)", 3000)  # type: ignore[attr-defined]
             return
-        self._editor_state.set("edited", True)
-        self.refresh_faces()
-        self._frame_view.update()
+        self._editor_state.set("edited", True)  # type: ignore[attr-defined]
+        self.refresh_faces()  # type: ignore[attr-defined]
+        self._frame_view.update()  # type: ignore[attr-defined]

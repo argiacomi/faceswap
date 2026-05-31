@@ -32,7 +32,7 @@ def per_landmark_error(predicted: np.ndarray, target: np.ndarray) -> np.ndarray:
     diagnostics. Apply masking at the aggregation site instead.
     """
     pred, truth = _paired_points(predicted, target)
-    return np.linalg.norm(pred - truth, axis=1).astype("float32")
+    return np.linalg.norm(pred - truth, axis=1).astype("float32")  # type: ignore[no-any-return]
 
 
 def mean_point_error(

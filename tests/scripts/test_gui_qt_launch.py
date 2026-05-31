@@ -17,12 +17,12 @@ class _FakeApp:
 
     instance_value = None
 
-    def __init__(self, _argv) -> None:  # type:ignore[no-untyped-def]
+    def __init__(self, _argv) -> None:
         self.exec_count = 0
         self.stylesheet = ""
 
     @classmethod
-    def instance(cls):  # type:ignore[no-untyped-def]
+    def instance(cls):
         """Return fake singleton instance."""
         return cls.instance_value
 
@@ -38,7 +38,7 @@ class _FakeApp:
 class _FakeWindow:
     """Small MainWindow stand-in."""
 
-    def __init__(self, *args, **kwargs) -> None:  # type:ignore[no-untyped-def]
+    def __init__(self, *args, **kwargs) -> None:
         self.show_count = 0
         self.apply_calls = 0
         self.theme = kwargs.get("theme")
@@ -61,14 +61,14 @@ def test_qt_gui_resolves_no_exec_from_argument() -> None:
     assert gui_qt.Gui._resolve_no_exec(Namespace(no_gui_exec=False)) is False
 
 
-def test_qt_gui_resolves_no_exec_from_environment(monkeypatch) -> None:  # type:ignore[no-untyped-def]
+def test_qt_gui_resolves_no_exec_from_environment(monkeypatch) -> None:
     """The smoke launch environment variable should skip the Qt event loop."""
     monkeypatch.setenv(gui_qt.QT_NO_EXEC_ENV, "1")
 
     assert gui_qt.Gui._resolve_no_exec(Namespace()) is True
 
 
-def test_qt_gui_no_exec_builds_window_without_event_loop(monkeypatch) -> None:  # type:ignore[no-untyped-def]
+def test_qt_gui_no_exec_builds_window_without_event_loop(monkeypatch) -> None:
     """Smoke mode should instantiate QApplication and MainWindow without entering exec."""
     _FakeApp.instance_value = None
     monkeypatch.setattr(gui_qt, "QApplication", _FakeApp)
@@ -83,7 +83,7 @@ def test_qt_gui_no_exec_builds_window_without_event_loop(monkeypatch) -> None:  
     assert process.app.exec_count == 0
 
 
-def test_qt_gui_applies_default_theme(monkeypatch) -> None:  # type:ignore[no-untyped-def]
+def test_qt_gui_applies_default_theme(monkeypatch) -> None:
     """Qt launch should apply the default shell stylesheet."""
     _FakeApp.instance_value = None
     monkeypatch.setattr(gui_qt, "QApplication", _FakeApp)
@@ -95,7 +95,7 @@ def test_qt_gui_applies_default_theme(monkeypatch) -> None:  # type:ignore[no-un
     assert "QMainWindow" in process.app.stylesheet
 
 
-def test_qt_gui_normal_launch_shows_window_and_runs_owned_event_loop(monkeypatch) -> None:  # type:ignore[no-untyped-def]
+def test_qt_gui_normal_launch_shows_window_and_runs_owned_event_loop(monkeypatch) -> None:
     """Normal launch should show the window, install signal handlers, and enter exec."""
     _FakeApp.instance_value = None
     monkeypatch.setattr(gui_qt, "QApplication", _FakeApp)
@@ -115,10 +115,10 @@ def test_qt_gui_normal_launch_shows_window_and_runs_owned_event_loop(monkeypatch
     assert installed == [(process.app, process.root)]
 
 
-def test_qt_gui_reuses_existing_qapplication_without_exec(monkeypatch) -> None:  # type:ignore[no-untyped-def]
+def test_qt_gui_reuses_existing_qapplication_without_exec(monkeypatch) -> None:
     """If a QApplication already exists, the wrapper should not own or run its event loop."""
     existing_app = _FakeApp([])
-    _FakeApp.instance_value = existing_app
+    _FakeApp.instance_value = existing_app  # type: ignore[assignment]
     monkeypatch.setattr(gui_qt, "QApplication", _FakeApp)
     monkeypatch.setattr(gui_qt, "MainWindow", _FakeWindow)
     installed: list[tuple[object, object]] = []
@@ -140,7 +140,7 @@ def test_qt_gui_reuses_existing_qapplication_without_exec(monkeypatch) -> None: 
     _FakeApp.instance_value = None
 
 
-def test_qt_gui_handles_keyboard_interrupt_via_helper(monkeypatch) -> None:  # type:ignore[no-untyped-def]
+def test_qt_gui_handles_keyboard_interrupt_via_helper(monkeypatch) -> None:
     """KeyboardInterrupt raised during exec should call interrupt_window and sys.exit(130)."""
     _FakeApp.instance_value = None
     monkeypatch.setattr(gui_qt, "QApplication", _FakeApp)
@@ -162,7 +162,7 @@ def test_qt_gui_handles_keyboard_interrupt_via_helper(monkeypatch) -> None:  # t
     assert interrupted == [process.root]
 
 
-def test_qt_gui_no_exec_does_not_touch_streams_or_root_logger(monkeypatch) -> None:  # type:ignore[no-untyped-def]
+def test_qt_gui_no_exec_does_not_touch_streams_or_root_logger(monkeypatch) -> None:
     """Smoke-mode process() must leave sys.stdout/stderr and root handlers untouched."""
     import logging
     import sys
@@ -190,13 +190,13 @@ def test_qt_gui_no_exec_does_not_touch_streams_or_root_logger(monkeypatch) -> No
     assert logging.getLogger().handlers == original_handlers
 
 
-def test_qt_gui_reused_qapp_does_not_touch_streams_or_root_logger(monkeypatch) -> None:  # type:ignore[no-untyped-def]
+def test_qt_gui_reused_qapp_does_not_touch_streams_or_root_logger(monkeypatch) -> None:
     """Reused-QApplication process() must leave streams/handlers untouched."""
     import logging
     import sys
 
     existing_app = _FakeApp([])
-    _FakeApp.instance_value = existing_app
+    _FakeApp.instance_value = existing_app  # type: ignore[assignment]
     monkeypatch.setattr(gui_qt, "QApplication", _FakeApp)
     monkeypatch.setattr(gui_qt, "MainWindow", _FakeWindow)
     monkeypatch.setattr(gui_qt, "install_signal_handlers", lambda app, window: None)
@@ -216,7 +216,7 @@ def test_qt_gui_reused_qapp_does_not_touch_streams_or_root_logger(monkeypatch) -
     _FakeApp.instance_value = None
 
 
-def test_qt_gui_restores_streams_when_signal_install_fails(monkeypatch) -> None:  # type:ignore[no-untyped-def]
+def test_qt_gui_restores_streams_when_signal_install_fails(monkeypatch) -> None:
     """An exception after install must be caught by the same try/finally."""
     import logging
     import sys
@@ -245,7 +245,7 @@ def test_qt_gui_restores_streams_when_signal_install_fails(monkeypatch) -> None:
     assert logging.getLogger().handlers == original_handlers
 
 
-def test_qt_gui_log_handler_does_not_duplicate_pre_existing_stream_handlers(monkeypatch) -> None:  # type:ignore[no-untyped-def]
+def test_qt_gui_log_handler_does_not_duplicate_pre_existing_stream_handlers(monkeypatch) -> None:
     """A logger.warning must land in each sink exactly once.
 
     The Tk launcher's ``log_setup`` adds a ``StreamHandler`` bound to

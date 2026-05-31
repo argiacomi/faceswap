@@ -173,11 +173,11 @@ def _cofw68_json_current(path: Path) -> bool:
         if not isinstance(sample, dict):
             return False
         metadata = sample.get("metadata") if isinstance(sample.get("metadata"), dict) else {}
-        if metadata.get("face_bbox_source") != "cofw68_benchmark":
+        if metadata.get("face_bbox_source") != "cofw68_benchmark":  # type: ignore[union-attr]
             continue
-        if metadata.get("face_bbox_format") != "ltrb":
+        if metadata.get("face_bbox_format") != "ltrb":  # type: ignore[union-attr]
             return False
-        bbox = metadata.get("face_bbox")
+        bbox = metadata.get("face_bbox")  # type: ignore[union-attr]
         if not isinstance(bbox, (list, tuple)) or len(bbox) < 4:
             return False
         left, top, right, bottom = (float(value) for value in bbox[:4])
@@ -254,7 +254,7 @@ def build_cofw68_json_from_sources(
             metadata["visibility"] = visibility
             entry["visibility"] = visibility
         if bboxes[index - 1] is not None:
-            raw_bbox = [float(value) for value in bboxes[index - 1][:4]]
+            raw_bbox = [float(value) for value in bboxes[index - 1][:4]]  # type: ignore[index]
             bbox = _cofw_bbox_xywh_to_ltrb(raw_bbox)
             metadata["face_bbox"] = bbox
             metadata["face_bbox_raw"] = raw_bbox

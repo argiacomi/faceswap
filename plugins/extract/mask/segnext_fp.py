@@ -236,7 +236,7 @@ def _resolve_checkpoint_path(checkpoint: _SegNeXtCheckpoint) -> str:
             )
         )
 
-    return T.cast(
+    return T.cast(  # type: ignore[redundant-cast]
         str,
         GetModelFromUrl(checkpoint.filename, checkpoint.url, checkpoint.sha256).model_path,
     )

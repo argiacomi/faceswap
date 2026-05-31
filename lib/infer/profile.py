@@ -80,8 +80,8 @@ class ModelProfile:
 
         num_tests = int(math.log2(self._max_batch_size)) + 1
         self.batch_sizes = np.fromiter((2**i for i in range(num_tests)), dtype=np.int64)
-        self.iterations = np.zeros((num_tests,), dtype=np.int64) - 1
-        self.vram = np.zeros((2, num_tests), dtype=np.int64) - 1
+        self.iterations = np.zeros((num_tests,), dtype=np.int64) - 1  # type: ignore[var-annotated]
+        self.vram = np.zeros((2, num_tests), dtype=np.int64) - 1  # type: ignore[var-annotated]
 
         accelerator_empty_cache()
         plugin.batch_size = 1
@@ -307,7 +307,7 @@ class DataTracker:  # pylint:disable=too-many-instance-attributes
     def add_iterations_row(self) -> None:
         """Add a new row to the iterations list"""
         with self._lock:
-            new_row = np.zeros((1, len(self._iterations[-1])), dtype="int") - 1
+            new_row = np.zeros((1, len(self._iterations[-1])), dtype="int") - 1  # type: ignore[var-annotated]
             self._iterations = np.concatenate([self._iterations, new_row])
 
     def collect_vram(self) -> None:

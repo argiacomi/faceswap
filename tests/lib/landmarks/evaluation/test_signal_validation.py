@@ -214,7 +214,7 @@ def _make_summary(
     matrix = np.array(
         [[scale, 0.0, translation[0]], [0.0, scale, translation[1]]], dtype="float64"
     )
-    landmarks = np.zeros((68, 2), dtype="float64")
+    landmarks = np.zeros((68, 2), dtype="float64")  # type: ignore[var-annotated]
     return AlignmentSummary(
         matrix=matrix,
         roi=roi,

@@ -26,7 +26,7 @@ def test_canonicalize_schema_aliases() -> None:
 
 def test_normalize_landmark_array_flat_input() -> None:
     """Flat x/y pairs are reshaped and converted to float32."""
-    points = normalize_landmark_array([0, 1, 2, 3, 4, 5, 6, 7], schema="2d_4")
+    points = normalize_landmark_array([0, 1, 2, 3, 4, 5, 6, 7], schema="2d_4")  # type: ignore[list-item]
     assert points.dtype == np.float32
     np.testing.assert_array_equal(
         points,
@@ -42,14 +42,14 @@ def test_normalize_landmark_array_rejects_non_finite() -> None:
 
 def test_landmark_prediction_validates_confidence_shape() -> None:
     """Confidence must match the point count."""
-    points = np.zeros((68, 2), dtype="float32")
+    points = np.zeros((68, 2), dtype="float32")  # type: ignore[var-annotated]
     with pytest.raises(ValueError, match="one value per landmark"):
         LandmarkPrediction(points=points, confidence=np.zeros(67, dtype="float32"))
 
 
 def test_landmark_prediction_records_adapter_metadata() -> None:
     """Predictions expose the metadata required by model adapters."""
-    points = np.zeros((68, 2), dtype="float32")
+    points = np.zeros((68, 2), dtype="float32")  # type: ignore[var-annotated]
     prediction = LandmarkPrediction(
         landmarks=points,
         model_name="hrnet",
@@ -68,7 +68,7 @@ def test_landmark_prediction_records_adapter_metadata() -> None:
 
 def test_to_canonical_68_from_98_point_schema() -> None:
     """98-point inputs reuse Faceswap's existing 98-to-68 mapping."""
-    points = np.arange(196, dtype="float32").reshape((98, 2))
+    points = np.arange(196, dtype="float32").reshape((98, 2))  # type: ignore[var-annotated]
     expected = points[MAP_2D_68[LandmarkType.LM_2D_98]]
     np.testing.assert_array_equal(to_canonical_68(points, source_schema="2d_98"), expected)
 
@@ -81,7 +81,7 @@ def test_normalizers_accept_mixed_68_and_98_inputs(
 ) -> None:
     """Public normalization helpers map 68 and 98 point inputs to canonical 68."""
     count = 68 if source_schema == "2d_68" else 98
-    points = np.arange(count * 2, dtype="float32").reshape((count, 2))
+    points = np.arange(count * 2, dtype="float32").reshape((count, 2))  # type: ignore[var-annotated]
     expected = points if source_schema == "2d_68" else points[MAP_2D_68[LandmarkType.LM_2D_98]]
 
     result = normalizer(points, source_schema=source_schema)
@@ -93,8 +93,8 @@ def test_normalizers_accept_mixed_68_and_98_inputs(
 
 def test_normalizers_infer_mixed_68_and_98_inputs_without_schema() -> None:
     """Shape inference keeps 68-point inputs and remaps 98-point inputs."""
-    points_68 = np.arange(136, dtype="float32").reshape((68, 2))
-    points_98 = np.arange(196, dtype="float32").reshape((98, 2))
+    points_68 = np.arange(136, dtype="float32").reshape((68, 2))  # type: ignore[var-annotated]
+    points_98 = np.arange(196, dtype="float32").reshape((98, 2))  # type: ignore[var-annotated]
 
     np.testing.assert_array_equal(to_canonical_68(points_68), points_68)
     np.testing.assert_array_equal(

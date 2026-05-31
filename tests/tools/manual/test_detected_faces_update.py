@@ -55,7 +55,7 @@ def _face_update(
         tk_face_count_changed=_Var(),
         extractor=None,
     )
-    return FaceUpdate(detected_faces), detected_faces
+    return FaceUpdate(detected_faces), detected_faces  # type: ignore[arg-type]
 
 
 def test_delete_mask_removes_mask_key_and_marks_frame_dirty() -> None:

@@ -32,7 +32,7 @@ MODELS = ("hrnet", "spiga", "orformer")
 
 
 def _truth_points() -> np.ndarray:
-    return np.stack(
+    return np.stack(  # type: ignore[no-any-return]
         (
             np.linspace(20.0, 70.0, LANDMARK_COUNT, dtype="float32"),
             np.linspace(25.0, 75.0, LANDMARK_COUNT, dtype="float32"),
@@ -42,7 +42,7 @@ def _truth_points() -> np.ndarray:
 
 
 def _prediction(noise: float) -> np.ndarray:
-    return _truth_points() + noise
+    return _truth_points() + noise  # type: ignore[no-any-return]
 
 
 def _write_manifest_and_cache(
@@ -406,4 +406,4 @@ def test_run_candidate_search_attaches_effective_ensemble_diagnostics(tmp_path: 
     baselines = [result for result in results if result.is_single_model_baseline]
     assert {result.candidate.models[0] for result in baselines} == set(MODELS)
     for baseline in baselines:
-        assert baseline.effective_ensemble.collapsed is True
+        assert baseline.effective_ensemble.collapsed is True  # type: ignore[union-attr]

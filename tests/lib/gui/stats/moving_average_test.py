@@ -65,7 +65,7 @@ def naive_ewma(data: np.ndarray, alpha: float) -> np.ndarray:
     out[0] = data[0]
     for i in range(1, len(data)):
         out[i] = alpha * data[i] + (1 - alpha) * out[i - 1]
-    return out
+    return out  # type: ignore[no-any-return]
 
 
 @pytest.mark.parametrize("alpha", [0.001, 0.01, 0.25, 0.33, 0.5, 0.66, 0.75, 0.90, 0.999])

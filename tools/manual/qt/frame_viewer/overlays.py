@@ -254,7 +254,7 @@ class ManualFrameOverlay:
         pen = QPen(color)
         pen.setWidthF(pen_width)
         painter.setPen(pen)
-        painter.setBrush(Qt.NoBrush)
+        painter.setBrush(Qt.NoBrush)  # type: ignore[attr-defined]
         painter.drawRect(rect)
 
     @staticmethod
@@ -267,7 +267,7 @@ class ManualFrameOverlay:
         pen = QPen(color)
         pen.setWidthF(pen_width)
         painter.setPen(pen)
-        painter.setBrush(Qt.NoBrush)
+        painter.setBrush(Qt.NoBrush)  # type: ignore[attr-defined]
         painter.drawPolygon(polygon)
 
     def _draw_landmarks(
@@ -278,7 +278,7 @@ class ManualFrameOverlay:
         is_active: bool,
         face_index: int,
     ) -> None:
-        painter.setPen(Qt.NoPen)
+        painter.setPen(Qt.NoPen)  # type: ignore[attr-defined]
         selected = self._selected_landmarks if is_active else frozenset()
         for lm_index, (lx, ly) in enumerate(landmarks):
             point = viewport.source_to_widget(lx, ly)
@@ -304,12 +304,12 @@ class ManualFrameOverlay:
                 metrics = painter.fontMetrics()
                 label_rect = metrics.boundingRect(label).adjusted(-3, -2, 3, 2)
                 label_rect.moveTopLeft(point.toPoint() + QPointF(8.0, -8.0).toPoint())
-                painter.setPen(Qt.NoPen)
+                painter.setPen(Qt.NoPen)  # type: ignore[attr-defined]
                 painter.setBrush(QBrush(QColor(20, 20, 20, 210)))
                 painter.drawRect(label_rect)
                 painter.setPen(QPen(QColor("#ffffff")))
-                painter.drawText(label_rect, Qt.AlignCenter, label)
-                painter.setPen(Qt.NoPen)
+                painter.drawText(label_rect, Qt.AlignCenter, label)  # type: ignore[attr-defined]
+                painter.setPen(Qt.NoPen)  # type: ignore[attr-defined]
 
     def _draw_mesh(
         self,
@@ -324,7 +324,7 @@ class ManualFrameOverlay:
         pen = QPen(self._color("mesh"))
         pen.setWidthF(max(1.0, pen_width))
         painter.setPen(pen)
-        painter.setBrush(Qt.NoBrush)
+        painter.setBrush(Qt.NoBrush)  # type: ignore[attr-defined]
         for group in groups["polygon"]:
             painter.drawPolygon(
                 QPolygonF(tuple(viewport.source_to_widget(x, y) for x, y in group))
@@ -424,7 +424,7 @@ class ManualFrameOverlay:
                 flags=cv2.WARP_INVERSE_MAP | cv2.INTER_LINEAR,
                 borderMode=cv2.BORDER_CONSTANT,
             )
-            roi = np.zeros((int(src_h), int(src_w)), dtype=np.uint8)
+            roi = np.zeros((int(src_h), int(src_w)), dtype=np.uint8)  # type: ignore[var-annotated]
             roi_points = self._model.mask_original_roi(
                 frame_index, int(face.face_index), mask_type
             )

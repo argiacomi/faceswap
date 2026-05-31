@@ -613,7 +613,7 @@ class CudaWindows(_Cuda):
             if "cuda_path_v" in k.lower()
         }
         try:
-            with winreg.OpenKey(
+            with winreg.OpenKey(  # type: ignore[attr-defined]
                 winreg.HKEY_LOCAL_MACHINE,  # type:ignore[attr-defined]
                 reg_key,
             ) as key:
@@ -655,8 +655,8 @@ class CudaWindows(_Cuda):
         reg_key = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"
         lookups = (
             winreg.HKEY_LOCAL_MACHINE,  # type:ignore[attr-defined]
-            winreg.HKEY_CURRENT_USER,
-        )  # type:ignore[attr-defined]
+            winreg.HKEY_CURRENT_USER,  # type: ignore[attr-defined]
+        )
         for lookup in lookups:
             try:
                 key = winreg.OpenKey(lookup, reg_key)  # type:ignore[attr-defined]
@@ -673,8 +673,8 @@ class CudaWindows(_Cuda):
                     continue
                 logger.debug("Parsing cudnn key '%s'", cudnn_key)
                 try:
-                    path, _ = winreg.QueryValueEx(
-                        subkey,  # type:ignore[attr-defined]
+                    path, _ = winreg.QueryValueEx(  # type: ignore[attr-defined]
+                        subkey,
                         "InstallLocation",
                     )
                 except (FileNotFoundError, OSError):

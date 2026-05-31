@@ -58,7 +58,7 @@ class Detect(ExtractHandler):
         self._rotation = rotation
         self._rotator = Rotator(rotation, self.plugin.input_size)
         """Responsible for rotating feed images for the model"""
-        self._empty_bbox = np.empty((0, 4), dtype="float32")
+        self._empty_bbox = np.empty((0, 4), dtype="float32")  # type: ignore[var-annotated]
         """An empty detection result, that will never be used so only needs to be created once"""
         self._min_size = min_size / 100.0
         """The user selected shortest frame dim multiplier to accept for minimum size"""
@@ -100,7 +100,7 @@ class Detect(ExtractHandler):
         new_wh = np.rint(orig_wh * scales[:, None]).astype(np.int32)
         pad_xy = (self.plugin.input_size - new_wh) // 2
 
-        retval = np.zeros((len(scales), 3, 3), dtype="float32")
+        retval = np.zeros((len(scales), 3, 3), dtype="float32")  # type: ignore[var-annotated]
         retval[:, 0, 0] = scales
         retval[:, 1, 1] = scales
         retval[:, 0, 2] = pad_xy[:, 0]
@@ -332,8 +332,8 @@ class Detect(ExtractHandler):
         predictions /= mats[:, 0, 0][:, None]
         np.rint(predictions, out=predictions)
         batch.bboxes = predictions.astype("int32")
-        logger.trace(
-            "[%s.out] Finalized batch: %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "[%s.out] Finalized batch: %s",
             self.plugin.name,
             batch,
         )
@@ -456,7 +456,7 @@ class Rotator:
         -------
         The rotation angles between 0 and 360 for the given step size
         """
-        retval = np.arange(0, 360, step_size, dtype="float32")
+        retval = np.arange(0, 360, step_size, dtype="float32")  # type: ignore[var-annotated]
         logger.debug("Setting rotation angles to %s from step size: %s", retval, step_size)
         return retval
 
@@ -539,7 +539,7 @@ class Rotator:
         if self._channels_first:
             retval = retval.transpose(0, 3, 1, 2)
 
-        return retval
+        return retval  # type: ignore[no-any-return]
 
     def un_rotate(
         self, indices_angle: npt.NDArray[np.int32], roi: npt.NDArray[np.float32]

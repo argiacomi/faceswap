@@ -116,9 +116,8 @@ class PreviewTrain:
         try:
             modified = os.path.getmtime(filename)
             if modified <= self._modified:
-                logger.trace(
-                    "preview '%s' not updated. Current timestamp: %s, "  # type:ignore
-                    "existing timestamp: %s",
+                logger.trace(  # type: ignore[attr-defined]
+                    "preview '%s' not updated. Current timestamp: %s, existing timestamp: %s",
                     filename,
                     modified,
                     self._modified,
@@ -367,7 +366,7 @@ class PreviewExtract:
         draw.rectangle(((0, 0), (size, size)), outline="#E5E5E5", width=1)
         retval = np.array(image)
         logger.trace("image shape: %s", retval.shape)  # type: ignore
-        return retval
+        return retval  # type: ignore[no-any-return]
 
     def _process_samples(
         self, samples: list[np.ndarray], filenames: list[str], num_images: int

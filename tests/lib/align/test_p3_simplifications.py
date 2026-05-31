@@ -11,7 +11,7 @@ from lib.align.objects import AlignmentsEntry, FileAlignments
 
 def _face_with_masks(masks: list[str]) -> FileAlignments:
     face = FileAlignments(x=0, y=0, w=10, h=10, landmarks_xy=np.zeros((68, 2), dtype="float32"))
-    face.mask = {name: None for name in masks}  # type: ignore[arg-type]
+    face.mask = {name: None for name in masks}  # type: ignore[misc]
     return face
 
 
@@ -56,7 +56,7 @@ def test_numpy_to_list_update_handles_legacy_alignment_without_thumb() -> None:
     }
 
     updater = NumpyToList.__new__(NumpyToList)
-    updater._alignments = alignments  # type: ignore[attr-defined]
+    updater._alignments = alignments
 
     # Must not raise — and only the ndarray entry should flip to list.
     count = updater.update()
@@ -64,11 +64,11 @@ def test_numpy_to_list_update_handles_legacy_alignment_without_thumb() -> None:
     assert count == 1
     first = alignments["frame_a.png"]["faces"][0]
     second = alignments["frame_a.png"]["faces"][1]
-    assert first["landmarks_xy"] == [[0.0, 0.0]] * 68
-    assert second["landmarks_xy"] == [[0.0, 0.0]]
+    assert first["landmarks_xy"] == [[0.0, 0.0]] * 68  # type: ignore[index]
+    assert second["landmarks_xy"] == [[0.0, 0.0]]  # type: ignore[index]
     # ``thumb`` was never set; the updater must not have created it.
-    assert "thumb" not in first
-    assert "thumb" not in second
+    assert "thumb" not in first  # type: ignore[operator]
+    assert "thumb" not in second  # type: ignore[operator]
 
 
 def test_solve_pnp_writes_rotation_and_translation_into_preallocated_buffer(monkeypatch) -> None:
@@ -123,7 +123,7 @@ def test_to_alignment_uses_landmarks_xy_property_without_recast() -> None:
     """
     from lib.align.detected_face import DetectedFace
 
-    landmarks = np.zeros((68, 2), dtype=np.float32)
+    landmarks = np.zeros((68, 2), dtype=np.float32)  # type: ignore[var-annotated]
     face = DetectedFace(left=0, top=0, width=10, height=10, landmarks_xy=landmarks)
 
     out: FileAlignments = face.to_alignment()
@@ -139,7 +139,7 @@ def test_to_png_meta_uses_landmarks_xy_property_without_recast() -> None:
     from lib.align.detected_face import DetectedFace
     from lib.align.objects import PNGAlignments
 
-    landmarks = np.zeros((68, 2), dtype=np.float32)
+    landmarks = np.zeros((68, 2), dtype=np.float32)  # type: ignore[var-annotated]
     face = DetectedFace(left=0, top=0, width=10, height=10, landmarks_xy=landmarks)
 
     out: PNGAlignments = face.to_png_meta()

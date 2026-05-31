@@ -116,12 +116,12 @@ class Mask:  # pylint:disable=too-many-instance-attributes
         assert self._mask is not None
         cached = getattr(self, "_decompressed_mask_cache", None)
         if cached is not None:
-            return cached
+            return cached  # type: ignore[no-any-return]
         dims = (self.stored_size, self.stored_size, 1)
         mask = np.frombuffer(decompress(self._mask), dtype=np.uint8).reshape(dims)
         logger.trace("stored mask shape: %s", mask.shape)  # type:ignore[attr-defined]
         self._decompressed_mask_cache = mask
-        return mask
+        return mask  # type: ignore[no-any-return]
 
     def _invalidate_stored_mask_cache(self) -> None:
         """Drop the decompressed-mask cache after a writer mutates ``self._mask``."""
@@ -142,7 +142,7 @@ class Mask:  # pylint:disable=too-many-instance-attributes
         matrix = cv2.invertAffineTransform(self.affine_matrix[:2])
         roi = cv2.transform(points, matrix).reshape((4, 2))
         logger.trace("Returning: %s", roi)  # type:ignore[attr-defined]
-        return roi
+        return roi  # type: ignore[no-any-return]
 
     @property
     def affine_matrix(self) -> np.ndarray:
@@ -186,7 +186,7 @@ class Mask:  # pylint:disable=too-many-instance-attributes
         -------
         The mask affined to the original full frame of the given dimensions
         """
-        frame = np.zeros((width, height, 1), dtype=np.uint8)
+        frame = np.zeros((width, height, 1), dtype=np.uint8)  # type: ignore[var-annotated]
         mask = cv2.warpAffine(
             self.mask,
             self.affine_matrix[:2],
@@ -195,17 +195,16 @@ class Mask:  # pylint:disable=too-many-instance-attributes
             flags=cv2.WARP_INVERSE_MAP | self.interpolator,
             borderMode=cv2.BORDER_CONSTANT,
         )
-        logger.trace(
-            "mask shape: %s, mask dtype: %s, mask min: %s, "  # type:ignore[attr-defined]
-            "mask max: %s",
+        logger.trace(  # type: ignore[attr-defined]
+            "mask shape: %s, mask dtype: %s, mask min: %s, mask max: %s",
             mask.shape,
             mask.dtype,
             mask.min(),
             mask.max(),
         )
-        return mask
+        return mask  # type: ignore[no-any-return]
 
-    def add(self, mask: npt.NDArray[np.uint8], affine_matrix: npt.NDArray[np.float32]) -> T.Self:
+    def add(self, mask: npt.NDArray[np.uint8], affine_matrix: npt.NDArray[np.float32]) -> T.Self:  # type: ignore[name-defined]
         """Add a Faceswap mask to this :class:`Mask`.
 
         The mask should be the original output from  :mod:`plugins.extract.mask`
@@ -223,9 +222,8 @@ class Mask:  # pylint:disable=too-many-instance-attributes
         -------
         This mask object
         """
-        logger.trace(
-            "mask shape: %s, mask dtype: %s, mask min: %s, "  # type:ignore[attr-defined]
-            "mask max: %s, affine_matrix: %s)",
+        logger.trace(  # type: ignore[attr-defined]
+            "mask shape: %s, mask dtype: %s, mask min: %s, mask max: %s, affine_matrix: %s)",
             mask.shape,
             mask.dtype,
             mask.min(),
@@ -277,8 +275,8 @@ class Mask:  # pylint:disable=too-many-instance-attributes
         kernel = int(round(self.stored_size * abs(amount / 100.0), 0))
         self._dilation = (action, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel, kernel)))
 
-        logger.trace(
-            "action: '%s', amount: %s, kernel: %s, ",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "action: '%s', amount: %s, kernel: %s, ",
             action,
             amount,
             kernel,
@@ -307,9 +305,8 @@ class Mask:  # pylint:disable=too-many-instance-attributes
             The threshold amount to minimize/maximize mask values to 0 and 100. Percentage value.
             Default: 0
         """
-        logger.trace(
-            "blur_kernel: %s, blur_type: %s, "  # type:ignore[attr-defined]
-            "blur_passes: %s, threshold: %s",
+        logger.trace(  # type: ignore[attr-defined]
+            "blur_kernel: %s, blur_type: %s, blur_passes: %s, threshold: %s",
             blur_kernel,
             blur_type,
             blur_passes,
@@ -372,9 +369,8 @@ class Mask:  # pylint:disable=too-many-instance-attributes
             ),
         ]
 
-        logger.trace(
-            "src_size: %s, coverage_ratio: %s, "  # type:ignore[attr-defined]
-            "sub_crop_size: %s, sub_crop_slices: %s",
+        logger.trace(  # type: ignore[attr-defined]
+            "src_size: %s, coverage_ratio: %s, sub_crop_size: %s, sub_crop_slices: %s",
             roi,
             coverage_ratio,
             self._sub_crop_size,
@@ -416,16 +412,15 @@ class Mask:  # pylint:disable=too-many-instance-attributes
         zoom = self.stored_size / mask_size
         zoom_mat = np.array([[zoom, 0, 0.0], [0, zoom, 0.0]])
         adjust_mat = np.dot(zoom_mat, self._matrix_2to3(affine_matrix))
-        logger.trace(
-            "storage_size: %s, mask_size: %s, zoom: %s, "  # type:ignore[attr-defined]
-            "original matrix: %s, adjusted_matrix: %s",
+        logger.trace(  # type: ignore[attr-defined]
+            "storage_size: %s, mask_size: %s, zoom: %s, original matrix: %s, adjusted_matrix: %s",
             self.stored_size,
             mask_size,
             zoom,
             affine_matrix.shape,
             adjust_mat.shape,
         )
-        return adjust_mat
+        return adjust_mat  # type: ignore[no-any-return]
 
     def to_dict(self, is_png=False) -> MaskAlignmentsFile:
         """Convert the mask to a dictionary for saving to an alignments file
@@ -463,7 +458,7 @@ class Mask:  # pylint:disable=too-many-instance-attributes
         """
         return self.to_dict(is_png=True)
 
-    def from_dict(self, mask: MaskAlignmentsFile) -> T.Self:
+    def from_dict(self, mask: MaskAlignmentsFile) -> T.Self:  # type: ignore[name-defined]
         """Populates the :class:`Mask` from a dictionary loaded from an alignments file.
 
         Parameters
@@ -607,8 +602,8 @@ class LandmarksMask:
             retval = [
                 [slice(*p) for p in T.cast(list[tuple[int, int]], lm_parts[v])] for v in mapped
             ]
-        logger.trace(
-            "[LM_MASK] area: '%s', slices: %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "[LM_MASK] area: '%s', slices: %s",
             self._area,
             retval,
         )
@@ -705,7 +700,7 @@ class LandmarksMask:
         """
         if self._original_mask is None:
             points = self._get_points()
-            mask = np.zeros((self._size, self._size, 1), dtype=np.uint8)
+            mask = np.zeros((self._size, self._size, 1), dtype=np.uint8)  # type: ignore[var-annotated]
             for pts in points:
                 # ``_get_points`` already emits int32 arrays; the previous
                 # ``np.rint(...).astype("int")`` was a no-op round + a copy.
@@ -719,8 +714,8 @@ class LandmarksMask:
             mask = BlurMask(
                 self.blur_type, mask, self.blur_kernel, passes=self.blur_passes
             ).blurred
-        logger.trace(
-            "[LM_MASK] mask: (shape: %s, dtype: %s)",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "[LM_MASK] mask: (shape: %s, dtype: %s)",
             mask.shape,
             mask.dtype,
         )
@@ -783,8 +778,8 @@ class BlurMask:
             k_tup = kwargs["ksize"]
             assert isinstance(k_tup, tuple)
             k_size = int(k_tup[0])
-            logger.trace(
-                "Pass: %s, kernel_size: %s",  # type:ignore[attr-defined]
+            logger.trace(  # type: ignore[attr-defined]
+                "Pass: %s, kernel_size: %s",
                 i + 1,
                 (k_size, k_size),
             )
@@ -792,8 +787,8 @@ class BlurMask:
             k_size = int(round(k_size * self._multipass_factor))
             kwargs["ksize"] = self._get_kernel_tuple(k_size)
         blurred = blurred[..., None]
-        logger.trace(
-            "Returning blurred mask. Shape: %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "Returning blurred mask. Shape: %s",
             blurred.shape,
         )
         return blurred

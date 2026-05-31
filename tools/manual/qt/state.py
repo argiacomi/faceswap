@@ -22,14 +22,14 @@ class WindowStateMixin:
 
     def _capture_manual_window_state(self) -> dict[str, object]:
         """Capture geometry, window state and Manual Tool splitter sizes."""
-        geometry = bytes(self.saveGeometry().toBase64()).decode("ascii")
-        window_state = bytes(self.saveState().toBase64()).decode("ascii")
+        geometry = bytes(self.saveGeometry().toBase64()).decode("ascii")  # type: ignore[attr-defined]
+        window_state = bytes(self.saveState().toBase64()).decode("ascii")  # type: ignore[attr-defined]
         return {
             "geometry": geometry,
             "window_state": window_state,
-            "maximized": self.isMaximized(),
-            "fullscreen": self.isFullScreen(),
-            "splitter_sizes": self._manual_splitter.sizes() if self._manual_splitter else [],
+            "maximized": self.isMaximized(),  # type: ignore[attr-defined]
+            "fullscreen": self.isFullScreen(),  # type: ignore[attr-defined]
+            "splitter_sizes": self._manual_splitter.sizes() if self._manual_splitter else [],  # type: ignore[attr-defined]
         }
 
     def _restore_manual_window_state_from(self, state: T.Mapping[str, object]) -> bool:
@@ -37,24 +37,24 @@ class WindowStateMixin:
         restored = False
         geometry = state.get("geometry")
         if isinstance(geometry, str) and geometry:
-            restored = bool(self.restoreGeometry(QByteArray.fromBase64(geometry.encode("ascii"))))
+            restored = bool(self.restoreGeometry(QByteArray.fromBase64(geometry.encode("ascii"))))  # type: ignore[attr-defined]
         window_state = state.get("window_state")
         if isinstance(window_state, str) and window_state:
-            self.restoreState(QByteArray.fromBase64(window_state.encode("ascii")))
+            self.restoreState(QByteArray.fromBase64(window_state.encode("ascii")))  # type: ignore[attr-defined]
         sizes = state.get("splitter_sizes")
-        if self._manual_splitter is not None and isinstance(sizes, list | tuple):
+        if self._manual_splitter is not None and isinstance(sizes, list | tuple):  # type: ignore[attr-defined]
             try:
                 int_sizes = [int(value) for value in sizes]
             except (TypeError, ValueError):
                 int_sizes = []
             if int_sizes:
-                self._manual_splitter.setSizes(int_sizes)
+                self._manual_splitter.setSizes(int_sizes)  # type: ignore[attr-defined]
                 restored = True
         if bool(state.get("fullscreen")):
-            self.showFullScreen()
+            self.showFullScreen()  # type: ignore[attr-defined]
             restored = True
         elif bool(state.get("maximized")):
-            self.showMaximized()
+            self.showMaximized()  # type: ignore[attr-defined]
             restored = True
         return restored
 

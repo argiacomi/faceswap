@@ -281,7 +281,7 @@ def test_seed_from_handle_maps_sparse_alignments_to_filename_index() -> None:
     model = ManualEditableAlignments()
     frame_names = [f"frame_{idx:03d}.png" for idx in range(20)]
 
-    model.seed_from_handle(handle, frame_names=frame_names)
+    model.seed_from_handle(handle, frame_names=frame_names)  # type: ignore[arg-type]
 
     # The sole alignment entry must land on frame_index 10 (the position of
     # ``frame_010.png`` in the source frame list), not 0 (the lexicographic
@@ -336,7 +336,7 @@ def test_seed_from_handle_falls_back_to_sorted_alignments_for_video() -> None:
             return self._payload
 
     model = ManualEditableAlignments()
-    model.seed_from_handle(_StubHandle())
+    model.seed_from_handle(_StubHandle())  # type: ignore[arg-type]
 
     # Sorted alphabetically: frame_a.png -> index 0, frame_b.png -> index 1.
     assert model.faces(0)[0].bbox == (5.0, 6.0, 7.0, 8.0)
@@ -810,7 +810,7 @@ def test_encode_mask_blob_round_trips_through_decode() -> None:
     import numpy as np
 
     size = ManualEditableAlignments.MASK_STORED_SIZE
-    grid = np.zeros((size, size), dtype=np.uint8)
+    grid = np.zeros((size, size), dtype=np.uint8)  # type: ignore[var-annotated]
     grid[10:40, 10:40] = 255
     blob = ManualEditableAlignments.encode_mask_blob(grid, (5.0, 5.0, 100.0, 100.0))
     decoded = ManualEditableAlignments.decode_mask_blob(blob)
@@ -824,7 +824,7 @@ def test_encode_mask_blob_affine_matrix_maps_to_bbox() -> None:
     import numpy as np
 
     size = ManualEditableAlignments.MASK_STORED_SIZE
-    grid = np.ones((size, size), dtype=np.uint8) * 200
+    grid = np.ones((size, size), dtype=np.uint8) * 200  # type: ignore[var-annotated]
     bbox = (12.0, 18.0, 40.0, 80.0)
     blob = ManualEditableAlignments.encode_mask_blob(grid, bbox)
     a = blob.affine_matrix
@@ -1001,7 +1001,7 @@ def test_apply_to_alignments_clears_mask_after_user_clears_it() -> None:
     model = ManualEditableAlignments()
     model.add_face(0, (10.0, 10.0, 40.0, 40.0), landmarks=[(20.0, 20.0)])
     # Materialise the editor cache via get_mask (lazy decode), then clear it.
-    model._persisted_mask_blobs[(0, 0, "components")] = blob  # type:ignore[arg-type]
+    model._persisted_mask_blobs[(0, 0, "components")] = blob
     decoded = model.get_mask(0, 0, "components")
     assert decoded is not None
     assert model.clear_mask(0, 0, "components") is True
@@ -1026,7 +1026,7 @@ def test_known_mask_types_includes_persisted_blobs() -> None:
         stored_size=128,
         stored_centering="head",
     )
-    model._persisted_mask_blobs[(0, 0, "bisenet-fp_head")] = blob  # type:ignore[arg-type]
+    model._persisted_mask_blobs[(0, 0, "bisenet-fp_head")] = blob
     assert "bisenet-fp_head" in model.known_mask_types(0, 0)
 
 
@@ -1051,10 +1051,10 @@ def test_paint_mask_stroke_decodes_persisted_blob_before_writing() -> None:
     # Pre-populate a persisted blob with a recognisable "full" region near
     # the corner so we can prove later that the original pixels survived.
     size = ManualEditableAlignments.MASK_STORED_SIZE
-    persisted_grid = np.zeros((size, size), dtype=np.uint8)
+    persisted_grid = np.zeros((size, size), dtype=np.uint8)  # type: ignore[var-annotated]
     persisted_grid[0:20, 0:20] = 200
     blob = ManualEditableAlignments.encode_mask_blob(persisted_grid, (0.0, 0.0, 64.0, 64.0))
-    model._persisted_mask_blobs[(0, 0, "components")] = blob  # type:ignore[arg-type]
+    model._persisted_mask_blobs[(0, 0, "components")] = blob
 
     # Critical: paint *before* anything calls get_mask().
     assert model.paint_mask_stroke(0, 0, "components", 50.0, 50.0, 4.0, 255) is True
@@ -1075,7 +1075,7 @@ def test_apply_to_alignments_after_paint_over_persisted_preserves_originals() ->
     from lib.align.objects import AlignmentsEntry, FileAlignments
 
     size = ManualEditableAlignments.MASK_STORED_SIZE
-    persisted_grid = np.zeros((size, size), dtype=np.uint8)
+    persisted_grid = np.zeros((size, size), dtype=np.uint8)  # type: ignore[var-annotated]
     persisted_grid[0:20, 0:20] = 200
     blob = ManualEditableAlignments.encode_mask_blob(persisted_grid, (0.0, 0.0, 64.0, 64.0))
 
@@ -1099,7 +1099,7 @@ def test_apply_to_alignments_after_paint_over_persisted_preserves_originals() ->
 
     model = ManualEditableAlignments()
     model.add_face(0, (0.0, 0.0, 64.0, 64.0), landmarks=[(32.0, 32.0)])
-    model._persisted_mask_blobs[(0, 0, "components")] = blob  # type:ignore[arg-type]
+    model._persisted_mask_blobs[(0, 0, "components")] = blob
 
     # Paint *before* anything decodes the blob, then save.
     model.paint_mask_stroke(0, 0, "components", 50.0, 50.0, 4.0, 255)
@@ -1127,7 +1127,7 @@ def test_clear_mask_works_on_persisted_blob_without_pre_decode() -> None:
         np.full((128, 128), 100, dtype=np.uint8),
         (0.0, 0.0, 64.0, 64.0),
     )
-    model._persisted_mask_blobs[(0, 0, "components")] = blob  # type:ignore[arg-type]
+    model._persisted_mask_blobs[(0, 0, "components")] = blob
 
     # Critical: no get_mask call has happened — _mask_state is empty.
     assert (0, 0, "components") not in model._mask_state
@@ -1168,7 +1168,7 @@ def test_clear_mask_persisted_blob_then_save_deletes_disk_entry() -> None:
 
     model = ManualEditableAlignments()
     model.add_face(0, (0.0, 0.0, 64.0, 64.0), landmarks=[(32.0, 32.0)])
-    model._persisted_mask_blobs[(0, 0, "components")] = blob  # type:ignore[arg-type]
+    model._persisted_mask_blobs[(0, 0, "components")] = blob
 
     # No pre-decode: the clear must succeed and the save must delete the key.
     assert model.clear_mask(0, 0, "components") is True

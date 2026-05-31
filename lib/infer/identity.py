@@ -154,7 +154,7 @@ class IdentityFilter:
         self._plugin_name = name
         self._name = f"{name}.Filter"
 
-        self._filters = {
+        self._filters = {  # type: ignore[var-annotated]
             "filter": np.empty([0], dtype="float32"),
             "nfilter": np.empty([0], dtype="float32"),
         }
@@ -694,7 +694,7 @@ class Cluster:
             else linkage(predictions, method=method, preserve_input=False)
         )
         logger.debug("Linkage shape: %s", retval.shape)
-        return retval
+        return retval  # type: ignore[no-any-return]
 
     def _process_leaf_node(self, current_index: int, current_bin: int) -> list[tuple[int, int]]:
         """Process the output when we have hit a leaf node"""
@@ -766,7 +766,7 @@ class Cluster:
         serate_left = self._seriation(tree, points, left, current_bin=current_bin)
         serate_right = self._seriation(tree, points, right, current_bin=current_bin)
 
-        return serate_left + serate_right  # type: ignore
+        return serate_left + serate_right
 
     def __call__(self) -> list[tuple[int, int]]:
         """Process the linkages.

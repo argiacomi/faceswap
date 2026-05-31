@@ -200,8 +200,8 @@ class Converter:  # pylint:disable=too-many-instance-attributes
 
             items = inbound if isinstance(inbound, list) else [inbound]
             for item in items:
-                logger.trace(
-                    "Patch queue got: '%s'",  # type: ignore[attr-defined]
+                logger.trace(  # type: ignore[attr-defined]
+                    "Patch queue got: '%s'",
                     item.inbound.filename,
                 )
                 try:
@@ -221,8 +221,8 @@ class Converter:  # pylint:disable=too-many-instance-attributes
                     # UNCOMMENT THIS CODE BLOCK TO PRINT TRACEBACK ERRORS
                     # import sys; import traceback
                     # exc_info = sys.exc_info(); traceback.print_exception(*exc_info)
-                logger.trace(
-                    "Out queue put: %s",  # type: ignore[attr-defined]
+                logger.trace(  # type: ignore[attr-defined]
+                    "Out queue put: %s",
                     item.inbound.filename,
                 )
                 out_queue.put((item.inbound.filename, image))
@@ -270,8 +270,8 @@ class Converter:  # pylint:disable=too-many-instance-attributes
         either an array, or the pre-encoded output from the writer's pre-encode function (if it
         has one)
         """
-        logger.trace(
-            "Patching image: '%s'",  # type: ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "Patching image: '%s'",
             predicted.inbound.filename,
         )
         frame_size = (
@@ -308,8 +308,8 @@ class Converter:  # pylint:disable=too-many-instance-attributes
                     dtype="float32",
                 )
             retval = self._writer_pre_encode(patched_face, **kwargs)
-        logger.trace(
-            "Patched image: '%s'",  # type: ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "Patched image: '%s'",
             predicted.inbound.filename,
         )
         return retval
@@ -372,8 +372,8 @@ class Converter:  # pylint:disable=too-many-instance-attributes
         background
             The original frame
         """
-        logger.trace(
-            "Getting: (filename: '%s', faces: %s)",  # type: ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "Getting: (filename: '%s', faces: %s)",
             predicted.inbound.filename,
             len(predicted.swapped_faces),
         )
@@ -412,8 +412,8 @@ class Converter:  # pylint:disable=too-many-instance-attributes
         if not self._full_frame_output:
             placeholder = np.array(faces, dtype="float32")
 
-        logger.trace(
-            "Got filename: '%s'. (placeholders: %s)",  # type: ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "Got filename: '%s'. (placeholders: %s)",
             predicted.inbound.filename,
             placeholder.shape,
         )
@@ -449,8 +449,8 @@ class Converter:  # pylint:disable=too-many-instance-attributes
         -------
         The face output from the Faceswap Model with any requested pre-warp adjustments performed.
         """
-        logger.trace(
-            "new_face shape: %s, predicted_mask shape: %s",  # type: ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "new_face shape: %s, predicted_mask shape: %s",
             new_face.shape,
             predicted_mask.shape if predicted_mask is not None else None,
         )

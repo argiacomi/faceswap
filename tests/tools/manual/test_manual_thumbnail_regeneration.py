@@ -14,7 +14,7 @@ from tools.manual.session import ManualEditableAlignments, ManualSession
 
 def _write_frame(path: Path, value: int = 80) -> None:
     """Write a small valid source frame."""
-    image = np.full((64, 64, 3), value, dtype=np.uint8)
+    image = np.full((64, 64, 3), value, dtype=np.uint8)  # type: ignore[var-annotated]
     assert cv2.imwrite(str(path), image)
 
 

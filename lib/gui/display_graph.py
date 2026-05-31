@@ -369,7 +369,7 @@ class TrainingGraph(GraphBase):  # pylint:disable=too-many-ancestors
 
     def _add_callback(self) -> None:
         """Add the variable trace to update graph on refresh button press or save iteration."""
-        get_config().tk_vars.refresh_graph.trace_add("write", self.refresh)  # type:ignore
+        get_config().tk_vars.refresh_graph.trace_add("write", self.refresh)
 
     def build(self) -> None:
         """Build the Training graph."""
@@ -379,7 +379,7 @@ class TrainingGraph(GraphBase):  # pylint:disable=too-many-ancestors
 
     def refresh(self, *args) -> None:  # pylint:disable=unused-argument
         """Read the latest loss data and apply to current graph"""
-        refresh_var = T.cast(tk.BooleanVar, get_config().tk_vars.refresh_graph)
+        refresh_var = T.cast(tk.BooleanVar, get_config().tk_vars.refresh_graph)  # type: ignore[redundant-cast]
         if not refresh_var.get() and self._thread is None:
             return
 
@@ -442,8 +442,8 @@ class TrainingGraph(GraphBase):  # pylint:disable=too-many-ancestors
 
             pass  # pylint:disable=unnecessary-pass
 
-        Event.width = self.winfo_width()
-        Event.height = self.winfo_height()
+        Event.width = self.winfo_width()  # type: ignore[attr-defined]
+        Event.height = self.winfo_height()  # type: ignore[attr-defined]
         self._plot_canvas.resize(Event)  # pylint:disable=no-value-for-parameter
 
 
@@ -581,7 +581,7 @@ class NavigationToolbar(NavigationToolbar2Tk):  # pylint:disable=too-many-ancest
 
     @staticmethod
     def _Button(
-        frame,  # type:ignore[override] # pylint:disable=arguments-differ,arguments-renamed  # noqa: E501
+        frame,  # pylint:disable=arguments-differ,arguments-renamed  # noqa: E501
         text: str,
         image_file: str,
         toggle: bool,
@@ -616,7 +616,7 @@ class NavigationToolbar(NavigationToolbar2Tk):  # pylint:disable=too-many-ancest
             btn: ttk.Button | ttk.Checkbutton = ttk.Button(
                 frame,
                 text=text,
-                image=img,  # type:ignore[arg-type]
+                image=img,
                 command=command,
             )
         else:
@@ -624,7 +624,7 @@ class NavigationToolbar(NavigationToolbar2Tk):  # pylint:disable=too-many-ancest
             btn = ttk.Checkbutton(
                 frame,
                 text=text,
-                image=img,  # type:ignore[arg-type]
+                image=img,
                 command=command,
                 variable=var,
             )
@@ -632,8 +632,8 @@ class NavigationToolbar(NavigationToolbar2Tk):  # pylint:disable=too-many-ancest
             # Original implementation uses tk Checkbuttons which have a select and deselect
             # method. These aren't available in ttk Checkbuttons, so we monkey patch the methods
             # to update the underlying variable.
-            btn.select = lambda i=1: var.set(i)
-            btn.deselect = lambda i=0: var.set(i)
+            btn.select = lambda i=1: var.set(i)  # type: ignore[attr-defined]
+            btn.deselect = lambda i=0: var.set(i)  # type: ignore[attr-defined]
 
         btn.pack(side=tk.RIGHT, padx=2)
         return btn

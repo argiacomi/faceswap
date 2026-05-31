@@ -441,7 +441,7 @@ class VideoReader:
         """The metadata information for the video file"""
         return self._info
 
-    def __iter__(self) -> T.Self:
+    def __iter__(self) -> T.Self:  # type: ignore[name-defined]
         """This is an iterator"""
         return self
 
@@ -508,16 +508,16 @@ class VideoReader:
             The keyframe that appears directly prior to the given target frame
         """
         if index in self._info.keyframes:
-            logger.trace(
-                "[%s] Index is keyframe: %s",  # type:ignore[attr-defined]
+            logger.trace(  # type: ignore[attr-defined]
+                "[%s] Index is keyframe: %s",
                 self.__class__.__name__,
                 index,
             )
             return index
         keyframe_index = np.searchsorted(self._info.keyframes, index, side="left") - 1
         keyframe = int(self._info.keyframes[keyframe_index])
-        logger.trace(
-            "[%s] Previous keyframe for frame %s: %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "[%s] Previous keyframe for frame %s: %s",
             self.__class__.__name__,
             index,
             keyframe,
@@ -545,8 +545,8 @@ class VideoReader:
             return
 
         if index < self._current_index:  # Moving backwards
-            logger.trace(
-                "[%s] Seeking backwards from %s to %s",  # type:ignore[attr-defined]
+            logger.trace(  # type: ignore[attr-defined]
+                "[%s] Seeking backwards from %s to %s",
                 self.__class__.__name__,
                 self._current_index,
                 index,
@@ -575,8 +575,8 @@ class VideoReader:
             return
 
         next_keyframe = self._get_previous_keyframe(index)
-        logger.trace(
-            "[%s] Seeking forwards to %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "[%s] Seeking forwards to %s",
             self.__class__.__name__,
             next_keyframe,
         )
@@ -612,8 +612,8 @@ class VideoReader:
             frame = next(self)
             assert frame.pts is not None
             current_pts = frame.pts
-        logger.trace(
-            "[%s] Returning frame: %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "[%s] Returning frame: %s",
             self.__class__.__name__,
             frame,
         )
@@ -833,8 +833,8 @@ class VideoMux:  # pylint:disable=too-many-instance-attributes
             self._graph.push(frame.reformat(format=vid.pix_fmt))
             frame = T.cast(av.VideoFrame, self._graph.pull())
 
-        logger.trace(
-            "[%s] Encoded frame of shape %s to: %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "[%s] Encoded frame of shape %s to: %s",
             self.__class__.__name__,
             image.shape,
             frame,
@@ -842,8 +842,8 @@ class VideoMux:  # pylint:disable=too-many-instance-attributes
 
         packets = vid.encode(frame)
         self._video_packets.extend(packets)
-        logger.trace(
-            "[%s] Added video packets: %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "[%s] Added video packets: %s",
             self.__class__.__name__,
             packets,
         )
@@ -910,14 +910,14 @@ class VideoMux:  # pylint:disable=too-many-instance-attributes
                     audio = self._get_audio_packet(self._timestamp(video))
                     if audio is None:
                         break
-                    logger.trace(
-                        "[%s] Muxing audio: %s",  # type:ignore[attr-defined]
+                    logger.trace(  # type: ignore[attr-defined]
+                        "[%s] Muxing audio: %s",
                         self.__class__.__name__,
                         audio,
                     )
                     out.mux(audio)
-            logger.trace(
-                "[%s] Muxing video: %s",  # type:ignore[attr-defined]
+            logger.trace(  # type: ignore[attr-defined]
+                "[%s] Muxing video: %s",
                 self.__class__.__name__,
                 video,
             )

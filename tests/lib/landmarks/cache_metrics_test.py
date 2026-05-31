@@ -22,7 +22,7 @@ def _face_points(offset: float = 0.0) -> np.ndarray:
         ),
         axis=1,
     )
-    return points + offset
+    return points + offset  # type: ignore[no-any-return]
 
 
 def test_prediction_cache_lru_eviction() -> None:
@@ -40,7 +40,7 @@ def test_prediction_cache_lru_eviction() -> None:
 
 def test_cache_key_for_array_uses_image_content() -> None:
     """Array cache keys change when image bytes change."""
-    image = np.zeros((4, 4, 3), dtype="uint8")
+    image = np.zeros((4, 4, 3), dtype="uint8")  # type: ignore[var-annotated]
     changed = image.copy()
     changed[0, 0, 0] = 1
     assert cache_key_for_array(image, "adapter") != cache_key_for_array(changed, "adapter")
@@ -59,7 +59,7 @@ def test_metrics_for_shifted_landmarks() -> None:
 
 def test_normalized_mean_error_uses_ibug_outer_eye_corners_by_default() -> None:
     """Default NME normalizes by canonical 68 outer eye corners 36 and 45."""
-    truth = np.zeros((68, 2), dtype="float32")
+    truth = np.zeros((68, 2), dtype="float32")  # type: ignore[var-annotated]
     truth[36] = [10.0, 20.0]
     truth[45] = [60.0, 20.0]
     predicted = truth.copy()
@@ -86,12 +86,12 @@ def test_mean_point_error_visibility_none_matches_legacy_average() -> None:
 
 def test_mean_point_error_visibility_masks_out_occluded_points() -> None:
     """A visibility mask excludes flagged-occluded landmarks from the mean."""
-    truth = np.zeros((68, 2), dtype="float32")
+    truth = np.zeros((68, 2), dtype="float32")  # type: ignore[var-annotated]
     predicted = truth.copy()
     # Move every landmark slightly, but blow up landmarks 50..67 (occluded).
     predicted[:50, 0] = 1.0
     predicted[50:, 0] = 100.0
-    visibility = np.ones(68, dtype=bool)
+    visibility = np.ones(68, dtype=bool)  # type: ignore[var-annotated]
     visibility[50:] = False
 
     masked = mean_point_error(predicted, truth, visibility=visibility)
@@ -104,17 +104,17 @@ def test_mean_point_error_visibility_masks_out_occluded_points() -> None:
 
 def test_mean_point_error_visibility_all_false_falls_back_to_full_mean() -> None:
     """When no landmark is visible, return the full-landmark mean (not zero)."""
-    truth = np.zeros((68, 2), dtype="float32")
+    truth = np.zeros((68, 2), dtype="float32")  # type: ignore[var-annotated]
     predicted = truth.copy()
     predicted[:, 0] = 7.0
-    visibility = np.zeros(68, dtype=bool)
+    visibility = np.zeros(68, dtype=bool)  # type: ignore[var-annotated]
     full_mean = mean_point_error(predicted, truth)
     assert mean_point_error(predicted, truth, visibility=visibility) == pytest.approx(full_mean)
 
 
 def test_mean_point_error_visibility_length_mismatch_raises() -> None:
     """A visibility array of the wrong length is a programmer error."""
-    truth = np.zeros((68, 2), dtype="float32")
+    truth = np.zeros((68, 2), dtype="float32")  # type: ignore[var-annotated]
     predicted = truth.copy()
     with pytest.raises(ValueError):
         mean_point_error(predicted, truth, visibility=np.ones(10, dtype=bool))
@@ -122,13 +122,13 @@ def test_mean_point_error_visibility_length_mismatch_raises() -> None:
 
 def test_normalized_mean_error_forwards_visibility() -> None:
     """``normalized_mean_error`` honours the visibility mask via mean_point_error."""
-    truth = np.zeros((68, 2), dtype="float32")
+    truth = np.zeros((68, 2), dtype="float32")  # type: ignore[var-annotated]
     truth[36] = [10.0, 20.0]
     truth[45] = [60.0, 20.0]
     predicted = truth.copy()
     predicted[:50, 0] += 5.0
     predicted[50:, 0] += 500.0
-    visibility = np.ones(68, dtype=bool)
+    visibility = np.ones(68, dtype=bool)  # type: ignore[var-annotated]
     visibility[50:] = False
 
     nme = normalized_mean_error(predicted, truth, visibility=visibility)

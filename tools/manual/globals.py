@@ -268,8 +268,8 @@ class TkGlobals:
         index: int
             The currently selected face index
         """
-        logger.trace(
-            "Setting face index from %s to %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "Setting face index from %s to %s",
             self.face_index,
             index,
         )
@@ -431,8 +431,8 @@ class TkGlobals:
         state: bool
             ``True`` for zoomed ``False`` for full frame
         """
-        logger.trace(
-            "Setting zoom state from %s to %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "Setting zoom state from %s to %s",
             self.is_zoomed,
             state,
         )

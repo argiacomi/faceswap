@@ -54,7 +54,7 @@ class CV2DNNDetect(ExtractPlugin):
         -------
         The batch of images ready for feeding the model
         """
-        return (batch - self._average_image).transpose(0, 3, 1, 2)
+        return (batch - self._average_image).transpose(0, 3, 1, 2)  # type: ignore[no-any-return]
 
     def process(self, batch: np.ndarray) -> np.ndarray:
         """Run model to get predictions
@@ -70,7 +70,7 @@ class CV2DNNDetect(ExtractPlugin):
         """
         self.model.setInput(batch)
         result = self.model.forward()
-        return result.reshape(batch.shape[0], 200, 7)
+        return result.reshape(batch.shape[0], 200, 7)  # type: ignore[no-any-return]
 
     def post_process(self, batch: np.ndarray) -> np.ndarray:
         """Compile found faces for output
@@ -88,7 +88,7 @@ class CV2DNNDetect(ExtractPlugin):
         boxes = [
             batch[b, ..., 3:7][confidence_mask[b]] * self.input_size for b in range(batch.shape[0])
         ]
-        return np.array(boxes, dtype="object")
+        return np.array(boxes, dtype="object")  # type: ignore[no-any-return]
 
 
 __all__ = get_module_objects(__name__)

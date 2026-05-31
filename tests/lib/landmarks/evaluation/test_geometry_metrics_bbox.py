@@ -10,7 +10,7 @@ from lib.landmarks.evaluation.geometry_metrics import evaluate_geometry_sample
 
 def _face_points() -> np.ndarray:
     """Return a simple non-degenerate 68-point face-like landmark set."""
-    points = np.zeros((68, 2), dtype="float32")
+    points = np.zeros((68, 2), dtype="float32")  # type: ignore[var-annotated]
     points[0:17, 0] = np.linspace(180, 250, 17)
     points[0:17, 1] = 160 + 18 * np.sin(np.linspace(0, np.pi, 17))
     points[17:22, 0] = np.linspace(188, 208, 5)

@@ -80,7 +80,7 @@ class SCRFD(ExtractPlugin):
             input_size=640,
             batch_size=cfg.batch_size(),
             is_rgb=False,
-            dtype=np.uint8,
+            dtype=np.uint8,  # type: ignore[arg-type]
             scale=(0, 255),
             force_cpu=cfg.cpu(),
         )
@@ -150,7 +150,7 @@ class SCRFD(ExtractPlugin):
         with open(model_path, "rb") as model_file:
             for chunk in iter(lambda: model_file.read(1024 * 1024), b""):
                 sha256.update(chunk)
-        return sha256.hexdigest() == self._model_config["sha256"]
+        return sha256.hexdigest() == self._model_config["sha256"]  # type: ignore[no-any-return]
 
     def load_model(self) -> SCRFDModel:
         """Load the SCRFD PyTorch model."""
@@ -165,7 +165,7 @@ class SCRFD(ExtractPlugin):
 
     def _blob_pre_process(self, batch: np.ndarray) -> np.ndarray:
         """Convert BGR uint8 detector feeds into normalized NCHW float32 blobs."""
-        return cv2.dnn.blobFromImages(
+        return cv2.dnn.blobFromImages(  # type: ignore[no-any-return]
             list(batch),
             scalefactor=1.0 / 128.0,
             mean=(127.5, 127.5, 127.5),
@@ -193,7 +193,7 @@ class SCRFD(ExtractPlugin):
             return True
         if self._postprocess_mode == "numpy":
             return False
-        return self.device.type != "cpu"
+        return self.device.type != "cpu"  # type: ignore[no-any-return]
 
     def _from_torch_raw(self, batch: np.ndarray) -> np.ndarray:
         """Run the Torch model while keeping output tensors on-device."""
@@ -220,7 +220,7 @@ class SCRFD(ExtractPlugin):
     @staticmethod
     def _object_array(values: T.Sequence[T.Any]) -> np.ndarray:
         """Store arbitrary Python objects without triggering implicit NumPy conversion."""
-        retval = np.empty((len(values),), dtype="object")
+        retval = np.empty((len(values),), dtype="object")  # type: ignore[var-annotated]
         for idx, value in enumerate(values):
             retval[idx] = value
         return retval
@@ -592,7 +592,7 @@ class SCRFD(ExtractPlugin):
     def _numpy_post_process(self, batch: np.ndarray) -> np.ndarray:
         """Process SCRFD output to bounding boxes on CPU with NumPy."""
         self._last_profile_events = []
-        final_boxes = []
+        final_boxes = []  # type: ignore[var-annotated]
         batch_size = batch[0].shape[0]
 
         for img_idx in range(batch_size):
@@ -600,7 +600,7 @@ class SCRFD(ExtractPlugin):
             image_boxes = []
 
             for out_idx, stride in enumerate(self._feature_strides):
-                scores = batch[out_idx][img_idx].reshape(-1).astype("float32", copy=False)
+                scores = batch[out_idx][img_idx].reshape(-1).astype("float32", copy=False)  # type: ignore[var-annotated]
                 bbox_preds = batch[out_idx + len(self._feature_strides)][img_idx]
                 bbox_preds = bbox_preds.reshape((-1, 4)).astype("float32", copy=False) * stride
 
@@ -929,7 +929,7 @@ class SCRFDModel(nn.Module):
 
     def forward(self, inputs: torch.Tensor) -> list[torch.Tensor]:
         """Forward pass."""
-        return self.bbox_head(self.neck(self.backbone(inputs)))
+        return self.bbox_head(self.neck(self.backbone(inputs)))  # type: ignore[no-any-return]
 
 
 __all__ = get_module_objects(__name__)

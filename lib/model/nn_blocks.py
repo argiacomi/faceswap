@@ -368,7 +368,7 @@ class Conv2DBlock:  # pylint:disable=too-many-instance-attributes
             retval.append(
                 ReflectionPadding2D(
                     stride=self._strides[0],
-                    kernel_size=self._args[-1][0],  # type:ignore[index]
+                    kernel_size=self._args[-1][0],
                     name=f"{self._name}_reflectionpadding2d",
                 )
             )

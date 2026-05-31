@@ -30,7 +30,7 @@ def _session_with_frames(folder: Path, count: int = 5) -> ManualSession:
     return ManualSession.create(frames=str(folder))
 
 
-def _make_window(qtbot, folder: Path, count: int = 5) -> ManualToolWindow:  # type:ignore[no-untyped-def]
+def _make_window(qtbot, folder: Path, count: int = 5) -> ManualToolWindow:
     session = _session_with_frames(folder, count=count)
     window = ManualToolWindow(session)
     qtbot.addWidget(window)
@@ -44,7 +44,7 @@ def _make_window(qtbot, folder: Path, count: int = 5) -> ManualToolWindow:  # ty
 # ---------------------------------------------------------------------------
 
 
-def test_transport_bar_set_total_configures_range(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_transport_bar_set_total_configures_range(qtbot) -> None:
     """``set_total`` syncs slider range, validator range, and the counter."""
     bar = ManualTransportBar()
     qtbot.addWidget(bar)
@@ -59,7 +59,7 @@ def test_transport_bar_set_total_configures_range(qtbot) -> None:  # type:ignore
     assert bar.jump_entry.isEnabled() is True
 
 
-def test_transport_bar_set_position_is_signal_silent(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_transport_bar_set_position_is_signal_silent(qtbot) -> None:
     """Programmatic ``set_position`` does not emit ``position_changed``."""
     bar = ManualTransportBar()
     qtbot.addWidget(bar)
@@ -71,7 +71,7 @@ def test_transport_bar_set_position_is_signal_silent(qtbot) -> None:  # type:ign
     assert received == []
 
 
-def test_transport_bar_user_slider_drag_emits(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_transport_bar_user_slider_drag_emits(qtbot) -> None:
     """A user-driven slider value emits ``position_changed``."""
     bar = ManualTransportBar()
     qtbot.addWidget(bar)
@@ -82,7 +82,7 @@ def test_transport_bar_user_slider_drag_emits(qtbot) -> None:  # type:ignore[no-
     assert received == [3]
 
 
-def test_transport_bar_jump_entry_handles_empty_and_invalid(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_transport_bar_jump_entry_handles_empty_and_invalid(qtbot) -> None:
     """Empty / non-numeric input must not emit and must restore the *1-based* slider value."""
     bar = ManualTransportBar()
     qtbot.addWidget(bar)
@@ -102,7 +102,7 @@ def test_transport_bar_jump_entry_handles_empty_and_invalid(qtbot) -> None:  # t
     assert bar.jump_entry.text() == "6"
 
 
-def test_transport_bar_jump_entry_clamps_out_of_range(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_transport_bar_jump_entry_clamps_out_of_range(qtbot) -> None:
     """Out-of-range 1-based input clamps to ``1..total`` and emits the 0-based index."""
     bar = ManualTransportBar()
     qtbot.addWidget(bar)
@@ -124,7 +124,7 @@ def test_transport_bar_jump_entry_clamps_out_of_range(qtbot) -> None:  # type:ig
     assert bar.jump_entry.text() == "1"
 
 
-def test_transport_bar_jump_entry_uses_one_based_numbering(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_transport_bar_jump_entry_uses_one_based_numbering(qtbot) -> None:
     """Typing ``5`` selects frame 5 of N (0-based index 4)."""
     bar = ManualTransportBar()
     qtbot.addWidget(bar)
@@ -145,21 +145,21 @@ def test_transport_bar_jump_entry_uses_one_based_numbering(qtbot) -> None:  # ty
 # ---------------------------------------------------------------------------
 
 
-def test_transport_total_matches_frame_count(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_transport_total_matches_frame_count(qtbot, tmp_path: Path) -> None:
     """The transport bar's total is set to the discovered frame count."""
     window = _make_window(qtbot, tmp_path, count=4)
     assert window._transport_bar.slider.maximum() == 3
     assert window._transport_bar.counter_label.text().endswith("/ 4")
 
 
-def test_transport_position_changed_drives_thumbnail_row(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_transport_position_changed_drives_thumbnail_row(qtbot, tmp_path: Path) -> None:
     """A user-driven slider/jump value navigates the thumbnail panel."""
     window = _make_window(qtbot, tmp_path, count=5)
     window._transport_bar.slider.setValue(3)
     assert window._thumbnail_panel.currentRow() == 3
 
 
-def test_navigation_keeps_transport_in_sync(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_navigation_keeps_transport_in_sync(qtbot, tmp_path: Path) -> None:
     """Programmatic next/prev/first/last keeps slider + counter in sync."""
     window = _make_window(qtbot, tmp_path, count=5)
     window._next_frame()
@@ -173,7 +173,7 @@ def test_navigation_keeps_transport_in_sync(qtbot, tmp_path: Path) -> None:  # t
     assert window._transport_bar.slider.value() == 0
 
 
-def test_play_pause_starts_and_stops_timer(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_play_pause_starts_and_stops_timer(qtbot, tmp_path: Path) -> None:
     """``toggle_play`` toggles the timer and the editor-state flag."""
     window = _make_window(qtbot, tmp_path, count=3)
     assert window._play_timer.isActive() is False
@@ -187,7 +187,7 @@ def test_play_pause_starts_and_stops_timer(qtbot, tmp_path: Path) -> None:  # ty
     assert window._play_timer.isActive() is False
 
 
-def test_play_loop_advances_and_stops_at_last_frame(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_play_loop_advances_and_stops_at_last_frame(qtbot, tmp_path: Path) -> None:
     """Auto-advance walks the panel and auto-stops at the end."""
     window = _make_window(qtbot, tmp_path, count=3)
     window.toggle_play()
@@ -204,7 +204,7 @@ def test_play_loop_advances_and_stops_at_last_frame(qtbot, tmp_path: Path) -> No
     assert window._thumbnail_panel.currentRow() == 2
 
 
-def test_play_from_last_frame_rewinds_to_start(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_play_from_last_frame_rewinds_to_start(qtbot, tmp_path: Path) -> None:
     """Pressing Play at the end rewinds to frame 0 before starting playback."""
     window = _make_window(qtbot, tmp_path, count=3)
     window.goto_last_frame()
@@ -213,7 +213,7 @@ def test_play_from_last_frame_rewinds_to_start(qtbot, tmp_path: Path) -> None:  
     assert window._thumbnail_panel.currentRow() == 0
 
 
-def test_manual_navigation_stops_playback(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_manual_navigation_stops_playback(qtbot, tmp_path: Path) -> None:
     """Manually walking frames during playback halts the auto-advance timer."""
     window = _make_window(qtbot, tmp_path, count=4)
     window.toggle_play()
@@ -223,7 +223,7 @@ def test_manual_navigation_stops_playback(qtbot, tmp_path: Path) -> None:  # typ
     assert window._play_timer.isActive() is False
 
 
-def test_play_action_icon_reflects_playing_state(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_play_action_icon_reflects_playing_state(qtbot, tmp_path: Path) -> None:
     """Play action text flips between Play / Pause based on playback."""
     window = _make_window(qtbot, tmp_path, count=3)
     action = window.actions_by_key["play_pause"]
@@ -239,14 +239,14 @@ def test_play_action_icon_reflects_playing_state(qtbot, tmp_path: Path) -> None:
     assert action.toolTip() == "Play playback (Space)"
 
 
-def test_status_label_shows_filtered_position(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_status_label_shows_filtered_position(qtbot, tmp_path: Path) -> None:
     """The transport counter reports current / total frame position."""
     window = _make_window(qtbot, tmp_path, count=4)
     window._next_frame()
     assert window._transport_bar.counter_label.text() == "Frame: 2 / 4"
 
 
-def test_empty_filter_leaves_transport_disabled(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_empty_filter_leaves_transport_disabled(qtbot, tmp_path: Path) -> None:
     """A session with no frames keeps the transport disabled instead of crashing."""
     bar = ManualTransportBar()
     qtbot.addWidget(bar)
@@ -266,7 +266,7 @@ def test_empty_filter_leaves_transport_disabled(qtbot, tmp_path: Path) -> None: 
 # ---------------------------------------------------------------------------
 
 
-def test_previous_next_frame_shortcuts_drop_left_right(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_previous_next_frame_shortcuts_drop_left_right(qtbot, tmp_path: Path) -> None:
     """``previous_frame`` / ``next_frame`` no longer bind ``Left``/``Right``.
 
     The frame-view-scoped nudge actions own arrow keys when the frame view
@@ -288,7 +288,7 @@ def test_previous_next_frame_shortcuts_drop_left_right(qtbot, tmp_path: Path) ->
     assert "Right" not in next_shortcuts
 
 
-def test_z_and_x_still_trigger_navigation(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_z_and_x_still_trigger_navigation(qtbot, tmp_path: Path) -> None:
     """The Z / X legacy navigation shortcuts continue to fire prev/next."""
     window = _make_window(qtbot, tmp_path, count=4)
     window._thumbnail_panel.setCurrentRow(2)
@@ -303,7 +303,7 @@ def test_z_and_x_still_trigger_navigation(qtbot, tmp_path: Path) -> None:  # typ
 # ---------------------------------------------------------------------------
 
 
-def test_return_in_jump_entry_emits_position_change_once(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_return_in_jump_entry_emits_position_change_once(qtbot) -> None:
     """Pressing Return in the jump entry triggers exactly one navigation request.
 
     Before the fix the bar wired both ``editingFinished`` *and*
@@ -325,7 +325,7 @@ def test_return_in_jump_entry_emits_position_change_once(qtbot) -> None:  # type
     bar.jump_entry.setFocus()
     bar.jump_entry.selectAll()
     QTest.keyClicks(bar.jump_entry, "7")
-    QTest.keyClick(bar.jump_entry, Qt.Key_Return)
+    QTest.keyClick(bar.jump_entry, Qt.Key_Return)  # type: ignore[attr-defined]
 
     # Exactly one emission, carrying the 0-based equivalent of 1-based "7".
     assert received == [6]

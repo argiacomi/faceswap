@@ -92,7 +92,7 @@ def _as_68x2(points: np.ndarray, *, source: Path, key: str) -> np.ndarray:
         )
     if not np.all(np.isfinite(points)):
         raise ValueError(f"AFLW2000-3D {key} contains NaN/Inf values: {source}")
-    return np.ascontiguousarray(points, dtype="float32")
+    return np.ascontiguousarray(points, dtype="float32")  # type: ignore[no-any-return]
 
 
 def _pt3d_z_coordinates(payload: dict[str, T.Any]) -> np.ndarray | None:
@@ -115,7 +115,7 @@ def _pt3d_z_coordinates(payload: dict[str, T.Any]) -> np.ndarray | None:
         return None
     if not np.all(np.isfinite(z)):
         return None
-    return z.astype("float32")
+    return z.astype("float32")  # type: ignore[no-any-return]
 
 
 # Z-buffer self-occlusion parameters. A landmark is flagged as occluded
@@ -190,7 +190,7 @@ def _visibility_from_zbuffer(
         return None
     neighborhood = neighborhood_ratio * face_extent
     depth_margin = depth_margin_ratio * face_extent
-    xy = points_xy.astype(np.float64)
+    xy = points_xy.astype(np.float64)  # type: ignore[var-annotated]
     pairwise_xy_dist = np.linalg.norm(xy[:, None, :] - xy[None, :, :], axis=2)
     np.fill_diagonal(pairwise_xy_dist, np.inf)
     within = pairwise_xy_dist < neighborhood

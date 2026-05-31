@@ -43,7 +43,7 @@ LEGACY_TK_VERSION1_WRAPPED_OPTIONS = {
 }
 
 
-def _main_window(qtbot, monkeypatch, tmp_path: Path):  # type:ignore[no-untyped-def]
+def _main_window(qtbot, monkeypatch, tmp_path: Path):
     """Return a MainWindow with a deterministic schema."""
     monkeypatch.setenv("HOME", str(tmp_path))
 
@@ -256,7 +256,7 @@ def test_tk_last_session_fixture_parses_with_store(tmp_path: Path) -> None:
     assert session.ui_state == {"display_tab": "Preview", "preview_source": "/tk/project/preview"}
 
 
-def test_window_title_tracks_dirty_state(qtbot, monkeypatch, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_window_title_tracks_dirty_state(qtbot, monkeypatch, tmp_path: Path) -> None:
     """Window title should include active filename and dirty marker."""
     window = _main_window(qtbot, monkeypatch, tmp_path)
 
@@ -272,7 +272,7 @@ def test_window_title_tracks_dirty_state(qtbot, monkeypatch, tmp_path: Path) -> 
     assert window.windowTitle() == "Faceswap Qt Shell Prototype - example.fsw"
 
 
-def test_option_edit_marks_project_dirty(qtbot, monkeypatch, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_option_edit_marks_project_dirty(qtbot, monkeypatch, tmp_path: Path) -> None:
     """User edits in option widgets should mark the current project dirty."""
     window = _main_window(qtbot, monkeypatch, tmp_path)
     window._project_filename = str(tmp_path / "dirty.fsw")  # pylint:disable=protected-access
@@ -286,7 +286,7 @@ def test_option_edit_marks_project_dirty(qtbot, monkeypatch, tmp_path: Path) -> 
     assert window.windowTitle() == "Faceswap Qt Shell Prototype - dirty.fsw*"
 
 
-def test_save_project_persists_all_project_tasks(qtbot, monkeypatch, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_save_project_persists_all_project_tasks(qtbot, monkeypatch, tmp_path: Path) -> None:
     """Saving a project should preserve existing tasks and current command values."""
     window = _main_window(qtbot, monkeypatch, tmp_path)
     filename = str(tmp_path / "project.fsw")
@@ -304,7 +304,7 @@ def test_save_project_persists_all_project_tasks(qtbot, monkeypatch, tmp_path: P
     assert window.windowTitle() == "Faceswap Qt Shell Prototype - project.fsw"
 
 
-def test_save_task_persists_only_current_command(qtbot, monkeypatch, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_save_task_persists_only_current_command(qtbot, monkeypatch, tmp_path: Path) -> None:
     """Saving a task should not replace the active project and should contain one task."""
     window = _main_window(qtbot, monkeypatch, tmp_path)
     filename = str(tmp_path / "task.fst")
@@ -322,7 +322,7 @@ def test_save_task_persists_only_current_command(qtbot, monkeypatch, tmp_path: P
     assert window._file_kind == PROJECT_KIND  # pylint:disable=protected-access
 
 
-def test_open_task_routes_kind_and_applies_command(qtbot, monkeypatch, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_open_task_routes_kind_and_applies_command(qtbot, monkeypatch, tmp_path: Path) -> None:
     """Opening a task should set task kind and apply the selected command values."""
     window = _main_window(qtbot, monkeypatch, tmp_path)
     filename = str(tmp_path / "task.fst")
@@ -342,7 +342,7 @@ def test_open_task_routes_kind_and_applies_command(qtbot, monkeypatch, tmp_path:
     assert window.windowTitle() == "Faceswap Qt Shell Prototype - task.fst"
 
 
-def test_open_session_file_can_be_cancelled_by_dirty_prompt(  # type:ignore[no-untyped-def]
+def test_open_session_file_can_be_cancelled_by_dirty_prompt(
     qtbot,
     monkeypatch,
     tmp_path: Path,
@@ -370,7 +370,7 @@ def test_open_session_file_can_be_cancelled_by_dirty_prompt(  # type:ignore[no-u
     assert window._modified is True  # pylint:disable=protected-access
 
 
-def test_new_project_can_be_cancelled_by_dirty_prompt(  # type:ignore[no-untyped-def]
+def test_new_project_can_be_cancelled_by_dirty_prompt(
     qtbot,
     monkeypatch,
     tmp_path: Path,
@@ -393,7 +393,7 @@ def test_new_project_can_be_cancelled_by_dirty_prompt(  # type:ignore[no-untyped
     assert window._modified is True  # pylint:disable=protected-access
 
 
-def test_new_project_discards_after_confirmation(  # type:ignore[no-untyped-def]
+def test_new_project_discards_after_confirmation(
     qtbot,
     monkeypatch,
     tmp_path: Path,
@@ -416,7 +416,7 @@ def test_new_project_discards_after_confirmation(  # type:ignore[no-untyped-def]
     assert window.windowTitle() == "Faceswap Qt Shell Prototype - Untitled"
 
 
-def test_reload_current_file_prompts_and_reloads(  # type:ignore[no-untyped-def]
+def test_reload_current_file_prompts_and_reloads(
     qtbot,
     monkeypatch,
     tmp_path: Path,
@@ -446,7 +446,7 @@ def test_reload_current_file_prompts_and_reloads(  # type:ignore[no-untyped-def]
     assert window._modified is False  # pylint:disable=protected-access
 
 
-def test_recent_menu_routes_saved_files(qtbot, monkeypatch, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_recent_menu_routes_saved_files(qtbot, monkeypatch, tmp_path: Path) -> None:
     """Recent menu actions should reopen their target file and kind."""
     window = _main_window(qtbot, monkeypatch, tmp_path)
     first = str(tmp_path / "first.fsw")
@@ -474,7 +474,7 @@ def test_recent_menu_routes_saved_files(qtbot, monkeypatch, tmp_path: Path) -> N
     assert values["-m"] == "second"
 
 
-def test_restore_last_session_opens_cached_file(qtbot, monkeypatch, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_restore_last_session_opens_cached_file(qtbot, monkeypatch, tmp_path: Path) -> None:
     """Restore Last Session should open the cached project/task file."""
     window = _main_window(qtbot, monkeypatch, tmp_path)
     filename = str(tmp_path / "last.fsw")
@@ -493,7 +493,7 @@ def test_restore_last_session_opens_cached_file(qtbot, monkeypatch, tmp_path: Pa
     assert values["-i"] == "last"
 
 
-def test_generate_marks_project_dirty(qtbot, monkeypatch, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_generate_marks_project_dirty(qtbot, monkeypatch, tmp_path: Path) -> None:
     """Generate should snapshot current command state and mark the window dirty."""
     window = _main_window(qtbot, monkeypatch, tmp_path)
     window._project_filename = str(tmp_path / "dirty.fsw")  # pylint:disable=protected-access

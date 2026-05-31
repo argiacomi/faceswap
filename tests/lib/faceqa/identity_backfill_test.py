@@ -63,7 +63,7 @@ class _FakePlugin:
         return np.ones((batch.shape[0], 512), dtype=np.float32)
 
     def post_process(self, raw: np.ndarray) -> np.ndarray:
-        return raw / np.linalg.norm(raw, axis=1, keepdims=True)
+        return raw / np.linalg.norm(raw, axis=1, keepdims=True)  # type: ignore[no-any-return]
 
 
 # ---------------------------------------------------------------------------

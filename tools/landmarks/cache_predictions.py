@@ -139,7 +139,7 @@ def _write_prediction(
 
 def _checkpoint_value(args: argparse.Namespace) -> str:
     """Return the effective checkpoint identifier for cache metadata."""
-    return args.checkpoint_tag or args.checkpoint
+    return args.checkpoint_tag or args.checkpoint  # type: ignore[no-any-return]
 
 
 def _bbox_values(raw: T.Any) -> tuple[float, float, float, float] | None:
@@ -196,7 +196,7 @@ def _square_roi_from_bbox(
     center_x = (left + right) * 0.5
     center_y = (top + bottom) * 0.5
     half = side * 0.5
-    return np.asarray(
+    return np.asarray(  # type: ignore[no-any-return]
         [center_x - half, center_y - half, center_x + half, center_y + half],
         dtype="float32",
     )
@@ -211,7 +211,7 @@ def _scale_roi(
     if scale <= 0:
         raise ValueError("gt_roi_scale must be greater than zero")
     if np.isclose(scale, 1.0):
-        return np.asarray(bbox, dtype="float32")
+        return np.asarray(bbox, dtype="float32")  # type: ignore[no-any-return]
     return _square_roi_from_bbox(bbox, scale=scale)
 
 
@@ -274,9 +274,9 @@ def _model_roi_for_adapter(adapter: LandmarkAdapter, raw_roi: np.ndarray) -> np.
     plugin = getattr(adapter, "plugin", None)
     if plugin is not None and hasattr(plugin, "pre_process"):
         adjusted = plugin.pre_process(np.asarray(raw_roi, dtype="float32")[None])
-        return np.asarray(adjusted[0], dtype="float32")
+        return np.asarray(adjusted[0], dtype="float32")  # type: ignore[no-any-return]
     values = tuple(float(value) for value in np.asarray(raw_roi, dtype="float32").reshape(4))
-    return _square_roi_from_bbox(values, scale=1.25)
+    return _square_roi_from_bbox(values, scale=1.25)  # type: ignore[arg-type]
 
 
 def _load_image_bgr(path: str | Path) -> np.ndarray:
@@ -284,7 +284,7 @@ def _load_image_bgr(path: str | Path) -> np.ndarray:
     image = cv2.imread(str(path), cv2.IMREAD_COLOR)
     if image is None:
         raise FileNotFoundError(f"failed to read image: {path}")
-    return image
+    return image  # type: ignore[no-any-return]
 
 
 def _crop_square(image: np.ndarray, roi: np.ndarray, size: int) -> np.ndarray:
@@ -306,7 +306,7 @@ def _crop_square(image: np.ndarray, roi: np.ndarray, size: int) -> np.ndarray:
             dst_top : dst_top + (src_bottom - src_top),
             dst_left : dst_left + (src_right - src_left),
         ] = image[src_top:src_bottom, src_left:src_right]
-    return cv2.resize(crop, (size, size), interpolation=cv2.INTER_LINEAR)
+    return cv2.resize(crop, (size, size), interpolation=cv2.INTER_LINEAR)  # type: ignore[no-any-return]
 
 
 def _fresh_cached_run(
@@ -379,7 +379,7 @@ def _build_model_adapters(models: T.Sequence[str], *, device: str) -> dict[str, 
     }
     for adapter in adapters.values():
         if hasattr(adapter, "load_model"):
-            adapter.load_model()  # type: ignore[attr-defined]
+            adapter.load_model()
     return adapters
 
 

@@ -151,7 +151,7 @@ class Preview(tk.Tk):
         """Build the elements for displaying preview images and options panels."""
         container = ttk.PanedWindow(self, orient=tk.VERTICAL)
         container.pack(fill=tk.BOTH, expand=True)
-        container.preview_display = self._display  # TODO subclass not setattr
+        container.preview_display = self._display  # type: ignore[attr-defined]  # TODO subclass not setattr
         self._image_canvas = ImagesCanvas(self, container)
         container.add(self._image_canvas, weight=3)
 
@@ -563,7 +563,7 @@ class Patch:
         The :mod:`argparse` arguments as passed in with converter default arguments added
         """
         valid_masks = available_masks + ["none"]
-        converter_arguments = ConvertArgs(None, "convert").get_optional_arguments()  # type: ignore
+        converter_arguments = ConvertArgs(None, "convert").get_optional_arguments()
         for item in converter_arguments:
             value = item.get("default", None)
             # Skip options without a default value

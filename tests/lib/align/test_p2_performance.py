@@ -49,7 +49,7 @@ def test_mask_stored_mask_cache_invalidates_on_replace_mask() -> None:
     from lib.align.aligned_mask import Mask
 
     mask = Mask()
-    base = np.zeros((32, 32), dtype=np.uint8)
+    base = np.zeros((32, 32), dtype=np.uint8)  # type: ignore[var-annotated]
     base[10:20, 10:20] = 200
     identity = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=np.float32)
     mask.add(base, identity)
@@ -59,7 +59,7 @@ def test_mask_stored_mask_cache_invalidates_on_replace_mask() -> None:
     assert first is second, "second access should hit the cache"
 
     # Replace with a different mask; cache must invalidate.
-    different = np.full((32, 32), 50, dtype=np.uint8)
+    different = np.full((32, 32), 50, dtype=np.uint8)  # type: ignore[var-annotated]
     mask.replace_mask(different)
     third = mask.stored_mask
     assert third is not first, "cache must be dropped after replace_mask"

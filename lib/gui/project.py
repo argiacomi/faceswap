@@ -66,7 +66,7 @@ class _GuiSession:  # pylint:disable=too-few-public-methods
         if command == "tools":
             command = tools_book.tab(tools_book.select(), "text").lower()
         logger.debug("Active tab: %s", command)
-        return command
+        return command  # type: ignore[no-any-return]
 
     @property
     def _modified_vars(self) -> dict[str, tk.BooleanVar]:
@@ -77,7 +77,7 @@ class _GuiSession:  # pylint:disable=too-few-public-methods
     def _tracker(self) -> ModifiedStateTracker:
         """The modified-state tracker, initialized after command tabs exist."""
         if self._modified_tracker is None:
-            self._modified_tracker = ModifiedStateTracker(self._modified_vars)
+            self._modified_tracker = ModifiedStateTracker(self._modified_vars)  # type: ignore[arg-type]
         return self._modified_tracker
 
     @property

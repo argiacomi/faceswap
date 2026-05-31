@@ -707,7 +707,7 @@ def _build_json_or_directory_dataset_manifest(
         else:
             cleanup = _source_root(resolved)
             root = cleanup.__enter__()
-            source = _find_dataset_json(root, dataset_name)
+            source = _find_dataset_json(root, dataset_name)  # type: ignore[assignment]
         if source is None:
             return build_directory_manifest(
                 root,

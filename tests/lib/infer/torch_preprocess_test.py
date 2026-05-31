@@ -25,8 +25,8 @@ def _sample_uint8_image(
     *, batch: int = 1, channels: int = 3, height: int = 12, width: int = 10
 ) -> torch.Tensor:
     """Create a deterministic BCHW uint8 image batch."""
-    base = np.arange(batch * channels * height * width, dtype=np.uint16)
-    image = (base.reshape(batch, channels, height, width) * 7) % 251
+    base = np.arange(batch * channels * height * width, dtype=np.uint16)  # type: ignore[var-annotated]
+    image = (base.reshape(batch, channels, height, width) * 7) % 251  # type: ignore[var-annotated]
     return torch.from_numpy(image.astype(np.uint8))
 
 
@@ -46,7 +46,7 @@ def _opencv_resize_reference(
 ) -> np.ndarray:
     """Return an OpenCV resize reference in BCHW order."""
     result = _resize_with_opencv(image, size, mode=mode)
-    return result.detach().cpu().numpy()
+    return result.detach().cpu().numpy()  # type: ignore[no-any-return]
 
 
 def _opencv_warp_reference(
@@ -56,7 +56,7 @@ def _opencv_warp_reference(
 ) -> np.ndarray:
     """Return an OpenCV warp reference in BCHW order."""
     result = _warp_with_opencv(image, matrix, size)
-    return result.detach().cpu().numpy()
+    return result.detach().cpu().numpy()  # type: ignore[no-any-return]
 
 
 def test_torch_resize_matches_opencv_with_tolerance() -> None:

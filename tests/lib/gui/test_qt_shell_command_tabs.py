@@ -6,7 +6,7 @@ from __future__ import annotations
 from PySide6.QtWidgets import QTabBar
 
 
-def _panel():  # type:ignore[no-untyped-def]
+def _panel():
     """Return a CommandPanel with Faceswap and tool commands."""
     from lib.gui.qt_shell.command_panel import CommandPanel
     from lib.gui.qt_shell.command_schema import CommandSchema, CommandSpec, OptionSpec
@@ -31,7 +31,7 @@ def _find_tab(tabs: QTabBar, label: str) -> int:
     raise AssertionError(f"Tab not found: {label}")
 
 
-def test_faceswap_tab_selection_updates_command(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_faceswap_tab_selection_updates_command(qtbot) -> None:
     """Selecting primary Faceswap tabs should update category and command."""
     panel = _panel()
     qtbot.addWidget(panel)
@@ -51,7 +51,7 @@ def test_faceswap_tab_selection_updates_command(qtbot) -> None:  # type:ignore[n
     assert tool_tabs.isHidden() is True
 
 
-def test_tool_tab_selection_updates_command(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_tool_tab_selection_updates_command(qtbot) -> None:
     """Selecting Tools and then a tool tab should update category and command."""
     panel = _panel()
     qtbot.addWidget(panel)
@@ -70,7 +70,7 @@ def test_tool_tab_selection_updates_command(qtbot) -> None:  # type:ignore[no-un
     assert panel.command_spec()[0:2] == ("tools", "sort")
 
 
-def test_set_command_selects_matching_faceswap_or_tool_tab(qtbot) -> None:  # type:ignore[no-untyped-def]
+def test_set_command_selects_matching_faceswap_or_tool_tab(qtbot) -> None:
     """Programmatic command selection should keep the visible tabs in sync."""
     panel = _panel()
     qtbot.addWidget(panel)

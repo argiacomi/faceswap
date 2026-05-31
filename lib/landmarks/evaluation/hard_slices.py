@@ -93,10 +93,10 @@ class HardSliceThresholds:
 def _pose_radians(sample: T.Mapping[str, T.Any]) -> T.Sequence[T.Any] | None:
     """Return AFLW2000-3D-style pose radians from a manifest sample."""
     metadata = sample.get("metadata") if isinstance(sample.get("metadata"), dict) else {}
-    pose = metadata.get("Pose_Para") or sample.get("Pose_Para")
+    pose = metadata.get("Pose_Para") or sample.get("Pose_Para")  # type: ignore[union-attr]
     if pose is None:
         return None
-    return pose
+    return pose  # type: ignore[no-any-return]
 
 
 def _pose_angle_degrees(sample: T.Mapping[str, T.Any], index: int) -> float | None:

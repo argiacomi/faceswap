@@ -19,7 +19,7 @@ from tools.manual.session import ManualEditableAlignments, ManualSession
 
 def _write_frame(path: Path, value: int = 80) -> None:
     """Write a small valid source frame."""
-    image = np.full((96, 96, 3), value, dtype=np.uint8)
+    image = np.full((96, 96, 3), value, dtype=np.uint8)  # type: ignore[var-annotated]
     assert cv2.imwrite(str(path), image)
 
 
@@ -84,11 +84,11 @@ def test_extract_faces_embeds_alignments_and_source_metadata(tmp_path: Path) -> 
     )
     meta = png_read_meta((output / "frame_000_0.png").read_bytes())
     assert meta is not None
-    assert meta.source.source_filename == "frame_000.png"
-    assert meta.source.face_index == 0
-    assert meta.source.source_is_video is False
-    assert meta.source.original_filename == "frame_000_0.png"
-    assert meta.alignments is not None
+    assert meta.source.source_filename == "frame_000.png"  # type: ignore[union-attr]
+    assert meta.source.face_index == 0  # type: ignore[union-attr]
+    assert meta.source.source_is_video is False  # type: ignore[union-attr]
+    assert meta.source.original_filename == "frame_000_0.png"  # type: ignore[union-attr]
+    assert meta.alignments is not None  # type: ignore[union-attr]
 
 
 def test_extract_faces_progress_callback_fires_per_frame(tmp_path: Path) -> None:
@@ -262,11 +262,11 @@ def test_extract_faces_editable_targets_carry_unsaved_bbox_into_metadata(
     meta = png_read_meta((output / "frame_000_0.png").read_bytes())
     assert meta is not None
     # Source frame name + face_index are still correct.
-    assert meta.source.source_filename == "frame_000.png"
-    assert meta.source.face_index == 0
+    assert meta.source.source_filename == "frame_000.png"  # type: ignore[union-attr]
+    assert meta.source.face_index == 0  # type: ignore[union-attr]
     # The alignments embed the *editable* bbox, not the persisted (10, 10).
-    assert meta.alignments.x == 20
-    assert meta.alignments.y == 20
+    assert meta.alignments.x == 20  # type: ignore[union-attr]
+    assert meta.alignments.y == 20  # type: ignore[union-attr]
 
 
 # ---------------------------------------------------------------------------

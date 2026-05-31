@@ -642,7 +642,7 @@ class Effmpeg:
         """Return the starting position of zero padding from a filename"""
         chk_string = filename[::-1]
         logger.trace(
-            "filename: %s, chk_string: %s",  # type:ignore[attr-defined]
+            "filename: %s, chk_string: %s",
             filename,
             chk_string,
         )

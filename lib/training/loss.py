@@ -48,7 +48,7 @@ class BatchLoss:
             self._total = total
         return self._total
 
-    def to_cpu(self) -> T.Self:
+    def to_cpu(self) -> T.Self:  # type: ignore[name-defined]
         """Detaches all contained loss values and moves them to CPU
 
         Returns
@@ -277,8 +277,8 @@ class LossCollator(nn.Module):  # pylint:disable=too-many-instance-attributes
             mask = masks[index]
             inputs.append((y_true * mask, y_pred * mask))
             weights.append(self._eye_multiplier if m_type == "eye" else self._mouth_multiplier)
-        logger.trace(
-            "[Loss] masked inputs: %s, weights: %s",  # type:ignore[attr-defined]
+        logger.trace(  # type: ignore[attr-defined]
+            "[Loss] masked inputs: %s, weights: %s",
             [[x.shape for x in i] for i in inputs],
             weights,
         )

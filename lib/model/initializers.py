@@ -203,7 +203,7 @@ class ConvolutionAware(initializers.Initializer):
         var_b = np.array([[np.diag(arr) for arr in batch] for batch in diag])
         retval = inputs + var_a - var_b
         logger.debug("Input shape: %s. Output shape: %s", inputs.shape, retval.shape)
-        return retval
+        return retval  # type: ignore[no-any-return]
 
     def _create_basis(self, filters_size: int, filters: int, size: int, dtype: str) -> np.ndarray:
         """Create the basis for convolutional aware initialization
@@ -223,12 +223,12 @@ class ConvolutionAware(initializers.Initializer):
             The output array
         """
         if size == 1:
-            return np.random.normal(0.0, self._eps_std, (filters_size, filters, size))
+            return np.random.normal(0.0, self._eps_std, (filters_size, filters, size))  # type: ignore[no-any-return]
         nbb = filters // size + 1
         var_a = np.random.normal(0.0, 1.0, (filters_size, nbb, size, size))
         var_a = self._symmetrize(var_a)
         var_u = np.linalg.svd(var_a)[0].transpose(0, 1, 3, 2)
-        retval = np.reshape(var_u, (filters_size, nbb * size, size))[:, :filters, :].astype(dtype)
+        retval = np.reshape(var_u, (filters_size, nbb * size, size))[:, :filters, :].astype(dtype)  # type: ignore[var-annotated]
         logger.debug(
             "filters_size: %s, filters: %s, size: %s, dtype: %s, output: %s",
             filters_size,
@@ -264,7 +264,7 @@ class ConvolutionAware(initializers.Initializer):
             variance,
             retval.shape,
         )
-        return retval
+        return retval  # type: ignore[no-any-return]
 
     def __call__(
         self,  # pylint: disable=too-many-locals

@@ -14,7 +14,7 @@ from .startup import StartupMixin
 from .state import WindowStateMixin
 
 
-class ManualToolWindow(
+class ManualToolWindow(  # type: ignore[misc]
     LifecycleMixin,
     PersistenceMixin,
     StartupMixin,

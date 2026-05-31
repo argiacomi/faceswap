@@ -397,7 +397,7 @@ class DiskIO:  # pylint:disable=too-many-instance-attributes
     def pre_encode(self) -> Callable[[np.ndarray, T.Any], list[bytes]] | None:
         """python function: Selected writer's pre-encode function, if it has one,
         otherwise ``None``"""
-        dummy = np.zeros((20, 20, 3), dtype="uint8")
+        dummy = np.zeros((20, 20, 3), dtype="uint8")  # type: ignore[var-annotated]
         test = self._writer.pre_encode(dummy)
         retval: Callable | None = None if test is None else self._writer.pre_encode
         logger.debug("Writer pre_encode function: %s", retval)
@@ -454,7 +454,7 @@ class DiskIO:  # pylint:disable=too-many-instance-attributes
             args.append(predictor.output_size)
         logger.debug("Writer args: %s", args)
         config_file = self._args.config_file if hasattr(self._args, "config_file") else None
-        return PluginLoader.get_converter("writer", self._args.writer)(
+        return PluginLoader.get_converter("writer", self._args.writer)(  # type: ignore[no-any-return]
             *args, config_file=config_file
         )
 
@@ -953,7 +953,7 @@ class Predict:  # pylint:disable=too-many-instance-attributes
         if not trainer:
             raise FaceswapError("Trainer name could not be read from state file.")
         logger.debug("Trainer from state file: '%s'", trainer)
-        return trainer
+        return trainer  # type: ignore[no-any-return]
 
     def launch(self, load_queue: EventQueue) -> None:
         """Launch the prediction process in a background thread.
@@ -997,8 +997,8 @@ class Predict:  # pylint:disable=too-many-instance-attributes
             self._faces_count += faces_count
             if faces_count > 1:
                 self._verify_output = True
-                logger.verbose(
-                    "Found more than one face in an image! '%s'",  # type:ignore
+                logger.verbose(  # type: ignore[attr-defined]
+                    "Found more than one face in an image! '%s'",
                     os.path.basename(item.inbound.filename),
                 )
 
@@ -1008,9 +1008,8 @@ class Predict:  # pylint:disable=too-many-instance-attributes
             batch.append(item)
 
             if faces_seen < self._batchsize and consecutive_no_faces < self._batchsize:
-                logger.trace(
-                    "Continuing. Current batchsize: %s, "  # type:ignore
-                    "consecutive_no_faces: %s",
+                logger.trace(  # type: ignore[attr-defined]
+                    "Continuing. Current batchsize: %s, consecutive_no_faces: %s",
                     faces_seen,
                     consecutive_no_faces,
                 )
@@ -1040,8 +1039,8 @@ class Predict:  # pylint:disable=too-many-instance-attributes
         -------
         The predicted faces for the current batch
         """
-        logger.trace(
-            "Batching to predictor. Frames: %s, Faces: %s",  # type:ignore
+        logger.trace(  # type: ignore[attr-defined]
+            "Batching to predictor. Frames: %s, Faces: %s",
             len(batch),
             faces_seen,
         )
@@ -1117,7 +1116,7 @@ class Predict:  # pylint:disable=too-many-instance-attributes
             / 255.0
         )
         logger.trace("Compiled Feed faces. Shape: %s", retval.shape)  # type:ignore
-        return retval
+        return retval  # type: ignore[no-any-return]
 
     def _predict(self, feed_faces: np.ndarray, batch_size: int | None = None) -> np.ndarray:
         """Run the Faceswap models' prediction function.
@@ -1152,8 +1151,8 @@ class Predict:  # pylint:disable=too-many-instance-attributes
         if self._model.color_order.lower() == "rgb":
             predicted[0] = predicted[0][..., ::-1]
 
-        logger.trace(
-            "Output shape(s): %s",  # type:ignore
+        logger.trace(  # type: ignore[attr-defined]
+            "Output shape(s): %s",
             [predict.shape for predict in predicted],
         )
 
@@ -1164,7 +1163,7 @@ class Predict:  # pylint:disable=too-many-instance-attributes
             retval = predicted[-1].astype("float32")
 
         logger.trace("Final shape: %s", retval.shape)  # type:ignore
-        return retval
+        return retval  # type: ignore[no-any-return]
 
     def _queue_out_frames(self, batch: list[ConvertItem], swapped_faces: np.ndarray) -> None:
         """Compile the batch back to original frames and put to the Out Queue.
@@ -1186,8 +1185,8 @@ class Predict:  # pylint:disable=too-many-instance-attributes
             if num_faces != 0:
                 item.swapped_faces = swapped_faces[pointer : pointer + num_faces]
 
-            logger.trace(
-                "Putting to queue. ('%s', detected_faces: %s, "  # type:ignore
+            logger.trace(  # type: ignore[attr-defined]
+                "Putting to queue. ('%s', detected_faces: %s, "
                 "reference_faces: %s, swapped_faces: %s)",
                 item.inbound.filename,
                 len(item.inbound.detected_faces),
@@ -1254,8 +1253,8 @@ class OptionalActions:  # pylint:disable=too-few-public-methods
         input_aligned_dir = self._args.input_aligned_dir
 
         if input_aligned_dir is None:
-            logger.verbose(
-                "Aligned directory not specified. All faces listed in "  # type:ignore
+            logger.verbose(  # type: ignore[attr-defined]
+                "Aligned directory not specified. All faces listed in "
                 "the alignments file will be converted"
             )
             return retval

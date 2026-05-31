@@ -193,10 +193,10 @@ class _Window:
     def _refresh_recent_menu(self) -> None:
         self.refreshed_recent += 1
 
-    def _apply_preview_context(self, _context) -> None:  # type:ignore[no-untyped-def]
+    def _apply_preview_context(self, _context) -> None:
         return None
 
-    def _apply_graph_context(self, _context) -> None:  # type:ignore[no-untyped-def]
+    def _apply_graph_context(self, _context) -> None:
         return None
 
     _capture_ui_state = MainWindow._capture_ui_state
@@ -225,8 +225,8 @@ def test_capture_ui_state_includes_display_and_runtime_sources() -> None:
 def test_restore_ui_state_restores_display_and_runtime_sources() -> None:
     window = _Window()
 
-    MainWindow._restore_ui_state(  # type:ignore[arg-type]
-        window,
+    MainWindow._restore_ui_state(
+        window,  # type: ignore[arg-type]
         {
             "window_size": [1440, 900],
             "display_tab": DisplayController.GRAPH,
@@ -266,8 +266,11 @@ def test_save_file_failure_does_not_update_session_state(tmp_path: Path) -> None
     window._project_store = _ProjectStore(fail_save=True)
 
     assert (
-        MainWindow._save_file(  # type:ignore[arg-type]
-            window, str(tmp_path / "project.fsw"), ProjectFile(), PROJECT_KIND
+        MainWindow._save_file(
+            window,  # type: ignore[arg-type]
+            str(tmp_path / "project.fsw"),
+            ProjectFile(),
+            PROJECT_KIND,
         )
         is False
     )
@@ -310,7 +313,7 @@ def test_apply_project_restores_command_context_and_last_session(tmp_path: Path)
 def test_reset_project_state_clears_command_displays_and_dirty_state() -> None:
     window = _Window()
     window._modified = True
-    window._project_filename = "/tmp/project.fsw"
+    window._project_filename = "/tmp/project.fsw"  # type: ignore[assignment]
     window._file_kind = TASK_KIND
 
     MainWindow._reset_project_state(window)  # type:ignore[arg-type]
@@ -328,7 +331,7 @@ def test_reset_project_state_clears_command_displays_and_dirty_state() -> None:
 
 def test_window_title_dirty_state_matches_session_service_format(tmp_path: Path) -> None:
     window = _Window()
-    window._project_filename = str(tmp_path / "sample.fsw")
+    window._project_filename = str(tmp_path / "sample.fsw")  # type: ignore[assignment]
 
     MainWindow._set_modified(window, True)  # type:ignore[arg-type]
     MainWindow._set_modified(window, False)  # type:ignore[arg-type]

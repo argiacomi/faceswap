@@ -324,7 +324,7 @@ class _Alignments:
         fname = self._args.alignments_file
         frames = self._args.frames_dir
         if fname and os.path.isfile(fname) and os.path.splitext(fname)[-1].lower() == ".fsa":
-            return fname
+            return fname  # type: ignore[no-any-return]
         if fname:
             logger.error("Not a valid alignments file: '%s'", fname)
             sys.exit(1)

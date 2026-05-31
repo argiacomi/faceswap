@@ -103,7 +103,7 @@ def test_set_options_exposes_tab_name_and_cli_options() -> None:
         "project": "/project.fsw",
     }
 
-    state.set_options(options)
+    state.set_options(options)  # type: ignore[arg-type]
 
     assert state.has_options is True
     assert state.tab_name == "convert"
@@ -122,7 +122,7 @@ def test_set_legacy_sets_filename_and_options(tmp_path: Path) -> None:
     }
     state = ProjectSessionState()
 
-    state.set_legacy(str(filename), options)
+    state.set_legacy(str(filename), options)  # type: ignore[arg-type]
 
     assert state.filename == str(filename)
     assert state.has_file is True

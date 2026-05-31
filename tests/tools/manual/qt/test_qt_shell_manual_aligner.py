@@ -99,7 +99,7 @@ def _session_with_frame(folder: Path) -> ManualSession:
 
 
 def _make_window(
-    qtbot,  # type:ignore[no-untyped-def]
+    qtbot,
     tmp_path: Path,
     *,
     service: ManualAlignerService | None = None,
@@ -120,10 +120,10 @@ def _child(window: ManualToolWindow, widget_type: type[_WidgetT], name: str) -> 
     """Return a named child widget, failing with a useful assertion message."""
     widget = window.findChild(widget_type, name)
     assert widget is not None, f"Missing widget {name}"
-    return widget
+    return widget  # type: ignore[no-any-return]
 
 
-def _wait_for_aligner_preload(qtbot, window: ManualToolWindow, *, timeout: int = 3000) -> None:  # type:ignore[no-untyped-def]
+def _wait_for_aligner_preload(qtbot, window: ManualToolWindow, *, timeout: int = 3000) -> None:
     """Wait until any explicit aligner preload worker has fully drained.
 
     Tests that trigger preload via ``set_aligner_normalization`` /
@@ -162,7 +162,7 @@ def _mouse_event(
         QPointF(view.mapToGlobal(pos.toPoint())),
         button,
         buttons,
-        Qt.NoModifier,
+        Qt.NoModifier,  # type: ignore[attr-defined]
     )
 
 
@@ -173,21 +173,21 @@ def _mouse_event(
 
 def test_available_aligners_and_normalizations_surface_through_window(
     qtbot, tmp_path: Path
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """The window forwards service discovery results for dropdown population."""
     window, _ = _make_window(qtbot, tmp_path)
     assert window.available_aligners() == ("HRNet",)
     assert window.available_normalizations() == NORMALIZATION_CHOICES
 
 
-def test_set_aligner_name_records_choice_on_editor_state(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_set_aligner_name_records_choice_on_editor_state(qtbot, tmp_path: Path) -> None:
     """``set_aligner_name`` stores the chosen plugin on the editor state."""
     window, _ = _make_window(qtbot, tmp_path)
     window.set_aligner_name("FAN")
     assert window._editor_state.aligner_name == "FAN"
 
 
-def test_set_normalization_propagates_to_loaded_backends(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_set_normalization_propagates_to_loaded_backends(qtbot, tmp_path: Path) -> None:
     """Normalization changes update editor state + already-loaded backends."""
     window, service = _make_window(qtbot, tmp_path)
     window._editable.add_face(0, (10.0, 10.0, 40.0, 40.0))
@@ -213,7 +213,7 @@ def test_set_normalization_propagates_to_loaded_backends(qtbot, tmp_path: Path) 
 # ---------------------------------------------------------------------------
 
 
-def test_bbox_aligner_controls_exist_and_populate_from_service(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_bbox_aligner_controls_exist_and_populate_from_service(qtbot, tmp_path: Path) -> None:
     """BBox editor surfaces aligner dropdown, radios, auto-run and progress widgets."""
     service = _stub_service(available=("HRNet", "FAN"), default="FAN")
     window, _ = _make_window(qtbot, tmp_path, service=service)
@@ -240,7 +240,7 @@ def test_bbox_aligner_controls_exist_and_populate_from_service(qtbot, tmp_path: 
     assert status.text()
 
 
-def test_bbox_aligner_controls_are_visible_only_in_bbox_mode(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_bbox_aligner_controls_are_visible_only_in_bbox_mode(qtbot, tmp_path: Path) -> None:
     """Aligner controls hide outside BoundingBox mode without being destroyed."""
     window, _ = _make_window(qtbot, tmp_path)
     controls = _child(window, QWidget, "qt-manual-aligner-controls")
@@ -257,7 +257,7 @@ def test_bbox_aligner_controls_are_visible_only_in_bbox_mode(qtbot, tmp_path: Pa
     assert controls.isVisible() is False
 
 
-def test_bbox_aligner_selection_persists_across_editor_mode_changes(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_bbox_aligner_selection_persists_across_editor_mode_changes(qtbot, tmp_path: Path) -> None:
     """Dropdown + normalization choices survive leaving and re-entering BBox mode."""
     service = _stub_service(available=("HRNet", "FAN"), default="HRNet")
     window, _ = _make_window(qtbot, tmp_path, service=service)
@@ -285,7 +285,7 @@ def test_bbox_aligner_selection_persists_across_editor_mode_changes(qtbot, tmp_p
     assert window._editor_state.aligner_normalization == "clahe"
 
 
-def test_bbox_auto_run_checkbox_updates_state_and_gates_rerun(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_bbox_auto_run_checkbox_updates_state_and_gates_rerun(qtbot, tmp_path: Path) -> None:
     """The visible Auto-run checkbox controls post-bbox-edit aligner reruns."""
     window, service = _make_window(qtbot, tmp_path)
     checkbox = _child(window, QCheckBox, "qt-manual-aligner-auto-run")
@@ -303,7 +303,7 @@ def test_bbox_auto_run_checkbox_updates_state_and_gates_rerun(qtbot, tmp_path: P
     assert all(not backend.align_calls for backend in instances)
 
 
-def test_bbox_aligner_preload_progress_paints_loading_then_ready(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_bbox_aligner_preload_progress_paints_loading_then_ready(qtbot, tmp_path: Path) -> None:
     """Changing a BBox normalization starts background preload and updates inline status."""
     window, _ = _make_window(qtbot, tmp_path)
     progress = _child(window, QProgressBar, "qt-manual-aligner-load-progress")
@@ -321,7 +321,7 @@ def test_bbox_aligner_preload_progress_paints_loading_then_ready(qtbot, tmp_path
     assert "ready" in status.text().lower()
 
 
-def test_bbox_aligner_preload_clears_worker_state_after_completion(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_bbox_aligner_preload_clears_worker_state_after_completion(qtbot, tmp_path: Path) -> None:
     """Completed explicit preload drains worker state before tests continue."""
     window, _ = _make_window(qtbot, tmp_path)
     clahe = _child(window, QRadioButton, "qt-manual-aligner-normalization-clahe")
@@ -339,7 +339,7 @@ def test_bbox_aligner_preload_clears_worker_state_after_completion(qtbot, tmp_pa
 # ---------------------------------------------------------------------------
 
 
-def test_bbox_move_triggers_aligner_when_auto_run_enabled(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_bbox_move_triggers_aligner_when_auto_run_enabled(qtbot, tmp_path: Path) -> None:
     """Moving a bbox in BoundingBox mode reruns the aligner with the new bbox."""
     canned = np.tile([[5.0, 6.0]], (68, 1)).astype(np.float32)
     window, service = _make_window(qtbot, tmp_path, service=_stub_service(landmarks=canned))
@@ -359,7 +359,7 @@ def test_bbox_move_triggers_aligner_when_auto_run_enabled(qtbot, tmp_path: Path)
     assert face.landmarks[0] == (5.0, 6.0)
 
 
-def test_successful_aligner_refresh_is_dirty_and_undoable(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_successful_aligner_refresh_is_dirty_and_undoable(qtbot, tmp_path: Path) -> None:
     """A successful explicit rerun records an undoable landmark refresh."""
     canned = np.tile([[9.0, 10.0]], (68, 1)).astype(np.float32)
     window, _ = _make_window(qtbot, tmp_path, service=_stub_service(landmarks=canned))
@@ -383,7 +383,7 @@ def test_successful_aligner_refresh_is_dirty_and_undoable(qtbot, tmp_path: Path)
     assert window._editable.faces(0)[0].landmarks[0] == (9.0, 10.0)
 
 
-def test_bbox_resize_triggers_aligner_when_auto_run_enabled(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_bbox_resize_triggers_aligner_when_auto_run_enabled(qtbot, tmp_path: Path) -> None:
     """Resizing a bbox in BoundingBox mode reruns the aligner with the new bbox."""
     window, service = _make_window(qtbot, tmp_path)
     window._editable.add_face(0, (10.0, 10.0, 40.0, 40.0))
@@ -398,7 +398,7 @@ def test_bbox_resize_triggers_aligner_when_auto_run_enabled(qtbot, tmp_path: Pat
 def test_bbox_move_and_resize_use_selected_aligner_and_normalization(
     qtbot,
     tmp_path: Path,
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """BBox edits rerun landmarks through the selected aligner backend."""
     instances: list[_StubBackend] = []
     window, _ = _make_window(
@@ -432,7 +432,7 @@ def test_bbox_move_and_resize_use_selected_aligner_and_normalization(
 def test_bbox_drag_motion_regenerates_landmarks_before_release(
     qtbot,
     tmp_path: Path,
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """Frame-level BBox drag mutates bbox and landmarks on mouse move."""
     canned = np.tile([[31.0, 32.0]], (68, 1)).astype(np.float32)
     window, service = _make_window(qtbot, tmp_path, service=_stub_service(landmarks=canned))
@@ -443,10 +443,10 @@ def test_bbox_drag_motion_regenerates_landmarks_before_release(
     end = _source_to_widget(window, 30.0, 25.0)
 
     window._frame_view.mousePressEvent(
-        _mouse_event(QEvent.Type.MouseButtonPress, window, start, Qt.LeftButton, Qt.LeftButton)
+        _mouse_event(QEvent.Type.MouseButtonPress, window, start, Qt.LeftButton, Qt.LeftButton)  # type: ignore[attr-defined]
     )
     window._frame_view.mouseMoveEvent(
-        _mouse_event(QEvent.Type.MouseMove, window, end, Qt.NoButton, Qt.LeftButton)
+        _mouse_event(QEvent.Type.MouseMove, window, end, Qt.NoButton, Qt.LeftButton)  # type: ignore[attr-defined]
     )
 
     face = window._editable.faces(0)[0]
@@ -455,14 +455,14 @@ def test_bbox_drag_motion_regenerates_landmarks_before_release(
     instances = service._test_instances  # type:ignore[attr-defined]
     assert instances[-1].align_calls[-1][1] == (20.0, 15.0, 40.0, 40.0)
     window._frame_view.mouseReleaseEvent(
-        _mouse_event(QEvent.Type.MouseButtonRelease, window, end, Qt.LeftButton, Qt.NoButton)
+        _mouse_event(QEvent.Type.MouseButtonRelease, window, end, Qt.LeftButton, Qt.NoButton)  # type: ignore[attr-defined]
     )
 
 
 def test_bbox_resize_motion_regenerates_landmarks_before_release(
     qtbot,
     tmp_path: Path,
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """Frame-level BBox resize updates model and aligner during mouse move."""
     canned = np.tile([[41.0, 42.0]], (68, 1)).astype(np.float32)
     window, service = _make_window(qtbot, tmp_path, service=_stub_service(landmarks=canned))
@@ -473,10 +473,10 @@ def test_bbox_resize_motion_regenerates_landmarks_before_release(
     end = _source_to_widget(window, 65.0, 60.0)
 
     window._frame_view.mousePressEvent(
-        _mouse_event(QEvent.Type.MouseButtonPress, window, start, Qt.LeftButton, Qt.LeftButton)
+        _mouse_event(QEvent.Type.MouseButtonPress, window, start, Qt.LeftButton, Qt.LeftButton)  # type: ignore[attr-defined]
     )
     window._frame_view.mouseMoveEvent(
-        _mouse_event(QEvent.Type.MouseMove, window, end, Qt.NoButton, Qt.LeftButton)
+        _mouse_event(QEvent.Type.MouseMove, window, end, Qt.NoButton, Qt.LeftButton)  # type: ignore[attr-defined]
     )
 
     face = window._editable.faces(0)[0]
@@ -485,14 +485,14 @@ def test_bbox_resize_motion_regenerates_landmarks_before_release(
     instances = service._test_instances  # type:ignore[attr-defined]
     assert instances[-1].align_calls[-1][1] == (10.0, 10.0, 55.0, 50.0)
     window._frame_view.mouseReleaseEvent(
-        _mouse_event(QEvent.Type.MouseButtonRelease, window, end, Qt.LeftButton, Qt.NoButton)
+        _mouse_event(QEvent.Type.MouseButtonRelease, window, end, Qt.LeftButton, Qt.NoButton)  # type: ignore[attr-defined]
     )
 
 
 def test_bbox_add_creates_face_on_press_and_same_drag_moves_it(
     qtbot,
     tmp_path: Path,
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """Empty-space BBox press creates immediately and drag continues as move."""
     canned = np.tile([[51.0, 52.0]], (68, 1)).astype(np.float32)
     window, service = _make_window(qtbot, tmp_path, service=_stub_service(landmarks=canned))
@@ -501,7 +501,7 @@ def test_bbox_add_creates_face_on_press_and_same_drag_moves_it(
     end = _source_to_widget(window, 80.0, 75.0)
 
     window._frame_view.mousePressEvent(
-        _mouse_event(QEvent.Type.MouseButtonPress, window, start, Qt.LeftButton, Qt.LeftButton)
+        _mouse_event(QEvent.Type.MouseButtonPress, window, start, Qt.LeftButton, Qt.LeftButton)  # type: ignore[attr-defined]
     )
     assert window._editable.face_count(0) == 1
     created = window._editable.faces(0)[0]
@@ -512,7 +512,7 @@ def test_bbox_add_creates_face_on_press_and_same_drag_moves_it(
     instances = service._test_instances  # type:ignore[attr-defined]
     assert instances[-1].aligner == "cv2-dnn"
     window._frame_view.mouseMoveEvent(
-        _mouse_event(QEvent.Type.MouseMove, window, end, Qt.NoButton, Qt.LeftButton)
+        _mouse_event(QEvent.Type.MouseMove, window, end, Qt.NoButton, Qt.LeftButton)  # type: ignore[attr-defined]
     )
 
     moved = window._editable.faces(0)[0]
@@ -521,14 +521,14 @@ def test_bbox_add_creates_face_on_press_and_same_drag_moves_it(
     assert instances[-1].aligner == "HRNet"
     assert instances[-1].align_calls[-1][1] == moved.bbox
     window._frame_view.mouseReleaseEvent(
-        _mouse_event(QEvent.Type.MouseButtonRelease, window, end, Qt.LeftButton, Qt.NoButton)
+        _mouse_event(QEvent.Type.MouseButtonRelease, window, end, Qt.LeftButton, Qt.NoButton)  # type: ignore[attr-defined]
     )
 
 
 def test_bbox_non_active_handle_selects_and_drags_without_adding(
     qtbot,
     tmp_path: Path,
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """A visible non-active corner handle starts a resize instead of adding a box."""
     window, _ = _make_window(qtbot, tmp_path)
     window._editable.add_face(0, (10.0, 10.0, 30.0, 30.0))
@@ -539,10 +539,10 @@ def test_bbox_non_active_handle_selects_and_drags_without_adding(
     end = _source_to_widget(window, 110.0, 48.0)
 
     window._frame_view.mousePressEvent(
-        _mouse_event(QEvent.Type.MouseButtonPress, window, start, Qt.LeftButton, Qt.LeftButton)
+        _mouse_event(QEvent.Type.MouseButtonPress, window, start, Qt.LeftButton, Qt.LeftButton)  # type: ignore[attr-defined]
     )
     window._frame_view.mouseMoveEvent(
-        _mouse_event(QEvent.Type.MouseMove, window, end, Qt.NoButton, Qt.LeftButton)
+        _mouse_event(QEvent.Type.MouseMove, window, end, Qt.NoButton, Qt.LeftButton)  # type: ignore[attr-defined]
     )
 
     faces = window._editable.faces(0)
@@ -552,14 +552,14 @@ def test_bbox_non_active_handle_selects_and_drags_without_adding(
     assert faces[1].bbox[2] > 30.0
     assert faces[1].bbox[3] > 30.0
     window._frame_view.mouseReleaseEvent(
-        _mouse_event(QEvent.Type.MouseButtonRelease, window, end, Qt.LeftButton, Qt.NoButton)
+        _mouse_event(QEvent.Type.MouseButtonRelease, window, end, Qt.LeftButton, Qt.NoButton)  # type: ignore[attr-defined]
     )
 
 
 def test_bbox_resize_clamps_corner_without_flipping(
     qtbot,
     tmp_path: Path,
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """Dragging a corner through the opposite side clamps at the display-pixel minimum."""
     window, _ = _make_window(qtbot, tmp_path)
     window._editable.add_face(0, (20.0, 20.0, 40.0, 40.0))
@@ -572,10 +572,10 @@ def test_bbox_resize_clamps_corner_without_flipping(
     expected_h = float(max(1, int(round(min_h))))
 
     window._frame_view.mousePressEvent(
-        _mouse_event(QEvent.Type.MouseButtonPress, window, start, Qt.LeftButton, Qt.LeftButton)
+        _mouse_event(QEvent.Type.MouseButtonPress, window, start, Qt.LeftButton, Qt.LeftButton)  # type: ignore[attr-defined]
     )
     window._frame_view.mouseMoveEvent(
-        _mouse_event(QEvent.Type.MouseMove, window, end, Qt.NoButton, Qt.LeftButton)
+        _mouse_event(QEvent.Type.MouseMove, window, end, Qt.NoButton, Qt.LeftButton)  # type: ignore[attr-defined]
     )
 
     face = window._editable.faces(0)[0]
@@ -588,14 +588,14 @@ def test_bbox_resize_clamps_corner_without_flipping(
         )
     )
     window._frame_view.mouseReleaseEvent(
-        _mouse_event(QEvent.Type.MouseButtonRelease, window, end, Qt.LeftButton, Qt.NoButton)
+        _mouse_event(QEvent.Type.MouseButtonRelease, window, end, Qt.LeftButton, Qt.NoButton)  # type: ignore[attr-defined]
     )
 
 
 def test_bbox_add_then_drag_undo_removes_face_in_one_step(
     qtbot,
     tmp_path: Path,
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """Immediate add plus same-gesture live movement is one undoable operation."""
     window, _ = _make_window(qtbot, tmp_path)
     window._editor_state.set("editor_mode", "BoundingBox")
@@ -603,13 +603,13 @@ def test_bbox_add_then_drag_undo_removes_face_in_one_step(
     end = _source_to_widget(window, 82.0, 76.0)
 
     window._frame_view.mousePressEvent(
-        _mouse_event(QEvent.Type.MouseButtonPress, window, start, Qt.LeftButton, Qt.LeftButton)
+        _mouse_event(QEvent.Type.MouseButtonPress, window, start, Qt.LeftButton, Qt.LeftButton)  # type: ignore[attr-defined]
     )
     window._frame_view.mouseMoveEvent(
-        _mouse_event(QEvent.Type.MouseMove, window, end, Qt.NoButton, Qt.LeftButton)
+        _mouse_event(QEvent.Type.MouseMove, window, end, Qt.NoButton, Qt.LeftButton)  # type: ignore[attr-defined]
     )
     window._frame_view.mouseReleaseEvent(
-        _mouse_event(QEvent.Type.MouseButtonRelease, window, end, Qt.LeftButton, Qt.NoButton)
+        _mouse_event(QEvent.Type.MouseButtonRelease, window, end, Qt.LeftButton, Qt.NoButton)  # type: ignore[attr-defined]
     )
 
     assert window._editable.face_count(0) == 1
@@ -620,7 +620,7 @@ def test_bbox_add_then_drag_undo_removes_face_in_one_step(
 def test_bbox_pointer_add_uses_add_then_aligner_regeneration_path(
     qtbot,
     tmp_path: Path,
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """Frame-view BBox add creates the face then regenerates landmarks."""
     canned = np.tile([[13.0, 14.0]], (68, 1)).astype(np.float32)
     window, service = _make_window(qtbot, tmp_path, service=_stub_service(landmarks=canned))
@@ -636,7 +636,7 @@ def test_bbox_pointer_add_uses_add_then_aligner_regeneration_path(
     assert instances[-1].align_calls[-1][1] == (30.0, 30.0, 40.0, 40.0)
 
 
-def test_bbox_move_skips_aligner_outside_bbox_mode(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_bbox_move_skips_aligner_outside_bbox_mode(qtbot, tmp_path: Path) -> None:
     """In View / Landmarks / Extract / Mask modes the aligner is not invoked."""
     window, service = _make_window(qtbot, tmp_path)
     window._editable.add_face(0, (10.0, 10.0, 40.0, 40.0))
@@ -646,7 +646,7 @@ def test_bbox_move_skips_aligner_outside_bbox_mode(qtbot, tmp_path: Path) -> Non
     assert service._test_instances == []  # type:ignore[attr-defined]
 
 
-def test_bbox_move_skips_aligner_when_auto_run_disabled(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_bbox_move_skips_aligner_when_auto_run_disabled(qtbot, tmp_path: Path) -> None:
     """``aligner_auto_run=False`` prevents the post-edit rerun."""
     window, service = _make_window(qtbot, tmp_path)
     window._editable.add_face(0, (10.0, 10.0, 40.0, 40.0))
@@ -664,7 +664,7 @@ def test_bbox_move_skips_aligner_when_auto_run_disabled(qtbot, tmp_path: Path) -
 # ---------------------------------------------------------------------------
 
 
-def test_add_face_initialises_landmarks_via_aligner_in_bbox_mode(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_add_face_initialises_landmarks_via_aligner_in_bbox_mode(qtbot, tmp_path: Path) -> None:
     """A new pointer-added face gets its landmarks from the aligner."""
     canned = np.tile([[3.0, 4.0]], (68, 1)).astype(np.float32)
     window, service = _make_window(qtbot, tmp_path, service=_stub_service(landmarks=canned))
@@ -683,7 +683,7 @@ def test_add_face_initialises_landmarks_via_aligner_in_bbox_mode(qtbot, tmp_path
 # ---------------------------------------------------------------------------
 
 
-def test_aligner_failure_leaves_editable_model_intact(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_aligner_failure_leaves_editable_model_intact(qtbot, tmp_path: Path) -> None:
     """A failing aligner surfaces a status message and does not touch landmarks."""
     failing = _stub_service(fail=RuntimeError("aligner broke"))
     window, _ = _make_window(qtbot, tmp_path, service=failing)
@@ -701,14 +701,14 @@ def test_aligner_failure_leaves_editable_model_intact(qtbot, tmp_path: Path) -> 
     assert before == after
 
 
-def test_rerun_aligner_no_face_returns_false_with_status_message(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_rerun_aligner_no_face_returns_false_with_status_message(qtbot, tmp_path: Path) -> None:
     """``rerun_aligner_for_face`` rejects an out-of-range face_index."""
     window, _ = _make_window(qtbot, tmp_path)
     # No faces have been added yet.
     assert window.rerun_aligner_for_face(0) is False
 
 
-def test_aligner_status_callback_routed_to_status_bar(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_aligner_status_callback_routed_to_status_bar(qtbot, tmp_path: Path) -> None:
     """``_on_aligner_status`` updates the status bar message text."""
     window, _ = _make_window(qtbot, tmp_path)
     window._on_aligner_status(AlignerStatus(kind="loading", aligner="HRNet", message="Hi"))
@@ -717,7 +717,7 @@ def test_aligner_status_callback_routed_to_status_bar(qtbot, tmp_path: Path) -> 
 
 def test_set_aligner_normalization_updates_editor_state_without_face(
     qtbot, tmp_path: Path
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """Normalization editor-state updates land even before any backend is loaded."""
     window, _ = _make_window(qtbot, tmp_path)
     window.set_aligner_normalization("mean")
@@ -731,7 +731,7 @@ def test_set_aligner_normalization_updates_editor_state_without_face(
 
 def test_rerun_aligner_with_unstubbed_image_returns_false_when_frame_unloaded(
     qtbot, tmp_path: Path
-) -> None:  # type:ignore[no-untyped-def]
+) -> None:
     """When the frame view has no image, the aligner rerun no-ops cleanly."""
     window, _ = _make_window(qtbot, tmp_path)
     window._editable.add_face(0, (10.0, 10.0, 40.0, 40.0))
@@ -746,7 +746,7 @@ def test_rerun_aligner_with_unstubbed_image_returns_false_when_frame_unloaded(
 # ---------------------------------------------------------------------------
 
 
-def test_explicit_preload_clears_worker_state_on_completion(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_explicit_preload_clears_worker_state_on_completion(qtbot, tmp_path: Path) -> None:
     """After an explicit aligner preload completes the worker reference is gone."""
     window, _ = _make_window(qtbot, tmp_path)
     window._editor_state.set("editor_mode", "BoundingBox")
@@ -762,7 +762,7 @@ def test_explicit_preload_clears_worker_state_on_completion(qtbot, tmp_path: Pat
     assert ("HRNet", "hist") in window._aligner_loaded_targets
 
 
-def test_close_event_after_preload_completes_does_not_leave_thread(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_close_event_after_preload_completes_does_not_leave_thread(qtbot, tmp_path: Path) -> None:
     """A normal close after preload finishes leaves no dangling worker thread."""
     from PySide6.QtGui import QCloseEvent
 
@@ -778,11 +778,11 @@ def test_close_event_after_preload_completes_does_not_leave_thread(qtbot, tmp_pa
     assert window._aligner_load_worker is None
 
 
-def test_aligner_refresh_marks_dirty_and_is_undoable(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_aligner_refresh_marks_dirty_and_is_undoable(qtbot, tmp_path: Path) -> None:
     """A bbox move + aligner refresh under auto-run is undoable as one logical edit."""
     import numpy as np
 
-    landmarks_v2 = np.full((68, 2), 11.0, dtype=np.float32)
+    landmarks_v2 = np.full((68, 2), 11.0, dtype=np.float32)  # type: ignore[var-annotated]
     window, service = _make_window(qtbot, tmp_path, service=_stub_service(landmarks=landmarks_v2))
     window._editor_state.set("editor_mode", "BoundingBox")
     initial_landmarks = tuple((float(i), float(i)) for i in range(5))
@@ -813,7 +813,7 @@ def test_aligner_refresh_marks_dirty_and_is_undoable(qtbot, tmp_path: Path) -> N
     assert final.landmarks[0] == (11.0, 11.0)
 
 
-def test_entering_bbox_mode_does_not_preload_aligner(qtbot, tmp_path: Path) -> None:  # type:ignore[no-untyped-def]
+def test_entering_bbox_mode_does_not_preload_aligner(qtbot, tmp_path: Path) -> None:
     """Switching to BoundingBox mode shows controls but does NOT start a preload."""
     window, _ = _make_window(qtbot, tmp_path)
     window._editor_state.set("editor_mode", "BoundingBox")

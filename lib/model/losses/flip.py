@@ -304,7 +304,7 @@ class _SpatialFilters(nn.Module):
         radius = int(
             np.ceil(3 * np.sqrt(max_scale_parameter / (2 * np.pi**2)) * self._pixels_per_degree)
         )
-        ax_x, ax_y = np.meshgrid(range(-radius, radius + 1), range(-radius, radius + 1))
+        ax_x, ax_y = np.meshgrid(range(-radius, radius + 1), range(-radius, radius + 1))  # type: ignore[var-annotated]
         domain = (ax_x * delta_x) ** 2 + (ax_y * delta_x) ** 2
         return domain, radius
 
@@ -317,7 +317,7 @@ class _SpatialFilters(nn.Module):
         ) * np.exp(-(np.pi**2) * domain / b_2)
         grad = grad / np.sum(grad)
         grad = np.reshape(grad, (1, *grad.shape))
-        return grad
+        return grad  # type: ignore[no-any-return]
 
     def _generate_spatial_filters(self) -> torch.Tensor:
         """Generates spatial contrast sensitivity filters with width depending on the number of
@@ -395,7 +395,7 @@ class _FeatureDetection(nn.Module):
         self._std = 0.5 * width * pixels_per_degree
         self._radius = int(np.ceil(3 * self._std))
 
-        grid = np.meshgrid(
+        grid = np.meshgrid(  # type: ignore[var-annotated]
             range(-self._radius, self._radius + 1),
             range(-self._radius, self._radius + 1),
         )

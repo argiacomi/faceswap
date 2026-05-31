@@ -68,7 +68,7 @@ def test_toolbar_settings_actions_route_to_dialog_sections(
     created: list[object] = []
 
     class _DialogDouble:
-        def __init__(self, section=None, parent=None) -> None:  # type:ignore[no-untyped-def]
+        def __init__(self, section=None, parent=None) -> None:
             self.section = section
             self.parent = parent
             self.show_count = 0
@@ -99,6 +99,6 @@ def test_toolbar_settings_actions_route_to_dialog_sections(
         actions[f"qt-shell-toolbar-settings-{name}"].trigger()
 
     assert len(created) == 1
-    assert created[0].section == "extract"
-    assert created[0].selected == ["train", "convert"]
-    assert created[0].show_count == 3
+    assert created[0].section == "extract"  # type: ignore[attr-defined]
+    assert created[0].selected == ["train", "convert"]  # type: ignore[attr-defined]
+    assert created[0].show_count == 3  # type: ignore[attr-defined]

@@ -821,7 +821,7 @@ def _build_pairwise_context(features: list[RepresentationFeatures]) -> _Pairwise
     """
     n = len(features)
     f = len(_FEATURE_ATTRS)
-    values = np.full((n, f), np.nan, dtype=np.float32)
+    values = np.full((n, f), np.nan, dtype=np.float32)  # type: ignore[var-annotated]
     for row, feature in enumerate(features):
         for col, attr in enumerate(_FEATURE_ATTRS):
             value = getattr(feature, attr)
@@ -2174,7 +2174,7 @@ def _visual_span_exceeds_limits(
         features[m].appearance_mode for m in members if features[m].appearance_mode is not None
     }
     if len(modes) > 1:
-        mode_list = sorted(modes)
+        mode_list = sorted(modes)  # type: ignore[type-var]
         for i_pos, a in enumerate(mode_list):
             for b in mode_list[i_pos + 1 :]:
                 if not _appearance_modes_compatible(a, b):
@@ -2737,8 +2737,8 @@ def _appearance_lighting_span(
     if len(modes) < 2:
         return 0
     widths = []
-    for channel in range(min(4, min(len(mode) for mode in modes))):
-        values = [mode[channel] for mode in modes]
+    for channel in range(min(4, min(len(mode) for mode in modes))):  # type: ignore[arg-type]
+        values = [mode[channel] for mode in modes]  # type: ignore[index]
         widths.append(max(values) - min(values))
     return int(max(widths, default=0))
 
