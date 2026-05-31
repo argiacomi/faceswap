@@ -22,6 +22,14 @@ from .utils import FileHandler, get_config, get_images, preview_trigger
 
 logger = logging.getLogger(__name__)
 
+# Names of the two ``GraphDisplay`` Tk-var traces. Hoisted from
+# ``GraphDisplay._add_trace_variables`` so ``T.get_args(T.Literal[...])``
+# is evaluated once at import instead of per add/clear cycle (issue
+# #193).
+_GRAPH_TRACE_VAR_NAMES: tuple[str, ...] = T.get_args(
+    T.Literal["smoothgraph", "display_iterations"]
+)
+
 # LOCALES
 _LANG = gettext.translation("gui.tooltips", localedir="locales", fallback=True)
 _ = _LANG.gettext
@@ -193,7 +201,8 @@ class PreviewTrain(DisplayOptionalPage):  # pylint:disable=too-many-ancestors
             if self._display is not None:
                 self._display.remove_option_controls()
             super().subnotebook_hide()
-            del self._display
+            # ``self._display = None`` releases the reference; the
+            # explicit ``del`` was redundant (issue #193).
             self._display = None
             self._preview.reset()
 
@@ -555,22 +564,29 @@ class GraphDisplay(DisplayOptionalPage):  # pylint:disable=too-many-ancestors
             graph.save_fig(graphlocation)
 
     def _add_trace_variables(self) -> None:
-        """Add tracing for when the option sliders are updated, for updating the graph."""
+        """Add tracing for when the option sliders are updated, for updating the graph.
+
+        Uses the modern ``trace_add("write", ...)`` API; the returned
+        token is stored on ``self._trace_vars`` so ``_clear_trace_variables``
+        can remove the trace cleanly (issue #193).
+        """
         for name, action in zip(
-            T.get_args(T.Literal["smoothgraph", "display_iterations"]),
+            _GRAPH_TRACE_VAR_NAMES,
             (self._smooth_amount_callback, self._iteration_limit_callback),
             strict=False,
         ):
             var = self.vars[name]
             if name not in self._trace_vars:
-                self._trace_vars[name] = (var, var.trace("w", action))
+                self._trace_vars[name] = (var, var.trace_add("write", action))
 
     def _clear_trace_variables(self) -> None:
         """Clear all of the trace variables from :attr:`_trace_vars` and reset the dictionary."""
         if self._trace_vars:
             for name, (var, trace) in self._trace_vars.items():
                 logger.debug("Clearing trace from variable: %s", name)
-                var.trace_vdelete("w", trace)
+                # Modern token-based removal — the legacy
+                # ``trace_vdelete("w", trace)`` is removed in Tk 9.
+                var.trace_remove("write", trace)
             self._trace_vars = {}
 
     def close(self) -> None:

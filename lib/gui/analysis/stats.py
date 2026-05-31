@@ -65,19 +65,28 @@ class GlobalSession:
         return os.path.join(self._model_dir, self._model_name)
 
     @property
+    def _sessions(self) -> dict[str, T.Any]:
+        """Centralised accessor for ``self._state["sessions"]``.
+
+        Returns ``{}`` when the state file is empty / missing the
+        ``sessions`` key — keeps the downstream ``batch_sizes`` /
+        ``total_iterations`` / ``logging_disabled`` accesses safe on
+        partially-loaded state without each call repeating the
+        ``self._state.get("sessions", {})`` pattern (issue #193).
+        """
+        return (self._state or {}).get("sessions", {}) or {}
+
+    @property
     def have_session_data(self) -> bool:
         """bool : ``True`` if session data is available otherwise ``False``"""
-        return bool(self._state and self._state["sessions"])
+        return bool(self._sessions)
 
     @property
     def batch_sizes(self) -> dict[int, int]:
         """dict: The batch sizes for each session_id for the model."""
         if not self.have_session_data:
             return {}
-        return {
-            int(sess_id): sess["batchsize"]
-            for sess_id, sess in self._state.get("sessions", {}).items()
-        }
+        return {int(sess_id): sess["batchsize"] for sess_id, sess in self._sessions.items()}
 
     @property
     def full_summary(self) -> list[dict]:
@@ -89,10 +98,13 @@ class GlobalSession:
     def logging_disabled(self) -> bool:
         """bool: ``True`` if logging is disabled for the currently training session otherwise
         ``False``."""
-        if not self.have_session_data:
+        sessions = self._sessions
+        if not sessions:
             return True
-        max_id = str(max(int(idx) for idx in self._state["sessions"]))
-        return self._state["sessions"][max_id]["no_logs"]
+        # ``max(...)`` over an empty iterable would raise; the
+        # ``not sessions`` guard above keeps that safe.
+        max_id = str(max(int(idx) for idx in sessions))
+        return sessions[max_id]["no_logs"]
 
     @property
     def session_ids(self) -> list[int]:
@@ -486,7 +498,7 @@ class SessionsSummary:
             examples += (summary["batch"] * 2) * summary["iterations"]
             batchset.add(summary["batch"])
             iterations += summary["iterations"]
-        batch = ",".join(str(bs) for bs in batchset)
+        batch = ",".join(map(str, batchset))
         totals: dict[str, str | int | float] = {
             "session": "Total",
             "start": starttime,

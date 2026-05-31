@@ -18,6 +18,9 @@ from .utils import get_config
 
 logger = logging.getLogger(__name__)
 
+_RECOLOR_RE = re.compile(r".+?(\s\d+:\d+:\d+\s)(?P<lvl>[A-Z]+)\s")
+_ANSI_ESCAPE_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+
 
 class ContextMenu(tk.Menu):  # pylint:disable=too-many-ancestors
     """A Pop up menu to be triggered when right clicking on widgets that this menu has been
@@ -260,8 +263,10 @@ class _SysOutRouter:
         )
         self._console = console
         self._out_type = out_type
-        self._recolor = re.compile(r".+?(\s\d+:\d+:\d+\s)(?P<lvl>[A-Z]+)\s")
-        self._ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+        # Reuse the module-level compiled patterns instead of compiling
+        # per-instance (issue #193).
+        self._recolor = _RECOLOR_RE
+        self._ansi_escape = _ANSI_ESCAPE_RE
         logger.debug("Initialized %s", self.__class__.__name__)
 
     def _get_tag(self, string):
@@ -273,7 +278,7 @@ class _SysOutRouter:
         output = self._recolor.match(string)
         if not output:
             return "default"
-        tag = output.groupdict()["lvl"].strip().lower()
+        tag = output["lvl"].strip().lower()
         return tag
 
     def write(self, string):

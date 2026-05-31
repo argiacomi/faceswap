@@ -61,11 +61,16 @@ class DisplayPage(ttk.Frame):  # pylint:disable=too-many-ancestors
             return False
 
     def add_optional_vars(self, varsdict):
-        """Add page specific variables"""
-        if isinstance(varsdict, dict):
-            for key, val in varsdict.items():
-                logger.debug("Adding: (%s: %s)", key, val)
-                self.vars[key] = val
+        """Add page specific variables.
+
+        ``set_vars`` always returns a dict (it has a default ``return {}``
+        override and every subclass returns a dict literal), so the
+        previous ``isinstance(varsdict, dict)`` guard never blocked
+        anything — removed (issue #193).
+        """
+        for key, val in varsdict.items():
+            logger.debug("Adding: (%s: %s)", key, val)
+            self.vars[key] = val
 
     def set_vars(self):
         """Override to return a dict of page specific variables"""
@@ -175,9 +180,13 @@ class DisplayPage(ttk.Frame):  # pylint:disable=too-many-ancestors
         if not self._has_valid_subnotebook():
             logger.debug("Subnotebook is invalid. Returning no tab ids")
             return {}
-        tabs = {}
-        for tab_id in range(0, self.subnotebook.index("end")):
-            tabs[self.subnotebook.tab(tab_id, "text")] = tab_id
+        # Dict comprehension replaces the per-row loop + assign + log
+        # — ``self.subnotebook.tab(...)`` is the only side-effect call
+        # (issue #193 simplification).
+        tabs = {
+            self.subnotebook.tab(tab_id, "text"): tab_id
+            for tab_id in range(self.subnotebook.index("end"))
+        }
         logger.debug(tabs)
         return tabs
 

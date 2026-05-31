@@ -50,8 +50,7 @@ class DisplayNotebook(ttk.Notebook):  # pylint:disable=too-many-ancestors
 
         self._set_wrapper_var_trace()
         self._add_static_tabs()
-        # pylint:disable=unnecessary-comprehension
-        self._static_tabs = [child for child in self.tabs()]
+        self._static_tabs = list(self.tabs())
         self.bind("<<NotebookTabChanged>>", self._on_tab_change)
         logger.debug("Initialized %s", self.__class__.__name__)
 
@@ -65,36 +64,25 @@ class DisplayNotebook(ttk.Notebook):  # pylint:disable=too-many-ancestors
         """Sets the trigger to update the displayed notebook's pages when the global tkinter
         variable `display` is updated in the :class:`~lib.gui.wrapper.ProcessWrapper`."""
         logger.debug("Setting wrapper var trace")
-        self._wrapper_var.trace("w", self._update_displaybook)
+        # Deprecated ``trace("w", ...)`` replaced with the modern
+        # ``trace_add("write", ...)`` (issue #193). Token is unused here
+        # because the trace lives for the lifetime of the notebook.
+        self._wrapper_var.trace_add("write", self._update_displaybook)
 
     def _add_static_tabs(self):
         """Add the tabs to the Display Notebook that are permanently displayed.
 
         Currently this is just the `Analysis` tab.
         """
+        # The previous shape iterated over ``("job queue", "analysis")``
+        # with a "not yet implemented" continue branch for "job queue"
+        # plus an ``_add_frame`` fallback. Both are dead — "job queue"
+        # was never wired up and no other code path adds a non-Analysis
+        # static tab — so this simplifies to the single live call
+        # (issue #193 simplification).
         logger.debug("Adding static tabs")
-        for tab in ("job queue", "analysis"):
-            if tab == "job queue":
-                continue  # Not yet implemented
-            if tab == "analysis":
-                helptext = {"stats": _("Summary statistics for each training session")}
-                frame = Analysis(self, tab, helptext)
-            else:
-                frame = self._add_frame()
-                self.add(frame, text=tab.title())
-
-    def _add_frame(self):
-        """Add a single frame for holding a static tab's contents.
-
-        Returns
-        -------
-        ttk.Frame
-            The frame, packed into position
-        """
-        logger.debug("Adding frame")
-        frame = ttk.Frame(self)
-        frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
-        return frame
+        helptext = {"stats": _("Summary statistics for each training session")}
+        Analysis(self, "analysis", helptext)
 
     def _command_display(self, command):
         """Build the relevant command specific tabs based on the incoming Faceswap command.
@@ -126,13 +114,8 @@ class DisplayNotebook(ttk.Notebook):  # pylint:disable=too-many-ancestors
     def _train_tabs(self):
         """Build the display tabs that are used for the Faceswap train task."""
         logger.debug("Build train tabs")
-        for tab in ("graph", "preview"):
-            if tab == "graph":
-                helptext = _("Graph showing Loss vs Iterations")
-                GraphDisplay(self, "graph", helptext, 5000)
-            elif tab == "preview":
-                helptext = _("Training preview. Updated on every save iteration")
-                PreviewTrain(self, "preview", helptext, 1000)
+        GraphDisplay(self, "graph", _("Graph showing Loss vs Iterations"), 5000)
+        PreviewTrain(self, "preview", _("Training preview. Updated on every save iteration"), 1000)
         logger.debug("Built train tabs")
 
     def _convert_tabs(self):
@@ -156,8 +139,14 @@ class DisplayNotebook(ttk.Notebook):  # pylint:disable=too-many-ancestors
         as a fallback so a stale widget cannot survive into the next
         rebuild and cause a duplicate window-name error.
         """
-        for child in self.tabs():
-            if child in self._static_tabs:
+        # Hoist ``self.tabs()`` once so the dynamic notebook state isn't
+        # walked per child (issue #193 medium-priority). ``static_tabs``
+        # also caches the set lookup since the membership check fires
+        # every iteration.
+        current_tabs = self.tabs()
+        static_tabs = set(self._static_tabs)
+        for child in current_tabs:
+            if child in static_tabs:
                 continue
             logger.debug("removing child: %s", child)
             child_name = child.split(".")[-1]
@@ -167,6 +156,8 @@ class DisplayNotebook(ttk.Notebook):  # pylint:disable=too-many-ancestors
                     child_object.close()
                 except Exception:  # pylint:disable=broad-except
                     logger.debug("close() raised for '%s'; continuing teardown", child)
+            # Recompute ``self.tabs()`` here — ``child_object.close()``
+            # may have already forgotten the tab.
             if child in self.tabs():
                 try:
                     self.forget(child)
@@ -214,6 +205,9 @@ class DisplayNotebook(ttk.Notebook):  # pylint:disable=too-many-ancestors
         args: tuple
             Required for tkinter callback events, but unused.
         """
+        # Empty string is not in the valid-command set, so a single
+        # ``in`` check covers both "missing" and "unrecognised" inputs
+        # (issue #193 simplification).
         raw_command = self._wrapper_var.get()
         command: str | None = (
             raw_command if raw_command in ("extract", "train", "convert") else None
