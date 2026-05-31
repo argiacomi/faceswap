@@ -62,7 +62,7 @@ class PluginThreads:
             return self._backup_error_state
         if self._external_error_state is not None:
             return self._external_error_state
-        return list(self._threads.values())[0].error_state
+        return next(iter(self._threads.values())).error_state
 
     @property
     def enabled(self) -> list[str]:
@@ -74,7 +74,7 @@ class PluginThreads:
         obj = f"{self.__class__.__name__}(name={self._name})"
         threads = self.enabled
         alive = [x.is_alive() for x in self._threads.values()]
-        error = None if not threads else list(self._threads.values())[0].error_state.has_error
+        error = None if not threads else next(iter(self._threads.values())).error_state.has_error
         info = f"[threads: {threads}, alive: {alive}, error: {error}]"
         return f"{obj} {info}"
 

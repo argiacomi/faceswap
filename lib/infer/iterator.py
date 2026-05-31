@@ -6,6 +6,7 @@ from __future__ import annotations
 import abc
 import logging
 import typing as T
+from collections import deque
 from queue import Empty as QueueEmpty
 from queue import Queue
 
@@ -65,7 +66,9 @@ class ExtractIterator(T.Generic[QueueItemInT, QueueItemOutT], abc.ABC):
         self._plugin_type = plugin_type
         self._batch_size = batch_size
         self._error_state = error_state
-        self._fifo: list[QueueItemOutT] = []
+        # Issue #194 P2 medium: ``deque`` so ``popleft()`` runs in O(1)
+        # — ``list.pop(0)`` was O(N) and shifted every remaining item.
+        self._fifo: deque[QueueItemOutT] = deque()
         self._zero_detect_threshold = batch_size * 2
         self._flush = False
         self._shutdown = False
@@ -136,7 +139,7 @@ class ExtractIterator(T.Generic[QueueItemInT, QueueItemOutT], abc.ABC):
             logger.trace("[%s.fifo] FIFO empty", self._name)  # type:ignore[attr-defined]
             return None
         if self._has_zero_detections():
-            retval = self._fifo.pop(0)
+            retval = self._fifo.popleft()
             logger.debug(
                 "[%s.fifo] Popping from FIFO due to accumulated zero detections "
                 "(frames: %s, faces: %s)",
@@ -152,7 +155,7 @@ class ExtractIterator(T.Generic[QueueItemInT, QueueItemOutT], abc.ABC):
                 len(self._fifo),
             )
             return None
-        retval = self._fifo.pop(0)
+        retval = self._fifo.popleft()
         logger.trace(
             "[%s.fifo] Popping: %s",  # type:ignore[attr-defined]
             self._name,
@@ -211,7 +214,7 @@ class ExtractIterator(T.Generic[QueueItemInT, QueueItemOutT], abc.ABC):
         if self._fifo:
             setattr(self, f"_{signal.lower()}", True)
             assert len(self._fifo) == 1  # Final batch should remain
-            retval = self._fifo.pop(0)
+            retval = self._fifo.popleft()
             logger.debug("[%s] Returning final queued output item: %s", self._name, retval)
             return retval
 

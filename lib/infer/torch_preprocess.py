@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
+from functools import lru_cache
 from threading import Lock
 
 import cv2
@@ -184,6 +185,76 @@ def _normalize_grid_coords(
     return ((coord + 0.5) * 2.0 / float(limit)) - 1.0
 
 
+@lru_cache(maxsize=64)
+def _cached_normalization_stats(
+    mean: tuple[float, ...],
+    std: tuple[float, ...],
+    device_str: str,
+    device_index: int | None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Build + cache ``(mean, std)`` tensors for ``torch_normalize``.
+
+    Issue #194 P2 high: the old shape rebuilt both tensors on EVERY
+    ``torch_normalize`` call. With this cache an identical ``(mean,
+    std, device)`` tuple reuses the same tensors instead — the size of
+    the cache is bounded by the number of distinct model normalisation
+    triples in the pipeline.
+
+    ``device_str`` + ``device_index`` are the cache key, not the
+    ``torch.device`` object itself, because devices are not hashable
+    in a way that survives equal-but-distinct instances.
+    """
+    device = (
+        torch.device(device_str)
+        if device_index is None
+        else torch.device(f"{device_str}:{device_index}")
+    )
+    mean_tensor = torch.tensor(mean, dtype=torch.float32, device=device).view(1, -1, 1, 1)
+    std_tensor = torch.tensor(std, dtype=torch.float32, device=device).view(1, -1, 1, 1)
+    return mean_tensor, std_tensor
+
+
+@lru_cache(maxsize=32)
+def _cached_affine_scaffold(
+    device_str: str,
+    device_index: int | None,
+    output_height: int,
+    output_width: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Build + cache the ``(homogeneous_eye, coords)`` scaffolding used
+    by :func:`_affine_grid_from_matrices`.
+
+    Issue #194 P2 high: ``torch.eye(3)`` and the ``torch.meshgrid``
+    grids depended only on the output resolution + device, but were
+    rebuilt per call. Caching the device-resident scaffolds means
+    repeated same-size warps reuse the same tensors.
+
+    Returns ``(eye3, coords)`` where:
+      * ``eye3`` is a ``(3, 3)`` float32 identity that the caller
+        expands to ``(B, 3, 3)`` per call.
+      * ``coords`` is the ``(H, W, 3)`` homogeneous-pixel grid that
+        the caller expands to ``(B, H, W, 3)`` per call.
+    """
+    device = (
+        torch.device(device_str)
+        if device_index is None
+        else torch.device(f"{device_str}:{device_index}")
+    )
+    eye3 = torch.eye(3, dtype=torch.float32, device=device)
+    ys, xs = torch.meshgrid(
+        torch.arange(output_height, device=device, dtype=torch.float32),
+        torch.arange(output_width, device=device, dtype=torch.float32),
+        indexing="ij",
+    )
+    coords = torch.stack((xs, ys, torch.ones_like(xs)), dim=-1)
+    return eye3, coords
+
+
+def _device_key(device: torch.device) -> tuple[str, int | None]:
+    """Return a hashable ``(type, index)`` tuple for a torch device."""
+    return device.type, device.index
+
+
 def _affine_grid_from_matrices(
     matrices: torch.Tensor,
     *,
@@ -191,22 +262,23 @@ def _affine_grid_from_matrices(
     output_size: tuple[int, int],
     align_corners: bool,
 ) -> torch.Tensor:
-    """Build a pixel-accurate ``grid_sample`` grid from OpenCV-style warp matrices."""
+    """Build a pixel-accurate ``grid_sample`` grid from OpenCV-style
+    warp matrices.
+
+    Issue #194 P2 high: the static scaffolding (identity matrix +
+    pixel-coordinate grid) is built ONCE per ``(device, output_size)``
+    via :func:`_cached_affine_scaffold` and reused across calls; only
+    the per-batch ``matrices`` mix-in + inversion + per-batch expand
+    runs every call.
+    """
     input_height, input_width = input_size
     output_height, output_width = output_size
-    homogeneous = (
-        torch.eye(3, dtype=torch.float32, device=matrices.device)
-        .unsqueeze(0)
-        .repeat(matrices.shape[0], 1, 1)
+    eye3, coords = _cached_affine_scaffold(
+        *_device_key(matrices.device), output_height, output_width
     )
+    homogeneous = eye3.unsqueeze(0).repeat(matrices.shape[0], 1, 1)
     homogeneous[:, :2] = matrices
     inverse = torch.linalg.inv(homogeneous)[:, :2]
-    ys, xs = torch.meshgrid(
-        torch.arange(output_height, device=matrices.device, dtype=torch.float32),
-        torch.arange(output_width, device=matrices.device, dtype=torch.float32),
-        indexing="ij",
-    )
-    coords = torch.stack((xs, ys, torch.ones_like(xs)), dim=-1)
     coords = coords.unsqueeze(0).expand(matrices.shape[0], -1, -1, -1)
     source = torch.einsum("bij,bhwj->bhwi", inverse, coords)
     grid_x = _normalize_grid_coords(source[..., 0], input_width, align_corners=align_corners)
@@ -306,8 +378,9 @@ def torch_normalize(
             f"mean/std length must match channel count {image.shape[1]}, got {len(mean)} and {len(std)}"
         )
 
-    mean_tensor = torch.tensor(mean, dtype=torch.float32, device=image.device).view(1, -1, 1, 1)
-    std_tensor = torch.tensor(std, dtype=torch.float32, device=image.device).view(1, -1, 1, 1)
+    mean_tensor, std_tensor = _cached_normalization_stats(
+        tuple(mean), tuple(std), *_device_key(image.device)
+    )
     if torch.any(std_tensor == 0):
         raise ValueError("std values must be non-zero")
     return (image - mean_tensor) / std_tensor

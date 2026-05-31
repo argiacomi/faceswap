@@ -97,7 +97,13 @@ class Align(ExtractHandler):
         -------
         The batch ROIs adjusted to fit within the frame's dimensions
         """
-        imgs_h_w = np.array([batch.images[i].shape[:2] for i in batch.frame_ids])
+        # Issue #194 P2 high: precompute the frame-shape lookup ONCE
+        # per batch and index into it via ``batch.frame_ids`` instead of
+        # rebuilding the ``[batch.images[i].shape[:2] ...]`` list per
+        # face. ``np.array`` was already wrapping the comprehension —
+        # the new shape just keeps the array around.
+        frame_shapes = np.array([img.shape[:2] for img in batch.images])
+        imgs_h_w = frame_shapes[batch.frame_ids]
         if imgs_h_w.shape[0] != roi.shape[0]:  # Re-feeds
             imgs_h_w = np.repeat(imgs_h_w, self._re_feed.total_feeds, axis=0)
         retval = np.empty_like(roi)
@@ -349,7 +355,14 @@ class Align(ExtractHandler):
             start = idx * batch_size
             results.append(T.cast(np.ndarray, self._predict(feed[start : start + batch_size])))
 
+        # Issue #194 P3: assert uniform plugin output here so a
+        # ragged-shape plugin produces an immediate, debuggable error
+        # rather than a downstream cast/reshape failure deep inside
+        # ``retval.reshape``.
         retval = np.asarray(results)
+        assert retval.dtype != object, (
+            "Plugin returned ragged predictions across re-feeds; expected a uniform shape"
+        )
         return T.cast(np.ndarray, retval.reshape((feed.shape[0], *retval.shape[2:])))
 
     def process(self, batch: ExtractBatch) -> None:

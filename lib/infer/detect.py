@@ -201,7 +201,14 @@ class Detect(ExtractHandler):
             if self._overridden["post_process"]
             else predictions
         )
-        mask_found = np.array([np.any(n) for n in bboxes], dtype="bool")
+        # Issue #194 P2 medium: ``np.fromiter`` over the generator avoids
+        # materialising the intermediate ``[np.any(n) for n in bboxes]``
+        # list for variable-length / object-dtype bbox arrays.
+        mask_found = np.fromiter(
+            (bool(np.any(n)) for n in bboxes),
+            dtype=bool,
+            count=len(bboxes),
+        )
         indices_requires = np.flatnonzero(mask_requires)
         indices_angle[indices_requires[mask_found]] = rotation_index
         mask_requires[indices_requires[mask_found]] = False
@@ -224,12 +231,13 @@ class Detect(ExtractHandler):
         process = "process"
         input_images = batch.data
         batch_size = input_images.shape[0]
-        box_list: list[None | np.ndarray] = [None for _ in range(batch_size)]
+        # Issue #194 P2 medium / P3: prefer the trivial allocation forms.
+        box_list: list[None | np.ndarray] = [None] * batch_size
         boxes: np.ndarray | None = None
         indices_angle = np.zeros((batch_size,), dtype="int32")
 
         idx = 0
-        mask_requires = np.array([True for _ in range(batch_size)])
+        mask_requires = np.ones(batch_size, dtype=bool)
         while True:
             feed = self._rotator.rotate(idx, input_images[mask_requires])
             if feed is None:
@@ -264,11 +272,14 @@ class Detect(ExtractHandler):
                 break
             idx += 1
 
-        boxes = (
-            np.array([self._empty_bbox if b is None else b for b in box_list], dtype="object")
-            if boxes is None
-            else boxes
-        )
+        # Issue #194 P3: split the conditional out of the ``np.array(...)``
+        # expression so the "rotations ran -> we already have boxes vs
+        # straight-through -> fill from box_list" branch is obvious.
+        if boxes is None:
+            filled = [self._empty_bbox if b is None else b for b in box_list]
+            boxes = np.empty(len(filled), dtype="object")
+            for pos, value in enumerate(filled):
+                boxes[pos] = value
         batch.data = np.empty(2, dtype="object")
         batch.data[0] = indices_angle
         batch.data[1] = boxes
@@ -339,6 +350,8 @@ class Detect(ExtractHandler):
         if not self._min_size and not self._max_size:
             return
 
+        # Issue #194 P2 low: pre-compute the frame-shape min array once
+        # so the indexing below doesn't rebuild it per filter call.
         frames = np.array([i.shape[:2] for i in batch.images]).min(axis=1)
         sizes = np.maximum(
             batch.bboxes[:, 2] - batch.bboxes[:, 0],

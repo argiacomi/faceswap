@@ -235,18 +235,35 @@ class ExtractHandler(abc.ABC):
         return retval
 
     def _format_images(self, images: npt.NDArray[np.uint8]) -> np.ndarray:
-        """Format the incoming UINT8 0-255 images to the format specified by the plugin
+        """Format the incoming UINT8 0-255 images to the format specified by the plugin.
 
-        Parameters
-        ----------
-        images
-            The batch of UINT8 images to format
+        Issue #194 P1: the legacy shape returned the caller's array
+        directly when ``self.plugin.dtype == np.uint8`` AND then did
+        in-place scaling (``retval /= ...``) if the plugin's scale
+        wasn't ``(0, 255)``. That combination was — and still is —
+        invalid: NumPy refuses the in-place float-into-uint8 cast, so
+        any plugin that asked for it would crash at extract time, AND
+        even if it didn't, the caller's batch would be mutated.
 
-        Returns
-        -------
-        The batch of images formatted and scaled for the plugin
+        The fix: ``uint8`` plugins MUST use ``(0, 255)`` scale; any
+        other combination raises an actionable ``ValueError`` at the
+        boundary instead of dying deep inside the in-place divide.
+        Float plugins still get the cast + scale path, which already
+        allocates a fresh array via ``astype`` so the in-place
+        ``/=`` / ``+=`` operate on the copy, never on the caller's
+        batch.
         """
-        retval = images if self.plugin.dtype == np.uint8 else images.astype(self.plugin.dtype)
+        if self.plugin.dtype == np.uint8:
+            if self.plugin.scale != (0, 255):
+                raise ValueError(
+                    f"Plugin '{getattr(self.plugin, 'name', type(self.plugin).__name__)}' "
+                    f"requested dtype=uint8 with scale={self.plugin.scale!r}. "
+                    "uint8 plugins must use scale=(0, 255); scale into float at the "
+                    "plugin layer if a different range is needed."
+                )
+            return images
+
+        retval = images.astype(self.plugin.dtype)
         if self.plugin.scale == (0, 255):
             return retval
         low, high = self.plugin.scale
@@ -428,7 +445,10 @@ class ExtractHandlerFace(ExtractHandler, abc.ABC):
         """
         if with_alpha:
             images = [
-                np.concatenate([i, np.zeros((*i.shape[:2], 1), dtype=i.dtype) + 255], axis=-1)
+                # ``np.full`` allocates + fills in one pass — the previous
+                # ``np.zeros(...) + 255`` did a zero-fill followed by an
+                # in-place add (issue #194 P2 low).
+                np.concatenate([i, np.full((*i.shape[:2], 1), 255, dtype=i.dtype)], axis=-1)
                 for i in images
             ]
         return batch_align(images, image_ids, matrices, self._input_size)
@@ -458,9 +478,12 @@ class ExtractHandlerFace(ExtractHandler, abc.ABC):
         -------
         The sub-crop from the aligned faces for feeding the model
         """
-        imgs = np.array(
-            [images[idx] for idx in image_ids] if len(images) != len(image_ids) else images
-        )
+        # Issue #194 P3: keep the two ``np.array(...)`` paths explicit
+        # so the (re-feeds vs identity) intent is obvious at a glance.
+        if len(images) != len(image_ids):
+            imgs = np.array([images[idx] for idx in image_ids])
+        else:
+            imgs = np.array(images)
         assert imgs.dtype != object, "Aligned images must all be the same size"
         if self._centering == "head":
             return batch_resize(imgs, self._input_size)
