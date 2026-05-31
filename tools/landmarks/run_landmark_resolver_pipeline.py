@@ -1300,7 +1300,7 @@ def _contract_for(stage: str, args: argparse.Namespace, paths: PipelinePaths) ->
         "scorer_training": "loads scorer contexts once, writes canonical scorer rows, trains v1/v1.1/v2 scorer artifacts, and records an input/hyperparameter sentinel; --resume skips only when all canonical artifacts and the sentinel match",
         "scorer_evaluation": "writes scorer_evaluation reports; --resume skips when scorer_policy_report.json exists",
         "production_promotion_check": "reads scorer report only; no recompute; requires promotion_status/status pass",
-        "artifact_export": "copies final artifacts into artifacts/; --resume skips when artifacts_manifest.json exists",
+        "artifact_export": "writes promotion_manifest.json with immutable runtime artifact provenance; --resume skips when the manifest matches the promoted scorer source",
         "config_update": "writes deterministic config_update_preview.json and config_update_patch.ini; writes only promoted align.ensemble keys with --write-config after promotion passes",
     }[stage]
     success = {
@@ -1342,7 +1342,7 @@ def _contract_for(stage: str, args: argparse.Namespace, paths: PipelinePaths) ->
         ],
         "scorer_evaluation": ["scorer_policy_report.json exists"],
         "production_promotion_check": ["scorer report promotion_status/status is pass"],
-        "artifact_export": ["artifacts_manifest.json exists"],
+        "artifact_export": ["promotion_manifest.json exists"],
         "config_update": [
             "config_update_preview.json exists",
             "config_update_patch.ini exists",
@@ -2176,9 +2176,6 @@ def _promoted_scorer_source(args: argparse.Namespace, paths: PipelinePaths) -> P
     if policy == SCORER_VERSION_LEARNED_QUALITY_V2:
         return paths.canonical_v2_scorer_artifact
     return paths.canonical_continuous_scorer_artifact
-    if policy == SCORER_VERSION_LEARNED_QUALITY_V2:
-        return paths.canonical_v2_scorer_artifact
-    return paths.canonical_continuous_scorer_artifact
 
 
 def _promoted_runtime_policy(args: argparse.Namespace) -> str:
@@ -2462,11 +2459,12 @@ def _install_production_bundle_artifacts(args: argparse.Namespace, paths: Pipeli
 def _apply_config(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
     updates = _config_updates(args, paths)
     _validate_config_artifacts(args, paths)
-    if not _artifact_export_matches(args, paths):
-        _export_artifacts(args, paths)
     _write_config_patch_files(args, paths, updates)
     if not args.write_config:
         return ["wrote config update preview only"]
+
+    if not _artifact_export_matches(args, paths):
+        _export_artifacts(args, paths)
     _promotion_check(paths, promotion_scope=args.promotion_scope, args=args)
     config_path = Path(args.config_path)
     _require(config_path, "config file for --write-config")
