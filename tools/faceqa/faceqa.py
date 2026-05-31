@@ -224,7 +224,7 @@ class Faceqa:  # pylint:disable=invalid-name
             min_bucket_pct=min_bucket_pct,
         )
 
-        self._run_deep_analysis(entries, report, total_faces=total_faces)
+        deep_pruning_signals = self._run_deep_analysis(entries, report, total_faces=total_faces)
 
         output_dir = self._output_dir(alignments)
 
@@ -236,6 +236,7 @@ class Faceqa:  # pylint:disable=invalid-name
                     coverage=coverage,
                     aggressiveness=str(getattr(self._args, "prune_aggressiveness", "balanced")),
                     min_bucket_pct=min_bucket_pct,
+                    deep_pruning_signals=deep_pruning_signals,
                     progress_callback=tick,
                 )
             report.pruning_suggestions = redundancy.to_dict()
@@ -265,7 +266,7 @@ class Faceqa:  # pylint:disable=invalid-name
         report: T.Any,
         *,
         total_faces: int,
-    ) -> None:
+    ) -> dict[tuple[str, int], dict[str, T.Any]] | None:
         """Optionally run the DECA deep audit and attach it to the report.
 
         Gated on ``--deep-analysis deca``; when ``none`` (the default) this is
@@ -275,7 +276,7 @@ class Faceqa:  # pylint:disable=invalid-name
         """
         deep_analysis = str(getattr(self._args, "deep_analysis", "none"))
         if deep_analysis != "deca":
-            return
+            return None
 
         # Imported here (not at module top) so the default lightweight path
         # pays no torch / DECA import cost.
@@ -313,6 +314,10 @@ class Faceqa:  # pylint:disable=invalid-name
             deep_report.status,
             deep_report.deca_readiness.get("score") if deep_report.deca_readiness else None,
         )
+        return {
+            (str(signal["frame"]), int(signal["face_index"])): signal
+            for signal in deep_report.pruning_signals
+        }
 
     def _run_identity_backfill(
         self,

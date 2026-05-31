@@ -48,10 +48,17 @@ archive format.
 | `cluster_coverage` | k-means partition `balance` plus an absolute `mean_dispersion` collapse signal. |
 | `deca_readiness` | 0–100 sub-score derived from the above (independent of the landmark readiness score). |
 | `landmark_vs_deca` | Side-by-side `entropy_coverage` / `occupied_coverage` for the landmark vs DECA views. |
+| `pruning_signals` | Per-face DECA cells used to keep learned-space expression / pose / lighting / latent variation from being auto-pruned. |
 
 Coverage is measured in **absolute** coefficient space (fixed reference scale),
 not per-faceset z-scores, so a faceset collapsed onto a single
 expression/lighting scores low rather than being normalized to look diverse.
+
+When `--suggest-pruning` is combined with `--deep-analysis deca`, FaceQA passes
+the per-face DECA cells into the tight prune-subgroup splitter. Faces that look
+redundant under landmark/thumbnail metrics but differ in DECA expression, pose,
+lighting, or latent cluster stay in separate prune groups instead of being
+automatically collapsed.
 
 ## Validation status
 

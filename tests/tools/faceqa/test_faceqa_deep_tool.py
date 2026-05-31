@@ -68,7 +68,7 @@ def test_cli_exposes_deep_analysis_flag() -> None:
 def test_deep_analysis_none_is_noop() -> None:
     faceqa = Faceqa(Namespace(deep_analysis="none"))
     report = ReadinessReport()
-    faceqa._run_deep_analysis(_entries(), report, total_faces=20)
+    assert faceqa._run_deep_analysis(_entries(), report, total_faces=20) is None
     assert report.deep_audit == {}
 
 
@@ -97,10 +97,12 @@ def test_deep_analysis_deca_populates_report(monkeypatch) -> None:
             },
         },
     }
-    faceqa._run_deep_analysis(_entries(), report, total_faces=20)
+    deep_pruning_signals = faceqa._run_deep_analysis(_entries(), report, total_faces=20)
 
     assert report.deep_audit["mode"] == "deca"
     assert report.deep_audit["faces_encoded"] == 20
+    assert deep_pruning_signals is not None
+    assert len(deep_pruning_signals) == 20
     assert report.deep_audit["status"] == "ok"
     assert "deca_readiness" in report.deep_audit
     assert report.readiness_scores["landmark_readiness_score"] == 40.0

@@ -193,6 +193,14 @@ class RepresentationFeatures:
     appearance modes block normal redundancy edges so visually distinct
     looks (hairstyle / makeup / event / lighting) are preserved by
     default."""
+    deca_expression_cell: str | None = None
+    """Optional DECA expression-space cell for deep-analysis-aware pruning."""
+    deca_pose_cell: str | None = None
+    """Optional DECA pose-space cell for deep-analysis-aware pruning."""
+    deca_lighting_cell: str | None = None
+    """Optional DECA lighting-space cell for deep-analysis-aware pruning."""
+    deca_latent_cluster: int | None = None
+    """Optional DECA latent cluster id for deep-analysis-aware pruning."""
 
 
 @dataclass
@@ -299,6 +307,14 @@ class RedundancyRecord:
     smile_proxy_band: int | None = None
     """Discrete smile-proxy intensity band. ``None`` for missing
     smile_proxy."""
+    deca_expression_cell: str | None = None
+    """DECA expression-space cell used for pruning, when deep analysis ran."""
+    deca_pose_cell: str | None = None
+    """DECA pose-space cell used for pruning, when deep analysis ran."""
+    deca_lighting_cell: str | None = None
+    """DECA lighting-space cell used for pruning, when deep analysis ran."""
+    deca_latent_cluster: int | None = None
+    """DECA latent cluster id used for pruning, when deep analysis ran."""
     prune_group_id: int | None = None
     """Tight duplicate subgroup id used for pruning decisions. Multiple
     prune groups may share one broad contact-sheet cluster_id."""
@@ -346,6 +362,10 @@ class RedundancyRecord:
             "pitch_micro_band": self.pitch_micro_band,
             "mouth_openness_band": self.mouth_openness_band,
             "smile_proxy_band": self.smile_proxy_band,
+            "deca_expression_cell": self.deca_expression_cell,
+            "deca_pose_cell": self.deca_pose_cell,
+            "deca_lighting_cell": self.deca_lighting_cell,
+            "deca_latent_cluster": self.deca_latent_cluster,
             "prune_group_id": self.prune_group_id,
             "prune_group_size": self.prune_group_size,
             "contact_cluster_reason": self.contact_cluster_reason,
@@ -424,6 +444,10 @@ class RedundancyReport:
     cluster_merge_diagnostics: dict[int, dict[str, T.Any]] = field(default_factory=dict)
     """Per-contact-cluster diagnostics explaining broad merge reason and
     blockers that forced tight prune-subgroup splits."""
+    deep_pruning_enabled: bool = False
+    """``True`` when DECA per-face signatures were supplied to pruning."""
+    deep_pruning_signal_count: int = 0
+    """Number of faces with usable DECA pruning signatures."""
 
     def to_dict(self) -> dict[str, T.Any]:
         return {
@@ -448,6 +472,8 @@ class RedundancyReport:
             "readiness_safety_cap_reason": self.readiness_safety_cap_reason,
             "readiness_safety_cap_demotions": self.readiness_safety_cap_demotions,
             "cluster_merge_diagnostics": self.cluster_merge_diagnostics,
+            "deep_pruning_enabled": self.deep_pruning_enabled,
+            "deep_pruning_signal_count": self.deep_pruning_signal_count,
         }
 
     def to_json(self, *, indent: int = 2) -> str:
@@ -654,7 +680,17 @@ def _appearance_mode_signature(record: FaceQARecord) -> tuple[int, ...] | None:
     return T.cast(tuple[int, ...], channels)
 
 
-def _features_for(record: FaceQARecord) -> RepresentationFeatures:
+def _deca_signal_value(signal: T.Mapping[str, T.Any] | None, key: str) -> T.Any:
+    """Return one optional DECA pruning signal value."""
+    if signal is None:
+        return None
+    return signal.get(key)
+
+
+def _features_for(
+    record: FaceQARecord,
+    deca_signal: T.Mapping[str, T.Any] | None = None,
+) -> RepresentationFeatures:
     """Return the normalised representation feature vector for one record."""
     has_identity = _has_identity_guardrail(record)
     identity_outlier = record.identity_quality_flag in {"outlier", "reject"} or (
@@ -726,6 +762,12 @@ def _features_for(record: FaceQARecord) -> RepresentationFeatures:
             record.expression_asymmetry, _EXPRESSION_ASYMMETRY_EDGES
         ),
         appearance_mode=_appearance_mode_signature(record),
+        deca_expression_cell=T.cast(
+            str | None, _deca_signal_value(deca_signal, "expression_cell")
+        ),
+        deca_pose_cell=T.cast(str | None, _deca_signal_value(deca_signal, "pose_cell")),
+        deca_lighting_cell=T.cast(str | None, _deca_signal_value(deca_signal, "lighting_cell")),
+        deca_latent_cluster=T.cast(int | None, _deca_signal_value(deca_signal, "latent_cluster")),
     )
 
 
@@ -2770,6 +2812,39 @@ def _quality_consistent(
     return (max(values) - min(values)) <= allowed
 
 
+_DECA_PRUNING_ATTRS: tuple[tuple[str, str], ...] = (
+    ("deca_expression_cell", "DECA expression"),
+    ("deca_pose_cell", "DECA pose"),
+    ("deca_lighting_cell", "DECA lighting"),
+    ("deca_latent_cluster", "DECA latent cluster"),
+)
+
+
+def _deca_pair_blocker(a: RepresentationFeatures, b: RepresentationFeatures) -> str | None:
+    """Return a pruning blocker when DECA signatures disagree."""
+    for attr, label in _DECA_PRUNING_ATTRS:
+        va = getattr(a, attr)
+        vb = getattr(b, attr)
+        if va is None or vb is None:
+            continue
+        if va != vb:
+            return f"{label} mismatch ({va} vs {vb}) blocks DECA-aware pruning"
+    return None
+
+
+def _deca_signatures_pairwise_compatible(
+    members: list[int],
+    features: list[RepresentationFeatures],
+) -> tuple[bool, str | None]:
+    """Return whether every DECA-aware member pair can share one prune group."""
+    for left_pos, left in enumerate(members):
+        for right in members[left_pos + 1 :]:
+            blocker = _deca_pair_blocker(features[left], features[right])
+            if blocker is not None:
+                return False, blocker
+    return True, None
+
+
 def _candidate_complete_link_acceptance(
     *,
     candidate: int,
@@ -2847,6 +2922,10 @@ def _candidate_complete_link_acceptance(
 
     if not _appearance_modes_pairwise_compatible(proposed, features):
         blockers.append("appearance mode drift exceeds compatible one-channel rule")
+
+    deca_ok, deca_blocker = _deca_signatures_pairwise_compatible(proposed, features)
+    if not deca_ok and deca_blocker is not None:
+        blockers.append(deca_blocker)
 
     if not _quality_consistent(proposed, features, coverage_failed=coverage_failed):
         blockers.append("quality spread too wide for automatic prune subgroup")
@@ -3038,6 +3117,7 @@ def compute_redundancy(
     aggressiveness: str = "balanced",
     coverage: FacesetCoverageReport | None = None,
     min_bucket_pct: float = 5.0,
+    deep_pruning_signals: T.Mapping[tuple[str, int], T.Mapping[str, T.Any]] | None = None,
     progress_callback: T.Callable[[int], None] | None = None,
 ) -> RedundancyReport:
     """Compute coverage-aware representation redundancy clusters and recs.
@@ -3057,7 +3137,16 @@ def compute_redundancy(
     if n == 0:
         return RedundancyReport(aggressiveness=aggressiveness)
 
-    features = [_features_for(record) for record in record_list]
+    deep_signal_map = deep_pruning_signals or {}
+    features = [
+        _features_for(record, deep_signal_map.get((record.frame, record.face_index)))
+        for record in record_list
+    ]
+    deep_signal_count = sum(
+        1
+        for feature in features
+        if any(getattr(feature, attr) is not None for attr, _label in _DECA_PRUNING_ATTRS)
+    )
     components, edges, edge_reasons, ctx = _build_redundancy_clusters(
         features, config, progress_callback=progress_callback
     )
@@ -3293,6 +3382,10 @@ def compute_redundancy(
                 pitch_micro_band=rep_features.pitch_micro_band,
                 mouth_openness_band=rep_features.mouth_openness_band,
                 smile_proxy_band=rep_features.smile_proxy_band,
+                deca_expression_cell=rep_features.deca_expression_cell,
+                deca_pose_cell=rep_features.deca_pose_cell,
+                deca_lighting_cell=rep_features.deca_lighting_cell,
+                deca_latent_cluster=rep_features.deca_latent_cluster,
                 prune_group_id=prune_group_id,
                 prune_group_size=len(members),
                 contact_cluster_reason=contact_reason,
@@ -3392,6 +3485,10 @@ def compute_redundancy(
                     pitch_micro_band=member_features.pitch_micro_band,
                     mouth_openness_band=member_features.mouth_openness_band,
                     smile_proxy_band=member_features.smile_proxy_band,
+                    deca_expression_cell=member_features.deca_expression_cell,
+                    deca_pose_cell=member_features.deca_pose_cell,
+                    deca_lighting_cell=member_features.deca_lighting_cell,
+                    deca_latent_cluster=member_features.deca_latent_cluster,
                     prune_group_id=prune_group_id,
                     prune_group_size=len(members),
                     contact_cluster_reason=contact_reason,
@@ -3445,6 +3542,8 @@ def compute_redundancy(
         readiness_safety_cap_reason=cap_reason,
         readiness_safety_cap_demotions=cap_demotions,
         cluster_merge_diagnostics=cluster_merge_diagnostics,
+        deep_pruning_enabled=deep_signal_count > 0,
+        deep_pruning_signal_count=deep_signal_count,
         records=output_records,
     )
 

@@ -104,6 +104,15 @@ def test_run_deep_audit_happy_path(monkeypatch) -> None:
     assert data["expression_space_coverage"]["samples"] == 120
     assert data["pose_space_coverage"]["samples"] == 120
     assert data["lighting_space_coverage"]["samples"] == 120
+    assert len(data["pruning_signals"]) == 120
+    assert {
+        "frame",
+        "face_index",
+        "expression_cell",
+        "pose_cell",
+        "lighting_cell",
+        "latent_cluster",
+    }.issubset(data["pruning_signals"][0])
     assert 0.0 <= data["deca_readiness"]["score"] <= 100.0
     # Comparison carries both views with comparable keys.
     expr = data["landmark_vs_deca"]["expression"]

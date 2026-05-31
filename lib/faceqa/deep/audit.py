@@ -74,6 +74,7 @@ class DeepAuditReport:
     cluster_coverage: dict[str, object] = field(default_factory=dict)
     deca_readiness: dict[str, object] = field(default_factory=dict)
     landmark_vs_deca: dict[str, object] = field(default_factory=dict)
+    pruning_signals: list[dict[str, T.Any]] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, T.Any]:
@@ -151,9 +152,9 @@ def _encode_faceset(
     encoder: DecaEncoder,
     batch_size: int,
     progress_callback: Callable[[int], None] | None,
-) -> tuple[DecaCoefficients | None, int, int, dict[str, int]]:
+) -> tuple[DecaCoefficients | None, list[dict[str, T.Any]], int, int, dict[str, int]]:
     """Encode every face crop and return decoded coefficients + skip tallies."""
-    crops: list[np.ndarray] = []
+    encoded_refs: list[dict[str, T.Any]] = []
     pending: list[np.ndarray] = []
     skipped = 0
     skip_reasons: dict[str, int] = {}
@@ -179,16 +180,16 @@ def _encode_faceset(
                 key = "frame_loader_disabled" if extractor.disabled_reason else reason
                 skip_reasons[key] = skip_reasons.get(key, 0) + 1
                 continue
-            crops.append(crop)
+            encoded_refs.append({"frame": frame, "face_index": face_index})
             pending.append(crop)
             if len(pending) >= batch_size:
                 _flush()
     _flush()
 
     if not params:
-        return None, total, skipped, skip_reasons
+        return None, [], total, skipped, skip_reasons
     parameters = np.concatenate(params, axis=0)
-    return decode_parameters(parameters), total, skipped, skip_reasons
+    return decode_parameters(parameters), encoded_refs, total, skipped, skip_reasons
 
 
 def _combined_latent(coefficients: DecaCoefficients) -> np.ndarray:
@@ -201,6 +202,101 @@ def _combined_latent(coefficients: DecaCoefficients) -> np.ndarray:
         ),
         axis=1,
     )
+
+
+def _space_cell_labels(
+    features: np.ndarray,
+    *,
+    center: float,
+    scale: float,
+    n_bins: int = metrics_mod.DEFAULT_BINS,
+    n_dims: int = metrics_mod.DEFAULT_SPACE_DIMS,
+    clip: float = metrics_mod.DEFAULT_CLIP,
+) -> list[str | None]:
+    """Return coarse per-face cell labels for pruning diversity checks."""
+    matrix = np.asarray(features, dtype=np.float64)
+    if matrix.ndim != 2 or matrix.shape[0] == 0:
+        return []
+    finite = np.isfinite(matrix).all(axis=1)
+    if not finite.any():
+        return [None] * int(matrix.shape[0])
+
+    dims = metrics_mod._top_variance_dims(matrix[finite], n_dims)  # pylint:disable=protected-access
+    bins = max(1, int(n_bins))
+    labels: list[str | None] = [None] * int(matrix.shape[0])
+    for row_index, row in enumerate(matrix):
+        if not finite[row_index]:
+            continue
+        parts: list[str] = []
+        for dim in dims:
+            mapped = metrics_mod._center_scale_clip(  # pylint:disable=protected-access
+                np.asarray([row[dim]], dtype=np.float64), center, scale, clip
+            )
+            idx = metrics_mod._bin_indices(  # pylint:disable=protected-access
+                mapped, bins, clip
+            )[0]
+            parts.append(f"{int(dim)}:{int(idx)}")
+        labels[row_index] = "|".join(parts)
+    return labels
+
+
+def _latent_cluster_labels(latent: np.ndarray) -> list[int | None]:
+    """Return deterministic per-face latent cluster labels for pruning."""
+    matrix = np.asarray(latent, dtype=np.float64)
+    if matrix.ndim != 2 or matrix.shape[0] == 0:
+        return []
+    finite = np.isfinite(matrix).all(axis=1)
+    if not finite.any():
+        return [None] * int(matrix.shape[0])
+    labels: list[int | None] = [None] * int(matrix.shape[0])
+    valid = matrix[finite]
+    effective_clusters = int(min(metrics_mod.DEFAULT_CLUSTERS, valid.shape[0]))
+    if effective_clusters <= 1:
+        valid_labels = np.zeros(valid.shape[0], dtype=np.intp)
+    else:
+        valid_labels = metrics_mod._kmeans_labels(  # pylint:disable=protected-access
+            valid,
+            effective_clusters,
+            seed=metrics_mod.DEFAULT_SEED,
+        )
+    valid_iter = iter(int(label) for label in valid_labels)
+    for row_index, is_finite in enumerate(finite):
+        if is_finite:
+            labels[row_index] = next(valid_iter)
+    return labels
+
+
+def _pruning_signals(
+    refs: list[dict[str, T.Any]],
+    coefficients: DecaCoefficients,
+    latent: np.ndarray,
+) -> list[dict[str, T.Any]]:
+    """Build per-face DECA signatures consumed by pruning."""
+    expression_cells = _space_cell_labels(
+        coefficients.expression, center=0.0, scale=EXPRESSION_SCALE
+    )
+    pose_cells = _space_cell_labels(coefficients.pose, center=0.0, scale=POSE_SCALE)
+    lighting_cells = _space_cell_labels(coefficients.light, center=0.0, scale=LIGHT_SCALE)
+    latent_clusters = _latent_cluster_labels(latent)
+    signals: list[dict[str, T.Any]] = []
+    for index, ref in enumerate(refs):
+        signal = {
+            "frame": ref["frame"],
+            "face_index": int(ref["face_index"]),
+            "encoded_index": index,
+            "expression_cell": expression_cells[index],
+            "pose_cell": pose_cells[index],
+            "lighting_cell": lighting_cells[index],
+            "latent_cluster": latent_clusters[index],
+        }
+        signal["signature"] = [
+            signal["expression_cell"],
+            signal["pose_cell"],
+            signal["lighting_cell"],
+            signal["latent_cluster"],
+        ]
+        signals.append(signal)
+    return signals
 
 
 def _readiness_from_metrics(
@@ -317,7 +413,7 @@ def run_deep_audit(
         Called with ``1`` per face processed (for the CLI progress bar).
     """
     extractor = DecaCropExtractor(frames_loader)
-    coefficients, total, skipped, skip_reasons = _encode_faceset(
+    coefficients, encoded_refs, total, skipped, skip_reasons = _encode_faceset(
         entries,
         extractor=extractor,
         encoder=encoder,
@@ -360,6 +456,7 @@ def run_deep_audit(
         expression_space, pose_space, lighting_space, latent_entropy, cluster
     )
     report.landmark_vs_deca = _comparison(scores, expression_space, lighting_space)
+    report.pruning_signals = _pruning_signals(encoded_refs, coefficients, latent)
     if skipped:
         report.notes.append(
             f"{skipped}/{total} faces skipped during DECA encoding "

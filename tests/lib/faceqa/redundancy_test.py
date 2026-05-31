@@ -145,6 +145,32 @@ def test_effective_coverage_lower_than_raw_for_repeated_faces() -> None:
     assert any(ratio > 5.0 for ratio in eff.redundancy_ratios.values())
 
 
+def test_deca_mismatch_splits_prune_groups() -> None:
+    """DECA signatures preserve learned-space variation during pruning."""
+    records = _near_identical_run(8, yaw=0.0, expression_bucket="neutral")
+    signals = {
+        (record.frame, record.face_index): {
+            "expression_cell": "0:1",
+            "pose_cell": "0:1",
+            "lighting_cell": "0:1",
+            "latent_cluster": 0 if idx < 4 else 1,
+        }
+        for idx, record in enumerate(records)
+    }
+
+    report = compute_redundancy(records, aggressiveness="balanced", deep_pruning_signals=signals)
+
+    assert report.deep_pruning_enabled is True
+    assert report.deep_pruning_signal_count == 8
+    assert report.prune_candidate_count < compute_redundancy(records).prune_candidate_count
+    assert len({record.prune_group_id for record in report.records}) >= 2
+    assert any(
+        "DECA latent cluster mismatch" in blocker
+        for diag in report.cluster_merge_diagnostics.values()
+        for blocker in diag.get("split_blockers", [])
+    )
+
+
 def test_temporal_close_higher_confidence_than_temporal_far() -> None:
     """Close-in-time near-identical faces should be more confident duplicates."""
     close = _near_identical_run(8, yaw=0.0, frame_start=1)
