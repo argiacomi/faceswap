@@ -33,6 +33,7 @@ DECA_WEIGHTS_SHA256 = "e714ed293054cba5eea9c96bd3b6b57880074cd84b3fd00d606cbaf0b
 
 #: Key under which upstream DECA stores the FLAME-parameter encoder.
 _DECA_ENCODER_KEY = "E_flame"
+DEEP_DEVICE_CHOICES = ("auto", "cuda", "mps", "cpu")
 
 
 def default_weights_path() -> str:
@@ -93,7 +94,36 @@ def _extract_encoder_state(checkpoint: T.Any) -> dict[str, T.Any]:
     return encoder_state
 
 
-def load_deca_encoder(*, device: str = "cpu") -> TorchDecaEncoder:
+def resolve_deep_device(device: str = "auto") -> tuple[str, bool]:
+    """Return the torch device for DECA inference and whether it was auto-selected."""
+    requested = str(device or "auto").lower()
+    if requested not in DEEP_DEVICE_CHOICES:
+        raise FaceswapError(
+            f"Unknown DECA device '{device}'. Expected one of: {', '.join(DEEP_DEVICE_CHOICES)}."
+        )
+
+    import torch
+
+    cuda_available = bool(torch.cuda.is_available())
+    mps_available = bool(
+        getattr(getattr(torch, "backends", None), "mps", None) is not None
+        and torch.backends.mps.is_available()
+    )
+
+    if requested == "auto":
+        if cuda_available:
+            return "cuda", True
+        if mps_available:
+            return "mps", True
+        return "cpu", True
+    if requested == "cuda" and not cuda_available:
+        raise FaceswapError("DECA deep-device 'cuda' was requested but torch CUDA is unavailable.")
+    if requested == "mps" and not mps_available:
+        raise FaceswapError("DECA deep-device 'mps' was requested but torch MPS is unavailable.")
+    return requested, False
+
+
+def load_deca_encoder(*, device: str = "auto") -> TorchDecaEncoder:
     """Load the DECA encoder from cached research weights.
 
     Parameters
@@ -108,18 +138,23 @@ def load_deca_encoder(*, device: str = "cpu") -> TorchDecaEncoder:
         If the weights file cannot be downloaded, fails SHA256 validation, or
         cannot be parsed into an encoder state dict.
     """
+    selected_device, auto_selected = resolve_deep_device(device)
     path = resolve_weights_path()
 
     import torch
 
-    logger.info("Loading DECA encoder weights from '%s'.", path)
+    logger.info("Loading DECA encoder weights from '%s' on device '%s'.", path, selected_device)
     # The official checkpoint is a pickled dict of state dicts, so the
     # full-pickle path is required. The cached file is SHA256-validated by the
     # model downloader before this load.
-    checkpoint = torch.load(path, map_location=device, weights_only=False)
+    checkpoint = torch.load(path, map_location="cpu", weights_only=False)
     encoder_state = _extract_encoder_state(checkpoint)
     remapped = remap_deca_state_dict(encoder_state)
-    return TorchDecaEncoder.from_state_dict(remapped, device=device)
+    return TorchDecaEncoder.from_state_dict(
+        remapped,
+        device=selected_device,
+        device_auto_selected=auto_selected,
+    )
 
 
 __all__ = get_module_objects(__name__)

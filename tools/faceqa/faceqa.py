@@ -234,6 +234,7 @@ class Faceqa:  # pylint:disable=invalid-name
                 redundancy = compute_redundancy(
                     records,
                     coverage=coverage,
+                    readiness_scores=report.readiness_scores,
                     aggressiveness=str(getattr(self._args, "prune_aggressiveness", "balanced")),
                     min_bucket_pct=min_bucket_pct,
                     deep_pruning_signals=deep_pruning_signals,
@@ -292,7 +293,8 @@ class Faceqa:  # pylint:disable=invalid-name
 
         # ``build_encoder`` downloads and SHA256-validates the DECA checkpoint
         # through the standard faceswap model cache when it is not present.
-        encoder = build_encoder()
+        deep_device = str(getattr(self._args, "deep_device", "auto"))
+        encoder = build_encoder(device=deep_device)
 
         with _faceqa_progress(
             total=total_faces, desc="FaceQA deep audit (DECA)", unit="face"
@@ -308,9 +310,10 @@ class Faceqa:  # pylint:disable=invalid-name
         report.deep_audit = deep_report.to_dict()
         integrate_deep_readiness(report)
         logger.info(
-            "DECA deep audit: %d/%d faces encoded, status=%s, readiness=%s.",
+            "DECA deep audit: %d/%d faces encoded, device=%s, status=%s, readiness=%s.",
             deep_report.faces_encoded,
             deep_report.faces_total,
+            deep_report.device,
             deep_report.status,
             deep_report.deca_readiness.get("score") if deep_report.deca_readiness else None,
         )

@@ -463,6 +463,8 @@ def _render_deep_audit(report: ReadinessReport) -> list[str]:
         "## DECA Deep Audit",
         "",
         f"- **Status**: {audit.get('status', 'unknown')}",
+        f"- **Device**: {audit.get('device', 'unknown')}"
+        f"{' (auto)' if audit.get('device_auto_selected') else ''}",
         f"- **Faces encoded**: {audit.get('faces_encoded', 0)} of {audit.get('faces_total', 0)}",
     ]
     if audit.get("matched_key_ratio") is not None:

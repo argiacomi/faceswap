@@ -325,6 +325,18 @@ class RedundancyRecord:
     contact_cluster_split_blockers: list[str] = field(default_factory=list)
     """Top reasons why the broad contact cluster was split into multiple
     tight prune groups."""
+    prune_confidence: float = 0.0
+    """0-1 confidence that this non-representative can be auto-pruned."""
+    prune_confidence_band: str = "low"
+    """``high`` / ``medium`` / ``low`` confidence band for pruning decisions."""
+    prune_confidence_factors: dict[str, T.Any] = field(default_factory=dict)
+    """Inputs used to derive ``prune_confidence``."""
+    diversity_preservation_score: float = 0.0
+    """0-1 score describing how useful this sample is to preserve."""
+    preservation_factors: list[str] = field(default_factory=list)
+    """Top human-readable factors contributing to preservation score."""
+    safety_cap_preserve_score: float | None = None
+    """Combined score used when the adaptive readiness cap preserves records."""
 
     def to_dict(self) -> dict[str, T.Any]:
         return {
@@ -370,6 +382,12 @@ class RedundancyRecord:
             "prune_group_size": self.prune_group_size,
             "contact_cluster_reason": self.contact_cluster_reason,
             "contact_cluster_split_blockers": self.contact_cluster_split_blockers,
+            "prune_confidence": self.prune_confidence,
+            "prune_confidence_band": self.prune_confidence_band,
+            "prune_confidence_factors": self.prune_confidence_factors,
+            "diversity_preservation_score": self.diversity_preservation_score,
+            "preservation_factors": self.preservation_factors,
+            "safety_cap_preserve_score": self.safety_cap_preserve_score,
         }
 
 
@@ -448,6 +466,10 @@ class RedundancyReport:
     """``True`` when DECA per-face signatures were supplied to pruning."""
     deep_pruning_signal_count: int = 0
     """Number of faces with usable DECA pruning signatures."""
+    adaptive_prune_cap: dict[str, T.Any] = field(default_factory=dict)
+    """Readiness-band cap diagnostics for adaptive prune-ceiling decisions."""
+    cluster_pruning_stats: list[dict[str, T.Any]] = field(default_factory=list)
+    """Per-contact-cluster pruning/confidence/triage stats."""
 
     def to_dict(self) -> dict[str, T.Any]:
         return {
@@ -477,6 +499,8 @@ class RedundancyReport:
             "cluster_merge_diagnostics": self.cluster_merge_diagnostics,
             "deep_pruning_enabled": self.deep_pruning_enabled,
             "deep_pruning_signal_count": self.deep_pruning_signal_count,
+            "adaptive_prune_cap": self.adaptive_prune_cap,
+            "cluster_pruning_stats": self.cluster_pruning_stats,
         }
 
     def to_json(self, *, indent: int = 2) -> str:
@@ -1942,6 +1966,159 @@ def _record_is_in_surplus_bucket(
     return any((dim, bucket) in surplus for dim, bucket in keys.items())
 
 
+def _deca_signature_matches(
+    member_features: RepresentationFeatures,
+    rep_features: RepresentationFeatures | None,
+) -> bool:
+    if rep_features is None:
+        return True
+    for attr, _label in _DECA_PRUNING_ATTRS:
+        member_value = getattr(member_features, attr)
+        rep_value = getattr(rep_features, attr)
+        if member_value is None or rep_value is None:
+            continue
+        if member_value != rep_value:
+            return False
+    return True
+
+
+def _quality_spread_ok(
+    member_features: RepresentationFeatures,
+    rep_features: RepresentationFeatures | None,
+) -> bool:
+    if rep_features is None:
+        return True
+    return abs(member_features.quality_score - rep_features.quality_score) <= 0.35
+
+
+def _confidence_band(confidence: float) -> str:
+    if confidence >= 0.8:
+        return "high"
+    if confidence >= 0.55:
+        return "medium"
+    return "low"
+
+
+def _prune_confidence(
+    *,
+    member_features: RepresentationFeatures,
+    rep_features: RepresentationFeatures | None,
+    distance: float,
+    compared: int,
+    temporal_confidence: float,
+    config: AggressivenessConfig,
+    direct_to_representative: bool,
+    connected_via_representative: bool,
+    nearest_neighbor_distance: float | None,
+    protected_bucket: bool,
+) -> tuple[float, str, dict[str, T.Any]]:
+    """Return explicit pruning confidence and the factors used to derive it."""
+    representative_distance = None if not math.isfinite(distance) else round(distance, 4)
+    distance_score = 0.0
+    if math.isfinite(distance):
+        denominator = max(config.representation_distance_threshold, 1e-6)
+        distance_score = max(0.0, min(1.0, 1.0 - (distance / denominator)))
+    comparable_score = max(0.0, min(1.0, compared / 6.0))
+    deca_match = _deca_signature_matches(member_features, rep_features)
+    appearance_match = rep_features is None or _appearance_modes_compatible(
+        member_features.appearance_mode, rep_features.appearance_mode
+    )
+    quality_ok = _quality_spread_ok(member_features, rep_features)
+    confidence = (
+        0.30 * distance_score
+        + 0.18 * max(0.0, min(1.0, temporal_confidence))
+        + 0.12 * comparable_score
+        + 0.10 * (1.0 if direct_to_representative else 0.0)
+        + 0.10 * (1.0 if connected_via_representative else 0.0)
+        + 0.10 * (1.0 if deca_match else 0.0)
+        + 0.06 * (1.0 if appearance_match else 0.0)
+        + 0.04 * (1.0 if quality_ok else 0.0)
+    )
+    if protected_bucket:
+        confidence -= 0.08
+    if member_features.identity_outlier or not member_features.has_identity:
+        confidence = min(confidence, 0.35)
+    confidence = round(max(0.0, min(1.0, confidence)), 4)
+    factors: dict[str, T.Any] = {
+        "direct_to_representative": direct_to_representative,
+        "connected_via_representative": connected_via_representative,
+        "deca_signature_match": deca_match,
+        "appearance_mode_match": appearance_match,
+        "nearest_neighbor_distance": nearest_neighbor_distance,
+        "representative_distance": representative_distance,
+        "temporal_confidence": round(float(temporal_confidence), 4),
+        "quality_spread_ok": quality_ok,
+        "protected_bucket": protected_bucket,
+        "compared_metrics": compared,
+    }
+    return confidence, _confidence_band(confidence), factors
+
+
+def _diversity_preservation(
+    *,
+    member_features: RepresentationFeatures,
+    member_record: FaceQARecord,
+    rep_features: RepresentationFeatures | None,
+    rep_record: FaceQARecord | None,
+    distance: float,
+    protected_bucket: bool,
+) -> tuple[float, list[str]]:
+    """Return explicit diversity-preservation value and top contributing factors."""
+    score = 0.0
+    factors: list[str] = []
+    member_buckets = _bucket_keys_for(member_record)
+    rep_buckets = _bucket_keys_for(rep_record) if rep_record is not None else {}
+    for dim in ("expression", "lighting", "pose", "pitch"):
+        member_bucket = member_buckets.get(dim)
+        rep_bucket = rep_buckets.get(dim)
+        if (
+            member_bucket not in (None, "unknown")
+            and rep_bucket not in (None, "unknown")
+            and member_bucket != rep_bucket
+        ):
+            score += 0.10
+            factors.append(f"{dim} bucket differs")
+    for attr, label in _DECA_PRUNING_ATTRS:
+        member_value = getattr(member_features, attr)
+        rep_value = getattr(rep_features, attr) if rep_features is not None else None
+        if member_value is not None and rep_value is not None and member_value != rep_value:
+            score += 0.10
+            factors.append(f"{label} differs")
+    if rep_features is not None:
+        for attr, label in (
+            ("yaw_micro_band", "yaw micro-band"),
+            ("pitch_micro_band", "pitch micro-band"),
+            ("mouth_openness_band", "mouth openness"),
+            ("smile_proxy_band", "smile proxy"),
+        ):
+            member_value = getattr(member_features, attr)
+            rep_value = getattr(rep_features, attr)
+            if member_value is not None and rep_value is not None and member_value != rep_value:
+                score += 0.06
+                factors.append(f"{label} differs")
+        if not _appearance_modes_compatible(
+            member_features.appearance_mode, rep_features.appearance_mode
+        ):
+            score += 0.08
+            factors.append("appearance mode differs")
+        quality_delta = abs(member_features.quality_score - rep_features.quality_score)
+        if quality_delta >= 0.15:
+            score += min(0.12, quality_delta * 0.30)
+            factors.append("quality percentile differs")
+    if math.isfinite(distance):
+        distance_component = min(0.16, max(0.0, distance) * 0.40)
+        if distance_component > 0:
+            score += distance_component
+            factors.append("farther from representative")
+    if protected_bucket:
+        score += 0.16
+        factors.append("protected bucket membership")
+    if member_features.identity_outlier or not member_features.has_identity:
+        score += 0.10
+        factors.append("identity guardrail needs review")
+    return round(min(1.0, score), 4), factors[:6]
+
+
 def _representative_safety_reason(features: RepresentationFeatures) -> str | None:
     """Return a review reason if a representative cannot safely default to keep.
 
@@ -1971,6 +2148,8 @@ def _decide_single_member(
     protection_budget_remaining: int,
     member_in_surplus_bucket: bool,
     rep_features: RepresentationFeatures | None = None,
+    prune_confidence: float = 0.0,
+    prune_confidence_band: str = "low",
 ) -> tuple[str, str, int]:
     """Return ``(recommendation, reason, budget_after)`` for one cluster member.
 
@@ -2039,7 +2218,8 @@ def _decide_single_member(
             )
         return (
             PRUNE,
-            f"obvious duplicate of representative (distance={distance:.2f})",
+            f"obvious duplicate of representative (distance={distance:.2f}, "
+            f"prune_confidence={prune_confidence:.2f}, band={prune_confidence_band})",
             protection_budget_remaining,
         )
     if protection_budget_remaining > 0:
@@ -2057,16 +2237,31 @@ def _decide_single_member(
         )
     if compared < 4:
         return REVIEW, "few comparable metrics — review", protection_budget_remaining
+    if prune_confidence_band == "low":
+        return (
+            REVIEW,
+            f"low prune confidence — review (confidence={prune_confidence:.2f})",
+            protection_budget_remaining,
+        )
+    if prune_confidence_band == "medium" and not member_in_surplus_bucket:
+        return (
+            REVIEW,
+            f"medium prune confidence outside surplus bucket — review "
+            f"(confidence={prune_confidence:.2f})",
+            protection_budget_remaining,
+        )
     if member_in_surplus_bucket:
         return (
             PRUNE,
-            f"redundant within surplus coverage bucket (distance={distance:.2f})",
+            f"redundant within surplus coverage bucket (distance={distance:.2f}, "
+            f"prune_confidence={prune_confidence:.2f}, band={prune_confidence_band})",
             protection_budget_remaining,
         )
     return (
         PRUNE,
         f"redundant with representative (distance={distance:.2f}, "
-        f"temporal_confidence={temporal_confidence:.2f})",
+        f"temporal_confidence={temporal_confidence:.2f}, "
+        f"prune_confidence={prune_confidence:.2f}, band={prune_confidence_band})",
         protection_budget_remaining,
     )
 
@@ -2425,11 +2620,10 @@ def _percentile(values: list[float], pct: float) -> float | None:
     return ordered[lower] + (ordered[upper] - ordered[lower]) * fraction
 
 
-# Issue #208 follow-up 4 — landmark-readiness FAIL safety cap parameters. The cap fires when:
-#   1. ``coverage`` is supplied AND
-#   2. ``ReadinessScores.overall_readiness_score`` is below the FAIL band
-#      (``_READINESS_FAIL_SCORE``) AND
-#   3. The proposed prune ratio exceeds ``_READINESS_FAIL_PRUNE_RATIO``.
+# Issue #212 — adaptive readiness cap parameters. The cap fires when:
+#   1. coverage or finalized readiness scores are supplied AND
+#   2. the selected readiness band has a hard prune ceiling AND
+#   3. the proposed prune ratio exceeds that ceiling.
 #
 # The cap now preserves useful samples instead of only producing review piles:
 #
@@ -2441,6 +2635,12 @@ def _percentile(values: list[float], pct: float) -> float | None:
 #     candidates, including obvious duplicates.
 _READINESS_FAIL_SCORE: float = 50.0
 _READINESS_FAIL_PRUNE_RATIO: float = 0.60
+_ADAPTIVE_PRUNE_CAP_BANDS: tuple[tuple[float, float | None, str], ...] = (
+    (50.0, 0.60, "readiness_lt_50"),
+    (65.0, 0.70, "readiness_50_to_65"),
+    (80.0, 0.80, "readiness_65_to_80"),
+    (math.inf, None, "readiness_gte_80"),
+)
 _READINESS_FAIL_CLUSTER_KEEP_FLOOR_PCT: float = 0.10
 _READINESS_FAIL_CLUSTER_KEEP_FLOOR_MIN: int = 1
 _READINESS_FAIL_CLUSTER_KEEP_FLOOR_LARGE_SIZE: int = 50
@@ -2490,23 +2690,71 @@ def _readiness_cap_review_floor(cluster_size: int) -> int:
     return min(cluster_size - 1, floor)
 
 
-def _readiness_cap_preserve_sort_key(record: RedundancyRecord) -> tuple[T.Any, ...]:
-    """Sort prune candidates from most-to-least worth preserving.
+def _adaptive_cap_for_readiness(score: float) -> tuple[float | None, str]:
+    """Return the max prune ratio and readiness band label for ``score``."""
+    for upper, ratio, label in _ADAPTIVE_PRUNE_CAP_BANDS:
+        if score < upper:
+            return ratio, label
+    return None, "readiness_gte_80"
 
-    Prefer samples with weaker duplicate evidence and more likely visual value:
-    not directly tied to the representative, not connected via representative
-    edge, farther from the representative, in broader/larger clusters, and then
-    higher quality.
-    """
+
+def _readiness_scores_for_cap(
+    coverage: FacesetCoverageReport | None,
+    readiness_scores: T.Mapping[str, T.Any] | None,
+) -> tuple[float | None, float | None, float | None]:
+    """Return integrated, landmark, and DECA readiness scores for cap decisions."""
+    integrated: float | None = None
+    landmark: float | None = None
+    deca: float | None = None
+    if readiness_scores:
+        raw_overall = readiness_scores.get("overall_readiness_score")
+        if raw_overall is not None:
+            integrated = float(raw_overall)
+        raw_landmark = readiness_scores.get("landmark_readiness_score")
+        if raw_landmark is not None:
+            landmark = float(raw_landmark)
+        components = readiness_scores.get("components", {}) or {}
+        deca_component = components.get("deca_deep", {}) if isinstance(components, dict) else {}
+        raw_deca = deca_component.get("score") if isinstance(deca_component, dict) else None
+        if raw_deca is not None:
+            deca = float(raw_deca)
+    if coverage is not None and (integrated is None or landmark is None):
+        from lib.faceqa.scoring import compute_readiness_scores
+
+        scores = compute_readiness_scores(coverage)
+        if integrated is None:
+            integrated = scores.overall_readiness_score
+        if landmark is None:
+            landmark = scores.overall_readiness_score
+    return integrated, landmark, deca
+
+
+def _safety_cap_preserve_score(record: RedundancyRecord) -> float:
+    """Combined utility for deciding which prune candidates to preserve first."""
+    uncertainty = 1.0 - record.prune_confidence
+    protected = 1.0 if bool(record.prune_confidence_factors.get("protected_bucket")) else 0.0
+    score = (
+        record.diversity_preservation_score * 0.55
+        + uncertainty * 0.30
+        + protected * 0.20
+        - record.prune_confidence * 0.15
+    )
+    return round(max(0.0, min(1.0, score)), 4)
+
+
+def _readiness_cap_preserve_sort_key(record: RedundancyRecord) -> tuple[T.Any, ...]:
+    """Sort prune candidates from most-to-least worth preserving."""
     distance = record.redundancy_distance_to_representative
     if distance is None or not math.isfinite(distance):
         distance = math.inf
     diameter = record.component_diameter
     if diameter is None or not math.isfinite(diameter):
         diameter = math.inf
+    record.safety_cap_preserve_score = _safety_cap_preserve_score(record)
     return (
-        0 if not record.direct_to_representative else 1,
-        0 if not record.connected_via_representative else 1,
+        -record.safety_cap_preserve_score,
+        record.prune_confidence,
+        0 if record.prune_confidence_band == "low" else 1,
         -distance,
         -diameter,
         -record.cluster_size,
@@ -2523,6 +2771,7 @@ def _apply_readiness_cap_record(
     recommendation: str,
     overall: float,
     proposed_prune_ratio: float,
+    max_prune_ratio: float,
     phase: str,
 ) -> bool:
     """Move one prune candidate to KEEP/REVIEW and append an auditable reason."""
@@ -2530,9 +2779,12 @@ def _apply_readiness_cap_record(
         return False
     record.recommendation = recommendation
     cap_note = (
-        f"readiness FAIL safety cap ({phase}): moved to {recommendation} "
+        f"adaptive readiness cap ({phase}): moved to {recommendation} "
         f"(readiness={overall:.1f}, proposed prune ratio "
-        f"{proposed_prune_ratio:.0%} > {_READINESS_FAIL_PRUNE_RATIO:.0%})"
+        f"{proposed_prune_ratio:.0%} > {max_prune_ratio:.0%}, "
+        f"preserve_score={record.safety_cap_preserve_score or 0.0:.2f}, "
+        f"diversity={record.diversity_preservation_score:.2f}, "
+        f"prune_confidence={record.prune_confidence:.2f})"
     )
     record.reason = f"{record.reason}; {cap_note}" if record.reason else cap_note
     return True
@@ -2542,40 +2794,47 @@ def _apply_readiness_safety_cap(
     output_records: list[RedundancyRecord],
     coverage: FacesetCoverageReport | None,
     total_faces: int,
-) -> tuple[bool, str | None, int]:
-    """Preserve KEEP/REVIEW samples when landmark readiness FAILs and pruning is high.
+    readiness_scores: T.Mapping[str, T.Any] | None = None,
+) -> tuple[bool, str | None, int, dict[str, T.Any]]:
+    """Preserve KEEP/REVIEW samples when readiness-band pruning is too high.
 
-    Returns ``(applied, reason, changed_count)`` — ``applied`` is True when
-    at least one prune candidate moved to KEEP or REVIEW; ``reason`` carries
-    the human-readable cap explanation for the report header.
+    Returns ``(applied, reason, changed_count, metadata)`` — ``applied`` is
+    True when at least one prune candidate moved to KEEP or REVIEW; ``reason``
+    carries the human-readable cap explanation for the report header.
 
     The cap is intentionally less aggressive than the original 80% prune
     ceiling: it promotes diverse cluster samples to KEEP first, then fills a
     REVIEW floor, then enforces a global max prune ratio across all remaining
     prune candidates, including obvious duplicates.
     """
-    if coverage is None or total_faces == 0:
-        return False, None, 0
-
-    # Local import to avoid the circular ``coverage -> redundancy``
-    # dependency that would arise if scoring were imported at module
-    # top-level.
-    from lib.faceqa.scoring import compute_readiness_scores
+    if total_faces == 0 or (coverage is None and not readiness_scores):
+        return False, None, 0, {}
 
     try:
-        scores = compute_readiness_scores(coverage)
+        overall, landmark, deca = _readiness_scores_for_cap(coverage, readiness_scores)
     except Exception:  # pylint: disable=broad-except
         logger.debug("Readiness safety cap: scoring failed; cap not applied.")
-        return False, None, 0
+        return False, None, 0, {}
 
-    overall = scores.overall_readiness_score
-    if overall >= _READINESS_FAIL_SCORE:
-        return False, None, 0
+    if overall is None:
+        return False, None, 0, {}
+    max_prune_ratio, band = _adaptive_cap_for_readiness(overall)
 
     proposed_prune = sum(1 for r in output_records if r.recommendation == PRUNE)
     proposed_prune_ratio = proposed_prune / total_faces
-    if proposed_prune_ratio <= _READINESS_FAIL_PRUNE_RATIO:
-        return False, None, 0
+    cap_meta: dict[str, T.Any] = {
+        "applied": False,
+        "readiness_score": round(overall, 2),
+        "landmark_readiness_score": None if landmark is None else round(landmark, 2),
+        "deca_readiness_score": None if deca is None else round(deca, 2),
+        "readiness_band": band,
+        "max_prune_ratio": max_prune_ratio,
+        "proposed_prune_ratio": round(proposed_prune_ratio, 4),
+        "final_prune_ratio": round(proposed_prune_ratio, 4),
+        "demotions": 0,
+    }
+    if max_prune_ratio is None or proposed_prune_ratio <= max_prune_ratio:
+        return False, None, 0, cap_meta
 
     changed = 0
 
@@ -2611,6 +2870,7 @@ def _apply_readiness_safety_cap(
                 recommendation=KEEP,
                 overall=overall,
                 proposed_prune_ratio=proposed_prune_ratio,
+                max_prune_ratio=max_prune_ratio,
                 phase=f"cluster keep floor ({floor} non-representative sample(s))",
             ):
                 changed += 1
@@ -2628,6 +2888,7 @@ def _apply_readiness_safety_cap(
             recommendation=REVIEW,
             overall=overall,
             proposed_prune_ratio=proposed_prune_ratio,
+            max_prune_ratio=max_prune_ratio,
             phase="borderline prune",
         ):
             changed += 1
@@ -2657,12 +2918,13 @@ def _apply_readiness_safety_cap(
                 recommendation=REVIEW,
                 overall=overall,
                 proposed_prune_ratio=proposed_prune_ratio,
+                max_prune_ratio=max_prune_ratio,
                 phase=f"cluster review floor ({floor} non-representative sample(s))",
             ):
                 changed += 1
 
     # 4. Enforce the hard post-cap max prune ratio across all remaining prunes.
-    max_prune = math.floor(total_faces * _READINESS_FAIL_PRUNE_RATIO)
+    max_prune = math.floor(total_faces * max_prune_ratio)
     remaining_prune = sum(1 for r in output_records if r.recommendation == PRUNE)
     overflow = max(0, remaining_prune - max_prune)
     if overflow > 0:
@@ -2673,26 +2935,119 @@ def _apply_readiness_safety_cap(
                 recommendation=REVIEW,
                 overall=overall,
                 proposed_prune_ratio=proposed_prune_ratio,
-                phase=f"hard {_READINESS_FAIL_PRUNE_RATIO:.0%} prune-ratio ceiling",
+                max_prune_ratio=max_prune_ratio,
+                phase=f"hard {max_prune_ratio:.0%} prune-ratio ceiling",
             ):
                 changed += 1
 
     if changed == 0:
-        return False, None, 0
+        return False, None, 0, cap_meta
 
     final_keep = sum(1 for r in output_records if r.recommendation == KEEP)
     final_review = sum(1 for r in output_records if r.recommendation == REVIEW)
     final_prune = sum(1 for r in output_records if r.recommendation == PRUNE)
     final_prune_ratio = final_prune / total_faces
+    cap_meta.update(
+        {
+            "applied": True,
+            "final_prune_ratio": round(final_prune_ratio, 4),
+            "demotions": changed,
+        }
+    )
     reason = (
-        f"landmark readiness FAIL (overall={overall:.1f} < {_READINESS_FAIL_SCORE:.0f}) "
+        f"adaptive readiness cap ({band}, readiness={overall:.1f}) "
         f"AND proposed prune ratio {proposed_prune_ratio:.0%} > "
-        f"{_READINESS_FAIL_PRUNE_RATIO:.0%}; moved {changed} prune candidate(s) "
+        f"{max_prune_ratio:.0%}; moved {changed} prune candidate(s) "
         f"to keep/review (final keep={final_keep}, review={final_review}, "
         f"final prune ratio {final_prune_ratio:.0%})."
     )
     logger.info("Redundancy %s", reason)
-    return True, reason, changed
+    return True, reason, changed, cap_meta
+
+
+def _cluster_pruning_stats(records: list[RedundancyRecord]) -> list[dict[str, T.Any]]:
+    """Return per-contact-cluster pruning stats and triage group labels."""
+    by_cluster: dict[int, list[RedundancyRecord]] = {}
+    for record in records:
+        by_cluster.setdefault(record.cluster_id, []).append(record)
+    stats: list[dict[str, T.Any]] = []
+    for cluster_id, cluster_records in sorted(by_cluster.items()):
+        size = len(cluster_records)
+        prune_group_count = len(
+            {
+                record.prune_group_id
+                for record in cluster_records
+                if record.prune_group_id is not None
+            }
+        )
+        keep_count = sum(1 for record in cluster_records if record.recommendation == KEEP)
+        review_count = sum(1 for record in cluster_records if record.recommendation == REVIEW)
+        prune_count = sum(1 for record in cluster_records if record.recommendation == PRUNE)
+        prune_records = [record for record in cluster_records if record.recommendation == PRUNE]
+        mean_prune_confidence = (
+            sum(record.prune_confidence for record in prune_records) / len(prune_records)
+            if prune_records
+            else 0.0
+        )
+        low_confidence_prune_count = sum(
+            1 for record in prune_records if record.prune_confidence_band == "low"
+        )
+        blockers: list[str] = []
+        for record in cluster_records:
+            for blocker in record.contact_cluster_split_blockers:
+                if blocker not in blockers:
+                    blockers.append(blocker)
+        blocker_counts: dict[str, int] = {}
+        for blocker in blockers:
+            blocker_counts[blocker] = blocker_counts.get(blocker, 0) + 1
+        top_split_reasons = [
+            reason
+            for reason, _count in sorted(
+                blocker_counts.items(), key=lambda item: (-item[1], item[0])
+            )[:3]
+        ]
+        protected_count = sum(
+            1
+            for record in cluster_records
+            if bool(record.prune_confidence_factors.get("protected_bucket"))
+        )
+        review_ratio = review_count / size if size else 0.0
+        low_confidence_ratio = (
+            low_confidence_prune_count / len(prune_records) if prune_records else 0.0
+        )
+        high_diversity_prunes = sum(
+            1 for record in prune_records if record.diversity_preservation_score >= 0.5
+        )
+        deca_split_count = sum(1 for reason in blockers if "DECA" in reason)
+        keep_prune_disagreement = keep_count > 0 and prune_count > 0 and review_count > 0
+        priority = (
+            review_ratio >= 0.20
+            or low_confidence_prune_count >= 3
+            or low_confidence_ratio >= 0.15
+            or deca_split_count >= 2
+            or size >= 100
+            or protected_count >= 3
+            or keep_prune_disagreement
+            or high_diversity_prunes >= 2
+        )
+        stats.append(
+            {
+                "cluster_id": cluster_id,
+                "cluster_size": size,
+                "prune_group_count": prune_group_count,
+                "keep_count": keep_count,
+                "review_count": review_count,
+                "prune_candidate_count": prune_count,
+                "mean_prune_confidence": round(mean_prune_confidence, 4),
+                "low_confidence_prune_count": low_confidence_prune_count,
+                "deca_split_count": deca_split_count,
+                "top_split_reasons": top_split_reasons,
+                "protected_bucket_count": protected_count,
+                "high_diversity_prune_count": high_diversity_prunes,
+                "triage_group": "priority_review" if priority else "normal_review",
+            }
+        )
+    return stats
 
 
 # ---------------------------------------------------------------------------
@@ -3119,6 +3474,7 @@ def compute_redundancy(
     *,
     aggressiveness: str = "balanced",
     coverage: FacesetCoverageReport | None = None,
+    readiness_scores: T.Mapping[str, T.Any] | None = None,
     min_bucket_pct: float = 5.0,
     deep_pruning_signals: T.Mapping[tuple[str, int], T.Mapping[str, T.Any]] | None = None,
     progress_callback: T.Callable[[int], None] | None = None,
@@ -3393,6 +3749,14 @@ def compute_redundancy(
                 prune_group_size=len(members),
                 contact_cluster_reason=contact_reason,
                 contact_cluster_split_blockers=split_blockers,
+                prune_confidence=0.0,
+                prune_confidence_band="low",
+                prune_confidence_factors={
+                    "representative": True,
+                    "protected_bucket": _record_is_in_protected_bucket(rep_record, protected),
+                },
+                diversity_preservation_score=1.0,
+                preservation_factors=["subgroup representative"],
             )
         )
 
@@ -3416,6 +3780,30 @@ def compute_redundancy(
             distance, compared, t_conf, t_dist, direct_rep_eligible, direct_rep_edge_reason = (
                 _pair_diagnostics_for(member, rep_index)
             )
+            direct_to_rep = direct_to_rep_by_member.get(member, False)
+            connected_via_rep = connected_via_rep_edge_by_member.get(member, False)
+            nearest_neighbor_distance = _finite_or_none(nearest_neighbor_by_member.get(member))
+            protected_bucket = _record_is_in_protected_bucket(member_record, protected)
+            confidence, confidence_band, confidence_factors = _prune_confidence(
+                member_features=member_features,
+                rep_features=rep_features,
+                distance=distance,
+                compared=compared,
+                temporal_confidence=t_conf,
+                config=config,
+                direct_to_representative=direct_to_rep,
+                connected_via_representative=connected_via_rep,
+                nearest_neighbor_distance=nearest_neighbor_distance,
+                protected_bucket=protected_bucket,
+            )
+            diversity_score, preservation_factors = _diversity_preservation(
+                member_features=member_features,
+                member_record=member_record,
+                rep_features=rep_features,
+                rep_record=rep_record,
+                distance=distance,
+                protected_bucket=protected_bucket,
+            )
 
             if not direct_rep_eligible:
                 recommendation, reason, budget = (
@@ -3438,6 +3826,8 @@ def compute_redundancy(
                     protection_budget_remaining=budget,
                     member_in_surplus_bucket=_record_is_in_surplus_bucket(member_record, surplus),
                     rep_features=rep_features,
+                    prune_confidence=confidence,
+                    prune_confidence_band=confidence_band,
                 )
 
             output_records.append(
@@ -3466,7 +3856,7 @@ def compute_redundancy(
                     nearest_neighbor_distance=_finite_or_none(
                         nearest_neighbor_by_member.get(member)
                     ),
-                    direct_to_representative=direct_to_rep_by_member.get(member, False),
+                    direct_to_representative=direct_to_rep,
                     component_diameter=_finite_or_none(diameter_by_member.get(member)),
                     nearest_neighbor_frame=_neighbor_frame_for(
                         record_list,
@@ -3479,9 +3869,7 @@ def compute_redundancy(
                     nearest_neighbor_edge_eligibility=_edge_reason_for(
                         nearest_neighbor_index_by_member.get(member), member
                     ),
-                    connected_via_representative=connected_via_rep_edge_by_member.get(
-                        member, False
-                    ),
+                    connected_via_representative=connected_via_rep,
                     split_reason=split_reason_by_member.get(member),
                     appearance_mode=member_features.appearance_mode,
                     yaw_micro_band=member_features.yaw_micro_band,
@@ -3496,23 +3884,28 @@ def compute_redundancy(
                     prune_group_size=len(members),
                     contact_cluster_reason=contact_reason,
                     contact_cluster_split_blockers=split_blockers,
+                    prune_confidence=confidence,
+                    prune_confidence_band=confidence_band,
+                    prune_confidence_factors=confidence_factors,
+                    diversity_preservation_score=diversity_score,
+                    preservation_factors=preservation_factors,
                 )
             )
 
-    # Issue #208 — readiness FAIL safety cap. When the supplied coverage
-    # report scores below the FAIL threshold AND the proposed prune
-    # ratio is extreme, preserve additional KEEP/REVIEW samples so an
-    # under-developed faceset does not get gutted. The cap now enforces
-    # its global prune ceiling even when remaining candidates are labelled
-    # as obvious duplicates.
-    cap_applied, cap_reason, cap_demotions = _apply_readiness_safety_cap(
-        output_records, coverage, n
+    # Issue #212 — adaptive readiness cap. Use finalized readiness scores
+    # (including DECA when enabled) to choose the hard prune ceiling, then
+    # preserve high-diversity / low-confidence prune candidates first.
+    cap_applied, cap_reason, cap_demotions, adaptive_prune_cap = _apply_readiness_safety_cap(
+        output_records, coverage, n, readiness_scores
     )
 
     keep = sum(1 for r in output_records if r.recommendation == KEEP)
     review = sum(1 for r in output_records if r.recommendation == REVIEW)
     prune = sum(1 for r in output_records if r.recommendation == PRUNE)
+    if adaptive_prune_cap:
+        adaptive_prune_cap["final_prune_ratio"] = round(prune / n if n else 0.0, 4)
     multi = sum(1 for c in components if len(c) > 1)
+    cluster_stats = _cluster_pruning_stats(output_records)
     (
         largest_cluster_size,
         largest_cluster_ratio,
@@ -3547,6 +3940,8 @@ def compute_redundancy(
         cluster_merge_diagnostics=cluster_merge_diagnostics,
         deep_pruning_enabled=deep_signal_count > 0,
         deep_pruning_signal_count=deep_signal_count,
+        adaptive_prune_cap=adaptive_prune_cap,
+        cluster_pruning_stats=cluster_stats,
         records=output_records,
     )
 

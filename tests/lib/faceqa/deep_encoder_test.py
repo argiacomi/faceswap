@@ -151,6 +151,24 @@ def test_load_deca_encoder_rejects_partial_checkpoint(tmp_path, monkeypatch) -> 
         w.load_deca_encoder()
 
 
+def test_resolve_deep_device_auto_prefers_cuda(monkeypatch) -> None:
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.backends.mps, "is_available", lambda: True)
+    assert w.resolve_deep_device("auto") == ("cuda", True)
+
+
+def test_resolve_deep_device_auto_falls_back_to_cpu(monkeypatch) -> None:
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(torch.backends.mps, "is_available", lambda: False)
+    assert w.resolve_deep_device("auto") == ("cpu", True)
+
+
+def test_resolve_deep_device_explicit_unavailable_fails(monkeypatch) -> None:
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    with pytest.raises(FaceswapError, match="cuda"):
+        w.resolve_deep_device("cuda")
+
+
 def test_resolve_weights_path_uses_standard_model_cache(monkeypatch) -> None:
     class _CachedModel:
         def __init__(self, filename: str, url: str, sha256: str) -> None:

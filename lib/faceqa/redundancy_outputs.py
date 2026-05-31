@@ -217,6 +217,10 @@ def render_contact_sheets(
         if record.cluster_size <= 1:
             continue
         clusters.setdefault(record.cluster_id, []).append(record)
+    triage_by_cluster = {
+        int(item["cluster_id"]): str(item.get("triage_group", "normal_review"))
+        for item in report.cluster_pruning_stats
+    }
     written: list[Path] = []
     for cluster_id, records in sorted(clusters.items()):
         # Issue #208 follow-up 2: within each cluster, order tiles so
@@ -266,7 +270,8 @@ def render_contact_sheets(
             rows.append(np.hstack(row_tiles))
         sheet = np.vstack(rows)
         sheet = _annotate_sheet_header(sheet, cluster_id, records)
-        path = output_dir_p / f"cluster_{cluster_id:04d}.png"
+        triage_group = triage_by_cluster.get(cluster_id, "normal_review")
+        path = _ensure_dir(output_dir_p / triage_group) / f"cluster_{cluster_id:04d}.png"
         cv2.imwrite(str(path), sheet)
         written.append(path)
         if progress_callback is not None:

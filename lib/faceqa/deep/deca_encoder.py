@@ -159,9 +159,12 @@ class TorchDecaEncoder:
         missing_keys_count: int = 0,
         unexpected_keys_count: int = 0,
         matched_key_ratio: float | None = None,
+        device_auto_selected: bool = False,
     ) -> None:
         self._module = module
         self._device = device
+        self.device = device
+        self.device_auto_selected = device_auto_selected
         self.missing_keys_count = missing_keys_count
         self.unexpected_keys_count = unexpected_keys_count
         self.matched_key_ratio = matched_key_ratio
@@ -205,6 +208,7 @@ class TorchDecaEncoder:
         device: str = "cpu",
         strict: bool = False,
         allow_partial: bool = False,
+        device_auto_selected: bool = False,
     ) -> TorchDecaEncoder:
         """Build an encoder and load ``state_dict`` (already key-remapped).
 
@@ -249,6 +253,7 @@ class TorchDecaEncoder:
             missing_keys_count=len(missing),
             unexpected_keys_count=len(unexpected),
             matched_key_ratio=matched_key_ratio,
+            device_auto_selected=device_auto_selected,
         )
 
     @staticmethod

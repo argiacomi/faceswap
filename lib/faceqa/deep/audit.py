@@ -71,6 +71,8 @@ class DeepAuditReport:
     schema_version: int = DEEP_AUDIT_SCHEMA_VERSION
     status: str = "ok"
     weights_path: str = ""
+    device: str = "cpu"
+    device_auto_selected: bool = False
     faces_total: int = 0
     faces_encoded: int = 0
     faces_skipped: int = 0
@@ -472,6 +474,8 @@ def run_deep_audit(
     matched_key_ratio = getattr(encoder, "matched_key_ratio", None)
     report = DeepAuditReport(
         weights_path=weights_path,
+        device=str(getattr(encoder, "device", "cpu")),
+        device_auto_selected=bool(getattr(encoder, "device_auto_selected", False)),
         faces_total=total,
         faces_skipped=skipped,
         skipped_reasons=skip_reasons,
@@ -519,7 +523,7 @@ def run_deep_audit(
     return report
 
 
-def build_encoder(*, device: str = "cpu") -> DecaEncoder:
+def build_encoder(*, device: str = "auto") -> DecaEncoder:
     """Load the real DECA encoder from cached research weights.
 
     Thin indirection over :func:`lib.faceqa.deep.weights.load_deca_encoder`

@@ -297,6 +297,25 @@ class FaceqaArgs(FaceSwapArgs):  # pylint:disable=invalid-name
         )
         argument_list.append(
             {
+                "opts": ("--deep-device",),
+                "action": Radio,
+                "type": str,
+                "dest": "deep_device",
+                "group": _("deep analysis"),
+                "default": "auto",
+                "choices": ("auto", "cuda", "mps", "cpu"),
+                "help": _(
+                    "R|Torch device for --deep-analysis deca. "
+                    "\nL|'auto': use CUDA when available, then Apple MPS, then CPU "
+                    "(default)."
+                    "\nL|'cuda' / 'mps': require that accelerator and fail clearly "
+                    "if unavailable."
+                    "\nL|'cpu': force CPU inference."
+                ),
+            }
+        )
+        argument_list.append(
+            {
                 "opts": ("--source-alignments",),
                 "action": FileFullPaths,
                 "type": str,
