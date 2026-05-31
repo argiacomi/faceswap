@@ -135,7 +135,7 @@ def _render_markdown(report: ReadinessReport) -> str:
     verdict = _verdict_label(overall_score, len(report.warnings))
 
     lines: list[str] = []
-    lines.extend(_render_summary(report, scores, overall_score, confidence, verdict))
+    lines.extend(_render_summary(report, overall_score, confidence, verdict))
     lines.extend(_render_warnings(report))
     lines.extend(_render_recommendations(report))
     lines.extend(_render_scores(scores, overall_score, confidence))

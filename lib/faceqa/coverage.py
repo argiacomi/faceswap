@@ -189,6 +189,15 @@ def _write_faceqa_metadata(face: FileAlignments, key: str, value: T.Any) -> None
     envelope[key] = value
 
 
+def _faceqa_metadata_block(face: FileAlignments, key: str) -> T.Any:
+    """Return a stable snapshot of one ``face.metadata['faceqa']`` block."""
+    envelope = face.metadata.get("faceqa")
+    if not isinstance(envelope, dict):
+        return None
+    block = envelope.get(key)
+    return dict(block) if isinstance(block, dict) else block
+
+
 def records_from_alignments(
     source: str | Path | dict[str, AlignmentsEntry],
     *,
@@ -197,6 +206,7 @@ def records_from_alignments(
     metrics_backfiller: Callable[[FileAlignments, str, int], dict[str, T.Any] | None]
     | None = None,
     progress_callback: Callable[[int], None] | None = None,
+    metadata_change_callback: Callable[[], None] | None = None,
 ) -> list[FaceQARecord]:
     """Return FaceQA records derived from alignments + embedded ``face.metadata['faceqa']``.
 
@@ -221,7 +231,13 @@ def records_from_alignments(
     for frame, entry in entries.items():
         for idx, face in enumerate(entry.faces):
             record = _record_from_alignment(frame, idx, face)
+            before_image_metrics = _faceqa_metadata_block(face, "image_metrics")
             _populate_image_metrics(record, face, metrics_backfiller=metrics_backfiller)
+            if (
+                metadata_change_callback is not None
+                and _faceqa_metadata_block(face, "image_metrics") != before_image_metrics
+            ):
+                metadata_change_callback()
             if pose_backfiller is not None and not _valid_spiga_pose(record):
                 pose = pose_backfiller(record, face)
                 if pose is not None:
@@ -1226,30 +1242,19 @@ class FrameImageMetricsBackfiller:
         return image
 
 
-def backfill_identity(
-    alignments_path: str | Path,
+def backfill_identity_entries(
+    entries: dict[str, AlignmentsEntry],
     *,
     frames_loader: T.Any,
     model: str | None = None,
-    save: bool = True,
     progress_callback: Callable[[int], None] | None = None,
 ) -> IdentityBackfillReport:
-    """Backfill missing identity embeddings across an entire alignments file.
+    """Backfill missing identity embeddings in pre-loaded entries without saving.
 
-    Selects the majority identity model (unless ``model`` overrides it), runs
-    :class:`IdentityBackfiller` against each face missing a vector under the
-    chosen key, and — when ``save`` is true and at least one face was filled —
-    writes the mutated alignments back to ``alignments_path``.
+    This lets FaceQA coverage keep all enrichment mutations in one in-memory
+    alignments envelope and perform a single atomic commit at the end of the
+    pipeline.
     """
-    path = Path(alignments_path)
-    serializer = get_serializer("compressed")
-    raw = serializer.load(str(path))
-    data_block = raw.get("__data__")
-    data: dict[str, T.Any] = data_block if isinstance(data_block, dict) else raw
-
-    entries: dict[str, AlignmentsEntry] = {
-        frame: AlignmentsEntry.from_dict(value) for frame, value in data.items()
-    }
     all_faces: list[FileAlignments] = [face for entry in entries.values() for face in entry.faces]
     report = IdentityBackfillReport(total_faces=len(all_faces))
 
@@ -1277,7 +1282,7 @@ def backfill_identity(
         report.model = model
 
     backfiller = IdentityBackfiller(frames_loader, model=report.model)
-    any_backfilled = False
+    backfilled_faces: list[FileAlignments] = []
     for frame, entry in entries.items():
         for idx, face in enumerate(entry.faces):
             existing = face.identity.get(report.model)
@@ -1286,6 +1291,7 @@ def backfill_identity(
                 if progress_callback is not None:
                     progress_callback(1)
                 continue
+
             prior_image = backfiller._last_image  # noqa: SLF001
             vector = backfiller(face, frame, idx)
             if vector is None:
@@ -1299,20 +1305,51 @@ def backfill_identity(
                 if progress_callback is not None:
                     progress_callback(1)
                 continue
+
             report.backfilled += 1
-            any_backfilled = True
+            backfilled_faces.append(face)
             if progress_callback is not None:
                 progress_callback(1)
+
         if report.disabled_reason is not None:
             break
 
-    if any_backfilled and save and report.disabled_reason is None:
-        new_data = {frame: entry.to_dict() for frame, entry in entries.items()}
-        if isinstance(data_block, dict):
-            raw["__data__"] = new_data
-            serializer.save(str(path), raw)
-        else:
-            serializer.save(str(path), new_data)
+    # Match the old save-on-success behavior: if the identity plugin disables
+    # itself mid-run, do not leave partial in-memory identity vectors to be
+    # persisted later by the coverage commit.
+    if report.disabled_reason is not None and report.model is not None:
+        for face in backfilled_faces:
+            face.identity.pop(report.model, None)
+        report.backfilled = 0
+
+    return report
+
+
+def backfill_identity(
+    alignments_path: str | Path,
+    *,
+    frames_loader: T.Any,
+    model: str | None = None,
+    save: bool = True,
+    progress_callback: Callable[[int], None] | None = None,
+) -> IdentityBackfillReport:
+    """Backfill missing identity embeddings across an entire alignments file.
+
+    Selects the majority identity model (unless ``model`` overrides it), runs
+    :class:`IdentityBackfiller` against each face missing a vector under the
+    chosen key, and — when ``save`` is true and at least one face was filled —
+    writes the mutated alignments back to ``alignments_path``.
+    """
+    path = Path(alignments_path)
+    raw, entries = load_alignments_envelope(path)
+    report = backfill_identity_entries(
+        entries,
+        frames_loader=frames_loader,
+        model=model,
+        progress_callback=progress_callback,
+    )
+    if report.backfilled > 0 and save and report.disabled_reason is None:
+        save_alignments_envelope(path, raw, entries)
         report.persisted = True
     return report
 

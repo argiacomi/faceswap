@@ -26,11 +26,11 @@ from lib.faceqa.compatibility import compute_compatibility
 from lib.faceqa.coverage import (
     FacesetCoverageReport,
     FrameImageMetricsBackfiller,
+    IdentityBackfillReport,
     SpigaPoseBackfiller,
-    backfill_identity,
+    backfill_identity_entries,
     compute_coverage,
     compute_identity_quality,
-    identity_coverage_status,
     load_alignments_envelope,
     records_from_alignments,
     save_alignments_envelope,
@@ -124,12 +124,12 @@ class Faceqa:  # pylint:disable=invalid-name
         # / video index is walked once instead of three times (issue #196).
         self._use_frames_loader(self._frames_loader())
 
-        # Identity is both a coverage signal and the redundancy guardrail. Run
-        # embedding backfill before records are built so coverage, readiness,
-        # and pruning all observe the same enriched alignments state.
-        self._run_identity_backfill(alignments)
-
         raw_envelope, entries = load_alignments_envelope(alignments)
+
+        # Identity is both a coverage signal and the redundancy guardrail. Run
+        # embedding backfill against the same in-memory envelope that later
+        # FaceQA enrichment stages mutate, then commit everything once.
+        identity_backfill = self._run_identity_backfill(entries)
         # Bind ``total_faces`` ONCE — reused by every per-stage tqdm bar
         # below and by the sort-prune progress total (issue #196).
         total_faces = sum(len(entry.faces) for entry in entries.values())
@@ -154,6 +154,12 @@ class Faceqa:  # pylint:disable=invalid-name
 
             pose_backfill_callback = _track_pose_backfill
 
+        image_metrics_changed = False
+
+        def _track_image_metrics_change() -> None:
+            nonlocal image_metrics_changed
+            image_metrics_changed = True
+
         metrics_backfiller = self._metrics_backfiller()
         with _faceqa_progress(total=total_faces, desc="FaceQA metrics", unit="face") as tick:
             records = records_from_alignments(
@@ -161,6 +167,7 @@ class Faceqa:  # pylint:disable=invalid-name
                 pose_backfiller=pose_backfill_callback,
                 metrics_backfiller=metrics_backfiller,
                 progress_callback=tick,
+                metadata_change_callback=_track_image_metrics_change,
             )
 
         if metrics_backfiller is not None and metrics_backfiller.disabled_reason:
@@ -191,9 +198,13 @@ class Faceqa:  # pylint:disable=invalid-name
                 identity_quality.reject,
             )
 
-        # The image-metrics backfiller mutates face.metadata in records_from_alignments;
-        # persist whenever anything wrote into face.metadata['faceqa'] this pass.
-        if pose_backfill_added or identity_quality.updated or metrics_backfiller is not None:
+        # Commit once, after every enrichment stage has completed successfully.
+        if (
+            (identity_backfill.backfilled > 0 and identity_backfill.disabled_reason is None)
+            or pose_backfill_added
+            or image_metrics_changed
+            or identity_quality.updated
+        ):
             save_alignments_envelope(alignments, raw_envelope, entries)
             logger.info(
                 "Persisted FaceQA enrichment (pose/identity/image_metrics) into alignments '%s'.",
@@ -246,65 +257,51 @@ class Faceqa:  # pylint:disable=invalid-name
         logger.info("Wrote JSON: %s", output_json)
         logger.info("Wrote Markdown: %s", output_markdown)
 
-    def _run_identity_backfill(self, alignments: Path) -> None:
-        """Backfill missing identity embeddings before coverage reporting.
-
-        Identity is a FaceQA coverage signal and the pruning guardrail. If the
-        selected identity model is already complete, no source frames are
-        required. Otherwise ``--frames-dir`` is needed to fill missing vectors.
-
-        Reuses the shared frames loader cached on ``self`` by
-        ``_run_coverage`` so the folder / video index is not enumerated a
-        second time (issue #196). Constructs its own loader when invoked
-        without a shared one.
-        """
-        status = identity_coverage_status(alignments)
-        if status.complete:
-            logger.info(
-                "Identity coverage already complete for '%s' (%d/%d faces).",
-                status.model,
-                status.available_faces,
-                status.total_faces,
-            )
-            return
-
+    def _run_identity_backfill(
+        self,
+        entries: dict[str, T.Any],
+    ) -> IdentityBackfillReport:
+        """Backfill missing identity embeddings into pre-loaded alignments entries."""
+        total_faces = sum(len(entry.faces) for entry in entries.values())
         frames_loader = self._frames_loader()
         if frames_loader is None:
-            frames_dir = getattr(self._args, "frames_dir", None)
-            if not frames_dir:
-                raise FaceswapError(
-                    "--suggest-pruning requires --frames-dir when identity embeddings "
-                    "are incomplete, so FaceQA can backfill identity before coverage "
-                    "and redundancy clustering."
-                )
-            frames_loader = Frames(frames_dir)
+            raise FaceswapError(
+                "--frames-dir is required when identity embeddings are incomplete, "
+                "so FaceQA can backfill identity before coverage and redundancy "
+                "clustering."
+            )
 
-        # ``backfill_identity`` ticks once per face it considers, including
-        # already-present + skipped, so the tqdm total must be the FULL
-        # alignment face count — not just the missing count — or the bar
-        # exceeds 100% on real facesets (only a fraction of faces lack
-        # embeddings).
         with _faceqa_progress(
-            total=status.total_faces,
+            total=total_faces,
             desc="FaceQA identity backfill",
             unit="face",
         ) as tick:
-            report = backfill_identity(
-                alignments,
+            report = backfill_identity_entries(
+                entries,
                 frames_loader=frames_loader,
-                model=status.model,
                 progress_callback=tick,
             )
+
         if report.disabled_reason:
             logger.warning(
                 "Identity backfill disabled (%s); coverage/pruning will rely on "
                 "the existing identity coverage only.",
                 report.disabled_reason,
             )
-            return
+            return report
+
+        if report.backfilled == 0 and report.already_present == report.total_faces:
+            logger.info(
+                "Identity coverage already complete for '%s' (%d/%d faces).",
+                report.model,
+                report.already_present,
+                report.total_faces,
+            )
+            return report
+
         logger.info(
             "Identity backfill (%s): %d faces, %d already present, "
-            "%d backfilled, %d skipped (frame: %d, failed: %d), persisted=%s.",
+            "%d backfilled, %d skipped (frame: %d, failed: %d), pending alignments commit.",
             report.model,
             report.total_faces,
             report.already_present,
@@ -312,8 +309,8 @@ class Faceqa:  # pylint:disable=invalid-name
             report.skipped_no_frame + report.skipped_failed,
             report.skipped_no_frame,
             report.skipped_failed,
-            report.persisted,
         )
+        return report
 
     def _emit_pruning_artifacts(
         self,

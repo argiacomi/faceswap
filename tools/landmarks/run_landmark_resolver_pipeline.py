@@ -1488,12 +1488,19 @@ def _emit_gt_runtime_bucket_artifacts(
     else:
         args = T.cast(argparse.Namespace, args_or_paths)
 
-    candidate_table = paths.scorer_train_dir / "candidate_table.csv"
-    if not candidate_table.is_file():
-        legacy_candidate_table = paths.binary_scorer_train_dir / "candidate_table.csv"
-        candidate_table = legacy_candidate_table
-    if not candidate_table.is_file():
-        logger.info("gt_runtime_bucket aggregation skipped: %s not found", candidate_table)
+    binary_scorer_train_dir = getattr(paths, "binary_scorer_train_dir", None)
+    scorer_train_dir = getattr(paths, "scorer_train_dir", None)
+
+    candidate_tables = []
+    if binary_scorer_train_dir is not None:
+        candidate_tables.append(binary_scorer_train_dir / "candidate_table.csv")
+    if scorer_train_dir is not None:
+        candidate_tables.append(scorer_train_dir / "candidate_table.csv")
+
+    candidate_table = next((table for table in candidate_tables if table.is_file()), None)
+    if candidate_table is None:
+        missing = candidate_tables[-1] if candidate_tables else "candidate_table.csv"
+        logger.info("gt_runtime_bucket aggregation skipped: %s not found", missing)
         return
 
     best_setup_payload: dict[str, T.Any] = {}
