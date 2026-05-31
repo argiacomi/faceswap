@@ -58,6 +58,13 @@ from lib.landmarks.search.gt_runtime_bucket_metrics import (
 )
 from tools.landmarks.pipeline_progress import PipelineProgress, configure_logging
 
+from lib.landmarks.ensemble.scorer_dataset import (
+    SCORER_DATASET_DIR,
+    SCORER_DATASET_MANIFEST_JSON,
+    SCORER_ROWS_CSV,
+)
+from lib.landmarks.ensemble.scorer_training import SCORER_SUITE_METRICS_JSON
+
 logger = logging.getLogger("run_landmark_resolver_pipeline")
 
 STAGES: tuple[str, ...] = (
@@ -74,9 +81,7 @@ STAGES: tuple[str, ...] = (
     "hard_alignment_validation",
     "build_gt_hard_resolver_metadata",
     "freeze_resolver_metadata",
-    "binary_scorer_training",
-    "continuous_scorer_training",
-    "v2_scorer_training",
+    "scorer_training",
     "scorer_evaluation",
     "production_promotion_check",
     "artifact_export",
@@ -91,6 +96,7 @@ HARD_SOURCE_CACHE_SENTINEL_FILENAME = ".hard_source_prediction_cache_complete.js
 PRODUCTION_CACHE_SENTINEL_FILENAME = ".production_prediction_cache_complete.json"
 PRODUCTION_RESOLVER_METADATA_SENTINEL_FILENAME = ".production_resolver_metadata_complete.json"
 V2_SCORER_TRAINING_SENTINEL_FILENAME = ".v2_scorer_training_complete.json"
+SCORER_TRAINING_SENTINEL_FILENAME = ".scorer_training_complete.json"
 DEFAULT_CONFIG_SECTION = "align.ensemble"
 CONFIG_PREVIEW_FILENAME = "config_update_preview.json"
 CONFIG_PATCH_FILENAME = "config_update_patch.ini"
@@ -103,6 +109,12 @@ PROMOTED_POLICIES = (
     SCORER_POLICY_CONTINUOUS_REGRET,
     SCORER_VERSION_LEARNED_QUALITY_V2,
 )
+STAGE_ALIASES = {
+    "binary_scorer_training": "scorer_training",
+    "continuous_scorer_training": "scorer_training",
+    "v2_scorer_training": "scorer_training",
+}
+
 PROGRESS_LOG_FILENAME = "pipeline_progress.jsonl"
 VALID_ALIGN_ENSEMBLE_CONFIG_KEYS = frozenset(
     {
@@ -171,6 +183,15 @@ class PipelinePaths:
     v2_scorer_train_dir: Path = field(init=False)
     v2_scorer_artifact: Path = field(init=False)
     v2_scorer_training_sentinel: Path = field(init=False)
+    scorer_dataset_dir: Path = field(init=False)
+    scorer_rows_csv: Path = field(init=False)
+    scorer_dataset_manifest: Path = field(init=False)
+    canonical_scorers_dir: Path = field(init=False)
+    canonical_binary_scorer_artifact: Path = field(init=False)
+    canonical_continuous_scorer_artifact: Path = field(init=False)
+    canonical_v2_scorer_artifact: Path = field(init=False)
+    scorer_suite_metrics: Path = field(init=False)
+    scorer_training_sentinel: Path = field(init=False)
     scorer_eval_dir: Path = field(init=False)
     scorer_report: Path = field(init=False)
     artifacts_dir: Path = field(init=False)
@@ -290,6 +311,70 @@ class PipelinePaths:
             "v2_scorer_training_sentinel",
             self.v2_scorer_train_dir / V2_SCORER_TRAINING_SENTINEL_FILENAME,
         )
+        # Issue #206 canonical scorer-suite outputs. Keep the legacy path
+        # attributes pointed at the suite subdirectories so existing evaluator,
+        # promotion, and export code can continue to use them while the pipeline
+        # runs only one scorer-training stage.
+        object.__setattr__(self, "binary_scorer_train_dir", self.scorer_train_dir / "v1_binary")
+        object.__setattr__(
+            self,
+            "binary_scorer_artifact",
+            self.binary_scorer_train_dir / "runtime_resolver_scorer.json",
+        )
+        object.__setattr__(
+            self,
+            "continuous_scorer_train_dir",
+            self.scorer_train_dir / "v1_1_selection_cost",
+        )
+        object.__setattr__(
+            self,
+            "continuous_scorer_eval_rows",
+            self.continuous_scorer_train_dir / "runtime_resolver_scorer_eval_rows.csv",
+        )
+        object.__setattr__(
+            self,
+            "scorer_artifact",
+            self.continuous_scorer_train_dir / "runtime_resolver_scorer.json",
+        )
+        object.__setattr__(self, "v2_scorer_train_dir", self.scorer_train_dir / "v2_lambdarank")
+        object.__setattr__(
+            self,
+            "v2_scorer_artifact",
+            self.v2_scorer_train_dir / "runtime_resolver_scorer_v2.json",
+        )
+        object.__setattr__(self, "scorer_dataset_dir", self.scorer_train_dir / SCORER_DATASET_DIR)
+        object.__setattr__(self, "scorer_rows_csv", self.scorer_dataset_dir / SCORER_ROWS_CSV)
+        object.__setattr__(
+            self,
+            "scorer_dataset_manifest",
+            self.scorer_dataset_dir / SCORER_DATASET_MANIFEST_JSON,
+        )
+        object.__setattr__(self, "canonical_scorers_dir", self.scorer_train_dir / "scorers")
+        object.__setattr__(
+            self,
+            "canonical_binary_scorer_artifact",
+            self.canonical_scorers_dir / "learned_quality_v1.json",
+        )
+        object.__setattr__(
+            self,
+            "canonical_continuous_scorer_artifact",
+            self.canonical_scorers_dir / "learned_quality_v1_1.json",
+        )
+        object.__setattr__(
+            self,
+            "canonical_v2_scorer_artifact",
+            self.canonical_scorers_dir / "learned_quality_v2.json",
+        )
+        object.__setattr__(
+            self,
+            "scorer_suite_metrics",
+            self.canonical_scorers_dir / SCORER_SUITE_METRICS_JSON,
+        )
+        object.__setattr__(
+            self,
+            "scorer_training_sentinel",
+            self.scorer_train_dir / SCORER_TRAINING_SENTINEL_FILENAME,
+        )
         object.__setattr__(self, "scorer_eval_dir", self.output_root / "scorer_evaluation")
         object.__setattr__(self, "scorer_report", self.scorer_eval_dir / SCORER_POLICY_REPORT_JSON)
         object.__setattr__(self, "artifacts_dir", self.stable_root / "artifacts")
@@ -378,7 +463,15 @@ def _require(path: Path, label: str) -> None:
         raise FileNotFoundError(f"missing required {label}: {path}")
 
 
+
+def _canonical_stage_name(stage: str | None) -> str | None:
+    if stage is None:
+        return None
+    return STAGE_ALIASES.get(stage, stage)
+
 def _stage_slice(start_at: str | None, stop_after: str | None) -> tuple[str, ...]:
+    start_at = _canonical_stage_name(start_at)
+    stop_after = _canonical_stage_name(stop_after)
     start = STAGES.index(start_at) if start_at else 0
     stop = STAGES.index(stop_after) if stop_after else len(STAGES) - 1
     if start > stop:
@@ -781,6 +874,32 @@ def _command_gt_hard_resolver_metadata(
     return _append_extra(argv, args.gt_hard_resolver_metadata_arg)
 
 
+
+def _scorer_training_sentinel_payload(
+    args: argparse.Namespace,
+    paths: PipelinePaths,
+) -> dict[str, T.Any]:
+    payload = dict(_v2_scorer_training_sentinel_payload(args, paths))
+    payload.update(
+        {
+            "training_mode": "scorer_suite",
+            "failure_threshold": float(getattr(args, "failure_threshold", 0.08)),
+            "high_gap_threshold": float(getattr(args, "high_gap_threshold", 0.01)),
+        }
+    )
+    return payload
+
+
+def _scorer_training_sentinel_matches(args: argparse.Namespace, paths: PipelinePaths) -> bool:
+    return _sentinel_matches(
+        paths.scorer_training_sentinel,
+        _scorer_training_sentinel_payload(args, paths),
+    )
+
+
+def _write_scorer_training_sentinel(args: argparse.Namespace, paths: PipelinePaths) -> None:
+    write_json(paths.scorer_training_sentinel, _scorer_training_sentinel_payload(args, paths))
+
 def _command_scorer_training(
     args: argparse.Namespace,
     paths: PipelinePaths,
@@ -853,6 +972,45 @@ def _command_v2_scorer_training(args: argparse.Namespace, paths: PipelinePaths) 
     return _append_extra(argv, args.scorer_train_arg)
 
 
+
+def _command_scorer_suite_training(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
+    argv = [
+        args.python_executable,
+        _script("train_runtime_resolver_scorer.py"),
+        "--gt-manifest",
+        str(paths.hard_manifest),
+        "--gt-cache-dir",
+        str(paths.run_cache),
+        "--production-manifest",
+        str(paths.production_manifest),
+        "--production-cache-dir",
+        str(paths.production_cache),
+        "--weights",
+        str(paths.best_weights),
+        "--candidates",
+        args.candidates,
+        "--output-dir",
+        str(paths.scorer_train_dir),
+        "--training-mode",
+        "scorer_suite",
+        "--target",
+        TARGET_SELECTION_COST,
+        "--split-seed",
+        str(args.split_seed),
+        "--eval-fraction",
+        str(args.v2_eval_fraction),
+        "--learning-rate",
+        str(args.v2_learning_rate),
+        "--iterations",
+        str(args.v2_iterations),
+        "--num-leaves",
+        str(args.v2_num_leaves),
+    ]
+    if args.allow_image_backfill:
+        argv.append("--allow-image-backfill")
+    argv.extend(["--gt-hard-resolver-metadata", str(paths.frozen_gt_metadata)])
+    return _append_extra(argv, args.scorer_train_arg)
+
 def _command_scorer_eval(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
     argv = [
         args.python_executable,
@@ -897,6 +1055,7 @@ def _command_scorer_eval(args: argparse.Namespace, paths: PipelinePaths) -> list
 
 
 def _outputs_for(stage: str, paths: PipelinePaths) -> list[Path]:
+    stage = _canonical_stage_name(stage) or stage
     return {
         "build_dataset_manifest": [paths.run_manifest, paths.run_manifest_sentinel],
         "build_hard_source_manifest": [paths.hard_source_manifest],
@@ -927,9 +1086,17 @@ def _outputs_for(stage: str, paths: PipelinePaths) -> list[Path]:
         "hard_alignment_validation": [paths.hard_manifest],
         "build_gt_hard_resolver_metadata": [paths.frozen_gt_metadata],
         "freeze_resolver_metadata": [paths.frozen_gt_metadata],
-        "binary_scorer_training": [paths.binary_scorer_artifact],
-        "continuous_scorer_training": [paths.scorer_artifact, paths.continuous_scorer_eval_rows],
-        "v2_scorer_training": [paths.v2_scorer_artifact, paths.v2_scorer_training_sentinel],
+        "scorer_training": [
+            paths.binary_scorer_artifact,
+            paths.scorer_artifact,
+            paths.continuous_scorer_eval_rows,
+            paths.v2_scorer_artifact,
+            paths.v2_scorer_training_sentinel,
+            paths.scorer_rows_csv,
+            paths.scorer_dataset_manifest,
+            paths.scorer_suite_metrics,
+            paths.scorer_training_sentinel,
+        ],
         "scorer_evaluation": [paths.scorer_report],
         "production_promotion_check": [paths.scorer_report],
         "artifact_export": [
@@ -946,6 +1113,7 @@ def _outputs_for(stage: str, paths: PipelinePaths) -> list[Path]:
 
 
 def _required_inputs_for(stage: str, args: argparse.Namespace, paths: PipelinePaths) -> list[Path]:
+    stage = _canonical_stage_name(stage) or stage
     return {
         "build_dataset_manifest": [],
         "build_hard_source_manifest": [],
@@ -1009,27 +1177,7 @@ def _required_inputs_for(stage: str, args: argparse.Namespace, paths: PipelinePa
             if args.gt_hard_resolver_metadata
             else [paths.frozen_gt_metadata]
         ),
-        "binary_scorer_training": [
-            paths.hard_manifest,
-            paths.run_cache,
-            paths.hard_source_cache_sentinel,
-            paths.production_manifest,
-            paths.production_cache,
-            paths.production_cache_sentinel,
-            paths.best_weights,
-            paths.frozen_gt_metadata,
-        ],
-        "continuous_scorer_training": [
-            paths.hard_manifest,
-            paths.run_cache,
-            paths.hard_source_cache_sentinel,
-            paths.production_manifest,
-            paths.production_cache,
-            paths.production_cache_sentinel,
-            paths.best_weights,
-            paths.frozen_gt_metadata,
-        ],
-        "v2_scorer_training": [
+        "scorer_training": [
             paths.hard_manifest,
             paths.run_cache,
             paths.hard_source_cache_sentinel,
@@ -1066,6 +1214,7 @@ def _required_inputs_for(stage: str, args: argparse.Namespace, paths: PipelinePa
 
 
 def _contract_for(stage: str, args: argparse.Namespace, paths: PipelinePaths) -> StageContract:
+    stage = _canonical_stage_name(stage) or stage
     cache_behavior = {
         "build_dataset_manifest": "writes merged run-root base GT manifest; first dataset uses --manifest-mode replace and later datasets use --manifest-mode merge; completion sentinel is written only after all dataset builds succeed",
         "build_hard_source_manifest": "writes separate AFLW2000-3D hard-source manifest under run-root; --resume skips when manifest exists",
@@ -1080,15 +1229,20 @@ def _contract_for(stage: str, args: argparse.Namespace, paths: PipelinePaths) ->
         "hard_alignment_validation": "writes gt_hard_validation artifacts; --resume skips when manifest.json exists",
         "build_gt_hard_resolver_metadata": "runs the GT-hard resolver metadata CLI on the GT-hard manifest and writes the frozen resolver metadata sidecar; explicit sidecars are copied into the same frozen path",
         "freeze_resolver_metadata": "validates the caller-supplied or freshly generated frozen GT-hard resolver metadata sidecar; never derives runtime metadata from a plain manifest",
-        "binary_scorer_training": "writes v1 binary scorer artifacts; --resume skips when runtime_resolver_scorer.json exists",
-        "continuous_scorer_training": "writes v1.1 continuous scorer artifacts; --resume skips when runtime_resolver_scorer.json and eval rows exist",
-        "v2_scorer_training": "writes learned_quality_v2 LightGBM LambdaRank scorer artifacts and an input/hyperparameter sentinel; --resume skips only when both match",
+        "scorer_training": "loads scorer contexts once, writes canonical scorer rows, trains v1/v1.1/v2 scorer artifacts, and records an input/hyperparameter sentinel; --resume skips only when all canonical artifacts and the sentinel match",
         "scorer_evaluation": "writes scorer_evaluation reports; --resume skips when scorer_policy_report.json exists",
         "production_promotion_check": "reads scorer report only; no recompute; requires promotion_status/status pass",
         "artifact_export": "copies final artifacts into artifacts/; --resume skips when artifacts_manifest.json exists",
         "config_update": "writes deterministic config_update_preview.json and config_update_patch.ini; writes only promoted align.ensemble keys with --write-config after promotion passes",
     }[stage]
     success = {
+        "scorer_training": [
+            "v1 binary runtime_resolver_scorer.json exists",
+            "v1.1 runtime_resolver_scorer.json and held-out eval rows exist",
+            "learned_quality_v2 runtime_resolver_scorer_v2.json exists",
+            "canonical scorer rows and manifest exist",
+            "scorer training sentinel matches requested inputs and hyperparameters",
+        ],
         "build_dataset_manifest": ["merged base GT run manifest and completion sentinel exist"],
         "build_hard_source_manifest": ["hard-source manifest exists"],
         "build_prediction_cache": ["base GT prediction cache sentinel exists"],
@@ -1313,7 +1467,10 @@ def _emit_gt_runtime_bucket_artifacts(
     else:
         args = T.cast(argparse.Namespace, args_or_paths)
 
-    candidate_table = paths.binary_scorer_train_dir / "candidate_table.csv"
+    candidate_table = paths.scorer_train_dir / "candidate_table.csv"
+    if not candidate_table.is_file():
+        legacy_candidate_table = paths.binary_scorer_train_dir / "candidate_table.csv"
+        candidate_table = legacy_candidate_table
     if not candidate_table.is_file():
         logger.info("gt_runtime_bucket aggregation skipped: %s not found", candidate_table)
         return
@@ -1367,6 +1524,11 @@ def _emit_gt_runtime_bucket_artifacts(
 
 
 def _stage_complete(stage: str, args: argparse.Namespace, paths: PipelinePaths) -> bool:
+    if stage == "v2_scorer_training":
+        if not paths.v2_scorer_artifact.exists():
+            return False
+        return _v2_scorer_training_sentinel_matches(args, paths)
+    stage = _canonical_stage_name(stage) or stage
     if stage == "build_hard_source_manifest" and args.hard_source_manifest is not None:
         return True
     if not all(path.exists() for path in _outputs_for(stage, paths)):
@@ -1399,8 +1561,8 @@ def _stage_complete(stage: str, args: argparse.Namespace, paths: PipelinePaths) 
         )
     if stage == "build_production_resolver_metadata":
         return _production_resolver_metadata_sentinel_matches(args, paths)
-    if stage == "v2_scorer_training":
-        return _v2_scorer_training_sentinel_matches(args, paths)
+    if stage == "scorer_training":
+        return _scorer_training_sentinel_matches(args, paths)
     if stage == "artifact_export":
         return _artifact_export_matches(args, paths)
     return True
@@ -1418,10 +1580,10 @@ def _should_skip_completed_stage(stage: str, args: argparse.Namespace) -> bool:
 
 
 def _stage_forced(stage: str, args: argparse.Namespace) -> bool:
-    overwrite_from = getattr(args, "overwrite_from", None)
+    overwrite_from = _canonical_stage_name(getattr(args, "overwrite_from", None))
     if overwrite_from is not None and STAGES.index(stage) >= STAGES.index(overwrite_from):
         return True
-    force_downstream_of = getattr(args, "force_downstream_of", None)
+    force_downstream_of = _canonical_stage_name(getattr(args, "force_downstream_of", None))
     return force_downstream_of is not None and STAGES.index(stage) > STAGES.index(
         force_downstream_of
     )
@@ -1851,11 +2013,11 @@ def _validate_stage_outputs(
         )
     if (
         args is not None
-        and stage == "v2_scorer_training"
-        and not _v2_scorer_training_sentinel_matches(args, paths)
+        and stage == "scorer_training"
+        and not _scorer_training_sentinel_matches(args, paths)
     ):
         raise PipelineContractError(
-            "stage 'v2_scorer_training' sentinel does not match the requested "
+            "stage 'scorer_training' sentinel does not match the requested "
             "training inputs or hyperparameters"
         )
     if args is not None and stage == "artifact_export":
@@ -2437,44 +2599,18 @@ def _execute_stage(stage: str, args: argparse.Namespace, paths: PipelinePaths) -
                 contract=contract.to_json(),
                 notes=notes,
             )
-        elif stage == "binary_scorer_training":
-            command = _command_scorer_training(
-                args,
-                paths,
-                output_dir=paths.binary_scorer_train_dir,
-                target=TARGET_CANDIDATE_FAILURE_OR_HIGH_GAP,
-            )
+        elif stage == "scorer_training":
+            command = _command_scorer_suite_training(args, paths)
             if args.dry_run:
                 return StageResult(
                     stage, "planned", command=command, outputs=outputs, contract=contract.to_json()
                 )
             _run_command(command)
+            _write_scorer_training_sentinel(args, paths)
             # Issue #205: aggregate the freshly-written candidate_table.csv
             # into per-runtime-bucket production metrics and drop the
-            # artifacts into ``paths.candidate_dir`` for downstream
-            # consumers (the helper is crash-safe — a failure logs and
-            # continues so binary_scorer_training stays green).
+            # artifacts into ``paths.candidate_dir`` for downstream consumers.
             _emit_gt_runtime_bucket_artifacts(args, paths)
-        elif stage == "continuous_scorer_training":
-            command = _command_scorer_training(
-                args,
-                paths,
-                output_dir=paths.continuous_scorer_train_dir,
-                target=args.scorer_target,
-            )
-            if args.dry_run:
-                return StageResult(
-                    stage, "planned", command=command, outputs=outputs, contract=contract.to_json()
-                )
-            _run_command(command)
-        elif stage == "v2_scorer_training":
-            command = _command_v2_scorer_training(args, paths)
-            if args.dry_run:
-                return StageResult(
-                    stage, "planned", command=command, outputs=outputs, contract=contract.to_json()
-                )
-            _run_command(command)
-            _write_v2_scorer_training_sentinel(args, paths)
         elif stage == "scorer_evaluation":
             command = _command_scorer_eval(args, paths)
             if args.dry_run:
@@ -2746,7 +2882,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--resume", action="store_true")
     parser.add_argument(
         "--overwrite-from",
-        choices=STAGES,
+        choices=tuple(STAGES) + tuple(STAGE_ALIASES),
         help=(
             "With --resume, rerun this stage and every later selected stage even when "
             "their outputs already exist."
@@ -2754,7 +2890,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--force-downstream-of",
-        choices=STAGES,
+        choices=tuple(STAGES) + tuple(STAGE_ALIASES),
         help=(
             "With --resume, rerun every selected stage after this stage even when "
             "their outputs already exist."
