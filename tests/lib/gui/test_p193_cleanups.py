@@ -146,3 +146,58 @@ def test_graph_trace_var_names_tuple_matches_literal() -> None:
     assert T.get_args(T.Literal["smoothgraph", "display_iterations"]) == _GRAPH_TRACE_VAR_NAMES
     # Tuple, not list — frozen at import time.
     assert isinstance(_GRAPH_TRACE_VAR_NAMES, tuple)
+
+
+# ---------------------------------------------------------------------------
+# Reviewed Tk GUI scope — no deprecated Tk trace API
+# ---------------------------------------------------------------------------
+
+
+def test_reviewed_gui_scope_has_no_legacy_tk_trace_api() -> None:
+    """Reviewed #193 GUI files must not use deprecated Tk trace APIs."""
+    from pathlib import Path
+
+    reviewed_gui_files = [
+        "lib/gui/__init__.py",
+        "lib/gui/command.py",
+        "lib/gui/command_builder.py",
+        "lib/gui/control_helper.py",
+        "lib/gui/custom_widgets.py",
+        "lib/gui/display.py",
+        "lib/gui/display_analysis.py",
+        "lib/gui/display_command.py",
+        "lib/gui/display_graph.py",
+        "lib/gui/display_page.py",
+        "lib/gui/gui_config.py",
+        "lib/gui/menu.py",
+        "lib/gui/options.py",
+        "lib/gui/popup_configure.py",
+        "lib/gui/popup_session.py",
+        "lib/gui/project.py",
+        "lib/gui/project_models.py",
+        "lib/gui/theme.py",
+        "lib/gui/wrapper.py",
+        "lib/gui/analysis/event_reader.py",
+        "lib/gui/analysis/moving_average.py",
+        "lib/gui/analysis/stats.py",
+        "lib/gui/models/project.py",
+    ]
+    legacy_patterns = (
+        '.trace("w"',
+        ".trace('w'",
+        ".trace_vdelete(",
+    )
+
+    offenders = []
+    root = Path(__file__).resolve().parents[3]
+    for relpath in reviewed_gui_files:
+        path = root / relpath
+        text = path.read_text(encoding="utf-8")
+        for lineno, line in enumerate(text.splitlines(), start=1):
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                continue
+            if any(pattern in line for pattern in legacy_patterns):
+                offenders.append(f"{relpath}:{lineno}: {stripped}")
+
+    assert not offenders, "\n".join(offenders)

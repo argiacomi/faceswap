@@ -135,7 +135,7 @@ class SessionPopUp(tk.Toplevel):
             smoothamount=tk.DoubleVar(),
         )
         retval.buildgraph.set(False)
-        retval.buildgraph.trace("w", self._graph_build)
+        retval.buildgraph.trace_add("write", self._graph_build)
         return retval
 
     def _layout_frames(self) -> ttk.Frame:
@@ -192,7 +192,7 @@ class SessionPopUp(tk.Toplevel):
             cmb.current(0)
 
             cmd = self._option_button_reload if item == "Display" else self._graph_scale
-            var.trace("w", cmd)
+            var.trace_add("write", cmd)
             hlp = self._set_help(item)
             Tooltip(cmbframe, text=hlp, wrap_length=200)
 

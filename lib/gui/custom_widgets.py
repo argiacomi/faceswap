@@ -172,7 +172,7 @@ class ConsoleOut(ttk.Frame):  # pylint:disable=too-many-ancestors
     def _set_console_clear_var_trace(self):
         """Set a trace on the console clear tkinter variable to trigger :func:`_clear`"""
         logger.debug("Set clear trace")
-        self._console_clear.trace("w", self._clear)
+        self._console_clear.trace_add("write", self._clear)
 
     def _build_console(self):
         """Build and place the console  and add stdout/stderr redirection"""
@@ -843,8 +843,8 @@ class MultiOption(ttk.Checkbutton):  # pylint:disable=too-many-ancestors
         super().__init__(parent, variable=self._tk_var, **kwargs)
         self._value = value
         self._master_variable = variable
-        self._tk_var.trace("w", self._on_update)
-        self._master_variable.trace("w", self._on_master_update)
+        self._tk_var.trace_add("write", self._on_update)
+        self._master_variable.trace_add("write", self._on_master_update)
 
     @property
     def _master_list(self):

@@ -102,8 +102,8 @@ class Analysis(DisplayPage):  # pylint:disable=too-many-ancestors
 
         When the analysis folder has been populated - Updates the stats from that folder.
         """
-        self.vars["refresh_graph"].trace("w", self._update_current_session)
-        self.vars["analysis_folder"].trace("w", self._populate_from_folder)
+        self.vars["refresh_graph"].trace_add("write", self._update_current_session)
+        self.vars["analysis_folder"].trace_add("write", self._populate_from_folder)
 
     def _update_current_session(self, *args):  # pylint:disable=unused-argument
         """Update the currently training session data on a graph update callback."""
@@ -354,7 +354,7 @@ class _Options:  # pylint:disable=too-few-public-methods
         """Add a callback to the training tkinter variable to disable save and clear buttons
         when a model is training."""
         var = self._parent.vars["is_training"]
-        var.trace("w", self._set_buttons_state)
+        var.trace_add("write", self._set_buttons_state)
 
     def _set_buttons_state(self, *args):  # pylint:disable=unused-argument
         """Callback to enable/disable button when training is commenced and stopped."""

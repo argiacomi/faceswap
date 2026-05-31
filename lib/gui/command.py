@@ -54,7 +54,7 @@ class CommandNotebook(ttk.Notebook):  # pylint:disable=too-many-ancestors
         to change the action buttons text and command"""
         logger.debug("Set running trace")
         tk_vars = get_config().tk_vars
-        tk_vars.running_task.trace("w", self.change_action_button)
+        tk_vars.running_task.trace_add("write", self.change_action_button)
 
     def build_tabs(self):
         """Build the tabs for the relevant command"""

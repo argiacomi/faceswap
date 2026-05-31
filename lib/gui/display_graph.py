@@ -369,7 +369,7 @@ class TrainingGraph(GraphBase):  # pylint:disable=too-many-ancestors
 
     def _add_callback(self) -> None:
         """Add the variable trace to update graph on refresh button press or save iteration."""
-        get_config().tk_vars.refresh_graph.trace("w", self.refresh)  # type:ignore
+        get_config().tk_vars.refresh_graph.trace_add("write", self.refresh)  # type:ignore
 
     def build(self) -> None:
         """Build the Training graph."""

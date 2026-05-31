@@ -732,7 +732,7 @@ class Project(_GuiSession):
         been drawn, and their options' initial values have been set."""
         for key, tk_var in self._modified_vars.items():
             logger.debug("Adding callback for tab: %s", key)
-            tk_var.trace("w", self._modified_callback)
+            tk_var.trace_add("write", self._modified_callback)
 
     def _modified_callback(self, *args) -> None:  # pylint:disable=unused-argument
         """Update the project modified state on a GUI modification change and

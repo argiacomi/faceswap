@@ -91,8 +91,8 @@ class ProcessWrapper:
     def _set_callbacks(self) -> None:
         """Set the tkinter variable callbacks for performing an action or generating a command"""
         logger.debug("Setting tk variable traces")
-        self._tk_vars.action_command.trace("w", self._action_command)
-        self._tk_vars.generate_command.trace("w", self._generate_command)
+        self._tk_vars.action_command.trace_add("write", self._action_command)
+        self._tk_vars.generate_command.trace_add("write", self._generate_command)
 
     def _refresh_graph(self) -> None:
         """Trigger a graph/analysis refresh from a runtime service event."""

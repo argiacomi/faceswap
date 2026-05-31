@@ -419,11 +419,11 @@ class ControlPanelOption:
                      self.name, self.dtype, var, initial_value)
         if self._track_modified and self._command is not None:
             logger.debug("Tracking variable modification: %s", self.name)
-            var.trace("w",
+            var.trace_add("write",
                       lambda name, index, mode, cmd=self._command: self._modified_callback(cmd))
 
         if self._track_modified and self._command == "train" and self.title == "Model Dir":
-            var.trace("w", lambda name, index, mode, v=var: self._model_callback(v))
+            var.trace_add("write", lambda name, index, mode, v=var: self._model_callback(v))
 
         return var
 
@@ -1363,7 +1363,7 @@ class ControlBuilder:
         if self.option.helptext is not None:
             _get_tooltip(frame, text=self.option.helptext)
         # Callback to set the color chooser background on an update (e.g. reset)
-        self.option.tk_var.trace("w", lambda *e: ctl.config(bg=self.option.tk_var.get()))
+        self.option.tk_var.trace_add("write", lambda *e: ctl.config(bg=self.option.tk_var.get()))
         logger.debug("Added control to Options Frame: %s", self.option.name)
         return ctl
 
