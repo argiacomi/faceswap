@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import os
+from argparse import Namespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -82,6 +83,31 @@ def test_output_processing_missing_folder_exits_non_zero() -> None:
     assert excinfo.value.code == 1
 
 
+def test_batch_process_propagates_child_failure() -> None:
+    """Batch-mode child failures must make the top-level process exit non-zero."""
+    instance = mask_module.Mask.__new__(mask_module.Mask)
+    instance._input_locations = ["job_a", "job_b"]  # noqa: SLF001
+    instance._args = Namespace(batch_mode=True, output=None)  # noqa: SLF001
+
+    class FailingProcess:
+        def __init__(self, *args, **kwargs) -> None:
+            self.exitcode = 7
+
+        def start(self) -> None:
+            return None
+
+        def join(self) -> None:
+            return None
+
+    with (
+        patch.object(mask_module, "Process", FailingProcess),
+        pytest.raises(SystemExit) as excinfo,
+    ):
+        instance.process()
+
+    assert excinfo.value.code == 7
+
+
 # ---------------------------------------------------------------------------
 # #198 P2 high — O(N) dict mapping in _map_images
 # ---------------------------------------------------------------------------
@@ -138,6 +164,25 @@ def test_map_images_returns_only_unmapped_when_no_overlap(tmp_path, caplog) -> N
         instance._map_images(masks, source_files)  # noqa: SLF001
     assert excinfo.value.code == 1
     assert "No masks map between the source data and the mask folder" in caplog.text
+
+
+def test_map_images_warns_duplicate_same_stem_masks_as_extra(tmp_path) -> None:
+    """Duplicate same-stem mask files must not be silently overwritten by the lookup."""
+    mask_dir_a = tmp_path / "masks_a"
+    mask_dir_b = tmp_path / "masks_b"
+    mask_dir_a.mkdir()
+    mask_dir_b.mkdir()
+
+    first = str(mask_dir_a / "frame_000001.png")
+    duplicate = str(mask_dir_b / "frame_000001.png")
+    source_files = [str(tmp_path / "frame_000001.jpg")]
+
+    instance = _make_import_instance()
+    with patch.object(instance, "_warn_extra_masks") as warn:
+        mapping = instance._map_images([first, duplicate], source_files)  # noqa: SLF001
+
+    assert mapping == {"frame_000001.jpg": first}
+    warn.assert_called_once_with([duplicate])
 
 
 def test_map_images_is_linear_in_mask_count() -> None:

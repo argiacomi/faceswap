@@ -398,7 +398,9 @@ class PipelinePaths:
         object.__setattr__(self, "scorer_eval_dir", self.output_root / "scorer_evaluation")
         object.__setattr__(self, "scorer_report", self.scorer_eval_dir / SCORER_POLICY_REPORT_JSON)
         object.__setattr__(self, "artifacts_dir", self.output_root / "promotion")
-        object.__setattr__(self, "promotion_manifest", self.artifacts_dir / "promotion_manifest.json")
+        object.__setattr__(
+            self, "promotion_manifest", self.artifacts_dir / "promotion_manifest.json"
+        )
         object.__setattr__(self, "exported_candidate_dir", self.stable_root / "candidate_search")
         object.__setattr__(self, "exported_scorer_dir", self.stable_root / "scorer_training")
         object.__setattr__(
@@ -1535,7 +1537,7 @@ def _emit_gt_runtime_bucket_artifacts(
         getattr(
             paths,
             "gt_runtime_bucket_candidate_table",
-            Path(getattr(paths, "candidate_dir")) / "gt_runtime_bucket_candidate_table.csv",
+            Path(paths.candidate_dir) / "gt_runtime_bucket_candidate_table.csv",
         )
     )
 
@@ -1589,7 +1591,7 @@ def _emit_gt_runtime_bucket_artifacts(
                 getattr(
                     paths,
                     "gt_runtime_bucket_metrics_json",
-                    Path(getattr(paths, "candidate_dir")) / "gt_runtime_bucket_metrics.json",
+                    Path(paths.candidate_dir) / "gt_runtime_bucket_metrics.json",
                 )
             ),
         )
@@ -1599,7 +1601,7 @@ def _emit_gt_runtime_bucket_artifacts(
                 getattr(
                     paths,
                     "gt_runtime_bucket_metrics_csv",
-                    Path(getattr(paths, "candidate_dir")) / "gt_runtime_bucket_metrics.csv",
+                    Path(paths.candidate_dir) / "gt_runtime_bucket_metrics.csv",
                 )
             ),
         )

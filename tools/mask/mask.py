@@ -149,6 +149,8 @@ class Mask:
                 proc = Process(target=self._run_mask_process, args=(arguments,))
                 proc.start()
                 proc.join()
+                if proc.exitcode:
+                    sys.exit(proc.exitcode)
             else:
                 self._run_mask_process(arguments)
 

@@ -649,10 +649,7 @@ def _score_context_rows(
         scores = scorer.score_feature_maps(feature_maps)
     else:  # defensive compatibility for ad-hoc scorer-like test doubles
         scores = [scorer.score_feature_map(feature_map) for feature_map in feature_maps]
-    return {
-        row.candidate_name: float(score)
-        for row, score in zip(rows, scores, strict=True)
-    }
+    return {row.candidate_name: float(score) for row, score in zip(rows, scores, strict=True)}
 
 
 def row_contexts_from_scorer_rows(

@@ -8,6 +8,7 @@ import os
 import re
 import sys
 import typing as T
+from collections import defaultdict, deque
 from pathlib import Path
 
 import cv2
@@ -260,22 +261,26 @@ class Import:
         Source filenames mapped to full path location of mask to be imported
         """
         mask_count = len(file_list)
-        # Issue #198 P2 high — O(N) mapping via a stem-indexed dict
-        # instead of the previous ``next(... in file_list)`` +
-        # ``file_list.pop(file_list.index(...))`` chain that ran in
-        # O(N^2). ``pop`` is what surfaced the "extra mask" warning
-        # set; using ``mask_by_stem.values()`` after the loop preserves
-        # that behavior.
-        mask_by_stem: dict[str, str] = {Path(f).stem: f for f in file_list}
+        # Issue #198 P2 high — O(N) mapping via a stem-indexed lookup.
+        # Keep a deque per stem rather than a plain dict[str, str] so duplicate
+        # same-stem mask files are not silently overwritten before extra-mask
+        # warnings are generated.
+        mask_by_stem: dict[str, deque[str]] = defaultdict(deque)
+        for mask_file in file_list:
+            mask_by_stem[Path(mask_file).stem].append(mask_file)
+
         retval: dict[str, str] = {}
         unmapped: list[str] = []
         for filename in tqdm(source_files, desc="Mapping masks to input", leave=False):
             fname = Path(filename).stem
-            mapped = mask_by_stem.pop(fname, None)
-            if mapped is None:
+            mapped = mask_by_stem.get(fname)
+            if not mapped:
                 unmapped.append(filename)
                 continue
-            retval[os.path.basename(filename)] = mapped
+
+            retval[os.path.basename(filename)] = mapped.popleft()
+            if not mapped:
+                del mask_by_stem[fname]
 
         if len(unmapped) == len(source_files):
             logger.error(
@@ -283,7 +288,8 @@ class Import:
             )
             sys.exit(1)
 
-        self._warn_extra_masks(list(mask_by_stem.values()))
+        extra_masks = [mask for masks in mask_by_stem.values() for mask in masks]
+        self._warn_extra_masks(extra_masks)
 
         logger.debug(
             "Source: %s, Mask: %s, Mapped: %s",

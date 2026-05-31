@@ -224,9 +224,9 @@ def _touch_pipeline_outputs(paths: PipelinePaths, *, promotion_status: str = "pa
                 "best_setup": str(paths.best_setup),
                 "best_weights": str(paths.best_weights),
                 "runtime_resolver_scorer_source": str(paths.canonical_continuous_scorer_artifact),
-                "runtime_resolver_scorer_source_sha256": __import__("hashlib").sha256(
-                    paths.canonical_continuous_scorer_artifact.read_bytes()
-                ).hexdigest(),
+                "runtime_resolver_scorer_source_sha256": __import__("hashlib")
+                .sha256(paths.canonical_continuous_scorer_artifact.read_bytes())
+                .hexdigest(),
                 "runtime_resolver_scorer_version": "continuous_regret_v1_1",
                 "promotion": {
                     "active_policy": "learned_quality_v1_1",
@@ -958,7 +958,9 @@ def test_scorer_train_and_eval_commands_allow_image_backfill_by_default(
     assert v2_train_command[v2_train_command.index("--output-dir") + 1] == str(
         paths.v2_scorer_train_dir
     )
-    assert eval_command[eval_command.index("--v2-scorer") + 1] == str(paths.canonical_v2_scorer_artifact)
+    assert eval_command[eval_command.index("--v2-scorer") + 1] == str(
+        paths.canonical_v2_scorer_artifact
+    )
 
 
 def test_scorer_train_and_eval_commands_allow_image_backfill_can_be_disabled(
@@ -1416,9 +1418,11 @@ def test_artifact_export_records_promoted_scorer_provenance(tmp_path: Path) -> N
     assert not paths.exported_scorer_artifact.exists()
     assert not paths.exported_scorer_rows.exists()
     assert not paths.exported_scorer_dataset_manifest.exists()
-    assert json.loads(
-        paths.canonical_continuous_scorer_artifact.read_text(encoding="utf-8")
-    ) == source_scorer_payload
+    assert (
+        json.loads(paths.canonical_continuous_scorer_artifact.read_text(encoding="utf-8"))
+        == source_scorer_payload
+    )
+
 
 def test_v2_promotion_check_requires_v2_policy_metrics(tmp_path: Path) -> None:
     args = _args(tmp_path, promoted_scorer_version="learned_quality_v2")
@@ -1491,6 +1495,7 @@ def test_artifact_export_can_promote_v2_scorer(tmp_path: Path) -> None:
     assert manifest["promotion"]["model_type"] == "lightgbm_lambdarank"
     assert manifest["promotion"]["runtime_export"] == "production_bundle"
     assert not paths.exported_scorer_artifact.exists()
+
 
 def test_resume_write_config_does_not_skip_config_update(tmp_path: Path) -> None:
     args = _args(

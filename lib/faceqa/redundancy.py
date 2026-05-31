@@ -2112,6 +2112,7 @@ def _contact_sheet_appearance_key(
     coarse_channels = appearance_mode[:4]
     return tuple(value // 2 for value in coarse_channels)
 
+
 def _visual_mode_key(features: RepresentationFeatures) -> tuple[T.Any, ...]:
     """Return the broad visual-mode key for contact-sheet splitting.
 
@@ -2764,9 +2765,7 @@ def _quality_consistent(
         return True
     values = [features[idx].quality_score for idx in members]
     allowed = (
-        _PRUNE_GROUP_MIN_QUALITY_DELTA_FAIL
-        if coverage_failed
-        else _PRUNE_GROUP_MIN_QUALITY_DELTA
+        _PRUNE_GROUP_MIN_QUALITY_DELTA_FAIL if coverage_failed else _PRUNE_GROUP_MIN_QUALITY_DELTA
     )
     return (max(values) - min(values)) <= allowed
 
@@ -2843,8 +2842,7 @@ def _candidate_complete_link_acceptance(
     lighting_span = _appearance_lighting_span(proposed, features)
     if lighting_span > _PRUNE_GROUP_APPEARANCE_LIGHTING_SPAN:
         blockers.append(
-            f"appearance lighting span {lighting_span} > "
-            f"{_PRUNE_GROUP_APPEARANCE_LIGHTING_SPAN}"
+            f"appearance lighting span {lighting_span} > {_PRUNE_GROUP_APPEARANCE_LIGHTING_SPAN}"
         )
 
     if not _appearance_modes_pairwise_compatible(proposed, features):
@@ -2894,7 +2892,6 @@ def _build_complete_link_prune_subgroups(
             while changed:
                 changed = False
                 best_candidate: int | None = None
-                best_acceptance: _CandidateAcceptance | None = None
 
                 for candidate in sorted(
                     pending,
@@ -2911,7 +2908,6 @@ def _build_complete_link_prune_subgroups(
                     )
                     if acceptance.accepted:
                         best_candidate = candidate
-                        best_acceptance = acceptance
                         break
                     blockers.extend(acceptance.blockers[:2])
 
@@ -2983,6 +2979,7 @@ def _contact_cluster_reason(
     ]
     parts.extend(f"{name}_span={value}" for name, value in spans.items())
     return "; ".join(parts)
+
 
 def _compute_cluster_health(
     components: list[list[int]],
