@@ -222,6 +222,10 @@ def records_from_alignments(
     ``progress_callback`` (when supplied) is invoked with ``1`` after each
     face is processed so the FaceQA dispatcher can drive a ``tqdm`` bar the
     GUI process wrapper consumes.
+
+    ``metadata_change_callback`` (when supplied) is invoked whenever image
+    metrics metadata changes so callers can persist only real enrichment
+    mutations.
     """
     if isinstance(source, dict):
         entries = source
