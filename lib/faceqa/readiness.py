@@ -85,6 +85,7 @@ class ReadinessReport:
     lighting_coverage: dict[str, T.Any] = field(default_factory=dict)
     readiness_scores: dict[str, T.Any] = field(default_factory=dict)
     pruning_suggestions: dict[str, T.Any] = field(default_factory=dict)
+    deep_audit: dict[str, T.Any] = field(default_factory=dict)
     image_metrics_provenance: dict[str, int] = field(default_factory=dict)
     underrepresented_buckets: list[dict[str, str | float]] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
@@ -112,6 +113,7 @@ class ReadinessReport:
             "lighting_coverage": self.lighting_coverage,
             "readiness_scores": self.readiness_scores,
             "pruning_suggestions": self.pruning_suggestions,
+            "deep_audit": self.deep_audit,
             "image_metrics_provenance": self.image_metrics_provenance,
             "underrepresented_buckets": self.underrepresented_buckets,
             "warnings": self.warnings,
@@ -145,6 +147,7 @@ def _render_markdown(report: ReadinessReport) -> str:
     lines.extend(_render_joint_pose(report))
     lines.extend(_render_expression(report))
     lines.extend(_render_lighting(report))
+    lines.extend(_render_deep_audit(report))
     lines.extend(_render_metrics(report))
     lines.append("")
     return "\n".join(lines)
@@ -442,6 +445,89 @@ def _render_lighting(report: ReadinessReport) -> list[str]:
     return lines
 
 
+def _render_deep_audit(report: ReadinessReport) -> list[str]:
+    """Render optional DECA deep-audit diagnostics."""
+    audit = report.deep_audit
+    if not audit:
+        return []
+
+    readiness = audit.get("deca_readiness", {}) or {}
+    expression = audit.get("expression_space_coverage", {}) or {}
+    pose = audit.get("pose_space_coverage", {}) or {}
+    lighting = audit.get("lighting_space_coverage", {}) or {}
+    latent = audit.get("latent_entropy", {}) or {}
+    cluster = audit.get("cluster_coverage", {}) or {}
+
+    lines = [
+        "",
+        "## DECA Deep Audit",
+        "",
+        f"- **Status**: {audit.get('status', 'unknown')}",
+        f"- **Faces encoded**: {audit.get('faces_encoded', 0)} of {audit.get('faces_total', 0)}",
+    ]
+    if readiness:
+        lines.append(f"- **DECA readiness**: {float(readiness.get('score', 0.0)):.1f} / 100")
+    lines.extend(
+        [
+            "",
+            "| Signal | Entropy | Occupied | Samples |",
+            "|--------|--------:|---------:|--------:|",
+            _deep_metric_row("Expression", expression),
+            _deep_metric_row("Pose", pose),
+            _deep_metric_row("Lighting", lighting),
+            "| Latent entropy | "
+            f"{float(latent.get('entropy', 0.0)):.2f} | "
+            f"{int(latent.get('occupied_cells', 0))} cells | "
+            f"{int(latent.get('samples', 0))} |",
+            "| Cluster balance | "
+            f"{float(cluster.get('balance', 0.0)):.2f} | "
+            f"{int(cluster.get('occupied_clusters', 0))} clusters | "
+            f"{int(cluster.get('samples', 0))} |",
+        ]
+    )
+
+    comparison = audit.get("landmark_vs_deca", {}) or {}
+    if comparison:
+        lines.extend(
+            [
+                "",
+                "### Landmark vs DECA",
+                "",
+                "| Signal | Landmark Entropy | DECA Entropy | Landmark Occupied | DECA Occupied |",
+                "|--------|-----------------:|-------------:|------------------:|--------------:|",
+            ]
+        )
+        for name in ("expression", "lighting"):
+            item = comparison.get(name, {}) or {}
+            landmark = item.get("landmark", {}) or {}
+            deca = item.get("deca", {}) or {}
+            lines.append(
+                "| "
+                f"{name.title()} | "
+                f"{float(landmark.get('entropy_coverage', 0.0)):.2f} | "
+                f"{float(deca.get('entropy_coverage', 0.0)):.2f} | "
+                f"{float(landmark.get('occupied_coverage', 0.0)):.2f} | "
+                f"{float(deca.get('occupied_coverage', 0.0)):.2f} |"
+            )
+
+    notes = list(audit.get("notes", [])) + list(readiness.get("notes", []))
+    if notes:
+        lines.extend(["", "### DECA Notes", ""])
+        lines.extend(f"- {note}" for note in notes)
+    return lines
+
+
+def _deep_metric_row(name: str, payload: dict[str, T.Any]) -> str:
+    """Return one Markdown row for a DECA coverage metric."""
+    return (
+        "| "
+        f"{name} | "
+        f"{float(payload.get('entropy_coverage', 0.0)):.2f} | "
+        f"{float(payload.get('occupied_coverage', 0.0)):.2f} | "
+        f"{int(payload.get('samples', 0))} |"
+    )
+
+
 def _render_metrics(report: ReadinessReport) -> list[str]:
     """Render metric summary table."""
     if not report.metric_summary:
@@ -533,6 +619,71 @@ def _provenance_trust(tag: str) -> str:
 def _fmt(value: float | None) -> str:
     """Format optional metric values for Markdown tables."""
     return "unknown" if value is None else f"{value:.3f}"
+
+
+def integrate_deep_readiness(
+    report: ReadinessReport,
+    *,
+    deep_weight: float = 0.25,
+) -> None:
+    """Fold an optional DECA readiness sub-score into ``readiness_scores``.
+
+    The default coverage path never calls this. When DECA is enabled, the
+    existing landmark-derived components keep their relative proportions but
+    are scaled to ``1 - deep_weight`` and a ``deca_deep`` component carries the
+    DECA sub-score.
+    """
+    audit = report.deep_audit
+    readiness = audit.get("deca_readiness", {}) if audit else {}
+    if not readiness or "score" not in readiness or not report.readiness_scores:
+        return
+
+    scores = report.readiness_scores
+    if scores.get("deep_analysis_mode") == audit.get("mode", "deca"):
+        return
+
+    weight = max(0.0, min(1.0, float(deep_weight)))
+    landmark_weight = 1.0 - weight
+    components = scores.get("components", {}) or {}
+    for component in components.values():
+        component["weight"] = round(float(component.get("weight", 0.0)) * landmark_weight, 4)
+
+    deca_score = float(readiness.get("score", 0.0))
+    expression = audit.get("expression_space_coverage", {}) or {}
+    pose = audit.get("pose_space_coverage", {}) or {}
+    lighting = audit.get("lighting_space_coverage", {}) or {}
+    latent = audit.get("latent_entropy", {}) or {}
+    occupied = [
+        float(expression.get("occupied_coverage", 0.0) or 0.0),
+        float(pose.get("occupied_coverage", 0.0) or 0.0),
+        float(lighting.get("occupied_coverage", 0.0) or 0.0),
+    ]
+    components["deca_deep"] = {
+        "name": "deca_deep",
+        "score": round(deca_score, 2),
+        "entropy_coverage": round(float(latent.get("entropy", 0.0) or 0.0), 4),
+        "occupied_coverage": round(sum(occupied) / len(occupied), 4),
+        "min_sample_coverage": 0.0,
+        "weight": round(weight, 4),
+        "classified_faces": int(audit.get("faces_encoded", 0) or 0),
+        "total_bins": 0,
+        "signal_coverage": (
+            round(
+                float(audit.get("faces_encoded", 0) or 0)
+                / float(audit.get("faces_total", 0) or 1),
+                4,
+            )
+            if audit.get("faces_total", 0)
+            else 0.0
+        ),
+    }
+
+    previous = float(scores.get("overall_readiness_score", 0.0) or 0.0)
+    scores["landmark_readiness_score"] = round(previous, 2)
+    scores["deep_analysis_mode"] = audit.get("mode", "deca")
+    scores["deep_analysis_weight"] = round(weight, 4)
+    scores["components"] = components
+    scores["overall_readiness_score"] = round(previous * landmark_weight + deca_score * weight, 2)
 
 
 def _underrepresented(

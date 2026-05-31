@@ -273,6 +273,30 @@ class FaceqaArgs(FaceSwapArgs):  # pylint:disable=invalid-name
         )
         argument_list.append(
             {
+                "opts": ("--deep-analysis",),
+                "action": Radio,
+                "type": str,
+                "dest": "deep_analysis",
+                "group": _("deep analysis"),
+                "default": "none",
+                "choices": ("none", "deca"),
+                "help": _(
+                    "R|Optional deep dataset-quality analysis layered on top of "
+                    "'coverage' mode. The default keeps FaceQA lightweight."
+                    "\nL|'none': Standard landmark/thumbnail coverage only (default)."
+                    "\nL|'deca': Additionally run the DECA encoder to derive 3D "
+                    "expression / pose / lighting coefficients and report "
+                    "expression-space, lighting-space, latent-entropy and cluster "
+                    "coverage, a DECA readiness sub-score, and a landmark-vs-DECA "
+                    "comparison inside the coverage report's 'deep_audit' block. "
+                    "The DECA checkpoint (deca_model.tar) is downloaded and "
+                    "SHA256-validated through the standard faceswap model cache on "
+                    "first use."
+                ),
+            }
+        )
+        argument_list.append(
+            {
                 "opts": ("--source-alignments",),
                 "action": FileFullPaths,
                 "type": str,
