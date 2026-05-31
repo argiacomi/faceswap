@@ -428,18 +428,18 @@ class RedundancyReport:
     component_diameter_max: float | None = None
     """Largest per-cluster diameter observed after splitting; capped by
     the splitter's diameter limit when no cluster exceeded it."""
-    # Issue #208 — readiness FAIL safety cap diagnostic. ``None`` when the
+    # Issue #208 — landmark-readiness FAIL safety cap diagnostic. ``None`` when the
     # cap did not fire (either readiness wasn't supplied OR the prune
     # ratio was within bounds).
     readiness_safety_cap_applied: bool = False
     """``True`` when ``compute_redundancy`` demoted borderline prune
-    candidates to review because readiness was FAIL and the prune ratio
+    candidates to review because landmark readiness was FAIL and the prune ratio
     would otherwise have been extreme."""
     readiness_safety_cap_reason: str | None = None
     """Human-readable explanation of the cap (``None`` when not
     applied)."""
     readiness_safety_cap_demotions: int = 0
-    """Number of records whose recommendation was changed by the readiness
+    """Number of records whose recommendation was changed by the landmark-readiness
     safety cap."""
     cluster_merge_diagnostics: dict[int, dict[str, T.Any]] = field(default_factory=dict)
     """Per-contact-cluster diagnostics explaining broad merge reason and
@@ -468,6 +468,9 @@ class RedundancyReport:
             "giant_component_warning": self.giant_component_warning,
             "component_spread_p95": self.component_spread_p95,
             "component_diameter_max": self.component_diameter_max,
+            "landmark_readiness_safety_cap_applied": self.readiness_safety_cap_applied,
+            "landmark_readiness_safety_cap_reason": self.readiness_safety_cap_reason,
+            "landmark_readiness_safety_cap_demotions": self.readiness_safety_cap_demotions,
             "readiness_safety_cap_applied": self.readiness_safety_cap_applied,
             "readiness_safety_cap_reason": self.readiness_safety_cap_reason,
             "readiness_safety_cap_demotions": self.readiness_safety_cap_demotions,
@@ -2422,7 +2425,7 @@ def _percentile(values: list[float], pct: float) -> float | None:
     return ordered[lower] + (ordered[upper] - ordered[lower]) * fraction
 
 
-# Issue #208 follow-up 4 — readiness FAIL safety cap parameters. The cap fires when:
+# Issue #208 follow-up 4 — landmark-readiness FAIL safety cap parameters. The cap fires when:
 #   1. ``coverage`` is supplied AND
 #   2. ``ReadinessScores.overall_readiness_score`` is below the FAIL band
 #      (``_READINESS_FAIL_SCORE``) AND
@@ -2540,7 +2543,7 @@ def _apply_readiness_safety_cap(
     coverage: FacesetCoverageReport | None,
     total_faces: int,
 ) -> tuple[bool, str | None, int]:
-    """Preserve KEEP/REVIEW samples when readiness FAILs and pruning is high.
+    """Preserve KEEP/REVIEW samples when landmark readiness FAILs and pruning is high.
 
     Returns ``(applied, reason, changed_count)`` — ``applied`` is True when
     at least one prune candidate moved to KEEP or REVIEW; ``reason`` carries
@@ -2682,7 +2685,7 @@ def _apply_readiness_safety_cap(
     final_prune = sum(1 for r in output_records if r.recommendation == PRUNE)
     final_prune_ratio = final_prune / total_faces
     reason = (
-        f"readiness FAIL (overall={overall:.1f} < {_READINESS_FAIL_SCORE:.0f}) "
+        f"landmark readiness FAIL (overall={overall:.1f} < {_READINESS_FAIL_SCORE:.0f}) "
         f"AND proposed prune ratio {proposed_prune_ratio:.0%} > "
         f"{_READINESS_FAIL_PRUNE_RATIO:.0%}; moved {changed} prune candidate(s) "
         f"to keep/review (final keep={final_keep}, review={final_review}, "

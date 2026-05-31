@@ -20,12 +20,11 @@ loaded at runtime from the local cache - see :mod:`lib.faceqa.deep.weights`.
 
 Validation note
 ---------------
-The exact ResNet variant / preprocessing in upstream DECA must be confirmed
-against the real ``deca_model.tar`` on first use (see the issue-156 validation
-checklist). The pure-numpy :func:`decode_parameters` slicing and the
-:class:`DecaEncoder` protocol are fully unit-tested with a synthetic encoder;
-the torch backbone below is the real-weights path that runs on the user's
-hardware.
+The real ``deca_model.tar`` path refuses missing/unexpected state-dict keys so
+unvalidated partial loads cannot feed readiness or pruning. The pure-numpy
+:func:`decode_parameters` slicing and the :class:`DecaEncoder` protocol are
+fully unit-tested with a synthetic encoder; the torch backbone below is the
+real-weights path that runs on the user's hardware.
 """
 
 from __future__ import annotations
@@ -36,7 +35,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from lib.utils import get_module_objects
+from lib.utils import FaceswapError, get_module_objects
 
 logger = logging.getLogger(__name__)
 
@@ -152,9 +151,20 @@ class TorchDecaEncoder:
     and a ``2048 -> 1024 -> DECA_PARAM_DIM`` head.
     """
 
-    def __init__(self, module: T.Any, device: str = "cpu") -> None:
+    def __init__(
+        self,
+        module: T.Any,
+        device: str = "cpu",
+        *,
+        missing_keys_count: int = 0,
+        unexpected_keys_count: int = 0,
+        matched_key_ratio: float | None = None,
+    ) -> None:
         self._module = module
         self._device = device
+        self.missing_keys_count = missing_keys_count
+        self.unexpected_keys_count = unexpected_keys_count
+        self.matched_key_ratio = matched_key_ratio
 
     @classmethod
     def build_module(cls) -> T.Any:
@@ -194,12 +204,13 @@ class TorchDecaEncoder:
         *,
         device: str = "cpu",
         strict: bool = False,
+        allow_partial: bool = False,
     ) -> TorchDecaEncoder:
         """Build an encoder and load ``state_dict`` (already key-remapped).
 
-        ``strict=False`` by default so a partial match still produces a usable
-        encoder while the user confirms the key mapping during validation; the
-        matched / missing key counts are logged.
+        The default real-weights path rejects partial loads. ``strict=False``
+        is still used to collect missing/unexpected-key diagnostics before
+        failing with a FaceSwap error that can be surfaced to the CLI.
         """
         import torch  # noqa: F401
 
@@ -207,18 +218,38 @@ class TorchDecaEncoder:
         result = module.load_state_dict(state_dict, strict=strict)
         missing = list(getattr(result, "missing_keys", []) or [])
         unexpected = list(getattr(result, "unexpected_keys", []) or [])
+        expected_keys = set(module.state_dict())
+        matched_key_ratio = (
+            0.0
+            if not expected_keys
+            else (len(expected_keys) - len(missing)) / float(len(expected_keys))
+        )
         logger.info(
-            "DECA encoder weights loaded: %d missing, %d unexpected keys.",
+            "DECA encoder weights loaded: %d missing, %d unexpected keys, %.3f matched.",
             len(missing),
             len(unexpected),
+            matched_key_ratio,
         )
         if missing:
             logger.warning("DECA encoder missing keys (first 5): %s", missing[:5])
         if unexpected:
             logger.warning("DECA encoder unexpected keys (first 5): %s", unexpected[:5])
+        if (missing or unexpected) and not allow_partial:
+            raise FaceswapError(
+                "DECA encoder weights did not fully match the expected FaceQA module "
+                f"({len(missing)} missing keys, {len(unexpected)} unexpected keys, "
+                f"matched_key_ratio={matched_key_ratio:.3f}). "
+                "Refusing to use unvalidated DECA outputs for readiness or pruning."
+            )
         module.to(device)
         module.eval()
-        return cls(module, device=device)
+        return cls(
+            module,
+            device=device,
+            missing_keys_count=len(missing),
+            unexpected_keys_count=len(unexpected),
+            matched_key_ratio=matched_key_ratio,
+        )
 
     @staticmethod
     def _preprocess(crops: np.ndarray) -> T.Any:

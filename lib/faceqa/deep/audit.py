@@ -47,12 +47,20 @@ LIGHT_SCALE = 5.0
 
 # Readiness weighting across the DECA coverage signals (sums to 1.0).
 _READINESS_WEIGHTS = {
-    "expression": 0.3,
-    "pose": 0.2,
-    "lighting": 0.25,
-    "latent_entropy": 0.15,
-    "cluster_balance": 0.1,
+    "expression_entropy": 0.15,
+    "expression_occupied": 0.15,
+    "pose_entropy": 0.10,
+    "pose_occupied": 0.15,
+    "lighting_entropy": 0.10,
+    "lighting_occupied": 0.15,
+    "latent_entropy": 0.10,
+    "cluster_balance": 0.05,
+    "cluster_dispersion": 0.05,
 }
+_READINESS_OCCUPIED_FLOOR = 0.35
+_READINESS_DISPERSION_FLOOR = 0.05
+_READINESS_LOW_COVERAGE_CAP = 49.0
+_READINESS_DISPERSION_REFERENCE = 0.25
 
 
 @dataclass
@@ -67,6 +75,9 @@ class DeepAuditReport:
     faces_encoded: int = 0
     faces_skipped: int = 0
     skipped_reasons: dict[str, int] = field(default_factory=dict)
+    missing_keys_count: int = 0
+    unexpected_keys_count: int = 0
+    matched_key_ratio: float | None = None
     expression_space_coverage: dict[str, T.Any] = field(default_factory=dict)
     pose_space_coverage: dict[str, T.Any] = field(default_factory=dict)
     lighting_space_coverage: dict[str, T.Any] = field(default_factory=dict)
@@ -310,27 +321,61 @@ def _readiness_from_metrics(
     cluster: dict[str, T.Any],
 ) -> dict[str, T.Any]:
     """Derive a 0-100 DECA readiness sub-score from the coverage metrics."""
+    expression_entropy = float(expression.get("entropy_coverage", 0.0) or 0.0)
+    expression_occupied = float(expression.get("occupied_coverage", 0.0) or 0.0)
+    pose_entropy = float(pose.get("entropy_coverage", 0.0) or 0.0)
+    pose_occupied = float(pose.get("occupied_coverage", 0.0) or 0.0)
+    lighting_entropy = float(lighting.get("entropy_coverage", 0.0) or 0.0)
+    lighting_occupied = float(lighting.get("occupied_coverage", 0.0) or 0.0)
+    mean_dispersion = float(cluster.get("mean_dispersion", 0.0) or 0.0)
     components = {
-        "expression": float(expression.get("entropy_coverage", 0.0) or 0.0),
-        "pose": float(pose.get("entropy_coverage", 0.0) or 0.0),
-        "lighting": float(lighting.get("entropy_coverage", 0.0) or 0.0),
+        "expression_entropy": expression_entropy,
+        "expression_occupied": expression_occupied,
+        "pose_entropy": pose_entropy,
+        "pose_occupied": pose_occupied,
+        "lighting_entropy": lighting_entropy,
+        "lighting_occupied": lighting_occupied,
         "latent_entropy": float(latent.get("entropy", 0.0) or 0.0),
         "cluster_balance": float(cluster.get("balance", 0.0) or 0.0),
+        "cluster_dispersion": min(1.0, mean_dispersion / _READINESS_DISPERSION_REFERENCE),
     }
     score = sum(components[name] * weight for name, weight in _READINESS_WEIGHTS.items())
     notes: list[str] = []
-    if components["expression"] < 0.5:
+    if expression_entropy < 0.5 or expression_occupied < _READINESS_OCCUPIED_FLOOR:
         notes.append("Low DECA expression-space coverage: faceset spans few expressions.")
-    if components["pose"] < 0.5:
+    if pose_entropy < 0.5 or pose_occupied < _READINESS_OCCUPIED_FLOOR:
         notes.append("Low DECA pose-space coverage: faceset spans few head/jaw poses.")
-    if components["lighting"] < 0.5:
+    if lighting_entropy < 0.5 or lighting_occupied < _READINESS_OCCUPIED_FLOOR:
         notes.append("Low DECA lighting-space coverage: limited illumination variety.")
     if components["latent_entropy"] < 0.5:
         notes.append("Low DECA latent entropy: faces cluster into few latent modes.")
+    if mean_dispersion < _READINESS_DISPERSION_FLOOR:
+        notes.append("Low DECA cluster dispersion: latent clusters have little absolute spread.")
+    gate_reasons: list[str] = []
+    if pose_occupied < _READINESS_OCCUPIED_FLOOR:
+        gate_reasons.append("pose occupied coverage")
+    if lighting_occupied < _READINESS_OCCUPIED_FLOOR:
+        gate_reasons.append("lighting occupied coverage")
+    if mean_dispersion < _READINESS_DISPERSION_FLOOR:
+        gate_reasons.append("cluster dispersion")
+    if gate_reasons:
+        score = min(score, _READINESS_LOW_COVERAGE_CAP / 100.0)
+        notes.append(
+            "DECA readiness capped below pass because "
+            f"{', '.join(gate_reasons)} is below the validation floor."
+        )
     return {
         "score": round(score * 100.0, 2),
         "weights": dict(_READINESS_WEIGHTS),
         "components": {name: round(value, 4) for name, value in components.items()},
+        "gates": {
+            "occupied_floor": _READINESS_OCCUPIED_FLOOR,
+            "dispersion_floor": _READINESS_DISPERSION_FLOOR,
+            "low_coverage_cap": _READINESS_LOW_COVERAGE_CAP,
+            "applied": bool(gate_reasons),
+            "reasons": gate_reasons,
+        },
+        "mean_dispersion": round(mean_dispersion, 4),
         "notes": notes,
     }
 
@@ -424,11 +469,17 @@ def run_deep_audit(
         progress_callback=progress_callback,
     )
 
+    matched_key_ratio = getattr(encoder, "matched_key_ratio", None)
     report = DeepAuditReport(
         weights_path=weights_path,
         faces_total=total,
         faces_skipped=skipped,
         skipped_reasons=skip_reasons,
+        missing_keys_count=int(getattr(encoder, "missing_keys_count", 0) or 0),
+        unexpected_keys_count=int(getattr(encoder, "unexpected_keys_count", 0) or 0),
+        matched_key_ratio=(
+            None if matched_key_ratio is None else round(float(matched_key_ratio), 4)
+        ),
     )
     scores = readiness_scores or {}
 

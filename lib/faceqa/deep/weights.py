@@ -61,8 +61,8 @@ def remap_deca_state_dict(raw: dict[str, T.Any]) -> dict[str, T.Any]:
     ``encoder.*`` and its projection head under ``layers.*``; the faceswap
     module uses ``backbone.*`` and ``head.*`` respectively. Keys that match
     neither prefix are passed through unchanged so a differing upstream layout
-    still surfaces as ``unexpected_keys`` during the (non-strict) load rather
-    than being silently dropped.
+    surfaces as ``unexpected_keys`` and fails validation rather than being
+    silently dropped.
     """
     remapped: dict[str, T.Any] = {}
     for key, value in raw.items():
@@ -119,7 +119,7 @@ def load_deca_encoder(*, device: str = "cpu") -> TorchDecaEncoder:
     checkpoint = torch.load(path, map_location=device, weights_only=False)
     encoder_state = _extract_encoder_state(checkpoint)
     remapped = remap_deca_state_dict(encoder_state)
-    return TorchDecaEncoder.from_state_dict(remapped, device=device, strict=False)
+    return TorchDecaEncoder.from_state_dict(remapped, device=device)
 
 
 __all__ = get_module_objects(__name__)

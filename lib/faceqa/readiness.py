@@ -465,6 +465,13 @@ def _render_deep_audit(report: ReadinessReport) -> list[str]:
         f"- **Status**: {audit.get('status', 'unknown')}",
         f"- **Faces encoded**: {audit.get('faces_encoded', 0)} of {audit.get('faces_total', 0)}",
     ]
+    if audit.get("matched_key_ratio") is not None:
+        lines.append(
+            "- **Weights validation**: "
+            f"{float(audit.get('matched_key_ratio', 0.0)):.3f} matched; "
+            f"{int(audit.get('missing_keys_count', 0))} missing, "
+            f"{int(audit.get('unexpected_keys_count', 0))} unexpected"
+        )
     if readiness:
         lines.append(f"- **DECA readiness**: {float(readiness.get('score', 0.0)):.1f} / 100")
     lines.extend(

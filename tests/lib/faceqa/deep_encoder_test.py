@@ -84,6 +84,11 @@ def test_encoder_rejects_non_rgb_crops() -> None:
         encoder.encode(np.zeros((2, 224, 224), dtype=np.uint8))
 
 
+def test_encoder_rejects_partial_state_dict() -> None:
+    with pytest.raises(FaceswapError, match="did not fully match"):
+        de.TorchDecaEncoder.from_state_dict({})
+
+
 # ---------------------------------------------------------------------------
 # Weights remapper / loader
 # ---------------------------------------------------------------------------
@@ -130,8 +135,20 @@ def test_load_deca_encoder_from_checkpoint(tmp_path, monkeypatch) -> None:
 
     monkeypatch.setattr(w, "resolve_weights_path", lambda: str(checkpoint))
     encoder = w.load_deca_encoder()
+    assert encoder.missing_keys_count == 0
+    assert encoder.unexpected_keys_count == 0
+    assert encoder.matched_key_ratio == 1.0
     out = encoder.encode(np.zeros((2, 224, 224, 3), dtype=np.uint8))
     assert out.shape == (2, de.DECA_PARAM_DIM)
+
+
+def test_load_deca_encoder_rejects_partial_checkpoint(tmp_path, monkeypatch) -> None:
+    checkpoint = tmp_path / "deca_model.tar"
+    torch.save({"E_flame": {"unexpected.weight": torch.zeros(1)}}, checkpoint)
+
+    monkeypatch.setattr(w, "resolve_weights_path", lambda: str(checkpoint))
+    with pytest.raises(FaceswapError, match="unvalidated DECA outputs"):
+        w.load_deca_encoder()
 
 
 def test_resolve_weights_path_uses_standard_model_cache(monkeypatch) -> None:

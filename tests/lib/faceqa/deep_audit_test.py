@@ -138,6 +138,24 @@ def test_run_deep_audit_diverse_scores_higher_than_collapsed(monkeypatch) -> Non
     assert collapsed.notes == [] or "skipped" not in " ".join(collapsed.notes)
 
 
+def test_deca_readiness_caps_low_pose_or_lighting_coverage() -> None:
+    readiness = audit_mod._readiness_from_metrics(  # pylint:disable=protected-access
+        {"entropy_coverage": 1.0, "occupied_coverage": 1.0},
+        {"entropy_coverage": 1.0, "occupied_coverage": 0.25},
+        {"entropy_coverage": 1.0, "occupied_coverage": 0.25},
+        {"entropy": 1.0},
+        {"balance": 1.0, "mean_dispersion": 0.5},
+    )
+
+    assert readiness["score"] == 49.0
+    assert readiness["gates"]["applied"] is True
+    assert "pose occupied coverage" in readiness["gates"]["reasons"]
+    assert "lighting occupied coverage" in readiness["gates"]["reasons"]
+    assert readiness["components"]["pose_occupied"] == 0.25
+    assert readiness["components"]["lighting_occupied"] == 0.25
+    assert readiness["components"]["cluster_dispersion"] == 1.0
+
+
 def test_run_deep_audit_no_faces_encoded(monkeypatch) -> None:
     _patch_extractor(monkeypatch, disabled=True)
     report = audit_mod.run_deep_audit(

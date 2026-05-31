@@ -1638,7 +1638,8 @@ def test_readiness_fail_safety_cap_demotes_borderline_prunes() -> None:
 
     assert applied is True
     assert changed > 0
-    assert reason is not None and "keep/review" in reason
+    assert reason is not None and "landmark readiness FAIL" in reason
+    assert "keep/review" in reason
     assert sum(1 for r in output_records if r.recommendation == KEEP) > 1
     assert sum(1 for r in output_records if r.recommendation == REVIEW) > 0
     assert sum(1 for r in output_records if r.recommendation == PRUNE) <= 12

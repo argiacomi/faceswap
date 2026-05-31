@@ -46,7 +46,8 @@ archive format.
 | `lighting_space_coverage` | Occupancy + entropy of DECA spherical-harmonic lighting coefficients. |
 | `latent_entropy` | Normalized Shannon entropy of a joint coarse binning of the dominant latent dims. |
 | `cluster_coverage` | k-means partition `balance` plus an absolute `mean_dispersion` collapse signal. |
-| `deca_readiness` | 0–100 sub-score derived from the above (independent of the landmark readiness score). |
+| `missing_keys_count` / `unexpected_keys_count` / `matched_key_ratio` | Real-weight load diagnostics; the default loader refuses partial state-dict matches. |
+| `deca_readiness` | 0–100 sub-score derived from entropy, occupied coverage, latent entropy, cluster balance, and absolute cluster dispersion (independent of the landmark readiness score). |
 | `landmark_vs_deca` | Side-by-side `entropy_coverage` / `occupied_coverage` for the landmark vs DECA views. |
 | `pruning_signals` | Per-face DECA cells used to keep learned-space expression / pose / lighting / latent variation from being auto-pruned. |
 
