@@ -38,6 +38,7 @@ from tools.landmarks.run_landmark_resolver_pipeline import (
     _stage_forced,
     _validate_stage_outputs,
     _write_v2_scorer_training_sentinel,
+    _write_scorer_training_sentinel,
     run_pipeline,
 )
 
@@ -126,7 +127,7 @@ def _touch_pipeline_outputs(paths: PipelinePaths, *, promotion_status: str = "pa
         paths.frozen_gt_metadata,
         paths.binary_scorer_artifact,
         paths.scorer_artifact,
-        paths.continuous_scorer_eval_rows,
+        paths.scorer_rows_csv,
         paths.v2_scorer_artifact,
         paths.v2_scorer_training_sentinel,
         paths.scorer_report,
@@ -818,29 +819,42 @@ def test_stage_contract_declares_required_files(tmp_path: Path) -> None:
     assert str(paths.v2_scorer_training_sentinel) not in v2_contract.outputs
 
 
-def test_v2_scorer_training_resume_requires_matching_sentinel(tmp_path: Path) -> None:
+
+def test_scorer_training_resume_requires_matching_sentinel_for_stage_aliases(tmp_path: Path) -> None:
     args = _args(tmp_path)
     paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
-    for path in (
+
+    required_and_outputs = (
         paths.hard_manifest,
         paths.production_manifest,
         paths.hard_source_cache_sentinel,
         paths.production_cache_sentinel,
         paths.best_weights,
         paths.frozen_gt_metadata,
+        paths.binary_scorer_artifact,
+        paths.scorer_artifact,
         paths.v2_scorer_artifact,
-    ):
+        paths.scorer_rows_csv,
+        paths.scorer_dataset_manifest,
+        paths.scorer_suite_metrics,
+    )
+    for path in required_and_outputs:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("{}\n", encoding="utf-8")
 
+    assert not _stage_complete("scorer_training", args, paths)
     assert not _stage_complete("v2_scorer_training", args, paths)
 
-    _write_v2_scorer_training_sentinel(args, paths)
+    _write_scorer_training_sentinel(args, paths)
+
+    assert _stage_complete("scorer_training", args, paths)
+    assert _stage_complete("binary_scorer_training", args, paths)
+    assert _stage_complete("continuous_scorer_training", args, paths)
     assert _stage_complete("v2_scorer_training", args, paths)
 
-    changed_args = _args(tmp_path, v2_iterations=args.v2_iterations + 1)
-    assert not _stage_complete("v2_scorer_training", changed_args, paths)
-
+    args.v2_iterations += 1
+    assert not _stage_complete("scorer_training", args, paths)
+    assert not _stage_complete("v2_scorer_training", args, paths)
 
 def test_scorer_train_and_eval_commands_allow_image_backfill_by_default(
     tmp_path: Path,

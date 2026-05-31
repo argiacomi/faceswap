@@ -890,6 +890,16 @@ def _scorer_training_sentinel_payload(
     return payload
 
 
+def _sentinel_matches(path: Path, expected: dict[str, object]) -> bool:
+    if not path.is_file():
+        return False
+    try:
+        actual = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return actual == expected
+
+
 def _scorer_training_sentinel_matches(args: argparse.Namespace, paths: PipelinePaths) -> bool:
     return _sentinel_matches(
         paths.scorer_training_sentinel,
@@ -899,10 +909,6 @@ def _scorer_training_sentinel_matches(args: argparse.Namespace, paths: PipelineP
 
 def _write_scorer_training_sentinel(args: argparse.Namespace, paths: PipelinePaths) -> None:
     write_json(paths.scorer_training_sentinel, _scorer_training_sentinel_payload(args, paths))
-    # Compatibility for legacy callers/tests that still inspect the old v2
-    # training stage sentinel after scorer stages were collapsed into
-    # scorer_training.
-    _write_v2_scorer_training_sentinel(args, paths)
 
 def _command_scorer_training(
     args: argparse.Namespace,
@@ -1035,8 +1041,6 @@ def _command_scorer_eval(args: argparse.Namespace, paths: PipelinePaths) -> list
         str(paths.binary_scorer_artifact),
         "--v2-scorer",
         str(paths.v2_scorer_artifact),
-        "--eval-split",
-        str(paths.continuous_scorer_eval_rows),
         "--scorer-rows",
         str(paths.scorer_rows_csv),
         "--candidates",
@@ -1108,6 +1112,7 @@ def _outputs_for(stage: str, paths: PipelinePaths) -> list[Path]:
             paths.exported_best_weights,
             paths.exported_scorer_artifact,
             paths.artifacts_dir / "artifacts_manifest.json",
+            paths.scorer_rows_csv,
         ],
         "config_update": [
             paths.output_root / CONFIG_PREVIEW_FILENAME,
@@ -1528,10 +1533,6 @@ def _emit_gt_runtime_bucket_artifacts(
 
 
 def _stage_complete(stage: str, args: argparse.Namespace, paths: PipelinePaths) -> bool:
-    if stage == "v2_scorer_training":
-        if not paths.v2_scorer_artifact.exists():
-            return False
-        return _v2_scorer_training_sentinel_matches(args, paths)
     stage = _canonical_stage_name(stage) or stage
     if stage == "build_hard_source_manifest" and args.hard_source_manifest is not None:
         return True
