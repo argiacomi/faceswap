@@ -132,6 +132,7 @@ def set_train_config(value):
 
 def main():
     """Main testing script"""
+    global _fail_count  # pylint:disable=global-statement
     base_dir = pathjoin(dirname(abspath(__file__)), "data")
     vid_base = pathjoin(base_dir, "vid")
     img_base = pathjoin(base_dir, "imgs")
@@ -139,12 +140,13 @@ def main():
     was_trained = False
 
     vid_path = pathjoin(vid_base, "test.mp4")
+    img_alignments = pathjoin(img_base, "alignments.fsa")
     vid_extract = run_test(
         "Extraction video with cv2-dnn detector and cv2-dnn aligner.",
         extract_args("Cv2-Dnn", "Cv2-Dnn", vid_path, pathjoin(vid_base, "faces")),
     )
 
-    run_test(
+    img_extract = run_test(
         "Extraction images with cv2-dnn detector and cv2-dnn aligner.",
         extract_args("Cv2-Dnn", "Cv2-Dnn", img_base, pathjoin(img_base, "faces")),
     )
@@ -210,15 +212,20 @@ def main():
             ),
         )
 
-        run_test(
-            "Convert images.",
-            convert_args(
-                img_base,
-                pathjoin(img_base, "conv"),
-                pathjoin(vid_base, "model"),
-                "opencv",
-            ),
-        )
+        if img_extract and os.path.exists(img_alignments):
+            run_test(
+                "Convert images.",
+                convert_args(
+                    img_base,
+                    pathjoin(img_base, "conv"),
+                    pathjoin(vid_base, "model"),
+                    "opencv",
+                    args=f"-p {img_alignments}",
+                ),
+            )
+        else:
+            print_fail(f"[-] Image alignments file missing: {img_alignments}")
+            _fail_count += 1
 
     if _fail_count == 0:
         print_ok(f"[+] Failed {_fail_count}/{_test_count} tests.")
