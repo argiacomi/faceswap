@@ -899,6 +899,10 @@ def _scorer_training_sentinel_matches(args: argparse.Namespace, paths: PipelineP
 
 def _write_scorer_training_sentinel(args: argparse.Namespace, paths: PipelinePaths) -> None:
     write_json(paths.scorer_training_sentinel, _scorer_training_sentinel_payload(args, paths))
+    # Compatibility for legacy callers/tests that still inspect the old v2
+    # training stage sentinel after scorer stages were collapsed into
+    # scorer_training.
+    _write_v2_scorer_training_sentinel(args, paths)
 
 def _command_scorer_training(
     args: argparse.Namespace,
