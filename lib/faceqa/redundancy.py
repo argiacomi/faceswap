@@ -297,6 +297,8 @@ class RedundancyRecord:
     """Discrete mouth-openness intensity band. ``None`` for missing
     mouth_openness."""
     smile_proxy_band: int | None = None
+    """Discrete smile-proxy intensity band. ``None`` for missing
+    smile_proxy."""
     prune_group_id: int | None = None
     """Tight duplicate subgroup id used for pruning decisions. Multiple
     prune groups may share one broad contact-sheet cluster_id."""
@@ -307,8 +309,6 @@ class RedundancyRecord:
     contact_cluster_split_blockers: list[str] = field(default_factory=list)
     """Top reasons why the broad contact cluster was split into multiple
     tight prune groups."""
-    """Discrete smile-proxy intensity band. ``None`` for missing
-    smile_proxy."""
 
     def to_dict(self) -> dict[str, T.Any]:
         return {
@@ -419,11 +419,11 @@ class RedundancyReport:
     """Human-readable explanation of the cap (``None`` when not
     applied)."""
     readiness_safety_cap_demotions: int = 0
+    """Number of records whose recommendation was changed by the readiness
+    safety cap."""
     cluster_merge_diagnostics: dict[int, dict[str, T.Any]] = field(default_factory=dict)
     """Per-contact-cluster diagnostics explaining broad merge reason and
     blockers that forced tight prune-subgroup splits."""
-    """Number of records whose recommendation was demoted from
-    ``prune_candidate`` to ``review`` by the cap."""
 
     def to_dict(self) -> dict[str, T.Any]:
         return {
