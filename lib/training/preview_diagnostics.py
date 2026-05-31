@@ -205,6 +205,14 @@ class PreviewDiagnostics:
             if boundary.any():
                 metrics["boundary_mae"] = cls._weighted_mean(abs_err, boundary)
 
+        if target.shape[-1] > 4:
+            eye_masks = np.clip(target[..., 4], 0.0, 1.0).astype(np.float32, copy=False)
+            metrics["eye_reconstruction_mae"] = cls._weighted_mean(abs_err, eye_masks)
+
+        if target.shape[-1] > 5:
+            mouth_masks = np.clip(target[..., 5], 0.0, 1.0).astype(np.float32, copy=False)
+            metrics["mouth_reconstruction_mae"] = cls._weighted_mean(abs_err, mouth_masks)
+
         return metrics
 
     def _update_metric(self, name: str, values: npt.NDArray[np.float32]) -> MetricSnapshot | None:

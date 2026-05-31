@@ -202,6 +202,9 @@ class PreviewLoader:
     num_samples
         Set to 0 for random previews from the image folder. Set to a positive integer for this
         number of images to use for a static timelapse. Default: 0
+    include_region_masks
+        ``True`` to include diagnostic-only eye and mouth region masks in the target. Default:
+        ``False``.
     """
 
     def __init__(
@@ -213,11 +216,13 @@ class PreviewLoader:
         batch_size: int,
         sampler: None | type[tch_data.RandomSampler | tch_data.SequentialSampler] = None,
         num_samples: int = 0,
+        include_region_masks: bool = False,
     ) -> None:
         self._output_size = output_size
         self._input_folders = input_folders
         self._batch_size = batch_size
         self._num_samples = num_samples
+        self._include_region_masks = include_region_masks
 
         self._input_size = input_size
         self._color_order: T.Literal["bgr", "rgb"] = T.cast(
@@ -245,6 +250,7 @@ class PreviewLoader:
                 "_batch_size",
                 "_sampler",
                 "_num_samples",
+                "_include_region_masks",
             )
         )
         return f"{self.__class__.__name__}({params})"
@@ -264,6 +270,7 @@ class PreviewLoader:
                 self._output_size,
                 self._color_order,
                 num_images=self._num_samples,
+                include_region_masks=self._include_region_masks,
             )
             for i, f in enumerate(self._input_folders)
         )
@@ -287,7 +294,8 @@ class PreviewLoader:
         feed
             The batch of feed images for a side
         targets
-            A batch of full sized, full coverage input images with mask in the 4th channel
+            A batch of full sized, full coverage input images with mask in the 4th channel.
+            If diagnostic region masks are enabled, eye and mouth masks are in channels 4 and 5.
         """
         try:
             inputs, targets = T.cast(tuple[torch.Tensor, torch.Tensor], next(self._iterator))  # type: ignore[redundant-cast]
@@ -314,7 +322,7 @@ class PreviewLoader:
             batch_size, *dims)` where `side` 0 is "A" and `side` 1 is "B" etc.
         targets
             The full sized source image with mask in 4th channel for each side of the model in
-            format `(side, batch_size, *dims, 4) where `side` 0 is "A" and `side` 1 is "B" etc.
+            format `(side, batch_size, *dims, 4|6) where `side` 0 is "A" and `side` 1 is "B" etc.
         """
         items = self._items_from_loader()
         inputs = items[0].swapaxes(0, 1)

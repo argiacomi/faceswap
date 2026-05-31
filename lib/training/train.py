@@ -204,6 +204,7 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
             self._plugin.config.folders,
             trn_cfg.Augmentation.preview_images(),
             torch.utils.data.RandomSampler,
+            include_region_masks=trn_cfg.Augmentation.preview_diagnostics(),
         )
         logger.debug("[Trainer] Preview data loader: %s", retval)
         return retval
@@ -587,7 +588,8 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
                     self._model.iterations, logs={"preview_diagnostics": logs}
                 )
 
-        samples = self._samples.get_preview(predictions, targets)
+        display_targets = targets[..., :4]
+        samples = self._samples.get_preview(predictions, display_targets)
 
         if do_timelapse:
             filename = os.path.join(self._timelapse_output, str(int(time.time())) + ".jpg")

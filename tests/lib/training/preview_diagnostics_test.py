@@ -15,17 +15,21 @@ from plugins.train.trainer import trainer_config as cfg
 def _get_preview_arrays(
     errors: tuple[float, float] = (0.1, 0.2),
     include_mask: bool = True,
+    include_region_masks: bool = True,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return deterministic preview predictions and targets."""
     samples = 3
     size = 8
-    channels = 4 if include_mask else 3
+    channels = 6 if include_mask and include_region_masks else 4 if include_mask else 3
     targets: np.ndarray = np.zeros((2, samples, size, size, channels), dtype=np.float32)
     targets[0, ..., :3] = 0.2
     targets[1, ..., :3] = 0.4
     if include_mask:
         targets[..., 3] = 0.0
         targets[:, :, 2:6, 2:6, 3] = 1.0
+    if include_mask and include_region_masks:
+        targets[:, :, 1:3, 2:6, 4] = 1.0
+        targets[:, :, 5:7, 3:5, 5] = 1.0
 
     predictions: np.ndarray = np.zeros((2, 2, samples, size, size, 3), dtype=np.float32)
     predictions[0, 0, ..., :3] = targets[0, ..., :3] + errors[0]
@@ -51,6 +55,12 @@ def test_preview_diagnostics_updates_expected_metric_payload() -> None:
     assert logs["masked_reconstruction_mae_B"] == pytest.approx(0.2)
     assert logs["boundary_mae_A"] == pytest.approx(0.1)
     assert logs["boundary_mae_B"] == pytest.approx(0.2)
+    assert logs["eye_reconstruction_mae_A"] == pytest.approx(0.1)
+    assert logs["eye_reconstruction_mae_B"] == pytest.approx(0.2)
+    assert logs["eye_reconstruction_mae_count"] == 6.0
+    assert logs["mouth_reconstruction_mae_A"] == pytest.approx(0.1)
+    assert logs["mouth_reconstruction_mae_B"] == pytest.approx(0.2)
+    assert logs["mouth_reconstruction_mae_count"] == 6.0
     assert "detail_mae_A" in logs
     assert "prediction_detail_A" in logs
     assert "target_detail_A" in logs
@@ -82,6 +92,18 @@ def test_preview_diagnostics_handles_missing_masks() -> None:
     assert logs["reconstruction_mae_A"] == pytest.approx(0.1)
     assert not any(key.startswith("masked_") for key in logs)
     assert not any(key.startswith("boundary_") for key in logs)
+
+
+def test_preview_diagnostics_handles_missing_region_masks() -> None:
+    """Region diagnostics are skipped when preview targets have no region mask channels."""
+    predictions, targets = _get_preview_arrays(include_region_masks=False)
+    diagnostics = PreviewDiagnostics()
+
+    logs = diagnostics.update(predictions, targets, iteration=1)
+
+    assert logs["masked_reconstruction_mae_A"] == pytest.approx(0.1)
+    assert not any(key.startswith("eye_") for key in logs)
+    assert not any(key.startswith("mouth_") for key in logs)
 
 
 def test_preview_diagnostics_writes_jsonl(tmp_path) -> None:

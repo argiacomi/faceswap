@@ -490,6 +490,9 @@ class PreviewSet(_BaseSet):
     num_images
         Set to 0 for random previews from the image folder. Set to a positive integer for this
         number of images to use for a static timelapse. Default: 0
+    include_region_masks
+        ``True`` to include diagnostic-only eye and mouth masks in target channels 4 and 5.
+        Default: ``False``.
     """
 
     def __init__(
@@ -500,6 +503,7 @@ class PreviewSet(_BaseSet):
         output_size: int,
         color_order: T.Literal["bgr", "rgb"],
         num_images: int = 0,
+        include_region_masks: bool = False,
     ) -> None:
         logger.debug(parse_class_init(locals()))
         super().__init__(side, image_folder)
@@ -507,6 +511,7 @@ class PreviewSet(_BaseSet):
         self._output_size = output_size
         self._color_order = color_order
         self._num_images = num_images
+        self._include_region_masks = include_region_masks
         if num_images and num_images != len(self._image_list):
             logger.debug(
                 "[%s] Filtering image list of %s for timelapse: %s",
@@ -525,7 +530,8 @@ class PreviewSet(_BaseSet):
         """Pretty print for logging"""
         params = (
             f"input_size={self._input_size}, output_size={self._output_size}, "
-            f"color_order={repr(self._color_order)}, num_images={self._num_images}"
+            f"color_order={repr(self._color_order)}, num_images={self._num_images}, "
+            f"include_region_masks={self._include_region_masks}"
         )
         return f"{super().__repr__()[:-1]}, {params})"
 
@@ -557,7 +563,8 @@ class PreviewSet(_BaseSet):
         feed
             A feed image for preview
         target
-            An output face at full coverage with the mask in the 4th channel
+            An output face at full coverage with the mask in the 4th channel. If diagnostic
+            region masks are enabled, eye and mouth masks are included in channels 4 and 5.
         """
         filename = self._image_list[index]
         logger.trace(  # type: ignore[attr-defined]
@@ -572,7 +579,8 @@ class PreviewSet(_BaseSet):
         in_face = self._get_face(image, meta.alignments, self._input_size, self._coverage)
         in_img = T.cast("npt.NDArray[np.uint8]", in_face.face)
         out_face = self._get_face(image, meta.alignments, self._full_size, 1.0)
-        out_img = np.empty((self._full_size, self._full_size, 4), dtype=np.uint8)  # type: ignore[var-annotated]
+        channels = 6 if self._include_region_masks else 4
+        out_img = np.empty((self._full_size, self._full_size, channels), dtype=np.uint8)  # type: ignore[var-annotated]
         out_img[..., :3] = T.cast("npt.NDArray[np.uint8]", out_face.face)
 
         if self._mask_types:
@@ -581,6 +589,10 @@ class PreviewSet(_BaseSet):
             )
         else:
             out_img[..., 3] = np.zeros_like(out_img[..., 0])[..., None] + 255
+
+        if self._include_region_masks:
+            out_img[..., 4] = self._mask(meta.alignments.mask, "eye", filename, out_face)
+            out_img[..., 5] = self._mask(meta.alignments.mask, "mouth", filename, out_face)
 
         if self._color_order == "rgb":
             in_img[..., :3] = in_img[..., [2, 1, 0]]

@@ -123,7 +123,7 @@ class GraphPanel(QWidget):
         """Save the currently rendered graph image to disk."""
         saved = self._graph_widget.save_image(filename)
         self._status_label.setText("Graph image saved" if saved else "No graph image to save")
-        return saved
+        return bool(saved)
 
     def save_graph_csv(self, filename: str | Path) -> int:
         """Save the currently selected graph series to CSV."""
@@ -133,7 +133,7 @@ class GraphPanel(QWidget):
         self._status_label.setText(
             "No graph data to save" if written == 0 else f"Graph CSV saved: {written} rows"
         )
-        return written
+        return int(written)
 
     def clear_graph(self) -> None:
         """Clear graph source and rendered graph state."""
@@ -340,7 +340,7 @@ class GraphPanel(QWidget):
         self._key_combo.blockSignals(True)
         self._key_combo.clear()
         if keys:
-            self._key_combo.addItem("All metrics", None)
+            self._key_combo.addItem("All losses", None)
             for key in keys:
                 self._key_combo.addItem(key, key)
         for index in range(self._key_combo.count()):

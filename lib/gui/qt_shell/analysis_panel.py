@@ -28,7 +28,10 @@ from lib.gui.services.analysis_session_service import (
 )
 from lib.gui.services.analysis_summary_service import AnalysisSummaryService
 from lib.gui.services.command_context import CommandExecutionContext
-from lib.gui.services.preview_diagnostics_service import PreviewDiagnosticsService
+from lib.gui.services.preview_diagnostics_service import (
+    PreviewDiagnosticsError,
+    PreviewDiagnosticsService,
+)
 
 
 class AnalysisPanel(QWidget):
@@ -352,7 +355,11 @@ class AnalysisPanel(QWidget):
         if source is None:
             self._diagnostics_label.setText("Preview diagnostics: no session source")
             return
-        snapshot = self._diagnostics_service.load_source(source.state_file)
+        try:
+            snapshot = self._diagnostics_service.load_source(source.state_file)
+        except PreviewDiagnosticsError:
+            self._diagnostics_label.setText("Preview diagnostics: no metrics logged")
+            return
         self._diagnostics_label.setText(PreviewDiagnosticsService.compact_text(snapshot))
 
     def _update_source_label(self) -> None:

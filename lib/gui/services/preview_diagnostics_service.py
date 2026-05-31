@@ -128,6 +128,10 @@ class PreviewDiagnosticsService:
         "masked_reconstruction_mae_B",
         "boundary_mae_A",
         "boundary_mae_B",
+        "eye_reconstruction_mae_A",
+        "eye_reconstruction_mae_B",
+        "mouth_reconstruction_mae_A",
+        "mouth_reconstruction_mae_B",
     )
     _PART_SUFFIXES = {
         "_current": "current",
