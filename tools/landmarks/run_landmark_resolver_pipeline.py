@@ -196,6 +196,7 @@ class PipelinePaths:
     scorer_eval_dir: Path = field(init=False)
     scorer_report: Path = field(init=False)
     artifacts_dir: Path = field(init=False)
+    promotion_manifest: Path = field(init=False)
     exported_candidate_dir: Path = field(init=False)
     exported_scorer_dir: Path = field(init=False)
     exported_best_setup: Path = field(init=False)
@@ -396,7 +397,8 @@ class PipelinePaths:
         )
         object.__setattr__(self, "scorer_eval_dir", self.output_root / "scorer_evaluation")
         object.__setattr__(self, "scorer_report", self.scorer_eval_dir / SCORER_POLICY_REPORT_JSON)
-        object.__setattr__(self, "artifacts_dir", self.stable_root / "artifacts")
+        object.__setattr__(self, "artifacts_dir", self.output_root / "promotion")
+        object.__setattr__(self, "promotion_manifest", self.artifacts_dir / "promotion_manifest.json")
         object.__setattr__(self, "exported_candidate_dir", self.stable_root / "candidate_search")
         object.__setattr__(self, "exported_scorer_dir", self.stable_root / "scorer_training")
         object.__setattr__(
@@ -1099,11 +1101,11 @@ def _command_scorer_eval(args: argparse.Namespace, paths: PipelinePaths) -> list
         "--weights",
         str(paths.best_weights),
         "--scorer",
-        str(paths.scorer_artifact),
+        str(paths.canonical_continuous_scorer_artifact),
         "--binary-scorer",
-        str(paths.binary_scorer_artifact),
+        str(paths.canonical_binary_scorer_artifact),
         "--v2-scorer",
-        str(paths.v2_scorer_artifact),
+        str(paths.canonical_v2_scorer_artifact),
         "--scorer-rows",
         str(paths.scorer_rows_csv),
         "--candidates",
@@ -1166,9 +1168,9 @@ def _outputs_for(stage: str, paths: PipelinePaths) -> list[Path]:
         "build_gt_hard_resolver_metadata": [paths.frozen_gt_metadata],
         "freeze_resolver_metadata": [paths.frozen_gt_metadata],
         "scorer_training": [
-            paths.binary_scorer_artifact,
-            paths.scorer_artifact,
-            paths.v2_scorer_artifact,
+            paths.canonical_binary_scorer_artifact,
+            paths.canonical_continuous_scorer_artifact,
+            paths.canonical_v2_scorer_artifact,
             paths.scorer_rows_csv,
             paths.scorer_dataset_manifest,
             paths.scorer_suite_metrics,
@@ -1176,14 +1178,7 @@ def _outputs_for(stage: str, paths: PipelinePaths) -> list[Path]:
         ],
         "scorer_evaluation": [paths.scorer_report],
         "production_promotion_check": [paths.scorer_report],
-        "artifact_export": [
-            paths.exported_best_setup,
-            paths.exported_best_weights,
-            paths.exported_scorer_artifact,
-            paths.artifacts_dir / "artifacts_manifest.json",
-            paths.exported_scorer_rows,
-            paths.exported_scorer_dataset_manifest,
-        ],
+        "artifact_export": [paths.promotion_manifest],
         "config_update": [
             paths.output_root / CONFIG_PREVIEW_FILENAME,
             paths.output_root / CONFIG_PATCH_FILENAME,
@@ -1268,9 +1263,9 @@ def _required_inputs_for(stage: str, args: argparse.Namespace, paths: PipelinePa
             paths.frozen_gt_metadata,
         ],
         "scorer_evaluation": [
-            paths.scorer_artifact,
-            paths.binary_scorer_artifact,
-            paths.v2_scorer_artifact,
+            paths.canonical_continuous_scorer_artifact,
+            paths.canonical_binary_scorer_artifact,
+            paths.canonical_v2_scorer_artifact,
             paths.scorer_rows_csv,
             paths.scorer_dataset_manifest,
         ],
@@ -1280,8 +1275,6 @@ def _required_inputs_for(stage: str, args: argparse.Namespace, paths: PipelinePa
             paths.best_weights,
             _promoted_scorer_source(args, paths),
             paths.scorer_report,
-            paths.scorer_rows_csv,
-            paths.scorer_dataset_manifest,
             paths.frozen_gt_metadata,
         ],
         "config_update": [Path(args.config_path)] if args.write_config else [],
@@ -1455,14 +1448,19 @@ def _v2_scorer_training_sentinel_matches(
 
 
 def _artifact_export_matches(args: argparse.Namespace, paths: PipelinePaths) -> bool:
-    manifest = _read_json(paths.artifacts_dir / "artifacts_manifest.json")
-    scorer_payload = _read_json(paths.exported_scorer_artifact)
-    expected_source = str(_promoted_scorer_source(args, paths))
+    manifest = _read_json(paths.promotion_manifest)
+    scorer_source = _promoted_scorer_source(args, paths)
+    scorer_payload = _read_json(scorer_source)
+    expected_version = str(
+        scorer_payload.get("scorer_version")
+        or scorer_payload.get("version")
+        or args.promoted_scorer_version
+    )
     return (
-        manifest.get("runtime_resolver_scorer") == str(paths.exported_scorer_artifact)
-        and manifest.get("runtime_resolver_scorer_source") == expected_source
-        and str(manifest.get("runtime_resolver_scorer_version") or "")
-        == str(scorer_payload.get("scorer_version") or scorer_payload.get("version") or "")
+        manifest.get("active_policy") == _promoted_runtime_policy(args)
+        and manifest.get("runtime_resolver_scorer_source") == str(scorer_source)
+        and manifest.get("runtime_resolver_scorer_source_sha256") == _sha256_file(scorer_source)
+        and str(manifest.get("runtime_resolver_scorer_version") or "") == expected_version
     )
 
 
@@ -2174,10 +2172,13 @@ def _copy_scorer_with_promotion_metadata(source: Path, target: Path, *, promoted
 def _promoted_scorer_source(args: argparse.Namespace, paths: PipelinePaths) -> Path:
     policy = _promoted_runtime_policy(args)
     if policy == SCORER_VERSION_BINARY:
-        return paths.binary_scorer_artifact
+        return paths.canonical_binary_scorer_artifact
     if policy == SCORER_VERSION_LEARNED_QUALITY_V2:
-        return paths.v2_scorer_artifact
-    return paths.scorer_artifact
+        return paths.canonical_v2_scorer_artifact
+    return paths.canonical_continuous_scorer_artifact
+    if policy == SCORER_VERSION_LEARNED_QUALITY_V2:
+        return paths.canonical_v2_scorer_artifact
+    return paths.canonical_continuous_scorer_artifact
 
 
 def _promoted_runtime_policy(args: argparse.Namespace) -> str:
@@ -2194,54 +2195,65 @@ def _promoted_scorer_target(args: argparse.Namespace, paths: PipelinePaths) -> s
     return str(payload.get("target") or TARGET_SELECTION_COST)
 
 
-def _export_artifacts(args: argparse.Namespace, paths: PipelinePaths) -> dict[str, str]:
+def _export_artifacts(args: argparse.Namespace, paths: PipelinePaths) -> dict[str, T.Any]:
+    """Write the promotion manifest without copying runtime artifacts.
+
+    The production bundle is the runtime export. The run directory keeps
+    immutable training/eval artifacts in place; this manifest records provenance
+    and hashes for promotion/config stages without maintaining a redundant
+    output_root/current tree.
+    """
     _promotion_check(paths, promotion_scope=args.promotion_scope, args=args)
     scorer_source = _promoted_scorer_source(args, paths)
-    exported = {
-        "best_setup": _copy_if_exists(paths.best_setup, paths.exported_candidate_dir),
-        "best_weights": _copy_if_exists(paths.best_weights, paths.exported_candidate_dir),
-        "runtime_resolver_scorer": _copy_scorer_with_promotion_metadata(
-            scorer_source,
-            paths.exported_scorer_artifact,
-            promoted_from=str(scorer_source.relative_to(paths.output_root)),
-        ),
-        "scorer_policy_report": _copy_if_exists(paths.scorer_report, paths.artifacts_dir),
-        "scorer_rows": _copy_if_exists(
-            paths.scorer_rows_csv,
-            paths.exported_scorer_dataset_dir,
-        ),
-        "scorer_dataset_manifest": _copy_if_exists(
-            paths.scorer_dataset_manifest,
-            paths.exported_scorer_dataset_dir,
-        ),
-        "gt_hard_resolver_metadata": _copy_if_exists(
-            paths.frozen_gt_metadata, paths.artifacts_dir
-        ),
-    }
-    manifest = {key: value for key, value in exported.items() if value}
-    if exported["runtime_resolver_scorer"]:
-        scorer_payload = _read_json(paths.exported_scorer_artifact)
-        active_policy = _promoted_runtime_policy(args)
-        manifest["runtime_resolver_scorer_source"] = str(scorer_source)
-        manifest["runtime_resolver_scorer_source_sha256"] = _sha256_file(scorer_source)
-        manifest["runtime_resolver_scorer_sha256"] = _sha256_file(paths.exported_scorer_artifact)
-        manifest["active_policy"] = active_policy
-        manifest["promotion"] = {
-            "active_policy": active_policy,
-            "promoted_from": str(scorer_source.relative_to(paths.output_root)),
-            "source": str(scorer_source),
-            "source_sha256": _sha256_file(scorer_source),
-            "exported": str(paths.exported_scorer_artifact),
-            "exported_sha256": _sha256_file(paths.exported_scorer_artifact),
-            "target": str(scorer_payload.get("target") or ""),
-            "model_type": str(scorer_payload.get("model_type") or ""),
-        }
-        manifest["runtime_resolver_scorer_version"] = str(
+    scorer_payload = _read_json(scorer_source)
+    active_policy = _promoted_runtime_policy(args)
+    manifest: dict[str, T.Any] = {
+        "active_policy": active_policy,
+        "best_setup": str(paths.best_setup),
+        "best_setup_sha256": _sha256_file(paths.best_setup),
+        "best_weights": str(paths.best_weights),
+        "best_weights_sha256": _sha256_file(paths.best_weights),
+        "runtime_resolver_scorer_source": str(scorer_source),
+        "runtime_resolver_scorer_source_sha256": _sha256_file(scorer_source),
+        "runtime_resolver_scorer_version": str(
             scorer_payload.get("scorer_version")
             or scorer_payload.get("version")
             or args.promoted_scorer_version
-        )
-    write_json(paths.artifacts_dir / "artifacts_manifest.json", manifest)
+        ),
+        "promotion": {
+            "active_policy": active_policy,
+            "source": str(scorer_source),
+            "source_sha256": _sha256_file(scorer_source),
+            "target": str(scorer_payload.get("target") or ""),
+            "model_type": str(scorer_payload.get("model_type") or ""),
+            "immutable_scorer_artifact": True,
+            "runtime_export": "production_bundle",
+        },
+        "diagnostics": {
+            "scorer_policy_report": str(paths.scorer_report),
+            "scorer_policy_report_sha256": _sha256_file(paths.scorer_report),
+            "scorer_dataset_manifest": str(paths.scorer_dataset_manifest)
+            if paths.scorer_dataset_manifest.exists()
+            else "",
+            "scorer_rows": str(paths.scorer_rows_csv) if paths.scorer_rows_csv.exists() else "",
+            "gt_hard_resolver_metadata": str(paths.frozen_gt_metadata),
+            "gt_hard_resolver_metadata_sha256": _sha256_file(paths.frozen_gt_metadata),
+        },
+    }
+    paths.promotion_manifest.parent.mkdir(parents=True, exist_ok=True)
+    write_json(paths.promotion_manifest, manifest)
+
+    # #206: artifact_export no longer maintains output_root/current copies.
+    # Remove stale copies from older runs so the default contract is unambiguous.
+    for stale in (
+        paths.exported_scorer_artifact,
+        paths.exported_scorer_rows,
+        paths.exported_scorer_dataset_manifest,
+        paths.exported_best_setup,
+        paths.exported_best_weights,
+        paths.stable_root / "artifacts" / "artifacts_manifest.json",
+    ):
+        stale.unlink(missing_ok=True)
     return manifest
 
 
@@ -2280,11 +2292,11 @@ def _config_patch_text(section: str, updates: T.Mapping[str, str]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _validate_config_artifacts(paths: PipelinePaths) -> None:
+def _validate_config_artifacts(args: argparse.Namespace, paths: PipelinePaths) -> None:
     for path, label in (
-        (paths.exported_best_setup, "exported promoted setup artifact"),
-        (paths.exported_best_weights, "exported promoted weights artifact"),
-        (paths.exported_scorer_artifact, "exported runtime resolver scorer artifact"),
+        (paths.best_setup, "promoted setup artifact"),
+        (paths.best_weights, "promoted weights artifact"),
+        (_promoted_scorer_source(args, paths), "promoted runtime resolver scorer artifact"),
         (paths.scorer_report, "scorer evaluation report"),
     ):
         _require(path, label)
@@ -2429,13 +2441,13 @@ def _install_production_bundle_artifacts(args: argparse.Namespace, paths: Pipeli
     automatically selects the matching scorer.
     """
     scorer_sources = {
-        "learned_quality_v1": paths.binary_scorer_artifact,
-        "learned_quality_v1_1": paths.scorer_artifact,
-        "learned_quality_v2": paths.v2_scorer_artifact,
+        "learned_quality_v1": paths.canonical_binary_scorer_artifact,
+        "learned_quality_v1_1": paths.canonical_continuous_scorer_artifact,
+        "learned_quality_v2": paths.canonical_v2_scorer_artifact,
     }
     return install_production_bundle(
-        setup_src=paths.exported_best_setup,
-        weights_src=paths.exported_best_weights,
+        setup_src=paths.best_setup,
+        weights_src=paths.best_weights,
         scorer_sources={
             policy: source
             for policy, source in scorer_sources.items()
@@ -2449,7 +2461,9 @@ def _install_production_bundle_artifacts(args: argparse.Namespace, paths: Pipeli
 
 def _apply_config(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
     updates = _config_updates(args, paths)
-    _validate_config_artifacts(paths)
+    _validate_config_artifacts(args, paths)
+    if not _artifact_export_matches(args, paths):
+        _export_artifacts(args, paths)
     _write_config_patch_files(args, paths, updates)
     if not args.write_config:
         return ["wrote config update preview only"]

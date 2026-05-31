@@ -437,10 +437,7 @@ def score_policy_choices(
     choices: dict[str, str] = {}
     for context in contexts:
         context_rows = _context_rows_for_eval(context)
-        scores = {
-            row.candidate_name: scorer.score_feature_map(row.feature_values)
-            for row in context_rows
-        }
+        scores = _score_context_rows(scorer, context_rows)
         choices[context.sample_id] = choose_scorer(
             context,
             scores,
@@ -639,6 +636,23 @@ def _context_rows_for_eval(context: T.Any) -> list[T.Any]:
     if row_payload is not None:
         return list(row_payload)
     return rows_for_context(context)
+
+
+def _score_context_rows(
+    scorer: T.Any,
+    context_rows: T.Sequence[T.Any],
+) -> dict[str, float]:
+    """Batch-score one sample's candidate rows for a scorer artifact."""
+    rows = list(context_rows)
+    feature_maps = [row.feature_values for row in rows]
+    if hasattr(scorer, "score_feature_maps"):
+        scores = scorer.score_feature_maps(feature_maps)
+    else:  # defensive compatibility for ad-hoc scorer-like test doubles
+        scores = [scorer.score_feature_map(feature_map) for feature_map in feature_maps]
+    return {
+        row.candidate_name: float(score)
+        for row, score in zip(rows, scores, strict=True)
+    }
 
 
 def row_contexts_from_scorer_rows(
@@ -845,17 +859,11 @@ def evaluate_runtime_resolver_scorer(
     hard_slice_fallback_count = 0
     for context in contexts:
         context_rows = _context_rows_for_eval(context)
-        score_by_candidate = {
-            row.candidate_name: scorer.score_feature_map(row.feature_values)
-            for row in context_rows
-        }
+        score_by_candidate = _score_context_rows(scorer, context_rows)
         binary_score_by_candidate: dict[str, float] = {}
         binary_chosen = ""
         if binary_scorer is not None:
-            binary_score_by_candidate = {
-                row.candidate_name: binary_scorer.score_feature_map(row.feature_values)
-                for row in context_rows
-            }
+            binary_score_by_candidate = _score_context_rows(binary_scorer, context_rows)
             binary_chosen = choose_scorer(
                 context,
                 binary_score_by_candidate,
@@ -864,10 +872,7 @@ def evaluate_runtime_resolver_scorer(
             )[0]
             binary_scorer_choices[context.sample_id] = binary_chosen
         if v2_scorer is not None:
-            v2_score_by_candidate = {
-                row.candidate_name: v2_scorer.score_feature_map(row.feature_values)
-                for row in context_rows
-            }
+            v2_score_by_candidate = _score_context_rows(v2_scorer, context_rows)
             v2_chosen = choose_scorer(
                 context,
                 v2_score_by_candidate,
@@ -1256,6 +1261,7 @@ def evaluate_runtime_resolver_scorer(
             "candidate_count": len(candidates),
             "uses_same_contexts": True,
             "uses_same_candidates": True,
+            "batched_policy_scoring": True,
             "binary_scorer_present": binary_scorer is not None,
             "v2_scorer_present": v2_scorer is not None,
         },

@@ -261,6 +261,22 @@ class RuntimeResolverScorer:
             return float(linear)
         return sigmoid(linear)
 
+    def score_feature_maps(self, feature_maps: T.Sequence[T.Mapping[str, float]]) -> list[float]:
+        """Score N feature dicts through one dense matrix path.
+
+        This mirrors RuntimeResolverLightGBMScorer.score_feature_maps so evaluation
+        can batch all scorer policies uniformly. For linear/logistic scorers the
+        result is mathematically identical to repeated score_feature_map calls.
+        """
+        if not feature_maps:
+            return []
+        x = feature_matrix(feature_maps, self.features)
+        coefs = np.asarray(self.coefficients, dtype="float64")
+        linear = x @ coefs + float(self.intercept)
+        if self.model_type == MODEL_TYPE_LINEAR_REGRESSION:
+            return [float(value) for value in linear]
+        return [sigmoid(float(value)) for value in linear]
+
     def score_candidate(
         self,
         candidate: CandidateLike,
