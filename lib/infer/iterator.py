@@ -7,6 +7,7 @@ import abc
 import logging
 import typing as T
 from collections import deque
+from itertools import islice
 from queue import Empty as QueueEmpty
 from queue import Queue
 
@@ -529,7 +530,8 @@ class InboundIterator(ExtractIterator[ExtractBatch, ExtractBatch]):
             len(batch),
             ", ".join(
                 f"{b.__class__.__name__}(frames={len(b.filenames)}, faces={len(b)})"
-                for b in self._fifo[-count:]
+                # ``_fifo`` is a ``deque`` (no slicing); take the last ``count`` items
+                for b in islice(self._fifo, max(0, len(self._fifo) - count), None)
             ),
         )
 

@@ -200,3 +200,47 @@ def test_iterator_fifo_is_deque_for_O1_pop() -> None:
         error_state=error_state,
     )
     assert isinstance(instance._fifo, deque)
+
+
+class _StubBatch:
+    """Minimal stand-in exposing the surface ``_rebatch_data`` touches:
+    ``__len__``, ``filenames`` and slice support for ``batch[i:end]``."""
+
+    def __init__(self, size: int) -> None:
+        self._size = size
+        self.filenames = [f"f{idx}" for idx in range(size)]
+
+    def __len__(self) -> int:
+        return self._size
+
+    def __getitem__(self, sl: slice) -> _StubBatch:
+        return _StubBatch(len(range(*sl.indices(self._size))))
+
+
+def test_rebatch_data_trace_does_not_slice_deque() -> None:
+    """``_rebatch_data`` logs the rebatched tail via ``self._fifo[-count:]``.
+    Since #194 made ``_fifo`` a ``deque`` (no slice support), that line
+    raised ``TypeError: sequence index must be integer, not 'slice'`` on
+    every extract. The join is a *call argument*, so it is evaluated
+    eagerly regardless of log level. This guards the deque-safe tail
+    access and pins the regression."""
+    instance = iterator_mod.InboundIterator(
+        queue=MagicMock(),
+        name="test",
+        plugin_type="align",
+        batch_size=4,
+        error_state=MagicMock(),
+    )
+    # Pre-seed the FIFO with more items than ``count`` to exercise the tail.
+    instance._fifo.extend(_StubBatch(2) for _ in range(3))
+    # Drive the loop without real batching machinery: report 6 boxes and
+    # make the fifo/no-box appends no-ops so only the trace line is under test.
+    instance._handle_non_split_batch = lambda batch: (6, instance._batch_size)  # type: ignore[method-assign]
+    instance._batch_to_fifo = lambda in_batch: None  # type: ignore[method-assign]
+    instance._append_no_boxes = lambda batch: None  # type: ignore[method-assign]
+
+    # Force the trace record to actually format, belt-and-braces against a
+    # future lazy-logging refactor of the call.
+    iterator_mod.logger.setLevel(5)  # TRACE
+
+    instance._rebatch_data(_StubBatch(6))  # must not raise
