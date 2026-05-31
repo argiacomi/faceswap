@@ -253,7 +253,7 @@ class TorchDecaEncoder:
         tensor = self._preprocess(crops).to(self._device)
         with torch.no_grad():
             output = self._module(tensor)
-        return output.detach().cpu().numpy().astype(np.float32)
+        return T.cast(np.ndarray, output.detach().cpu().numpy().astype(np.float32))
 
 
 __all__ = get_module_objects(__name__)

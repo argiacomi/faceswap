@@ -10,8 +10,10 @@ covered by the existing coverage tests' alignment fixtures.
 from __future__ import annotations
 
 import json
+import typing as T
 
 import numpy as np
+import pytest
 
 from lib.faceqa.deep import audit as audit_mod
 from lib.faceqa.deep.deca_encoder import DECA_PARAM_DIM
@@ -34,7 +36,9 @@ class _DiverseEncoder:
         self._rng = np.random.default_rng(seed)
 
     def encode(self, crops: np.ndarray) -> np.ndarray:
-        return self._rng.normal(size=(len(crops), DECA_PARAM_DIM)).astype(np.float32)
+        return T.cast(
+            np.ndarray, self._rng.normal(size=(len(crops), DECA_PARAM_DIM)).astype(np.float32)
+        )
 
 
 class _CollapsedEncoder:
@@ -45,10 +49,10 @@ class _CollapsedEncoder:
 
     def encode(self, crops: np.ndarray) -> np.ndarray:
         noise = np.random.default_rng(2).normal(scale=1e-3, size=(len(crops), DECA_PARAM_DIM))
-        return (self._point + noise).astype(np.float32)
+        return T.cast(np.ndarray, (self._point + noise).astype(np.float32))
 
 
-def _fake_extractor_factory(*, fail: bool = False, disabled: bool = False):
+def _fake_extractor_factory(*, fail: bool = False, disabled: bool = False) -> type:
     rng = np.random.default_rng(7)
 
     class _FakeExtractor:
@@ -67,7 +71,7 @@ def _entries(n_frames: int = 40, per_frame: int = 3) -> dict[str, _Entry]:
     return {f"frame_{i}.png": _Entry(per_frame) for i in range(n_frames)}
 
 
-def _patch_extractor(monkeypatch, **kwargs) -> None:
+def _patch_extractor(monkeypatch: pytest.MonkeyPatch, **kwargs: T.Any) -> None:
     monkeypatch.setattr(audit_mod, "DecaCropExtractor", _fake_extractor_factory(**kwargs))
 
 
@@ -169,11 +173,15 @@ def test_run_deep_audit_partial_skips_are_tallied(monkeypatch) -> None:
 
 def test_progress_callback_fires_per_face(monkeypatch) -> None:
     _patch_extractor(monkeypatch)
-    ticks = []
+    ticks: list[int] = []
+
+    def _tick(n: int = 1) -> None:
+        ticks.append(n)
+
     audit_mod.run_deep_audit(
         _entries(n_frames=5, per_frame=2),
         encoder=_DiverseEncoder(),
         frames_loader=_Loader(),
-        progress_callback=lambda n=1: ticks.append(n),
+        progress_callback=_tick,
     )
     assert sum(ticks) == 10

@@ -67,13 +67,13 @@ class DeepAuditReport:
     faces_encoded: int = 0
     faces_skipped: int = 0
     skipped_reasons: dict[str, int] = field(default_factory=dict)
-    expression_space_coverage: dict[str, object] = field(default_factory=dict)
-    pose_space_coverage: dict[str, object] = field(default_factory=dict)
-    lighting_space_coverage: dict[str, object] = field(default_factory=dict)
-    latent_entropy: dict[str, object] = field(default_factory=dict)
-    cluster_coverage: dict[str, object] = field(default_factory=dict)
-    deca_readiness: dict[str, object] = field(default_factory=dict)
-    landmark_vs_deca: dict[str, object] = field(default_factory=dict)
+    expression_space_coverage: dict[str, T.Any] = field(default_factory=dict)
+    pose_space_coverage: dict[str, T.Any] = field(default_factory=dict)
+    lighting_space_coverage: dict[str, T.Any] = field(default_factory=dict)
+    latent_entropy: dict[str, T.Any] = field(default_factory=dict)
+    cluster_coverage: dict[str, T.Any] = field(default_factory=dict)
+    deca_readiness: dict[str, T.Any] = field(default_factory=dict)
+    landmark_vs_deca: dict[str, T.Any] = field(default_factory=dict)
     pruning_signals: list[dict[str, T.Any]] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
@@ -129,7 +129,7 @@ class DecaCropExtractor:
             return None
         if aligned_bgr.ndim != 3 or aligned_bgr.shape[2] != 3:
             return None
-        return cv2.cvtColor(aligned_bgr, cv2.COLOR_BGR2RGB)
+        return T.cast(np.ndarray, cv2.cvtColor(aligned_bgr, cv2.COLOR_BGR2RGB))
 
     def _load_frame(self, frame: str) -> np.ndarray | None:
         if frame == self._last_frame and self._last_image is not None:
@@ -194,13 +194,16 @@ def _encode_faceset(
 
 def _combined_latent(coefficients: DecaCoefficients) -> np.ndarray:
     """Return the per-group-scaled concatenation used for latent metrics."""
-    return np.concatenate(
-        (
-            coefficients.expression / EXPRESSION_SCALE,
-            coefficients.pose / POSE_SCALE,
-            coefficients.light / LIGHT_SCALE,
+    return T.cast(
+        np.ndarray,
+        np.concatenate(
+            (
+                coefficients.expression / EXPRESSION_SCALE,
+                coefficients.pose / POSE_SCALE,
+                coefficients.light / LIGHT_SCALE,
+            ),
+            axis=1,
         ),
-        axis=1,
     )
 
 
@@ -300,12 +303,12 @@ def _pruning_signals(
 
 
 def _readiness_from_metrics(
-    expression: dict[str, object],
-    pose: dict[str, object],
-    lighting: dict[str, object],
-    latent: dict[str, object],
-    cluster: dict[str, object],
-) -> dict[str, object]:
+    expression: dict[str, T.Any],
+    pose: dict[str, T.Any],
+    lighting: dict[str, T.Any],
+    latent: dict[str, T.Any],
+    cluster: dict[str, T.Any],
+) -> dict[str, T.Any]:
     """Derive a 0-100 DECA readiness sub-score from the coverage metrics."""
     components = {
         "expression": float(expression.get("entropy_coverage", 0.0) or 0.0),

@@ -46,12 +46,12 @@ def resolve_weights_path() -> str:
     Uses the standard faceswap model cache and SHA256-validates the official
     Google Drive checkpoint, matching other external FaceSwap models.
     """
-    model_path = GetModelFromUrl(
+    model_path: str = GetModelFromUrl(
         DECA_WEIGHTS_FILENAME,
         DECA_WEIGHTS_URL,
         DECA_WEIGHTS_SHA256,
     ).model_path
-    return T.cast(str, model_path)
+    return model_path
 
 
 def remap_deca_state_dict(raw: dict[str, T.Any]) -> dict[str, T.Any]:

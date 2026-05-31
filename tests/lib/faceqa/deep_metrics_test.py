@@ -7,6 +7,8 @@ coefficient matrices - no torch and no DECA weights required.
 
 from __future__ import annotations
 
+import typing as T
+
 import numpy as np
 import pytest
 
@@ -14,12 +16,12 @@ from lib.faceqa.deep import metrics as m
 
 
 def _diverse(rng: np.random.Generator, n: int = 300, d: int = 50) -> np.ndarray:
-    return rng.normal(size=(n, d))
+    return T.cast(np.ndarray, rng.normal(size=(n, d)))
 
 
 def _collapsed(rng: np.random.Generator, n: int = 300, d: int = 50) -> np.ndarray:
     point = rng.normal(size=(1, d))
-    return np.tile(point, (n, 1)) + rng.normal(scale=1e-3, size=(n, d))
+    return T.cast(np.ndarray, np.tile(point, (n, 1)) + rng.normal(scale=1e-3, size=(n, d)))
 
 
 # ---------------------------------------------------------------------------

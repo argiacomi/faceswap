@@ -30,7 +30,7 @@ def test_param_dim_matches_layout() -> None:
 
 
 def test_decode_parameters_slices_at_canonical_offsets() -> None:
-    params = np.arange(de.DECA_PARAM_DIM, dtype=np.float32).reshape(1, -1)
+    params: np.ndarray = np.arange(de.DECA_PARAM_DIM, dtype=np.float32).reshape(1, -1)
     coef = de.decode_parameters(params)
     assert coef.expression.shape == (1, 50)
     assert coef.pose.shape == (1, 6)
@@ -59,7 +59,7 @@ def test_decode_parameters_rejects_wrong_width() -> None:
 def test_build_module_forward_shape() -> None:
     module = de.TorchDecaEncoder.build_module()
     encoder = de.TorchDecaEncoder(module)
-    crops = np.zeros((3, 256, 256, 3), dtype=np.uint8)
+    crops: np.ndarray = np.zeros((3, 256, 256, 3), dtype=np.uint8)
     out = encoder.encode(crops)
     assert out.shape == (3, de.DECA_PARAM_DIM)
     assert out.dtype == np.float32

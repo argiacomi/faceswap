@@ -21,6 +21,7 @@ unit-testable without the DECA model or torch.
 from __future__ import annotations
 
 import logging
+import typing as T
 
 import numpy as np
 from sklearn.cluster import KMeans
@@ -47,14 +48,14 @@ def _as_matrix(features: np.ndarray | None) -> np.ndarray:
     not poison the whole metric.
     """
     if features is None:
-        return np.empty((0, 0), dtype=np.float64)
+        return T.cast(np.ndarray, np.empty((0, 0), dtype=np.float64))
     matrix = np.asarray(features, dtype=np.float64)
     if matrix.ndim == 1:
         matrix = matrix.reshape(1, -1)
     if matrix.ndim != 2 or matrix.size == 0:
-        return np.empty((0, 0), dtype=np.float64)
+        return T.cast(np.ndarray, np.empty((0, 0), dtype=np.float64))
     finite_rows = np.isfinite(matrix).all(axis=1)
-    return matrix[finite_rows]
+    return T.cast(np.ndarray, matrix[finite_rows])
 
 
 def _normalized_entropy(counts: np.ndarray) -> float:
@@ -82,9 +83,9 @@ def _top_variance_dims(matrix: np.ndarray, n_dims: int) -> np.ndarray:
     variances = matrix.var(axis=0)
     count = int(min(n_dims, matrix.shape[1]))
     if count <= 0:
-        return np.empty(0, dtype=np.intp)
+        return T.cast(np.ndarray, np.empty(0, dtype=np.intp))
     # ``argsort`` is ascending; take the tail and reverse for descending order.
-    return np.argsort(variances)[-count:][::-1]
+    return T.cast(np.ndarray, np.argsort(variances)[-count:][::-1])
 
 
 def _center_scale_clip(
@@ -104,14 +105,14 @@ def _center_scale_clip(
     many bins (high coverage).
     """
     safe_scale = scale if abs(scale) > 1e-9 else 1.0
-    return np.clip((column - center) / safe_scale, -clip, clip)
+    return T.cast(np.ndarray, np.clip((column - center) / safe_scale, -clip, clip))
 
 
 def _bin_indices(values: np.ndarray, n_bins: int, clip: float) -> np.ndarray:
     """Map clipped z-scores in ``[-clip, clip]`` to integer bins ``[0, n_bins)``."""
     width = (2.0 * clip) / n_bins
     idx = np.floor((values + clip) / width).astype(np.intp)
-    return np.clip(idx, 0, n_bins - 1)
+    return T.cast(np.ndarray, np.clip(idx, 0, n_bins - 1))
 
 
 def space_coverage(
@@ -122,7 +123,7 @@ def space_coverage(
     clip: float = DEFAULT_CLIP,
     center: float = 0.0,
     scale: float = 1.0,
-) -> dict[str, object]:
+) -> dict[str, T.Any]:
     """Report occupancy + entropy coverage of a coefficient space.
 
     The space is reduced to its ``n_dims`` highest-variance coefficients,
@@ -201,7 +202,7 @@ def latent_entropy(
     clip: float = DEFAULT_CLIP,
     center: float = 0.0,
     scale: float = 1.0,
-) -> dict[str, object]:
+) -> dict[str, T.Any]:
     """Report normalized Shannon entropy of a joint coarse binning.
 
     The latent is reduced to its ``n_dims`` highest-variance dimensions and
@@ -225,10 +226,10 @@ def latent_entropy(
 
     dims = _top_variance_dims(matrix, n_dims)
     # Encode each sample's per-dim bin tuple as a single mixed-radix cell id.
-    cell_ids = np.zeros(samples, dtype=np.int64)
+    cell_ids: np.ndarray = np.zeros(samples, dtype=np.int64)
     for dim in dims:
         mapped = _center_scale_clip(matrix[:, dim], center, scale, clip)
-        idx = _bin_indices(mapped, bins, clip).astype(np.int64)
+        idx: np.ndarray = _bin_indices(mapped, bins, clip).astype(np.int64)
         cell_ids = cell_ids * bins + idx
 
     _, counts = np.unique(cell_ids, return_counts=True)
@@ -258,7 +259,7 @@ def _kmeans_labels(
     std[std <= 1e-9] = 1.0
     scaled = (matrix - matrix.mean(axis=0)) / std
     model = KMeans(n_clusters=n_clusters, random_state=seed, n_init=10)
-    return model.fit_predict(scaled).astype(np.intp)
+    return T.cast(np.ndarray, model.fit_predict(scaled).astype(np.intp))
 
 
 def cluster_coverage(
@@ -266,7 +267,7 @@ def cluster_coverage(
     *,
     n_clusters: int = DEFAULT_CLUSTERS,
     seed: int = DEFAULT_SEED,
-) -> dict[str, object]:
+) -> dict[str, T.Any]:
     """Report how evenly the faceset spreads across latent clusters.
 
     Runs a deterministic k-means over the latent and measures the *balance*

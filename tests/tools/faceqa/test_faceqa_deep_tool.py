@@ -7,6 +7,7 @@ hook in isolation (synthetic encoder + stub loader), without the DECA weights.
 
 from __future__ import annotations
 
+import typing as T
 from argparse import Namespace
 
 import numpy as np
@@ -33,7 +34,7 @@ class _Loader:
 class _SynthEncoder:
     def encode(self, crops: np.ndarray) -> np.ndarray:
         rng = np.random.default_rng(len(crops))
-        return rng.normal(size=(len(crops), DECA_PARAM_DIM)).astype(np.float32)
+        return T.cast(np.ndarray, rng.normal(size=(len(crops), DECA_PARAM_DIM)).astype(np.float32))
 
 
 class _FakeExtractor:
