@@ -588,7 +588,7 @@ class PreviewSet(_BaseSet):
                 meta.alignments.mask, self._mask_types[0], filename, out_face
             )
         else:
-            out_img[..., 3] = np.zeros_like(out_img[..., 0])[..., None] + 255
+            out_img[..., 3] = np.full_like(out_img[..., 3], 255)
 
         if self._include_region_masks:
             out_img[..., 4] = self._mask(meta.alignments.mask, "eye", filename, out_face)
