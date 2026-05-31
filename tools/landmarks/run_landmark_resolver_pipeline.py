@@ -24,11 +24,16 @@ from lib.landmarks.ensemble.production_artifacts import (
     LEARNED_POLICIES,
     install_production_bundle,
 )
+from lib.landmarks.ensemble.scorer_dataset import (
+    SCORER_DATASET_DIR,
+    SCORER_DATASET_MANIFEST_JSON,
+    SCORER_ROWS_CSV,
+)
 from lib.landmarks.ensemble.scorer_target_config import (
     SCORER_TARGETS,
-    TARGET_CANDIDATE_FAILURE_OR_HIGH_GAP,
     TARGET_SELECTION_COST,
 )
+from lib.landmarks.ensemble.scorer_training import SCORER_SUITE_METRICS_JSON
 from lib.landmarks.ensemble.static_weight_fit import compute_static_weights
 from lib.landmarks.ensemble.weights import save_weights
 from lib.landmarks.evaluation.splits import (
@@ -57,13 +62,6 @@ from lib.landmarks.search.gt_runtime_bucket_metrics import (
     write_runtime_bucket_json,
 )
 from tools.landmarks.pipeline_progress import PipelineProgress, configure_logging
-
-from lib.landmarks.ensemble.scorer_dataset import (
-    SCORER_DATASET_DIR,
-    SCORER_DATASET_MANIFEST_JSON,
-    SCORER_ROWS_CSV,
-)
-from lib.landmarks.ensemble.scorer_training import SCORER_SUITE_METRICS_JSON
 
 logger = logging.getLogger("run_landmark_resolver_pipeline")
 
@@ -200,6 +198,9 @@ class PipelinePaths:
     exported_best_setup: Path = field(init=False)
     exported_best_weights: Path = field(init=False)
     exported_scorer_artifact: Path = field(init=False)
+    exported_scorer_dataset_dir: Path = field(init=False)
+    exported_scorer_rows: Path = field(init=False)
+    exported_scorer_dataset_manifest: Path = field(init=False)
     progress_log: Path = field(init=False)
     summary_json: Path = field(init=False)
     summary_md: Path = field(init=False)
@@ -391,6 +392,21 @@ class PipelinePaths:
             "exported_scorer_artifact",
             self.exported_scorer_dir / "runtime_resolver_scorer.json",
         )
+        object.__setattr__(
+            self,
+            "exported_scorer_dataset_dir",
+            self.exported_scorer_dir / SCORER_DATASET_DIR,
+        )
+        object.__setattr__(
+            self,
+            "exported_scorer_rows",
+            self.exported_scorer_dataset_dir / SCORER_ROWS_CSV,
+        )
+        object.__setattr__(
+            self,
+            "exported_scorer_dataset_manifest",
+            self.exported_scorer_dataset_dir / SCORER_DATASET_MANIFEST_JSON,
+        )
         object.__setattr__(self, "progress_log", self.output_root / PROGRESS_LOG_FILENAME)
         object.__setattr__(self, "summary_json", self.output_root / "pipeline_summary.json")
         object.__setattr__(self, "summary_md", self.output_root / "pipeline_summary.md")
@@ -463,11 +479,11 @@ def _require(path: Path, label: str) -> None:
         raise FileNotFoundError(f"missing required {label}: {path}")
 
 
-
 def _canonical_stage_name(stage: str | None) -> str | None:
     if stage is None:
         return None
     return STAGE_ALIASES.get(stage, stage)
+
 
 def _stage_slice(start_at: str | None, stop_after: str | None) -> tuple[str, ...]:
     start_at = _canonical_stage_name(start_at)
@@ -874,7 +890,6 @@ def _command_gt_hard_resolver_metadata(
     return _append_extra(argv, args.gt_hard_resolver_metadata_arg)
 
 
-
 def _scorer_training_sentinel_payload(
     args: argparse.Namespace,
     paths: PipelinePaths,
@@ -909,6 +924,7 @@ def _scorer_training_sentinel_matches(args: argparse.Namespace, paths: PipelineP
 
 def _write_scorer_training_sentinel(args: argparse.Namespace, paths: PipelinePaths) -> None:
     write_json(paths.scorer_training_sentinel, _scorer_training_sentinel_payload(args, paths))
+
 
 def _command_scorer_training(
     args: argparse.Namespace,
@@ -982,7 +998,6 @@ def _command_v2_scorer_training(args: argparse.Namespace, paths: PipelinePaths) 
     return _append_extra(argv, args.scorer_train_arg)
 
 
-
 def _command_scorer_suite_training(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
     argv = [
         args.python_executable,
@@ -1020,6 +1035,7 @@ def _command_scorer_suite_training(args: argparse.Namespace, paths: PipelinePath
         argv.append("--allow-image-backfill")
     argv.extend(["--gt-hard-resolver-metadata", str(paths.frozen_gt_metadata)])
     return _append_extra(argv, args.scorer_train_arg)
+
 
 def _command_scorer_eval(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
     argv = [
@@ -1112,7 +1128,8 @@ def _outputs_for(stage: str, paths: PipelinePaths) -> list[Path]:
             paths.exported_best_weights,
             paths.exported_scorer_artifact,
             paths.artifacts_dir / "artifacts_manifest.json",
-            paths.scorer_rows_csv,
+            paths.exported_scorer_rows,
+            paths.exported_scorer_dataset_manifest,
         ],
         "config_update": [
             paths.output_root / CONFIG_PREVIEW_FILENAME,
@@ -1197,18 +1214,11 @@ def _required_inputs_for(stage: str, args: argparse.Namespace, paths: PipelinePa
             paths.frozen_gt_metadata,
         ],
         "scorer_evaluation": [
-            paths.hard_manifest,
-            paths.run_cache,
-            paths.hard_source_cache_sentinel,
-            paths.production_manifest,
-            paths.production_cache,
-            paths.production_cache_sentinel,
-            paths.best_weights,
             paths.scorer_artifact,
             paths.binary_scorer_artifact,
             paths.v2_scorer_artifact,
-            paths.continuous_scorer_eval_rows,
-            paths.frozen_gt_metadata,
+            paths.scorer_rows_csv,
+            paths.scorer_dataset_manifest,
         ],
         "production_promotion_check": [paths.scorer_report],
         "artifact_export": [
@@ -1216,6 +1226,8 @@ def _required_inputs_for(stage: str, args: argparse.Namespace, paths: PipelinePa
             paths.best_weights,
             _promoted_scorer_source(args, paths),
             paths.scorer_report,
+            paths.scorer_rows_csv,
+            paths.scorer_dataset_manifest,
             paths.frozen_gt_metadata,
         ],
         "config_update": [Path(args.config_path)] if args.write_config else [],
@@ -2126,6 +2138,14 @@ def _export_artifacts(args: argparse.Namespace, paths: PipelinePaths) -> dict[st
             promoted_from=str(scorer_source.relative_to(paths.output_root)),
         ),
         "scorer_policy_report": _copy_if_exists(paths.scorer_report, paths.artifacts_dir),
+        "scorer_rows": _copy_if_exists(
+            paths.scorer_rows_csv,
+            paths.exported_scorer_dataset_dir,
+        ),
+        "scorer_dataset_manifest": _copy_if_exists(
+            paths.scorer_dataset_manifest,
+            paths.exported_scorer_dataset_dir,
+        ),
         "gt_hard_resolver_metadata": _copy_if_exists(
             paths.frozen_gt_metadata, paths.artifacts_dir
         ),

@@ -37,7 +37,6 @@ from tools.landmarks.run_landmark_resolver_pipeline import (
     _stage_complete,
     _stage_forced,
     _validate_stage_outputs,
-    _write_v2_scorer_training_sentinel,
     _write_scorer_training_sentinel,
     run_pipeline,
 )
@@ -128,12 +127,15 @@ def _touch_pipeline_outputs(paths: PipelinePaths, *, promotion_status: str = "pa
         paths.binary_scorer_artifact,
         paths.scorer_artifact,
         paths.scorer_rows_csv,
+        paths.scorer_dataset_manifest,
         paths.v2_scorer_artifact,
         paths.v2_scorer_training_sentinel,
         paths.scorer_report,
         paths.exported_best_setup,
         paths.exported_best_weights,
         paths.exported_scorer_artifact,
+        paths.exported_scorer_rows,
+        paths.exported_scorer_dataset_manifest,
     ):
         path.parent.mkdir(parents=True, exist_ok=True)
         if path.name.endswith(".json"):
@@ -796,6 +798,7 @@ def test_stage_contract_declares_required_files(tmp_path: Path) -> None:
 
     contract = _contract_for("continuous_scorer_training", args, paths)
     v2_contract = _contract_for("v2_scorer_training", args, paths)
+    eval_contract = _contract_for("scorer_evaluation", args, paths)
 
     assert str(paths.hard_manifest) in contract.required_files
     assert str(paths.hard_source_cache_sentinel) in contract.required_files
@@ -817,10 +820,25 @@ def test_stage_contract_declares_required_files(tmp_path: Path) -> None:
     assert str(paths.scorer_suite_metrics) in v2_contract.outputs
     assert str(paths.scorer_training_sentinel) in v2_contract.outputs
     assert str(paths.v2_scorer_training_sentinel) not in v2_contract.outputs
+    assert str(paths.scorer_artifact) in eval_contract.required_files
+    assert str(paths.binary_scorer_artifact) in eval_contract.required_files
+    assert str(paths.v2_scorer_artifact) in eval_contract.required_files
+    assert str(paths.scorer_rows_csv) in eval_contract.required_files
+    assert str(paths.scorer_dataset_manifest) in eval_contract.required_files
+    assert str(paths.continuous_scorer_eval_rows) not in eval_contract.required_files
+    assert str(paths.hard_manifest) not in eval_contract.required_files
+    assert str(paths.run_cache) not in eval_contract.required_files
+    assert str(paths.hard_source_cache_sentinel) not in eval_contract.required_files
+    assert str(paths.production_manifest) not in eval_contract.required_files
+    assert str(paths.production_cache) not in eval_contract.required_files
+    assert str(paths.production_cache_sentinel) not in eval_contract.required_files
+    assert str(paths.best_weights) not in eval_contract.required_files
+    assert str(paths.frozen_gt_metadata) not in eval_contract.required_files
 
 
-
-def test_scorer_training_resume_requires_matching_sentinel_for_stage_aliases(tmp_path: Path) -> None:
+def test_scorer_training_resume_requires_matching_sentinel_for_stage_aliases(
+    tmp_path: Path,
+) -> None:
     args = _args(tmp_path)
     paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
 
@@ -855,6 +873,7 @@ def test_scorer_training_resume_requires_matching_sentinel_for_stage_aliases(tmp
     args.v2_iterations += 1
     assert not _stage_complete("scorer_training", args, paths)
     assert not _stage_complete("v2_scorer_training", args, paths)
+
 
 def test_scorer_train_and_eval_commands_allow_image_backfill_by_default(
     tmp_path: Path,
@@ -1326,6 +1345,14 @@ def test_artifact_export_records_promoted_scorer_provenance(tmp_path: Path) -> N
         encoding="utf-8",
     )
 
+    paths.scorer_rows_csv.write_text("sample_id,split\ns1,eval\n", encoding="utf-8")
+    paths.scorer_dataset_manifest.write_text(
+        json.dumps({"rows": "rows.csv", "row_count": 1}) + "\n",
+        encoding="utf-8",
+    )
+    paths.exported_scorer_rows.unlink(missing_ok=True)
+    paths.exported_scorer_dataset_manifest.unlink(missing_ok=True)
+
     manifest = _export_artifacts(args, paths)
     scorer_payload = json.loads(paths.exported_scorer_artifact.read_text(encoding="utf-8"))
 
@@ -1338,6 +1365,13 @@ def test_artifact_export_records_promoted_scorer_provenance(tmp_path: Path) -> N
     assert scorer_payload["objective"] == "minimize_candidate_selection_regret"
     assert scorer_payload["training_mode"] == "continuous_selection_cost"
     assert scorer_payload["runtime_policy"] == "learned_quality_v1"
+    assert manifest["scorer_rows"] == str(paths.exported_scorer_rows)
+    assert manifest["scorer_dataset_manifest"] == str(paths.exported_scorer_dataset_manifest)
+    assert paths.exported_scorer_rows.read_text(encoding="utf-8") == "sample_id,split\ns1,eval\n"
+    assert (
+        json.loads(paths.exported_scorer_dataset_manifest.read_text(encoding="utf-8"))["row_count"]
+        == 1
+    )
 
 
 def test_v2_promotion_check_requires_v2_policy_metrics(tmp_path: Path) -> None:

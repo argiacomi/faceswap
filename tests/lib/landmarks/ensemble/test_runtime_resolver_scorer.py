@@ -737,9 +737,11 @@ def test_evaluate_runtime_resolver_scorer_filters_to_eval_split(tmp_path: Path) 
         eval_split=eval_split,
     )
 
-    assert report["heldout_eval"] is True
     assert report["eval_split"] == str(eval_split)
     assert report["sample_count"] == 1
+    assert report["heldout_eval"] is True
+    assert report["row_backed_eval"] is False
+    assert report["scorer_rows"] == ""
     assert report["production_only_policy_metrics"]["sample_count"] == 1
     assert (tmp_path / "heldout_eval" / "scorer_policy_eval_report.json").is_file()
 
@@ -1135,7 +1137,6 @@ def test_export_resolver_candidate_table_skips_missing_candidate_prediction(
     assert report["row_count"] == 1
 
 
-
 def _write_canonical_scorer_rows(path: Path) -> Path:
     fieldnames = [
         "split",
@@ -1234,6 +1235,10 @@ def test_row_contexts_from_scorer_rows_uses_only_eval_split(tmp_path: Path) -> N
         "spiga",
         "static_weighted_downweight",
     }
+    by_candidate = {candidate.name: candidate for candidate in context.candidates}
+    assert by_candidate["hrnet"].is_fusion is False
+    assert by_candidate["spiga"].is_fusion is False
+    assert by_candidate["static_weighted_downweight"].is_fusion is True
     assert len(context.scorer_rows) == 3
 
 
@@ -1274,6 +1279,48 @@ def test_evaluate_runtime_resolver_scorer_uses_scorer_rows_without_context_rebui
     )
 
     assert report["sample_count"] == 1
+    assert report["heldout_eval"] is True
+    assert report["row_backed_eval"] is True
+    assert report["scorer_rows"] == str(rows_path)
+    assert report["eval_split"] == ""
     assert report["production_only_policy_metrics"]["sample_count"] == 1
     assert report["current_binary_logistic_scorer"]["pick_counts"] == {"hrnet": 1}
     assert (tmp_path / "row_backed_eval" / "scorer_policy_eval_report.json").is_file()
+
+
+def test_row_backed_eval_high_risk_safe_fallback_handles_fusion_flags(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rows_path = _write_canonical_scorer_rows(tmp_path / "rows.csv")
+    scorer_path = write_runtime_resolver_scorer(
+        RuntimeResolverScorer(
+            features=("candidate_name=hrnet",),
+            coefficients=(0.0,),
+            intercept=1.0,
+        ),
+        tmp_path / "high_risk_scorer.json",
+    )
+
+    def fail_context_rebuild(**_kwargs: object) -> object:
+        raise AssertionError("row-backed evaluation must not rebuild scorer contexts")
+
+    monkeypatch.setattr(scorer_eval_impl, "load_scorer_contexts", fail_context_rebuild)
+
+    report = evaluate_runtime_resolver_scorer(
+        gt_manifest=None,
+        gt_cache_dir=None,
+        production_manifest=None,
+        production_cache_dir=None,
+        weights_path=tmp_path / "unused_weights.json",
+        scorer_path=scorer_path,
+        candidates=("hrnet", "spiga", "static_weighted_downweight"),
+        output_dir=tmp_path / "row_backed_high_risk_eval",
+        scorer_rows=rows_path,
+        installed_scorer_dir=None,
+        risk_floor_for_safe_fallback=0.50,
+    )
+
+    assert report["row_backed_eval"] is True
+    assert report["sample_count"] == 1
+    assert report["current_binary_logistic_scorer"]["pick_counts"]

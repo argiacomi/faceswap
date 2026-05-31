@@ -548,7 +548,6 @@ def assert_lower_score_is_better(scorer: RuntimeResolverScorer) -> None:
         )
 
 
-
 def _row_bool(value: T.Any) -> bool:
     if isinstance(value, bool):
         return value
@@ -691,14 +690,21 @@ def row_contexts_from_scorer_rows(
             if not candidate_name:
                 continue
             candidate_nme = _row_float(row.get("candidate_nme"))
-            candidate_failure = _row_bool(row.get("failure_label", row.get("candidate_failure_or_high_gap", 0)))
+            candidate_failure = _row_bool(
+                row.get("failure_label", row.get("candidate_failure_or_high_gap", 0))
+            )
             feature_values = _row_feature_values(row)
             geometry_reasons = _row_geometry_reasons(row.get("geometry_veto_reasons"))
 
             nme_by_candidate[candidate_name] = candidate_nme
             failure_by_candidate[candidate_name] = candidate_failure
             metrics[candidate_name] = SimpleNamespace(geometry_veto_reasons=geometry_reasons)
-            candidates_payload.append(SimpleNamespace(name=candidate_name))
+            candidates_payload.append(
+                SimpleNamespace(
+                    name=candidate_name,
+                    is_fusion=is_fusion_candidate(candidate_name),
+                )
+            )
             scorer_row_payload.append(
                 SimpleNamespace(
                     candidate_name=candidate_name,
@@ -708,7 +714,9 @@ def row_contexts_from_scorer_rows(
 
             if not oracle and _row_bool(row.get("is_oracle", 0)):
                 oracle = candidate_name
-            if not current_policy_choice and _row_bool(row.get("was_selected_by_current_policy", 0)):
+            if not current_policy_choice and _row_bool(
+                row.get("was_selected_by_current_policy", 0)
+            ):
                 current_policy_choice = candidate_name
 
         if not nme_by_candidate:
@@ -786,12 +794,7 @@ def evaluate_runtime_resolver_scorer(
     output_dir.mkdir(parents=True, exist_ok=True)
     if scorer_dataset is not None and scorer_rows is None:
         _dataset_dir, scorer_rows, _manifest = resolve_scorer_dataset_path(scorer_dataset)
-    if scorer_rows is not None and eval_split is None:
-        # Issue #206: canonical scorer rows are the training-to-eval handoff.
-        # In this migration slice, the existing evaluator still rebuilds
-        # contexts, but it filters them by the canonical eval rows instead of
-        # a per-scorer legacy eval CSV.
-        eval_split = scorer_rows
+
     scorer = load_runtime_resolver_scorer(scorer_path)
     assert_lower_score_is_better(scorer)
     binary_scorer = (
@@ -803,9 +806,6 @@ def evaluate_runtime_resolver_scorer(
     if v2_scorer is not None:
         assert_lower_score_is_better(v2_scorer)
     source_by_sample_id: dict[str, str] = {}
-    if scorer_dataset is not None and scorer_rows is None:
-        _dataset_dir, scorer_rows, _manifest = resolve_scorer_dataset_path(scorer_dataset)
-
     if scorer_rows is not None:
         contexts, source_by_sample_id = row_contexts_from_scorer_rows(scorer_rows)
     else:
