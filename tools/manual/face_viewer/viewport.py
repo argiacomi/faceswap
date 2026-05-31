@@ -37,6 +37,7 @@ class Viewport:
     """
 
     _SELECTED_BOX_COLOR = "#ffcc00"
+    _ACTIVE_SELECTED_BOX_COLOR = "#ff00ff"
 
     def __init__(self, canvas: FacesViewer, tk_edited_variable: tk.BooleanVar) -> None:
         logger.debug(parse_class_init(locals()))
@@ -168,13 +169,38 @@ class Viewport:
         self._active_frame.reload_annotations()
         self._update_selected_highlighters()
 
-        if self._canvas.find_withtag("viewport_image"):
-            self._canvas.tag_raise("viewport_selected_highlighter", "viewport_image")
+        self._raise_highlight_layers()
+
+    def refresh_selection_highlights(self) -> None:
+        """Refresh selection outlines without rebuilding the whole viewport."""
+        self._update_selected_highlighters()
+        self._raise_highlight_layers()
+
+    def _raise_highlight_layers(self) -> None:
+        """Keep thumbnails visible and layer outline-only highlights deterministically."""
+        has_images = bool(self._canvas.find_withtag("viewport_image"))
+        has_active = bool(self._canvas.find_withtag("active_highlighter"))
+        has_selected = bool(self._canvas.find_withtag("viewport_selected_highlighter"))
+
+        if has_images:
             self._canvas.tag_raise("viewport_mesh", "viewport_image")
             self._canvas.tag_raise("active_mesh_polygon", "viewport_image")
             self._canvas.tag_raise("active_mesh_line", "viewport_image")
-        if self._canvas.find_withtag("active_highlighter"):
-            self._canvas.tag_raise("active_highlighter")
+
+            if has_active:
+                self._canvas.tag_raise("active_highlighter", "viewport_image")
+
+            if has_selected:
+                above = "active_highlighter" if has_active else "viewport_image"
+                self._canvas.tag_raise("viewport_selected_highlighter", above)
+        else:
+            if has_active:
+                self._canvas.tag_raise("active_highlighter")
+            if has_selected:
+                self._canvas.tag_raise("viewport_selected_highlighter")
+
+        if self._canvas.find_withtag("hover_box"):
+            self._canvas.tag_raise("hover_box")
 
     def _update_viewport(self, refresh_annotations: bool) -> None:
         """Update the viewport
@@ -248,11 +274,17 @@ class Viewport:
             return
 
         visible: set[tuple[int, int]] = set()
+        active_key = (
+            self._canvas._globals.frame_index,
+            self._canvas._globals.face_index,
+        )
+
         for frame_idx, face_idx, pnt_x, pnt_y in self._objects.visible_grid.transpose(
             1, 2, 0
         ).reshape(-1, 4):
             if frame_idx == -1:
                 continue
+
             key = (int(frame_idx), int(face_idx))
             if key not in self._canvas._globals.selected_faces:
                 continue
@@ -267,6 +299,7 @@ class Viewport:
                     float(self.face_size),
                     outline=self._SELECTED_BOX_COLOR,
                     width=4,
+                    fill="",
                     state="hidden",
                     tags=["viewport", "viewport_selected_highlighter"],
                 )
@@ -278,8 +311,19 @@ class Viewport:
                 int(pnt_x + self.face_size),
                 int(pnt_y + self.face_size),
             )
+            is_active_selected = key == active_key
             self._canvas.coords(box_id, *coords)
-            self._canvas.itemconfig(box_id, state="normal")
+            self._canvas.itemconfig(
+                box_id,
+                state="normal",
+                outline=(
+                    self._ACTIVE_SELECTED_BOX_COLOR
+                    if is_active_selected
+                    else self._SELECTED_BOX_COLOR
+                ),
+                width=5 if is_active_selected else 4,
+                fill="",
+            )
 
         for key, box_id in self._selected_boxes.items():
             if key not in visible:

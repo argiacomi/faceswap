@@ -48,8 +48,7 @@ class HoverBox:
             outline="#0000ff",
             width=2,
             state="hidden",
-            fill="#0000ff",
-            stipple="gray12",
+            fill="",
             tags="hover_box",
         )
         self._current_frame_index = None
@@ -148,11 +147,13 @@ class HoverBox:
         if multi_select:
             self._globals.toggle_selected_face(frame_id, face_idx)
             self._globals.var_update_active_viewport.set(True)
+            self._viewport.refresh_selection_highlights()
             return
 
         self._globals.set_selected_faces(((frame_id, face_idx),))
         self._globals.set_face_index(face_idx)
         self._globals.var_update_active_viewport.set(True)
+        self._viewport.refresh_selection_highlights()
 
         if frame_id == self._globals.frame_index and not is_zoomed:
             return
@@ -214,6 +215,7 @@ class ActiveFrame:
     """
 
     _SELECTED_BOX_COLOR = "#ffcc00"
+    _ACTIVE_BOX_COLOR = "#00ff00"
 
     def __init__(self, viewport: Viewport, tk_edited_variable: tk.BooleanVar) -> None:
         logger.debug(parse_class_init(locals()))
@@ -433,9 +435,10 @@ class ActiveFrame:
                 0.0,
                 float(self._viewport.face_size),
                 float(self._viewport.face_size),
-                outline="#00FF00",
+                outline=self._ACTIVE_BOX_COLOR,
                 width=2,
                 state="hidden",
+                fill="",
                 tags=["active_highlighter"],
             )
             logger.trace("Created new highlight_box: %s", box)  # type:ignore[attr-defined]
@@ -476,24 +479,33 @@ class ActiveFrame:
         self._last_execution["size"] = self._viewport.face_size
 
     def _show_box(self, item_id: int, coordinates: list[float], is_selected: bool) -> None:
-        """Display the highlight box around the given coordinates.
+        """Display the active/displayed-frame highlight box.
 
-        Parameters
-        ----------
-        item_id: int
-            The tkinter canvas object identifier for the highlight box
-        coordinates: list[float]
-            The (x, y, x1, y1) coordinates of the top left corner of the box
-        is_selected
-            ``True`` if the face is selected for a bulk action
+        The thumbnail image itself must remain untouched. Active/displayed faces
+        always use a dedicated outline color. If the same face is also selected,
+        inset the active outline so the selected outline drawn by ``Viewport``
+        remains visible around it.
         """
-        self._canvas.coords(item_id, *coordinates)
-        kwargs = (
-            {"outline": self._SELECTED_BOX_COLOR, "width": 4}
-            if is_selected
-            else {"outline": self._canvas.control_colors["ExtractBox"], "width": 2}
+        active_coords = coordinates
+        width = 3
+        if is_selected:
+            inset = 3
+            active_coords = [
+                coordinates[0] + inset,
+                coordinates[1] + inset,
+                coordinates[2] - inset,
+                coordinates[3] - inset,
+            ]
+            width = 2
+
+        self._canvas.coords(item_id, *active_coords)
+        self._canvas.itemconfig(
+            item_id,
+            state="normal",
+            fill="",
+            outline=self._ACTIVE_BOX_COLOR,
+            width=width,
         )
-        self._canvas.itemconfig(item_id, state="normal", **kwargs)
 
     def _show_mesh(
         self,
