@@ -151,6 +151,7 @@ def test_qt_shell_checks_pyside6_not_tk(monkeypatch) -> None:
     calls = []
     executor = ScriptExecutor("gui")
     executor._gui_shell = "qt"  # pylint:disable=protected-access
+    monkeypatch.setenv("QT_QPA_PLATFORM", "xcb")
     monkeypatch.setattr(executor, "_test_pyside6", lambda: calls.append("qt"))
     monkeypatch.setattr(executor, "_test_tkinter", lambda: calls.append("tk"))
     monkeypatch.setattr(executor, "_check_display", lambda: calls.append("display"))
@@ -158,6 +159,21 @@ def test_qt_shell_checks_pyside6_not_tk(monkeypatch) -> None:
     executor._test_for_gui()  # pylint:disable=protected-access
 
     assert calls == ["qt", "display"]
+
+
+def test_qt_shell_offscreen_skips_display_preflight(monkeypatch) -> None:
+    """Qt offscreen preflight should not require a display."""
+    calls = []
+    executor = ScriptExecutor("gui")
+    executor._gui_shell = "qt"  # pylint:disable=protected-access
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    monkeypatch.setattr(executor, "_test_pyside6", lambda: calls.append("qt"))
+    monkeypatch.setattr(executor, "_test_tkinter", lambda: calls.append("tk"))
+    monkeypatch.setattr(executor, "_check_display", lambda: calls.append("display"))
+
+    executor._test_for_gui()  # pylint:disable=protected-access
+
+    assert calls == ["qt"]
 
 
 def test_qt_no_exec_skips_display_preflight(monkeypatch) -> None:

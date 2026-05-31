@@ -122,14 +122,15 @@ def test_wflw_builder_writes_visual_mapping_overlay(tmp_path: Path) -> None:
 def test_wflw_builder_disambiguates_multiple_faces_in_same_image(tmp_path: Path) -> None:
     """WFLW may annotate multiple distinct faces in one source image."""
     points = _points_98()
-    rows = []
-    for attr_values in ("1 0 0 0 0 0", "0 0 0 0 1 0"):
-        rows.append(
+    rows = [
+        (
             " ".join(str(value) for value in points.reshape(-1))
             + " 1 2 3 4"
             + f" {attr_values}"
             + " images/group.jpg\n"
         )
+        for attr_values in ("1 0 0 0 0 0", "0 0 0 0 1 0")
+    ]
     annotation = tmp_path / "list_98pt_rect_attr_test.txt"
     annotation.write_text("".join(rows), encoding="utf-8")
 

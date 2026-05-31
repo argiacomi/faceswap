@@ -97,17 +97,33 @@ def test_qt_no_exec_checks_pyside6_but_skips_display(monkeypatch) -> None:
 
 
 def test_qt_normal_launch_checks_display(monkeypatch) -> None:
-    """Normal Qt launch should still run display preflight."""
+    """Normal display-backed Qt launch should still run display preflight."""
     executor = ScriptExecutor("gui")
     executor._gui_shell = "qt"  # pylint:disable=protected-access
     executor._gui_no_exec = False  # pylint:disable=protected-access
     calls: list[str] = []
+    monkeypatch.setenv("QT_QPA_PLATFORM", "xcb")
     monkeypatch.setattr(executor, "_test_pyside6", lambda: calls.append("qt"))
     monkeypatch.setattr(executor, "_check_display", lambda: calls.append("display"))
 
     executor._test_for_gui()  # pylint:disable=protected-access
 
     assert calls == ["qt", "display"]
+
+
+def test_qt_offscreen_launch_skips_display(monkeypatch) -> None:
+    """Qt offscreen launch should remain headless and skip DISPLAY preflight."""
+    executor = ScriptExecutor("gui")
+    executor._gui_shell = "qt"  # pylint:disable=protected-access
+    executor._gui_no_exec = False  # pylint:disable=protected-access
+    calls: list[str] = []
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    monkeypatch.setattr(executor, "_test_pyside6", lambda: calls.append("qt"))
+    monkeypatch.setattr(executor, "_check_display", lambda: calls.append("display"))
+
+    executor._test_for_gui()  # pylint:disable=protected-access
+
+    assert calls == ["qt"]
 
 
 def test_tk_launch_keeps_tk_and_display_preflight(monkeypatch) -> None:
@@ -147,6 +163,7 @@ def test_no_display_raises_for_normal_qt_launch(monkeypatch) -> None:
     executor._gui_shell = "qt"  # pylint:disable=protected-access
     executor._gui_no_exec = False  # pylint:disable=protected-access
     monkeypatch.setattr(executor, "_test_pyside6", lambda: None)
+    monkeypatch.setenv("QT_QPA_PLATFORM", "xcb")
     monkeypatch.delenv("DISPLAY", raising=False)
     monkeypatch.setattr("os.name", "posix")
     monkeypatch.setattr("platform.system", lambda: "Linux")

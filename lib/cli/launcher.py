@@ -147,7 +147,7 @@ class ScriptExecutor:
             return
         if self._gui_shell == "qt":
             self._test_pyside6()
-            if self._gui_no_exec:
+            if self._gui_no_exec or self._qt_platform_is_headless():
                 return
         else:
             self._test_tkinter()
@@ -196,6 +196,12 @@ class ScriptExecutor:
                 "Install PySide6 or run with '--shell tk'."
             )
             raise FaceswapError("PySide6 not found") from err
+
+    @classmethod
+    def _qt_platform_is_headless(cls) -> bool:
+        """Return whether Qt has been explicitly configured for headless rendering."""
+        platform_name = os.environ.get("QT_QPA_PLATFORM", "").split(":", maxsplit=1)[0]
+        return platform_name.lower() in {"minimal", "offscreen"}
 
     @classmethod
     def _check_display(cls) -> None:

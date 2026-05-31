@@ -2,9 +2,7 @@
 """Pytest unit tests for :mod:`lib.utils`"""
 
 import os
-import platform
 import sys
-import time
 import types
 import typing as T
 import zipfile
@@ -657,20 +655,20 @@ def test_get_model__write_model(
 
 
 # DebugTimes class
-def test_debug_times():
+def test_debug_times(monkeypatch: pytest.MonkeyPatch) -> None:
     """Test :class:`~lib.utils.DebugTimes` executes its logic correctly"""
+    time_values = iter((0.0, 0.1, 0.2, 0.4, 0.5, 0.6))
+    monkeypatch.setattr(utils, "time", lambda: next(time_values))
+
     debug_times = DebugTimes()
 
     debug_times.step_start("Test1")
-    time.sleep(0.1)
     debug_times.step_end("Test1")
 
     debug_times.step_start("Test2")
-    time.sleep(0.2)
     debug_times.step_end("Test2")
 
     debug_times.step_start("Test1")
-    time.sleep(0.1)
     debug_times.step_end("Test1")
 
     debug_times.summary()
@@ -685,15 +683,13 @@ def test_debug_times():
     assert len(debug_times._times["Test2"]) == 1
 
     # Ensure that the summary method includes the correct min, mean, and max times for each step
-    # Github workflow for macos-latest can swing out a fair way
-    threshold = 2e-1 if platform.system() == "Darwin" else 1e-1
-    assert min(debug_times._times["Test1"]) == pytest.approx(0.1, abs=threshold)
-    assert min(debug_times._times["Test2"]) == pytest.approx(0.2, abs=threshold)
-    assert max(debug_times._times["Test1"]) == pytest.approx(0.1, abs=threshold)
-    assert max(debug_times._times["Test2"]) == pytest.approx(0.2, abs=threshold)
+    assert min(debug_times._times["Test1"]) == pytest.approx(0.1)
+    assert min(debug_times._times["Test2"]) == pytest.approx(0.2)
+    assert max(debug_times._times["Test1"]) == pytest.approx(0.1)
+    assert max(debug_times._times["Test2"]) == pytest.approx(0.2)
     assert (sum(debug_times._times["Test1"]) / len(debug_times._times["Test1"])) == pytest.approx(
-        0.1, abs=threshold
+        0.1
     )
     assert sum(debug_times._times["Test2"]) / len(debug_times._times["Test2"]) == pytest.approx(
-        0.2, abs=threshold
+        0.2
     )

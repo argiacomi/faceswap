@@ -30,8 +30,8 @@ def _make_samples(bucket_sizes: dict[str, int]) -> list[dict[str, str]]:
     samples: list[dict[str, str]] = []
     for bucket, count in bucket_sizes.items():
         dataset, condition = bucket.split(":", 1)
-        for index in range(count):
-            samples.append(
+        samples.extend(
+            (
                 {
                     "sample_id": f"{bucket}-{index:03d}",
                     "image": f"{bucket}-{index:03d}.png",
@@ -40,6 +40,8 @@ def _make_samples(bucket_sizes: dict[str, int]) -> list[dict[str, str]]:
                     "condition": condition,
                 }
             )
+            for index in range(count)
+        )
     return samples
 
 

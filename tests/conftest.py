@@ -12,9 +12,9 @@ import tempfile
 
 os.environ["OBJC_DISABLE_CLASS_WARNINGS"] = "YES"
 os.environ["OBJC_DEBUG_DUPLICATE_CLASSES"] = "NO"
-# Keep Qt widget tests headless by default.  Use setdefault so developers can
-# still override the platform plugin explicitly when debugging locally.
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+# Keep Qt widget tests headless under pytest, even if a developer shell has a
+# display-backed Qt platform configured.
+os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
 # Isolate tests from any landmark-ensemble production bundle that happens to be
 # installed at the project's default ``.fs_cache/landmark_ensemble/current/``
@@ -49,6 +49,7 @@ def pytest_configure(config: pytest.Config) -> None:
 # of files and gives one obvious place to retune the fast/slow split.
 _GUI_PATH_FRAGMENTS = (
     f"tests{os.sep}lib{os.sep}gui{os.sep}",
+    f"tests{os.sep}scripts{os.sep}test_gui_qt_launch.py",
     f"tests{os.sep}tools{os.sep}manual{os.sep}qt{os.sep}",
     f"tests{os.sep}tools{os.sep}preview{os.sep}",
 )
