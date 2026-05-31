@@ -72,6 +72,39 @@ class Augmentation(GlobalSection):
         min_max=(2, 16),
     )
 
+    preview_diagnostics = ConfigItem(
+        datatype=bool,
+        default=False,
+        group=_("evaluation"),
+        info=_(
+            "Enable lightweight numerical diagnostics for preview refreshes. When enabled, "
+            "preview reconstruction and detail metrics are calculated after inference without "
+            "changing training behavior."
+        ),
+        fixed=False,
+    )
+
+    preview_diagnostics_ema_alpha = ConfigItem(
+        datatype=float,
+        default=0.2,
+        group=_("evaluation"),
+        info=_("Exponential moving average alpha for preview diagnostics metrics."),
+        rounding=2,
+        min_max=(0.01, 1.0),
+        fixed=False,
+    )
+
+    preview_diagnostics_jsonl = ConfigItem(
+        datatype=bool,
+        default=False,
+        group=_("evaluation"),
+        info=_(
+            "Write preview diagnostics metrics as JSON lines in the model's TensorBoard log "
+            "session folder."
+        ),
+        fixed=False,
+    )
+
     mask_opacity = ConfigItem(
         datatype=int,
         default=30,

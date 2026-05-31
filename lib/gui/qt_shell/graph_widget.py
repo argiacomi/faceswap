@@ -221,9 +221,13 @@ class TrainingGraphWidget(QWidget):
             self._last_decimated_count = 0
             return
         minimum, maximum = self._value_range()
+        x_min, x_max = self._iteration_range()
         if minimum == maximum:
             minimum -= 1.0
             maximum += 1.0
+        if x_min == x_max:
+            x_min -= 1
+            x_max += 1
         painter.drawText(4, 18, f"{maximum:.4g}")
         painter.drawText(4, rect.bottom(), f"{minimum:.4g}")
         painter.save()
@@ -233,16 +237,22 @@ class TrainingGraphWidget(QWidget):
             pen = QPen(self.palette().highlight().color())
             pen.setWidth(2 + (index % 2))
             painter.setPen(pen)
-            painter.drawPath(self._path_for_series(series, minimum, maximum, rect))
+            painter.drawPath(self._path_for_series(series, minimum, maximum, x_min, x_max, rect))
         painter.restore()
         painter.setPen(self.palette().text().color())
         painter.drawText(rect.left(), self.height() - 8, self._legend())
 
     def _path_for_series(
-        self, series: TrainingGraphSeries, minimum: float, maximum: float, rect
+        self,
+        series: TrainingGraphSeries,
+        minimum: float,
+        maximum: float,
+        x_min: int,
+        x_max: int,
+        rect,
     ) -> QPainterPath:
         """Return a batched painter path for a series in widget coordinates."""
-        points = self._points_for_series(series, minimum, maximum, rect)
+        points = self._points_for_series(series, minimum, maximum, x_min, x_max, rect)
         if not points:
             return QPainterPath()
         polygon = QPolygonF(points)
@@ -256,29 +266,31 @@ class TrainingGraphWidget(QWidget):
         series: TrainingGraphSeries,
         minimum: float,
         maximum: float,
+        x_min: int,
+        x_max: int,
         rect,
     ) -> list[QPointF]:
         """Return painted points for a series in widget coordinates."""
-        values = self._decimated_values(
-            self._visible_values(series.values),
+        points = self._decimated_points(
+            self._visible_points(series),
             max(2, int(rect.width()) * self.MAX_POINTS_PER_PIXEL),
         )
-        self._last_decimated_count = max(self._last_decimated_count, len(values))
-        if not values:
+        self._last_decimated_count = max(self._last_decimated_count, len(points))
+        if not points:
             return []
-        x_span = max(1, len(values) - 1)
+        x_span = max(1, x_max - x_min)
         y_span = maximum - minimum
-        points = []
-        for index, value in enumerate(values):
-            x_pos = rect.left() + (index / x_span) * rect.width()
+        rendered = []
+        for iteration, value in points:
+            x_pos = rect.left() + ((iteration - x_min) / x_span) * rect.width()
             y_pos = rect.bottom() - ((value - minimum) / y_span) * rect.height()
-            points.append(QPointF(x_pos, y_pos))
-        return points
+            rendered.append(QPointF(x_pos, y_pos))
+        return rendered
 
     def _value_range(self) -> tuple[float, float]:
         """Return min/max values across rendered series after x/y viewport transforms."""
         values = [
-            value for series in self._series for value in self._visible_values(series.values)
+            value for series in self._series for _iteration, value in self._visible_points(series)
         ]
         minimum = min(values)
         maximum = max(values)
@@ -289,6 +301,15 @@ class TrainingGraphWidget(QWidget):
         max_start = span - window
         start = minimum + (max_start * self._y_pan)
         return start, start + window
+
+    def _iteration_range(self) -> tuple[int, int]:
+        """Return min/max iterations across rendered series after viewport transforms."""
+        iterations = [
+            iteration
+            for series in self._series
+            for iteration, _value in self._visible_points(series)
+        ]
+        return min(iterations), max(iterations)
 
     def _legend(self) -> str:
         """Return a compact legend string."""
@@ -303,6 +324,20 @@ class TrainingGraphWidget(QWidget):
         start = int(round(max_start * self._pan))
         return values[start : start + window]
 
+    def _visible_points(self, series: TrainingGraphSeries) -> tuple[tuple[int, float], ...]:
+        """Return ``(iteration, value)`` points in the current x zoom/pan window."""
+        if len(series.iterations) == series.count:
+            iterations = series.iterations
+        else:
+            iterations = tuple(range(1, series.count + 1))
+        points = tuple(zip(iterations, series.values, strict=False))
+        if self._zoom <= 1.0 or len(points) <= 2:
+            return points
+        window = max(2, int(round(len(points) / self._zoom)))
+        max_start = max(0, len(points) - window)
+        start = int(round(max_start * self._pan))
+        return points[start : start + window]
+
     @staticmethod
     def _decimated_values(values: tuple[float, ...], max_points: int) -> tuple[float, ...]:
         """Return evenly sampled values capped for long-history paint performance."""
@@ -310,6 +345,16 @@ class TrainingGraphWidget(QWidget):
             return values
         step = len(values) / max_points
         return tuple(values[int(index * step)] for index in range(max_points))
+
+    @staticmethod
+    def _decimated_points(
+        points: tuple[tuple[int, float], ...], max_points: int
+    ) -> tuple[tuple[int, float], ...]:
+        """Return evenly sampled points capped for long-history paint performance."""
+        if len(points) <= max_points:
+            return points
+        step = len(points) / max_points
+        return tuple(points[int(index * step)] for index in range(max_points))
 
     def _set_zoom(self, zoom: float) -> None:
         """Clamp and apply horizontal zoom."""

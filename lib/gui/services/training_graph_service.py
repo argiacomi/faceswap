@@ -8,6 +8,7 @@ import typing as T
 from dataclasses import dataclass
 from pathlib import Path
 
+from lib.gui.services.preview_diagnostics_service import PreviewDiagnosticsService
 from lib.utils import get_module_objects
 
 
@@ -57,6 +58,7 @@ class TrainingGraphSeries:
 
     name: str
     values: tuple[float, ...]
+    iterations: tuple[int, ...] = ()
 
     @property
     def count(self) -> int:
@@ -107,8 +109,13 @@ class TrainingGraphService:
 
     STATE_SUFFIX = "_state.json"
 
-    def __init__(self, session: TrainingGraphSessionProtocol | None = None) -> None:
+    def __init__(
+        self,
+        session: TrainingGraphSessionProtocol | None = None,
+        diagnostics: PreviewDiagnosticsService | None = None,
+    ) -> None:
         self._session = session
+        self._diagnostics = diagnostics or PreviewDiagnosticsService()
         self._source: TrainingGraphSource | None = None
         self._session_id: int | None = None
         self._loss_keys: tuple[str, ...] = ()
@@ -155,10 +162,12 @@ class TrainingGraphService:
         """Configure a graph source without requiring it to exist yet."""
         if model_folder is None or model_name is None:
             self._source = None
+            self._diagnostics.clear()
             self._loss_keys = ()
             self._snapshot = TrainingGraphSnapshot(None, self._session_id, ())
             return None
         self._source = TrainingGraphSource(Path(model_folder), model_name)
+        self._diagnostics.configure(model_folder=model_folder, model_name=model_name)
         self._loss_keys = ()
         self._snapshot = TrainingGraphSnapshot(self._source, self._session_id, ())
         return self._source
@@ -172,6 +181,7 @@ class TrainingGraphService:
         """Load a graph source from a state file or model folder and refresh graph data."""
         source = self.resolve_source(state_file_or_folder)
         self._source = source
+        self._diagnostics.configure(model_folder=source.model_dir, model_name=source.model_name)
         session = self._session_or_default(import_default=True)
         assert session is not None
         session.initialize_session(str(source.model_dir), source.model_name, is_training)
@@ -212,8 +222,26 @@ class TrainingGraphService:
             converted = self._to_float_tuple(values)
             if converted:
                 graph_series.append(TrainingGraphSeries(name, converted))
+        graph_series.extend(self._preview_diagnostic_series())
         self._snapshot = TrainingGraphSnapshot(self._source, self._session_id, tuple(graph_series))
         return self._snapshot
+
+    def _preview_diagnostic_series(self) -> list[TrainingGraphSeries]:
+        """Return preview diagnostic graph series for the current source/session."""
+        if self._source is None:
+            return []
+        self._diagnostics.configure(
+            model_folder=self._source.model_dir,
+            model_name=self._source.model_name,
+        )
+        return [
+            TrainingGraphSeries(
+                f"preview/{series.name}",
+                series.values,
+                iterations=series.iterations,
+            )
+            for series in self._diagnostics.get_series(self._session_id)
+        ]
 
     def save_csv(
         self,
@@ -225,21 +253,25 @@ class TrainingGraphService:
         series = self._snapshot.series_for_keys(selected_keys)
         if not series:
             return 0
-        max_count = max(item.count for item in series)
+        iterations = sorted(
+            {iteration for item in series for iteration in self._series_iterations(item)}
+        )
         fieldnames = ("iteration", *(item.name for item in series))
         with Path(filename).open("w", encoding="utf-8", newline="") as outfile:
             writer = csv.DictWriter(outfile, fieldnames=fieldnames)
             writer.writeheader()
-            for index in range(max_count):
-                row: dict[str, int | float | str] = {"iteration": index + 1}
+            for iteration in iterations:
+                row: dict[str, int | float | str] = {"iteration": iteration}
                 for item in series:
-                    row[item.name] = item.values[index] if index < item.count else ""
+                    values = dict(zip(self._series_iterations(item), item.values, strict=False))
+                    row[item.name] = values.get(iteration, "")
                 writer.writerow(row)
-        return max_count
+        return len(iterations)
 
     def clear(self) -> None:
         """Clear graph source and cached graph data."""
         self._source = None
+        self._diagnostics.clear()
         self._session_id = None
         self._loss_keys = ()
         self._snapshot = TrainingGraphSnapshot(None, None, ())
@@ -294,6 +326,13 @@ class TrainingGraphService:
             if number == number:
                 converted.append(number)
         return tuple(converted)
+
+    @staticmethod
+    def _series_iterations(series: TrainingGraphSeries) -> tuple[int, ...]:
+        """Return explicit series iterations or a dense 1-based fallback."""
+        if len(series.iterations) == series.count:
+            return series.iterations
+        return tuple(range(1, series.count + 1))
 
 
 __all__ = get_module_objects(__name__)

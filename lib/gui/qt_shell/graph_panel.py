@@ -172,7 +172,7 @@ class GraphPanel(QWidget):
         controls.addWidget(QLabel("Session:"))
         self._session_combo.setObjectName("qt-shell-graph-session")
         controls.addWidget(self._session_combo)
-        controls.addWidget(QLabel("Loss:"))
+        controls.addWidget(QLabel("Metric:"))
         self._key_combo.setObjectName("qt-shell-graph-key")
         controls.addWidget(self._key_combo)
         controls.addStretch(1)
@@ -340,7 +340,7 @@ class GraphPanel(QWidget):
         self._key_combo.blockSignals(True)
         self._key_combo.clear()
         if keys:
-            self._key_combo.addItem("All losses", None)
+            self._key_combo.addItem("All metrics", None)
             for key in keys:
                 self._key_combo.addItem(key, key)
         for index in range(self._key_combo.count()):
@@ -350,7 +350,7 @@ class GraphPanel(QWidget):
         self._key_combo.blockSignals(False)
 
     def _selected_loss_keys(self, snapshot: TrainingGraphSnapshot) -> tuple[str, ...]:
-        """Return selected loss keys, or all available keys."""
+        """Return selected metric keys, or all available keys."""
         selected = self._key_combo.currentData()
         if isinstance(selected, str):
             return (selected,)

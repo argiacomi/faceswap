@@ -119,6 +119,8 @@ def test_graph_widget_decimates_long_history_for_fast_paint(qtbot) -> None:
         widget.series[0],
         0.0,
         99.0,
+        1,
+        100_000,
         rect,
     )
 
@@ -139,6 +141,32 @@ def test_graph_widget_visible_values_respect_x_zoom_and_pan(qtbot) -> None:
 
     assert 2 <= len(visible) < 100
     assert visible[-1] == 99.0
+
+
+def test_graph_widget_explicit_iterations_drive_x_coordinates(qtbot) -> None:
+    """Sparse preview diagnostics should plot at their training iterations."""
+    widget = TrainingGraphWidget()
+    qtbot.addWidget(widget)
+    widget.resize(320, 240)
+    snapshot = TrainingGraphSnapshot(
+        source=None,
+        session_id=1,
+        series=(TrainingGraphSeries("preview/reconstruction", (0.2, 0.1), (10, 20)),),
+    )
+    widget.set_snapshot(snapshot)
+    rect = widget.rect().adjusted(44, 16, -16, -28)
+
+    points = widget._points_for_series(  # pylint:disable=protected-access
+        widget.series[0],
+        0.1,
+        0.2,
+        1,
+        20,
+        rect,
+    )
+
+    assert round(points[0].x()) > rect.left()
+    assert abs(round(points[-1].x()) - rect.right()) <= 1
 
 
 def test_graph_widget_saves_image_when_data_loaded(qtbot, tmp_path: Path) -> None:

@@ -8,6 +8,7 @@ from pathlib import Path
 
 from PySide6.QtGui import QImage
 from PySide6.QtWidgets import QLabel, QListWidget, QPushButton, QTabWidget
+from torch.utils.tensorboard import SummaryWriter
 
 from lib.gui.services.command_context import CommandExecutionContext
 from lib.gui.services.preview_output_service import PreviewOutputService
@@ -27,6 +28,16 @@ def _image(path: Path) -> Path:
     image.fill(0x123456)
     assert image.save(str(path))
     return path
+
+
+def _write_diagnostics(tmp_path: Path, model_name: str = "model") -> None:
+    """Write preview diagnostics TensorBoard scalar events."""
+    writer = SummaryWriter(tmp_path / f"{model_name}_logs" / "session_1" / "train")
+    writer.add_scalar("batch_preview_diagnostics/reconstruction_mae_A", 0.1, 10)
+    writer.add_scalar("batch_preview_diagnostics/reconstruction_mae_A_count", 14.0, 10)
+    writer.add_scalar("batch_preview_diagnostics/reconstruction_mae_B", 0.2, 10)
+    writer.flush()
+    writer.close()
 
 
 def _panel():
@@ -73,6 +84,7 @@ def test_preview_panel_initial_state(qtbot) -> None:
     assert _button(panel, "reset-view").isEnabled() is False
     assert _button(panel, "train-update").isHidden() is True
     assert _button(panel, "train-mask").isHidden() is True
+    assert _label(panel, "diagnostics").isHidden() is True
 
 
 def test_preview_panel_configures_pending_output_path(qtbot, tmp_path: Path) -> None:
@@ -190,6 +202,7 @@ def test_preview_panel_apply_context_uses_training_preview_cache(qtbot) -> None:
     assert _label(panel, "source").text().startswith("Training preview source:")
     assert _button(panel, "train-update").isHidden() is False
     assert _button(panel, "train-mask").isHidden() is False
+    assert _label(panel, "diagnostics").isHidden() is False
 
 
 def test_preview_panel_training_preview_loads_only_gui_training_image(
@@ -210,6 +223,24 @@ def test_preview_panel_training_preview_loads_only_gui_training_image(
     assert _list(panel).count() == 1
     assert _list(panel).item(0).text() == PreviewOutputService.TRAINING_PREVIEW
     assert _label(panel, "status").text() == "Loaded 1 training preview image"
+
+
+def test_preview_panel_training_context_shows_latest_diagnostics(
+    qtbot,
+    tmp_path: Path,
+) -> None:
+    """Train preview should show compact preview diagnostics when metrics are logged."""
+    _write_diagnostics(tmp_path)
+    panel = _panel()
+    qtbot.addWidget(panel)
+
+    panel.apply_context(CommandExecutionContext(model_name="model", model_folder=str(tmp_path)))
+
+    text = _label(panel, "diagnostics").text()
+    assert "Preview diagnostics (iter 10)" in text
+    assert "reconstruction mae A: 0.1000" in text
+    assert "reconstruction mae B: 0.2000" in text
+    assert "n=14" in text
 
 
 def test_preview_panel_training_buttons_create_tk_trigger_files(

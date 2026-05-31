@@ -17,6 +17,7 @@ from lib.logger import format_array, parse_class_init
 from lib.torch_utils import get_device, is_accelerator_oom_error
 from lib.training.data import PreviewLoader, TrainLoader, get_label
 from lib.training.preview import Samples
+from lib.training.preview_diagnostics import PreviewDiagnostics
 from lib.training.tensorboard import TorchTensorBoard
 from lib.utils import FaceswapError, get_module_objects
 from plugins.train import train_config as mod_cfg
@@ -101,6 +102,7 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
 
         self._model.state.add_session_batchsize(plugin.batch_size)
         self._tensorboard = self._set_tensorboard()
+        self._preview_diagnostics = self._set_preview_diagnostics()
         self._samples = Samples(
             self._model.coverage_ratio,
             mod_cfg.Loss.learn_mask() or mod_cfg.Loss.penalized_mask_loss(),
@@ -307,15 +309,40 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
         logger.debug("[Trainer] Enabling TensorBoard Logging")
 
         logger.debug("[Trainer] Setting up TensorBoard Logging")
-        log_dir = os.path.join(
+        tensorboard = TorchTensorBoard(
+            log_dir=self._get_session_log_dir(), write_graph=True, update_freq="batch"
+        )
+        tensorboard.set_model(self._model.model)
+        logger.verbose("Enabled TensorBoard Logging")  # type: ignore
+        return tensorboard
+
+    def _get_session_log_dir(self) -> str:
+        """Return the current model session log directory."""
+        return os.path.join(
             str(self._model.io.model_dir),
             f"{self._model.name}_logs",
             f"session_{self._model.state.session_id}",
         )
-        tensorboard = TorchTensorBoard(log_dir=log_dir, write_graph=True, update_freq="batch")
-        tensorboard.set_model(self._model.model)
-        logger.verbose("Enabled TensorBoard Logging")  # type: ignore
-        return tensorboard
+
+    def _set_preview_diagnostics(self) -> PreviewDiagnostics | None:
+        """Set up optional preview diagnostics metrics."""
+        if not trn_cfg.Augmentation.preview_diagnostics():
+            logger.debug("[Trainer] Preview diagnostics disabled")
+            return None
+        if self._preview_loader is None:
+            logger.debug("[Trainer] Preview diagnostics requested but preview is disabled")
+            return None
+
+        jsonl_path = None
+        if trn_cfg.Augmentation.preview_diagnostics_jsonl():
+            jsonl_path = os.path.join(self._get_session_log_dir(), "preview_diagnostics.jsonl")
+
+        retval = PreviewDiagnostics(
+            ema_alpha=trn_cfg.Augmentation.preview_diagnostics_ema_alpha(),
+            jsonl_path=jsonl_path,
+        )
+        logger.info("Enabled preview diagnostics")
+        return retval
 
     def toggle_mask(self) -> None:
         """Toggle the mask overlay on or off based on user input."""
@@ -553,6 +580,12 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
             format_array(predictions),
             format_array(targets),
         )
+        if self._preview_diagnostics is not None and not do_timelapse:
+            logs = self._preview_diagnostics.update(predictions, targets, self._model.iterations)
+            if self._tensorboard is not None:
+                self._tensorboard.on_train_batch_end(
+                    self._model.iterations, logs={"preview_diagnostics": logs}
+                )
 
         samples = self._samples.get_preview(predictions, targets)
 

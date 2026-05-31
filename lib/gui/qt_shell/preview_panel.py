@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from lib.gui.services.command_context import CommandExecutionContext
+from lib.gui.services.preview_diagnostics_service import PreviewDiagnosticsService
 from lib.gui.services.preview_output_service import (
     PreviewOutputError,
     PreviewOutputImage,
@@ -185,14 +186,17 @@ class PreviewPanel(QWidget):
     def __init__(
         self,
         service: PreviewOutputService | None = None,
+        diagnostics_service: PreviewDiagnosticsService | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._service = service or PreviewOutputService()
+        self._diagnostics_service = diagnostics_service or PreviewDiagnosticsService()
         self._refresh_timer = QTimer(self)
         self._refresh_timer.setInterval(self.DEFAULT_REFRESH_MS)
         self._source_label = QLabel("No preview source configured")
         self._status_label = QLabel("No preview images loaded")
+        self._diagnostics_label = QLabel("Preview diagnostics: no model source")
         self._image_label = PreviewImageView()
         self._image_list = QListWidget()
         self._open_button = QPushButton("Open")
@@ -259,6 +263,10 @@ class PreviewPanel(QWidget):
             self.configure_output(context.preview_output_path, batch_mode=context.batch_mode)
             return True
         if context.model_folder is not None or context.model_name is not None:
+            self._diagnostics_service.configure(
+                model_folder=context.model_folder,
+                model_name=context.model_name,
+            )
             self.configure_training_preview()
             return True
         return False
@@ -294,6 +302,7 @@ class PreviewPanel(QWidget):
         self._render_images(images, selected_path=selected)
         self._update_source_label()
         self._set_status(len(images))
+        self._refresh_diagnostics()
         self._sync_actions()
         return True
 
@@ -311,9 +320,11 @@ class PreviewPanel(QWidget):
         self._refresh_timer.stop()
         if clear_service:
             self._service.clear()
+            self._diagnostics_service.clear()
         self._image_list.clear()
         self._source_label.setText("No preview source configured")
         self._status_label.setText(message)
+        self._diagnostics_label.setText("Preview diagnostics: no model source")
         self._image_label.clear_preview()
         self._sync_actions()
 
@@ -358,6 +369,11 @@ class PreviewPanel(QWidget):
         self._source_label.setAlignment(Qt.AlignCenter)  # type: ignore[attr-defined]
         self._source_label.setWordWrap(True)
         layout.addWidget(self._source_label)
+
+        self._diagnostics_label.setObjectName("qt-shell-preview-diagnostics")
+        self._diagnostics_label.setAlignment(Qt.AlignCenter)  # type: ignore[attr-defined]
+        self._diagnostics_label.setWordWrap(True)
+        layout.addWidget(self._diagnostics_label)
 
         content = QHBoxLayout()
         self._image_list.setObjectName("qt-shell-preview-list")
@@ -490,6 +506,15 @@ class PreviewPanel(QWidget):
         else:
             self._status_label.setText(f"Loaded {image_count} {prefix.lower()} images{live}")
 
+    def _refresh_diagnostics(self) -> None:
+        """Refresh the compact preview diagnostics readout."""
+        if self._service.mode != "train":
+            self._diagnostics_label.setVisible(False)
+            return
+        self._diagnostics_label.setVisible(True)
+        snapshot = self._diagnostics_service.refresh()
+        self._diagnostics_label.setText(PreviewDiagnosticsService.compact_text(snapshot))
+
     def _update_source_label(self) -> None:
         """Update source label text."""
         source = self._service.source
@@ -510,6 +535,7 @@ class PreviewPanel(QWidget):
         has_source = self._service.source is not None
         has_image = self._image_label.has_preview
         is_train = self._service.mode == "train"
+        self._diagnostics_label.setVisible(is_train)
         self._refresh_button.setEnabled(has_source)
         self._clear_button.setEnabled(has_source or self._image_list.count() > 0)
         self._zoom_in_button.setEnabled(has_image)

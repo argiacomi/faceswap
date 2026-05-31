@@ -6,6 +6,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from torch.utils.tensorboard import SummaryWriter
 
 from lib.gui.services.training_graph_service import (
     TrainingGraphError,
@@ -52,6 +53,15 @@ def _state_file(tmp_path: Path, name: str = "model") -> Path:
     return state_file
 
 
+def _write_diagnostics(tmp_path: Path, model_name: str = "model") -> None:
+    """Write preview diagnostics TensorBoard scalar events."""
+    writer = SummaryWriter(tmp_path / f"{model_name}_logs" / "session_1" / "train")
+    writer.add_scalar("batch_preview_diagnostics/reconstruction_mae_A", 0.1, 10)
+    writer.add_scalar("batch_preview_diagnostics/reconstruction_mae_A", 0.08, 20)
+    writer.flush()
+    writer.close()
+
+
 def test_training_graph_service_configures_pending_source(tmp_path: Path) -> None:
     """Graph source can be configured before a state file exists."""
     service = TrainingGraphService(_SessionDouble())
@@ -80,6 +90,21 @@ def test_training_graph_service_loads_state_file_and_refreshes(tmp_path: Path) -
     assert [series.name for series in snapshot.series] == ["loss_a", "loss_b"]
     assert snapshot.point_count == 3
     assert snapshot.series[0].values == (3.0, 2.0, 1.0)
+
+
+def test_training_graph_service_includes_preview_diagnostics_series(tmp_path: Path) -> None:
+    """Graph service should include preview diagnostics as sparse iteration-aware series."""
+    session = _SessionDouble()
+    service = TrainingGraphService(session)
+    state_file = _state_file(tmp_path, "model")
+    _write_diagnostics(tmp_path)
+
+    snapshot = service.load_source(state_file)
+
+    diagnostics = next(series for series in snapshot.series if series.name.startswith("preview/"))
+    assert diagnostics.name == "preview/reconstruction_mae_A"
+    assert diagnostics.values == pytest.approx((0.1, 0.08))
+    assert diagnostics.iterations == (10, 20)
 
 
 def test_training_graph_service_loads_from_folder(tmp_path: Path) -> None:

@@ -28,6 +28,7 @@ from lib.gui.services.analysis_session_service import (
 )
 from lib.gui.services.analysis_summary_service import AnalysisSummaryService
 from lib.gui.services.command_context import CommandExecutionContext
+from lib.gui.services.preview_diagnostics_service import PreviewDiagnosticsService
 
 
 class AnalysisPanel(QWidget):
@@ -39,15 +40,18 @@ class AnalysisPanel(QWidget):
     def __init__(
         self,
         service: AnalysisSessionService | None = None,
+        diagnostics_service: PreviewDiagnosticsService | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._service = service or AnalysisSessionService()
+        self._diagnostics_service = diagnostics_service or PreviewDiagnosticsService()
         self._summary_service = AnalysisSummaryService()
         self._title = QLabel("Session Stats")
         self._source_label = QLabel("No session source loaded")
         self._status_label = QLabel("No session data loaded")
         self._detail_label = QLabel("Rows: 0 | Graphs: 0 | Iterations: 0 | Avg EGs/sec: 0.00")
+        self._diagnostics_label = QLabel("Preview diagnostics: no session source")
         self._selection_label = QLabel("No session selected")
         self._filter_combo = QComboBox()
         self._group_combo = QComboBox()
@@ -136,6 +140,7 @@ class AnalysisPanel(QWidget):
             return False
         self._rows = tuple(rows)
         self._apply_row_controls()
+        self._refresh_diagnostics()
         self._sync_actions()
         return True
 
@@ -149,17 +154,19 @@ class AnalysisPanel(QWidget):
         self._status_label.setText(
             "No session data to save" if written == 0 else f"Saved {written} rows"
         )
-        return written
+        return int(written)
 
     def clear_session(self) -> None:
         """Clear the current Analysis session and reset the table."""
         self._service.clear_session()
+        self._diagnostics_service.clear()
         self._rows = ()
         self._display_rows = ()
         self._table.setRowCount(0)
         self._source_label.setText("No session source loaded")
         self._status_label.setText("No session data loaded")
         self._detail_label.setText("Rows: 0 | Graphs: 0 | Iterations: 0 | Avg EGs/sec: 0.00")
+        self._diagnostics_label.setText("Preview diagnostics: no session source")
         self._selection_label.setText("No session selected")
         self._sync_actions()
         self.session_cleared.emit()
@@ -174,6 +181,7 @@ class AnalysisPanel(QWidget):
         self._rows = tuple(rows)
         self._update_source_label()
         self._apply_row_controls()
+        self._refresh_diagnostics()
         self._sync_actions()
         if self.source_path is not None:
             self.session_loaded.emit(self.source_path)
@@ -214,6 +222,11 @@ class AnalysisPanel(QWidget):
         self._detail_label.setObjectName("qt-shell-analysis-detail")
         self._detail_label.setAlignment(Qt.AlignCenter)  # type: ignore[attr-defined]
         layout.addWidget(self._detail_label)
+
+        self._diagnostics_label.setObjectName("qt-shell-analysis-diagnostics")
+        self._diagnostics_label.setAlignment(Qt.AlignCenter)  # type: ignore[attr-defined]
+        self._diagnostics_label.setWordWrap(True)
+        layout.addWidget(self._diagnostics_label)
 
         self._table.setObjectName("qt-shell-session-stats")
         self._table.setMinimumWidth(0)
@@ -332,6 +345,15 @@ class AnalysisPanel(QWidget):
         metrics = self._summary_service.from_session(self._service, rows=self._display_rows)
         self._status_label.setText(metrics.status_text)
         self._detail_label.setText(metrics.detail_text)
+
+    def _refresh_diagnostics(self) -> None:
+        """Refresh the latest preview diagnostics readout for the loaded session."""
+        source = self._service.source
+        if source is None:
+            self._diagnostics_label.setText("Preview diagnostics: no session source")
+            return
+        snapshot = self._diagnostics_service.load_source(source.state_file)
+        self._diagnostics_label.setText(PreviewDiagnosticsService.compact_text(snapshot))
 
     def _update_source_label(self) -> None:
         """Update source label from service source."""
