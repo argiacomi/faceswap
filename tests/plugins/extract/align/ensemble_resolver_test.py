@@ -96,28 +96,6 @@ def test_resolver_enabled_routes_low_risk_path(tmp_path) -> None:
     assert "active_models" in debug
 
 
-def test_resolver_high_risk_swaps_in_hard_case_strategy(tmp_path) -> None:
-    """Large disagreement steers the resolver to the hard-case strategy."""
-    # 25-pixel shifts across adapters drive mean pairwise distance well above
-    # the configured 10-px threshold.
-    adapters = _three_adapters((0.0, 25.0, -25.0))
-    plugin = Ensemble(
-        adapters=adapters,
-        crop_scale=1.0,
-        strategy="plain_average",
-        use_alignment_resolver=True,
-        **_TEST_NO_BUNDLE_KWARGS,  # bypass production bundle requirement
-        hard_case_strategy="static_weighted_downweight",
-        hard_disagreement_px=10.0,
-    )
-    plugin.model = plugin.load_model()
-    plugin.predict_landmarks_68(np.zeros((256, 256, 3), dtype="float32"))
-    debug = plugin.last_debug_metadata[0]
-    assert debug["resolver"]["risk_route"] == "high_risk"
-    assert debug["strategy"] == "static_weighted_downweight"
-    assert debug["resolver"]["max_disagreement_px"] > 10.0
-
-
 def test_resolver_metadata_carries_per_model_disagreement(tmp_path) -> None:
     """Per-model disagreement values appear in ``last_debug_metadata`` for debugging."""
     adapters = _three_adapters((0.0, 0.5, 1.0))

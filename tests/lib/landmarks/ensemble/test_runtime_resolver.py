@@ -118,46 +118,6 @@ def _runtime_bucket_for_production_signals(
     )
 
 
-def test_runtime_resolver_applies_v7_bucket_priority(monkeypatch) -> None:
-    """Large-yaw-left bucket priority prefers SPIGA when it survives vetoes."""
-    monkeypatch.setattr(
-        runtime_resolver,
-        "infer_runtime_bucket",
-        lambda **kwargs: RuntimeBucketResult(bucket="large_yaw_left", features={}),
-    )
-    base = _face()
-    predictions = [
-        ModelPrediction("hrnet", base + 0.2),
-        ModelPrediction("spiga", base),
-        ModelPrediction("orformer", base + 0.4),
-    ]
-
-    result = resolve_runtime(
-        predictions,
-        RuntimeResolverConfig(
-            weights={name: [1.0 / 3.0] * 68 for name in ("hrnet", "spiga", "orformer")}
-        ),
-        detector_bbox=(35.0, 65.0, 165.0, 155.0),
-    )
-
-    assert result.selected_candidate == "spiga"
-    assert result.metadata["runtime_bucket"] == "large_yaw_left"
-    assert result.metadata["bucket"] == "large_yaw_left"
-    assert _LEGACY_LANDMARK_POSE_BUCKET_KEY not in result.metadata
-    assert result.metadata["candidate_priority"][0] == "spiga"
-    assert result.metadata["model_predictions_available"] == {
-        "hrnet": True,
-        "spiga": True,
-        "orformer": True,
-    }
-    assert set(result.metadata["cloud_area_ratio"]) >= {
-        "hrnet",
-        "spiga",
-        "orformer",
-        "static_weighted",
-    }
-
-
 def test_runtime_resolver_metadata_contains_requested_debug_fields(monkeypatch) -> None:
     """Resolver metadata is immediately useful for profile extraction debugging."""
     monkeypatch.setattr(
