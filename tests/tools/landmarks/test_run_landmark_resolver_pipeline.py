@@ -801,13 +801,21 @@ def test_stage_contract_declares_required_files(tmp_path: Path) -> None:
     assert str(paths.production_cache_sentinel) in contract.required_files
     assert str(paths.frozen_gt_metadata) in contract.required_files
     assert str(paths.scorer_artifact) in contract.outputs
-    assert str(paths.continuous_scorer_eval_rows) in contract.outputs
+    assert str(paths.scorer_rows_csv) in contract.outputs
+    assert str(paths.scorer_dataset_manifest) in contract.outputs
+    assert str(paths.scorer_suite_metrics) in contract.outputs
+    assert str(paths.scorer_training_sentinel) in contract.outputs
+    assert str(paths.continuous_scorer_eval_rows) not in contract.outputs
     assert str(paths.hard_manifest) in v2_contract.required_files
     assert str(paths.hard_source_cache_sentinel) in v2_contract.required_files
     assert str(paths.production_cache_sentinel) in v2_contract.required_files
     assert str(paths.frozen_gt_metadata) in v2_contract.required_files
     assert str(paths.v2_scorer_artifact) in v2_contract.outputs
-    assert str(paths.v2_scorer_training_sentinel) in v2_contract.outputs
+    assert str(paths.scorer_rows_csv) in v2_contract.outputs
+    assert str(paths.scorer_dataset_manifest) in v2_contract.outputs
+    assert str(paths.scorer_suite_metrics) in v2_contract.outputs
+    assert str(paths.scorer_training_sentinel) in v2_contract.outputs
+    assert str(paths.v2_scorer_training_sentinel) not in v2_contract.outputs
 
 
 def test_v2_scorer_training_resume_requires_matching_sentinel(tmp_path: Path) -> None:

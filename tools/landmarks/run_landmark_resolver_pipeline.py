@@ -1095,9 +1095,7 @@ def _outputs_for(stage: str, paths: PipelinePaths) -> list[Path]:
         "scorer_training": [
             paths.binary_scorer_artifact,
             paths.scorer_artifact,
-            paths.continuous_scorer_eval_rows,
             paths.v2_scorer_artifact,
-            paths.v2_scorer_training_sentinel,
             paths.scorer_rows_csv,
             paths.scorer_dataset_manifest,
             paths.scorer_suite_metrics,
