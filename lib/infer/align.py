@@ -258,20 +258,55 @@ class Align(ExtractHandler):
         return retval
 
     def _detector_bboxes_for_matrices(
-        self, batch: ExtractBatch, matrices: npt.NDArray[np.float32]
+        self,
+        batch: ExtractBatch,
+        matrices: npt.NDArray[np.float32],
+        *,
+        row_indices: np.ndarray | None = None,
+        source_matrix_count: int | None = None,
     ) -> npt.NDArray[np.float32] | None:
-        """Return detector boxes aligned to the current feed matrix count."""
+        """Return detector boxes aligned to the current matrix rows.
+
+        Re-feed rows are stored face-major:
+        ``face0/feed0, face0/feed1, ..., face1/feed0, ...``.
+        When inference is chunked to plugin batch size, a chunk can contain mixed
+        rows such as ``face0/feed2`` and ``face1/feed0``. The detector bboxes
+        must therefore be selected by absolute matrix row, not inferred only
+        from the chunk length.
+        """
         bboxes = batch.bboxes.astype("float32", copy=False)
-        if bboxes.shape[0] == matrices.shape[0]:
-            return bboxes
-        if matrices.shape[0] % bboxes.shape[0] != 0:
+        face_count = bboxes.shape[0]
+        if face_count == 0:
             return None
-        return np.repeat(bboxes, matrices.shape[0] // bboxes.shape[0], axis=0)
+
+        if row_indices is None:
+            rows = np.arange(matrices.shape[0], dtype=np.intp)
+            total_rows = matrices.shape[0]
+        else:
+            rows = np.asarray(row_indices, dtype=np.intp)
+            if rows.shape[0] != matrices.shape[0]:
+                return None
+            total_rows = int(source_matrix_count or matrices.shape[0])
+
+        if total_rows == face_count:
+            face_indices = rows
+        elif total_rows % face_count == 0:
+            feeds_per_face = total_rows // face_count
+            face_indices = rows // feeds_per_face
+        else:
+            return None
+
+        if np.any((face_indices < 0) | (face_indices >= face_count)):
+            return None
+        return bboxes[face_indices]
 
     def _set_plugin_crop_matrices(
         self,
         batch: ExtractBatch,
         matrices: npt.NDArray[np.float32],
+        *,
+        row_indices: np.ndarray | None = None,
+        source_matrix_count: int | None = None,
     ) -> None:
         """Pass current crop-to-frame matrices to plugins that need runner geometry."""
         setter = getattr(self.plugin, "set_crop_matrices", None)
@@ -279,7 +314,12 @@ class Align(ExtractHandler):
             return
         setter(
             matrices,
-            detector_bboxes=self._detector_bboxes_for_matrices(batch, matrices),
+            detector_bboxes=self._detector_bboxes_for_matrices(
+                batch,
+                matrices,
+                row_indices=row_indices,
+                source_matrix_count=source_matrix_count,
+            ),
         )
 
     def _prepare_data(self, batch: ExtractBatch, iteration: int = 1) -> None:
@@ -332,28 +372,67 @@ class Align(ExtractHandler):
         self._prepare_data(batch, iteration=1)
 
     # Processing
-    def _get_predictions(self, is_final: bool, feed: np.ndarray) -> np.ndarray:
-        """Obtain the predictions from the model. Handles collating any re-feeds
+    def _get_predictions(
+        self,
+        is_final: bool,
+        feed: np.ndarray,
+        batch: ExtractBatch | None = None,
+    ) -> np.ndarray:
+        """Obtain predictions from the model, preserving per-chunk crop geometry.
 
-        Parameters
-        ----------
-        is_final
-            ``True`` if this is the final iteration through the plugin
-        feed
-            The input to the model for the batch.
-
-        Returns
-        -------
-        The predictions from the model for the provided feed
+        Re-feeds are flattened face-major, then chunked back down to the plugin
+        batch size for inference. Plugins such as the Ensemble aligner need the
+        exact crop-to-frame matrix rows for each chunk before every ``process()``
+        call, otherwise later re-feed chunks can be decoded with stale matrices.
         """
-        batch_size = feed.shape[0]
+        feed_size = feed.shape[0]
+        batch_size = feed_size
         if is_final:  # Re-feeds performed on final pass only
+            if feed_size % self._re_feed.total_feeds != 0:
+                raise ValueError(
+                    f"Final align feed has {feed_size} rows, which is not divisible "
+                    f"by total re-feeds {self._re_feed.total_feeds}"
+                )
             batch_size //= self._re_feed.total_feeds
+
+        matrices = batch.matrices if batch is not None else None
+        if matrices is not None and matrices.shape[0] != feed_size:
+            raise ValueError(
+                f"Align feed row count {feed_size} does not match crop matrix row "
+                f"count {matrices.shape[0]}"
+            )
+
         results: list[np.ndarray] = []
+        metadata_chunks: list[dict[str, T.Any]] = []
+        collect_metadata = isinstance(getattr(self.plugin, "last_debug_metadata", None), list)
+        if collect_metadata:
+            self.plugin.last_debug_metadata = []  # type: ignore[attr-defined]
+
         chunks = self._re_feed.total_feeds if is_final else 1
         for idx in range(chunks):
             start = idx * batch_size
-            results.append(T.cast(np.ndarray, self._predict(feed[start : start + batch_size])))  # type: ignore[redundant-cast]
+            end = start + batch_size
+            if batch is not None and matrices is not None:
+                self._set_plugin_crop_matrices(
+                    batch,
+                    matrices[start:end],
+                    row_indices=np.arange(start, end, dtype=np.intp),
+                    source_matrix_count=matrices.shape[0],
+                )
+
+            prediction = T.cast(np.ndarray, self._predict(feed[start:end]))  # type: ignore[redundant-cast]
+            results.append(prediction)
+
+            metadata = getattr(self.plugin, "last_debug_metadata", None)
+            if isinstance(metadata, list):
+                collect_metadata = True
+                metadata_chunks.extend(
+                    item if isinstance(item, dict) else {"value": item} for item in metadata
+                )
+                self.plugin.last_debug_metadata = []  # type: ignore[attr-defined]
+
+        if collect_metadata:
+            self.plugin.last_debug_metadata = metadata_chunks  # type: ignore[attr-defined]
 
         # Issue #194 P3: assert uniform plugin output here so a
         # ragged-shape plugin produces an immediate, debuggable error
@@ -363,7 +442,7 @@ class Align(ExtractHandler):
         assert retval.dtype != object, (
             "Plugin returned ragged predictions across re-feeds; expected a uniform shape"
         )
-        return T.cast(np.ndarray, retval.reshape((feed.shape[0], *retval.shape[2:])))
+        return T.cast(np.ndarray, retval.reshape((feed_size, *retval.shape[2:])))
 
     def process(self, batch: ExtractBatch) -> None:
         """Perform inference to get results from the aligner
@@ -382,7 +461,7 @@ class Align(ExtractHandler):
                 self._prepare_data(batch, iteration=iteration)
 
             assert batch.data is not None
-            result = self._get_predictions(is_final, batch.data)
+            result = self._get_predictions(is_final, batch.data, batch)
 
             if is_final and not self._re_align.enabled:  # Nothing left to do. Just the 1 pass
                 break
