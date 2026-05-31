@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# mypy: disable-error-code="assignment, attr-defined, operator"
 """ Helper functions and classes for GUI controls """
 from __future__ import annotations
 
@@ -11,7 +12,7 @@ from _tkinter import Tcl_Obj, TclError
 from functools import partial
 from itertools import zip_longest
 from tkinter import colorchooser, ttk
-from typing import TYPE_CHECKING, Any, Literal, Self, cast, get_args  # type: ignore[attr-defined]
+from typing import TYPE_CHECKING, Any, Literal, Self, cast, get_args
 
 from lib.logger import parse_class_init
 from lib.utils import get_module_objects

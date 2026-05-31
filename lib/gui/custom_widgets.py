@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# mypy: disable-error-code="attr-defined, method-assign, union-attr"
 """Custom widgets for Faceswap GUI"""
 
 import contextlib

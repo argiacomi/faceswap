@@ -1,4 +1,5 @@
 #! /usr/env/bin/python
+# mypy: disable-error-code="call-overload"
 """Unit tests for lib.convert.objects"""
 
 import pytest

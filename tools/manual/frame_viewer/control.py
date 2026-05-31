@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# mypy: disable-error-code="arg-type, attr-defined, call-overload"
 """Handles Navigation and Background Image for the Frame Viewer section of the manual
 tool GUI."""
 

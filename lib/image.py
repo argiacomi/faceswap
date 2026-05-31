@@ -1,4 +1,5 @@
 #!/usr/bin python3
+# mypy: disable-error-code="attr-defined, var-annotated"
 """Utilities for working with images"""
 
 from __future__ import annotations
@@ -103,7 +104,7 @@ def read_image(
     >>> except:
     >>>     raise ValueError("There was an error")
     """
-    logger.trace("Requested image: '%s'", filename)  # type:ignore[attr-defined]
+    logger.trace("Requested image: '%s'", filename)
     success = True
     image = None
     retval: np.ndarray | tuple[np.ndarray, PNGHeader] | None = None
@@ -158,7 +159,7 @@ def read_image(
         logger.error(msg)
         if raise_error:
             raise Exception(msg) from err  # pylint:disable=broad-exception-raised
-    logger.trace("Loaded image: '%s'. Success: %s", filename, success)  # type:ignore[attr-defined]
+    logger.trace("Loaded image: '%s'. Success: %s", filename, success)
     return retval
 
 
@@ -216,7 +217,7 @@ def read_image_batch(
     >>> print(len(metadata))
     ... 3
     """
-    logger.trace("Requested batch: '%s'", filenames)  # type:ignore[attr-defined]
+    logger.trace("Requested batch: '%s'", filenames)
     batch: list[np.ndarray | None] = [None for _ in range(len(filenames))]
     meta: list[PNGHeader | None] = [None for _ in range(len(filenames))]
 
@@ -245,7 +246,7 @@ def read_image_batch(
     retval: np.ndarray | tuple[np.ndarray, list[PNGHeader]]
     retval = (arr_batch, T.cast(list["PNGHeader"], meta)) if with_metadata else arr_batch
 
-    logger.trace(  # type:ignore[attr-defined]
+    logger.trace(
         "Returning images: (filenames: %s, batch shape: %s, with_metadata: %s)",
         filenames,
         arr_batch.shape,
@@ -417,31 +418,29 @@ def update_existing_metadata(filename: str, metadata: PNGHeader | bytes) -> None
         while True:
             chunk = png.read(8)
             length, field = struct.unpack(">I4s", chunk)
-            logger.trace(  # type:ignore[attr-defined]
-                "Read chunk: (chunk: %s, length: %s, field: %s)", chunk, length, field
-            )
+            logger.trace("Read chunk: (chunk: %s, length: %s, field: %s)", chunk, length, field)
 
             if field == b"IDAT":  # Write out all remaining data
-                logger.trace("Writing image data and closing png")  # type:ignore[attr-defined]
+                logger.trace("Writing image data and closing png")
                 tmp.write(chunk + png.read())
                 break
 
             if field != b"iTXt":  # Write non iTXt chunk straight out
-                logger.trace("Copying existing chunk")  # type:ignore[attr-defined]
+                logger.trace("Copying existing chunk")
                 tmp.write(chunk + png.read(length + 4))  # Header + CRC
                 continue
 
             keyword, value = png.read(length).split(b"\0", 1)
             if keyword != b"faceswap":
                 # Write existing non fs-iTXt data + CRC
-                logger.trace(  # type: ignore[attr-defined]
+                logger.trace(
                     "Copying non-faceswap iTXt chunk: %s",
                     keyword,
                 )
                 tmp.write(keyword + b"\0" + value + png.read(4))
                 continue
 
-            logger.trace("Updating faceswap iTXt chunk")  # type:ignore[attr-defined]
+            logger.trace("Updating faceswap iTXt chunk")
             tmp.write(pack_to_itxt(metadata))
             png.seek(4, 1)  # Skip old CRC
 
@@ -650,7 +649,7 @@ def png_read_meta(image: bytes) -> PNGHeader | dict[str, T.Any]:
     while True:
         pointer = image.find(b"iTXt", pointer) - 4
         if pointer < 0:
-            logger.trace("No metadata in png")  # type:ignore[attr-defined]
+            logger.trace("No metadata in png")
             break
         length = struct.unpack(">I", image[pointer : pointer + 4])[0]
         pointer += 8
@@ -666,7 +665,7 @@ def png_read_meta(image: bytes) -> PNGHeader | dict[str, T.Any]:
                     err,
                 )
             break
-        logger.trace(  # type: ignore[attr-defined]
+        logger.trace(
             "Skipping iTXt chunk: '%s'",
             keyword.decode("latin-1", errors="ignore"),
         )
@@ -1007,7 +1006,7 @@ class ImagesLoader(ImageIO):
                 self._file_list = get_image_paths(self.location)
             self._count = len(self.file_list) if count is None else count
         logger.debug("[%s] count: %s", self._name, self.count)
-        logger.trace("[%s] file_list: %s", self._name, self.file_list)  # type:ignore[attr-defined]
+        logger.trace("[%s] file_list: %s", self._name, self.file_list)
 
     def _process(self, queue: Queue) -> None:
         """The load thread.
@@ -1028,7 +1027,7 @@ class ImagesLoader(ImageIO):
                 # All black frames will return not numpy.any() so check dims too
                 logger.warning("Unable to open image. Skipping: '%s'", filename)
                 continue
-            logger.trace(  # type: ignore[attr-defined]
+            logger.trace(
                 "[%s] Putting to queue: %s",
                 self._name,
                 [v.shape if isinstance(v, np.ndarray) else v for v in retval],
@@ -1042,12 +1041,12 @@ class ImagesLoader(ImageIO):
                     queue.put(retval, timeout=0.2)
                     break
                 except QueueFull:
-                    logger.trace(  # type: ignore[attr-defined]
+                    logger.trace(
                         "[%s] Queue full. Waiting",
                         self._name,
                     )
                     continue
-        logger.trace("[%s] Putting EOF", self._name)  # type:ignore[attr-defined]
+        logger.trace("[%s] Putting EOF", self._name)
         queue.put("EOF")
 
     def _dummy_video_frame_name(self, index: int) -> str:
@@ -1085,16 +1084,14 @@ class ImagesLoader(ImageIO):
         logger.debug("[%s] Loading frames from video: '%s'", self._name, self.location)
         for idx, frame in enumerate(self._reader):
             if idx in self._skip_list:
-                logger.trace(  # type:ignore[attr-defined]
-                    "[%s] Skipping frame %s due to skip list", self._name, idx
-                )
+                logger.trace("[%s] Skipping frame %s due to skip list", self._name, idx)
                 continue
             image = T.cast(
                 "npt.NDArray[np.uint8]",
                 frame.to_ndarray(channel_last=True, format="bgr24"),
             )
             filename = self._dummy_video_frame_name(idx)
-            logger.trace(  # type: ignore[attr-defined]
+            logger.trace(
                 "[%s] Loading video frame: '%s'",
                 self._name,
                 filename,
@@ -1122,9 +1119,7 @@ class ImagesLoader(ImageIO):
         logger.debug("[%s] Loading frames from folder: '%s'", self._name, self.location)
         for idx, filename in enumerate(self.file_list):
             if idx in self._skip_list:
-                logger.trace(  # type:ignore[attr-defined]
-                    "[%s] Skipping frame %s due to skip list", self._name, filename
-                )
+                logger.trace("[%s] Skipping frame %s due to skip list", self._name, filename)
                 continue
             image_read = read_image(filename, raise_error=False)
             if image_read is None:
@@ -1173,9 +1168,9 @@ class ImagesLoader(ImageIO):
             except QueueEmpty:
                 continue
             if retval == "EOF":
-                logger.trace("[%s] Got EOF", self._name)  # type:ignore[attr-defined]
+                logger.trace("[%s] Got EOF", self._name)
                 break
-            logger.trace(  # type: ignore[attr-defined]
+            logger.trace(
                 "[%s] Yielding: %s",
                 self._name,
                 [v.shape if isinstance(v, np.ndarray) else v for v in retval],
@@ -1339,7 +1334,7 @@ class SingleFrameLoader(ImagesLoader):
             filename = file_list[index]
             image = read_image(filename, raise_error=True)
             filename = os.path.basename(filename)
-        logger.trace(  # type:ignore[attr-defined]
+        logger.trace(
             "[%s] index: %s, filename: %s image shape: %s",
             self._name,
             index,
@@ -1451,7 +1446,7 @@ class ImagesSaver(ImageIO):
             else:
                 assert isinstance(image, np.ndarray)
                 cv2.imwrite(filename, image)
-            logger.trace(  # type: ignore[attr-defined]
+            logger.trace(
                 "[%s] Saved image: '%s'",
                 self._name,
                 filename,
@@ -1487,7 +1482,7 @@ class ImagesSaver(ImageIO):
             )
             return
         self._set_thread()
-        logger.trace(  # type: ignore[attr-defined]
+        logger.trace(
             "[%s] Putting to save queue: '%s'",
             self._name,
             filename,

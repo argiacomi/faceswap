@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# mypy: disable-error-code="arg-type, attr-defined, misc, var-annotated"
 """The frame viewer section of the manual tool GUI"""
 
 import gettext

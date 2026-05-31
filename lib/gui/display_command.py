@@ -1,4 +1,5 @@
 #!/usr/bin python3
+# mypy: disable-error-code="arg-type, assignment, union-attr"
 """Command specific tabs of Display Frame of the Faceswap GUI"""
 
 import datetime

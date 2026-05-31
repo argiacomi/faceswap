@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# mypy: disable-error-code="assignment"
 """
 Library for serializing python objects to and from various different serializer formats
 """

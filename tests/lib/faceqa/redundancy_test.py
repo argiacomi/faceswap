@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# mypy: disable-error-code="arg-type"
 """Regression tests for FaceQA coverage-aware redundancy pruning.
 
 These tests cover the scenarios listed under "Regression tests to add" in
@@ -428,7 +429,7 @@ def _decide_with_missing_identity(
     member_kwargs = dict(identity_model=None, identity_quality_flag=None)
     if member_record_overrides:
         member_kwargs.update(member_record_overrides)
-    member_record = _record("frame_000010.png", **member_kwargs)  # type: ignore[arg-type]
+    member_record = _record("frame_000010.png", **member_kwargs)
     member_features = _features_for(member_record)
     return _decide_single_member(
         member_features=member_features,

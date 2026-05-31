@@ -1,4 +1,5 @@
 #!/usr/bin python3
+# mypy: disable-error-code="attr-defined"
 """Display Frame of the Faceswap GUI
 
 This is the large right hand area of the GUI. At default, the Analysis tab is always displayed

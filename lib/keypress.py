@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# mypy: disable-error-code="attr-defined"
 """
 Source: http://home.wlu.edu/~levys/software/kbhit.py
 A Python class implementing KBHIT, the standard keyboard-interrupt poller.

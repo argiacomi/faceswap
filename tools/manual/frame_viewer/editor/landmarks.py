@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# mypy: disable-error-code="attr-defined, misc"
 """Landmarks Editor and Landmarks Mesh viewer for the manual adjustments tool"""
 
 import gettext

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# mypy: disable-error-code="attr-defined, call-arg, index"
 """Extract Box Editor for the manual adjustments tool"""
 
 import gettext

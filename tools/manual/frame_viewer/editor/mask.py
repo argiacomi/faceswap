@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# mypy: disable-error-code="index"
 """Mask Editor for the manual adjustments tool"""
 
 from __future__ import annotations

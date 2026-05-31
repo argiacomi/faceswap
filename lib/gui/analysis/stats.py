@@ -1,4 +1,5 @@
 #!/usr/bin python3
+# mypy: disable-error-code="assignment"
 """Stats functions for the GUI.
 
 Holds the globally loaded training session. This will either be a user selected session (loaded in

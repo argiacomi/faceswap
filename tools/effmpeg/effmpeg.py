@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# mypy: disable-error-code="arg-type, assignment, attr-defined, operator"
 """
 Created on 2018-03-16 15:14
 

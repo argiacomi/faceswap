@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# mypy: disable-error-code="assignment"
 """Targeted regression tests for the #194 lib/infer cleanup commit.
 
 Covers:
@@ -235,9 +236,9 @@ def test_rebatch_data_trace_does_not_slice_deque() -> None:
     instance._fifo.extend(_StubBatch(2) for _ in range(3))  # type: ignore[misc]
     # Drive the loop without real batching machinery: report 6 boxes and
     # make the fifo/no-box appends no-ops so only the trace line is under test.
-    instance._handle_non_split_batch = lambda batch: (6, instance._batch_size)  # type: ignore[method-assign]
-    instance._batch_to_fifo = lambda in_batch: None  # type: ignore[method-assign]
-    instance._append_no_boxes = lambda batch: None  # type: ignore[method-assign]
+    instance._handle_non_split_batch = lambda batch: (6, instance._batch_size)
+    instance._batch_to_fifo = lambda in_batch: None
+    instance._append_no_boxes = lambda batch: None
 
     # Force the trace record to actually format, belt-and-braces against a
     # future lazy-logging refactor of the call.

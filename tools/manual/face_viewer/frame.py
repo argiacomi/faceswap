@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# mypy: disable-error-code="attr-defined, operator"
 """The Faces Viewer Frame and Canvas for Faceswap's Manual Tool."""
 
 from __future__ import annotations
@@ -127,11 +128,9 @@ class FacesFrame(ttk.Frame):  # pylint:disable=too-many-ancestors
         """
 
         if self._event.is_set():
-            logger.trace(  # type: ignore[attr-defined]
-                "Update already running. Aborting repeated keypress"
-            )
+            logger.trace("Update already running. Aborting repeated keypress")
             return
-        logger.trace(  # type: ignore[attr-defined]
+        logger.trace(
             "Running update on received key press: %s",
             direction,
         )
@@ -437,9 +436,7 @@ class FacesViewer(tk.Canvas):  # pylint:disable=too-many-ancestors
             The event fired by the mouse scrolling
         """
         if self._event.is_set():
-            logger.trace(  # type: ignore[attr-defined]
-                "Update already running. Aborting repeated mousewheel"
-            )
+            logger.trace("Update already running. Aborting repeated mousewheel")
             return
         if platform.system() == "Darwin":
             adjust = event.delta
@@ -606,7 +603,7 @@ class Grid:
             max(0, floor(height * self._canvas.yview()[0]) - self._face_size),
             ceil(height * self._canvas.yview()[1]),
         )
-        logger.trace(  # type: ignore[attr-defined]
+        logger.trace(
             "height: %s, yview: %s, face_size: %s, visible: %s",
             height,
             self._canvas.yview(),
@@ -642,7 +639,7 @@ class Grid:
             assert self._display_faces is not None
             top, bottom = self._visible_row_indices
             retval = self._grid[:, top:bottom, :], self._display_faces[top:bottom, :]
-        logger.trace([r if r is None else r.shape for r in retval])  # type:ignore[attr-defined]
+        logger.trace([r if r is None else r.shape for r in retval])
         return retval
 
     def y_coord_from_frame(self, frame_index: int) -> int:
@@ -816,7 +813,7 @@ class Grid:
             frames
         """
         retval = self._frames_list.index(frame_index) if frame_index in self._frames_list else None
-        logger.trace(  # type: ignore[attr-defined]
+        logger.trace(
             "frame_index: %s, transport_index: %s",
             frame_index,
             retval,

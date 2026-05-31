@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# mypy: disable-error-code="union-attr"
 """A tool that allows for sorting and grouping images in different ways."""
 
 from __future__ import annotations

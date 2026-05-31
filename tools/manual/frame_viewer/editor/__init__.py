@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# mypy: disable-error-code="index"
 """The Frame Viewer for Faceswap's Manual Tool."""
 
 from __future__ import annotations

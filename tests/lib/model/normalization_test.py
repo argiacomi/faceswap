@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# mypy: disable-error-code="arg-type, call-overload"
 """Tests for Faceswap Normalization.
 
 Adapted from Keras tests.

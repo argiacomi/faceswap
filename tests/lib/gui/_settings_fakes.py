@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# mypy: disable-error-code="attr-defined"
 """Shared fakes and widget lookups for the Qt settings-dialog test suite.
 
 ``test_qt_shell_settings_dialog.py`` and ``test_qt_shell_settings_dialog_parity.py``

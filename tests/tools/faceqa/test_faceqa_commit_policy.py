@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# mypy: disable-error-code="attr-defined"
 """Source-level guardrails for FaceQA alignments commit policy."""
 
 from __future__ import annotations

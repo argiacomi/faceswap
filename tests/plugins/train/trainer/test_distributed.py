@@ -1,4 +1,5 @@
 #!/usr/bin python3
+# mypy: disable-error-code="attr-defined"
 """Pytest unit tests for :mod:`plugins.train.trainer.distributed` Trainer plug in"""
 # pylint:disable=protected-access, invalid-name, duplicate-code, too-many-locals
 

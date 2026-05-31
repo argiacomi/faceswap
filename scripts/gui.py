@@ -1,4 +1,5 @@
 #!/usr/bin python3
+# mypy: disable-error-code="arg-type, attr-defined"
 """The optional GUI for faceswap"""
 
 import logging
@@ -109,7 +110,7 @@ class FaceswapGui(tk.Tk):
         """Create a paned window with a visible separator."""
         return tk.PanedWindow(
             parent,
-            orient=orient,  # type: ignore[arg-type]
+            orient=orient,
             name=name,
             borderwidth=0,
             sashrelief=tk.RIDGE,

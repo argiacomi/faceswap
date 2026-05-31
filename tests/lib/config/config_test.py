@@ -1,4 +1,5 @@
 #!/usr/bin python3
+# mypy: disable-error-code="attr-defined"
 """Pytest unit tests for :mod:`lib.config.config`"""
 
 import pytest

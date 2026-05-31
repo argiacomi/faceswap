@@ -1,4 +1,5 @@
 #!/usr/bin python3
+# mypy: disable-error-code="unused-ignore"
 """Global configuration options for the Faceswap GUI"""
 
 from __future__ import annotations

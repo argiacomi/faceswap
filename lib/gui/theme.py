@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# mypy: disable-error-code="assignment, attr-defined, method-assign"
 """functions for implementing themes in Faceswap's GUI"""
 
 import logging

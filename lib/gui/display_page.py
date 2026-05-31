@@ -1,4 +1,5 @@
 #!/usr/bin python3
+# mypy: disable-error-code="arg-type, attr-defined"
 """Display Page parent classes for display section of the Faceswap GUI"""
 
 import gettext

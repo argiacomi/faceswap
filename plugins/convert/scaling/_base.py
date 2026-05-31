@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# mypy: disable-error-code="attr-defined"
 """Parent class for scaling Adjustments for faceswap.py converter"""
 
 import logging

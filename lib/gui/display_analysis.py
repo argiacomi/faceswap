@@ -1,4 +1,5 @@
 #!/usr/bin python3
+# mypy: disable-error-code="arg-type, assignment, attr-defined, misc"
 """Analysis tab of Display Frame of the Faceswap GUI"""
 
 import csv

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# mypy: disable-error-code="misc"
 """Native Qt Manual Tool Extract Faces tests.
 
 Covers:

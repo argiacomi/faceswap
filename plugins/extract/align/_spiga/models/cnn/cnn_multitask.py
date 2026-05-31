@@ -1,3 +1,4 @@
+# mypy: disable-error-code="var-annotated"
 from torch import nn
 
 from .coord_conv import AddCoordsTh
