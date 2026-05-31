@@ -8,6 +8,7 @@ import os
 import re
 import sys
 import typing as T
+from pathlib import Path
 
 import cv2
 from tqdm import tqdm
@@ -259,18 +260,22 @@ class Import:
         Source filenames mapped to full path location of mask to be imported
         """
         mask_count = len(file_list)
-        retval = {}
-        unmapped = []
+        # Issue #198 P2 high — O(N) mapping via a stem-indexed dict
+        # instead of the previous ``next(... in file_list)`` +
+        # ``file_list.pop(file_list.index(...))`` chain that ran in
+        # O(N^2). ``pop`` is what surfaced the "extra mask" warning
+        # set; using ``mask_by_stem.values()`` after the loop preserves
+        # that behavior.
+        mask_by_stem: dict[str, str] = {Path(f).stem: f for f in file_list}
+        retval: dict[str, str] = {}
+        unmapped: list[str] = []
         for filename in tqdm(source_files, desc="Mapping masks to input", leave=False):
-            fname = os.path.splitext(os.path.basename(filename))[0]
-            mapped = next(
-                (f for f in file_list if os.path.splitext(os.path.basename(f))[0] == fname),
-                "",
-            )
-            if not mapped:
+            fname = Path(filename).stem
+            mapped = mask_by_stem.pop(fname, None)
+            if mapped is None:
                 unmapped.append(filename)
                 continue
-            retval[os.path.basename(filename)] = file_list.pop(file_list.index(mapped))
+            retval[os.path.basename(filename)] = mapped
 
         if len(unmapped) == len(source_files):
             logger.error(
@@ -278,7 +283,7 @@ class Import:
             )
             sys.exit(1)
 
-        self._warn_extra_masks(file_list)
+        self._warn_extra_masks(list(mask_by_stem.values()))
 
         logger.debug(
             "Source: %s, Mask: %s, Mapped: %s",

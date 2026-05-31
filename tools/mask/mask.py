@@ -9,6 +9,7 @@ import sys
 import typing as T
 from argparse import Namespace
 from multiprocessing import Process
+from pathlib import Path
 
 from lib.align import Alignments
 from lib.utils import get_module_objects, handle_deprecated_cli_opts
@@ -24,6 +25,19 @@ if T.TYPE_CHECKING:
     from lib.infer.objects import FrameFaces
 
 logger = logging.getLogger(__name__)
+
+
+def _fail(message: str, *args: T.Any) -> T.NoReturn:
+    """Log a fatal error and exit with non-zero status (issue #198).
+
+    The tool previously used ``sys.exit(0)`` after fatal ``logger.error``
+    calls — silent-success on real failures hides problems from CI and
+    batch pipelines. ``_fail`` is the single fatal-exit helper so the
+    "log + exit non-zero" pattern stays consistent across the module
+    and reads as one operation at the call site.
+    """
+    logger.error(message, *args)
+    sys.exit(1)
 
 
 class Mask:
@@ -44,8 +58,7 @@ class Mask:
     def __init__(self, arguments: Namespace) -> None:
         logger.debug("Initializing %s: (arguments: %s", self.__class__.__name__, arguments)
         if arguments.batch_mode and arguments.processing == "import":
-            logger.error("Batch mode is not supported for 'import' processing")
-            sys.exit(0)
+            _fail("Batch mode is not supported for 'import' processing")
 
         self._args = arguments
         self._input_locations = self._get_input_locations()
@@ -62,18 +75,18 @@ class Mask:
             return [self._args.input]
 
         if not os.path.isdir(self._args.input):
-            logger.error(
+            _fail(
                 "Batch mode is selected but input '%s' is not a folder",
                 self._args.input,
             )
-            sys.exit(1)
 
-        retval = [
-            os.path.join(self._args.input, fname)
-            for fname in os.listdir(self._args.input)
-            if os.path.isdir(os.path.join(self._args.input, fname))
-            or os.path.splitext(fname)[-1].lower() in VIDEO_EXTENSIONS
-        ]
+        # Bind ``candidate`` once per directory entry instead of recomputing
+        # ``os.path.join(...)`` twice per row (issue #198 P3).
+        retval: list[str] = []
+        for fname in os.listdir(self._args.input):
+            candidate = os.path.join(self._args.input, fname)
+            if os.path.isdir(candidate) or Path(candidate).suffix.lower() in VIDEO_EXTENSIONS:
+                retval.append(candidate)
         logger.info("Batch mode selected. Processing locations: %s", retval)
         return retval
 
@@ -88,9 +101,7 @@ class Mask:
         input_location
             The full path to an input video or folder of images
         """
-        retval = os.path.join(
-            self._args.output, os.path.splitext(os.path.basename(input_location))[0]
-        )
+        retval = os.path.join(self._args.output, Path(input_location).stem)
         logger.debug("Returning output: '%s' for input: '%s'", retval, input_location)
         return retval
 
@@ -208,14 +219,12 @@ class _Mask:
             Path to the input folder/video
         """
         if not os.path.exists(mask_input):
-            logger.error("Location cannot be found: '%s'", mask_input)
-            sys.exit(0)
+            _fail("Location cannot be found: '%s'", mask_input)
         if os.path.isfile(mask_input) and self._input_is_faces:
-            logger.error(
+            _fail(
                 "Input type 'faces' was selected but input is not a folder: '%s'",
                 mask_input,
             )
-            sys.exit(0)
         logger.debug("input '%s' is valid", mask_input)
 
     def _get_alignments(self, alignments: str | None, input_location: str) -> Alignments | None:
@@ -247,17 +256,13 @@ class _Mask:
             )
             return None
 
-        folder = input_location
         if self._loader.is_video:
-            logger.debug("Alignments from Video File: '%s'", folder)
-            folder, filename = os.path.split(folder)
-            filename = f"{os.path.splitext(filename)[0]}_alignments.fsa"
-        else:
-            logger.debug("Alignments from Input Folder: '%s'", folder)
-            filename = "alignments"
+            logger.debug("Alignments from Video File: '%s'", input_location)
+            video = Path(input_location)
+            return Alignments(str(video.parent), filename=f"{video.stem}_alignments.fsa")
 
-        retval = Alignments(folder, filename=filename)
-        return retval
+        logger.debug("Alignments from Input Folder: '%s'", input_location)
+        return Alignments(input_location, filename="alignments")
 
     def _save_output(self, media: FrameFaces) -> None:
         """Output masks to disk

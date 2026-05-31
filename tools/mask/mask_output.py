@@ -108,8 +108,9 @@ class Output:
         """
         if output is None or not output:
             if processing == "output":
+                # Non-zero exit on fatal user-input error (issue #198).
                 logger.error("Processing set as 'output' but no output folder provided.")
-                sys.exit(0)
+                sys.exit(1)
             logger.debug("No output provided. Not creating saver")
             return None
         output_dir = get_folder(self._get_subfolder(output), make_folder=True)
