@@ -22,6 +22,14 @@ from plugins.extract.base import ExtractPlugin
 from . import hrnet_defaults as cfg
 from .dark_decoder import Dark
 
+# Module-level constants for the HRNet aligner. Hoisting these out of the
+# instance ``__init__`` saves three small array allocations per plugin
+# instance (issue #195 medium-priority) and keeps the ImageNet
+# normalisation values in one obvious place.
+_HRNET_MEAN: np.ndarray = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+_HRNET_STD: np.ndarray = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+_HRNET_CROP_SCALE: float = 1.25
+
 if T.TYPE_CHECKING:
     import numpy.typing as npt
 
