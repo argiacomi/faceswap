@@ -1829,7 +1829,10 @@ def _count_buckets(records: list[FaceQARecord]) -> dict[str, dict[str, int]]:
     for record in records:
         for dim, fn in _BUCKET_DIMENSIONS:
             label = fn(record)
-            counts[dim][label] = counts[dim].get(label, 0) + 1
+            if label in counts[dim]:
+                counts[dim][label] += 1
+            else:
+                counts[dim][label] = 1
     return counts
 
 

@@ -257,12 +257,12 @@ def render_contact_sheets(
             for record in records
         ]
         rows = []
+        pad_tile = np.full_like(tiles[0], 20) if tiles else None
         for start in range(0, len(tiles), CONTACT_SHEET_COLS):
             row_tiles = tiles[start : start + CONTACT_SHEET_COLS]
-            if len(row_tiles) < CONTACT_SHEET_COLS:
-                pad = np.full_like(row_tiles[0], 20)
+            if len(row_tiles) < CONTACT_SHEET_COLS and pad_tile is not None:
                 while len(row_tiles) < CONTACT_SHEET_COLS:
-                    row_tiles.append(pad)
+                    row_tiles.append(pad_tile)
             rows.append(np.hstack(row_tiles))
         sheet = np.vstack(rows)
         sheet = _annotate_sheet_header(sheet, cluster_id, records)

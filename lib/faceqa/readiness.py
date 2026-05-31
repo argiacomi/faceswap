@@ -10,8 +10,12 @@ from dataclasses import dataclass, field
 from lib.faceqa.coverage import (
     IMAGE_METRICS_PROVENANCE_FRAME,
     IMAGE_METRICS_PROVENANCE_THUMBNAIL,
+    PITCH_BUCKETS,
+    YAW_BUCKETS,
     FacesetCoverageReport,
 )
+from lib.faceqa.expression import EXPRESSION_BUCKETS
+from lib.faceqa.lighting import LIGHTING_BUCKETS
 from lib.faceqa.scoring import ReadinessScores, compute_readiness_scores
 from lib.utils import get_module_objects
 
@@ -119,282 +123,339 @@ class ReadinessReport:
         return json.dumps(self.to_dict(), indent=indent)
 
     def to_markdown(self) -> str:
-        """Return a Markdown audit summary organised verdict-first.
+        """Return a Markdown audit summary organised verdict-first."""
+        return _render_markdown(self)
 
-        Structure:
 
-        1. Header + at-a-glance summary (counts, readiness verdict, identity
-           model, prune verdict if computed, provenance highlights).
-        2. Warnings then recommendations — the actionable parts come before
-           the deep diagnostic tables so users can act without scrolling.
-        3. Readiness scores (overall + per-component table + strengths/risks).
-        4. Image-metrics provenance (frame-derived is authoritative;
-           thumbnail-fallback rows are flagged).
-        5. Pruning suggestions, only when ``--suggest-pruning`` ran.
-        6. Coverage buckets per dimension, highlighting any below
-           ``min_bucket_pct``.
-        7. Joint pose / expression / lighting diagnostics.
-        8. Metric summary table.
-        """
-        scores = self.readiness_scores
-        overall_score = float(scores.get("overall_readiness_score", 0.0)) if scores else 0.0
-        confidence = float(scores.get("confidence", 0.0)) if scores else 0.0
-        verdict = _verdict_label(overall_score, len(self.warnings))
+def _render_markdown(report: ReadinessReport) -> str:
+    """Render a complete Markdown audit report from section helpers."""
+    scores = report.readiness_scores
+    overall_score = float(scores.get("overall_readiness_score", 0.0)) if scores else 0.0
+    confidence = float(scores.get("confidence", 0.0)) if scores else 0.0
+    verdict = _verdict_label(overall_score, len(report.warnings))
 
-        provenance_summary = _format_provenance_summary(self.image_metrics_provenance)
-        identity_summary = _format_identity_summary(self.coverage)
-        identity_ratio_summary = _format_identity_ratio_summary(
-            embedding_ratio=self.identity_embedding_coverage_ratio,
-            decision_ratio=self.identity_decision_coverage_ratio,
-            unknown_ratio=self.identity_unknown_ratio,
+    lines: list[str] = []
+    lines.extend(_render_summary(report, scores, overall_score, confidence, verdict))
+    lines.extend(_render_warnings(report))
+    lines.extend(_render_recommendations(report))
+    lines.extend(_render_scores(scores, overall_score, confidence))
+    lines.extend(_render_provenance(report))
+    lines.extend(_render_pruning(report))
+    lines.extend(_render_coverage(report))
+    lines.extend(_render_joint_pose(report))
+    lines.extend(_render_expression(report))
+    lines.extend(_render_lighting(report))
+    lines.extend(_render_metrics(report))
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _render_summary(
+    report: ReadinessReport,
+    overall_score: float,
+    confidence: float,
+    verdict: str,
+) -> list[str]:
+    """Render the report header and at-a-glance summary."""
+    provenance_summary = _format_provenance_summary(report.image_metrics_provenance)
+    identity_summary = _format_identity_summary(report.coverage)
+    identity_ratio_summary = _format_identity_ratio_summary(
+        embedding_ratio=report.identity_embedding_coverage_ratio,
+        decision_ratio=report.identity_decision_coverage_ratio,
+        unknown_ratio=report.identity_unknown_ratio,
+    )
+
+    lines = [
+        "# FaceQA Coverage Report",
+        "",
+        f"**Verdict**: {verdict}  —  readiness {overall_score:.1f}/100 "
+        f"(confidence {confidence:.1f}/100)",
+        "",
+        "## Summary",
+        "",
+        f"- **Alignments**: `{report.alignments}`",
+        f"- **Total faces**: {report.total_faces}  (usable: {report.usable_faces})",
+    ]
+    if report.duplicate_ratio is not None:
+        lines.append(f"- **Duplicate ratio**: {report.duplicate_ratio:.1%}")
+    if report.identity_outlier_ratio is not None:
+        lines.append(f"- **Identity outlier ratio**: {report.identity_outlier_ratio:.1%}")
+    if identity_summary:
+        lines.append(f"- **Identity buckets**: {identity_summary}")
+    if identity_ratio_summary:
+        lines.append(f"- **Identity signal coverage**: {identity_ratio_summary}")
+    if provenance_summary:
+        lines.append(f"- **Image metrics provenance**: {provenance_summary}")
+    if report.pruning_suggestions:
+        pruning = report.pruning_suggestions
+        lines.append(
+            f"- **Pruning recommendations** "
+            f"({pruning.get('aggressiveness', 'balanced')}): keep "
+            f"{pruning.get('keep_count', 0)} / review "
+            f"{pruning.get('review_count', 0)} / prune "
+            f"{pruning.get('prune_candidate_count', 0)}"
         )
+    return lines
 
-        lines = [
-            "# FaceQA Coverage Report",
-            "",
-            f"**Verdict**: {verdict}  —  readiness {overall_score:.1f}/100 "
-            f"(confidence {confidence:.1f}/100)",
-            "",
-            "## Summary",
-            "",
-            f"- **Alignments**: `{self.alignments}`",
-            f"- **Total faces**: {self.total_faces}  (usable: {self.usable_faces})",
-        ]
-        if self.duplicate_ratio is not None:
-            lines.append(f"- **Duplicate ratio**: {self.duplicate_ratio:.1%}")
-        if self.identity_outlier_ratio is not None:
-            lines.append(f"- **Identity outlier ratio**: {self.identity_outlier_ratio:.1%}")
-        if identity_summary:
-            lines.append(f"- **Identity buckets**: {identity_summary}")
-        if identity_ratio_summary:
-            lines.append(f"- **Identity signal coverage**: {identity_ratio_summary}")
-        if provenance_summary:
-            lines.append(f"- **Image metrics provenance**: {provenance_summary}")
-        if self.pruning_suggestions:
-            pruning = self.pruning_suggestions
+
+def _render_warnings(report: ReadinessReport) -> list[str]:
+    """Render warning bullets."""
+    if not report.warnings:
+        return []
+    return ["", "## Warnings", "", *[f"- {warning}" for warning in report.warnings]]
+
+
+def _render_recommendations(report: ReadinessReport) -> list[str]:
+    """Render recommendation bullets."""
+    if not report.recommendations:
+        return []
+    return [
+        "",
+        "## Recommendations",
+        "",
+        *[f"- {recommendation}" for recommendation in report.recommendations],
+    ]
+
+
+def _render_scores(
+    scores: dict[str, T.Any],
+    overall_score: float,
+    confidence: float,
+) -> list[str]:
+    """Render readiness score tables and score-derived notes."""
+    if not scores:
+        return []
+
+    lines = [
+        "",
+        "## Readiness Scores",
+        "",
+        f"- **Overall readiness**: {overall_score:.1f} / 100",
+        f"- **Confidence**: {confidence:.1f} / 100",
+    ]
+    components = scores.get("components", {}) or {}
+    if components:
+        lines.extend(
+            [
+                "",
+                "| Component | Score | Weight | Entropy | Occupied | Min-Samples | Signals |",
+                "|-----------|------:|------:|--------:|---------:|------------:|--------:|",
+            ]
+        )
+        for component in components.values():
             lines.append(
-                f"- **Pruning recommendations** "
-                f"({pruning.get('aggressiveness', 'balanced')}): keep "
-                f"{pruning.get('keep_count', 0)} / review "
-                f"{pruning.get('review_count', 0)} / prune "
-                f"{pruning.get('prune_candidate_count', 0)}"
+                "| "
+                f"{component.get('name', '')} | "
+                f"{float(component.get('score', 0.0)):.1f} | "
+                f"{float(component.get('weight', 0.0)):.2f} | "
+                f"{float(component.get('entropy_coverage', 0.0)):.2f} | "
+                f"{float(component.get('occupied_coverage', 0.0)):.2f} | "
+                f"{float(component.get('min_sample_coverage', 0.0)):.2f} | "
+                f"{float(component.get('signal_coverage', 1.0)):.2f} |"
             )
 
-        if self.warnings:
-            lines.extend(["", "## Warnings", ""])
-            lines.extend(f"- {warning}" for warning in self.warnings)
+    strengths = list(scores.get("strengths", []))
+    if strengths:
+        lines.extend(["", "### Strengths", ""])
+        lines.extend(f"- {item}" for item in strengths)
 
-        if self.recommendations:
-            lines.extend(["", "## Recommendations", ""])
-            lines.extend(f"- {recommendation}" for recommendation in self.recommendations)
+    risks = list(scores.get("risks", []))
+    if risks:
+        lines.extend(["", "### Highest-risk components", ""])
+        lines.extend(f"- {item}" for item in risks)
 
-        if scores:
-            lines.extend(
-                [
-                    "",
-                    "## Readiness Scores",
-                    "",
-                    f"- **Overall readiness**: {overall_score:.1f} / 100",
-                    f"- **Confidence**: {confidence:.1f} / 100",
-                ]
-            )
-            components = scores.get("components", {}) or {}
-            if components:
-                lines.extend(
-                    [
-                        "",
-                        "| Component | Score | Weight | Entropy | Occupied | Min-Samples | Signals |",
-                        "|-----------|------:|------:|--------:|---------:|------------:|--------:|",
-                    ]
-                )
-                for component in components.values():
-                    lines.append(
-                        "| "
-                        f"{component.get('name', '')} | "
-                        f"{float(component.get('score', 0.0)):.1f} | "
-                        f"{float(component.get('weight', 0.0)):.2f} | "
-                        f"{float(component.get('entropy_coverage', 0.0)):.2f} | "
-                        f"{float(component.get('occupied_coverage', 0.0)):.2f} | "
-                        f"{float(component.get('min_sample_coverage', 0.0)):.2f} | "
-                        f"{float(component.get('signal_coverage', 1.0)):.2f} |"
-                    )
-            strengths = list(scores.get("strengths", []))
-            if strengths:
-                lines.extend(["", "### Strengths", ""])
-                lines.extend(f"- {item}" for item in strengths)
-            risks = list(scores.get("risks", []))
-            if risks:
-                lines.extend(["", "### Highest-risk components", ""])
-                lines.extend(f"- {item}" for item in risks)
-            expected = list(scores.get("expected_training_risks", []))
-            if expected:
-                lines.extend(["", "### Expected training risks", ""])
-                lines.extend(f"- {item}" for item in expected)
+    expected = list(scores.get("expected_training_risks", []))
+    if expected:
+        lines.extend(["", "### Expected training risks", ""])
+        lines.extend(f"- {item}" for item in expected)
 
-        if self.image_metrics_provenance:
-            lines.extend(
-                [
-                    "",
-                    "## Image-metrics Provenance",
-                    "",
-                    "Blur, lighting, and black-pixel metrics are most trustworthy "
-                    "when computed from the SOURCE FRAME (the reconstructed aligned "
-                    "crop). Rows below that fell back to the stored thumbnail or "
-                    "have no metrics carry reduced confidence; see warnings.",
-                    "",
-                    "| Source | Faces | Trust |",
-                    "|--------|------:|-------|",
-                ]
-            )
-            for tag, count in sorted(
-                self.image_metrics_provenance.items(), key=lambda item: -item[1]
-            ):
-                lines.append(f"| {tag} | {count} | {_provenance_trust(tag)} |")
+    return lines
 
-        if self.pruning_suggestions:
-            pruning = self.pruning_suggestions
-            lines.extend(
-                [
-                    "",
-                    "## Pruning Suggestions",
-                    "",
-                    f"- **Aggressiveness**: {pruning.get('aggressiveness', 'balanced')}",
-                    f"- **Total faces**: {pruning.get('total_faces', 0)}",
-                    f"- **Redundancy clusters**: {pruning.get('cluster_count', 0)} "
-                    f"({pruning.get('multi_face_clusters', 0)} multi-face)",
-                    f"- **Keep**: {pruning.get('keep_count', 0)}",
-                    f"- **Review**: {pruning.get('review_count', 0)}",
-                    f"- **Prune candidates**: {pruning.get('prune_candidate_count', 0)}",
-                ]
-            )
-            protected = list(pruning.get("protected_buckets", []))
-            if protected:
-                lines.append(f"- **Protected buckets**: {', '.join(protected)}")
-            effective = pruning.get("effective_coverage", {}) or {}
-            if effective:
-                lines.extend(
-                    [
-                        "",
-                        "| Dimension | Bucket | Raw | Effective | Redundancy x |",
-                        "|-----------|--------|----:|----------:|-------------:|",
-                    ]
-                )
-                for dim_name, dim_payload in effective.items():
-                    raw_counts = dim_payload.get("raw_counts", {}) or {}
-                    eff_counts = dim_payload.get("effective_counts", {}) or {}
-                    ratios = dim_payload.get("redundancy_ratios", {}) or {}
-                    for bucket in sorted(set(raw_counts) | set(eff_counts)):
-                        lines.append(
-                            "| "
-                            f"{dim_name} | {bucket} | {int(raw_counts.get(bucket, 0))} | "
-                            f"{int(eff_counts.get(bucket, 0))} | "
-                            f"{float(ratios.get(bucket, 1.0)):.2f} |"
-                        )
 
-        # Underrepresented buckets get an early-warning indicator inside the per-
-        # dimension tables to make low-coverage spots jump out at a glance.
-        underrep_set: set[tuple[str, str]] = {
-            (str(item["dimension"]), str(item["bucket"])) for item in self.underrepresented_buckets
-        }
-        if self.coverage:
-            lines.extend(["", "## Coverage by Dimension", ""])
-        for dimension, payload in self.coverage.items():
-            counts = payload.get("counts", {})
-            percentages = payload.get("percentages", {})
-            if not counts:
-                continue
-            lines.extend(["", f"### {dimension.replace('_', ' ').title()}", ""])
-            lines.extend(["| Bucket | Count | % |", "|--------|------:|--:|"])
-            for bucket, count in counts.items():
-                pct = float(percentages.get(bucket, 0.0))
-                marker = " ⚠️" if (dimension, bucket) in underrep_set else ""
-                lines.append(f"| {bucket}{marker} | {count} | {pct:.1f} |")
+def _render_provenance(report: ReadinessReport) -> list[str]:
+    """Render image-metrics provenance diagnostics."""
+    if not report.image_metrics_provenance:
+        return []
 
-        joint = self.joint_pose_coverage
-        if joint:
-            lines.extend(
-                [
-                    "",
-                    "## Joint Pose Coverage (signed yaw x pitch)",
-                    "",
-                    f"- **Occupied cells**: {joint.get('occupied_pose_cells', 0)} "
-                    f"of {joint.get('total_cells', 0)}",
-                    f"- **Empty cells**: {joint.get('empty_pose_cells', 0)}",
-                    f"- **Bin coverage**: {float(joint.get('pose_bin_coverage_pct', 0.0)):.1f}%",
-                    f"- **Pose entropy (bits)**: {float(joint.get('pose_entropy', 0.0)):.3f}",
-                ]
-            )
-            missing = list(joint.get("missing_cells", []))
-            if missing:
-                preview = ", ".join(missing[:MISSING_POSE_CELL_REPORT_LIMIT])
-                if len(missing) > MISSING_POSE_CELL_REPORT_LIMIT:
-                    preview += f", … (+{len(missing) - MISSING_POSE_CELL_REPORT_LIMIT} more)"
-                lines.append(f"- **Missing pose regions**: {preview}")
+    lines = [
+        "",
+        "## Image-metrics Provenance",
+        "",
+        "Blur, lighting, and black-pixel metrics are most trustworthy "
+        "when computed from the SOURCE FRAME (the reconstructed aligned "
+        "crop). Rows below that fell back to the stored thumbnail or "
+        "have no metrics carry reduced confidence; see warnings.",
+        "",
+        "| Source | Faces | Trust |",
+        "|--------|------:|-------|",
+    ]
+    for tag, count in sorted(report.image_metrics_provenance.items(), key=lambda item: -item[1]):
+        lines.append(f"| {tag} | {count} | {_provenance_trust(tag)} |")
+    return lines
 
-        expression = self.expression_coverage
-        if expression:
-            occupied = expression.get("occupied_expression_bins", 0)
-            total_bins = expression.get("total_bins", 0)
-            bin_pct = float(expression.get("expression_bin_coverage_pct", 0.0))
-            entropy = float(expression.get("expression_entropy", 0.0))
-            lines.extend(
-                [
-                    "",
-                    "## Expression Coverage",
-                    "",
-                    f"- **Occupied bins**: {occupied} of {total_bins}",
-                    f"- **Empty bins**: {expression.get('empty_expression_bins', 0)}",
-                    f"- **Bin coverage**: {bin_pct:.1f}%",
-                    f"- **Expression entropy (bits)**: {entropy:.3f}",
-                ]
-            )
-            missing_bins = list(expression.get("missing_bins", []))
-            if missing_bins:
-                preview = ", ".join(missing_bins[:MISSING_EXPRESSION_BIN_REPORT_LIMIT])
-                if len(missing_bins) > MISSING_EXPRESSION_BIN_REPORT_LIMIT:
-                    preview += (
-                        f", … (+{len(missing_bins) - MISSING_EXPRESSION_BIN_REPORT_LIMIT} more)"
-                    )
-                lines.append(f"- **Missing expression regions**: {preview}")
 
-        lighting = self.lighting_coverage
-        if lighting:
-            occupied = lighting.get("occupied_lighting_bins", 0)
-            total_bins = lighting.get("total_bins", 0)
-            bin_pct = float(lighting.get("lighting_bin_coverage_pct", 0.0))
-            entropy = float(lighting.get("lighting_entropy", 0.0))
-            lines.extend(
-                [
-                    "",
-                    "## Lighting Coverage",
-                    "",
-                    f"- **Occupied bins**: {occupied} of {total_bins}",
-                    f"- **Empty bins**: {lighting.get('empty_lighting_bins', 0)}",
-                    f"- **Bin coverage**: {bin_pct:.1f}%",
-                    f"- **Lighting entropy (bits)**: {entropy:.3f}",
-                ]
-            )
-            missing_bins = list(lighting.get("missing_bins", []))
-            if missing_bins:
-                preview = ", ".join(missing_bins[:MISSING_LIGHTING_BIN_REPORT_LIMIT])
-                if len(missing_bins) > MISSING_LIGHTING_BIN_REPORT_LIMIT:
-                    preview += (
-                        f", … (+{len(missing_bins) - MISSING_LIGHTING_BIN_REPORT_LIMIT} more)"
-                    )
-                lines.append(f"- **Missing lighting conditions**: {preview}")
+def _render_pruning(report: ReadinessReport) -> list[str]:
+    """Render pruning suggestion summary and effective-coverage table."""
+    if not report.pruning_suggestions:
+        return []
 
-        if self.metric_summary:
-            lines.extend(["", "## Metric Summary", ""])
-            lines.extend(["| Metric | Min | Median | Max |", "|--------|----:|-------:|----:|"])
-            for metric, values in self.metric_summary.items():
+    pruning = report.pruning_suggestions
+    lines = [
+        "",
+        "## Pruning Suggestions",
+        "",
+        f"- **Aggressiveness**: {pruning.get('aggressiveness', 'balanced')}",
+        f"- **Total faces**: {pruning.get('total_faces', 0)}",
+        f"- **Redundancy clusters**: {pruning.get('cluster_count', 0)} "
+        f"({pruning.get('multi_face_clusters', 0)} multi-face)",
+        f"- **Keep**: {pruning.get('keep_count', 0)}",
+        f"- **Review**: {pruning.get('review_count', 0)}",
+        f"- **Prune candidates**: {pruning.get('prune_candidate_count', 0)}",
+    ]
+    protected = list(pruning.get("protected_buckets", []))
+    if protected:
+        lines.append(f"- **Protected buckets**: {', '.join(protected)}")
+
+    effective = pruning.get("effective_coverage", {}) or {}
+    if effective:
+        lines.extend(
+            [
+                "",
+                "| Dimension | Bucket | Raw | Effective | Redundancy x |",
+                "|-----------|--------|----:|----------:|-------------:|",
+            ]
+        )
+        for dim_name, dim_payload in effective.items():
+            raw_counts = dim_payload.get("raw_counts", {}) or {}
+            eff_counts = dim_payload.get("effective_counts", {}) or {}
+            ratios = dim_payload.get("redundancy_ratios", {}) or {}
+            for bucket in sorted(set(raw_counts) | set(eff_counts)):
                 lines.append(
                     "| "
-                    f"{metric} | {_fmt(values.get('min'))} | "
-                    f"{_fmt(values.get('median'))} | {_fmt(values.get('max'))} |"
+                    f"{dim_name} | {bucket} | {int(raw_counts.get(bucket, 0))} | "
+                    f"{int(eff_counts.get(bucket, 0))} | "
+                    f"{float(ratios.get(bucket, 1.0)):.2f} |"
                 )
+    return lines
 
-        lines.append("")
-        return "\n".join(lines)
+
+def _render_coverage(report: ReadinessReport) -> list[str]:
+    """Render per-dimension coverage buckets."""
+    lines: list[str] = []
+    underrep_set: set[tuple[str, str]] = {
+        (str(item["dimension"]), str(item["bucket"])) for item in report.underrepresented_buckets
+    }
+    if report.coverage:
+        lines.extend(["", "## Coverage by Dimension", ""])
+    for dimension, payload in report.coverage.items():
+        counts = payload.get("counts", {})
+        percentages = payload.get("percentages", {})
+        if not counts:
+            continue
+        lines.extend(["", f"### {dimension.replace('_', ' ').title()}", ""])
+        lines.extend(["| Bucket | Count | % |", "|--------|------:|--:|"])
+        for bucket, count in counts.items():
+            pct = float(percentages.get(bucket, 0.0))
+            marker = " ⚠️" if (dimension, bucket) in underrep_set else ""
+            lines.append(f"| {bucket}{marker} | {count} | {pct:.1f} |")
+    return lines
+
+
+def _render_joint_pose(report: ReadinessReport) -> list[str]:
+    """Render joint yaw/pitch coverage diagnostics."""
+    joint = report.joint_pose_coverage
+    if not joint:
+        return []
+
+    lines = [
+        "",
+        "## Joint Pose Coverage (signed yaw x pitch)",
+        "",
+        f"- **Occupied cells**: {joint.get('occupied_pose_cells', 0)} "
+        f"of {joint.get('total_cells', 0)}",
+        f"- **Empty cells**: {joint.get('empty_pose_cells', 0)}",
+        f"- **Bin coverage**: {float(joint.get('pose_bin_coverage_pct', 0.0)):.1f}%",
+        f"- **Pose entropy (bits)**: {float(joint.get('pose_entropy', 0.0)):.3f}",
+    ]
+    missing = list(joint.get("missing_cells", []))
+    if missing:
+        preview = ", ".join(missing[:MISSING_POSE_CELL_REPORT_LIMIT])
+        if len(missing) > MISSING_POSE_CELL_REPORT_LIMIT:
+            preview += f", … (+{len(missing) - MISSING_POSE_CELL_REPORT_LIMIT} more)"
+        lines.append(f"- **Missing pose regions**: {preview}")
+    return lines
+
+
+def _render_expression(report: ReadinessReport) -> list[str]:
+    """Render expression coverage diagnostics."""
+    expression = report.expression_coverage
+    if not expression:
+        return []
+
+    occupied = expression.get("occupied_expression_bins", 0)
+    total_bins = expression.get("total_bins", 0)
+    bin_pct = float(expression.get("expression_bin_coverage_pct", 0.0))
+    entropy = float(expression.get("expression_entropy", 0.0))
+    lines = [
+        "",
+        "## Expression Coverage",
+        "",
+        f"- **Occupied bins**: {occupied} of {total_bins}",
+        f"- **Empty bins**: {expression.get('empty_expression_bins', 0)}",
+        f"- **Bin coverage**: {bin_pct:.1f}%",
+        f"- **Expression entropy (bits)**: {entropy:.3f}",
+    ]
+    missing_bins = list(expression.get("missing_bins", []))
+    if missing_bins:
+        preview = ", ".join(missing_bins[:MISSING_EXPRESSION_BIN_REPORT_LIMIT])
+        if len(missing_bins) > MISSING_EXPRESSION_BIN_REPORT_LIMIT:
+            preview += f", … (+{len(missing_bins) - MISSING_EXPRESSION_BIN_REPORT_LIMIT} more)"
+        lines.append(f"- **Missing expression regions**: {preview}")
+    return lines
+
+
+def _render_lighting(report: ReadinessReport) -> list[str]:
+    """Render lighting coverage diagnostics."""
+    lighting = report.lighting_coverage
+    if not lighting:
+        return []
+
+    occupied = lighting.get("occupied_lighting_bins", 0)
+    total_bins = lighting.get("total_bins", 0)
+    bin_pct = float(lighting.get("lighting_bin_coverage_pct", 0.0))
+    entropy = float(lighting.get("lighting_entropy", 0.0))
+    lines = [
+        "",
+        "## Lighting Coverage",
+        "",
+        f"- **Occupied bins**: {occupied} of {total_bins}",
+        f"- **Empty bins**: {lighting.get('empty_lighting_bins', 0)}",
+        f"- **Bin coverage**: {bin_pct:.1f}%",
+        f"- **Lighting entropy (bits)**: {entropy:.3f}",
+    ]
+    missing_bins = list(lighting.get("missing_bins", []))
+    if missing_bins:
+        preview = ", ".join(missing_bins[:MISSING_LIGHTING_BIN_REPORT_LIMIT])
+        if len(missing_bins) > MISSING_LIGHTING_BIN_REPORT_LIMIT:
+            preview += f", … (+{len(missing_bins) - MISSING_LIGHTING_BIN_REPORT_LIMIT} more)"
+        lines.append(f"- **Missing lighting conditions**: {preview}")
+    return lines
+
+
+def _render_metrics(report: ReadinessReport) -> list[str]:
+    """Render metric summary table."""
+    if not report.metric_summary:
+        return []
+
+    lines = ["", "## Metric Summary", ""]
+    lines.extend(["| Metric | Min | Median | Max |", "|--------|----:|-------:|----:|"])
+    for metric, values in report.metric_summary.items():
+        lines.append(
+            "| "
+            f"{metric} | {_fmt(values.get('min'))} | "
+            f"{_fmt(values.get('median'))} | {_fmt(values.get('max'))} |"
+        )
+    return lines
 
 
 def _verdict_label(overall_score: float, warning_count: int) -> str:
@@ -478,35 +539,11 @@ def _underrepresented(
     coverage: FacesetCoverageReport, min_bucket_pct: float
 ) -> list[dict[str, str | float]]:
     """Return non-risk coverage buckets below the configured threshold."""
-    included = {
-        "pose": {
-            "left_extreme",
-            "left_profile",
-            "left_slight",
-            "frontal",
-            "right_slight",
-            "right_profile",
-            "right_extreme",
-        },
-        "pitch": {"down_extreme", "down", "neutral", "up", "up_extreme"},
-        "lighting": {
-            "dark",
-            "overexposed",
-            "side_lit",
-            "top_lit",
-            "high_contrast",
-            "warm",
-            "cool",
-            "flat_frontal",
-        },
-        "expression": {
-            "neutral",
-            "slight_open",
-            "talking_open",
-            "smile",
-            "eyes_closed",
-            "expressive",
-        },
+    included: dict[str, set[str]] = {
+        "pose": set(YAW_BUCKETS),
+        "pitch": set(PITCH_BUCKETS),
+        "lighting": set(LIGHTING_BUCKETS),
+        "expression": set(EXPRESSION_BUCKETS),
     }
     result: list[dict[str, str | float]] = []
     for dimension, buckets in coverage.bucket_percentages.items():
@@ -531,15 +568,28 @@ def _ratio(coverage: FacesetCoverageReport, dimension: str, buckets: set[str]) -
     return ratio
 
 
+def _risk_ratios(coverage: FacesetCoverageReport) -> dict[str, float]:
+    """Compute warning/recommendation ratios once per report."""
+    return {
+        "blur_unusable": _ratio(coverage, "blur", {"unusable"}),
+        "low_resolution": _ratio(coverage, "resolution", {"low", "tiny"}),
+        "misalignment": _ratio(coverage, "misalignment", {"high", "extreme"}),
+        "pose_fallback": _ratio(coverage, "pose_sources", {"alignment"}),
+        "low_confidence_pose": _ratio(coverage, "pose_confidence", {"low"}),
+    }
+
+
 def _build_warnings(
     coverage: FacesetCoverageReport,
     underrepresented: list[dict[str, str | float]],
     min_bucket_pct: float,
+    ratios: dict[str, float] | None = None,
 ) -> list[str]:
     """Build ordered warning strings."""
     warnings: list[str] = []
     if coverage.total_faces == 0:
         return ["No faces were found in the supplied alignments file."]
+    risk_ratios = ratios if ratios is not None else _risk_ratios(coverage)
     if coverage.usable_faces < MIN_USABLE_FACES:
         warnings.append(
             f"Faceset has only {coverage.usable_faces} usable faces "
@@ -557,24 +607,24 @@ def _build_warnings(
             "High identity outlier ratio: "
             f"{coverage.identity_outlier_ratio:.1%} of faces are outliers or rejects."
         )
-    blur_ratio = _ratio(coverage, "blur", {"unusable"})
+    blur_ratio = risk_ratios["blur_unusable"]
     if blur_ratio > UNUSABLE_BLUR_WARN_RATIO:
         warnings.append(f"High unusable-blur count: {blur_ratio:.1%} of faces are very blurry.")
-    low_res_ratio = _ratio(coverage, "resolution", {"low", "tiny"})
+    low_res_ratio = risk_ratios["low_resolution"]
     if low_res_ratio > LOW_RES_WARN_RATIO:
         warnings.append(f"Low-resolution risk: {low_res_ratio:.1%} of faces are low or tiny.")
-    misalignment_ratio = _ratio(coverage, "misalignment", {"high", "extreme"})
+    misalignment_ratio = risk_ratios["misalignment"]
     if misalignment_ratio > MISALIGNMENT_WARN_RATIO:
         warnings.append(
             "Misalignment risk: "
             f"{misalignment_ratio:.1%} of faces are far from the average face geometry."
         )
-    fallback_pose_ratio = _ratio(coverage, "pose_sources", {"alignment"})
+    fallback_pose_ratio = risk_ratios["pose_fallback"]
     if fallback_pose_ratio > POSE_FALLBACK_WARN_RATIO:
         warnings.append(
             f"Pose fallback risk: {fallback_pose_ratio:.1%} of faces use alignment-derived pose."
         )
-    low_confidence_pose_ratio = _ratio(coverage, "pose_confidence", {"low"})
+    low_confidence_pose_ratio = risk_ratios["low_confidence_pose"]
     if low_confidence_pose_ratio > LOW_CONFIDENCE_POSE_WARN_RATIO:
         warnings.append(
             "SPIGA/alignment pose disagreement: "
@@ -640,11 +690,13 @@ def _build_warnings(
 def _build_recommendations(
     coverage: FacesetCoverageReport,
     underrepresented: list[dict[str, str | float]],
+    ratios: dict[str, float] | None = None,
 ) -> list[str]:
     """Build actionable recommendations."""
     if coverage.total_faces == 0:
         return ["Run extraction before auditing faceset coverage."]
 
+    risk_ratios = ratios if ratios is not None else _risk_ratios(coverage)
     recommendations: list[str] = []
     if coverage.usable_faces < MIN_USABLE_FACES:
         recommendations.append("Collect more source material before training.")
@@ -655,17 +707,17 @@ def _build_recommendations(
         and coverage.identity_outlier_ratio > OUTLIER_WARN_RATIO
     ):
         recommendations.append("Review identity outliers for mixed-subject frames.")
-    if _ratio(coverage, "blur", {"unusable"}) > UNUSABLE_BLUR_WARN_RATIO:
+    if risk_ratios["blur_unusable"] > UNUSABLE_BLUR_WARN_RATIO:
         recommendations.append("Filter very blurry faces or re-extract from sharper footage.")
-    if _ratio(coverage, "resolution", {"low", "tiny"}) > LOW_RES_WARN_RATIO:
+    if risk_ratios["low_resolution"] > LOW_RES_WARN_RATIO:
         recommendations.append("Add higher-resolution source footage for stronger face detail.")
-    if _ratio(coverage, "misalignment", {"high", "extreme"}) > MISALIGNMENT_WARN_RATIO:
+    if risk_ratios["misalignment"] > MISALIGNMENT_WARN_RATIO:
         recommendations.append("Review high-distance alignments for bad landmarks or false faces.")
-    if _ratio(coverage, "pose_sources", {"alignment"}) > POSE_FALLBACK_WARN_RATIO:
+    if risk_ratios["pose_fallback"] > POSE_FALLBACK_WARN_RATIO:
         recommendations.append(
             "Review faces without SPIGA pose backfill; missing or unreadable source frames can force alignment pose."
         )
-    if _ratio(coverage, "pose_confidence", {"low"}) > LOW_CONFIDENCE_POSE_WARN_RATIO:
+    if risk_ratios["low_confidence_pose"] > LOW_CONFIDENCE_POSE_WARN_RATIO:
         recommendations.append(
             "Review low-confidence pose samples where SPIGA and alignment pose disagree."
         )
@@ -758,8 +810,9 @@ def generate_readiness_report(
 ) -> ReadinessReport:
     """Generate a readiness report from precomputed coverage."""
     underrepresented = _underrepresented(coverage, min_bucket_pct)
-    warnings = _build_warnings(coverage, underrepresented, min_bucket_pct)
-    recommendations = _build_recommendations(coverage, underrepresented)
+    risk_ratios = _risk_ratios(coverage)
+    warnings = _build_warnings(coverage, underrepresented, min_bucket_pct, risk_ratios)
+    recommendations = _build_recommendations(coverage, underrepresented, risk_ratios)
     scores: ReadinessScores = compute_readiness_scores(coverage)
     return ReadinessReport(
         alignments=alignments,
