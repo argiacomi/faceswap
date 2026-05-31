@@ -33,7 +33,7 @@ DECA_WEIGHTS_SHA256 = "e714ed293054cba5eea9c96bd3b6b57880074cd84b3fd00d606cbaf0b
 
 #: Key under which upstream DECA stores the FLAME-parameter encoder.
 _DECA_ENCODER_KEY = "E_flame"
-DEEP_DEVICE_CHOICES = ("auto", "cuda", "mps", "cpu")
+DEEP_DEVICE_CHOICES = ("auto", "cpu")
 
 
 def default_weights_path() -> str:
@@ -95,7 +95,17 @@ def _extract_encoder_state(checkpoint: T.Any) -> dict[str, T.Any]:
 
 
 def resolve_deep_device(device: str = "auto") -> tuple[str, bool]:
-    """Return the torch device for DECA inference and whether it was auto-selected."""
+    """Return the torch device for DECA inference and whether it was auto-selected.
+
+    Public CLI control is intentionally binary:
+
+    * ``auto``: prefer CUDA, then Apple MPS, then CPU.
+    * ``cpu``: force CPU inference.
+
+    Explicit accelerator selection is not exposed because FaceQA should either
+    use the best available accelerator or be forced onto CPU for deterministic /
+    compatibility runs.
+    """
     requested = str(device or "auto").lower()
     if requested not in DEEP_DEVICE_CHOICES:
         raise FaceswapError(
@@ -104,23 +114,20 @@ def resolve_deep_device(device: str = "auto") -> tuple[str, bool]:
 
     import torch
 
+    if requested == "cpu":
+        return "cpu", False
+
     cuda_available = bool(torch.cuda.is_available())
     mps_available = bool(
         getattr(getattr(torch, "backends", None), "mps", None) is not None
         and torch.backends.mps.is_available()
     )
 
-    if requested == "auto":
-        if cuda_available:
-            return "cuda", True
-        if mps_available:
-            return "mps", True
-        return "cpu", True
-    if requested == "cuda" and not cuda_available:
-        raise FaceswapError("DECA deep-device 'cuda' was requested but torch CUDA is unavailable.")
-    if requested == "mps" and not mps_available:
-        raise FaceswapError("DECA deep-device 'mps' was requested but torch MPS is unavailable.")
-    return requested, False
+    if cuda_available:
+        return "cuda", True
+    if mps_available:
+        return "mps", True
+    return "cpu", True
 
 
 def load_deca_encoder(*, device: str = "auto") -> TorchDecaEncoder:
@@ -129,8 +136,8 @@ def load_deca_encoder(*, device: str = "auto") -> TorchDecaEncoder:
     Parameters
     ----------
     device
-        Torch device string for inference (``"cpu"`` keeps the default
-        FaceQA workflow CPU-safe).
+        ``"auto"`` selects CUDA, then Apple MPS, then CPU. ``"cpu"`` forces
+        CPU inference.
 
     Raises
     ------

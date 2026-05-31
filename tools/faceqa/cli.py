@@ -297,20 +297,15 @@ class FaceqaArgs(FaceSwapArgs):  # pylint:disable=invalid-name
         )
         argument_list.append(
             {
-                "opts": ("--deep-device",),
-                "action": Radio,
-                "type": str,
-                "dest": "deep_device",
+                "opts": ("--cpu",),
+                "action": "store_true",
+                "dest": "cpu",
                 "group": _("deep analysis"),
-                "default": "auto",
-                "choices": ("auto", "cuda", "mps", "cpu"),
+                "default": False,
                 "help": _(
-                    "R|Torch device for --deep-analysis deca. "
-                    "\nL|'auto': use CUDA when available, then Apple MPS, then CPU "
-                    "(default)."
-                    "\nL|'cuda' / 'mps': require that accelerator and fail clearly "
-                    "if unavailable."
-                    "\nL|'cpu': force CPU inference."
+                    "Force --deep-analysis deca to run on CPU. Without this flag, "
+                    "FaceQA auto-selects the best available accelerator (CUDA, then "
+                    "Apple MPS) and falls back to CPU when no accelerator is available."
                 ),
             }
         )

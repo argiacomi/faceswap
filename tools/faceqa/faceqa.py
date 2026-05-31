@@ -293,7 +293,7 @@ class Faceqa:  # pylint:disable=invalid-name
 
         # ``build_encoder`` downloads and SHA256-validates the DECA checkpoint
         # through the standard faceswap model cache when it is not present.
-        deep_device = str(getattr(self._args, "deep_device", "auto"))
+        deep_device = "cpu" if bool(getattr(self._args, "cpu", False)) else "auto"
         encoder = build_encoder(device=deep_device)
 
         with _faceqa_progress(

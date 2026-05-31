@@ -163,8 +163,13 @@ def test_resolve_deep_device_auto_falls_back_to_cpu(monkeypatch) -> None:
     assert w.resolve_deep_device("auto") == ("cpu", True)
 
 
-def test_resolve_deep_device_explicit_unavailable_fails(monkeypatch) -> None:
-    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+def test_resolve_deep_device_cpu_forces_cpu(monkeypatch) -> None:
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.backends.mps, "is_available", lambda: True)
+    assert w.resolve_deep_device("cpu") == ("cpu", False)
+
+
+def test_resolve_deep_device_rejects_explicit_accelerator(monkeypatch) -> None:
     with pytest.raises(FaceswapError, match="cuda"):
         w.resolve_deep_device("cuda")
 
