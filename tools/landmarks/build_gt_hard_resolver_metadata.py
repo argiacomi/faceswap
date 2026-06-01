@@ -80,6 +80,13 @@ def _sample_without_manifest_runtime_metadata(sample: LandmarkSample) -> Landmar
 def _resolver_metadata_row(context: T.Any, sample: LandmarkSample) -> dict[str, T.Any]:
     """Return one resolver_metadata.jsonl row for a GT-hard sample context."""
     face_index = face_index_for_sample(sample)
+    condition = str(
+        getattr(context, "condition", "")
+        or sample.condition
+        or context.runtime_bucket
+        or "unknown"
+    )
+    hard_case_tags = list(getattr(context, "hard_case_tags", ()) or ())
     runtime_features: dict[str, T.Any] = {
         "candidate_yaw_disagreement": context.candidate_yaw_disagreement,
         "max_disagreement_px": context.max_disagreement_px,
@@ -93,8 +100,8 @@ def _resolver_metadata_row(context: T.Any, sample: LandmarkSample) -> dict[str, 
         "bucket": context.runtime_bucket,
         "runtime_bucket_source": context.runtime_bucket_source,
         "runtime_bucket_features": runtime_features,
-        "condition": context.condition,
-        "hard_case_tags": list(context.hard_case_tags),
+        "condition": condition,
+        "hard_case_tags": hard_case_tags,
         "selected_candidate": context.current_policy_choice,
         "risk_route": context.risk_route,
         "candidate_yaw_disagreement": context.candidate_yaw_disagreement,
@@ -113,9 +120,9 @@ def _resolver_metadata_row(context: T.Any, sample: LandmarkSample) -> dict[str, 
             "sample_id": sample.sample_id,
             "image_path": str(sample.image),
             "face_index": face_index,
-            "condition": context.condition,
+            "condition": condition,
             "runtime_bucket": context.runtime_bucket,
-            "hard_case_tags": list(context.hard_case_tags),
+            "hard_case_tags": hard_case_tags,
             "landmark_ensemble": landmark_ensemble,
         }
     )
