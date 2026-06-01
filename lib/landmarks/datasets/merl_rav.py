@@ -81,11 +81,12 @@ MERL_RAV_SOURCE = DatasetSourceSpec(
     extracted_aliases=("merl_rav_organized", "MERL-RAV_dataset-master", "MERL-RAV", "MERL_RAV"),
     url=MERL_RAV_LABELS_URL,
     manual_hint=(
-        "MERL-RAV labels default to the MERL-RAV GitHub archive. Manifests are "
-        "produced by translating 68-point reannotations into AFLW release-2 "
-        "cropped image coordinates; provide the AFLW release-2 cropped dataset "
-        "under --aflw-release2-dir or at "
-        f"{DEFAULT_AFLW_RELEASE2_DIR}."
+        "MERL-RAV labels default to the MERL-RAV GitHub archive. Native AFLW mode "
+        "matches MERL-RAV 68-point annotations directly to AFLW flickr images by "
+        "imageNNNNN and uses "
+        f"{DEFAULT_AFLW_DIR} by default. Provide --aflw-image-root for a custom "
+        "native AFLW root, or use --merl-rav-coordinate-space=aflw-release2 with "
+        "--aflw-release2-dir for the older cropped release-2 translation path."
     ),
 )
 
@@ -531,6 +532,18 @@ def _find_aflw_native_root(root: Path) -> Path:
     )
 
 
+def _validate_aflw_archive(archive: Path) -> Path:
+    """Return a valid AFLW zip archive or raise a clear cache/download error."""
+    if not archive.is_file():
+        raise FileNotFoundError(f"AFLW archive not found: {archive}")
+    if not zipfile.is_zipfile(archive):
+        raise ValueError(
+            f"Invalid AFLW zip archive: {archive}. Remove the cached file and retry, "
+            "or provide a valid AFLW.zip / --aflw-image-root."
+        )
+    return archive
+
+
 def _download_aflw_archive(
     cache_dir: str | Path,
     *,
@@ -541,24 +554,31 @@ def _download_aflw_archive(
     archive = cache_root / AFLW_ARCHIVE_NAME
 
     try:
-        return download(
+        candidate = download(
             None,
             archive,
             force=force_download,
             google_drive_file_id=AFLW_GOOGLE_DRIVE_FILE_ID,
             label="AFLW archive",
         )
+        return _validate_aflw_archive(candidate)
     except Exception as err:
         logger.warning(
-            "AFLW Google Drive id download failed, retrying direct download URL: %s", err
+            "AFLW Google Drive id download failed or produced an invalid zip, "
+            "retrying direct download URL: %s",
+            err,
         )
-        return download(
+        if archive.exists():
+            archive.unlink()
+
+        candidate = download(
             AFLW_GOOGLE_DRIVE_DIRECT_URL,
             archive,
-            force=force_download,
+            force=True,
             google_drive_file_id=None,
             label="AFLW archive",
         )
+        return _validate_aflw_archive(candidate)
 
 
 def _extract_aflw_archive_to_native_root(
@@ -579,6 +599,7 @@ def _extract_aflw_archive_to_native_root(
     moved_tmp = False
 
     try:
+        archive = _validate_aflw_archive(archive)
         with zipfile.ZipFile(archive, "r") as zf:
             safe_zip_extractall(zf, tmp_dir)
 
