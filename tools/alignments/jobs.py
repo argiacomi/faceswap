@@ -7,10 +7,12 @@ import logging
 import os
 import sys
 import typing as T
+from dataclasses import dataclass
 from datetime import datetime
 
 import numpy as np
 from scipy import signal
+from scipy.optimize import linear_sum_assignment
 from sklearn import decomposition
 from tqdm import tqdm
 
@@ -526,6 +528,53 @@ class Sort:
         return reindexed
 
 
+_SPATIAL_TRACK_REJECT_COST = 1_000_000.0
+_SPATIAL_MAX_TRACK_GAP = 10
+_SPATIAL_MAX_IDENTITY_DISTANCE = 0.45
+_SPATIAL_STRONG_IDENTITY_DISTANCE = 0.10
+_SPATIAL_MAX_WEAK_IDENTITY_JUMP = 3.0
+
+
+@dataclass
+class _SpatialFaceObservation:
+    """One detected face instance in one frame for identity-aware smoothing."""
+
+    frame_key: str
+    frame_number: int
+    face_index: int
+    landmarks: np.ndarray
+    embedding: np.ndarray
+    center_x: float
+    center_y: float
+    width: float
+    height: float
+    frame_half: str | None = None
+    same_identity_duplicate: bool = False
+
+
+@dataclass
+class _SpatialIdentityTrack:
+    """A persistent face instance track across frames."""
+
+    track_id: int
+    observations: list[_SpatialFaceObservation]
+
+    @property
+    def last(self) -> _SpatialFaceObservation:
+        """Return most recent observation in this track."""
+        return self.observations[-1]
+
+    @property
+    def embedding(self) -> np.ndarray:
+        """Return normalized running mean identity embedding for this track."""
+        values = np.stack([obs.embedding for obs in self.observations], axis=0)
+        mean = values.mean(axis=0).astype(np.float32, copy=False)
+        norm = np.linalg.norm(mean)
+        if norm == 0:
+            return T.cast(np.ndarray, mean)
+        return T.cast(np.ndarray, mean / norm)
+
+
 class Spatial:
     """Apply spatial temporal filtering to landmarks
 
@@ -545,16 +594,29 @@ class Spatial:
         logger.debug(parse_class_init(locals()))
         self.arguments = arguments
         self._alignments = alignments
-        self._mappings: dict[int, str] = {}
+        self._mappings: dict[int, str | tuple[str, int]] = {}
         self._normalized: dict[str, np.ndarray] = {}
         self._shapes_model: decomposition.PCA | None = None
         logger.debug("Initialized %s", self.__class__.__name__)
 
     def process(self) -> None:
-        """Perform spatial filtering"""
+        """Perform spatial filtering."""
         logger.info("[SPATIAL-TEMPORAL FILTERING]")  # Tidy up cli output
+
+        if self._has_identity_embeddings():
+            logger.info("Identity embeddings found. Smoothing by persistent face instance tracks.")
+            if self._process_by_identity_tracks():
+                return
+            logger.info(
+                "No usable identity tracks were smoothed. Falling back to face-index smoothing."
+            )
+
+        self._process_by_face_index()
+
+    def _process_by_face_index(self) -> None:
+        """Run the legacy slot-based smoothing fallback."""
         logger.info(
-            "NB: The process smooths alignments by face index. For best results only run this "
+            "NB: Falling back to face-index smoothing. For best results only run this "
             "when face ordering is consistent across frames and all false positives have been "
             "removed"
         )
@@ -578,6 +640,45 @@ class Spatial:
             logger.info("No faces were found to spatially smooth")
             return
 
+        self._save_smoothed_alignments()
+
+    def _process_by_identity_tracks(self) -> bool:
+        """Run identity-assisted instance-track smoothing.
+
+        Returns
+        -------
+        bool
+            ``True`` if any identity track was smoothed, otherwise ``False``.
+        """
+        tracks = self._build_identity_instance_tracks()
+        if not tracks:
+            logger.info("No identity tracks were built")
+            return False
+
+        smoothed = 0
+        for track in tracks:
+            self._mappings = {}
+            self._normalized = {}
+            self._shapes_model = None
+
+            if not self._normalize_track(track):
+                continue
+
+            self._shape_model()
+            landmarks = self._spatially_filter()
+            landmarks = self._temporally_smooth(landmarks)
+            self._update_track_alignments(landmarks)
+            smoothed += 1
+
+        if not smoothed:
+            logger.info("No identity tracks were found to spatially smooth")
+            return False
+
+        self._save_smoothed_alignments()
+        return True
+
+    def _save_smoothed_alignments(self) -> None:
+        """Persist smoothed alignments and warn about regenerated facesets."""
         self._alignments.save()
         logger.warning(
             "If you have a face-set corresponding to the alignment file you "
@@ -594,6 +695,226 @@ class Spatial:
         retval = max((len(val.faces) for val in self._alignments.data.values()), default=0)
         logger.debug("Max face count: %s", retval)
         return retval
+
+    def _has_identity_embeddings(self) -> bool:
+        """Return ``True`` if any face has a usable identity embedding."""
+        return any(
+            self._embedding_for_face(face) is not None
+            for frame in self._alignments.data.values()
+            for face in frame.faces
+        )
+
+    def _build_identity_instance_tracks(self) -> list[_SpatialIdentityTrack]:
+        """Build persistent face-instance tracks from identity and motion continuity.
+
+        This is intentionally instance-based, not pure identity clustering. Multiple tracks may
+        share the same identity embedding, which is required for same-person duplicate cases such
+        as side-by-side stereo frames.
+        """
+        tracks: list[_SpatialIdentityTrack] = []
+        next_track_id = 0
+
+        for frame_number, frame_key in enumerate(sorted(self._alignments.data.keys())):
+            observations = self._observations_for_frame(frame_key, frame_number)
+            if not observations:
+                continue
+
+            if not tracks:
+                for observation in observations:
+                    tracks.append(_SpatialIdentityTrack(next_track_id, [observation]))
+                    next_track_id += 1
+                continue
+
+            active_tracks = [
+                track
+                for track in tracks
+                if frame_number - track.last.frame_number <= _SPATIAL_MAX_TRACK_GAP
+            ]
+
+            matched_observations: set[int] = set()
+
+            if active_tracks:
+                cost_matrix: np.ndarray = np.full(
+                    (len(active_tracks), len(observations)),
+                    _SPATIAL_TRACK_REJECT_COST,
+                    dtype=np.float32,
+                )
+
+                for row, track in enumerate(active_tracks):
+                    for col, observation in enumerate(observations):
+                        cost_matrix[row, col] = self._track_match_cost(track, observation)
+
+                rows, cols = linear_sum_assignment(cost_matrix)
+                for row, col in zip(rows, cols, strict=False):
+                    cost = float(cost_matrix[row, col])
+                    if cost >= _SPATIAL_TRACK_REJECT_COST:
+                        continue
+                    active_tracks[row].observations.append(observations[col])
+                    matched_observations.add(col)
+
+            for col, observation in enumerate(observations):
+                if col in matched_observations:
+                    continue
+                tracks.append(_SpatialIdentityTrack(next_track_id, [observation]))
+                next_track_id += 1
+
+        logger.info("Built %s identity-aware face instance track(s)", len(tracks))
+        return tracks
+
+    def _observations_for_frame(
+        self,
+        frame_key: str,
+        frame_number: int,
+    ) -> list[_SpatialFaceObservation]:
+        """Return usable identity observations for one frame."""
+        observations: list[_SpatialFaceObservation] = []
+        faces = self._alignments.data[frame_key].faces
+
+        for face_index, face in enumerate(faces):
+            embedding = self._embedding_for_face(face)
+            if embedding is None:
+                continue
+
+            landmarks_raw = getattr(face, "landmarks_xy", None)
+            if landmarks_raw is None:
+                continue
+            landmarks = np.asarray(landmarks_raw, dtype=np.float32)
+            if landmarks.ndim != 2 or landmarks.shape[1] != 2:
+                continue
+
+            x_pos = float(getattr(face, "x", 0.0) or 0.0)
+            y_pos = float(getattr(face, "y", 0.0) or 0.0)
+            width = float(getattr(face, "w", 0.0) or 0.0)
+            height = float(getattr(face, "h", 0.0) or 0.0)
+
+            observations.append(
+                _SpatialFaceObservation(
+                    frame_key=frame_key,
+                    frame_number=frame_number,
+                    face_index=face_index,
+                    landmarks=landmarks,
+                    embedding=embedding,
+                    center_x=x_pos + (width / 2.0),
+                    center_y=y_pos + (height / 2.0),
+                    width=width,
+                    height=height,
+                )
+            )
+
+        self._assign_frame_halves(observations)
+        self._mark_same_identity_duplicates(observations)
+        return observations
+
+    @staticmethod
+    def _embedding_for_face(face: T.Any) -> np.ndarray | None:
+        """Return a normalized deterministic identity embedding for a face."""
+        identity = getattr(face, "identity", None)
+        if not identity:
+            return None
+
+        for key in sorted(identity):
+            embedding = np.asarray(identity[key], dtype=np.float32)
+            if embedding.ndim != 1 or embedding.size == 0:
+                continue
+            if not np.isfinite(embedding).all():
+                continue
+            norm = np.linalg.norm(embedding)
+            if norm == 0:
+                continue
+            return T.cast(np.ndarray, embedding / norm)
+        return None
+
+    @staticmethod
+    def _identity_distance(lhs: np.ndarray, rhs: np.ndarray) -> float:
+        """Return cosine distance for normalized identity embeddings."""
+        return 1.0 - float(np.clip(np.dot(lhs, rhs), -1.0, 1.0))
+
+    @staticmethod
+    def _assign_frame_halves(observations: list[_SpatialFaceObservation]) -> None:
+        """Assign coarse left/right positions within a frame.
+
+        This is only used as a guardrail when the same identity appears more than once in a
+        single frame, as in side-by-side stereo.
+        """
+        if len(observations) < 2:
+            return
+
+        centers = [obs.center_x for obs in observations]
+        left = min(centers)
+        right = max(centers)
+        if right <= left:
+            return
+
+        midpoint = (left + right) / 2.0
+        for observation in observations:
+            observation.frame_half = "left" if observation.center_x < midpoint else "right"
+
+    def _mark_same_identity_duplicates(
+        self,
+        observations: list[_SpatialFaceObservation],
+    ) -> None:
+        """Mark observations that share a near-identical identity within the same frame."""
+        for idx, lhs in enumerate(observations):
+            for rhs in observations[idx + 1 :]:
+                if (
+                    self._identity_distance(lhs.embedding, rhs.embedding)
+                    <= _SPATIAL_STRONG_IDENTITY_DISTANCE
+                ):
+                    lhs.same_identity_duplicate = True
+                    rhs.same_identity_duplicate = True
+
+    def _track_match_cost(
+        self,
+        track: _SpatialIdentityTrack,
+        observation: _SpatialFaceObservation,
+    ) -> float:
+        """Return assignment cost for matching a track to an observation.
+
+        Lower is better. ``_SPATIAL_TRACK_REJECT_COST`` means do not match.
+        """
+        last = track.last
+        gap = max(1, observation.frame_number - last.frame_number)
+        if gap > _SPATIAL_MAX_TRACK_GAP:
+            return _SPATIAL_TRACK_REJECT_COST
+
+        identity_distance = self._identity_distance(track.embedding, observation.embedding)
+        if identity_distance > _SPATIAL_MAX_IDENTITY_DISTANCE:
+            return _SPATIAL_TRACK_REJECT_COST
+
+        spatial_distance = np.hypot(
+            observation.center_x - last.center_x,
+            observation.center_y - last.center_y,
+        )
+        spatial_scale = max(
+            last.width,
+            last.height,
+            observation.width,
+            observation.height,
+            1.0,
+        )
+        spatial_distance = float(spatial_distance / spatial_scale)
+
+        if (
+            spatial_distance > _SPATIAL_MAX_WEAK_IDENTITY_JUMP
+            and identity_distance > _SPATIAL_STRONG_IDENTITY_DISTANCE
+        ):
+            return _SPATIAL_TRACK_REJECT_COST
+
+        if (
+            last.frame_half is not None
+            and observation.frame_half is not None
+            and last.frame_half != observation.frame_half
+            and (last.same_identity_duplicate or observation.same_identity_duplicate)
+            and identity_distance <= _SPATIAL_STRONG_IDENTITY_DISTANCE
+        ):
+            # Same-person duplicates in a single frame, e.g. side-by-side stereo, should remain
+            # separate left/right face-instance tracks instead of collapsing into one identity.
+            return _SPATIAL_TRACK_REJECT_COST
+
+        spatial_component = min(spatial_distance, 1.0)
+        gap_component = min(1.0, 0.1 * (gap - 1))
+
+        return 0.80 * identity_distance + 0.15 * spatial_component + 0.05 * gap_component
 
     # Define shape normalization utility functions
     @staticmethod
@@ -733,6 +1054,37 @@ class Spatial:
         logger.debug("Normalized: %s", self._normalized)
         return True
 
+    def _normalize_track(self, track: _SpatialIdentityTrack) -> bool:
+        """Compile original and normalized alignments for one identity instance track."""
+        logger.debug("Normalize identity track: %s", track.track_id)
+        observations = track.observations
+        if len(observations) < 2:
+            logger.info(
+                "Skipping identity track %s. Not enough observations.",
+                track.track_id,
+            )
+            return False
+
+        sample_lm = observations[0].landmarks
+        lm_count = sample_lm.shape[0]
+        if lm_count != 68:
+            raise FaceswapError("Spatial smoothing only supports 68 point facial landmarks")
+
+        landmarks_all = np.zeros((lm_count, 2, len(observations)))
+        self._mappings = {}
+
+        for idx, observation in enumerate(observations):
+            landmarks = np.asarray(observation.landmarks, dtype=np.float32).reshape((lm_count, 2))
+            landmarks_all[:, :, idx] = landmarks
+            self._mappings[idx] = (observation.frame_key, observation.face_index)
+
+        normalized_shape = self._normalize_shapes(landmarks_all)
+        self._normalized["landmarks"] = normalized_shape[0]
+        self._normalized["scale_factors"] = normalized_shape[1]
+        self._normalized["mean_coords"] = normalized_shape[2]
+        logger.debug("Normalized identity track %s: %s", track.track_id, self._normalized)
+        return True
+
     def _shape_model(self) -> None:
         """build 2D shape model"""
         logger.debug("Shape model")
@@ -833,6 +1185,28 @@ class Spatial:
                 landmarks_xy,
             )
         logger.debug("Updated alignments")
+
+    def _update_track_alignments(self, landmarks: np.ndarray) -> None:
+        """Update smoothed landmarks back to their original frame and face index."""
+        logger.debug("Update alignments for identity track")
+        for idx, mapping in tqdm(
+            self._mappings.items(),
+            desc="Updating identity track",
+            leave=False,
+        ):
+            assert isinstance(mapping, tuple)
+            frame, face_index = mapping
+            logger.trace("Updating: (frame: %s, face_index: %s)", frame, face_index)  # type:ignore
+            landmarks_update = landmarks[:, :, idx]
+            landmarks_xy = landmarks_update.reshape(68, 2)
+            self._alignments.data[frame].faces[face_index].landmarks_xy = landmarks_xy
+            logger.trace(  # type: ignore[attr-defined]
+                "Updated: (frame: '%s', face_index: %s, landmarks: %s)",
+                frame,
+                face_index,
+                landmarks_xy,
+            )
+        logger.debug("Updated identity track alignments")
 
 
 __all__ = get_module_objects(__name__)
