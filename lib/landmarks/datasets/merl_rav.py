@@ -644,6 +644,24 @@ def resolve_aflw_native_root(
         return aflw_root
 
     archive = cache_root / AFLW_ARCHIVE_NAME
+    if archive.is_file() and not force_download:
+        try:
+            archive = _validate_aflw_archive(archive)
+        except ValueError as err:
+            if no_download:
+                raise ValueError(
+                    f"AFLW cached archive is invalid and download is disabled: {archive}. "
+                    "Remove the cached file and provide a valid AFLW.zip, or rerun "
+                    "without --no-download."
+                ) from err
+
+            logger.warning(
+                "AFLW cached archive is invalid, redownloading from configured sources: %s",
+                err,
+            )
+            archive.unlink()
+            archive = _download_aflw_archive(cache_dir, force_download=False)
+
     if not archive.is_file() or force_download:
         if no_download:
             raise FileNotFoundError(
