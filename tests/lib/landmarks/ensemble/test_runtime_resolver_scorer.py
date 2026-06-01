@@ -284,6 +284,21 @@ def test_oracle_regret_target_uses_raw_candidate_minus_oracle_nme() -> None:
     assert scorer_training.scorer_target_value(row, TARGET_ORACLE_REGRET) == pytest.approx(0.04)
 
 
+def test_hard_bucket_gates_fail_on_profile_failures() -> None:
+    failed = scorer_eval_impl.hard_bucket_promotion_gates(
+        {
+            "profile": {
+                "sample_count": 2,
+                "failure_rate": 0.5,
+                "catastrophic_failure_count": 1,
+            }
+        }
+    )
+
+    assert "profile_failure_rate_above_hard_bucket_gate" in failed
+    assert "profile_catastrophic_failures_above_hard_bucket_gate" in failed
+
+
 def test_rows_for_context_adds_continuous_regret_targets() -> None:
     rows = scorer_data.rows_for_context(
         _candidate_context(
@@ -458,6 +473,10 @@ def test_train_runtime_resolver_scorer_writes_artifact_and_rows(tmp_path: Path) 
     assert (output_dir / "runtime_resolver_scorer_training_rows.csv").is_file()
     assert (output_dir / "runtime_resolver_scorer_eval_rows.csv").is_file()
     assert (output_dir / "candidate_table.csv").is_file()
+    assert (output_dir / "scorer_report_by_condition.csv").is_file()
+    assert (output_dir / "scorer_report_by_region.csv").is_file()
+    assert metrics["sample_weighting"]["strategy"] == "hard_case_weighting_single_scorer"
+    assert "oracle_regret_target_stats" in metrics
     training_rows = output_dir / "runtime_resolver_scorer_training_rows.csv"
     with training_rows.open("r", newline="", encoding="utf-8") as handle:
         header = next(csv.DictReader(handle))

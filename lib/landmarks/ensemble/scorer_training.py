@@ -731,6 +731,10 @@ def _train_linear_or_logistic_from_tagged_rows(
             "score_semantics": score_semantics,
             "higher_is_better": False,
             "target_stats": target_stats,
+            "oracle_regret_target_stats": target_distribution_stats(
+                rows,
+                target=TARGET_ORACLE_REGRET,
+            ),
             "sample_weighting": scorer_sample_weighting_stats(train_tagged_rows),
             "scorer_report_by_condition": str(condition_report_path),
             "scorer_report_by_region": str(region_report_path),
@@ -950,7 +954,6 @@ def train_runtime_resolver_scorer_suite(
     )
     binary_dir = output_dir / "v1_binary"
     continuous_dir = output_dir / "v1_1_selection_cost"
-    oracle_regret_dir = output_dir / "v1_1_oracle_regret"
     v2_dir = output_dir / "v2_lambdarank"
     scorers_dir = output_dir / SCORERS_DIR
     scorers_dir.mkdir(parents=True, exist_ok=True)
@@ -991,24 +994,6 @@ def train_runtime_resolver_scorer_suite(
         gt_hard_resolver_metadata=gt_hard_resolver_metadata,
         candidate_table_path=candidate_table_path,
     )
-    oracle_regret_metrics = _train_linear_or_logistic_from_tagged_rows(
-        tagged_rows=tagged_rows,
-        train_tagged_rows=train_tagged_rows,
-        eval_tagged_rows=eval_tagged_rows,
-        candidates=candidates,
-        output_dir=oracle_regret_dir,
-        target=TARGET_ORACLE_REGRET,
-        failure_threshold=failure_threshold,
-        high_gap_threshold=high_gap_threshold,
-        l2=l2,
-        learning_rate=learning_rate,
-        iterations=iterations,
-        eval_fraction=eval_fraction,
-        split_seed=split_seed,
-        allow_image_backfill=allow_image_backfill,
-        gt_hard_resolver_metadata=gt_hard_resolver_metadata,
-        candidate_table_path=candidate_table_path,
-    )
     v2_metrics = _train_lambdarank_from_tagged_rows(
         train_tagged_rows=train_tagged_rows,
         eval_tagged_rows=eval_tagged_rows,
@@ -1024,11 +1009,9 @@ def train_runtime_resolver_scorer_suite(
 
     canonical_binary = scorers_dir / "learned_quality_v1.json"
     canonical_continuous = scorers_dir / "learned_quality_v1_1.json"
-    canonical_oracle_regret = scorers_dir / "learned_quality_v1_1_oracle_regret.json"
     canonical_v2 = scorers_dir / "learned_quality_v2.json"
     shutil.copy2(binary_dir / SCORER_ARTIFACT, canonical_binary)
     shutil.copy2(continuous_dir / SCORER_ARTIFACT, canonical_continuous)
-    shutil.copy2(oracle_regret_dir / SCORER_ARTIFACT, canonical_oracle_regret)
     shutil.copy2(v2_dir / SCORER_V2_ARTIFACT, canonical_v2)
 
     metrics = {
@@ -1043,10 +1026,6 @@ def train_runtime_resolver_scorer_suite(
                 **continuous_metrics,
                 "canonical_artifact": str(canonical_continuous),
             },
-            "learned_quality_v1_1_oracle_regret": {
-                **oracle_regret_metrics,
-                "canonical_artifact": str(canonical_oracle_regret),
-            },
             "learned_quality_v2": {
                 **v2_metrics,
                 "canonical_artifact": str(canonical_v2),
@@ -1057,13 +1036,11 @@ def train_runtime_resolver_scorer_suite(
             "legacy_per_scorer_training_rows": [
                 str(binary_dir / TRAINING_ROWS_CSV),
                 str(continuous_dir / TRAINING_ROWS_CSV),
-                str(oracle_regret_dir / TRAINING_ROWS_CSV),
                 str(v2_dir / TRAINING_ROWS_CSV),
             ],
             "legacy_per_scorer_eval_rows": [
                 str(binary_dir / EVAL_ROWS_CSV),
                 str(continuous_dir / EVAL_ROWS_CSV),
-                str(oracle_regret_dir / EVAL_ROWS_CSV),
                 str(v2_dir / EVAL_ROWS_CSV),
             ],
             "candidate_table": str(candidate_table_path),
@@ -1185,12 +1162,7 @@ def train_runtime_resolver_scorer_v2(
         },
         "feature_importances": importances,
         "calibration": {"type": "none", "params": {}},
-        "sample_weighting": {
-            "base": 1.0,
-            "candidate_failure_bonus": 2.0,
-            "hard_pose_bucket_bonus": 0.5,
-            "production_validated_bonus": 0.25,
-        },
+        "sample_weighting": scorer_sample_weighting_stats(grouped_train),
         "lightgbm_params": {
             "objective": "lambdarank",
             "n_estimators": iterations,
@@ -1287,14 +1259,28 @@ def train_runtime_resolver_scorer(
         [scorer_target_value(row, target) for row in train_rows],
         dtype="float64",
     )
+    train_sample_weights = np.asarray(
+        [scorer_sample_weight(row, source) for row, source in train_tagged_rows],
+        dtype="float64",
+    )
     if target in REGRESSION_TARGETS:
-        coefficients, intercept = fit_linear_regression(x, y, l2=l2)
+        coefficients, intercept = fit_linear_regression(
+            x,
+            y,
+            l2=l2,
+            sample_weight=train_sample_weights,
+        )
         model_type = MODEL_TYPE_LINEAR_REGRESSION
         score_semantics = SCORE_SEMANTICS_PREDICTED_COST
         version = "continuous_regret_v1_1"
-        selection_target = "continuous_regret"
-        objective = "minimize_candidate_selection_regret"
-        training_mode = "continuous_selection_cost"
+        if target == TARGET_ORACLE_REGRET:
+            selection_target = "oracle_regret"
+            objective = "minimize_candidate_oracle_regret"
+            training_mode = "oracle_regret_regression"
+        else:
+            selection_target = "continuous_regret"
+            objective = "minimize_candidate_selection_regret"
+            training_mode = "continuous_selection_cost"
         # The v1.1 continuous scorer is selected at runtime by policy
         # "learned_quality_v1_1"; the v1 binary classifier ships under
         # "learned_quality_v1". Writing the wrong runtime_policy lets the
@@ -1308,6 +1294,7 @@ def train_runtime_resolver_scorer(
             l2=l2,
             learning_rate=learning_rate,
             iterations=iterations,
+            sample_weight=train_sample_weights,
         )
         model_type = MODEL_TYPE_LOGISTIC_REGRESSION
         score_semantics = SCORE_SEMANTICS_PREDICTED_RISK
@@ -1339,6 +1326,16 @@ def train_runtime_resolver_scorer(
         candidate_rows,
         output_dir / TRAINING_CANDIDATE_TABLE_CSV,
     )
+    condition_report_rows = _training_report_rows(tagged_rows, group_by="condition")
+    region_report_rows = _training_report_rows(tagged_rows, group_by="region")
+    condition_report_path = write_training_report_csv(
+        condition_report_rows,
+        output_dir / SCORER_CONDITION_REPORT_CSV,
+    )
+    region_report_path = write_training_report_csv(
+        region_report_rows,
+        output_dir / SCORER_REGION_REPORT_CSV,
+    )
     metrics = scorer_row_metrics(scorer, rows)
     target_stats = target_distribution_stats(rows, target=target)
     train_metrics = scorer_row_metrics(scorer, train_rows)
@@ -1363,6 +1360,13 @@ def train_runtime_resolver_scorer(
             "score_semantics": score_semantics,
             "higher_is_better": False,
             "target_stats": target_stats,
+            "oracle_regret_target_stats": target_distribution_stats(
+                rows,
+                target=TARGET_ORACLE_REGRET,
+            ),
+            "sample_weighting": scorer_sample_weighting_stats(train_tagged_rows),
+            "scorer_report_by_condition": str(condition_report_path),
+            "scorer_report_by_region": str(region_report_path),
             "failure_threshold": failure_threshold,
             "high_gap_threshold": high_gap_threshold,
             "normalized_regret_clamp": DEFAULT_REGRET_NORMALIZER,

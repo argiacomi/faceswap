@@ -1520,7 +1520,9 @@ def evaluate_runtime_resolver_scorer(
         *hard_bucket_failed_gates,
     ]
     failed_gates = (
-        production_failed_gates if promotion_scope == "production" else universal_failed_gates
+        [*production_failed_gates, *hard_bucket_failed_gates]
+        if promotion_scope == "production"
+        else universal_failed_gates
     )
     v2_summary = policy_summary(contexts, v2_scorer_choices) if v2_scorer is not None else None
     v2_failed_gates: list[str] = []
