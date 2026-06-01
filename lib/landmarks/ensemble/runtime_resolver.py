@@ -1670,7 +1670,7 @@ def resolve_runtime(
     preloaded_scorer: T.Any = None,
 ) -> RuntimeResolverResult:
     """Resolve one face using runtime candidate diagnostics and policy selection."""
-    learned_policies = {"learned_quality_v1", "learned_quality_v1_1", "learned_quality_v2"}
+    learned_policies = {"learned_quality_v2"}
     if config.policy not in {"roll_aware_veto", *learned_policies}:
         raise RuntimeResolverError(f"unsupported runtime resolver policy {config.policy!r}")
     logger.debug(

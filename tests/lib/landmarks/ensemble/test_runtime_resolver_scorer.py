@@ -337,8 +337,10 @@ def test_rows_for_context_adds_continuous_regret_targets() -> None:
     assert by_name["failure"].candidate_failure_or_high_gap is True
     assert by_name["failure"].selection_cost == pytest.approx(
         (0.01 / DEFAULT_REGRET_NORMALIZER)
+        + scorer_data.JAW_CROP_MASK_PENALTY
         + DEFAULT_FAILURE_COST_PENALTY
         + DEFAULT_COLLAPSE_COST_PENALTY
+        + scorer_data.PRODUCTION_FAILURE_PENALTY
     )
 
 
@@ -519,7 +521,7 @@ def test_train_runtime_resolver_scorer_supports_selection_cost_regressor(
     assert artifact["selection_target"] == "continuous_regret"
     assert artifact["objective"] == "minimize_candidate_selection_regret"
     assert artifact["training_mode"] == "continuous_selection_cost"
-    assert artifact["runtime_policy"] == "learned_quality_v1_1"
+    assert artifact["runtime_policy"] == "learned_quality_v2"
     assert metrics["score_semantics"] == SCORE_SEMANTICS_PREDICTED_COST
     assert metrics["higher_is_better"] is False
     assert metrics["target_stats"]["target"] == TARGET_SELECTION_COST
@@ -669,15 +671,20 @@ def test_evaluate_runtime_resolver_scorer_reports_policy(tmp_path: Path) -> None
     assert report["status"] == "fail"
     assert "scorer_mean_nme_not_better_than_static_downweight" in report["failed_gates"]
     assert report["heldout_eval"] is False
-    assert report["runtime_policy"] == "learned_quality_v1"
-    assert report["promoted_scorer_label"] == "current_binary_logistic_scorer"
+    assert report["runtime_policy"] == "learned_quality_v2"
+    assert report["promoted_scorer_label"] == "learned_quality_v2"
+    assert "learned_quality_v2" in report
     assert "learned_quality_v1" not in report
-    assert report["current_binary_logistic_scorer"]["pick_counts"] == {"hrnet": 2}
+    assert "learned_quality_v1_1" not in report
+    assert "learned_quality_v1" not in report
+    assert report["learned_quality_v2"]["pick_counts"] == {"hrnet": 2}
     assert report["production_only_policy_metrics"]["sample_count"] == 2
+    assert "learned_quality_v2" in report["production_only_policy_metrics"]
     assert "learned_quality_v1" not in report["production_only_policy_metrics"]
-    assert report["production_only_policy_metrics"]["current_binary_logistic_scorer"][
-        "pick_counts"
-    ] == {"hrnet": 2}
+    assert "learned_quality_v1" not in report["production_only_policy_metrics"]
+    assert report["production_only_policy_metrics"]["learned_quality_v2"]["pick_counts"] == {
+        "hrnet": 2
+    }
     assert report["gt_hard_only_policy_metrics"]["sample_count"] == 0
     assert report["best_single"]["candidate"] == "hrnet"
     assert set(report["metrics_by_split"]) == {
@@ -706,19 +713,11 @@ def test_evaluate_runtime_resolver_scorer_reports_policy(tmp_path: Path) -> None
     }
 
 
-def test_evaluate_runtime_resolver_scorer_compares_binary_and_continuous(
+def test_evaluate_runtime_resolver_scorer_reports_v2_primary_policy(
     tmp_path: Path,
 ) -> None:
     manifest_path, cache_dir, weights_path = _write_fixture(tmp_path)
-    binary_scorer_path = write_runtime_resolver_scorer(
-        RuntimeResolverScorer(
-            features=("candidate_name=hrnet", "candidate_name=spiga"),
-            coefficients=(-5.0, 5.0),
-            intercept=0.0,
-        ),
-        tmp_path / "binary_runtime_resolver_scorer.json",
-    )
-    continuous_scorer_path = write_runtime_resolver_scorer(
+    v2_scorer_path = write_runtime_resolver_scorer(
         RuntimeResolverScorer(
             features=("candidate_name=hrnet", "candidate_name=spiga"),
             coefficients=(-1.0, 1.0),
@@ -727,10 +726,13 @@ def test_evaluate_runtime_resolver_scorer_compares_binary_and_continuous(
             target=TARGET_SELECTION_COST,
             score_semantics=SCORE_SEMANTICS_PREDICTED_COST,
             higher_is_better=False,
-            version="continuous_regret_v1_1",
-            selection_target="continuous_regret",
+            version="learned_quality_v2",
+            runtime_policy="learned_quality_v2",
+            selection_target="downstream_weighted_alignment_cost",
+            objective="minimize_downstream_weighted_alignment_cost",
+            training_mode="v2_lambdarank",
         ),
-        tmp_path / "continuous_runtime_resolver_scorer.json",
+        tmp_path / "v2_runtime_resolver_scorer.json",
     )
 
     report = evaluate_runtime_resolver_scorer(
@@ -739,76 +741,25 @@ def test_evaluate_runtime_resolver_scorer_compares_binary_and_continuous(
         production_manifest=manifest_path,
         production_cache_dir=cache_dir,
         weights_path=weights_path,
-        scorer_path=continuous_scorer_path,
-        binary_scorer_path=binary_scorer_path,
+        scorer_path=v2_scorer_path,
         candidates=("hrnet", "spiga", "static_weighted_downweight"),
-        output_dir=tmp_path / "eval_compare",
+        output_dir=tmp_path / "eval_v2",
     )
 
-    assert report["primary_scorer_policy"] == "learned_quality_v1_1"
-    assert report["runtime_policy"] == "learned_quality_v1_1"
-    assert report["promoted_scorer_version"] == "continuous_regret_v1_1"
+    assert report["primary_scorer_policy"] == "learned_quality_v2"
+    assert report["runtime_policy"] == "learned_quality_v2"
+    assert report["promoted_scorer_label"] == "learned_quality_v2"
     assert report["promoted_scorer_target"] == TARGET_SELECTION_COST
-    assert report["promoted_scorer_label"] == "learned_quality_v1_1"
     assert report["scorer_target"] == TARGET_SELECTION_COST
-    assert report["scorer_model_type"] == MODEL_TYPE_LINEAR_REGRESSION
-    assert report["scorer_comparison"]["uses_same_contexts"] is True
-    assert report["scorer_comparison"]["uses_same_candidates"] is True
-    assert report["scorer_comparison"]["context_count"] == report["sample_count"]
-    assert report["learned_quality_v1_1"]["pick_counts"] == {"hrnet": 2}
-    assert "learned_quality_v1" not in report
-    assert report["current_binary_logistic_scorer"]["pick_counts"] == {"hrnet": 2}
-    assert "static_weighted_downweight" in report
-    assert "oracle" in report
-    assert report["production_only_policy_metrics"]["learned_quality_v1_1"]["pick_counts"] == {
-        "hrnet": 2
-    }
-    assert report["production_only_policy_metrics"]["current_binary_logistic_scorer"][
-        "pick_counts"
-    ] == {"hrnet": 2}
-
-    primary_scorer = report["primary_scorer"]
-    assert primary_scorer["label"] == "learned_quality_v1_1"
-    assert primary_scorer["version"] == "continuous_regret_v1_1"
-    assert primary_scorer["target"] == TARGET_SELECTION_COST
-    assert primary_scorer["model_type"] == MODEL_TYPE_LINEAR_REGRESSION
-    assert primary_scorer["metrics"] == report["learned_quality_v1_1"]
-    assert "scorer_version" not in report
-    assert "scorer_version" not in report["production_only_policy_metrics"]
-    assert "scorer_version" not in report["gt_hard_all_policy_metrics"]
+    assert "learned_quality_v2" in report
+    assert report["primary_scorer"]["label"] == "learned_quality_v2"
+    assert report["primary_scorer"]["metrics"] == report["learned_quality_v2"]
 
 
-def test_evaluate_runtime_resolver_scorer_emits_stable_keys_for_all_scorers(
+def test_evaluate_runtime_resolver_scorer_emits_stable_v2_only_keys(
     tmp_path: Path,
 ) -> None:
-    """Three-way comparison: v1.1 primary + binary peer + v2 peer.
-
-    Locks in the stable report contract: each scorer gets a version-explicit
-    bucket key and the ``primary_scorer`` block names the canonical v1.1 label.
-    """
     manifest_path, cache_dir, weights_path = _write_fixture(tmp_path)
-    binary_scorer_path = write_runtime_resolver_scorer(
-        RuntimeResolverScorer(
-            features=("candidate_name=hrnet", "candidate_name=spiga"),
-            coefficients=(-5.0, 5.0),
-            intercept=0.0,
-        ),
-        tmp_path / "binary_scorer.json",
-    )
-    continuous_scorer_path = write_runtime_resolver_scorer(
-        RuntimeResolverScorer(
-            features=("candidate_name=hrnet", "candidate_name=spiga"),
-            coefficients=(-1.0, 1.0),
-            intercept=0.0,
-            model_type=MODEL_TYPE_LINEAR_REGRESSION,
-            target=TARGET_SELECTION_COST,
-            score_semantics=SCORE_SEMANTICS_PREDICTED_COST,
-            higher_is_better=False,
-            version="continuous_regret_v1_1",
-            selection_target="continuous_regret",
-        ),
-        tmp_path / "continuous_scorer.json",
-    )
     v2_scorer_path = write_runtime_resolver_scorer(
         RuntimeResolverScorer(
             features=("candidate_name=hrnet", "candidate_name=spiga"),
@@ -819,6 +770,10 @@ def test_evaluate_runtime_resolver_scorer_emits_stable_keys_for_all_scorers(
             score_semantics=SCORE_SEMANTICS_PREDICTED_COST,
             higher_is_better=False,
             version="learned_quality_v2",
+            runtime_policy="learned_quality_v2",
+            selection_target="downstream_weighted_alignment_cost",
+            objective="minimize_downstream_weighted_alignment_cost",
+            training_mode="v2_lambdarank",
         ),
         tmp_path / "v2_scorer.json",
     )
@@ -829,42 +784,27 @@ def test_evaluate_runtime_resolver_scorer_emits_stable_keys_for_all_scorers(
         production_manifest=manifest_path,
         production_cache_dir=cache_dir,
         weights_path=weights_path,
-        scorer_path=continuous_scorer_path,
-        binary_scorer_path=binary_scorer_path,
-        v2_scorer_path=v2_scorer_path,
+        scorer_path=v2_scorer_path,
         candidates=("hrnet", "spiga", "static_weighted_downweight"),
-        output_dir=tmp_path / "eval_three_way",
+        output_dir=tmp_path / "eval_v2_only",
     )
 
-    # Canonical primary label is the v1.1-aligned name, not the legacy alias.
-    assert report["primary_scorer_policy"] == "learned_quality_v1_1"
-    assert report["primary_scorer_policy"] != "scorer_version"
-    primary_scorer = report["primary_scorer"]
-    assert primary_scorer["label"] == "learned_quality_v1_1"
-    assert primary_scorer["version"] == "continuous_regret_v1_1"
-    assert primary_scorer["target"] == TARGET_SELECTION_COST
-    assert primary_scorer["model_type"] == MODEL_TYPE_LINEAR_REGRESSION
-    assert primary_scorer["metrics"] == report["learned_quality_v1_1"]
+    assert report["primary_scorer_policy"] == "learned_quality_v2"
+    assert report["runtime_policy"] == "learned_quality_v2"
+    assert report["primary_scorer"]["label"] == "learned_quality_v2"
+    assert report["primary_scorer"]["metrics"] == report["learned_quality_v2"]
 
-    # All three scorers have version-explicit top-level buckets.
-    assert "learned_quality_v1_1" in report
-    assert "learned_quality_v2" in report
-    assert "current_binary_logistic_scorer" in report
-
-    # Per-source bundles carry each scorer under the same stable keys.
     production = report["production_only_policy_metrics"]
-    assert "learned_quality_v1_1" in production
     assert "learned_quality_v2" in production
-    assert "current_binary_logistic_scorer" in production
-
-    # No legacy alias keys leak into the report or the per-source bundles.
+    assert "learned_quality_v1" not in production
+    assert "learned_quality_v1_1" not in production
+    assert "learned_quality_v1" not in production
+    assert "learned_quality_v2" in report
+    assert "learned_quality_v1" not in report
+    assert "learned_quality_v1_1" not in report
+    assert "learned_quality_v1" not in report
     assert "scorer_version" not in report
     assert "scorer_version" not in production
-    assert "scorer_version" not in report["gt_hard_all_policy_metrics"]
-
-    # Each named scorer has its own metrics bucket — no aliasing or sharing.
-    assert production["learned_quality_v2"] is not production["learned_quality_v1_1"]
-    assert production["current_binary_logistic_scorer"] is not production["learned_quality_v1_1"]
 
 
 def test_evaluate_runtime_resolver_scorer_filters_to_eval_split(tmp_path: Path) -> None:
@@ -936,7 +876,7 @@ def test_evaluate_runtime_resolver_scorer_blocks_safe_fallback_without_score_del
         output_dir=tmp_path / "eval_safe",
     )
 
-    assert report["current_binary_logistic_scorer"]["pick_counts"] == {"static_weighted": 2}
+    assert report["learned_quality_v2"]["pick_counts"] == {"static_weighted": 2}
     assert report["safe_fallback_count"] == 0
     assert report["safe_fallback_min_delta"] == 0.05
     assert report["fallback_impact"]["count_with_rejected_candidate"] == 0
@@ -1444,7 +1384,7 @@ def test_evaluate_runtime_resolver_scorer_uses_scorer_rows_without_context_rebui
     assert report["scorer_rows"] == str(rows_path)
     assert report["eval_split"] == ""
     assert report["production_only_policy_metrics"]["sample_count"] == 1
-    assert report["current_binary_logistic_scorer"]["pick_counts"] == {"hrnet": 1}
+    assert report["learned_quality_v2"]["pick_counts"] == {"hrnet": 1}
     assert (tmp_path / "row_backed_eval" / "scorer_policy_eval_report.json").is_file()
 
 
@@ -1483,4 +1423,4 @@ def test_row_backed_eval_high_risk_safe_fallback_handles_fusion_flags(
 
     assert report["row_backed_eval"] is True
     assert report["sample_count"] == 1
-    assert report["current_binary_logistic_scorer"]["pick_counts"]
+    assert report["learned_quality_v2"]["pick_counts"]

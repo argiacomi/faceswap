@@ -60,6 +60,16 @@ DEFAULT_HIGH_GAP_THRESHOLD: float = DEFAULT_LARGE_REGRET_THRESHOLD
 DEFAULT_OUTLIER_THRESHOLD: float = 3.5
 DEFAULT_IMAGE_BACKFILL_CROP_SCALE: float = 1.6
 DEFAULT_IMAGE_BACKFILL_CROP_SIZE: int = 256
+
+# Downstream weighted alignment cost proxy components.
+# The scorer rows do not yet carry true per-region NME, so these penalties use
+# the closest available runtime/geometry evidence for Faceswap-critical regions.
+JAW_CROP_MASK_PENALTY: float = 0.75
+EYES_IDENTITY_POSE_PENALTY: float = 0.60
+MOUTH_EXPRESSION_PENALTY: float = 0.45
+OCCLUDED_SIDE_INFERENCE_PENALTY: float = 0.65
+CATASTROPHIC_FAILURE_PENALTY: float = DEFAULT_FAILURE_COST_PENALTY
+PRODUCTION_FAILURE_PENALTY: float = 1.50
 DEFAULT_RESOLVER_CANDIDATES: tuple[str, ...] = (
     "fan",
     "hrnet",
@@ -811,6 +821,114 @@ def build_sample_context(
     )
 
 
+def _proxy_text_for_downstream_cost(
+    *,
+    context: SampleCandidateContext,
+    metric: CandidateMetrics,
+) -> str:
+    """Return lower-case diagnostic text used for region-penalty proxies."""
+    return "|".join(
+        [
+            str(context.condition or ""),
+            str(context.runtime_bucket or ""),
+            str(context.risk_route or ""),
+            *(str(tag) for tag in (context.hard_case_tags or ())),
+            *(str(reason) for reason in (metric.geometry_veto_reasons or ())),
+        ]
+    ).lower()
+
+
+def _has_any_token(text: str, tokens: T.Iterable[str]) -> bool:
+    return any(token in text for token in tokens)
+
+
+def downstream_weighted_alignment_cost(
+    *,
+    context: SampleCandidateContext,
+    candidate_name: str,
+    metric: CandidateMetrics,
+    candidate_nme: float,
+    oracle_nme: float,
+    candidate_failure: bool,
+) -> float:
+    """Return the training target used by the promoted scorer.
+
+    Intended target:
+        downstream_weighted_alignment_cost =
+            full_face_nme_regret
+            + jaw_crop_mask_penalty
+            + eyes_identity_pose_penalty
+            + mouth_expression_penalty
+            + occluded_side_inference_penalty
+            + catastrophic_failure_penalty
+            + production_failure_penalty
+
+    Closest available proxy:
+        full_face_nme_regret is normalized candidate NME regret;
+        region penalties are inferred from geometry veto reasons and
+        hard-condition/runtime tags until true per-region training targets
+        are materialized in CandidateQualityRow.
+    """
+    regret = max(float(candidate_nme) - float(oracle_nme), 0.0)
+    full_face_nme_regret = min(regret / DEFAULT_REGRET_NORMALIZER, 1.0)
+    text = _proxy_text_for_downstream_cost(context=context, metric=metric)
+
+    jaw_crop_mask_penalty = (
+        JAW_CROP_MASK_PENALTY
+        if _has_any_token(text, ("jaw", "mask", "crop", "bbox", "outside", "hull", "cloud_area"))
+        else 0.0
+    )
+    eyes_identity_pose_penalty = (
+        EYES_IDENTITY_POSE_PENALTY
+        if _has_any_token(text, ("eye", "eyes", "pose", "yaw", "roll", "identity"))
+        else 0.0
+    )
+    mouth_expression_penalty = (
+        MOUTH_EXPRESSION_PENALTY
+        if _has_any_token(text, ("mouth", "lip", "expression", "mouth_nose_jaw"))
+        else 0.0
+    )
+    occluded_side_inference_penalty = (
+        OCCLUDED_SIDE_INFERENCE_PENALTY
+        if _has_any_token(
+            text,
+            (
+                "occlusion",
+                "occluded",
+                "profile",
+                "large_yaw",
+                "occluded_side",
+                "visible_side",
+                "side_conflict",
+            ),
+        )
+        else 0.0
+    )
+
+    catastrophic_failure_penalty = 0.0
+    if candidate_failure:
+        catastrophic_failure_penalty += CATASTROPHIC_FAILURE_PENALTY
+    if _catastrophic_or_visual_collapse(metric.geometry_veto_reasons):
+        catastrophic_failure_penalty += DEFAULT_COLLAPSE_COST_PENALTY
+
+    production_failure_penalty = (
+        PRODUCTION_FAILURE_PENALTY
+        if str(context.source or "").strip().lower() == "production_validated"
+        and candidate_failure
+        else 0.0
+    )
+
+    return float(
+        full_face_nme_regret
+        + jaw_crop_mask_penalty
+        + eyes_identity_pose_penalty
+        + mouth_expression_penalty
+        + occluded_side_inference_penalty
+        + catastrophic_failure_penalty
+        + production_failure_penalty
+    )
+
+
 def rows_for_context(
     context: SampleCandidateContext,
     *,
@@ -826,11 +944,13 @@ def rows_for_context(
         normalized_regret = min(regret / DEFAULT_REGRET_NORMALIZER, 1.0)
         candidate_failure = bool(context.failure_by_candidate[candidate.name])
         large_regret = regret > high_gap_threshold
-        collapse = _catastrophic_or_visual_collapse(metric.geometry_veto_reasons)
-        selection_cost = (
-            normalized_regret
-            + (DEFAULT_FAILURE_COST_PENALTY if candidate_failure else 0.0)
-            + (DEFAULT_COLLAPSE_COST_PENALTY if collapse else 0.0)
+        selection_cost = downstream_weighted_alignment_cost(
+            context=context,
+            candidate_name=candidate.name,
+            metric=metric,
+            candidate_nme=candidate_nme,
+            oracle_nme=oracle_nme,
+            candidate_failure=candidate_failure,
         )
         rows.append(
             CandidateQualityRow(

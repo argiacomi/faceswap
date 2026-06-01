@@ -653,12 +653,12 @@ def _train_linear_or_logistic_from_tagged_rows(
             selection_target = "oracle_regret"
             objective = "minimize_candidate_oracle_regret"
             training_mode = "oracle_regret_regression"
-            runtime_policy = "learned_quality_v1_1"
+            runtime_policy = "learned_quality_v2"
         else:
             selection_target = "continuous_regret"
             objective = "minimize_candidate_selection_regret"
             training_mode = "continuous_selection_cost"
-            runtime_policy = "learned_quality_v1_1"
+            runtime_policy = "learned_quality_v2"
     else:
         coefficients, intercept = fit_logistic(
             x,
@@ -674,7 +674,7 @@ def _train_linear_or_logistic_from_tagged_rows(
         selection_target = "binary_failure_or_high_gap"
         objective = "minimize_candidate_failure_risk"
         training_mode = "binary_failure_or_high_gap"
-        runtime_policy = "learned_quality_v1"
+        runtime_policy = "learned_quality_v2"
 
     scorer = RuntimeResolverScorer(
         features=features,
@@ -952,48 +952,10 @@ def train_runtime_resolver_scorer_suite(
         scorer_candidate_table_rows(contexts),
         output_dir / TRAINING_CANDIDATE_TABLE_CSV,
     )
-    binary_dir = output_dir / "v1_binary"
-    continuous_dir = output_dir / "v1_1_selection_cost"
     v2_dir = output_dir / "v2_lambdarank"
     scorers_dir = output_dir / SCORERS_DIR
     scorers_dir.mkdir(parents=True, exist_ok=True)
 
-    binary_metrics = _train_linear_or_logistic_from_tagged_rows(
-        tagged_rows=tagged_rows,
-        train_tagged_rows=train_tagged_rows,
-        eval_tagged_rows=eval_tagged_rows,
-        candidates=candidates,
-        output_dir=binary_dir,
-        target=TARGET_CANDIDATE_FAILURE_OR_HIGH_GAP,
-        failure_threshold=failure_threshold,
-        high_gap_threshold=high_gap_threshold,
-        l2=l2,
-        learning_rate=learning_rate,
-        iterations=iterations,
-        eval_fraction=eval_fraction,
-        split_seed=split_seed,
-        allow_image_backfill=allow_image_backfill,
-        gt_hard_resolver_metadata=gt_hard_resolver_metadata,
-        candidate_table_path=candidate_table_path,
-    )
-    continuous_metrics = _train_linear_or_logistic_from_tagged_rows(
-        tagged_rows=tagged_rows,
-        train_tagged_rows=train_tagged_rows,
-        eval_tagged_rows=eval_tagged_rows,
-        candidates=candidates,
-        output_dir=continuous_dir,
-        target=TARGET_SELECTION_COST,
-        failure_threshold=failure_threshold,
-        high_gap_threshold=high_gap_threshold,
-        l2=l2,
-        learning_rate=learning_rate,
-        iterations=iterations,
-        eval_fraction=eval_fraction,
-        split_seed=split_seed,
-        allow_image_backfill=allow_image_backfill,
-        gt_hard_resolver_metadata=gt_hard_resolver_metadata,
-        candidate_table_path=candidate_table_path,
-    )
     v2_metrics = _train_lambdarank_from_tagged_rows(
         train_tagged_rows=train_tagged_rows,
         eval_tagged_rows=eval_tagged_rows,
@@ -1007,25 +969,13 @@ def train_runtime_resolver_scorer_suite(
         num_leaves=v2_num_leaves,
     )
 
-    canonical_binary = scorers_dir / "learned_quality_v1.json"
-    canonical_continuous = scorers_dir / "learned_quality_v1_1.json"
     canonical_v2 = scorers_dir / "learned_quality_v2.json"
-    shutil.copy2(binary_dir / SCORER_ARTIFACT, canonical_binary)
-    shutil.copy2(continuous_dir / SCORER_ARTIFACT, canonical_continuous)
     shutil.copy2(v2_dir / SCORER_V2_ARTIFACT, canonical_v2)
 
     metrics = {
         "artifact_schema_version": 1,
         "scorer_dataset": dataset_manifest,
         "scorers": {
-            "learned_quality_v1": {
-                **binary_metrics,
-                "canonical_artifact": str(canonical_binary),
-            },
-            "learned_quality_v1_1": {
-                **continuous_metrics,
-                "canonical_artifact": str(canonical_continuous),
-            },
             "learned_quality_v2": {
                 **v2_metrics,
                 "canonical_artifact": str(canonical_v2),
@@ -1034,19 +984,15 @@ def train_runtime_resolver_scorer_suite(
         "candidate_table": str(candidate_table_path),
         "compatibility_artifacts": {
             "legacy_per_scorer_training_rows": [
-                str(binary_dir / TRAINING_ROWS_CSV),
-                str(continuous_dir / TRAINING_ROWS_CSV),
                 str(v2_dir / TRAINING_ROWS_CSV),
             ],
             "legacy_per_scorer_eval_rows": [
-                str(binary_dir / EVAL_ROWS_CSV),
-                str(continuous_dir / EVAL_ROWS_CSV),
                 str(v2_dir / EVAL_ROWS_CSV),
             ],
             "candidate_table": str(candidate_table_path),
             "note": (
-                "These files are kept for compatibility. New consumers should use "
-                "scorer_dataset/rows.csv and scorer_dataset/manifest.json."
+                "v1/v1_1 scorer training has been removed. New consumers should use "
+                "scorer_dataset/rows.csv, scorer_dataset/manifest.json, and learned_quality_v2."
             ),
         },
         "candidate_table_status": "compatibility_derived_from_scorer_contexts",
@@ -1056,7 +1002,7 @@ def train_runtime_resolver_scorer_suite(
     }
     metrics_path = write_json(scorers_dir / SCORER_SUITE_METRICS_JSON, metrics)
     metrics["metrics_path"] = str(metrics_path)
-    metrics["artifact"] = str(canonical_continuous)
+    metrics["artifact"] = str(canonical_v2)
     return metrics
 
 
@@ -1286,7 +1232,7 @@ def train_runtime_resolver_scorer(
         # "learned_quality_v1". Writing the wrong runtime_policy lets the
         # production bundle install this artifact under a manifest slot it
         # was not trained for and the runtime validation catches that.
-        runtime_policy = "learned_quality_v1_1"
+        runtime_policy = "learned_quality_v2"
     else:
         coefficients, intercept = fit_logistic(
             x,
@@ -1302,7 +1248,7 @@ def train_runtime_resolver_scorer(
         selection_target = "binary_failure_or_high_gap"
         objective = "minimize_candidate_failure_risk"
         training_mode = "binary_failure_or_high_gap"
-        runtime_policy = "learned_quality_v1"
+        runtime_policy = "learned_quality_v2"
     scorer = RuntimeResolverScorer(
         features=features,
         coefficients=tuple(float(item) for item in coefficients),

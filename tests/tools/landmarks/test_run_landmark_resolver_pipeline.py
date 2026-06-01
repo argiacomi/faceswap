@@ -81,7 +81,7 @@ def _args(tmp_path: Path, **overrides: object) -> argparse.Namespace:
         "split_report": 0.2,
         "split_seed": 1337,
         "scorer_target": "selection_cost",
-        "promoted_scorer_version": "continuous_regret_v1_1",
+        "promoted_scorer_version": "learned_quality_v2",
         "v2_eval_fraction": 0.20,
         "v2_learning_rate": 0.05,
         "v2_iterations": 150,
@@ -170,15 +170,15 @@ def _touch_pipeline_outputs(paths: PipelinePaths, *, promotion_status: str = "pa
     scorer_payload = {
         "artifact_schema_version": 1,
         "model_type": "linear_regression",
-        "target": "selection_cost",
+        "target": "downstream_weighted_alignment_cost",
         "score_semantics": "predicted_cost",
         "higher_is_better": False,
         "features": ["candidate_name=hrnet"],
         "coefficients": [1.0],
         "intercept": 0.0,
-        "version": "continuous_regret_v1_1",
-        "scorer_version": "continuous_regret_v1_1",
-        "runtime_policy": "learned_quality_v1_1",
+        "version": "learned_quality_v2",
+        "scorer_version": "learned_quality_v2",
+        "runtime_policy": "learned_quality_v2",
     }
     paths.canonical_continuous_scorer_artifact.write_text(
         json.dumps(scorer_payload) + chr(10),
@@ -191,9 +191,9 @@ def _touch_pipeline_outputs(paths: PipelinePaths, *, promotion_status: str = "pa
             "model_type": "logistic_regression",
             "target": "candidate_failure_or_high_gap",
             "score_semantics": "predicted_risk",
-            "version": "learned_quality_v1",
-            "scorer_version": "learned_quality_v1",
-            "runtime_policy": "learned_quality_v1",
+            "version": "learned_quality_v2",
+            "scorer_version": "learned_quality_v2",
+            "runtime_policy": "learned_quality_v2",
         }
     )
     paths.canonical_binary_scorer_artifact.write_text(
@@ -204,7 +204,7 @@ def _touch_pipeline_outputs(paths: PipelinePaths, *, promotion_status: str = "pa
     v2_payload = {
         "artifact_schema_version": 2,
         "model_type": "lightgbm_lambdarank",
-        "target": "selection_cost",
+        "target": "downstream_weighted_alignment_cost",
         "score_semantics": "predicted_cost",
         "higher_is_better": False,
         "features": ["candidate_name=hrnet"],
@@ -222,16 +222,16 @@ def _touch_pipeline_outputs(paths: PipelinePaths, *, promotion_status: str = "pa
     paths.promotion_manifest.write_text(
         json.dumps(
             {
-                "active_policy": "learned_quality_v1_1",
+                "active_policy": "learned_quality_v2",
                 "best_setup": str(paths.best_setup),
                 "best_weights": str(paths.best_weights),
                 "runtime_resolver_scorer_source": str(paths.canonical_continuous_scorer_artifact),
                 "runtime_resolver_scorer_source_sha256": __import__("hashlib")
                 .sha256(paths.canonical_continuous_scorer_artifact.read_bytes())
                 .hexdigest(),
-                "runtime_resolver_scorer_version": "continuous_regret_v1_1",
+                "runtime_resolver_scorer_version": "learned_quality_v2",
                 "promotion": {
-                    "active_policy": "learned_quality_v1_1",
+                    "active_policy": "learned_quality_v2",
                     "source": str(paths.canonical_continuous_scorer_artifact),
                     "runtime_export": "production_bundle",
                     "immutable_scorer_artifact": True,
@@ -303,10 +303,10 @@ def test_pipeline_runner_dry_run_writes_summaries_contracts_and_progress(tmp_pat
     assert summary["best_weights_path"].endswith("best_weights.json")
     assert summary["scorer_path"].endswith("runtime_resolver_scorer.json")
     assert summary["eval_report_path"].endswith("scorer_policy_report.json")
-    assert summary["selected_runtime_policy"] == "learned_quality_v1_1"
-    assert summary["selected_production_policy"] == "learned_quality_v1_1"
-    assert summary["promoted_scorer_version"] == "continuous_regret_v1_1"
-    assert summary["promoted_scorer_target"] == "selection_cost"
+    assert summary["selected_runtime_policy"] == "learned_quality_v2"
+    assert summary["selected_production_policy"] == "learned_quality_v2"
+    assert summary["promoted_scorer_version"] == "learned_quality_v2"
+    assert summary["promoted_scorer_target"] == "downstream_weighted_alignment_cost"
     assert summary["prediction_cache_device"] == "gpu"
     assert summary["prediction_cache_compile"] == "default"
     # Path-bearing keys are no longer written into extract.ini — runtime
@@ -722,7 +722,7 @@ def test_candidate_search_command_uses_full_manifest_with_splits(
 
 @pytest.mark.parametrize(
     "promoted_scorer_version",
-    ("continuous_regret_v1_1", "learned_quality_v2"),
+    ("learned_quality_v2",),
 )
 def test_candidate_search_command_requires_effective_ensemble(
     tmp_path: Path,
@@ -972,7 +972,10 @@ def test_scorer_train_and_eval_commands_allow_image_backfill_by_default(
     assert "--allow-image-backfill" in v2_train_command
     assert "--allow-image-backfill" in eval_command
     assert v2_train_command[v2_train_command.index("--training-mode") + 1] == "learned_quality_v2"
-    assert v2_train_command[v2_train_command.index("--target") + 1] == "selection_cost"
+    assert (
+        v2_train_command[v2_train_command.index("--target") + 1]
+        == "downstream_weighted_alignment_cost"
+    )
     assert v2_train_command[v2_train_command.index("--eval-fraction") + 1] == str(
         args.v2_eval_fraction
     )
@@ -1233,7 +1236,7 @@ def test_config_preview_and_write_preserves_unmanaged_config_entries(tmp_path: P
 
     assert "preview" in notes[0]
     assert preview["section"] == "align.ensemble"
-    assert preview["updates"]["resolver_policy"] == "learned_quality_v1_1"
+    assert preview["updates"]["resolver_policy"] == "learned_quality_v2"
     assert "production_weights_path" not in preview["updates"]
     assert "coordinate_space" not in preview["updates"]
     # Path-bearing keys are no longer in the patch.
@@ -1282,7 +1285,7 @@ def test_config_preview_and_write_preserves_unmanaged_config_entries(tmp_path: P
     assert parser.get("detect.scrfd", "model") == "10g"
     assert parser.get("align.ensemble", "stale_experimental") == "true"
     assert parser.get("align.ensemble", "use_alignment_resolver") == "True"
-    assert parser.get("align.ensemble", "resolver_policy") == "learned_quality_v1_1"
+    assert parser.get("align.ensemble", "resolver_policy") == "learned_quality_v2"
     # Path-bearing keys are not written into extract.ini anymore; the runtime
     # resolves them from the installed production bundle.
     assert not parser.has_option("align.ensemble", "resolver_scorer_path")
@@ -1324,14 +1327,14 @@ def test_config_write_appends_missing_align_ensemble_section(tmp_path: Path) -> 
     assert "[global]" in config_text
     assert "[detect.scrfd]" in config_text
     assert "[align.ensemble]" in config_text
-    assert "resolver_policy = learned_quality_v1_1" in config_text
+    assert "resolver_policy = learned_quality_v2" in config_text
 
     parser = configparser.ConfigParser()
     parser.optionxform = str  # type: ignore[assignment, method-assign]
     parser.read(args.config_path, encoding="utf-8")
     assert parser.get("global", "aligner_min_scale") == "0.03"
     assert parser.get("detect.scrfd", "model") == "10g"
-    assert parser.get("align.ensemble", "resolver_policy") == "learned_quality_v1_1"
+    assert parser.get("align.ensemble", "resolver_policy") == "learned_quality_v2"
     # Path-bearing keys are no longer written into extract.ini.
     assert not parser.has_option("align.ensemble", "weights_path")
 
@@ -1354,7 +1357,7 @@ def test_config_write_preserves_inline_comments_on_managed_keys(tmp_path: Path) 
     _apply_config(args, paths)
 
     config_text = args.config_path.read_text(encoding="utf-8")
-    assert "resolver_policy = learned_quality_v1_1 # keep this comment" in config_text
+    assert "resolver_policy = learned_quality_v2 # keep this comment" in config_text
 
 
 def test_config_write_requires_artifacts_and_passing_promotion(tmp_path: Path) -> None:
@@ -1413,13 +1416,13 @@ def test_artifact_export_records_promoted_scorer_provenance(tmp_path: Path) -> N
     source_scorer_payload = {
         "artifact_schema_version": 1,
         "model_type": "linear_regression",
-        "target": "selection_cost",
+        "target": "downstream_weighted_alignment_cost",
         "score_semantics": "predicted_cost",
         "higher_is_better": False,
         "features": ["candidate_name=hrnet"],
         "coefficients": [1.0],
         "intercept": 0.0,
-        "version": "continuous_regret_v1_1",
+        "version": "learned_quality_v2",
     }
     paths.canonical_continuous_scorer_artifact.write_text(
         json.dumps(source_scorer_payload) + "\n",
@@ -1428,14 +1431,14 @@ def test_artifact_export_records_promoted_scorer_provenance(tmp_path: Path) -> N
 
     manifest = _export_artifacts(args, paths)
 
-    assert manifest["active_policy"] == "learned_quality_v1_1"
+    assert manifest["active_policy"] == "learned_quality_v2"
     assert manifest["best_setup"] == str(paths.best_setup)
     assert manifest["best_weights"] == str(paths.best_weights)
     assert manifest["runtime_resolver_scorer_source"] == str(
         paths.canonical_continuous_scorer_artifact
     )
-    assert manifest["runtime_resolver_scorer_version"] == "continuous_regret_v1_1"
-    assert manifest["promotion"]["active_policy"] == "learned_quality_v1_1"
+    assert manifest["runtime_resolver_scorer_version"] == "learned_quality_v2"
+    assert manifest["promotion"]["active_policy"] == "learned_quality_v2"
     assert manifest["promotion"]["source"] == str(paths.canonical_continuous_scorer_artifact)
     assert manifest["promotion"]["runtime_export"] == "production_bundle"
     assert manifest["promotion"]["immutable_scorer_artifact"] is True
@@ -1455,6 +1458,29 @@ def test_v2_promotion_check_requires_v2_policy_metrics(tmp_path: Path) -> None:
     paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
     _touch_pipeline_outputs(paths)
 
+    # This report is intentionally malformed for v2 promotion:
+    # it has a valid static baseline but no learned_quality_v2 production metrics.
+    paths.scorer_report.write_text(
+        json.dumps(
+            {
+                "status": "pass",
+                "promotion_status": "pass",
+                "production_gate_status": "pass",
+                "failed_gates": [],
+                "production_failed_gates": [],
+                "production_only_policy_metrics": {
+                    "static_weighted_downweight": {
+                        "failure_rate": 0.0,
+                        "mean_nme": 0.010,
+                        "p90_nme": 0.020,
+                    }
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
     with pytest.raises(RuntimeError, match="learned_quality_v2 promotion check failed"):
         _promotion_check(paths, promotion_scope=args.promotion_scope, args=args)
 
@@ -1469,7 +1495,7 @@ def test_artifact_export_blocks_v2_when_v2_metrics_regress(tmp_path: Path) -> No
             {
                 "artifact_schema_version": 2,
                 "model_type": "lightgbm_lambdarank",
-                "target": "selection_cost",
+                "target": "downstream_weighted_alignment_cost",
                 "score_semantics": "predicted_cost",
                 "higher_is_better": False,
                 "features": ["candidate_name=hrnet"],
@@ -1497,7 +1523,7 @@ def test_artifact_export_can_promote_v2_scorer(tmp_path: Path) -> None:
     v2_payload = {
         "artifact_schema_version": 2,
         "model_type": "lightgbm_lambdarank",
-        "target": "selection_cost",
+        "target": "downstream_weighted_alignment_cost",
         "score_semantics": "predicted_cost",
         "higher_is_better": False,
         "features": ["candidate_name=hrnet"],
@@ -1554,7 +1580,7 @@ def test_resume_write_config_does_not_skip_config_update(tmp_path: Path) -> None
     assert summary["stages"][0]["name"] == "config_update"
     assert summary["stages"][0]["status"] == "ok"
     config_text = args.config_path.read_text(encoding="utf-8")
-    assert "resolver_policy = learned_quality_v1_1" in config_text
+    assert "resolver_policy = learned_quality_v2" in config_text
     assert "# config comment survives" in config_text
 
 
@@ -1587,17 +1613,15 @@ def test_apply_config_installs_production_bundle(
 
     assert any("installed production landmark-ensemble bundle" in note for note in notes)
     loaded = pa.load_production_bundle()
-    # continuous_regret_v1_1 is the default promoted_scorer_version in _args.
-    assert loaded.active_policy == "learned_quality_v1_1"
+    # learned_quality_v2 is the default promoted_scorer_version in _args.
+    assert loaded.active_policy == "learned_quality_v2"
     assert loaded.setup_path.is_file()
     # All three scorer sources existed via _touch_pipeline_outputs, so all
     # three policy slots should be populated.
     assert set(loaded.scorers) == {
-        "learned_quality_v1",
-        "learned_quality_v1_1",
         "learned_quality_v2",
     }
-    assert loaded.scorer_path_for("learned_quality_v1_1").is_file()  # type: ignore[union-attr]
+    assert loaded.scorer_path_for("learned_quality_v2").is_file()  # type: ignore[union-attr]
     assert loaded.scorer_path_for(pa.ROLL_AWARE_VETO_POLICY) is None
 
 

@@ -6,7 +6,9 @@ from __future__ import annotations
 TARGET_CANDIDATE_FAILURE_OR_HIGH_GAP = "candidate_failure_or_high_gap"
 TARGET_NORMALIZED_REGRET = "normalized_regret"
 TARGET_ORACLE_REGRET = "oracle_regret"
-TARGET_SELECTION_COST = "selection_cost"
+TARGET_DOWNSTREAM_WEIGHTED_ALIGNMENT_COST = "downstream_weighted_alignment_cost"
+# Backward-compatible constant name used by trainer/evaluator call sites.
+TARGET_SELECTION_COST = TARGET_DOWNSTREAM_WEIGHTED_ALIGNMENT_COST
 
 CLASSIFIER_TARGETS: tuple[str, ...] = (TARGET_CANDIDATE_FAILURE_OR_HIGH_GAP,)
 REGRESSION_TARGETS: tuple[str, ...] = (
@@ -48,5 +50,6 @@ __all__ = [
     "TARGET_CANDIDATE_FAILURE_OR_HIGH_GAP",
     "TARGET_NORMALIZED_REGRET",
     "TARGET_ORACLE_REGRET",
+    "TARGET_DOWNSTREAM_WEIGHTED_ALIGNMENT_COST",
     "TARGET_SELECTION_COST",
 ]

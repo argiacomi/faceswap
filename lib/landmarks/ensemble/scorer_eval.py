@@ -38,10 +38,6 @@ from lib.landmarks.ensemble.scorer_dataset import (
     resolve_scorer_dataset_path,
 )
 from lib.landmarks.ensemble.scorer_reports import write_scorer_policy_outputs
-from lib.landmarks.ensemble.scorer_target_config import (
-    MODEL_TYPE_LINEAR_REGRESSION,
-    TARGET_CANDIDATE_FAILURE_OR_HIGH_GAP,
-)
 from lib.landmarks.ensemble.strategies import canonical_strategy
 from lib.landmarks.evaluation.geometry_signals import alignment_summary
 from lib.landmarks.pipeline_conventions import (
@@ -55,7 +51,7 @@ DEFAULT_RISK_FLOOR_FOR_SAFE_FALLBACK = 0.50
 DEFAULT_SAFE_FALLBACK_MIN_DELTA = 0.05
 DEFAULT_FALLBACK_CATASTROPHIC_WORSE_NME = 0.02
 PROMOTION_SCOPES = ("universal", "production")
-SCORER_VERSION_REPORT_LABEL = "learned_quality_v1_1"
+SCORER_VERSION_REPORT_LABEL = "learned_quality_v2"
 RUNTIME_POLICY_REPORT_LABEL = "runtime_policy_learned_quality"
 HARD_SLICE_POLICY_BUCKETS = {
     "extreme_roll",
@@ -794,13 +790,8 @@ def fallback_impact_summary(impacts: T.Sequence[dict[str, T.Any]]) -> dict[str, 
 
 
 def scorer_policy_key(scorer: RuntimeResolverScorerLike) -> str:
-    """Return the stable report key for a scorer artifact."""
-    if (
-        scorer.model_type == MODEL_TYPE_LINEAR_REGRESSION
-        or scorer.target != TARGET_CANDIDATE_FAILURE_OR_HIGH_GAP
-    ):
-        return SCORER_VERSION_REPORT_LABEL
-    return "current_binary_logistic_scorer"
+    """Return the stable report key for the only supported learned scorer policy."""
+    return "learned_quality_v2"
 
 
 def scorer_policy_key_for_path(path: Path, scorer: RuntimeResolverScorerLike) -> str:
@@ -814,8 +805,6 @@ def scorer_policy_key_for_path(path: Path, scorer: RuntimeResolverScorerLike) ->
     version = str(getattr(scorer, "version", "") or getattr(scorer, "scorer_version", "") or "")
     if version == "learned_quality_v2":
         return "learned_quality_v2"
-    if version == "learned_quality_v1":
-        return "learned_quality_v1"
     return scorer_policy_key(scorer)
 
 
@@ -1533,11 +1522,7 @@ def evaluate_runtime_resolver_scorer(
             v2_failed_gates.append("v2_failure_rate_regresses_vs_promoted_scorer")
 
     if not promotion_policy:
-        promotion_policy = (
-            "learned_quality_v1"
-            if primary_scorer_policy == "current_binary_logistic_scorer"
-            else primary_scorer_policy
-        )
+        promotion_policy = "learned_quality_v2"
 
     selected_policy_metrics: dict[str, T.Mapping[str, T.Any]] = {}
     if production_contexts:
@@ -1548,39 +1533,24 @@ def evaluate_runtime_resolver_scorer(
                 if key in LEARNED_POLICIES and isinstance(value, dict)
             }
         )
-        if primary_scorer_policy == "current_binary_logistic_scorer":
-            selected_policy_metrics.setdefault(
-                "learned_quality_v1",
-                production_only_policy_metrics[primary_scorer_policy],
-            )
-        elif binary_scorer_choices:
-            selected_policy_metrics.setdefault(
-                "learned_quality_v1",
-                policy_summary(
-                    production_contexts,
-                    choice_subset(production_contexts, binary_scorer_choices),
-                ),
-            )
+        selected_policy_metrics.setdefault(
+            "learned_quality_v2",
+            production_only_policy_metrics[primary_scorer_policy],
+        )
     else:
         selected_policy_metrics.update(
             {
                 key: value
                 for key, value in {
                     primary_scorer_policy: scorer_summary,
-                    "learned_quality_v1": (
-                        policy_summary(contexts, binary_scorer_choices)
-                        if binary_scorer_choices
-                        else {}
-                    ),
-                    "learned_quality_v2": v2_summary or {},
+                    "learned_quality_v2": scorer_summary
+                    if primary_scorer_policy == "learned_quality_v2"
+                    else (v2_summary or {}),
                 }.items()
                 if key in LEARNED_POLICIES and isinstance(value, dict) and value
             }
         )
-    if primary_scorer_policy == "current_binary_logistic_scorer":
-        selected_policy_metrics.setdefault("learned_quality_v1", scorer_summary)
-    if primary_scorer_policy in LEARNED_POLICIES:
-        selected_policy_metrics.setdefault(primary_scorer_policy, scorer_summary)
+    selected_policy_metrics.setdefault("learned_quality_v2", scorer_summary)
 
     installed_metrics = None
     installed_choices = installed_scorer_choices.get(installed_policy)
@@ -1686,21 +1656,17 @@ def evaluate_runtime_resolver_scorer(
         "scorer_target": scorer.target,
         "promoted_scorer_version": (
             v2_scorer.version
-            if promotion_policy == "learned_quality_v2" and v2_scorer is not None
-            else (
-                binary_scorer.version
-                if promotion_policy == "learned_quality_v1" and binary_scorer is not None
-                else scorer.version
-            )
+            if promotion_policy == "learned_quality_v2"
+            and v2_scorer is not None
+            and primary_scorer_policy != "learned_quality_v2"
+            else scorer.version
         ),
         "promoted_scorer_target": (
             v2_scorer.target
-            if promotion_policy == "learned_quality_v2" and v2_scorer is not None
-            else (
-                binary_scorer.target
-                if promotion_policy == "learned_quality_v1" and binary_scorer is not None
-                else scorer.target
-            )
+            if promotion_policy == "learned_quality_v2"
+            and v2_scorer is not None
+            and primary_scorer_policy != "learned_quality_v2"
+            else scorer.target
         ),
         "promoted_scorer_label": primary_scorer_policy,
         "runtime_policy": promotion_policy,
@@ -1709,7 +1675,9 @@ def evaluate_runtime_resolver_scorer(
         primary_scorer_policy: scorer_summary,
         RUNTIME_POLICY_REPORT_LABEL: current_summary,
         "oracle": oracle_summary,
-        "learned_quality_v2": v2_summary or {},
+        "learned_quality_v2": (
+            scorer_summary if primary_scorer_policy == "learned_quality_v2" else (v2_summary or {})
+        ),
         "learned_quality_v2_promotion_status": (
             ""
             if v2_summary is None

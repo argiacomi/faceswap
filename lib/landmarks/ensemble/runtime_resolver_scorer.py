@@ -153,12 +153,12 @@ class RuntimeResolverScorer:
     failure_threshold: float = 0.08
     calibration: dict[str, T.Any] | None = None
     source_path: str = ""
-    version: str = "learned_quality_v1"
+    version: str = "learned_quality_v2"
     selection_target: str = "binary_failure_or_high_gap"
     promoted_from: str = ""
     objective: str = "minimize_candidate_failure_risk"
     training_mode: str = "binary_failure_or_high_gap"
-    runtime_policy: str = "learned_quality_v1"
+    runtime_policy: str = "learned_quality_v2"
 
     def __post_init__(self) -> None:
         """Validate the score direction contract at construction time."""

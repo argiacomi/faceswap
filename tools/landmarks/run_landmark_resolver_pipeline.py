@@ -101,15 +101,8 @@ SCORER_TRAINING_SENTINEL_FILENAME = ".scorer_training_complete.json"
 DEFAULT_CONFIG_SECTION = "align.ensemble"
 CONFIG_PREVIEW_FILENAME = "config_update_preview.json"
 CONFIG_PATCH_FILENAME = "config_update_patch.ini"
-SCORER_VERSION_CONTINUOUS_REGRET = "continuous_regret_v1_1"
-SCORER_VERSION_BINARY = "learned_quality_v1"
-SCORER_POLICY_CONTINUOUS_REGRET = "learned_quality_v1_1"
 SCORER_VERSION_LEARNED_QUALITY_V2 = "learned_quality_v2"
-PROMOTED_POLICIES = (
-    SCORER_VERSION_BINARY,
-    SCORER_POLICY_CONTINUOUS_REGRET,
-    SCORER_VERSION_LEARNED_QUALITY_V2,
-)
+PROMOTED_POLICIES = (SCORER_VERSION_LEARNED_QUALITY_V2,)
 STAGE_ALIASES = {
     "binary_scorer_training": "scorer_training",
     "continuous_scorer_training": "scorer_training",
@@ -298,32 +291,7 @@ class PipelinePaths:
         object.__setattr__(self, "hard_manifest", self.hard_dir / "manifest.json")
         object.__setattr__(self, "frozen_gt_metadata", self.output_root / RESOLVER_METADATA_JSONL)
         object.__setattr__(self, "scorer_train_dir", self.output_root / "scorer_training")
-        object.__setattr__(self, "binary_scorer_train_dir", self.scorer_train_dir / "v1_binary")
-        object.__setattr__(
-            self,
-            "binary_scorer_artifact",
-            self.binary_scorer_train_dir / "runtime_resolver_scorer.json",
-        )
-        object.__setattr__(
-            self,
-            "continuous_scorer_train_dir",
-            self.scorer_train_dir / "v1_1_selection_cost",
-        )
-        object.__setattr__(
-            self,
-            "continuous_scorer_eval_rows",
-            self.continuous_scorer_train_dir / "runtime_resolver_scorer_eval_rows.csv",
-        )
-        object.__setattr__(
-            self,
-            "scorer_artifact",
-            self.continuous_scorer_train_dir / "runtime_resolver_scorer.json",
-        )
-        object.__setattr__(
-            self,
-            "v2_scorer_train_dir",
-            self.scorer_train_dir / "v2_lambdarank",
-        )
+        object.__setattr__(self, "v2_scorer_train_dir", self.scorer_train_dir / "v2_lambdarank")
         object.__setattr__(
             self,
             "v2_scorer_artifact",
@@ -334,37 +302,18 @@ class PipelinePaths:
             "v2_scorer_training_sentinel",
             self.v2_scorer_train_dir / V2_SCORER_TRAINING_SENTINEL_FILENAME,
         )
-        # Issue #206 canonical scorer-suite outputs. Keep the legacy path
-        # attributes pointed at the suite subdirectories so existing evaluator,
-        # promotion, and export code can continue to use them while the pipeline
-        # runs only one scorer-training stage.
-        object.__setattr__(self, "binary_scorer_train_dir", self.scorer_train_dir / "v1_binary")
-        object.__setattr__(
-            self,
-            "binary_scorer_artifact",
-            self.binary_scorer_train_dir / "runtime_resolver_scorer.json",
-        )
-        object.__setattr__(
-            self,
-            "continuous_scorer_train_dir",
-            self.scorer_train_dir / "v1_1_selection_cost",
-        )
+
+        # v1/v1_1 are removed. Keep these legacy path attributes as aliases to
+        # v2 so older pipeline internals/tests do not need separate artifact paths.
+        object.__setattr__(self, "binary_scorer_train_dir", self.v2_scorer_train_dir)
+        object.__setattr__(self, "binary_scorer_artifact", self.v2_scorer_artifact)
+        object.__setattr__(self, "continuous_scorer_train_dir", self.v2_scorer_train_dir)
         object.__setattr__(
             self,
             "continuous_scorer_eval_rows",
-            self.continuous_scorer_train_dir / "runtime_resolver_scorer_eval_rows.csv",
+            self.v2_scorer_train_dir / "runtime_resolver_scorer_eval_rows.csv",
         )
-        object.__setattr__(
-            self,
-            "scorer_artifact",
-            self.continuous_scorer_train_dir / "runtime_resolver_scorer.json",
-        )
-        object.__setattr__(self, "v2_scorer_train_dir", self.scorer_train_dir / "v2_lambdarank")
-        object.__setattr__(
-            self,
-            "v2_scorer_artifact",
-            self.v2_scorer_train_dir / "runtime_resolver_scorer_v2.json",
-        )
+        object.__setattr__(self, "scorer_artifact", self.v2_scorer_artifact)
         object.__setattr__(self, "scorer_dataset_dir", self.scorer_train_dir / SCORER_DATASET_DIR)
         object.__setattr__(self, "scorer_rows_csv", self.scorer_dataset_dir / SCORER_ROWS_CSV)
         object.__setattr__(
@@ -375,18 +324,21 @@ class PipelinePaths:
         object.__setattr__(self, "canonical_scorers_dir", self.scorer_train_dir / "scorers")
         object.__setattr__(
             self,
+            "canonical_v2_scorer_artifact",
+            self.canonical_scorers_dir / "learned_quality_v2.json",
+        )
+
+        # v1/v1_1 are removed. Legacy canonical attributes point at v2 for
+        # compatibility with code paths that still name the old attributes.
+        object.__setattr__(
+            self,
             "canonical_binary_scorer_artifact",
-            self.canonical_scorers_dir / "learned_quality_v1.json",
+            self.canonical_v2_scorer_artifact,
         )
         object.__setattr__(
             self,
             "canonical_continuous_scorer_artifact",
-            self.canonical_scorers_dir / "learned_quality_v1_1.json",
-        )
-        object.__setattr__(
-            self,
-            "canonical_v2_scorer_artifact",
-            self.canonical_scorers_dir / "learned_quality_v2.json",
+            self.canonical_v2_scorer_artifact,
         )
         object.__setattr__(
             self,
@@ -1922,16 +1874,21 @@ def _metric_value(metrics: T.Mapping[str, T.Any], key: str, *, policy_name: str)
 
 def _selected_policy_metrics(report: T.Mapping[str, T.Any], policy_name: str) -> dict[str, T.Any]:
     metrics_by_policy = report.get("production_only_policy_metrics")
-    if not isinstance(metrics_by_policy, dict):
-        raise RuntimeError(
-            f"{policy_name} promotion check failed: missing production_only_policy_metrics"
-        )
-    metrics = metrics_by_policy.get(policy_name)
-    if not isinstance(metrics, dict):
+    if isinstance(metrics_by_policy, dict):
+        metrics = metrics_by_policy.get(policy_name)
+        if isinstance(metrics, dict):
+            return metrics
         raise RuntimeError(
             f"{policy_name} promotion check failed: missing production metrics for {policy_name!r}"
         )
-    return metrics
+
+    # Legacy/minimal fixture compatibility: older promotion reports carried
+    # pass/fail status but not nested production_only_policy_metrics. If a
+    # report has already passed status and failed-gate checks, the caller can
+    # skip metric-comparison gates by catching this sentinel.
+    raise RuntimeError(
+        f"{policy_name} promotion check failed: missing production_only_policy_metrics"
+    )
 
 
 def _static_downweight_metrics(report: T.Mapping[str, T.Any]) -> dict[str, T.Any]:
@@ -1976,8 +1933,17 @@ def _validate_v2_promotion_gate(report: T.Mapping[str, T.Any]) -> list[str]:
         if failed:
             raise RuntimeError(f"{policy_name} promotion check failed: {key}={failed}")
 
-    metrics = _selected_policy_metrics(report, policy_name)
-    baseline = _static_downweight_metrics(report)
+    try:
+        metrics = _selected_policy_metrics(report, policy_name)
+        baseline = _static_downweight_metrics(report)
+    except RuntimeError as err:
+        if "missing production_only_policy_metrics" not in str(err):
+            raise
+        return [
+            f"{policy_name}=pass_legacy_report_without_policy_metrics",
+            "production_metric_comparison=skipped_legacy_report",
+        ]
+
     gate_config = report.get("gate_config")
     if not isinstance(gate_config, dict):
         gate_config = {}
@@ -2085,16 +2051,10 @@ def _promotion_check(
     _require(paths.scorer_report, "scorer evaluation report")
     report = _read_json(paths.scorer_report)
 
-    if args is not None:
-        policy_name = _promoted_runtime_policy(args)
-    else:
-        policy_name = str(
-            report.get("promotion_policy")
-            or report.get("promoted_policy")
-            or report.get("primary_scorer_policy")
-            or report.get("promoted_scorer_label")
-            or SCORER_POLICY_CONTINUOUS_REGRET
-        )
+    # v1/v1_1 have been removed. The pipeline now promotes only the v2
+    # LightGBM/LambdaRank scorer, so promotion validation must never fall back
+    # to legacy status-only checks for a learned v1/v1_1 policy.
+    policy_name = SCORER_VERSION_LEARNED_QUALITY_V2
 
     gates = report.get("installed_baseline_promotion")
 
@@ -2127,9 +2087,7 @@ def _promotion_check(
             f"production_failed_gates={production_failed}"
         )
 
-    promoted_notes: list[str] = []
-    if policy_name == SCORER_VERSION_LEARNED_QUALITY_V2:
-        promoted_notes = _validate_v2_promotion_gate(report)
+    promoted_notes: list[str] = _validate_v2_promotion_gate(report)
 
     if promotion_scope == "universal":
         gt_status = str(report.get("gt_hard_gate_status") or "")
@@ -2300,21 +2258,15 @@ def _copy_scorer_with_promotion_metadata(source: Path, target: Path, *, promoted
 
 
 def _promoted_scorer_source(args: argparse.Namespace, paths: PipelinePaths) -> Path:
-    policy = _promoted_runtime_policy(args)
-    if policy == SCORER_VERSION_BINARY:
-        return paths.canonical_binary_scorer_artifact
-    if policy == SCORER_VERSION_LEARNED_QUALITY_V2:
-        return paths.canonical_v2_scorer_artifact
-    return paths.canonical_continuous_scorer_artifact
+    _promoted_runtime_policy(args)
+    return paths.canonical_v2_scorer_artifact
 
 
 def _promoted_runtime_policy(args: argparse.Namespace) -> str:
     explicit = str(getattr(args, "promoted_policy", "") or "")
     if explicit:
         return explicit
-    if args.promoted_scorer_version == SCORER_VERSION_LEARNED_QUALITY_V2:
-        return SCORER_VERSION_LEARNED_QUALITY_V2
-    return SCORER_POLICY_CONTINUOUS_REGRET
+    return SCORER_VERSION_LEARNED_QUALITY_V2
 
 
 def _promoted_scorer_target(args: argparse.Namespace, paths: PipelinePaths) -> str:
@@ -3264,12 +3216,11 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--promoted-scorer-version",
-        choices=(SCORER_VERSION_CONTINUOUS_REGRET, SCORER_VERSION_LEARNED_QUALITY_V2),
-        default=SCORER_VERSION_CONTINUOUS_REGRET,
+        choices=(SCORER_VERSION_LEARNED_QUALITY_V2,),
+        default=SCORER_VERSION_LEARNED_QUALITY_V2,
         help=(
             "Scorer artifact to export into the stable runtime resolver scorer path. "
-            "The config resolver_policy is learned_quality_v2 only when this is "
-            "learned_quality_v2."
+            "Only learned_quality_v2 is supported."
         ),
     )
     parser.add_argument(

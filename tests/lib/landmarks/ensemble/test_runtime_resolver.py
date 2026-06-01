@@ -193,7 +193,7 @@ def test_learned_quality_policy_scores_geometry_valid_candidates(
     monkeypatch,
     tmp_path,
 ) -> None:
-    """learned_quality_v1 chooses the lowest predicted risk instead of bucket priority."""
+    """learned_quality_v2 chooses the lowest predicted risk instead of bucket priority."""
     monkeypatch.setattr(
         runtime_resolver,
         "infer_runtime_bucket",
@@ -216,7 +216,7 @@ def test_learned_quality_policy_scores_geometry_valid_candidates(
             ModelPrediction("orformer", base + 0.2),
         ],
         RuntimeResolverConfig(
-            policy="learned_quality_v1",
+            policy="learned_quality_v2",
             scorer_path=str(scorer_path),
             weights={name: [1.0 / 3.0] * 68 for name in ("hrnet", "spiga", "orformer")},
         ),
@@ -224,7 +224,7 @@ def test_learned_quality_policy_scores_geometry_valid_candidates(
     )
 
     assert result.selected_candidate == "hrnet"
-    assert result.metadata["policy"] == "learned_quality_v1"
+    assert result.metadata["policy"] == "learned_quality_v2"
     assert (
         result.metadata["selected_candidate_score"] < result.metadata["candidate_scores"]["spiga"]
     )
@@ -260,7 +260,7 @@ def test_learned_quality_policy_falls_back_to_hrnet_when_all_risks_high(
             ModelPrediction("orformer", base + 0.2),
         ],
         RuntimeResolverConfig(
-            policy="learned_quality_v1",
+            policy="learned_quality_v2",
             scorer_path=str(scorer_path),
             weights={name: [1.0 / 3.0] * 68 for name in ("hrnet", "spiga", "orformer")},
             safe_fallback_min_delta=-1.0,
@@ -309,7 +309,7 @@ def test_hard_pose_guard_rejects_plain_average_without_single_model_margin(
             ModelPrediction("orformer", base + 0.2),
         ],
         RuntimeResolverConfig(
-            policy="learned_quality_v1",
+            policy="learned_quality_v2",
             scorer_path=str(scorer_path),
             weights={name: [1.0 / 3.0] * 68 for name in ("hrnet", "spiga", "orformer")},
         ),
@@ -354,7 +354,7 @@ def test_hard_pose_guard_allows_plain_average_when_margin_clears(
             ModelPrediction("orformer", base + 0.2),
         ],
         RuntimeResolverConfig(
-            policy="learned_quality_v1",
+            policy="learned_quality_v2",
             scorer_path=str(scorer_path),
             weights={name: [1.0 / 3.0] * 68 for name in ("hrnet", "spiga", "orformer")},
         ),
@@ -398,7 +398,7 @@ def test_all_candidates_vetoed_uses_deterministic_hard_case_fallback(
             ModelPrediction("orformer", base + 0.2),
         ],
         RuntimeResolverConfig(
-            policy="learned_quality_v1",
+            policy="learned_quality_v2",
             scorer_path=str(scorer_path),
             weights={name: [1.0 / 3.0] * 68 for name in ("hrnet", "spiga", "orformer")},
         ),
@@ -557,7 +557,7 @@ def test_learned_quality_policy_rejects_consensus_collapse_fusion_for_best_singl
             ModelPrediction("orformer", base + 20.0),
         ],
         RuntimeResolverConfig(
-            policy="learned_quality_v1",
+            policy="learned_quality_v2",
             scorer_path=str(scorer_path),
             weights={name: [1.0 / 3.0] * 68 for name in ("hrnet", "spiga", "orformer")},
         ),

@@ -35,8 +35,6 @@ it at an alternate ``current/`` directory).
         best_setup.json
         best_weights.json
         scorers/
-            learned_quality_v1.json
-            learned_quality_v1_1.json
             learned_quality_v2.json
 
 Manifest schema::
@@ -46,8 +44,6 @@ Manifest schema::
         "active_policy": "learned_quality_v2",
         "setup": "best_setup.json",
         "scorers": {
-            "learned_quality_v1": "scorers/learned_quality_v1.json",
-            "learned_quality_v1_1": "scorers/learned_quality_v1_1.json",
             "learned_quality_v2": "scorers/learned_quality_v2.json"
         },
         "created_by": "run_landmark_resolver_pipeline.py",
@@ -97,11 +93,7 @@ SETUP_FILENAME = "best_setup.json"
 WEIGHTS_FILENAME = "best_weights.json"
 SCORERS_SUBDIR = "scorers"
 
-LEARNED_POLICIES: tuple[str, ...] = (
-    "learned_quality_v1",
-    "learned_quality_v1_1",
-    "learned_quality_v2",
-)
+LEARNED_POLICIES: tuple[str, ...] = ("learned_quality_v2",)
 """Resolver policies that consume a scorer artifact.
 
 ``roll_aware_veto`` is intentionally absent — its runtime path runs

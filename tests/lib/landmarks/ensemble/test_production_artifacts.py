@@ -11,23 +11,17 @@ from lib.landmarks.ensemble import production_artifacts as pa
 
 
 def _seed_pipeline_sources(root: Path) -> dict[str, Path]:
-    """Produce minimal pipeline-shaped source files for install tests."""
+    """Produce minimal v2-only pipeline-shaped source files for install tests."""
     root.mkdir(parents=True, exist_ok=True)
     setup_src = root / "src_setup.json"
     weights_src = root / "src_weights.json"
-    scorer_v1 = root / "scorer_v1.json"
-    scorer_v1_1 = root / "scorer_v1_1.json"
     scorer_v2 = root / "scorer_v2.json"
     setup_src.write_text(json.dumps({"weights_path": "best_weights.json"}))
     weights_src.write_text(json.dumps({"hrnet": [1.0]}))
-    scorer_v1.write_text(json.dumps({"model_type": "logistic_regression"}))
-    scorer_v1_1.write_text(json.dumps({"model_type": "linear_regression"}))
     scorer_v2.write_text(json.dumps({"model_type": "lightgbm_lambdarank"}))
     return {
         "setup_src": setup_src,
         "weights_src": weights_src,
-        "learned_quality_v1": scorer_v1,
-        "learned_quality_v1_1": scorer_v1_1,
         "learned_quality_v2": scorer_v2,
     }
 
@@ -66,8 +60,6 @@ def test_install_and_load_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPa
         setup_src=sources["setup_src"],
         weights_src=sources["weights_src"],
         scorer_sources={
-            "learned_quality_v1": sources["learned_quality_v1"],
-            "learned_quality_v1_1": sources["learned_quality_v1_1"],
             "learned_quality_v2": sources["learned_quality_v2"],
         },
         active_policy="learned_quality_v2",
@@ -78,8 +70,6 @@ def test_install_and_load_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     # Files landed where the manifest schema promises.
     assert (bundle / "best_setup.json").is_file()
     assert (bundle / "best_weights.json").is_file()
-    assert (bundle / "scorers" / "learned_quality_v1.json").is_file()
-    assert (bundle / "scorers" / "learned_quality_v1_1.json").is_file()
     assert (bundle / "scorers" / "learned_quality_v2.json").is_file()
     assert (bundle / "manifest.json").is_file()
 
@@ -106,7 +96,6 @@ def test_install_skips_missing_scorer_sources(
         setup_src=sources["setup_src"],
         weights_src=sources["weights_src"],
         scorer_sources={
-            "learned_quality_v1": tmp_path / "src" / "does_not_exist.json",
             "learned_quality_v2": sources["learned_quality_v2"],
         },
         active_policy="learned_quality_v2",
@@ -138,7 +127,7 @@ def test_install_rejects_active_policy_with_no_scorer(tmp_path: Path) -> None:
         pa.install_production_bundle(
             setup_src=sources["setup_src"],
             weights_src=sources["weights_src"],
-            scorer_sources={"learned_quality_v1": sources["learned_quality_v1"]},
+            scorer_sources={},
             active_policy="learned_quality_v2",
             dest=tmp_path / "bundle",
         )
@@ -191,8 +180,8 @@ def test_load_rejects_missing_referenced_setup(
 def test_resolve_runtime_rejects_scorer_runtime_policy_mismatch(tmp_path: Path) -> None:
     """The runtime refuses to score with a scorer trained for a different policy.
 
-    Regression for the bug where the v1.1 continuous scorer was installed
-    under the v1 manifest slot. With the corrected scorer-training output
+    Regression for hand-edited artifacts whose embedded runtime_policy no
+    longer matches the configured learned runtime policy. With the corrected scorer-training output
     this can no longer happen via the pipeline, but operators editing
     extract.ini or manifests by hand could still produce a mismatch; the
     runtime check makes that loud instead of silent.
@@ -232,7 +221,7 @@ def test_resolve_runtime_rejects_scorer_runtime_policy_mismatch(tmp_path: Path) 
         for name, offset in (("hrnet", 0.0), ("spiga", 1.0), ("orformer", -1.0))
     ]
     config = RuntimeResolverConfig(
-        policy="learned_quality_v1_1",  # mismatch vs scorer's "learned_quality_v1"
+        policy="learned_quality_v2",  # mismatch vs scorer's "learned_quality_v2"
         scorer_path=str(scorer_path),
         general_strategy="plain_average",
         hard_case_strategy="plain_average",

@@ -106,14 +106,12 @@ resolver_policy = ConfigItem(
     info=(
         "Production runtime resolver policy. ``roll_aware_veto`` applies conservative "
         "roll/geometry safety checks and then chooses from configured candidate priority. "
-        "``learned_quality_v1``/``learned_quality_v1_1``/``learned_quality_v2`` "
+        "``learned_quality_v2`` "
         "score geometry-valid candidates with the installed scorer artifact and choose "
         "the lowest predicted risk/cost."
     ),
     choices=[
         "roll_aware_veto",
-        "learned_quality_v1",
-        "learned_quality_v1_1",
         "learned_quality_v2",
     ],
 )
