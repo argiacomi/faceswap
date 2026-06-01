@@ -27,6 +27,7 @@ if T.TYPE_CHECKING:
     import numpy.typing as npt
 
     from lib.align import CenteringType
+    from lib.training.faceqa_diagnostics import FaceQASampleMetadata
     from plugins.train.trainer.base import TrainConfig
 
 logger = logging.getLogger(__name__)
@@ -46,14 +47,24 @@ class BatchMeta:
     """The eye mask if eye loss multipliers > 1 for each output in NCHW order"""
     mask_mouth: list[torch.Tensor] | None = None
     """The mouth mask if mouth loss multipliers > 1 for each output in NCHW order"""
+    faceqa: list[list[FaceQASampleMetadata]] | None = None
+    """FaceQA sample metadata by side and batch item. ``None`` when unavailable."""
 
     def __repr__(self) -> str:
         """Pretty print for logging"""
-        params = ", ".join(
-            f"{k}={None if v is None else [(x.shape, x.dtype) for x in v]}"
-            for k, v in self.__dict__.items()
-        )
+        params = ", ".join(f"{k}={self._repr_value(v)}" for k, v in self.__dict__.items())
         return f"{self.__class__.__name__}({params})"
+
+    @classmethod
+    def _repr_value(cls, value: T.Any) -> T.Any:
+        """Return a compact representation for meta values."""
+        if value is None:
+            return None
+        if isinstance(value, list) and value and isinstance(value[0], torch.Tensor):
+            return [(x.shape, x.dtype) for x in value]
+        if isinstance(value, list) and value and isinstance(value[0], list):
+            return [len(x) for x in value]
+        return value
 
     def __getitem__(self, key: int) -> BatchMeta:
         """Obtain a copy of the BatchMeta object for a specific model input index
@@ -68,9 +79,15 @@ class BatchMeta:
         The meta data for a specific model input. Data will be populated in lists of
         length num_outputs in shape (batch_size, 1, H, W)
         """
-        return BatchMeta(
-            **{k: None if v is None else [x[:, key] for x in v] for k, v in self.__dict__.items()}
-        )
+        values: dict[str, T.Any] = {}
+        for name, value in self.__dict__.items():
+            if value is None:
+                values[name] = None
+            elif name == "faceqa":
+                values[name] = [value[key]]
+            else:
+                values[name] = [x[:, key] for x in value]
+        return BatchMeta(**values)
 
     def to(self, device: str | torch.Device) -> T.Self:  # type: ignore[name-defined]
         """Place all contained tensors onto the given device
@@ -88,8 +105,18 @@ class BatchMeta:
             v = self.__dict__[k]
             if v is None:
                 continue
+            if k == "faceqa":
+                continue
             self.__dict__[k] = [x.to(device) for x in v]
         return self
+
+    def tensor_dict(self) -> dict[str, list[torch.Tensor] | None]:
+        """Return tensor-only metadata for distributed model forwarding."""
+        return {
+            k: v
+            for k, v in self.__dict__.items()
+            if k != "faceqa" and (v is None or all(isinstance(x, torch.Tensor) for x in v))
+        }
 
 
 class LandmarkMatcher:
@@ -461,7 +488,7 @@ class Collate:  # pylint:disable=too-many-instance-attributes
         return self._landmarks.get_close_landmarks(indices)
 
     def __call__(
-        self, data: list[tuple[tuple[npt.NDArray[np.uint8], int], ...]]
+        self, data: list[tuple[tuple[npt.NDArray[np.uint8], int, object], ...]]
     ) -> tuple[list[torch.Tensor], list[torch.Tensor], BatchMeta]:
         """Prepare the loaded samples for feeding the model, creating targets and applying
         augmentation
@@ -484,10 +511,20 @@ class Collate:  # pylint:disable=too-many-instance-attributes
         """
         shape = data[0][0][0].shape
         batch = np.empty((self._num_inputs, self._batch_size, *shape), dtype=np.uint8)
-        indices = np.empty((self._num_inputs, self._batch_size), dtype=np.int64)  # type: ignore[var-annotated]
+        indices: npt.NDArray[np.int64] = np.empty(
+            (self._num_inputs, self._batch_size), dtype=np.int64
+        )
+        faceqa: list[list[FaceQASampleMetadata]] = [[] for _ in range(self._num_inputs)]
         for idx in range(self._num_inputs):
             batch[idx] = [d[0][idx] for d in data]
             indices[idx] = [d[1][idx] for d in data]
+            faceqa[idx] = [
+                T.cast(
+                    "FaceQASampleMetadata",
+                    item.item() if isinstance(item, np.ndarray) else item,
+                )
+                for item in (d[2][idx] for d in data)
+            ]
 
         batch = batch.reshape(-1, *shape)
         landmarks = self._get_landmarks_pairs(indices)
@@ -503,6 +540,7 @@ class Collate:  # pylint:disable=too-many-instance-attributes
             batch[..., :3] = batch[..., [2, 1, 0]]
 
         targets, masks = self._create_targets(batch)
+        masks.faceqa = faceqa
 
         feed = batch[..., :3]
         if self._config.warp and landmarks is not None and self._landmarks is not None:

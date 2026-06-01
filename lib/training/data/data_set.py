@@ -17,6 +17,7 @@ from torch.utils.data import Dataset
 from lib.align import AlignedFace, Mask
 from lib.image import read_image
 from lib.logger import format_array, parse_class_init
+from lib.training.faceqa_diagnostics import FaceQASampleMetadata
 from lib.utils import FaceswapError, get_module_objects
 from plugins.train import train_config as cfg
 
@@ -431,7 +432,7 @@ class TrainSet(_BaseSet):
         logger.debug("[%s] Configured masks: %s", self._name, retval)
         return retval
 
-    def __getitem__(self, index: int) -> tuple[npt.NDArray[np.uint8], int]:
+    def __getitem__(self, index: int) -> tuple[npt.NDArray[np.uint8], int, object]:
         """Obtain the next item from the data loader
 
         Parameters
@@ -446,6 +447,9 @@ class TrainSet(_BaseSet):
             stacked into a single array
         index
             The image file index
+        metadata
+            FaceQA metadata for the sample when embedded in the PNG header. A placeholder is
+            returned when no FaceQA metadata is present.
         """
         filename = self._image_list[index]
         logger.trace(  # type: ignore[attr-defined]
@@ -457,6 +461,7 @@ class TrainSet(_BaseSet):
         meta: PNGHeader
         image, meta = read_image(filename, raise_error=False, with_metadata=True)
         face = self._get_face(image, meta.alignments, self._size, self._coverage)
+        faceqa = FaceQASampleMetadata.from_png_header(self._side, filename, meta)
         img = T.cast("npt.NDArray[np.uint8]", face.face)
         retval = np.empty(self._out_shape, dtype=img.dtype)
         retval[..., :3] = img
@@ -468,7 +473,7 @@ class TrainSet(_BaseSet):
             self._name,
             format_array(retval),
         )
-        return retval, index
+        return retval, index, np.array(faceqa, dtype=object)
 
 
 class PreviewSet(_BaseSet):

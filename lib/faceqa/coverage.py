@@ -65,6 +65,8 @@ logger = logging.getLogger(__name__)
 if T.TYPE_CHECKING:
     from collections.abc import Callable
 
+    from lib.align import CenteringType
+
 # Bucket-classification thresholds live in ``lib.faceqa.buckets`` so the
 # bucket helpers and their thresholds stay co-located. The validation
 # thresholds below (``POSE_LIMITS`` etc.) are NOT bucket-classification
@@ -273,6 +275,21 @@ def _record_from_alignment(frame: str, idx: int, face: FileAlignments) -> FaceQA
     _populate_aligned_metrics(record, face)
     _populate_pose_metadata(record, face.metadata)
     _populate_metadata(record, face.metadata)
+    return record
+
+
+def record_from_alignment(frame: str, face_index: int, face: FileAlignments) -> FaceQARecord:
+    """Build a FaceQA record from one alignment face.
+
+    This public wrapper lets runtime consumers such as training diagnostics
+    classify already-embedded FaceQA metadata without loading a full alignments
+    file or recomputing a coverage report.
+    """
+    record = _record_from_alignment(frame, face_index, face)
+    _populate_image_metrics(record, face)
+    _select_pose(record)
+    if record.expression_bucket is None:
+        _populate_expression(record, face)
     return record
 
 
@@ -1124,7 +1141,7 @@ class IdentityBackfiller:
         try:
             face_obj = DetectedFace()
             face_obj.from_alignment(face, image=image)
-            face_obj.load_aligned(image, size=size, centering=centering)  # type: ignore[arg-type]
+            face_obj.load_aligned(image, size=size, centering=T.cast("CenteringType", centering))
         except Exception as err:  # pylint:disable=broad-except
             logger.warning(
                 "Could not reconstruct aligned face for identity backfill "
@@ -1600,7 +1617,8 @@ def compute_identity_quality(
         if key not in classified_keys:
             continue
         vector = vectors_by_key[key]
-        face = faces_by_key.get(key)  # type: ignore[assignment]
+        aligned_face = faces_by_key.get(key)
+        assert aligned_face is not None
         score = float(np.dot(vector, centroid))
         quality_flag, final_decision = _identity_decision(score)
         report.classified += 1
@@ -1620,17 +1638,16 @@ def compute_identity_quality(
         changed |= _set_record_value(record, "identity_final_decision", final_decision)
         report.updated = report.updated or changed
 
-        if face is not None:
-            _write_faceqa_metadata(
-                face,
-                "identity",
-                {
-                    "model": selected_model,
-                    "score": score,
-                    "quality_flag": quality_flag,
-                    "final_decision": final_decision,
-                },
-            )
+        _write_faceqa_metadata(
+            aligned_face,
+            "identity",
+            {
+                "model": selected_model,
+                "score": score,
+                "quality_flag": quality_flag,
+                "final_decision": final_decision,
+            },
+        )
 
     return report
 

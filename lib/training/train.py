@@ -16,6 +16,7 @@ import torch
 from lib.logger import format_array, parse_class_init
 from lib.torch_utils import get_device, is_accelerator_oom_error
 from lib.training.data import PreviewLoader, TrainLoader, get_label
+from lib.training.faceqa_diagnostics import FaceQALossDiagnostics
 from lib.training.preview import Samples
 from lib.training.preview_diagnostics import PreviewDiagnostics
 from lib.training.tensorboard import TorchTensorBoard
@@ -102,6 +103,8 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
 
         self._model.state.add_session_batchsize(plugin.batch_size)
         self._tensorboard = self._set_tensorboard()
+        self._faceqa_diagnostics = self._set_faceqa_diagnostics()
+        self._faceqa_diagnostic_logs: dict[str, float] = {}
         self._preview_diagnostics = self._set_preview_diagnostics()
         self._samples = Samples(
             self._model.coverage_ratio,
@@ -345,6 +348,15 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
         logger.info("Enabled preview diagnostics")
         return retval
 
+    def _set_faceqa_diagnostics(self) -> FaceQALossDiagnostics | None:
+        """Set up optional FaceQA training loss diagnostics."""
+        if self._model.state.current_session["no_logs"]:
+            logger.debug("[Trainer] FaceQA training diagnostics disabled with no-logs")
+            return None
+        jsonl_path = os.path.join(self._get_session_log_dir(), "faceqa_training_diagnostics.jsonl")
+        logger.debug("[Trainer] FaceQA training diagnostics path: %s", jsonl_path)
+        return FaceQALossDiagnostics(jsonl_path=jsonl_path)
+
     def toggle_mask(self) -> None:
         """Toggle the mask overlay on or off based on user input."""
         self._samples.toggle_mask_display()
@@ -365,6 +377,15 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
                 meta.to(self._device),
             )
             retval = [x.to_cpu() for x in loss]
+            self._faceqa_diagnostic_logs = (
+                {}
+                if self._faceqa_diagnostics is None
+                else self._faceqa_diagnostics.update(
+                    retval,
+                    meta.faceqa,
+                    self._model.iterations,
+                )
+            )
         except RuntimeError as err:
             if not is_accelerator_oom_error(err):
                 raise
@@ -407,6 +428,8 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
                 logs[f"unweighted_{key}"] = {k: v.item() for k, v in unweighted.items()}
             if out.mask is not None:
                 logs[f"mask_{lbl}"] = out.mask.mean().item()
+        if self._faceqa_diagnostic_logs:
+            logs["faceqa_diagnostics"] = self._faceqa_diagnostic_logs
         self._tensorboard.on_train_batch_end(self._model.iterations, logs=logs)
 
     def _collate_and_store_loss(self, loss: list[BatchLoss]) -> np.ndarray:
