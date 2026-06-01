@@ -237,6 +237,137 @@ def _load_cvlface_wrapper(model_dir: str, model_label: str) -> T.Any:
         sys.modules.pop(module_name, None)
 
 
+def _extract_embedding_tensor(output: T.Any, *, model_label: str) -> T.Any:
+    """Extract the embedding tensor from common Transformers/custom-code model outputs.
+
+    Parameters
+    ----------
+    output
+        The raw output returned by a CVLFace recognition model
+    model_label
+        The human-readable model label used for error reporting
+
+    Returns
+    -------
+    The extracted embedding tensor
+    """
+    torch = import_module("torch")
+    if hasattr(torch, "is_tensor") and torch.is_tensor(output):
+        return output
+    if isinstance(output, dict):
+        for key in ("embeddings", "embedding", "features", "logits", "last_hidden_state"):
+            if key in output:
+                return _extract_embedding_tensor(output[key], model_label=model_label)
+        for value in output.values():
+            try:
+                return _extract_embedding_tensor(value, model_label=model_label)
+            except TypeError:
+                continue
+    if isinstance(output, (list, tuple)):
+        for value in output:
+            try:
+                return _extract_embedding_tensor(value, model_label=model_label)
+            except TypeError:
+                continue
+    for attr in ("embeddings", "embedding", "features", "logits", "last_hidden_state"):
+        if hasattr(output, attr):
+            return _extract_embedding_tensor(getattr(output, attr), model_label=model_label)
+    raise TypeError(f"Unsupported {model_label} model output type: {type(output)!r}")
+
+
+def load_trainable_recognition_module(
+    repo_id: str, *, model_label: str, input_size: int, force_cpu: bool = False
+) -> tuple[T.Any, int]:
+    """Load a frozen, eval-mode torch recognition module for use as a training loss.
+
+    Unlike the extraction loaders, the returned module is differentiable so that gradients
+    can flow back into a generated face. Its weights are frozen and it is returned outside of
+    any optimizer so that it is not trained.
+
+    Parameters
+    ----------
+    repo_id
+        The Hugging Face repository id to download the CVLFace snapshot from
+    model_label
+        The human-readable model label used for logging and error reporting
+    input_size
+        The spatial input size expected by the recognition model
+    force_cpu
+        ``True`` to force loading on CPU
+
+    Returns
+    -------
+    module
+        A frozen ``torch.nn.Module`` accepting an ``(N, 3, input_size, input_size)`` RGB
+        tensor normalized to ``-1.0 - 1.0`` and returning ``(N, D)`` embeddings
+    input_size
+        The spatial input size expected by the module
+    """
+    try:
+        torch = import_module("torch")
+        import_module("transformers")
+        torch_utils = import_module("lib.torch_utils")
+    except ImportError as exc:
+        raise ImportError(
+            f"{model_label} identity loss requires the optional 'torch' and 'transformers' "
+            "packages."
+        ) from exc
+
+    device = torch_utils.get_device(cpu=force_cpu)
+    model_dir = _download_cvlface_snapshot(repo_id, model_label)
+    with (
+        _CVLFACE_LOAD_LOCK,
+        _cvlface_repo_context(model_dir),
+        _third_party_output_to_debug(f"{model_label} CVLFace"),
+    ):
+        model = _load_cvlface_wrapper(model_dir, model_label)
+    model.to(device)
+    model.eval()
+    for param in model.parameters():
+        param.requires_grad_(False)
+    logger.info(
+        "%s CVLFace identity-loss model loaded on %s from %s", model_label, device, repo_id
+    )
+
+    class _TrainableRecognition(torch.nn.Module):  # type: ignore[name-defined]
+        """Thin differentiable wrapper that returns embedding tensors."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self._model = model
+
+        def forward(self, faces: T.Any) -> T.Any:
+            embeddings = _extract_embedding_tensor(self._model(faces), model_label=model_label)
+            if embeddings.ndim == 1:
+                embeddings = embeddings.unsqueeze(0)
+            return embeddings
+
+    return _TrainableRecognition(), input_size
+
+
+def trainable_arcface_module(*, force_cpu: bool = False) -> tuple[T.Any, int]:
+    """Return a frozen, differentiable ArcFace recognition module for identity-loss use.
+
+    Parameters
+    ----------
+    force_cpu
+        ``True`` to force loading on CPU
+
+    Returns
+    -------
+    module
+        The frozen ArcFace recognition module
+    input_size
+        The spatial input size expected by the module
+    """
+    return load_trainable_recognition_module(
+        "minchul/cvlface_arcface_ir101_webface4m",
+        model_label="ArcFace",
+        input_size=ARCFACE.input_size,
+        force_cpu=force_cpu,
+    )
+
+
 def _make_cvlface_loader(
     repo_id: str, *, model_label: str, embedding_dim: int, force_cpu: bool = False
 ) -> T.Callable[[], LoadedIdentityModel]:
@@ -266,27 +397,7 @@ def _make_cvlface_loader(
 
         def _extract_tensor(output: T.Any) -> T.Any:
             """Extract the embedding tensor from common Transformers/custom-code outputs."""
-            if hasattr(torch, "is_tensor") and torch.is_tensor(output):
-                return output
-            if isinstance(output, dict):
-                for key in ("embeddings", "embedding", "features", "logits", "last_hidden_state"):
-                    if key in output:
-                        return _extract_tensor(output[key])
-                for value in output.values():
-                    try:
-                        return _extract_tensor(value)
-                    except TypeError:
-                        continue
-            if isinstance(output, (list, tuple)):
-                for value in output:
-                    try:
-                        return _extract_tensor(value)
-                    except TypeError:
-                        continue
-            for attr in ("embeddings", "embedding", "features", "logits", "last_hidden_state"):
-                if hasattr(output, attr):
-                    return _extract_tensor(getattr(output, attr))
-            raise TypeError(f"Unsupported {model_label} model output type: {type(output)!r}")
+            return _extract_embedding_tensor(output, model_label=model_label)
 
         class _CVLFace:
             def __init__(self) -> None:

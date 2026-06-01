@@ -15,6 +15,13 @@ from lib.logger import parse_class_init
 from lib.model.losses import get_loss_function
 from lib.utils import get_module_objects
 
+from .extra_losses import (
+    BoundaryLoss,
+    IdentityLoss,
+    RegionWeightedPerceptualLoss,
+    occlusion_exclusion_weight,
+)
+
 if T.TYPE_CHECKING:
     from .data import BatchMeta
 
@@ -83,6 +90,23 @@ class LossCollator(nn.Module):  # pylint:disable=too-many-instance-attributes
         The smallest output from the model. Required for initializing some loss functions
     mask_loss
         The loss function to use if learn_mask is enabled. Default: ``None`` (not enabled)
+    occlusion_strength
+        Strength (``0.0 - 1.0``) for excluding occluded regions (using ``meta.mask_occlusion``)
+        from the reconstruction loss. ``0.0`` disables occlusion exclusion. Default: ``0.0``
+    boundary_loss
+        Optional configured boundary-aware reconstruction loss. Default: ``None`` (disabled)
+    boundary_weight
+        The weight to apply to the boundary loss. Default: ``0.0``
+    region_perceptual_loss
+        Optional configured region-weighted perceptual loss. Default: ``None`` (disabled)
+    region_perceptual_weight
+        The weight to apply to the region-weighted perceptual loss. Default: ``0.0``
+    identity_loss
+        Optional configured frozen identity embedding loss. Default: ``None`` (disabled)
+    identity_weight
+        The weight to apply to the identity loss. Default: ``0.0``
+    identity_start_iteration
+        The iteration at which the identity loss begins to be applied. Default: ``0``
     """
 
     def __init__(
@@ -95,6 +119,14 @@ class LossCollator(nn.Module):  # pylint:disable=too-many-instance-attributes
         mouth_multiplier: float,
         smallest_output: int,
         mask_loss: str | None = None,
+        occlusion_strength: float = 0.0,
+        boundary_loss: BoundaryLoss | None = None,
+        boundary_weight: float = 0.0,
+        region_perceptual_loss: RegionWeightedPerceptualLoss | None = None,
+        region_perceptual_weight: float = 0.0,
+        identity_loss: IdentityLoss | None = None,
+        identity_weight: float = 0.0,
+        identity_start_iteration: int = 0,
     ) -> None:
         logger.debug(parse_class_init(locals()))
         super().__init__()
@@ -106,6 +138,16 @@ class LossCollator(nn.Module):  # pylint:disable=too-many-instance-attributes
         self._mask_loss = mask_loss
         self._functions, self._weights = self._configure_functions(functions, weights)
         self._spatial, self._non_spatial = self._get_function_types()
+
+        self._occlusion_strength = occlusion_strength
+        self._boundary_loss = boundary_loss
+        self._boundary_weight = boundary_weight
+        self._region_perceptual_loss = region_perceptual_loss
+        self._region_perceptual_weight = region_perceptual_weight
+        self._identity_loss = identity_loss
+        self._identity_weight = identity_weight
+        self._identity_start_iteration = identity_start_iteration
+        self._iteration = 0
 
         self._mask_loss_function = (
             None
@@ -133,6 +175,38 @@ class LossCollator(nn.Module):  # pylint:disable=too-many-instance-attributes
         }
         s_params = ", ".join(f"{k}={repr(v)}" for k, v in params.items())
         return f"{self.__class__.__name__}({s_params})"
+
+    def set_iteration(self, iteration: int) -> None:
+        """Update the current training iteration.
+
+        Used to gate losses (such as the identity loss) that only begin after a configured
+        iteration.
+
+        Parameters
+        ----------
+        iteration
+            The current model training iteration
+        """
+        self._iteration = iteration
+
+    def _occlusion_weight(self, meta: BatchMeta, index: int) -> torch.Tensor | None:
+        """Obtain the per-pixel occlusion-exclusion weight for an output if enabled.
+
+        Parameters
+        ----------
+        meta
+            The meta information for the batch
+        index
+            The output index for obtaining the correct meta data
+
+        Returns
+        -------
+        The per-pixel weight in ``(N, 1, H, W)`` order, or ``None`` if occlusion exclusion is
+        disabled or no occlusion mask is available
+        """
+        if self._occlusion_strength <= 0.0 or meta.mask_occlusion is None:
+            return None
+        return occlusion_exclusion_weight(meta.mask_occlusion[index], self._occlusion_strength)
 
     def _configure_functions(
         self, names: list[str], weights: list[float]
@@ -230,6 +304,7 @@ class LossCollator(nn.Module):  # pylint:disable=too-many-instance-attributes
         -------
         The unweighted loss scalar for each loss function with masks and multipliers applied
         """
+        occlusion = self._occlusion_weight(meta, index)
         retval: dict[str, torch.Tensor] = {}
         for name in self._spatial:
             loss: torch.Tensor = self._functions[name](y_true, y_pred)
@@ -239,6 +314,8 @@ class LossCollator(nn.Module):  # pylint:disable=too-many-instance-attributes
                 loss += loss * meta.mask_eye[index] * self._eye_multiplier
             if self._mouth_multiplier > 1.0 and meta.mask_mouth is not None:
                 loss += loss * meta.mask_mouth[index] * self._mouth_multiplier
+            if occlusion is not None:
+                loss = loss * occlusion
             retval[name] = loss.mean(dim=tuple(range(1, loss.ndim)))
         logger.trace("[Loss] Spatial loss: %s", retval)  # type:ignore[attr-defined]
         return retval
@@ -304,6 +381,11 @@ class LossCollator(nn.Module):  # pylint:disable=too-many-instance-attributes
         -------
         The unweighted loss scalar for each loss function with masks and multipliers applied
         """
+        occlusion = self._occlusion_weight(meta, index)
+        if occlusion is not None:
+            y_true = y_true * occlusion
+            y_pred = y_pred * occlusion
+
         retval: dict[str, torch.Tensor] = {}
         if not self._use_mask:
             inputs = [(y_true, y_pred)]
@@ -322,6 +404,64 @@ class LossCollator(nn.Module):  # pylint:disable=too-many-instance-attributes
 
         logger.trace("[Loss] Non-spatial loss: %s", retval)  # type:ignore[attr-defined]
         return retval
+
+    def _get_extra_losses(
+        self,
+        y_true: torch.Tensor,
+        y_pred: torch.Tensor,
+        meta: BatchMeta,
+        index: int,
+        is_largest: bool,
+    ) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
+        """Obtain the unweighted and weighted values for the optional advanced losses.
+
+        Parameters
+        ----------
+        y_true
+            The ground truth batch of images in ``(N, C, H, W)`` order
+        y_pred
+            The batch of model predictions in ``(N, C, H, W)`` order
+        meta
+            The meta information for the batch
+        index
+            The output index for obtaining the correct meta data
+        is_largest
+            ``True`` if this is the largest reconstruction output (used to gate the identity
+            loss so that it only runs once per side)
+
+        Returns
+        -------
+        unweighted
+            The unweighted advanced loss scalars for each item in the batch
+        weighted
+            The weighted advanced loss scalars for each item in the batch
+        """
+        face_mask = None if meta.mask_face is None else meta.mask_face[index]
+        eye_mask = None if meta.mask_eye is None else meta.mask_eye[index]
+        mouth_mask = None if meta.mask_mouth is None else meta.mask_mouth[index]
+        unweighted: dict[str, torch.Tensor] = {}
+        weighted: dict[str, torch.Tensor] = {}
+
+        if self._boundary_loss is not None and face_mask is not None:
+            loss = self._boundary_loss(y_true, y_pred, face_mask)
+            unweighted["boundary"] = loss
+            weighted["boundary"] = loss * self._boundary_weight
+
+        if self._region_perceptual_loss is not None:
+            loss = self._region_perceptual_loss(y_true, y_pred, face_mask, eye_mask, mouth_mask)
+            unweighted["region_perceptual"] = loss
+            weighted["region_perceptual"] = loss * self._region_perceptual_weight
+
+        if (
+            self._identity_loss is not None
+            and is_largest
+            and self._iteration >= self._identity_start_iteration
+        ):
+            loss = self._identity_loss(y_true, y_pred, face_mask)
+            unweighted["identity"] = loss
+            weighted["identity"] = loss * self._identity_weight
+
+        return unweighted, weighted
 
     def forward(
         self, y_true_all: list[torch.Tensor], y_pred_all: list[torch.Tensor], meta: BatchMeta
@@ -342,6 +482,13 @@ class LossCollator(nn.Module):  # pylint:disable=too-many-instance-attributes
         -------
         The loss scalars for the batch
         """
+        # Identify the largest reconstruction output so single-shot losses (e.g. identity)
+        # run once per side on the highest-resolution face.
+        recon_sizes = {
+            idx: y_true.shape[1] for idx, y_true in enumerate(y_true_all) if y_true.shape[-1] != 1
+        }
+        largest_idx = max(recon_sizes, key=lambda i: recon_sizes[i]) if recon_sizes else -1
+
         all_unweighted: list[dict[str, torch.Tensor]] = []
         all_weighted: list[dict[str, torch.Tensor]] = []
         mask_loss = None
@@ -358,8 +505,16 @@ class LossCollator(nn.Module):  # pylint:disable=too-many-instance-attributes
 
             unweighted = self._get_spatial_loss(y_true, y_pred, meta, idx)
             unweighted |= self._get_non_spatial_loss(y_true, y_pred, meta, idx)
+            weighted = {k: v * self._weights[k] for k, v in unweighted.items()}
+
+            extra_unweighted, extra_weighted = self._get_extra_losses(
+                y_true, y_pred, meta, idx, idx == largest_idx
+            )
+            unweighted |= extra_unweighted
+            weighted |= extra_weighted
+
             all_unweighted.append(unweighted)
-            all_weighted.append({k: v * self._weights[k] for k, v in unweighted.items()})
+            all_weighted.append(weighted)
 
         retval = BatchLoss(unweighted=all_unweighted, weighted=all_weighted, mask=mask_loss)
         logger.trace("[Loss] %s", retval)  # type:ignore[attr-defined]

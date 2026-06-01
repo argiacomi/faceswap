@@ -34,6 +34,7 @@ from lib.utils import FaceswapError, get_module_objects
 from plugins.train import train_config as mod_cfg
 from plugins.train.trainer import trainer_config as trn_cfg
 
+from .extra_losses import BoundaryLoss, IdentityLoss, RegionWeightedPerceptualLoss
 from .loss import LossCollator
 from .optimizer import Optimizer
 
@@ -150,6 +151,7 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
         plugin
             The plugin that is training the model
         """
+        boundary_loss, region_perceptual_loss, identity_loss = self._configure_extra_losses()
         loss = LossCollator(
             functions=[
                 mod_cfg.Loss.loss_function(),
@@ -171,9 +173,81 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
             mask_loss=(
                 None if not mod_cfg.Loss.learn_mask() else mod_cfg.Loss.mask_loss_function()
             ),
+            occlusion_strength=self._occlusion_strength(),
+            boundary_loss=boundary_loss,
+            boundary_weight=mod_cfg.Loss.boundary_loss_weight(),
+            region_perceptual_loss=region_perceptual_loss,
+            region_perceptual_weight=mod_cfg.Loss.region_perceptual_loss_weight(),
+            identity_loss=identity_loss,
+            identity_weight=mod_cfg.Loss.identity_loss_weight(),
+            identity_start_iteration=mod_cfg.Loss.identity_loss_start_iteration(),
         )
         plugin.register_loss(loss)
         plugin.model.model.to(self._device)
+
+    @staticmethod
+    def _occlusion_strength() -> float:
+        """Return the configured occlusion-exclusion strength, or ``0.0`` if disabled.
+
+        Returns
+        -------
+        The occlusion-exclusion strength
+        """
+        if mod_cfg.Loss.occlusion_exclusion() == "none" or mod_cfg.Loss.occlusion_mask_type() in (
+            None,
+            "none",
+        ):
+            return 0.0
+        return float(mod_cfg.Loss.occlusion_exclusion_strength())
+
+    def _configure_extra_losses(
+        self,
+    ) -> tuple[BoundaryLoss | None, RegionWeightedPerceptualLoss | None, IdentityLoss | None]:
+        """Build the optional advanced loss modules from configuration.
+
+        Returns
+        -------
+        boundary_loss
+            The configured boundary loss, or ``None`` if disabled
+        region_perceptual_loss
+            The configured region-weighted perceptual loss, or ``None`` if disabled
+        identity_loss
+            The configured frozen identity loss, or ``None`` if disabled
+        """
+        boundary_loss: BoundaryLoss | None = None
+        if mod_cfg.Loss.boundary_loss() != "none":
+            boundary_loss = BoundaryLoss(
+                mod_cfg.Loss.boundary_loss_function(),
+                mod_cfg.Loss.boundary_band_pixels(),
+                mod_cfg.Loss.boundary_band_mode(),
+                self._model.color_order,
+            )
+
+        region_perceptual_loss: RegionWeightedPerceptualLoss | None = None
+        if mod_cfg.Loss.region_perceptual_loss() != "none":
+            region_perceptual_loss = RegionWeightedPerceptualLoss(
+                mod_cfg.Loss.region_perceptual_loss(),
+                self._model.color_order,
+                mod_cfg.Loss.region_perceptual_face_weight(),
+                mod_cfg.Loss.region_perceptual_eye_weight(),
+                mod_cfg.Loss.region_perceptual_mouth_weight(),
+                mod_cfg.Loss.region_perceptual_skin_weight(),
+            )
+
+        identity_loss: IdentityLoss | None = None
+        if mod_cfg.Loss.identity_loss() == "arcface":
+            from plugins.extract.identity._model_adapter import trainable_arcface_module
+
+            logger.info("Enabling frozen ArcFace identity loss")
+            recognizer, input_size = trainable_arcface_module()
+            identity_loss = IdentityLoss(
+                recognizer,
+                input_size,
+                self._model.color_order,
+                crop=mod_cfg.Loss.identity_loss_crop(),
+            )
+
+        return boundary_loss, region_perceptual_loss, identity_loss
 
     def _faceqa_training_diagnostics_enabled(self) -> bool:
         """Return whether FaceQA training diagnostics should run for this session."""
@@ -553,6 +627,7 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
         """
         try:
             inputs, targets, meta = next(self._train_loader)
+            self._plugin.loss_func.set_iteration(self._model.iterations)
             loss = self._plugin.train_batch(
                 [i.to(self._device) for i in inputs],
                 [t.to(self._device) for t in targets],

@@ -637,6 +637,273 @@ class Loss(GlobalSection):
             "to replicate more complex mask models."
         ),
     )
+    identity_loss = ConfigItem(
+        datatype=str,
+        default="none",
+        group=_("identity loss"),
+        info=_(
+            "Add a frozen face-recognition identity loss. This compares identity "
+            "embeddings of the ground truth face and the model's reconstruction using a "
+            "pre-trained, frozen recognition network, encouraging the reconstruction to "
+            "preserve the subject's identity. The recognition model is never trained and "
+            "its weights are not saved into the Faceswap model."
+            "\n\t none: Do not use an identity loss."
+            "\n\t arcface: Use a frozen ArcFace (CVLFace iResNet101) recognition model. "
+            "NB: This requires the optional 'torch', 'transformers' and 'huggingface_hub' "
+            "packages and will download the recognition weights on first use. The ArcFace "
+            "weights are licensed for non-commercial use only."
+        ),
+        choices=["none", "arcface"],
+        gui_radio=True,
+        fixed=False,
+    )
+    identity_loss_weight = ConfigItem(
+        datatype=float,
+        default=0.1,
+        group=_("identity loss"),
+        info=_(
+            "The amount of weight to apply to the identity loss. Only used if "
+            "'identity_loss' is not 'none'. The identity distance (1 - cosine similarity) "
+            "is multiplied by this value before being added to the overall loss."
+        ),
+        min_max=(0.0, 1.0),
+        rounding=2,
+        fixed=False,
+    )
+    identity_loss_crop = ConfigItem(
+        datatype=str,
+        default="face",
+        group=_("identity loss"),
+        info=_(
+            "How to crop the face before passing it to the recognition model."
+            "\n\t face: Use the full training face crop."
+            "\n\t mask_bbox: Tightly crop to the bounding box of the face mask before "
+            "feeding the recognition model. Requires 'Penalized Mask Loss' to be enabled "
+            "so that a face mask is available, otherwise the full face crop is used."
+        ),
+        choices=["face", "mask_bbox"],
+        gui_radio=True,
+        fixed=False,
+    )
+    identity_loss_start_iteration = ConfigItem(
+        datatype=int,
+        default=0,
+        group=_("identity loss"),
+        info=_(
+            "Delay the identity loss until this training iteration has been reached. This "
+            "allows the model to perform broad reconstruction before the identity loss is "
+            "introduced. Set to 0 to apply the identity loss from the first iteration."
+        ),
+        min_max=(0, 1000000),
+        rounding=1000,
+        fixed=False,
+    )
+    region_perceptual_loss = ConfigItem(
+        datatype=str,
+        default="none",
+        group=_("region perceptual loss"),
+        info=_(
+            "Add an explicit region-weighted perceptual loss. This wraps a perceptual "
+            "loss function and applies independent weight multipliers to the face, eye, "
+            "mouth and skin regions, allowing perceptual detail to be prioritized "
+            "intentionally rather than relying on the global eye/mouth multipliers."
+            "\n\t none: Do not use a region-weighted perceptual loss."
+            "\n\t lpips_alex / lpips_squeeze / lpips_vgg16: Learned Perceptual Image Patch "
+            "Similarity using the named backbone."
+            "\n\t ssim / ms_ssim / gmsd / flip: Structural / perceptual spatial losses."
+        ),
+        choices=[
+            "none",
+            "lpips_alex",
+            "lpips_squeeze",
+            "lpips_vgg16",
+            "ssim",
+            "ms_ssim",
+            "gmsd",
+            "flip",
+        ],
+        gui_radio=True,
+        fixed=False,
+    )
+    region_perceptual_loss_weight = ConfigItem(
+        datatype=float,
+        default=0.1,
+        group=_("region perceptual loss"),
+        info=_(
+            "The amount of weight to apply to the region-weighted perceptual loss. Only "
+            "used if 'region_perceptual_loss' is not 'none'."
+        ),
+        min_max=(0.0, 1.0),
+        rounding=2,
+        fixed=False,
+    )
+    region_perceptual_face_weight = ConfigItem(
+        datatype=float,
+        default=1.0,
+        group=_("region perceptual loss"),
+        info=_(
+            "Multiplier applied to the perceptual loss within the face mask region. A "
+            "value of 1.0 leaves the region at its baseline weight."
+        ),
+        min_max=(1.0, 10.0),
+        rounding=1,
+        fixed=False,
+    )
+    region_perceptual_eye_weight = ConfigItem(
+        datatype=float,
+        default=1.0,
+        group=_("region perceptual loss"),
+        info=_(
+            "Multiplier applied to the perceptual loss within the eye region. A value of "
+            "1.0 leaves the region at its baseline weight."
+        ),
+        min_max=(1.0, 10.0),
+        rounding=1,
+        fixed=False,
+    )
+    region_perceptual_mouth_weight = ConfigItem(
+        datatype=float,
+        default=1.0,
+        group=_("region perceptual loss"),
+        info=_(
+            "Multiplier applied to the perceptual loss within the mouth region. A value "
+            "of 1.0 leaves the region at its baseline weight."
+        ),
+        min_max=(1.0, 10.0),
+        rounding=1,
+        fixed=False,
+    )
+    region_perceptual_skin_weight = ConfigItem(
+        datatype=float,
+        default=1.0,
+        group=_("region perceptual loss"),
+        info=_(
+            "Multiplier applied to the perceptual loss within the skin region (the face "
+            "mask excluding the eye and mouth regions). A value of 1.0 leaves the region "
+            "at its baseline weight."
+        ),
+        min_max=(1.0, 10.0),
+        rounding=1,
+        fixed=False,
+    )
+    boundary_loss = ConfigItem(
+        datatype=str,
+        default="none",
+        group=_("boundary loss"),
+        info=_(
+            "Add a boundary-aware reconstruction loss. This focuses an additional "
+            "reconstruction loss on a band around the edge of the face mask to improve "
+            "seam quality where the swapped face meets the background."
+            "\n\t none: Do not use a boundary loss."
+            "\n\t mask_band: Apply the boundary loss to a band derived from the face mask "
+            "edge."
+        ),
+        choices=["none", "mask_band"],
+        gui_radio=True,
+        fixed=False,
+    )
+    boundary_loss_function = ConfigItem(
+        datatype=str,
+        default="mae",
+        group=_("boundary loss"),
+        info=_(
+            "The loss function to use for the boundary band. Only used if "
+            "'boundary_loss' is not 'none'."
+        ),
+        choices=["mae", "mse", "smooth_loss", "ssim"],
+        gui_radio=True,
+        fixed=False,
+    )
+    boundary_loss_weight = ConfigItem(
+        datatype=float,
+        default=0.1,
+        group=_("boundary loss"),
+        info=_(
+            "The amount of weight to apply to the boundary loss. Only used if "
+            "'boundary_loss' is not 'none'."
+        ),
+        min_max=(0.0, 1.0),
+        rounding=2,
+        fixed=False,
+    )
+    boundary_band_pixels = ConfigItem(
+        datatype=int,
+        default=8,
+        group=_("boundary loss"),
+        info=_(
+            "The width, in pixels (relative to the model output size), of the boundary "
+            "band around the face mask edge."
+        ),
+        min_max=(2, 32),
+        rounding=1,
+        fixed=False,
+    )
+    boundary_band_mode = ConfigItem(
+        datatype=str,
+        default="both",
+        group=_("boundary loss"),
+        info=_(
+            "Which side of the mask edge the boundary band should cover."
+            "\n\t inner: Only the area just inside the mask edge."
+            "\n\t outer: Only the area just outside the mask edge."
+            "\n\t both: The area on both sides of the mask edge."
+        ),
+        choices=["inner", "outer", "both"],
+        gui_radio=True,
+        fixed=False,
+    )
+    occlusion_exclusion = ConfigItem(
+        datatype=str,
+        default="none",
+        group=_("occlusion"),
+        info=_(
+            "Exclude occluded regions from the reconstruction loss using a dedicated "
+            "occlusion mask. When enabled, the per-pixel reconstruction loss is "
+            "down-weighted wherever the occlusion mask indicates an obstruction (e.g. "
+            "hands or glasses), preventing the model from being penalized for failing to "
+            "reconstruct occluders."
+            "\n\t none: Do not exclude occluded regions."
+            "\n\t mask: Use the mask selected in 'occlusion_mask_type'."
+            "\n\nNB: This does not reuse the standard face mask. You must explicitly "
+            "select an occlusion mask source via 'occlusion_mask_type'."
+        ),
+        choices=["none", "mask"],
+        gui_radio=True,
+        fixed=False,
+    )
+    occlusion_mask_type = ConfigItem(
+        datatype=str,
+        default="none",
+        group=_("occlusion"),
+        info=_(
+            "The mask source to use as the occlusion mask when 'occlusion_exclusion' is "
+            "set to 'mask'. This must be a mask that was generated during extraction and "
+            "exists in the alignments data for the training faces. Set to 'none' to "
+            "disable occlusion exclusion."
+        ),
+        choices=list(
+            sorted(
+                ["none"]
+                + PluginLoader.get_available_extractors("mask", add_none=False, extend_plugin=True)
+            )
+        ),
+        gui_radio=True,
+        fixed=False,
+    )
+    occlusion_exclusion_strength = ConfigItem(
+        datatype=float,
+        default=1.0,
+        group=_("occlusion"),
+        info=_(
+            "How strongly to exclude occluded regions from the reconstruction loss. A "
+            "value of 1.0 fully ignores occluded pixels, while lower values only "
+            "partially down-weight them. Only used if 'occlusion_exclusion' is not "
+            "'none'."
+        ),
+        min_max=(0.0, 1.0),
+        rounding=2,
+        fixed=False,
+    )
 
 
 @dataclass

@@ -21,7 +21,7 @@ from lib.logger import format_array, parse_class_init
 from lib.utils import FaceswapError, get_module_objects
 
 from .augmentation import ImageAugmentation
-from .data_set import get_label, get_sorted_images, to_float32
+from .data_set import configured_training_masks, get_label, get_sorted_images, to_float32
 
 if T.TYPE_CHECKING:
     import numpy.typing as npt
@@ -47,6 +47,8 @@ class BatchMeta:
     """The eye mask if eye loss multipliers > 1 for each output in NCHW order"""
     mask_mouth: list[torch.Tensor] | None = None
     """The mouth mask if mouth loss multipliers > 1 for each output in NCHW order"""
+    mask_occlusion: list[torch.Tensor] | None = None
+    """The occlusion mask if occlusion exclusion is enabled for each output in NCHW order"""
     faceqa: list[list[FaceQASampleMetadata]] | None = None
     """FaceQA sample metadata by side and batch item. ``None`` when unavailable."""
 
@@ -355,8 +357,9 @@ class Collate:  # pylint:disable=too-many-instance-attributes
         enabled otherwise ``None``
     """
 
-    _mask_types = ("mask_face", "mask_eye", "mask_mouth")
-    """The masks that are stacked to the end of the targets in the order they are stacked"""
+    _mask_types = ("mask_face", "mask_eye", "mask_mouth", "mask_occlusion")
+    """The masks that may be stacked to the end of the targets, in the order they are stacked.
+    The active subset/order is resolved at run time via :func:`configured_training_masks`."""
 
     def __init__(
         self,
@@ -378,6 +381,9 @@ class Collate:  # pylint:disable=too-many-instance-attributes
 
         # For Warp to Landmarks
         self._landmarks = landmarks
+
+        # The BatchMeta fields for each stacked mask channel, in stacking order
+        self._mask_fields = [field for _, field in configured_training_masks()]
 
         self._process_size = max(*output_sizes, input_size)
         self._resize_targets = any(x != self._process_size for x in self._output_sizes)
@@ -451,7 +457,7 @@ class Collate:  # pylint:disable=too-many-instance-attributes
         targets = [torch.from_numpy(out[..., :3]) for out in reshaped]
         masks = BatchMeta(
             **{
-                self._mask_types[idx]: [
+                self._mask_fields[idx]: [
                     torch.from_numpy(out[..., 3 + idx][:, :, None, :, :]) for out in reshaped
                 ]
                 for idx in range(reshaped[0].shape[-1] - 3)

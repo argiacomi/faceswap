@@ -31,6 +31,34 @@ if T.TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def configured_training_masks() -> list[tuple[str, str]]:
+    """Obtain the configured training masks in stacking order.
+
+    This is the single source of truth for which masks are stacked onto the training targets
+    and the order they appear in, ensuring that the dataset loader and the collation function
+    agree on the channel-to-:class:`~lib.training.data.collate.BatchMeta` mapping.
+
+    Returns
+    -------
+    Ordered ``(alignment mask source, BatchMeta field)`` pairs for each configured mask
+    """
+    retval: list[tuple[str, str]] = []
+    if cfg.Loss.mask_type() is not None and (
+        cfg.Loss.learn_mask() or cfg.Loss.penalized_mask_loss()
+    ):
+        retval.append((cfg.Loss.mask_type(), "mask_face"))
+    if cfg.Loss.penalized_mask_loss() and cfg.Loss.eye_multiplier() > 1:
+        retval.append(("eye", "mask_eye"))
+    if cfg.Loss.penalized_mask_loss() and cfg.Loss.mouth_multiplier() > 1:
+        retval.append(("mouth", "mask_mouth"))
+    if cfg.Loss.occlusion_exclusion() != "none" and cfg.Loss.occlusion_mask_type() not in (
+        None,
+        "none",
+    ):
+        retval.append((cfg.Loss.occlusion_mask_type(), "mask_occlusion"))
+    return retval
+
+
 def to_float32(in_array: npt.NDArray[np.uint8]) -> npt.NDArray[np.float32]:
     """Cast an UINT8 array in 0-255 range to float32 in 0.0-1.0 range.
 
@@ -469,17 +497,10 @@ class TrainSet(_BaseSet):
 
         Returns
         -------
-        list of configured masks types in the order [<face mask type>, <eye>, <mouth>]
+        list of configured masks types in the order
+        [<face mask type>, <eye>, <mouth>, <occlusion>]
         """
-        retval = []
-        if cfg.Loss.mask_type() is not None and (
-            cfg.Loss.learn_mask() or cfg.Loss.penalized_mask_loss()
-        ):
-            retval.append(cfg.Loss.mask_type())
-        if cfg.Loss.penalized_mask_loss() and cfg.Loss.eye_multiplier() > 1:
-            retval.append("eye")
-        if cfg.Loss.penalized_mask_loss() and cfg.Loss.mouth_multiplier() > 1:
-            retval.append("mouth")
+        retval = [source for source, _ in configured_training_masks()]
         logger.debug("[%s] Configured masks: %s", self._name, retval)
         return retval
 
