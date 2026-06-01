@@ -172,6 +172,9 @@ def _candidate_context(
             )
             for candidate in candidates
         },
+        truth_landmarks=_face(),
+        normalizer=100.0,
+        visibility=None,
         nme_by_candidate=nme_by_candidate,
         failure_by_candidate={
             candidate.name: bool((failure_by_candidate or {}).get(candidate.name, False))
@@ -588,8 +591,30 @@ def test_evaluate_runtime_resolver_scorer_reports_policy(tmp_path: Path) -> None
     ] == {"hrnet": 2}
     assert report["gt_hard_only_policy_metrics"]["sample_count"] == 0
     assert report["best_single"]["candidate"] == "hrnet"
+    assert set(report["metrics_by_split"]) == {
+        "normal",
+        "profile",
+        "occlusion",
+        "profile_occlusion",
+        "production_failures",
+    }
+    assert report["metrics_by_split"]["profile"]["sample_count"] == 2
+    assert report["metrics_by_split"]["profile"]["full_face_mean_nme"] >= 0.0
+    assert report["region_reports"]["region_metrics_available"] is True
     assert (tmp_path / "eval" / "scorer_policy_report.csv").is_file()
     assert (tmp_path / "eval" / "scorer_feature_importance.csv").is_file()
+    assert (tmp_path / "eval" / "per_region_nme.csv").is_file()
+    assert (tmp_path / "eval" / "per_region_geometry.csv").is_file()
+    assert (tmp_path / "eval" / "per_region_worst_samples.json").is_file()
+    with (tmp_path / "eval" / "per_region_nme.csv").open(newline="", encoding="utf-8") as handle:
+        region_rows = list(csv.DictReader(handle))
+    assert {row["region"] for row in region_rows} >= {
+        "jaw",
+        "eyes",
+        "mouth",
+        "occluded_side",
+        "visible_side",
+    }
 
 
 def test_evaluate_runtime_resolver_scorer_compares_binary_and_continuous(

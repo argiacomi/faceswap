@@ -268,6 +268,9 @@ class SampleCandidateContext:
     condition: str
     candidates: tuple[CandidateRecord, ...]
     metrics: dict[str, CandidateMetrics]
+    truth_landmarks: np.ndarray | None
+    normalizer: float | None
+    visibility: tuple[bool, ...] | None
     nme_by_candidate: dict[str, float]
     failure_by_candidate: dict[str, bool]
     runtime_bucket: str
@@ -778,6 +781,9 @@ def build_sample_context(
         condition=condition,
         candidates=candidates,
         metrics=metrics,
+        truth_landmarks=truth,
+        normalizer=sample.normalizer,
+        visibility=sample.visibility,
         nme_by_candidate=nme_by_candidate,
         failure_by_candidate=failure_by_candidate,
         runtime_bucket=bucket_result.bucket,

@@ -42,6 +42,7 @@ from lib.landmarks.ensemble.scorer_target_config import (
     TARGET_CANDIDATE_FAILURE_OR_HIGH_GAP,
 )
 from lib.landmarks.ensemble.strategies import canonical_strategy
+from lib.landmarks.evaluation.geometry_signals import alignment_summary
 from lib.landmarks.pipeline_conventions import (
     SOURCE_GT_HARD,
     SOURCE_PRODUCTION_VALIDATED,
@@ -60,6 +61,34 @@ HARD_SLICE_POLICY_BUCKETS = {
     "rolled_profile_left",
     "rolled_profile_right",
 }
+SCORER_REQUIRED_SPLITS: tuple[str, ...] = (
+    "normal",
+    "profile",
+    "occlusion",
+    "profile_occlusion",
+    "production_failures",
+)
+SCORER_REGION_NAMES: tuple[str, ...] = (
+    "jaw",
+    "brows",
+    "eyes",
+    "nose",
+    "mouth",
+    "occluded_side",
+    "visible_side",
+)
+SCORER_REGION_RANGES: dict[str, tuple[tuple[int, int], ...]] = {
+    "jaw": ((0, 17),),
+    "brows": ((17, 22), (22, 27)),
+    "eyes": ((36, 42), (42, 48)),
+    "nose": ((27, 36),),
+    "mouth": ((48, 60), (60, 68)),
+    "right_side": ((0, 8), (17, 22), (36, 42)),
+    "left_side": ((9, 17), (22, 27), (42, 48)),
+}
+PER_REGION_GEOMETRY_CSV = "per_region_geometry.csv"
+PER_REGION_NME_CSV = "per_region_nme.csv"
+PER_REGION_WORST_SAMPLES_JSON = "per_region_worst_samples.json"
 
 
 def eval_split_sources(path: Path) -> tuple[set[tuple[str, str, str]], dict[str, str]]:
@@ -128,13 +157,13 @@ def context_source(
     if source:
         return source
     if context.source:
-        return context.source
+        return str(context.source)
     if (
         context.dataset == SOURCE_PRODUCTION_VALIDATED
         or context.runtime_bucket_source == "stored_manifest_landmark_ensemble"
     ):
-        return SOURCE_PRODUCTION_VALIDATED
-    return SOURCE_GT_HARD
+        return str(SOURCE_PRODUCTION_VALIDATED)
+    return str(SOURCE_GT_HARD)
 
 
 def summary(values: T.Sequence[float], failures: T.Sequence[bool]) -> dict[str, float]:
@@ -146,6 +175,12 @@ def summary(values: T.Sequence[float], failures: T.Sequence[bool]) -> dict[str, 
         "p90_nme": float(np.percentile(arr, 90)),
         "failure_rate": float(sum(failures) / len(failures)) if failures else 0.0,
     }
+
+
+def _percentile(values: T.Sequence[float], percent: float) -> float:
+    if not values:
+        return 0.0
+    return float(np.percentile(np.asarray(values, dtype="float64"), percent))
 
 
 def candidate_summary(
@@ -320,11 +355,310 @@ def per_bucket(
     return payload
 
 
+def _condition_tags(context: T.Any) -> set[str]:
+    tags = {str(context.condition or "").strip().lower()}
+    tags.add(str(context.runtime_bucket or "").strip().lower())
+    tags.update(str(tag).strip().lower() for tag in getattr(context, "hard_case_tags", ()) or ())
+    return {tag for tag in tags if tag}
+
+
+def split_labels_for_context(
+    context: T.Any,
+    *,
+    choices: T.Mapping[str, str],
+    source_by_sample_id: T.Mapping[str, str],
+) -> tuple[str, ...]:
+    """Return report split labels for one evaluated context."""
+    tags = _condition_tags(context)
+    selected = choices.get(context.sample_id, "")
+    labels: list[str] = []
+    if not any("profile" in tag or "large_yaw" in tag or "yaw_" in tag for tag in tags):
+        labels.append("normal")
+    if any("profile" in tag for tag in tags):
+        labels.append("profile")
+    if any("occlusion" in tag or "occluded" in tag for tag in tags):
+        labels.append("occlusion")
+    if "profile_occlusion" in tags or "rolled_profile_occlusion" in tags:
+        labels.append("profile_occlusion")
+    if (
+        context_source(context, source_by_sample_id) == SOURCE_PRODUCTION_VALIDATED
+        and selected
+        and bool(context.failure_by_candidate.get(selected, False))
+    ):
+        labels.append("production_failures")
+    return tuple(dict.fromkeys(labels))
+
+
+def split_metric_summary(
+    contexts: T.Sequence[T.Any],
+    *,
+    choices: T.Mapping[str, str],
+    source_by_sample_id: T.Mapping[str, str],
+) -> dict[str, dict[str, T.Any]]:
+    """Return required split-level scorer metrics."""
+    grouped: dict[str, list[T.Any]] = {split: [] for split in SCORER_REQUIRED_SPLITS}
+    for context in contexts:
+        for label in split_labels_for_context(
+            context,
+            choices=choices,
+            source_by_sample_id=source_by_sample_id,
+        ):
+            if label in grouped:
+                grouped[label].append(context)
+
+    payload: dict[str, dict[str, T.Any]] = {}
+    for split in SCORER_REQUIRED_SPLITS:
+        rows = grouped[split]
+        selected_nme: list[float] = []
+        failures: list[bool] = []
+        gaps: list[float] = []
+        catastrophic = 0
+        for context in rows:
+            selected = choices.get(context.sample_id, "")
+            oracle = str(context.oracle)
+            if selected not in context.nme_by_candidate or oracle not in context.nme_by_candidate:
+                continue
+            selected_value = float(context.nme_by_candidate[selected])
+            oracle_value = float(context.nme_by_candidate[oracle])
+            gap = selected_value - oracle_value
+            selected_nme.append(selected_value)
+            failures.append(bool(context.failure_by_candidate.get(selected, False)))
+            gaps.append(gap)
+            catastrophic += int(
+                bool(context.failure_by_candidate.get(selected, False))
+                or gap >= DEFAULT_FALLBACK_CATASTROPHIC_WORSE_NME
+            )
+        base = summary(selected_nme, failures)
+        payload[split] = {
+            "sample_count": len(selected_nme),
+            "full_face_mean_nme": base["mean_nme"],
+            "full_face_p90_nme": base["p90_nme"],
+            "failure_rate": base["failure_rate"],
+            "oracle_gap_mean": float(np.mean(gaps)) if gaps else 0.0,
+            "selected_vs_oracle_regret_mean": float(np.mean([max(gap, 0.0) for gap in gaps]))
+            if gaps
+            else 0.0,
+            "selected_vs_oracle_regret_p90": _percentile([max(gap, 0.0) for gap in gaps], 90),
+            "catastrophic_failure_count": catastrophic,
+        }
+    return payload
+
+
+def _indices_for_region(context: T.Any, region: str) -> tuple[int, ...]:
+    if region in {"jaw", "brows", "eyes", "nose", "mouth"}:
+        spans = SCORER_REGION_RANGES[region]
+    else:
+        visibility = getattr(context, "visibility", None)
+        right_hidden = 0
+        left_hidden = 0
+        if visibility is not None and len(visibility) >= 48:
+            right_indices = _indices_for_spans(SCORER_REGION_RANGES["right_side"])
+            left_indices = _indices_for_spans(SCORER_REGION_RANGES["left_side"])
+            right_hidden = sum(1 for index in right_indices if not bool(visibility[index]))
+            left_hidden = sum(1 for index in left_indices if not bool(visibility[index]))
+        yaw = getattr(context, "yaw_estimate", None)
+        if right_hidden == left_hidden and yaw is not None:
+            try:
+                if float(yaw) < 0:
+                    right_hidden += 1
+                elif float(yaw) > 0:
+                    left_hidden += 1
+            except (TypeError, ValueError):
+                pass
+        if right_hidden >= left_hidden:
+            occluded = "right_side"
+            visible = "left_side"
+        else:
+            occluded = "left_side"
+            visible = "right_side"
+        spans = SCORER_REGION_RANGES[occluded if region == "occluded_side" else visible]
+    return _indices_for_spans(spans)
+
+
+def _indices_for_spans(spans: T.Sequence[tuple[int, int]]) -> tuple[int, ...]:
+    indices: list[int] = []
+    for start, end in spans:
+        indices.extend(range(start, end))
+    return tuple(indices)
+
+
+def _region_nme(
+    predicted: np.ndarray,
+    truth: np.ndarray,
+    indices: T.Sequence[int],
+    *,
+    normalizer: float,
+) -> float:
+    pred = np.asarray(predicted, dtype="float64")[list(indices), :2]
+    gt = np.asarray(truth, dtype="float64")[list(indices), :2]
+    return float(np.linalg.norm(pred - gt, axis=1).mean() / max(float(normalizer), 1e-9))
+
+
+def _region_geometry_error(
+    predicted: np.ndarray,
+    truth: np.ndarray,
+    indices: T.Sequence[int],
+) -> float:
+    pred_summary = alignment_summary(np.asarray(predicted, dtype="float32"))
+    truth_summary = alignment_summary(np.asarray(truth, dtype="float32"))
+    pred = pred_summary.aligned_landmarks[list(indices)]
+    gt = truth_summary.aligned_landmarks[list(indices)]
+    face_size = max(
+        float(
+            max(
+                np.ptp(truth_summary.aligned_landmarks[:, 0]),
+                np.ptp(truth_summary.aligned_landmarks[:, 1]),
+            )
+        ),
+        1.0,
+    )
+    return float(np.linalg.norm(pred - gt, axis=1).mean() / face_size)
+
+
 def choice_subset(
     contexts: T.Sequence[SampleCandidateContext],
     choices: T.Mapping[str, str],
 ) -> dict[str, str]:
     return {context.sample_id: choices[context.sample_id] for context in contexts}
+
+
+def write_region_reports(
+    *,
+    contexts: T.Sequence[T.Any],
+    choices: T.Mapping[str, str],
+    source_by_sample_id: T.Mapping[str, str],
+    output_dir: Path,
+    failure_threshold: float,
+    worst_sample_count: int,
+) -> dict[str, T.Any]:
+    """Write region-level NME/geometry reports and return a summary payload."""
+    detail_rows: list[dict[str, T.Any]] = []
+    for context in contexts:
+        truth = getattr(context, "truth_landmarks", None)
+        if truth is None:
+            continue
+        selected = choices.get(context.sample_id, "")
+        candidate_by_name = {candidate.name: candidate for candidate in context.candidates}
+        selected_candidate = candidate_by_name.get(selected)
+        oracle_candidate = candidate_by_name.get(str(context.oracle))
+        if selected_candidate is None or oracle_candidate is None:
+            continue
+        normalizer = float(getattr(context, "normalizer", None) or 0.0)
+        if normalizer <= 0.0:
+            normalizer = float(
+                max(np.ptp(np.asarray(truth)[:, 0]), np.ptp(np.asarray(truth)[:, 1]), 1.0)
+            )
+        splits = split_labels_for_context(
+            context,
+            choices=choices,
+            source_by_sample_id=source_by_sample_id,
+        )
+        if not splits:
+            splits = ("normal",)
+        for region in SCORER_REGION_NAMES:
+            indices = _indices_for_region(context, region)
+            selected_nme = _region_nme(
+                selected_candidate.landmarks,
+                truth,
+                indices,
+                normalizer=normalizer,
+            )
+            oracle_nme = _region_nme(
+                oracle_candidate.landmarks,
+                truth,
+                indices,
+                normalizer=normalizer,
+            )
+            geometry_error = _region_geometry_error(selected_candidate.landmarks, truth, indices)
+            row = {
+                "source": context_source(context, source_by_sample_id),
+                "sample_id": context.sample_id,
+                "dataset": context.dataset,
+                "condition": context.condition,
+                "runtime_bucket": context.runtime_bucket,
+                "hard_case_tags": "|".join(getattr(context, "hard_case_tags", ()) or ()),
+                "splits": "|".join(splits),
+                "region": region,
+                "selected_candidate": selected,
+                "oracle": context.oracle,
+                "selected_region_nme": selected_nme,
+                "oracle_region_nme": oracle_nme,
+                "region_regret": selected_nme - oracle_nme,
+                "region_failure": int(selected_nme > failure_threshold),
+                "region_geometry_error": geometry_error,
+                "region_geometry_failure": int(geometry_error > 0.05),
+            }
+            detail_rows.append(row)
+
+    def aggregate(metric: str, failure_key: str) -> list[dict[str, T.Any]]:
+        grouped: dict[tuple[str, str], list[dict[str, T.Any]]] = defaultdict(list)
+        for row in detail_rows:
+            for split in str(row["splits"]).split("|"):
+                if split in SCORER_REQUIRED_SPLITS:
+                    grouped[(split, str(row["region"]))].append(row)
+        rows: list[dict[str, T.Any]] = []
+        for split in SCORER_REQUIRED_SPLITS:
+            for region in SCORER_REGION_NAMES:
+                values = [float(row[metric]) for row in grouped.get((split, region), [])]
+                failures = [bool(row[failure_key]) for row in grouped.get((split, region), [])]
+                regrets = [
+                    float(row.get("region_regret", 0.0))
+                    for row in grouped.get((split, region), [])
+                ]
+                rows.append(
+                    {
+                        "split": split,
+                        "region": region,
+                        "sample_count": len(values),
+                        "mean": float(np.mean(values)) if values else 0.0,
+                        "p90": _percentile(values, 90),
+                        "failure_rate": float(sum(failures) / len(failures)) if failures else 0.0,
+                        "mean_regret": float(np.mean(regrets)) if regrets else 0.0,
+                        "p90_regret": _percentile([max(value, 0.0) for value in regrets], 90),
+                        "worst_sample_id": max(
+                            grouped.get((split, region), []),
+                            key=lambda row: float(row[metric]),
+                            default={},
+                        ).get("sample_id", ""),
+                    }
+                )
+        return rows
+
+    nme_rows = aggregate("selected_region_nme", "region_failure")
+    geometry_rows = aggregate("region_geometry_error", "region_geometry_failure")
+
+    if nme_rows:
+        with (output_dir / PER_REGION_NME_CSV).open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(nme_rows[0]))
+            writer.writeheader()
+            writer.writerows(nme_rows)
+    if geometry_rows:
+        with (output_dir / PER_REGION_GEOMETRY_CSV).open(
+            "w", newline="", encoding="utf-8"
+        ) as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(geometry_rows[0]))
+            writer.writeheader()
+            writer.writerows(geometry_rows)
+
+    worst: dict[str, list[dict[str, T.Any]]] = {}
+    for region in SCORER_REGION_NAMES:
+        region_rows = [row for row in detail_rows if row["region"] == region]
+        worst[region] = sorted(
+            region_rows,
+            key=lambda row: (float(row["selected_region_nme"]), float(row["region_regret"])),
+            reverse=True,
+        )[:worst_sample_count]
+    with (output_dir / PER_REGION_WORST_SAMPLES_JSON).open("w", encoding="utf-8") as handle:
+        json.dump({"samples_by_region": worst}, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+
+    return {
+        "region_sample_rows": len(detail_rows),
+        "per_region_nme_csv": str(output_dir / PER_REGION_NME_CSV),
+        "per_region_geometry_csv": str(output_dir / PER_REGION_GEOMETRY_CSV),
+        "per_region_worst_samples_json": str(output_dir / PER_REGION_WORST_SAMPLES_JSON),
+        "region_metrics_available": bool(detail_rows),
+    }
 
 
 def policy_metric_bundle(
@@ -481,12 +815,12 @@ def load_installed_policy_scorers(
     for path in sorted(scorer_dir.glob("*.json")):
         try:
             scorer = load_runtime_resolver_scorer(path)
-            assert_lower_score_is_better(scorer)  # type: ignore[arg-type]
+            assert_lower_score_is_better(scorer)
         except (OSError, ValueError, RuntimeError):
             continue
-        policy = scorer_policy_key_for_path(path, scorer)  # type: ignore[arg-type]
+        policy = scorer_policy_key_for_path(path, scorer)
         if policy in LEARNED_POLICIES:
-            scorers[policy] = scorer  # type: ignore[assignment]
+            scorers[policy] = scorer
 
     if not active_policy and len(scorers) == 1:
         active_policy = next(iter(scorers))
@@ -812,15 +1146,15 @@ def evaluate_runtime_resolver_scorer(
         _dataset_dir, scorer_rows, _manifest = resolve_scorer_dataset_path(scorer_dataset)
 
     scorer = load_runtime_resolver_scorer(scorer_path)
-    assert_lower_score_is_better(scorer)  # type: ignore[arg-type]
+    assert_lower_score_is_better(scorer)
     binary_scorer = (
         None if binary_scorer_path is None else load_runtime_resolver_scorer(binary_scorer_path)
     )
     if binary_scorer is not None:
-        assert_lower_score_is_better(binary_scorer)  # type: ignore[arg-type]
+        assert_lower_score_is_better(binary_scorer)
     v2_scorer = None if v2_scorer_path is None else load_runtime_resolver_scorer(v2_scorer_path)
     if v2_scorer is not None:
-        assert_lower_score_is_better(v2_scorer)  # type: ignore[arg-type]
+        assert_lower_score_is_better(v2_scorer)
     source_by_sample_id: dict[str, str] = {}
     if scorer_rows is not None:
         contexts, source_by_sample_id = row_contexts_from_scorer_rows(scorer_rows)
@@ -963,13 +1297,27 @@ def evaluate_runtime_resolver_scorer(
             }
         )
 
+    metrics_by_split = split_metric_summary(
+        contexts,
+        choices=scorer_choices,
+        source_by_sample_id=source_by_sample_id,
+    )
+    region_report_summary = write_region_reports(
+        contexts=contexts,
+        choices=scorer_choices,
+        source_by_sample_id=source_by_sample_id,
+        output_dir=output_dir,
+        failure_threshold=failure_threshold,
+        worst_sample_count=worst_sample_count,
+    )
+
     best_single_name, best_single_summary = best_single(contexts, candidates)
     static_name = (
         "static_weighted_downweight" if "static_weighted_downweight" in candidates else ""
     )
     static = candidate_summary(contexts, static_name) if static_name else best_single_summary
     scorer_summary = policy_summary(contexts, scorer_choices)
-    primary_scorer_policy = scorer_policy_key(scorer)  # type: ignore[arg-type]
+    primary_scorer_policy = scorer_policy_key(scorer)
     extra_scorer_choices: dict[str, T.Mapping[str, str]] = {
         primary_scorer_policy: scorer_choices,
     }
@@ -1323,6 +1671,8 @@ def evaluate_runtime_resolver_scorer(
         "safe_fallback_min_delta": safe_fallback_min_delta,
         "safe_fallback_tie_breaker": ["hrnet", "spiga", "orformer"],
         "per_bucket": per_bucket(contexts, scorer_choices),
+        "metrics_by_split": metrics_by_split,
+        "region_reports": region_report_summary,
         "production_only_policy_metrics": production_only_policy_metrics,
         "gt_hard_all_policy_metrics": gt_hard_all_policy_metrics,
         "gt_hard_only_policy_metrics": gt_hard_all_policy_metrics,
@@ -1355,6 +1705,8 @@ def evaluate_runtime_resolver_scorer(
         "gt_hard": gt_hard_all_policy_metrics,
         "gt_roll_hard": gt_roll_hard_policy_metrics,
     }
+    report["metrics_by_condition_split"] = metrics_by_split
+    report["artifacts_by_region"] = region_report_summary
     report["fallbacks"] = {
         "fallback_count": fallback_count,
         "safe_fallback_count": safe_fallback_count,
