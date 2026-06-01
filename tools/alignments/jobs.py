@@ -1336,37 +1336,6 @@ class Spatial:
 
         return T.cast(np.ndarray, x_smoothed[:, 0])
 
-    def _normalize_track(self, track: _SpatialIdentityTrack) -> bool:
-        """Compile original and normalized alignments for one identity instance track."""
-        logger.debug("Normalize identity track: %s", track.track_id)
-        observations = track.observations
-        if len(observations) < 2:
-            logger.info(
-                "Skipping identity track %s. Not enough observations.",
-                track.track_id,
-            )
-            return False
-
-        sample_lm = observations[0].landmarks
-        lm_count = sample_lm.shape[0]
-        if lm_count != 68:
-            raise FaceswapError("Spatial smoothing only supports 68 point facial landmarks")
-
-        landmarks_all = np.zeros((lm_count, 2, len(observations)))
-        self._mappings = {}
-
-        for idx, observation in enumerate(observations):
-            landmarks = np.asarray(observation.landmarks, dtype=np.float32).reshape((lm_count, 2))
-            landmarks_all[:, :, idx] = landmarks
-            self._mappings[idx] = (observation.frame_key, observation.face_index)
-
-        normalized_shape = self._normalize_shapes(landmarks_all)
-        self._normalized["landmarks"] = normalized_shape[0]
-        self._normalized["scale_factors"] = normalized_shape[1]
-        self._normalized["mean_coords"] = normalized_shape[2]
-        logger.debug("Normalized identity track %s: %s", track.track_id, self._normalized)
-        return True
-
     def _shape_model(self) -> None:
         """build 2D shape model"""
         logger.debug("Shape model")
