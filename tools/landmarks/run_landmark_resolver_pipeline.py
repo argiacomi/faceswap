@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from lib.landmarks.datasets.manifest_io import filter_canonical_68_samples, load_manifest
 from lib.landmarks.ensemble.production_artifacts import (
     LEARNED_POLICIES,
     install_production_bundle,
@@ -1789,6 +1790,28 @@ def _build_splits(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
     samples = base_manifest.get("samples", base_manifest.get("scenarios", []))
     if not isinstance(samples, list):
         raise ValueError(f"manifest samples must be a list: {paths.run_manifest}")
+
+    if all(
+        isinstance(sample, dict) and (sample.get("landmarks") or sample.get("ground_truth"))
+        for sample in samples
+    ):
+        canonical_ids = {
+            sample.sample_id
+            for sample in filter_canonical_68_samples(
+                load_manifest(paths.run_manifest), context="pipeline split construction"
+            )
+        }
+        if len(canonical_ids) != len(samples):
+            samples = [
+                sample
+                for sample in samples
+                if isinstance(sample, dict)
+                and str(sample.get("sample_id") or sample.get("id") or sample.get("name"))
+                in canonical_ids
+            ]
+            base_manifest = dict(base_manifest)
+            base_manifest["samples"] = samples
+
     ratios = SplitRatios(args.split_fit, args.split_select, args.split_report)
     normalized_mode = _normalized_split_mode(args.split_mode)
     assignment, diagnostics = split_manifest_samples(
