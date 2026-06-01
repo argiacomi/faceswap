@@ -24,8 +24,12 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import os
 import re
+import shutil
+import tempfile
 import typing as T
+import zipfile
 from pathlib import Path
 
 import numpy as np
@@ -39,8 +43,10 @@ from lib.landmarks.datasets import (
 from lib.landmarks.datasets.sources import (
     DEFAULT_CACHE_DIR,
     DatasetSourceSpec,
+    download,
     is_archive,
     resolve_dataset_source,
+    safe_zip_extractall,
 )
 
 logger = logging.getLogger(__name__)
@@ -52,6 +58,20 @@ MERL_RAV_LABELS_URL = (
 DEFAULT_AFLW_RELEASE2_DIR = Path(
     ".fs_cache/landmark_quality/aflw/extracted/data/aflw/aflw_release-2"
 )
+
+AFLW_GOOGLE_DRIVE_FILE_ID = "1uSx5hTxkxm48a3No0xm26DeJKpIooqrx"
+AFLW_GOOGLE_DRIVE_VIEW_URL = (
+    "https://drive.google.com/file/d/1uSx5hTxkxm48a3No0xm26DeJKpIooqrx/view"
+)
+AFLW_GOOGLE_DRIVE_DIRECT_URL = (
+    "https://drive.usercontent.google.com/download?"
+    "id=1uSx5hTxkxm48a3No0xm26DeJKpIooqrx&export=download&authuser=0"
+)
+AFLW_ARCHIVE_NAME = "AFLW.zip"
+AFLW_CACHE_SUBDIR = "aflw"
+DEFAULT_AFLW_DIR = Path(".fs_cache/landmark_quality/aflw/aflw")
+AFLW_IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff")
+
 
 MERL_RAV_SOURCE = DatasetSourceSpec(
     dataset="MERL-RAV",
@@ -487,6 +507,377 @@ def _sample_from_aflw_crop(
     }
 
 
+def _aflw_cache_root(cache_dir: str | Path) -> Path:
+    """Return the AFLW cache root that stores AFLW.zip and extracted AFLW data."""
+    return Path(cache_dir) / AFLW_CACHE_SUBDIR
+
+
+def _find_aflw_native_root(root: Path) -> Path:
+    """Return the AFLW root containing flickr/."""
+    root = Path(root)
+    if (root / "flickr").is_dir():
+        return root
+
+    nested = root / "aflw"
+    if (nested / "flickr").is_dir():
+        return nested
+
+    candidates = sorted(path.parent for path in root.rglob("flickr") if path.is_dir())
+    if candidates:
+        return candidates[0]
+
+    raise FileNotFoundError(
+        f"AFLW root not found below {root}. Expected a directory containing flickr/."
+    )
+
+
+def _download_aflw_archive(
+    cache_dir: str | Path,
+    *,
+    force_download: bool,
+) -> Path:
+    """Download AFLW.zip into .fs_cache/landmark_quality/aflw."""
+    cache_root = _aflw_cache_root(cache_dir)
+    archive = cache_root / AFLW_ARCHIVE_NAME
+
+    try:
+        return download(
+            None,
+            archive,
+            force=force_download,
+            google_drive_file_id=AFLW_GOOGLE_DRIVE_FILE_ID,
+            label="AFLW archive",
+        )
+    except Exception as err:
+        logger.warning(
+            "AFLW Google Drive id download failed, retrying direct download URL: %s", err
+        )
+        return download(
+            AFLW_GOOGLE_DRIVE_DIRECT_URL,
+            archive,
+            force=force_download,
+            google_drive_file_id=None,
+            label="AFLW archive",
+        )
+
+
+def _extract_aflw_archive_to_native_root(
+    archive: Path,
+    cache_dir: str | Path,
+    *,
+    force_extract: bool,
+) -> Path:
+    """Extract AFLW.zip so the usable root is .fs_cache/landmark_quality/aflw/aflw."""
+    cache_root = _aflw_cache_root(cache_dir)
+    aflw_root = cache_root / "aflw"
+
+    if not force_extract and (aflw_root / "flickr").is_dir():
+        return aflw_root
+
+    cache_root.mkdir(parents=True, exist_ok=True)
+    tmp_dir = Path(tempfile.mkdtemp(prefix="aflw.", suffix=".part", dir=cache_root))
+    moved_tmp = False
+
+    try:
+        with zipfile.ZipFile(archive, "r") as zf:
+            safe_zip_extractall(zf, tmp_dir)
+
+        extracted_root = _find_aflw_native_root(tmp_dir)
+
+        if aflw_root.exists():
+            if aflw_root.is_dir():
+                shutil.rmtree(aflw_root)
+            else:
+                aflw_root.unlink()
+
+        if extracted_root == tmp_dir:
+            os.replace(tmp_dir, aflw_root)
+            moved_tmp = True
+        else:
+            os.replace(extracted_root, aflw_root)
+
+        if not (aflw_root / "flickr").is_dir():
+            raise FileNotFoundError(f"Extracted AFLW root missing flickr/: {aflw_root}")
+
+        return aflw_root
+    finally:
+        if not moved_tmp and tmp_dir.exists():
+            shutil.rmtree(tmp_dir)
+
+
+def resolve_aflw_native_root(
+    aflw_image_root: str | Path | None,
+    *,
+    cache_dir: str | Path = DEFAULT_CACHE_DIR,
+    force_download: bool = False,
+    no_download: bool = False,
+) -> Path:
+    """Resolve the native AFLW image root used by MERL-RAV image matching."""
+    if aflw_image_root is not None:
+        return _find_aflw_native_root(Path(aflw_image_root))
+
+    cache_root = _aflw_cache_root(cache_dir)
+    aflw_root = cache_root / "aflw"
+
+    if not force_download and (aflw_root / "flickr").is_dir():
+        return aflw_root
+
+    archive = cache_root / AFLW_ARCHIVE_NAME
+    if not archive.is_file() or force_download:
+        if no_download:
+            raise FileNotFoundError(
+                f"AFLW native source not found at {aflw_root} and download is disabled. "
+                f"Place {AFLW_ARCHIVE_NAME} in {cache_root} or pass --aflw-image-root. "
+                f"Google Drive source: {AFLW_GOOGLE_DRIVE_VIEW_URL}"
+            )
+        archive = _download_aflw_archive(cache_dir, force_download=force_download)
+
+    return _extract_aflw_archive_to_native_root(
+        archive,
+        cache_dir,
+        force_extract=force_download,
+    )
+
+
+def _build_aflw_native_image_index(aflw_root: Path) -> dict[str, Path]:
+    """Build an imageNNNNN keyed index over AFLW flickr images."""
+    flickr_root = aflw_root / "flickr"
+    if not flickr_root.is_dir():
+        raise FileNotFoundError(f"AFLW flickr directory not found: {flickr_root}")
+
+    index: dict[str, Path] = {}
+    duplicates = 0
+
+    for image in sorted(flickr_root.rglob("*")):
+        if not image.is_file() or image.suffix.lower() not in AFLW_IMAGE_EXTS:
+            continue
+
+        stem = _aflw_source_stem(image.stem)
+        if stem is None:
+            continue
+
+        if stem in index:
+            duplicates += 1
+            continue
+
+        index[stem] = image
+
+    if not index:
+        raise FileNotFoundError(f"No AFLW images found below {flickr_root}")
+
+    if duplicates:
+        logger.warning("Ignored %d duplicate AFLW image stems below %s", duplicates, flickr_root)
+
+    return index
+
+
+def _in_image_mask(points_xy: np.ndarray, image_hw: tuple[int, int]) -> np.ndarray:
+    """Return coordinate-valid landmarks that fall inside the native AFLW image."""
+    height, width = image_hw
+    source_valid = _source_valid_xy(points_xy)
+    mask: np.ndarray = source_valid & (
+        np.isfinite(points_xy).all(axis=1)
+        & (points_xy[:, 0] >= 0)
+        & (points_xy[:, 1] >= 0)
+        & (points_xy[:, 0] < float(width))
+        & (points_xy[:, 1] < float(height))
+    )
+    return mask
+
+
+def _relative_to_or_absolute(path: Path, root: Path) -> str:
+    """Return a stable relative path where possible."""
+    try:
+        return path.relative_to(root).as_posix()
+    except ValueError:
+        return str(path.resolve())
+
+
+def _sample_from_native_aflw_image(
+    *,
+    annotation: Path,
+    label_root: Path,
+    image_path: Path,
+    aflw_root: Path,
+    src_points: np.ndarray,
+    visibility: list[str],
+    score_visible: np.ndarray,
+    image_hw: tuple[int, int],
+) -> dict[str, T.Any]:
+    """Build a manifest sample for one MERL-RAV annotation matched to one AFLW image."""
+    relative_annotation = annotation.relative_to(label_root)
+    condition_labels = _labels_from_path(relative_annotation)
+    if any(value == "externally_occluded" for value in visibility):
+        condition_labels = tuple(dict.fromkeys((*condition_labels, "occlusion")))
+
+    label_id = relative_annotation.with_suffix("").as_posix().replace("/", "_")
+    sample_id = f"{label_id}__{image_path.stem}"
+
+    source_valid_mask = _source_valid_xy(src_points)
+    coordinate_valid_in_image = _in_image_mask(src_points, image_hw)
+    score_visibility = coordinate_valid_in_image & score_visible
+
+    face_bbox = _bbox_from_valid(src_points, coordinate_valid_in_image, image_hw)
+    if not all(np.isfinite(value) for value in face_bbox):
+        raise ValueError(f"MERL-RAV sample {sample_id} has non-finite face_bbox={face_bbox!r}")
+
+    left, top, right, bottom = face_bbox
+    bbox_width = float(right - left)
+    bbox_height = float(bottom - top)
+    normalizer = max(bbox_width, bbox_height)
+
+    if not np.isfinite(normalizer) or normalizer <= 0.0:
+        normalizer = float(max(image_hw[1], image_hw[0]))
+
+    if not np.isfinite(normalizer) or normalizer <= 0.0:
+        raise ValueError(
+            f"MERL-RAV sample {sample_id} has invalid fallback normalizer={normalizer!r}"
+        )
+
+    top_level_visibility = [bool(value) for value in score_visibility.tolist()]
+    coordinate_valid_mask = [bool(value) for value in coordinate_valid_in_image.tolist()]
+    source_valid = [bool(value) for value in source_valid_mask.tolist()]
+
+    metadata: dict[str, T.Any] = {
+        "image_id": _relative_to_or_absolute(image_path, aflw_root),
+        "annotation_file": relative_annotation.as_posix(),
+        "visibility": list(visibility),
+        "self_occluded_count": sum(1 for value in visibility if value == "self_occluded"),
+        "externally_occluded_count": sum(
+            1 for value in visibility if value == "externally_occluded"
+        ),
+        "image_height": int(image_hw[0]),
+        "image_width": int(image_hw[1]),
+        "landmark_source_valid_mask": source_valid,
+        "landmark_in_image_mask": coordinate_valid_mask,
+        "landmark_coordinate_valid_mask": coordinate_valid_mask,
+        "landmark_score_visibility_mask": top_level_visibility,
+        "landmark_source_valid_count": int(source_valid_mask.sum()),
+        "landmark_in_image_count": int(coordinate_valid_in_image.sum()),
+        "landmark_score_visible_count": int(score_visibility.sum()),
+        "face_bbox": face_bbox,
+        "face_bbox_source": "merl_rav_native_aflw_image_landmarks",
+        "normalizer_source": "merl_rav_coordinate_valid_landmark_bbox_max_side",
+        "aflw_image_source": "aflw_native",
+    }
+
+    finite_landmarks = np.where(np.isfinite(src_points), src_points, 0.0).astype("float32")
+
+    return {
+        "sample_id": sample_id,
+        "dataset": "merl-rav",
+        "condition": condition_labels[0],
+        "conditions": condition_labels,
+        "image": str(image_path.resolve()),
+        "source_schema": "2d_68",
+        "source": {"dataset": "merl-rav-aflw-native", "source_id": sample_id},
+        "normalizer": float(normalizer),
+        "visibility": top_level_visibility,
+        "metadata": metadata,
+        "points": finite_landmarks,
+    }
+
+
+def _split_from_annotation_path(path: Path) -> str | None:
+    """Infer train/test from MERL-RAV label path parts."""
+    parts = {part.lower().replace("-", "_") for part in path.parts}
+    if "trainset" in parts:
+        return "train"
+    if "testset" in parts:
+        return "test"
+    return None
+
+
+def _build_samples_native_aflw(
+    label_root: Path,
+    aflw_root: Path,
+    *,
+    splits: T.Sequence[str] = ("train", "test"),
+) -> tuple[list[dict[str, T.Any]], dict[str, T.Any]]:
+    """Build MERL-RAV samples by directly matching annotations to native AFLW images."""
+    image_index = _build_aflw_native_image_index(aflw_root)
+    requested = {split.lower() for split in splits}
+
+    samples: list[dict[str, T.Any]] = []
+    stats: dict[str, T.Any] = {
+        "labels": 0,
+        "matched": 0,
+        "skipped_split": 0,
+        "skipped_no_image": 0,
+        "skipped_missing_image": 0,
+        "skipped_bad_image": 0,
+        "skipped_all_outside_image": 0,
+        "skipped_no_score_visible": 0,
+        "total_source_valid_landmarks": 0,
+        "total_in_image_landmarks": 0,
+        "total_score_visible_landmarks": 0,
+        "aflw_native_image_count": len(image_index),
+    }
+
+    for annotation in _label_files(label_root):
+        stats["labels"] += 1
+
+        split_name = _split_from_annotation_path(annotation.relative_to(label_root))
+        if split_name is not None and requested and split_name not in requested:
+            stats["skipped_split"] += 1
+            continue
+
+        source_stem = _aflw_source_stem(annotation.stem)
+        image_path = image_index.get(source_stem or "")
+        if image_path is None:
+            stats["skipped_no_image"] += 1
+            continue
+
+        if not image_path.is_file():
+            stats["skipped_missing_image"] += 1
+            continue
+
+        try:
+            image_hw = _read_image_size(image_path)
+        except OSError:
+            stats["skipped_bad_image"] += 1
+            continue
+
+        signed = _parse_pts_signed(annotation)
+        visibility, src_points, score_visible = _visibility_for_crop(signed)
+
+        sample = _sample_from_native_aflw_image(
+            annotation=annotation,
+            label_root=label_root,
+            image_path=image_path,
+            aflw_root=aflw_root,
+            src_points=src_points,
+            visibility=visibility,
+            score_visible=score_visible,
+            image_hw=image_hw,
+        )
+
+        if sample["metadata"]["landmark_in_image_count"] == 0:
+            stats["skipped_all_outside_image"] += 1
+            continue
+
+        if not any(sample["visibility"]):
+            stats["skipped_no_score_visible"] += 1
+            continue
+
+        samples.append(sample)
+        stats["matched"] += 1
+        stats["total_source_valid_landmarks"] += int(
+            sample["metadata"]["landmark_source_valid_count"]
+        )
+        stats["total_in_image_landmarks"] += int(sample["metadata"]["landmark_in_image_count"])
+        stats["total_score_visible_landmarks"] += int(
+            sample["metadata"]["landmark_score_visible_count"]
+        )
+
+    return samples, stats
+
+
+def _log_native_aflw_audit(stats: dict[str, T.Any]) -> None:
+    """Emit a structured audit log for the native AFLW image builder."""
+    logger.info("MERL-RAV native AFLW audit: %s", stats)
+
+
 def _build_samples_aflw_release2(
     label_root: Path,
     release2_dir: Path,
@@ -629,6 +1020,8 @@ def build_merl_rav_manifest(
     output_dir: str | Path,
     *,
     aflw_release2_dir: str | Path | None = None,
+    aflw_image_root: str | Path | None = None,
+    coordinate_space: str | None = None,
     source_dir: str | Path | None = None,
     source_zip: str | Path | None = None,
     cache_dir: str | Path = DEFAULT_CACHE_DIR,
@@ -645,38 +1038,46 @@ def build_merl_rav_manifest(
     min_anchors: int = 3,
     validate_hw: bool = True,
 ) -> Path:
-    """Build a MERL-RAV manifest aligned with AFLW release-2 cropped images.
+    """Build a MERL-RAV manifest aligned with AFLW images.
 
-    MERL-RAV 68-point reannotations are matched to AFLW release-2 crops via the
-    stem ``imageNNNNN``. Per-image crop origins ``(x1, y1)`` are recovered by
-    comparing 5 robust anchors derived from the 68-point annotation against the
-    AFLW 5-point keypoints in ``mat['gt']`` and translating every coordinate-
-    valid landmark by the same global origin.
+    Native AFLW mode matches MERL-RAV annotations directly to AFLW flickr
+    images by imageNNNNN and uses MERL-RAV coordinates directly in image
+    space. AFLW CSV and AFLW .pts files are intentionally ignored.
 
-    MERL-RAV signed-coordinate semantics are preserved:
-
-    * positive ``x y``: visible landmark with a directly usable coordinate
-    * negative ``-x -y``: externally occluded landmark estimated at
-      ``abs(x), abs(y)``
-    * ``-1 -1``: self-occluded landmark with no usable coordinate
-
-    Externally occluded landmarks are retained as coordinate-valid points for
-    crop matching, bbox construction, and normalizer computation. Scoring
-    visibility is tracked separately so downstream evaluation can decide whether
-    to score only visible landmarks or include estimated occluded landmarks.
-    Saved ``.npy`` landmarks remain finite; truly invalid positions are zeroed
-    after validity masks have been computed and written into metadata.
+    AFLW release-2 mode keeps the older cropped-image translation path.
     """
-    release2_dir = (
-        Path(aflw_release2_dir) if aflw_release2_dir is not None else DEFAULT_AFLW_RELEASE2_DIR
-    )
-    if not release2_dir.is_dir():
-        raise FileNotFoundError(
-            f"AFLW release-2 directory not found: {release2_dir}. Expected output/ "
-            f"and aflw_train_keypoints.mat/aflw_train_images.txt inside it. Pass "
-            f"--aflw-release2-dir or stage the dataset at "
-            f"{DEFAULT_AFLW_RELEASE2_DIR}."
+    selected_space = (coordinate_space or "").strip().lower().replace("_", "-")
+    if not selected_space:
+        selected_space = "aflw-release2" if aflw_release2_dir is not None else "native-aflw"
+
+    if selected_space not in {"native-aflw", "aflw-release2"}:
+        raise ValueError(
+            "coordinate_space must be one of {'native-aflw', 'aflw-release2'}, "
+            f"got {coordinate_space!r}"
         )
+
+    release2_dir: Path | None = None
+    aflw_root: Path | None = None
+
+    if selected_space == "aflw-release2":
+        release2_dir = (
+            Path(aflw_release2_dir) if aflw_release2_dir is not None else DEFAULT_AFLW_RELEASE2_DIR
+        )
+        if not release2_dir.is_dir():
+            raise FileNotFoundError(
+                f"AFLW release-2 directory not found: {release2_dir}. Expected output/ "
+                f"and aflw_train_keypoints.mat/aflw_train_images.txt inside it. Pass "
+                f"--aflw-release2-dir or stage the dataset at "
+                f"{DEFAULT_AFLW_RELEASE2_DIR}."
+            )
+    else:
+        aflw_root = resolve_aflw_native_root(
+            aflw_image_root,
+            cache_dir=cache_dir,
+            force_download=force_download,
+            no_download=no_download,
+        )
+
     resolved = resolve_dataset_source(
         MERL_RAV_SOURCE,
         cache_dir=cache_dir,
@@ -686,56 +1087,66 @@ def build_merl_rav_manifest(
         force_download=force_download,
         no_download=no_download,
     )
+
     cleanup: contextlib.AbstractContextManager[Path] | None = None
     try:
         if resolved.is_file() and not is_archive(resolved):
             raise ValueError("MERL-RAV source must be a directory or archive")
+
         cleanup = _source_root(resolved)
         root = cleanup.__enter__()
         scenario_groups = _explicit_scenario_groups(scenarios)
+
         all_samples: list[dict[str, T.Any]] = []
-        aggregate: dict[str, T.Any] = {
-            "labels": 0,
-            "matched": 0,
-            "skipped_no_candidate": 0,
-            "skipped_no_origin": 0,
-            "skipped_missing_image": 0,
-            "skipped_bad_hw": 0,
-            "skipped_all_outside_crop": 0,
-            "skipped_no_score_visible": 0,
-            "total_source_valid_landmarks": 0,
-            "total_in_crop_landmarks": 0,
-            "total_score_visible_landmarks": 0,
-            "residual_medians": [],
-            "aflw_release2_split_counts": {},
-        }
+        aggregate: dict[str, T.Any] = {}
+
         for label_root in _find_label_roots(root):
-            samples, stats = _build_samples_aflw_release2(
-                label_root,
-                release2_dir,
-                splits=splits,
-                min_anchors=min_anchors,
-                validate_hw=validate_hw,
-            )
+            if selected_space == "aflw-release2":
+                assert release2_dir is not None
+                samples, stats = _build_samples_aflw_release2(
+                    label_root,
+                    release2_dir,
+                    splits=splits,
+                    min_anchors=min_anchors,
+                    validate_hw=validate_hw,
+                )
+            else:
+                assert aflw_root is not None
+                samples, stats = _build_samples_native_aflw(
+                    label_root,
+                    aflw_root,
+                    splits=splits,
+                )
+
             all_samples.extend(samples)
+
             for key, value in stats.items():
-                if key == "residual_medians":
-                    aggregate[key].extend(value)
-                elif key == "aflw_release2_split_counts":
-                    for split_name, count in value.items():
-                        aggregate[key][split_name] = aggregate[key].get(split_name, 0) + count
+                if isinstance(value, list):
+                    aggregate.setdefault(key, []).extend(value)
+                elif isinstance(value, dict):
+                    target = aggregate.setdefault(key, {})
+                    for nested_key, nested_value in value.items():
+                        target[nested_key] = target.get(nested_key, 0) + nested_value
+                elif isinstance(value, (int, float)):
+                    aggregate[key] = aggregate.get(key, 0) + value
                 else:
-                    aggregate[key] += value
-        _log_aflw_release2_audit(aggregate)
+                    aggregate[key] = value
+
+        if selected_space == "aflw-release2":
+            _log_aflw_release2_audit(aggregate)
+            error_label = "MERL-RAV/AFLW release-2 crop pairs"
+        else:
+            _log_native_aflw_audit(aggregate)
+            error_label = "MERL-RAV/native AFLW image pairs"
+
         if not all_samples:
             detail = " ".join(
                 f"{key}={value}"
                 for key, value in aggregate.items()
                 if key not in {"residual_medians", "aflw_release2_split_counts"}
             )
-            raise FileNotFoundError(
-                f"No MERL-RAV/AFLW release-2 crop pairs produced from {root}. {detail}"
-            )
+            raise FileNotFoundError(f"No {error_label} produced from {root}. {detail}")
+
         return _write_manifest_and_audit(
             _filter_samples(all_samples, scenario_groups, samples_per_scenario),
             Path(output_dir),
