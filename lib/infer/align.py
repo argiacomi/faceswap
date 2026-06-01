@@ -358,7 +358,8 @@ class Align(ExtractHandler):
                 else self._re_align.default_crop_matrices
             )
             batch.data = self._re_align.get_images(mats, self._re_feed.total_feeds)
-            self._set_plugin_crop_matrices(batch, self._re_align.matrices)
+            batch.matrices = self._re_align.matrices
+            self._set_plugin_crop_matrices(batch, batch.matrices)
 
     def pre_process(self, batch: ExtractBatch) -> None:
         """Obtain the adjusted square ROIs from the plugin based off the provided detection
