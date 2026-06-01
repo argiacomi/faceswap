@@ -535,6 +535,11 @@ _SPATIAL_MAX_TRACK_GAP = 10
 _SPATIAL_MAX_IDENTITY_DISTANCE = 0.45
 _SPATIAL_STRONG_IDENTITY_DISTANCE = 0.10
 _SPATIAL_MAX_WEAK_IDENTITY_JUMP = 3.0
+_SPATIAL_KALMAN_MAX_SMOOTHING_GAP = 3
+_SPATIAL_MIN_OBSERVATION_CONFIDENCE = 0.05
+_SPATIAL_KALMAN_PROCESS_VARIANCE = 0.05
+_SPATIAL_KALMAN_OBSERVATION_VARIANCE = 4.0
+_SPATIAL_KALMAN_OUTLIER_SIGMA = 6.0
 
 
 @dataclass
@@ -550,6 +555,7 @@ class _SpatialFaceObservation:
     center_y: float
     width: float
     height: float
+    confidence: float = 1.0
     frame_half: str | None = None
     same_identity_duplicate: bool = False
 
@@ -665,12 +671,10 @@ class Spatial:
                 self._normalized = {}
                 self._shapes_model = None
 
-                if not self._normalize_track(segment):
+                landmarks = self._smooth_identity_segment(segment)
+                if landmarks is None:
                     continue
 
-                self._shape_model()
-                landmarks = self._spatially_filter()
-                landmarks = self._temporally_smooth(landmarks)
                 self._update_track_alignments(landmarks)
                 smoothed += 1
 
@@ -787,13 +791,13 @@ class Spatial:
     def _split_track_segments(
         track: _SpatialIdentityTrack,
         *,
-        max_gap: int = 1,
+        max_gap: int = _SPATIAL_KALMAN_MAX_SMOOTHING_GAP,
     ) -> list[_SpatialIdentityTrack]:
-        """Split an identity track into gap-contiguous smoothing segments.
+        """Split an identity track into Kalman smoothing segments.
 
-        The PCA + temporal moving-average smoother expects a dense sequence. If a face disappears
-        for one or more frames, the observed landmarks on either side of that gap must not be
-        smoothed as adjacent samples.
+        Kalman prediction can safely bridge short gaps because frame-number deltas are used as
+        ``dt``. Larger gaps start a fresh segment to avoid long-range prediction drift. Missing
+        frames are never written by default; only existing observed frame/face entries are updated.
         """
         segments: list[_SpatialIdentityTrack] = []
         current: list[_SpatialFaceObservation] = []
@@ -853,6 +857,7 @@ class Spatial:
                     center_y=y_pos + (height / 2.0),
                     width=width,
                     height=height,
+                    confidence=self._confidence_for_face(face),
                 )
             )
 
@@ -877,6 +882,82 @@ class Spatial:
             if norm == 0:
                 continue
             return T.cast(np.ndarray, embedding / norm)
+        return None
+
+    @staticmethod
+    def _confidence_for_face(face: T.Any) -> float:
+        """Return a bounded landmark/detection confidence for a face.
+
+        Alignments do not guarantee confidence metadata. If no usable confidence exists, default
+        to high confidence so legacy alignment files behave as fully observed measurements.
+        """
+        for attr_name in (
+            "landmark_confidence",
+            "alignment_confidence",
+            "detection_confidence",
+            "identity_confidence",
+            "confidence",
+            "pose_confidence",
+        ):
+            confidence = Spatial._coerce_confidence(getattr(face, attr_name, None))
+            if confidence is not None:
+                return confidence
+
+        metadata = getattr(face, "metadata", None)
+        if isinstance(metadata, dict):
+            for key in (
+                "landmark_confidence",
+                "alignment_confidence",
+                "detection_confidence",
+                "identity_confidence",
+                "confidence",
+                "pose_confidence",
+            ):
+                confidence = Spatial._coerce_confidence(metadata.get(key))
+                if confidence is not None:
+                    return confidence
+
+            for nested_key in ("faceqa", "aligner", "detector", "identity"):
+                nested = metadata.get(nested_key)
+                if not isinstance(nested, dict):
+                    continue
+                for key in (
+                    "landmark_confidence",
+                    "alignment_confidence",
+                    "detection_confidence",
+                    "identity_confidence",
+                    "confidence",
+                    "pose_confidence",
+                ):
+                    confidence = Spatial._coerce_confidence(nested.get(key))
+                    if confidence is not None:
+                        return confidence
+
+        return 1.0
+
+    @staticmethod
+    def _coerce_confidence(value: T.Any) -> float | None:
+        """Return a numeric confidence in ``[min_confidence, 1.0]`` if possible."""
+        if value is None or isinstance(value, bool):
+            return None
+
+        if isinstance(value, str):
+            return {
+                "high": 0.90,
+                "medium": 0.65,
+                "med": 0.65,
+                "low": 0.35,
+                "poor": 0.20,
+            }.get(value.lower())
+
+        if isinstance(value, (int, float, np.floating)):
+            numeric = float(value)
+            if not np.isfinite(numeric):
+                return None
+            if numeric > 1.0:
+                numeric = numeric / 100.0
+            return min(1.0, max(_SPATIAL_MIN_OBSERVATION_CONFIDENCE, numeric))
+
         return None
 
     @staticmethod
@@ -1108,6 +1189,152 @@ class Spatial:
         self._normalized["mean_coords"] = normalized_shape[2]
         logger.debug("Normalized: %s", self._normalized)
         return True
+
+    def _smooth_identity_segment(
+        self,
+        segment: _SpatialIdentityTrack,
+    ) -> np.ndarray | None:
+        """Smooth one identity-instance segment with raw-landmark Kalman/RTS smoothing."""
+        observations = segment.observations
+        if len(observations) < 2:
+            logger.info(
+                "Skipping identity track %s segment. Not enough observations.",
+                segment.track_id,
+            )
+            return None
+
+        sample_lm = observations[0].landmarks
+        lm_count = sample_lm.shape[0]
+        if lm_count != 68:
+            raise FaceswapError("Spatial smoothing only supports 68 point facial landmarks")
+
+        landmarks_all = np.zeros((lm_count, 2, len(observations)), dtype=np.float32)
+        self._mappings = {}
+
+        for idx, observation in enumerate(observations):
+            landmarks = np.asarray(observation.landmarks, dtype=np.float32).reshape((lm_count, 2))
+            landmarks_all[:, :, idx] = landmarks
+            self._mappings[idx] = (observation.frame_key, observation.face_index)
+
+        return self._temporally_smooth_kalman(landmarks_all, observations)
+
+    @staticmethod
+    def _temporally_smooth_kalman(
+        landmarks: np.ndarray,
+        observations: list[_SpatialFaceObservation],
+    ) -> np.ndarray:
+        """Apply confidence-aware Kalman/RTS smoothing to an identity segment.
+
+        The state model is constant velocity per landmark coordinate. Observation confidence
+        scales measurement variance, so low-confidence detections influence the smoothed path less
+        than high-confidence detections. Frame numbers set the prediction interval.
+        """
+        if landmarks.shape[2] != len(observations):
+            raise AssertionError("Landmark count must match identity segment observations")
+
+        sample_count = landmarks.shape[2]
+        if sample_count < 2:
+            return T.cast(np.ndarray, landmarks.copy())
+
+        original_shape = landmarks.shape
+        flat: np.ndarray = landmarks.reshape(68 * 2, sample_count).astype(
+            np.float64,
+            copy=False,
+        )
+        frame_numbers = [obs.frame_number for obs in observations]
+        confidences = np.asarray(
+            [
+                min(1.0, max(_SPATIAL_MIN_OBSERVATION_CONFIDENCE, obs.confidence))
+                for obs in observations
+            ],
+            dtype=np.float64,
+        )
+
+        smoothed = np.empty_like(flat, dtype=np.float64)
+        for feature_index in range(flat.shape[0]):
+            smoothed[feature_index] = Spatial._kalman_rts_1d(
+                flat[feature_index],
+                frame_numbers,
+                confidences,
+            )
+
+        retval = smoothed.reshape(original_shape).astype(np.float32, copy=False)
+        logger.debug("Kalman/RTS temporally smoothed identity segment: %s", retval)
+        return T.cast(np.ndarray, retval)
+
+    @staticmethod
+    def _kalman_rts_1d(
+        values: np.ndarray,
+        frame_numbers: list[int],
+        confidences: np.ndarray,
+    ) -> np.ndarray:
+        """Run a 1D constant-velocity Kalman filter plus RTS smoother."""
+        sample_count = int(values.shape[0])
+        x_filtered: np.ndarray = np.zeros((sample_count, 2), dtype=np.float64)
+        p_filtered: np.ndarray = np.zeros((sample_count, 2, 2), dtype=np.float64)
+        x_predicted: np.ndarray = np.zeros((sample_count, 2), dtype=np.float64)
+        p_predicted: np.ndarray = np.zeros((sample_count, 2, 2), dtype=np.float64)
+
+        first_r = _SPATIAL_KALMAN_OBSERVATION_VARIANCE / max(
+            _SPATIAL_MIN_OBSERVATION_CONFIDENCE,
+            float(confidences[0]),
+        )
+        state = np.asarray([float(values[0]), 0.0], dtype=np.float64)
+        covariance = np.diag([first_r, max(1.0, first_r * 10.0)])
+
+        x_filtered[0] = state
+        p_filtered[0] = covariance
+        x_predicted[0] = state
+        p_predicted[0] = covariance
+
+        identity: np.ndarray = np.eye(2, dtype=np.float64)
+        observation_matrix: np.ndarray = np.asarray([1.0, 0.0], dtype=np.float64)
+
+        for idx in range(1, sample_count):
+            dt = float(max(1, frame_numbers[idx] - frame_numbers[idx - 1]))
+            transition = np.asarray([[1.0, dt], [0.0, 1.0]], dtype=np.float64)
+            dt2 = dt * dt
+            dt3 = dt2 * dt
+            dt4 = dt2 * dt2
+            process_noise = _SPATIAL_KALMAN_PROCESS_VARIANCE * np.asarray(
+                [[dt4 / 4.0, dt3 / 2.0], [dt3 / 2.0, dt2]],
+                dtype=np.float64,
+            )
+
+            predicted_state = transition @ state
+            predicted_covariance = transition @ covariance @ transition.T + process_noise
+            x_predicted[idx] = predicted_state
+            p_predicted[idx] = predicted_covariance
+
+            confidence = max(_SPATIAL_MIN_OBSERVATION_CONFIDENCE, float(confidences[idx]))
+            observation_variance = _SPATIAL_KALMAN_OBSERVATION_VARIANCE / confidence
+            innovation = float(values[idx] - predicted_state[0])
+            innovation_variance = float(predicted_covariance[0, 0] + observation_variance)
+
+            if abs(innovation) > (_SPATIAL_KALMAN_OUTLIER_SIGMA * np.sqrt(innovation_variance)):
+                confidence = _SPATIAL_MIN_OBSERVATION_CONFIDENCE
+                observation_variance = _SPATIAL_KALMAN_OBSERVATION_VARIANCE / confidence
+                innovation_variance = float(predicted_covariance[0, 0] + observation_variance)
+
+            kalman_gain = predicted_covariance[:, 0] / innovation_variance
+            state = predicted_state + kalman_gain * innovation
+            covariance = (
+                identity - np.outer(kalman_gain, observation_matrix)
+            ) @ predicted_covariance
+
+            x_filtered[idx] = state
+            p_filtered[idx] = covariance
+
+        x_smoothed = x_filtered.copy()
+        for idx in range(sample_count - 2, -1, -1):
+            dt = float(max(1, frame_numbers[idx + 1] - frame_numbers[idx]))
+            transition = np.asarray([[1.0, dt], [0.0, 1.0]], dtype=np.float64)
+            smoother_gain = p_filtered[idx] @ transition.T @ np.linalg.pinv(p_predicted[idx + 1])
+            x_smoothed[idx] = x_filtered[idx] + smoother_gain @ (
+                x_smoothed[idx + 1] - x_predicted[idx + 1]
+            )
+
+        return T.cast(np.ndarray, x_smoothed[:, 0])
 
     def _normalize_track(self, track: _SpatialIdentityTrack) -> bool:
         """Compile original and normalized alignments for one identity instance track."""

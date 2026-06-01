@@ -21,6 +21,7 @@ class _Face:
         x: float,
         identity: np.ndarray | None,
         landmarks_offset: float = 0.0,
+        confidence: float | None = 1.0,
     ) -> None:
         self.x = x
         self.y = 0.0
@@ -29,6 +30,9 @@ class _Face:
         self.landmarks_xy = np.zeros((68, 2), dtype=np.float32) + landmarks_offset
         self.identity: dict[str, np.ndarray] = (
             {} if identity is None else {"test": identity.astype(np.float32)}
+        )
+        self.metadata: dict[str, float] = (
+            {} if confidence is None else {"landmark_confidence": confidence}
         )
 
 
@@ -136,7 +140,7 @@ def test_identity_tracks_split_on_missing_frame_gaps() -> None:
     spatial = _spatial(
         {
             "frame_001.png": _Frame([_Face(x=0.0, identity=identity_a)]),
-            "frame_004.png": _Frame([_Face(x=5.0, identity=identity_a)]),
+            "frame_006.png": _Frame([_Face(x=5.0, identity=identity_a)]),
         }
     )
 
@@ -146,7 +150,7 @@ def test_identity_tracks_split_on_missing_frame_gaps() -> None:
     segments = spatial._split_track_segments(tracks[0])  # pylint:disable=protected-access
     assert [[obs.frame_key for obs in segment.observations] for segment in segments] == [
         ["frame_001.png"],
-        ["frame_004.png"],
+        ["frame_006.png"],
     ]
 
 
@@ -179,3 +183,87 @@ def test_frame_number_for_key_uses_trailing_numeric_suffix() -> None:
 def test_frame_number_for_key_falls_back_for_non_numbered_keys() -> None:
     """Non-numbered image sets should fall back to dense sorted-key order."""
     assert Spatial._frame_number_for_key("portrait_left.png", 7) == 7
+
+
+def test_identity_tracks_bridge_short_gaps_for_kalman_prediction() -> None:
+    """Short missing-frame gaps should stay in one Kalman segment."""
+    identity_a = _identity(0)
+    spatial = _spatial(
+        {
+            "frame_001.png": _Frame([_Face(x=0.0, identity=identity_a)]),
+            "frame_004.png": _Frame([_Face(x=5.0, identity=identity_a)]),
+        }
+    )
+
+    tracks = spatial._build_identity_instance_tracks()  # pylint:disable=protected-access
+    assert len(tracks) == 1
+
+    segments = spatial._split_track_segments(tracks[0])  # pylint:disable=protected-access
+    assert [[obs.frame_key for obs in segment.observations] for segment in segments] == [
+        ["frame_001.png", "frame_004.png"],
+    ]
+
+
+def test_confidence_for_face_reads_numeric_metadata() -> None:
+    """Face metadata should provide bounded smoothing confidence."""
+    face = _Face(x=0.0, identity=_identity(0), confidence=0.25)
+    assert Spatial._confidence_for_face(face) == 0.25
+
+
+def test_confidence_for_face_defaults_to_high_confidence() -> None:
+    """Missing confidence should behave as a fully trusted observation."""
+    face = _Face(x=0.0, identity=_identity(0), confidence=None)
+    assert Spatial._confidence_for_face(face) == 1.0
+
+
+def test_confidence_aware_kalman_smoothing_downweights_low_confidence_outlier() -> None:
+    """A low-confidence outlier should influence the smoothed path less."""
+    identity_a = _identity(0)
+    spatial = _spatial(
+        {
+            "frame_001.png": _Frame([_Face(x=0.0, identity=identity_a, confidence=1.0)]),
+            "frame_002.png": _Frame([_Face(x=2.0, identity=identity_a, confidence=0.05)]),
+            "frame_003.png": _Frame([_Face(x=4.0, identity=identity_a, confidence=1.0)]),
+        }
+    )
+    tracks = spatial._build_identity_instance_tracks()  # pylint:disable=protected-access
+    segment = spatial._split_track_segments(tracks[0])[0]  # pylint:disable=protected-access
+
+    landmarks: np.ndarray = np.zeros((68, 2, 3), dtype=np.float32)
+    landmarks[:, :, 0] = 0.0
+    landmarks[:, :, 1] = 100.0
+    landmarks[:, :, 2] = 2.0
+
+    smoothed = spatial._temporally_smooth_kalman(  # pylint:disable=protected-access
+        landmarks,
+        segment.observations,
+    )
+
+    assert np.isfinite(smoothed).all()
+    assert smoothed.shape == landmarks.shape
+    assert smoothed[0, 0, 1] < 50.0
+
+
+def test_kalman_smoothing_uses_non_unit_frame_deltas() -> None:
+    """Kalman smoothing should tolerate non-adjacent frame numbers inside a short-gap segment."""
+    identity_a = _identity(0)
+    spatial = _spatial(
+        {
+            "frame_001.png": _Frame([_Face(x=0.0, identity=identity_a, confidence=1.0)]),
+            "frame_004.png": _Frame([_Face(x=4.0, identity=identity_a, confidence=1.0)]),
+        }
+    )
+    tracks = spatial._build_identity_instance_tracks()  # pylint:disable=protected-access
+    segment = spatial._split_track_segments(tracks[0])[0]  # pylint:disable=protected-access
+
+    landmarks: np.ndarray = np.zeros((68, 2, 2), dtype=np.float32)
+    landmarks[:, :, 0] = 0.0
+    landmarks[:, :, 1] = 4.0
+
+    smoothed = spatial._temporally_smooth_kalman(  # pylint:disable=protected-access
+        landmarks,
+        segment.observations,
+    )
+
+    assert np.isfinite(smoothed).all()
+    assert smoothed.shape == landmarks.shape
