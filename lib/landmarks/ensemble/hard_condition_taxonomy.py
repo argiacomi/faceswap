@@ -184,6 +184,9 @@ def derive_hard_condition_taxonomy(
             "externally_occluded",
             "external_occlusion",
         }
+    ) or any(
+        label.endswith("_occlusion") or label.endswith("_occluded") or "occlud" in label
+        for label in labels
     )
     has_occlusion = has_labeled_occlusion or has_visibility_occlusion
     profile, large_yaw, rolled = _runtime_pose_flags(
@@ -198,6 +201,9 @@ def derive_hard_condition_taxonomy(
     def add(tag: str, present: bool = True) -> None:
         if present and tag not in tags:
             tags.append(tag)
+
+    for label in NEW_HARD_CONDITION_LABELS:
+        add(label, label in labels)
 
     add("rolled_profile_occlusion", rolled and profile and has_occlusion)
     add("profile_occlusion", profile and has_occlusion)

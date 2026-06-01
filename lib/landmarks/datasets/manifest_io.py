@@ -108,16 +108,51 @@ def coerce_bbox(value: T.Any) -> tuple[float, float, float, float] | None:
 
 
 def coerce_visibility(value: T.Any) -> tuple[bool, ...] | None:
-    """Coerce a manifest visibility payload to a bool tuple, or ``None``."""
+    """Coerce a manifest visibility payload to a bool tuple, or ``None``.
+
+    Supports both boolean masks and dataset visibility labels. Known occlusion
+    labels are treated as hidden instead of relying on bool(non_empty_string).
+    """
     if value is None:
         return None
+
+    visible_labels = {"visible", "vis", "v", "1", "true", "yes"}
+    hidden_labels = {
+        "hidden",
+        "invisible",
+        "occluded",
+        "self_occluded",
+        "self_occlusion",
+        "externally_occluded",
+        "external_occlusion",
+        "not_visible",
+        "0",
+        "false",
+        "no",
+    }
+
+    flags: list[bool] = []
     try:
-        flags = tuple(bool(item) for item in value)
+        iterator = iter(value)
     except TypeError:
         return None
-    if not flags:
-        return None
-    return flags
+
+    for item in iterator:
+        if isinstance(item, str):
+            label = item.strip().lower().replace("-", "_").replace(" ", "_")
+            while "__" in label:
+                label = label.replace("__", "_")
+            label = label.strip("_")
+            if label in visible_labels:
+                flags.append(True)
+            elif label in hidden_labels or "occlud" in label:
+                flags.append(False)
+            else:
+                return None
+        else:
+            flags.append(bool(item))
+
+    return tuple(flags) if flags else None
 
 
 def coerce_conditions(value: T.Any, *, fallback: str = "") -> tuple[str, ...]:

@@ -71,3 +71,28 @@ def test_visibility_heuristic_derives_mouth_or_jaw_occluded() -> None:
 
     assert taxonomy.condition == "mouth_or_jaw_occluded"
     assert taxonomy.hard_case_tags[:2] == ("mouth_or_jaw_occluded", "occlusion")
+
+
+def test_explicit_new_condition_label_populates_hard_case_tags() -> None:
+    taxonomy = derive_hard_condition_taxonomy(
+        _sample(condition="profile_occlusion", conditions=("profile_occlusion",)),
+        runtime_bucket="frontal",
+    )
+
+    assert taxonomy.condition == "profile_occlusion"
+    assert "profile_occlusion" in taxonomy.hard_case_tags
+    assert "occlusion" in taxonomy.hard_case_tags
+
+
+def test_explicit_rolled_profile_label_populates_hard_case_tags() -> None:
+    taxonomy = derive_hard_condition_taxonomy(
+        _sample(
+            condition="rolled_profile_occlusion",
+            conditions=("rolled_profile_occlusion",),
+        ),
+        runtime_bucket="frontal",
+    )
+
+    assert taxonomy.condition == "rolled_profile_occlusion"
+    assert "rolled_profile_occlusion" in taxonomy.hard_case_tags
+    assert "occlusion" in taxonomy.hard_case_tags

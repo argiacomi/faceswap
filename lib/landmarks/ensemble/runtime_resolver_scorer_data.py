@@ -78,6 +78,8 @@ class StoredRuntimeDiagnostics:
     features: dict[str, T.Any]
     source: str
     selected_candidate: str
+    condition: str = ""
+    hard_case_tags: tuple[str, ...] = ()
 
 
 def _metadata_key(sample_id: str, face_index: int | None = 0) -> tuple[str, int]:
@@ -352,6 +354,27 @@ def _runtime_features_from_metadata(resolver: T.Mapping[str, T.Any]) -> dict[str
     return features
 
 
+def _stored_hard_case_tags(value: T.Any) -> tuple[str, ...]:
+    """Return stored hard-case tags from list/tuple/set or pipe-delimited text."""
+    if value is None:
+        return ()
+
+    raw_items: T.Iterable[T.Any]
+    if isinstance(value, str):
+        raw_items = value.split("|")
+    elif isinstance(value, (list, tuple, set)):
+        raw_items = value
+    else:
+        raw_items = (value,)
+
+    tags: list[str] = []
+    for item in raw_items:
+        tag = str(item).strip()
+        if tag and tag not in tags:
+            tags.append(tag)
+    return tuple(tags)
+
+
 def _stored_runtime_diagnostics(sample: LandmarkSample) -> StoredRuntimeDiagnostics | None:
     resolver = _runtime_metadata(sample)
     bucket = resolver.get("runtime_bucket") or resolver.get("bucket")
@@ -364,6 +387,8 @@ def _stored_runtime_diagnostics(sample: LandmarkSample) -> StoredRuntimeDiagnost
         features=_runtime_features_from_metadata(resolver),
         source=source,
         selected_candidate=selected_candidate,
+        condition=str(resolver.get("condition") or ""),
+        hard_case_tags=_stored_hard_case_tags(resolver.get("hard_case_tags")),
     )
 
 
@@ -386,6 +411,11 @@ def _stored_runtime_diagnostics_from_sidecar(
         features=_runtime_features_from_metadata(resolver),
         source=source,
         selected_candidate=selected_candidate,
+        condition=str(resolver.get("condition") or row.get("condition") or ""),
+        hard_case_tags=(
+            _stored_hard_case_tags(resolver.get("hard_case_tags"))
+            or _stored_hard_case_tags(row.get("hard_case_tags"))
+        ),
     )
 
 
@@ -656,11 +686,21 @@ def build_sample_context(
         yaw_estimate=yaw_estimate,
         roll_estimate=roll_estimate,
     )
+    condition = (
+        stored_runtime.condition
+        if stored_runtime and stored_runtime.condition
+        else taxonomy.condition
+    )
+    hard_case_tags = (
+        stored_runtime.hard_case_tags
+        if stored_runtime and stored_runtime.hard_case_tags
+        else taxonomy.hard_case_tags
+    )
     candidate_extra_features = _candidate_extra_features(
         candidates,
         metrics,
         reference_bbox=reference_bbox,
-        condition=taxonomy.condition,
+        condition=condition,
         runtime_bucket=bucket_result.bucket,
         runtime_bucket_source=runtime_bucket_source,
     )
@@ -701,13 +741,13 @@ def build_sample_context(
         face_index=face_index,
         dataset=sample.dataset,
         source=source,
-        condition=taxonomy.condition,
+        condition=condition,
         candidates=candidates,
         metrics=metrics,
         nme_by_candidate=nme_by_candidate,
         failure_by_candidate=failure_by_candidate,
         runtime_bucket=bucket_result.bucket,
-        hard_case_tags=taxonomy.hard_case_tags,
+        hard_case_tags=hard_case_tags,
         risk_route=risk_route,
         current_policy_choice=current_policy_choice,
         oracle=oracle,

@@ -480,3 +480,13 @@ def test_multipie_builder_defaults_to_excluding_39pt_profile(tmp_path: Path) -> 
     )
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert {sample["source_schema"] for sample in payload["samples"]} == {"2d_68"}
+
+
+def test_coerce_visibility_handles_string_occlusion_labels() -> None:
+    from lib.landmarks.datasets.manifest_io import coerce_visibility
+
+    assert coerce_visibility(["visible", "self_occluded", "externally_occluded"]) == (
+        True,
+        False,
+        False,
+    )
