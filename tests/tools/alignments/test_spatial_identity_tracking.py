@@ -168,3 +168,14 @@ def test_identity_tracks_keep_contiguous_observations_in_one_segment() -> None:
     assert [[obs.frame_key for obs in segment.observations] for segment in segments] == [
         ["frame_001.png", "frame_002.png", "frame_003.png"],
     ]
+
+
+def test_frame_number_for_key_uses_trailing_numeric_suffix() -> None:
+    """Numbered alignment keys should preserve source-frame spacing."""
+    assert Spatial._frame_number_for_key("frame_004.png", 99) == 4
+    assert Spatial._frame_number_for_key("clip_a_000123.jpg", 99) == 123
+
+
+def test_frame_number_for_key_falls_back_for_non_numbered_keys() -> None:
+    """Non-numbered image sets should fall back to dense sorted-key order."""
+    assert Spatial._frame_number_for_key("portrait_left.png", 7) == 7

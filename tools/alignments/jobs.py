@@ -607,7 +607,11 @@ class Spatial:
 
         if self._has_identity_embeddings():
             logger.info("Identity embeddings found. Smoothing by persistent face instance tracks.")
-            self._process_by_identity_tracks()
+            if not self._process_by_identity_tracks():
+                logger.info(
+                    "Identity embeddings were present, but no contiguous identity segments "
+                    "were long enough to smooth. Skipping face-index fallback."
+                )
             return
 
         self._process_by_face_index()
