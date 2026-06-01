@@ -160,6 +160,13 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
         plugin.register_loss(loss)
         plugin.model.model.to(self._device)
 
+    def _faceqa_training_diagnostics_enabled(self) -> bool:
+        """Return whether FaceQA training diagnostics should run for this session."""
+        return (
+            trn_cfg.Augmentation.faceqa_training_diagnostics()
+            and not self._model.state.current_session["no_logs"]
+        )
+
     def _get_train_loader(self) -> TrainLoader:
         """Get the loaders for training the model
 
@@ -185,6 +192,7 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
             self._model.color_order,
             self._plugin.config,
             self._plugin.sampler,
+            include_faceqa_diagnostics=self._faceqa_training_diagnostics_enabled(),
         )
         logger.debug("[Trainer] data loader: %s", retval)
         return retval
@@ -353,7 +361,7 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
         if not trn_cfg.Augmentation.faceqa_training_diagnostics():
             logger.debug("[Trainer] FaceQA training diagnostics disabled")
             return None
-        if self._model.state.current_session["no_logs"]:
+        if not self._faceqa_training_diagnostics_enabled():
             logger.debug("[Trainer] FaceQA training diagnostics disabled with no-logs")
             return None
         jsonl_path = None

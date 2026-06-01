@@ -12,6 +12,7 @@ import torch
 
 from lib.align.objects import PNGAlignments, PNGHeader, PNGSource
 from lib.training.data.collate import BatchMeta
+from lib.training.data.data_set import TrainSet
 from lib.training.faceqa_diagnostics import FaceQALossDiagnostics, FaceQASampleMetadata
 from lib.training.loss import BatchLoss
 
@@ -42,6 +43,15 @@ def _header(*, faceqa: dict[str, object] | None = None) -> PNGHeader:
 def _loss(values: list[float]) -> BatchLoss:
     tensor = torch.tensor(values, dtype=torch.float32)
     return BatchLoss(unweighted=[{"mae": tensor}], weighted=[{"mae": tensor}])
+
+
+def _train_set_stub(*, include_faceqa: bool) -> TrainSet:
+    """Return a TrainSet shell for testing FaceQA metadata helpers."""
+    dataset = object.__new__(TrainSet)
+    dataset._include_faceqa = include_faceqa
+    dataset._faceqa_cache = {}
+    dataset._side = "A"
+    return dataset
 
 
 def test_faceqa_sample_metadata_extracts_embedded_buckets() -> None:
@@ -257,3 +267,60 @@ def test_faceqa_loss_diagnostics_tensorboard_keys_are_stable() -> None:
 
     assert "worst_current_loss_1" not in logs
     assert logs["bucket/A/yaw_pose/frontal/ema"] == pytest.approx(1.0)
+
+
+def test_train_set_faceqa_metadata_disabled_skips_header_parse(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Disabled FaceQA diagnostics should not parse FaceQA headers."""
+
+    def fail_from_png_header(*_args: object, **_kwargs: object) -> FaceQASampleMetadata:
+        raise AssertionError("from_png_header should not be called")
+
+    monkeypatch.setattr(
+        FaceQASampleMetadata,
+        "from_png_header",
+        staticmethod(fail_from_png_header),
+    )
+    dataset = _train_set_stub(include_faceqa=False)
+
+    sample = dataset._faceqa_metadata(0, "face.png", _header(faceqa={"pose": {"yaw": 0.0}}))
+
+    assert sample.has_faceqa is False
+    assert sample.side == "A"
+
+
+def test_train_set_faceqa_metadata_caches_by_index(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Enabled FaceQA diagnostics should cache parsed metadata per dataset index."""
+    calls = 0
+
+    def fake_from_png_header(
+        side: str,
+        filename: str,
+        _header_obj: PNGHeader,
+    ) -> FaceQASampleMetadata:
+        nonlocal calls
+        calls += 1
+        return FaceQASampleMetadata(
+            side=side.upper(),
+            filename=filename,
+            source_file=f"src_{calls}.png",
+            source_id=f"src_{calls}.png:0",
+            face_index=0,
+            has_faceqa=True,
+        )
+
+    monkeypatch.setattr(
+        FaceQASampleMetadata,
+        "from_png_header",
+        staticmethod(fake_from_png_header),
+    )
+    dataset = _train_set_stub(include_faceqa=True)
+
+    first = dataset._faceqa_metadata(1, "face.png", _header(faceqa={"pose": {"yaw": 0.0}}))
+    second = dataset._faceqa_metadata(1, "face.png", _header(faceqa={"pose": {"yaw": 45.0}}))
+    third = dataset._faceqa_metadata(2, "face2.png", _header(faceqa={"pose": {"yaw": 90.0}}))
+
+    assert first is second
+    assert third is not first
+    assert calls == 2

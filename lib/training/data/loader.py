@@ -53,6 +53,8 @@ class TrainLoader:  # pylint:disable=too-many-instance-attributes
         color_order: T.Literal["bgr", "rgb"],
         config: TrainConfig,
         sampler: None | type[tch_data.RandomSampler | tch_data.DistributedSampler] = None,
+        *,
+        include_faceqa_diagnostics: bool = False,
     ) -> None:
         logger.debug(parse_class_init(locals()))
         self._learn_mask = mod_cfg.Loss.learn_mask()
@@ -61,7 +63,7 @@ class TrainLoader:  # pylint:disable=too-many-instance-attributes
         self._process_size = max(*self._output_sizes, input_size)
         self._landmarks: None | LandmarkMatcher = None
 
-        self._faceqa_training_diagnostics = trn_cfg.Augmentation.faceqa_training_diagnostics()
+        self._faceqa_training_diagnostics = include_faceqa_diagnostics
 
         if config.warp and config.cache_landmarks:
             self._landmarks = LandmarkMatcher(
