@@ -38,19 +38,45 @@ def configured_training_masks() -> list[tuple[str, str]]:
     and the order they appear in, ensuring that the dataset loader and the collation function
     agree on the channel-to-:class:`~lib.training.data.collate.BatchMeta` mapping.
 
+    Masks are requested based on the options that actually consume them. The legacy mask-loss
+    options (``learn_mask`` / ``penalized_mask_loss`` and the eye / mouth multipliers) request
+    their masks as before, and the advanced losses (boundary, region-weighted perceptual,
+    identity ``mask_bbox`` crop and occlusion exclusion) independently request the masks they
+    need so they do not rely on unrelated legacy mask-loss settings being enabled.
+
     Returns
     -------
     Ordered ``(alignment mask source, BatchMeta field)`` pairs for each configured mask
     """
     retval: list[tuple[str, str]] = []
-    if cfg.Loss.mask_type() is not None and (
-        cfg.Loss.learn_mask() or cfg.Loss.penalized_mask_loss()
-    ):
-        retval.append((cfg.Loss.mask_type(), "mask_face"))
-    if cfg.Loss.penalized_mask_loss() and cfg.Loss.eye_multiplier() > 1:
+    mask_type = cfg.Loss.mask_type()
+    penalized = cfg.Loss.penalized_mask_loss()
+    region_perceptual = cfg.Loss.region_perceptual_loss() != "none"
+
+    # Face mask: the legacy triggers retain their exact original behavior; the advanced
+    # losses additionally request the face mask, but only when a real (non-"none") mask
+    # source is selected.
+    legacy_face = cfg.Loss.learn_mask() or penalized
+    advanced_face = mask_type not in (None, "none") and (
+        cfg.Loss.boundary_loss() != "none"
+        or region_perceptual
+        or (cfg.Loss.identity_loss() != "none" and cfg.Loss.identity_loss_crop() == "mask_bbox")
+    )
+    if mask_type is not None and (legacy_face or advanced_face):
+        retval.append((mask_type, "mask_face"))
+
+    needs_eye = (penalized and cfg.Loss.eye_multiplier() > 1) or (
+        region_perceptual and cfg.Loss.region_perceptual_eye_weight() != 1.0
+    )
+    if needs_eye:
         retval.append(("eye", "mask_eye"))
-    if cfg.Loss.penalized_mask_loss() and cfg.Loss.mouth_multiplier() > 1:
+
+    needs_mouth = (penalized and cfg.Loss.mouth_multiplier() > 1) or (
+        region_perceptual and cfg.Loss.region_perceptual_mouth_weight() != 1.0
+    )
+    if needs_mouth:
         retval.append(("mouth", "mask_mouth"))
+
     if cfg.Loss.occlusion_exclusion() != "none" and cfg.Loss.occlusion_mask_type() not in (
         None,
         "none",
