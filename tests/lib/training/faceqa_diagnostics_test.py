@@ -166,3 +166,94 @@ def test_faceqa_loss_diagnostics_no_metadata_fallback(tmp_path: Path) -> None:
 
     assert diagnostics.update([_loss([1.0])], metadata, iteration=1) == {}
     assert not jsonl.exists()
+
+
+def test_faceqa_loss_diagnostics_ranks_sources_before_truncating(tmp_path: Path) -> None:
+    """Worst source buckets should not be dropped by low-cardinality buckets."""
+    jsonl = tmp_path / "faceqa_training_diagnostics.jsonl"
+    diagnostics = FaceQALossDiagnostics(jsonl_path=str(jsonl), worst_limit=1)
+    metadata = [
+        [
+            FaceQASampleMetadata(
+                side="A",
+                filename="a1.png",
+                source_file="src1.png",
+                source_id="src1.png:0",
+                face_index=0,
+                has_faceqa=True,
+                yaw_pose_bucket="frontal",
+            )
+        ]
+    ]
+
+    diagnostics.update([_loss([9.0])], metadata, iteration=1)
+
+    payload = json.loads(jsonl.read_text(encoding="utf-8").strip())
+    assert len(payload["worst_sources"]) == 1
+    assert payload["worst_sources"][0]["dimension"] in {"source_file", "source_id"}
+
+
+def test_faceqa_loss_diagnostics_rejects_sample_count_mismatch() -> None:
+    """Diagnostics should fail loudly if losses and metadata no longer align."""
+    diagnostics = FaceQALossDiagnostics()
+    metadata = [[FaceQASampleMetadata.missing("A", "a.png")]]
+
+    with pytest.raises(ValueError, match="sample count mismatch"):
+        diagnostics.update([_loss([1.0, 2.0])], metadata, iteration=1)
+
+
+def test_faceqa_loss_diagnostics_rejects_side_count_mismatch() -> None:
+    """Diagnostics should fail loudly if side counts no longer align."""
+    diagnostics = FaceQALossDiagnostics()
+    metadata = [[FaceQASampleMetadata.missing("A", "a.png")]]
+
+    with pytest.raises(ValueError, match="side count mismatch"):
+        diagnostics.update([_loss([1.0]), _loss([2.0])], metadata, iteration=1)
+
+
+def test_faceqa_loss_diagnostics_writes_bare_jsonl_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Bare JSONL filenames should not call makedirs('') and fail."""
+    monkeypatch.chdir(tmp_path)
+    diagnostics = FaceQALossDiagnostics(jsonl_path="faceqa_training_diagnostics.jsonl")
+    metadata = [
+        [
+            FaceQASampleMetadata(
+                side="A",
+                filename="a1.png",
+                source_file="src1.png",
+                source_id="src1.png:0",
+                face_index=0,
+                has_faceqa=True,
+                yaw_pose_bucket="frontal",
+            )
+        ]
+    ]
+
+    diagnostics.update([_loss([1.0])], metadata, iteration=1)
+
+    assert (tmp_path / "faceqa_training_diagnostics.jsonl").exists()
+
+
+def test_faceqa_loss_diagnostics_tensorboard_keys_are_stable() -> None:
+    """TensorBoard scalars should be bucket-labelled, not positional top-N slots."""
+    diagnostics = FaceQALossDiagnostics()
+    metadata = [
+        [
+            FaceQASampleMetadata(
+                side="A",
+                filename="a1.png",
+                source_file="src1.png",
+                source_id="src1.png:0",
+                face_index=0,
+                has_faceqa=True,
+                yaw_pose_bucket="frontal",
+            )
+        ]
+    ]
+
+    logs = diagnostics.update([_loss([1.0])], metadata, iteration=1)
+
+    assert "worst_current_loss_1" not in logs
+    assert logs["bucket/A/yaw_pose/frontal/ema"] == pytest.approx(1.0)

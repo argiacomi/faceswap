@@ -400,10 +400,19 @@ class TrainSet(_BaseSet):
         size for train sets or the model input size for preview sets
     """
 
-    def __init__(self, side: str, image_folder: str, size: int) -> None:
+    def __init__(
+        self,
+        side: str,
+        image_folder: str,
+        size: int,
+        *,
+        include_faceqa: bool = True,
+    ) -> None:
         logger.debug(parse_class_init(locals()))
         super().__init__(side, image_folder)
         self._size = size
+        self._include_faceqa = include_faceqa
+        self._faceqa_cache: dict[int, FaceQASampleMetadata] = {}
         self._out_shape = (self._size, self._size, 3 + len(self._mask_types))
         self._mask = _MaskProcessing(
             self._side, self._size, self._coverage, self._centering, self._y_offset
@@ -411,7 +420,32 @@ class TrainSet(_BaseSet):
 
     def __repr__(self) -> str:
         """Pretty print for logging"""
-        return f"{super().__repr__()[:-1]}, size={repr(self._size)})"
+        return (
+            f"{super().__repr__()[:-1]}, size={repr(self._size)}, "
+            f"include_faceqa={repr(self._include_faceqa)})"
+        )
+
+    def _faceqa_metadata(
+        self,
+        index: int,
+        filename: str,
+        header: PNGHeader,
+    ) -> FaceQASampleMetadata:
+        """Return cached FaceQA metadata for a training sample."""
+        if not self._include_faceqa:
+            return T.cast(
+                FaceQASampleMetadata,
+                FaceQASampleMetadata.missing(self._side, filename),
+            )
+        cached = self._faceqa_cache.get(index)
+        if cached is not None:
+            return cached
+        sample = T.cast(
+            FaceQASampleMetadata,
+            FaceQASampleMetadata.from_png_header(self._side, filename, header),
+        )
+        self._faceqa_cache[index] = sample
+        return sample
 
     def _get_configured_masks(self) -> list[str]:
         """Obtain a list of configured training masks
@@ -461,7 +495,7 @@ class TrainSet(_BaseSet):
         meta: PNGHeader
         image, meta = read_image(filename, raise_error=False, with_metadata=True)
         face = self._get_face(image, meta.alignments, self._size, self._coverage)
-        faceqa = FaceQASampleMetadata.from_png_header(self._side, filename, meta)
+        faceqa = self._faceqa_metadata(index, filename, meta)
         img = T.cast("npt.NDArray[np.uint8]", face.face)
         retval = np.empty(self._out_shape, dtype=img.dtype)
         retval[..., :3] = img

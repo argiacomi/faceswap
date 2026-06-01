@@ -61,6 +61,8 @@ class TrainLoader:  # pylint:disable=too-many-instance-attributes
         self._process_size = max(*self._output_sizes, input_size)
         self._landmarks: None | LandmarkMatcher = None
 
+        self._faceqa_training_diagnostics = trn_cfg.Augmentation.faceqa_training_diagnostics()
+
         if config.warp and config.cache_landmarks:
             self._landmarks = LandmarkMatcher(
                 config.folders,
@@ -116,7 +118,12 @@ class TrainLoader:  # pylint:disable=too-many-instance-attributes
             num_workers = max_proc - 1
 
         data_sets = tuple(
-            TrainSet(get_label(i, len(self._config.folders)), f, self._process_size)
+            TrainSet(
+                get_label(i, len(self._config.folders)),
+                f,
+                self._process_size,
+                include_faceqa=self._faceqa_training_diagnostics,
+            )
             for i, f in enumerate(self._config.folders)
         )
         train_set = MultiDataset(data_sets, is_random=True)

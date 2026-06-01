@@ -350,10 +350,19 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
 
     def _set_faceqa_diagnostics(self) -> FaceQALossDiagnostics | None:
         """Set up optional FaceQA training loss diagnostics."""
+        if not trn_cfg.Augmentation.faceqa_training_diagnostics():
+            logger.debug("[Trainer] FaceQA training diagnostics disabled")
+            return None
         if self._model.state.current_session["no_logs"]:
             logger.debug("[Trainer] FaceQA training diagnostics disabled with no-logs")
             return None
-        jsonl_path = os.path.join(self._get_session_log_dir(), "faceqa_training_diagnostics.jsonl")
+        jsonl_path = None
+        if trn_cfg.Augmentation.faceqa_training_diagnostics_jsonl():
+            jsonl_path = os.path.join(
+                self._get_session_log_dir(),
+                "faceqa_training_diagnostics.jsonl",
+            )
+        logger.info("Enabled FaceQA training diagnostics")
         logger.debug("[Trainer] FaceQA training diagnostics path: %s", jsonl_path)
         return FaceQALossDiagnostics(jsonl_path=jsonl_path)
 

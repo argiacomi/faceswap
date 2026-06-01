@@ -255,12 +255,16 @@ class FaceQALossDiagnostics:
         )
         worst_current = self._ranked(lambda bucket: bucket.ema or 0.0)
         worst_trend = self._ranked(lambda bucket: bucket.trend)
-        worst_sources = self._ranked(
-            lambda bucket: bucket.ema or 0.0, include_high_cardinality=True
-        )
-        worst_sources = [
-            bucket for bucket in worst_sources if bucket.dimension in {"source_file", "source_id"}
-        ][: self._worst_limit]
+        source_buckets = [
+            bucket
+            for bucket in self._buckets.values()
+            if bucket.dimension in {"source_file", "source_id"}
+        ]
+        worst_sources = sorted(
+            source_buckets,
+            key=lambda bucket: bucket.ema or 0.0,
+            reverse=True,
+        )[: self._worst_limit]
         return {
             "iteration": iteration,
             "metadata_samples": metadata_count,
@@ -279,12 +283,19 @@ class FaceQALossDiagnostics:
         """Append one diagnostic snapshot to the JSONL stream."""
         if not self._jsonl_path:
             return
-        os.makedirs(os.path.dirname(self._jsonl_path), exist_ok=True)
+        directory = os.path.dirname(self._jsonl_path)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
         with open(self._jsonl_path, "a", encoding="utf-8") as out_file:
             out_file.write(json.dumps(payload, sort_keys=True) + "\n")
 
+    @staticmethod
+    def _safe_tag(value: str) -> str:
+        """Return a TensorBoard-safe path component."""
+        return "".join(char if char.isalnum() or char in ("-", "_") else "_" for char in value)
+
     def _tensorboard_scalars(self, payload: dict[str, T.Any]) -> dict[str, float]:
-        """Return bounded TensorBoard scalars for the current snapshot."""
+        """Return stable TensorBoard scalars for the current snapshot."""
         scalars = {
             "metadata_coverage": float(payload["metadata_coverage"]),
             "metadata_samples": float(payload["metadata_samples"]),
@@ -292,12 +303,20 @@ class FaceQALossDiagnostics:
         imbalance = payload["ab_reconstruction_imbalance"]
         if imbalance is not None:
             scalars["ab_reconstruction_imbalance"] = float(imbalance)
-        for idx, bucket in enumerate(payload["worst_current"], start=1):
-            scalars[f"worst_current_loss_{idx}"] = float(bucket["ema"] or 0.0)
-            scalars[f"worst_current_count_{idx}"] = float(bucket["count"])
-        for idx, bucket in enumerate(payload["worst_trend"], start=1):
-            scalars[f"worst_trend_delta_{idx}"] = float(bucket["trend"])
-            scalars[f"worst_trend_count_{idx}"] = float(bucket["count"])
+
+        for bucket in sorted(
+            self._buckets.values(),
+            key=lambda item: (item.side, item.dimension, item.bucket),
+        ):
+            if bucket.dimension not in LOW_CARDINALITY_DIMENSIONS or bucket.ema is None:
+                continue
+            side = self._safe_tag(bucket.side)
+            dimension = self._safe_tag(bucket.dimension)
+            label = self._safe_tag(bucket.bucket)
+            prefix = f"bucket/{side}/{dimension}/{label}"
+            scalars[f"{prefix}/ema"] = float(bucket.ema)
+            scalars[f"{prefix}/trend"] = float(bucket.trend)
+            scalars[f"{prefix}/count"] = float(bucket.count)
         return scalars
 
     def update(
@@ -309,11 +328,22 @@ class FaceQALossDiagnostics:
         """Update diagnostics and return bounded TensorBoard scalars."""
         if metadata is None:
             return {}
+        if len(losses) != len(metadata):
+            raise ValueError(
+                "FaceQA diagnostics side count mismatch: "
+                f"losses={len(losses)} metadata={len(metadata)}"
+            )
+
         metadata_count = 0
         total_count = 0
-        for side_loss, side_metadata in zip(losses, metadata, strict=False):
+        for side_idx, (side_loss, side_metadata) in enumerate(zip(losses, metadata, strict=True)):
             side_values = self._side_losses(side_loss)
-            for sample_loss, sample in zip(side_values, side_metadata, strict=False):
+            if len(side_values) != len(side_metadata):
+                raise ValueError(
+                    "FaceQA diagnostics sample count mismatch for side "
+                    f"{side_idx}: losses={len(side_values)} metadata={len(side_metadata)}"
+                )
+            for sample_loss, sample in zip(side_values, side_metadata, strict=True):
                 total_count += 1
                 if not sample.has_faceqa:
                     continue
