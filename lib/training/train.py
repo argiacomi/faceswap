@@ -167,6 +167,17 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
             and not self._model.state.current_session["no_logs"]
         )
 
+    def _faceqa_training_metadata_paths(self, num_sides: int) -> list[str | None]:
+        """Return optional FaceQA metadata fallback paths by training side."""
+        configured = [
+            trn_cfg.Augmentation.faceqa_training_metadata_a(),
+            trn_cfg.Augmentation.faceqa_training_metadata_b(),
+        ]
+        paths = [path.strip() or None for path in configured]
+        if len(paths) < num_sides:
+            paths.extend([None] * (num_sides - len(paths)))
+        return paths[:num_sides]
+
     def _get_train_loader(self) -> TrainLoader:
         """Get the loaders for training the model
 
@@ -193,6 +204,7 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
             self._plugin.config,
             self._plugin.sampler,
             include_faceqa_diagnostics=self._faceqa_training_diagnostics_enabled(),
+            faceqa_metadata_paths=self._faceqa_training_metadata_paths(num_sides),
         )
         logger.debug("[Trainer] data loader: %s", retval)
         return retval

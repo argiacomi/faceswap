@@ -17,7 +17,7 @@ from torch.utils.data import Dataset
 from lib.align import AlignedFace, Mask
 from lib.image import read_image
 from lib.logger import format_array, parse_class_init
-from lib.training.faceqa_diagnostics import FaceQASampleMetadata
+from lib.training.faceqa_diagnostics import FaceQAMetadataIndex, FaceQASampleMetadata
 from lib.utils import FaceswapError, get_module_objects
 from plugins.train import train_config as cfg
 
@@ -407,11 +407,13 @@ class TrainSet(_BaseSet):
         size: int,
         *,
         include_faceqa: bool = True,
+        faceqa_index: FaceQAMetadataIndex | None = None,
     ) -> None:
         logger.debug(parse_class_init(locals()))
         super().__init__(side, image_folder)
         self._size = size
         self._include_faceqa = include_faceqa
+        self._faceqa_index = faceqa_index
         self._faceqa_cache: dict[int, FaceQASampleMetadata] = {}
         self._out_shape = (self._size, self._size, 3 + len(self._mask_types))
         self._mask = _MaskProcessing(
@@ -422,7 +424,8 @@ class TrainSet(_BaseSet):
         """Pretty print for logging"""
         return (
             f"{super().__repr__()[:-1]}, size={repr(self._size)}, "
-            f"include_faceqa={repr(self._include_faceqa)})"
+            f"include_faceqa={repr(self._include_faceqa)}, "
+            f"faceqa_index={repr(self._faceqa_index is not None)})"
         )
 
     def _faceqa_metadata(
@@ -444,6 +447,15 @@ class TrainSet(_BaseSet):
             FaceQASampleMetadata,
             FaceQASampleMetadata.from_png_header(self._side, filename, header),
         )
+        if not sample.has_faceqa and self._faceqa_index is not None:
+            source_file = header.source.source_filename or os.path.basename(filename)
+            fallback = self._faceqa_index.lookup(
+                source_file,
+                int(header.source.face_index),
+                filename=filename,
+            )
+            if fallback is not None:
+                sample = fallback
         self._faceqa_cache[index] = sample
         return sample
 

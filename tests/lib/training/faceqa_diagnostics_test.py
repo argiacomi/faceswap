@@ -45,10 +45,11 @@ def _loss(values: list[float]) -> BatchLoss:
     return BatchLoss(unweighted=[{"mae": tensor}], weighted=[{"mae": tensor}])
 
 
-def _train_set_stub(*, include_faceqa: bool) -> TrainSet:
+def _train_set_stub(*, include_faceqa: bool, faceqa_index: object | None = None) -> TrainSet:
     """Return a TrainSet shell for testing FaceQA metadata helpers."""
     dataset = object.__new__(TrainSet)
     dataset._include_faceqa = include_faceqa
+    dataset._faceqa_index = faceqa_index
     dataset._faceqa_cache = {}
     dataset._side = "A"
     return dataset
@@ -324,3 +325,60 @@ def test_train_set_faceqa_metadata_caches_by_index(monkeypatch: pytest.MonkeyPat
     assert first is second
     assert third is not first
     assert calls == 2
+
+
+def test_train_set_faceqa_metadata_uses_fallback_index_when_header_missing() -> None:
+    """FaceQA diagnostics should fall back to an enriched alignments index."""
+
+    class _FallbackIndex:
+        def lookup(
+            self,
+            source_file: str,
+            face_index: int,
+            *,
+            filename: str,
+        ) -> FaceQASampleMetadata | None:
+            assert source_file == "frame_000001.png"
+            assert face_index == 2
+            assert filename == "/faces/a/face_000001.png"
+            return FaceQASampleMetadata(
+                side="A",
+                filename=filename,
+                source_file=source_file,
+                source_id=f"{source_file}:{face_index}",
+                face_index=face_index,
+                has_faceqa=True,
+                yaw_pose_bucket="frontal",
+            )
+
+    dataset = _train_set_stub(include_faceqa=True, faceqa_index=_FallbackIndex())
+
+    sample = dataset._faceqa_metadata(0, "/faces/a/face_000001.png", _header())
+
+    assert sample.has_faceqa is True
+    assert sample.source_file == "frame_000001.png"
+    assert sample.face_index == 2
+    assert sample.yaw_pose_bucket == "frontal"
+
+
+def test_train_set_faceqa_metadata_fallback_miss_returns_placeholder() -> None:
+    """Missing header metadata and missing fallback should retain the no-metadata behavior."""
+
+    class _FallbackIndex:
+        def lookup(
+            self,
+            _source_file: str,
+            _face_index: int,
+            *,
+            filename: str,
+        ) -> FaceQASampleMetadata | None:
+            assert filename == "/faces/a/face_000001.png"
+            return None
+
+    dataset = _train_set_stub(include_faceqa=True, faceqa_index=_FallbackIndex())
+
+    sample = dataset._faceqa_metadata(0, "/faces/a/face_000001.png", _header())
+
+    assert sample.has_faceqa is False
+    assert sample.source_file == "frame_000001.png"
+    assert sample.face_index == 2

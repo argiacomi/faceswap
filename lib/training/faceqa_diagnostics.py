@@ -7,7 +7,7 @@ import json
 import logging
 import os
 import typing as T
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import torch
 
@@ -22,7 +22,7 @@ from lib.faceqa.buckets import (
     pose_bucket,
     resolution_bucket,
 )
-from lib.faceqa.coverage import record_from_alignment
+from lib.faceqa.coverage import load_alignments_envelope, record_from_alignment
 from lib.utils import get_module_objects
 
 if T.TYPE_CHECKING:
@@ -80,6 +80,52 @@ class FaceQASampleMetadata:
             source_file=basename,
             source_id=basename,
             face_index=-1,
+        )
+
+    @classmethod
+    def from_alignment(
+        cls,
+        side: str,
+        filename: str,
+        source_file: str,
+        face_index: int,
+        face: FileAlignments,
+    ) -> T.Self:  # type: ignore[name-defined]
+        """Build metadata from a FaceQA-enriched alignment face."""
+        source_file = source_file or os.path.basename(filename)
+        faceqa_payload = face.metadata.get("faceqa")
+        if not isinstance(faceqa_payload, dict) or not faceqa_payload:
+            return cls(
+                side=side.upper(),
+                filename=filename,
+                source_file=source_file,
+                source_id=f"{source_file}:{face_index}",
+                face_index=int(face_index),
+            )
+
+        record = record_from_alignment(source_file, int(face_index), face)
+        duplicate = (
+            "duplicate"
+            if record.duplicate_cluster_id or record.duplicate_cluster is not None
+            else "unique"
+        )
+        outlier = "outlier" if is_identity_outlier(record) else "inlier"
+        return cls(
+            side=side.upper(),
+            filename=filename,
+            source_file=source_file,
+            source_id=f"{source_file}:{face_index}",
+            face_index=int(face_index),
+            has_faceqa=True,
+            yaw_pose_bucket=pose_bucket(record),
+            pitch_bucket=pitch_bucket(record),
+            expression_bucket=expression_bucket(record),
+            lighting_bucket=lighting_bucket(record),
+            blur_bucket=blur_bucket(record),
+            resolution_bucket=resolution_bucket(record),
+            mask_qa_bucket=mask_qa_bucket(record),
+            duplicate_bucket=duplicate,
+            identity_outlier_bucket=outlier,
         )
 
     @classmethod
@@ -192,6 +238,81 @@ class _BucketLoss:
             "ema": self.ema,
             "trend": self.trend,
         }
+
+
+class FaceQAMetadataIndex:
+    """Lookup FaceQA metadata from an enriched alignments file for one training side."""
+
+    def __init__(self, side: str, path: str) -> None:
+        self._side = side.upper()
+        self._path = path
+        self._samples: dict[tuple[str, int], FaceQASampleMetadata] = {}
+        self._load(path)
+
+    @classmethod
+    def from_path(cls, side: str, path: str | None) -> FaceQAMetadataIndex | None:
+        """Return an index for ``path`` or ``None`` when no fallback path is configured."""
+        if not path:
+            return None
+        return cls(side, path)
+
+    @staticmethod
+    def _keys(source_file: str, face_index: int) -> tuple[tuple[str, int], ...]:
+        """Return exact and basename lookup keys for a FaceQA source image."""
+        basename = os.path.basename(source_file)
+        if basename == source_file:
+            return ((source_file, face_index),)
+        return ((source_file, face_index), (basename, face_index))
+
+    def _load(self, path: str) -> None:
+        """Load FaceQA metadata from an enriched alignments file."""
+        if not os.path.exists(path):
+            logger.warning("FaceQA training metadata file does not exist: %s", path)
+            return
+
+        _raw, entries = load_alignments_envelope(path)
+        for frame, entry in entries.items():
+            for face_index, face in enumerate(entry.faces):
+                sample = FaceQASampleMetadata.from_alignment(
+                    self._side,
+                    frame,
+                    frame,
+                    face_index,
+                    face,
+                )
+                if not sample.has_faceqa:
+                    continue
+                for key in self._keys(frame, face_index):
+                    self._samples[key] = sample
+
+        logger.info(
+            "Loaded %s FaceQA training metadata samples for side %s from %s",
+            len({sample.source_id for sample in self._samples.values()}),
+            self._side,
+            path,
+        )
+
+    def lookup(
+        self,
+        source_file: str,
+        face_index: int,
+        *,
+        filename: str,
+    ) -> FaceQASampleMetadata | None:
+        """Return metadata matching ``source_file`` and ``face_index``."""
+        for key in self._keys(source_file, int(face_index)):
+            sample = self._samples.get(key)
+            if sample is None:
+                continue
+            return replace(
+                sample,
+                side=self._side,
+                filename=filename,
+                source_file=source_file,
+                source_id=f"{source_file}:{int(face_index)}",
+                face_index=int(face_index),
+            )
+        return None
 
 
 class FaceQALossDiagnostics:
