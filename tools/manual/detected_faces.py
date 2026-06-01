@@ -1081,6 +1081,22 @@ class FaceUpdate:
         self._globals.var_full_update.set(True)
         return True
 
+    def _copy_faces_from_frame(self, frame_index: int) -> list[DetectedFace]:
+        """Return deep-copied detected faces from ``frame_index`` without marking source dirty."""
+        to_copy = self._frame_faces[frame_index]
+        if not to_copy:
+            return []
+
+        # ``aligned_face`` cannot be deep-copied reliably, so remove and recreate.
+        for face in to_copy:
+            face._aligned = None  # pylint:disable=protected-access
+        copied = deepcopy(to_copy)
+
+        for old_face, new_face in zip(to_copy, copied, strict=False):
+            old_face.load_aligned(None)
+            new_face.load_aligned(None)
+        return copied
+
     def copy(self, frame_index: int, direction: T.Literal["prev", "next"]) -> None:
         """Copy the alignments from the previous or next frame that has alignments
         to the current frame.
@@ -1108,19 +1124,49 @@ class FaceUpdate:
             return
         logger.debug("Copying alignments from frame %s to frame: %s", idx, frame_index)
 
-        # aligned_face cannot be deep copied, so remove and recreate
-        to_copy = self._faces_at_frame_index(idx)
-        for face in to_copy:
-            face._aligned = None  # pylint:disable=protected-access
-        copied = deepcopy(to_copy)
-
-        for old_face, new_face in zip(to_copy, copied, strict=False):
-            old_face.load_aligned(None)
-            new_face.load_aligned(None)
-
+        copied = self._copy_faces_from_frame(idx)
+        if not copied:
+            return
         faces.extend(copied)
         self._tk_face_count_changed.set(True)
         self._globals.var_full_update.set(True)
+
+    def copy_previous_to_empty_frames(self) -> int:
+        """Copy the nearest previous alignment into every frame that currently has no faces.
+
+        Frames before the first frame with faces are skipped because there is no previous alignment
+        to copy. Consecutive empty frames are filled left-to-right, so each newly filled frame also
+        becomes the previous alignment for the next empty frame.
+        """
+        copied_count = 0
+        previous_frame_index: int | None = None
+
+        for frame_index, faces in enumerate(self._frame_faces):
+            if faces:
+                previous_frame_index = frame_index
+                continue
+            if previous_frame_index is None:
+                continue
+
+            copied = self._copy_faces_from_frame(previous_frame_index)
+            if not copied:
+                continue
+
+            target_faces = self._faces_at_frame_index(frame_index)
+            target_faces[:] = copied
+            previous_frame_index = frame_index
+            copied_count += 1
+
+        if copied_count:
+            logger.info(
+                "Copied previous alignments to %s empty frame(s).",
+                copied_count,
+            )
+            self._tk_face_count_changed.set(True)
+            self._globals.var_full_update.set(True)
+        else:
+            logger.info("No empty frames with previous alignments were available to fill.")
+        return copied_count
 
     def post_edit_trigger(self, frame_index: int, face_index: int) -> None:
         """Update the jpg thumbnail, the viewport thumbnail, the landmark masks and the aligned

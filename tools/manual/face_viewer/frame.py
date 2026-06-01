@@ -674,7 +674,7 @@ class Grid:
         if not self._is_valid:
             return False
         assert self._grid is not None
-        return np.any(self._grid[0] == frame_index)
+        return np.any((self._grid[0] == frame_index) & (self._grid[1] >= 0))
 
     def update(self) -> None:
         """Update the underlying grid.
@@ -862,8 +862,8 @@ class ContextMenu:  # pylint:disable=too-few-public-methods
         frame_idx, face_idx = self._canvas.viewport.face_from_point(
             self._canvas.canvasx(event.x), self._canvas.canvasy(event.y)
         )[:2]
-        if frame_idx == -1:
-            logger.trace("No valid item under mouse")
+        if frame_idx == -1 or face_idx == -1:
+            logger.trace("No valid face under mouse")
             self._frame_index = self._face_index = None
             return
         self._frame_index = frame_idx

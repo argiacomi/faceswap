@@ -228,7 +228,11 @@ class Viewport:
             for (frame_idx, face_idx, pnt_x, pnt_y), image_id, mesh_ids, face in zip(
                 *collection, strict=False
             ):
-                if frame_idx == self._active_frame.frame_index and not refresh_annotations:
+                if (
+                    face_idx >= 0
+                    and frame_idx == self._active_frame.frame_index
+                    and not refresh_annotations
+                ):
                     logger.trace(  # type: ignore[attr-defined]
                         "Skipping active frame: %s",
                         frame_idx,
@@ -282,7 +286,7 @@ class Viewport:
         for frame_idx, face_idx, pnt_x, pnt_y in self._objects.visible_grid.transpose(
             1, 2, 0
         ).reshape(-1, 4):
-            if frame_idx == -1:
+            if frame_idx == -1 or face_idx == -1:
                 continue
 
             key = (int(frame_idx), int(face_idx))
@@ -341,10 +345,17 @@ class Viewport:
         self._selected_boxes = {}
 
     def _discard_tk_faces(self) -> None:
-        """Remove any :class:`TKFace` objects from the cache that are not currently displayed."""
-        keys = [
-            f"{pnt_x}_{pnt_y}" for pnt_x, pnt_y in self._objects.visible_grid[:2].T.reshape(-1, 2)
-        ]
+        """Remove cached TKFace objects that are not currently displayed."""
+        keys: list[str] = []
+        for frame_idx, face_idx in (
+            self._objects.visible_grid[:2].transpose(1, 2, 0).reshape(-1, 2)
+        ):
+            frame_idx = int(frame_idx)
+            face_idx = int(face_idx)
+            if frame_idx < 0:
+                continue
+            keys.append(f"frame_{frame_idx}" if face_idx < 0 else f"{frame_idx}_{face_idx}")
+
         for key in list(self._tk_faces):
             if key not in keys:
                 del self._tk_faces[key]

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import typing as T
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -334,3 +335,111 @@ def test_on_close_swallows_loader_exception(monkeypatch) -> None:
     inner_loader.close.assert_called_once()
     instance.destroy.assert_called_once()
     assert exits == [0]
+
+
+# ---------------------------------------------------------------------------
+# No-face placeholder perf/editing + fill-empty action
+# ---------------------------------------------------------------------------
+
+
+class _CopyableFace:
+    """Small DetectedFace-like object for FaceUpdate copy tests."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self._aligned = object()
+        self.load_count = 0
+
+    def load_aligned(self, *_args, **_kwargs) -> None:
+        self.load_count += 1
+
+
+def test_face_update_copy_previous_to_empty_frames_fills_only_fillable_gaps() -> None:
+    """The batch fill action copies previous alignments into empty frames and skips leading gaps."""
+    from tools.manual.detected_faces import FaceUpdate
+
+    face_count_changed = SimpleNamespace(set=MagicMock())
+    full_update = SimpleNamespace(set=MagicMock())
+    unsaved = SimpleNamespace(get=lambda: False, set=MagicMock())
+
+    updater = FaceUpdate.__new__(FaceUpdate)
+    updater._frame_faces = T.cast(
+        T.Any,
+        [[], [_CopyableFace("a")], [], [], [_CopyableFace("b")], []],
+    )
+    updater._updated_frame_indices = set()
+    updater._tk_unsaved = T.cast(T.Any, unsaved)
+    updater._globals = T.cast(T.Any, SimpleNamespace(var_full_update=full_update))
+    updater._detected_faces = T.cast(
+        T.Any,
+        SimpleNamespace(tk_face_count_changed=face_count_changed),
+    )
+
+    copied = FaceUpdate.copy_previous_to_empty_frames(updater)
+
+    assert copied == 3
+    assert [len(frame) for frame in updater._frame_faces] == [0, 1, 1, 1, 1, 1]
+    assert updater._updated_frame_indices == {2, 3, 5}
+    assert updater._frame_faces[2][0] is not updater._frame_faces[1][0]
+    assert updater._frame_faces[3][0] is not updater._frame_faces[2][0]
+    assert updater._frame_faces[5][0] is not updater._frame_faces[4][0]
+    unsaved.set.assert_called_once_with(True)
+    face_count_changed.set.assert_called_with(True)
+    full_update.set.assert_called_with(True)
+
+
+def test_viewport_discard_tk_faces_keeps_visible_full_frame_placeholders() -> None:
+    """Full-frame placeholder cache keys must survive redraws while visible.
+
+    This avoids reloading/resizing the source frame on every viewport update.
+    """
+    from tools.manual.face_viewer.viewport import Viewport
+
+    viewport = Viewport.__new__(Viewport)
+    viewport._objects = T.cast(
+        T.Any,
+        SimpleNamespace(
+            visible_grid=np.array(
+                [
+                    [[0, 1, -1]],  # frame ids
+                    [[0, -1, -1]],  # face ids: frame 1 is a no-face placeholder
+                    [[0, 96, 192]],
+                    [[0, 0, 0]],
+                ],
+                dtype=np.int32,
+            )
+        ),
+    )
+    viewport._tk_faces = T.cast(
+        T.Any,
+        {
+            "0_0": object(),
+            "frame_1": object(),
+            "2_0": object(),
+            "frame_2": object(),
+        },
+    )
+
+    Viewport._discard_tk_faces(viewport)
+
+    assert set(viewport._tk_faces) == {"0_0", "frame_1"}
+
+
+def test_grid_frame_has_faces_ignores_no_face_placeholders() -> None:
+    """A full-frame placeholder represents a frame, not an editable face."""
+    from tools.manual.face_viewer.frame import Grid
+
+    grid = Grid.__new__(Grid)
+    grid._is_valid = True
+    grid._grid = np.array(
+        [
+            [[0, 1]],  # frame ids
+            [[0, -1]],  # face ids
+            [[0, 96]],
+            [[0, 0]],
+        ],
+        dtype=np.int32,
+    )
+
+    assert Grid.frame_has_faces(grid, 0)
+    assert not Grid.frame_has_faces(grid, 1)

@@ -144,6 +144,33 @@ class HoverBox:
         if frame_id is None or face_idx is None:
             return
 
+        if int(face_idx) < 0:
+            if multi_select:
+                return
+            self._globals.clear_selected_faces()
+            self._globals.set_face_index(0)
+            self._globals.var_update_active_viewport.set(True)
+            self._viewport.refresh_selection_highlights()
+
+            if frame_id == self._globals.frame_index and not is_zoomed:
+                return
+
+            transport_id = self._grid.transport_index_from_frame(frame_id)
+            logger.trace(
+                "frame_index: %s, transport_id: %s, face_idx: %s",
+                frame_id,
+                transport_id,
+                face_idx,
+            )
+            if transport_id is None:
+                return
+            self._navigation.stop_playback()
+            self._globals.var_transport_index.set(transport_id)
+            self._globals.var_update_active_viewport.set(True)
+            self._viewport.move_active_to_top()
+            self.on_hover(None)
+            return
+
         if multi_select:
             self._globals.toggle_selected_face(frame_id, face_idx)
             self._globals.var_update_active_viewport.set(True)
@@ -323,7 +350,10 @@ class ActiveFrame:
             self._assets.faces = []
             return
 
-        rows, cols = np.where(self._objects.visible_grid[0] == self.frame_index)
+        rows, cols = np.where(
+            (self._objects.visible_grid[0] == self.frame_index)
+            & (self._objects.visible_grid[1] >= 0)
+        )
         logger.trace(  # type: ignore[attr-defined]
             "Setting active objects: (rows: %s, columns: %s)",
             rows,
