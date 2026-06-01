@@ -178,6 +178,7 @@ def _candidate_context(
             for candidate in candidates
         },
         runtime_bucket="frontal",
+        hard_case_tags=(),
         risk_route="low_risk",
         current_policy_choice="oracle",
         oracle=oracle,
@@ -301,6 +302,33 @@ def test_candidate_table_rows_include_shape_plausibility_diagnostics() -> None:
     assert oracle["max_edge_length_ratio"] == pytest.approx(1.6)
     assert oracle["mean_shape_fit_error"] == pytest.approx(0.14)
     assert oracle["topology_violation_count"] == 3
+
+
+def test_rows_and_candidate_table_include_hard_case_tags() -> None:
+    context = _candidate_context(
+        nme_by_candidate={
+            "oracle": 0.01,
+            "zero": 0.01,
+            "small": 0.015,
+            "large": 0.05,
+            "failure": 0.02,
+        }
+    )
+    context = scorer_data.SampleCandidateContext(
+        **{
+            **context.__dict__,
+            "condition": "profile_occlusion",
+            "runtime_bucket": "profile_left",
+            "hard_case_tags": ("profile_occlusion", "occlusion", "profile_pose"),
+        }
+    )
+
+    row = scorer_data.rows_for_context(context)[0]
+    candidate_row = scorer_data.candidate_table_rows_for_context(context)[0]
+
+    assert row.to_csv_row()["hard_case_tags"] == "profile_occlusion|occlusion|profile_pose"
+    assert candidate_row["hard_case_tags"] == "profile_occlusion|occlusion|profile_pose"
+    assert row.feature_values["hard_case_tag=profile_occlusion"] == pytest.approx(1.0)
 
 
 def test_train_runtime_resolver_scorer_writes_artifact_and_rows(tmp_path: Path) -> None:

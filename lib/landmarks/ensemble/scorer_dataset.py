@@ -67,6 +67,7 @@ def _fieldnames(feature_names: T.Sequence[str]) -> list[str]:
         "gap_vs_oracle",
         "runtime_bucket",
         "runtime_bucket_source",
+        "hard_case_tags",
         "risk_route",
         "geometry_veto_reasons",
         "selected_by_current_policy",

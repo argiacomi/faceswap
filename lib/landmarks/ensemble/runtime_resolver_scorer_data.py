@@ -21,6 +21,7 @@ from lib.landmarks.datasets.manifest_io import (
     filter_canonical_68_samples,
     load_manifest,
 )
+from lib.landmarks.ensemble.hard_condition_taxonomy import derive_hard_condition_taxonomy
 from lib.landmarks.ensemble.runtime_resolver import (
     CandidateMetrics,
     CandidateRecord,
@@ -155,6 +156,7 @@ CANDIDATE_TABLE_COLUMNS: tuple[str, ...] = (
     "max_disagreement_px",
     "candidate_yaw_disagreement",
     "runtime_bucket",
+    "hard_case_tags",
     "runtime_bucket_source",
     "selected_candidate_missing_from_eval",
     "geometry_veto_reasons",
@@ -181,6 +183,7 @@ class CandidateQualityRow:
     was_selected_by_current_policy: bool
     gap_vs_oracle: float
     runtime_bucket: str
+    hard_case_tags: tuple[str, ...]
     risk_route: str
     feature_values: dict[str, float]
     selected_by_current_policy: str
@@ -210,6 +213,7 @@ class CandidateQualityRow:
             "was_selected_by_current_policy": int(self.was_selected_by_current_policy),
             "gap_vs_oracle": self.gap_vs_oracle,
             "runtime_bucket": self.runtime_bucket,
+            "hard_case_tags": "|".join(self.hard_case_tags),
             "runtime_bucket_source": self.runtime_bucket_source,
             "risk_route": self.risk_route,
             "geometry_veto_reasons": "|".join(self.geometry_veto_reasons),
@@ -262,6 +266,7 @@ class SampleCandidateContext:
     nme_by_candidate: dict[str, float]
     failure_by_candidate: dict[str, bool]
     runtime_bucket: str
+    hard_case_tags: tuple[str, ...]
     risk_route: str
     current_policy_choice: str
     oracle: str
@@ -645,11 +650,17 @@ def build_sample_context(
             yaw_estimate = stored_yaw
     for name, metric in metrics.items():
         metric.geometry_veto_reasons = _shape_reasons(bucket_result.bucket, name, metric)
+    taxonomy = derive_hard_condition_taxonomy(
+        sample,
+        runtime_bucket=bucket_result.bucket,
+        yaw_estimate=yaw_estimate,
+        roll_estimate=roll_estimate,
+    )
     candidate_extra_features = _candidate_extra_features(
         candidates,
         metrics,
         reference_bbox=reference_bbox,
-        condition=sample.condition or bucket_result.bucket or "unknown",
+        condition=taxonomy.condition,
         runtime_bucket=bucket_result.bucket,
         runtime_bucket_source=runtime_bucket_source,
     )
@@ -690,12 +701,13 @@ def build_sample_context(
         face_index=face_index,
         dataset=sample.dataset,
         source=source,
-        condition=sample.condition or bucket_result.bucket or "unknown",
+        condition=taxonomy.condition,
         candidates=candidates,
         metrics=metrics,
         nme_by_candidate=nme_by_candidate,
         failure_by_candidate=failure_by_candidate,
         runtime_bucket=bucket_result.bucket,
+        hard_case_tags=taxonomy.hard_case_tags,
         risk_route=risk_route,
         current_policy_choice=current_policy_choice,
         oracle=oracle,
@@ -759,6 +771,7 @@ def rows_for_context(
                 was_selected_by_current_policy=(candidate.name == context.current_policy_choice),
                 gap_vs_oracle=candidate_nme - oracle_nme,
                 runtime_bucket=context.runtime_bucket,
+                hard_case_tags=context.hard_case_tags,
                 risk_route=context.risk_route,
                 feature_values=candidate_feature_map(
                     candidate,
@@ -771,6 +784,7 @@ def rows_for_context(
                     candidate_yaw_disagreement=context.candidate_yaw_disagreement,
                     max_disagreement_px=context.max_disagreement_px,
                     runtime_bucket_source=context.runtime_bucket_source,
+                    hard_case_tags=context.hard_case_tags,
                     candidate_extra_features=context.candidate_extra_features,
                 ),
                 selected_by_current_policy=context.current_policy_choice,
@@ -836,6 +850,7 @@ def candidate_table_rows_for_context(
                 "max_disagreement_px": context.max_disagreement_px,
                 "candidate_yaw_disagreement": context.candidate_yaw_disagreement,
                 "runtime_bucket": context.runtime_bucket,
+                "hard_case_tags": "|".join(context.hard_case_tags),
                 "runtime_bucket_source": context.runtime_bucket_source,
                 "selected_candidate_missing_from_eval": int(
                     context.selected_candidate_missing_from_eval
@@ -977,6 +992,7 @@ def write_rows_csv(rows: T.Sequence[CandidateQualityRow], path: Path) -> Path:
         "gap_vs_oracle",
         "runtime_bucket",
         "runtime_bucket_source",
+        "hard_case_tags",
         "risk_route",
         "geometry_veto_reasons",
         "selected_by_current_policy",

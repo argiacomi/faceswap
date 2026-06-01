@@ -133,6 +133,7 @@ def write_tagged_rows_csv(rows: T.Sequence[TaggedRow], path: Path) -> Path:
         "gap_vs_oracle",
         "runtime_bucket",
         "runtime_bucket_source",
+        "hard_case_tags",
         "risk_route",
         "geometry_veto_reasons",
         "selected_by_current_policy",

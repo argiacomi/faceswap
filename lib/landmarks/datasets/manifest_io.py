@@ -47,6 +47,7 @@ class LandmarkSample:
     landmarks: str
     dataset: str = ""
     condition: str = ""
+    conditions: tuple[str, ...] = ()
     source_schema: str = ""
     normalizer: float | None = None
     face_bbox: tuple[float, float, float, float] | None = None
@@ -119,6 +120,43 @@ def coerce_visibility(value: T.Any) -> tuple[bool, ...] | None:
     return flags
 
 
+def coerce_conditions(value: T.Any, *, fallback: str = "") -> tuple[str, ...]:
+    """Coerce manifest condition labels to a stable tuple."""
+    raw_items: T.Iterable[T.Any]
+    if isinstance(value, T.Mapping):
+        explicit_labels = value.get("labels")
+        if isinstance(explicit_labels, (list, tuple, set)):
+            raw_items = explicit_labels
+        else:
+            raw_items = [
+                key
+                for key, present in value.items()
+                if str(key).strip() and key not in {"labels", "condition", "scenario"} and present
+            ]
+            for key in ("condition", "scenario"):
+                if value.get(key):
+                    raw_items = [value[key], *raw_items]
+                    break
+    elif isinstance(value, (list, tuple, set)):
+        raw_items = value
+    elif value:
+        raw_items = (value,)
+    elif fallback:
+        raw_items = (fallback,)
+    else:
+        raw_items = ()
+
+    normalized_labels: list[str] = []
+    for item in raw_items:
+        label = str(item).strip().lower().replace("-", "_").replace(" ", "_")
+        while "__" in label:
+            label = label.replace("__", "_")
+        label = label.strip("_")
+        if label and label not in normalized_labels:
+            normalized_labels.append(label)
+    return tuple(normalized_labels)
+
+
 def bbox_from_truth_fallback(truth: np.ndarray) -> tuple[float, float, float, float] | None:
     """Return the axis-aligned bbox of ``truth`` landmarks as the fallback bbox.
 
@@ -152,6 +190,11 @@ def load_manifest(path: str | Path) -> list[LandmarkSample]:
         if not landmarks:
             raise ValueError(f"manifest entry {entry!r} missing landmarks path")
         metadata = entry.get("metadata", {}) if isinstance(entry.get("metadata"), dict) else {}
+        condition = str(entry.get("condition", entry.get("scenario", "")))
+        conditions = coerce_conditions(
+            entry.get("conditions", metadata.get("conditions")),
+            fallback=condition,
+        )
         bbox = coerce_bbox(entry.get("face_bbox", metadata.get("face_bbox")))
         if bbox is None:
             bbox = coerce_bbox(entry.get("bbox", metadata.get("bbox")))
@@ -162,7 +205,8 @@ def load_manifest(path: str | Path) -> list[LandmarkSample]:
                 image=str((base / str(entry.get("image", ""))).resolve()),
                 landmarks=str((base / landmarks).resolve()),
                 dataset=str(entry.get("dataset", "")),
-                condition=str(entry.get("condition", entry.get("scenario", ""))),
+                condition=condition,
+                conditions=conditions,
                 source_schema=str(entry.get("source_schema", metadata.get("source_schema", ""))),
                 normalizer=entry.get("normalizer", metadata.get("normalizer")),
                 face_bbox=bbox,
@@ -248,6 +292,7 @@ __all__ = [
     "bbox_for_sample",
     "bbox_from_truth_fallback",
     "coerce_bbox",
+    "coerce_conditions",
     "coerce_visibility",
     "filter_canonical_68_samples",
     "load_manifest",

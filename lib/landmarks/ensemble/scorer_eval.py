@@ -613,6 +613,7 @@ def _row_feature_values(row: T.Mapping[str, T.Any]) -> dict[str, float]:
         "gap_vs_oracle",
         "runtime_bucket",
         "runtime_bucket_source",
+        "hard_case_tags",
         "risk_route",
         "geometry_veto_reasons",
         "selected_by_current_policy",
@@ -693,6 +694,9 @@ def row_contexts_from_scorer_rows(
         current_policy_choice = str(first.get("selected_by_current_policy") or "")
         runtime_bucket = str(first.get("runtime_bucket") or "")
         runtime_bucket_source = str(first.get("runtime_bucket_source") or "")
+        hard_case_tags = tuple(
+            tag for tag in str(first.get("hard_case_tags") or "").split("|") if tag
+        )
         condition = str(first.get("condition") or "")
         selected_missing = _row_bool(first.get("selected_candidate_missing_from_eval", 0))
 
@@ -754,6 +758,7 @@ def row_contexts_from_scorer_rows(
                 oracle=oracle,
                 runtime_bucket=runtime_bucket,
                 runtime_bucket_source=runtime_bucket_source,
+                hard_case_tags=hard_case_tags,
                 risk_route=str(first.get("risk_route") or ""),
                 candidate_extra_features={},
                 scorer_rows=tuple(scorer_row_payload),
@@ -922,6 +927,7 @@ def evaluate_runtime_resolver_scorer(
                 "condition": context.condition,
                 "runtime_bucket": context.runtime_bucket,
                 "runtime_bucket_source": context.runtime_bucket_source,
+                "hard_case_tags": "|".join(getattr(context, "hard_case_tags", ())),
                 "chosen": chosen,
                 "chosen_nme": context.nme_by_candidate[chosen],
                 "chosen_failure": int(context.failure_by_candidate[chosen]),
