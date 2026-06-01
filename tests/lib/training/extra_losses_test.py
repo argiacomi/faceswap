@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import typing as T
+
 import pytest
 import torch
 from torch import nn
@@ -52,7 +54,7 @@ class _FakeRecognizer(nn.Module):
 # compute_boundary_band
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize("mode", ["inner", "outer", "both"])
-def test_boundary_band_is_non_empty(mode: str) -> None:
+def test_boundary_band_is_non_empty(mode: T.Literal["inner", "outer", "both"]) -> None:
     """A band derived from a non-trivial mask should be non-empty for every mode."""
     band = compute_boundary_band(_face_mask(), band_pixels=4, mode=mode)
     assert band.shape == (_BATCH, 1, _SIZE, _SIZE)
@@ -173,7 +175,7 @@ def test_identity_loss_is_zero_for_identical_inputs() -> None:
 
 
 @pytest.mark.parametrize("crop", ["face", "mask_bbox"])
-def test_identity_loss_forward_backward(crop: str) -> None:
+def test_identity_loss_forward_backward(crop: T.Literal["face", "mask_bbox"]) -> None:
     """Identity loss should backprop into the prediction only."""
     loss_fn = IdentityLoss(_FakeRecognizer(), input_size=16, color_order="bgr", crop=crop)
     y_true = torch.rand(_BATCH, 3, _SIZE, _SIZE)

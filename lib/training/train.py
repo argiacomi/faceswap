@@ -50,6 +50,24 @@ if T.TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+BoundaryBandMode = T.Literal["inner", "outer", "both"]
+IdentityCrop = T.Literal["face", "mask_bbox"]
+
+
+def _boundary_band_mode(value: str) -> BoundaryBandMode:
+    """Return a validated boundary band mode for BoundaryLoss."""
+    if value not in ("inner", "outer", "both"):
+        raise ValueError(f"Invalid boundary band mode: {value!r}")
+    return T.cast(BoundaryBandMode, value)
+
+
+def _identity_crop(value: str) -> IdentityCrop:
+    """Return a validated identity-loss crop mode for IdentityLoss."""
+    if value not in ("face", "mask_bbox"):
+        raise ValueError(f"Invalid identity loss crop: {value!r}")
+    return T.cast(IdentityCrop, value)
+
+
 # Suppress non-Faceswap related Keras warning about backend padding mismatches
 warnings.filterwarnings(
     "ignore", message="You might experience inconsistencies", category=UserWarning
@@ -219,7 +237,7 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
             boundary_loss = BoundaryLoss(
                 mod_cfg.Loss.boundary_loss_function(),
                 mod_cfg.Loss.boundary_band_pixels(),
-                mod_cfg.Loss.boundary_band_mode(),
+                _boundary_band_mode(mod_cfg.Loss.boundary_band_mode()),
                 self._model.color_order,
             )
 
@@ -244,7 +262,7 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
                 recognizer,
                 input_size,
                 self._model.color_order,
-                crop=mod_cfg.Loss.identity_loss_crop(),
+                crop=_identity_crop(mod_cfg.Loss.identity_loss_crop()),
             )
 
         return boundary_loss, region_perceptual_loss, identity_loss
