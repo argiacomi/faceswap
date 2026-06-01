@@ -22,6 +22,7 @@ from lib.landmarks.ensemble.runtime_resolver import (
     _high_risk_safe_fallback_candidate,
 )
 from lib.landmarks.ensemble.runtime_resolver_scorer import (
+    RuntimeResolverLightGBMScorer,
     RuntimeResolverScorer,
     load_runtime_resolver_scorer,
 )
@@ -47,6 +48,8 @@ from lib.landmarks.pipeline_conventions import (
     SOURCE_GT_HARD,
     SOURCE_PRODUCTION_VALIDATED,
 )
+
+RuntimeResolverScorerLike = RuntimeResolverScorer | RuntimeResolverLightGBMScorer
 
 DEFAULT_RISK_FLOOR_FOR_SAFE_FALLBACK = 0.50
 DEFAULT_SAFE_FALLBACK_MIN_DELTA = 0.05
@@ -372,11 +375,13 @@ def split_labels_for_context(
     tags = _condition_tags(context)
     selected = choices.get(context.sample_id, "")
     labels: list[str] = []
-    if not any("profile" in tag or "large_yaw" in tag or "yaw_" in tag for tag in tags):
+    is_profile_like = any("profile" in tag or "large_yaw" in tag or "yaw_" in tag for tag in tags)
+    is_occlusion_like = any("occlusion" in tag or "occluded" in tag for tag in tags)
+    if not is_profile_like and not is_occlusion_like:
         labels.append("normal")
     if any("profile" in tag for tag in tags):
         labels.append("profile")
-    if any("occlusion" in tag or "occluded" in tag for tag in tags):
+    if is_occlusion_like:
         labels.append("occlusion")
     if "profile_occlusion" in tags or "rolled_profile_occlusion" in tags:
         labels.append("profile_occlusion")
@@ -446,33 +451,46 @@ def split_metric_summary(
 
 def _indices_for_region(context: T.Any, region: str) -> tuple[int, ...]:
     if region in {"jaw", "brows", "eyes", "nose", "mouth"}:
-        spans = SCORER_REGION_RANGES[region]
+        return _indices_for_spans(SCORER_REGION_RANGES[region])
+
+    visibility = getattr(context, "visibility", None)
+    right_hidden = 0
+    left_hidden = 0
+    has_side_evidence = False
+
+    if visibility is not None and len(visibility) >= 48:
+        right_indices = _indices_for_spans(SCORER_REGION_RANGES["right_side"])
+        left_indices = _indices_for_spans(SCORER_REGION_RANGES["left_side"])
+        right_hidden = sum(1 for index in right_indices if not bool(visibility[index]))
+        left_hidden = sum(1 for index in left_indices if not bool(visibility[index]))
+        has_side_evidence = right_hidden != left_hidden
+
+    yaw = getattr(context, "yaw_estimate", None)
+    if right_hidden == left_hidden and yaw is not None:
+        try:
+            yaw_value = float(yaw)
+        except (TypeError, ValueError):
+            yaw_value = 0.0
+        if yaw_value < 0.0:
+            right_hidden += 1
+            has_side_evidence = True
+        elif yaw_value > 0.0:
+            left_hidden += 1
+            has_side_evidence = True
+
+    if not has_side_evidence or right_hidden == left_hidden:
+        return ()
+
+    if right_hidden > left_hidden:
+        occluded = "right_side"
+        visible = "left_side"
     else:
-        visibility = getattr(context, "visibility", None)
-        right_hidden = 0
-        left_hidden = 0
-        if visibility is not None and len(visibility) >= 48:
-            right_indices = _indices_for_spans(SCORER_REGION_RANGES["right_side"])
-            left_indices = _indices_for_spans(SCORER_REGION_RANGES["left_side"])
-            right_hidden = sum(1 for index in right_indices if not bool(visibility[index]))
-            left_hidden = sum(1 for index in left_indices if not bool(visibility[index]))
-        yaw = getattr(context, "yaw_estimate", None)
-        if right_hidden == left_hidden and yaw is not None:
-            try:
-                if float(yaw) < 0:
-                    right_hidden += 1
-                elif float(yaw) > 0:
-                    left_hidden += 1
-            except (TypeError, ValueError):
-                pass
-        if right_hidden >= left_hidden:
-            occluded = "right_side"
-            visible = "left_side"
-        else:
-            occluded = "left_side"
-            visible = "right_side"
-        spans = SCORER_REGION_RANGES[occluded if region == "occluded_side" else visible]
-    return _indices_for_spans(spans)
+        occluded = "left_side"
+        visible = "right_side"
+
+    return _indices_for_spans(
+        SCORER_REGION_RANGES[occluded if region == "occluded_side" else visible]
+    )
 
 
 def _indices_for_spans(spans: T.Sequence[tuple[int, int]]) -> tuple[int, ...]:
@@ -557,6 +575,8 @@ def write_region_reports(
             splits = ("normal",)
         for region in SCORER_REGION_NAMES:
             indices = _indices_for_region(context, region)
+            if not indices:
+                continue
             selected_nme = _region_nme(
                 selected_candidate.landmarks,
                 truth,
@@ -652,12 +672,22 @@ def write_region_reports(
         json.dump({"samples_by_region": worst}, handle, indent=2, sort_keys=True)
         handle.write("\n")
 
+    unavailable_reason = ""
+    if not detail_rows:
+        if not contexts:
+            unavailable_reason = "no_contexts"
+        elif all(getattr(context, "truth_landmarks", None) is None for context in contexts):
+            unavailable_reason = "missing_truth_landmarks"
+        else:
+            unavailable_reason = "no_region_rows"
+
     return {
         "region_sample_rows": len(detail_rows),
         "per_region_nme_csv": str(output_dir / PER_REGION_NME_CSV),
         "per_region_geometry_csv": str(output_dir / PER_REGION_GEOMETRY_CSV),
         "per_region_worst_samples_json": str(output_dir / PER_REGION_WORST_SAMPLES_JSON),
         "region_metrics_available": bool(detail_rows),
+        "region_metrics_unavailable_reason": unavailable_reason,
     }
 
 
@@ -734,7 +764,7 @@ def fallback_impact_summary(impacts: T.Sequence[dict[str, T.Any]]) -> dict[str, 
     }
 
 
-def scorer_policy_key(scorer: RuntimeResolverScorer) -> str:
+def scorer_policy_key(scorer: RuntimeResolverScorerLike) -> str:
     """Return the stable report key for a scorer artifact."""
     if (
         scorer.model_type == MODEL_TYPE_LINEAR_REGRESSION
@@ -744,7 +774,7 @@ def scorer_policy_key(scorer: RuntimeResolverScorer) -> str:
     return "current_binary_logistic_scorer"
 
 
-def scorer_policy_key_for_path(path: Path, scorer: RuntimeResolverScorer) -> str:
+def scorer_policy_key_for_path(path: Path, scorer: RuntimeResolverScorerLike) -> str:
     """Return a stable policy key for a scorer path/artifact."""
     name = path.stem
     if name in LEARNED_POLICIES:
@@ -762,7 +792,7 @@ def scorer_policy_key_for_path(path: Path, scorer: RuntimeResolverScorer) -> str
 
 def score_policy_choices(
     contexts: T.Sequence[SampleCandidateContext],
-    scorer: RuntimeResolverScorer,
+    scorer: RuntimeResolverScorerLike,
     *,
     risk_floor_for_safe_fallback: float,
     safe_fallback_min_delta: float,
@@ -783,7 +813,7 @@ def score_policy_choices(
 
 def load_installed_policy_scorers(
     scorer_dir: Path | None,
-) -> tuple[str, dict[str, RuntimeResolverScorer], str]:
+) -> tuple[str, dict[str, RuntimeResolverScorerLike], str]:
     """Load installed current production scorers keyed by runtime policy."""
     if scorer_dir is None:
         return "", {}, "not_configured"
@@ -811,7 +841,7 @@ def load_installed_policy_scorers(
         if bundle is not None and (bundle.bundle_dir / "scorers").resolve() == scorer_dir:
             active_policy = str(bundle.active_policy or "")
 
-    scorers: dict[str, RuntimeResolverScorer] = {}
+    scorers: dict[str, RuntimeResolverScorerLike] = {}
     for path in sorted(scorer_dir.glob("*.json")):
         try:
             scorer = load_runtime_resolver_scorer(path)
@@ -871,7 +901,7 @@ def installed_baseline_promotion_gates(
     return gates
 
 
-def assert_lower_score_is_better(scorer: RuntimeResolverScorer) -> None:
+def assert_lower_score_is_better(scorer: RuntimeResolverScorerLike) -> None:
     """Fail fast if a scorer artifact cannot be ranked by ascending score."""
     if scorer.higher_is_better:
         raise ValueError(

@@ -214,6 +214,34 @@ def test_stored_non_hard_condition_does_not_seed_hard_case_tags() -> None:
     assert tags == ("occlusion",)
 
 
+def test_split_labels_do_not_count_occlusion_as_normal() -> None:
+    context = SimpleNamespace(
+        sample_id="sample",
+        source="gt_hard",
+        dataset="test",
+        condition="occlusion",
+        runtime_bucket="frontal",
+        hard_case_tags=("occlusion",),
+        failure_by_candidate={"hrnet": False},
+    )
+
+    labels = scorer_eval_impl.split_labels_for_context(
+        context,
+        choices={"sample": "hrnet"},
+        source_by_sample_id={},
+    )
+
+    assert "occlusion" in labels
+    assert "normal" not in labels
+
+
+def test_occluded_side_requires_visibility_or_yaw_evidence() -> None:
+    context = SimpleNamespace(visibility=None, yaw_estimate=0.0)
+
+    assert scorer_eval_impl._indices_for_region(context, "occluded_side") == ()
+    assert scorer_eval_impl._indices_for_region(context, "visible_side") == ()
+
+
 def test_rows_for_context_adds_continuous_regret_targets() -> None:
     rows = scorer_data.rows_for_context(
         _candidate_context(
