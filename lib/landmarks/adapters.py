@@ -205,11 +205,13 @@ class FaceswapAlignerAdapter(LandmarkAdapter):
         *,
         input_is_rgb: bool = True,
         input_scale: tuple[int, int] = (0, 1),
+        compile_mode: str = "off",
     ) -> None:
         super().__init__(config)
         self.plugin = plugin
         self._input_is_rgb = input_is_rgb
         self._input_scale = input_scale
+        self._compile_mode = compile_mode
 
     def load_model(self) -> object:
         """Load the wrapped plugin model if it exposes the normal Faceswap hook."""
@@ -217,6 +219,19 @@ class FaceswapAlignerAdapter(LandmarkAdapter):
             return self.plugin
         model = self.plugin.load_model()
         self.plugin.model = model  # type: ignore[attr-defined]
+        if self._compile_mode != "off":
+            from lib.infer.compile_modes import resolve_compile_policy
+            from lib.infer.plugin_utils import compile_models, get_torch_modules
+
+            policy = resolve_compile_policy(
+                self._compile_mode,
+                backend=_compile_backend_for_plugin(self.plugin),
+            )
+            compile_models(
+                self.plugin,  # type: ignore[arg-type]
+                get_torch_modules(model),
+                policy,
+            )
         return model
 
     def _format_images(self, images: np.ndarray) -> np.ndarray:
@@ -304,20 +319,58 @@ def _set_plugin_device(plugin: object, device: str | None) -> None:
         return
     torch_infer = getattr(plugin, "_torch", None)
     if torch_infer is None:
+        if device != "cpu":
+            raise RuntimeError(
+                f"device '{device}' was requested, but plugin {type(plugin).__name__} "
+                "does not expose a torch inference backend"
+            )
         return
     try:
         import torch
     except ImportError as err:  # pragma: no cover - torch is present in normal Faceswap envs
         raise RuntimeError("device selection for landmark adapters requires torch") from err
+    if device == "gpu":
+        if torch.cuda.is_available():
+            device = "cuda"
+        elif (
+            getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available()
+        ):
+            device = "mps"
+        else:
+            raise RuntimeError(
+                "GPU device requested, but no CUDA/ROCm or MPS accelerator is available"
+            )
+    if device.startswith("cuda") and not torch.cuda.is_available():
+        raise RuntimeError(f"CUDA/ROCm device requested, but torch cannot use device '{device}'")
+    if device == "mps" and not (
+        getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available()
+    ):
+        raise RuntimeError("MPS device requested, but torch.backends.mps is not available")
     torch_device = torch.device(device)
     torch_infer.device = torch_device
     torch_infer._use_pinned = torch.cuda.is_available() and torch_device.type == "cuda"
+
+
+def _compile_backend_for_plugin(
+    plugin: object,
+) -> T.Literal["nvidia", "cpu", "apple_silicon", "rocm"]:
+    """Return the compile backend matching the plugin's actual torch device."""
+    device = getattr(plugin, "device", None)
+    device_type = getattr(device, "type", "cpu")
+    if device_type == "cuda":
+        import torch
+
+        return "rocm" if getattr(torch.version, "hip", None) else "nvidia"
+    if device_type == "mps":
+        return "apple_silicon"
+    return "cpu"
 
 
 def build_landmark_adapter(
     model_name: str,
     *,
     device: str | None = None,
+    compile_mode: str = "off",
     input_is_rgb: bool = False,
     input_scale: tuple[int, int] = (0, 255),
 ) -> LandmarkAdapter:
@@ -348,4 +401,5 @@ def build_landmark_adapter(
         plugin,
         input_is_rgb=input_is_rgb,
         input_scale=input_scale,
+        compile_mode=compile_mode,
     )

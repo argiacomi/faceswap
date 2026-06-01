@@ -88,6 +88,8 @@ STAGES: tuple[str, ...] = (
 DEFAULT_MODELS = "fan,hrnet,spiga,orformer"
 DEFAULT_CANDIDATES = "fan,hrnet,spiga,orformer,plain_average,static_weighted,static_weighted_downweight,static_weighted_hard_drop,weighted_median"
 DEFAULT_HARD_SOURCE_DATASET = "aflw2000-3d"
+DEFAULT_PREDICTION_CACHE_DEVICE = "gpu"
+DEFAULT_PREDICTION_CACHE_COMPILE = "default"
 BASE_DATASET_MANIFEST_SENTINEL_FILENAME = ".base_dataset_manifest_complete.json"
 BASE_CACHE_SENTINEL_FILENAME = ".base_prediction_cache_complete.json"
 HARD_SOURCE_CACHE_SENTINEL_FILENAME = ".hard_source_prediction_cache_complete.json"
@@ -621,11 +623,21 @@ def _prediction_cache_mode(args: argparse.Namespace) -> str:
     return str(getattr(args, "prediction_cache_mode", "run-models"))
 
 
+def _prediction_cache_device(args: argparse.Namespace) -> str:
+    return str(getattr(args, "prediction_cache_device", DEFAULT_PREDICTION_CACHE_DEVICE))
+
+
+def _prediction_cache_compile(args: argparse.Namespace) -> str:
+    return str(getattr(args, "prediction_cache_compile", DEFAULT_PREDICTION_CACHE_COMPILE))
+
+
 def _append_prediction_cache_mode(
     args: argparse.Namespace, argv: list[str], extra: T.Sequence[str]
 ) -> list[str]:
     if _prediction_cache_mode(args) == "run-models":
         argv.append("--run-models")
+        argv.extend(["--device", _prediction_cache_device(args)])
+        argv.extend(["--compile", _prediction_cache_compile(args)])
     return _append_extra(argv, extra)
 
 
@@ -762,6 +774,8 @@ def _write_cache_sentinel(
     manifest: Path,
     models: str,
     mode: str,
+    device: str,
+    compile_mode: str,
     extra_args: T.Sequence[str],
 ) -> None:
     write_json(
@@ -771,6 +785,8 @@ def _write_cache_sentinel(
             "manifest_sha256": _sha256_file(manifest),
             "models": models,
             "mode": mode,
+            "device": device,
+            "compile_mode": compile_mode,
             "extra_args": list(extra_args),
         },
     )
@@ -1431,6 +1447,8 @@ def _cache_sentinel_matches(
     manifest: Path,
     models: str,
     mode: str,
+    device: str,
+    compile_mode: str,
     extra_args: T.Sequence[str],
 ) -> bool:
     payload = _read_json(path)
@@ -1442,6 +1460,8 @@ def _cache_sentinel_matches(
         and payload.get("manifest_sha256") == expected_hash
         and payload.get("models") == models
         and payload.get("mode") == mode
+        and payload.get("device") == device
+        and payload.get("compile_mode") == compile_mode
         and payload.get("extra_args") == list(extra_args)
     )
 
@@ -1691,6 +1711,8 @@ def _stage_complete(stage: str, args: argparse.Namespace, paths: PipelinePaths) 
             manifest=paths.run_manifest,
             models=args.models,
             mode=_prediction_cache_mode(args),
+            device=_prediction_cache_device(args),
+            compile_mode=_prediction_cache_compile(args),
             extra_args=getattr(args, "cache_prediction_arg", []),
         )
     if stage == "build_hard_source_prediction_cache":
@@ -1699,6 +1721,8 @@ def _stage_complete(stage: str, args: argparse.Namespace, paths: PipelinePaths) 
             manifest=_effective_hard_source_manifest(args, paths),
             models=args.models,
             mode=_prediction_cache_mode(args),
+            device=_prediction_cache_device(args),
+            compile_mode=_prediction_cache_compile(args),
             extra_args=getattr(args, "hard_source_cache_prediction_arg", []),
         )
     if stage == "build_production_prediction_cache":
@@ -1707,6 +1731,8 @@ def _stage_complete(stage: str, args: argparse.Namespace, paths: PipelinePaths) 
             manifest=paths.production_manifest,
             models=args.models,
             mode=_prediction_cache_mode(args),
+            device=_prediction_cache_device(args),
+            compile_mode=_prediction_cache_compile(args),
             extra_args=getattr(args, "production_cache_prediction_arg", []),
         )
     if stage == "build_production_resolver_metadata":
@@ -2116,6 +2142,8 @@ def _validate_stage_outputs(
             manifest=paths.run_manifest,
             models=args.models,
             mode=_prediction_cache_mode(args),
+            device=_prediction_cache_device(args),
+            compile_mode=_prediction_cache_compile(args),
             extra_args=getattr(args, "cache_prediction_arg", []),
         )
     ):
@@ -2130,6 +2158,8 @@ def _validate_stage_outputs(
             manifest=_effective_hard_source_manifest(args, paths),
             models=args.models,
             mode=_prediction_cache_mode(args),
+            device=_prediction_cache_device(args),
+            compile_mode=_prediction_cache_compile(args),
             extra_args=getattr(args, "hard_source_cache_prediction_arg", []),
         )
     ):
@@ -2145,6 +2175,8 @@ def _validate_stage_outputs(
             manifest=paths.production_manifest,
             models=args.models,
             mode=_prediction_cache_mode(args),
+            device=_prediction_cache_device(args),
+            compile_mode=_prediction_cache_compile(args),
             extra_args=getattr(args, "production_cache_prediction_arg", []),
         )
     ):
@@ -2612,6 +2644,8 @@ def _execute_stage(stage: str, args: argparse.Namespace, paths: PipelinePaths) -
                 manifest=paths.run_manifest,
                 models=args.models,
                 mode=_prediction_cache_mode(args),
+                device=_prediction_cache_device(args),
+                compile_mode=_prediction_cache_compile(args),
                 extra_args=getattr(args, "cache_prediction_arg", []),
             )
         elif stage == "build_hard_source_prediction_cache":
@@ -2626,6 +2660,8 @@ def _execute_stage(stage: str, args: argparse.Namespace, paths: PipelinePaths) -
                 manifest=_effective_hard_source_manifest(args, paths),
                 models=args.models,
                 mode=_prediction_cache_mode(args),
+                device=_prediction_cache_device(args),
+                compile_mode=_prediction_cache_compile(args),
                 extra_args=getattr(args, "hard_source_cache_prediction_arg", []),
             )
         elif stage == "build_splits":
@@ -2703,6 +2739,8 @@ def _execute_stage(stage: str, args: argparse.Namespace, paths: PipelinePaths) -
                 manifest=paths.production_manifest,
                 models=args.models,
                 mode=_prediction_cache_mode(args),
+                device=_prediction_cache_device(args),
+                compile_mode=_prediction_cache_compile(args),
                 extra_args=getattr(args, "production_cache_prediction_arg", []),
             )
         elif stage == "build_production_resolver_metadata":
@@ -2974,6 +3012,8 @@ def _summary_payload(
         "overwrite_from": str(getattr(args, "overwrite_from", "") or ""),
         "force_downstream_of": str(getattr(args, "force_downstream_of", "") or ""),
         "prediction_cache_mode": _prediction_cache_mode(args),
+        "prediction_cache_device": _prediction_cache_device(args),
+        "prediction_cache_compile": _prediction_cache_compile(args),
         "stages": [_jsonable(row.__dict__) for row in results],
         "config_update": {
             "config_path": str(args.config_path),
@@ -3235,6 +3275,27 @@ def _parser() -> argparse.ArgumentParser:
             "How cache_predictions.py should populate caches. Defaults to run-models "
             "for end-to-end runs; fixtures preserves precomputed prediction import behavior."
         ),
+    )
+    parser.add_argument(
+        "--prediction-cache-device",
+        default=DEFAULT_PREDICTION_CACHE_DEVICE,
+        help=(
+            "Torch device passed to cache_predictions.py for run-model cache stages. "
+            "The default 'gpu' requires CUDA/ROCm or MPS and will not silently use CPU. "
+            "Use 'cpu' only for explicit CPU/debug runs."
+        ),
+    )
+    parser.add_argument(
+        "--prediction-cache-compile",
+        default=DEFAULT_PREDICTION_CACHE_COMPILE,
+        choices=(
+            "off",
+            "default",
+            "reduce-overhead",
+            "max-autotune",
+            "max-autotune-no-cudagraphs",
+        ),
+        help="Torch compile mode passed to cache_predictions.py for run-model cache stages.",
     )
     parser.add_argument(
         "--allow-image-backfill",

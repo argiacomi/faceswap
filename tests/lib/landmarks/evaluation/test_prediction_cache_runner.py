@@ -267,9 +267,12 @@ def test_model_runner_dispatch_builds_selected_adapters(monkeypatch: pytest.Monk
     monkeypatch.setattr(cache_predictions, "build_landmark_adapter", fake_build_landmark_adapter)
 
     adapters = cache_predictions._build_model_adapters(
-        ("hrnet", "spiga", "orformer"), device="cpu"
+        ("hrnet", "spiga", "orformer"),
+        device="cpu",
+        compile_mode="reduce-overhead",
     )
 
     assert tuple(adapters) == ("hrnet", "spiga", "orformer")
     assert [name for name, _kwargs in seen] == ["hrnet", "spiga", "orformer"]
     assert all(kwargs["device"] == "cpu" for _name, kwargs in seen)
+    assert all(kwargs["compile_mode"] == "reduce-overhead" for _name, kwargs in seen)

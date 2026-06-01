@@ -87,6 +87,8 @@ def _args(tmp_path: Path, **overrides: object) -> argparse.Namespace:
         "v2_iterations": 150,
         "v2_num_leaves": 31,
         "prediction_cache_mode": "run-models",
+        "prediction_cache_device": "gpu",
+        "prediction_cache_compile": "default",
         "allow_image_backfill": True,
         "dataset_build_arg": [],
         "hard_source_dataset_build_arg": [],
@@ -305,6 +307,8 @@ def test_pipeline_runner_dry_run_writes_summaries_contracts_and_progress(tmp_pat
     assert summary["selected_production_policy"] == "learned_quality_v1_1"
     assert summary["promoted_scorer_version"] == "continuous_regret_v1_1"
     assert summary["promoted_scorer_target"] == "selection_cost"
+    assert summary["prediction_cache_device"] == "gpu"
+    assert summary["prediction_cache_compile"] == "default"
     # Path-bearing keys are no longer written into extract.ini — runtime
     # resolves artifacts from the installed production bundle instead.
     assert "resolver_scorer_path" not in summary["config_fields_changed"]
@@ -458,6 +462,8 @@ def test_hard_source_manifest_and_cache_default_to_aflw2000_3d(
     assert cache_command[cache_command.index("--manifest") + 1] == str(paths.hard_source_manifest)
     assert cache_command[cache_command.index("--cache-dir") + 1] == str(paths.run_cache)
     assert "--run-models" in cache_command
+    assert cache_command[cache_command.index("--device") + 1] == "gpu"
+    assert cache_command[cache_command.index("--compile") + 1] == "default"
     assert "--hard-cache-extra" in cache_command
 
 
@@ -523,6 +529,8 @@ def test_hard_source_cache_resume_rejects_sentinel_for_different_manifest(
                 ).hexdigest(),
                 "models": args.models,
                 "mode": args.prediction_cache_mode,
+                "device": args.prediction_cache_device,
+                "compile_mode": args.prediction_cache_compile,
                 "extra_args": args.hard_source_cache_prediction_arg,
             }
         )
@@ -635,7 +643,23 @@ def test_production_prediction_cache_command_uses_production_manifest_and_cache(
     assert command[command.index("--cache-dir") + 1] == str(paths.production_cache)
     assert command[command.index("--models") + 1] == args.models
     assert "--run-models" in command
+    assert command[command.index("--device") + 1] == "gpu"
+    assert command[command.index("--compile") + 1] == "default"
     assert "--extra-cache-option" in command
+
+
+def test_prediction_cache_device_and_compile_are_configurable(tmp_path: Path) -> None:
+    args = _args(
+        tmp_path,
+        prediction_cache_device="cuda:1",
+        prediction_cache_compile="reduce-overhead",
+    )
+    paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
+
+    command = _command_production_prediction_cache(args, paths)
+
+    assert command[command.index("--device") + 1] == "cuda:1"
+    assert command[command.index("--compile") + 1] == "reduce-overhead"
 
 
 def test_production_resolver_metadata_command_writes_image_aware_sidecar(
@@ -661,6 +685,8 @@ def test_prediction_cache_mode_fixtures_does_not_add_run_models(tmp_path: Path) 
 
     assert "--run-models" not in _command_production_prediction_cache(args, paths)
     assert "--run-models" not in _command_hard_source_prediction_cache(args, paths)
+    assert "--device" not in _command_production_prediction_cache(args, paths)
+    assert "--compile" not in _command_production_prediction_cache(args, paths)
 
 
 def test_candidate_search_contract_requires_built_production_prediction_cache(

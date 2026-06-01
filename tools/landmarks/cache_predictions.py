@@ -368,6 +368,7 @@ def _model_config(
     model_roi: np.ndarray,
     roi_source: str,
     device: str,
+    compile_mode: str,
 ) -> dict[str, T.Any]:
     """Return cache config metadata for a model/sample prediction run."""
     plugin = getattr(adapter, "plugin", None)
@@ -382,14 +383,21 @@ def _model_config(
         "model_roi": [float(value) for value in model_roi.tolist()],
         "roi_source": roi_source,
         "device": device,
+        "compile_mode": compile_mode,
     }
 
 
-def _build_model_adapters(models: T.Sequence[str], *, device: str) -> dict[str, LandmarkAdapter]:
+def _build_model_adapters(
+    models: T.Sequence[str], *, device: str, compile_mode: str = "off"
+) -> dict[str, LandmarkAdapter]:
     """Build and load model adapters for CLI prediction generation."""
     adapters = {
         model: build_landmark_adapter(
-            model, device=device, input_is_rgb=False, input_scale=(0, 255)
+            model,
+            device=device,
+            compile_mode=compile_mode,
+            input_is_rgb=False,
+            input_scale=(0, 255),
         )
         for model in models
     }
@@ -411,6 +419,7 @@ def _prepare_run_items(
     allow_gt_roi: bool,
     gt_roi_scale: float = 1.0,
     device: str,
+    compile_mode: str = "off",
 ) -> tuple[list[_RunItem], int]:
     """Build run plans and count reusable cache hits."""
     items: list[_RunItem] = []
@@ -433,6 +442,7 @@ def _prepare_run_items(
             model_roi=model_roi,
             roi_source=roi_source,
             device=device,
+            compile_mode=compile_mode,
         )
         if not refresh and _fresh_cached_run(
             cache,
@@ -468,6 +478,7 @@ def _run_model_predictions(
     refresh: bool,
     allow_gt_roi: bool,
     gt_roi_scale: float = 1.0,
+    compile_mode: str = "off",
     adapters: dict[str, LandmarkAdapter] | None = None,
 ) -> tuple[int, int]:
     """Run selected model adapters from a manifest into the disk cache."""
@@ -475,7 +486,9 @@ def _run_model_predictions(
     raw_entries = {_entry_id(entry): entry for entry in _load_manifest_entries(manifest_path)}
     cache = DiskPredictionCache(cache_dir)
     loaded_adapters = (
-        adapters if adapters is not None else _build_model_adapters(models, device=device)
+        adapters
+        if adapters is not None
+        else _build_model_adapters(models, device=device, compile_mode=compile_mode)
     )
     written = 0
     reused = 0
@@ -493,6 +506,7 @@ def _run_model_predictions(
             allow_gt_roi=allow_gt_roi,
             gt_roi_scale=gt_roi_scale,
             device=device,
+            compile_mode=compile_mode,
         )
         reused += model_reused
         if model_reused:
@@ -604,7 +618,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--device",
         default="auto",
-        help="Torch device for model adapters, e.g. auto, cpu, cuda, cuda:0, or mps.",
+        help="Torch device for model adapters, e.g. auto, gpu, cpu, cuda, cuda:0, or mps.",
+    )
+    parser.add_argument(
+        "--compile",
+        default="off",
+        choices=(
+            "off",
+            "default",
+            "reduce-overhead",
+            "max-autotune",
+            "max-autotune-no-cudagraphs",
+        ),
+        help="Torch compile mode for model adapters when using --run-models.",
     )
     parser.add_argument(
         "--no-gt-roi",
@@ -645,6 +671,7 @@ def main(argv: list[str] | None = None) -> int:
                 refresh=args.refresh,
                 allow_gt_roi=not args.no_gt_roi,
                 gt_roi_scale=args.gt_roi_scale,
+                compile_mode=args.compile,
             )
         else:
             written, reused = _import_manifest_predictions(args)
