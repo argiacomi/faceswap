@@ -43,9 +43,6 @@ if T.TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# TODO roll back to max and refine
-
-
 class ModelProfile:
     """Benchmark a single PyTorch GPU plugin for inference
 
@@ -244,10 +241,14 @@ class DataTracker:  # pylint:disable=too-many-instance-attributes
     """The processed batch size configurations including failed tests"""
     _iterations: npt.NDArray[np.int64] = field(init=False)
     """Iterations put through each plugin at each testing phase"""
-    _batch_size_adjust: npt.NDArray[np.int64] = field(init=False)
-    """Amount to adjust batch sizes by when we are approaching VRAM limits"""
     _success: npt.NDArray[np.bool_] = field(init=False)
     """Booleans that show if each test successfully completed or OOM'd"""
+    _changed_indices: list[int] = field(init=False, default_factory=list)
+    """The plugin index adjusted for each tested batch-size row"""
+    _visited_batch_sizes: set[tuple[int, ...]] = field(init=False, default_factory=set)
+    """Batch-size combinations that have already been scheduled"""
+    _failed_batch_sizes: set[tuple[int, ...]] = field(init=False, default_factory=set)
+    """Batch-size combinations that failed or exceeded the configured VRAM limit"""
 
     _lock: Lock = field(init=False, default_factory=Lock)
     """Threading lock for updating iteration counts"""
@@ -267,7 +268,9 @@ class DataTracker:  # pylint:disable=too-many-instance-attributes
         self.vram_limit = accelerator_total_memory() * max_vram
         self._all_batch_sizes = np.ones((1, size), dtype=np.int64)
         self._success = np.array([True], dtype=bool)
-        self._batch_size_adjust = np.zeros((size,), dtype=np.int64) - 1
+        self._changed_indices = [-1]
+        self._visited_batch_sizes = {self._batch_key(self._all_batch_sizes[0])}
+        self._failed_batch_sizes = set()
         self._iterations = (
             np.zeros(
                 (
@@ -377,30 +380,124 @@ class DataTracker:  # pylint:disable=too-many-instance-attributes
         logger.debug("[%s] Calculated Average samples/plugin: %s", self._name, retval.tolist())
         return retval
 
+    @classmethod
+    def _batch_key(cls, batch_sizes: npt.NDArray[np.int64]) -> tuple[int, ...]:
+        """Return a hashable key for a batch-size combination."""
+        return tuple(int(size) for size in batch_sizes)
+
     def _handle_oom(self) -> None:
-        """Update :attr:`_batch_size_adjust` in cases when we hit an OOM or exceeded our VRAM
-        threshold. In these instances we will either shrink our search window, or exit if we have
-        gone as far as we can"""
+        """Mark the latest row as failed."""
         if not self.has_oom:
             return
         self._success[-1] = False
+        failed_key = self._batch_key(self._all_batch_sizes[-1])
+        self._failed_batch_sizes.add(failed_key)
 
-        changed_mask = self._all_batch_sizes[-1] != self._all_batch_sizes[-2]
-        diff = abs(
-            self._all_batch_sizes[-1][changed_mask] - self._all_batch_sizes[-2][changed_mask]
-        )
-        if diff <= 4:
+        changed_idx = self._changed_indices[-1]
+        if changed_idx < 0:
             logger.debug(
-                "[%s] Minimum batch size adjustment hit. All combos exhausted",
+                "[%s] Minimum batch size failed. All combos exhausted",
                 self._name,
             )
             self.combos_exhausted = True
             return
-        self._batch_size_adjust[changed_mask] = diff // 2
+
         logger.debug(
-            "[%s] batch_size_adjust updated to: %s",
+            "[%s] batch sizes marked as failed: %s",
             self._name,
-            self._batch_size_adjust.tolist(),
+            failed_key,
+        )
+
+    def _dominates_failed(self, batch_sizes: tuple[int, ...]) -> bool:
+        """Return ``True`` if the batch sizes are known to be above a failed combination."""
+        return any(
+            all(
+                candidate >= failed
+                for candidate, failed in zip(batch_sizes, failed_key, strict=False)
+            )
+            for failed_key in self._failed_batch_sizes
+        )
+
+    def _dominates_success(self, batch_sizes: tuple[int, ...]) -> bool:
+        """Return ``True`` if an already-successful combination covers these batch sizes."""
+        return any(
+            all(
+                success >= candidate
+                for success, candidate in zip(success_key, batch_sizes, strict=False)
+            )
+            for success_key in (self._batch_key(sizes) for sizes in self.batch_sizes)
+        )
+
+    def _nearest_failed_upper(
+        self, batch_sizes: npt.NDArray[np.int64], plugin_idx: int
+    ) -> int | None:
+        """Return the nearest failed upper bound for a single plugin dimension.
+
+        A failed combination bounds the candidate if every other plugin in that
+        failed combination is less than or equal to the successful base. This
+        preserves monotonic VRAM behavior without globally capping a plugin when
+        another plugin could be reduced to free memory.
+        """
+        current_size = int(batch_sizes[plugin_idx])
+        upper_size: int | None = None
+        for failed_key in self._failed_batch_sizes:
+            failed_size = failed_key[plugin_idx]
+            if failed_size <= current_size:
+                continue
+            if any(
+                failed_key[idx] > int(size)
+                for idx, size in enumerate(batch_sizes)
+                if idx != plugin_idx
+            ):
+                continue
+            upper_size = failed_size if upper_size is None else min(upper_size, failed_size)
+        return upper_size
+
+    def _next_batch_candidate(
+        self, batch_sizes: npt.NDArray[np.int64], plugin_idx: int
+    ) -> npt.NDArray[np.int64] | None:
+        """Return the next untested batch candidate for a plugin, if one exists."""
+        current_size = int(batch_sizes[plugin_idx])
+        upper_size = self._nearest_failed_upper(batch_sizes, plugin_idx)
+
+        if upper_size is None:
+            next_size = current_size * 2
+        else:
+            if current_size + 1 >= upper_size:
+                return None
+            next_size = current_size + max(1, (upper_size - current_size) // 2)
+
+        if next_size <= current_size:
+            return None
+
+        candidate = batch_sizes.copy()
+        candidate[plugin_idx] = next_size
+        candidate_key = self._batch_key(candidate)
+        if (
+            candidate_key in self._visited_batch_sizes
+            or self._dominates_failed(candidate_key)
+            or self._dominates_success(candidate_key)
+        ):
+            return None
+        return candidate
+
+    @classmethod
+    def _candidate_score(
+        cls,
+        samples: npt.NDArray[np.float64],
+        batch_sizes: npt.NDArray[np.int64],
+        plugin_idx: int,
+    ) -> tuple[float, float, float, int]:
+        """Return a deterministic score for choosing the next frontier candidate."""
+        if len(samples) == 1:
+            potential_min = float(samples[plugin_idx] * 2.0)
+        else:
+            potential_min = float(np.delete(samples, plugin_idx).min())
+        return (
+            potential_min,
+            float(samples.min()),
+            float(samples[plugin_idx]),
+            -int(batch_sizes.sum()),
         )
 
     def add_next_batch_sizes(self) -> None:
@@ -409,18 +506,39 @@ class DataTracker:  # pylint:disable=too-many-instance-attributes
         self._handle_oom()
         if self.combos_exhausted:
             return
+        if not len(self.batch_sizes):
+            logger.debug("[%s] No viable batch size combinations found", self._name)
+            self.combos_exhausted = True
+            return
 
-        samples = self.get_samples(-1, adjusted=True)
-        p_idx = samples.argmin()
-        _batch_size_adjust = self._batch_size_adjust[p_idx]
+        all_samples = self.get_samples(adjusted=True)
+        all_batch_sizes = self.batch_sizes
+        candidate: npt.NDArray[np.int64] | None = None
+        changed_idx = -1
+        best_score: tuple[float, float, float, int] | None = None
 
-        next_batch = self.batch_sizes[-1].copy()
-        if _batch_size_adjust == -1:
-            next_batch[p_idx] *= 2
-        else:
-            next_batch[p_idx] += _batch_size_adjust
-        logger.debug("[%s] next batch sizes: %s", self._name, next_batch.tolist())
-        self._all_batch_sizes = np.concatenate([self._all_batch_sizes, next_batch[None]])
+        for samples, batch_sizes in zip(all_samples, all_batch_sizes, strict=False):
+            plugin_order = np.argsort(samples, kind="stable")
+            for plugin_idx in plugin_order:
+                next_candidate = self._next_batch_candidate(batch_sizes, int(plugin_idx))
+                if next_candidate is None:
+                    continue
+                score = self._candidate_score(samples, next_candidate, int(plugin_idx))
+                if best_score is not None and score <= best_score:
+                    continue
+                best_score = score
+                candidate = next_candidate
+                changed_idx = int(plugin_idx)
+
+        if candidate is None:
+            logger.debug("[%s] All batch size combinations exhausted", self._name)
+            self.combos_exhausted = True
+            return
+
+        logger.debug("[%s] next batch sizes: %s", self._name, candidate.tolist())
+        self._visited_batch_sizes.add(self._batch_key(candidate))
+        self._changed_indices.append(changed_idx)
+        self._all_batch_sizes = np.concatenate([self._all_batch_sizes, candidate[None]])
         self._success = np.concatenate([self._success, [True]])
 
 
@@ -626,6 +744,13 @@ class PipelineProfile:
 
     def _update_batch_sizes(self) -> None:
         """Output final batch sizes and update the plugins"""
+        if not len(self._data.batch_sizes):
+            logger.warning(
+                "Profiling did not find a viable batch size combination. Keeping current "
+                "batch sizes"
+            )
+            return
+
         best_idx = self._data.get_samples(adjusted=True).min(axis=1).argmax()
         best_batch_sizes = self._data.batch_sizes[best_idx]
         plugin_names = [p.name for p in self._plugins]
