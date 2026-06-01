@@ -21,7 +21,10 @@ from lib.landmarks.datasets.manifest_io import (
     filter_canonical_68_samples,
     load_manifest,
 )
-from lib.landmarks.ensemble.hard_condition_taxonomy import derive_hard_condition_taxonomy
+from lib.landmarks.ensemble.hard_condition_taxonomy import (
+    NEW_HARD_CONDITION_LABELS,
+    derive_hard_condition_taxonomy,
+)
 from lib.landmarks.ensemble.runtime_resolver import (
     CandidateMetrics,
     CandidateRecord,
@@ -375,6 +378,33 @@ def _stored_hard_case_tags(value: T.Any) -> tuple[str, ...]:
     return tuple(tags)
 
 
+def _normalize_stored_condition_tag(value: T.Any) -> str:
+    """Return stored condition as a hard-case tag only when it is hard/occlusion-like."""
+    tag = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    while "__" in tag:
+        tag = tag.replace("__", "_")
+    tag = tag.strip("_")
+    if not tag:
+        return ""
+    if tag in NEW_HARD_CONDITION_LABELS:
+        return tag
+    if tag.endswith("_occlusion") or tag.endswith("_occluded") or "occlud" in tag:
+        return tag
+    return ""
+
+
+def _hard_case_tags_with_stored_condition(
+    *,
+    stored_condition: str,
+    taxonomy_tags: T.Sequence[str],
+) -> tuple[str, ...]:
+    """Seed stored hard/occlusion condition into derived tags when stored tags are absent."""
+    condition_tag = _normalize_stored_condition_tag(stored_condition)
+    if not condition_tag:
+        return tuple(taxonomy_tags)
+    return tuple(dict.fromkeys((condition_tag, *taxonomy_tags)))
+
+
 def _stored_runtime_diagnostics(sample: LandmarkSample) -> StoredRuntimeDiagnostics | None:
     resolver = _runtime_metadata(sample)
     bucket = resolver.get("runtime_bucket") or resolver.get("bucket")
@@ -691,11 +721,15 @@ def build_sample_context(
         if stored_runtime and stored_runtime.condition
         else taxonomy.condition
     )
-    hard_case_tags = (
-        stored_runtime.hard_case_tags
-        if stored_runtime and stored_runtime.hard_case_tags
-        else taxonomy.hard_case_tags
-    )
+    if stored_runtime and stored_runtime.hard_case_tags:
+        hard_case_tags = stored_runtime.hard_case_tags
+    elif stored_runtime and stored_runtime.condition:
+        hard_case_tags = _hard_case_tags_with_stored_condition(
+            stored_condition=stored_runtime.condition,
+            taxonomy_tags=taxonomy.hard_case_tags,
+        )
+    else:
+        hard_case_tags = taxonomy.hard_case_tags
     candidate_extra_features = _candidate_extra_features(
         candidates,
         metrics,

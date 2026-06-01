@@ -193,6 +193,24 @@ def _candidate_context(
     )
 
 
+def test_stored_condition_seeds_hard_case_tags_when_tags_missing() -> None:
+    tags = scorer_data._hard_case_tags_with_stored_condition(
+        stored_condition="profile_occlusion",
+        taxonomy_tags=("profile_pose",),
+    )
+
+    assert tags == ("profile_occlusion", "profile_pose")
+
+
+def test_stored_non_hard_condition_does_not_seed_hard_case_tags() -> None:
+    tags = scorer_data._hard_case_tags_with_stored_condition(
+        stored_condition="frontal",
+        taxonomy_tags=("occlusion",),
+    )
+
+    assert tags == ("occlusion",)
+
+
 def test_rows_for_context_adds_continuous_regret_targets() -> None:
     rows = scorer_data.rows_for_context(
         _candidate_context(
