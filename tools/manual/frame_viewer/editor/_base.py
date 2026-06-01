@@ -85,6 +85,20 @@ class Editor:
         return hasattr(self._canvas, "active_editor") and self._canvas.active_editor == self
 
     @property
+    def _active_editor_uses_bbox_zoom(self):
+        """bool: ``True`` if the active editor is using bbox-centered zoom.
+
+        Bounding-box zoom is a crop-space editing view, not an aligned-face
+        landmark view. Non-bbox overlays should not render their own zoom
+        annotations in this mode because they use different transforms.
+        """
+        return (
+            self._globals.is_zoomed
+            and hasattr(self._canvas, "active_editor")
+            and getattr(self._canvas.active_editor, "zoomed_centering", None) == "bbox"
+        )
+
+    @property
     def view_mode(self):
         """["frame", "face"]: The view mode for the currently selected editor. If the editor does
         not have a view mode that can be updated, then `"frame"` will be returned."""
@@ -110,6 +124,82 @@ class Editor:
         """tuple: The (`width`, `height`) of the zoomed ROI."""
         roi = self._zoomed_roi
         return (roi[2] - roi[0], roi[3] - roi[1])
+
+    def _bbox_zoom_state(self, face=None):
+        """Return persistent bbox zoom state shared with the background image."""
+        frame_idx = self._globals.frame_index
+        face_idx = self._globals.face_index
+        display_dims = tuple(self._globals.frame_display_dims)
+        state = getattr(self._canvas, "_bbox_zoom_state", None)
+        if (
+            state is not None
+            and state.get("frame_index") == frame_idx
+            and state.get("face_index") == face_idx
+            and state.get("display_dims") == display_dims
+        ):
+            return state
+
+        if face is None:
+            face = self._det_faces.current_faces[frame_idx][face_idx]
+
+        assert face.left is not None and face.top is not None
+        assert face.right is not None and face.bottom is not None
+
+        display_w, display_h = display_dims
+        width = max(1, int(face.right - face.left))
+        height = max(1, int(face.bottom - face.top))
+
+        roi_left = int(np.floor(face.left - (width / 2.0)))
+        roi_top = int(np.floor(face.top - (height / 2.0)))
+        roi_right = int(np.ceil(face.right + (width / 2.0)))
+        roi_bottom = int(np.ceil(face.bottom + (height / 2.0)))
+
+        roi_w = max(1, roi_right - roi_left)
+        roi_h = max(1, roi_bottom - roi_top)
+        scale = min(display_w / roi_w, display_h / roi_h)
+
+        resized_w = max(1, int(round(roi_w * scale)))
+        resized_h = max(1, int(round(roi_h * scale)))
+        offset = (
+            (display_w - resized_w) / 2.0,
+            (display_h - resized_h) / 2.0,
+        )
+
+        state = {
+            "frame_index": frame_idx,
+            "face_index": face_idx,
+            "display_dims": display_dims,
+            "roi": (roi_left, roi_top, roi_right, roi_bottom),
+            "origin": (float(roi_left), float(roi_top)),
+            "scale": float(scale),
+            "offset": (float(offset[0]), float(offset[1])),
+            "resized_dims": (resized_w, resized_h),
+        }
+        self._canvas._bbox_zoom_state = state  # pylint:disable=protected-access
+        return state
+
+    def _bbox_zoom_geometry(self, face=None):
+        """Return source origin, scale and display offset for latched bbox zoom."""
+        state = self._bbox_zoom_state(face)
+        return (
+            np.asarray(state["origin"], dtype="float32"),
+            float(state["scale"]),
+            np.asarray(state["offset"], dtype="float32"),
+        )
+
+    def _scale_to_bbox_zoom(self, points, face=None):
+        """Scale source-frame points into bbox-centered zoom display coords."""
+        origin, scale, offset = self._bbox_zoom_geometry(face)
+        return np.rint(((np.asarray(points, dtype="float32") - origin) * scale) + offset).astype(
+            "int32"
+        )
+
+    def _scale_from_bbox_zoom(self, points, face=None):
+        """Scale bbox-centered zoom display points back to source-frame coords."""
+        origin, scale, offset = self._bbox_zoom_geometry(face)
+        return np.rint(((np.asarray(points, dtype="float32") - offset) / scale) + origin).astype(
+            "int32"
+        )
 
     @property
     def _control_vars(self):

@@ -214,7 +214,10 @@ class BackgroundImage:
             self._canvas.active_editor.zoomed_centering == self._zoomed_centering
         ):
             return
-        self._zoomed_centering = self._canvas.active_editor.zoomed_centering
+        new_centering = self._canvas.active_editor.zoomed_centering
+        if view_mode == "frame" or new_centering != self._zoomed_centering:
+            self._canvas._bbox_zoom_state = None  # pylint:disable=protected-access
+        self._zoomed_centering = new_centering
         logger.trace(
             "Switching background image from '%s' to '%s'",
             self._current_view_mode,
@@ -228,12 +231,7 @@ class BackgroundImage:
     def _update_tk_face(self):
         """Update the currently zoomed face."""
         face = self._get_zoomed_face()
-        padding = self._get_padding(
-            (
-                min(self._globals.frame_display_dims),
-                min(self._globals.frame_display_dims),
-            )
-        )
+        padding = self._get_padding(face.shape[:2])
         face = cv2.copyMakeBorder(face, *padding, cv2.BORDER_CONSTANT)
         if self._tk_frame.height() != face.shape[0]:
             self._resize_frame()
@@ -244,10 +242,10 @@ class BackgroundImage:
     def _get_zoomed_face(self):
         """Get the zoomed face or a blank image if no faces are available.
 
-        Returns
-        -------
-        :class:`numpy.ndarray`
-            The face sized to the shortest dimensions of the face viewer
+        For most editors this remains an AlignedFace crop. For the bounding-box
+        editor, use a bbox-centered crop with 2x bbox width and 2x bbox height,
+        so the displayed bbox can remain an axis-aligned rectangle in its own
+        zoom coordinate system.
         """
         frame_idx = self._globals.frame_index
         face_idx = self._globals.face_index
@@ -262,19 +260,118 @@ class BackgroundImage:
                 face_idx,
             )
             self._globals.set_face_index(0)
+            face_idx = 0
 
         if faces_in_frame == 0:
             face = np.ones((size, size, 3), dtype="uint8")
         else:
             det_face = self._det_faces.current_faces[frame_idx][face_idx]
-            face = AlignedFace(
-                det_face.landmarks_xy,
-                image=self._globals.current_frame.image,
-                centering=self._zoomed_centering,
-                size=size,
-            ).face
+            if self._zoomed_centering == "bbox":
+                face = self._get_zoomed_bbox_face(det_face)
+            else:
+                face = AlignedFace(
+                    det_face.landmarks_xy,
+                    image=self._globals.current_frame.image,
+                    centering=self._zoomed_centering,
+                    size=size,
+                ).face
         logger.trace("face shape: %s", face.shape)
         return face[..., 2::-1]
+
+    def _bbox_zoom_state(self, det_face, frame_idx: int, face_idx: int):
+        """Return persistent bbox zoom state for the current frame/face/display."""
+        display_dims = tuple(self._globals.frame_display_dims)
+        state = getattr(self._canvas, "_bbox_zoom_state", None)
+        if (
+            state is not None
+            and state.get("frame_index") == frame_idx
+            and state.get("face_index") == face_idx
+            and state.get("display_dims") == display_dims
+        ):
+            return state
+
+        state = self._create_bbox_zoom_state(det_face, frame_idx, face_idx, display_dims)
+        self._canvas._bbox_zoom_state = state  # pylint:disable=protected-access
+        return state
+
+    def _create_bbox_zoom_state(self, det_face, frame_idx: int, face_idx: int, display_dims):
+        """Create bbox zoom geometry once when entering bbox zoom.
+
+        The ROI is intentionally based on the bbox at zoom-entry time. It must
+        not follow subsequent bbox edits, otherwise the image/overlay coordinate
+        system moves under the user's cursor.
+        """
+        assert det_face.left is not None and det_face.top is not None
+        assert det_face.right is not None and det_face.bottom is not None
+
+        display_w, display_h = display_dims
+        width = max(1, int(det_face.right - det_face.left))
+        height = max(1, int(det_face.bottom - det_face.top))
+
+        roi_left = int(np.floor(det_face.left - (width / 2.0)))
+        roi_top = int(np.floor(det_face.top - (height / 2.0)))
+        roi_right = int(np.ceil(det_face.right + (width / 2.0)))
+        roi_bottom = int(np.ceil(det_face.bottom + (height / 2.0)))
+
+        roi_w = max(1, roi_right - roi_left)
+        roi_h = max(1, roi_bottom - roi_top)
+        scale = min(display_w / roi_w, display_h / roi_h)
+
+        resized_w = max(1, int(round(roi_w * scale)))
+        resized_h = max(1, int(round(roi_h * scale)))
+        offset = (
+            (display_w - resized_w) / 2.0,
+            (display_h - resized_h) / 2.0,
+        )
+
+        return {
+            "frame_index": frame_idx,
+            "face_index": face_idx,
+            "display_dims": display_dims,
+            "roi": (roi_left, roi_top, roi_right, roi_bottom),
+            "origin": (float(roi_left), float(roi_top)),
+            "scale": float(scale),
+            "offset": (float(offset[0]), float(offset[1])),
+            "resized_dims": (resized_w, resized_h),
+        }
+
+    def _get_zoomed_bbox_face(self, det_face):
+        """Return persistent bbox-centered zoom crop for bounding-box editing."""
+        frame_idx = self._globals.frame_index
+        face_idx = self._globals.face_index
+        state = self._bbox_zoom_state(det_face, frame_idx, face_idx)
+
+        frame = self._globals.current_frame.image
+        roi_left, roi_top, roi_right, roi_bottom = state["roi"]
+        resized_w, resized_h = state["resized_dims"]
+
+        frame_h, frame_w = frame.shape[:2]
+        crop_left = max(0, roi_left)
+        crop_top = max(0, roi_top)
+        crop_right = min(frame_w, roi_right)
+        crop_bottom = min(frame_h, roi_bottom)
+
+        crop = frame[crop_top:crop_bottom, crop_left:crop_right]
+        roi_w = max(1, roi_right - roi_left)
+        roi_h = max(1, roi_bottom - roi_top)
+
+        if crop.size == 0:
+            crop = np.zeros((roi_h, roi_w, 3), dtype="uint8")
+        else:
+            crop = cv2.copyMakeBorder(
+                crop,
+                max(0, -roi_top),
+                max(0, roi_bottom - frame_h),
+                max(0, -roi_left),
+                max(0, roi_right - frame_w),
+                cv2.BORDER_CONSTANT,
+            )
+
+        return cv2.resize(
+            crop,
+            (resized_w, resized_h),
+            interpolation=self._globals.current_frame.interpolation,
+        )
 
     def _update_tk_frame(self):
         """Place the currently held frame into :attr:`_tk_frame`."""

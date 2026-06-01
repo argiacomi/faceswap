@@ -1050,6 +1050,27 @@ class FaceUpdate:
         face.add_landmarks_xy(face.landmarks_xy + (shift_x, shift_y))
         self._globals.var_full_update.set(True)
 
+    def bounding_box_move(
+        self,
+        frame_index: int,
+        face_index: int,
+        shift_x: int,
+        shift_y: int,
+    ) -> None:
+        """Move a face bounding box and translate its existing landmarks.
+
+        This is used while dragging a bounding box in bbox-zoom mode, where the
+        box and landmarks should remain spatially coupled in source-frame
+        coordinates. Final landmark regeneration still happens through
+        ``bounding_box(...)`` on release/resize paths.
+        """
+        face = self._faces_at_frame_index(frame_index)[face_index]
+        assert face.left is not None and face.top is not None
+        face.left += shift_x
+        face.top += shift_y
+        face.add_landmarks_xy(face.landmarks_xy + (shift_x, shift_y))
+        self._globals.var_full_update.set(True)
+
     def landmarks_rotate(
         self, frame_index: int, face_index: int, angle: float, center: np.ndarray
     ) -> None:

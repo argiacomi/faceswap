@@ -6,10 +6,8 @@ import gettext
 import platform
 from functools import partial
 
-import cv2
 import numpy as np
 
-from lib.align import AlignedFace
 from lib.gui.custom_widgets import RightClickMenu
 from lib.utils import get_module_objects
 from tools.manual.aligners import available_aligners, default_aligner
@@ -52,6 +50,7 @@ class BoundingBox(Editor):
         super().__init__(
             canvas, detected_faces, control_text=control_text, key_bindings=key_bindings
         )
+        self.zoomed_centering = "bbox"
 
     @property
     def _corner_order(self):
@@ -158,26 +157,29 @@ class BoundingBox(Editor):
         logger.trace("Updated bounding box annotations")
 
     def _zoomed_bounding_box(self, face):
-        """Return the selected face bounding box transformed into zoomed display coordinates."""
+        """Return bbox display coords in bbox-centered zoom space.
+
+        Because the zoom crop is exactly 2x bbox width and 2x bbox height, the
+        bbox remains axis-aligned and centered in the zoom view. No face-pose
+        affine transform is applied.
+        """
         assert face.left is not None and face.top is not None
         assert face.right is not None and face.bottom is not None
-        aligned = AlignedFace(
-            face.landmarks_xy,
-            centering="face",
-            size=min(self._globals.frame_display_dims),
-        )
-        box = np.array(
-            [[[face.left, face.top], [face.right, face.bottom]]],
+
+        origin, scale, offset = self._bbox_zoom_geometry(face)
+        corners = np.array(
+            [[face.left, face.top], [face.right, face.bottom]],
             dtype="float32",
         )
-        box = cv2.transform(box, aligned.adjusted_matrix).reshape(2, 2)
-        box = box + self._zoomed_roi[:2]
-        return np.rint(box).astype("int32").flatten()
+        display = ((corners - origin) * scale) + offset
+        return np.rint(display).astype("int32").flatten()
 
     def _display_corners_to_source(self, coords, face_idx=None):
         """Convert display/zoomed box coords into original-frame corner coordinates."""
         coords = np.asarray(coords, dtype="float32").flatten()
         left, top, right, bottom = coords
+        left, right = sorted((left, right))
+        top, bottom = sorted((top, bottom))
         corners = np.array(
             [[left, top], [right, top], [right, bottom], [left, bottom]],
             dtype="float32",
@@ -185,14 +187,7 @@ class BoundingBox(Editor):
 
         if self._globals.is_zoomed and face_idx is not None:
             face = self._det_faces.current_faces[self._globals.frame_index][face_idx]
-            aligned = AlignedFace(
-                face.landmarks_xy,
-                centering="face",
-                size=min(self._globals.frame_display_dims),
-            )
-            matrix = cv2.invertAffineTransform(aligned.adjusted_matrix)
-            corners = corners - self._zoomed_roi[:2]
-            corners = cv2.transform(corners.reshape(1, -1, 2), matrix).reshape(-1, 2)
+            corners = self._scale_from_bbox_zoom(corners, face)
         else:
             corners = self.scale_from_display(corners)
 
@@ -494,10 +489,9 @@ class BoundingBox(Editor):
     def _coords_to_bounding_box(self, coords, face_idx=None):
         """Convert display coordinates to DetectedFace bounding-box format.
 
-        In frame view, the coordinates are scaled back from the displayed frame.
-        In zoomed view, the displayed zoom-space rectangle is inverse-transformed
-        through the selected face's aligned-face matrix, then converted to an
-        axis-aligned source-frame rectangle.
+        Frame view uses normal display scaling. Bbox zoom view uses the
+        bbox-centered ROI scale/offset, leaving the edited rectangle in bbox
+        zoom space and mapping it back to original-frame coordinates.
         """
         logger.trace("in: %s", coords)
         corners = self._display_corners_to_source(coords, face_idx)

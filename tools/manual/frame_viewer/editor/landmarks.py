@@ -401,12 +401,15 @@ class Landmarks(Editor):
         for face_idx, face in enumerate(self._face_iterator):
             face_index = self._globals.face_index if self._globals.is_zoomed else face_idx
             if self._globals.is_zoomed:
-                aligned = AlignedFace(
-                    face.landmarks_xy,
-                    centering="face",
-                    size=min(self._globals.frame_display_dims),
-                )
-                landmarks = aligned.landmarks + zoomed_offset
+                if self._active_editor_uses_bbox_zoom:
+                    landmarks = self._scale_to_bbox_zoom(face.landmarks_xy, face)
+                else:
+                    aligned = AlignedFace(
+                        face.landmarks_xy,
+                        centering="face",
+                        size=min(self._globals.frame_display_dims),
+                    )
+                    landmarks = aligned.landmarks + zoomed_offset
                 # Hide all landmarks and only display selected
                 self._canvas.itemconfig("lm_dsp", state="hidden")
                 self._canvas.itemconfig(f"lm_dsp_face_{face_index}", state="normal")
@@ -814,13 +817,19 @@ class Mesh(Editor):
         for face_idx, face in enumerate(self._face_iterator):
             face_index = self._globals.face_index if self._globals.is_zoomed else face_idx
             if self._globals.is_zoomed:
-                aligned = AlignedFace(
-                    face.landmarks_xy,
-                    centering="face",
-                    size=min(self._globals.frame_display_dims),
-                )
-                landmarks = aligned.landmarks + zoomed_offset
-                landmark_mapping = LANDMARK_PARTS[aligned.landmark_type]
+                if self._active_editor_uses_bbox_zoom:
+                    landmarks = self._scale_to_bbox_zoom(face.landmarks_xy, face)
+                    landmark_mapping = LANDMARK_PARTS[
+                        LandmarkType.from_shape(face.landmarks_xy.shape)
+                    ]
+                else:
+                    aligned = AlignedFace(
+                        face.landmarks_xy,
+                        centering="face",
+                        size=min(self._globals.frame_display_dims),
+                    )
+                    landmarks = aligned.landmarks + zoomed_offset
+                    landmark_mapping = LANDMARK_PARTS[aligned.landmark_type]
                 # Hide all meshes and only display selected
                 self._canvas.itemconfig("Mesh", state="hidden")
                 self._canvas.itemconfig(f"Mesh_face_{face_index}", state="normal")
