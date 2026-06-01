@@ -19,6 +19,7 @@ from lib.landmarks.datasets import (
     build_merl_rav_manifest,
     build_wflw_manifest,
 )
+from lib.landmarks.datasets.multipie import _parse_line, build_multipie_manifest
 
 
 def _points_68() -> np.ndarray:
@@ -366,3 +367,103 @@ def test_aflw2000_3d_json_manifest_uses_xy_landmarks(tmp_path: Path) -> None:
     assert sample["source_schema"] == "3d_68"
     assert sample["conditions"] == ["large_pose"]
     np.testing.assert_array_equal(landmarks, _points_68())
+
+
+def _points_39() -> np.ndarray:
+    """Return deterministic 39-point profile landmarks."""
+    return np.stack(  # type: ignore[no-any-return]
+        (
+            np.linspace(0, 38, 39, dtype="float32"),
+            np.linspace(20, 58, 39, dtype="float32"),
+        ),
+        axis=1,
+    )
+
+
+def _multipie_list_line(image_rel: str, points: np.ndarray) -> str:
+    """Build a MenpoBenchmark list-file line: path, 4 bbox, 5 ref points, dense points."""
+    header = [0.0, 0.0, 256.0, 256.0, *([10.0] * 10)]
+    values = header + points.reshape(-1).tolist()
+    return " ".join([image_rel, *(f"{value:g}" for value in values)])
+
+
+def test_multipie_parse_line_splits_header_and_dense() -> None:
+    """_parse_line drops the 4 bbox + 5 reference points and keeps the dense landmarks."""
+    p68 = _points_68()
+    semifrontal = _parse_line(_multipie_list_line("image/semifrontal/x.jpg", p68))
+    assert semifrontal is not None
+    image_rel, bbox, parsed = semifrontal
+    assert image_rel == "image/semifrontal/x.jpg"
+    assert bbox == (0.0, 0.0, 256.0, 256.0)
+    assert parsed.shape == (68, 2)
+    np.testing.assert_allclose(parsed, p68)
+
+    p39 = _points_39()
+    profile = _parse_line(_multipie_list_line("image/profile/y.jpg", p39))
+    assert profile is not None
+    _, profile_bbox, parsed_profile = profile
+    assert profile_bbox == (0.0, 0.0, 256.0, 256.0)
+    assert parsed_profile.shape == (39, 2)
+    np.testing.assert_allclose(parsed_profile, p39)
+
+    assert _parse_line("") is None
+    assert _parse_line("image/semifrontal/x.jpg 1 2 3 4 5") is None
+
+
+def _write_multipie_cache(root: Path) -> tuple[np.ndarray, np.ndarray]:
+    """Create a minimal MenpoBenchmark MultiPIE layout under ``root``."""
+    base = root / "MultiPIE"
+    (base / "image" / "semifrontal").mkdir(parents=True)
+    (base / "image" / "profile").mkdir(parents=True)
+    sf_rel = "image/semifrontal/001_01_01_041_14.jpg"
+    pf_rel = "image/profile/024_01_01_090_03.jpg"
+    blank: np.ndarray = np.zeros((256, 256, 3), dtype="uint8")
+    assert cv2.imwrite(str(base / sf_rel), blank)
+    assert cv2.imwrite(str(base / pf_rel), blank)
+    p68, p39 = _points_68(), _points_39()
+    (base / "MultiPIE_semifrontal_train.txt").write_text(
+        _multipie_list_line(sf_rel, p68) + "\n", encoding="utf-8"
+    )
+    (base / "MultiPIE_profile_train.txt").write_text(
+        _multipie_list_line(pf_rel, p39) + "\n", encoding="utf-8"
+    )
+    return p68, p39
+
+
+def test_multipie_builder_parses_menpo_list_files(tmp_path: Path) -> None:
+    """The MultiPIE builder parses the flat MenpoBenchmark list files into samples."""
+    _, p39 = _write_multipie_cache(tmp_path)
+
+    manifest_path = build_multipie_manifest(
+        tmp_path / "out", source_dir=tmp_path, no_download=True
+    )
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    assert payload["dataset"] == "multipie"
+    by_schema = {sample["source_schema"]: sample for sample in payload["samples"]}
+    assert set(by_schema) == {"2d_68", "2d_39"}
+
+    semifrontal = by_schema["2d_68"]
+    profile = by_schema["2d_39"]
+    assert "semifrontal" in semifrontal["conditions"]
+    assert "profile" in profile["conditions"]
+    assert profile["face_bbox"] == [0.0, 0.0, 256.0, 256.0]
+    assert profile["metadata"]["face_bbox"] == [0.0, 0.0, 256.0, 256.0]
+    assert profile["metadata"]["face_bbox_source"] == "multipie_menpobenchmark_detection"
+    assert np.load(tmp_path / "out" / semifrontal["landmarks"]).shape == (68, 2)
+    np.testing.assert_allclose(np.load(tmp_path / "out" / profile["landmarks"]), p39)
+
+
+def test_multipie_builder_can_exclude_39pt_profile(tmp_path: Path) -> None:
+    """``include_39pt_profile=False`` keeps only the 68-point semifrontal samples."""
+    _write_multipie_cache(tmp_path)
+
+    manifest_path = build_multipie_manifest(
+        tmp_path / "out",
+        source_dir=tmp_path,
+        no_download=True,
+        include_39pt_profile=False,
+    )
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    schemas = {sample["source_schema"] for sample in payload["samples"]}
+    assert schemas == {"2d_68"}

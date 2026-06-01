@@ -37,6 +37,36 @@ def _sample(tmp_path: Path, *, dataset: str = "wflw") -> LandmarkSample:
     )
 
 
+def test_39_point_gt_roi_uses_raw_landmark_extents(tmp_path: Path) -> None:
+    """Profile-only 39-point truth can still provide a validation crop ROI."""
+    points = np.stack(
+        (
+            np.linspace(20, 58, 39, dtype="float32"),
+            np.linspace(40, 78, 39, dtype="float32"),
+        ),
+        axis=1,
+    )
+    path = tmp_path / "truth.npy"
+    np.save(str(path), points)
+    sample = LandmarkSample(
+        sample_id="multipie-profile",
+        image=str(tmp_path / "image.jpg"),
+        landmarks=str(path),
+        dataset="multipie",
+        condition="profile",
+    )
+
+    roi, source = cache_predictions._base_roi_for_sample(  # pylint:disable=protected-access
+        sample,
+        {"dataset": "multipie", "source_schema": "2d_39"},
+        allow_gt_roi=True,
+        gt_roi_scale=1.0,
+    )
+
+    assert source == "gt_landmarks"
+    np.testing.assert_allclose(roi, np.asarray([20, 40, 58, 78], dtype="float32"))
+
+
 def test_wflw_98_ignores_annotation_bbox_for_validation_roi(tmp_path: Path) -> None:
     """WFLW annotation bbox should not be treated as the model crop ROI."""
     sample = _sample(tmp_path)

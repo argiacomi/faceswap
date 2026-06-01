@@ -25,7 +25,15 @@ from lib.landmarks.datasets.sources import (
 )
 
 logger = logging.getLogger(__name__)
-SUPPORTED_DATASETS = ("wflw", "cofw", "merl-rav", "aflw2000-3d", "directory")
+SUPPORTED_DATASETS = (
+    "wflw",
+    "cofw",
+    "merl-rav",
+    "aflw2000-3d",
+    "menpo2d",
+    "multipie",
+    "directory",
+)
 IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".bmp")
 MANIFEST_MODES = ("replace", "merge")
 WFLW_ATTRIBUTE_NAMES = ("pose", "expression", "illumination", "makeup", "occlusion", "blur")

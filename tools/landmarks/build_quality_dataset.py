@@ -22,18 +22,20 @@ from lib.landmarks.datasets import (
 )
 from lib.landmarks.datasets.aflw2000_3d import build_aflw2000_3d_manifest
 from lib.landmarks.datasets.cofw68 import resolve_cofw68_json
+from lib.landmarks.datasets.menpo2d import build_menpo2d_manifest
 from lib.landmarks.datasets.merl_rav import (
     DEFAULT_AFLW_DIR,
     DEFAULT_AFLW_RELEASE2_DIR,
     build_merl_rav_manifest,
 )
+from lib.landmarks.datasets.multipie import build_multipie_manifest
 from lib.landmarks.datasets.polish import polish_landmark_dataset_artifacts
 from lib.landmarks.datasets.sources import DEFAULT_CACHE_DIR, resolve_wflw_official_source
 from lib.landmarks.datasets.visual_overlays import write_indexed_region_overlays
 from lib.landmarks.datasets.w300 import build_300w_manifest
 
 logger = logging.getLogger(__name__)
-CLI_SUPPORTED_DATASETS = tuple(dict.fromkeys((*SUPPORTED_DATASETS, "300w")))
+CLI_SUPPORTED_DATASETS = tuple(dict.fromkeys((*SUPPORTED_DATASETS, "300w", "menpo2d", "multipie")))
 
 
 def _parse_csv(value: str | None) -> tuple[str, ...] | None:
@@ -150,6 +152,18 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Skip validation of mat['hw'] against the actual cropped image "
         "dimensions in release-2 mode.",
     )
+    parser.add_argument(
+        "--include-39pt-profile",
+        action="store_true",
+        default=True,
+        help="Include MenpoBenchmark 39-point profile samples for Menpo2D/MultiPIE.",
+    )
+    parser.add_argument(
+        "--no-39pt-profile",
+        dest="include_39pt_profile",
+        action="store_false",
+        help="Drop MenpoBenchmark 39-point profile samples and keep only 68-point samples.",
+    )
     parser.add_argument("--image-root", default=None)
     parser.add_argument("--recursive", action="store_true")
     parser.add_argument(
@@ -259,7 +273,7 @@ def _validate_args(args: argparse.Namespace) -> None:
         ):
             raise ValueError("--dataset directory only supports --source-dir")
 
-    if args.dataset in {"merl-rav", "aflw2000-3d", "300w"} and (
+    if args.dataset in {"merl-rav", "aflw2000-3d", "300w", "menpo2d", "multipie"} and (
         args.wflw_annotations or args.wflw_download_official or args.cofw_json
     ):
         raise ValueError(f"--dataset {args.dataset} only supports --source-dir/--source-zip")
@@ -418,6 +432,40 @@ def main(argv: list[str] | None = None) -> int:
             manifest_mode=args.manifest_mode,
             allow_overlap=args.allow_overlap,
             write_overlays=args.write_overlays,
+        )
+    elif args.dataset == "menpo2d":
+        manifest = build_menpo2d_manifest(
+            args.output_dir,
+            source_dir=args.source_dir,
+            source_zip=args.source_zip,
+            cache_dir=args.cache_dir,
+            download_url=args.download_url,
+            force_download=args.force_download,
+            no_download=args.no_download,
+            scenario=args.scenario,
+            scenarios=scenarios,
+            samples_per_scenario=args.samples_per_scenario,
+            manifest_mode=args.manifest_mode,
+            allow_overlap=args.allow_overlap,
+            write_overlays=args.write_overlays,
+            include_39pt_profile=args.include_39pt_profile,
+        )
+    elif args.dataset == "multipie":
+        manifest = build_multipie_manifest(
+            args.output_dir,
+            source_dir=args.source_dir,
+            source_zip=args.source_zip,
+            cache_dir=args.cache_dir,
+            download_url=args.download_url,
+            force_download=args.force_download,
+            no_download=args.no_download,
+            scenario=args.scenario,
+            scenarios=scenarios,
+            samples_per_scenario=args.samples_per_scenario,
+            manifest_mode=args.manifest_mode,
+            allow_overlap=args.allow_overlap,
+            write_overlays=args.write_overlays,
+            include_39pt_profile=args.include_39pt_profile,
         )
     elif args.recursive:
         manifest = build_directory_manifest(

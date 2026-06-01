@@ -229,7 +229,7 @@ class PipelinePaths:
         object.__setattr__(
             self, "run_cache_sentinel", self.run_cache / BASE_CACHE_SENTINEL_FILENAME
         )
-        object.__setattr__(self, "hard_source_dataset_dir", self.run_root / "aflw2000_3d")
+        object.__setattr__(self, "hard_source_dataset_dir", self.run_root / "hard_source")
         object.__setattr__(
             self, "hard_source_manifest", self.hard_source_dataset_dir / "manifest.json"
         )
@@ -535,6 +535,32 @@ def _base_datasets(args: argparse.Namespace) -> tuple[str, ...]:
     return _split_csv_values(getattr(args, "dataset", None)) or ("wflw",)
 
 
+def _validate_dataset_source_args(args: argparse.Namespace) -> None:
+    datasets = _base_datasets(args)
+    if (
+        getattr(args, "source_dir", None) is not None
+        and getattr(args, "source_zip", None) is not None
+    ):
+        raise ValueError("Pass only one of --source-dir or --source-zip for a single base dataset")
+    if getattr(args, "source_dir", None) is not None and len(datasets) != 1:
+        raise ValueError("--source-dir is only valid when exactly one --dataset is selected")
+    if getattr(args, "source_zip", None) is not None and len(datasets) != 1:
+        raise ValueError("--source-zip is only valid when exactly one --dataset is selected")
+    source_dirs = set(_dataset_source_map(args))
+    source_zips = set(_dataset_source_zip_map(args))
+    overlap = sorted(source_dirs & source_zips)
+    if overlap:
+        raise ValueError(
+            "Datasets cannot have both --dataset-source and --dataset-source-zip: "
+            + ", ".join(overlap)
+        )
+    if (
+        getattr(args, "hard_source_dir", None) is not None
+        and getattr(args, "hard_source_zip", None) is not None
+    ):
+        raise ValueError("Pass only one of --hard-source-dir or --hard-source-zip")
+
+
 def _dataset_source_map(args: argparse.Namespace) -> dict[str, Path]:
     mapping: dict[str, Path] = {}
     for spec in getattr(args, "dataset_source", []) or []:
@@ -550,6 +576,28 @@ def _dataset_source_map(args: argparse.Namespace) -> dict[str, Path]:
     datasets = _base_datasets(args)
     if source_dir is not None and len(datasets) == 1:
         mapping.setdefault(datasets[0], Path(source_dir))
+    return mapping
+
+
+def _dataset_source_zip_map(args: argparse.Namespace) -> dict[str, Path]:
+    mapping: dict[str, Path] = {}
+    for spec in getattr(args, "dataset_source_zip", []) or []:
+        if "=" not in str(spec):
+            raise ValueError(
+                f"--dataset-source-zip must use dataset=source_zip format, got {spec!r}"
+            )
+        name, source = str(spec).split("=", 1)
+        name = name.strip()
+        source = source.strip()
+        if not name or not source:
+            raise ValueError(
+                f"--dataset-source-zip must use dataset=source_zip format, got {spec!r}"
+            )
+        mapping[name] = Path(source)
+    source_zip = getattr(args, "source_zip", None)
+    datasets = _base_datasets(args)
+    if source_zip is not None and len(datasets) == 1:
+        mapping.setdefault(datasets[0], Path(source_zip))
     return mapping
 
 
@@ -589,6 +637,7 @@ def _dataset_build_command(
     output_dir: Path,
     manifest_mode: str,
     source_dir: Path | None = None,
+    source_zip: Path | None = None,
     extra: T.Sequence[str] = (),
 ) -> list[str]:
     argv = [
@@ -601,13 +650,18 @@ def _dataset_build_command(
         "--manifest-mode",
         manifest_mode,
     ]
+    if source_dir is not None and source_zip is not None:
+        raise ValueError(f"dataset {dataset!r} received both source_dir and source_zip")
     if source_dir is not None:
         argv.extend(["--source-dir", str(source_dir)])
+    if source_zip is not None:
+        argv.extend(["--source-zip", str(source_zip)])
     return _append_extra(argv, extra)
 
 
 def _commands_dataset_build(args: argparse.Namespace, paths: PipelinePaths) -> list[list[str]]:
     source_map = _dataset_source_map(args)
+    source_zip_map = _dataset_source_zip_map(args)
     commands: list[list[str]] = []
     for index, dataset in enumerate(_base_datasets(args)):
         commands.append(
@@ -618,6 +672,7 @@ def _commands_dataset_build(args: argparse.Namespace, paths: PipelinePaths) -> l
                 output_dir=paths.run_dataset_dir,
                 manifest_mode="replace" if index == 0 else "merge",
                 source_dir=source_map.get(dataset),
+                source_zip=source_zip_map.get(dataset),
                 extra=getattr(args, "dataset_build_arg", []),
             )
         )
@@ -636,6 +691,7 @@ def _command_hard_source_manifest(args: argparse.Namespace, paths: PipelinePaths
         output_dir=paths.hard_source_dataset_dir,
         manifest_mode="replace",
         source_dir=getattr(args, "hard_source_dir", None),
+        source_zip=getattr(args, "hard_source_zip", None),
         extra=getattr(args, "hard_source_dataset_build_arg", []),
     )
 
@@ -678,6 +734,7 @@ def _command_hard_source_prediction_cache(
 
 def _write_dataset_manifest_sentinel(args: argparse.Namespace, paths: PipelinePaths) -> None:
     source_map = _dataset_source_map(args)
+    source_zip_map = _dataset_source_zip_map(args)
     write_json(
         paths.run_manifest_sentinel,
         {
@@ -687,6 +744,11 @@ def _write_dataset_manifest_sentinel(args: argparse.Namespace, paths: PipelinePa
             "dataset_sources": {
                 dataset: str(source_map[dataset])
                 for dataset in sorted(source_map)
+                if dataset in _base_datasets(args)
+            },
+            "dataset_source_zips": {
+                dataset: str(source_zip_map[dataset])
+                for dataset in sorted(source_zip_map)
                 if dataset in _base_datasets(args)
             },
             "dataset_build_args": list(getattr(args, "dataset_build_arg", [])),
@@ -3069,6 +3131,17 @@ def _parser() -> argparse.ArgumentParser:
         help="Per-base-dataset source mapping in dataset=source_dir form.",
     )
     parser.add_argument(
+        "--source-zip",
+        type=Path,
+        help="Source archive for a single --dataset base GT build.",
+    )
+    parser.add_argument(
+        "--dataset-source-zip",
+        action="append",
+        default=[],
+        help="Per-base-dataset archive mapping in dataset=source_zip form.",
+    )
+    parser.add_argument(
         "--hard-source-dataset",
         default=DEFAULT_HARD_SOURCE_DATASET,
         help="Dataset used to build the separate pose-driven GT-hard source manifest.",
@@ -3077,6 +3150,11 @@ def _parser() -> argparse.ArgumentParser:
         "--hard-source-dir",
         type=Path,
         help="Source directory for --hard-source-dataset, normally AFLW2000-3D.",
+    )
+    parser.add_argument(
+        "--hard-source-zip",
+        type=Path,
+        help="Source archive for --hard-source-dataset.",
     )
     parser.add_argument("--models", default=DEFAULT_MODELS)
     parser.add_argument("--candidates", default=DEFAULT_CANDIDATES)
@@ -3188,6 +3266,7 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: T.Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    _validate_dataset_source_args(args)
     configure_logging(args.log_level)
     summary = run_pipeline(args)
     logger.info("Pipeline summary: %s", summary["status"])

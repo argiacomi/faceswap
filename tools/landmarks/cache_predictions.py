@@ -22,7 +22,11 @@ from tqdm import tqdm
 from lib.landmarks.adapters import LandmarkAdapter, build_landmark_adapter
 from lib.landmarks.cache.prediction_cache import DiskPredictionCache, config_hash
 from lib.landmarks.coordinates import roi_to_matrix
-from lib.landmarks.core.schema import LandmarkPrediction, normalize_landmarks
+from lib.landmarks.core.schema import (
+    LandmarkPrediction,
+    normalize_landmark_array,
+    normalize_landmarks,
+)
 from lib.landmarks.evaluation.harness import LandmarkSample, load_manifest
 
 logger = logging.getLogger(__name__)
@@ -215,11 +219,19 @@ def _scale_roi(
     return _square_roi_from_bbox(bbox, scale=scale)
 
 
-def _roi_from_truth(sample: LandmarkSample, *, scale: float = 1.0) -> np.ndarray:
+def _roi_from_truth(
+    sample: LandmarkSample,
+    *,
+    source_schema: str | None = None,
+    scale: float = 1.0,
+) -> np.ndarray:
     """Derive a validation-only raw ROI from ground-truth landmarks."""
     try:
         raw = np.load(sample.landmarks).astype("float32")
-        points = normalize_landmarks(raw)
+        try:
+            points = normalize_landmarks(raw, source_schema=source_schema)
+        except ValueError:
+            points = normalize_landmark_array(raw)[:, :2]
     except Exception as err:
         raise ValueError(
             f"sample '{sample.sample_id}' has no usable face_bbox and GT-derived ROI failed: {err}"
@@ -249,6 +261,7 @@ def _base_roi_for_sample(
     gt_roi_scale: float = 1.0,
 ) -> tuple[np.ndarray, str]:
     """Return the raw face ROI and source label for one manifest sample."""
+    source_schema = str(entry.get("source_schema") or "").strip() or None
     face_bbox = _entry_face_bbox(entry)
     if face_bbox is not None:
         return np.asarray(face_bbox, dtype="float32"), "manifest_face_bbox"
@@ -258,7 +271,10 @@ def _base_roi_for_sample(
                 f"sample '{sample.sample_id}' is a WFLW 98-point sample without face_bbox; "
                 "GT-derived ROI is required because WFLW annotation bbox is not a model crop ROI"
             )
-        return _roi_from_truth(sample, scale=gt_roi_scale), "gt_landmarks_wflw_98"
+        return (
+            _roi_from_truth(sample, source_schema=source_schema, scale=gt_roi_scale),
+            "gt_landmarks_wflw_98",
+        )
     bbox = _entry_bbox(entry)
     if bbox is not None:
         return np.asarray(bbox, dtype="float32"), "manifest_bbox"
@@ -266,7 +282,7 @@ def _base_roi_for_sample(
         raise ValueError(
             f"sample '{sample.sample_id}' is missing face_bbox/bbox and GT-derived ROI is disabled"
         )
-    return _roi_from_truth(sample, scale=gt_roi_scale), "gt_landmarks"
+    return _roi_from_truth(sample, source_schema=source_schema, scale=gt_roi_scale), "gt_landmarks"
 
 
 def _model_roi_for_adapter(adapter: LandmarkAdapter, raw_roi: np.ndarray) -> np.ndarray:
