@@ -443,19 +443,24 @@ class TrainSet(_BaseSet):
         cached = self._faceqa_cache.get(index)
         if cached is not None:
             return cached
-        sample = T.cast(
-            FaceQASampleMetadata,
-            FaceQASampleMetadata.from_png_header(self._side, filename, header),
-        )
-        if not sample.has_faceqa and self._faceqa_index is not None:
-            source_file = header.source.source_filename or os.path.basename(filename)
-            fallback = self._faceqa_index.lookup(
+        source_file = header.source.source_filename or os.path.basename(filename)
+        fallback = (
+            None
+            if self._faceqa_index is None
+            else self._faceqa_index.lookup(
                 source_file,
                 int(header.source.face_index),
                 filename=filename,
             )
-            if fallback is not None:
-                sample = fallback
+        )
+        sample = (
+            fallback
+            if fallback is not None
+            else T.cast(
+                FaceQASampleMetadata,
+                FaceQASampleMetadata.from_png_header(self._side, filename, header),
+            )
+        )
         self._faceqa_cache[index] = sample
         return sample
 

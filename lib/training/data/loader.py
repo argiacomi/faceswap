@@ -45,6 +45,10 @@ class TrainLoader:  # pylint:disable=too-many-instance-attributes
         The training configuration for feeding the model
     sampler
         The sampler to use for the data loaders. Default: ``None`` (RandomSampler)
+    include_faceqa_diagnostics
+        ``True`` to attach FaceQA metadata to training batches for diagnostics.
+    faceqa_metadata_paths
+        Optional FaceQA-enriched alignments fallback paths by training side.
     """
 
     def __init__(

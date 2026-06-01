@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import typing
 from pathlib import Path
 
 import numpy as np
@@ -13,7 +14,11 @@ import torch
 from lib.align.objects import PNGAlignments, PNGHeader, PNGSource
 from lib.training.data.collate import BatchMeta
 from lib.training.data.data_set import TrainSet
-from lib.training.faceqa_diagnostics import FaceQALossDiagnostics, FaceQASampleMetadata
+from lib.training.faceqa_diagnostics import (
+    FaceQALossDiagnostics,
+    FaceQAMetadataIndex,
+    FaceQASampleMetadata,
+)
 from lib.training.loss import BatchLoss
 
 
@@ -45,7 +50,9 @@ def _loss(values: list[float]) -> BatchLoss:
     return BatchLoss(unweighted=[{"mae": tensor}], weighted=[{"mae": tensor}])
 
 
-def _train_set_stub(*, include_faceqa: bool, faceqa_index: object | None = None) -> TrainSet:
+def _train_set_stub(
+    *, include_faceqa: bool, faceqa_index: FaceQAMetadataIndex | None = None
+) -> TrainSet:
     """Return a TrainSet shell for testing FaceQA metadata helpers."""
     dataset = object.__new__(TrainSet)
     dataset._include_faceqa = include_faceqa
@@ -351,7 +358,9 @@ def test_train_set_faceqa_metadata_uses_fallback_index_when_header_missing() -> 
                 yaw_pose_bucket="frontal",
             )
 
-    dataset = _train_set_stub(include_faceqa=True, faceqa_index=_FallbackIndex())
+    dataset = _train_set_stub(
+        include_faceqa=True, faceqa_index=typing.cast(FaceQAMetadataIndex, _FallbackIndex())
+    )
 
     sample = dataset._faceqa_metadata(0, "/faces/a/face_000001.png", _header())
 
@@ -375,10 +384,52 @@ def test_train_set_faceqa_metadata_fallback_miss_returns_placeholder() -> None:
             assert filename == "/faces/a/face_000001.png"
             return None
 
-    dataset = _train_set_stub(include_faceqa=True, faceqa_index=_FallbackIndex())
+    dataset = _train_set_stub(
+        include_faceqa=True, faceqa_index=typing.cast(FaceQAMetadataIndex, _FallbackIndex())
+    )
 
     sample = dataset._faceqa_metadata(0, "/faces/a/face_000001.png", _header())
 
     assert sample.has_faceqa is False
     assert sample.source_file == "frame_000001.png"
     assert sample.face_index == 2
+
+
+def test_train_set_faceqa_metadata_fallback_overrides_stale_header() -> None:
+    """Configured fallback metadata should override stale embedded PNG metadata."""
+
+    class _FallbackIndex:
+        def lookup(
+            self,
+            source_file: str,
+            face_index: int,
+            *,
+            filename: str,
+        ) -> FaceQASampleMetadata | None:
+            assert source_file == "frame_000001.png"
+            assert face_index == 2
+            assert filename == "/faces/a/face_000001.png"
+            return FaceQASampleMetadata(
+                side="A",
+                filename=filename,
+                source_file=source_file,
+                source_id=f"{source_file}:{face_index}",
+                face_index=face_index,
+                has_faceqa=True,
+                yaw_pose_bucket="right_profile",
+            )
+
+    dataset = _train_set_stub(
+        include_faceqa=True, faceqa_index=typing.cast(FaceQAMetadataIndex, _FallbackIndex())
+    )
+
+    sample = dataset._faceqa_metadata(
+        0,
+        "/faces/a/face_000001.png",
+        _header(faceqa={"pose": {"yaw": 0.0, "pitch": 0.0, "roll": 0.0}}),
+    )
+
+    assert sample.has_faceqa is True
+    assert sample.source_file == "frame_000001.png"
+    assert sample.face_index == 2
+    assert sample.yaw_pose_bucket == "right_profile"
