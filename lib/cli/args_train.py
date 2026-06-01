@@ -282,6 +282,62 @@ class TrainArgs(FaceSwapArgs):
         )
         argument_list.append(
             {
+                "opts": ("--find-batch-size",),
+                "action": "store_true",
+                "dest": "find_batch_size",
+                "default": False,
+                "group": _("training"),
+                "help": _(
+                    "Run the training batch-size finder. This probes real training steps to "
+                    "find the maximum safe batch size and prints a conservative recommendation."
+                ),
+            }
+        )
+        argument_list.append(
+            {
+                "opts": ("--batch-size-finder-max",),
+                "action": Slider,
+                "min_max": (1, 256),
+                "rounding": 1,
+                "type": int,
+                "dest": "batch_size_finder_max",
+                "default": 256,
+                "group": _("training"),
+                "help": _("Maximum batch size for the training batch-size finder to test."),
+            }
+        )
+        argument_list.append(
+            {
+                "opts": ("--batch-size-finder-target",),
+                "action": Slider,
+                "min_max": (1, 256),
+                "rounding": 1,
+                "type": int,
+                "dest": "batch_size_finder_target",
+                "default": 4,
+                "group": _("training"),
+                "help": _(
+                    "Minimum effective batch size to target when recommending gradient "
+                    "accumulation."
+                ),
+            }
+        )
+        argument_list.append(
+            {
+                "opts": ("--batch-size-finder-auto-apply",),
+                "action": "store_true",
+                "dest": "batch_size_finder_auto_apply",
+                "default": False,
+                "group": _("training"),
+                "help": _(
+                    "Apply the batch-size finder's conservative recommendation to this training "
+                    "run. Without this option, the finder reports results and exits without "
+                    "changing the configured batch size."
+                ),
+            }
+        )
+        argument_list.append(
+            {
                 "opts": ("-s", "--save-interval"),
                 "action": Slider,
                 "min_max": (10, 1000),

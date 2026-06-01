@@ -282,6 +282,16 @@ class Train:
                 logger.debug("[Train] Trainer exits early")
                 self._stop = True
                 return
+            if self._args.find_batch_size:
+                trainer.find_batch_size(
+                    self._args.batch_size_finder_max,
+                    self._args.batch_size_finder_target,
+                    auto_apply=self._args.batch_size_finder_auto_apply,
+                )
+                if not self._args.batch_size_finder_auto_apply:
+                    logger.debug("[Train] Batch-size finder complete. Exiting")
+                    self._stop = True
+                    return
             self._run_training_cycle(trainer)
         except KeyboardInterrupt:
             try:
@@ -599,7 +609,7 @@ class PreviewInterface:
         then resets mask toggle back to ``False``"""
         if not self._active:
             return False
-        retval = self._triggers["toggle_mask"].is_set()
+        retval = bool(self._triggers["toggle_mask"].is_set())
         if retval:
             logger.debug("[PreviewInterface] Sending toggle mask")
             self._triggers["toggle_mask"].clear()
@@ -611,7 +621,7 @@ class PreviewInterface:
         returned then resets the refresh trigger back to ``False``"""
         if not self._active:
             return False
-        retval = self._triggers["refresh"].is_set()
+        retval = bool(self._triggers["refresh"].is_set())
         if retval:
             logger.debug("[PreviewInterface] Sending should refresh")
             self._triggers["refresh"].clear()
@@ -623,7 +633,7 @@ class PreviewInterface:
         trigger is set back to ``False``"""
         if not self._active:
             return False
-        retval = self._triggers["save"].is_set()
+        retval = bool(self._triggers["save"].is_set())
         if retval:
             logger.debug("[PreviewInterface] Sending should save")
             self._triggers["save"].clear()
@@ -644,7 +654,7 @@ class PreviewInterface:
 
         self._thread.check_and_raise_error()
 
-        retval = self._triggers["quit"].is_set()
+        retval = bool(self._triggers["quit"].is_set())
         if retval:
             logger.debug("[PreviewInterface] Sending should stop")
         return retval

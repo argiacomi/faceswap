@@ -45,6 +45,7 @@ class State:  # pylint:disable=too-many-instance-attributes
         self._iterations = 0
         self._mixed_precision_layers: list[str] = []
         self._lr_finder = -1.0
+        self._training_batch_size_finder: dict[str, T.Any] = {}
         self._rebuild_model = False
         self._sessions: dict[int, dict] = {}
         self.lowest_avg_loss: float = 0.0
@@ -93,6 +94,11 @@ class State:  # pylint:disable=too-many-instance-attributes
     def lr_finder(self) -> float:
         """The value discovered from the learning rate finder. -1 if no value stored"""
         return self._lr_finder
+
+    @property
+    def training_batch_size_finder(self) -> dict[str, T.Any]:
+        """The last training batch-size finder recommendation."""
+        return self._training_batch_size_finder
 
     @property
     def model_needs_rebuild(self) -> bool:
@@ -179,6 +185,17 @@ class State:  # pylint:disable=too-many-instance-attributes
         logger.debug("Storing learning rate from LR Finder: %s", learning_rate)
         self._lr_finder = learning_rate
 
+    def add_training_batch_size_finder(self, recommendation: dict[str, T.Any]) -> None:
+        """Store the latest training batch-size finder recommendation.
+
+        Parameters
+        ----------
+        recommendation
+            The JSON-serializable recommendation from the training batch-size finder.
+        """
+        logger.debug("Storing training batch-size finder recommendation: %s", recommendation)
+        self._training_batch_size_finder = recommendation
+
     def save(self) -> None:
         """Save the state values to the serialized state file."""
         state = {
@@ -188,6 +205,7 @@ class State:  # pylint:disable=too-many-instance-attributes
             "iterations": self._iterations,
             "mixed_precision_layers": self._mixed_precision_layers,
             "lr_finder": self._lr_finder,
+            "training_batch_size_finder": self._training_batch_size_finder,
             "config": self._config,
         }
         logger.debug("Saving State: %s", state)
@@ -470,6 +488,7 @@ class State:  # pylint:disable=too-many-instance-attributes
         self._iterations = state.get("iterations", 0)
         self._mixed_precision_layers = state.get("mixed_precision_layers", [])
         self._lr_finder = state.get("lr_finder", -1.0)
+        self._training_batch_size_finder = state.get("training_batch_size_finder", {})
         self._config = state.get("config", {})
         logger.debug("Loaded state: %s", state)
         self._update_config()

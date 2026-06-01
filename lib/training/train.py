@@ -8,14 +8,24 @@ import os
 import time
 import typing as T
 import warnings
+from copy import deepcopy
 
 import cv2
 import numpy as np
 import torch
 
 from lib.logger import format_array, parse_class_init
-from lib.torch_utils import get_device, is_accelerator_oom_error
-from lib.training.data import PreviewLoader, TrainLoader, get_label
+from lib.torch_utils import (
+    accelerator_empty_cache,
+    accelerator_max_memory_allocated,
+    accelerator_max_memory_reserved,
+    accelerator_reset_peak_memory_stats,
+    accelerator_synchronize,
+    get_device,
+    is_accelerator_oom_error,
+)
+from lib.training.batch_size_finder import BatchSizeProbe, TrainingBatchSizeFinder
+from lib.training.data import PreviewLoader, TrainLoader, get_label, get_sorted_images
 from lib.training.faceqa_diagnostics import FaceQALossDiagnostics
 from lib.training.preview import Samples
 from lib.training.preview_diagnostics import PreviewDiagnostics
@@ -127,6 +137,11 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
         """``True`` if the trainer should exit early, without performing any training steps"""
         return self._exit_early
 
+    @property
+    def batch_size(self) -> int:
+        """The currently configured training batch size."""
+        return int(self._plugin.config.batch_size)
+
     def _configure_model(self, plugin: TrainerBase):
         """Add the loss functions to the model and move to the correct device
 
@@ -208,6 +223,17 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
         )
         logger.debug("[Trainer] data loader: %s", retval)
         return retval
+
+    def _set_training_batch_size(self, batch_size: int) -> None:
+        """Update the active training batch size and rebuild the train loader."""
+        logger.debug(
+            "[Trainer] Updating training batch size from %s to %s",
+            self._plugin.config.batch_size,
+            batch_size,
+        )
+        self._plugin.batch_size = batch_size
+        self._plugin.config.batch_size = batch_size
+        self._train_loader = self._get_train_loader()
 
     def _get_preview_loader(self) -> PreviewLoader | None:
         """Get the loader for generating previews whilst training the model
@@ -385,6 +411,120 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
         logger.info("Enabled FaceQA training diagnostics")
         logger.debug("[Trainer] FaceQA training diagnostics path: %s", jsonl_path)
         return FaceQALossDiagnostics(jsonl_path=jsonl_path)
+
+    def _snapshot_model_state(self) -> tuple[str, T.Any]:
+        """Return a restorable snapshot of the current model weights."""
+        model = self._model.model
+        if hasattr(model, "state_dict"):
+            return "state_dict", deepcopy(model.state_dict())
+        if hasattr(model, "get_weights"):
+            return "weights", deepcopy(model.get_weights())
+        raise RuntimeError("Unable to snapshot model weights for batch-size finder")
+
+    def _restore_model_state(self, snapshot: tuple[str, T.Any]) -> None:
+        """Restore model weights from :meth:`_snapshot_model_state`."""
+        mode, state = snapshot
+        model = self._model.model
+        if mode == "state_dict":
+            model.load_state_dict(state)
+            return
+        model.set_weights(state)
+
+    def _snapshot_optimizer_state(self) -> tuple[dict[str, T.Any], int, int]:
+        """Return a restorable snapshot of optimizer state and counters."""
+        return (
+            deepcopy(self._optimizer.state_dict()),
+            self._optimizer._accumulation_count,  # pylint:disable=protected-access
+            self._optimizer._session_steps,  # pylint:disable=protected-access
+        )
+
+    def _restore_optimizer_state(self, snapshot: tuple[dict[str, T.Any], int, int]) -> None:
+        """Restore optimizer state and counters."""
+        state, accumulation_count, session_steps = snapshot
+        self._optimizer.load_state_dict(state)
+        self._optimizer._accumulation_count = accumulation_count  # pylint:disable=protected-access
+        self._optimizer._session_steps = session_steps  # pylint:disable=protected-access
+
+    def probe_training_batch_size(self, batch_size: int) -> BatchSizeProbe:
+        """Probe one batch size through a real training step without keeping mutations."""
+        self._set_training_batch_size(batch_size)
+        model_state = self._snapshot_model_state()
+        optimizer_state = self._snapshot_optimizer_state()
+        vram_allocated = 0
+        vram_reserved = 0
+        try:
+            accelerator_empty_cache()
+            accelerator_reset_peak_memory_stats()
+            for _ in range(max(1, mod_cfg.Optimizer.gradient_accumulation())):
+                inputs, targets, meta = next(self._train_loader)
+                self._plugin.train_batch(
+                    [i.to(self._device) for i in inputs],
+                    [t.to(self._device) for t in targets],
+                    self._optimizer,
+                    meta.to(self._device),
+                )
+            accelerator_synchronize()
+            vram_allocated = accelerator_max_memory_allocated()
+            vram_reserved = accelerator_max_memory_reserved()
+            return BatchSizeProbe(
+                batch_size=batch_size,
+                success=True,
+                vram_allocated=vram_allocated,
+                vram_reserved=vram_reserved,
+            )
+        except RuntimeError as err:
+            vram_allocated = accelerator_max_memory_allocated()
+            vram_reserved = accelerator_max_memory_reserved()
+            if not is_accelerator_oom_error(err):
+                raise
+            logger.debug(
+                "[Trainer] Batch-size probe OOM for batch size %s: %s",
+                batch_size,
+                err,
+            )
+            return BatchSizeProbe(
+                batch_size=batch_size,
+                success=False,
+                vram_allocated=vram_allocated,
+                vram_reserved=vram_reserved,
+                error=str(err),
+            )
+        finally:
+            self._restore_model_state(model_state)
+            self._restore_optimizer_state(optimizer_state)
+            accelerator_empty_cache()
+
+    def find_batch_size(
+        self,
+        max_batch_size: int,
+        target_effective_batch_size: int,
+        auto_apply: bool = False,
+    ) -> None:
+        """Find and optionally apply a safe training batch-size recommendation."""
+        original_batch_size = self.batch_size
+        max_available = min(
+            max_batch_size,
+            *(len(get_sorted_images(folder)) for folder in self._plugin.config.folders),
+        )
+        finder = TrainingBatchSizeFinder(
+            self,
+            max_batch_size=max_available,
+            target_effective_batch_size=target_effective_batch_size,
+        )
+        recommendation = finder.find()
+        self._model.state.add_training_batch_size_finder(recommendation.to_state())
+        self._model.state.save()
+
+        if auto_apply and recommendation.suggested_batch_size > 0:
+            self._set_training_batch_size(recommendation.suggested_batch_size)
+            self._model.state.add_session_batchsize(recommendation.suggested_batch_size)
+            logger.info(
+                "Applied recommended training batch size: %s",
+                recommendation.suggested_batch_size,
+            )
+            return
+
+        self._set_training_batch_size(original_batch_size)
 
     def toggle_mask(self) -> None:
         """Toggle the mask overlay on or off based on user input."""
