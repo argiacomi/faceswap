@@ -540,8 +540,7 @@ class Ensemble(ExtractPlugin):
         """Return crop-to-frame matrices, falling back to identity for warmup or padding."""
         matrices = np.repeat(np.eye(3, dtype="float32")[None], batch_size, axis=0)
         if self._last_matrices is None:
-            log = logger.debug if batch_size == self.batch_size else logger.warning
-            log(
+            logger.debug(
                 "[Ensemble] No cached crop matrices available; falling back to identity "
                 "for batch_size=%s. Outputs will be wrong unless this is a warmup batch.",
                 batch_size,
