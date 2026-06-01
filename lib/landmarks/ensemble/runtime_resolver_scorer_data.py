@@ -18,6 +18,7 @@ from lib.landmarks.coordinates import roi_to_matrix
 from lib.landmarks.datasets.manifest_io import (
     LandmarkSample,
     bbox_from_truth_fallback,
+    filter_canonical_68_samples,
     load_manifest,
 )
 from lib.landmarks.ensemble.runtime_resolver import (
@@ -874,7 +875,9 @@ def load_contexts(
     requested = tuple(candidates or parse_candidates(None, weights))
     cache = DiskPredictionCache(cache_dir)
     contexts: list[SampleCandidateContext] = []
-    for sample in load_manifest(manifest_path):
+    for sample in filter_canonical_68_samples(
+        load_manifest(manifest_path), context="scorer dataset"
+    ):
         try:
             contexts.append(
                 build_sample_context(

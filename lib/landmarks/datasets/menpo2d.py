@@ -45,7 +45,7 @@ def build_menpo2d_manifest(
     manifest_mode: str = "replace",
     allow_overlap: bool = False,
     write_overlays: bool = False,
-    include_39pt_profile: bool = True,
+    include_39pt_profile: bool = False,
 ) -> Path:
     return build_menpo_benchmark_manifest(
         dataset_name="menpo2d",

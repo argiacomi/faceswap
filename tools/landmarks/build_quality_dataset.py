@@ -155,7 +155,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--include-39pt-profile",
         action="store_true",
-        default=True,
+        default=False,
         help="Include MenpoBenchmark 39-point profile samples for Menpo2D/MultiPIE.",
     )
     parser.add_argument(

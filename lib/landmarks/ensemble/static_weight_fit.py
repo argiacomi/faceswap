@@ -10,6 +10,7 @@ import numpy as np
 
 from lib.landmarks.cache.prediction_cache import DiskPredictionCache
 from lib.landmarks.core.metrics import per_landmark_error
+from lib.landmarks.datasets.manifest_io import filter_canonical_68_samples
 from lib.landmarks.ensemble.weights import MODEL_NAMES, weights_from_errors
 from lib.landmarks.evaluation.harness import load_manifest
 
@@ -24,7 +25,9 @@ def compute_static_weights(
     if not model_names:
         raise ValueError("at least one model is required")
     cache = DiskPredictionCache(cache_dir)
-    samples = load_manifest(manifest_path)
+    samples = filter_canonical_68_samples(
+        load_manifest(manifest_path), context="static weight fit"
+    )
     if not samples:
         raise ValueError("manifest contains no validation samples")
 

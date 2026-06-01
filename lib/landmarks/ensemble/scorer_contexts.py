@@ -8,7 +8,10 @@ import typing as T
 from dataclasses import replace
 from pathlib import Path
 
-from lib.landmarks.datasets.manifest_io import load_manifest
+from lib.landmarks.datasets.manifest_io import (
+    filter_canonical_68_samples,
+    load_manifest,
+)
 from lib.landmarks.ensemble.runtime_resolver_scorer_data import (
     DEFAULT_FAILURE_THRESHOLD,
     DEFAULT_OUTLIER_THRESHOLD,
@@ -85,7 +88,9 @@ def load_scorer_contexts(
         resolver_metadata = None
         context_source = source
         if source == SOURCE_GT_HARD:
-            samples = load_manifest(pair.manifest_path)
+            samples = filter_canonical_68_samples(
+                load_manifest(pair.manifest_path), context="scorer contexts"
+            )
             validate_resolver_metadata_for_samples(
                 samples,
                 gt_hard_metadata,

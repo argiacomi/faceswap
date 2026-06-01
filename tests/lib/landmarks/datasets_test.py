@@ -434,8 +434,10 @@ def test_multipie_builder_parses_menpo_list_files(tmp_path: Path) -> None:
     """The MultiPIE builder parses the flat MenpoBenchmark list files into samples."""
     _, p39 = _write_multipie_cache(tmp_path)
 
+    # Opt in to the 39-point profile set: it is excluded by default because it is
+    # not canonical-68 compatible (see test_multipie_builder_can_exclude_39pt_profile).
     manifest_path = build_multipie_manifest(
-        tmp_path / "out", source_dir=tmp_path, no_download=True
+        tmp_path / "out", source_dir=tmp_path, no_download=True, include_39pt_profile=True
     )
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
 
@@ -467,3 +469,14 @@ def test_multipie_builder_can_exclude_39pt_profile(tmp_path: Path) -> None:
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     schemas = {sample["source_schema"] for sample in payload["samples"]}
     assert schemas == {"2d_68"}
+
+
+def test_multipie_builder_defaults_to_excluding_39pt_profile(tmp_path: Path) -> None:
+    """By default the MultiPIE builder keeps only canonical-68 semifrontal samples."""
+    _write_multipie_cache(tmp_path)
+
+    manifest_path = build_multipie_manifest(
+        tmp_path / "out", source_dir=tmp_path, no_download=True
+    )
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert {sample["source_schema"] for sample in payload["samples"]} == {"2d_68"}

@@ -247,7 +247,7 @@ def build_menpo_benchmark_manifest(
     manifest_mode: str = "replace",
     allow_overlap: bool = False,
     write_overlays: bool = False,
-    include_39pt_profile: bool = True,
+    include_39pt_profile: bool = False,
 ) -> Path:
     """Build a canonical manifest from a MenpoBenchmark-style package."""
     resolved = resolve_dataset_source(

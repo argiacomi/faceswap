@@ -16,11 +16,20 @@ to consume one of the legacy helpers should import from here instead.
 from __future__ import annotations
 
 import json
+import logging
 import typing as T
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
+
+# Schemas that ``lib.landmarks.core.schema.to_canonical_68`` can remap to the
+# canonical 68-point layout. Ground truth in any other schema (for example the
+# MenpoBenchmark 39-point profile set) cannot be scored against 68-point model
+# output and must be skipped by canonical-68 eval/scorer/static-weight paths.
+CANONICAL_68_COMPATIBLE_SCHEMAS = frozenset({"2d_68", "2d_98"})
 
 
 @dataclass(frozen=True)
@@ -38,6 +47,7 @@ class LandmarkSample:
     landmarks: str
     dataset: str = ""
     condition: str = ""
+    source_schema: str = ""
     normalizer: float | None = None
     face_bbox: tuple[float, float, float, float] | None = None
     visibility: tuple[bool, ...] | None = None
@@ -153,6 +163,7 @@ def load_manifest(path: str | Path) -> list[LandmarkSample]:
                 landmarks=str((base / landmarks).resolve()),
                 dataset=str(entry.get("dataset", "")),
                 condition=str(entry.get("condition", entry.get("scenario", ""))),
+                source_schema=str(entry.get("source_schema", metadata.get("source_schema", ""))),
                 normalizer=entry.get("normalizer", metadata.get("normalizer")),
                 face_bbox=bbox,
                 visibility=visibility,
@@ -182,11 +193,63 @@ def bbox_for_sample(
     return bbox_from_truth_fallback(truth)
 
 
+def sample_is_canonical_68(sample: LandmarkSample) -> bool:
+    """Return ``True`` if the sample ground truth can map to the canonical 68 points.
+
+    The decision is based on the *shape* of the stored GT array (68 points, or 98
+    points which :func:`lib.landmarks.core.schema.to_canonical_68` remaps), not the
+    declared ``source_schema`` label. The label is unreliable for this purpose: for
+    example AFLW2000-3D ground truth is labelled ``3d_68`` but is stored as a
+    ``(68, 2)`` array that canonical-68 scoring handles fine, while the MenpoBenchmark
+    39-point profile set is stored as ``(39, 2)`` and cannot be scored against
+    68-point model output.
+    """
+    try:
+        truth = np.load(sample.landmarks)
+    except OSError:
+        return False
+    return getattr(truth, "ndim", 0) == 2 and int(truth.shape[0]) in (68, 98)
+
+
+def filter_canonical_68_samples(
+    samples: T.Sequence[LandmarkSample], *, context: str = ""
+) -> list[LandmarkSample]:
+    """Drop samples whose GT cannot be scored against canonical 68-point output.
+
+    Canonical-68 NME / scorer / static-weight code only understands 68-point (or
+    98-point, which is remapped to 68) ground truth. Samples in any other schema are
+    skipped with a single summarizing warning so that a mixed manifest does not crash
+    these paths. The schema is not silently coerced.
+    """
+    kept: list[LandmarkSample] = []
+    skipped_by_schema: dict[str, int] = {}
+    for sample in samples:
+        if sample_is_canonical_68(sample):
+            kept.append(sample)
+        else:
+            key = (sample.source_schema or "unknown").strip() or "unknown"
+            skipped_by_schema[key] = skipped_by_schema.get(key, 0) + 1
+    if skipped_by_schema:
+        where = f" in {context}" if context else ""
+        logger.warning(
+            "Skipping %d non-canonical-68 ground-truth sample(s)%s (counts by schema: %s). "
+            "Canonical-68 NME/scorer/static-weight paths only support 68/98-point ground "
+            "truth; opt out of 39-point profile data or add real partial-schema metrics.",
+            sum(skipped_by_schema.values()),
+            where,
+            skipped_by_schema,
+        )
+    return kept
+
+
 __all__ = [
+    "CANONICAL_68_COMPATIBLE_SCHEMAS",
     "LandmarkSample",
     "bbox_for_sample",
     "bbox_from_truth_fallback",
     "coerce_bbox",
     "coerce_visibility",
+    "filter_canonical_68_samples",
     "load_manifest",
+    "sample_is_canonical_68",
 ]

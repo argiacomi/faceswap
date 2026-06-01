@@ -30,6 +30,7 @@ from lib.landmarks.core.fusion import (
 from lib.landmarks.core.metrics import per_landmark_error
 from lib.landmarks.core.rejection import weighted_median as weighted_median_fusion
 from lib.landmarks.core.schema import CANONICAL_SCHEMA, LandmarkPrediction
+from lib.landmarks.datasets.manifest_io import filter_canonical_68_samples
 from lib.landmarks.ensemble.strategies import (
     strategy_outlier_method,
     strategy_requires_weights,
@@ -656,7 +657,7 @@ def load_split_samples(
     manifest_path: str | Path, assignment: SplitAssignment, split_name: str
 ) -> list[LandmarkSample]:
     """Load the LandmarkSample list for one named split from the full manifest."""
-    full = load_manifest(manifest_path)
+    full = filter_canonical_68_samples(load_manifest(manifest_path), context="candidate search")
     by_id = {sample.sample_id: sample for sample in full}
     wanted = assignment.ids_for(split_name)
     missing = [sid for sid in wanted if sid not in by_id]

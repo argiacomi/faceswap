@@ -15,6 +15,7 @@ from lib.landmarks.core.fusion import FusionResult, plain_average, static_weight
 from lib.landmarks.core.schema import CANONICAL_SCHEMA, LandmarkPrediction
 from lib.landmarks.datasets.manifest_io import (
     LandmarkSample,
+    filter_canonical_68_samples,
     load_manifest,
 )
 from lib.landmarks.ensemble.strategies import (
@@ -191,7 +192,9 @@ def run_quality_harness(
     ``outlier_threshold`` is measured in robust z-score units for outlier-aware
     variants.
     """
-    samples = load_manifest(manifest_path)
+    samples = filter_canonical_68_samples(
+        load_manifest(manifest_path), context="landmark evaluation harness"
+    )
     cache = DiskPredictionCache(cache_dir)
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)

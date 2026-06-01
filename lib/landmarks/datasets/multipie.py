@@ -240,7 +240,7 @@ def build_multipie_manifest(
     manifest_mode: str = "replace",
     allow_overlap: bool = False,
     write_overlays: bool = False,
-    include_39pt_profile: bool = True,
+    include_39pt_profile: bool = False,
 ) -> Path:
     """Build a canonical manifest from the MenpoBenchmark MultiPIE package."""
     resolved = resolve_dataset_source(

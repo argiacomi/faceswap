@@ -135,3 +135,46 @@ def test_static_weights_from_cache_and_ground_truth(tmp_path: Path) -> None:
     assert weights["hrnet"][0] > weights["spiga"][0] > weights["orformer"][0]
     for landmark_index in range(LANDMARK_COUNT):
         assert sum(weights[model][landmark_index] for model in MODEL_NAMES) == pytest.approx(1.0)
+
+
+def test_compute_static_weights_skips_non_canonical_68_gt(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A mixed manifest with 39-point profile GT must not crash static-weight fitting."""
+    import logging
+
+    from lib.landmarks.ensemble.static_weight_fit import compute_static_weights
+
+    truth_dir = tmp_path / "truth"
+    truth_dir.mkdir()
+    np.save(str(truth_dir / "good.npy"), _points())
+    np.save(str(truth_dir / "profile.npy"), np.zeros((39, 2), dtype="float32"))
+    samples = [
+        {
+            "sample_id": "good",
+            "image": "good.png",
+            "landmarks": "truth/good.npy",
+            "source_schema": "2d_68",
+        },
+        {
+            "sample_id": "profile",
+            "image": "profile.png",
+            "landmarks": "truth/profile.npy",
+            "source_schema": "2d_39",
+        },
+    ]
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps({"samples": samples}) + "\n", encoding="utf-8")
+
+    cache = DiskPredictionCache(tmp_path / "cache")
+    for sample_id in ("good", "profile"):
+        for model in MODEL_NAMES:
+            cache.write(sample_id, LandmarkPrediction(_points(1.0), model_name=model))
+
+    with caplog.at_level(logging.WARNING, logger="lib.landmarks.datasets.manifest_io"):
+        weights, mean_errors = compute_static_weights(manifest, tmp_path / "cache")
+
+    # Only the canonical-68 sample contributed; the 39-point profile sample was skipped.
+    assert tuple(weights) == MODEL_NAMES
+    assert all(len(mean_errors[model]) == LANDMARK_COUNT for model in MODEL_NAMES)
+    assert "non-canonical-68" in caplog.text
