@@ -6,6 +6,9 @@ from __future__ import annotations
 import typing as T
 from pathlib import Path
 
+import torch
+
+from lib.torch_utils import is_accelerator_oom_error
 from lib.training.batch_size_finder import BatchSizeProbe, TrainingBatchSizeFinder
 from lib.training.train import Trainer
 
@@ -85,6 +88,51 @@ class _Trainer:
         )
 
 
+class _Meta:
+    """Minimal batch metadata."""
+
+    def to(self, _device: torch.device) -> T.Self:  # type: ignore[name-defined]
+        """Return self for fake device transfer."""
+        return self
+
+
+class _ProbePlugin:
+    """Fake plugin that raises accelerator OOM during train."""
+
+    def train_batch(
+        self,
+        _inputs: list[torch.Tensor],
+        _targets: list[torch.Tensor],
+        _optimizer: object,
+        _meta: _Meta,
+    ) -> list[object]:
+        """Raise an OOM error during the training path."""
+        raise torch.OutOfMemoryError("probe oom")
+
+
+class _ProbeOptimizer:
+    """Fake optimizer that records gradient clearing."""
+
+    _accumulation_count = 1
+    _session_steps = 2
+
+    def __init__(self) -> None:
+        self.zeroed = False
+        self.restored = False
+
+    def state_dict(self) -> dict[str, object]:
+        """Return fake optimizer state."""
+        return {"optimizer": {"state": {}}, "scaler": None}
+
+    def load_state_dict(self, _state: dict[str, object]) -> None:
+        """Record state restore."""
+        self.restored = True
+
+    def zero_grad(self) -> None:
+        """Record gradient clearing."""
+        self.zeroed = True
+
+
 def _folders(tmp_path: Path, count: int = 32) -> list[str]:
     """Create two fake training folders containing PNG filenames."""
     retval = []
@@ -135,6 +183,44 @@ def test_recommendation_uses_conservative_batch_and_accumulation() -> None:
     assert recommendation.gradient_accumulation_recommended is True
     assert recommendation.gradient_accumulation_steps == 2
     assert recommendation.effective_batch_size == 4
+
+
+def test_probe_snapshots_clone_tensors_to_cpu() -> None:
+    """Probe snapshots should not duplicate model/optimizer tensors on the accelerator."""
+    value = {
+        "tensor": torch.ones((2, 2)),
+        "nested": ({"tensor": torch.arange(3)}, [torch.ones(1)]),
+    }
+
+    snapshot = Trainer._copy_state_to_cpu(value)
+
+    assert snapshot["tensor"].device.type == "cpu"
+    assert snapshot["tensor"].data_ptr() != value["tensor"].data_ptr()
+    assert snapshot["nested"][0]["tensor"].device.type == "cpu"
+    assert snapshot["nested"][0]["tensor"].data_ptr() != value["nested"][0]["tensor"].data_ptr()
+    assert snapshot["nested"][1][0].device.type == "cpu"
+    assert snapshot["nested"][1][0].data_ptr() != value["nested"][1][0].data_ptr()
+
+
+def test_probe_clears_gradients_after_oom() -> None:
+    """OOM probes should restore state and clear partial gradients."""
+    trainer = T.cast(T.Any, Trainer.__new__(Trainer))
+    optimizer = _ProbeOptimizer()
+    trainer._device = torch.device("cpu")
+    trainer._plugin = _ProbePlugin()
+    trainer._optimizer = optimizer
+    trainer._train_loader = iter([([torch.zeros((1, 1))], [torch.zeros((1, 1))], _Meta())])
+    trainer._set_training_batch_size = lambda _batch_size: None
+    trainer._snapshot_model_state = lambda: ("state_dict", {})
+    trainer._restore_model_state = lambda _state: None
+
+    probe = Trainer.probe_training_batch_size(trainer, 4)
+
+    assert probe.success is False
+    assert probe.error is not None
+    assert is_accelerator_oom_error(torch.OutOfMemoryError(probe.error))
+    assert optimizer.restored is True
+    assert optimizer.zeroed is True
 
 
 def test_trainer_find_batch_size_does_not_auto_apply(tmp_path: Path) -> None:

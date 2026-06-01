@@ -450,6 +450,10 @@ class Optimizer:
         self._optimizer.zero_grad(set_to_none=True)
         self._accumulation_count = 0
 
+    def zero_grad(self) -> None:
+        """Clear all optimizer parameter gradients."""
+        self._optimizer.zero_grad(set_to_none=True)
+
     def state_dict(self) -> dict[str, T.Any]:
         """Serialized data as a dict for relevant options contained in this class
 

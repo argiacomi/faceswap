@@ -412,13 +412,26 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
         logger.debug("[Trainer] FaceQA training diagnostics path: %s", jsonl_path)
         return FaceQALossDiagnostics(jsonl_path=jsonl_path)
 
+    @classmethod
+    def _copy_state_to_cpu(cls, value: T.Any) -> T.Any:
+        """Recursively clone tensor state onto CPU for probe snapshots."""
+        if isinstance(value, torch.Tensor):
+            return value.detach().cpu().clone()
+        if isinstance(value, dict):
+            return value.__class__((k, cls._copy_state_to_cpu(v)) for k, v in value.items())
+        if isinstance(value, list):
+            return [cls._copy_state_to_cpu(v) for v in value]
+        if isinstance(value, tuple):
+            return tuple(cls._copy_state_to_cpu(v) for v in value)
+        return deepcopy(value)
+
     def _snapshot_model_state(self) -> tuple[str, T.Any]:
-        """Return a restorable snapshot of the current model weights."""
+        """Return a CPU-backed restorable snapshot of the current model weights."""
         model = self._model.model
         if hasattr(model, "state_dict"):
-            return "state_dict", deepcopy(model.state_dict())
+            return "state_dict", self._copy_state_to_cpu(model.state_dict())
         if hasattr(model, "get_weights"):
-            return "weights", deepcopy(model.get_weights())
+            return "weights", self._copy_state_to_cpu(model.get_weights())
         raise RuntimeError("Unable to snapshot model weights for batch-size finder")
 
     def _restore_model_state(self, snapshot: tuple[str, T.Any]) -> None:
@@ -431,9 +444,9 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
         model.set_weights(state)
 
     def _snapshot_optimizer_state(self) -> tuple[dict[str, T.Any], int, int]:
-        """Return a restorable snapshot of optimizer state and counters."""
+        """Return a CPU-backed restorable snapshot of optimizer state and counters."""
         return (
-            deepcopy(self._optimizer.state_dict()),
+            self._copy_state_to_cpu(self._optimizer.state_dict()),
             self._optimizer._accumulation_count,  # pylint:disable=protected-access
             self._optimizer._session_steps,  # pylint:disable=protected-access
         )
@@ -492,6 +505,7 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
         finally:
             self._restore_model_state(model_state)
             self._restore_optimizer_state(optimizer_state)
+            self._optimizer.zero_grad()
             accelerator_empty_cache()
 
     def find_batch_size(
