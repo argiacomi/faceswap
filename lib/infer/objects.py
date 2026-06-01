@@ -1049,7 +1049,20 @@ def frame_faces_to_alignment(media: FrameFaces) -> list[PNGAlignments]:
     assert media.landmarks is not None
     assert media.landmarks.shape[0] == len(media)
     assert all(m.masks.shape[0] == m.matrices.shape[0] == len(media) for m in media.masks.values())
-    assert all(i.shape[0] == len(media) for i in media.identities.values())
+
+    identities = {}
+    for key, identity in media.identities.items():
+        if identity.shape[0] == len(media):
+            identities[key] = identity
+            continue
+        logger.warning(
+            "Dropping malformed identity metadata for frame '%s', identity '%s': "
+            "%s identity row(s) for %s face(s).",
+            media.filename,
+            key,
+            identity.shape[0],
+            len(media),
+        )
 
     masks = {}
     for k, v in media.masks.items():
@@ -1086,7 +1099,7 @@ def frame_faces_to_alignment(media: FrameFaces) -> list[PNGAlignments]:
                 )
                 for k, m in masks.items()
             },
-            identity={k: i[idx].tolist() for k, i in media.identities.items()},
+            identity={k: i[idx].tolist() for k, i in identities.items()},
             metadata=media.aligned.metadata[idx] if idx < len(media.aligned.metadata) else {},
         )
         for idx, (bbox, lms) in enumerate(
