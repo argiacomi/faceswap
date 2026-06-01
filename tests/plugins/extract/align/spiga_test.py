@@ -22,6 +22,7 @@ imports are deferred to function scope.
 
 from __future__ import annotations
 
+import typing as T
 from types import SimpleNamespace
 
 import numpy as np
@@ -30,6 +31,11 @@ import pytest
 # Boot lib.infer first so that plugins.extract.base can be imported without a
 # circular-import error in standalone (file-targeted) pytest runs.
 from lib.infer.align import Align  # noqa: F401  (import for side-effect)
+
+if T.TYPE_CHECKING:
+    from lib.infer.align import ReFeed
+    from plugins.extract.align.spiga import SPIGAModelConfig
+    from plugins.extract.base import ExtractPlugin
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -167,8 +173,8 @@ def _build_tensor(image: np.ndarray, bbox: np.ndarray) -> np.ndarray:
     class _StubReFeed:
         total_feeds = 1
 
-    handler.plugin = _StubPlugin()  # type: ignore[assignment]
-    handler._re_feed = _StubReFeed()  # type: ignore[assignment]
+    handler.plugin = T.cast("ExtractPlugin", _StubPlugin())
+    handler._re_feed = T.cast("ReFeed", _StubReFeed())
 
     spiga = _spiga(target_dist=1.60)
     roi = spiga.pre_process(bbox)
@@ -207,7 +213,8 @@ def _build_tensor(image: np.ndarray, bbox: np.ndarray) -> np.ndarray:
     cropped = handler._crop_and_resize(
         _FakeBatch.images, _FakeBatch.frame_ids, clamped, dst, scale, is_final=True
     )
-    return handler._format_images(cropped)
+    formatted: np.ndarray = handler._format_images(cropped)
+    return formatted
 
 
 def test_crop_and_resize_skips_empty_or_invalid_boxes() -> None:
@@ -224,10 +231,10 @@ def test_crop_and_resize_skips_empty_or_invalid_boxes() -> None:
     class _StubReFeed:
         total_feeds = 4
 
-    handler.plugin = _StubPlugin()  # type: ignore[assignment]
-    handler._re_feed = _StubReFeed()  # type: ignore[assignment]
+    handler.plugin = T.cast("ExtractPlugin", _StubPlugin())
+    handler._re_feed = T.cast("ReFeed", _StubReFeed())
 
-    image = np.full((10, 10, 3), 255, dtype=np.uint8)
+    image: np.ndarray = np.full((10, 10, 3), 255, dtype=np.uint8)
     roi = np.array(
         [
             [1, 1, 8, 8],  # valid
@@ -241,7 +248,7 @@ def test_crop_and_resize_skips_empty_or_invalid_boxes() -> None:
         [[0, 0, 16, 16], [0, 0, 16, 16], [0, 0, 16, 16], [0, 0, 16, 16]],
         dtype=np.int32,
     )
-    scales = np.ones((4,), dtype=np.float64)
+    scales: np.ndarray = np.ones((4,), dtype=np.float64)
 
     cropped = handler._crop_and_resize(
         [image], np.array([0], dtype=np.int32), roi, destinations, scales, is_final=True
@@ -362,7 +369,7 @@ def test_post_process_passes_through_float32() -> None:
     from plugins.extract.align.spiga import SPIGA
 
     plugin = object.__new__(SPIGA)
-    plugin._model_config = SimpleNamespace(num_landmarks=98)  # type: ignore[assignment]
+    plugin._model_config = T.cast("SPIGAModelConfig", SimpleNamespace(num_landmarks=98))
     arr = np.random.default_rng(0).uniform(0.0, 1.0, (3, 98, 2)).astype(np.float32)
     result = plugin.post_process(arr)
     assert result.dtype == np.float32
@@ -373,7 +380,7 @@ def test_post_process_converts_float64_to_float32() -> None:
     from plugins.extract.align.spiga import SPIGA
 
     plugin = object.__new__(SPIGA)
-    plugin._model_config = SimpleNamespace(num_landmarks=68)  # type: ignore[assignment]
+    plugin._model_config = T.cast("SPIGAModelConfig", SimpleNamespace(num_landmarks=68))
     arr = np.random.default_rng(0).uniform(0.0, 1.0, (2, 68, 2))  # float64
     result = plugin.post_process(arr)
     assert result.dtype == np.float32
