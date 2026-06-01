@@ -136,10 +136,12 @@ class Landmarks(Editor):
                 group="Trace",
                 default="Jaw",
                 choices=tuple(TRACE_REGIONS_68),
+                is_radio=True,
                 helptext=_(
                     "Region to replace when Edit Mode is Trace Region. Chin is "
-                    "available as an advanced pose-critical subset of Jaw."
-                ),
+                    "available as an advanced pose-critical subset of Jaw.\n\n"
+                )
+                + POINT_ORDERING_GUIDE,
             ),
             ControlPanelOption(
                 title="Numbered Guide",
@@ -152,13 +154,6 @@ class Landmarks(Editor):
                     "Show faint landmark numbers while editing. Selected Region "
                     "uses the current trace region."
                 ),
-            ),
-            ControlPanelOption(
-                title="Point Ordering Guide",
-                dtype=str,
-                group="Trace",
-                default=POINT_ORDERING_GUIDE,
-                helptext=POINT_ORDERING_GUIDE,
             ),
         )
         for option in controls:

@@ -6,8 +6,10 @@ import gettext
 import platform
 from functools import partial
 
+import cv2
 import numpy as np
 
+from lib.align import AlignedFace
 from lib.gui.custom_widgets import RightClickMenu
 from lib.utils import get_module_objects
 from tools.manual.aligners import available_aligners, default_aligner
@@ -43,7 +45,8 @@ class BoundingBox(Editor):
             " - Grab the corner anchors to resize the bounding box.\n"
             " - Click and drag the bounding box to relocate.\n"
             " - Click in empty space to create a new bounding box.\n"
-            " - Right click a bounding box to delete a face."
+            " - Right click a bounding box to delete a face.\n"
+            " - Use Magnify to edit the selected face's bounding box in zoomed view."
         )
         key_bindings = {"<Delete>": self._delete_current_face}
         super().__init__(
@@ -72,6 +75,18 @@ class BoundingBox(Editor):
 
     def _add_controls(self):
         """Controls for feeding the Aligner. Exposes Normalization Method as a parameter."""
+
+    def _add_actions(self):
+        """Add the zoom action for detailed bounding-box editing."""
+        self._add_action(
+            "magnify", "zoom", _("Magnify/Demagnify the View"), group=None, hotkey="M"
+        )
+        self._actions["magnify"]["tk_var"].trace("w", self._toggle_zoom)
+
+    def _toggle_zoom(self, *args):  # pylint:disable=unused-argument
+        """Trigger a redraw when zoom mode changes."""
+        self._globals.var_full_update.set(True)
+
         align_ctl = ControlPanelOption(
             "Aligner",
             str,
@@ -116,26 +131,72 @@ class BoundingBox(Editor):
 
     def update_annotation(self):
         """Get the latest bounding box data from alignments and update."""
-        if self._globals.is_zoomed:
-            logger.trace("Image is zoomed. Hiding Bounding Box.")
-            self.hide_annotation()
-            return
         key = "bb_box"
         color = self._control_color
+        if self._globals.is_zoomed:
+            self.hide_annotation("bb_box")
+            self.hide_annotation("bb_anc_dsp")
+            self.hide_annotation("bb_anc_grb")
+
         for idx, face in enumerate(self._face_iterator):
-            box = np.array([(face.left, face.top), (face.right, face.bottom)])
-            box = self._scale_to_display(box).astype("int32").flatten()
+            face_index = self._globals.face_index if self._globals.is_zoomed else idx
+            if self._globals.is_zoomed:
+                box = self._zoomed_bounding_box(face)
+            else:
+                box = np.array([(face.left, face.top), (face.right, face.bottom)])
+                box = self._scale_to_display(box).astype("int32").flatten()
             kwargs = {"outline": color, "width": 1}
             logger.trace(
                 "frame_index: %s, face_index: %s, box: %s, kwargs: %s",
                 self._globals.frame_index,
-                idx,
+                face_index,
                 box,
                 kwargs,
             )
-            self._object_tracker(key, "rectangle", idx, box, kwargs)
-            self._update_anchor_annotation(idx, box, color)
+            self._object_tracker(key, "rectangle", face_index, box, kwargs)
+            self._update_anchor_annotation(face_index, box, color)
         logger.trace("Updated bounding box annotations")
+
+    def _zoomed_bounding_box(self, face):
+        """Return the selected face bounding box transformed into zoomed display coordinates."""
+        assert face.left is not None and face.top is not None
+        assert face.right is not None and face.bottom is not None
+        aligned = AlignedFace(
+            face.landmarks_xy,
+            centering="face",
+            size=min(self._globals.frame_display_dims),
+        )
+        box = np.array(
+            [[[face.left, face.top], [face.right, face.bottom]]],
+            dtype="float32",
+        )
+        box = cv2.transform(box, aligned.adjusted_matrix).reshape(2, 2)
+        box = box + self._zoomed_roi[:2]
+        return np.rint(box).astype("int32").flatten()
+
+    def _display_corners_to_source(self, coords, face_idx=None):
+        """Convert display/zoomed box coords into original-frame corner coordinates."""
+        coords = np.asarray(coords, dtype="float32").flatten()
+        left, top, right, bottom = coords
+        corners = np.array(
+            [[left, top], [right, top], [right, bottom], [left, bottom]],
+            dtype="float32",
+        )
+
+        if self._globals.is_zoomed and face_idx is not None:
+            face = self._det_faces.current_faces[self._globals.frame_index][face_idx]
+            aligned = AlignedFace(
+                face.landmarks_xy,
+                centering="face",
+                size=min(self._globals.frame_display_dims),
+            )
+            matrix = cv2.invertAffineTransform(aligned.adjusted_matrix)
+            corners = corners - self._zoomed_roi[:2]
+            corners = cv2.transform(corners.reshape(1, -1, 2), matrix).reshape(-1, 2)
+        else:
+            corners = self.scale_from_display(corners)
+
+        return np.rint(corners).astype("int32")
 
     def _update_anchor_annotation(self, face_index, bounding_box, color):
         """Update the anchor annotations for each corner of the bounding box.
@@ -254,8 +315,14 @@ class BoundingBox(Editor):
         -----
         We can't use tags on unfilled rectangles as the interior of the rectangle is not tagged.
         """
-        for face_idx, bbox in enumerate(self._bounding_boxes):
+        item_ids = self._canvas.find_withtag("bb_box")
+        for item_id in item_ids:
+            if self._canvas.itemcget(item_id, "state") == "hidden":
+                continue
+            bbox = self._canvas.coords(item_id)
             if bbox[0] <= event.x <= bbox[2] and bbox[1] <= event.y <= bbox[3]:
+                tags = self._canvas.gettags(item_id)
+                face_idx = int(next(tag for tag in tags if tag.startswith("face_")).split("_")[-1])
                 self._canvas.config(cursor="fleur")
                 self._mouse_location = ("box", str(face_idx))
                 return True
@@ -277,7 +344,7 @@ class BoundingBox(Editor):
         bool
             ``True`` if cursor is over a bounding box otherwise ``False``
         """
-        if self._globals.frame_index == -1:
+        if self._globals.frame_index == -1 or self._globals.is_zoomed:
             return False
         display_dims = self._globals.current_frame.display_dims
         if (
@@ -395,7 +462,7 @@ class BoundingBox(Editor):
         self._det_faces.update.bounding_box(
             self._globals.frame_index,
             face_idx,
-            *self._coords_to_bounding_box(box),
+            *self._coords_to_bounding_box(box, face_idx),
             aligner=self._tk_aligner.get(),
         )
 
@@ -419,30 +486,29 @@ class BoundingBox(Editor):
         self._det_faces.update.bounding_box(
             self._globals.frame_index,
             face_idx,
-            *self._coords_to_bounding_box(coords),
+            *self._coords_to_bounding_box(coords, face_idx),
             aligner=self._tk_aligner.get(),
         )
         self._drag_data["current_location"] = (event.x, event.y)
 
-    def _coords_to_bounding_box(self, coords):
-        """Converts tkinter coordinates to :class:`lib.align.DetectedFace` bounding
-        box format, scaled up and offset for feeding the model.
+    def _coords_to_bounding_box(self, coords, face_idx=None):
+        """Convert display coordinates to DetectedFace bounding-box format.
 
-        Returns
-        -------
-        tuple
-            The (`x`, `width`, `y`, `height`) integer points of the bounding box.
+        In frame view, the coordinates are scaled back from the displayed frame.
+        In zoomed view, the displayed zoom-space rectangle is inverse-transformed
+        through the selected face's aligned-face matrix, then converted to an
+        axis-aligned source-frame rectangle.
         """
         logger.trace("in: %s", coords)
-        coords = (
-            self.scale_from_display(np.array(coords).reshape((2, 2))).flatten().astype("int32")
-        )
-        logger.trace("out: %s", coords)
+        corners = self._display_corners_to_source(coords, face_idx)
+        mins = np.min(corners, axis=0)
+        maxes = np.max(corners, axis=0)
+        logger.trace("out mins: %s maxes: %s", mins, maxes)
         return (
-            int(coords[0]),
-            int(coords[2] - coords[0]),
-            int(coords[1]),
-            int(coords[3] - coords[1]),
+            int(mins[0]),
+            int(maxes[0] - mins[0]),
+            int(mins[1]),
+            int(maxes[1] - mins[1]),
         )
 
     def _context_menu(self, event):
