@@ -1791,10 +1791,21 @@ def _build_splits(args: argparse.Namespace, paths: PipelinePaths) -> list[str]:
     if not isinstance(samples, list):
         raise ValueError(f"manifest samples must be a list: {paths.run_manifest}")
 
-    if all(
+    has_any_landmark_paths = any(
         isinstance(sample, dict) and (sample.get("landmarks") or sample.get("ground_truth"))
         for sample in samples
-    ):
+    )
+    has_all_landmark_paths = all(
+        isinstance(sample, dict) and (sample.get("landmarks") or sample.get("ground_truth"))
+        for sample in samples
+    )
+
+    if has_any_landmark_paths and not has_all_landmark_paths:
+        raise ValueError(
+            f"manifest {paths.run_manifest} mixes samples with and without landmark paths"
+        )
+
+    if has_all_landmark_paths:
         canonical_ids = {
             sample.sample_id
             for sample in filter_canonical_68_samples(
