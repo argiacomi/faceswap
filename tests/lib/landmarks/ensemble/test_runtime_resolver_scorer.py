@@ -14,6 +14,7 @@ import pytest
 
 import lib.landmarks.ensemble.runtime_resolver_scorer_data as scorer_data
 import lib.landmarks.ensemble.scorer_eval as scorer_eval_impl
+import lib.landmarks.ensemble.scorer_training as scorer_training
 from lib.landmarks.cache.prediction_cache import DiskPredictionCache
 from lib.landmarks.core.schema import LandmarkPrediction
 from lib.landmarks.ensemble.promoted_setup import write_best_setup
@@ -33,6 +34,7 @@ from lib.landmarks.ensemble.scorer_target_config import (
     SCORE_SEMANTICS_PREDICTED_COST,
     SCORE_SEMANTICS_PREDICTED_RISK,
     TARGET_CANDIDATE_FAILURE_OR_HIGH_GAP,
+    TARGET_ORACLE_REGRET,
     TARGET_SELECTION_COST,
 )
 from lib.landmarks.ensemble.weights import save_weights
@@ -240,6 +242,46 @@ def test_occluded_side_requires_visibility_or_yaw_evidence() -> None:
 
     assert scorer_eval_impl._indices_for_region(context, "occluded_side") == ()
     assert scorer_eval_impl._indices_for_region(context, "visible_side") == ()
+
+
+def test_scorer_training_weights_hard_condition_rows() -> None:
+    context = _candidate_context(
+        nme_by_candidate={
+            "oracle": 0.01,
+            "zero": 0.01,
+            "small": 0.015,
+            "large": 0.05,
+            "failure": 0.02,
+        },
+        failure_by_candidate={"failure": True},
+    )
+    context = scorer_data.SampleCandidateContext(
+        **{
+            **context.__dict__,
+            "condition": "profile_occlusion",
+            "runtime_bucket": "profile_left",
+            "hard_case_tags": ("profile_occlusion", "occlusion", "profile_pose"),
+        }
+    )
+    row = scorer_data.rows_for_context(context)[0]
+
+    assert scorer_eval_impl is not None
+    assert scorer_training.scorer_sample_weight(row, "gt_hard") >= 4.0
+
+
+def test_oracle_regret_target_uses_raw_candidate_minus_oracle_nme() -> None:
+    context = _candidate_context(
+        nme_by_candidate={
+            "oracle": 0.01,
+            "zero": 0.01,
+            "small": 0.015,
+            "large": 0.05,
+            "failure": 0.02,
+        }
+    )
+    row = {item.candidate_name: item for item in scorer_data.rows_for_context(context)}["large"]
+
+    assert scorer_training.scorer_target_value(row, TARGET_ORACLE_REGRET) == pytest.approx(0.04)
 
 
 def test_rows_for_context_adds_continuous_regret_targets() -> None:

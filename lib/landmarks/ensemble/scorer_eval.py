@@ -94,6 +94,14 @@ PER_REGION_NME_CSV = "per_region_nme.csv"
 PER_REGION_WORST_SAMPLES_JSON = "per_region_worst_samples.json"
 
 SIDE_YAW_EVIDENCE_DEGREES = 5.0
+HARD_BUCKET_PROMOTION_SPLITS: tuple[str, ...] = (
+    "profile",
+    "occlusion",
+    "profile_occlusion",
+    "production_failures",
+)
+HARD_BUCKET_MAX_FAILURE_RATE = 0.0
+HARD_BUCKET_MAX_CATASTROPHIC_FAILURES = 0
 
 
 def eval_split_sources(path: Path) -> tuple[set[tuple[str, str, str]], dict[str, str]]:
@@ -691,6 +699,25 @@ def write_region_reports(
         "region_metrics_available": bool(detail_rows),
         "region_metrics_unavailable_reason": unavailable_reason,
     }
+
+
+def hard_bucket_promotion_gates(
+    metrics_by_split: T.Mapping[str, T.Mapping[str, T.Any]],
+) -> list[str]:
+    """Return hard-bucket promotion failures for the selected scorer policy."""
+    failed: list[str] = []
+    for split in HARD_BUCKET_PROMOTION_SPLITS:
+        metrics = metrics_by_split.get(split, {})
+        sample_count = int(metrics.get("sample_count", 0) or 0)
+        if sample_count <= 0:
+            continue
+        failure_rate = float(metrics.get("failure_rate", 0.0) or 0.0)
+        catastrophic = int(metrics.get("catastrophic_failure_count", 0) or 0)
+        if failure_rate > HARD_BUCKET_MAX_FAILURE_RATE:
+            failed.append(f"{split}_failure_rate_above_hard_bucket_gate")
+        if catastrophic > HARD_BUCKET_MAX_CATASTROPHIC_FAILURES:
+            failed.append(f"{split}_catastrophic_failures_above_hard_bucket_gate")
+    return failed
 
 
 def policy_metric_bundle(
@@ -1342,6 +1369,7 @@ def evaluate_runtime_resolver_scorer(
         failure_threshold=failure_threshold,
         worst_sample_count=worst_sample_count,
     )
+    hard_bucket_failed_gates = hard_bucket_promotion_gates(metrics_by_split)
 
     best_single_name, best_single_summary = best_single(contexts, candidates)
     static_name = (
@@ -1489,6 +1517,7 @@ def evaluate_runtime_resolver_scorer(
         *combined_failed_gates,
         *production_failed_gates,
         *gt_hard_failed_gates,
+        *hard_bucket_failed_gates,
     ]
     failed_gates = (
         production_failed_gates if promotion_scope == "production" else universal_failed_gates
@@ -1618,10 +1647,12 @@ def evaluate_runtime_resolver_scorer(
         "diagnostic_combined_failed_gates": combined_failed_gates,
         "diagnostic_production_failed_gates": production_failed_gates,
         "diagnostic_gt_hard_failed_gates": gt_hard_failed_gates,
+        "diagnostic_hard_bucket_failed_gates": hard_bucket_failed_gates,
         "universal_failed_gates": universal_failed_gates,
         "combined_failed_gates": combined_failed_gates,
         "production_failed_gates": production_failed_gates,
         "gt_hard_failed_gates": gt_hard_failed_gates,
+        "hard_bucket_failed_gates": hard_bucket_failed_gates,
         "production_gate_status": "pass",
         "gt_hard_gate_status": "pass" if not gt_hard_failed_gates else "diagnostic_fail",
         "sample_count": len(contexts),
@@ -1727,6 +1758,7 @@ def evaluate_runtime_resolver_scorer(
         "combined_failed_gates": list(combined_failed_gates),
         "production_failed_gates": list(production_failed_gates),
         "gt_hard_failed_gates": list(gt_hard_failed_gates),
+        "hard_bucket_failed_gates": list(hard_bucket_failed_gates),
         "row_backed_eval": scorer_rows is not None,
         "scorer_rows": "" if scorer_rows is None else str(scorer_rows),
         "derived_no_image_sample_count": len(derived_no_image_contexts),
