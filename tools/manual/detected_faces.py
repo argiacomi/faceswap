@@ -127,7 +127,8 @@ class DetectedFaces:
     def available_masks(self) -> dict[str, int]:
         """The mask type names stored in the alignments; type as key with the number of faces which
         possess the mask type as value."""
-        return self._alignments.mask_summary
+        retval: dict[str, int] = self._alignments.mask_summary
+        return retval
 
     @property
     def current_faces(self) -> list[list[DetectedFace]]:
@@ -140,7 +141,10 @@ class DetectedFaces:
     ) -> dict[T.Literal["pts_time", "keyframes"], list[int]] | None:
         """The frame meta data stored in the alignments file. If data does not exist in the
         alignments file then ``None`` is returned for each Key"""
-        return self._alignments.video_meta_data
+        retval: dict[T.Literal["pts_time", "keyframes"], list[int]] | None = (
+            self._alignments.video_meta_data
+        )
+        return retval
 
     @property
     def face_count_per_index(self) -> list[int]:
@@ -582,7 +586,7 @@ class Filter:
         except tk.TclError:
             # Suppress error when distance box is empty
             retval = 0
-        return retval / 100.0
+        return float(retval) / 100.0
 
     @property
     def count(self) -> int:
@@ -959,6 +963,63 @@ class FaceUpdate:
                     face.landmarks_xy[idx] = lmk
         else:
             face.landmarks_xy[landmark_index] += (shift_x, shift_y)
+        self._globals.var_full_update.set(True)
+
+    def landmark_region(
+        self,
+        frame_index: int,
+        face_index: int,
+        landmark_indices: T.Sequence[int],
+        points: np.ndarray,
+        is_zoomed: bool,
+    ) -> None:
+        """Replace a landmark region with absolute point positions.
+
+        Parameters
+        ----------
+        frame_index
+            The frame that the face is being set for.
+        face_index
+            The face index within the frame.
+        landmark_indices
+            The landmark indices to replace.
+        points
+            Replacement points. In frame view these are original-frame coordinates.
+            In zoomed view these are displayed coordinates in the zoomed ROI.
+        is_zoomed
+            ``True`` if the replacement was drawn on the zoomed image.
+        """
+        face = self._faces_at_frame_index(frame_index)[face_index]
+        indices = np.asarray(tuple(int(idx) for idx in landmark_indices), dtype=np.int32)
+        replacement = np.asarray(points, dtype=np.float32)
+        if replacement.shape != (len(indices), 2):
+            raise ValueError(
+                "landmark_region expected points with shape "
+                f"({len(indices)}, 2); got {replacement.shape}."
+            )
+
+        if is_zoomed:
+            aligned = AlignedFace(
+                face.landmarks_xy,
+                centering="face",
+                size=min(self._globals.frame_display_dims),
+            )
+            half_size = min(self._globals.frame_display_dims) / 2
+            zoomed_offset = np.asarray(
+                (
+                    self._globals.frame_display_dims[0] / 2 - half_size,
+                    0,
+                ),
+                dtype=np.float32,
+            )
+            replacement = replacement - zoomed_offset
+            matrix = cv2.invertAffineTransform(aligned.adjusted_matrix)
+            replacement = cv2.transform(
+                replacement.reshape(1, -1, 2),
+                matrix,
+            ).reshape(-1, 2)
+
+        face.landmarks_xy[indices] = replacement
         self._globals.var_full_update.set(True)
 
     def landmarks(self, frame_index: int, face_index: int, shift_x: int, shift_y: int) -> None:
