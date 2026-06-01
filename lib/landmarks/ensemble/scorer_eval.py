@@ -93,6 +93,8 @@ PER_REGION_GEOMETRY_CSV = "per_region_geometry.csv"
 PER_REGION_NME_CSV = "per_region_nme.csv"
 PER_REGION_WORST_SAMPLES_JSON = "per_region_worst_samples.json"
 
+SIDE_YAW_EVIDENCE_DEGREES = 5.0
+
 
 def eval_split_sources(path: Path) -> tuple[set[tuple[str, str, str]], dict[str, str]]:
     """Return held-out `(source, dataset, sample_id)` keys and per-sample source."""
@@ -471,10 +473,10 @@ def _indices_for_region(context: T.Any, region: str) -> tuple[int, ...]:
             yaw_value = float(yaw)
         except (TypeError, ValueError):
             yaw_value = 0.0
-        if yaw_value < 0.0:
+        if yaw_value <= -SIDE_YAW_EVIDENCE_DEGREES:
             right_hidden += 1
             has_side_evidence = True
-        elif yaw_value > 0.0:
+        elif yaw_value >= SIDE_YAW_EVIDENCE_DEGREES:
             left_hidden += 1
             has_side_evidence = True
 
