@@ -210,6 +210,48 @@ def _build_tensor(image: np.ndarray, bbox: np.ndarray) -> np.ndarray:
     return handler._format_images(cropped)
 
 
+def test_crop_and_resize_skips_empty_or_invalid_boxes() -> None:
+    """Invalid manual-edit boxes should not reach cv2.resize with an empty crop."""
+    handler = object.__new__(Align)
+
+    class _StubPlugin:
+        is_rgb = False
+        input_size = 16
+        dtype = np.float32
+        scale = (0, 1)
+        name = "SPIGA"
+
+    class _StubReFeed:
+        total_feeds = 4
+
+    handler.plugin = _StubPlugin()  # type: ignore[assignment]
+    handler._re_feed = _StubReFeed()  # type: ignore[assignment]
+
+    image = np.full((10, 10, 3), 255, dtype=np.uint8)
+    roi = np.array(
+        [
+            [1, 1, 8, 8],  # valid
+            [5, 5, 5, 8],  # zero width
+            [8, 8, 2, 9],  # inverted x
+            [-20, -20, -5, -5],  # fully off-image after clamping
+        ],
+        dtype=np.int32,
+    )
+    destinations = np.array(
+        [[0, 0, 16, 16], [0, 0, 16, 16], [0, 0, 16, 16], [0, 0, 16, 16]],
+        dtype=np.int32,
+    )
+    scales = np.ones((4,), dtype=np.float64)
+
+    cropped = handler._crop_and_resize(
+        [image], np.array([0], dtype=np.int32), roi, destinations, scales, is_final=True
+    )
+
+    assert cropped.shape == (4, 16, 16, 3)
+    assert cropped[0].sum() > 0
+    assert cropped[1:].sum() == 0
+
+
 def test_preprocessing_channel_order_is_bgr() -> None:
     """After the is_rgb=False fix, channel 0 must be Blue (not Red).
 

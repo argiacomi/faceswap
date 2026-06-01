@@ -193,12 +193,40 @@ class Align(ExtractHandler):
         ):
             img = images[image_id]
             img = img[..., 2::-1] if self.plugin.is_rgb else img
+            img_height, img_width = img.shape[:2]
             for i, (box, dest_box) in enumerate(zip(bboxes, dest, strict=False)):
+                x1, y1, x2, y2 = (int(coord) for coord in box)
+                dst_x1, dst_y1, dst_x2, dst_y2 = (int(coord) for coord in dest_box)
+                if x2 <= x1 or y2 <= y1 or dst_x2 <= dst_x1 or dst_y2 <= dst_y1:
+                    _logger_trace(
+                        "Skipping invalid align crop: box=%s destination=%s",
+                        box,
+                        dest_box,
+                    )
+                    continue
+                dst_x1 = max(0, min(self.plugin.input_size, dst_x1))
+                dst_x2 = max(0, min(self.plugin.input_size, dst_x2))
+                dst_y1 = max(0, min(self.plugin.input_size, dst_y1))
+                dst_y2 = max(0, min(self.plugin.input_size, dst_y2))
+                if dst_x2 <= dst_x1 or dst_y2 <= dst_y1:
+                    _logger_trace("Skipping empty align destination: destination=%s", dest_box)
+                    continue
+                x1 = max(0, min(img_width, x1))
+                x2 = max(0, min(img_width, x2))
+                y1 = max(0, min(img_height, y1))
+                y2 = max(0, min(img_height, y2))
+                if x2 <= x1 or y2 <= y1:
+                    _logger_trace("Skipping empty align crop after clamping: box=%s", box)
+                    continue
+                crop = img[y1:y2, x1:x2]
+                if crop.size == 0 or crop.shape[0] == 0 or crop.shape[1] == 0:
+                    _logger_trace("Skipping empty align crop: box=%s", box)
+                    continue
                 out = batch[batch_id, i]
                 cv2.resize(
-                    img[box[1] : box[3], box[0] : box[2]],
-                    (dest_box[2] - dest_box[0], dest_box[3] - dest_box[1]),
-                    dst=out[dest_box[1] : dest_box[3], dest_box[0] : dest_box[2]],
+                    crop,
+                    (dst_x2 - dst_x1, dst_y2 - dst_y1),
+                    dst=out[dst_y1:dst_y2, dst_x1:dst_x2],
                     interpolation=interpolations[batch_id, i],
                 )
         retval = batch.reshape((-1, self.plugin.input_size, self.plugin.input_size, 3))
