@@ -249,6 +249,9 @@ class Landmarks(Editor):
 
     def _apply_numbered_guide(self) -> None:
         """Apply the faint numbered landmark guide for the selected mode."""
+        self._canvas.itemconfig("lm_lbl", state="hidden")
+        self._canvas.itemconfig("lm_lbl_bg", state="hidden")
+
         mode = self._trace_control_value("NumberedGuide", "Selected Region")
         if mode == "Off" or not self._is_active:
             return
