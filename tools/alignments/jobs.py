@@ -5,10 +5,12 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import sys
 import typing as T
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 
 import numpy as np
 from scipy import signal
@@ -605,11 +607,8 @@ class Spatial:
 
         if self._has_identity_embeddings():
             logger.info("Identity embeddings found. Smoothing by persistent face instance tracks.")
-            if self._process_by_identity_tracks():
-                return
-            logger.info(
-                "No usable identity tracks were smoothed. Falling back to face-index smoothing."
-            )
+            self._process_by_identity_tracks()
+            return
 
         self._process_by_face_index()
 
@@ -657,21 +656,24 @@ class Spatial:
 
         smoothed = 0
         for track in tracks:
-            self._mappings = {}
-            self._normalized = {}
-            self._shapes_model = None
+            for segment in self._split_track_segments(track):
+                self._mappings = {}
+                self._normalized = {}
+                self._shapes_model = None
 
-            if not self._normalize_track(track):
-                continue
+                if not self._normalize_track(segment):
+                    continue
 
-            self._shape_model()
-            landmarks = self._spatially_filter()
-            landmarks = self._temporally_smooth(landmarks)
-            self._update_track_alignments(landmarks)
-            smoothed += 1
+                self._shape_model()
+                landmarks = self._spatially_filter()
+                landmarks = self._temporally_smooth(landmarks)
+                self._update_track_alignments(landmarks)
+                smoothed += 1
 
         if not smoothed:
-            logger.info("No identity tracks were found to spatially smooth")
+            logger.info(
+                "No contiguous identity track segments were long enough to spatially smooth"
+            )
             return False
 
         self._save_smoothed_alignments()
@@ -704,6 +706,21 @@ class Spatial:
             for face in frame.faces
         )
 
+    @staticmethod
+    def _frame_number_for_key(frame_key: str, fallback: int) -> int:
+        """Return source frame number from a frame key when available.
+
+        Alignment keys are commonly image filenames such as ``video_000123.png`` or
+        ``frame_001.png``. For gap-aware identity smoothing, use that numeric suffix so missing
+        detections do not get treated as adjacent samples. If no trailing number exists, fall back
+        to dense sorted-key order.
+        """
+        stem = Path(frame_key).stem
+        match = re.search(r"(\d+)$", stem)
+        if match is None:
+            return fallback
+        return int(match.group(1))
+
     def _build_identity_instance_tracks(self) -> list[_SpatialIdentityTrack]:
         """Build persistent face-instance tracks from identity and motion continuity.
 
@@ -714,7 +731,8 @@ class Spatial:
         tracks: list[_SpatialIdentityTrack] = []
         next_track_id = 0
 
-        for frame_number, frame_key in enumerate(sorted(self._alignments.data.keys())):
+        for fallback_frame_number, frame_key in enumerate(sorted(self._alignments.data.keys())):
+            frame_number = self._frame_number_for_key(frame_key, fallback_frame_number)
             observations = self._observations_for_frame(frame_key, frame_number)
             if not observations:
                 continue
@@ -760,6 +778,39 @@ class Spatial:
 
         logger.info("Built %s identity-aware face instance track(s)", len(tracks))
         return tracks
+
+    @staticmethod
+    def _split_track_segments(
+        track: _SpatialIdentityTrack,
+        *,
+        max_gap: int = 1,
+    ) -> list[_SpatialIdentityTrack]:
+        """Split an identity track into gap-contiguous smoothing segments.
+
+        The PCA + temporal moving-average smoother expects a dense sequence. If a face disappears
+        for one or more frames, the observed landmarks on either side of that gap must not be
+        smoothed as adjacent samples.
+        """
+        segments: list[_SpatialIdentityTrack] = []
+        current: list[_SpatialFaceObservation] = []
+
+        for observation in track.observations:
+            if not current:
+                current = [observation]
+                continue
+
+            gap = observation.frame_number - current[-1].frame_number
+            if gap > max_gap:
+                segments.append(_SpatialIdentityTrack(track.track_id, current))
+                current = [observation]
+                continue
+
+            current.append(observation)
+
+        if current:
+            segments.append(_SpatialIdentityTrack(track.track_id, current))
+
+        return segments
 
     def _observations_for_frame(
         self,

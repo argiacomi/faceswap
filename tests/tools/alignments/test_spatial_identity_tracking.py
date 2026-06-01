@@ -128,3 +128,43 @@ def test_no_identity_embeddings_uses_slot_fallback() -> None:
     )
 
     assert spatial._has_identity_embeddings() is False  # pylint:disable=protected-access
+
+
+def test_identity_tracks_split_on_missing_frame_gaps() -> None:
+    """Observed samples separated by missing frames should smooth as separate segments."""
+    identity_a = _identity(0)
+    spatial = _spatial(
+        {
+            "frame_001.png": _Frame([_Face(x=0.0, identity=identity_a)]),
+            "frame_004.png": _Frame([_Face(x=5.0, identity=identity_a)]),
+        }
+    )
+
+    tracks = spatial._build_identity_instance_tracks()  # pylint:disable=protected-access
+    assert len(tracks) == 1
+
+    segments = spatial._split_track_segments(tracks[0])  # pylint:disable=protected-access
+    assert [[obs.frame_key for obs in segment.observations] for segment in segments] == [
+        ["frame_001.png"],
+        ["frame_004.png"],
+    ]
+
+
+def test_identity_tracks_keep_contiguous_observations_in_one_segment() -> None:
+    """Adjacent observed frames should remain one smoothing segment."""
+    identity_a = _identity(0)
+    spatial = _spatial(
+        {
+            "frame_001.png": _Frame([_Face(x=0.0, identity=identity_a)]),
+            "frame_002.png": _Frame([_Face(x=2.0, identity=identity_a)]),
+            "frame_003.png": _Frame([_Face(x=4.0, identity=identity_a)]),
+        }
+    )
+
+    tracks = spatial._build_identity_instance_tracks()  # pylint:disable=protected-access
+    assert len(tracks) == 1
+
+    segments = spatial._split_track_segments(tracks[0])  # pylint:disable=protected-access
+    assert [[obs.frame_key for obs in segment.observations] for segment in segments] == [
+        ["frame_001.png", "frame_002.png", "frame_003.png"],
+    ]
