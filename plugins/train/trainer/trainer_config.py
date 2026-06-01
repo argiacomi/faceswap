@@ -105,6 +105,50 @@ class Augmentation(GlobalSection):
         fixed=False,
     )
 
+    faceqa_training_diagnostics = ConfigItem(
+        datatype=bool,
+        default=False,
+        group=_("evaluation"),
+        info=_(
+            "Enable FaceQA training loss diagnostics. When enabled, per-sample losses are "
+            "aggregated by FaceQA metadata buckets without changing training behavior."
+        ),
+        fixed=False,
+    )
+
+    faceqa_training_diagnostics_jsonl = ConfigItem(
+        datatype=bool,
+        default=False,
+        group=_("evaluation"),
+        info=_(
+            "Write FaceQA training diagnostics as JSON lines in the model's TensorBoard log "
+            "session folder."
+        ),
+        fixed=False,
+    )
+
+    faceqa_training_metadata_a = ConfigItem(
+        datatype=str,
+        default="",
+        group=_("evaluation"),
+        info=_(
+            "Optional FaceQA-enriched alignments file for side A. When provided, training "
+            "diagnostics can use FaceQA metadata even if the extracted PNG headers are stale."
+        ),
+        fixed=False,
+    )
+
+    faceqa_training_metadata_b = ConfigItem(
+        datatype=str,
+        default="",
+        group=_("evaluation"),
+        info=_(
+            "Optional FaceQA-enriched alignments file for side B. When provided, training "
+            "diagnostics can use FaceQA metadata even if the extracted PNG headers are stale."
+        ),
+        fixed=False,
+    )
+
     mask_opacity = ConfigItem(
         datatype=int,
         default=30,

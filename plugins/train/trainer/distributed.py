@@ -230,7 +230,7 @@ class Trainer(OriginalTrainer):
         -------
         The loss for each input to the model in order (A, B, ...)
         """
-        loss_dicts = self._distributed_model(inputs, targets, meta.__dict__)
+        loss_dicts = self._distributed_model(inputs, targets, meta.tensor_dict())
         loss = [BatchLoss(**T.cast(dict, self._mean_loss(loss_dict))) for loss_dict in loss_dicts]
         return loss
 

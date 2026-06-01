@@ -12,6 +12,7 @@ from torch.utils import data as tch_data
 from torch.utils.data import DataLoader
 
 from lib.logger import parse_class_init
+from lib.training.faceqa_diagnostics import FaceQAMetadataIndex
 from lib.utils import get_module_objects
 from plugins.train import train_config as mod_cfg
 from plugins.train.trainer import trainer_config as trn_cfg
@@ -44,6 +45,10 @@ class TrainLoader:  # pylint:disable=too-many-instance-attributes
         The training configuration for feeding the model
     sampler
         The sampler to use for the data loaders. Default: ``None`` (RandomSampler)
+    include_faceqa_diagnostics
+        ``True`` to attach FaceQA metadata to training batches for diagnostics.
+    faceqa_metadata_paths
+        Optional FaceQA-enriched alignments fallback paths by training side.
     """
 
     def __init__(
@@ -53,6 +58,9 @@ class TrainLoader:  # pylint:disable=too-many-instance-attributes
         color_order: T.Literal["bgr", "rgb"],
         config: TrainConfig,
         sampler: None | type[tch_data.RandomSampler | tch_data.DistributedSampler] = None,
+        *,
+        include_faceqa_diagnostics: bool = False,
+        faceqa_metadata_paths: list[str | None] | None = None,
     ) -> None:
         logger.debug(parse_class_init(locals()))
         self._learn_mask = mod_cfg.Loss.learn_mask()
@@ -60,6 +68,11 @@ class TrainLoader:  # pylint:disable=too-many-instance-attributes
         self._config = config
         self._process_size = max(*self._output_sizes, input_size)
         self._landmarks: None | LandmarkMatcher = None
+
+        self._faceqa_training_diagnostics = include_faceqa_diagnostics
+        self._faceqa_metadata_paths = (
+            [] if faceqa_metadata_paths is None else faceqa_metadata_paths
+        )
 
         if config.warp and config.cache_landmarks:
             self._landmarks = LandmarkMatcher(
@@ -116,7 +129,22 @@ class TrainLoader:  # pylint:disable=too-many-instance-attributes
             num_workers = max_proc - 1
 
         data_sets = tuple(
-            TrainSet(get_label(i, len(self._config.folders)), f, self._process_size)
+            TrainSet(
+                get_label(i, len(self._config.folders)),
+                f,
+                self._process_size,
+                include_faceqa=self._faceqa_training_diagnostics,
+                faceqa_index=(
+                    None
+                    if not self._faceqa_training_diagnostics
+                    else FaceQAMetadataIndex.from_path(
+                        get_label(i, len(self._config.folders)),
+                        self._faceqa_metadata_paths[i]
+                        if i < len(self._faceqa_metadata_paths)
+                        else None,
+                    )
+                ),
+            )
             for i, f in enumerate(self._config.folders)
         )
         train_set = MultiDataset(data_sets, is_random=True)
