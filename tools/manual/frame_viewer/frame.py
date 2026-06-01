@@ -574,6 +574,13 @@ class ActionsFrame(ttk.Frame):  # pylint:disable=too-many-ancestors
         self._globals.var_frame_index.trace_add("write", self._disable_enable_copy_buttons)
         self._det_faces.tk_face_count_changed.trace_add("write", self._disable_enable_copy_buttons)
         self._globals.var_full_update.trace_add("write", self._disable_enable_reload_button)
+
+        # Apply initial button state immediately. The traces above only fire after
+        # the next frame/change event, so without this the copy buttons can start
+        # disabled even when a previous/next alignment is available.
+        self._static_buttons = buttons
+        self._disable_enable_copy_buttons()
+        self._disable_enable_reload_button()
         return buttons
 
     def _has_empty_frames_after_faces(self):
