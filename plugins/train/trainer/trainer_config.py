@@ -111,7 +111,7 @@ class Augmentation(GlobalSection):
         group=_("evaluation"),
         info=_(
             "Enable FaceQA training loss diagnostics. When enabled, per-sample losses are "
-            "aggregated by embedded FaceQA metadata buckets without changing training behavior."
+            "aggregated by FaceQA metadata buckets without changing training behavior."
         ),
         fixed=False,
     )
