@@ -15,6 +15,9 @@ import keras
 import torch
 from schedulefree import AdamWScheduleFree, ScheduleFreeWrapper
 
+if T.TYPE_CHECKING:
+    from plugins.train.model._base import ModelBase
+
 from lib.training.optimizer import (
     SCHEDULE_FREE_ADAMW,
     SCHEDULE_FREE_LION,
@@ -44,6 +47,11 @@ def _build_model() -> keras.Model:
     # Forward once to ensure variables (and their backing torch parameters) are created.
     model(keras.ops.zeros((1, 4)))
     return model
+
+
+def _make_fake_model() -> ModelBase:
+    """Build a fake model and type it as the interface Optimizer expects."""
+    return T.cast("ModelBase", _FakeModel(_build_model()))
 
 
 def _make_config(name: str, **overrides: T.Any) -> type:
@@ -95,19 +103,19 @@ def _reduce_param_loss(optimizer: Optimizer, steps: int = 25) -> tuple[float, fl
 
 
 def test_factory_builds_schedule_free_adamw() -> None:
-    optimizer = Optimizer(_FakeModel(_build_model()), _make_config(SCHEDULE_FREE_ADAMW))
+    optimizer = Optimizer(_make_fake_model(), _make_config(SCHEDULE_FREE_ADAMW))
     assert optimizer.is_schedule_free is True
     assert isinstance(optimizer._optimizer, AdamWScheduleFree)
 
 
 def test_factory_builds_schedule_free_lion() -> None:
-    optimizer = Optimizer(_FakeModel(_build_model()), _make_config(SCHEDULE_FREE_LION))
+    optimizer = Optimizer(_make_fake_model(), _make_config(SCHEDULE_FREE_LION))
     assert optimizer.is_schedule_free is True
     assert isinstance(optimizer._optimizer, ScheduleFreeWrapper)
 
 
 def test_standard_optimizer_is_not_schedule_free_and_toggles_are_noops() -> None:
-    optimizer = Optimizer(_FakeModel(_build_model()), _make_config("adam"))
+    optimizer = Optimizer(_make_fake_model(), _make_config("adam"))
     assert optimizer.is_schedule_free is False
     before = [param.detach().clone() for param in _params(optimizer)]
     # train()/eval() must be safe no-ops for standard optimizers and not mutate parameters.
@@ -118,7 +126,7 @@ def test_standard_optimizer_is_not_schedule_free_and_toggles_are_noops() -> None
 
 
 def test_schedule_free_train_eval_swaps_parameters() -> None:
-    optimizer = Optimizer(_FakeModel(_build_model()), _make_config(SCHEDULE_FREE_ADAMW))
+    optimizer = Optimizer(_make_fake_model(), _make_config(SCHEDULE_FREE_ADAMW))
     _reduce_param_loss(optimizer, steps=5)
     optimizer.train()
     train_weights = [param.detach().clone() for param in _params(optimizer)]
@@ -132,24 +140,24 @@ def test_schedule_free_train_eval_swaps_parameters() -> None:
 
 
 def test_schedule_free_adamw_reduces_loss() -> None:
-    optimizer = Optimizer(_FakeModel(_build_model()), _make_config(SCHEDULE_FREE_ADAMW))
+    optimizer = Optimizer(_make_fake_model(), _make_config(SCHEDULE_FREE_ADAMW))
     first, last = _reduce_param_loss(optimizer)
     assert last < first
 
 
 def test_schedule_free_lion_reduces_loss() -> None:
-    optimizer = Optimizer(_FakeModel(_build_model()), _make_config(SCHEDULE_FREE_LION))
+    optimizer = Optimizer(_make_fake_model(), _make_config(SCHEDULE_FREE_LION))
     first, last = _reduce_param_loss(optimizer)
     assert last < first
 
 
 def test_schedule_free_state_dict_round_trips() -> None:
-    optimizer = Optimizer(_FakeModel(_build_model()), _make_config(SCHEDULE_FREE_ADAMW))
+    optimizer = Optimizer(_make_fake_model(), _make_config(SCHEDULE_FREE_ADAMW))
     _reduce_param_loss(optimizer, steps=5)
     state = optimizer.state_dict()
     assert state["version"] == 1.0
 
-    other = Optimizer(_FakeModel(_build_model()), _make_config(SCHEDULE_FREE_ADAMW))
+    other = Optimizer(_make_fake_model(), _make_config(SCHEDULE_FREE_ADAMW))
     other.load_state_dict(state)
     # The momentum buffers (z) restore onto the fresh optimizer.
     assert other._optimizer.state_dict()["state"].keys() == (
@@ -158,7 +166,7 @@ def test_schedule_free_state_dict_round_trips() -> None:
 
 
 def test_learning_rate_finder_is_skipped_for_schedule_free() -> None:
-    optimizer = Optimizer(_FakeModel(_build_model()), _make_config(SCHEDULE_FREE_ADAMW))
+    optimizer = Optimizer(_make_fake_model(), _make_config(SCHEDULE_FREE_ADAMW))
     result = optimizer.find_learning_rate(
         trainer=T.cast("T.Any", None),
         steps=10,
