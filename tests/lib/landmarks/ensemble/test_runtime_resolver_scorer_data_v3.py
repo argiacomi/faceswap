@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import csv
+import typing as T
 
 import numpy as np
 import pytest
@@ -27,8 +28,8 @@ from lib.landmarks.ensemble.scorer_target_config import (
 from lib.landmarks.ensemble.scorer_training import (
     MIN_V3_ORACLE_GAP,
     _lambdarank_label_v3,
-    _rankable_v3_tagged_rows,
     _v3_lambdarank_item_weights,
+    grouped_rankable_rows_v3,
     scorer_target_value,
     v3_lambdarank_query_weight,
     write_tagged_rows_csv,
@@ -69,17 +70,17 @@ def _truth_face() -> np.ndarray:
 
 
 def _metric(**overrides: object) -> CandidateMetrics:
-    values: dict[str, object] = {
+    values: dict[str, T.Any] = {
         "roll_degrees": None,
         "yaw_degrees": None,
         "pitch_degrees": None,
     }
     values.update(overrides)
-    return CandidateMetrics(**values)  # type: ignore[arg-type]
+    return CandidateMetrics(**values)
 
 
 def _row(**overrides: object) -> CandidateQualityRow:
-    values = {
+    values: dict[str, T.Any] = {
         "sample_id": "sample",
         "face_index": 0,
         "dataset": "dataset",
@@ -116,7 +117,7 @@ def _row(**overrides: object) -> CandidateQualityRow:
         "geometry_veto_reasons": (),
     }
     values.update(overrides)
-    return CandidateQualityRow(**values)  # type: ignore[arg-type]
+    return CandidateQualityRow(**values)
 
 
 def _csv_header(path) -> set[str]:
@@ -265,7 +266,7 @@ def test_v3_rankable_filter_drops_invalid_rows_and_counts_abstain_groups() -> No
         transform_regret_v3=0.0,
     )
 
-    kept, stats = _rankable_v3_tagged_rows(
+    groups, _query_weights, stats = grouped_rankable_rows_v3(
         [
             (rankable, "gt"),
             (rankable_same_group, "gt"),
@@ -274,12 +275,51 @@ def test_v3_rankable_filter_drops_invalid_rows_and_counts_abstain_groups() -> No
         ]
     )
 
-    assert kept == [(rankable, "gt"), (rankable_same_group, "gt")]
+    assert groups == [[(rankable, "gt"), (rankable_same_group, "gt")]]
     assert stats["total_group_count"] == 2
     assert stats["rankable_pair_group_count"] == 1
     assert stats["fallback_abstain_group_count"] == 1
     assert stats["fallback_abstain_row_count"] == 1
     assert stats["hard_invalid_row_count"] == 2
+
+
+def test_grouped_rankable_rows_v3_excludes_invalid_candidates() -> None:
+    rankable = _row(
+        sample_id="sample_a",
+        candidate_name="candidate_a",
+        rankable_v3=True,
+        hard_invalid_v3=False,
+        transform_oracle_gap_v3=0.20,
+    )
+    rankable_same_group = _row(
+        sample_id="sample_a",
+        candidate_name="candidate_b",
+        rankable_v3=True,
+        hard_invalid_v3=False,
+        transform_regret_v3=0.2,
+        transform_oracle_gap_v3=0.20,
+    )
+    invalid_same_group = _row(
+        sample_id="sample_a",
+        candidate_name="candidate_c",
+        rankable_v3=False,
+        hard_invalid_v3=True,
+        hard_invalid_reasons_v3=("cloud_collapse",),
+    )
+
+    groups, query_weights, stats = grouped_rankable_rows_v3(
+        [
+            (rankable, "gt"),
+            (rankable_same_group, "gt"),
+            (invalid_same_group, "gt"),
+        ]
+    )
+
+    assert groups == [[(rankable, "gt"), (rankable_same_group, "gt")]]
+    assert query_weights == pytest.approx([v3_lambdarank_query_weight(rankable, "gt")])
+    assert stats["rankable_pair_group_count"] == 1
+    assert stats["rankable_row_count"] == 2
+    assert stats["hard_invalid_row_count"] == 1
 
 
 def test_v3_rankable_filter_skips_near_tie_groups() -> None:
@@ -300,9 +340,9 @@ def test_v3_rankable_filter_skips_near_tie_groups() -> None:
         transform_oracle_gap_v3=MIN_V3_ORACLE_GAP / 2.0,
     )
 
-    kept, stats = _rankable_v3_tagged_rows([(first, "gt"), (second, "gt")])
+    groups, _query_weights, stats = grouped_rankable_rows_v3([(first, "gt"), (second, "gt")])
 
-    assert kept == []
+    assert groups == []
     assert stats["rankable_pair_group_count"] == 0
     assert stats["near_tie_group_count"] == 1
     assert stats["near_tie_row_count"] == 2
@@ -367,8 +407,8 @@ def test_v3_item_weights_repeat_query_weight_for_whole_group() -> None:
         geometry_veto_reasons=("eye_warning",),
         soft_structural_penalty_v3=0.75,
     )
-    grouped = [(first, "gt"), (second, "gt")]
+    groups, query_weights, _stats = grouped_rankable_rows_v3([(first, "gt"), (second, "gt")])
 
-    weights = _v3_lambdarank_item_weights(grouped, [2])
+    weights = _v3_lambdarank_item_weights(query_weights, [len(groups[0])])
 
-    assert weights.tolist() == pytest.approx([v3_lambdarank_query_weight(first, "gt")] * 2)
+    assert weights.tolist() == pytest.approx([query_weights[0]] * 2)

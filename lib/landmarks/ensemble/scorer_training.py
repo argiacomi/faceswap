@@ -510,16 +510,17 @@ def _v3_sample_group_key(row: CandidateQualityRow, source: str) -> tuple[str, st
     return source, row.dataset, row.condition, row.sample_id
 
 
-def _rankable_v3_tagged_rows(
+def grouped_rankable_rows_v3(
     rows: T.Sequence[TaggedRow],
-) -> tuple[list[TaggedRow], dict[str, T.Any]]:
-    """Drop hard-invalid rows and skip groups with no v3 ranking signal."""
+) -> tuple[list[list[TaggedRow]], list[float], dict[str, T.Any]]:
+    """Return valid v3 LambdaRank groups and one query weight per group."""
     groups: dict[tuple[str, str, str, str], list[TaggedRow]] = {}
     for tagged in rows:
         row, source = tagged
         groups.setdefault(_v3_sample_group_key(row, source), []).append(tagged)
 
-    kept: list[TaggedRow] = []
+    valid_groups: list[list[TaggedRow]] = []
+    query_weights: list[float] = []
     fallback_abstain_groups = 0
     fallback_abstain_rows = 0
     single_valid_groups = 0
@@ -530,7 +531,7 @@ def _rankable_v3_tagged_rows(
 
     for key in sorted(groups):
         group = groups[key]
-        rankable = [
+        valid = [
             tagged
             for tagged in group
             if bool(tagged[0].rankable_v3) and not bool(tagged[0].hard_invalid_v3)
@@ -538,23 +539,26 @@ def _rankable_v3_tagged_rows(
 
         hard_invalid_rows += sum(1 for row, _source in group if bool(row.hard_invalid_v3))
 
-        if not rankable:
+        if not valid:
             fallback_abstain_groups += 1
             fallback_abstain_rows += len(group)
             continue
 
-        if len(rankable) < 2:
+        if len(valid) < 2:
             single_valid_groups += 1
             single_valid_rows += len(group)
             continue
 
-        oracle_gap = min(float(row.transform_oracle_gap_v3) for row, _source in rankable)
+        oracle_gap = min(float(row.transform_oracle_gap_v3) for row, _source in valid)
         if oracle_gap < MIN_V3_ORACLE_GAP:
             near_tie_groups += 1
             near_tie_rows += len(group)
             continue
 
-        kept.extend(sorted(rankable, key=lambda tagged: tagged[0].candidate_name))
+        ordered = sorted(valid, key=lambda tagged: tagged[0].candidate_name)
+        row, source = ordered[0]
+        valid_groups.append(ordered)
+        query_weights.append(v3_lambdarank_query_weight(row, source))
 
     stats = {
         "total_group_count": len(groups),
@@ -568,40 +572,26 @@ def _rankable_v3_tagged_rows(
         "near_tie_group_count": near_tie_groups,
         "near_tie_row_count": near_tie_rows,
         "min_v3_oracle_gap": MIN_V3_ORACLE_GAP,
-        "rankable_row_count": len(kept),
+        "rankable_row_count": sum(len(group) for group in valid_groups),
         "hard_invalid_row_count": hard_invalid_rows,
     }
 
-    return kept, stats
+    return valid_groups, query_weights, stats
 
 
-def _v3_grouped_rows(rows: T.Sequence[TaggedRow]) -> tuple[list[TaggedRow], list[int]]:
-    """Return v3 rankable groups after hard-invalid rows have been removed."""
-    groups: dict[tuple[str, str, str, str], list[TaggedRow]] = {}
-    for tagged in rows:
-        row, source = tagged
-        groups.setdefault(_v3_sample_group_key(row, source), []).append(tagged)
-
-    ordered: list[TaggedRow] = []
-    group_sizes: list[int] = []
-    for key in sorted(groups):
-        group = sorted(groups[key], key=lambda tagged: tagged[0].candidate_name)
-        ordered.extend(group)
-        group_sizes.append(len(group))
-    return ordered, group_sizes
+def _flatten_grouped_rows(groups: T.Sequence[T.Sequence[TaggedRow]]) -> list[TaggedRow]:
+    """Return grouped rows flattened in group order."""
+    return [tagged for group in groups for tagged in group]
 
 
 def _v3_lambdarank_item_weights(
-    grouped_rows: T.Sequence[TaggedRow],
+    query_weights: T.Sequence[float],
     group_sizes: T.Sequence[int],
 ) -> np.ndarray:
     """Return per-row LightGBM weights from one query weight per group."""
     weights: list[float] = []
-    offset = 0
-    for size in group_sizes:
-        row, source = grouped_rows[offset]
-        weights.extend([v3_lambdarank_query_weight(row, source)] * size)
-        offset += size
+    for weight, size in zip(query_weights, group_sizes, strict=True):
+        weights.extend([float(weight)] * size)
     return T.cast(np.ndarray, np.asarray(weights, dtype="float64"))
 
 
@@ -639,20 +629,26 @@ def _train_v3_lambdarank_from_tagged_rows(
         ) from err
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    rankable_train, train_filter_stats = _rankable_v3_tagged_rows(train_tagged_rows)
-    rankable_eval, eval_filter_stats = _rankable_v3_tagged_rows(eval_tagged_rows)
+    train_groups, train_query_weights, train_filter_stats = grouped_rankable_rows_v3(
+        train_tagged_rows
+    )
+    eval_groups, _eval_query_weights, eval_filter_stats = grouped_rankable_rows_v3(
+        eval_tagged_rows
+    )
 
-    if not rankable_train:
+    if not train_groups:
         raise ValueError(
             "learned_quality_v3 has no rankable training rows after hard-invalid filtering"
         )
 
-    grouped_train, train_group_sizes = _v3_grouped_rows(rankable_train)
+    train_group_sizes = [len(group) for group in train_groups]
+    grouped_train = _flatten_grouped_rows(train_groups)
+    rankable_eval = _flatten_grouped_rows(eval_groups)
     train_rows = untag_quality_rows(grouped_train)
     features = feature_order(train_rows)
     x = feature_matrix([row.feature_values for row in train_rows], features)
     y = np.asarray([_lambdarank_label_v3(row) for row in train_rows], dtype="int32")
-    item_weights = _v3_lambdarank_item_weights(grouped_train, train_group_sizes)
+    item_weights = _v3_lambdarank_item_weights(train_query_weights, train_group_sizes)
 
     ranker = lgb.LGBMRanker(
         objective="lambdarank",
@@ -1291,6 +1287,7 @@ __all__ = [
     "TRAINING_ROWS_CSV",
     "EVAL_ROWS_CSV",
     "feature_order",
+    "grouped_rankable_rows_v3",
     "scorer_target_value",
     "scorer_row_metrics",
     "split_tagged_rows",
