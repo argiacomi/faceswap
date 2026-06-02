@@ -112,23 +112,30 @@ def _polygon_area(points: np.ndarray) -> float:
     return float(abs(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1))) / 2.0)
 
 
-def _orientation(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> float:
-    return float((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]))
-
-
-def _segments_cross(a: np.ndarray, b: np.ndarray, c: np.ndarray, d: np.ndarray) -> bool:
+def _segments_cross(
+    points: np.ndarray,
+    a_idx: int,
+    b_idx: int,
+    c_idx: int,
+    d_idx: int,
+) -> bool:
     eps = 1e-9
+    eps_sq = eps * eps
+    ax, ay = float(points[a_idx, 0]), float(points[a_idx, 1])
+    bx, by = float(points[b_idx, 0]), float(points[b_idx, 1])
+    cx, cy = float(points[c_idx, 0]), float(points[c_idx, 1])
+    dx, dy = float(points[d_idx, 0]), float(points[d_idx, 1])
     if (
-        np.linalg.norm(a - c) <= eps
-        or np.linalg.norm(a - d) <= eps
-        or np.linalg.norm(b - c) <= eps
-        or np.linalg.norm(b - d) <= eps
+        (ax - cx) * (ax - cx) + (ay - cy) * (ay - cy) <= eps_sq
+        or (ax - dx) * (ax - dx) + (ay - dy) * (ay - dy) <= eps_sq
+        or (bx - cx) * (bx - cx) + (by - cy) * (by - cy) <= eps_sq
+        or (bx - dx) * (bx - dx) + (by - dy) * (by - dy) <= eps_sq
     ):
         return False
-    o1 = _orientation(a, b, c)
-    o2 = _orientation(a, b, d)
-    o3 = _orientation(c, d, a)
-    o4 = _orientation(c, d, b)
+    o1 = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)
+    o2 = (bx - ax) * (dy - ay) - (by - ay) * (dx - ax)
+    o3 = (dx - cx) * (ay - cy) - (dy - cy) * (ax - cx)
+    o4 = (dx - cx) * (by - cy) - (dy - cy) * (bx - cx)
     return bool(o1 * o2 < -eps and o3 * o4 < -eps)
 
 
@@ -144,13 +151,12 @@ def _polyline_intersections(points: np.ndarray, indices: tuple[int, ...], *, clo
     intersections = 0
     for left_index, (a_idx, b_idx) in enumerate(edges):
         for right_index, (c_idx, d_idx) in enumerate(edges[left_index + 1 :], left_index + 1):
-            if {a_idx, b_idx} & {c_idx, d_idx}:
+            right_edge = (c_idx, d_idx)
+            if a_idx in right_edge or b_idx in right_edge:
                 continue
-            if closed and {left_index, right_index} == {0, len(edges) - 1}:
+            if closed and left_index == 0 and right_index == len(edges) - 1:
                 continue
-            if _segments_cross(
-                points[a_idx, :2], points[b_idx, :2], points[c_idx, :2], points[d_idx, :2]
-            ):
+            if _segments_cross(points, a_idx, b_idx, c_idx, d_idx):
                 intersections += 1
     return intersections
 
