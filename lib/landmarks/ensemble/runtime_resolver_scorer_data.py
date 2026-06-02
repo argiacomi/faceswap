@@ -1333,7 +1333,11 @@ def load_contexts(
     requested = tuple(candidates or parse_candidates(None, weights))
     cache = DiskPredictionCache(cache_dir)
     contexts: list[SampleCandidateContext] = []
-    samples = filter_canonical_68_samples(load_manifest(manifest_path), context="scorer dataset")
+    samples = filter_canonical_68_samples(
+        load_manifest(manifest_path),
+        context="scorer dataset",
+        progress=progress,
+    )
     iterator = (
         progress(samples, f"Load contexts [{source or manifest_path.stem}]")
         if progress is not None

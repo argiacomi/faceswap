@@ -90,7 +90,9 @@ def load_scorer_contexts(
         context_source = source
         if source == SOURCE_GT_HARD:
             samples = filter_canonical_68_samples(
-                load_manifest(pair.manifest_path), context="scorer contexts"
+                load_manifest(pair.manifest_path),
+                context="scorer contexts",
+                progress=progress,
             )
             validate_resolver_metadata_for_samples(
                 samples,

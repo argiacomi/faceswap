@@ -55,6 +55,12 @@ class LandmarkSample:
     metadata: dict[str, T.Any] = field(default_factory=dict)
 
 
+LandmarkSampleProgress = T.Callable[
+    [T.Sequence[LandmarkSample], str],
+    T.Iterable[LandmarkSample],
+]
+
+
 def coerce_bbox(value: T.Any) -> tuple[float, float, float, float] | None:
     """Coerce a manifest bbox payload to ``(left, top, right, bottom)``.
 
@@ -291,7 +297,10 @@ def sample_is_canonical_68(sample: LandmarkSample) -> bool:
 
 
 def filter_canonical_68_samples(
-    samples: T.Sequence[LandmarkSample], *, context: str = ""
+    samples: T.Sequence[LandmarkSample],
+    *,
+    context: str = "",
+    progress: LandmarkSampleProgress | None = None,
 ) -> list[LandmarkSample]:
     """Drop samples whose GT cannot be scored against canonical 68-point output.
 
@@ -302,7 +311,9 @@ def filter_canonical_68_samples(
     """
     kept: list[LandmarkSample] = []
     skipped_by_schema: dict[str, int] = {}
-    for sample in samples:
+    progress_desc = f"Filter canonical GT [{context}]" if context else "Filter canonical GT"
+    iterator = progress(samples, progress_desc) if progress is not None else samples
+    for sample in iterator:
         if sample_is_canonical_68(sample):
             kept.append(sample)
         else:
@@ -324,6 +335,7 @@ def filter_canonical_68_samples(
 __all__ = [
     "CANONICAL_68_COMPATIBLE_SCHEMAS",
     "LandmarkSample",
+    "LandmarkSampleProgress",
     "bbox_for_sample",
     "bbox_from_truth_fallback",
     "coerce_bbox",
