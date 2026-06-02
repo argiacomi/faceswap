@@ -28,13 +28,7 @@ import numpy as np
 
 from lib.align.aligned_face import batch_umeyama
 from lib.align.constants import EXTRACT_RATIOS, MEAN_FACE, LandmarkType
-from lib.landmarks.evaluation.geometry_signals import (
-    DEFAULT_ALIGNED_SIZE,
-    AlignmentSummary,
-    alignment_matrix_delta,
-    average_distance_delta,
-    roi_delta,
-)
+from lib.landmarks.evaluation.geometry_signals import DEFAULT_ALIGNED_SIZE, AlignmentSummary
 
 _CORE_START = 17
 _CORE_END = 68
@@ -49,7 +43,7 @@ class TransformCostWeightsV3:
     The defaults mirror the scale of ``alignment_geometry_v1`` where possible:
     crop-center/translation dominates, scale is unit-weighted, and roll degrees
     get a small coefficient so several degrees matter without overwhelming the
-    center/scale terms.  ``fit`` is a normalized mean-face fit delta.
+    center/scale terms.  ``fit`` is the output-frame RMS fit-regret delta.
     """
 
     center: float = 5.0
@@ -104,9 +98,11 @@ class VisibleAlignmentSummary:
     """
 
     summary: AlignmentSummary
+    adjusted_matrix: np.ndarray
     visible_indices: tuple[int, ...]
     fit_indices: tuple[int, ...]
     coverage_ratio: float
+    fit_rms_pixels: float
 
 
 def _as_68_landmarks(landmarks: np.ndarray, *, name: str) -> np.ndarray:
@@ -228,6 +224,52 @@ def _decompose_similarity_matrix(matrix: np.ndarray) -> tuple[float, float, tupl
     return float(scale), float(rotation), (float(tx), float(ty))
 
 
+def _wrap_angle_degrees(angle: float) -> float:
+    """Wrap an angle to ``(-180, 180]`` for deterministic roll deltas."""
+    wrapped = ((float(angle) + 180.0) % 360.0) - 180.0
+    return 180.0 if wrapped == -180.0 else wrapped
+
+
+def _fit_targets_output_frame(
+    fit_indices: T.Sequence[int],
+    *,
+    size: int,
+    coverage_ratio: float,
+) -> np.ndarray:
+    """Return mean-face fit targets in the aligned output frame."""
+    padding = _padding_from_coverage(size=size, coverage_ratio=coverage_ratio)
+    core_offsets = np.asarray(fit_indices, dtype=np.intp) - _CORE_START
+    target_normalized = MEAN_FACE[LandmarkType.LM_2D_51][core_offsets]
+    return T.cast(np.ndarray, target_normalized * (size - 2 * padding) + padding)
+
+
+def _visible_fit_rms_pixels(
+    aligned_landmarks: np.ndarray,
+    fit_indices: T.Sequence[int],
+    *,
+    size: int,
+    coverage_ratio: float,
+) -> float:
+    """Return output-frame RMS residual to the visible mean-face fit targets."""
+    fit_points = aligned_landmarks[np.asarray(fit_indices, dtype=np.intp)]
+    target_points = _fit_targets_output_frame(
+        fit_indices,
+        size=size,
+        coverage_ratio=coverage_ratio,
+    )
+    residual = fit_points - target_points
+    return float(np.sqrt(np.mean(np.sum(residual * residual, axis=1))))
+
+
+def _crop_center_in_output_frame(
+    source_roi: np.ndarray,
+    output_matrix: np.ndarray,
+) -> np.ndarray:
+    """Return a source-frame ROI center transformed into an aligned output frame."""
+    center = np.asarray(source_roi, dtype="float64").mean(axis=0, keepdims=True)
+    return T.cast(np.ndarray, _affine_transform_points(center, output_matrix)[0])
+
+
 def visible_subset_alignment_summary(
     landmarks: np.ndarray,
     visibility: T.Sequence[bool] | None = None,
@@ -257,17 +299,18 @@ def visible_subset_alignment_summary(
     aligned = _affine_transform_points(points, adjusted)
     roi = _roi_from_adjusted_matrix(adjusted, size=size)
     scale, rotation_degrees, translation = _decompose_similarity_matrix(matrix)
-    mean_face = MEAN_FACE[LandmarkType.LM_2D_51]
-    core_offsets = np.asarray(fit_indices, dtype=np.intp) - _CORE_START
-    average_distance = float(
-        np.mean(np.abs(normalized[list(fit_indices)] - mean_face[core_offsets]))
+    fit_rms_pixels = _visible_fit_rms_pixels(
+        aligned,
+        fit_indices,
+        size=size,
+        coverage_ratio=coverage_ratio,
     )
     summary = AlignmentSummary(
         matrix=matrix,
         roi=roi,
         aligned_landmarks=aligned,
         normalized_landmarks=normalized,
-        average_distance=average_distance,
+        average_distance=fit_rms_pixels / float(size),
         relative_eye_mouth_position=0.0,
         pitch=0.0,
         yaw=0.0,
@@ -278,9 +321,11 @@ def visible_subset_alignment_summary(
     )
     return VisibleAlignmentSummary(
         summary=summary,
+        adjusted_matrix=adjusted,
         visible_indices=visible_indices,
         fit_indices=fit_indices,
         coverage_ratio=coverage_ratio,
+        fit_rms_pixels=fit_rms_pixels,
     )
 
 
@@ -298,32 +343,41 @@ def transform_cost_v3(
 ) -> TransformCostV3:
     """Return direct v3 transform-impact cost for one prediction vs GT.
 
-    The function is pure and label-oriented: it may use GT and manifest
-    visibility.  It does not mutate or replace ``alignment_geometry_v1``.  The
-    same visibility mask gates both candidate and GT transform fits.
+    Deterministic v3 deltas are expressed in GT-aligned output-frame units:
+
+    * ``center_delta`` is crop-center distance after transforming both centers
+      into the GT aligned output frame, divided by aligned crop size.
+    * ``scale_delta`` is ``abs(log(candidate_scale / gt_scale))``.
+    * ``roll_delta_degrees`` is the absolute wrapped roll delta.
+    * ``fit_delta`` is ``max(candidate_visible_fit_rms - gt_visible_fit_rms, 0)``
+      divided by aligned crop size.
     """
     reasons = tuple(str(reason) for reason in hard_invalid_reasons if str(reason))
     try:
-        pred_summary = visible_subset_alignment_summary(
+        pred = visible_subset_alignment_summary(
             predicted,
             visibility,
             size=size,
             coverage_ratio=coverage_ratio,
             min_visible_points=min_visible_points,
-        ).summary
-        truth_summary = visible_subset_alignment_summary(
+        )
+        truth_fit = visible_subset_alignment_summary(
             truth,
             visibility,
             size=size,
             coverage_ratio=coverage_ratio,
             min_visible_points=min_visible_points,
-        ).summary
-        matrix_delta = alignment_matrix_delta(pred_summary, truth_summary, normalizer=float(size))
-        crop_delta = roi_delta(pred_summary, truth_summary, normalizer=float(size))
-        center_delta = float(crop_delta.center_normalized_distance)
-        scale_delta = abs(math.log(max(pred_summary.scale, 1e-12) / max(truth_summary.scale, 1e-12)))
-        roll_delta_degrees = float(matrix_delta.rotation_degrees_delta)
-        fit_delta = max(float(average_distance_delta(pred_summary, truth_summary)), 0.0)
+        )
+        pred_center = _crop_center_in_output_frame(pred.summary.roi, truth_fit.adjusted_matrix)
+        truth_center = _crop_center_in_output_frame(truth_fit.summary.roi, truth_fit.adjusted_matrix)
+        center_delta = float(np.linalg.norm(pred_center - truth_center) / float(size))
+        scale_delta = abs(
+            math.log(max(pred.summary.scale, 1e-12) / max(truth_fit.summary.scale, 1e-12))
+        )
+        roll_delta_degrees = abs(
+            _wrap_angle_degrees(pred.summary.rotation_degrees - truth_fit.summary.rotation_degrees)
+        )
+        fit_delta = max(pred.fit_rms_pixels - truth_fit.fit_rms_pixels, 0.0) / float(size)
         hard_invalid = bool(reasons)
     except ValueError as err:
         center_delta = float("inf")
