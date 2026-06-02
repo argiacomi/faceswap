@@ -156,18 +156,30 @@ def test_transform_cost_v3_fit_delta_uses_output_frame_rms_regret() -> None:
 def test_transform_cost_v3_applies_weights() -> None:
     truth = _truth_face()
     predicted = truth + np.asarray([8.0, 0.0], dtype="float64")
-    weights = TransformCostWeightsV3(center=2.0, scale=3.0, roll=4.0, fit=5.0)
+    weights = TransformCostWeightsV3(corner=2.0, fit=5.0)
 
     cost = transform_cost_v3(predicted, truth, weights=weights)
 
-    expected = (
-        weights.center * cost.center_delta
-        + weights.scale * cost.scale_delta
-        + weights.roll * cost.roll_delta_degrees
-        + weights.fit * cost.fit_delta
-    )
+    # The cost is the single grounded corner primitive plus the small fit
+    # adjunct; center/scale/roll are diagnostics and must not enter total_cost.
+    expected = weights.corner * cost.corner_delta + weights.fit * cost.fit_delta
     assert math.isfinite(cost.total_cost)
     assert cost.total_cost == pytest.approx(expected)
+    assert cost.corner_delta > 0.0
+
+
+def test_transform_cost_v3_excludes_center_scale_roll_from_total() -> None:
+    """center/scale/roll are reported diagnostics and never enter total_cost."""
+    truth = _truth_face()
+    predicted = truth + np.asarray([8.0, 0.0], dtype="float64")
+    # Zero the corner and fit weights: a pure center/scale/roll cost would be
+    # non-zero, but the diagnostics-only terms must leave total_cost at 0.
+    weights = TransformCostWeightsV3(corner=0.0, fit=0.0)
+
+    cost = transform_cost_v3(predicted, truth, weights=weights)
+
+    assert cost.center_delta > 0.0
+    assert cost.total_cost == pytest.approx(0.0)
 
 
 def test_soft_suspect_is_finite_additive_penalty() -> None:

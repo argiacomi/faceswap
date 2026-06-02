@@ -216,6 +216,7 @@ class CandidateQualityRow:
     runtime_bucket_source: str
     geometry_veto_reasons: tuple[str, ...]
     transform_cost_v3: float
+    corner_delta_v3: float
     center_delta_v3: float
     scale_delta_v3: float
     roll_delta_degrees_v3: float
@@ -255,6 +256,7 @@ class CandidateQualityRow:
             "risk_route": self.risk_route,
             "geometry_veto_reasons": "|".join(self.geometry_veto_reasons),
             "transform_cost_v3": self.transform_cost_v3,
+            "corner_delta_v3": self.corner_delta_v3,
             "center_delta_v3": self.center_delta_v3,
             "scale_delta_v3": self.scale_delta_v3,
             "roll_delta_degrees_v3": self.roll_delta_degrees_v3,
@@ -1221,6 +1223,7 @@ def rows_for_context(
                 runtime_bucket_source=context.runtime_bucket_source,
                 geometry_veto_reasons=tuple(metric.geometry_veto_reasons),
                 transform_cost_v3=transform_cost,
+                corner_delta_v3=float(v3_cost.corner_delta),
                 center_delta_v3=float(v3_cost.center_delta),
                 scale_delta_v3=float(v3_cost.scale_delta),
                 roll_delta_degrees_v3=float(v3_cost.roll_delta_degrees),
@@ -1445,6 +1448,7 @@ def write_rows_csv(rows: T.Sequence[CandidateQualityRow], path: Path) -> Path:
         "candidate_failure_or_high_gap",
         "selection_cost",
         "transform_cost_v3",
+        "corner_delta_v3",
         "center_delta_v3",
         "scale_delta_v3",
         "roll_delta_degrees_v3",

@@ -5,17 +5,23 @@ This module intentionally does not change ``alignment_geometry_v1``.  It adds a
 separate, explicit v3 scoring primitive for candidate-selection labels:
 
     candidate_alignment_cost =
-        w_center * crop_center_delta
-        + w_scale * scale_delta
-        + w_roll * roll_delta_degrees
+        w_corner * crop_corner_rms_delta
         + w_fit * fit_delta
         + soft_structural_plausibility_penalty
 
+``crop_corner_rms_delta`` is the single grounded geometric primitive: the RMS
+displacement (in GT output-frame units) of the four aligned crop corners between
+the candidate transform and the GT transform.  It subsumes translation, scale,
+and rotation with their actual geometric effect, so there is one weight to reason
+about instead of three competing magic numbers.  ``center``/``scale``/``roll``
+deltas are still computed and reported as diagnostics but no longer contribute to
+``total_cost``.
+
 The deltas are computed from the same Faceswap alignment vocabulary used by the
-existing geometry stack: Umeyama alignment matrices, crop/ROI deltas, roll deltas,
-and average-distance fit deltas.  Unlike ``alignment_summary()``, the transform
-fit here is gated by manifest landmark visibility, so profile/occluded GT points
-do not pollute the transform used as the v3 oracle target.
+existing geometry stack: Umeyama alignment matrices, crop/ROI corner deltas, and
+average-distance fit deltas.  Unlike ``alignment_summary()``, the transform fit
+here is gated by manifest landmark visibility, so profile/occluded GT points do
+not pollute the transform used as the v3 oracle target.
 """
 
 from __future__ import annotations
@@ -43,16 +49,15 @@ DEFAULT_SOFT_STRUCTURAL_PENALTY_V3 = 0.05
 class TransformCostWeightsV3:
     """Weights for the direct v3 transform-cost components.
 
-    The defaults mirror the scale of ``alignment_geometry_v1`` where possible:
-    crop-center/translation dominates, scale is unit-weighted, and roll degrees
-    get a small coefficient so several degrees matter without overwhelming the
-    center/scale terms.  ``fit`` is the output-frame RMS fit-regret delta.
+    The cost has a single dominant geometric knob (``corner``: the output-frame
+    RMS crop-corner displacement, which already encodes translation, scale, and
+    rotation) plus a small ``fit`` adjunct (the output-frame RMS fit-regret
+    delta).  The legacy ``center``/``scale``/``roll`` weights were removed from
+    the cost; those deltas remain available as diagnostics only.
     """
 
-    center: float = 5.0
-    scale: float = 1.0
-    roll: float = 0.02
-    fit: float = 1.0
+    corner: float = 1.0
+    fit: float = 0.25
 
 
 DEFAULT_TRANSFORM_COST_WEIGHTS_V3 = TransformCostWeightsV3()
@@ -94,6 +99,7 @@ class TransformCostV3:
     ordinary finite-cost items and they are never assigned an ``inf`` label.
     """
 
+    corner_delta: float
     center_delta: float
     scale_delta: float
     roll_delta_degrees: float
@@ -105,8 +111,13 @@ class TransformCostV3:
     soft_suspect_reasons: tuple[str, ...]
 
     def to_payload(self) -> dict[str, T.Any]:
-        """Return a JSON-serializable diagnostic payload."""
+        """Return a JSON-serializable diagnostic payload.
+
+        ``corner_delta`` is the cost-bearing geometric term; ``center_delta`` /
+        ``scale_delta`` / ``roll_delta_degrees`` are retained diagnostics only.
+        """
         return {
+            "corner_delta": float(self.corner_delta),
             "center_delta": float(self.center_delta),
             "scale_delta": float(self.scale_delta),
             "roll_delta_degrees": float(self.roll_delta_degrees),
@@ -368,6 +379,33 @@ def _crop_center_in_output_frame(source_roi: np.ndarray, output_matrix: np.ndarr
     return T.cast(FloatArray, _affine_transform_points(center, output_matrix)[0])
 
 
+def _crop_corner_rms_delta(
+    candidate_roi: np.ndarray,
+    truth_roi: np.ndarray,
+    output_matrix: np.ndarray,
+    *,
+    size: int,
+) -> float:
+    """Return RMS crop-corner displacement in GT output-frame units.
+
+    Both source-frame ROIs are mapped into the GT output frame by the GT
+    ``output_matrix``; the RMS of the four per-corner Euclidean displacements is
+    normalized by ``size`` so the term is invariant to pixel resolution. This is
+    the single geometric primitive that subsumes the separate center/scale/roll
+    deltas (translation shifts all corners, scale dilates them, rotation rotates
+    them).
+    """
+    candidate_corners = _affine_transform_points(
+        np.asarray(candidate_roi, dtype=np.float64), output_matrix
+    )
+    truth_corners = _affine_transform_points(
+        np.asarray(truth_roi, dtype=np.float64), output_matrix
+    )
+    displacement = candidate_corners - truth_corners
+    rms_pixels = float(np.sqrt(np.mean(np.sum(displacement * displacement, axis=1))))
+    return rms_pixels / float(size)
+
+
 def visible_subset_alignment_summary(
     landmarks: np.ndarray,
     visibility: T.Sequence[bool] | None = None,
@@ -429,21 +467,18 @@ def visible_subset_alignment_summary(
 
 def _finite_transform_cost(
     *,
-    center_delta: float,
-    scale_delta: float,
-    roll_delta_degrees: float,
+    corner_delta: float,
     fit_delta: float,
     soft_structural_penalty: float,
     weights: TransformCostWeightsV3,
 ) -> float:
-    """Return finite weighted transform cost for rankable candidates."""
-    return float(
-        weights.center * center_delta
-        + weights.scale * scale_delta
-        + weights.roll * roll_delta_degrees
-        + weights.fit * fit_delta
-        + soft_structural_penalty
-    )
+    """Return finite weighted transform cost for rankable candidates.
+
+    The cost is the single grounded corner-displacement primitive plus the small
+    ``fit`` adjunct and the soft structural penalty.  ``center``/``scale``/
+    ``roll`` are diagnostics and intentionally excluded here.
+    """
+    return float(weights.corner * corner_delta + weights.fit * fit_delta + soft_structural_penalty)
 
 
 def transform_cost_v3(
@@ -499,7 +534,14 @@ def transform_cost_v3(
             _wrap_angle_degrees(pred.summary.rotation_degrees - truth_fit.summary.rotation_degrees)
         )
         fit_delta = max(pred.fit_rms_pixels - truth_fit.fit_rms_pixels, 0.0) / float(size)
+        corner_delta = _crop_corner_rms_delta(
+            pred.summary.roi,
+            truth_fit.summary.roi,
+            truth_fit.adjusted_matrix,
+            size=size,
+        )
     except ValueError as err:
+        corner_delta = 0.0
         center_delta = 0.0
         scale_delta = 0.0
         roll_delta_degrees = 0.0
@@ -513,15 +555,14 @@ def transform_cost_v3(
         0.0
         if validity.hard_invalid
         else _finite_transform_cost(
-            center_delta=center_delta,
-            scale_delta=scale_delta,
-            roll_delta_degrees=roll_delta_degrees,
+            corner_delta=corner_delta,
             fit_delta=fit_delta,
             soft_structural_penalty=validity.soft_structural_penalty,
             weights=cost_weights,
         )
     )
     return TransformCostV3(
+        corner_delta=corner_delta,
         center_delta=center_delta,
         scale_delta=scale_delta,
         roll_delta_degrees=roll_delta_degrees,

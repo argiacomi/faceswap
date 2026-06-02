@@ -145,6 +145,7 @@ def write_tagged_rows_csv(rows: T.Sequence[TaggedRow], path: Path) -> Path:
         "candidate_failure_or_high_gap",
         "selection_cost",
         "transform_cost_v3",
+        "corner_delta_v3",
         "center_delta_v3",
         "scale_delta_v3",
         "roll_delta_degrees_v3",

@@ -99,6 +99,7 @@ def _row(**overrides: object) -> CandidateQualityRow:
         "candidate_failure_or_high_gap": False,
         "selection_cost": 0.25,
         "transform_cost_v3": 0.40,
+        "corner_delta_v3": 0.05,
         "center_delta_v3": 0.05,
         "scale_delta_v3": 0.05,
         "roll_delta_degrees_v3": 1.0,
