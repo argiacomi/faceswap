@@ -31,10 +31,13 @@ import itertools
 import json
 import math
 import statistics
+import sys
 import typing as T
 from collections import defaultdict
 from dataclasses import asdict, dataclass
 from pathlib import Path
+
+from tqdm import tqdm
 
 BASELINE_WEIGHTS = {"center": 5.0, "scale": 1.0, "roll": 0.02, "fit": 1.0}
 
@@ -54,6 +57,26 @@ COMPONENT_COLUMN_ALIASES = {
     "fit": ("fit_delta_v3", "transform_fit_delta_v3"),
     "soft": ("soft_structural_penalty_v3",),
 }
+
+
+def progress_iter(
+    values: T.Iterable[T.Any],
+    *,
+    total: int | None,
+    desc: str,
+    unit: str,
+    enabled: bool,
+) -> T.Iterable[T.Any]:
+    return T.cast(
+        T.Iterable[T.Any],
+        tqdm(
+            values,
+            total=total,
+            desc=desc,
+            unit=unit,
+            disable=not enabled,
+        ),
+    )
 
 
 @dataclass(frozen=True)
@@ -155,11 +178,19 @@ def first_component(row: T.Mapping[str, str], component: str) -> float | None:
     return None
 
 
-def load_rows(path: Path) -> list[CandidateRow]:
+def load_rows(path: Path, *, progress: bool = False) -> list[CandidateRow]:
     rows: list[CandidateRow] = []
     with path.open("r", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle)
-        for line_number, raw in enumerate(reader, start=2):
+        iterator = progress_iter(
+            reader,
+            total=None,
+            desc="Load scorer rows",
+            unit="row",
+            enabled=progress,
+        )
+        for line_number, raw_obj in enumerate(iterator, start=2):
+            raw = T.cast(dict[str, str], raw_obj)
             sample_id = first_present(raw, ("sample_id",))
             candidate_name = first_present(raw, ("candidate_name", "candidate"))
             if not sample_id or not candidate_name:
@@ -275,9 +306,19 @@ def summarize_groups(
     *,
     components_available: bool,
     baseline_policy: str,
+    progress: bool = False,
+    progress_desc: str = "Summarize groups",
 ) -> list[GroupSummary]:
     summaries: list[GroupSummary] = []
-    for _key, group in grouped_rows(rows).items():
+    groups = grouped_rows(rows)
+    iterator = progress_iter(
+        groups.items(),
+        total=len(groups),
+        desc=progress_desc,
+        unit="group",
+        enabled=progress,
+    )
+    for _key, group in iterator:
         valid = [row for row in group if row.rankable and not row.hard_invalid]
         exemplar = group[0]
         if not valid:
@@ -511,6 +552,11 @@ def main(argv: T.Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--rows", type=Path, required=True, help="Input scorer-row CSV.")
     parser.add_argument("--output-dir", type=Path, required=True, help="Directory for reports.")
+    parser.add_argument(
+        "--no-progress",
+        action="store_true",
+        help="Disable terminal progress bars.",
+    )
     parser.add_argument("--baseline-policy", default="static_weighted_downweight")
     parser.add_argument("--center-weights", default=None)
     parser.add_argument("--scale-weights", default=None)
@@ -520,8 +566,9 @@ def main(argv: T.Sequence[str] | None = None) -> int:
     parser.add_argument("--min-gaps", default=None)
     parser.add_argument("--oracle-flip-example-limit", type=int, default=200)
     args = parser.parse_args(argv)
+    progress_enabled = not args.no_progress and sys.stderr.isatty()
 
-    rows = load_rows(args.rows)
+    rows = load_rows(args.rows, progress=progress_enabled)
     if not rows:
         raise SystemExit(f"no rows found in {args.rows}")
 
@@ -542,6 +589,8 @@ def main(argv: T.Sequence[str] | None = None) -> int:
         baseline_config,
         components_available=components_available,
         baseline_policy=args.baseline_policy,
+        progress=progress_enabled,
+        progress_desc="Summarize baseline groups",
     )
     baseline_by_group = {
         (item.sample_id, item.face_index): item for item in baseline_group_summaries
@@ -552,7 +601,14 @@ def main(argv: T.Sequence[str] | None = None) -> int:
     flip_rows: list[dict[str, T.Any]] = []
     gate_sensitivity: list[dict[str, T.Any]] = []
 
-    for config in configs:
+    for config in progress_iter(
+        configs,
+        total=len(configs),
+        desc="Sweep transform configs",
+        unit="config",
+        enabled=progress_enabled,
+    ):
+        config = T.cast(SweepConfig, config)
         summaries = summarize_groups(
             rows,
             config,
