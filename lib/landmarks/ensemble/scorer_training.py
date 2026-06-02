@@ -60,6 +60,8 @@ SCORER_ARTIFACT = "runtime_resolver_scorer.json"
 SCORER_V2_ARTIFACT = "runtime_resolver_scorer_v2.json"
 SCORER_V3_ARTIFACT = "runtime_resolver_scorer_v3.json"
 SCORER_VERSION_LEARNED_QUALITY_V3 = "learned_quality_v3"
+ACTIVE_SCORER_VERSION = SCORER_VERSION_LEARNED_QUALITY_V3
+ACTIVE_SCORER_TARGET = TARGET_TRANSFORM_REGRET_V3
 SCORERS_DIR = "scorers"
 SCORER_SUITE_METRICS_JSON = "metrics.json"
 SCORER_SUITE_SENTINEL_JSON = ".scorer_training_complete.json"
@@ -919,17 +921,19 @@ def train_runtime_resolver_scorer_suite(
     failure_threshold: float = DEFAULT_FAILURE_THRESHOLD,
     high_gap_threshold: float = DEFAULT_HIGH_GAP_THRESHOLD,
     outlier_threshold: float = DEFAULT_OUTLIER_THRESHOLD,
-    l2: float = 0.001,
-    learning_rate: float = 0.1,
-    iterations: int = 1500,
+    learning_rate: float = 0.05,
+    iterations: int = 150,
+    num_leaves: int = 31,
     eval_fraction: float = 0.20,
     split_seed: int = 42,
     allow_image_backfill: bool = False,
-    v3_learning_rate: float = 0.05,
-    v3_iterations: int = 150,
-    v3_num_leaves: int = 31,
 ) -> dict[str, T.Any]:
-    """Train the active learned_quality_v3 scorer from one canonical row split."""
+    """Train the active v3 scorer from one canonical row split.
+
+    The active scorer-suite target is ``transform_alignment_regret_v3``. Legacy
+    v2/``selection_cost`` training is intentionally available only through
+    ``train_runtime_resolver_scorer_v2``.
+    """
 
     output_dir.mkdir(parents=True, exist_ok=True)
     contexts = load_scorer_contexts(
@@ -967,10 +971,15 @@ def train_runtime_resolver_scorer_suite(
             ),
         },
         config={
+            "active_scorer_version": ACTIVE_SCORER_VERSION,
+            "active_target": ACTIVE_SCORER_TARGET,
             "candidates": list(candidates),
             "failure_threshold": failure_threshold,
             "high_gap_threshold": high_gap_threshold,
             "outlier_threshold": outlier_threshold,
+            "learning_rate": learning_rate,
+            "iterations": iterations,
+            "num_leaves": num_leaves,
             "eval_fraction": eval_fraction,
             "split_seed": split_seed,
             "allow_image_backfill": allow_image_backfill,
@@ -993,9 +1002,9 @@ def train_runtime_resolver_scorer_suite(
         failure_threshold=failure_threshold,
         eval_fraction=eval_fraction,
         split_seed=split_seed,
-        learning_rate=v3_learning_rate,
-        iterations=v3_iterations,
-        num_leaves=v3_num_leaves,
+        learning_rate=learning_rate,
+        iterations=iterations,
+        num_leaves=num_leaves,
     )
 
     canonical_v3 = scorers_dir / "learned_quality_v3.json"
@@ -1004,7 +1013,9 @@ def train_runtime_resolver_scorer_suite(
     metrics = {
         "artifact_schema_version": 1,
         "scorer_dataset": dataset_manifest,
-        "active_target": TARGET_TRANSFORM_REGRET_V3,
+        "active_scorer_version": ACTIVE_SCORER_VERSION,
+        "active_target": ACTIVE_SCORER_TARGET,
+        "runtime_feature_contract_version": RUNTIME_FEATURE_CONTRACT_VERSION,
         "scorers": {
             "learned_quality_v3": {
                 **v3_metrics,
@@ -1021,8 +1032,9 @@ def train_runtime_resolver_scorer_suite(
             ],
             "candidate_table": str(candidate_table_path),
             "note": (
-                "Legacy linear/logistic scorer training has been removed. The active scorer_suite "
-                "target is transform_alignment_regret_v3 only. New consumers should use "
+                "The active scorer_suite target is transform_alignment_regret_v3 only. "
+                "Legacy learned_quality_v2/selection_cost training is explicit-only. "
+                "New consumers should use "
                 "scorer_dataset/rows.csv, scorer_dataset/manifest.json, and the canonical "
                 "learned_quality_v3 artifact."
             ),
@@ -1058,15 +1070,7 @@ def train_runtime_resolver_scorer_v2(
     iterations: int = 150,
     num_leaves: int = 31,
 ) -> dict[str, T.Any]:
-    """Train learned_quality_v2 with LightGBM LambdaRank grouped by sample."""
-    try:
-        import lightgbm as lgb
-    except ModuleNotFoundError as err:  # pragma: no cover - depends on install env
-        raise RuntimeError(
-            "learned_quality_v2 training requires lightgbm; install project requirements first"
-        ) from err
-
-    output_dir.mkdir(parents=True, exist_ok=True)
+    """Train the explicit legacy learned_quality_v2 scorer on selection_cost."""
     contexts = load_scorer_contexts(
         gt_manifest=gt_manifest,
         gt_cache_dir=gt_cache_dir,
@@ -1088,99 +1092,18 @@ def train_runtime_resolver_scorer_v2(
         eval_fraction=eval_fraction,
         seed=split_seed,
     )
-    grouped_train, train_group_sizes = _grouped_rows(train_tagged_rows)
-    train_rows = untag_quality_rows(grouped_train)
-    features = feature_order(train_rows)
-    x = feature_matrix([row.feature_values for row in train_rows], features)
-    y = np.asarray([_lambdarank_label(row) for row in train_rows], dtype="int32")
-    item_weights = np.asarray(
-        [_lambdarank_weight(row, source) for row, source in grouped_train],
-        dtype="float64",
-    )
-    ranker = lgb.LGBMRanker(
-        objective="lambdarank",
-        n_estimators=iterations,
+    return _train_lambdarank_from_tagged_rows(
+        train_tagged_rows=train_tagged_rows,
+        eval_tagged_rows=eval_tagged_rows,
+        candidates=candidates,
+        output_dir=output_dir,
+        failure_threshold=failure_threshold,
+        eval_fraction=eval_fraction,
+        split_seed=split_seed,
         learning_rate=learning_rate,
+        iterations=iterations,
         num_leaves=num_leaves,
-        random_state=split_seed,
-        deterministic=True,
-        verbosity=-1,
     )
-    ranker.fit(x, y, group=train_group_sizes, sample_weight=item_weights)
-    booster = ranker.booster_
-    importances = _feature_importance_map(
-        features,
-        booster.feature_importance(importance_type="gain"),
-    )
-    artifact = {
-        "artifact_schema_version": 2,
-        "version": "learned_quality_v2",
-        "scorer_version": "learned_quality_v2",
-        "model_type": MODEL_TYPE_LIGHTGBM_LAMBDARANK,
-        "target": TARGET_SELECTION_COST,
-        "objective": "lambdarank_inverse_regret",
-        "training_mode": "grouped_lambdarank",
-        "selection_target": "inverse_selection_cost_rank",
-        "runtime_policy": "learned_quality_v2",
-        "score_semantics": SCORE_SEMANTICS_PREDICTED_COST,
-        "higher_is_better": False,
-        "failure_threshold": failure_threshold,
-        "features": list(features),
-        "runtime_feature_contract_version": RUNTIME_FEATURE_CONTRACT_VERSION,
-        "model_data": booster.model_to_string(),
-        "training_data_counts": {
-            "row_count": len(train_rows),
-            "sample_group_count": len(train_group_sizes),
-            "eval_row_count": len(eval_tagged_rows),
-            "candidate_count": len(candidates),
-        },
-        "split_ids": {
-            "seed": split_seed,
-            "eval_fraction": eval_fraction,
-            "train_group_count": len(train_group_sizes),
-        },
-        "feature_importances": importances,
-        "calibration": {"type": "none", "params": {}},
-        "sample_weighting": scorer_sample_weighting_stats(grouped_train),
-        "lightgbm_params": {
-            "objective": "lambdarank",
-            "n_estimators": iterations,
-            "learning_rate": learning_rate,
-            "num_leaves": num_leaves,
-            "random_state": split_seed,
-            "deterministic": True,
-        },
-    }
-    artifact_path = write_json(output_dir / SCORER_V2_ARTIFACT, artifact)
-    rows_path = write_tagged_rows_csv(grouped_train, output_dir / TRAINING_ROWS_CSV)
-    eval_rows_path = write_tagged_rows_csv(eval_tagged_rows, output_dir / EVAL_ROWS_CSV)
-    importances_path = _write_feature_importance_csv(
-        output_dir / "runtime_resolver_scorer_v2_feature_importances.csv",
-        importances,
-    )
-    metrics: dict[str, T.Any] = {
-        "artifact": str(artifact_path),
-        "training_rows": str(rows_path),
-        "eval_rows": str(eval_rows_path),
-        "feature_importances": str(importances_path),
-        "candidate_count": len(candidates),
-        "candidates": list(candidates),
-        "feature_count": len(features),
-        "runtime_feature_contract_version": RUNTIME_FEATURE_CONTRACT_VERSION,
-        "target": TARGET_SELECTION_COST,
-        "model_type": MODEL_TYPE_LIGHTGBM_LAMBDARANK,
-        "score_semantics": SCORE_SEMANTICS_PREDICTED_COST,
-        "higher_is_better": False,
-        "split_seed": split_seed,
-        "eval_fraction": eval_fraction,
-        "training_data_counts": artifact["training_data_counts"],
-        "split_ids": artifact["split_ids"],
-        "sample_weighting": artifact["sample_weighting"],
-        "lightgbm_params": artifact["lightgbm_params"],
-    }
-    metrics_path = write_json(output_dir / TRAINING_V2_METRICS_JSON, metrics)
-    metrics["metrics_path"] = str(metrics_path)
-    return metrics
 
 
 def train_runtime_resolver_scorer(
@@ -1199,23 +1122,23 @@ def train_runtime_resolver_scorer(
     l2: float = 0.001,
     learning_rate: float = 0.1,
     iterations: int = 1500,
+    num_leaves: int = 31,
     eval_fraction: float = 0.20,
     split_seed: int = 42,
     allow_image_backfill: bool = False,
     target: str = TARGET_SELECTION_COST,
 ) -> dict[str, T.Any]:
-    """Compatibility wrapper that trains the only supported learned scorer.
+    """Compatibility wrapper for explicit legacy learned_quality_v2 training.
 
-    Legacy linear/logistic scorer artifacts have been removed. Keep this
-    public function name for callers that have not migrated yet, but route all
-    work to learned_quality_v2 so no legacy artifact can be emitted.
+    The active scorer-suite path is v3-only. Keep this public function name for
+    older callers that still request the selection_cost/v2 artifact explicitly.
     """
     del l2
     if target != TARGET_SELECTION_COST:
         raise ValueError(
-            "train_runtime_resolver_scorer only trains learned_quality_v2 on "
-            f"{TARGET_SELECTION_COST!r}; unsupported target {target!r}. Legacy v1/v1.1 "
-            "scorer targets have been removed."
+            "train_runtime_resolver_scorer is legacy-v2-only and trains on "
+            f"{TARGET_SELECTION_COST!r}; unsupported target {target!r}. Use "
+            "train_runtime_resolver_scorer_suite for active v3 training."
         )
     return train_runtime_resolver_scorer_v2(
         gt_manifest=gt_manifest,
@@ -1234,7 +1157,7 @@ def train_runtime_resolver_scorer(
         allow_image_backfill=allow_image_backfill,
         learning_rate=learning_rate,
         iterations=iterations,
-        num_leaves=31,
+        num_leaves=num_leaves,
     )
 
 
@@ -1243,6 +1166,8 @@ __all__ = [
     "SCORER_V2_ARTIFACT",
     "SCORER_V3_ARTIFACT",
     "SCORER_VERSION_LEARNED_QUALITY_V3",
+    "ACTIVE_SCORER_VERSION",
+    "ACTIVE_SCORER_TARGET",
     "SCORERS_DIR",
     "SCORER_SUITE_METRICS_JSON",
     "SCORER_SUITE_SENTINEL_JSON",
