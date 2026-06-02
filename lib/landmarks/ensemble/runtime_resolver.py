@@ -21,6 +21,7 @@ import numpy as np
 from lib.landmarks.core.fusion import normalize_weight_matrix, plain_average, static_weighted
 from lib.landmarks.core.rejection import weighted_median
 from lib.landmarks.core.schema import LandmarkPrediction
+from lib.landmarks.ensemble.hard_condition_taxonomy import applicable_weight_buckets
 from lib.landmarks.ensemble.production_artifacts import LEARNED_POLICIES
 from lib.landmarks.ensemble.runtime_resolver_scorer import (
     candidate_scores as score_runtime_candidates,
@@ -34,6 +35,7 @@ from lib.landmarks.ensemble.strategies import (
     strategy_requires_weights,
     strategy_uses_threshold,
 )
+from lib.landmarks.ensemble.weights import region_weights_to_matrix, weights_matrix_for_models
 from lib.landmarks.evaluation.geometry_signals import AlignmentSummary, alignment_summary
 from lib.landmarks.evaluation.shape_plausibility import evaluate_shape_plausibility
 
@@ -298,6 +300,8 @@ class RuntimeResolverConfig:
     fallback_model: str = "orformer"
     outlier_threshold: float = 3.5
     weights: T.Mapping[str, T.Sequence[float]] | None = None
+    bucket_weights: T.Mapping[str, T.Mapping[str, T.Sequence[float]]] | None = None
+    region_weights: T.Mapping[str, T.Mapping[str, float]] | None = None
     adapter_weights: T.Mapping[str, float] = field(default_factory=dict)
     hard_disagreement_px: float = 12.0
     roll_veto_degrees: float = 15.0
@@ -565,19 +569,29 @@ def _metric_for_candidate(
     )
 
 
-def _populate_consensus_geometry(
-    candidates: T.Sequence[CandidateRecord],
+def _apply_consensus_geometry(
+    targets: T.Sequence[CandidateRecord],
     metrics: T.MutableMapping[str, CandidateMetrics],
     *,
+    consensus_candidates: T.Sequence[CandidateRecord],
     reference_bbox: tuple[float, float, float, float] | None,
 ) -> None:
+    """Populate consensus-distance metrics for ``targets``.
+
+    The consensus point cloud is the median over ``consensus_candidates``. Keeping
+    that set separate lets second-pass candidates (e.g. per-bucket fusion) be
+    measured against the same consensus as the base set without recomputing — and
+    therefore perturbing — the base candidates' own distances.
+    """
     diag = _bbox_diag(reference_bbox)
     if diag is None:
         return
-    stack = np.stack([candidate.landmarks.astype("float64") for candidate in candidates], axis=0)
+    stack = np.stack(
+        [candidate.landmarks.astype("float64") for candidate in consensus_candidates], axis=0
+    )
     consensus_points = np.median(stack, axis=0)
     consensus_center = _bbox_center(_landmark_bbox(consensus_points))
-    for candidate in candidates:
+    for candidate in targets:
         metric = metrics[candidate.name]
         candidate_center = _bbox_center(_landmark_bbox(candidate.landmarks))
         if consensus_center is not None and candidate_center is not None:
@@ -596,6 +610,20 @@ def _populate_consensus_geometry(
         )
 
 
+def _populate_consensus_geometry(
+    candidates: T.Sequence[CandidateRecord],
+    metrics: T.MutableMapping[str, CandidateMetrics],
+    *,
+    reference_bbox: tuple[float, float, float, float] | None,
+) -> None:
+    _apply_consensus_geometry(
+        candidates,
+        metrics,
+        consensus_candidates=candidates,
+        reference_bbox=reference_bbox,
+    )
+
+
 def _mean_landmark_distance_px(left: np.ndarray, right: np.ndarray) -> float:
     return float(np.mean(np.linalg.norm(left.astype("float64") - right.astype("float64"), axis=1)))
 
@@ -612,9 +640,7 @@ def _candidate_extra_features(
     """Return full-candidate-set features used by learned quality scoring."""
     diag = _bbox_diag(reference_bbox)
     by_name = {candidate.name: candidate for candidate in candidates}
-    single_candidates = [
-        candidate for candidate in candidates if not _is_canonical_strategy_name(candidate.name)
-    ]
+    single_candidates = [candidate for candidate in candidates if not candidate.is_fusion]
     single_stack = (
         np.stack(
             [candidate.landmarks.astype("float64") for candidate in single_candidates], axis=0
@@ -772,6 +798,8 @@ def _fuse_strategy(
     threshold = config.outlier_threshold if strategy_uses_threshold(canonical) else 3.5
     if not strategy_requires_weights(canonical):
         return plain_average(items, outlier_method=method, outlier_threshold=threshold).points
+    if canonical == "region_weighted":
+        return _fuse_region_weighted(singles, config)
     models = tuple(candidate.name for candidate in singles)
     if config.weights is None:
         matrix = np.array(
@@ -779,10 +807,7 @@ def _fuse_strategy(
             dtype="float32",
         )
     else:
-        matrix = np.array(
-            [config.weights.get(model, [1.0] * 68) for model in models],
-            dtype="float32",
-        )
+        matrix = weights_matrix_for_models(config.weights, models)
     if canonical == "weighted_median":
         stack = np.stack([item.canonical_68().points for item in items], axis=0)
         normalized = normalize_weight_matrix(
@@ -833,6 +858,169 @@ def build_candidates(
             )
         )
     return candidates
+
+
+#: Separator between a base strategy and its per-bucket weight variant in a
+#: candidate name, e.g. ``static_weighted@profile`` (Phase 5 #8). Kept as a
+#: module constant so the offline scorer-data path and the runtime path agree.
+BUCKET_CANDIDATE_SEPARATOR: str = "@"
+
+
+def bucket_candidate_name(strategy: str, weight_bucket: str) -> str:
+    """Return the candidate name for ``strategy`` fused with ``weight_bucket`` weights."""
+    return f"{strategy}{BUCKET_CANDIDATE_SEPARATOR}{weight_bucket}"
+
+
+def _fuse_static_weighted_with_weights(
+    singles: T.Sequence[CandidateRecord],
+    weights_map: T.Mapping[str, T.Sequence[float]],
+) -> np.ndarray:
+    """Fuse single-model candidates with an explicit per-model weight map."""
+    items = [
+        LandmarkPrediction(candidate.landmarks.astype("float32"), source=candidate.name)
+        for candidate in singles
+    ]
+    models = tuple(candidate.name for candidate in singles)
+    matrix = weights_matrix_for_models(weights_map, models)
+    fused: np.ndarray = static_weighted(items, matrix, outlier_method="none").points
+    return fused
+
+
+def append_bucket_weight_candidates(
+    candidates: list[CandidateRecord],
+    config: RuntimeResolverConfig,
+    *,
+    bucket: str,
+    metrics: T.MutableMapping[str, CandidateMetrics],
+    reference_bbox: tuple[float, float, float, float] | None,
+) -> None:
+    """Append per-bucket ``static_weighted`` fusion candidates in place (Phase 5 #8).
+
+    Runs as a second pass after the runtime bucket is known (bucket inference
+    consumes the base candidate metrics, so the applicable weight buckets cannot
+    be selected earlier). No-op unless ``config.bucket_weights`` is populated, so
+    v1 artifacts and the legacy global-weight path behave identically.
+
+    New candidates are named ``static_weighted@<weight_bucket>`` for every
+    applicable weight bucket that has a fitted weight set. Their metrics and
+    consensus geometry are computed against the original (base) candidate set so
+    the base candidates' diagnostics are left untouched. The learned scorer then
+    ranks the enlarged candidate pool.
+    """
+    if not config.bucket_weights:
+        return
+    base_candidates = list(candidates)
+    singles = [candidate for candidate in base_candidates if not candidate.is_fusion]
+    if len(singles) < 2:
+        return
+    existing = {candidate.name for candidate in candidates}
+    contributing = tuple(candidate.name for candidate in singles)
+    new_records: list[CandidateRecord] = []
+    for weight_bucket in applicable_weight_buckets(bucket):
+        weights_map = config.bucket_weights.get(weight_bucket)
+        if not weights_map:
+            continue
+        name = bucket_candidate_name("static_weighted", weight_bucket)
+        if name in existing:
+            continue
+        try:
+            landmarks = _fuse_static_weighted_with_weights(singles, weights_map)
+        except Exception as err:  # noqa: BLE001
+            if config.strict:
+                raise RuntimeResolverError(
+                    f"bucket fusion candidate {name!r} failed: {err}"
+                ) from err
+            logger.debug("Skipping bucket fusion candidate %s: %s", name, err)
+            continue
+        record = CandidateRecord(
+            name=name,
+            landmarks=landmarks.astype("float32", copy=False),
+            is_fusion=True,
+            contributing_models=contributing,
+        )
+        candidates.append(record)
+        existing.add(name)
+        new_records.append(record)
+
+    for record in new_records:
+        metrics[record.name] = _metric_for_candidate(record, reference_bbox=reference_bbox)
+    if new_records:
+        _apply_consensus_geometry(
+            new_records,
+            metrics,
+            consensus_candidates=base_candidates,
+            reference_bbox=reference_bbox,
+        )
+
+
+def _fuse_region_weighted(
+    singles: T.Sequence[CandidateRecord],
+    config: RuntimeResolverConfig,
+) -> np.ndarray:
+    """Fuse single-model candidates region-by-region from a region weight table.
+
+    The ``{region: {model: weight}}`` table is broadcast into a per-landmark
+    ``(models, 68)`` matrix whose entries are constant within each region, then
+    a static-weighted average is taken — exactly equivalent to assembling the
+    fused face one region at a time. Raises when no region weights are
+    configured so callers can fall back.
+    """
+    if not config.region_weights:
+        raise RuntimeResolverError("region_weighted fusion requires region_weights")
+    items = [
+        LandmarkPrediction(candidate.landmarks.astype("float32"), source=candidate.name)
+        for candidate in singles
+    ]
+    models = tuple(candidate.name for candidate in singles)
+    matrix = region_weights_to_matrix(config.region_weights, models)
+    fused: np.ndarray = static_weighted(items, matrix, outlier_method="none").points
+    return fused
+
+
+def append_region_weight_candidate(
+    candidates: list[CandidateRecord],
+    config: RuntimeResolverConfig,
+    *,
+    metrics: T.MutableMapping[str, CandidateMetrics],
+    reference_bbox: tuple[float, float, float, float] | None,
+) -> None:
+    """Append the ``region_weighted`` fusion candidate in place (Phase 5 #9).
+
+    No-op unless ``config.region_weights`` is populated, so v1 artifacts and the
+    legacy path behave identically. Like the per-bucket pass, the new candidate's
+    metrics and consensus geometry are computed against the original (base)
+    candidate set, and the learned scorer ranks it alongside the others.
+    """
+    if not config.region_weights:
+        return
+    base_candidates = list(candidates)
+    singles = [candidate for candidate in base_candidates if not candidate.is_fusion]
+    if len(singles) < 2:
+        return
+    name = canonical_strategy("region_weighted")
+    if any(candidate.name == name for candidate in candidates):
+        return
+    try:
+        landmarks = _fuse_region_weighted(singles, config)
+    except Exception as err:  # noqa: BLE001
+        if config.strict:
+            raise RuntimeResolverError(f"region fusion candidate {name!r} failed: {err}") from err
+        logger.debug("Skipping region fusion candidate %s: %s", name, err)
+        return
+    record = CandidateRecord(
+        name=name,
+        landmarks=landmarks.astype("float32", copy=False),
+        is_fusion=True,
+        contributing_models=tuple(candidate.name for candidate in singles),
+    )
+    candidates.append(record)
+    metrics[name] = _metric_for_candidate(record, reference_bbox=reference_bbox)
+    _apply_consensus_geometry(
+        [record],
+        metrics,
+        consensus_candidates=base_candidates,
+        reference_bbox=reference_bbox,
+    )
 
 
 def _priority_for_bucket(bucket: str, available: T.AbstractSet[str]) -> list[str]:
@@ -1072,6 +1260,18 @@ def _is_canonical_strategy_name(name: str) -> bool:
     return True
 
 
+def _is_fusion_candidate_name(name: str) -> bool:
+    """Return True for any fusion candidate, including per-bucket variants.
+
+    Per-bucket candidates are named ``<strategy>@<weight_bucket>``; the base
+    strategy before the separator identifies them as fusion outputs rather than
+    single models, so single-vs-fusion classification stays correct when only a
+    candidate name (not a :class:`CandidateRecord`) is available.
+    """
+    base = name.split(BUCKET_CANDIDATE_SEPARATOR, 1)[0]
+    return _is_canonical_strategy_name(base)
+
+
 def _single_model_yaw_side_agreement(
     metrics: T.Mapping[str, CandidateMetrics],
     *,
@@ -1080,7 +1280,7 @@ def _single_model_yaw_side_agreement(
     """Return whether at least two non-fusion models agree on yaw side."""
     side_counts: Counter[str] = Counter()
     for name, metric in metrics.items():
-        if _is_canonical_strategy_name(name):
+        if _is_fusion_candidate_name(name):
             continue
         yaw = metric.yaw_degrees
         if yaw is None or not math.isfinite(float(yaw)):
@@ -1488,7 +1688,7 @@ def _roll_support_count(
         return 0
     support = 0
     for name, metric in metrics.items():
-        if _is_canonical_strategy_name(name):
+        if _is_fusion_candidate_name(name):
             continue
         roll = metric.roll_degrees
         if roll is None or not math.isfinite(float(roll)):
@@ -1741,6 +1941,20 @@ def resolve_runtime(
         },
     )
     _trace("[RuntimeResolver] bucket features: %s", runtime_bucket.features)
+
+    append_bucket_weight_candidates(
+        candidates,
+        config,
+        bucket=bucket,
+        metrics=metrics,
+        reference_bbox=reference_bbox,
+    )
+    append_region_weight_candidate(
+        candidates,
+        config,
+        metrics=metrics,
+        reference_bbox=reference_bbox,
+    )
 
     for name, metric in metrics.items():
         metric.geometry_veto_reasons = _shape_reasons(bucket, name, metric)
@@ -2097,6 +2311,9 @@ __all__ = [
     "RuntimeResolverResult",
     "RuntimeBucketResult",
     "RUNTIME_BUCKETS",
+    "append_bucket_weight_candidates",
+    "append_region_weight_candidate",
     "build_candidates",
+    "bucket_candidate_name",
     "resolve_runtime",
 ]

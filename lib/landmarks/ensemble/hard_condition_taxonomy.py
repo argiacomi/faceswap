@@ -23,6 +23,19 @@ NEW_HARD_CONDITION_LABELS: tuple[str, ...] = (
     "mouth_or_jaw_occluded",
 )
 
+#: Coarse pose/occlusion buckets that per-bucket static fusion weights are fit
+#: against (Phase 5 #8). ``global`` is the fallback weight set used when a bucket
+#: has too few fit samples or is not selectable from runtime evidence.
+WEIGHT_BUCKETS: tuple[str, ...] = (
+    "frontal",
+    "large_yaw",
+    "profile",
+    "rolled_profile",
+    "occlusion",
+    "profile_occlusion",
+)
+GLOBAL_WEIGHT_BUCKET: str = "global"
+
 _LEFT_EYE = range(36, 42)
 _RIGHT_EYE = range(42, 48)
 _JAW = range(0, 17)
@@ -231,8 +244,98 @@ def derive_hard_condition_taxonomy(
     )
 
 
+def _pose_weight_bucket(
+    *,
+    profile: bool,
+    rolled_profile: bool,
+    large_yaw: bool,
+    occluded: bool,
+) -> str:
+    """Resolve coarse pose/occlusion flags to a single :data:`WEIGHT_BUCKETS` key.
+
+    Occlusion outranks pure pose for the profile family (there is no dedicated
+    rolled-profile-occlusion weight bucket), so an occluded profile/rolled-profile
+    face maps to ``profile_occlusion``. A non-profile occluded face maps to the
+    generic ``occlusion`` bucket.
+    """
+    if profile and occluded:
+        return "profile_occlusion"
+    if rolled_profile:
+        return "rolled_profile"
+    if profile:
+        return "profile"
+    if occluded:
+        return "occlusion"
+    if large_yaw:
+        return "large_yaw"
+    return "frontal"
+
+
+def weight_bucket_from_runtime(runtime_bucket: str, *, occluded: bool = False) -> str:
+    """Map a fine-grained runtime bucket name to a coarse weight bucket.
+
+    Pure-roll buckets (``large_roll`` / ``extreme_roll``) carry no yaw signal and
+    map to ``frontal`` (or ``occlusion`` when occluded). ``rolled_large_yaw_*`` is
+    treated as ``large_yaw`` since the dominant fusion factor is the yaw.
+    """
+    bucket = _normalized_label(runtime_bucket)
+    profile = bucket.startswith("profile_") or bucket.startswith("rolled_profile_")
+    rolled_profile = bucket.startswith("rolled_profile_")
+    large_yaw = bucket.startswith("large_yaw_") or bucket.startswith("rolled_large_yaw_")
+    return _pose_weight_bucket(
+        profile=profile,
+        rolled_profile=rolled_profile,
+        large_yaw=large_yaw,
+        occluded=occluded,
+    )
+
+
+def weight_bucket_from_pose(
+    yaw_estimate: float | None,
+    roll_estimate: float | None,
+    *,
+    occluded: bool = False,
+) -> str:
+    """Map an estimated yaw/roll (degrees) to a coarse weight bucket.
+
+    Used by the offline weight fitter, which derives pose from ground-truth
+    landmarks. Thresholds reuse :data:`PROFILE_YAW_DEGREES`,
+    :data:`LARGE_YAW_DEGREES`, and :data:`ROLLED_DEGREES` so the offline
+    partition and the runtime bucketer stay aligned.
+    """
+    yaw = _finite_abs(yaw_estimate)
+    roll = _finite_abs(roll_estimate)
+    profile = yaw is not None and yaw >= PROFILE_YAW_DEGREES
+    rolled_profile = profile and roll is not None and roll >= ROLLED_DEGREES
+    large_yaw = yaw is not None and yaw >= LARGE_YAW_DEGREES
+    return _pose_weight_bucket(
+        profile=profile,
+        rolled_profile=rolled_profile,
+        large_yaw=large_yaw,
+        occluded=occluded,
+    )
+
+
+def applicable_weight_buckets(runtime_bucket: str) -> tuple[str, ...]:
+    """Return the weight buckets the runtime may select for ``runtime_bucket``.
+
+    Occlusion is not observable from the runtime pose bucket alone, so both the
+    pose bucket and its occlusion sibling are returned. The learned scorer then
+    picks between the resulting fusion candidates using its veto / shape /
+    disagreement features.
+    """
+    base = weight_bucket_from_runtime(runtime_bucket, occluded=False)
+    occluded = weight_bucket_from_runtime(runtime_bucket, occluded=True)
+    return tuple(dict.fromkeys((base, occluded)))
+
+
 __all__ = [
+    "GLOBAL_WEIGHT_BUCKET",
     "HardConditionTaxonomy",
     "NEW_HARD_CONDITION_LABELS",
+    "WEIGHT_BUCKETS",
+    "applicable_weight_buckets",
     "derive_hard_condition_taxonomy",
+    "weight_bucket_from_pose",
+    "weight_bucket_from_runtime",
 ]

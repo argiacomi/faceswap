@@ -865,8 +865,19 @@ class Ensemble(ExtractPlugin):
     ) -> np.ndarray | None:
         """Route this face through the production runtime resolver."""
         weights_map: dict[str, list[float]] | None = None
+        bucket_weights_map: dict[str, dict[str, list[float]]] | None = None
+        region_weights_map: dict[str, dict[str, float]] | None = None
         if self._promoted is not None and self._promoted.weights:
             weights_map = {model: list(values) for model, values in self._promoted.weights.items()}
+        if self._promoted is not None and self._promoted.bucket_weights:
+            bucket_weights_map = {
+                bucket: {model: list(values) for model, values in columns.items()}
+                for bucket, columns in self._promoted.bucket_weights.items()
+            }
+        if self._promoted is not None and self._promoted.region_weights:
+            region_weights_map = {
+                region: dict(columns) for region, columns in self._promoted.region_weights.items()
+            }
         model_predictions = [
             ModelPrediction(
                 adapter.config.name,
@@ -892,6 +903,8 @@ class Ensemble(ExtractPlugin):
             fallback_model=self._fallback_model,
             outlier_threshold=self._outlier_threshold,
             weights=weights_map,
+            bucket_weights=bucket_weights_map,
+            region_weights=region_weights_map,
             adapter_weights={adapter.config.name: adapter.config.weight for adapter in adapters},
             hard_disagreement_px=self._resolver_disagreement_px,
             roll_veto_degrees=self._roll_veto_degrees,

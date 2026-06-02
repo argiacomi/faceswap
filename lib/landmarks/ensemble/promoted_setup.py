@@ -20,9 +20,21 @@ from lib.landmarks.ensemble.strategies import (
     canonical_strategy,
     validate_threshold,
 )
-from lib.landmarks.ensemble.weights import LANDMARK_COUNT, normalize_static_weights
+from lib.landmarks.ensemble.weights import (
+    FUSION_REGION_INDICES,
+    LANDMARK_COUNT,
+    normalize_bucket_weights,
+    normalize_region_weights,
+    normalize_static_weights,
+)
 
 ARTIFACT_SCHEMA_VERSION: int = 1
+#: ``best_weights.json`` may be v1 (global weights only) or v2, which adds the
+#: optional ``bucket_weights`` (Phase 5 #8) and ``region_weights`` (Phase 5 #9)
+#: blocks. v1 artifacts stay valid forever; the loader transparently exposes
+#: empty bucket/region maps for them.
+WEIGHTS_SCHEMA_VERSION_WITH_BUCKETS: int = 2
+SUPPORTED_WEIGHTS_SCHEMA_VERSIONS: tuple[int, ...] = (1, 2)
 WEIGHTS_FILENAME: str = "best_weights.json"
 SETUP_FILENAME: str = "best_setup.json"
 PROMOTION_REPORT_FILENAME: str = "promotion_report.md"
@@ -64,13 +76,21 @@ def write_best_weights(
     weights: T.Mapping[str, T.Sequence[float]],
     *,
     models: T.Sequence[str],
+    bucket_weights: T.Mapping[str, T.Mapping[str, T.Sequence[float]]] | None = None,
+    region_weights: T.Mapping[str, T.Mapping[str, float]] | None = None,
     schema: str = CANONICAL_SCHEMA,
 ) -> Path:
-    """Write a ``best_weights.json`` v1 artifact.
+    """Write a ``best_weights.json`` artifact (v1 global-only, or v2 with extras).
 
     Each model weight list must contain exactly 68 non-negative values; every
     landmark column must sum to a positive value before normalization. The
     payload is normalized in place so per-landmark columns sum to 1.0.
+
+    When ``bucket_weights`` (Phase 5 #8) and/or ``region_weights`` (Phase 5 #9)
+    are provided, a v2 artifact is written with the corresponding optional
+    blocks; each per-bucket weight set carries the same ``models`` columns as the
+    global set. Omitting both writes an unchanged v1 artifact so existing tooling
+    and consumers keep working.
     """
     if schema != CANONICAL_SCHEMA:
         raise ValueError(f"only {CANONICAL_SCHEMA!r} schema is supported, got {schema!r}")
@@ -78,12 +98,30 @@ def write_best_weights(
     normalized = normalize_static_weights(ordered)
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
+    payload: dict[str, T.Any] = {
         "artifact_schema_version": ARTIFACT_SCHEMA_VERSION,
         "schema": schema,
         "models": list(models),
         "weights": normalized,
     }
+    if bucket_weights:
+        ordered_buckets = {
+            bucket: {model: list(columns[model]) for model in models}
+            for bucket, columns in bucket_weights.items()
+        }
+        payload["artifact_schema_version"] = WEIGHTS_SCHEMA_VERSION_WITH_BUCKETS
+        payload["bucket_weights"] = normalize_bucket_weights(ordered_buckets)
+    if region_weights:
+        ordered_regions: dict[str, dict[str, float]] = {}
+        for region, columns in region_weights.items():
+            missing = [model for model in models if model not in columns]
+            if missing:
+                raise ValueError(
+                    f"region_weights[{region!r}] missing weights for models: {missing}"
+                )
+            ordered_regions[region] = {model: float(columns[model]) for model in models}
+        payload["artifact_schema_version"] = WEIGHTS_SCHEMA_VERSION_WITH_BUCKETS
+        payload["region_weights"] = normalize_region_weights(ordered_regions)
     output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return output
 
@@ -185,9 +223,17 @@ class PromotedSetup:
     evaluation_log_path: str
     weights_path: str
     weights: dict[str, list[float]] = field(default_factory=dict)
+    bucket_weights: dict[str, dict[str, list[float]]] = field(default_factory=dict)
+    region_weights: dict[str, dict[str, float]] = field(default_factory=dict)
 
     def has_weights(self) -> bool:
         return bool(self.weights)
+
+    def has_bucket_weights(self) -> bool:
+        return bool(self.bucket_weights)
+
+    def has_region_weights(self) -> bool:
+        return bool(self.region_weights)
 
 
 def validate_setup_payload(payload: T.Mapping[str, T.Any]) -> None:
@@ -254,13 +300,86 @@ def validate_setup_payload(payload: T.Mapping[str, T.Any]) -> None:
         raise PromotedSetupError(f"models contains duplicates: {models}")
 
 
+def _validate_weight_columns(
+    weights: T.Any,
+    models: T.Sequence[str],
+    *,
+    where: str,
+) -> None:
+    """Validate a ``{model: [68 non-negative floats]}`` block under ``where``."""
+    if not isinstance(weights, dict):
+        raise PromotedSetupError(f"{where} must be a JSON object")
+    missing_columns = [model for model in models if model not in weights]
+    if missing_columns:
+        raise PromotedSetupError(f"{where} missing columns for models: {missing_columns}")
+    for model in models:
+        column = weights[model]
+        if not isinstance(column, list) or len(column) != LANDMARK_COUNT:
+            raise PromotedSetupError(
+                f"{where}[{model!r}] must be a list of exactly {LANDMARK_COUNT} values, "
+                f"got length {len(column) if isinstance(column, list) else 'n/a'}"
+            )
+        for index, value in enumerate(column):
+            if not isinstance(value, (int, float)):
+                raise PromotedSetupError(
+                    f"{where}[{model!r}][{index}] must be numeric, got {type(value).__name__}"
+                )
+            if value < 0:
+                raise PromotedSetupError(
+                    f"{where}[{model!r}][{index}] must be non-negative, got {value!r}"
+                )
+
+
+def _validate_region_weights(region_weights: T.Any, models: T.Sequence[str]) -> None:
+    """Validate a ``{region: {model: scalar weight}}`` table.
+
+    Regions must be known fusion regions; every model must be present with a
+    non-negative numeric weight and a positive per-region sum.
+    """
+    if not isinstance(region_weights, dict):
+        raise PromotedSetupError("region_weights must be a JSON object")
+    for region, column in region_weights.items():
+        if region not in FUSION_REGION_INDICES:
+            raise PromotedSetupError(
+                f"region_weights has unknown region {region!r}; supported: "
+                + ", ".join(FUSION_REGION_INDICES)
+            )
+        if not isinstance(column, dict):
+            raise PromotedSetupError(f"region_weights[{region!r}] must be a JSON object")
+        missing = [model for model in models if model not in column]
+        if missing:
+            raise PromotedSetupError(
+                f"region_weights[{region!r}] missing weights for models: {missing}"
+            )
+        total = 0.0
+        for model in models:
+            value = column[model]
+            if not isinstance(value, (int, float)):
+                raise PromotedSetupError(
+                    f"region_weights[{region!r}][{model!r}] must be numeric, "
+                    f"got {type(value).__name__}"
+                )
+            if value < 0:
+                raise PromotedSetupError(
+                    f"region_weights[{region!r}][{model!r}] must be non-negative, got {value!r}"
+                )
+            total += float(value)
+        if total <= 0:
+            raise PromotedSetupError(
+                f"region_weights[{region!r}] must have at least one positive weight"
+            )
+
+
 def validate_weights_payload(
     payload: T.Mapping[str, T.Any], *, expected_models: T.Sequence[str] | None = None
 ) -> None:
-    """Strictly validate a parsed ``best_weights.json`` dict.
+    """Strictly validate a parsed ``best_weights.json`` dict (v1 or v2).
 
     When ``expected_models`` is provided every model must appear in
-    ``weights`` and the ordering must match the setup's ``models`` list.
+    ``weights`` and the ordering must match the setup's ``models`` list. A v2
+    payload may carry an optional ``bucket_weights`` block; each bucket is
+    validated against the same ``models`` columns as the global weights. The
+    ``bucket_weights`` key is only permitted on v2 artifacts.
     """
     if not isinstance(payload, T.Mapping):
         raise PromotedSetupError(
@@ -270,10 +389,10 @@ def validate_weights_payload(
     if missing:
         raise PromotedSetupError(f"weights payload missing required keys: {missing}")
     version = payload["artifact_schema_version"]
-    if version != ARTIFACT_SCHEMA_VERSION:
+    if version not in SUPPORTED_WEIGHTS_SCHEMA_VERSIONS:
         raise PromotedSetupError(
             f"unsupported weights artifact_schema_version {version!r}; this loader "
-            f"supports version {ARTIFACT_SCHEMA_VERSION}"
+            f"supports versions {SUPPORTED_WEIGHTS_SCHEMA_VERSIONS}"
         )
     schema_value = payload["schema"]
     if schema_value != CANONICAL_SCHEMA:
@@ -281,34 +400,36 @@ def validate_weights_payload(
             f"unsupported weights schema {schema_value!r}; only {CANONICAL_SCHEMA!r} is supported"
         )
     models = payload["models"]
-    weights = payload["weights"]
     if not isinstance(models, list) or not models:
         raise PromotedSetupError("weights.models must be a non-empty list of strings")
-    if not isinstance(weights, dict):
-        raise PromotedSetupError("weights must be a JSON object")
-    missing_columns = [model for model in models if model not in weights]
-    if missing_columns:
-        raise PromotedSetupError(f"weights payload missing columns for models: {missing_columns}")
-    for model in models:
-        column = weights[model]
-        if not isinstance(column, list) or len(column) != LANDMARK_COUNT:
-            raise PromotedSetupError(
-                f"weights[{model!r}] must be a list of exactly {LANDMARK_COUNT} values, "
-                f"got length {len(column) if isinstance(column, list) else 'n/a'}"
-            )
-        for index, value in enumerate(column):
-            if not isinstance(value, (int, float)):
-                raise PromotedSetupError(
-                    f"weights[{model!r}][{index}] must be numeric, got {type(value).__name__}"
-                )
-            if value < 0:
-                raise PromotedSetupError(
-                    f"weights[{model!r}][{index}] must be non-negative, got {value!r}"
-                )
+    _validate_weight_columns(payload["weights"], models, where="weights")
     if expected_models is not None and tuple(models) != tuple(expected_models):
         raise PromotedSetupError(
             f"weights.models {tuple(models)!r} do not match setup.models {tuple(expected_models)!r}"
         )
+
+    bucket_weights = payload.get("bucket_weights")
+    if bucket_weights is not None:
+        if version < WEIGHTS_SCHEMA_VERSION_WITH_BUCKETS:
+            raise PromotedSetupError(
+                "weights payload carries 'bucket_weights' but artifact_schema_version is "
+                f"{version!r}; bucket weights require version "
+                f"{WEIGHTS_SCHEMA_VERSION_WITH_BUCKETS}"
+            )
+        if not isinstance(bucket_weights, dict):
+            raise PromotedSetupError("bucket_weights must be a JSON object")
+        for bucket, columns in bucket_weights.items():
+            _validate_weight_columns(columns, models, where=f"bucket_weights[{bucket!r}]")
+
+    region_weights = payload.get("region_weights")
+    if region_weights is not None:
+        if version < WEIGHTS_SCHEMA_VERSION_WITH_BUCKETS:
+            raise PromotedSetupError(
+                "weights payload carries 'region_weights' but artifact_schema_version is "
+                f"{version!r}; region weights require version "
+                f"{WEIGHTS_SCHEMA_VERSION_WITH_BUCKETS}"
+            )
+        _validate_region_weights(region_weights, models)
 
 
 def load_promoted_setup(
@@ -335,6 +456,8 @@ def load_promoted_setup(
     validate_setup_payload(payload)
 
     weights: dict[str, list[float]] = {}
+    bucket_weights: dict[str, dict[str, list[float]]] = {}
+    region_weights: dict[str, dict[str, float]] = {}
     if load_weights:
         weights_relative = str(payload["weights_path"])
         weights_path = Path(weights_relative)
@@ -354,6 +477,18 @@ def load_promoted_setup(
         weights = {
             model: [float(value) for value in weights_payload["weights"][model]]
             for model in payload["models"]
+        }
+        raw_bucket_weights = weights_payload.get("bucket_weights") or {}
+        bucket_weights = {
+            str(bucket): {
+                model: [float(value) for value in columns[model]] for model in payload["models"]
+            }
+            for bucket, columns in raw_bucket_weights.items()
+        }
+        raw_region_weights = weights_payload.get("region_weights") or {}
+        region_weights = {
+            str(region): {model: float(columns[model]) for model in payload["models"]}
+            for region, columns in raw_region_weights.items()
         }
 
     return PromotedSetup(
@@ -376,6 +511,8 @@ def load_promoted_setup(
         evaluation_log_path=str(payload.get("evaluation_log_path", "")),
         weights_path=str(payload["weights_path"]),
         weights=weights,
+        bucket_weights=bucket_weights,
+        region_weights=region_weights,
     )
 
 
@@ -406,6 +543,8 @@ def strategy_supported_by_runtime(strategy: str, supported: T.Sequence[str]) -> 
 __all__ = [
     "ARTIFACT_SCHEMA_VERSION",
     "PROMOTION_REPORT_FILENAME",
+    "SUPPORTED_WEIGHTS_SCHEMA_VERSIONS",
+    "WEIGHTS_SCHEMA_VERSION_WITH_BUCKETS",
     "PromotedSetup",
     "PromotedSetupError",
     "SETUP_FILENAME",

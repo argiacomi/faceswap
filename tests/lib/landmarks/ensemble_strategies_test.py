@@ -14,13 +14,18 @@ from lib.landmarks.ensemble.strategies import (
 
 
 def test_canonical_strategies_are_stable() -> None:
-    """The canonical strategy list is the public contract for #65 artifacts."""
+    """The canonical strategy list is the public contract for #65 artifacts.
+
+    ``region_weighted`` was appended for Phase 5 #9 (region-level fusion); it is
+    additive and keeps the legacy names in their original order.
+    """
     assert CANONICAL_STRATEGIES == (
         "plain_average",
         "static_weighted",
         "static_weighted_hard_drop",
         "static_weighted_downweight",
         "weighted_median",
+        "region_weighted",
     )
 
 
