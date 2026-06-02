@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import gc
 import os
 import shutil
@@ -12,6 +13,23 @@ import tempfile
 
 os.environ["OBJC_DISABLE_CLASS_WARNINGS"] = "YES"
 os.environ["OBJC_DEBUG_DUPLICATE_CLASSES"] = "NO"
+
+# PyTorch and LightGBM each ship their own libomp. Loading both into one process
+# (which happens when a single ``pytest`` run touches the torch-based plugins and
+# the lightgbm-based learned_quality_v2 scorer training) triggers an "OMP: System
+# error #22" / segfault on macOS. ``faceswap.py`` guards against this before any
+# torch/lightgbm import at runtime, but pytest never imports ``faceswap.py``, so
+# mirror the same guard here before any heavy module is imported.
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("LIBOMP_NUM_THREADS", "1")
+
+# Import lightgbm eagerly (before any torch-importing test module) so its libomp
+# initializes first; mixing the load order with torch in one process otherwise
+# segfaults during lightgbm training on macOS.
+with contextlib.suppress(Exception):
+    import lightgbm  # noqa: F401
+
 # Keep Qt widget tests headless under pytest, even if a developer shell has a
 # display-backed Qt platform configured.
 os.environ["QT_QPA_PLATFORM"] = "offscreen"

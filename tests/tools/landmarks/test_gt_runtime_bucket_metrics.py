@@ -327,19 +327,17 @@ def test_cli_errors_when_candidate_table_missing(tmp_path: Path) -> None:
 
 def test_pipeline_helper_writes_artifacts_into_candidate_dir(tmp_path: Path) -> None:
     """``_emit_gt_runtime_bucket_artifacts`` reads
-    ``binary_scorer_train_dir/candidate_table.csv`` and drops the JSON+CSV
+    ``candidate_dir/gt_runtime_bucket_candidate_table.csv`` and drops the JSON+CSV
     aggregates into ``candidate_dir`` per the ticket layout."""
     from tools.landmarks.run_landmark_resolver_pipeline import (
         _emit_gt_runtime_bucket_artifacts,
     )
 
     candidate_dir = tmp_path / "candidate_search"
-    binary_dir = tmp_path / "scorer_training" / "v1_binary"
     candidate_dir.mkdir(parents=True)
-    binary_dir.mkdir(parents=True)
 
     # Minimal candidate_table.csv covering two buckets.
-    table = binary_dir / "candidate_table.csv"
+    table = candidate_dir / "gt_runtime_bucket_candidate_table.csv"
     with table.open("w", encoding="utf-8") as handle:
         writer = csv.DictWriter(
             handle,
@@ -375,7 +373,6 @@ def test_pipeline_helper_writes_artifacts_into_candidate_dir(tmp_path: Path) -> 
     from types import SimpleNamespace
 
     paths = SimpleNamespace(
-        binary_scorer_train_dir=binary_dir,
         best_setup=candidate_dir / "best_setup.json",
         candidate_dir=candidate_dir,
     )
@@ -396,14 +393,11 @@ def test_pipeline_helper_is_noop_when_table_missing(tmp_path: Path) -> None:
     )
 
     candidate_dir = tmp_path / "candidate_search"
-    binary_dir = tmp_path / "scorer_training" / "v1_binary"
     candidate_dir.mkdir(parents=True)
-    binary_dir.mkdir(parents=True)
 
     from types import SimpleNamespace
 
     paths = SimpleNamespace(
-        binary_scorer_train_dir=binary_dir,
         best_setup=candidate_dir / "best_setup.json",
         candidate_dir=candidate_dir,
     )
@@ -415,21 +409,20 @@ def test_pipeline_helper_is_noop_when_table_missing(tmp_path: Path) -> None:
 
 def test_pipeline_helper_survives_aggregator_failure(tmp_path: Path) -> None:
     """A malformed candidate_table.csv must NOT raise — the helper is
-    crash-safe so binary_scorer_training stays green."""
+    crash-safe so candidate-search aggregation stays green."""
     from tools.landmarks.run_landmark_resolver_pipeline import (
         _emit_gt_runtime_bucket_artifacts,
     )
 
     candidate_dir = tmp_path / "candidate_search"
-    binary_dir = tmp_path / "scorer_training" / "v1_binary"
     candidate_dir.mkdir(parents=True)
-    binary_dir.mkdir(parents=True)
-    (binary_dir / "candidate_table.csv").write_text("garbage\n", encoding="utf-8")
+    (candidate_dir / "gt_runtime_bucket_candidate_table.csv").write_text(
+        "garbage\n", encoding="utf-8"
+    )
 
     from types import SimpleNamespace
 
     paths = SimpleNamespace(
-        binary_scorer_train_dir=binary_dir,
         best_setup=candidate_dir / "best_setup.json",
         candidate_dir=candidate_dir,
     )

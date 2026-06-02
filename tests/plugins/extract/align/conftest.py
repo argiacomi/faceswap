@@ -18,7 +18,7 @@ This conftest pins the implicit defaults to:
 * ``resolver_policy = "roll_aware_veto"`` — for tests that *do* opt into
   the resolver but don't supply a scorer, ``roll_aware_veto`` runs
   without one (Tk-parity safety check); tests that intentionally exercise
-  ``learned_quality_v1`` / ``v1_1`` / ``v2`` still pass their own
+  ``learned_quality_v2`` still passes its own
   ``resolver_policy=...`` kwarg, which the test fixture leaves alone.
 
 Tests that explicitly want the resolver on remain unchanged because they

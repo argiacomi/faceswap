@@ -209,7 +209,7 @@ def test_init_resolves_setup_and_scorer_from_production_bundle(
 
     src_dir = tmp_path / "src"
     setup_src, weights_src = _write_valid_setup_and_weights_pair(src_dir)
-    scorer_src = src_dir / "scorer_v1_1.json"
+    scorer_src = src_dir / "scorer_v2.json"
     scorer_src.write_text('{"model_type": "linear_regression"}\n', encoding="utf-8")
 
     bundle_dir = tmp_path / "bundle"
@@ -231,7 +231,7 @@ def test_init_resolves_setup_and_scorer_from_production_bundle(
 
     assert plugin._setup_path == str((bundle_dir / "best_setup.json").resolve())
     assert plugin._resolver_scorer_path == str(
-        (bundle_dir / "scorers" / "learned_quality_v1_1.json").resolve()
+        (bundle_dir / "scorers" / "learned_quality_v2.json").resolve()
     )
     # weights_path is no longer carried in config; promoted_setup resolves it.
     assert plugin._weights_path == ""

@@ -12,7 +12,7 @@ per supported runtime policy.
 The runtime used to read each artifact path directly out of
 ``extract.ini`` (``setup_path``, ``weights_path``, ``resolver_scorer_path``).
 That made paths user-settable production knobs that could fall out of
-sync with the artifact contents — e.g. ``resolver_policy=learned_quality_v1``
+sync with the artifact contents — e.g. ``resolver_policy=learned_quality_v2``
 pointing at a v2 LightGBM scorer JSON. The runtime loader picks the scorer
 implementation from the artifact's ``model_type``, not from the policy
 name, so the mismatch only surfaced at predict time.

@@ -15,8 +15,6 @@ import numpy as np
 from lib.landmarks.ensemble.runtime_resolver_scorer import (
     RuntimeResolverScorer,
     feature_matrix,
-    sigmoid,
-    write_runtime_resolver_scorer,
 )
 from lib.landmarks.ensemble.runtime_resolver_scorer_data import (
     DEFAULT_FAILURE_THRESHOLD,
@@ -31,17 +29,11 @@ from lib.landmarks.ensemble.scorer_dataset import (
     write_scorer_dataset,
 )
 from lib.landmarks.ensemble.scorer_target_config import (
-    DEFAULT_COLLAPSE_COST_PENALTY,
-    DEFAULT_FAILURE_COST_PENALTY,
     DEFAULT_LARGE_COST_THRESHOLD,
-    DEFAULT_REGRET_NORMALIZER,
     MODEL_TYPE_LIGHTGBM_LAMBDARANK,
     MODEL_TYPE_LINEAR_REGRESSION,
     MODEL_TYPE_LOGISTIC_REGRESSION,
-    REGRESSION_TARGETS,
     SCORE_SEMANTICS_PREDICTED_COST,
-    SCORE_SEMANTICS_PREDICTED_RISK,
-    SCORER_TARGETS,
     TARGET_CANDIDATE_FAILURE_OR_HIGH_GAP,
     TARGET_NORMALIZED_REGRET,
     TARGET_ORACLE_REGRET,
@@ -50,12 +42,10 @@ from lib.landmarks.ensemble.scorer_target_config import (
 from lib.landmarks.ensemble.scorer_targets import (
     TaggedRow,
     scorer_candidate_table_rows,
-    source_quality_rows,
     tagged_quality_rows,
     untag_quality_rows,
 )
 from lib.landmarks.pipeline_conventions import (
-    SOURCE_GT_HARD,
     SOURCE_PRODUCTION_VALIDATED,
     write_json,
 )
@@ -204,84 +194,6 @@ def feature_order(rows: T.Sequence[CandidateQualityRow]) -> tuple[str, ...]:
     ordered = [name for name in preferred if name in names]
     ordered.extend(sorted(names - set(ordered)))
     return tuple(ordered)
-
-
-def _logit(value: float) -> float:
-    clipped = min(max(value, 1e-6), 1.0 - 1e-6)
-    return float(np.log(clipped / (1.0 - clipped)))
-
-
-def fit_logistic(
-    x_raw: np.ndarray,
-    y: np.ndarray,
-    *,
-    l2: float,
-    learning_rate: float,
-    iterations: int,
-    sample_weight: np.ndarray | None = None,
-) -> tuple[np.ndarray, float]:
-    """Fit a weighted logistic-regression scorer using numpy only."""
-    if x_raw.shape[0] == 0:
-        raise ValueError("cannot train scorer on an empty matrix")
-    weights = (
-        np.ones(x_raw.shape[0], dtype="float64")
-        if sample_weight is None
-        else np.asarray(sample_weight, dtype="float64")
-    )
-    weights = np.where(weights > 0.0, weights, 1.0)
-    weight_sum = float(np.sum(weights))
-    positive_rate = float(np.sum(weights * y) / max(weight_sum, 1e-9))
-    if positive_rate <= 0.0 or positive_rate >= 1.0:
-        return np.zeros(x_raw.shape[1], dtype="float64"), _logit(positive_rate)
-
-    mean = np.average(x_raw, axis=0, weights=weights)
-    centered = x_raw - mean
-    std = np.sqrt(np.average(np.square(centered), axis=0, weights=weights))
-    std = np.where(std < 1e-8, 1.0, std)
-    x = centered / std
-    coef = np.zeros(x.shape[1], dtype="float64")
-    intercept = _logit(positive_rate)
-    for _ in range(iterations):
-        linear = x @ coef + intercept
-        pred = np.asarray([sigmoid(float(item)) for item in linear], dtype="float64")
-        error = (pred - y) * weights
-        grad_coef = (x.T @ error) / weight_sum + (l2 * coef)
-        grad_intercept = float(np.sum(error) / weight_sum)
-        coef -= learning_rate * grad_coef
-        intercept -= learning_rate * grad_intercept
-    raw_coef = coef / std
-    raw_intercept = float(intercept - np.sum((coef * mean) / std))
-    return raw_coef, raw_intercept
-
-
-def fit_linear_regression(
-    x: np.ndarray,
-    y: np.ndarray,
-    *,
-    l2: float,
-    sample_weight: np.ndarray | None = None,
-) -> tuple[np.ndarray, float]:
-    """Fit a weighted ridge linear regressor using numpy only."""
-    if x.shape[0] == 0:
-        raise ValueError("cannot train scorer on an empty matrix")
-    weights = (
-        np.ones(x.shape[0], dtype="float64")
-        if sample_weight is None
-        else np.asarray(sample_weight, dtype="float64")
-    )
-    weights = np.where(weights > 0.0, weights, 1.0)
-    design = np.column_stack([np.ones(x.shape[0], dtype="float64"), x])
-    weighted_design = design * np.sqrt(weights)[:, None]
-    weighted_y = y * np.sqrt(weights)
-    penalty = np.eye(design.shape[1], dtype="float64") * l2
-    penalty[0, 0] = 0.0
-    lhs = weighted_design.T @ weighted_design + penalty
-    rhs = weighted_design.T @ weighted_y
-    try:
-        params = np.linalg.solve(lhs, rhs)
-    except np.linalg.LinAlgError:
-        params = np.linalg.lstsq(lhs, rhs, rcond=None)[0]
-    return params[1:].astype("float64"), float(params[0])
 
 
 def scorer_target_value(row: CandidateQualityRow, target: str) -> float:
@@ -551,15 +463,19 @@ def _sample_group_key(row: CandidateQualityRow, source: str) -> tuple[str, str, 
 
 
 def _lambdarank_label(row: CandidateQualityRow) -> int:
-    """Return an integer relevance label where higher means better candidate quality."""
-    if row.is_oracle:
-        return 30
+    """Return an integer relevance label where higher means lower downstream cost.
+
+    The full-face NME oracle is no longer privileged here. The promoted target is
+    downstream_weighted_alignment_cost, so a candidate with lower full-face NME but
+    crop-breaking, jaw, eye, mouth, occluded-side, catastrophic, or production
+    penalties must be allowed to rank below a more production-safe candidate.
+    """
     clipped_cost = min(max(float(row.selection_cost), 0.0), 3.0)
-    return max(0, min(29, int(round((1.0 - clipped_cost / 3.0) * 29.0))))
+    return max(0, min(30, int(round((1.0 - clipped_cost / 3.0) * 30.0))))
 
 
 def _lambdarank_weight(row: CandidateQualityRow, source: str) -> float:
-    """Return v2 item weight using the same hard-case policy as v1 scorers."""
+    """Return v2 item weight using the hard-case sample weighting policy."""
     return scorer_sample_weight(row, source)
 
 
@@ -599,166 +515,6 @@ def _write_feature_importance_csv(path: Path, importances: T.Mapping[str, float]
         for feature, importance in importances.items():
             writer.writerow({"feature": feature, "importance": importance})
     return path
-
-
-def _train_linear_or_logistic_from_tagged_rows(
-    *,
-    tagged_rows: T.Sequence[TaggedRow],
-    train_tagged_rows: T.Sequence[TaggedRow],
-    eval_tagged_rows: T.Sequence[TaggedRow],
-    candidates: T.Sequence[str],
-    output_dir: Path,
-    target: str,
-    failure_threshold: float,
-    high_gap_threshold: float,
-    l2: float,
-    learning_rate: float,
-    iterations: int,
-    eval_fraction: float,
-    split_seed: int,
-    allow_image_backfill: bool,
-    gt_hard_resolver_metadata: Path | None,
-    candidate_table_path: Path | None = None,
-) -> dict[str, T.Any]:
-    """Train a v1/v1.1 scorer from prebuilt scorer rows."""
-
-    if target not in SCORER_TARGETS:
-        raise ValueError(f"target must be one of {SCORER_TARGETS}, got {target!r}")
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    rows = untag_quality_rows(tagged_rows)
-    train_rows = untag_quality_rows(train_tagged_rows)
-    eval_rows = untag_quality_rows(eval_tagged_rows)
-    features = feature_order(train_rows)
-    x = feature_matrix([row.feature_values for row in train_rows], features)
-    y = np.asarray(
-        [scorer_target_value(row, target) for row in train_rows],
-        dtype="float64",
-    )
-    train_sample_weights = np.asarray(
-        [scorer_sample_weight(row, source) for row, source in train_tagged_rows],
-        dtype="float64",
-    )
-    if target in REGRESSION_TARGETS:
-        coefficients, intercept = fit_linear_regression(
-            x,
-            y,
-            l2=l2,
-            sample_weight=train_sample_weights,
-        )
-        model_type = MODEL_TYPE_LINEAR_REGRESSION
-        score_semantics = SCORE_SEMANTICS_PREDICTED_COST
-        version = "continuous_regret_v1_1"
-        if target == TARGET_ORACLE_REGRET:
-            selection_target = "oracle_regret"
-            objective = "minimize_candidate_oracle_regret"
-            training_mode = "oracle_regret_regression"
-            runtime_policy = "learned_quality_v2"
-        else:
-            selection_target = "continuous_regret"
-            objective = "minimize_candidate_selection_regret"
-            training_mode = "continuous_selection_cost"
-            runtime_policy = "learned_quality_v2"
-    else:
-        coefficients, intercept = fit_logistic(
-            x,
-            y,
-            l2=l2,
-            learning_rate=learning_rate,
-            iterations=iterations,
-            sample_weight=train_sample_weights,
-        )
-        model_type = MODEL_TYPE_LOGISTIC_REGRESSION
-        score_semantics = SCORE_SEMANTICS_PREDICTED_RISK
-        version = "learned_quality_v1"
-        selection_target = "binary_failure_or_high_gap"
-        objective = "minimize_candidate_failure_risk"
-        training_mode = "binary_failure_or_high_gap"
-        runtime_policy = "learned_quality_v2"
-
-    scorer = RuntimeResolverScorer(
-        features=features,
-        coefficients=tuple(float(item) for item in coefficients),
-        intercept=float(intercept),
-        model_type=model_type,
-        target=target,
-        score_semantics=score_semantics,
-        higher_is_better=False,
-        failure_threshold=failure_threshold,
-        calibration={"type": "none", "params": {}},
-        version=version,
-        selection_target=selection_target,
-        objective=objective,
-        training_mode=training_mode,
-        runtime_policy=runtime_policy,
-    )
-    scorer_path = write_runtime_resolver_scorer(scorer, output_dir / SCORER_ARTIFACT)
-    rows_path = write_tagged_rows_csv(train_tagged_rows, output_dir / TRAINING_ROWS_CSV)
-    eval_rows_path = write_tagged_rows_csv(eval_tagged_rows, output_dir / EVAL_ROWS_CSV)
-
-    condition_report_rows = _training_report_rows(tagged_rows, group_by="condition")
-    region_report_rows = _training_report_rows(tagged_rows, group_by="region")
-    condition_report_path = write_training_report_csv(
-        condition_report_rows,
-        output_dir / SCORER_CONDITION_REPORT_CSV,
-    )
-    region_report_path = write_training_report_csv(
-        region_report_rows,
-        output_dir / SCORER_REGION_REPORT_CSV,
-    )
-
-    metrics = scorer_row_metrics(scorer, rows)
-    target_stats = target_distribution_stats(rows, target=target)
-    train_metrics = scorer_row_metrics(scorer, train_rows)
-    eval_metrics = scorer_row_metrics(scorer, eval_rows)
-    production_eval_metrics = scorer_row_metrics(
-        scorer, source_quality_rows(eval_tagged_rows, SOURCE_PRODUCTION_VALIDATED)
-    )
-    gt_eval_metrics = scorer_row_metrics(
-        scorer, source_quality_rows(eval_tagged_rows, SOURCE_GT_HARD)
-    )
-    metrics.update(
-        {
-            "artifact": str(scorer_path),
-            "training_rows": str(rows_path),
-            "eval_rows": str(eval_rows_path),
-            "candidate_table": "" if candidate_table_path is None else str(candidate_table_path),
-            "candidate_count": len(candidates),
-            "candidates": list(candidates),
-            "feature_count": len(features),
-            "target": target,
-            "model_type": model_type,
-            "score_semantics": score_semantics,
-            "higher_is_better": False,
-            "target_stats": target_stats,
-            "oracle_regret_target_stats": target_distribution_stats(
-                rows,
-                target=TARGET_ORACLE_REGRET,
-            ),
-            "sample_weighting": scorer_sample_weighting_stats(train_tagged_rows),
-            "scorer_report_by_condition": str(condition_report_path),
-            "scorer_report_by_region": str(region_report_path),
-            "failure_threshold": failure_threshold,
-            "high_gap_threshold": high_gap_threshold,
-            "normalized_regret_clamp": DEFAULT_REGRET_NORMALIZER,
-            "failure_cost_penalty": DEFAULT_FAILURE_COST_PENALTY,
-            "collapse_cost_penalty": DEFAULT_COLLAPSE_COST_PENALTY,
-            "l2": l2,
-            "split_seed": split_seed,
-            "eval_fraction": eval_fraction,
-            "allow_image_backfill": allow_image_backfill,
-            "gt_hard_resolver_metadata": (
-                "" if gt_hard_resolver_metadata is None else str(gt_hard_resolver_metadata)
-            ),
-            "train_metrics": train_metrics,
-            "eval_metrics": eval_metrics,
-            "production_only_eval_metrics": production_eval_metrics,
-            "gt_hard_only_eval_metrics": gt_eval_metrics,
-        }
-    )
-    metrics_path = write_json(output_dir / TRAINING_METRICS_JSON, metrics)
-    metrics["metrics_path"] = str(metrics_path)
-    return metrics
 
 
 def _train_lambdarank_from_tagged_rows(
@@ -991,7 +747,7 @@ def train_runtime_resolver_scorer_suite(
             ],
             "candidate_table": str(candidate_table_path),
             "note": (
-                "v1/v1_1 scorer training has been removed. New consumers should use "
+                "Legacy linear/logistic scorer training has been removed. New consumers should use "
                 "scorer_dataset/rows.csv, scorer_dataset/manifest.json, and learned_quality_v2."
             ),
         },
@@ -1168,172 +924,40 @@ def train_runtime_resolver_scorer(
     eval_fraction: float = 0.20,
     split_seed: int = 42,
     allow_image_backfill: bool = False,
-    target: str = TARGET_CANDIDATE_FAILURE_OR_HIGH_GAP,
+    target: str = TARGET_SELECTION_COST,
 ) -> dict[str, T.Any]:
-    """Train the scorer and write the portable artifact plus diagnostics."""
-    if target not in SCORER_TARGETS:
-        raise ValueError(f"target must be one of {SCORER_TARGETS}, got {target!r}")
-    output_dir.mkdir(parents=True, exist_ok=True)
-    contexts = load_scorer_contexts(
+    """Compatibility wrapper that trains the only supported learned scorer.
+
+    Legacy linear/logistic scorer artifacts have been removed. Keep this
+    public function name for callers that have not migrated yet, but route all
+    work to learned_quality_v2 so no legacy artifact can be emitted.
+    """
+    del l2
+    if target != TARGET_SELECTION_COST:
+        raise ValueError(
+            "train_runtime_resolver_scorer only trains learned_quality_v2 on "
+            f"{TARGET_SELECTION_COST!r}; unsupported target {target!r}. Legacy v1/v1.1 "
+            "scorer targets have been removed."
+        )
+    return train_runtime_resolver_scorer_v2(
         gt_manifest=gt_manifest,
         gt_cache_dir=gt_cache_dir,
         production_manifest=production_manifest,
         production_cache_dir=production_cache_dir,
         weights_path=weights_path,
         candidates=candidates,
-        failure_threshold=failure_threshold,
-        outlier_threshold=outlier_threshold,
-        allow_image_backfill=allow_image_backfill,
+        output_dir=output_dir,
         gt_hard_resolver_metadata=gt_hard_resolver_metadata,
-        require_gt_hard_metadata=True,
-    )
-    tagged_rows = tagged_quality_rows(contexts, high_gap_threshold=high_gap_threshold)
-    if not tagged_rows:
-        raise ValueError("no scorer training rows were loaded")
-    candidate_rows = scorer_candidate_table_rows(contexts)
-    train_tagged_rows, eval_tagged_rows = split_tagged_rows(
-        tagged_rows,
-        eval_fraction=eval_fraction,
-        seed=split_seed,
-    )
-    rows = untag_quality_rows(tagged_rows)
-    train_rows = untag_quality_rows(train_tagged_rows)
-    eval_rows = untag_quality_rows(eval_tagged_rows)
-    features = feature_order(train_rows)
-    x = feature_matrix([row.feature_values for row in train_rows], features)
-    y = np.asarray(
-        [scorer_target_value(row, target) for row in train_rows],
-        dtype="float64",
-    )
-    train_sample_weights = np.asarray(
-        [scorer_sample_weight(row, source) for row, source in train_tagged_rows],
-        dtype="float64",
-    )
-    if target in REGRESSION_TARGETS:
-        coefficients, intercept = fit_linear_regression(
-            x,
-            y,
-            l2=l2,
-            sample_weight=train_sample_weights,
-        )
-        model_type = MODEL_TYPE_LINEAR_REGRESSION
-        score_semantics = SCORE_SEMANTICS_PREDICTED_COST
-        version = "continuous_regret_v1_1"
-        if target == TARGET_ORACLE_REGRET:
-            selection_target = "oracle_regret"
-            objective = "minimize_candidate_oracle_regret"
-            training_mode = "oracle_regret_regression"
-        else:
-            selection_target = "continuous_regret"
-            objective = "minimize_candidate_selection_regret"
-            training_mode = "continuous_selection_cost"
-        # The v1.1 continuous scorer is selected at runtime by policy
-        # "learned_quality_v1_1"; the v1 binary classifier ships under
-        # "learned_quality_v1". Writing the wrong runtime_policy lets the
-        # production bundle install this artifact under a manifest slot it
-        # was not trained for and the runtime validation catches that.
-        runtime_policy = "learned_quality_v2"
-    else:
-        coefficients, intercept = fit_logistic(
-            x,
-            y,
-            l2=l2,
-            learning_rate=learning_rate,
-            iterations=iterations,
-            sample_weight=train_sample_weights,
-        )
-        model_type = MODEL_TYPE_LOGISTIC_REGRESSION
-        score_semantics = SCORE_SEMANTICS_PREDICTED_RISK
-        version = "learned_quality_v1"
-        selection_target = "binary_failure_or_high_gap"
-        objective = "minimize_candidate_failure_risk"
-        training_mode = "binary_failure_or_high_gap"
-        runtime_policy = "learned_quality_v2"
-    scorer = RuntimeResolverScorer(
-        features=features,
-        coefficients=tuple(float(item) for item in coefficients),
-        intercept=float(intercept),
-        model_type=model_type,
-        target=target,
-        score_semantics=score_semantics,
-        higher_is_better=False,
         failure_threshold=failure_threshold,
-        calibration={"type": "none", "params": {}},
-        version=version,
-        selection_target=selection_target,
-        objective=objective,
-        training_mode=training_mode,
-        runtime_policy=runtime_policy,
+        high_gap_threshold=high_gap_threshold,
+        outlier_threshold=outlier_threshold,
+        eval_fraction=eval_fraction,
+        split_seed=split_seed,
+        allow_image_backfill=allow_image_backfill,
+        learning_rate=learning_rate,
+        iterations=iterations,
+        num_leaves=31,
     )
-    scorer_path = write_runtime_resolver_scorer(scorer, output_dir / SCORER_ARTIFACT)
-    rows_path = write_tagged_rows_csv(train_tagged_rows, output_dir / TRAINING_ROWS_CSV)
-    eval_rows_path = write_tagged_rows_csv(eval_tagged_rows, output_dir / EVAL_ROWS_CSV)
-    candidate_table_path = write_candidate_table_csv(
-        candidate_rows,
-        output_dir / TRAINING_CANDIDATE_TABLE_CSV,
-    )
-    condition_report_rows = _training_report_rows(tagged_rows, group_by="condition")
-    region_report_rows = _training_report_rows(tagged_rows, group_by="region")
-    condition_report_path = write_training_report_csv(
-        condition_report_rows,
-        output_dir / SCORER_CONDITION_REPORT_CSV,
-    )
-    region_report_path = write_training_report_csv(
-        region_report_rows,
-        output_dir / SCORER_REGION_REPORT_CSV,
-    )
-    metrics = scorer_row_metrics(scorer, rows)
-    target_stats = target_distribution_stats(rows, target=target)
-    train_metrics = scorer_row_metrics(scorer, train_rows)
-    eval_metrics = scorer_row_metrics(scorer, eval_rows)
-    production_eval_metrics = scorer_row_metrics(
-        scorer, source_quality_rows(eval_tagged_rows, SOURCE_PRODUCTION_VALIDATED)
-    )
-    gt_eval_metrics = scorer_row_metrics(
-        scorer, source_quality_rows(eval_tagged_rows, SOURCE_GT_HARD)
-    )
-    metrics.update(
-        {
-            "artifact": str(scorer_path),
-            "training_rows": str(rows_path),
-            "eval_rows": str(eval_rows_path),
-            "candidate_table": str(candidate_table_path),
-            "candidate_count": len(candidates),
-            "candidates": list(candidates),
-            "feature_count": len(features),
-            "target": target,
-            "model_type": model_type,
-            "score_semantics": score_semantics,
-            "higher_is_better": False,
-            "target_stats": target_stats,
-            "oracle_regret_target_stats": target_distribution_stats(
-                rows,
-                target=TARGET_ORACLE_REGRET,
-            ),
-            "sample_weighting": scorer_sample_weighting_stats(train_tagged_rows),
-            "scorer_report_by_condition": str(condition_report_path),
-            "scorer_report_by_region": str(region_report_path),
-            "failure_threshold": failure_threshold,
-            "high_gap_threshold": high_gap_threshold,
-            "normalized_regret_clamp": DEFAULT_REGRET_NORMALIZER,
-            "failure_cost_penalty": DEFAULT_FAILURE_COST_PENALTY,
-            "collapse_cost_penalty": DEFAULT_COLLAPSE_COST_PENALTY,
-            "l2": l2,
-            "split_seed": split_seed,
-            "eval_fraction": eval_fraction,
-            "allow_image_backfill": allow_image_backfill,
-            "gt_hard_resolver_metadata": (
-                "" if gt_hard_resolver_metadata is None else str(gt_hard_resolver_metadata)
-            ),
-            "train_metrics": train_metrics,
-            "eval_metrics": eval_metrics,
-            "production_only_eval_metrics": production_eval_metrics,
-            "gt_hard_only_eval_metrics": gt_eval_metrics,
-        }
-    )
-    metrics_path = write_json(output_dir / TRAINING_METRICS_JSON, metrics)
-    metrics["metrics_path"] = str(metrics_path)
-    return metrics
 
 
 __all__ = [
@@ -1348,8 +972,6 @@ __all__ = [
     "TRAINING_ROWS_CSV",
     "EVAL_ROWS_CSV",
     "feature_order",
-    "fit_linear_regression",
-    "fit_logistic",
     "scorer_target_value",
     "scorer_row_metrics",
     "split_tagged_rows",

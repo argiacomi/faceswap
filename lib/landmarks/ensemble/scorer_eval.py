@@ -1163,7 +1163,6 @@ def evaluate_runtime_resolver_scorer(
     production_cache_dir: Path | None,
     weights_path: Path,
     scorer_path: Path,
-    binary_scorer_path: Path | None = None,
     v2_scorer_path: Path | None = None,
     candidates: T.Sequence[str],
     output_dir: Path,
@@ -1195,11 +1194,6 @@ def evaluate_runtime_resolver_scorer(
 
     scorer = load_runtime_resolver_scorer(scorer_path)
     assert_lower_score_is_better(scorer)
-    binary_scorer = (
-        None if binary_scorer_path is None else load_runtime_resolver_scorer(binary_scorer_path)
-    )
-    if binary_scorer is not None:
-        assert_lower_score_is_better(binary_scorer)
     v2_scorer = None if v2_scorer_path is None else load_runtime_resolver_scorer(v2_scorer_path)
     if v2_scorer is not None:
         assert_lower_score_is_better(v2_scorer)
@@ -1233,7 +1227,6 @@ def evaluate_runtime_resolver_scorer(
 
     rows: list[dict[str, T.Any]] = []
     scorer_choices: dict[str, str] = {}
-    binary_scorer_choices: dict[str, str] = {}
     v2_scorer_choices: dict[str, str] = {}
     current_choices: dict[str, str] = {}
     oracle_choices: dict[str, str] = {}
@@ -1244,17 +1237,6 @@ def evaluate_runtime_resolver_scorer(
     for context in contexts:
         context_rows = _context_rows_for_eval(context)
         score_by_candidate = _score_context_rows(scorer, context_rows)
-        binary_score_by_candidate: dict[str, float] = {}
-        binary_chosen = ""
-        if binary_scorer is not None:
-            binary_score_by_candidate = _score_context_rows(binary_scorer, context_rows)
-            binary_chosen = choose_scorer(
-                context,
-                binary_score_by_candidate,
-                risk_floor_for_safe_fallback=risk_floor_for_safe_fallback,
-                safe_fallback_min_delta=safe_fallback_min_delta,
-            )[0]
-            binary_scorer_choices[context.sample_id] = binary_chosen
         if v2_scorer is not None:
             v2_score_by_candidate = _score_context_rows(v2_scorer, context_rows)
             v2_chosen = choose_scorer(
@@ -1323,11 +1305,6 @@ def evaluate_runtime_resolver_scorer(
                     context.nme_by_candidate[chosen] - context.nme_by_candidate[context.oracle]
                 ),
                 "candidate_scores": json.dumps(score_by_candidate, sort_keys=True),
-                "binary_logistic_scorer_chosen": binary_chosen,
-                "binary_logistic_candidate_scores": json.dumps(
-                    binary_score_by_candidate,
-                    sort_keys=True,
-                ),
                 "fallback_used": int(fallback_used),
                 "fallback_reason": fallback_reason,
                 "rejected_candidate": rejected_candidate,
@@ -1370,21 +1347,10 @@ def evaluate_runtime_resolver_scorer(
     extra_scorer_choices: dict[str, T.Mapping[str, str]] = {
         primary_scorer_policy: scorer_choices,
     }
-    if binary_scorer is not None:
-        extra_scorer_choices["learned_quality_v1"] = binary_scorer_choices
-        extra_scorer_choices["current_binary_logistic_scorer"] = binary_scorer_choices
-    elif primary_scorer_policy == "current_binary_logistic_scorer":
-        binary_scorer_choices = dict(scorer_choices)
-        extra_scorer_choices["learned_quality_v1"] = binary_scorer_choices
     if v2_scorer is not None:
         extra_scorer_choices["learned_quality_v2"] = v2_scorer_choices
 
     report_extra_scorer_choices = dict(extra_scorer_choices)
-    # Keep learned_quality_v1 available for explicit promotion / installed-baseline
-    # comparisons, but do not expose it as a public policy-metrics alias. Existing
-    # report consumers expect binary scorers to appear only as
-    # current_binary_logistic_scorer in policy metric bundles.
-    report_extra_scorer_choices.pop("learned_quality_v1", None)
 
     installed_policy, installed_scorers, installed_status = load_installed_policy_scorers(
         installed_scorer_dir
@@ -1640,7 +1606,6 @@ def evaluate_runtime_resolver_scorer(
         "candidate_count": len(candidates),
         "candidates": list(candidates),
         "scorer_path": str(scorer_path),
-        "binary_scorer_path": "" if binary_scorer_path is None else str(binary_scorer_path),
         "v2_scorer_path": "" if v2_scorer_path is None else str(v2_scorer_path),
         "scorer_comparison": {
             "context_count": len(contexts),
@@ -1648,7 +1613,6 @@ def evaluate_runtime_resolver_scorer(
             "uses_same_contexts": True,
             "uses_same_candidates": True,
             "batched_policy_scoring": True,
-            "binary_scorer_present": binary_scorer is not None,
             "v2_scorer_present": v2_scorer is not None,
         },
         "primary_scorer_policy": primary_scorer_policy,
@@ -1750,13 +1714,8 @@ def evaluate_runtime_resolver_scorer(
     }
     report["artifacts"] = {
         "scorer_path": str(scorer_path),
-        "binary_scorer_path": "" if binary_scorer_path is None else str(binary_scorer_path),
         "v2_scorer_path": "" if v2_scorer_path is None else str(v2_scorer_path),
     }
-    if binary_scorer is not None:
-        binary_summary = policy_summary(contexts, binary_scorer_choices)
-        report["current_binary_logistic_scorer"] = binary_summary
-
     report["primary_scorer"] = {
         "label": primary_scorer_policy,
         "version": scorer.version,

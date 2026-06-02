@@ -14,11 +14,6 @@ geometry-risk evidence, **not** by predicting whether a face is "profile" or
   falls back to ``fallback_strategy``; if no candidate remains, it raises a
   resolver-specific error so callers can decide whether to skip or hard-fail.
 
-The resolver is intentionally rule-based for v1: each signal threshold is
-inspectable and documented, no learned model is involved. Promotion of a
-signal into the runtime path needs validation evidence (#80) before the
-threshold is tuned.
-
 This module is the offline scaffold. The runtime Ensemble plugin (#66) can
 delegate to :func:`resolve_alignment_geometry` behind a config flag once
 signal thresholds are calibrated; the function itself is pure and works on

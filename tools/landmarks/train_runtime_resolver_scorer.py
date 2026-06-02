@@ -21,8 +21,7 @@ from lib.landmarks.ensemble.runtime_resolver_scorer_data import (
     parse_candidates,
 )
 from lib.landmarks.ensemble.scorer_target_config import (
-    SCORER_TARGETS,
-    TARGET_CANDIDATE_FAILURE_OR_HIGH_GAP,
+    TARGET_SELECTION_COST,
 )
 from lib.landmarks.ensemble.scorer_training import (
     EVAL_ROWS_CSV,
@@ -58,25 +57,23 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--outlier-threshold", type=float, default=DEFAULT_OUTLIER_THRESHOLD)
     parser.add_argument(
         "--target",
-        choices=SCORER_TARGETS,
-        default=TARGET_CANDIDATE_FAILURE_OR_HIGH_GAP,
+        choices=(TARGET_SELECTION_COST,),
+        default=TARGET_SELECTION_COST,
         help=(
-            "Training target. The default preserves the binary v1 classifier; "
-            "normalized_regret and selection_cost train a v1.1 linear regressor."
+            "The only supported learned scorer is learned_quality_v2, trained on "
+            "downstream weighted alignment cost. Legacy scorer targets were removed."
         ),
     )
     parser.add_argument(
         "--training-mode",
         choices=(
-            "learned_quality_v1",
-            "continuous_regret_v1_1",
             "learned_quality_v2",
             "scorer_suite",
         ),
-        default="",
+        default="learned_quality_v2",
         help=(
-            "Explicit scorer training mode. learned_quality_v2 trains a LightGBM "
-            "LambdaRank artifact and writes runtime_resolver_scorer_v2.json."
+            "Explicit scorer training mode. learned_quality_v2 trains the only "
+            "supported learned scorer and writes runtime_resolver_scorer_v2.json."
         ),
     )
     parser.add_argument("--l2", type=float, default=0.001)
@@ -151,27 +148,8 @@ def main(argv: T.Sequence[str] | None = None) -> int:
             split_seed=args.split_seed,
             allow_image_backfill=args.allow_image_backfill,
         )
-    else:
-        metrics = train_runtime_resolver_scorer(
-            gt_manifest=args.gt_manifest,
-            gt_cache_dir=args.gt_cache_dir,
-            production_manifest=args.production_manifest,
-            production_cache_dir=args.production_cache_dir,
-            weights_path=args.weights,
-            candidates=candidates,
-            output_dir=args.output_dir,
-            gt_hard_resolver_metadata=args.gt_hard_resolver_metadata,
-            failure_threshold=args.failure_threshold,
-            high_gap_threshold=args.high_gap_threshold,
-            outlier_threshold=args.outlier_threshold,
-            l2=args.l2,
-            learning_rate=args.learning_rate,
-            iterations=args.iterations,
-            eval_fraction=args.eval_fraction,
-            split_seed=args.split_seed,
-            allow_image_backfill=args.allow_image_backfill,
-            target=args.target,
-        )
+    else:  # pragma: no cover - argparse choices prevent this.
+        parser.error(f"unsupported training mode: {args.training_mode}")
     logger.info("Wrote runtime resolver scorer artifacts to %s", metrics["artifact"])
     return 0
 

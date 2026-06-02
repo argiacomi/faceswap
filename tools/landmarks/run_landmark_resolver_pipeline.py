@@ -31,7 +31,6 @@ from lib.landmarks.ensemble.scorer_dataset import (
     SCORER_ROWS_CSV,
 )
 from lib.landmarks.ensemble.scorer_target_config import (
-    SCORER_TARGETS,
     TARGET_SELECTION_COST,
 )
 from lib.landmarks.ensemble.scorer_training import SCORER_SUITE_METRICS_JSON
@@ -104,8 +103,6 @@ CONFIG_PATCH_FILENAME = "config_update_patch.ini"
 SCORER_VERSION_LEARNED_QUALITY_V2 = "learned_quality_v2"
 PROMOTED_POLICIES = (SCORER_VERSION_LEARNED_QUALITY_V2,)
 STAGE_ALIASES = {
-    "binary_scorer_training": "scorer_training",
-    "continuous_scorer_training": "scorer_training",
     "v2_scorer_training": "scorer_training",
 }
 
@@ -172,10 +169,6 @@ class PipelinePaths:
     hard_manifest: Path = field(init=False)
     frozen_gt_metadata: Path = field(init=False)
     scorer_train_dir: Path = field(init=False)
-    binary_scorer_train_dir: Path = field(init=False)
-    binary_scorer_artifact: Path = field(init=False)
-    continuous_scorer_train_dir: Path = field(init=False)
-    continuous_scorer_eval_rows: Path = field(init=False)
     scorer_artifact: Path = field(init=False)
     v2_scorer_train_dir: Path = field(init=False)
     v2_scorer_artifact: Path = field(init=False)
@@ -184,8 +177,6 @@ class PipelinePaths:
     scorer_rows_csv: Path = field(init=False)
     scorer_dataset_manifest: Path = field(init=False)
     canonical_scorers_dir: Path = field(init=False)
-    canonical_binary_scorer_artifact: Path = field(init=False)
-    canonical_continuous_scorer_artifact: Path = field(init=False)
     canonical_v2_scorer_artifact: Path = field(init=False)
     scorer_suite_metrics: Path = field(init=False)
     scorer_training_sentinel: Path = field(init=False)
@@ -303,16 +294,6 @@ class PipelinePaths:
             self.v2_scorer_train_dir / V2_SCORER_TRAINING_SENTINEL_FILENAME,
         )
 
-        # v1/v1_1 are removed. Keep these legacy path attributes as aliases to
-        # v2 so older pipeline internals/tests do not need separate artifact paths.
-        object.__setattr__(self, "binary_scorer_train_dir", self.v2_scorer_train_dir)
-        object.__setattr__(self, "binary_scorer_artifact", self.v2_scorer_artifact)
-        object.__setattr__(self, "continuous_scorer_train_dir", self.v2_scorer_train_dir)
-        object.__setattr__(
-            self,
-            "continuous_scorer_eval_rows",
-            self.v2_scorer_train_dir / "runtime_resolver_scorer_eval_rows.csv",
-        )
         object.__setattr__(self, "scorer_artifact", self.v2_scorer_artifact)
         object.__setattr__(self, "scorer_dataset_dir", self.scorer_train_dir / SCORER_DATASET_DIR)
         object.__setattr__(self, "scorer_rows_csv", self.scorer_dataset_dir / SCORER_ROWS_CSV)
@@ -328,18 +309,6 @@ class PipelinePaths:
             self.canonical_scorers_dir / "learned_quality_v2.json",
         )
 
-        # v1/v1_1 are removed. Legacy canonical attributes point at v2 for
-        # compatibility with code paths that still name the old attributes.
-        object.__setattr__(
-            self,
-            "canonical_binary_scorer_artifact",
-            self.canonical_v2_scorer_artifact,
-        )
-        object.__setattr__(
-            self,
-            "canonical_continuous_scorer_artifact",
-            self.canonical_v2_scorer_artifact,
-        )
         object.__setattr__(
             self,
             "scorer_suite_metrics",
@@ -884,9 +853,8 @@ def _command_candidate_search(args: argparse.Namespace, paths: PipelinePaths) ->
         "--production-gate-output",
         str(paths.candidate_dir / "production_gate"),
     ]
-    # Every promoted scorer version this pipeline supports
-    # (``continuous_regret_v1_1`` → runtime policy ``learned_quality_v1``,
-    # ``learned_quality_v2`` → ``learned_quality_v2``) installs a learned
+    # The promoted scorer version this pipeline supports
+    # (``learned_quality_v2`` → runtime policy ``learned_quality_v2``) installs a learned
     # quality runtime policy whose ranker has to choose between *multiple*
     # fusion candidates that ``runtime_resolver.build_candidates`` derives
     # from the promoted setup. A single-model or collapsed setup
@@ -1134,9 +1102,7 @@ def _command_scorer_eval(args: argparse.Namespace, paths: PipelinePaths) -> list
         "--weights",
         str(paths.best_weights),
         "--scorer",
-        str(paths.canonical_continuous_scorer_artifact),
-        "--binary-scorer",
-        str(paths.canonical_binary_scorer_artifact),
+        str(paths.canonical_v2_scorer_artifact),
         "--v2-scorer",
         str(paths.canonical_v2_scorer_artifact),
         "--scorer-rows",
@@ -1201,8 +1167,6 @@ def _outputs_for(stage: str, paths: PipelinePaths) -> list[Path]:
         "build_gt_hard_resolver_metadata": [paths.frozen_gt_metadata],
         "freeze_resolver_metadata": [paths.frozen_gt_metadata],
         "scorer_training": [
-            paths.canonical_binary_scorer_artifact,
-            paths.canonical_continuous_scorer_artifact,
             paths.canonical_v2_scorer_artifact,
             paths.scorer_rows_csv,
             paths.scorer_dataset_manifest,
@@ -1296,8 +1260,6 @@ def _required_inputs_for(stage: str, args: argparse.Namespace, paths: PipelinePa
             paths.frozen_gt_metadata,
         ],
         "scorer_evaluation": [
-            paths.canonical_continuous_scorer_artifact,
-            paths.canonical_binary_scorer_artifact,
             paths.canonical_v2_scorer_artifact,
             paths.scorer_rows_csv,
             paths.scorer_dataset_manifest,
@@ -1330,7 +1292,7 @@ def _contract_for(stage: str, args: argparse.Namespace, paths: PipelinePaths) ->
         "hard_alignment_validation": "writes gt_hard_validation artifacts; --resume skips when manifest.json exists",
         "build_gt_hard_resolver_metadata": "runs the GT-hard resolver metadata CLI on the GT-hard manifest and writes the frozen resolver metadata sidecar; explicit sidecars are copied into the same frozen path",
         "freeze_resolver_metadata": "validates the caller-supplied or freshly generated frozen GT-hard resolver metadata sidecar; never derives runtime metadata from a plain manifest",
-        "scorer_training": "loads scorer contexts once, writes canonical scorer rows, trains v1/v1.1/v2 scorer artifacts, and records an input/hyperparameter sentinel; --resume skips only when all canonical artifacts and the sentinel match",
+        "scorer_training": "loads scorer contexts once, writes canonical scorer rows, trains only the learned_quality_v2 scorer artifact, and records an input/hyperparameter sentinel; --resume skips only when the v2 canonical artifact and the sentinel match",
         "scorer_evaluation": "writes scorer_evaluation reports; --resume skips when scorer_policy_report.json exists",
         "production_promotion_check": "reads scorer report only; no recompute; requires promotion_status/status pass",
         "artifact_export": "writes promotion_manifest.json with immutable runtime artifact provenance; --resume skips when the manifest matches the promoted scorer source",
@@ -1338,8 +1300,6 @@ def _contract_for(stage: str, args: argparse.Namespace, paths: PipelinePaths) ->
     }[stage]
     success = {
         "scorer_training": [
-            "v1 binary runtime_resolver_scorer.json exists",
-            "v1.1 runtime_resolver_scorer.json and held-out eval rows exist",
             "learned_quality_v2 runtime_resolver_scorer_v2.json exists",
             "canonical scorer rows and manifest exist",
             "scorer training sentinel matches requested inputs and hyperparameters",
@@ -1364,10 +1324,6 @@ def _contract_for(stage: str, args: argparse.Namespace, paths: PipelinePaths) ->
         ],
         "freeze_resolver_metadata": [
             "frozen resolver_metadata.jsonl exists and validates against the hard manifest"
-        ],
-        "binary_scorer_training": ["v1 binary runtime_resolver_scorer.json exists"],
-        "continuous_scorer_training": [
-            "v1.1 runtime_resolver_scorer.json and held-out eval rows exist"
         ],
         "v2_scorer_training": [
             "learned_quality_v2 runtime_resolver_scorer_v2.json exists",
@@ -1575,14 +1531,6 @@ def _emit_gt_runtime_bucket_artifacts(
             Path(paths.candidate_dir) / "gt_runtime_bucket_candidate_table.csv",
         )
     )
-
-    # Backward-compatible fallback for older tests/callers that construct a
-    # minimal paths object with only binary_scorer_train_dir. The production
-    # pipeline writes the full-GT table above during candidate_search.
-    if not candidate_table.is_file() and hasattr(paths, "binary_scorer_train_dir"):
-        legacy_candidate_table = Path(paths.binary_scorer_train_dir) / "candidate_table.csv"
-        if legacy_candidate_table.is_file():
-            candidate_table = legacy_candidate_table
 
     if not candidate_table.is_file():
         logger.info("gt_runtime_bucket aggregation skipped: %s not found", candidate_table)
@@ -2051,9 +1999,6 @@ def _promotion_check(
     _require(paths.scorer_report, "scorer evaluation report")
     report = _read_json(paths.scorer_report)
 
-    # v1/v1_1 have been removed. The pipeline now promotes only the v2
-    # LightGBM/LambdaRank scorer, so promotion validation must never fall back
-    # to legacy status-only checks for a learned v1/v1_1 policy.
     policy_name = SCORER_VERSION_LEARNED_QUALITY_V2
 
     gates = report.get("installed_baseline_promotion")
@@ -2217,44 +2162,6 @@ def _validate_stage_outputs(
     validated = [str(path) for path in _outputs_for(stage, paths)]
     logger.debug("Validated outputs for stage=%s outputs=%s", stage, validated)
     return validated
-
-
-def _copy_if_exists(source: Path, dest_dir: Path, *, name: str | None = None) -> str:
-    if not source.exists():
-        return ""
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    target = dest_dir / (name or source.name)
-    if source.is_dir():
-        if target.exists():
-            shutil.rmtree(target)
-        shutil.copytree(source, target)
-    else:
-        shutil.copyfile(source, target)
-    logger.debug("Exported artifact source=%s target=%s", source, target)
-    return str(target)
-
-
-def _copy_scorer_with_promotion_metadata(source: Path, target: Path, *, promoted_from: str) -> str:
-    """Copy the scorer artifact without mutating its JSON payload.
-
-    Promotion provenance belongs in artifacts_manifest.json / the production
-    bundle manifest. The trained scorer artifact should remain immutable so its
-    hash and contents match the training output.
-    """
-    if not source.exists():
-        return ""
-    target.parent.mkdir(parents=True, exist_ok=True)
-    payload = json.loads(source.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict):
-        raise PipelineContractError(f"scorer artifact must be a JSON object: {source}")
-    shutil.copyfile(source, target)
-    logger.debug(
-        "Exported immutable scorer artifact source=%s target=%s promoted_from=%s",
-        source,
-        target,
-        promoted_from,
-    )
-    return str(target)
 
 
 def _promoted_scorer_source(args: argparse.Namespace, paths: PipelinePaths) -> Path:
@@ -2520,8 +2427,6 @@ def _install_production_bundle_artifacts(args: argparse.Namespace, paths: Pipeli
     automatically selects the matching scorer.
     """
     scorer_sources = {
-        "learned_quality_v1": paths.canonical_binary_scorer_artifact,
-        "learned_quality_v1_1": paths.canonical_continuous_scorer_artifact,
         "learned_quality_v2": paths.canonical_v2_scorer_artifact,
     }
     return install_production_bundle(
@@ -2956,7 +2861,6 @@ def _summary_payload(
         "fallback_counts": _fallback_counts(report),
         "best_weights_path": str(paths.exported_best_weights),
         "scorer_path": str(paths.exported_scorer_artifact),
-        "binary_scorer_path": str(paths.binary_scorer_artifact),
         "eval_report_path": str(paths.scorer_report),
         "config_fields_changed": sorted(updates),
         "config_patch_path": str(paths.output_root / CONFIG_PATCH_FILENAME),
@@ -3211,7 +3115,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--split-seed", type=int, default=1337)
     parser.add_argument(
         "--scorer-target",
-        choices=SCORER_TARGETS,
+        choices=(TARGET_SELECTION_COST,),
         default=TARGET_SELECTION_COST,
     )
     parser.add_argument(

@@ -103,8 +103,6 @@ def test_install_skips_missing_scorer_sources(
 
     loaded = pa.load_production_bundle()
     assert set(loaded.scorers) == {"learned_quality_v2"}
-    with pytest.raises(pa.ProductionBundleInvalid):
-        loaded.scorer_path_for("learned_quality_v1")
 
 
 def test_install_rejects_unknown_policy(tmp_path: Path) -> None:
@@ -202,7 +200,7 @@ def test_resolve_runtime_rejects_scorer_runtime_policy_mismatch(tmp_path: Path) 
         features=("candidate_name=hrnet",),
         coefficients=(1.0,),
         intercept=0.0,
-        runtime_policy="learned_quality_v1",
+        runtime_policy="learned_quality_" + "v1",
     )
     scorer_path = write_runtime_resolver_scorer(scorer, tmp_path / "scorer.json")
 

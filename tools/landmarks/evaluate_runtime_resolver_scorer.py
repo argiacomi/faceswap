@@ -39,15 +39,6 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--weights", type=Path, required=True)
     parser.add_argument("--scorer", type=Path, required=True)
     parser.add_argument(
-        "--binary-scorer",
-        type=Path,
-        default=None,
-        help=(
-            "Optional current binary logistic scorer artifact to compare against a "
-            "continuous regret v1.1 scorer."
-        ),
-    )
-    parser.add_argument(
         "--v2-scorer",
         type=Path,
         default=None,
@@ -153,7 +144,6 @@ def main(argv: T.Sequence[str] | None = None) -> int:
         production_cache_dir=args.production_cache_dir,
         weights_path=args.weights,
         scorer_path=args.scorer,
-        binary_scorer_path=args.binary_scorer,
         v2_scorer_path=args.v2_scorer,
         candidates=candidates,
         output_dir=args.output_dir,

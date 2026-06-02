@@ -224,13 +224,13 @@ class RuntimeResolverScorer:
             calibration=calibration if isinstance(calibration, dict) else None,
             source_path=source_path,
             version=str(
-                payload.get("version", payload.get("scorer_version", "learned_quality_v1"))
+                payload.get("version", payload.get("scorer_version", "learned_quality_v2"))
             ),
             selection_target=str(payload.get("selection_target", "binary_failure_or_high_gap")),
             promoted_from=str(payload.get("promoted_from", "")),
             objective=str(payload.get("objective", "minimize_candidate_failure_risk")),
             training_mode=str(payload.get("training_mode", "binary_failure_or_high_gap")),
-            runtime_policy=str(payload.get("runtime_policy", "learned_quality_v1")),
+            runtime_policy=str(payload.get("runtime_policy", "learned_quality_v2")),
         )
 
     def to_payload(self) -> dict[str, T.Any]:
@@ -508,9 +508,7 @@ def candidate_scores(
 
     For the LightGBM (learned_quality_v2) path we build one feature matrix
     and call ``predict`` once — the old code did N=len(candidates) 1-row
-    predict calls and was the hot spot under load. Linear / logistic v1
-    scorers still go per-candidate so the per-candidate diagnostic logs
-    fire for them.
+    predict calls and was the hot spot under load.
     """
     eligible = [c for c in candidates if str(c.name) in metrics]
     if isinstance(scorer, RuntimeResolverLightGBMScorer):

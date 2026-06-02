@@ -14,7 +14,10 @@ from lib.landmarks.cache.prediction_cache import DiskPredictionCache
 from lib.landmarks.core.schema import LandmarkPrediction
 from lib.landmarks.ensemble.scorer_contexts import load_scorer_contexts
 from lib.landmarks.ensemble.scorer_eval import evaluate_runtime_resolver_scorer
-from lib.landmarks.ensemble.scorer_training import SCORER_ARTIFACT, train_runtime_resolver_scorer
+from lib.landmarks.ensemble.scorer_training import (
+    SCORER_V2_ARTIFACT,
+    train_runtime_resolver_scorer,
+)
 from lib.landmarks.ensemble.weights import save_weights
 from lib.landmarks.pipeline_conventions import (
     SCORER_POLICY_REPORT_JSON,
@@ -222,9 +225,9 @@ def test_scorer_pipeline_smoke_build_train_evaluate_and_report(tmp_path: Path) -
         iterations=5,
         eval_fraction=0.0,
     )
-    scorer_path = train_dir / SCORER_ARTIFACT
+    scorer_path = train_dir / SCORER_V2_ARTIFACT
     assert scorer_path.is_file()
-    assert metrics["row_count"] > 0
+    assert metrics["training_data_counts"]["row_count"] > 0
     assert metrics["candidate_count"] == len(CANDIDATES)
 
     eval_dir = fixture.root / "eval"
