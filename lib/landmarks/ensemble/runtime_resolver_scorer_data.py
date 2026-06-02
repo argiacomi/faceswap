@@ -330,7 +330,7 @@ _V3_SOFT_SUSPECT_TOKENS: tuple[str, ...] = (
 
 # Keep this aligned with runtime_resolver.DEFAULT_MAX_SHAPE_PLAUSIBILITY_SCORE
 # without importing runtime_resolver here and expanding scorer-data dependencies.
-DEFAULT_V3_MAX_SHAPE_PLAUSIBILITY_SCORE: float = 1.10
+DEFAULT_V3_MAX_SHAPE_PLAUSIBILITY_SCORE: float = 0.2
 
 
 def _dedupe_reasons(reasons: T.Iterable[str]) -> tuple[str, ...]:
