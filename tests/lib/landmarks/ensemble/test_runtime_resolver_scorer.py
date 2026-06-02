@@ -34,6 +34,7 @@ from lib.landmarks.ensemble.scorer_target_config import (
     SCORE_SEMANTICS_PREDICTED_COST,
     TARGET_ORACLE_REGRET,
     TARGET_SELECTION_COST,
+    TARGET_TRANSFORM_REGRET_V3,
 )
 from lib.landmarks.ensemble.weights import save_weights
 from tools.landmarks.backfill_runtime_resolver_metadata import (
@@ -1285,6 +1286,15 @@ def _write_canonical_scorer_rows(path: Path) -> Path:
         "selected_by_current_policy",
         "selected_candidate_missing_from_eval",
         "oracle",
+        "transform_cost_v3",
+        "transform_oracle_cost_v3",
+        "transform_regret_v3",
+        "transform_oracle_candidate_v3",
+        "transform_oracle_gap_v3",
+        "rankable_v3",
+        "hard_invalid_v3",
+        "hard_invalid_reasons_v3",
+        "soft_structural_penalty_v3",
         "features_json",
     ]
 
@@ -1317,6 +1327,15 @@ def _write_canonical_scorer_rows(path: Path) -> Path:
             "selected_by_current_policy": "hrnet",
             "selected_candidate_missing_from_eval": 0,
             "oracle": "hrnet",
+            "transform_cost_v3": max(gap, 0.0),
+            "transform_oracle_cost_v3": 0.0,
+            "transform_regret_v3": max(gap, 0.0),
+            "transform_oracle_candidate_v3": "hrnet",
+            "transform_oracle_gap_v3": 0.01,
+            "rankable_v3": 1,
+            "hard_invalid_v3": 0,
+            "hard_invalid_reasons_v3": "",
+            "soft_structural_penalty_v3": 0.0,
             "features_json": json.dumps({f"candidate_name={candidate}": 1.0}, sort_keys=True),
         }
 
@@ -1361,6 +1380,95 @@ def test_row_contexts_from_scorer_rows_uses_only_eval_split(tmp_path: Path) -> N
     assert by_candidate["spiga"].is_fusion is False
     assert by_candidate["static_weighted_downweight"].is_fusion is True
     assert len(context.scorer_rows) == 3
+    hrnet_row = next(row for row in context.scorer_rows if row.candidate_name == "hrnet")
+    assert hrnet_row.transform_regret_v3 == pytest.approx(0.0)
+    assert "transform_regret_v3" not in hrnet_row.feature_values
+
+
+def test_policy_summary_reports_v3_transform_metrics_and_skips_production() -> None:
+    scorer_rows = (
+        SimpleNamespace(
+            candidate_name="hrnet",
+            feature_values={},
+            transform_regret_v3=0.0,
+            transform_oracle_candidate_v3="hrnet",
+            transform_oracle_gap_v3=0.25,
+            rankable_v3=True,
+            hard_invalid_v3=False,
+        ),
+        SimpleNamespace(
+            candidate_name="spiga",
+            feature_values={},
+            transform_regret_v3=0.25,
+            transform_oracle_candidate_v3="hrnet",
+            transform_oracle_gap_v3=0.25,
+            rankable_v3=True,
+            hard_invalid_v3=False,
+        ),
+        SimpleNamespace(
+            candidate_name="bad",
+            feature_values={},
+            transform_regret_v3=3.0,
+            transform_oracle_candidate_v3="hrnet",
+            transform_oracle_gap_v3=0.25,
+            rankable_v3=False,
+            hard_invalid_v3=True,
+        ),
+    )
+    context = SimpleNamespace(
+        sample_id="gt_sample",
+        dataset="gt_hard",
+        source="gt_hard",
+        condition="profile",
+        runtime_bucket="profile",
+        runtime_bucket_source="",
+        nme_by_candidate={"hrnet": 0.01, "spiga": 0.04, "bad": 0.20},
+        failure_by_candidate={"hrnet": False, "spiga": False, "bad": True},
+        oracle="hrnet",
+        scorer_rows=scorer_rows,
+    )
+    contexts = T.cast("list[scorer_data.SampleCandidateContext]", [context])
+    summary = scorer_eval_impl.policy_summary(
+        contexts,
+        {"gt_sample": "spiga"},
+        source_by_sample_id={},
+    )
+    assert summary["mean_transform_regret_v3"] == pytest.approx(0.25)
+    assert summary["p95_transform_regret_v3"] == pytest.approx(0.25)
+    assert summary["oracle_match_rate_v3"] == pytest.approx(0.0)
+    assert summary["invalid_selection_count_v3"] == 0
+    assert summary["transform_eval_count_v3"] == 1
+
+    invalid_summary = scorer_eval_impl.policy_summary(
+        contexts,
+        {"gt_sample": "bad"},
+        source_by_sample_id={},
+    )
+    assert invalid_summary["invalid_selection_count_v3"] == 1
+    assert invalid_summary["mean_transform_regret_v3"] == pytest.approx(0.0)
+
+    production_context = SimpleNamespace(**{**context.__dict__, "source": "production_validated"})
+    production_contexts = T.cast("list[scorer_data.SampleCandidateContext]", [production_context])
+    production_summary = scorer_eval_impl.policy_summary(
+        production_contexts,
+        {"gt_sample": "spiga"},
+        source_by_sample_id={},
+    )
+    assert production_summary["transform_eval_count_v3"] == 0
+    assert production_summary["mean_transform_regret_v3"] == pytest.approx(0.0)
+
+
+def test_scorer_policy_key_detects_v3_transform_artifact() -> None:
+    scorer = RuntimeResolverScorer(
+        features=("candidate_name=hrnet",),
+        coefficients=(1.0,),
+        intercept=0.0,
+        target=TARGET_TRANSFORM_REGRET_V3,
+        version="learned_quality_v3",
+        runtime_policy="learned_quality_v3",
+    )
+
+    assert scorer_eval_impl.scorer_policy_key(scorer) == "learned_quality_v3"
 
 
 def test_evaluate_runtime_resolver_scorer_uses_scorer_rows_without_context_rebuild(

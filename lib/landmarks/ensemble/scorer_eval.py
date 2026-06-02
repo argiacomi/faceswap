@@ -38,6 +38,7 @@ from lib.landmarks.ensemble.scorer_dataset import (
     resolve_scorer_dataset_path,
 )
 from lib.landmarks.ensemble.scorer_reports import write_scorer_policy_outputs
+from lib.landmarks.ensemble.scorer_target_config import TARGET_TRANSFORM_REGRET_V3
 from lib.landmarks.ensemble.strategies import canonical_strategy
 from lib.landmarks.evaluation.geometry_signals import alignment_summary
 from lib.landmarks.pipeline_conventions import (
@@ -52,7 +53,9 @@ DEFAULT_SAFE_FALLBACK_MIN_DELTA = 0.05
 DEFAULT_FALLBACK_CATASTROPHIC_WORSE_NME = 0.02
 PROMOTION_SCOPES = ("universal", "production")
 SCORER_VERSION_REPORT_LABEL = "learned_quality_v2"
+SCORER_VERSION_LEARNED_QUALITY_V3 = "learned_quality_v3"
 RUNTIME_POLICY_REPORT_LABEL = "runtime_policy_learned_quality"
+MIN_V3_ORACLE_GAP = 1e-4
 HARD_SLICE_POLICY_BUCKETS = {
     "extreme_roll",
     "rolled_large_yaw_left",
@@ -98,6 +101,29 @@ HARD_BUCKET_PROMOTION_SPLITS: tuple[str, ...] = (
 )
 HARD_BUCKET_MAX_FAILURE_RATE = 0.0
 HARD_BUCKET_MAX_CATASTROPHIC_FAILURES = 0
+REWEIGHTED_POLICY_METRICS: tuple[str, ...] = (
+    "mean_nme",
+    "p90_nme",
+    "failure_rate",
+    "oracle_match_rate",
+    "mean_gap_vs_oracle",
+    "mean_transform_regret_v3",
+    "p95_transform_regret_v3",
+    "oracle_match_rate_v3",
+    "invalid_selection_rate_v3",
+    "transform_eval_count_v3",
+)
+V3_RESERVED_ROW_FIELDS: tuple[str, ...] = (
+    "transform_cost_v3",
+    "transform_oracle_cost_v3",
+    "transform_regret_v3",
+    "transform_oracle_candidate_v3",
+    "transform_oracle_gap_v3",
+    "rankable_v3",
+    "hard_invalid_v3",
+    "hard_invalid_reasons_v3",
+    "soft_structural_penalty_v3",
+)
 
 
 def eval_split_sources(path: Path) -> tuple[set[tuple[str, str, str]], dict[str, str]]:
@@ -318,9 +344,112 @@ def choose_scorer(
     return chosen, fallback_used, fallback_reason, rejected_candidate, replacement_candidate
 
 
+def _v3_row_value(row: T.Any, name: str, default: T.Any = None) -> T.Any:
+    if hasattr(row, name):
+        return getattr(row, name)
+    if isinstance(row, T.Mapping):
+        return row.get(name, default)
+    return default
+
+
+def _v3_rows_by_candidate(context: T.Any) -> dict[str, T.Any]:
+    rows: dict[str, T.Any] = {}
+    for row in _context_rows_for_eval(context):
+        candidate = str(_v3_row_value(row, "candidate_name", "") or "")
+        if candidate and _v3_row_value(row, "transform_regret_v3") is not None:
+            rows[candidate] = row
+    return rows
+
+
+def _v3_group_diagnostics(context: T.Any) -> tuple[dict[str, T.Any], bool, bool, bool]:
+    rows = _v3_rows_by_candidate(context)
+    valid = {
+        name: row
+        for name, row in rows.items()
+        if _row_bool(_v3_row_value(row, "rankable_v3", False))
+        and not _row_bool(_v3_row_value(row, "hard_invalid_v3", False))
+    }
+    zero_valid = not valid
+    if len(valid) < 2:
+        return rows, zero_valid, False, False
+    oracle_gap = min(
+        _row_float(_v3_row_value(row, "transform_oracle_gap_v3")) for row in valid.values()
+    )
+    return rows, zero_valid, False, oracle_gap < MIN_V3_ORACLE_GAP
+
+
+def _transform_summary_empty() -> dict[str, T.Any]:
+    return {
+        "mean_transform_regret_v3": 0.0,
+        "p95_transform_regret_v3": 0.0,
+        "oracle_match_rate_v3": 0.0,
+        "invalid_selection_count_v3": 0,
+        "invalid_selection_rate_v3": 0.0,
+        "near_tie_excluded_count_v3": 0,
+        "zero_valid_group_count_v3": 0,
+        "transform_eval_count_v3": 0,
+    }
+
+
+def transform_policy_summary_v3(
+    contexts: T.Sequence[T.Any],
+    choices: T.Mapping[str, str],
+    *,
+    source_by_sample_id: T.Mapping[str, str],
+) -> dict[str, T.Any]:
+    """Return v3 transform-regret metrics for labeled, non-production contexts."""
+    regrets: list[float] = []
+    oracle_matches = 0
+    invalid_selection_count = 0
+    near_tie_count = 0
+    zero_valid_count = 0
+    eval_count = 0
+    valid_eval_count = 0
+    for context in contexts:
+        if context_source(context, source_by_sample_id) == SOURCE_PRODUCTION_VALIDATED:
+            continue
+        rows, zero_valid, too_few_valid, near_tie = _v3_group_diagnostics(context)
+        if not rows:
+            continue
+        eval_count += 1
+        selected = choices.get(context.sample_id, "")
+        selected_row = rows.get(selected)
+        if zero_valid:
+            zero_valid_count += 1
+        if near_tie:
+            near_tie_count += 1
+        selected_invalid = (
+            selected_row is None
+            or not _row_bool(_v3_row_value(selected_row, "rankable_v3", False))
+            or _row_bool(_v3_row_value(selected_row, "hard_invalid_v3", False))
+        )
+        invalid_selection_count += int(selected_invalid)
+        if selected_invalid or zero_valid or too_few_valid or near_tie:
+            continue
+        valid_eval_count += 1
+        oracle = str(_v3_row_value(selected_row, "transform_oracle_candidate_v3", "") or "")
+        oracle_matches += int(bool(oracle) and selected == oracle)
+        regrets.append(max(_row_float(_v3_row_value(selected_row, "transform_regret_v3")), 0.0))
+
+    if eval_count == 0:
+        return _transform_summary_empty()
+    return {
+        "mean_transform_regret_v3": float(np.mean(regrets)) if regrets else 0.0,
+        "p95_transform_regret_v3": _percentile(regrets, 95),
+        "oracle_match_rate_v3": oracle_matches / valid_eval_count if valid_eval_count else 0.0,
+        "invalid_selection_count_v3": invalid_selection_count,
+        "invalid_selection_rate_v3": invalid_selection_count / eval_count,
+        "near_tie_excluded_count_v3": near_tie_count,
+        "zero_valid_group_count_v3": zero_valid_count,
+        "transform_eval_count_v3": eval_count,
+    }
+
+
 def policy_summary(
     contexts: T.Sequence[SampleCandidateContext],
     choices: T.Mapping[str, str],
+    *,
+    source_by_sample_id: T.Mapping[str, str] | None = None,
 ) -> dict[str, T.Any]:
     values: list[float] = []
     failures: list[bool] = []
@@ -339,6 +468,13 @@ def policy_summary(
             "oracle_match_rate": oracle_matches / len(contexts) if contexts else 0.0,
             "mean_gap_vs_oracle": float(np.mean(gaps)) if gaps else 0.0,
         }
+    )
+    base.update(
+        transform_policy_summary_v3(
+            contexts,
+            choices,
+            source_by_sample_id=source_by_sample_id or {},
+        )
     )
     return base
 
@@ -546,6 +682,76 @@ def choice_subset(
     return {context.sample_id: choices[context.sample_id] for context in contexts}
 
 
+def fixed_candidate_choices(
+    contexts: T.Sequence[SampleCandidateContext],
+    candidate: str,
+) -> dict[str, str]:
+    """Return per-sample choices for a fixed candidate baseline."""
+    return {context.sample_id: candidate for context in contexts}
+
+
+def bucket_key(context: T.Any) -> str:
+    """Return the production/report bucket key for one context."""
+    return str(context.runtime_bucket or context.condition or "unknown")
+
+
+def production_bucket_mix(contexts: T.Sequence[SampleCandidateContext]) -> dict[str, T.Any]:
+    """Return production bucket counts and rates without deriving GT labels."""
+    counts = Counter(bucket_key(context) for context in contexts)
+    total = sum(counts.values())
+    return {
+        "sample_count": total,
+        "counts": dict(sorted(counts.items())),
+        "rates": {bucket: count / total for bucket, count in sorted(counts.items())}
+        if total
+        else {},
+    }
+
+
+def context_has_feature_coverage(context: T.Any) -> bool:
+    """Return whether a production context carries scorer-visible features."""
+    rows = _context_rows_for_eval(context)
+    if any(getattr(row, "feature_values", None) for row in rows):
+        return True
+    candidate_features = getattr(context, "candidate_extra_features", {}) or {}
+    if any(candidate_features.values()):
+        return True
+    model_available = getattr(context, "model_predictions_available", None)
+    return bool(model_available)
+
+
+def context_has_invalid_detector(context: T.Any) -> bool:
+    """Return whether no detector/model prediction is available for a production context."""
+    model_available = getattr(context, "model_predictions_available", None)
+    if isinstance(model_available, T.Mapping):
+        return not any(bool(value) for value in model_available.values())
+    return False
+
+
+def production_only_diagnostics(
+    contexts: T.Sequence[SampleCandidateContext],
+    *,
+    fallback_used_by_sample_id: T.Mapping[str, bool],
+) -> dict[str, T.Any]:
+    """Return production-only checks that do not require GT transform labels."""
+    sample_count = len(contexts)
+    fallback_count = sum(
+        bool(fallback_used_by_sample_id.get(context.sample_id)) for context in contexts
+    )
+    feature_coverage_count = sum(context_has_feature_coverage(context) for context in contexts)
+    invalid_detector_count = sum(context_has_invalid_detector(context) for context in contexts)
+    return {
+        "sample_count": sample_count,
+        "bucket_mix": production_bucket_mix(contexts),
+        "feature_coverage_count": feature_coverage_count,
+        "feature_coverage_rate": feature_coverage_count / sample_count if sample_count else 0.0,
+        "invalid_detector_count": invalid_detector_count,
+        "invalid_detector_rate": invalid_detector_count / sample_count if sample_count else 0.0,
+        "fallback_count": fallback_count,
+        "fallback_rate": fallback_count / sample_count if sample_count else 0.0,
+    }
+
+
 def write_region_reports(
     *,
     contexts: T.Sequence[T.Any],
@@ -725,27 +931,39 @@ def policy_metric_bundle(
     current_choices: T.Mapping[str, str],
     oracle_choices: T.Mapping[str, str],
     extra_scorer_choices: T.Mapping[str, T.Mapping[str, str]] | None = None,
+    source_by_sample_id: T.Mapping[str, str] | None = None,
 ) -> dict[str, T.Any]:
     """Return selected-policy NME/failure summaries for one source slice."""
+    source_lookup = source_by_sample_id or {}
     if not contexts:
         payload = {
             "sample_count": 0,
-            scorer_policy_name: policy_summary((), {}),
-            RUNTIME_POLICY_REPORT_LABEL: policy_summary((), {}),
-            "oracle": policy_summary((), {}),
+            scorer_policy_name: policy_summary((), {}, source_by_sample_id=source_lookup),
+            RUNTIME_POLICY_REPORT_LABEL: policy_summary((), {}, source_by_sample_id=source_lookup),
+            "oracle": policy_summary((), {}, source_by_sample_id=source_lookup),
         }
         for policy_name in extra_scorer_choices or {}:
             if policy_name == scorer_policy_name:
                 continue
-            payload[policy_name] = policy_summary((), {})
+            payload[policy_name] = policy_summary((), {}, source_by_sample_id=source_lookup)
         return payload
     payload: dict[str, T.Any] = {  # type: ignore[no-redef]
         "sample_count": len(contexts),
-        scorer_policy_name: policy_summary(contexts, choice_subset(contexts, scorer_choices)),
-        RUNTIME_POLICY_REPORT_LABEL: policy_summary(
-            contexts, choice_subset(contexts, current_choices)
+        scorer_policy_name: policy_summary(
+            contexts,
+            choice_subset(contexts, scorer_choices),
+            source_by_sample_id=source_lookup,
         ),
-        "oracle": policy_summary(contexts, choice_subset(contexts, oracle_choices)),
+        RUNTIME_POLICY_REPORT_LABEL: policy_summary(
+            contexts,
+            choice_subset(contexts, current_choices),
+            source_by_sample_id=source_lookup,
+        ),
+        "oracle": policy_summary(
+            contexts,
+            choice_subset(contexts, oracle_choices),
+            source_by_sample_id=source_lookup,
+        ),
     }
     for policy_name, policy_choices in (extra_scorer_choices or {}).items():
         if policy_name == scorer_policy_name:
@@ -753,17 +971,116 @@ def policy_metric_bundle(
         payload[policy_name] = policy_summary(
             contexts,
             choice_subset(contexts, policy_choices),
+            source_by_sample_id=source_lookup,
         )
-    best_single_name, best_single_summary = best_single(contexts, candidates)
-    payload["best_single"] = {"candidate": best_single_name, **best_single_summary}
+    best_single_name, _best_single_summary = best_single(contexts, candidates)
+    payload["best_single"] = {
+        "candidate": best_single_name,
+        **policy_summary(
+            contexts,
+            fixed_candidate_choices(contexts, best_single_name),
+            source_by_sample_id=source_lookup,
+        ),
+    }
     if "static_weighted_downweight" in candidates:
         payload["static_weighted_downweight"] = {
             "candidate": "static_weighted_downweight",
-            **candidate_summary(contexts, "static_weighted_downweight"),
+            **policy_summary(
+                contexts,
+                fixed_candidate_choices(contexts, "static_weighted_downweight"),
+                source_by_sample_id=source_lookup,
+            ),
         }
     if "hrnet" in candidates:
-        payload["hrnet"] = {"candidate": "hrnet", **candidate_summary(contexts, "hrnet")}
+        payload["hrnet"] = {
+            "candidate": "hrnet",
+            **policy_summary(
+                contexts,
+                fixed_candidate_choices(contexts, "hrnet"),
+                source_by_sample_id=source_lookup,
+            ),
+        }
     return payload
+
+
+def _weighted_policy_payload(
+    bucket_payloads: T.Mapping[str, T.Mapping[str, T.Any]],
+    bucket_rates: T.Mapping[str, float],
+) -> dict[str, T.Any]:
+    policies = {
+        policy_name
+        for payload in bucket_payloads.values()
+        for policy_name, value in payload.items()
+        if isinstance(value, dict)
+    }
+    reweighted: dict[str, T.Any] = {}
+    for policy_name in sorted(policies):
+        weighted_metrics: dict[str, float] = {}
+        covered_weight = 0.0
+        for bucket, payload in bucket_payloads.items():
+            rate = float(bucket_rates.get(bucket, 0.0))
+            metrics = payload.get(policy_name)
+            if not isinstance(metrics, dict) or rate <= 0.0:
+                continue
+            covered_weight += rate
+            for metric in REWEIGHTED_POLICY_METRICS:
+                if metric in metrics:
+                    weighted_metrics[metric] = weighted_metrics.get(metric, 0.0) + (
+                        rate * float(metrics[metric] or 0.0)
+                    )
+        if covered_weight <= 0.0:
+            continue
+        reweighted[policy_name] = {
+            **weighted_metrics,
+            "production_bucket_coverage_rate": covered_weight,
+        }
+    return reweighted
+
+
+def production_bucket_reweighted_gt_policy_metrics(
+    *,
+    gt_contexts: T.Sequence[SampleCandidateContext],
+    production_contexts: T.Sequence[SampleCandidateContext],
+    candidates: T.Sequence[str],
+    scorer_policy_name: str,
+    scorer_choices: T.Mapping[str, str],
+    current_choices: T.Mapping[str, str],
+    oracle_choices: T.Mapping[str, str],
+    extra_scorer_choices: T.Mapping[str, T.Mapping[str, str]] | None,
+    source_by_sample_id: T.Mapping[str, str],
+) -> dict[str, T.Any]:
+    """Reweight labeled GT policy metrics using production bucket distribution."""
+    production_mix = production_bucket_mix(production_contexts)
+    bucket_rates = T.cast("dict[str, float]", production_mix["rates"])
+    gt_by_bucket: dict[str, list[SampleCandidateContext]] = defaultdict(list)
+    for context in gt_contexts:
+        gt_by_bucket[bucket_key(context)].append(context)
+
+    bucket_payloads: dict[str, dict[str, T.Any]] = {}
+    missing_gt_buckets: list[str] = []
+    for bucket in sorted(bucket_rates):
+        bucket_contexts = gt_by_bucket.get(bucket, [])
+        if not bucket_contexts:
+            missing_gt_buckets.append(bucket)
+            continue
+        bucket_payloads[bucket] = policy_metric_bundle(
+            bucket_contexts,
+            candidates=candidates,
+            scorer_policy_name=scorer_policy_name,
+            scorer_choices=scorer_choices,
+            current_choices=current_choices,
+            oracle_choices=oracle_choices,
+            extra_scorer_choices=extra_scorer_choices,
+            source_by_sample_id=source_by_sample_id,
+        )
+
+    return {
+        "sample_count": len(gt_contexts),
+        "production_bucket_mix": production_mix,
+        "missing_gt_buckets": missing_gt_buckets,
+        "bucket_policy_metrics": bucket_payloads,
+        "policies": _weighted_policy_payload(bucket_payloads, bucket_rates),
+    }
 
 
 def fallback_impact_summary(impacts: T.Sequence[dict[str, T.Any]]) -> dict[str, T.Any]:
@@ -790,8 +1107,17 @@ def fallback_impact_summary(impacts: T.Sequence[dict[str, T.Any]]) -> dict[str, 
 
 
 def scorer_policy_key(scorer: RuntimeResolverScorerLike) -> str:
-    """Return the stable report key for the only supported learned scorer policy."""
-    return "learned_quality_v2"
+    """Return the stable report key for a learned scorer policy."""
+    runtime_policy = str(getattr(scorer, "runtime_policy", "") or "")
+    if runtime_policy in LEARNED_POLICIES:
+        return runtime_policy
+    version = str(getattr(scorer, "version", "") or getattr(scorer, "scorer_version", "") or "")
+    if version in LEARNED_POLICIES:
+        return version
+    target = str(getattr(scorer, "target", "") or "")
+    if target == TARGET_TRANSFORM_REGRET_V3:
+        return SCORER_VERSION_LEARNED_QUALITY_V3
+    return SCORER_VERSION_REPORT_LABEL
 
 
 def scorer_policy_key_for_path(path: Path, scorer: RuntimeResolverScorerLike) -> str:
@@ -803,8 +1129,8 @@ def scorer_policy_key_for_path(path: Path, scorer: RuntimeResolverScorerLike) ->
     if runtime_policy in LEARNED_POLICIES:
         return runtime_policy
     version = str(getattr(scorer, "version", "") or getattr(scorer, "scorer_version", "") or "")
-    if version == "learned_quality_v2":
-        return "learned_quality_v2"
+    if version in LEARNED_POLICIES:
+        return version
     return scorer_policy_key(scorer)
 
 
@@ -899,14 +1225,22 @@ def installed_baseline_promotion_gates(
 
     for policy_name, selected_metrics in selected_policy_metrics.items():
         failed: list[str] = []
-        selected_failure = float(selected_metrics.get("failure_rate", 0.0) or 0.0)
-        installed_failure = float(installed_metrics.get("failure_rate", 0.0) or 0.0)
-        selected_mean = float(selected_metrics.get("mean_nme", 0.0) or 0.0)
-        installed_mean = float(installed_metrics.get("mean_nme", 0.0) or 0.0)
-        if selected_failure > installed_failure:
-            failed.append("failure_rate_regresses_vs_installed_current")
-        if selected_mean >= installed_mean:
-            failed.append("mean_nme_not_better_than_installed_current")
+        selected_transform_count = int(selected_metrics.get("transform_eval_count_v3", 0) or 0)
+        installed_transform_count = int(installed_metrics.get("transform_eval_count_v3", 0) or 0)
+        if selected_transform_count > 0 and installed_transform_count > 0:
+            selected_regret = float(selected_metrics.get("mean_transform_regret_v3", 0.0) or 0.0)
+            installed_regret = float(installed_metrics.get("mean_transform_regret_v3", 0.0) or 0.0)
+            if selected_regret >= installed_regret:
+                failed.append("transform_regret_v3_not_better_than_installed_current")
+        else:
+            selected_failure = float(selected_metrics.get("failure_rate", 0.0) or 0.0)
+            installed_failure = float(installed_metrics.get("failure_rate", 0.0) or 0.0)
+            selected_mean = float(selected_metrics.get("mean_nme", 0.0) or 0.0)
+            installed_mean = float(installed_metrics.get("mean_nme", 0.0) or 0.0)
+            if selected_failure > installed_failure:
+                failed.append("failure_rate_regresses_vs_installed_current")
+            if selected_mean >= installed_mean:
+                failed.append("mean_nme_not_better_than_installed_current")
         gates[policy_name] = {
             "status": "pass" if not failed else "fail",
             "failed_gates": failed,
@@ -940,6 +1274,15 @@ def _row_float(value: T.Any, default: float = 0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _row_optional_float(value: T.Any) -> float | None:
+    if value is None or str(value).strip() == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _row_int(value: T.Any, default: int = 0) -> int:
@@ -1002,6 +1345,7 @@ def _row_feature_values(row: T.Mapping[str, T.Any]) -> dict[str, float]:
         "selected_candidate_missing_from_eval",
         "oracle",
         "features_json",
+        *V3_RESERVED_ROW_FIELDS,
     }
     payload: dict[str, float] = {}
     for key, value in row.items():
@@ -1106,6 +1450,23 @@ def row_contexts_from_scorer_rows(
                 SimpleNamespace(
                     candidate_name=candidate_name,
                     feature_values=feature_values,
+                    transform_cost_v3=_row_optional_float(row.get("transform_cost_v3")),
+                    transform_oracle_cost_v3=_row_optional_float(
+                        row.get("transform_oracle_cost_v3")
+                    ),
+                    transform_regret_v3=_row_optional_float(row.get("transform_regret_v3")),
+                    transform_oracle_candidate_v3=str(
+                        row.get("transform_oracle_candidate_v3") or ""
+                    ),
+                    transform_oracle_gap_v3=_row_optional_float(
+                        row.get("transform_oracle_gap_v3")
+                    ),
+                    rankable_v3=_row_bool(row.get("rankable_v3", False)),
+                    hard_invalid_v3=_row_bool(row.get("hard_invalid_v3", False)),
+                    hard_invalid_reasons_v3=_row_geometry_reasons(
+                        row.get("hard_invalid_reasons_v3")
+                    ),
+                    soft_structural_penalty_v3=_row_float(row.get("soft_structural_penalty_v3")),
                 )
             )
 
@@ -1234,6 +1595,7 @@ def evaluate_runtime_resolver_scorer(
     fallback_count = 0
     safe_fallback_count = 0
     hard_slice_fallback_count = 0
+    fallback_used_by_sample_id: dict[str, bool] = {}
     for context in contexts:
         context_rows = _context_rows_for_eval(context)
         score_by_candidate = _score_context_rows(scorer, context_rows)
@@ -1261,6 +1623,7 @@ def evaluate_runtime_resolver_scorer(
         fallback_count += int(fallback_used)
         safe_fallback_count += int(fallback_reason == "scorer_high_risk_safe_fallback")
         hard_slice_fallback_count += int(fallback_reason == "consensus_collapse_fusion_rejected")
+        fallback_used_by_sample_id[context.sample_id] = fallback_used
         rejected_nme = None
         replacement_nme = None
         rejected_failure = None
@@ -1338,12 +1701,34 @@ def evaluate_runtime_resolver_scorer(
     hard_bucket_failed_gates = hard_bucket_promotion_gates(metrics_by_split)
 
     best_single_name, best_single_summary = best_single(contexts, candidates)
+    best_single_report_summary = policy_summary(
+        contexts,
+        fixed_candidate_choices(contexts, best_single_name),
+        source_by_sample_id=source_by_sample_id,
+    )
     static_name = (
         "static_weighted_downweight" if "static_weighted_downweight" in candidates else ""
     )
     static = candidate_summary(contexts, static_name) if static_name else best_single_summary
-    scorer_summary = policy_summary(contexts, scorer_choices)
+    static_report_summary = (
+        policy_summary(
+            contexts,
+            fixed_candidate_choices(contexts, static_name),
+            source_by_sample_id=source_by_sample_id,
+        )
+        if static_name
+        else best_single_report_summary
+    )
     primary_scorer_policy = scorer_policy_key(scorer)
+    scorer_summary = policy_summary(
+        contexts,
+        scorer_choices,
+        source_by_sample_id=source_by_sample_id,
+    )
+    use_v3_transform_metrics = (
+        primary_scorer_policy == SCORER_VERSION_LEARNED_QUALITY_V3
+        or scorer.target == TARGET_TRANSFORM_REGRET_V3
+    )
     extra_scorer_choices: dict[str, T.Mapping[str, str]] = {
         primary_scorer_policy: scorer_choices,
     }
@@ -1367,8 +1752,16 @@ def evaluate_runtime_resolver_scorer(
             policy_name
         ]
 
-    current_summary = policy_summary(contexts, current_choices)
-    oracle_summary = policy_summary(contexts, oracle_choices)
+    current_summary = policy_summary(
+        contexts,
+        current_choices,
+        source_by_sample_id=source_by_sample_id,
+    )
+    oracle_summary = policy_summary(
+        contexts,
+        oracle_choices,
+        source_by_sample_id=source_by_sample_id,
+    )
     production_contexts = [
         context
         for context in contexts
@@ -1403,6 +1796,7 @@ def evaluate_runtime_resolver_scorer(
         current_choices=current_choices,
         oracle_choices=oracle_choices,
         extra_scorer_choices=report_extra_scorer_choices,
+        source_by_sample_id=source_by_sample_id,
     )
     gt_hard_all_policy_metrics = policy_metric_bundle(
         gt_hard_all_contexts,
@@ -1412,6 +1806,7 @@ def evaluate_runtime_resolver_scorer(
         current_choices=current_choices,
         oracle_choices=oracle_choices,
         extra_scorer_choices=report_extra_scorer_choices,
+        source_by_sample_id=source_by_sample_id,
     )
     gt_roll_hard_policy_metrics = policy_metric_bundle(
         gt_roll_hard_contexts,
@@ -1421,20 +1816,62 @@ def evaluate_runtime_resolver_scorer(
         current_choices=current_choices,
         oracle_choices=oracle_choices,
         extra_scorer_choices=report_extra_scorer_choices,
+        source_by_sample_id=source_by_sample_id,
+    )
+    production_diagnostics = production_only_diagnostics(
+        production_contexts,
+        fallback_used_by_sample_id=fallback_used_by_sample_id,
+    )
+    production_reweighted_gt_policy_metrics = production_bucket_reweighted_gt_policy_metrics(
+        gt_contexts=gt_hard_all_contexts,
+        production_contexts=production_contexts,
+        candidates=candidates,
+        scorer_policy_name=primary_scorer_policy,
+        scorer_choices=scorer_choices,
+        current_choices=current_choices,
+        oracle_choices=oracle_choices,
+        extra_scorer_choices=report_extra_scorer_choices,
+        source_by_sample_id=source_by_sample_id,
     )
     combined_failed_gates: list[str] = []
     production_failed_gates: list[str] = []
     gt_hard_failed_gates: list[str] = []
-    if static_name and scorer_summary["mean_nme"] >= static["mean_nme"]:
-        combined_failed_gates.append("scorer_mean_nme_not_better_than_static_downweight")
-    if static_name and scorer_summary["p90_nme"] > static["p90_nme"]:
-        combined_failed_gates.append("scorer_p90_nme_regresses_vs_static_downweight")
-    if (
-        static_name
-        and scorer_summary["failure_rate"] > static["failure_rate"] + epsilon_failure_rate
-    ):
-        combined_failed_gates.append("scorer_failure_rate_regresses_vs_static_downweight")
-    if static_name and production_contexts:
+    if use_v3_transform_metrics:
+        comparison_metrics = (
+            production_reweighted_gt_policy_metrics["policies"]
+            if production_contexts
+            else gt_hard_all_policy_metrics
+        )
+        v3_scorer = comparison_metrics.get(primary_scorer_policy, {})
+        v3_static = comparison_metrics.get("static_weighted_downweight", {})
+        if (
+            static_name
+            and int(v3_scorer.get("transform_eval_count_v3", 0) or 0) > 0
+            and int(v3_static.get("transform_eval_count_v3", 0) or 0) > 0
+        ):
+            if float(v3_scorer["mean_transform_regret_v3"]) >= float(
+                v3_static["mean_transform_regret_v3"]
+            ):
+                combined_failed_gates.append(
+                    "scorer_transform_regret_v3_not_better_than_static_downweight"
+                )
+            if float(v3_scorer["p95_transform_regret_v3"]) > float(
+                v3_static["p95_transform_regret_v3"]
+            ):
+                combined_failed_gates.append(
+                    "scorer_p95_transform_regret_v3_regresses_vs_static_downweight"
+                )
+    else:
+        if static_name and scorer_summary["mean_nme"] >= static["mean_nme"]:
+            combined_failed_gates.append("scorer_mean_nme_not_better_than_static_downweight")
+        if static_name and scorer_summary["p90_nme"] > static["p90_nme"]:
+            combined_failed_gates.append("scorer_p90_nme_regresses_vs_static_downweight")
+        if (
+            static_name
+            and scorer_summary["failure_rate"] > static["failure_rate"] + epsilon_failure_rate
+        ):
+            combined_failed_gates.append("scorer_failure_rate_regresses_vs_static_downweight")
+    if static_name and production_contexts and not use_v3_transform_metrics:
         production_scorer = production_only_policy_metrics[primary_scorer_policy]
         production_static = production_only_policy_metrics["static_weighted_downweight"]
         production_hrnet = production_only_policy_metrics.get("hrnet")
@@ -1459,7 +1896,7 @@ def evaluate_runtime_resolver_scorer(
             > production_hrnet["failure_rate"] + epsilon_failure_rate
         ):
             production_failed_gates.append("production_scorer_failure_rate_regresses_vs_hrnet")
-    if static_name and gt_hard_all_contexts:
+    if static_name and gt_hard_all_contexts and not use_v3_transform_metrics:
         gt_hard_scorer = gt_hard_all_policy_metrics[primary_scorer_policy]
         gt_hard_static = gt_hard_all_policy_metrics["static_weighted_downweight"]
         if gt_hard_scorer["failure_rate"] > gt_hard_static["failure_rate"] + epsilon_failure_rate:
@@ -1474,24 +1911,52 @@ def evaluate_runtime_resolver_scorer(
         *gt_hard_failed_gates,
         *hard_bucket_failed_gates,
     ]
-    failed_gates = (
-        [*production_failed_gates, *hard_bucket_failed_gates]
-        if promotion_scope == "production"
-        else universal_failed_gates
+    failed_gates = universal_failed_gates
+    if promotion_scope == "production":
+        failed_gates = [
+            *(combined_failed_gates if use_v3_transform_metrics else ()),
+            *production_failed_gates,
+            *hard_bucket_failed_gates,
+        ]
+    v2_summary = (
+        policy_summary(
+            contexts,
+            v2_scorer_choices,
+            source_by_sample_id=source_by_sample_id,
+        )
+        if v2_scorer is not None
+        else None
     )
-    v2_summary = policy_summary(contexts, v2_scorer_choices) if v2_scorer is not None else None
     v2_failed_gates: list[str] = []
     if v2_summary is not None:
-        if v2_summary["mean_nme"] > scorer_summary["mean_nme"] + epsilon_mean_nme:
-            v2_failed_gates.append("v2_mean_nme_regresses_vs_promoted_scorer")
-        if v2_summary["failure_rate"] > scorer_summary["failure_rate"] + epsilon_failure_rate:
-            v2_failed_gates.append("v2_failure_rate_regresses_vs_promoted_scorer")
+        if (
+            use_v3_transform_metrics
+            and int(v2_summary.get("transform_eval_count_v3", 0) or 0) > 0
+            and int(scorer_summary.get("transform_eval_count_v3", 0) or 0) > 0
+        ):
+            if float(v2_summary["mean_transform_regret_v3"]) > float(
+                scorer_summary["mean_transform_regret_v3"]
+            ):
+                v2_failed_gates.append("v2_transform_regret_v3_regresses_vs_promoted_scorer")
+        else:
+            if v2_summary["mean_nme"] > scorer_summary["mean_nme"] + epsilon_mean_nme:
+                v2_failed_gates.append("v2_mean_nme_regresses_vs_promoted_scorer")
+            if v2_summary["failure_rate"] > scorer_summary["failure_rate"] + epsilon_failure_rate:
+                v2_failed_gates.append("v2_failure_rate_regresses_vs_promoted_scorer")
 
     if not promotion_policy:
-        promotion_policy = "learned_quality_v2"
+        promotion_policy = primary_scorer_policy
 
     selected_policy_metrics: dict[str, T.Mapping[str, T.Any]] = {}
-    if production_contexts:
+    if production_contexts and use_v3_transform_metrics:
+        selected_policy_metrics.update(
+            {
+                key: value
+                for key, value in production_reweighted_gt_policy_metrics["policies"].items()
+                if key in LEARNED_POLICIES and isinstance(value, dict)
+            }
+        )
+    elif production_contexts:
         selected_policy_metrics.update(
             {
                 key: value
@@ -1499,10 +1964,11 @@ def evaluate_runtime_resolver_scorer(
                 if key in LEARNED_POLICIES and isinstance(value, dict)
             }
         )
-        selected_policy_metrics.setdefault(
-            "learned_quality_v2",
-            production_only_policy_metrics[primary_scorer_policy],
-        )
+        if primary_scorer_policy == SCORER_VERSION_REPORT_LABEL:
+            selected_policy_metrics.setdefault(
+                SCORER_VERSION_REPORT_LABEL,
+                production_only_policy_metrics[primary_scorer_policy],
+            )
     else:
         selected_policy_metrics.update(
             {
@@ -1516,18 +1982,36 @@ def evaluate_runtime_resolver_scorer(
                 if key in LEARNED_POLICIES and isinstance(value, dict) and value
             }
         )
-    selected_policy_metrics.setdefault("learned_quality_v2", scorer_summary)
+    selected_policy_metrics.setdefault(
+        primary_scorer_policy,
+        gt_hard_all_policy_metrics.get(primary_scorer_policy, scorer_summary)
+        if use_v3_transform_metrics
+        else scorer_summary,
+    )
+    if v2_summary is not None:
+        selected_policy_metrics.setdefault(SCORER_VERSION_REPORT_LABEL, v2_summary)
 
     installed_metrics = None
     installed_choices = installed_scorer_choices.get(installed_policy)
     if installed_choices:
-        if production_contexts:
+        if production_contexts and use_v3_transform_metrics:
+            installed_metrics = policy_summary(
+                gt_hard_all_contexts,
+                choice_subset(gt_hard_all_contexts, installed_choices),
+                source_by_sample_id=source_by_sample_id,
+            )
+        elif production_contexts:
             installed_metrics = policy_summary(
                 production_contexts,
                 choice_subset(production_contexts, installed_choices),
+                source_by_sample_id=source_by_sample_id,
             )
         else:
-            installed_metrics = policy_summary(contexts, installed_choices)
+            installed_metrics = policy_summary(
+                contexts,
+                installed_choices,
+                source_by_sample_id=source_by_sample_id,
+            )
 
     installed_baseline_gates = installed_baseline_promotion_gates(
         selected_policy_metrics=selected_policy_metrics,
@@ -1634,8 +2118,8 @@ def evaluate_runtime_resolver_scorer(
         ),
         "promoted_scorer_label": primary_scorer_policy,
         "runtime_policy": promotion_policy,
-        "best_single": {"candidate": best_single_name, **best_single_summary},
-        "static_weighted_downweight": {"candidate": static_name, **static},
+        "best_single": {"candidate": best_single_name, **best_single_report_summary},
+        "static_weighted_downweight": {"candidate": static_name, **static_report_summary},
         primary_scorer_policy: scorer_summary,
         RUNTIME_POLICY_REPORT_LABEL: current_summary,
         "oracle": oracle_summary,
@@ -1671,6 +2155,11 @@ def evaluate_runtime_resolver_scorer(
         "metrics_by_split": metrics_by_split,
         "region_reports": region_report_summary,
         "production_only_policy_metrics": production_only_policy_metrics,
+        "production_only_diagnostics": production_diagnostics,
+        "production_bucket_mix": production_diagnostics["bucket_mix"],
+        "production_bucket_reweighted_gt_policy_metrics": (
+            production_reweighted_gt_policy_metrics
+        ),
         "gt_hard_all_policy_metrics": gt_hard_all_policy_metrics,
         "gt_hard_only_policy_metrics": gt_hard_all_policy_metrics,
         "gt_roll_hard_policy_metrics": gt_roll_hard_policy_metrics,
@@ -1702,7 +2191,9 @@ def evaluate_runtime_resolver_scorer(
         "production_validated": production_only_policy_metrics,
         "gt_hard": gt_hard_all_policy_metrics,
         "gt_roll_hard": gt_roll_hard_policy_metrics,
+        "production_bucket_reweighted_gt": production_reweighted_gt_policy_metrics,
     }
+    report["production_checks"] = production_diagnostics
     report["metrics_by_condition_split"] = metrics_by_split
     report["artifacts_by_region"] = region_report_summary
     report["fallbacks"] = {
