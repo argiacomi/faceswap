@@ -101,7 +101,8 @@ DEFAULT_CONFIG_SECTION = "align.ensemble"
 CONFIG_PREVIEW_FILENAME = "config_update_preview.json"
 CONFIG_PATCH_FILENAME = "config_update_patch.ini"
 SCORER_VERSION_LEARNED_QUALITY_V2 = "learned_quality_v2"
-PROMOTED_POLICIES = (SCORER_VERSION_LEARNED_QUALITY_V2,)
+SCORER_VERSION_LEARNED_QUALITY_V3 = "learned_quality_v3"
+PROMOTED_POLICIES = (SCORER_VERSION_LEARNED_QUALITY_V2, SCORER_VERSION_LEARNED_QUALITY_V3)
 STAGE_ALIASES = {
     "v2_scorer_training": "scorer_training",
 }
@@ -178,6 +179,7 @@ class PipelinePaths:
     scorer_dataset_manifest: Path = field(init=False)
     canonical_scorers_dir: Path = field(init=False)
     canonical_v2_scorer_artifact: Path = field(init=False)
+    canonical_v3_scorer_artifact: Path = field(init=False)
     scorer_suite_metrics: Path = field(init=False)
     scorer_training_sentinel: Path = field(init=False)
     scorer_eval_dir: Path = field(init=False)
@@ -307,6 +309,11 @@ class PipelinePaths:
             self,
             "canonical_v2_scorer_artifact",
             self.canonical_scorers_dir / "learned_quality_v2.json",
+        )
+        object.__setattr__(
+            self,
+            "canonical_v3_scorer_artifact",
+            self.canonical_scorers_dir / "learned_quality_v3.json",
         )
 
         object.__setattr__(
@@ -1102,7 +1109,7 @@ def _command_scorer_eval(args: argparse.Namespace, paths: PipelinePaths) -> list
         "--weights",
         str(paths.best_weights),
         "--scorer",
-        str(paths.canonical_v2_scorer_artifact),
+        str(_promoted_scorer_source(args, paths)),
         "--v2-scorer",
         str(paths.canonical_v2_scorer_artifact),
         "--scorer-rows",
@@ -1168,6 +1175,7 @@ def _outputs_for(stage: str, paths: PipelinePaths) -> list[Path]:
         "freeze_resolver_metadata": [paths.frozen_gt_metadata],
         "scorer_training": [
             paths.canonical_v2_scorer_artifact,
+            paths.canonical_v3_scorer_artifact,
             paths.scorer_rows_csv,
             paths.scorer_dataset_manifest,
             paths.scorer_suite_metrics,
@@ -1260,7 +1268,7 @@ def _required_inputs_for(stage: str, args: argparse.Namespace, paths: PipelinePa
             paths.frozen_gt_metadata,
         ],
         "scorer_evaluation": [
-            paths.canonical_v2_scorer_artifact,
+            _promoted_scorer_source(args, paths),
             paths.scorer_rows_csv,
             paths.scorer_dataset_manifest,
         ],
@@ -1292,7 +1300,7 @@ def _contract_for(stage: str, args: argparse.Namespace, paths: PipelinePaths) ->
         "hard_alignment_validation": "writes gt_hard_validation artifacts; --resume skips when manifest.json exists",
         "build_gt_hard_resolver_metadata": "runs the GT-hard resolver metadata CLI on the GT-hard manifest and writes the frozen resolver metadata sidecar; explicit sidecars are copied into the same frozen path",
         "freeze_resolver_metadata": "validates the caller-supplied or freshly generated frozen GT-hard resolver metadata sidecar; never derives runtime metadata from a plain manifest",
-        "scorer_training": "loads scorer contexts once, writes canonical scorer rows, trains only the learned_quality_v2 scorer artifact, and records an input/hyperparameter sentinel; --resume skips only when the v2 canonical artifact and the sentinel match",
+        "scorer_training": "loads scorer contexts once, writes canonical scorer rows, trains canonical learned_quality artifacts, and records an input/hyperparameter sentinel; --resume skips only when canonical scorer artifacts and the sentinel match",
         "scorer_evaluation": "writes scorer_evaluation reports; --resume skips when scorer_policy_report.json exists",
         "production_promotion_check": "reads scorer report only; no recompute; requires promotion_status/status pass",
         "artifact_export": "writes promotion_manifest.json with immutable runtime artifact provenance; --resume skips when the manifest matches the promoted scorer source",
@@ -1855,23 +1863,33 @@ def _static_downweight_metrics(report: T.Mapping[str, T.Any]) -> dict[str, T.Any
     )
 
 
-def _validate_v2_promotion_gate(report: T.Mapping[str, T.Any]) -> list[str]:
-    """Validate legacy learned_quality_v2 promotion fields when no installed baseline exists."""
-    policy_name = SCORER_VERSION_LEARNED_QUALITY_V2
-    status_keys = (
-        "learned_quality_v2_gate_status",
-        "learned_quality_v2_production_gate_status",
-        "learned_quality_v2_promotion_status",
-        "v2_gate_status",
-        "v2_production_gate_status",
-        "v2_promotion_status",
+def _validate_v2_promotion_gate(
+    report: T.Mapping[str, T.Any],
+    *,
+    policy_name: str = SCORER_VERSION_LEARNED_QUALITY_V2,
+) -> list[str]:
+    """Validate legacy learned-quality promotion fields when no installed baseline exists."""
+    status_keys: tuple[str, ...] = (
+        f"{policy_name}_gate_status",
+        f"{policy_name}_production_gate_status",
+        f"{policy_name}_promotion_status",
     )
-    failed_keys = (
-        "learned_quality_v2_failed_gates",
-        "learned_quality_v2_production_failed_gates",
-        "v2_failed_gates",
-        "v2_production_failed_gates",
+    failed_keys: tuple[str, ...] = (
+        f"{policy_name}_failed_gates",
+        f"{policy_name}_production_failed_gates",
     )
+    if policy_name == SCORER_VERSION_LEARNED_QUALITY_V2:
+        status_keys = (
+            *status_keys,
+            "v2_gate_status",
+            "v2_production_gate_status",
+            "v2_promotion_status",
+        )
+        failed_keys = (
+            *failed_keys,
+            "v2_failed_gates",
+            "v2_production_failed_gates",
+        )
     for key in status_keys:
         status = report.get(key)
         if status is not None and str(status) != "pass":
@@ -1999,7 +2017,9 @@ def _promotion_check(
     _require(paths.scorer_report, "scorer evaluation report")
     report = _read_json(paths.scorer_report)
 
-    policy_name = SCORER_VERSION_LEARNED_QUALITY_V2
+    policy_name = (
+        _promoted_runtime_policy(args) if args is not None else SCORER_VERSION_LEARNED_QUALITY_V2
+    )
 
     gates = report.get("installed_baseline_promotion")
 
@@ -2032,7 +2052,7 @@ def _promotion_check(
             f"production_failed_gates={production_failed}"
         )
 
-    promoted_notes: list[str] = _validate_v2_promotion_gate(report)
+    promoted_notes: list[str] = _validate_v2_promotion_gate(report, policy_name=policy_name)
 
     if promotion_scope == "universal":
         gt_status = str(report.get("gt_hard_gate_status") or "")
@@ -2165,7 +2185,9 @@ def _validate_stage_outputs(
 
 
 def _promoted_scorer_source(args: argparse.Namespace, paths: PipelinePaths) -> Path:
-    _promoted_runtime_policy(args)
+    policy = _promoted_runtime_policy(args)
+    if policy == SCORER_VERSION_LEARNED_QUALITY_V3:
+        return paths.canonical_v3_scorer_artifact
     return paths.canonical_v2_scorer_artifact
 
 
@@ -2173,7 +2195,7 @@ def _promoted_runtime_policy(args: argparse.Namespace) -> str:
     explicit = str(getattr(args, "promoted_policy", "") or "")
     if explicit:
         return explicit
-    return SCORER_VERSION_LEARNED_QUALITY_V2
+    return str(getattr(args, "promoted_scorer_version", "") or SCORER_VERSION_LEARNED_QUALITY_V2)
 
 
 def _promoted_scorer_target(args: argparse.Namespace, paths: PipelinePaths) -> str:
@@ -2428,6 +2450,7 @@ def _install_production_bundle_artifacts(args: argparse.Namespace, paths: Pipeli
     """
     scorer_sources = {
         "learned_quality_v2": paths.canonical_v2_scorer_artifact,
+        "learned_quality_v3": paths.canonical_v3_scorer_artifact,
     }
     return install_production_bundle(
         setup_src=paths.best_setup,
@@ -3120,11 +3143,11 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--promoted-scorer-version",
-        choices=(SCORER_VERSION_LEARNED_QUALITY_V2,),
+        choices=PROMOTED_POLICIES,
         default=SCORER_VERSION_LEARNED_QUALITY_V2,
         help=(
             "Scorer artifact to export into the stable runtime resolver scorer path. "
-            "Only learned_quality_v2 is supported."
+            "Defaults to learned_quality_v2."
         ),
     )
     parser.add_argument(

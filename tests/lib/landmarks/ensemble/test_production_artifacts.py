@@ -16,13 +16,16 @@ def _seed_pipeline_sources(root: Path) -> dict[str, Path]:
     setup_src = root / "src_setup.json"
     weights_src = root / "src_weights.json"
     scorer_v2 = root / "scorer_v2.json"
+    scorer_v3 = root / "scorer_v3.json"
     setup_src.write_text(json.dumps({"weights_path": "best_weights.json"}))
     weights_src.write_text(json.dumps({"hrnet": [1.0]}))
     scorer_v2.write_text(json.dumps({"model_type": "lightgbm_lambdarank"}))
+    scorer_v3.write_text(json.dumps({"model_type": "lightgbm_lambdarank"}))
     return {
         "setup_src": setup_src,
         "weights_src": weights_src,
         "learned_quality_v2": scorer_v2,
+        "learned_quality_v3": scorer_v3,
     }
 
 
@@ -61,6 +64,7 @@ def test_install_and_load_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPa
         weights_src=sources["weights_src"],
         scorer_sources={
             "learned_quality_v2": sources["learned_quality_v2"],
+            "learned_quality_v3": sources["learned_quality_v3"],
         },
         active_policy="learned_quality_v2",
         source_output_root=tmp_path / "src",
@@ -71,6 +75,7 @@ def test_install_and_load_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert (bundle / "best_setup.json").is_file()
     assert (bundle / "best_weights.json").is_file()
     assert (bundle / "scorers" / "learned_quality_v2.json").is_file()
+    assert (bundle / "scorers" / "learned_quality_v3.json").is_file()
     assert (bundle / "manifest.json").is_file()
 
     loaded = pa.load_production_bundle()
@@ -79,6 +84,10 @@ def test_install_and_load_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert (
         loaded.scorer_path_for("learned_quality_v2")
         == (bundle / "scorers" / "learned_quality_v2.json").resolve()
+    )
+    assert (
+        loaded.scorer_path_for("learned_quality_v3")
+        == (bundle / "scorers" / "learned_quality_v3.json").resolve()
     )
     # roll_aware_veto returns None — no scorer needed for that path.
     assert loaded.scorer_path_for(pa.ROLL_AWARE_VETO_POLICY) is None
@@ -105,6 +114,32 @@ def test_install_skips_missing_scorer_sources(
     assert set(loaded.scorers) == {"learned_quality_v2"}
 
 
+def test_install_and_load_v3_active_policy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """learned_quality_v3 can be the active learned scorer policy."""
+    sources = _seed_pipeline_sources(tmp_path / "src")
+    bundle = tmp_path / "bundle"
+    monkeypatch.setenv(pa.BUNDLE_DIR_ENV, str(bundle))
+
+    pa.install_production_bundle(
+        setup_src=sources["setup_src"],
+        weights_src=sources["weights_src"],
+        scorer_sources={
+            "learned_quality_v2": sources["learned_quality_v2"],
+            "learned_quality_v3": sources["learned_quality_v3"],
+        },
+        active_policy="learned_quality_v3",
+    )
+
+    loaded = pa.load_production_bundle()
+    assert loaded.active_policy == "learned_quality_v3"
+    assert (
+        loaded.scorer_path_for("learned_quality_v3")
+        == (bundle / "scorers" / "learned_quality_v3.json").resolve()
+    )
+
+
 def test_install_rejects_unknown_policy(tmp_path: Path) -> None:
     """Unknown policies in scorer_sources are a programming error."""
     sources = _seed_pipeline_sources(tmp_path / "src")
@@ -112,7 +147,7 @@ def test_install_rejects_unknown_policy(tmp_path: Path) -> None:
         pa.install_production_bundle(
             setup_src=sources["setup_src"],
             weights_src=sources["weights_src"],
-            scorer_sources={"learned_quality_v3": sources["learned_quality_v2"]},
+            scorer_sources={"learned_quality_v4": sources["learned_quality_v2"]},
             active_policy="learned_quality_v2",
             dest=tmp_path / "bundle",
         )

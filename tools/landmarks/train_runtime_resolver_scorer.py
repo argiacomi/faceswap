@@ -27,6 +27,7 @@ from lib.landmarks.ensemble.scorer_training import (
     EVAL_ROWS_CSV,
     SCORER_ARTIFACT,
     SCORER_V2_ARTIFACT,
+    SCORER_V3_ARTIFACT,
     TRAINING_CANDIDATE_TABLE_CSV,
     TRAINING_METRICS_JSON,
     TRAINING_ROWS_CSV,
@@ -60,8 +61,8 @@ def _parser() -> argparse.ArgumentParser:
         choices=(TARGET_SELECTION_COST,),
         default=TARGET_SELECTION_COST,
         help=(
-            "The only supported learned scorer is learned_quality_v2, trained on "
-            "downstream weighted alignment cost. Legacy scorer targets were removed."
+            "Target for learned_quality_v2. scorer_suite also trains learned_quality_v3 "
+            "from visible transform-regret rows."
         ),
     )
     parser.add_argument(
@@ -72,8 +73,8 @@ def _parser() -> argparse.ArgumentParser:
         ),
         default="learned_quality_v2",
         help=(
-            "Explicit scorer training mode. learned_quality_v2 trains the only "
-            "supported learned scorer and writes runtime_resolver_scorer_v2.json."
+            "Explicit scorer training mode. scorer_suite writes canonical "
+            "learned_quality_v2 and learned_quality_v3 artifacts."
         ),
     )
     parser.add_argument("--l2", type=float, default=0.001)
@@ -162,6 +163,7 @@ __all__ = [
     "EVAL_ROWS_CSV",
     "SCORER_ARTIFACT",
     "SCORER_V2_ARTIFACT",
+    "SCORER_V3_ARTIFACT",
     "TRAINING_CANDIDATE_TABLE_CSV",
     "TRAINING_METRICS_JSON",
     "TRAINING_ROWS_CSV",

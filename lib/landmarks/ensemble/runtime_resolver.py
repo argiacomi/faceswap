@@ -21,6 +21,7 @@ import numpy as np
 from lib.landmarks.core.fusion import normalize_weight_matrix, plain_average, static_weighted
 from lib.landmarks.core.rejection import weighted_median
 from lib.landmarks.core.schema import LandmarkPrediction
+from lib.landmarks.ensemble.production_artifacts import LEARNED_POLICIES
 from lib.landmarks.ensemble.runtime_resolver_scorer import (
     candidate_scores as score_runtime_candidates,
 )
@@ -770,7 +771,10 @@ def _fuse_strategy(
     method = strategy_outlier_method(canonical)
     threshold = config.outlier_threshold if strategy_uses_threshold(canonical) else 3.5
     if not strategy_requires_weights(canonical):
-        return plain_average(items, outlier_method=method, outlier_threshold=threshold).points
+        return T.cast(
+            np.ndarray,
+            plain_average(items, outlier_method=method, outlier_threshold=threshold).points,
+        )
     models = tuple(candidate.name for candidate in singles)
     if config.weights is None:
         matrix = np.array(
@@ -789,13 +793,16 @@ def _fuse_strategy(
             model_count=stack.shape[0],
             landmark_count=stack.shape[1],
         )
-        return weighted_median(stack, normalized).astype("float32", copy=False)
-    return static_weighted(
-        items,
-        matrix,
-        outlier_method=method,
-        outlier_threshold=threshold,
-    ).points
+        return T.cast(np.ndarray, weighted_median(stack, normalized).astype("float32", copy=False))
+    return T.cast(
+        np.ndarray,
+        static_weighted(
+            items,
+            matrix,
+            outlier_method=method,
+            outlier_threshold=threshold,
+        ).points,
+    )
 
 
 def build_candidates(
@@ -1670,7 +1677,7 @@ def resolve_runtime(
     preloaded_scorer: T.Any = None,
 ) -> RuntimeResolverResult:
     """Resolve one face using runtime candidate diagnostics and policy selection."""
-    learned_policies = {"learned_quality_v2"}
+    learned_policies = set(LEARNED_POLICIES)
     if config.policy not in {"roll_aware_veto", *learned_policies}:
         raise RuntimeResolverError(f"unsupported runtime resolver policy {config.policy!r}")
     logger.debug(

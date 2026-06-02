@@ -65,6 +65,8 @@ TRAINING_V2_METRICS_JSON = "runtime_resolver_scorer_v2_training_metrics.json"
 TRAINING_V3_METRICS_JSON = "runtime_resolver_scorer_v3_training_metrics.json"
 SCORER_CONDITION_REPORT_CSV = "scorer_report_by_condition.csv"
 SCORER_REGION_REPORT_CSV = "scorer_report_by_region.csv"
+MIN_V3_ORACLE_GAP = 1e-4
+"""Minimum cost gap required to use a v3 group for ranking supervision."""
 
 HARD_CASE_SAMPLE_WEIGHTS: dict[str, float] = {
     "normal": 1.0,
@@ -521,6 +523,8 @@ def _rankable_v3_tagged_rows(
     single_valid_groups = 0
     single_valid_rows = 0
     hard_invalid_rows = 0
+    near_tie_groups = 0
+    near_tie_rows = 0
 
     for key in sorted(groups):
         group = groups[key]
@@ -542,15 +546,26 @@ def _rankable_v3_tagged_rows(
             single_valid_rows += len(group)
             continue
 
+        oracle_gap = min(float(row.transform_oracle_gap_v3) for row, _source in rankable)
+        if oracle_gap < MIN_V3_ORACLE_GAP:
+            near_tie_groups += 1
+            near_tie_rows += len(group)
+            continue
+
         kept.extend(sorted(rankable, key=lambda tagged: tagged[0].candidate_name))
 
     stats = {
         "total_group_count": len(groups),
-        "rankable_pair_group_count": (len(groups) - fallback_abstain_groups - single_valid_groups),
+        "rankable_pair_group_count": (
+            len(groups) - fallback_abstain_groups - single_valid_groups - near_tie_groups
+        ),
         "fallback_abstain_group_count": fallback_abstain_groups,
         "fallback_abstain_row_count": fallback_abstain_rows,
         "single_valid_group_count": single_valid_groups,
         "single_valid_row_count": single_valid_rows,
+        "near_tie_group_count": near_tie_groups,
+        "near_tie_row_count": near_tie_rows,
+        "min_v3_oracle_gap": MIN_V3_ORACLE_GAP,
         "rankable_row_count": len(kept),
         "hard_invalid_row_count": hard_invalid_rows,
     }
@@ -1041,7 +1056,8 @@ def train_runtime_resolver_scorer_suite(
             "candidate_table": str(candidate_table_path),
             "note": (
                 "Legacy linear/logistic scorer training has been removed. New consumers should use "
-                "scorer_dataset/rows.csv, scorer_dataset/manifest.json, and learned_quality_v2."
+                "scorer_dataset/rows.csv, scorer_dataset/manifest.json, and the canonical "
+                "learned_quality artifacts."
             ),
         },
         "candidate_table_status": "compatibility_derived_from_scorer_contexts",

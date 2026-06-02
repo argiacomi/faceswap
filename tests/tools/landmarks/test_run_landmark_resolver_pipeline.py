@@ -33,6 +33,7 @@ from tools.landmarks.run_landmark_resolver_pipeline import (
     _contract_for,
     _export_artifacts,
     _freeze_metadata,
+    _promoted_scorer_source,
     _promotion_check,
     _stage_complete,
     _stage_forced,
@@ -82,6 +83,7 @@ def _args(tmp_path: Path, **overrides: object) -> argparse.Namespace:
         "split_seed": 1337,
         "scorer_target": "selection_cost",
         "promoted_scorer_version": "learned_quality_v2",
+        "promoted_policy": "",
         "v2_eval_fraction": 0.20,
         "v2_learning_rate": 0.05,
         "v2_iterations": 150,
@@ -148,8 +150,7 @@ def _touch_pipeline_outputs(paths: PipelinePaths, *, promotion_status: str = "pa
         paths.hard_manifest,
         paths.frozen_gt_metadata,
         paths.canonical_v2_scorer_artifact,
-        paths.canonical_v2_scorer_artifact,
-        paths.canonical_v2_scorer_artifact,
+        paths.canonical_v3_scorer_artifact,
         paths.scorer_rows_csv,
         paths.scorer_dataset_manifest,
         paths.scorer_suite_metrics,
@@ -181,6 +182,18 @@ def _touch_pipeline_outputs(paths: PipelinePaths, *, promotion_status: str = "pa
     }
     paths.canonical_v2_scorer_artifact.write_text(
         json.dumps(v2_payload) + chr(10),
+        encoding="utf-8",
+    )
+    v3_payload = {
+        **v2_payload,
+        "artifact_schema_version": 3,
+        "target": "transform_regret_v3",
+        "version": "learned_quality_v3",
+        "scorer_version": "learned_quality_v3",
+        "runtime_policy": "learned_quality_v3",
+    }
+    paths.canonical_v3_scorer_artifact.write_text(
+        json.dumps(v3_payload) + chr(10),
         encoding="utf-8",
     )
 
@@ -688,7 +701,7 @@ def test_candidate_search_command_uses_full_manifest_with_splits(
 
 @pytest.mark.parametrize(
     "promoted_scorer_version",
-    ("learned_quality_v2",),
+    ("learned_quality_v2", "learned_quality_v3"),
 )
 def test_candidate_search_command_requires_effective_ensemble(
     tmp_path: Path,
@@ -706,6 +719,13 @@ def test_candidate_search_command_requires_effective_ensemble(
     command = _command_candidate_search(args, paths)
 
     assert "--require-effective-ensemble" in command
+
+
+def test_promoted_scorer_source_uses_v3_artifact(tmp_path: Path) -> None:
+    args = _args(tmp_path, promoted_scorer_version="learned_quality_v3")
+    paths = PipelinePaths(args.run_root, args.production_root, args.output_root)
+
+    assert _promoted_scorer_source(args, paths) == paths.canonical_v3_scorer_artifact
 
 
 def test_gt_hard_resolver_metadata_contract_runs_after_hard_validation(
@@ -903,8 +923,7 @@ def test_scorer_training_resume_requires_matching_sentinel_for_stage_aliases(
         paths.best_weights,
         paths.frozen_gt_metadata,
         paths.canonical_v2_scorer_artifact,
-        paths.canonical_v2_scorer_artifact,
-        paths.canonical_v2_scorer_artifact,
+        paths.canonical_v3_scorer_artifact,
         paths.scorer_rows_csv,
         paths.scorer_dataset_manifest,
         paths.scorer_suite_metrics,
@@ -1584,12 +1603,14 @@ def test_apply_config_installs_production_bundle(
     # learned_quality_v2 is the default promoted_scorer_version in _args.
     assert loaded.active_policy == "learned_quality_v2"
     assert loaded.setup_path.is_file()
-    # All three scorer sources existed via _touch_pipeline_outputs, so all
-    # three policy slots should be populated.
+    # All learned scorer sources existed via _touch_pipeline_outputs, so all
+    # learned policy slots should be populated.
     assert set(loaded.scorers) == {
         "learned_quality_v2",
+        "learned_quality_v3",
     }
     assert loaded.scorer_path_for("learned_quality_v2").is_file()  # type: ignore[union-attr]
+    assert loaded.scorer_path_for("learned_quality_v3").is_file()  # type: ignore[union-attr]
     assert loaded.scorer_path_for(pa.ROLL_AWARE_VETO_POLICY) is None
 
 

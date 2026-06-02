@@ -24,6 +24,7 @@ from lib.landmarks.ensemble.scorer_target_config import (
     TARGET_TRANSFORM_REGRET_V3,
 )
 from lib.landmarks.ensemble.scorer_training import (
+    MIN_V3_ORACLE_GAP,
     _rankable_v3_tagged_rows,
     _v3_lambdarank_label,
     scorer_target_value,
@@ -230,10 +231,19 @@ def test_v3_rankable_filter_drops_invalid_rows_and_counts_abstain_groups() -> No
         rankable_v3=True,
         hard_invalid_v3=False,
         transform_regret_v3=0.0,
+        transform_oracle_gap_v3=0.20,
+    )
+    rankable_same_group = _row(
+        sample_id="sample_a",
+        candidate_name="candidate_b",
+        rankable_v3=True,
+        hard_invalid_v3=False,
+        transform_regret_v3=0.2,
+        transform_oracle_gap_v3=0.20,
     )
     invalid_same_group = _row(
         sample_id="sample_a",
-        candidate_name="candidate_b",
+        candidate_name="candidate_c",
         rankable_v3=False,
         hard_invalid_v3=True,
         hard_invalid_reasons_v3=("cloud_collapse",),
@@ -251,17 +261,45 @@ def test_v3_rankable_filter_drops_invalid_rows_and_counts_abstain_groups() -> No
     kept, stats = _rankable_v3_tagged_rows(
         [
             (rankable, "gt"),
+            (rankable_same_group, "gt"),
             (invalid_same_group, "gt"),
             (invalid_all_group, "gt"),
         ]
     )
 
-    assert kept == [(rankable, "gt")]
+    assert kept == [(rankable, "gt"), (rankable_same_group, "gt")]
     assert stats["total_group_count"] == 2
-    assert stats["rankable_group_count"] == 1
+    assert stats["rankable_pair_group_count"] == 1
     assert stats["fallback_abstain_group_count"] == 1
     assert stats["fallback_abstain_row_count"] == 1
     assert stats["hard_invalid_row_count"] == 2
+
+
+def test_v3_rankable_filter_skips_near_tie_groups() -> None:
+    first = _row(
+        sample_id="near_tie",
+        candidate_name="candidate_a",
+        rankable_v3=True,
+        hard_invalid_v3=False,
+        transform_regret_v3=0.0,
+        transform_oracle_gap_v3=MIN_V3_ORACLE_GAP / 2.0,
+    )
+    second = _row(
+        sample_id="near_tie",
+        candidate_name="candidate_b",
+        rankable_v3=True,
+        hard_invalid_v3=False,
+        transform_regret_v3=MIN_V3_ORACLE_GAP / 2.0,
+        transform_oracle_gap_v3=MIN_V3_ORACLE_GAP / 2.0,
+    )
+
+    kept, stats = _rankable_v3_tagged_rows([(first, "gt"), (second, "gt")])
+
+    assert kept == []
+    assert stats["rankable_pair_group_count"] == 0
+    assert stats["near_tie_group_count"] == 1
+    assert stats["near_tie_row_count"] == 2
+    assert stats["min_v3_oracle_gap"] == pytest.approx(MIN_V3_ORACLE_GAP)
 
 
 def test_v3_lambdarank_label_uses_transform_regret_not_nme_or_selection_cost() -> None:
