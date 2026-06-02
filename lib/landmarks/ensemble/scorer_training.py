@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import math
 import shutil
 import typing as T
 from collections import defaultdict
@@ -12,6 +13,10 @@ from pathlib import Path
 
 import numpy as np
 
+from lib.landmarks.datasets.hard_negative_mining import (
+    DEFAULT_HARD_NEGATIVE_WEIGHT,
+    MAX_HARD_NEGATIVE_WEIGHT,
+)
 from lib.landmarks.ensemble.runtime_features import (
     RUNTIME_FEATURE_CONTRACT_VERSION,
     runtime_feature_order,
@@ -158,6 +163,7 @@ def write_tagged_rows_csv(rows: T.Sequence[TaggedRow], path: Path) -> Path:
         "hard_invalid_v3",
         "hard_invalid_reasons_v3",
         "soft_structural_penalty_v3",
+        "hard_negative_weight",
         "is_oracle",
         "was_selected_by_current_policy",
         "gap_vs_oracle",
@@ -229,6 +235,23 @@ def _crop_breaking_weight_bonus(row: CandidateQualityRow) -> float:
     return 0.0
 
 
+def _hard_negative_multiplier(row: CandidateQualityRow) -> float:
+    """Return the mined hard-negative weight multiplier for one row.
+
+    The hard-negative manifest builder writes ``metadata.hard_negative_weight``
+    which flows onto :attr:`CandidateQualityRow.hard_negative_weight`. Samples
+    from naturally-sampled manifests carry the neutral default and are
+    unaffected.
+    """
+    try:
+        weight = float(row.hard_negative_weight)
+    except (TypeError, ValueError):
+        return DEFAULT_HARD_NEGATIVE_WEIGHT
+    if not math.isfinite(weight) or weight <= 0.0:
+        return DEFAULT_HARD_NEGATIVE_WEIGHT
+    return weight
+
+
 def scorer_sample_weight(row: CandidateQualityRow, source: str = "") -> float:
     """Return sample weight for one candidate row.
 
@@ -237,6 +260,10 @@ def scorer_sample_weight(row: CandidateQualityRow, source: str = "") -> float:
     Occlusion: 2x
     Profile + occlusion: 4x
     Production failure: 5x minimum
+
+    Mined hard-negative manifest weights (``metadata.hard_negative_weight``)
+    multiply the condition weight and the combined value is capped at
+    :data:`MAX_HARD_NEGATIVE_WEIGHT` to avoid training instability.
     """
     label = _hard_case_split_label(row, source)
     weight = HARD_CASE_SAMPLE_WEIGHTS[label]
@@ -245,6 +272,9 @@ def scorer_sample_weight(row: CandidateQualityRow, source: str = "") -> float:
     weight += _crop_breaking_weight_bonus(row)
     if row.candidate_failure_or_high_gap:
         weight += 1.0
+    multiplier = _hard_negative_multiplier(row)
+    if multiplier > DEFAULT_HARD_NEGATIVE_WEIGHT:
+        weight = min(weight * multiplier, max(weight, MAX_HARD_NEGATIVE_WEIGHT))
     return float(weight)
 
 
@@ -408,9 +438,18 @@ def _v3_query_condition_label(row: CandidateQualityRow, source: str = "") -> str
 
 
 def v3_lambdarank_query_weight(row: CandidateQualityRow, source: str = "") -> float:
-    """Return face-level v3 query weight without candidate-specific signals."""
+    """Return face-level v3 query weight without candidate-specific signals.
+
+    Mined hard-negative manifest weights multiply the condition weight; the
+    combined value never reduces the base condition weight and is capped at
+    :data:`MAX_HARD_NEGATIVE_WEIGHT`.
+    """
     label = _v3_query_condition_label(row, source)
-    return float(HARD_CASE_SAMPLE_WEIGHTS[label])
+    weight = float(HARD_CASE_SAMPLE_WEIGHTS[label])
+    multiplier = _hard_negative_multiplier(row)
+    if multiplier > DEFAULT_HARD_NEGATIVE_WEIGHT:
+        weight = min(weight * multiplier, max(weight, MAX_HARD_NEGATIVE_WEIGHT))
+    return weight
 
 
 def _v3_sample_group_key(row: CandidateQualityRow, source: str) -> tuple[str, str, str, str]:

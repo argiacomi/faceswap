@@ -76,6 +76,7 @@ def _fieldnames(feature_names: T.Sequence[str]) -> list[str]:
         "hard_invalid_v3",
         "hard_invalid_reasons_v3",
         "soft_structural_penalty_v3",
+        "hard_negative_weight",
         "is_oracle",
         "was_selected_by_current_policy",
         "gap_vs_oracle",

@@ -15,6 +15,10 @@ import numpy as np
 
 from lib.landmarks.cache.prediction_cache import DiskPredictionCache
 from lib.landmarks.coordinates import roi_to_matrix
+from lib.landmarks.datasets.hard_negative_mining import (
+    DEFAULT_HARD_NEGATIVE_WEIGHT,
+    clamp_hard_negative_weight,
+)
 from lib.landmarks.datasets.manifest_io import (
     LandmarkSample,
     bbox_from_truth_fallback,
@@ -230,6 +234,7 @@ class CandidateQualityRow:
     hard_invalid_reasons_v3: tuple[str, ...]
     soft_structural_penalty_v3: float
     face_index: int = 0
+    hard_negative_weight: float = 1.0
 
     def to_csv_row(self) -> dict[str, T.Any]:
         """Return stable CSV fields plus a JSON feature payload."""
@@ -269,6 +274,7 @@ class CandidateQualityRow:
             "hard_invalid_v3": int(self.hard_invalid_v3),
             "hard_invalid_reasons_v3": "|".join(self.hard_invalid_reasons_v3),
             "soft_structural_penalty_v3": self.soft_structural_penalty_v3,
+            "hard_negative_weight": self.hard_negative_weight,
             "selected_by_current_policy": self.selected_by_current_policy,
             "selected_candidate_missing_from_eval": int(self.selected_candidate_missing_from_eval),
             "oracle": self.oracle,
@@ -418,6 +424,7 @@ class SampleCandidateContext:
     runtime_bucket_source: str
     selected_candidate_missing_from_eval: bool
     candidate_extra_features: dict[str, dict[str, float]]
+    hard_negative_weight: float = 1.0
 
 
 def parse_candidates(
@@ -999,7 +1006,23 @@ def build_sample_context(
         runtime_bucket_source=runtime_bucket_source,
         selected_candidate_missing_from_eval=selected_candidate_missing_from_eval,
         candidate_extra_features=candidate_extra_features,
+        hard_negative_weight=_hard_negative_weight_from_sample(sample),
     )
+
+
+def _hard_negative_weight_from_sample(sample: LandmarkSample) -> float:
+    """Return the mined hard-negative weight stored on a manifest sample.
+
+    The hard-negative manifest builder writes ``metadata.hard_negative_weight``;
+    samples without it fall back to the neutral default so naturally-sampled
+    manifests are unaffected.
+    """
+    metadata = sample.metadata if isinstance(sample.metadata, dict) else {}
+    try:
+        weight = float(metadata.get("hard_negative_weight", DEFAULT_HARD_NEGATIVE_WEIGHT))
+    except (TypeError, ValueError):
+        return DEFAULT_HARD_NEGATIVE_WEIGHT
+    return clamp_hard_negative_weight(weight)
 
 
 def _proxy_text_for_downstream_cost(
@@ -1236,6 +1259,7 @@ def rows_for_context(
                 hard_invalid_v3=bool(v3_cost.hard_invalid),
                 hard_invalid_reasons_v3=tuple(v3_cost.hard_invalid_reasons),
                 soft_structural_penalty_v3=float(v3_cost.soft_structural_penalty),
+                hard_negative_weight=context.hard_negative_weight,
             )
         )
     return rows
@@ -1461,6 +1485,7 @@ def write_rows_csv(rows: T.Sequence[CandidateQualityRow], path: Path) -> Path:
         "hard_invalid_v3",
         "hard_invalid_reasons_v3",
         "soft_structural_penalty_v3",
+        "hard_negative_weight",
         "is_oracle",
         "was_selected_by_current_policy",
         "gap_vs_oracle",
