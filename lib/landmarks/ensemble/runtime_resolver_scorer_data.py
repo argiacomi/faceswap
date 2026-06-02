@@ -25,6 +25,7 @@ from lib.landmarks.ensemble.hard_condition_taxonomy import (
     NEW_HARD_CONDITION_LABELS,
     derive_hard_condition_taxonomy,
 )
+from lib.landmarks.ensemble.runtime_features import candidate_feature_map, runtime_feature_order
 from lib.landmarks.ensemble.runtime_resolver import (
     CandidateMetrics,
     CandidateRecord,
@@ -41,7 +42,6 @@ from lib.landmarks.ensemble.runtime_resolver import (
     infer_runtime_bucket,
     resolve_runtime,
 )
-from lib.landmarks.ensemble.runtime_resolver_scorer import candidate_feature_map
 from lib.landmarks.ensemble.scorer_target_config import (
     DEFAULT_COLLAPSE_COST_PENALTY,
     DEFAULT_FAILURE_COST_PENALTY,
@@ -1336,7 +1336,7 @@ def export_candidate_table(
 def write_rows_csv(rows: T.Sequence[CandidateQualityRow], path: Path) -> Path:
     """Write scorer training rows to CSV."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    feature_names = sorted({name for row in rows for name in row.feature_values})
+    feature_names = list(runtime_feature_order(row.feature_values for row in rows))
     fieldnames = [
         "sample_id",
         "face_index",

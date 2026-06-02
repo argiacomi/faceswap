@@ -13,16 +13,23 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+import lib.landmarks.ensemble.runtime_features as runtime_features
+import lib.landmarks.ensemble.runtime_resolver_scorer as runtime_resolver_scorer_impl
 import lib.landmarks.ensemble.runtime_resolver_scorer_data as scorer_data
 import lib.landmarks.ensemble.scorer_eval as scorer_eval_impl
 import lib.landmarks.ensemble.scorer_training as scorer_training
 from lib.landmarks.cache.prediction_cache import DiskPredictionCache
 from lib.landmarks.core.schema import LandmarkPrediction
 from lib.landmarks.ensemble.promoted_setup import write_best_setup
+from lib.landmarks.ensemble.runtime_features import (
+    RUNTIME_PREFERRED_FEATURE_ORDER,
+    candidate_feature_map,
+    runtime_candidate_feature_maps,
+    runtime_feature_order,
+)
 from lib.landmarks.ensemble.runtime_resolver import CandidateMetrics, CandidateRecord
 from lib.landmarks.ensemble.runtime_resolver_scorer import (
     RuntimeResolverScorer,
-    candidate_feature_map,
     load_runtime_resolver_scorer,
     write_runtime_resolver_scorer,
 )
@@ -78,6 +85,89 @@ def _face(offset: float = 0.0) -> np.ndarray:
     points[48:68, 1] = 82
     points[:, 0] += offset
     return points
+
+
+def _runtime_feature_metric(**overrides: object) -> SimpleNamespace:
+    payload: dict[str, object] = {
+        "cloud_area_ratio": 0.9,
+        "hull_area_ratio": 0.8,
+        "points_outside_expanded_bbox_fraction": 0.05,
+        "eye_mouth_order_valid_after_deroll": True,
+        "roi_center_consensus_distance": 0.12,
+        "landmark_consensus_distance": 0.10,
+        "shape_plausibility_score": 0.3,
+        "max_edge_length_ratio": 0.4,
+        "mean_shape_fit_error": 0.02,
+        "topology_violation_count": 0,
+        "roll_degrees": 12.0,
+        "yaw_degrees": -30.0,
+        "geometry_veto_reasons": ("jaw_crop_warning",),
+        "shape_veto_reasons": ("borderline_hull",),
+    }
+    payload.update(overrides)
+    return SimpleNamespace(**payload)
+
+
+def test_runtime_feature_extractor_is_single_source_of_truth_for_train_and_runtime() -> None:
+    assert scorer_data.candidate_feature_map is runtime_features.candidate_feature_map
+    assert (
+        runtime_resolver_scorer_impl.candidate_feature_map
+        is runtime_features.candidate_feature_map
+    )
+
+    candidate = SimpleNamespace(name="hrnet", is_fusion=False)
+    metric = _runtime_feature_metric()
+    context: dict[str, T.Any] = {
+        "runtime_bucket": "profile_left",
+        "risk_route": "high_risk",
+        "model_predictions_available": {"hrnet": True, "spiga": True},
+        "roll_estimate": 4.0,
+        "yaw_estimate": -20.0,
+        "candidate_yaw_disagreement": 15.0,
+        "max_disagreement_px": 42.0,
+        "runtime_bucket_source": "runtime_image_evidence",
+        "hard_case_tags": ("profile",),
+        "candidate_extra_features": {
+            "hrnet": {
+                "candidate_is_consensus_like": 0.0,
+                "single_model_disagreement_px": 18.0,
+                "candidate_distance_to_hrnet": 0.0,
+            }
+        },
+    }
+
+    direct = candidate_feature_map(candidate, metric, **context)
+    batched = runtime_candidate_feature_maps([candidate], {"hrnet": metric}, **context)[0]
+
+    assert batched == direct
+    assert "candidate_name=hrnet" in direct
+    assert "runtime_bucket=profile_left" in direct
+    assert "geometry_veto_reason=jaw_crop_warning" in direct
+    assert "shape_veto_reason=borderline_hull" in direct
+    assert "candidate_is_consensus_like" in direct
+
+    ordered = runtime_feature_order([direct])
+    assert ordered[:2] == ("candidate_is_single_model", "candidate_is_fusion")
+    assert [name for name in RUNTIME_PREFERRED_FEATURE_ORDER if name in direct] == list(
+        ordered[: len([name for name in RUNTIME_PREFERRED_FEATURE_ORDER if name in direct])]
+    )
+
+
+def test_training_feature_order_uses_runtime_feature_order() -> None:
+    row = SimpleNamespace(
+        feature_values={
+            "candidate_name=hrnet": 1.0,
+            "yaw_degrees": -30.0,
+            "candidate_is_fusion": 0.0,
+            "candidate_is_single_model": 1.0,
+            "has_geometry_veto": 1.0,
+        }
+    )
+
+    typed_row = T.cast(scorer_data.CandidateQualityRow, row)
+    assert scorer_training.feature_order([typed_row]) == runtime_feature_order(
+        [row.feature_values]
+    )
 
 
 def _write_fixture(tmp_path: Path) -> tuple[Path, Path, Path]:

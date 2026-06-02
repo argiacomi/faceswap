@@ -12,6 +12,7 @@ from pathlib import Path
 
 import numpy as np
 
+from lib.landmarks.ensemble.runtime_features import runtime_feature_order
 from lib.landmarks.ensemble.runtime_resolver_scorer import (
     RuntimeResolverScorer,
     feature_matrix,
@@ -135,7 +136,7 @@ def split_tagged_rows(
 def write_tagged_rows_csv(rows: T.Sequence[TaggedRow], path: Path) -> Path:
     """Write scorer rows with an explicit source column for held-out split reuse."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    feature_names = sorted({name for row, _source in rows for name in row.feature_values})
+    feature_names = list(runtime_feature_order(row.feature_values for row, _source in rows))
     base_fieldnames = [
         "sample_id",
         "face_index",
@@ -188,30 +189,8 @@ def write_tagged_rows_csv(rows: T.Sequence[TaggedRow], path: Path) -> Path:
 
 
 def feature_order(rows: T.Sequence[CandidateQualityRow]) -> tuple[str, ...]:
-    """Return stable feature order for scorer training."""
-    names: set[str] = set()
-    for row in rows:
-        names.update(row.feature_values)
-    preferred = [
-        "candidate_is_single_model",
-        "candidate_is_fusion",
-        "cloud_area_ratio",
-        "hull_area_ratio",
-        "points_outside_expanded_bbox_fraction",
-        "eye_mouth_order_valid_after_deroll",
-        "roi_center_consensus_distance",
-        "landmark_consensus_distance",
-        "roll_degrees",
-        "yaw_degrees",
-        "roll_delta_to_consensus",
-        "yaw_delta_to_consensus",
-        "candidate_yaw_disagreement",
-        "max_disagreement_px",
-        "has_geometry_veto",
-    ]
-    ordered = [name for name in preferred if name in names]
-    ordered.extend(sorted(names - set(ordered)))
-    return tuple(ordered)
+    """Return stable runtime feature order for scorer training."""
+    return runtime_feature_order(row.feature_values for row in rows)
 
 
 def scorer_target_value(row: CandidateQualityRow, target: str) -> float:
