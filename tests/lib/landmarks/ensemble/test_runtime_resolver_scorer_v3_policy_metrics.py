@@ -3,11 +3,13 @@
 
 from __future__ import annotations
 
+import typing as T
 from types import SimpleNamespace
 
 import pytest
 
 from lib.landmarks.ensemble import scorer_eval as scorer_eval_impl
+from lib.landmarks.ensemble.runtime_resolver_scorer_data import SampleCandidateContext
 
 
 def _v3_row(
@@ -66,20 +68,21 @@ def _v3_context() -> SimpleNamespace:
 
 def test_baseline_transform_regret_uses_same_v3_row_cost_as_scorer_policy() -> None:
     context = _v3_context()
+    contexts = T.cast(list[SampleCandidateContext], [context])
     source_by_sample_id: dict[str, str] = {}
 
     scorer_summary = scorer_eval_impl.policy_summary(
-        [context],
+        contexts,
         {context.sample_id: "candidate_b"},
         source_by_sample_id=source_by_sample_id,
     )
     baseline_summary = scorer_eval_impl.policy_summary(
-        [context],
+        contexts,
         {context.sample_id: "static_weighted_downweight"},
         source_by_sample_id=source_by_sample_id,
     )
     oracle_summary = scorer_eval_impl.policy_summary(
-        [context],
+        contexts,
         {context.sample_id: "candidate_a"},
         source_by_sample_id=source_by_sample_id,
     )
@@ -100,8 +103,9 @@ def test_baseline_transform_regret_uses_same_v3_row_cost_as_scorer_policy() -> N
 
 def test_policy_metric_bundle_baselines_share_v3_transform_regret_accounting() -> None:
     context = _v3_context()
+    contexts = T.cast(list[SampleCandidateContext], [context])
     bundle = scorer_eval_impl.policy_metric_bundle(
-        [context],
+        contexts,
         candidates=("candidate_a", "candidate_b", "static_weighted_downweight"),
         scorer_policy_name="learned_quality_v3",
         scorer_choices={context.sample_id: "candidate_b"},
