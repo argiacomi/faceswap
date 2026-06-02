@@ -25,6 +25,7 @@ import typing as T
 from dataclasses import dataclass
 
 import numpy as np
+from numpy.typing import NDArray
 
 from lib.align.aligned_face import batch_umeyama
 from lib.align.constants import EXTRACT_RATIOS, MEAN_FACE, LandmarkType
@@ -33,7 +34,8 @@ from lib.landmarks.evaluation.geometry_signals import DEFAULT_ALIGNED_SIZE, Alig
 _CORE_START = 17
 _CORE_END = 68
 _DEFAULT_MIN_VISIBLE_POINTS = 8
-_DEFAULT_CENTERING = "face"
+_DEFAULT_CENTERING: T.Literal["face", "head", "legacy"] = "face"
+FloatArray: T.TypeAlias = NDArray[np.float64]
 DEFAULT_SOFT_STRUCTURAL_PENALTY_V3 = 0.05
 
 
@@ -51,6 +53,9 @@ class TransformCostWeightsV3:
     scale: float = 1.0
     roll: float = 0.02
     fit: float = 1.0
+
+
+DEFAULT_TRANSFORM_COST_WEIGHTS_V3 = TransformCostWeightsV3()
 
 
 @dataclass(frozen=True)
@@ -194,7 +199,7 @@ def _with_hard_invalid_reason(
 
 def _as_68_landmarks(landmarks: np.ndarray, *, name: str) -> np.ndarray:
     """Return landmarks as finite ``float64`` with shape ``(68, 2)``."""
-    points = np.asarray(landmarks, dtype="float64")
+    points = T.cast(np.ndarray, np.asarray(landmarks, dtype=np.float64))
     if points.shape != (68, 2):
         raise ValueError(f"{name} expected (68, 2) landmarks, got {points.shape!r}")
     if not np.isfinite(points).all():
@@ -205,8 +210,8 @@ def _as_68_landmarks(landmarks: np.ndarray, *, name: str) -> np.ndarray:
 def _visibility_mask(visibility: T.Sequence[bool] | None) -> np.ndarray:
     """Return a 68-long boolean visibility mask, defaulting to all visible."""
     if visibility is None:
-        return np.ones(68, dtype=bool)
-    mask = np.asarray(visibility, dtype=bool)
+        return T.cast(np.ndarray, np.ones(68, dtype=bool))
+    mask = T.cast(np.ndarray, np.asarray(visibility, dtype=bool))
     if mask.shape != (68,):
         raise ValueError(f"visibility expected shape (68,), got {mask.shape!r}")
     return mask
@@ -239,36 +244,40 @@ def _fit_indices_from_visible_indices(
 def _fit_matrix_from_visible_core(
     landmarks: np.ndarray,
     fit_indices: T.Sequence[int],
-) -> np.ndarray:
+) -> FloatArray:
     """Fit a 2×3 Umeyama matrix from visible core landmarks to the mean face."""
     core_offsets = np.asarray(fit_indices, dtype=np.intp) - _CORE_START
     if core_offsets.size < 3:
         raise ValueError("at least 3 visible core landmarks are required")
     source = landmarks[np.asarray(fit_indices, dtype=np.intp)]
     destination = MEAN_FACE[LandmarkType.LM_2D_51][core_offsets]
-    matrix = batch_umeyama(source[np.newaxis, ...], destination, estimate_scale=True)[0][:2]
+    raw_matrix = batch_umeyama(source[np.newaxis, ...], destination, estimate_scale=True)[0][:2]
+    matrix = T.cast(FloatArray, raw_matrix.astype(np.float64))
     if not np.isfinite(matrix).all():
         raise ValueError("visible-subset Umeyama fit produced a non-finite matrix")
-    return T.cast(np.ndarray, matrix.astype("float64"))
+    return matrix
 
 
-def _affine_transform_points(points: np.ndarray, matrix: np.ndarray) -> np.ndarray:
+def _affine_transform_points(points: np.ndarray, matrix: np.ndarray) -> FloatArray:
     """Apply a 2×3 affine matrix to ``(N, 2)`` points."""
-    homogeneous = np.concatenate(
-        [points.astype("float64"), np.ones((points.shape[0], 1), dtype="float64")],
-        axis=1,
+    homogeneous = T.cast(
+        FloatArray,
+        np.concatenate(
+            [points.astype(np.float64), np.ones((points.shape[0], 1), dtype=np.float64)],
+            axis=1,
+        ),
     )
-    return T.cast(np.ndarray, homogeneous @ matrix.T)
+    return T.cast(FloatArray, homogeneous @ matrix.T)
 
 
-def _invert_affine(matrix: np.ndarray) -> np.ndarray:
+def _invert_affine(matrix: np.ndarray) -> FloatArray:
     """Return the inverse of a 2×3 affine matrix as another 2×3 matrix."""
-    full = np.eye(3, dtype="float64")
+    full: FloatArray = np.eye(3, dtype=np.float64)
     full[:2, :] = matrix
     inverse = np.linalg.inv(full)
     if not np.isfinite(inverse).all():
         raise ValueError("affine matrix inversion produced non-finite values")
-    return T.cast(np.ndarray, inverse[:2, :])
+    return T.cast(FloatArray, inverse[:2, :])
 
 
 def _padding_from_coverage(*, size: int, coverage_ratio: float) -> int:
@@ -277,25 +286,28 @@ def _padding_from_coverage(*, size: int, coverage_ratio: float) -> int:
         raise ValueError(f"size must be positive, got {size!r}")
     if coverage_ratio <= 0:
         raise ValueError(f"coverage_ratio must be positive, got {coverage_ratio!r}")
-    return round(
-        size * (EXTRACT_RATIOS[_DEFAULT_CENTERING] + coverage_ratio - 1) / (2 * coverage_ratio)
-    )
+    extract_ratio = float(EXTRACT_RATIOS[_DEFAULT_CENTERING])
+    padding = round(size * (extract_ratio + coverage_ratio - 1.0) / (2.0 * coverage_ratio))
+    return int(padding)
 
 
 def _adjusted_matrix(matrix: np.ndarray, *, size: int, coverage_ratio: float) -> np.ndarray:
     """Return Faceswap-style face-centered crop matrix with coverage padding."""
     padding = _padding_from_coverage(size=size, coverage_ratio=coverage_ratio)
-    adjusted = matrix.copy()
+    adjusted = T.cast(np.ndarray, matrix.copy())
     adjusted *= size - 2 * padding
     adjusted[:, 2] += padding
     return adjusted
 
 
-def _roi_from_adjusted_matrix(matrix: np.ndarray, *, size: int) -> np.ndarray:
+def _roi_from_adjusted_matrix(matrix: np.ndarray, *, size: int) -> FloatArray:
     """Return original-frame ROI corners implied by an adjusted crop matrix."""
-    corners = np.asarray(
-        [[0.0, 0.0], [0.0, size - 1.0], [size - 1.0, size - 1.0], [size - 1.0, 0.0]],
-        dtype="float64",
+    corners = T.cast(
+        FloatArray,
+        np.asarray(
+            [[0.0, 0.0], [0.0, size - 1.0], [size - 1.0, size - 1.0], [size - 1.0, 0.0]],
+            dtype=np.float64,
+        ),
     )
     return _affine_transform_points(corners, _invert_affine(matrix))
 
@@ -322,12 +334,12 @@ def _fit_targets_output_frame(
     *,
     size: int,
     coverage_ratio: float,
-) -> np.ndarray:
+) -> FloatArray:
     """Return mean-face fit targets in the aligned output frame."""
     padding = _padding_from_coverage(size=size, coverage_ratio=coverage_ratio)
     core_offsets = np.asarray(fit_indices, dtype=np.intp) - _CORE_START
     target_normalized = MEAN_FACE[LandmarkType.LM_2D_51][core_offsets]
-    return T.cast(np.ndarray, target_normalized * (size - 2 * padding) + padding)
+    return T.cast(FloatArray, target_normalized * (size - 2 * padding) + padding)
 
 
 def _visible_fit_rms_pixels(
@@ -348,10 +360,12 @@ def _visible_fit_rms_pixels(
     return float(np.sqrt(np.mean(np.sum(residual * residual, axis=1))))
 
 
-def _crop_center_in_output_frame(source_roi: np.ndarray, output_matrix: np.ndarray) -> np.ndarray:
+def _crop_center_in_output_frame(source_roi: np.ndarray, output_matrix: np.ndarray) -> FloatArray:
     """Return a source-frame ROI center transformed into an aligned output frame."""
-    center = np.asarray(source_roi, dtype="float64").mean(axis=0, keepdims=True)
-    return T.cast(np.ndarray, _affine_transform_points(center, output_matrix)[0])
+    center = T.cast(
+        FloatArray, np.asarray(source_roi, dtype=np.float64).mean(axis=0, keepdims=True)
+    )
+    return T.cast(FloatArray, _affine_transform_points(center, output_matrix)[0])
 
 
 def visible_subset_alignment_summary(
@@ -439,7 +453,7 @@ def transform_cost_v3(
     visibility: T.Sequence[bool] | None = None,
     size: int = DEFAULT_ALIGNED_SIZE,
     coverage_ratio: float = 1.0,
-    weights: TransformCostWeightsV3 = TransformCostWeightsV3(),
+    weights: TransformCostWeightsV3 | None = None,
     hard_invalid_reasons: T.Sequence[str] = (),
     soft_suspect_reasons: T.Sequence[str] = (),
     soft_structural_penalty: float | None = None,
@@ -452,6 +466,7 @@ def transform_cost_v3(
     numeric label; their returned ``total_cost`` is zero because it must not be
     consumed by ranking/oracle selection.
     """
+    cost_weights = weights or DEFAULT_TRANSFORM_COST_WEIGHTS_V3
     validity = structural_validity_v3(
         hard_invalid_reasons=hard_invalid_reasons,
         soft_suspect_reasons=soft_suspect_reasons,
@@ -473,7 +488,9 @@ def transform_cost_v3(
             min_visible_points=min_visible_points,
         )
         pred_center = _crop_center_in_output_frame(pred.summary.roi, truth_fit.adjusted_matrix)
-        truth_center = _crop_center_in_output_frame(truth_fit.summary.roi, truth_fit.adjusted_matrix)
+        truth_center = _crop_center_in_output_frame(
+            truth_fit.summary.roi, truth_fit.adjusted_matrix
+        )
         center_delta = float(np.linalg.norm(pred_center - truth_center) / float(size))
         scale_delta = abs(
             math.log(max(pred.summary.scale, 1e-12) / max(truth_fit.summary.scale, 1e-12))
@@ -501,7 +518,7 @@ def transform_cost_v3(
             roll_delta_degrees=roll_delta_degrees,
             fit_delta=fit_delta,
             soft_structural_penalty=validity.soft_structural_penalty,
-            weights=weights,
+            weights=cost_weights,
         )
     )
     return TransformCostV3(

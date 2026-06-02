@@ -20,7 +20,7 @@ from lib.landmarks.evaluation.transform_alignment_cost import (
 
 def _truth_face() -> np.ndarray:
     """Plausible iBUG/300W-style 68-point face for test fixtures."""
-    points = np.zeros((68, 2), dtype="float64")
+    points: np.ndarray = np.zeros((68, 2), dtype="float64")
     points[0:17, 0] = np.linspace(40, 160, 17)
     points[0:17, 1] = 120 + 30 * np.sin(np.linspace(0, np.pi, 17))
     points[17:22, 0] = np.linspace(50, 90, 5)
