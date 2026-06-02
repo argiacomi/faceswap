@@ -8,6 +8,7 @@ import logging
 import typing as T
 
 import torch
+from schedulefree import AdamWScheduleFree, ScheduleFreeWrapper
 from torch import nn
 from torch.optim.lr_scheduler import ExponentialLR
 
@@ -41,6 +42,15 @@ _OPTIMIZERS = {
     "nadam": torch.optim.NAdam,
     "rms-prop": torch.optim.RMSprop,
 }
+
+#: Schedule-free optimizers (issue #185) maintain an internal averaged ("eval")
+#: parameter set and require ``train()`` / ``eval()`` mode toggling around
+#: training batches versus preview/save/checkpoint. They are constructed
+#: separately from the simple ``_OPTIMIZERS`` registry because their signatures
+#: and (for Lion) wrapper composition differ.
+SCHEDULE_FREE_ADAMW = "schedule-free-adamw"
+SCHEDULE_FREE_LION = "schedule-free-lion"
+_SCHEDULE_FREE_OPTIMIZERS = (SCHEDULE_FREE_ADAMW, SCHEDULE_FREE_LION)
 
 
 def get_parameter_group_ids(
@@ -190,8 +200,20 @@ class Optimizer:
             )
         )
 
-        self._optimizer = self._get_optimizer(model.model, config)
-        self._warmup = None if warmup_steps < 1 else WarmupScheduler(self._optimizer, warmup_steps)
+        self._is_schedule_free = config.optimizer() in _SCHEDULE_FREE_OPTIMIZERS
+        self._optimizer = self._get_optimizer(model.model, config, warmup_steps)
+        # Schedule-free optimizers manage their own learning-rate warmup internally, so the
+        # external warmup scheduler is disabled for them to avoid double-warmup.
+        self._warmup = (
+            None
+            if warmup_steps < 1 or self._is_schedule_free
+            else WarmupScheduler(self._optimizer, warmup_steps)
+        )
+        if self._is_schedule_free and warmup_steps >= 1:
+            logger.info(
+                "Schedule-free optimizer selected: learning-rate warmup is handled internally "
+                "by the optimizer (external warmup scheduler disabled)."
+            )
         self._lr_scheduler: ExponentialLR | None = None
 
         self._load_state(model)
@@ -243,7 +265,39 @@ class Optimizer:
         logger.debug("[Optimizer] '%s' kwargs: %s", name, retval)
         return retval
 
-    def _get_optimizer(self, model: K_Model, config: type[OptConfig]) -> torch.optim.Optimizer:
+    def _get_schedule_free_optimizer(
+        self, name: str, groups: T.Any, config: type[OptConfig], warmup_steps: int
+    ) -> torch.optim.Optimizer:
+        """Build a schedule-free optimizer (issue #185).
+
+        ``schedule-free-adamw`` uses the upstream :class:`schedulefree.AdamWScheduleFree`
+        directly. ``schedule-free-lion`` wraps the project's :class:`Lion` with
+        :class:`schedulefree.ScheduleFreeWrapper`; decoupled weight decay is left on the base
+        Lion so the per-group ``no_decay`` split (bias / norm params) is honored (decay is then
+        computed at ``z``), and the wrapper's ``weight_decay_at_y`` is disabled.
+        """
+        lr = config.learning_rate()
+        betas = (config.ada_beta_1(), config.ada_beta_2())
+        if name == SCHEDULE_FREE_ADAMW:
+            retval: torch.optim.Optimizer = AdamWScheduleFree(
+                groups,
+                lr=lr,
+                betas=betas,
+                eps=10 ** config.epsilon_exponent(),
+                weight_decay=config.weight_decay(),
+                warmup_steps=max(warmup_steps, 0),
+            )
+        else:  # SCHEDULE_FREE_LION
+            base = optimizers.Lion(groups, lr=lr, betas=betas, weight_decay=config.weight_decay())
+            retval = T.cast(
+                "torch.optim.Optimizer",
+                ScheduleFreeWrapper(base, momentum=betas[0], weight_decay_at_y=0.0),
+            )
+        return retval
+
+    def _get_optimizer(
+        self, model: K_Model, config: type[OptConfig], warmup_steps: int = 0
+    ) -> torch.optim.Optimizer:
         """Obtain the configured optimizer the given configuration file options
 
         Parameters
@@ -252,21 +306,27 @@ class Optimizer:
             The keras model that is to be trained
         config
             The optimizer user configuration options
+        warmup_steps
+            The number of learning-rate warmup steps. Forwarded to schedule-free optimizers
+            which warm up internally. Default: 0
 
         Returns
         -------
         The requested configured optimizer
         """
         name = config.optimizer()
-        if name not in _OPTIMIZERS:
-            raise ValueError(f"'{name}' is not a valid optimizer. Select from {list(_OPTIMIZERS)}")
-        optimizer = _OPTIMIZERS[name]
-
-        retval = optimizer(
-            self._get_parameter_groups(model, config.weight_decay()),
-            lr=config.learning_rate(),
-            **self._get_optimizer_kwargs(config),
-        )
+        groups = self._get_parameter_groups(model, config.weight_decay())
+        if name in _SCHEDULE_FREE_OPTIMIZERS:
+            retval = self._get_schedule_free_optimizer(name, groups, config, warmup_steps)
+        elif name in _OPTIMIZERS:
+            retval = _OPTIMIZERS[name](
+                groups,
+                lr=config.learning_rate(),
+                **self._get_optimizer_kwargs(config),
+            )
+        else:
+            valid = [*_OPTIMIZERS, *_SCHEDULE_FREE_OPTIMIZERS]
+            raise ValueError(f"'{name}' is not a valid optimizer. Select from {valid}")
         logger.debug("[Optimizer] Got optimizer '%s': %s", name, retval)
         return retval
 
@@ -454,6 +514,34 @@ class Optimizer:
         """Clear all optimizer parameter gradients."""
         self._optimizer.zero_grad(set_to_none=True)
 
+    @property
+    def is_schedule_free(self) -> bool:
+        """``True`` if the wrapped optimizer is a schedule-free optimizer (issue #185)."""
+        return self._is_schedule_free
+
+    def train(self) -> None:
+        """Switch the optimizer into training mode.
+
+        Schedule-free optimizers expose ``train()`` to place their model-visible parameters at
+        the interpolation point used for gradient steps; this must be active during training
+        batches. A no-op for standard optimizers.
+        """
+        train_fn = getattr(self._optimizer, "train", None)
+        if callable(train_fn):
+            train_fn()
+
+    def eval(self) -> None:
+        """Switch the optimizer into evaluation mode.
+
+        Schedule-free optimizers expose ``eval()`` to swap their model-visible parameters to the
+        averaged ("deployable") weights; this must be active before generating previews and
+        before saving / checkpointing so those consume the averaged weights. A no-op for standard
+        optimizers.
+        """
+        eval_fn = getattr(self._optimizer, "eval", None)
+        if callable(eval_fn):
+            eval_fn()
+
     def state_dict(self) -> dict[str, T.Any]:
         """Serialized data as a dict for relevant options contained in this class
 
@@ -525,6 +613,12 @@ class Optimizer:
         -------
         ``True`` if an optimal learning rate was discovered.
         """
+        if self._is_schedule_free:
+            logger.warning(
+                "The Learning Rate Finder is not supported for schedule-free optimizers and "
+                "will be skipped. Set the learning rate manually for schedule-free training."
+            )
+            return False
         original_lr = self._optimizer.param_groups[0].get(
             "initial_lr", self._optimizer.param_groups[0]["lr"]
         )

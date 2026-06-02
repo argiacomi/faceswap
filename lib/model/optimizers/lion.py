@@ -92,8 +92,10 @@ class Lion(Optimizer):
 
                 grad = p.grad
                 state = self.state[p]
-                # State initialization
-                if len(state) == 0:
+                # State initialization. Keyed on ``exp_avg`` rather than an empty-state
+                # check so the optimizer remains compatible with wrappers (e.g. the
+                # schedule-free wrapper) that pre-seed their own keys into ``state``.
+                if "exp_avg" not in state:
                     # Exponential moving average of gradient values
                     state["exp_avg"] = torch.zeros_like(p)
 

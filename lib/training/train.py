@@ -643,6 +643,9 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
         -------
         The collated loss values detached and moved to CPU in order (A, B, ...)
         """
+        # Ensure schedule-free optimizers are in training mode for the gradient step.
+        # Idempotent and a no-op for standard optimizers (issue #185).
+        self._optimizer.train()
         try:
             inputs, targets, meta = next(self._train_loader)
             self._plugin.loss_func.set_iteration(self._model.iterations)
@@ -950,7 +953,16 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
         self._print_loss(total_loss)
         if do_snapshot:
             self._model.io.snapshot()
-        self._update_viewers(viewer, do_timelapse)
+        # Generate previews from the optimizer's eval (averaged) weights for schedule-free
+        # optimizers, then restore training mode. No-op for standard optimizers (issue #185).
+        needs_eval = viewer is not None or do_timelapse
+        if needs_eval:
+            self._optimizer.eval()
+        try:
+            self._update_viewers(viewer, do_timelapse)
+        finally:
+            if needs_eval:
+                self._optimizer.train()
 
     def _clear_tensorboard(self) -> None:
         """Stop Tensorboard logging.
@@ -971,7 +983,14 @@ class Trainer:  # pylint:disable=too-many-instance-attributes
         is_exit
             ``True`` if save has been called on model exit. Default: ``False``
         """
-        self._model.io.save(self._optimizer, is_exit=is_exit)
+        # Save the optimizer's eval (averaged) weights for schedule-free optimizers so the
+        # persisted/deployable model uses the averaged parameters. No-op otherwise (#185).
+        self._optimizer.eval()
+        try:
+            self._model.io.save(self._optimizer, is_exit=is_exit)
+        finally:
+            if not is_exit:
+                self._optimizer.train()
         assert self._tensorboard is not None
         self._tensorboard.on_save()
         if is_exit:

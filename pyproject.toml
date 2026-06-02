@@ -60,6 +60,7 @@ module = [
     "numexpr.*",
     "pexpect.*",
     "pynvml.*",
+    "schedulefree.*",
     "scipy.*",
     "sklearn.*",
     "tensorboard.*",

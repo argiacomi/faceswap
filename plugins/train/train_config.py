@@ -944,13 +944,32 @@ class Optimizer(GlobalSection):
             "larger batch sizes. A suitable learning rate for Lion is typically 3-10x "
             "smaller than that for AdamW. The weight decay for Lion should be 3-10x "
             "larger than that for AdamW to maintain a similar strength."
+            "\n\t schedule-free-adamw - AdamW using the Schedule-Free method "
+            "(https://arxiv.org/abs/2405.15682), which removes the need for a learning "
+            "rate schedule by averaging iterates internally. Use a learning rate similar "
+            "to AdamW. Warmup is handled internally and the Learning Rate Finder is "
+            "disabled for this optimizer."
+            "\n\t schedule-free-lion - Lion wrapped with the Schedule-Free method, "
+            "combining Lion's sign-based, low-VRAM update with schedule-free iterate "
+            "averaging. Use Lion-scale learning rates (typically 3-10x smaller than "
+            "AdamW). The Learning Rate Finder is disabled for this optimizer."
             "\n\t nadam - Adaptive Moment Optimization with Nesterov Momentum. Much like "
             "Adam but uses a different formula for calculating momentum."
             "\n\t rms-prop - Root Mean Square Propagation. Maintains a moving "
             "(discounted) average of the square of the gradients. Divides the gradient by "
             "the root of this average."
         ),
-        choices=["adabelief", "adam", "adamax", "adamw", "lion", "nadam", "rms-prop"],
+        choices=[
+            "adabelief",
+            "adam",
+            "adamax",
+            "adamw",
+            "lion",
+            "schedule-free-adamw",
+            "schedule-free-lion",
+            "nadam",
+            "rms-prop",
+        ],
         gui_radio=True,
         fixed=True,
     )
