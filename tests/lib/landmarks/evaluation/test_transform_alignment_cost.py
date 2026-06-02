@@ -76,15 +76,63 @@ def test_transform_cost_v3_zero_for_identical_landmarks() -> None:
     assert cost.total_cost == pytest.approx(0.0, abs=1e-9)
 
 
-def test_transform_cost_v3_detects_crop_center_shift() -> None:
+def test_transform_cost_v3_center_delta_uses_gt_output_frame() -> None:
     truth = _truth_face()
     predicted = truth + np.asarray([8.0, 0.0], dtype="float64")
 
+    cost_512 = transform_cost_v3(predicted, truth, size=512)
+    cost_256 = transform_cost_v3(predicted, truth, size=256)
+
+    assert cost_512.hard_invalid is False
+    assert cost_512.center_delta > 0.0
+    # The delta is normalized by aligned crop size, so changing output size
+    # should not materially change the label.
+    assert cost_256.center_delta == pytest.approx(cost_512.center_delta, rel=1e-6)
+
+
+def test_transform_cost_v3_scale_delta_uses_log_ratio() -> None:
+    truth = _truth_face()
+    center = truth.mean(axis=0)
+    predicted = center + (truth - center) * 1.10
+
+    pred_summary = visible_subset_alignment_summary(predicted)
+    truth_summary = visible_subset_alignment_summary(truth)
+    expected = abs(math.log(pred_summary.summary.scale / truth_summary.summary.scale))
     cost = transform_cost_v3(predicted, truth)
 
-    assert cost.hard_invalid is False
-    assert cost.center_delta > 0.0
-    assert cost.total_cost > 0.0
+    assert cost.scale_delta == pytest.approx(expected)
+
+
+def test_transform_cost_v3_roll_delta_wraps_degrees() -> None:
+    truth = _truth_face()
+    angle = math.radians(7.5)
+    rotation = np.asarray(
+        [[math.cos(angle), -math.sin(angle)], [math.sin(angle), math.cos(angle)]],
+        dtype="float64",
+    )
+    center = truth.mean(axis=0)
+    predicted = (truth - center) @ rotation.T + center
+
+    cost = transform_cost_v3(predicted, truth)
+
+    assert cost.roll_delta_degrees == pytest.approx(7.5, abs=1e-3)
+
+
+def test_transform_cost_v3_fit_delta_uses_output_frame_rms_regret() -> None:
+    truth = _truth_face()
+    predicted = truth.copy()
+    # Distort visible landmarks non-rigidly so the similarity transform cannot
+    # absorb all residual error.
+    predicted[36:42, 1] += 5.0
+    predicted[48:60, 1] -= 3.0
+
+    cost_512 = transform_cost_v3(predicted, truth, size=512)
+    cost_256 = transform_cost_v3(predicted, truth, size=256)
+
+    assert cost_512.fit_delta > 0.0
+    # fit_delta is RMS regret divided by aligned size, so it stays comparable
+    # across output sizes.
+    assert cost_256.fit_delta == pytest.approx(cost_512.fit_delta, rel=1e-6)
 
 
 def test_transform_cost_v3_includes_soft_structural_penalty() -> None:
