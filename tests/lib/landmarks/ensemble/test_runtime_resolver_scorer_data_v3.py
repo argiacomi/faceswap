@@ -23,7 +23,12 @@ from lib.landmarks.ensemble.scorer_target_config import (
     REGRESSION_TARGETS,
     TARGET_TRANSFORM_REGRET_V3,
 )
-from lib.landmarks.ensemble.scorer_training import scorer_target_value, write_tagged_rows_csv
+from lib.landmarks.ensemble.scorer_training import (
+    _rankable_v3_tagged_rows,
+    _v3_lambdarank_label,
+    scorer_target_value,
+    write_tagged_rows_csv,
+)
 
 V3_FIELDS = (
     "transform_cost_v3",
@@ -216,3 +221,63 @@ def test_v3_columns_are_carried_through_csv_schemas(tmp_path) -> None:
     assert set(V3_FIELDS).issubset(_fieldnames(("feature_a",)))
     assert set(V3_FIELDS).issubset(_csv_header(runtime_rows))
     assert set(V3_FIELDS).issubset(_csv_header(tagged_rows))
+
+
+def test_v3_rankable_filter_drops_invalid_rows_and_counts_abstain_groups() -> None:
+    rankable = _row(
+        sample_id="sample_a",
+        candidate_name="candidate_a",
+        rankable_v3=True,
+        hard_invalid_v3=False,
+        transform_regret_v3=0.0,
+    )
+    invalid_same_group = _row(
+        sample_id="sample_a",
+        candidate_name="candidate_b",
+        rankable_v3=False,
+        hard_invalid_v3=True,
+        hard_invalid_reasons_v3=("cloud_collapse",),
+        transform_regret_v3=0.0,
+    )
+    invalid_all_group = _row(
+        sample_id="sample_b",
+        candidate_name="candidate_c",
+        rankable_v3=False,
+        hard_invalid_v3=True,
+        hard_invalid_reasons_v3=("eye_mouth_flip",),
+        transform_regret_v3=0.0,
+    )
+
+    kept, stats = _rankable_v3_tagged_rows(
+        [
+            (rankable, "gt"),
+            (invalid_same_group, "gt"),
+            (invalid_all_group, "gt"),
+        ]
+    )
+
+    assert kept == [(rankable, "gt")]
+    assert stats["total_group_count"] == 2
+    assert stats["rankable_group_count"] == 1
+    assert stats["fallback_abstain_group_count"] == 1
+    assert stats["fallback_abstain_row_count"] == 1
+    assert stats["hard_invalid_row_count"] == 2
+
+
+def test_v3_lambdarank_label_uses_transform_regret_not_nme_or_selection_cost() -> None:
+    transform_oracle = _row(
+        candidate_name="transform_oracle",
+        candidate_nme=0.90,
+        oracle_nme=0.01,
+        selection_cost=3.0,
+        transform_regret_v3=0.0,
+    )
+    transform_bad = _row(
+        candidate_name="transform_bad",
+        candidate_nme=0.01,
+        oracle_nme=0.01,
+        selection_cost=0.0,
+        transform_regret_v3=1.0,
+    )
+
+    assert _v3_lambdarank_label(transform_oracle) > _v3_lambdarank_label(transform_bad)
